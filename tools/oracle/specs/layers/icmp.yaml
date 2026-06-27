@@ -161,9 +161,9 @@ backend_support:
     decode: true
     notes:
       - Echo request/reply compare byte-for-byte against the reference backend (ipv4-icmp, icmpv4-echo-reply).
-      - RFC 792 errors (with typed quoted IPv4 datagrams), timestamp, and information messages are typed; the libcrafter_to_reference crafter-icmpv4-* vectors round-trip byte-for-byte.
+      - RFC 792 errors (with typed quoted IPv4 datagrams), timestamp, and information messages are typed; the libcrafter_to_backend crafter-icmpv4-* vectors round-trip byte-for-byte.
       - RFC 950 address mask, RFC 1191 next-hop MTU, and RFC 1256 router discovery are typed.
       - RFC 4884 extension framing with RFC 4950 MPLS objects is typed and decoded.
       - RFC 5837 interface information and RFC 8335 extended echo objects are typed by libcrafter; the reference backend has no native object class for them, so those vectors are validated libcrafter-side and stay raw-compatible against the reference.
       - Deprecated, experimental, and unknown ICMPv4 types remain constructible and round-trip raw-compatibly.
-      - The reference_to_libcrafter generator path for structured ICMP errors remains feature-gated as partial under the icmpv4_errors feature; see that feature spec for the quoted-datagram sampler limitation.
+      - The backend_to_libcrafter generator path for structured ICMP errors remains feature-gated as partial under the icmpv4_errors feature; see that feature spec for the quoted-datagram sampler limitation.

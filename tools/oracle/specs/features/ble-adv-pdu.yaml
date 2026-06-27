@@ -7,8 +7,8 @@ layers:
   - ble_radio
   - ble_adv
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
   - roundtrip
 strict_bytes: true
 malformed: false
@@ -69,8 +69,8 @@ coverage_cases:
 supported_cases:
   - name: ble-adv-ind-flags-name
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
     roots:
@@ -103,8 +103,8 @@ supported_cases:
       - .agents/docs/ble-codepoints.md#GAP-AD-Types-Assigned-Numbers-Common-Data-Types
   - name: ble-adv-nonconn-uuid16
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
     roots:
@@ -134,8 +134,8 @@ supported_cases:
       - .agents/docs/ble-codepoints.md#GAP-AD-Types-Assigned-Numbers-Common-Data-Types
   - name: ble-adv-nonconn-uuid128
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
     roots:
@@ -165,8 +165,8 @@ supported_cases:
       - .agents/docs/ble-codepoints.md#GAP-AD-Types-Assigned-Numbers-Common-Data-Types
   - name: ble-scan-rsp-manufacturer-data
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
     roots:
@@ -196,8 +196,8 @@ supported_cases:
       - .agents/docs/ble-codepoints.md#GAP-AD-Types-Assigned-Numbers-Common-Data-Types
   - name: ble-scan-rsp-service-data
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
     roots:
@@ -227,8 +227,8 @@ supported_cases:
       - .agents/docs/ble-codepoints.md#GAP-AD-Types-Assigned-Numbers-Common-Data-Types
   - name: ble-adv-unknown-ad-raw
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
     roots:
@@ -261,8 +261,8 @@ supported_cases:
       - .agents/docs/ble-codepoints.md#GAP-AD-Types-Assigned-Numbers-Common-Data-Types
   - name: malformed-ble-adv-overlong-length
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
     offline_byte_comparison: excluded
     roots:
@@ -275,8 +275,8 @@ supported_cases:
       fixture: crafter/tests/fixtures/malformed/ble-decode-corpus.hex
   - name: malformed-ble-ad-truncated
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
     offline_byte_comparison: excluded
     roots:

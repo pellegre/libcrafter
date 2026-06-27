@@ -40,7 +40,7 @@ def _ble_adv_plan() -> PacketPlan:
         profile="ble-smoke",
         seed=1,
         index=0,
-        direction="reference_to_libcrafter",
+        direction="backend_to_libcrafter",
         family="ble",
         feature_tags=["ble", "ble_advertising"],
         case="ble-adv-ind-flags-name",

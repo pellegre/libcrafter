@@ -23,8 +23,8 @@ layers:
   - ipv4
   - ipv6
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
 strict_bytes: false
 malformed: true
 
@@ -60,18 +60,18 @@ coverage_cases:
 supported_cases:
   - name: ah-malformed-truncated-header
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
   - name: ah-malformed-oversized-payload-len
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
   - name: ah-malformed-icv-mismatch
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
 
 backend_support:

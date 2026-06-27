@@ -16,8 +16,8 @@ planned_roots:
   - "link:dot11"
   - "link:ieee80211"
 supported_directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
   - roundtrip
 live_eligibility: false
 live_gate: manual_monitor_mode_radiotap_only

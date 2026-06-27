@@ -10,7 +10,7 @@ these rows.
 - **Case ID** is the oracle coverage case name from the IGMP feature specs and
   `tools/oracle/specs/fixtures/scapy-cases.json`.
 - **Directions** are the feature-spec directions:
-  `reference_to_libcrafter` and `libcrafter_to_reference`.
+  `backend_to_libcrafter` and `libcrafter_to_backend`.
 - **Byte policy** is `strict_bytes` for comparable packet bytes. There are no
   normalized IGMP cases in this matrix yet.
 - **Scapy path** is `raw` for all current executable rows. This avoids

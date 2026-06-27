@@ -7,8 +7,8 @@ layers:
   - dot15d4
   - dot15d4_radio
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
   - roundtrip
 strict_bytes: true
 malformed: false
@@ -76,8 +76,8 @@ coverage_cases:
 supported_cases:
   - name: dot15d4-data-short-pan-compressed
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
     roots:
@@ -110,8 +110,8 @@ supported_cases:
       - .agents/docs/dot15d4-manifest.md#Frame-Check-Sequence-FCS
   - name: dot15d4-data-extended-pan-compressed
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
     roots:
@@ -144,8 +144,8 @@ supported_cases:
       - .agents/docs/dot15d4-manifest.md#Frame-Check-Sequence-FCS
   - name: dot15d4-ack-no-addressing
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
     roots:
@@ -172,8 +172,8 @@ supported_cases:
       - .agents/docs/dot15d4-manifest.md#Frame-Check-Sequence-FCS
   - name: malformed-dot15d4-truncated-fcf
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
     offline_byte_comparison: excluded
     roots:
@@ -186,8 +186,8 @@ supported_cases:
       fixture: crafter/tests/fixtures/malformed/dot15d4-decode-corpus.hex
   - name: malformed-dot15d4-truncated-addressing
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
     offline_byte_comparison: excluded
     roots:
@@ -200,8 +200,8 @@ supported_cases:
       fixture: crafter/tests/fixtures/malformed/dot15d4-decode-corpus.hex
   - name: malformed-dot15d4-reserved-frame-type
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
     offline_byte_comparison: excluded
     roots:

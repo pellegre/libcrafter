@@ -31,8 +31,8 @@ unsupported_parents:
   - icmpv6
   - mld
 supported_directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
   - roundtrip
   - live_exchange
 live_eligibility: provider_gated

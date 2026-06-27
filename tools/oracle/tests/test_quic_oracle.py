@@ -26,7 +26,7 @@ def _quic_plan(case: str):
         family="quic",
         feature="quic_behavior",
         case=case,
-        direction="reference_to_libcrafter",
+        direction="backend_to_libcrafter",
     )
     assert len(plans) == 1
     return plans[0]
@@ -104,7 +104,7 @@ class QuicGeneratorTest(unittest.TestCase):
             count=30,
             backend="scapy",
             family="quic",
-            direction="reference_to_libcrafter",
+            direction="backend_to_libcrafter",
         )
         cases = {plan.case for plan in plans}
         self.assertTrue(cases)

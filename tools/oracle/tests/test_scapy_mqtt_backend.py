@@ -322,7 +322,7 @@ def _mqtt_plan(mqtt_fields: dict[str, object]) -> PacketPlan:
         profile="mqtt-unit",
         seed=3901,
         index=0,
-        direction="reference_to_libcrafter",
+        direction="backend_to_libcrafter",
         family="mqtt",
         feature_tags=["baseline", "ipv4", "tcp", "mqtt"],
         case="mqtt-unit",

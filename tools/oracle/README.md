@@ -59,7 +59,7 @@ is available on `PATH`:
 
 ```sh
 tools/oracle/run offline --backend wireshark --profile smoke --seed 1 --count 10
-tools/oracle/run pcap --backend wireshark --direction libcrafter_to_reference --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --backend wireshark --direction libcrafter_to_backend --profile smoke --seed 1 --count 10
 ```
 
 Live validation uses the oracle live provider boundary. `local-dry-run` is the
@@ -117,7 +117,7 @@ coverage:
 
 - `ipv4 / udp / dhcpv4` (root `l3:ipv4`) is the live DHCPv4 packet under test. Live
   validation is a one-way packet-equivalence exchange run in both directions
-  (`libcrafter_to_reference` and `reference_to_libcrafter`); each direction
+  (`libcrafter_to_backend` and `backend_to_libcrafter`); each direction
   sends one DHCPv4 packet and checks the receiver's decoded observation, and no
   DHCPv4 reply is expected. Rooted at IPv4 unicast, it is wire-eligible without
   Ethernet framing, link-layer broadcast, or provider MAC discovery.
@@ -177,7 +177,7 @@ row documents the reason:
   (`dns-svcb-https`).
 - `\DDD` name escapes are flattened to literal text by the Scapy high-level
   encode, so byte-faithful agreement for special labels is carried by the
-  `libcrafter_to_reference` direction and the `crafter` byte-preserving name
+  `libcrafter_to_backend` direction and the `crafter` byte-preserving name
   tests, with the oracle comparing header and section counts
   (`dns-name-root-escaped`).
 - Malformed names and RDATA are covered by the deterministic `crafter` decode
@@ -190,8 +190,8 @@ Offline validation is the default safety boundary, so it should prove
 Scapy/libcrafter agreement before any pcap or live planning. Family selection is
 data-driven: the generator honors each case's declared `directions` and
 `byte_policy` from the feature spec's `supported_cases`, so a
-`reference_to_libcrafter`-only or `normalized` case is never forced through an
-unsupported `libcrafter_to_reference` strict comparison, and `structured_error`
+`backend_to_libcrafter`-only or `normalized` case is never forced through an
+unsupported `libcrafter_to_backend` strict comparison, and `structured_error`
 cases (which have no offline malformed pathway) are excluded.
 
 Run the deterministic DNS offline coverage with the `ci` profile in both
@@ -199,8 +199,8 @@ directions:
 
 ```sh
 tools/oracle/run corpus --backend scapy --family dns --profile ci --seed 2701 --count 50 --out target/oracle/dns-offline-corpus
-tools/oracle/run offline --backend scapy --family dns --profile ci --seed 2701 --count 50 --direction reference_to_libcrafter --out target/oracle/dns-offline-rtl
-tools/oracle/run offline --backend scapy --family dns --profile ci --seed 2702 --count 50 --direction libcrafter_to_reference --out target/oracle/dns-offline-ltr
+tools/oracle/run offline --backend scapy --family dns --profile ci --seed 2701 --count 50 --direction backend_to_libcrafter --out target/oracle/dns-offline-rtl
+tools/oracle/run offline --backend scapy --family dns --profile ci --seed 2702 --count 50 --direction libcrafter_to_backend --out target/oracle/dns-offline-ltr
 ```
 
 To force *every* offline-eligible DNS case in each direction it supports rather
@@ -225,7 +225,7 @@ and raw payload preservation:
 
 ```sh
 tools/oracle/run offline --profile tcp-header --seed 1 --count 10
-tools/oracle/run offline --profile tcp-header --seed 1 --count 30 --direction libcrafter_to_reference
+tools/oracle/run offline --profile tcp-header --seed 1 --count 30 --direction libcrafter_to_backend
 ```
 
 The deliberately malformed `tcp-header-invalid-data-offset` case (a data offset
@@ -251,11 +251,11 @@ promoting IPv6 enrichment behavior:
 
 ```sh
 tools/oracle/run offline --profile ipv6-enrichment --seed 2 --count 20 --root l3:ipv6 --out target/oracle/ipv6-enrichment-offline
-tools/oracle/run offline --direction reference_to_libcrafter --profile ipv6-enrichment --seed 3 --count 12 --root l3:ipv6 --out target/oracle/ipv6-enrichment-reference-to-libcrafter
+tools/oracle/run offline --direction backend_to_libcrafter --profile ipv6-enrichment --seed 3 --count 12 --root l3:ipv6 --out target/oracle/ipv6-enrichment-reference-to-libcrafter
 ```
 
 The complementary direction is
-`--direction libcrafter_to_reference`; use it when isolating libcrafter emission
+`--direction libcrafter_to_backend`; use it when isolating libcrafter emission
 against the Scapy decoder. Keep artifacts under `target/oracle/`, for example
 `target/oracle/ipv6-enrichment-offline/` and
 `target/oracle/ipv6-enrichment-reference-to-libcrafter/`.
@@ -287,7 +287,7 @@ data-driven from each case's `byte_policy` in `supported_cases`, mirroring the
 pcap gate:
 
 - `strict_bytes` DNS cases are live-eligible in both
-  `libcrafter_to_reference` and `reference_to_libcrafter` directions (the
+  `libcrafter_to_backend` and `backend_to_libcrafter` directions (the
   endpoint adapters send and decode the deterministic uncompressed encode);
 - `normalized` cases (compressed names, sorted SvcParams, minimal bitmaps) are
   live-ineligible and skipped with `wire_normalized_only` -- libcrafter

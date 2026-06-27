@@ -264,7 +264,7 @@ class IgmpSpecGenerationTest(unittest.TestCase):
                 self.assertFalse(
                     _igmp_generator()._case_supported_in_direction(
                         case_name,
-                        "reference_to_libcrafter",
+                        "backend_to_libcrafter",
                     )
                 )
 

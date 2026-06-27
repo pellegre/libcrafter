@@ -7,8 +7,8 @@ layers:
   - udp
   - snmp
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
 strict_bytes: true
 malformed: false
 
@@ -137,50 +137,50 @@ coverage_cases:
 supported_cases:
   - name: snmp-v3-global-data
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: snmp-v3-flags-security-models
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: snmp-v3-raw-security-parameters
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: raw_preserve
   - name: snmp-v3-usm-security-parameters
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: snmp-v3-plaintext-scoped-pdu
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: snmp-v3-encrypted-scoped-data
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: raw_preserve
   - name: snmp-v3-report-pdu
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: malformed-snmp-v3-header
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: structured_error
   - name: malformed-snmp-v3-usm-parameters
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: structured_error
   - name: malformed-snmp-v3-scoped-data
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: structured_error
 
 case_groups:

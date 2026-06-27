@@ -9,8 +9,8 @@ layers:
   - llc_snap
   - payload
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
   - roundtrip
 strict_bytes: true
 malformed: false
@@ -74,7 +74,7 @@ coverage_cases:
 
 supported_cases:
   - name: pcap-scapy-dot11
-    direction: reference_to_libcrafter
+    direction: backend_to_libcrafter
     writer: scapy
     reader: libcrafter
     file_format: pcap
@@ -87,7 +87,7 @@ supported_cases:
       - packet_bytes
       - decoded_model
   - name: pcap-scapy-radiotap
-    direction: reference_to_libcrafter
+    direction: backend_to_libcrafter
     writer: scapy
     reader: libcrafter
     file_format: pcap
@@ -100,7 +100,7 @@ supported_cases:
       - packet_bytes
       - decoded_model
   - name: pcap-crafter-dot11
-    direction: libcrafter_to_reference
+    direction: libcrafter_to_backend
     writer: libcrafter
     reader: scapy
     file_format: pcap
@@ -113,7 +113,7 @@ supported_cases:
       - packet_bytes
       - decoded_model
   - name: pcap-crafter-radiotap
-    direction: libcrafter_to_reference
+    direction: libcrafter_to_backend
     writer: libcrafter
     reader: scapy
     file_format: pcap
@@ -127,8 +127,8 @@ supported_cases:
       - decoded_model
   - name: pcap-dot11-protected-raw
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     file_format: pcap
     link_types:
@@ -140,8 +140,8 @@ supported_cases:
       - raw_payload_bytes
   - name: pcapng-dot11-radiotap-mixed-links
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     file_format: pcapng
     link_types:

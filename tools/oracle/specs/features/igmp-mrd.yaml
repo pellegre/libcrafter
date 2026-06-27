@@ -12,8 +12,8 @@ layers:
   - ipv4
   - igmp
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
 strict_bytes: true
 malformed: false
 
@@ -110,40 +110,40 @@ coverage_cases:
 supported_cases:
   - name: igmp-mrd-advertisement
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: igmp-mrd-solicitation
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: igmp-mrd-termination
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: igmp-mrd-explicit-checksum-invalid
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: igmp-mrd-reserved-override
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: malformed-igmp-mrd-truncated-advertisement
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: structured_error
   - name: malformed-igmp-mrd-truncated-solicitation
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: structured_error
   - name: malformed-igmp-mrd-truncated-termination
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: structured_error
 
 documentation_only:

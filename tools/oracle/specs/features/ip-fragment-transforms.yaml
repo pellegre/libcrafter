@@ -10,8 +10,8 @@ layers:
   - udp
   - payload
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
   - roundtrip
   - live_exchange
 strict_bytes: true
@@ -67,7 +67,7 @@ behaviors:
   - name: ipv4_defrag_complete
     family: IPv4
     transform: IpDefrag
-    expected_direction: reference_to_libcrafter
+    expected_direction: backend_to_libcrafter
     byte_policy: reassembled_packet
     requirements:
       - Group by source, destination, protocol, and identification.
@@ -77,7 +77,7 @@ behaviors:
   - name: ipv4_defrag_duplicates
     family: IPv4
     transform: IpDefrag
-    expected_direction: reference_to_libcrafter
+    expected_direction: backend_to_libcrafter
     byte_policy: reassembled_packet_with_duplicate_trace
     requirements:
       - Exact duplicate ranges with identical bytes are accepted.
@@ -85,7 +85,7 @@ behaviors:
   - name: ipv4_defrag_overlap_conflict
     family: IPv4
     transform: IpDefrag
-    expected_direction: reference_to_libcrafter
+    expected_direction: backend_to_libcrafter
     byte_policy: structured_ambiguity
     requirements:
       - Conflicting overlaps must not silently choose payload bytes.
@@ -93,7 +93,7 @@ behaviors:
   - name: ipv4_defrag_missing
     family: IPv4
     transform: IpDefrag
-    expected_direction: reference_to_libcrafter
+    expected_direction: backend_to_libcrafter
     byte_policy: no_emit_until_eviction
     requirements:
       - Missing final fragments or gaps do not emit a packet.
@@ -101,7 +101,7 @@ behaviors:
   - name: ipv4_fragment_mtu
     family: IPv4
     transform: IpFragment
-    expected_direction: libcrafter_to_reference
+    expected_direction: libcrafter_to_backend
     byte_policy: fragment_sequence
     requirements:
       - DF-clear oversized packets split into 8-byte-aligned non-final fragments.
@@ -110,7 +110,7 @@ behaviors:
   - name: ipv4_fragment_df
     family: IPv4
     transform: IpFragment
-    expected_direction: libcrafter_to_reference
+    expected_direction: libcrafter_to_backend
     byte_policy: structured_error_or_explicit_nonfragmenting_trace
     requirements:
       - DF-set oversized packets do not emit fragments by default.
@@ -118,7 +118,7 @@ behaviors:
   - name: ipv6_defrag_complete
     family: IPv6
     transform: IpDefrag
-    expected_direction: reference_to_libcrafter
+    expected_direction: backend_to_libcrafter
     byte_policy: reassembled_packet
     requirements:
       - Group by source, destination, and Fragment Identification.
@@ -128,7 +128,7 @@ behaviors:
   - name: ipv6_defrag_atomic
     family: IPv6
     transform: IpDefrag
-    expected_direction: reference_to_libcrafter
+    expected_direction: backend_to_libcrafter
     byte_policy: atomic_packet_without_fragment_header
     requirements:
       - Atomic fragments are processed in isolation.
@@ -136,7 +136,7 @@ behaviors:
   - name: ipv6_defrag_overlap_conflict
     family: IPv6
     transform: IpDefrag
-    expected_direction: reference_to_libcrafter
+    expected_direction: backend_to_libcrafter
     byte_policy: structured_ambiguity
     requirements:
       - Overlapping IPv6 fragments abandon the ambiguous packet.
@@ -144,7 +144,7 @@ behaviors:
   - name: ipv6_fragment_mtu
     family: IPv6
     transform: IpFragment
-    expected_direction: libcrafter_to_reference
+    expected_direction: libcrafter_to_backend
     byte_policy: fragment_sequence
     requirements:
       - Source-side fragmentation inserts IPv6 Fragment headers.
@@ -188,8 +188,8 @@ supported_cases:
   # PacketTransform contracts below remain explicit contract cases.
   - name: ipv4-fragment-mf-offset
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     family: IPv4
     profiles:
@@ -199,8 +199,8 @@ supported_cases:
     expected: IPv4 packet with MF set, non-zero fragment offset, raw payload, and Scapy-equivalent header checksum.
   - name: crafter-ipv4-fragment-mf-offset
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     family: IPv4
     profiles:
@@ -210,8 +210,8 @@ supported_cases:
     expected: libcrafter-oriented IPv4 fragment vector stays byte-identical against the Scapy reference backend.
   - name: ipv6-fragment-udp
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     family: IPv6
     profiles:
@@ -221,8 +221,8 @@ supported_cases:
     expected: IPv6 Fragment Header carrying UDP and payload bytes stays byte-identical against Scapy.
   - name: crafter-ipv6-fragment-udp
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     family: IPv6
     profiles:
@@ -232,7 +232,7 @@ supported_cases:
     expected: libcrafter-oriented IPv6 Fragment Header vector stays byte-identical against the Scapy reference backend.
   - name: ip-defrag-ipv4-in-order
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: reassembled_packet
     transform: IpDefrag
     family: IPv4
@@ -243,7 +243,7 @@ supported_cases:
     expected: emit one reassembled IPv4 PacketRecord with original payload, corrected total length, corrected checksum, and defrag trace metadata.
   - name: ip-defrag-ipv4-out-of-order
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: reassembled_packet
     transform: IpDefrag
     family: IPv4
@@ -254,7 +254,7 @@ supported_cases:
     expected: emit the same IPv4 PacketRecord as the in-order case after complete out-of-order fragments arrive.
   - name: ip-defrag-ipv4-duplicate
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: reassembled_packet_with_duplicate_trace
     transform: IpDefrag
     family: IPv4
@@ -265,7 +265,7 @@ supported_cases:
     expected: accept identical duplicate fragment bytes, keep deterministic reassembly, and record duplicate_count metadata.
   - name: ip-defrag-ipv4-overlap-conflict
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: structured_ambiguity
     transform: IpDefrag
     family: IPv4
@@ -276,7 +276,7 @@ supported_cases:
     expected: emit no reassembled packet and report conflicting overlap metadata.
   - name: ip-defrag-ipv4-missing-final
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: no_emit_until_eviction
     transform: IpDefrag
     family: IPv4
@@ -286,7 +286,7 @@ supported_cases:
     expected: emit nothing until a configured timeout or bound evicts the incomplete datagram with trace metadata.
   - name: ip-fragment-ipv4-df-clear
     directions:
-      - libcrafter_to_reference
+      - libcrafter_to_backend
     byte_policy: fragment_sequence
     transform: IpFragment
     family: IPv4
@@ -297,7 +297,7 @@ supported_cases:
     expected: emit IPv4 fragments with Scapy-equivalent offsets, MF flags, total lengths, checksums, and 8-byte-aligned non-final payload lengths.
   - name: ip-fragment-ipv4-df-set
     directions:
-      - libcrafter_to_reference
+      - libcrafter_to_backend
     byte_policy: structured_error_or_explicit_nonfragmenting_trace
     transform: IpFragment
     family: IPv4
@@ -307,7 +307,7 @@ supported_cases:
     expected: default behavior emits no fragments for oversized DF packets and returns a structured error or explicit non-fragmenting trace.
   - name: ip-fragment-ipv4-too-small-mtu
     directions:
-      - libcrafter_to_reference
+      - libcrafter_to_backend
     byte_policy: structured_error
     transform: IpFragment
     family: IPv4
@@ -317,7 +317,7 @@ supported_cases:
     expected: MTU too small for required IPv4 headers is a structured transform error, not a truncated packet.
   - name: ip-defrag-ipv6-out-of-order
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: reassembled_packet
     transform: IpDefrag
     family: IPv6
@@ -328,7 +328,7 @@ supported_cases:
     expected: group by IPv6 source, destination, and Fragment Identification, then emit one IPv6 PacketRecord with the Fragment Header removed.
   - name: ip-defrag-ipv6-duplicate
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: reassembled_packet_with_duplicate_trace
     transform: IpDefrag
     family: IPv6
@@ -339,7 +339,7 @@ supported_cases:
     expected: accept identical duplicate fragments, emit deterministic output, and record duplicate metadata.
   - name: ip-defrag-ipv6-overlap-conflict
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: structured_ambiguity
     transform: IpDefrag
     family: IPv6
@@ -350,7 +350,7 @@ supported_cases:
     expected: abandon the ambiguous IPv6 packet and do not silently emit overlapping payload bytes.
   - name: ip-defrag-ipv6-missing-final
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: no_emit_until_eviction
     transform: IpDefrag
     family: IPv6
@@ -360,7 +360,7 @@ supported_cases:
     expected: incomplete IPv6 fragment sets emit no packet and expose timeout or bounded-state eviction metadata.
   - name: ip-defrag-ipv6-atomic
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: atomic_packet_without_fragment_header
     transform: IpDefrag
     family: IPv6
@@ -371,7 +371,7 @@ supported_cases:
     expected: process the atomic fragment independently, remove the Fragment Header, and avoid interaction with other queued fragments.
   - name: ip-fragment-ipv6-plain
     directions:
-      - libcrafter_to_reference
+      - libcrafter_to_backend
     byte_policy: fragment_sequence
     transform: IpFragment
     family: IPv6
@@ -382,7 +382,7 @@ supported_cases:
     expected: emit source-side IPv6 fragments with Fragment headers, correct offsets, and 8-byte-aligned non-final fragmentable parts.
   - name: ip-fragment-ipv6-supported-extension-scope
     directions:
-      - libcrafter_to_reference
+      - libcrafter_to_backend
     byte_policy: fragment_sequence
     transform: IpFragment
     family: IPv6
@@ -393,7 +393,7 @@ supported_cases:
     expected: support the documented narrow extension-header scope and repair next-header links through Scapy-equivalent fragment bytes.
   - name: ip-fragment-ipv6-unsupported-extension-scope
     directions:
-      - libcrafter_to_reference
+      - libcrafter_to_backend
     byte_policy: structured_error_or_explicit_passthrough_trace
     transform: IpFragment
     family: IPv6

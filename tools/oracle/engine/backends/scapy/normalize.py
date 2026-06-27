@@ -733,7 +733,7 @@ def _canonicalize_bgp_from_wire(source_hex: str, fields: dict[str, JSONObject]) 
 # therefore emits ``ipv6 / udp / payload`` instead of the ``ripng`` layer that
 # libcrafter decodes. This canonicalizer reconstructs the neutral ``ripng`` layer
 # (matching the libcrafter ``Ripng``/``RipngRte`` decode field shape) directly
-# from the wire bytes so the offline ``reference_to_libcrafter`` decode compares
+# from the wire bytes so the offline ``backend_to_libcrafter`` decode compares
 # cleanly, mirroring how ``_canonicalize_bgp_from_wire`` rebuilds BGP from bytes.
 # This is the documented backend-limitation fallback (parser decode from wire +
 # libcrafter round-trip), not a silent skip; the IPv4 RIP path (``_canonicalize_

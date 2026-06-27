@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ...directions import LIVE_PHASE_DIRECTIONS, normalize_direction
 from ...live import LiveCommandPlan, LiveValidationCheck
 from ...model import (
     DecodedModel,
@@ -203,7 +204,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument(
         "--direction",
-        choices=("libcrafter_to_reference", "reference_to_libcrafter"),
+        type=normalize_direction,
+        choices=LIVE_PHASE_DIRECTIONS,
         help=argparse.SUPPRESS,
     )
     parser.add_argument("--role", choices=("sender", "receiver"), help=argparse.SUPPRESS)
@@ -1063,8 +1065,10 @@ def _packet_plan_from_object(value: object, name: str) -> PacketPlan:
         profile=_optional_string(plan.get("profile")) or "unknown",
         seed=_int_value(plan.get("seed"), 0),
         index=_int_value(plan.get("index"), 0),
-        direction=_optional_string(plan.get("direction"))
-        or _required_string(json_object(value, name), "direction"),
+        direction=normalize_direction(
+            _optional_string(plan.get("direction"))
+            or _required_string(json_object(value, name), "direction")
+        ),
         family=_optional_string(plan.get("family")),
         feature_tags=_string_values(plan.get("feature_tags", []), f"{name}.feature_tags"),
         case=_optional_string(plan.get("case")),
@@ -1078,10 +1082,10 @@ def _phase_role(request: JSONObject) -> str:
     phase_role = _optional_string(metadata.get("phase_role"))
     if phase_role is not None:
         return phase_role
-    direction = _required_string(request, "direction")
-    if direction == "reference_to_libcrafter":
+    direction = normalize_direction(_required_string(request, "direction"))
+    if direction == "backend_to_libcrafter":
         return "sender"
-    if direction == "libcrafter_to_reference":
+    if direction == "libcrafter_to_backend":
         return "receiver"
     raise ValueError(f"cannot infer Scapy endpoint phase for direction={direction}")
 

@@ -1,15 +1,15 @@
 {
   "artifact_paths": {
-    "captures": "artifacts/libcrafter_to_reference/libcrafter/captures",
-    "decoded_models": "artifacts/libcrafter_to_reference/libcrafter/decoded-models.json",
-    "request": "artifacts/libcrafter_to_reference/libcrafter/request.json",
-    "response": "artifacts/libcrafter_to_reference/libcrafter/response.json",
-    "root": "artifacts/libcrafter_to_reference/libcrafter",
-    "stderr": "artifacts/libcrafter_to_reference/libcrafter/stderr.log",
-    "stdout": "artifacts/libcrafter_to_reference/libcrafter/stdout.log"
+    "captures": "artifacts/libcrafter_to_backend/libcrafter/captures",
+    "decoded_models": "artifacts/libcrafter_to_backend/libcrafter/decoded-models.json",
+    "request": "artifacts/libcrafter_to_backend/libcrafter/request.json",
+    "response": "artifacts/libcrafter_to_backend/libcrafter/response.json",
+    "root": "artifacts/libcrafter_to_backend/libcrafter",
+    "stderr": "artifacts/libcrafter_to_backend/libcrafter/stderr.log",
+    "stdout": "artifacts/libcrafter_to_backend/libcrafter/stdout.log"
   },
   "backend": "scapy",
-  "direction": "libcrafter_to_reference",
+  "direction": "libcrafter_to_backend",
   "endpoint_id": "fixture-libcrafter",
   "endpoint_role": "libcrafter",
   "interface": "dry-run0",
@@ -26,7 +26,7 @@
   "packet_plans": [
     {
       "case": "live-smoke-ipv4-udp",
-      "direction": "libcrafter_to_reference",
+      "direction": "libcrafter_to_backend",
       "family": "ipv4",
       "feature_tags": [
         "baseline",
@@ -62,7 +62,7 @@
         "plan_id": "fixture/live-smoke/index-000000/root-l3-ipv4/stack-ipv4-udp-payload",
         "reproduction": {
           "count": 1,
-          "direction": "libcrafter_to_reference",
+          "direction": "libcrafter_to_backend",
           "family": "ipv4",
           "index": 0,
           "profile": "smoke",

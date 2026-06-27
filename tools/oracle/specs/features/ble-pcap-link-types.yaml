@@ -7,8 +7,8 @@ layers:
   - ble_radio
   - ble_adv
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
   - roundtrip
 strict_bytes: true
 malformed: false
@@ -51,8 +51,8 @@ coverage_cases:
 supported_cases:
   - name: ble-pcap-dlt-256-link-type
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
     file_format: pcap
@@ -71,7 +71,7 @@ supported_cases:
       - decoded_model
   - name: ble-pcap-fixture-decodes-root
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
       - roundtrip
     byte_policy: strict_bytes
     file_format: pcap

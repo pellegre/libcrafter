@@ -28,8 +28,8 @@ layers:
 # offline runner without weakening any comparison.
 directions:
   - live_exchange
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
 strict_bytes: true
 malformed: false
 

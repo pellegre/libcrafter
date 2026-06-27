@@ -46,8 +46,8 @@ summary: RIPv2 authentication — the AFI 0xFFFF simple-password entry (RFC 2453
 layers:
   - rip
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
 strict_bytes: true
 malformed: false
 
@@ -109,16 +109,16 @@ supported_cases:
   # in both offline directions.
   - name: rip-auth-simple-password
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   # Keyed-MD5 (type 3, RFC 2082). With the key id, sequence number, and key value
   # pinned, the auto-computed MD5 digest is deterministic, so both backends emit
   # byte-identical messages and the case keeps strict byte comparison.
   - name: rip-auth-keyed-md5
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   # Keyed-SHA-1 (type 3, RFC 4822). Scapy cannot derive the HMAC-SHA-1 digest
   # from the key, so this case is a libcrafter-internal round-trip
@@ -127,8 +127,8 @@ supported_cases:
   # decode-side verification helper.
   - name: rip-auth-keyed-sha1
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: normalized
 
 backend_support:

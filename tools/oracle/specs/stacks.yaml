@@ -968,7 +968,7 @@ stacks:
       - dhcpv4-option-matrix
   # ipv4 / udp / dhcpv4 (root l3:ipv4): the live DHCP packet under test. Live
   # validation is a one-way packet-equivalence exchange run in both directions
-  # (libcrafter_to_reference and reference_to_libcrafter) with NO expected DHCP
+  # (libcrafter_to_backend and backend_to_libcrafter) with NO expected DHCP
   # reply. It is not a DHCP client, server, lease, or relay emulation. Rooted at
   # IPv4 unicast it is wire-eligible without L2 framing, broadcast, or provider
   # MAC discovery. Scapy is the live reference backend; Wireshark/tshark is

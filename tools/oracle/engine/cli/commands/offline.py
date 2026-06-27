@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import argparse
 
+from ...directions import OFFLINE_DIRECTIONS
 from ..main import _offline
-from ..options import _add_common_options, _add_generation_options
+from ..options import _add_common_options, _add_generation_options, _direction_value
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -18,8 +19,9 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     _add_generation_options(offline_parser)
     offline_parser.add_argument(
         "--direction",
-        choices=("reference_to_libcrafter", "libcrafter_to_reference"),
-        default="reference_to_libcrafter",
+        type=_direction_value,
+        choices=OFFLINE_DIRECTIONS,
+        default="backend_to_libcrafter",
         help="offline validation direction (default: %(default)s)",
     )
     offline_parser.add_argument(

@@ -10,8 +10,8 @@ layers:
   - mqtt
   - tcp
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
 strict_bytes: true
 malformed: false
 
@@ -61,8 +61,8 @@ coverage_cases:
 supported_cases:
   - name: mqtt-connect
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     roots:
       - "l3:ipv4"
@@ -92,8 +92,8 @@ supported_cases:
         client_id: client
   - name: mqtt-connect-will-auth
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     roots:
       - "l3:ipv4"
@@ -141,8 +141,8 @@ supported_cases:
           length: 2
   - name: mqtt-connack-accepted
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     roots:
       - "l3:ipv4"
@@ -165,8 +165,8 @@ supported_cases:
         return_code: 0
   - name: mqtt-connack-server-unavailable
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     roots:
       - "l3:ipv4"

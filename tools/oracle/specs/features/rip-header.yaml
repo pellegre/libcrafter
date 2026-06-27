@@ -24,8 +24,8 @@ summary: RIP header command/version matrix, route-entry round-trip, and structur
 layers:
   - rip
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
 strict_bytes: true
 malformed: false
 
@@ -66,13 +66,13 @@ supported_cases:
   # Well-formed cases keep strict byte comparison in both offline directions.
   - name: rip-header-v1-request
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: rip-header-v2-response
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   # Deliberately unknown command. An unknown command round-trips as a preserved
   # value rather than a comparable strict-byte packet, so this case is excluded
@@ -81,8 +81,8 @@ supported_cases:
   # unknown command.
   - name: rip-header-invalid-command
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
   # Truncated header (fewer than 4 octets). A header past the available bytes is
   # a structured decode error rather than a comparable packet, so this case is
@@ -91,8 +91,8 @@ supported_cases:
   # typed BufferTooShort error.
   - name: rip-header-truncated-header
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
 
 backend_support:

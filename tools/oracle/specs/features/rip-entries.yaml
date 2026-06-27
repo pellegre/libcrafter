@@ -37,8 +37,8 @@ summary: RIPv1/RIPv2 route-entry layout — address family, route tag, address, 
 layers:
   - rip
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
 strict_bytes: true
 malformed: false
 
@@ -96,23 +96,23 @@ supported_cases:
   # directions.
   - name: rip-entries-v1-route
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: rip-entries-v2-route
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: rip-entries-multi-entry
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: rip-entries-request-sentinel
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   # Preserved unknown address family. The AFI round-trips as a preserved value,
   # and both backends emit byte-identical entries, so the case keeps strict byte
@@ -120,8 +120,8 @@ supported_cases:
   # preserved-unknown-AFI behavior.
   - name: rip-entries-unknown-afi
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
 
 backend_support:

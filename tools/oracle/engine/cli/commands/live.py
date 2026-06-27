@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import argparse
 
+from ...directions import LIVE_REQUEST_DIRECTIONS
 from ..main import _live
-from ..options import _add_common_options, _add_generation_options
+from ..options import _add_common_options, _add_generation_options, _direction_value
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -26,7 +27,8 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     live_parser.add_argument(
         "--direction",
-        choices=("libcrafter_to_reference", "reference_to_libcrafter", "live_exchange"),
+        type=_direction_value,
+        choices=LIVE_REQUEST_DIRECTIONS,
         default="live_exchange",
         help="live validation direction (default: %(default)s)",
     )

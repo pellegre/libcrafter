@@ -6,8 +6,8 @@ summary: Bluetooth Low Energy Link Layer radio pseudo-header defaults, explicit 
 layers:
   - ble_radio
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
   - roundtrip
 strict_bytes: true
 malformed: false
@@ -56,8 +56,8 @@ coverage_cases:
 supported_cases:
   - name: ble-radio-default-advertising-phdr
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     roots:
       - "link:bluetooth-le-ll-with-phdr"
@@ -69,8 +69,8 @@ supported_cases:
       flags: 0x0411
   - name: ble-radio-explicit-aa-channel
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     roots:
       - "link:bluetooth-le-ll-with-phdr"
@@ -82,8 +82,8 @@ supported_cases:
       flags: 0x0411
   - name: malformed-ble-radio-truncated-phdr
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
     offline_byte_comparison: excluded
     generator_policy:

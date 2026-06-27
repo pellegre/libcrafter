@@ -12,6 +12,13 @@ from dataclasses import dataclass, field
 
 from tools.lab.engine.model import LabEndpoint, LabSession
 
+from .directions import (
+    BACKEND_TO_LIBCRAFTER,
+    LIBCRAFTER_TO_BACKEND,
+    LIVE_EXCHANGE,
+    LIVE_PHASE_DIRECTIONS,
+    normalize_direction,
+)
 from .model import DecodedModel, JSONObject, JsonModel, PacketPlan, coerce_json_value
 
 
@@ -22,7 +29,7 @@ LIVE_SELECTED_SPECS = [
     "tools/oracle/specs/stacks.yaml",
     "tools/oracle/specs/profiles.yaml",
 ]
-LIVE_EXCHANGE_DIRECTIONS = ("libcrafter_to_reference", "reference_to_libcrafter")
+LIVE_EXCHANGE_DIRECTIONS = LIVE_PHASE_DIRECTIONS
 LIVE_ENDPOINT_TIMEOUT_SECONDS = 30
 
 
@@ -158,7 +165,8 @@ class LiveValidationCheck(JsonModel):
 def live_execution_directions(direction: str) -> list[str]:
     """Expand a live direction request into concrete one-way phases."""
 
-    if direction == "live_exchange":
+    direction = normalize_direction(direction)
+    if direction == LIVE_EXCHANGE:
         return list(LIVE_EXCHANGE_DIRECTIONS)
     if direction in LIVE_EXCHANGE_DIRECTIONS:
         return [direction]
@@ -1036,9 +1044,10 @@ def _endpoint_phase_role(request: LiveEndpointBatchRequest) -> str:
 
 
 def _expected_sender_role(direction: str) -> str | None:
-    if direction == "reference_to_libcrafter":
+    direction = normalize_direction(direction)
+    if direction == BACKEND_TO_LIBCRAFTER:
         return "reference_backend"
-    if direction == "libcrafter_to_reference":
+    if direction == LIBCRAFTER_TO_BACKEND:
         return "libcrafter"
     return None
 

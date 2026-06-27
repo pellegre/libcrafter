@@ -182,8 +182,8 @@ class CaseResult:
     protocol: str
     suite: str
     mode: str
-    libcrafter_to_reference: bool = False
-    reference_to_libcrafter: bool = False
+    libcrafter_to_backend: bool = False
+    backend_to_libcrafter: bool = False
     tamper_detected_by_reference: bool = False
     tamper_detected_by_libcrafter: bool = False
     detail: dict[str, object] = field(default_factory=dict)
@@ -191,8 +191,8 @@ class CaseResult:
     @property
     def passed(self) -> bool:
         return (
-            self.libcrafter_to_reference
-            and self.reference_to_libcrafter
+            self.libcrafter_to_backend
+            and self.backend_to_libcrafter
             and self.tamper_detected_by_reference
             and self.tamper_detected_by_libcrafter
         )
@@ -204,8 +204,8 @@ class CaseResult:
             "suite": self.suite,
             "mode": self.mode,
             "passed": self.passed,
-            "libcrafter_to_reference": self.libcrafter_to_reference,
-            "reference_to_libcrafter": self.reference_to_libcrafter,
+            "libcrafter_to_backend": self.libcrafter_to_backend,
+            "backend_to_libcrafter": self.backend_to_libcrafter,
             "tamper_detected_by_reference": self.tamper_detected_by_reference,
             "tamper_detected_by_libcrafter": self.tamper_detected_by_libcrafter,
             "detail": self.detail,
@@ -267,24 +267,24 @@ def _evaluate_case(
     # Direction A: libcrafter sealed -> reference opens.
     libcrafter_sealed = seal_results.get(case.name, {})
     a_open = _reference_open(root, case, libcrafter_sealed)
-    result.libcrafter_to_reference = bool(a_open.get("recovered_matches"))
+    result.libcrafter_to_backend = bool(a_open.get("recovered_matches"))
     result.tamper_detected_by_reference = bool(a_open.get("tamper_detected"))
 
     # Direction B: reference sealed -> libcrafter opens.
     reference_sealed = reference_seals.get(case.name, {})
     b_open = _libcrafter_open(root, case, reference_sealed)
-    result.reference_to_libcrafter = bool(b_open.get("recovered_matches"))
+    result.backend_to_libcrafter = bool(b_open.get("recovered_matches"))
     result.tamper_detected_by_libcrafter = bool(b_open.get("tamper_detected"))
 
     result.detail = {
         "libcrafter_seal_self_check": bool(libcrafter_sealed.get("recovered_matches")),
         "reference_open": {
-            "recovered_matches": result.libcrafter_to_reference,
+            "recovered_matches": result.libcrafter_to_backend,
             "tamper_detected": result.tamper_detected_by_reference,
         },
         "reference_seal_self_check": bool(reference_sealed.get("recovered_matches")),
         "libcrafter_open": {
-            "recovered_matches": result.reference_to_libcrafter,
+            "recovered_matches": result.backend_to_libcrafter,
             "tamper_detected": result.tamper_detected_by_libcrafter,
         },
     }

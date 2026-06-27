@@ -10,8 +10,8 @@ layers:
   - mqtt
   - tcp
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
 strict_bytes: true
 malformed: false
 
@@ -42,8 +42,8 @@ coverage_cases:
 supported_cases:
   - name: mqtt-v5-auth-short
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     roots:
       - "l3:ipv4"
@@ -65,8 +65,8 @@ supported_cases:
         reason_code: 0
   - name: mqtt-v5-auth-properties
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     roots:
       - "l3:ipv4"

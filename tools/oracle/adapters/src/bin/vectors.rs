@@ -8,7 +8,7 @@ use std::io;
 
 type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
-const DIRECTION: &str = "libcrafter_to_reference";
+const DIRECTION: &str = "libcrafter_to_backend";
 const ROUNDTRIP_DIRECTION: &str = "roundtrip";
 const GENERATOR: &str = "libcrafter oracle vector emitter";
 

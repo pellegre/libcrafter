@@ -91,8 +91,8 @@ class InteropEndToEndTest(unittest.TestCase):
         )
         self.assertEqual(report["passed_count"], report["case_count"])
         for case in report["cases"]:
-            self.assertTrue(case["libcrafter_to_reference"], case["name"])
-            self.assertTrue(case["reference_to_libcrafter"], case["name"])
+            self.assertTrue(case["libcrafter_to_backend"], case["name"])
+            self.assertTrue(case["backend_to_libcrafter"], case["name"])
             self.assertTrue(case["tamper_detected_by_reference"], case["name"])
             self.assertTrue(case["tamper_detected_by_libcrafter"], case["name"])
 

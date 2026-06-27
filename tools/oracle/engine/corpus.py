@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .directions import normalize_direction
 from .model import (
     JSONObject,
     JSONValue,
@@ -1330,7 +1331,7 @@ def packet_plan_from_object(value: object, name: str = "packet plan") -> PacketP
         profile=_required_string(plan, "profile", name),
         seed=_required_int(plan, "seed", name),
         index=_required_int(plan, "index", name),
-        direction=_required_string(plan, "direction", name),
+        direction=normalize_direction(_required_string(plan, "direction", name)),
         family=optional_string(plan.get("family")),
         feature_tags=_string_list_value(plan.get("feature_tags", []), f"{name}.feature_tags"),
         case=optional_string(plan.get("case")),

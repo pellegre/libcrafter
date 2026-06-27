@@ -6,8 +6,8 @@ summary: IPv4 option encodings and header-length normalization.
 layers:
   - ipv4
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
 strict_bytes: true
 malformed: false
 
