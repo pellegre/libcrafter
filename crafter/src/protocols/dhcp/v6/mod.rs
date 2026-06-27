@@ -9,12 +9,14 @@
 //! source-backed DHCPv6 wire behavior.
 
 pub mod constants;
+pub mod layer;
 pub mod message;
 pub mod option;
 pub mod registry;
 pub mod status;
 
 pub use constants::*;
+pub use layer::Dhcpv6;
 pub use message::Dhcpv6MessageType;
 pub use option::{Dhcpv6Option, Dhcpv6OptionCode, Dhcpv6OptionFormat, Dhcpv6OptionValue};
 pub use registry::{
