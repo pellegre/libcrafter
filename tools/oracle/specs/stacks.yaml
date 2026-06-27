@@ -20,6 +20,7 @@ roots:
       - udp
       - dns
       - dhcpv4
+      - dhcpv6
       - snmp
   - name: "link:linux-cooked"
     layers:
@@ -125,6 +126,7 @@ roots:
       - bgp
       - mqtt
       - ospf
+      - dhcpv6
 
 families:
   - name: ipv4
@@ -166,6 +168,15 @@ families:
     feature_tags:
       - udp
       - payload
+  - name: dhcpv6
+    default_stack:
+      - ipv6
+      - udp
+      - dhcpv6
+    feature_tags:
+      - ipv6
+      - udp
+      - dhcpv6
   - name: bgp
     default_stack:
       - ipv4
@@ -976,6 +987,51 @@ stacks:
       - dhcpv4-force-renew
       - dhcpv4-lease-query
       - dhcpv4-option-matrix
+  # ethernet / ipv6 / udp / dhcpv6: link-layer DHCPv6 coverage for offline byte,
+  # pcap, and decode-root validation. Provider live exchanges use the IPv6-root
+  # stack below instead of Ethernet framing.
+  - name: ethernet_dhcpv6
+    root: "link:ethernet"
+    layers:
+      - ethernet
+      - ipv6
+      - udp
+      - dhcpv6
+    coverage_cases:
+      - dhcpv6-solicit
+      - dhcpv6-request
+      - dhcpv6-reply
+      - dhcpv6-information-request
+      - dhcpv6-information-reply
+      - dhcpv6-relay-forward
+      - dhcpv6-relay-reply
+      - dhcpv6-ia-na-iaaddr
+      - dhcpv6-ia-pd-iaprefix
+      - dhcpv6-unknown-option
+      - dhcpv6-option-matrix
+  # ipv6 / udp / dhcpv6 (root l3:ipv6): live-plan eligible DHCPv6 packet
+  # coverage. It is packet equivalence and dry-run planning only; the crate does
+  # not emulate a DHCPv6 client, server, relay daemon, or lease state machine.
+  - name: ipv6_udp_dhcpv6
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - udp
+      - dhcpv6
+    coverage_cases:
+      - dhcpv6-solicit
+      - dhcpv6-request
+      - dhcpv6-reply
+      - dhcpv6-information-request
+      - dhcpv6-information-reply
+      - dhcpv6-relay-forward
+      - dhcpv6-relay-reply
+      - dhcpv6-ia-na-iaaddr
+      - dhcpv6-ia-pd-iaprefix
+      - dhcpv6-unknown-option
+      - dhcpv6-option-matrix
+      - dhcpv6-live-plan-client
+      - dhcpv6-live-plan-relay
   # ipv4 / udp / rip: the Routing Information Protocol message under test
   # (RFC 1058 RIPv1 and RFC 2453 RIPv2, plus RFC 2453/2082/4822 authentication
   # entries) over UDP/520. Rooted at IPv4 unicast it is offline byte-equivalence
@@ -1335,6 +1391,7 @@ constraints:
     children:
       - dns
       - dhcpv4
+      - dhcpv6
       - ikev2
       - esp
       - rip

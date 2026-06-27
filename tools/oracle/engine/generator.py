@@ -866,7 +866,7 @@ class PacketGenerator:
         if stack_families:
             return stack_families[0]
         for layer in stack:
-            if layer in {"ipv4", "ipv6", "arp", "dns", "dhcpv4"}:
+            if layer in {"ipv4", "ipv6", "arp", "dns", "dhcpv4", "dhcpv6"}:
                 return layer
         return "link"
 

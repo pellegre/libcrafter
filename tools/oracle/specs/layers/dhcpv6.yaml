@@ -1,0 +1,100 @@
+version: 1
+kind: layer
+name: dhcpv6
+summary: DHCPv6 client/server and relay messages over IPv6 UDP.
+
+roots: []
+parents:
+  - udp
+children: []
+
+fields:
+  - name: message_type
+    type: dhcpv6_message_type
+    required: true
+    domains:
+      - solicit
+      - request
+      - reply
+      - information_request
+      - relay_forward
+      - relay_reply
+  - name: transaction_id
+    type: uint24
+    required: false
+    domains:
+      - deterministic
+  - name: hop_count
+    type: uint8
+    required: false
+    domains:
+      - zero
+      - one
+  - name: link_address
+    type: ipv6
+    required: false
+    domains:
+      - documentation_ipv6
+  - name: peer_address
+    type: ipv6
+    required: false
+    domains:
+      - documentation_ipv6
+  - name: options
+    type: dhcpv6_option_list
+    required: true
+    domains:
+      - client_id
+      - server_id
+      - oro
+      - elapsed_time
+      - status_code
+      - ia_na
+      - ia_addr
+      - ia_pd
+      - ia_prefix
+      - relay_msg
+      - interface_id
+      - unknown
+      - option_matrix
+
+coverage_cases:
+  - dhcpv6-solicit
+  - dhcpv6-request
+  - dhcpv6-reply
+  - dhcpv6-information-request
+  - dhcpv6-information-reply
+  - dhcpv6-relay-forward
+  - dhcpv6-relay-reply
+  - dhcpv6-ia-na-iaaddr
+  - dhcpv6-ia-pd-iaprefix
+  - dhcpv6-unknown-option
+  - dhcpv6-option-matrix
+  - dhcpv6-live-plan-client
+  - dhcpv6-live-plan-relay
+
+notes:
+  - DHCPv6 is modeled as packet data, not as a DHCP client, server, relay
+    daemon, lease database, or address allocator.
+  - Client/server messages use the 24-bit transaction_id field. Relay messages
+    use hop_count, link_address, peer_address, and OPTION_RELAY_MSG instead.
+  - Unknown option codepoints and opaque payloads are preserved as packet data.
+
+backend_support:
+  scapy:
+    status: partial
+    native_layers:
+      - DHCP6
+    encode: false
+    decode: false
+    notes:
+      - Layer, stack, profile, and generator specs are registered first; Scapy
+        materialization is added by the backend coverage step.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - Encodes and decodes client/server messages, relay messages, DUIDs,
+        status codes, IA_NA, IAADDR, IA_PD, IAPREFIX, relay options, leasequery
+        families, and unknown options.

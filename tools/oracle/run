@@ -15,6 +15,10 @@ PYTHONPATH_REQUIREMENT = "PyYAML>=6.0,<7"
 def main(argv: list[str]) -> int:
     script_dir = Path(__file__).resolve().parent
     repo_root = script_dir.parent.parent
+    if argv and argv[0] == "specs" and (
+        len(argv) == 1 or argv[1] not in {"validate", "suite", "-h", "--help"}
+    ):
+        argv = ["generate", *argv[1:]]
 
     os.environ["ORACLE_REPO_ROOT"] = str(repo_root)
     existing_pythonpath = os.environ.get("PYTHONPATH")

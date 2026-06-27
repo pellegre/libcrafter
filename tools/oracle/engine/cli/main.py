@@ -8320,6 +8320,7 @@ def _self_check(args: argparse.Namespace) -> int:
 
 _SUITE_FEATURE_BY_FAMILY = {
     "ble": "ble-pcap-link-types",
+    "dhcpv6": "dhcpv6_behavior",
     "dns": "dns_behavior",
     "igmp": "igmp_header",
     "ip": "ip_fragment_transforms",
