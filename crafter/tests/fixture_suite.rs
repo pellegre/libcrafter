@@ -2,6 +2,7 @@
 mod support;
 
 use std::collections::HashSet;
+use std::fmt::Write as _;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
@@ -34,7 +35,9 @@ use crafter::core::{
     IPV6_ROUTING_TYPE_MOBILE, IPV6_ROUTING_TYPE_SEGMENT, QUIC_VERSION_1, QUIC_VERSION_2, SNMP_PORT,
     TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
-use crafter::protocols::dhcp::{Dhcpv6, Dhcpv6IaAddr, Dhcpv6IaNa, Dhcpv6Option, Dhcpv6StatusCode};
+use crafter::protocols::dhcp::{
+    Dhcpv6, Dhcpv6IaAddr, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6Option, Dhcpv6StatusCode,
+};
 use crafter::protocols::igmp::IgmpExtension;
 use crafter::wire::backend::pcap::{
     PcapError, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter, PcapWriterOptions,
@@ -110,6 +113,7 @@ enum ExpectedLayer {
     Ripng,
     Dns,
     Dhcpv4,
+    Dhcpv6,
     Ospf,
     Ospfv3,
     Esp,
@@ -158,6 +162,7 @@ enum CoverageFamily {
     Ipv6IcmpEcho,
     Ipv6IcmpError,
     Ipv6Udp,
+    Ipv6UdpDhcpv6,
     Ipv6UdpOptions,
     Ipv6Tcp,
     Ipv6ExtensionHeader,
@@ -591,6 +596,138 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
             ExpectedLayer::Ipv4,
             ExpectedLayer::Udp,
             ExpectedLayer::Dhcpv4,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv6-udp-dhcpv6-solicit",
+        path: "bytes/ipv6-udp-dhcpv6-solicit.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-udp-dhcpv6-solicit.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Dhcpv6,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv6-udp-dhcpv6-advertise",
+        path: "bytes/ipv6-udp-dhcpv6-advertise.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-udp-dhcpv6-advertise.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Dhcpv6,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv6-udp-dhcpv6-request",
+        path: "bytes/ipv6-udp-dhcpv6-request.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-udp-dhcpv6-request.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Dhcpv6,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv6-udp-dhcpv6-reply",
+        path: "bytes/ipv6-udp-dhcpv6-reply.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-udp-dhcpv6-reply.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Dhcpv6,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv6-udp-dhcpv6-information-request",
+        path: "bytes/ipv6-udp-dhcpv6-information-request.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ipv6-udp-dhcpv6-information-request.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Dhcpv6,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv6-udp-dhcpv6-relay-forward",
+        path: "bytes/ipv6-udp-dhcpv6-relay-forward.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-udp-dhcpv6-relay-forward.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Dhcpv6,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv6-udp-dhcpv6-relay-reply",
+        path: "bytes/ipv6-udp-dhcpv6-relay-reply.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-udp-dhcpv6-relay-reply.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Dhcpv6,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv6-udp-dhcpv6-ia-na-iaaddr",
+        path: "bytes/ipv6-udp-dhcpv6-ia-na-iaaddr.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-udp-dhcpv6-ia-na-iaaddr.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Dhcpv6,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv6-udp-dhcpv6-ia-pd-iaprefix",
+        path: "bytes/ipv6-udp-dhcpv6-ia-pd-iaprefix.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-udp-dhcpv6-ia-pd-iaprefix.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Dhcpv6,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv6-udp-dhcpv6-unknown-option",
+        path: "bytes/ipv6-udp-dhcpv6-unknown-option.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-udp-dhcpv6-unknown-option.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Dhcpv6,
         ],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -2463,6 +2600,7 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
     (CoverageFamily::Ipv6IcmpEcho, "IPv6 ICMPv6 echo"),
     (CoverageFamily::Ipv6IcmpError, "IPv6 ICMPv6 error message"),
     (CoverageFamily::Ipv6Udp, "IPv6 UDP payload"),
+    (CoverageFamily::Ipv6UdpDhcpv6, "IPv6 UDP DHCPv6 messages"),
     (
         CoverageFamily::Ipv6UdpOptions,
         "IPv6 UDP options surplus decode",
@@ -2667,6 +2805,16 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv6-icmp-echo-request" => &[CoverageFamily::Ipv6IcmpEcho],
         "ipv6-icmpv6-time-exceeded" => &[CoverageFamily::Ipv6IcmpError],
         "ipv6-udp-raw" | "ipv6-base-traffic-flow-udp-raw" => &[CoverageFamily::Ipv6Udp],
+        "ipv6-udp-dhcpv6-solicit"
+        | "ipv6-udp-dhcpv6-advertise"
+        | "ipv6-udp-dhcpv6-request"
+        | "ipv6-udp-dhcpv6-reply"
+        | "ipv6-udp-dhcpv6-information-request"
+        | "ipv6-udp-dhcpv6-relay-forward"
+        | "ipv6-udp-dhcpv6-relay-reply"
+        | "ipv6-udp-dhcpv6-ia-na-iaaddr"
+        | "ipv6-udp-dhcpv6-ia-pd-iaprefix"
+        | "ipv6-udp-dhcpv6-unknown-option" => &[CoverageFamily::Ipv6UdpDhcpv6],
         "ipv6-options-hop-destination-udp"
         | "ipv6-routing-generic-unknown-raw"
         | "ipv6-mobile-routing-raw"
@@ -3068,6 +3216,9 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             ExpectedLayer::Dhcpv4 => {
                 let _ = expect_layer::<Dhcpv4>(case, packet);
             }
+            ExpectedLayer::Dhcpv6 => {
+                let _ = expect_layer::<Dhcpv6>(case, packet);
+            }
             ExpectedLayer::Ospf => {
                 let _ = expect_layer::<Ospfv2>(case, packet);
             }
@@ -3159,6 +3310,7 @@ fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
         ExpectedLayer::Ripng => "Ripng",
         ExpectedLayer::Dns => "Dns",
         ExpectedLayer::Dhcpv4 => "Dhcpv4",
+        ExpectedLayer::Dhcpv6 => "Dhcpv6",
         ExpectedLayer::Ospf => "Ospf",
         ExpectedLayer::Ospfv3 => "Ospfv3",
         ExpectedLayer::Esp => "Esp",
@@ -3995,6 +4147,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_ipv6_oracle_reference_fixture_fields(case, packet)
         }
         name if name.starts_with("ipv4-igmp-") => assert_igmp_fixture_fields(case, packet),
+        name if name.starts_with("ipv6-udp-dhcpv6-") => assert_dhcpv6_fixture_fields(case, packet),
         "arp-who-has" => {
             let ethernet = expect_layer::<Ethernet>(case, packet);
             assert_eq!(ethernet.destination(), Some(MacAddr::BROADCAST));
@@ -6366,6 +6519,221 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     }
 }
 
+fn assert_dhcpv6_transport(
+    case: &ValidFixtureCase,
+    packet: &Packet,
+    src: Ipv6Addr,
+    dst: Ipv6Addr,
+    source_port: u16,
+    destination_port: u16,
+) {
+    let ipv6 = expect_layer::<Ipv6>(case, packet);
+    assert_eq!(ipv6.source(), src);
+    assert_eq!(ipv6.destination(), dst);
+
+    let udp = expect_layer::<Udp>(case, packet);
+    assert_eq!(udp.source_port_value(), source_port);
+    assert_eq!(udp.destination_port_value(), destination_port);
+}
+
+fn dhcpv6_oro_codes(dhcpv6: &Dhcpv6) -> Vec<u16> {
+    dhcpv6
+        .oro_value()
+        .expect("DHCPv6 ORO option should decode")
+        .unwrap_or_default()
+        .into_iter()
+        .map(u16::from)
+        .collect()
+}
+
+fn assert_dhcpv6_identity(dhcpv6: &Dhcpv6) {
+    assert_eq!(
+        dhcpv6.client_id_value(),
+        Some(dhcpv6_client_duid().as_slice())
+    );
+    assert_eq!(
+        dhcpv6.server_id_value(),
+        Some(dhcpv6_server_duid().as_slice())
+    );
+}
+
+fn assert_dhcpv6_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
+    let client_addr = dhcpv6_doc_addr(0x0010);
+    let server_addr = dhcpv6_doc_addr(0x0001);
+    let relay_addr = dhcpv6_doc_addr(0x00fe);
+    let relay_peer = dhcpv6_doc_addr(0x0011);
+    let relay_link = dhcpv6_doc_prefix(0x0100);
+    let dhcpv6 = expect_layer::<Dhcpv6>(case, packet);
+
+    match case.name {
+        "ipv6-udp-dhcpv6-solicit" => {
+            assert_dhcpv6_transport(case, packet, client_addr, server_addr, 546, 547);
+            assert_eq!(dhcpv6.message_type_code_value(), 1);
+            assert_eq!(dhcpv6.transaction_id_value(), 0x010203);
+            assert_eq!(
+                dhcpv6.client_id_value(),
+                Some(dhcpv6_client_duid().as_slice())
+            );
+            assert_eq!(dhcpv6_oro_codes(dhcpv6), vec![23, 24]);
+            assert_eq!(
+                dhcpv6
+                    .elapsed_time_value()
+                    .expect("elapsed-time option should decode"),
+                Some(1)
+            );
+            assert_eq!(
+                dhcpv6
+                    .options_ref()
+                    .iter()
+                    .map(Dhcpv6Option::codepoint)
+                    .collect::<Vec<_>>(),
+                vec![1, 6, 8]
+            );
+        }
+        "ipv6-udp-dhcpv6-advertise" => {
+            assert_dhcpv6_transport(case, packet, server_addr, client_addr, 547, 546);
+            assert_eq!(dhcpv6.message_type_code_value(), 2);
+            assert_eq!(dhcpv6.transaction_id_value(), 0x010203);
+            assert_dhcpv6_identity(dhcpv6);
+            assert_eq!(
+                dhcpv6
+                    .preference_value()
+                    .expect("preference option should decode"),
+                Some(100)
+            );
+        }
+        "ipv6-udp-dhcpv6-request" => {
+            assert_dhcpv6_transport(case, packet, client_addr, server_addr, 546, 547);
+            assert_eq!(dhcpv6.message_type_code_value(), 3);
+            assert_eq!(dhcpv6.transaction_id_value(), 0x020304);
+            assert_dhcpv6_identity(dhcpv6);
+            assert_eq!(dhcpv6_oro_codes(dhcpv6), vec![23, 24]);
+        }
+        "ipv6-udp-dhcpv6-reply" => {
+            assert_dhcpv6_transport(case, packet, server_addr, client_addr, 547, 546);
+            assert_eq!(dhcpv6.message_type_code_value(), 7);
+            assert_eq!(dhcpv6.transaction_id_value(), 0x020304);
+            assert_dhcpv6_identity(dhcpv6);
+            let status = dhcpv6
+                .status_code_value()
+                .expect("status option should decode")
+                .expect("reply fixture should carry status");
+            assert_eq!(status.status(), Dhcpv6StatusCode::Success);
+            assert!(status.message_bytes().is_empty());
+        }
+        "ipv6-udp-dhcpv6-information-request" => {
+            assert_dhcpv6_transport(case, packet, client_addr, server_addr, 546, 547);
+            assert_eq!(dhcpv6.message_type_code_value(), 11);
+            assert_eq!(dhcpv6.transaction_id_value(), 0x030405);
+            assert_eq!(
+                dhcpv6.client_id_value(),
+                Some(dhcpv6_client_duid().as_slice())
+            );
+            assert_eq!(dhcpv6_oro_codes(dhcpv6), vec![23, 24]);
+            assert_eq!(
+                dhcpv6
+                    .elapsed_time_value()
+                    .expect("elapsed-time option should decode"),
+                Some(2)
+            );
+        }
+        "ipv6-udp-dhcpv6-relay-forward" => {
+            assert_dhcpv6_transport(case, packet, relay_addr, server_addr, 547, 547);
+            assert_eq!(dhcpv6.message_type_code_value(), 12);
+            let relay = dhcpv6.relay().expect("relay-forward should have header");
+            assert_eq!(relay.hop_count_value(), 1);
+            assert_eq!(relay.link_address_value(), relay_link);
+            assert_eq!(relay.peer_address_value(), relay_peer);
+            assert_eq!(dhcpv6.interface_id_value(), Some(b"uplink-1".as_slice()));
+            let relayed = dhcpv6
+                .relayed_message_value()
+                .expect("relay-forward payload should decode")
+                .expect("relay-forward should carry a relay message");
+            assert_eq!(relayed.message_type_code_value(), 1);
+            assert_eq!(relayed.transaction_id_value(), 0x0a0b0c);
+            assert_eq!(
+                relayed.client_id_value(),
+                Some(dhcpv6_client_duid().as_slice())
+            );
+        }
+        "ipv6-udp-dhcpv6-relay-reply" => {
+            assert_dhcpv6_transport(case, packet, server_addr, relay_addr, 547, 547);
+            assert_eq!(dhcpv6.message_type_code_value(), 13);
+            let relay = dhcpv6.relay().expect("relay-reply should have header");
+            assert_eq!(relay.hop_count_value(), 1);
+            assert_eq!(relay.link_address_value(), relay_link);
+            assert_eq!(relay.peer_address_value(), relay_peer);
+            assert_eq!(dhcpv6.interface_id_value(), Some(b"uplink-1".as_slice()));
+            let relayed = dhcpv6
+                .relayed_message_value()
+                .expect("relay-reply payload should decode")
+                .expect("relay-reply should carry a relay message");
+            assert_eq!(relayed.message_type_code_value(), 2);
+            assert_eq!(relayed.transaction_id_value(), 0x0a0b0c);
+            assert_dhcpv6_identity(&relayed);
+            assert_eq!(
+                relayed
+                    .preference_value()
+                    .expect("relayed preference option should decode"),
+                Some(100)
+            );
+        }
+        "ipv6-udp-dhcpv6-ia-na-iaaddr" => {
+            assert_dhcpv6_transport(case, packet, server_addr, client_addr, 547, 546);
+            assert_eq!(dhcpv6.message_type_code_value(), 7);
+            assert_eq!(dhcpv6.transaction_id_value(), 0x040506);
+            assert_dhcpv6_identity(dhcpv6);
+            let ia_na = dhcpv6
+                .ia_na_value()
+                .expect("IA_NA option should decode")
+                .expect("IA_NA fixture should carry IA_NA");
+            assert_eq!(ia_na.iaid(), 0x0102_0304);
+            assert_eq!(ia_na.timers(), (60, 120));
+            let ia_addr = ia_na.options_ref()[0]
+                .ia_addr_value()
+                .expect("IAADDR nested option should decode")
+                .expect("IA_NA fixture should carry IAADDR");
+            assert_eq!(ia_addr.address(), dhcpv6_doc_addr(0x0100));
+            assert_eq!(ia_addr.preferred_lifetime(), 300);
+            assert_eq!(ia_addr.valid_lifetime(), 600);
+        }
+        "ipv6-udp-dhcpv6-ia-pd-iaprefix" => {
+            assert_dhcpv6_transport(case, packet, server_addr, client_addr, 547, 546);
+            assert_eq!(dhcpv6.message_type_code_value(), 7);
+            assert_eq!(dhcpv6.transaction_id_value(), 0x050607);
+            assert_dhcpv6_identity(dhcpv6);
+            let ia_pd = dhcpv6
+                .ia_pd_value()
+                .expect("IA_PD option should decode")
+                .expect("IA_PD fixture should carry IA_PD");
+            assert_eq!(ia_pd.iaid(), 0x0506_0708);
+            assert_eq!(ia_pd.timers(), (90, 180));
+            let ia_prefix = ia_pd.options_ref()[0]
+                .ia_prefix_value()
+                .expect("IAPREFIX nested option should decode")
+                .expect("IA_PD fixture should carry IAPREFIX");
+            assert_eq!(ia_prefix.preferred_lifetime(), 300);
+            assert_eq!(ia_prefix.valid_lifetime(), 600);
+            assert_eq!(ia_prefix.prefix_length(), 56);
+            assert_eq!(ia_prefix.prefix(), dhcpv6_doc_prefix(0x0200));
+        }
+        "ipv6-udp-dhcpv6-unknown-option" => {
+            assert_dhcpv6_transport(case, packet, server_addr, client_addr, 547, 546);
+            assert_eq!(dhcpv6.message_type_code_value(), 7);
+            assert_eq!(dhcpv6.transaction_id_value(), 0x060708);
+            assert_dhcpv6_identity(dhcpv6);
+            let unknown = dhcpv6
+                .options_ref()
+                .last()
+                .expect("unknown fixture should carry an unknown option");
+            assert_eq!(unknown.codepoint(), 65_000);
+            assert_eq!(unknown.payload(), &[0xde, 0xad, 0xbe, 0xef]);
+            assert_eq!(unknown.registered_name(), None);
+        }
+        other => panic!("fixture {other} is missing DHCPv6 field assertions"),
+    }
+}
+
 fn assert_dhcpv4_option_fixture(case: &ValidFixtureCase, bytes: &[u8]) {
     let options = Dhcpv4Option::decode_all(bytes)
         .unwrap_or_else(|err| panic!("fixture {} should decode DHCP options: {err}", case.path));
@@ -7703,6 +8071,42 @@ fn dhcpv4_fixture_catalog_decodes_renamed_fixtures() {
             }
             FixtureDecodeTarget::Dhcpv4Options => assert_dhcpv4_option_fixture(case, &bytes),
             FixtureDecodeTarget::QuicDatagram => unreachable!("DHCPv4 fixture cannot be QUIC"),
+        }
+    }
+}
+
+#[test]
+fn dhcpv6_fixture_catalog_decodes_byte_fixtures() {
+    let dhcpv6_cases = VALID_FIXTURES
+        .iter()
+        .filter(|case| coverage_for_case(case.name).contains(&CoverageFamily::Ipv6UdpDhcpv6))
+        .collect::<Vec<_>>();
+    assert_eq!(dhcpv6_cases.len(), 10);
+
+    for case in dhcpv6_cases {
+        assert!(
+            case.name.contains("dhcpv6"),
+            "DHCPv6 fixture name must be versioned: {}",
+            case.name
+        );
+        assert!(
+            case.path.contains("dhcpv6") && !case.path.contains("dhcp-"),
+            "DHCPv6 fixture path must be versioned: {}",
+            case.path
+        );
+        ensure_fixture_exists(case.path);
+        let bytes = fixture_bytes_for_case(case);
+
+        match case.target {
+            FixtureDecodeTarget::Packet(target) => {
+                let packet = decode_packet(target, &bytes)
+                    .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+                assert_packet_surface(case, &packet);
+                assert_fixture_fields(case, &packet);
+                assert_compile_decode_compile(case, target, &packet, &bytes);
+            }
+            FixtureDecodeTarget::Dhcpv4Options => unreachable!("DHCPv6 fixture cannot be DHCPv4"),
+            FixtureDecodeTarget::QuicDatagram => unreachable!("DHCPv6 fixture cannot be QUIC"),
         }
     }
 }
@@ -10573,6 +10977,194 @@ fn summary_fixture_reader_matches_current_summary_fixture() {
     );
 
     assert_eq!(actual, expected);
+}
+
+fn dhcpv6_doc_addr(host: u16) -> Ipv6Addr {
+    Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, host)
+}
+
+fn dhcpv6_doc_prefix(subnet: u16) -> Ipv6Addr {
+    Ipv6Addr::new(0x2001, 0x0db8, subnet, 0, 0, 0, 0, 0)
+}
+
+fn dhcpv6_client_duid() -> [u8; 10] {
+    [0x00, 0x03, 0x00, 0x01, 0x02, 0x00, 0x5e, 0x00, 0x00, 0x01]
+}
+
+fn dhcpv6_server_duid() -> [u8; 10] {
+    [0x00, 0x03, 0x00, 0x01, 0x02, 0x00, 0x5e, 0x00, 0x00, 0x02]
+}
+
+fn dhcpv6_packet(src: Ipv6Addr, dst: Ipv6Addr, udp: Udp, dhcpv6: Dhcpv6) -> Packet {
+    Ipv6::new().src(src).dst(dst) / udp / dhcpv6
+}
+
+fn dhcpv6_fixture_packets() -> Vec<(&'static str, Packet)> {
+    let client = dhcpv6_client_duid();
+    let server = dhcpv6_server_duid();
+    let client_addr = dhcpv6_doc_addr(0x0010);
+    let server_addr = dhcpv6_doc_addr(0x0001);
+    let relay_addr = dhcpv6_doc_addr(0x00fe);
+    let relay_peer = dhcpv6_doc_addr(0x0011);
+    let relay_link = dhcpv6_doc_prefix(0x0100);
+
+    let ia_na = Dhcpv6IaNa::new(0x0102_0304, 60, 120)
+        .ia_addr(Dhcpv6IaAddr::new(dhcpv6_doc_addr(0x0100), 300, 600))
+        .expect("IA_NA fixture should encode");
+    let ia_pd = Dhcpv6IaPd::new(0x0506_0708, 90, 180)
+        .ia_prefix(Dhcpv6IaPrefix::new(300, 600, 56, dhcpv6_doc_prefix(0x0200)))
+        .expect("IA_PD fixture should encode");
+
+    let relay_forward = Dhcpv6::relay_forward(relay_link, relay_peer)
+        .hop_count(1)
+        .interface_id(b"uplink-1".to_vec())
+        .relay_message(Dhcpv6::solicit(0x0a0b0c).client_id(client))
+        .expect("Relay-forward fixture should encode relayed message");
+    let relay_reply = Dhcpv6::relay_reply(relay_link, relay_peer)
+        .hop_count(1)
+        .interface_id(b"uplink-1".to_vec())
+        .relay_message(
+            Dhcpv6::advertise(0x0a0b0c)
+                .client_id(client)
+                .server_id(server)
+                .preference(100),
+        )
+        .expect("Relay-reply fixture should encode relayed message");
+
+    vec![
+        (
+            "bytes/ipv6-udp-dhcpv6-solicit.hex",
+            dhcpv6_packet(
+                client_addr,
+                server_addr,
+                Udp::dhcpv6_client(),
+                Dhcpv6::solicit(0x010203)
+                    .client_id(client)
+                    .oro([23u16, 24u16])
+                    .elapsed_time(1),
+            ),
+        ),
+        (
+            "bytes/ipv6-udp-dhcpv6-advertise.hex",
+            dhcpv6_packet(
+                server_addr,
+                client_addr,
+                Udp::dhcpv6_server(),
+                Dhcpv6::advertise(0x010203)
+                    .client_id(client)
+                    .server_id(server)
+                    .preference(100),
+            ),
+        ),
+        (
+            "bytes/ipv6-udp-dhcpv6-request.hex",
+            dhcpv6_packet(
+                client_addr,
+                server_addr,
+                Udp::dhcpv6_client(),
+                Dhcpv6::request(0x020304)
+                    .client_id(client)
+                    .server_id(server)
+                    .oro([23u16, 24u16]),
+            ),
+        ),
+        (
+            "bytes/ipv6-udp-dhcpv6-reply.hex",
+            dhcpv6_packet(
+                server_addr,
+                client_addr,
+                Udp::dhcpv6_server(),
+                Dhcpv6::reply(0x020304)
+                    .client_id(client)
+                    .server_id(server)
+                    .status(Dhcpv6StatusCode::Success),
+            ),
+        ),
+        (
+            "bytes/ipv6-udp-dhcpv6-information-request.hex",
+            dhcpv6_packet(
+                client_addr,
+                server_addr,
+                Udp::dhcpv6_client(),
+                Dhcpv6::information_request(0x030405)
+                    .client_id(client)
+                    .oro([23u16, 24u16])
+                    .elapsed_time(2),
+            ),
+        ),
+        (
+            "bytes/ipv6-udp-dhcpv6-relay-forward.hex",
+            dhcpv6_packet(relay_addr, server_addr, Udp::dhcpv6_relay(), relay_forward),
+        ),
+        (
+            "bytes/ipv6-udp-dhcpv6-relay-reply.hex",
+            dhcpv6_packet(server_addr, relay_addr, Udp::dhcpv6_relay(), relay_reply),
+        ),
+        (
+            "bytes/ipv6-udp-dhcpv6-ia-na-iaaddr.hex",
+            dhcpv6_packet(
+                server_addr,
+                client_addr,
+                Udp::dhcpv6_server(),
+                Dhcpv6::reply(0x040506)
+                    .client_id(client)
+                    .server_id(server)
+                    .ia_na(ia_na)
+                    .expect("IA_NA fixture option should encode"),
+            ),
+        ),
+        (
+            "bytes/ipv6-udp-dhcpv6-ia-pd-iaprefix.hex",
+            dhcpv6_packet(
+                server_addr,
+                client_addr,
+                Udp::dhcpv6_server(),
+                Dhcpv6::reply(0x050607)
+                    .client_id(client)
+                    .server_id(server)
+                    .ia_pd(ia_pd)
+                    .expect("IA_PD fixture option should encode"),
+            ),
+        ),
+        (
+            "bytes/ipv6-udp-dhcpv6-unknown-option.hex",
+            dhcpv6_packet(
+                server_addr,
+                client_addr,
+                Udp::dhcpv6_server(),
+                Dhcpv6::reply(0x060708)
+                    .client_id(client)
+                    .server_id(server)
+                    .raw_option(65_000u16, [0xde, 0xad, 0xbe, 0xef]),
+            ),
+        ),
+    ]
+}
+
+fn hex_byte_fixture(bytes: &[u8]) -> String {
+    let mut output = String::new();
+    for chunk in bytes.chunks(16) {
+        for (index, byte) in chunk.iter().enumerate() {
+            if index > 0 {
+                output.push(' ');
+            }
+            write!(&mut output, "{byte:02x}").expect("writing to string should not fail");
+        }
+        output.push('\n');
+    }
+    output
+}
+
+#[test]
+#[ignore = "regenerates committed DHCPv6 byte fixtures"]
+fn dhcpv6_write_byte_fixtures() {
+    for (path, packet) in dhcpv6_fixture_packets() {
+        let wire = packet
+            .compile()
+            .unwrap_or_else(|err| panic!("DHCPv6 fixture {path} should compile: {err}"));
+        fs::write(fixture_path(path), hex_byte_fixture(wire.as_bytes()))
+            .unwrap_or_else(|err| panic!("DHCPv6 fixture {path} should write: {err}"));
+    }
 }
 
 fn dhcpv6_summary_packet() -> Packet {
