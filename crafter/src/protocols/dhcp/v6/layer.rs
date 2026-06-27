@@ -15,7 +15,8 @@ use super::constants::{
 use super::duid::Dhcpv6Duid;
 use super::message::{dhcpv6_message_type_summary, Dhcpv6MessageType};
 use super::option::{
-    Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6Option, Dhcpv6OptionCode, Dhcpv6StatusCodeOption,
+    Dhcpv6Authentication, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6Option, Dhcpv6OptionCode,
+    Dhcpv6StatusCodeOption,
 };
 use super::status::Dhcpv6StatusCode;
 
@@ -337,6 +338,11 @@ impl Dhcpv6 {
         self.option(Dhcpv6Option::rapid_commit())
     }
 
+    /// Append an OPTION_AUTH option.
+    pub fn authentication(self, authentication: Dhcpv6Authentication) -> Self {
+        self.option(Dhcpv6Option::authentication(authentication))
+    }
+
     /// Append an OPTION_RECONF_MSG option.
     pub fn reconfigure_message(self, message_type: Dhcpv6MessageType) -> Self {
         self.option(Dhcpv6Option::reconfigure_message(message_type))
@@ -445,6 +451,14 @@ impl Dhcpv6 {
         match self.first_option(super::constants::DHCPV6_OPTION_RAPID_COMMIT) {
             Some(option) => option.rapid_commit_present(),
             None => Ok(false),
+        }
+    }
+
+    /// Decode the first Authentication option.
+    pub fn authentication_value(&self) -> Result<Option<Dhcpv6Authentication>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_AUTH) {
+            Some(option) => option.authentication_value(),
+            None => Ok(None),
         }
     }
 

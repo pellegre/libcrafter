@@ -4,9 +4,13 @@
 //! RFC 9915, "Dynamic Host Configuration Protocol for IPv6 (DHCPv6)", plus
 //! public IANA DHCPv6 registry metadata and packet-data extensions.
 //!
-//! The module is intentionally a skeleton at this stage. It exposes no packet
-//! builders, decoders, option types, or UDP bindings until later steps add
-//! source-backed DHCPv6 wire behavior.
+//! The module exposes packet builders, decoders, typed option helpers, UDP
+//! bindings, and registry metadata while keeping unknown codepoints and payloads
+//! round-trip safe.
+//!
+//! DHCPv6 Authentication is packet data only. The crate can encode and decode
+//! the option fields, but it never derives keys, signs messages, verifies MACs,
+//! or interprets authentication secrets.
 
 pub mod constants;
 pub mod duid;
@@ -22,8 +26,9 @@ pub(crate) use layer::{append_dhcpv6_packet, looks_like_dhcpv6_payload};
 pub use layer::{Dhcpv6, Dhcpv6RelayHeader};
 pub use message::Dhcpv6MessageType;
 pub use option::{
-    Dhcpv6IaAddr, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6Option, Dhcpv6OptionCode,
-    Dhcpv6OptionFormat, Dhcpv6OptionValue, Dhcpv6StatusCodeOption,
+    Dhcpv6AuthAlgorithm, Dhcpv6AuthProtocol, Dhcpv6Authentication, Dhcpv6IaAddr, Dhcpv6IaNa,
+    Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6Option, Dhcpv6OptionCode, Dhcpv6OptionFormat,
+    Dhcpv6OptionValue, Dhcpv6ReplayDetectionMethod, Dhcpv6StatusCodeOption,
 };
 pub use registry::{
     dhcpv6_option_meta, dhcpv6_option_name, dhcpv6_option_status, Dhcpv6ClientOro,
