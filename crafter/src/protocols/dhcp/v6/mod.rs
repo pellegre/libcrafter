@@ -37,15 +37,18 @@ pub use option::{
     Dhcpv6VendorOptions,
 };
 pub use registry::{
-    dhcpv6_option_meta, dhcpv6_option_name, dhcpv6_option_status, dhcpv6_radius_attribute_meta,
-    dhcpv6_radius_attribute_name, dhcpv6_radius_attribute_permitted,
-    dhcpv6_radius_dhcpv6_option_permission, dhcpv6_radius_dhcpv6_option_permitted,
-    dhcpv6_rsoo_option_permission, dhcpv6_rsoo_option_permitted,
-    dhcpv6_s46_priority_option_permission, dhcpv6_s46_priority_option_permitted,
-    dhcpv6_supported_transport_meta, dhcpv6_supported_transport_name,
-    Dhcpv6AuxiliaryRegistryStatus, Dhcpv6ClientOro, Dhcpv6OptionMeta, Dhcpv6OptionSingleton,
-    Dhcpv6OptionStatus, Dhcpv6RadiusAttributeCode, Dhcpv6RadiusAttributeMeta,
-    Dhcpv6RadiusDhcpv6OptionPermission, Dhcpv6RsooOptionPermission,
+    dhcpv6_option_ia_na_placement, dhcpv6_option_ia_pd_placement, dhcpv6_option_meta,
+    dhcpv6_option_name, dhcpv6_option_oro_placement, dhcpv6_option_placement_report,
+    dhcpv6_option_registered, dhcpv6_option_relay_supplied_placement, dhcpv6_option_status,
+    dhcpv6_option_top_level_placement, dhcpv6_radius_attribute_meta, dhcpv6_radius_attribute_name,
+    dhcpv6_radius_attribute_permitted, dhcpv6_radius_dhcpv6_option_permission,
+    dhcpv6_radius_dhcpv6_option_permitted, dhcpv6_rsoo_option_permission,
+    dhcpv6_rsoo_option_permitted, dhcpv6_s46_priority_option_permission,
+    dhcpv6_s46_priority_option_permitted, dhcpv6_supported_transport_meta,
+    dhcpv6_supported_transport_name, Dhcpv6AuxiliaryRegistryStatus, Dhcpv6ClientOro,
+    Dhcpv6OptionMeta, Dhcpv6OptionPlacementReport, Dhcpv6OptionPlacementStatus,
+    Dhcpv6OptionSingleton, Dhcpv6OptionStatus, Dhcpv6RadiusAttributeCode,
+    Dhcpv6RadiusAttributeMeta, Dhcpv6RadiusDhcpv6OptionPermission, Dhcpv6RsooOptionPermission,
     Dhcpv6S46PriorityOptionPermission, Dhcpv6SupportedTransportMeta,
 };
 pub use status::Dhcpv6StatusCode;

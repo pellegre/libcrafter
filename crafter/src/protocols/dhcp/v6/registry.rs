@@ -8,8 +8,9 @@
 
 use super::constants::{
     DHCPV6_OPTION_AFTR_NAME, DHCPV6_OPTION_DHCP4_O_DHCP6_SERVER,
-    DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME, DHCPV6_OPTION_S46_CONT_LW, DHCPV6_OPTION_S46_CONT_MAPE,
-    DHCPV6_OPTION_S46_CONT_MAPT, DHCPV6_OPTION_V6_DNR,
+    DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME, DHCPV6_OPTION_IAADDR, DHCPV6_OPTION_IAPREFIX,
+    DHCPV6_OPTION_PD_EXCLUDE, DHCPV6_OPTION_S46_CONT_LW, DHCPV6_OPTION_S46_CONT_MAPE,
+    DHCPV6_OPTION_S46_CONT_MAPT, DHCPV6_OPTION_STATUS_CODE, DHCPV6_OPTION_V6_DNR,
     DHCPV6_RADIUS_ATTRIBUTE_DELEGATED_IPV6_PREFIX,
     DHCPV6_RADIUS_ATTRIBUTE_DELEGATED_IPV6_PREFIX_POOL,
     DHCPV6_RADIUS_ATTRIBUTE_DHCPV6_OPTIONS_EXTENDED_TYPE,
@@ -127,10 +128,57 @@ pub enum Dhcpv6RadiusDhcpv6OptionPermission {
     NotPermitted,
 }
 
+/// Reported placement state for a DHCPv6 option codepoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Dhcpv6OptionPlacementStatus {
+    /// Public metadata lists the option as valid for this placement.
+    Known,
+    /// The option is registered but not listed as valid for this placement.
+    Questionable,
+    /// The option codepoint is unassigned, reserved, or outside bundled metadata.
+    Unknown,
+}
+
+/// Placement metadata for a DHCPv6 option codepoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Dhcpv6OptionPlacementReport {
+    /// Wire option codepoint.
+    pub code: u16,
+    /// Option-code registry status.
+    pub registry_status: Dhcpv6OptionStatus,
+    /// Placement at a DHCPv6 message option-list level.
+    pub top_level: Dhcpv6OptionPlacementStatus,
+    /// Placement directly inside OPTION_IA_NA.
+    pub ia_na: Dhcpv6OptionPlacementStatus,
+    /// Placement directly inside OPTION_IA_PD.
+    pub ia_pd: Dhcpv6OptionPlacementStatus,
+    /// Placement inside OPTION_RSOO.
+    pub relay_supplied: Dhcpv6OptionPlacementStatus,
+    /// Eligibility for request through Client ORO.
+    pub oro_eligible: Dhcpv6OptionPlacementStatus,
+}
+
 impl Dhcpv6OptionSingleton {
     /// True when the registry marks the option as singleton.
     pub const fn is_singleton(self) -> bool {
         matches!(self, Self::Yes)
+    }
+}
+
+impl Dhcpv6OptionPlacementStatus {
+    /// True when metadata lists the option as valid for a placement.
+    pub const fn is_known(self) -> bool {
+        matches!(self, Self::Known)
+    }
+
+    /// True when the option is registered but not listed for a placement.
+    pub const fn is_questionable(self) -> bool {
+        matches!(self, Self::Questionable)
+    }
+
+    /// True when the option codepoint has no usable placement metadata.
+    pub const fn is_unknown(self) -> bool {
+        matches!(self, Self::Unknown)
     }
 }
 
@@ -207,6 +255,14 @@ pub const fn dhcpv6_option_status(code: u16) -> Dhcpv6OptionStatus {
     dhcpv6_option_meta(code).status
 }
 
+/// True when the option-code registry assigns or obsoletes a codepoint.
+pub const fn dhcpv6_option_registered(code: u16) -> bool {
+    matches!(
+        dhcpv6_option_status(code),
+        Dhcpv6OptionStatus::Assigned | Dhcpv6OptionStatus::Obsolete
+    )
+}
+
 /// Registered option name for a DHCPv6 option codepoint, when assigned.
 pub const fn dhcpv6_option_name(code: u16) -> Option<&'static str> {
     match dhcpv6_option_meta(code).status {
@@ -216,6 +272,59 @@ pub const fn dhcpv6_option_name(code: u16) -> Option<&'static str> {
         Dhcpv6OptionStatus::Reserved
         | Dhcpv6OptionStatus::Unassigned
         | Dhcpv6OptionStatus::Unknown => None,
+    }
+}
+
+/// Placement report for a DHCPv6 option codepoint.
+pub const fn dhcpv6_option_placement_report(code: u16) -> Dhcpv6OptionPlacementReport {
+    Dhcpv6OptionPlacementReport {
+        code,
+        registry_status: dhcpv6_option_status(code),
+        top_level: dhcpv6_option_top_level_placement(code),
+        ia_na: dhcpv6_option_ia_na_placement(code),
+        ia_pd: dhcpv6_option_ia_pd_placement(code),
+        relay_supplied: dhcpv6_option_relay_supplied_placement(code),
+        oro_eligible: dhcpv6_option_oro_placement(code),
+    }
+}
+
+/// Placement state for a DHCPv6 message option-list level.
+pub const fn dhcpv6_option_top_level_placement(code: u16) -> Dhcpv6OptionPlacementStatus {
+    if dhcpv6_option_nested_only(code) {
+        Dhcpv6OptionPlacementStatus::Questionable
+    } else if dhcpv6_option_registered(code) {
+        Dhcpv6OptionPlacementStatus::Known
+    } else {
+        Dhcpv6OptionPlacementStatus::Unknown
+    }
+}
+
+/// Placement state for an option directly nested in OPTION_IA_NA.
+pub const fn dhcpv6_option_ia_na_placement(code: u16) -> Dhcpv6OptionPlacementStatus {
+    placement_from_known(code, dhcpv6_option_known_ia_na_nested(code))
+}
+
+/// Placement state for an option directly nested in OPTION_IA_PD.
+pub const fn dhcpv6_option_ia_pd_placement(code: u16) -> Dhcpv6OptionPlacementStatus {
+    placement_from_known(code, dhcpv6_option_known_ia_pd_nested(code))
+}
+
+/// Placement state for an option inside OPTION_RSOO.
+pub const fn dhcpv6_option_relay_supplied_placement(code: u16) -> Dhcpv6OptionPlacementStatus {
+    placement_from_known(code, dhcpv6_rsoo_option_permitted(code))
+}
+
+/// Placement state for an option requested through Client ORO.
+pub const fn dhcpv6_option_oro_placement(code: u16) -> Dhcpv6OptionPlacementStatus {
+    match dhcpv6_option_meta(code).client_oro {
+        Some(
+            Dhcpv6ClientOro::Yes
+            | Dhcpv6ClientOro::Optional
+            | Dhcpv6ClientOro::RequiredForInformationRequest
+            | Dhcpv6ClientOro::RequiredForSolicit,
+        ) => Dhcpv6OptionPlacementStatus::Known,
+        Some(Dhcpv6ClientOro::No) => Dhcpv6OptionPlacementStatus::Questionable,
+        None => Dhcpv6OptionPlacementStatus::Unknown,
     }
 }
 
@@ -387,6 +496,31 @@ const fn radius_attr(
     status: Dhcpv6AuxiliaryRegistryStatus,
 ) -> Dhcpv6RadiusAttributeMeta {
     Dhcpv6RadiusAttributeMeta { code, name, status }
+}
+
+const fn placement_from_known(code: u16, known: bool) -> Dhcpv6OptionPlacementStatus {
+    if known {
+        Dhcpv6OptionPlacementStatus::Known
+    } else if dhcpv6_option_registered(code) {
+        Dhcpv6OptionPlacementStatus::Questionable
+    } else {
+        Dhcpv6OptionPlacementStatus::Unknown
+    }
+}
+
+const fn dhcpv6_option_nested_only(code: u16) -> bool {
+    matches!(
+        code,
+        DHCPV6_OPTION_IAADDR | DHCPV6_OPTION_IAPREFIX | DHCPV6_OPTION_PD_EXCLUDE
+    )
+}
+
+const fn dhcpv6_option_known_ia_na_nested(code: u16) -> bool {
+    matches!(code, DHCPV6_OPTION_IAADDR | DHCPV6_OPTION_STATUS_CODE)
+}
+
+const fn dhcpv6_option_known_ia_pd_nested(code: u16) -> bool {
+    matches!(code, DHCPV6_OPTION_IAPREFIX | DHCPV6_OPTION_STATUS_CODE)
 }
 
 const fn entry(
@@ -1471,22 +1605,26 @@ const DHCPV6_OPTION_META: [Dhcpv6OptionMeta; 151] = [
 #[cfg(test)]
 mod dhcpv6_option_registry_tests {
     use crate::protocols::dhcp::v6::constants::{
-        DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME, DHCPV6_OPTION_RADIUS, DHCPV6_OPTION_S46_CONT_MAPE,
-        DHCPV6_OPTION_S46_RULE, DHCPV6_OPTION_V6_DNR,
-        DHCPV6_RADIUS_ATTRIBUTE_DHCPV6_OPTIONS_EXTENDED_TYPE,
+        DHCPV6_OPTION_CLIENTID, DHCPV6_OPTION_DNS_SERVERS, DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME,
+        DHCPV6_OPTION_IAADDR, DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_RADIUS,
+        DHCPV6_OPTION_S46_CONT_MAPE, DHCPV6_OPTION_S46_RULE, DHCPV6_OPTION_STATUS_CODE,
+        DHCPV6_OPTION_V6_DNR, DHCPV6_RADIUS_ATTRIBUTE_DHCPV6_OPTIONS_EXTENDED_TYPE,
         DHCPV6_RADIUS_ATTRIBUTE_EXTENDED_TYPE_1, DHCPV6_RADIUS_ATTRIBUTE_VENDOR_SPECIFIC,
         DHCPV6_SUPPORTED_TRANSPORT_DOMTLS_BIT,
     };
 
     use super::{
-        dhcpv6_option_meta, dhcpv6_option_name, dhcpv6_option_status, dhcpv6_radius_attribute_meta,
+        dhcpv6_option_ia_na_placement, dhcpv6_option_meta, dhcpv6_option_name,
+        dhcpv6_option_oro_placement, dhcpv6_option_placement_report, dhcpv6_option_status,
+        dhcpv6_option_top_level_placement, dhcpv6_radius_attribute_meta,
         dhcpv6_radius_attribute_name, dhcpv6_radius_attribute_permitted,
         dhcpv6_radius_dhcpv6_option_permission, dhcpv6_radius_dhcpv6_option_permitted,
         dhcpv6_rsoo_option_permission, dhcpv6_rsoo_option_permitted,
         dhcpv6_s46_priority_option_permission, dhcpv6_s46_priority_option_permitted,
         dhcpv6_supported_transport_meta, dhcpv6_supported_transport_name,
-        Dhcpv6AuxiliaryRegistryStatus, Dhcpv6ClientOro, Dhcpv6OptionSingleton, Dhcpv6OptionStatus,
-        Dhcpv6RadiusAttributeCode, Dhcpv6RadiusDhcpv6OptionPermission, Dhcpv6RsooOptionPermission,
+        Dhcpv6AuxiliaryRegistryStatus, Dhcpv6ClientOro, Dhcpv6OptionPlacementStatus,
+        Dhcpv6OptionSingleton, Dhcpv6OptionStatus, Dhcpv6RadiusAttributeCode,
+        Dhcpv6RadiusDhcpv6OptionPermission, Dhcpv6RsooOptionPermission,
         Dhcpv6S46PriorityOptionPermission, DHCPV6_OPTION_REGISTRY_EXPLICIT_END,
         DHCPV6_OPTION_UNASSIGNED_END, DHCPV6_OPTION_UNASSIGNED_START,
     };
@@ -1676,5 +1814,62 @@ mod dhcpv6_option_registry_tests {
             dhcpv6_radius_dhcpv6_option_permission(DHCPV6_OPTION_RADIUS),
             Dhcpv6RadiusDhcpv6OptionPermission::NotPermitted
         );
+    }
+
+    #[test]
+    fn dhcpv6_option_placement_reports_valid_locations() {
+        let dns = dhcpv6_option_placement_report(DHCPV6_OPTION_DNS_SERVERS);
+        assert_eq!(dns.code, DHCPV6_OPTION_DNS_SERVERS);
+        assert_eq!(dns.registry_status, Dhcpv6OptionStatus::Assigned);
+        assert_eq!(dns.top_level, Dhcpv6OptionPlacementStatus::Known);
+        assert_eq!(dns.oro_eligible, Dhcpv6OptionPlacementStatus::Known);
+        assert_eq!(dns.ia_na, Dhcpv6OptionPlacementStatus::Questionable);
+
+        let iaaddr = dhcpv6_option_placement_report(DHCPV6_OPTION_IAADDR);
+        assert_eq!(iaaddr.top_level, Dhcpv6OptionPlacementStatus::Questionable);
+        assert_eq!(iaaddr.ia_na, Dhcpv6OptionPlacementStatus::Known);
+        assert_eq!(iaaddr.ia_pd, Dhcpv6OptionPlacementStatus::Questionable);
+
+        let iaprefix = dhcpv6_option_placement_report(DHCPV6_OPTION_IAPREFIX);
+        assert_eq!(
+            iaprefix.top_level,
+            Dhcpv6OptionPlacementStatus::Questionable
+        );
+        assert_eq!(iaprefix.ia_pd, Dhcpv6OptionPlacementStatus::Known);
+
+        let status = dhcpv6_option_placement_report(DHCPV6_OPTION_STATUS_CODE);
+        assert_eq!(status.top_level, Dhcpv6OptionPlacementStatus::Known);
+        assert_eq!(status.ia_na, Dhcpv6OptionPlacementStatus::Known);
+        assert_eq!(status.ia_pd, Dhcpv6OptionPlacementStatus::Known);
+
+        let relay = dhcpv6_option_placement_report(DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME);
+        assert_eq!(relay.relay_supplied, Dhcpv6OptionPlacementStatus::Known);
+    }
+
+    #[test]
+    fn dhcpv6_option_placement_reports_questionable_locations() {
+        assert!(dhcpv6_option_top_level_placement(DHCPV6_OPTION_IAADDR).is_questionable());
+        assert!(dhcpv6_option_ia_na_placement(DHCPV6_OPTION_DNS_SERVERS).is_questionable());
+        assert!(dhcpv6_option_oro_placement(DHCPV6_OPTION_CLIENTID).is_questionable());
+
+        let clientid = dhcpv6_option_placement_report(DHCPV6_OPTION_CLIENTID);
+        assert_eq!(clientid.top_level, Dhcpv6OptionPlacementStatus::Known);
+        assert_eq!(clientid.ia_na, Dhcpv6OptionPlacementStatus::Questionable);
+        assert_eq!(
+            clientid.relay_supplied,
+            Dhcpv6OptionPlacementStatus::Questionable
+        );
+    }
+
+    #[test]
+    fn dhcpv6_option_placement_reports_unknown_options_without_losing_codepoints() {
+        let unknown = dhcpv6_option_placement_report(65_000);
+        assert_eq!(unknown.code, 65_000);
+        assert_eq!(unknown.registry_status, Dhcpv6OptionStatus::Unassigned);
+        assert_eq!(unknown.top_level, Dhcpv6OptionPlacementStatus::Unknown);
+        assert_eq!(unknown.ia_na, Dhcpv6OptionPlacementStatus::Unknown);
+        assert_eq!(unknown.ia_pd, Dhcpv6OptionPlacementStatus::Unknown);
+        assert_eq!(unknown.relay_supplied, Dhcpv6OptionPlacementStatus::Unknown);
+        assert!(unknown.oro_eligible.is_unknown());
     }
 }
