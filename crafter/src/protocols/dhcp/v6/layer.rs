@@ -1,6 +1,7 @@
 //! DHCPv6 client/server packet layer.
 
 use core::any::Any;
+use core::net::Ipv6Addr;
 use core::ops::Div;
 
 use crate::error::{CrafterError, Result};
@@ -8,8 +9,8 @@ use crate::field::{Field, FieldState};
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 use super::constants::{
-    DHCPV6_CLIENT_PORT, DHCPV6_CLIENT_SERVER_HEADER_LEN, DHCPV6_RELAY_FORW, DHCPV6_RELAY_REPL,
-    DHCPV6_SERVER_PORT, DHCPV6_TRANSACTION_ID_MAX,
+    DHCPV6_CLIENT_PORT, DHCPV6_CLIENT_SERVER_HEADER_LEN, DHCPV6_RELAY_FORW,
+    DHCPV6_RELAY_HEADER_LEN, DHCPV6_RELAY_REPL, DHCPV6_SERVER_PORT, DHCPV6_TRANSACTION_ID_MAX,
 };
 use super::message::{dhcpv6_message_type_summary, Dhcpv6MessageType};
 use super::option::Dhcpv6Option;
@@ -19,7 +20,81 @@ use super::option::Dhcpv6Option;
 pub struct Dhcpv6 {
     message_type: Field<Dhcpv6MessageType>,
     transaction_id: Field<u32>,
+    relay: Option<Dhcpv6RelayHeader>,
     options: Vec<Dhcpv6Option>,
+}
+
+/// DHCPv6 relay fixed-header fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Dhcpv6RelayHeader {
+    hop_count: Field<u8>,
+    link_address: Field<Ipv6Addr>,
+    peer_address: Field<Ipv6Addr>,
+}
+
+impl Dhcpv6RelayHeader {
+    /// Create a relay header with deterministic hop-count default.
+    pub fn new(link_address: Ipv6Addr, peer_address: Ipv6Addr) -> Self {
+        Self {
+            hop_count: Field::defaulted(0),
+            link_address: Field::user(link_address),
+            peer_address: Field::user(peer_address),
+        }
+    }
+
+    /// Set the relay hop count.
+    pub fn hop_count(mut self, hop_count: u8) -> Self {
+        self.hop_count.set_user(hop_count);
+        self
+    }
+
+    /// Set the relay link-address field.
+    pub fn link_address(mut self, link_address: Ipv6Addr) -> Self {
+        self.link_address.set_user(link_address);
+        self
+    }
+
+    /// Set the relay peer-address field.
+    pub fn peer_address(mut self, peer_address: Ipv6Addr) -> Self {
+        self.peer_address.set_user(peer_address);
+        self
+    }
+
+    /// Relay hop-count value.
+    pub fn hop_count_value(&self) -> u8 {
+        self.hop_count.value().copied().unwrap_or(0)
+    }
+
+    /// State of the relay hop-count field.
+    pub const fn hop_count_state(&self) -> FieldState {
+        self.hop_count.state()
+    }
+
+    /// Relay link-address value.
+    pub fn link_address_value(&self) -> Ipv6Addr {
+        self.link_address
+            .value()
+            .copied()
+            .unwrap_or(Ipv6Addr::UNSPECIFIED)
+    }
+
+    /// State of the relay link-address field.
+    pub const fn link_address_state(&self) -> FieldState {
+        self.link_address.state()
+    }
+
+    /// Relay peer-address value.
+    pub fn peer_address_value(&self) -> Ipv6Addr {
+        self.peer_address
+            .value()
+            .copied()
+            .unwrap_or(Ipv6Addr::UNSPECIFIED)
+    }
+
+    /// State of the relay peer-address field.
+    pub const fn peer_address_state(&self) -> FieldState {
+        self.peer_address.state()
+    }
 }
 
 impl Dhcpv6 {
@@ -28,6 +103,7 @@ impl Dhcpv6 {
         Self {
             message_type: Field::defaulted(Dhcpv6MessageType::Solicit),
             transaction_id: Field::defaulted(0),
+            relay: None,
             options: Vec::new(),
         }
     }
@@ -37,6 +113,20 @@ impl Dhcpv6 {
         Self::new()
             .message_type(Dhcpv6MessageType::Solicit)
             .transaction_id(transaction_id)
+    }
+
+    /// Create a DHCPv6 Relay-forward message body.
+    pub fn relay_forward(link_address: Ipv6Addr, peer_address: Ipv6Addr) -> Self {
+        Self::new()
+            .message_type(Dhcpv6MessageType::RelayForw)
+            .relay_header(Dhcpv6RelayHeader::new(link_address, peer_address))
+    }
+
+    /// Create a DHCPv6 Relay-reply message body.
+    pub fn relay_reply(link_address: Ipv6Addr, peer_address: Ipv6Addr) -> Self {
+        Self::new()
+            .message_type(Dhcpv6MessageType::RelayRepl)
+            .relay_header(Dhcpv6RelayHeader::new(link_address, peer_address))
     }
 
     /// Decode a DHCPv6 client/server message.
@@ -91,6 +181,46 @@ impl Dhcpv6 {
         self.transaction_id.state()
     }
 
+    /// Set relay fixed-header fields.
+    pub fn relay_header(mut self, relay: Dhcpv6RelayHeader) -> Self {
+        self.relay = Some(relay);
+        self
+    }
+
+    /// Set relay hop count when this message carries a relay header.
+    pub fn hop_count(mut self, hop_count: u8) -> Self {
+        if let Some(relay) = self.relay.take() {
+            self.relay = Some(relay.hop_count(hop_count));
+        }
+        self
+    }
+
+    /// Set relay link-address when this message carries a relay header.
+    pub fn link_address(mut self, link_address: Ipv6Addr) -> Self {
+        if let Some(relay) = self.relay.take() {
+            self.relay = Some(relay.link_address(link_address));
+        }
+        self
+    }
+
+    /// Set relay peer-address when this message carries a relay header.
+    pub fn peer_address(mut self, peer_address: Ipv6Addr) -> Self {
+        if let Some(relay) = self.relay.take() {
+            self.relay = Some(relay.peer_address(peer_address));
+        }
+        self
+    }
+
+    /// Borrow relay fixed-header fields, when present.
+    pub fn relay(&self) -> Option<&Dhcpv6RelayHeader> {
+        self.relay.as_ref()
+    }
+
+    /// Mutably borrow relay fixed-header fields, when present.
+    pub fn relay_mut(&mut self) -> Option<&mut Dhcpv6RelayHeader> {
+        self.relay.as_mut()
+    }
+
     /// Append an option and return the updated layer.
     pub fn option(mut self, option: Dhcpv6Option) -> Self {
         self.options.push(option);
@@ -115,7 +245,12 @@ impl Dhcpv6 {
 
     /// Encoded DHCPv6 client/server message length.
     pub fn encoded_dhcpv6_len(&self) -> usize {
-        DHCPV6_CLIENT_SERVER_HEADER_LEN
+        let header_len = if self.relay.is_some() {
+            DHCPV6_RELAY_HEADER_LEN
+        } else {
+            DHCPV6_CLIENT_SERVER_HEADER_LEN
+        };
+        header_len
             + self
                 .options
                 .iter()
@@ -136,6 +271,16 @@ impl Layer for Dhcpv6 {
     }
 
     fn summary(&self) -> String {
+        if let Some(relay) = &self.relay {
+            return format!(
+                "Dhcpv6(type={}, hop_count={}, link_address={}, peer_address={}, options={})",
+                dhcpv6_message_type_summary(self.message_type_value()),
+                relay.hop_count_value(),
+                relay.link_address_value(),
+                relay.peer_address_value(),
+                self.options.len(),
+            );
+        }
         format!(
             "Dhcpv6(type={}, xid=0x{:06x}, options={})",
             dhcpv6_message_type_summary(self.message_type_value()),
@@ -145,7 +290,7 @@ impl Layer for Dhcpv6 {
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
-        vec![
+        let mut fields = vec![
             (
                 "message_type",
                 dhcpv6_message_type_summary(self.message_type_value()),
@@ -155,7 +300,13 @@ impl Layer for Dhcpv6 {
                 format!("0x{:06x}", self.transaction_id_value()),
             ),
             ("options", self.options.len().to_string()),
-        ]
+        ];
+        if let Some(relay) = &self.relay {
+            fields.push(("hop_count", relay.hop_count_value().to_string()));
+            fields.push(("link_address", relay.link_address_value().to_string()));
+            fields.push(("peer_address", relay.peer_address_value().to_string()));
+        }
+        fields
     }
 
     fn encoded_len(&self) -> usize {
@@ -163,6 +314,13 @@ impl Layer for Dhcpv6 {
     }
 
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        if self.relay.is_some() {
+            return Err(CrafterError::invalid_field_value(
+                "dhcpv6.relay",
+                "relay compile is implemented by the relay codec",
+            ));
+        }
+
         let transaction_id = self.transaction_id_value();
         validate_transaction_id(transaction_id)?;
 
@@ -237,6 +395,7 @@ fn decode_dhcpv6_client_server(bytes: &[u8]) -> Result<Dhcpv6> {
     Ok(Dhcpv6 {
         message_type: Field::user(Dhcpv6MessageType::from_code(bytes[0])),
         transaction_id: Field::user(transaction_id),
+        relay: None,
         options: Dhcpv6Option::decode_all(&bytes[DHCPV6_CLIENT_SERVER_HEADER_LEN..])?,
     })
 }
@@ -456,5 +615,95 @@ mod dhcpv6_client_decode_tests {
         assert_eq!(dhcpv6.transaction_id_value(), 0x010203);
         assert_eq!(dhcpv6.options_ref().len(), 1);
         assert!(decoded.layer::<Raw>().is_none());
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_relay_header_tests {
+    use core::net::Ipv6Addr;
+
+    use super::{Dhcpv6, Dhcpv6RelayHeader};
+    use crate::error::CrafterError;
+    use crate::field::FieldState;
+    use crate::packet::{Layer, Packet};
+    use crate::protocols::dhcp::v6::Dhcpv6MessageType;
+
+    fn link() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, 1, 0, 0, 0, 0, 1)
+    }
+
+    fn peer() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, 2, 0, 0, 0, 0, 2)
+    }
+
+    #[test]
+    fn dhcpv6_relay_header_relay_forward_builder_sets_packet_data() {
+        let relay = Dhcpv6::relay_forward(link(), peer());
+        let header = relay.relay().unwrap();
+
+        assert_eq!(relay.message_type_value(), Dhcpv6MessageType::RelayForw);
+        assert_eq!(header.hop_count_value(), 0);
+        assert_eq!(header.hop_count_state(), FieldState::Defaulted);
+        assert_eq!(header.link_address_value(), link());
+        assert_eq!(header.link_address_state(), FieldState::User);
+        assert_eq!(header.peer_address_value(), peer());
+        assert_eq!(header.peer_address_state(), FieldState::User);
+        assert_eq!(relay.encoded_len(), 34);
+    }
+
+    #[test]
+    fn dhcpv6_relay_header_relay_reply_builder_sets_packet_data() {
+        let relay = Dhcpv6::relay_reply(link(), peer()).hop_count(2);
+        let header = relay.relay().unwrap();
+
+        assert_eq!(relay.message_type_value(), Dhcpv6MessageType::RelayRepl);
+        assert_eq!(header.hop_count_value(), 2);
+        assert_eq!(header.hop_count_state(), FieldState::User);
+    }
+
+    #[test]
+    fn dhcpv6_relay_header_peer_address_setter_updates_packet_data() {
+        let new_peer = Ipv6Addr::new(0x2001, 0x0db8, 3, 0, 0, 0, 0, 3);
+        let relay = Dhcpv6::relay_forward(link(), peer()).peer_address(new_peer);
+
+        assert_eq!(relay.relay().unwrap().peer_address_value(), new_peer);
+    }
+
+    #[test]
+    fn dhcpv6_relay_header_summary_and_inspection_include_peer_address() {
+        let relay = Dhcpv6::relay_forward(link(), peer()).hop_count(1);
+
+        let summary = relay.summary();
+        assert!(summary.contains("relay-forw"));
+        assert!(summary.contains("hop_count=1"));
+        assert!(summary.contains("peer_address=2001:db8:2::2"));
+        assert!(relay
+            .inspection_fields()
+            .iter()
+            .any(|(name, value)| *name == "peer_address" && value == "2001:db8:2::2"));
+    }
+
+    #[test]
+    fn dhcpv6_relay_header_compile_is_deferred_to_relay_codec() {
+        let error = Packet::from_layer(Dhcpv6::relay_forward(link(), peer()))
+            .compile()
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            CrafterError::invalid_field_value(
+                "dhcpv6.relay",
+                "relay compile is implemented by the relay codec",
+            ),
+        );
+    }
+
+    #[test]
+    fn dhcpv6_relay_header_standalone_header_builder_tracks_fields() {
+        let header = Dhcpv6RelayHeader::new(link(), peer()).hop_count(3);
+
+        assert_eq!(header.hop_count_value(), 3);
+        assert_eq!(header.link_address_value(), link());
+        assert_eq!(header.peer_address_value(), peer());
     }
 }
