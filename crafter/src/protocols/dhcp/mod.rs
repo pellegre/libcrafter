@@ -11,3 +11,5 @@ pub mod v6;
 
 pub use v4::*;
 pub(crate) use v4::{append_dhcpv4_packet, is_dhcpv4_port_pair, looks_like_dhcpv4_payload};
+pub use v6::*;
+pub(crate) use v6::{append_dhcpv6_packet, is_dhcpv6_port_pair, looks_like_dhcpv6_client_payload};
