@@ -15,8 +15,8 @@ use super::constants::{
 use super::duid::Dhcpv6Duid;
 use super::message::{dhcpv6_message_type_summary, Dhcpv6MessageType};
 use super::option::{
-    Dhcpv6Authentication, Dhcpv6BootfileParam, Dhcpv6ClientArchitecture,
-    Dhcpv6ClientLinkLayerAddress, Dhcpv6DomainList, Dhcpv6IaNa, Dhcpv6IaPd,
+    Dhcpv6Authentication, Dhcpv6BootfileParam, Dhcpv6ClientArchitecture, Dhcpv6ClientData,
+    Dhcpv6ClientLinkLayerAddress, Dhcpv6DomainList, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6Leasequery,
     Dhcpv6NetworkInterfaceIdentifier, Dhcpv6Option, Dhcpv6OptionCode, Dhcpv6RelaySuppliedOptions,
     Dhcpv6RemoteId, Dhcpv6StatusCodeOption, Dhcpv6UserClass, Dhcpv6VendorClass,
     Dhcpv6VendorOptions,
@@ -177,6 +177,16 @@ impl Dhcpv6 {
     /// Create a DHCPv6 Information-request message with the supplied transaction ID.
     pub fn information_request(transaction_id: u32) -> Self {
         Self::client_server_message(Dhcpv6MessageType::InformationRequest, transaction_id)
+    }
+
+    /// Create a DHCPv6 LEASEQUERY message with the supplied transaction ID.
+    pub fn leasequery(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::LeaseQuery, transaction_id)
+    }
+
+    /// Create a DHCPv6 LEASEQUERY-REPLY message with the supplied transaction ID.
+    pub fn leasequery_reply(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::LeaseQueryReply, transaction_id)
     }
 
     /// Create a DHCPv6 ADDR-REG-INFORM message with the supplied transaction ID.
@@ -365,6 +375,34 @@ impl Dhcpv6 {
     /// Append an OPTION_ADDR_REG_ENABLE option.
     pub fn addr_reg_enable(self) -> Self {
         self.option(Dhcpv6Option::addr_reg_enable())
+    }
+
+    /// Append an OPTION_LQ_QUERY option.
+    pub fn leasequery_option(self, query: Dhcpv6Leasequery) -> Result<Self> {
+        Ok(self.option(Dhcpv6Option::leasequery(query)?))
+    }
+
+    /// Append an OPTION_CLIENT_DATA option.
+    pub fn client_data(self, client_data: Dhcpv6ClientData) -> Result<Self> {
+        Ok(self.option(Dhcpv6Option::client_data(client_data)?))
+    }
+
+    /// Append an OPTION_CLT_TIME option.
+    pub fn client_time(self, seconds: u32) -> Self {
+        self.option(Dhcpv6Option::client_time(seconds))
+    }
+
+    /// Append an OPTION_LQ_RELAY_DATA option.
+    pub fn leasequery_relay_data(self, payload: impl Into<Vec<u8>>) -> Self {
+        self.option(Dhcpv6Option::leasequery_relay_data(payload))
+    }
+
+    /// Append an OPTION_LQ_CLIENT_LINK option.
+    pub fn leasequery_client_link<I>(self, addresses: I) -> Self
+    where
+        I: IntoIterator<Item = Ipv6Addr>,
+    {
+        self.option(Dhcpv6Option::leasequery_client_link(addresses))
     }
 
     /// Append an OPTION_AUTH option.
@@ -595,6 +633,44 @@ impl Dhcpv6 {
         match self.first_option(super::constants::DHCPV6_OPTION_ADDR_REG_ENABLE) {
             Some(option) => option.addr_reg_enable_present(),
             None => Ok(false),
+        }
+    }
+
+    /// Decode the first Leasequery option.
+    pub fn leasequery_value(&self) -> Result<Option<Dhcpv6Leasequery>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_LQ_QUERY) {
+            Some(option) => option.leasequery_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode the first Client Data option.
+    pub fn client_data_value(&self) -> Result<Option<Dhcpv6ClientData>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_CLIENT_DATA) {
+            Some(option) => option.client_data_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode the first Client Last Transaction Time option.
+    pub fn client_time_value(&self) -> Result<Option<u32>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_CLT_TIME) {
+            Some(option) => option.client_time_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Return OPTION_LQ_RELAY_DATA payload bytes.
+    pub fn leasequery_relay_data_value(&self) -> Option<&[u8]> {
+        self.first_option(super::constants::DHCPV6_OPTION_LQ_RELAY_DATA)
+            .and_then(Dhcpv6Option::leasequery_relay_data_value)
+    }
+
+    /// Decode the first Leasequery Client Link option.
+    pub fn leasequery_client_link_value(&self) -> Result<Option<Vec<Ipv6Addr>>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_LQ_CLIENT_LINK) {
+            Some(option) => option.leasequery_client_link_value(),
+            None => Ok(None),
         }
     }
 
@@ -2018,5 +2094,138 @@ mod dhcpv6_reconfigure_tests {
         assert_eq!(status.status(), Dhcpv6StatusCode::AddressInUse);
         assert_eq!(status.message_bytes(), &[]);
         assert_eq!(decoded.options_ref()[1].payload(), &[1, 2, 3]);
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_leasequery_base_tests {
+    use core::net::Ipv6Addr;
+
+    use super::Dhcpv6;
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{
+        Dhcpv6ClientData, Dhcpv6Leasequery, Dhcpv6LeasequeryType, Dhcpv6MessageType, Dhcpv6Option,
+        DHCPV6_LEASEQUERY, DHCPV6_LEASEQUERY_REPLY, DHCPV6_OPTION_CLIENT_DATA,
+        DHCPV6_OPTION_CLT_TIME, DHCPV6_OPTION_LQ_CLIENT_LINK, DHCPV6_OPTION_LQ_QUERY,
+    };
+
+    fn link() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, 55, 0, 0, 0, 0, 1)
+    }
+
+    #[test]
+    fn dhcpv6_leasequery_base_message_codepoints_and_query_payloads() {
+        let nested = Dhcpv6Option::client_id([0, 3, 0, 1, 0, 1, 2, 3]);
+        let query =
+            Dhcpv6Leasequery::new(Dhcpv6LeasequeryType::ByAddress, link()).option(nested.clone());
+        let option = Dhcpv6Option::leasequery(query.clone()).unwrap();
+
+        assert_eq!(Dhcpv6MessageType::LeaseQuery.code(), DHCPV6_LEASEQUERY);
+        assert_eq!(
+            Dhcpv6MessageType::LeaseQueryReply.code(),
+            DHCPV6_LEASEQUERY_REPLY
+        );
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_LQ_QUERY);
+
+        let decoded = option.leasequery_value().unwrap().unwrap();
+        assert_eq!(decoded, query);
+        assert_eq!(decoded.query_type(), Dhcpv6LeasequeryType::ByAddress);
+        assert_eq!(decoded.link_address(), link());
+        assert_eq!(decoded.options_ref(), &[nested]);
+    }
+
+    #[test]
+    fn dhcpv6_leasequery_base_preserves_unknown_query_types() {
+        let query = Dhcpv6Leasequery::new(Dhcpv6LeasequeryType::Unknown(250), link());
+        let decoded = Dhcpv6Option::leasequery(query.clone())
+            .unwrap()
+            .leasequery_value()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(decoded, query);
+        assert_eq!(decoded.query_type(), Dhcpv6LeasequeryType::Unknown(250));
+    }
+
+    #[test]
+    fn dhcpv6_leasequery_base_request_and_reply_roundtrip() {
+        let query = Dhcpv6Leasequery::new(Dhcpv6LeasequeryType::ByClientId, link())
+            .option(Dhcpv6Option::client_id([0, 3, 0, 1, 0xaa, 0xbb]));
+        let request = Dhcpv6::leasequery(0x010203)
+            .leasequery_option(query.clone())
+            .unwrap();
+        let decoded_request =
+            Dhcpv6::decode(Packet::from_layer(request).compile().unwrap().as_bytes()).unwrap();
+
+        assert_eq!(
+            decoded_request.message_type_value(),
+            Dhcpv6MessageType::LeaseQuery
+        );
+        assert_eq!(decoded_request.leasequery_value().unwrap(), Some(query));
+
+        let client_data =
+            Dhcpv6ClientData::new().option(Dhcpv6Option::raw(65_006u16, [0xde, 0xad]));
+        let reply_link = Ipv6Addr::new(0x2001, 0x0db8, 55, 0, 0, 0, 0, 2);
+        let reply = Dhcpv6::leasequery_reply(0x010203)
+            .client_data(client_data.clone())
+            .unwrap()
+            .client_time(300)
+            .leasequery_client_link([reply_link])
+            .leasequery_relay_data([0xaa, 0xbb, 0xcc]);
+        let decoded_reply =
+            Dhcpv6::decode(Packet::from_layer(reply).compile().unwrap().as_bytes()).unwrap();
+
+        assert_eq!(
+            decoded_reply.message_type_value(),
+            Dhcpv6MessageType::LeaseQueryReply
+        );
+        assert_eq!(
+            decoded_reply.client_data_value().unwrap(),
+            Some(client_data)
+        );
+        assert_eq!(decoded_reply.client_time_value().unwrap(), Some(300));
+        assert_eq!(
+            decoded_reply.leasequery_client_link_value().unwrap(),
+            Some(vec![reply_link]),
+        );
+        assert_eq!(
+            decoded_reply.leasequery_relay_data_value(),
+            Some(&[0xaa, 0xbb, 0xcc][..]),
+        );
+    }
+
+    #[test]
+    fn dhcpv6_leasequery_base_rejects_malformed_lengths() {
+        let short_query = Dhcpv6Option::raw(DHCPV6_OPTION_LQ_QUERY, vec![0; 16]);
+        assert_eq!(
+            short_query.leasequery_value().unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.lq_query", 17, 16),
+        );
+
+        let bad_client_data =
+            Dhcpv6Option::raw(DHCPV6_OPTION_CLIENT_DATA, [0x00, 0x01, 0x00, 0x02, 0xff]);
+        assert_eq!(
+            bad_client_data.client_data_value().unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.payload", 6, 5),
+        );
+
+        let bad_time = Dhcpv6Option::raw(DHCPV6_OPTION_CLT_TIME, [0, 0, 0]);
+        assert_eq!(
+            bad_time.client_time_value().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.clt_time",
+                "payload length does not match option format",
+            ),
+        );
+
+        let bad_link = Dhcpv6Option::raw(DHCPV6_OPTION_LQ_CLIENT_LINK, [0; 15]);
+        assert_eq!(
+            bad_link.leasequery_client_link_value().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.lq_client_link",
+                "payload length must be a multiple of 16 bytes",
+            ),
+        );
     }
 }
