@@ -7,3 +7,7 @@
 //! The module is intentionally a skeleton at this stage. It exposes no packet
 //! builders, decoders, option types, or UDP bindings until later steps add
 //! source-backed DHCPv6 wire behavior.
+
+pub mod constants;
+
+pub use constants::*;
