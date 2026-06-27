@@ -12,6 +12,7 @@ use super::constants::{
     DHCPV6_OPTION_ORO, DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT,
     DHCPV6_OPTION_SERVERID,
 };
+use super::duid::Dhcpv6Duid;
 
 /// DHCPv6 option codepoint.
 ///
@@ -245,6 +246,22 @@ impl Dhcpv6Option {
     /// Return OPTION_SERVERID DUID bytes when this option is Server ID.
     pub fn server_id_value(&self) -> Option<&[u8]> {
         self.payload_if_code(DHCPV6_OPTION_SERVERID)
+    }
+
+    /// Decode OPTION_CLIENTID as a DUID.
+    pub fn client_duid_value(&self) -> Result<Option<Dhcpv6Duid>> {
+        match self.client_id_value() {
+            Some(payload) => Dhcpv6Duid::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode OPTION_SERVERID as a DUID.
+    pub fn server_duid_value(&self) -> Result<Option<Dhcpv6Duid>> {
+        match self.server_id_value() {
+            Some(payload) => Dhcpv6Duid::decode(payload).map(Some),
+            None => Ok(None),
+        }
     }
 
     /// Decode OPTION_ORO requested option codepoints.

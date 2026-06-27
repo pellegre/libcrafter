@@ -12,6 +12,7 @@ use super::constants::{
     DHCPV6_CLIENT_PORT, DHCPV6_CLIENT_SERVER_HEADER_LEN, DHCPV6_RELAY_FORW,
     DHCPV6_RELAY_HEADER_LEN, DHCPV6_RELAY_REPL, DHCPV6_SERVER_PORT, DHCPV6_TRANSACTION_ID_MAX,
 };
+use super::duid::Dhcpv6Duid;
 use super::message::{dhcpv6_message_type_summary, Dhcpv6MessageType};
 use super::option::{Dhcpv6Option, Dhcpv6OptionCode};
 
@@ -291,6 +292,16 @@ impl Dhcpv6 {
         self.option(Dhcpv6Option::server_id(duid))
     }
 
+    /// Append an OPTION_CLIENTID option from a typed DUID.
+    pub fn client_duid(self, duid: Dhcpv6Duid) -> Self {
+        self.client_id(duid)
+    }
+
+    /// Append an OPTION_SERVERID option from a typed DUID.
+    pub fn server_duid(self, duid: Dhcpv6Duid) -> Self {
+        self.server_id(duid)
+    }
+
     /// Append an OPTION_ORO option.
     pub fn oro<I, C>(self, codes: I) -> Self
     where
@@ -341,6 +352,22 @@ impl Dhcpv6 {
     pub fn server_id_value(&self) -> Option<&[u8]> {
         self.first_option(super::constants::DHCPV6_OPTION_SERVERID)
             .and_then(Dhcpv6Option::server_id_value)
+    }
+
+    /// Decode the first Client ID option as a DUID.
+    pub fn client_duid_value(&self) -> Result<Option<Dhcpv6Duid>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_CLIENTID) {
+            Some(option) => option.client_duid_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode the first Server ID option as a DUID.
+    pub fn server_duid_value(&self) -> Result<Option<Dhcpv6Duid>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_SERVERID) {
+            Some(option) => option.server_duid_value(),
+            None => Ok(None),
+        }
     }
 
     /// Decode requested option codepoints from the first ORO option.
