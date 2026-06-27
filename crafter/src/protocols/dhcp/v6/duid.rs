@@ -52,6 +52,15 @@ impl Dhcpv6Duid {
         }
     }
 
+    /// Create a DUID-LLT value.
+    pub fn link_layer_time(
+        hardware_type: u16,
+        time: u32,
+        link_layer_address: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self::llt(hardware_type, time, link_layer_address)
+    }
+
     /// Create a DUID-EN value.
     pub fn en(enterprise_number: u32, identifier: impl Into<Vec<u8>>) -> Self {
         Self::En {
@@ -66,6 +75,11 @@ impl Dhcpv6Duid {
             hardware_type,
             link_layer_address: link_layer_address.into(),
         }
+    }
+
+    /// Create a DUID-LL value.
+    pub fn link_layer(hardware_type: u16, link_layer_address: impl Into<Vec<u8>>) -> Self {
+        Self::ll(hardware_type, link_layer_address)
     }
 
     /// Create a DUID-UUID value.
@@ -390,6 +404,95 @@ mod dhcpv6_duid_tests {
         let message = Dhcpv6::solicit(0x010203)
             .client_duid(client_duid.clone())
             .server_duid(server_duid.clone());
+        let bytes = Packet::from_layer(message).compile().unwrap();
+        let decoded = Dhcpv6::decode(bytes.as_bytes()).unwrap();
+
+        assert_eq!(decoded.client_duid_value().unwrap(), Some(client_duid));
+        assert_eq!(decoded.server_duid_value().unwrap(), Some(server_duid));
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_identity_tests {
+    use super::Dhcpv6Duid;
+    use crate::mac::MacAddr;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{Dhcpv6, Dhcpv6Option};
+
+    fn doc_mac(last: u8) -> MacAddr {
+        MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, last])
+    }
+
+    #[test]
+    fn dhcpv6_identity_duid_link_layer_helpers_use_documentation_mac_bytes() {
+        let ll = Dhcpv6Duid::link_layer(1, doc_mac(1).octets());
+        let llt = Dhcpv6Duid::link_layer_time(1, 0x01020304, doc_mac(2).octets());
+
+        assert_eq!(ll, Dhcpv6Duid::ll(1, doc_mac(1).octets()));
+        assert_eq!(llt, Dhcpv6Duid::llt(1, 0x01020304, doc_mac(2).octets()));
+        assert_eq!(
+            ll.encode(),
+            vec![0x00, 0x03, 0x00, 0x01, 0x00, 0x00, 0x5e, 0x00, 0x53, 0x01],
+        );
+        assert_eq!(
+            llt.encode(),
+            vec![
+                0x00, 0x01, 0x00, 0x01, 0x01, 0x02, 0x03, 0x04, 0x00, 0x00, 0x5e, 0x00, 0x53, 0x02,
+            ],
+        );
+    }
+
+    #[test]
+    fn dhcpv6_identity_option_helpers_roundtrip_typed_duids() {
+        let client_duid = Dhcpv6Duid::link_layer(1, doc_mac(3).octets());
+        let server_duid = Dhcpv6Duid::link_layer_time(1, 0x01020304, doc_mac(4).octets());
+
+        let client_option = Dhcpv6Option::client_duid(client_duid.clone());
+        let server_option = Dhcpv6Option::server_duid(server_duid.clone());
+
+        assert_eq!(
+            client_option.client_id_value(),
+            Some(client_duid.encode().as_slice()),
+        );
+        assert_eq!(
+            server_option.server_id_value(),
+            Some(server_duid.encode().as_slice()),
+        );
+        assert_eq!(
+            client_option.client_duid_value().unwrap(),
+            Some(client_duid.clone()),
+        );
+        assert_eq!(
+            server_option.server_duid_value().unwrap(),
+            Some(server_duid.clone()),
+        );
+    }
+
+    #[test]
+    fn dhcpv6_identity_layer_helpers_append_and_query_duids() {
+        let client_duid = Dhcpv6Duid::link_layer(1, doc_mac(5).octets());
+        let server_duid = Dhcpv6Duid::link_layer(1, doc_mac(6).octets());
+        let message = Dhcpv6::request(0x010203)
+            .client_duid(client_duid.clone())
+            .server_duid(server_duid.clone());
+
+        assert_eq!(
+            message.client_id_value(),
+            Some(client_duid.encode().as_slice())
+        );
+        assert_eq!(
+            message.server_id_value(),
+            Some(server_duid.encode().as_slice())
+        );
+        assert_eq!(
+            message.client_duid_value().unwrap(),
+            Some(client_duid.clone())
+        );
+        assert_eq!(
+            message.server_duid_value().unwrap(),
+            Some(server_duid.clone())
+        );
+
         let bytes = Packet::from_layer(message).compile().unwrap();
         let decoded = Dhcpv6::decode(bytes.as_bytes()).unwrap();
 
