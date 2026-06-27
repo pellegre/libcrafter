@@ -28,6 +28,11 @@ Per-protocol wire coverage for building and decoding packets.
   checksums, decode, inspection, and sizing helpers.
 - [UDP wire coverage](guide/udp.md) — UDP datagram construction, length and
   checksum auto-fill, decode dispatch, and the implemented RFCs.
+- [DHCPv4 wire coverage](guide/dhcpv4.md) — BOOTP/DHCPv4 packet construction,
+  named message constructors, typed options, option overload, RFC 3396 long
+  options, relay agent information (option 82), client identifiers,
+  authentication, leasequery packet fields, decode, inspection, dry-run
+  planning, and the provider-backed live boundary.
 - [DHCPv6 wire coverage](guide/dhcpv6.md) — DHCPv6 client/server and relay
   packet construction, typed options, prefix delegation, decode, inspection,
   offline fixtures, dry-run send/receive planning, and the provider-backed live
