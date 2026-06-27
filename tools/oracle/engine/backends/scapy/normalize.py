@@ -51,6 +51,7 @@ from .protocols.dhcpv4 import (
     _apply_dhcpv4_option_details,
     _decode_dhcpv4_option_tlvs,
 )
+from .protocols.dhcpv6 import _DHCPV6_OPTION_REGION_KEY
 from .protocols.quic import canonicalize_quic_payload
 
 
@@ -360,6 +361,8 @@ def normalize_packet(
     normalized_fields: dict[str, JSONObject] = {}
     for occurrence, layer in enumerate(layers):
         native_layer = _text(layer["name"])
+        if native_layer.startswith("DHCP6Opt"):
+            continue
         normalized_layer = _normalize_layer_name(native_layer)
         if normalized_layer == "padding":
             continue
@@ -494,6 +497,10 @@ def _packet_layers(packet: Any) -> list[JSONObject]:
             option_bytes = _dhcpv4_option_region_bytes(current)
             if option_bytes is not None:
                 fields[_DHCPV4_OPTION_REGION_KEY] = option_bytes.hex()
+        if _is_dhcpv6_message_layer(current.__class__.__name__):
+            option_bytes = _dhcpv6_option_region_bytes(current)
+            if option_bytes is not None:
+                fields[_DHCPV6_OPTION_REGION_KEY] = option_bytes.hex()
         if current.__class__.__name__ in {"IPv6ExtHdrHopByHop", "IPv6ExtHdrDestOpt"}:
             option_bytes = _ipv6_option_region_bytes(current)
             if option_bytes is not None:
@@ -524,6 +531,24 @@ def _dhcpv4_option_region_bytes(dhcpv4_layer: Any) -> bytes | None:
         return bytes(import_scapy()["all"].raw(dhcpv4_layer))
     except Exception:  # pragma: no cover - Scapy serialization edge cases.
         return None
+
+
+def _is_dhcpv6_message_layer(native_name: str) -> bool:
+    return native_name == "DHCP6" or (
+        native_name.startswith("DHCP6_") and not native_name.startswith("DHCP6Opt")
+    )
+
+
+def _dhcpv6_option_region_bytes(dhcpv6_layer: Any) -> bytes | None:
+    try:
+        raw = bytes(import_scapy()["all"].raw(dhcpv6_layer))
+    except Exception:  # pragma: no cover - Scapy serialization edge cases.
+        return None
+    native_name = dhcpv6_layer.__class__.__name__
+    header_len = 34 if native_name in {"DHCP6_RelayForward", "DHCP6_RelayReply"} else 4
+    if len(raw) < header_len:
+        return None
+    return raw[header_len:]
 
 
 def _ipv6_option_region_bytes(layer: Any) -> bytes | None:

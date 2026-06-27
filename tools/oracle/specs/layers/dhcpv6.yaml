@@ -82,14 +82,14 @@ notes:
 
 backend_support:
   scapy:
-    status: partial
+    status: supported
     native_layers:
       - DHCP6
-    encode: false
-    decode: false
+    encode: true
+    decode: true
     notes:
-      - Layer, stack, profile, and generator specs are registered first; Scapy
-        materialization is added by the backend coverage step.
+      - Encodes and decodes the DHCPv6 message, relay, identity association,
+        and unknown-option oracle cases through Scapy DHCP6 layers.
   libcrafter:
     status: supported
     encode: true

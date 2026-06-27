@@ -212,6 +212,7 @@ _SUPPORTED_FEATURES = {
     "ble-pcap-link-types",
     "ble-radio-phdr",
     "dhcpv4_behavior",
+    "dhcpv6_behavior",
     "dns_behavior",
     "dot11_basic",
     "dot11_data_llc",

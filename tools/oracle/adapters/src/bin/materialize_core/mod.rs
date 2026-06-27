@@ -263,6 +263,7 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "igmp_extension" => Ok(Box::new(igmp_extension_layer(plan)?)),
         "dns" => Ok(Box::new(dns_layer(plan)?)),
         "dhcpv4" => Ok(Box::new(dhcpv4_layer(plan)?)),
+        "dhcpv6" => Ok(Box::new(dhcpv6_layer(plan)?)),
         "snmp" => Ok(Box::new(snmp_layer(plan)?)),
         "rip" => Ok(Box::new(rip_layer(plan)?)),
         "ripng" => Ok(Box::new(ripng_layer(plan)?)),
@@ -3468,6 +3469,40 @@ fn dhcpv4_layer(plan: &Value) -> ExampleResult<Dhcpv4> {
     Ok(layer)
 }
 
+fn dhcpv6_layer(plan: &Value) -> ExampleResult<Dhcpv6> {
+    dhcpv6_message_from_fields(layer_fields(plan, "dhcpv6")?)
+}
+
+fn dhcpv6_message_from_fields(fields: &Map<String, Value>) -> ExampleResult<Dhcpv6> {
+    let message_type = optional(fields, &["message_type"])
+        .map(dhcpv6_message_type)
+        .transpose()?
+        .unwrap_or(Dhcpv6MessageType::Solicit);
+    let mut layer = match message_type {
+        Dhcpv6MessageType::RelayForw | Dhcpv6MessageType::RelayRepl => {
+            let link_address = Ipv6Addr::from_str(text_required(fields, &["link_address"])?)?;
+            let peer_address = Ipv6Addr::from_str(text_required(fields, &["peer_address"])?)?;
+            if message_type == Dhcpv6MessageType::RelayRepl {
+                Dhcpv6::relay_reply(link_address, peer_address)
+            } else {
+                Dhcpv6::relay_forward(link_address, peer_address)
+            }
+        }
+        _ => Dhcpv6::new().message_type(message_type),
+    };
+
+    if let Some(value) = optional(fields, &["transaction_id"]) {
+        layer = layer.transaction_id(u32_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["hop_count"]) {
+        layer = layer.hop_count(u8_value(value)?);
+    }
+    if let Some(options) = optional(fields, &["options"]) {
+        layer = layer.options(dhcpv6_options(options)?);
+    }
+    Ok(layer)
+}
+
 fn snmp_layer(plan: &Value) -> ExampleResult<Snmp> {
     let fields = layer_fields(plan, "snmp")?;
     let message = snmp_message_bytes(fields)?;
@@ -5167,6 +5202,166 @@ fn dhcpv4_option_pair(name: &str, value: &str) -> ExampleResult<Dhcpv4Option> {
     }
 }
 
+fn dhcpv6_options(value: &Value) -> ExampleResult<Vec<Dhcpv6Option>> {
+    let mut options = Vec::new();
+    for item in array_values(value)? {
+        let fields = item
+            .as_object()
+            .ok_or_else(|| format!("dhcpv6 option must be an object, got {item:?}"))?;
+        options.push(dhcpv6_option(fields)?);
+    }
+    Ok(options)
+}
+
+fn dhcpv6_option(fields: &Map<String, Value>) -> ExampleResult<Dhcpv6Option> {
+    let name = text_required(fields, &["name"])?
+        .to_ascii_lowercase()
+        .replace('-', "_");
+    match name.as_str() {
+        "client_id" => Ok(Dhcpv6Option::client_id(decode_hex(text_required(
+            fields,
+            &["duid"],
+        )?)?)),
+        "server_id" => Ok(Dhcpv6Option::server_id(decode_hex(text_required(
+            fields,
+            &["duid"],
+        )?)?)),
+        "oro" => {
+            let codes = array_values(required(fields, &["codes"])?)?
+                .iter()
+                .map(u16_value)
+                .collect::<ExampleResult<Vec<_>>>()?;
+            Ok(Dhcpv6Option::oro(codes))
+        }
+        "elapsed_time" => Ok(Dhcpv6Option::elapsed_time(u16_value(required(
+            fields,
+            &["centiseconds"],
+        )?)?)),
+        "status_code" => Ok(Dhcpv6Option::status_code(
+            Dhcpv6StatusCodeOption::with_message(
+                dhcpv6_status_code(required(fields, &["status"])?)?,
+                dhcpv6_status_message(fields)?,
+            ),
+        )),
+        "dns_servers" => {
+            let servers = array_values(required(fields, &["servers"])?)?
+                .iter()
+                .map(ipv6_text)
+                .collect::<ExampleResult<Vec<_>>>()?;
+            Ok(Dhcpv6Option::dns_servers(servers))
+        }
+        "domain_list" => {
+            let domains = array_values(required(fields, &["domains"])?)?
+                .iter()
+                .map(text_value)
+                .collect::<ExampleResult<Vec<_>>>()?;
+            Ok(Dhcpv6Option::domain_list(Dhcpv6DomainList::parse(
+                domains,
+            )?)?)
+        }
+        "ia_na" => {
+            let nested = optional(fields, &["options"])
+                .map(dhcpv6_options)
+                .transpose()?
+                .unwrap_or_default();
+            Ok(Dhcpv6Option::ia_na(
+                Dhcpv6IaNa::new(
+                    u32_value(required(fields, &["iaid"])?)?,
+                    optional(fields, &["t1"])
+                        .map(u32_value)
+                        .transpose()?
+                        .unwrap_or(0),
+                    optional(fields, &["t2"])
+                        .map(u32_value)
+                        .transpose()?
+                        .unwrap_or(0),
+                )
+                .options(nested),
+            )?)
+        }
+        "ia_addr" => {
+            let nested = optional(fields, &["options"])
+                .map(dhcpv6_options)
+                .transpose()?
+                .unwrap_or_default();
+            Ok(Dhcpv6Option::ia_addr(
+                Dhcpv6IaAddr::new(
+                    ipv6_text(required(fields, &["address"])?)?,
+                    u32_value(required(fields, &["preferred_lifetime"])?)?,
+                    u32_value(required(fields, &["valid_lifetime"])?)?,
+                )
+                .options(nested),
+            )?)
+        }
+        "ia_pd" => {
+            let nested = optional(fields, &["options"])
+                .map(dhcpv6_options)
+                .transpose()?
+                .unwrap_or_default();
+            Ok(Dhcpv6Option::ia_pd(
+                Dhcpv6IaPd::new(
+                    u32_value(required(fields, &["iaid"])?)?,
+                    optional(fields, &["t1"])
+                        .map(u32_value)
+                        .transpose()?
+                        .unwrap_or(0),
+                    optional(fields, &["t2"])
+                        .map(u32_value)
+                        .transpose()?
+                        .unwrap_or(0),
+                )
+                .options(nested),
+            )?)
+        }
+        "ia_prefix" => {
+            let nested = optional(fields, &["options"])
+                .map(dhcpv6_options)
+                .transpose()?
+                .unwrap_or_default();
+            Ok(Dhcpv6Option::ia_prefix(
+                Dhcpv6IaPrefix::new(
+                    u32_value(required(fields, &["preferred_lifetime"])?)?,
+                    u32_value(required(fields, &["valid_lifetime"])?)?,
+                    u8_value(required(fields, &["prefix_length"])?)?,
+                    ipv6_text(required(fields, &["prefix"])?)?,
+                )
+                .options(nested),
+            )?)
+        }
+        "interface_id" => Ok(Dhcpv6Option::interface_id(decode_hex(text_required(
+            fields,
+            &["payload_hex"],
+        )?)?)),
+        "relay_msg" => {
+            let payload = if let Some(value) = optional(fields, &["payload_hex"]) {
+                decode_hex(text_value(value)?)?
+            } else {
+                let message = required(fields, &["message"])?
+                    .as_object()
+                    .ok_or("dhcpv6 relay_msg.message must be an object")?;
+                Packet::from_layer(dhcpv6_message_from_fields(message)?)
+                    .compile()?
+                    .as_bytes()
+                    .to_vec()
+            };
+            Ok(Dhcpv6Option::relay_msg(payload))
+        }
+        "unknown" | "raw" => Ok(Dhcpv6Option::raw(
+            u16_value(required(fields, &["code"])?)?,
+            decode_hex(text_required(fields, &["payload_hex"])?)?,
+        )),
+        _ => Err(format!("unsupported dhcpv6 option kind: {name}").into()),
+    }
+}
+
+fn dhcpv6_status_message(fields: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    match optional(fields, &["message"]) {
+        Some(Value::String(text)) => Ok(text.as_bytes().to_vec()),
+        Some(value) => bytes_value(value),
+        None => Ok(Vec::new()),
+    }
+}
+
 fn dhcpv4_message_type(value: &str) -> Dhcpv4MessageType {
     match value.replace('-', "_").as_str() {
         "discover" => Dhcpv4MessageType::Discover,
@@ -5182,6 +5377,44 @@ fn dhcpv4_message_type(value: &str) -> Dhcpv4MessageType {
             .map(Dhcpv4MessageType::Unknown)
             .unwrap_or(Dhcpv4MessageType::Discover),
     }
+}
+
+fn dhcpv6_message_type(value: &Value) -> ExampleResult<Dhcpv6MessageType> {
+    if let Some(text) = value.as_str() {
+        return Ok(match text.to_ascii_lowercase().replace('-', "_").as_str() {
+            "solicit" => Dhcpv6MessageType::Solicit,
+            "advertise" => Dhcpv6MessageType::Advertise,
+            "request" => Dhcpv6MessageType::Request,
+            "confirm" => Dhcpv6MessageType::Confirm,
+            "renew" => Dhcpv6MessageType::Renew,
+            "rebind" => Dhcpv6MessageType::Rebind,
+            "reply" => Dhcpv6MessageType::Reply,
+            "release" => Dhcpv6MessageType::Release,
+            "decline" => Dhcpv6MessageType::Decline,
+            "reconfigure" => Dhcpv6MessageType::Reconfigure,
+            "information_request" => Dhcpv6MessageType::InformationRequest,
+            "relay_forward" | "relay_forw" => Dhcpv6MessageType::RelayForw,
+            "relay_reply" | "relay_repl" => Dhcpv6MessageType::RelayRepl,
+            _ => Dhcpv6MessageType::from_code(u8_text(text)?),
+        });
+    }
+    Ok(Dhcpv6MessageType::from_code(u8_value(value)?))
+}
+
+fn dhcpv6_status_code(value: &Value) -> ExampleResult<Dhcpv6StatusCode> {
+    if let Some(text) = value.as_str() {
+        return Ok(match text.to_ascii_lowercase().replace('-', "_").as_str() {
+            "success" => Dhcpv6StatusCode::Success,
+            "unspec_fail" => Dhcpv6StatusCode::UnspecFail,
+            "no_addrs_avail" => Dhcpv6StatusCode::NoAddrsAvail,
+            "no_binding" => Dhcpv6StatusCode::NoBinding,
+            "not_on_link" => Dhcpv6StatusCode::NotOnLink,
+            "use_multicast" => Dhcpv6StatusCode::UseMulticast,
+            "no_prefix_avail" => Dhcpv6StatusCode::NoPrefixAvail,
+            _ => Dhcpv6StatusCode::from_code(u16_text(text)?),
+        });
+    }
+    Ok(Dhcpv6StatusCode::from_code(u16_value(value)?))
 }
 
 fn parse_ipv4_list(value: &str) -> ExampleResult<Vec<Ipv4Addr>> {

@@ -15,6 +15,23 @@ _DHCPV6_STACKS = {
 }
 
 
+def _require_scapy_backend():
+    try:
+        from tools.oracle.engine.backends.scapy.packets import encode_packet_plan
+        from tools.oracle.engine.backends.scapy.normalize import decode_vector
+    except Exception as exc:  # pragma: no cover - exercised only without Scapy.
+        raise unittest.SkipTest(f"Scapy backend unavailable: {exc}")
+
+    try:
+        from tools.oracle.engine.backends.scapy.bootstrap import import_scapy
+
+        import_scapy()
+    except Exception as exc:  # pragma: no cover - exercised only without Scapy.
+        raise unittest.SkipTest(f"Scapy is not importable: {exc}")
+
+    return encode_packet_plan, decode_vector
+
+
 def _plans_for_case(case: str, count: int = 4) -> list[PacketPlan]:
     return generate_plans(
         seed=9915,
@@ -53,6 +70,18 @@ def _option_names(dhcpv6: Mapping[str, object]) -> list[str]:
         assert isinstance(name, str)
         output.append(name)
     return output
+
+
+def _option_codes(dhcpv6: Mapping[str, object]) -> list[int]:
+    options = dhcpv6.get("options")
+    assert isinstance(options, Sequence)
+    codes: list[int] = []
+    for option in options:
+        assert isinstance(option, Mapping)
+        code = option.get("code")
+        assert isinstance(code, int)
+        codes.append(code)
+    return codes
 
 
 class Dhcpv6GeneratorSelectionTest(unittest.TestCase):
@@ -120,6 +149,56 @@ class Dhcpv6GeneratorSelectionTest(unittest.TestCase):
         first = [plan.to_dict() for plan in _plans_for_case("dhcpv6-option-matrix")]
         second = [plan.to_dict() for plan in _plans_for_case("dhcpv6-option-matrix")]
         self.assertEqual(first, second)
+
+
+class ScapyDhcpv6MaterializationTest(unittest.TestCase):
+    def _decoded_for_case(self, case: str):
+        encode_packet_plan, decode_vector = _require_scapy_backend()
+        plan = _first_plan(case)
+        vector = encode_packet_plan(plan)
+        return plan, vector, decode_vector(vector)
+
+    def test_scapy_materializes_solicit(self) -> None:
+        plan, vector, decoded = self._decoded_for_case("dhcpv6-solicit")
+
+        self.assertEqual(vector.metadata.get("scapy_stack")[-1], "DHCP6")
+        self.assertEqual(decoded.layers, list(plan.stack))
+        dhcpv6 = decoded.fields.get("dhcpv6")
+        self.assertIsInstance(dhcpv6, Mapping)
+        self.assertEqual(dhcpv6.get("message_type"), 1)
+        self.assertIn("transaction_id", dhcpv6)
+        self.assertEqual(_option_codes(dhcpv6), [1, 6, 8])
+
+    def test_scapy_materializes_relay_forward(self) -> None:
+        _plan, _vector, decoded = self._decoded_for_case("dhcpv6-relay-forward")
+        dhcpv6 = decoded.fields.get("dhcpv6")
+
+        self.assertIsInstance(dhcpv6, Mapping)
+        self.assertEqual(dhcpv6.get("message_type"), 12)
+        self.assertEqual(dhcpv6.get("hop_count"), 1)
+        self.assertEqual(dhcpv6.get("link_address"), "2001:db8:100::")
+        self.assertEqual(_option_codes(dhcpv6), [18, 9])
+
+    def test_scapy_materializes_ia_na(self) -> None:
+        _plan, _vector, decoded = self._decoded_for_case("dhcpv6-ia-na-iaaddr")
+        dhcpv6 = decoded.fields.get("dhcpv6")
+
+        self.assertIsInstance(dhcpv6, Mapping)
+        self.assertIn(3, _option_codes(dhcpv6))
+
+    def test_scapy_materializes_ia_pd(self) -> None:
+        _plan, _vector, decoded = self._decoded_for_case("dhcpv6-ia-pd-iaprefix")
+        dhcpv6 = decoded.fields.get("dhcpv6")
+
+        self.assertIsInstance(dhcpv6, Mapping)
+        self.assertIn(25, _option_codes(dhcpv6))
+
+    def test_scapy_materializes_unknown_options(self) -> None:
+        _plan, _vector, decoded = self._decoded_for_case("dhcpv6-unknown-option")
+        dhcpv6 = decoded.fields.get("dhcpv6")
+
+        self.assertIsInstance(dhcpv6, Mapping)
+        self.assertIn(65000, _option_codes(dhcpv6))
 
 
 if __name__ == "__main__":
