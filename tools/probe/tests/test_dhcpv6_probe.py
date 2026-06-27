@@ -177,6 +177,36 @@ class Dhcpv6ProbePlanTest(unittest.TestCase):
             plan["dhcpv6"]["server_duid_hex"],
         )
 
+    def test_prefix_delegation_validates_iaprefix_and_exchange_transactions(self) -> None:
+        plan = _dhcpv6_plan("dhcpv6-prefix-delegation")
+
+        ia_pd = plan["validation"]["ia_pd"]
+        self.assertTrue(ia_pd["enabled"])
+        self.assertEqual(ia_pd["iaid"], plan["dhcpv6"]["transaction_id"])
+        self.assertEqual(ia_pd["t1"], 1800)
+        self.assertEqual(ia_pd["t2"], 2880)
+        iaprefix = ia_pd["iaprefix"]
+        self.assertEqual(iaprefix["prefix_length"], 56)
+        self.assertEqual(iaprefix["preferred_lifetime"], 3600)
+        self.assertEqual(iaprefix["valid_lifetime"], 7200)
+        delegated_prefix = str(iaprefix["prefix"]).split("/")[0]
+        self.assertIn(
+            ipaddress.ip_address(delegated_prefix),
+            ipaddress.ip_network("2001:db8::/32"),
+        )
+        self.assertEqual(ia_pd["status"], "success")
+        self.assertEqual(plan["validation"]["route_installation"], "out_of_scope")
+        self.assertEqual(
+            plan["validation"]["reply_decode"]["required_options"],
+            ["server_identifier", "client_identifier", "ia_pd", "iaprefix", "status_code"],
+        )
+        exchanges = plan["validation"]["pd_exchanges"]
+        self.assertEqual(
+            [(item["stimulus"], item["expected_response"]) for item in exchanges],
+            [("solicit", "advertise"), ("request", "reply")],
+        )
+        self.assertTrue(all(item["transaction_id_match"] for item in exchanges))
+
     def test_relay_plan_targets_all_servers_multicast(self) -> None:
         plan = _dhcpv6_plan(RELAY_CASE)
 
