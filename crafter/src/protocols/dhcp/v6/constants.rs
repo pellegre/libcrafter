@@ -154,6 +154,12 @@ pub const DHCPV6_OPTION_4RD: u16 = 97;
 pub const DHCPV6_OPTION_4RD_MAP_RULE: u16 = 98;
 /// DHCPv6 OPTION_4RD_NON_MAP_RULE option code.
 pub const DHCPV6_OPTION_4RD_NON_MAP_RULE: u16 = 99;
+/// DHCPv6 OPTION_LQ_BASE_TIME option code.
+pub const DHCPV6_OPTION_LQ_BASE_TIME: u16 = 100;
+/// DHCPv6 OPTION_LQ_START_TIME option code.
+pub const DHCPV6_OPTION_LQ_START_TIME: u16 = 101;
+/// DHCPv6 OPTION_LQ_END_TIME option code.
+pub const DHCPV6_OPTION_LQ_END_TIME: u16 = 102;
 /// DHCPv6 Captive-Portal option code.
 pub const DHCPV6_OPTION_CAPTIVE_PORTAL: u16 = 103;
 /// DHCPv6 OPTION_S46_PRIORITY option code.
