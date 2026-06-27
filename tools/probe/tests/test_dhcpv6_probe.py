@@ -15,6 +15,7 @@ from tools.probe.engine.model import ProbeRunRequest
 
 
 DHCPV6_SMOKE_PROFILE = "dhcpv6-smoke"
+DHCPV6_ADVANCED_PROFILE = "dhcpv6-advanced"
 INFO_REQUEST_CASE = "dhcpv6-information-request-reply"
 RELAY_CASE = "dhcpv6-relay-forward-reply"
 REPEATED_XID_CASE = "dhcpv6-repeated-transaction-id"
@@ -97,6 +98,17 @@ class Dhcpv6ProbeProfileTest(unittest.TestCase):
         self.assertEqual(
             capabilities.skip_reason_for_missing_capability(case, missing[0]),
             capabilities.SKIP_REQUIRES_DHCPV6_SERVICE,
+        )
+
+    def test_dhcpv6_advanced_profile_is_registered(self) -> None:
+        self.assertEqual(
+            probe_cases.profile_case_names(DHCPV6_ADVANCED_PROFILE),
+            (
+                "dhcpv6-reconfigure-observation",
+                "dhcpv6-leasequery-plan",
+                "dhcpv6-bulk-leasequery-plan",
+                "dhcpv6-active-leasequery-plan",
+            ),
         )
 
 
@@ -266,6 +278,69 @@ class Dhcpv6ProbePlanTest(unittest.TestCase):
         self.assertEqual(peers["stimulus"], ["relay"])
         self.assertEqual(peers["relay"], ["stimulus", "target"])
         self.assertEqual(peers["target"], ["relay"])
+
+    def test_advanced_reconfigure_and_leasequery_contracts_are_planned(self) -> None:
+        reconfigure = _dhcpv6_plan("dhcpv6-reconfigure-observation")
+        leasequery = _dhcpv6_plan("dhcpv6-leasequery-plan")
+
+        self.assertEqual(
+            reconfigure["planned_only_reason"],
+            "controlled_dhcpv6_service_not_implemented",
+        )
+        self.assertFalse(reconfigure["target_service"]["implemented"])
+        self.assertEqual(
+            reconfigure["validation"]["advanced"]["required_request_options"],
+            ["server_identifier", "reconfigure_message", "authentication"],
+        )
+        self.assertEqual(
+            reconfigure["validation"]["advanced"]["expected_client_response"],
+            "information-request",
+        )
+
+        advanced = leasequery["validation"]["advanced"]
+        self.assertEqual(advanced["query_type"], "by_address")
+        self.assertTrue(leasequery["target_service"]["implemented"])
+        self.assertIn(
+            "status_code",
+            leasequery["validation"]["reply_decode"]["required_options"],
+        )
+        expected_options = {
+            option["name"]: option for option in leasequery["dhcpv6"]["expected_options"]
+        }
+        self.assertEqual(expected_options["status_code"]["status"], "success")
+
+    def test_bulk_and_active_leasequery_are_planned_only_stream_contracts(self) -> None:
+        bulk = _dhcpv6_plan("dhcpv6-bulk-leasequery-plan")
+        active = _dhcpv6_plan("dhcpv6-active-leasequery-plan")
+
+        self.assertEqual(bulk["dhcpv6"]["message_type"], "leasequery")
+        self.assertEqual(bulk["dhcpv6"]["expected_message_type"], "leasequery-done")
+        self.assertFalse(bulk["target_service"]["implemented"])
+        self.assertEqual(bulk["validation"]["advanced"]["query_type"], "by_link_address")
+        self.assertEqual(
+            bulk["validation"]["reply_decode"]["required_options"],
+            ["server_identifier", "lq_base_time", "status_code"],
+        )
+
+        self.assertEqual(active["dhcpv6"]["message_type"], "activeleasequery")
+        self.assertEqual(active["dhcpv6"]["expected_message_type"], "leasequery-reply")
+        self.assertFalse(active["target_service"]["implemented"])
+        self.assertEqual(active["validation"]["advanced"]["query_type"], "by_relay_id")
+        expected_options = {
+            option["name"]: option for option in active["dhcpv6"]["expected_options"]
+        }
+        self.assertEqual(expected_options["status_code"]["status_code"], 13)
+
+    def test_unimplemented_advanced_services_are_not_target_service_plans(self) -> None:
+        setup = target_services.target_service_setup_plan(
+            probe_plans=[
+                _dhcpv6_plan("dhcpv6-bulk-leasequery-plan"),
+                _dhcpv6_plan("dhcpv6-active-leasequery-plan"),
+            ],
+            dry_run=True,
+        )
+
+        self.assertEqual(setup["services"], [])
 
     def test_repeated_transaction_id_plan_sends_two_matching_transactions(self) -> None:
         plan = _dhcpv6_plan(REPEATED_XID_CASE)

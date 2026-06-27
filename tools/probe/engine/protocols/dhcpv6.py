@@ -37,6 +37,18 @@ DHCPV6_DOCUMENTATION_PREFIX = "2001:db8::/32"
 DHCPV6_RELAY_INTERFACE_ID_HEX = "646f632d72656c6179"
 _DHCPV6_CAPABILITIES = ["dhcpv6_service"]
 _DHCPV6_RELAY_CAPABILITIES = ["dhcpv6_service", "dhcpv6_relay_topology"]
+_DHCPV6_ADVANCED_PROFILE = "dhcpv6-advanced"
+_DHCPV6_ADVANCED_PROFILES = {
+    "reconfigure",
+    "leasequery",
+    "bulk_leasequery",
+    "active_leasequery",
+}
+_DHCPV6_UNIMPLEMENTED_TARGET_SERVICES = {
+    "reconfigure",
+    "bulk_leasequery",
+    "active_leasequery",
+}
 
 
 DHCPV6_SMOKE_CASES: tuple[ProbeCase, ...] = (
@@ -116,6 +128,32 @@ DHCPV6_SMOKE_CASES: tuple[ProbeCase, ...] = (
         required_capabilities=_DHCPV6_CAPABILITIES,
         protocol="dhcpv6",
         metadata={"service": DHCPV6_SERVICE_KIND, "planned_only": True},
+    ),
+    _behavior_case(
+        name="dhcpv6-bulk-leasequery-plan",
+        description="Plan a Bulk Leasequery stream ending in Leasequery-done.",
+        stimulus="dhcpv6_bulk_leasequery",
+        expected_response="dhcpv6_leasequery_done",
+        required_capabilities=_DHCPV6_CAPABILITIES,
+        protocol="dhcpv6",
+        metadata={
+            "service": DHCPV6_SERVICE_KIND,
+            "planned_only": True,
+            "profile": _DHCPV6_ADVANCED_PROFILE,
+        },
+    ),
+    _behavior_case(
+        name="dhcpv6-active-leasequery-plan",
+        description="Plan an Active Leasequery stream carrying live binding updates.",
+        stimulus="dhcpv6_active_leasequery",
+        expected_response="dhcpv6_active_leasequery_stream",
+        required_capabilities=_DHCPV6_CAPABILITIES,
+        protocol="dhcpv6",
+        metadata={
+            "service": DHCPV6_SERVICE_KIND,
+            "planned_only": True,
+            "profile": _DHCPV6_ADVANCED_PROFILE,
+        },
     ),
     _behavior_case(
         name="dhcpv6-unknown-option-preservation",
@@ -214,6 +252,26 @@ _DHCPV6_CASE_CONFIG: dict[str, JSONObject] = {
         "source_port": DHCPV6_SERVER_PORT,
         "behavior": "leasequery_reply",
         "option_profile": "leasequery",
+    },
+    "dhcpv6-bulk-leasequery-plan": {
+        "message_type": "leasequery",
+        "message_type_code": 14,
+        "expected_message_type": "leasequery-done",
+        "expected_message_type_code": 16,
+        "destination": "unicast",
+        "source_port": DHCPV6_SERVER_PORT,
+        "behavior": "bulk_leasequery_done",
+        "option_profile": "bulk_leasequery",
+    },
+    "dhcpv6-active-leasequery-plan": {
+        "message_type": "activeleasequery",
+        "message_type_code": 22,
+        "expected_message_type": "leasequery-reply",
+        "expected_message_type_code": 15,
+        "destination": "unicast",
+        "source_port": DHCPV6_SERVER_PORT,
+        "behavior": "active_leasequery_stream",
+        "option_profile": "active_leasequery",
     },
     "dhcpv6-unknown-option-preservation": {
         "message_type": "information-request",
@@ -446,6 +504,26 @@ def _dhcpv6_probe_plan(
         },
         "digest_hex": digest.hex()[:16],
     }
+    if str(config["option_profile"]) in _DHCPV6_ADVANCED_PROFILES:
+        reason = _planned_only_reason(str(config["option_profile"]))
+        artifacts = _plan_artifact_outputs(case_name)
+        plan["planned_only_reason"] = reason
+        plan["artifact_outputs"] = artifacts
+        plan["target_service"]["implemented"] = _target_service_implemented(
+            str(config["option_profile"])
+        )
+        plan["target_service"]["planned_only_reason"] = reason
+        plan["target_service"]["artifacts"] = artifacts
+        plan["stimulus_driver"]["planned_only_reason"] = reason
+        plan["stimulus_driver"]["artifacts"] = artifacts
+        plan["validation"]["advanced"] = _advanced_validation(
+            str(config["option_profile"]),
+            case_name=case_name,
+            transaction_id=transaction_id,
+            client_duid=client_duid,
+            server_duid=server_duid,
+            client_ipv6=client_ipv6,
+        )
     if str(config["option_profile"]) == "relay":
         plan["wire_requirements"]["requires_relay_topology"] = True
         plan["validation"]["relay"] = _relay_validation(
@@ -497,7 +575,14 @@ def _request_options(
     base: list[JSONObject] = [
         {"code": 1, "name": "client_identifier", "duid_hex": client_duid},
     ]
-    if option_profile in {"ia_na", "ia_pd", "reconfigure", "leasequery"}:
+    if option_profile in {
+        "ia_na",
+        "ia_pd",
+        "reconfigure",
+        "leasequery",
+        "bulk_leasequery",
+        "active_leasequery",
+    }:
         base.append({"code": 2, "name": "server_identifier", "duid_hex": server_duid})
     if option_profile in {"oro_dns", "solicit", "rapid_commit", "unknown_option"}:
         base.append({"code": 6, "name": "option_request", "requested": [23, 24]})
@@ -524,14 +609,53 @@ def _request_options(
         base.extend(
             [
                 {"code": 19, "name": "reconfigure_message", "message_type": "information-request"},
-                {"code": 11, "name": "authentication", "protocol": "delayed", "algorithm": 1, "rdm": 0},
+                {
+                    "code": 11,
+                    "name": "authentication",
+                    "protocol": "delayed",
+                    "algorithm": 1,
+                    "rdm": 0,
+                },
             ]
         )
     if option_profile == "leasequery":
         base.extend(
             [
-                {"code": 44, "name": "lq_query", "query_type": "by_address", "address": client_ipv6},
+                {
+                    "code": 44,
+                    "name": "lq_query",
+                    "query_type": "by_address",
+                    "address": client_ipv6,
+                },
                 {"code": 1, "name": "query_client_identifier", "duid_hex": client_duid},
+            ]
+        )
+    if option_profile == "bulk_leasequery":
+        base.extend(
+            [
+                {
+                    "code": 44,
+                    "name": "lq_query",
+                    "query_type": "by_link_address",
+                    "query_type_code": 4,
+                    "address": client_ipv6,
+                },
+                {"code": 53, "name": "relay_id", "data_hex": "646f632d62756c6b"},
+                {"code": 101, "name": "lq_start_time", "seconds": 0},
+            ]
+        )
+    if option_profile == "active_leasequery":
+        base.extend(
+            [
+                {
+                    "code": 44,
+                    "name": "lq_query",
+                    "query_type": "by_relay_id",
+                    "query_type_code": 3,
+                    "address": client_ipv6,
+                },
+                {"code": 53, "name": "relay_id", "data_hex": "646f632d616374697665"},
+                {"code": 101, "name": "lq_start_time", "seconds": 0},
             ]
         )
     if option_profile == "unknown_option":
@@ -578,6 +702,23 @@ def _expected_options(
             [
                 {"code": 45, "name": "client_data", "client_identifier_hex": client_duid},
                 {"code": 46, "name": "clt_time", "seconds": 0},
+                _status_success_option(),
+            ]
+        )
+    if option_profile == "bulk_leasequery":
+        options.extend(
+            [
+                {"code": 100, "name": "lq_base_time", "seconds": 0},
+                _status_success_option(),
+            ]
+        )
+    if option_profile == "active_leasequery":
+        options.extend(
+            [
+                {"code": 45, "name": "client_data", "client_identifier_hex": client_duid},
+                {"code": 46, "name": "clt_time", "seconds": 0},
+                {"code": 100, "name": "lq_base_time", "seconds": 0},
+                _status_option(13, "catch_up_complete"),
             ]
         )
     if option_profile == "unknown_option":
@@ -686,7 +827,16 @@ def _ia_na_option(iaid: int, address: str) -> JSONObject:
 
 
 def _status_success_option() -> JSONObject:
-    return {"code": 13, "name": "status_code", "status_code": 0, "status": "success"}
+    return _status_option(0, "success")
+
+
+def _status_option(status_code: int, status: str) -> JSONObject:
+    return {
+        "code": 13,
+        "name": "status_code",
+        "status_code": status_code,
+        "status": status,
+    }
 
 
 def _iaprefix_option(prefix: str) -> JSONObject:
@@ -748,6 +898,125 @@ def _ia_pd_validation(option_profile: str, *, iaid: int, prefix: str) -> JSONObj
     }
 
 
+def _advanced_validation(
+    option_profile: str,
+    *,
+    case_name: str,
+    transaction_id: int,
+    client_duid: str,
+    server_duid: str,
+    client_ipv6: str,
+) -> JSONObject:
+    if option_profile not in _DHCPV6_ADVANCED_PROFILES:
+        return {"enabled": False}
+    base: JSONObject = {
+        "enabled": True,
+        "behavior": option_profile,
+        "transaction_id": transaction_id,
+        "transaction_id_match": True,
+        "client_duid_hex": client_duid,
+        "server_duid_hex": server_duid,
+        "status_required": True,
+        "planned_only_reason": _planned_only_reason(option_profile),
+        "artifacts": _plan_artifact_outputs(case_name),
+    }
+    if option_profile == "reconfigure":
+        base.update(
+            {
+                "stimulus": "reconfigure",
+                "expected_client_response": "information-request",
+                "required_request_options": [
+                    "server_identifier",
+                    "reconfigure_message",
+                    "authentication",
+                ],
+                "required_response_options": ["client_identifier", "option_request"],
+                "target_service_implemented": False,
+            }
+        )
+    elif option_profile == "leasequery":
+        base.update(
+            {
+                "stimulus": "leasequery",
+                "expected_response": "leasequery-reply",
+                "query_type": "by_address",
+                "query_address": client_ipv6,
+                "required_request_options": [
+                    "server_identifier",
+                    "lq_query",
+                    "query_client_identifier",
+                ],
+                "required_response_options": [
+                    "server_identifier",
+                    "client_data",
+                    "clt_time",
+                    "status_code",
+                ],
+                "target_service_implemented": True,
+            }
+        )
+    elif option_profile == "bulk_leasequery":
+        base.update(
+            {
+                "stimulus": "leasequery",
+                "expected_response": "leasequery-done",
+                "query_type": "by_link_address",
+                "required_request_options": [
+                    "server_identifier",
+                    "lq_query",
+                    "relay_id",
+                    "lq_start_time",
+                ],
+                "required_response_options": [
+                    "server_identifier",
+                    "lq_base_time",
+                    "status_code",
+                ],
+                "target_service_implemented": False,
+            }
+        )
+    elif option_profile == "active_leasequery":
+        base.update(
+            {
+                "stimulus": "activeleasequery",
+                "expected_response": "leasequery-reply",
+                "query_type": "by_relay_id",
+                "required_request_options": [
+                    "server_identifier",
+                    "lq_query",
+                    "relay_id",
+                    "lq_start_time",
+                ],
+                "required_response_options": [
+                    "server_identifier",
+                    "client_data",
+                    "clt_time",
+                    "lq_base_time",
+                    "status_code",
+                ],
+                "target_service_implemented": False,
+            }
+        )
+    return base
+
+
+def _target_service_implemented(option_profile: str) -> bool:
+    return option_profile not in _DHCPV6_UNIMPLEMENTED_TARGET_SERVICES
+
+
+def _planned_only_reason(option_profile: str) -> str:
+    if option_profile in _DHCPV6_UNIMPLEMENTED_TARGET_SERVICES:
+        return "controlled_dhcpv6_service_not_implemented"
+    return "stimulus_adapter_not_implemented"
+
+
+def _plan_artifact_outputs(case_name: str) -> list[str]:
+    return [
+        f"target/probe/artifacts/dhcpv6/{case_name}-plan.json",
+        f"target/probe/artifacts/dhcpv6/{case_name}-stimulus.request.json",
+    ]
+
+
 def _pd_exchange_sequence(option_profile: str, *, transaction_id: int) -> list[JSONObject]:
     if option_profile != "ia_pd":
         return []
@@ -777,6 +1046,12 @@ def _required_reply_option_names(option_profile: str) -> list[str]:
         names.extend(["client_identifier", "ia_pd", "iaprefix", "status_code"])
     if option_profile == "relay":
         names.extend(["interface_id", "relay_message"])
+    if option_profile == "leasequery":
+        names.extend(["client_data", "clt_time", "status_code"])
+    if option_profile == "bulk_leasequery":
+        names.extend(["lq_base_time", "status_code"])
+    if option_profile == "active_leasequery":
+        names.extend(["client_data", "clt_time", "lq_base_time", "status_code"])
     return names
 
 
@@ -813,7 +1088,15 @@ def dhcpv6_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
         for plan in probe_plans
         if plan.get("case") in _DHCPV6_CASE_BY_NAME
         and int(plan.get("destination_port", 0)) == DHCPV6_SERVER_PORT
+        and _plan_target_service_implemented(plan)
     ]
+
+
+def _plan_target_service_implemented(plan: JSONObject) -> bool:
+    target_service = plan.get("target_service")
+    if isinstance(target_service, Mapping):
+        return target_service.get("implemented") is not False
+    return True
 
 
 def dhcpv6_target_service_contribution(
@@ -978,10 +1261,13 @@ def dhcpv6_responder_setup_lines(
                 "    if code == 20 or code == 14:",
                 "        return b''",
                 "    if code == 44:",
-                "        return bytes([1]) + ipaddress.IPv6Address(str(option['address'])).packed",
+                "        query_type = int(option.get('query_type_code', 1))",
+                "        return bytes([query_type]) + ipaddress.IPv6Address(str(option['address'])).packed",
                 "    if code == 45:",
                 "        return bytes.fromhex(str(option.get('client_identifier_hex', '')))",
                 "    if code == 46:",
+                "        return struct.pack('!I', int(option.get('seconds', 0)))",
+                "    if code in (100, 101, 102):",
                 "        return struct.pack('!I', int(option.get('seconds', 0)))",
                 "    return b''",
                 "",
