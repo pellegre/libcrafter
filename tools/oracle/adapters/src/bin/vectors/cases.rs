@@ -44,7 +44,7 @@ pub(crate) fn build_cases() -> ExampleResult<Vec<Vector>> {
         icmpv4_echo_reply()?,
         ipv6_icmp()?,
         dns_query()?,
-        dhcp_discover()?,
+        dhcpv4_discover()?,
         vlan_ipv4_udp()?,
         crafter_raw_payload()?,
         crafter_ethernet_unknown_ethertype()?,
@@ -367,7 +367,7 @@ fn dns_query() -> ExampleResult<Vector> {
     )
 }
 
-fn dhcp_discover() -> ExampleResult<Vector> {
+fn dhcpv4_discover() -> ExampleResult<Vector> {
     let src_mac = parse_mac(SRC_MAC)?;
     let packet = Ethernet::new()
         .src(src_mac)

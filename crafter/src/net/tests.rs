@@ -1156,35 +1156,35 @@ mod reply_matching {
 }
 
 #[cfg(test)]
-mod dhcp_udp_binding {
+mod dhcpv4_udp_binding {
     use std::net::Ipv4Addr;
 
     use crate::{Dhcpv4, Ipv4, MacAddr, NetworkLayer, Packet, Raw, Udp};
 
     #[test]
-    fn dhcp_decode_binding_rejects_non_dhcp_payloads_on_dhcp_ports() {
+    fn dhcpv4_decode_binding_rejects_non_dhcpv4_payloads_on_dhcp_ports() {
         // The DHCP UDP binding stays conservative: the standard 67/68 port pair
         // alone is not enough; the payload must also carry the BOOTP structure
-        // and the valid magic cookie. These cases all sit on a DHCP port pair
-        // but are not DHCP, so they must fall through to Raw rather than
+        // and the valid magic cookie. These cases all sit on a DHCPv4 port pair
+        // but are not DHCPv4, so they must fall through to Raw rather than
         // misdecode as `Dhcpv4`.
 
         // 1. A payload long enough for the fixed header plus cookie region but
         //    with the wrong four magic-cookie octets (here a
-        //    plausible-but-not-DHCP application record) must not bind to DHCP.
+        //    plausible-but-not-DHCPv4 application record) must not bind to DHCPv4.
         //    `DHCPV4_MIN_LEN` is the fixed header (236) plus the 4 cookie octets;
         //    overwriting those last four with non-cookie bytes is enough to fail
         //    the magic-cookie gate.
-        let mut not_dhcp = vec![0u8; crate::DHCPV4_MIN_LEN];
+        let mut not_dhcpv4 = vec![0u8; crate::DHCPV4_MIN_LEN];
         let cookie_offset = crate::DHCPV4_MIN_LEN - 4;
-        not_dhcp[cookie_offset..].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        not_dhcpv4[cookie_offset..].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
         let wrong_cookie = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 9))
             .dst(Ipv4Addr::new(192, 0, 2, 1))
             / Udp::new()
                 .sport(crate::DHCPV4_CLIENT_PORT)
                 .dport(crate::DHCPV4_SERVER_PORT)
-            / Raw::from_bytes(not_dhcp);
+            / Raw::from_bytes(not_dhcpv4);
         let decoded = Packet::decode_from_l3(
             NetworkLayer::Ipv4,
             wrong_cookie.compile().unwrap().as_bytes(),
@@ -1192,42 +1192,43 @@ mod dhcp_udp_binding {
         .unwrap();
         assert!(
             decoded.layer::<Dhcpv4>().is_none(),
-            "wrong magic cookie on DHCP ports must not decode as DHCP",
+            "wrong magic cookie on DHCPv4 ports must not decode as DHCPv4",
         );
         assert!(decoded.layer::<Raw>().is_some());
 
-        // 2. A short payload on the DHCP port pair (too small to even contain the
-        //    BOOTP fixed header and cookie) must not bind to DHCP.
+        // 2. A short payload on the DHCPv4 port pair (too small to even contain the
+        //    BOOTP fixed header and cookie) must not bind to DHCPv4.
         let short = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::new(192, 0, 2, 9))
             / Udp::new()
                 .sport(crate::DHCPV4_SERVER_PORT)
                 .dport(crate::DHCPV4_CLIENT_PORT)
-            / Raw::from("not-dhcp");
+            / Raw::from("not-dhcpv4");
         let decoded_short =
             Packet::decode_from_l3(NetworkLayer::Ipv4, short.compile().unwrap().as_bytes())
                 .unwrap();
         assert!(
             decoded_short.layer::<Dhcpv4>().is_none(),
-            "short payload on DHCP ports must not decode as DHCP",
+            "short payload on DHCPv4 ports must not decode as DHCPv4",
         );
         assert!(decoded_short.layer::<Raw>().is_some());
 
-        // 3. Sanity: a genuine DHCP payload on the standard 68->67 port pair
-        //    still decodes as DHCP, proving the rejection above is the magic
+        // 3. Sanity: a genuine DHCPv4 payload on the standard 68->67 port pair
+        //    still decodes as DHCPv4v4, proving the rejection above is the magic
         //    cookie / structure gate and not a blanket refusal.
         let mac = MacAddr::new([0x02, 0, 0, 0, 0, 1]);
-        let dhcp = Ipv4::new()
+        let dhcpv4 = Ipv4::new()
             .src(Ipv4Addr::UNSPECIFIED)
             .dst(Ipv4Addr::BROADCAST)
             / Udp::dhcpv4_client()
             / Dhcpv4::discover(mac).xid(0xfeed_beef);
-        let decoded_dhcp =
-            Packet::decode_from_l3(NetworkLayer::Ipv4, dhcp.compile().unwrap().as_bytes()).unwrap();
+        let decoded_dhcpv4 =
+            Packet::decode_from_l3(NetworkLayer::Ipv4, dhcpv4.compile().unwrap().as_bytes())
+                .unwrap();
         assert!(
-            decoded_dhcp.layer::<Dhcpv4>().is_some(),
-            "valid DHCP on the standard port pair must still decode as DHCP",
+            decoded_dhcpv4.layer::<Dhcpv4>().is_some(),
+            "valid DHCPv4 on the standard port pair must still decode as DHCPv4",
         );
     }
 }

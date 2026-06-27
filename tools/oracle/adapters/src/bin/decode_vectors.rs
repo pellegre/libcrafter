@@ -620,7 +620,7 @@ fn normalized_layer_fields(
         return dns_fields(layer);
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Dhcpv4>() {
-        return dhcp_fields(layer);
+        return dhcpv4_fields(layer);
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Snmp>() {
         return snmp_fields(layer);
@@ -2524,7 +2524,7 @@ fn dns_fields(layer: &Dns) -> BTreeMap<String, Value> {
     ])
 }
 
-fn dhcp_fields(layer: &Dhcpv4) -> BTreeMap<String, Value> {
+fn dhcpv4_fields(layer: &Dhcpv4) -> BTreeMap<String, Value> {
     let mut fields = map([
         ("opcode", json!(layer.op_value())),
         ("hardware_type", json!(layer.hardware_type_value())),
@@ -2552,7 +2552,7 @@ fn dhcp_fields(layer: &Dhcpv4) -> BTreeMap<String, Value> {
         ),
         ("magic_cookie", json!(layer.magic_cookie_value())),
         ("option_count", json!(layer.options_value().len())),
-        ("options", json!(dhcp_options(layer))),
+        ("options", json!(dhcpv4_options(layer))),
     ]);
     if let Some(message_type) = layer.message_type_value() {
         fields.insert("message_type".to_string(), json!(message_type.code()));
@@ -2563,7 +2563,7 @@ fn dhcp_fields(layer: &Dhcpv4) -> BTreeMap<String, Value> {
 /// Normalize DHCP options to backend-neutral `{code, payload_hex}` entries in
 /// wire order, carrying the raw reassembled option payload (no typed
 /// reinterpretation) so they compare cleanly against the Scapy reference view.
-fn dhcp_options(layer: &Dhcpv4) -> Vec<Value> {
+fn dhcpv4_options(layer: &Dhcpv4) -> Vec<Value> {
     layer
         .options_value()
         .iter()

@@ -10,4 +10,4 @@ pub mod v4;
 pub mod v6;
 
 pub use v4::*;
-pub(crate) use v4::{append_dhcp_packet, is_dhcp_port_pair, looks_like_dhcp_payload};
+pub(crate) use v4::{append_dhcpv4_packet, is_dhcpv4_port_pair, looks_like_dhcpv4_payload};

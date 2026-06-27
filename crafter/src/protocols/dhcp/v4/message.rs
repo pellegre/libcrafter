@@ -175,7 +175,7 @@ mod message_type_tests {
     ];
 
     #[test]
-    fn dhcp_message_type_registry_is_complete() {
+    fn dhcpv4_message_type_registry_is_complete() {
         assert_eq!(
             REGISTERED_DHCPV4_MESSAGE_TYPES.len(),
             REGISTERED_CODES.len(),
@@ -215,7 +215,7 @@ mod message_type_tests {
     }
 
     #[test]
-    fn dhcp_message_type_unknown_values_roundtrip() {
+    fn dhcpv4_message_type_unknown_values_roundtrip() {
         // 0 and 19..=255 are not registered DHCP message type values.
         let registered: std::collections::HashSet<u8> = REGISTERED_DHCPV4_MESSAGE_TYPES
             .iter()
@@ -240,7 +240,7 @@ mod message_type_tests {
     }
 
     #[test]
-    fn dhcp_leasequery_message_types_roundtrip() {
+    fn dhcpv4_leasequery_message_types_roundtrip() {
         use super::super::Dhcpv4;
 
         // The leasequery message-type family is defined by RFC 4388 (codes
@@ -248,7 +248,7 @@ mod message_type_tests {
         // DHCPLEASEACTIVE), RFC 6926 (codes 14-15: DHCPBULKLEASEQUERY,
         // DHCPLEASEQUERYDONE), and RFC 7724 (codes 16-18: DHCPACTIVELEASEQUERY,
         // DHCPLEASEQUERYSTATUS, DHCPTLS). Each value carries through option 53 in
-        // a full DHCP packet without loss, and pins to its IANA codepoint.
+        // a full DHCPv4 packet without loss, and pins to its IANA codepoint.
         let leasequery_family = [
             (Dhcpv4MessageType::LeaseQuery, 10u8),
             (Dhcpv4MessageType::LeaseUnassigned, 11),
@@ -267,12 +267,12 @@ mod message_type_tests {
             assert_eq!(Dhcpv4MessageType::from_code(code), message_type);
             assert!(!matches!(message_type, Dhcpv4MessageType::Unknown(_)));
 
-            // The message type survives a full DHCP packet compile -> decode
+            // The message type survives a full DHCPv4 packet compile -> decode
             // cycle through option 53, and the bytes re-compile identically.
-            let dhcp = Dhcpv4::new()
+            let dhcpv4 = Dhcpv4::new()
                 .op(super::super::BOOTP_REPLY)
                 .message_type(message_type);
-            let bytes = crate::Packet::from_layer(dhcp)
+            let bytes = crate::Packet::from_layer(dhcpv4)
                 .compile()
                 .unwrap()
                 .as_bytes()
@@ -293,22 +293,22 @@ mod message_type_tests {
     }
 
     #[test]
-    fn dhcp_message_type_matrix_full_packet_roundtrip() {
+    fn dhcpv4_message_type_matrix_full_packet_roundtrip() {
         use super::super::Dhcpv4;
 
         // Every implemented Dhcpv4MessageType (the full IANA option-53 matrix,
         // codes 1..=18: RFC 2132 1-8, RFC 3203 9, RFC 4388 10-13, RFC 6926
         // 14-15, RFC 7724 16-18) must encode, decode, and re-encode through a
-        // full DHCP packet without loss. This test is named so the
-        // `dhcp_message` filter covers the complete matrix, not just the
+        // full DHCPv4 packet without loss. This test is named so the
+        // `dhcpv4_message` filter covers the complete matrix, not just the
         // RFC 2132 base types.
         for message_type in REGISTERED_DHCPV4_MESSAGE_TYPES {
             // The opcode does not affect the option-53 round-trip; BOOTREPLY is
             // a valid carrier for both request- and reply-side message types.
-            let dhcp = Dhcpv4::new()
+            let dhcpv4 = Dhcpv4::new()
                 .op(super::super::BOOTP_REPLY)
                 .message_type(message_type);
-            let bytes = crate::Packet::from_layer(dhcp)
+            let bytes = crate::Packet::from_layer(dhcpv4)
                 .compile()
                 .unwrap()
                 .as_bytes()

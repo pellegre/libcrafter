@@ -1,7 +1,7 @@
 """Wireshark-stage decode plugin for the DHCPv4 layer.
 
 The plugin's :func:`_normalize` callback receives the full tshark ``layers`` object
-and selects the BOOTP/DHCP sub-layer with :func:`_dhcp_layer` (Wireshark renamed the
+and selects the BOOTP/DHCPv4 sub-layer with :func:`_dhcpv4_layer` (Wireshark renamed the
 dissector prefix from ``bootp.`` to ``dhcp.`` around 3.0, so both are accepted),
 then emits the canonical ``dhcpv4`` oracle model.
 
@@ -27,15 +27,15 @@ from ..decode_helpers import (
 from .base import WiresharkProtocol, register
 
 
-# DHCP magic cookie (RFC 2132) prefacing the option region.
-_DHCP_MAGIC_COOKIE = 0x63825363
+# DHCPv4 magic cookie (RFC 2132) prefacing the option region.
+_DHCPV4_MAGIC_COOKIE = 0x63825363
 # Option codes that need no length octet and carry no payload.
-_DHCP_OPTION_PAD = 0
-_DHCP_OPTION_END = 255
-# DHCP message type option (RFC 2132).
-_DHCP_OPTION_MESSAGE_TYPE = 53
+_DHCPV4_OPTION_PAD = 0
+_DHCPV4_OPTION_END = 255
+# DHCPv4 message type option (RFC 2132).
+_DHCPV4_OPTION_MESSAGE_TYPE = 53
 
-# tshark field aliases the DHCP layer owns: canonical oracle name -> the
+# tshark field aliases the DHCPv4 layer owns: canonical oracle name -> the
 # native-tshark field names that carry it. Wireshark renamed the dissector prefix
 # from ``bootp.`` to ``dhcp.`` around 3.0, so both prefixes are accepted.
 _TSHARK_ALIASES: JSONObject = {
@@ -54,7 +54,7 @@ _TSHARK_ALIASES: JSONObject = {
 
 
 def _normalize(layers: JSONObject, *, source_hex: str | None = None) -> JSONObject:
-    """Normalize a tshark BOOTP/DHCP layer to the shared oracle field names.
+    """Normalize a tshark BOOTP/DHCPv4 layer to the shared oracle field names.
 
     The normalized names match the Scapy reference backend
     (``tools/oracle/engine/backends/scapy/normalize.py``) and the libcrafter
@@ -66,7 +66,7 @@ def _normalize(layers: JSONObject, *, source_hex: str | None = None) -> JSONObje
     ``message_type``.
     """
 
-    layer = _dhcp_layer(layers)
+    layer = _dhcpv4_layer(layers)
     output = _fields_from_aliases(layer, dict(_TSHARK_ALIASES))
     _parse_int_fields(
         output,
@@ -78,20 +78,20 @@ def _normalize(layers: JSONObject, *, source_hex: str | None = None) -> JSONObje
         "seconds",
     )
     magic = _parse_int(output.get("magic_cookie"))
-    output["magic_cookie"] = magic if magic is not None else _DHCP_MAGIC_COOKIE
+    output["magic_cookie"] = magic if magic is not None else _DHCPV4_MAGIC_COOKIE
 
     chaddr = _string_field(layer, "dhcp.hw.mac_addr", "bootp.hw.mac_addr", "dhcp.hw.addr")
     if chaddr is not None:
         output["client_hardware_address"] = {"hex": _hex_bytes(chaddr)}
 
-    output["flags"] = _dhcp_flags(layer)
+    output["flags"] = _dhcpv4_flags(layer)
 
-    options = _dhcp_options_from_source(source_hex)
+    options = _dhcpv4_options_from_source(source_hex)
     if options is not None:
         output["options"] = options
         output["option_count"] = len(options)
         for option in options:
-            if option["code"] == _DHCP_OPTION_MESSAGE_TYPE:
+            if option["code"] == _DHCPV4_OPTION_MESSAGE_TYPE:
                 payload = bytes.fromhex(option["payload_hex"])
                 if len(payload) == 1:
                     output["message_type"] = payload[0]
@@ -105,8 +105,8 @@ def _normalize(layers: JSONObject, *, source_hex: str | None = None) -> JSONObje
     return output
 
 
-def _dhcp_flags(layer: JSONObject) -> int:
-    """Return DHCP flags as the shared integer view (broadcast bit 0x8000)."""
+def _dhcpv4_flags(layer: JSONObject) -> int:
+    """Return DHCPv4 flags as the shared integer view (broadcast bit 0x8000)."""
 
     value = _parse_int(_field(layer, "dhcp.flags", "bootp.flags"))
     if value is not None:
@@ -116,8 +116,8 @@ def _dhcp_flags(layer: JSONObject) -> int:
     return 0
 
 
-def _dhcp_options_from_source(source_hex: str | None) -> list[JSONObject] | None:
-    """Reconstruct backend-neutral DHCP option TLVs from the raw packet bytes.
+def _dhcpv4_options_from_source(source_hex: str | None) -> list[JSONObject] | None:
+    """Reconstruct backend-neutral DHCPv4 option TLVs from the raw packet bytes.
 
     The option region begins right after the magic cookie. Parsing the raw bytes
     (rather than tshark's typed option views) keeps the ``{code, payload_hex}``
@@ -132,27 +132,27 @@ def _dhcp_options_from_source(source_hex: str | None) -> list[JSONObject] | None
         raw = bytes.fromhex(source_hex)
     except ValueError:
         return None
-    cookie = _DHCP_MAGIC_COOKIE.to_bytes(4, "big")
+    cookie = _DHCPV4_MAGIC_COOKIE.to_bytes(4, "big")
     marker = raw.find(cookie)
     if marker < 0:
         return None
-    return _decode_dhcp_option_tlvs(raw[marker + len(cookie) :])
+    return _decode_dhcpv4_option_tlvs(raw[marker + len(cookie) :])
 
 
-def _decode_dhcp_option_tlvs(raw: bytes) -> list[JSONObject] | None:
+def _decode_dhcpv4_option_tlvs(raw: bytes) -> list[JSONObject] | None:
     # Mirrors the Scapy reference parser
-    # (tools/oracle/engine/backends/scapy/protocols/dhcpv4.py::_decode_dhcp_option_tlvs):
+    # (tools/oracle/engine/backends/scapy/protocols/dhcpv4.py::_decode_dhcpv4_option_tlvs):
     # pad/end are single-octet options with empty payloads and END does not stop
     # parsing, so the ``option_count`` stays byte-identical across backends. The
     # wire bytes are identical for the offline strict-byte path, so the region
-    # after the magic cookie matches the Scapy DHCP sub-layer region exactly.
+    # after the magic cookie matches the Scapy DHCPv4 sub-layer region exactly.
     options: list[JSONObject] = []
     index = 0
     length = len(raw)
     while index < length:
         code = raw[index]
         index += 1
-        if code in {_DHCP_OPTION_PAD, _DHCP_OPTION_END}:
+        if code in {_DHCPV4_OPTION_PAD, _DHCPV4_OPTION_END}:
             options.append({"code": code, "payload_hex": ""})
             continue
         if index >= length:
@@ -167,7 +167,7 @@ def _decode_dhcp_option_tlvs(raw: bytes) -> list[JSONObject] | None:
     return options if options else None
 
 
-def _dhcp_layer(layers: JSONObject) -> JSONObject:
+def _dhcpv4_layer(layers: JSONObject) -> JSONObject:
     layer = layers.get("dhcp")
     if isinstance(layer, dict):
         return layer

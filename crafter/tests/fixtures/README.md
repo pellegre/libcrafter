@@ -253,7 +253,7 @@ name|target|expected-kind|expected-context-or-field|hex
 Supported `target` values are defined by the resilience test runner and include
 packet decode targets such as `ethernet`, `linux-sll`, `null-loopback`, `ipv4`,
 and `ipv6`, plus focused decoders such as `ipv4-options`, `tcp-options`,
-`dhcp`, `dhcpv4-options`, and `dns-name`.
+`dhcpv4`, `dhcpv4-options`, and `dns-name`.
 
 Supported `expected-kind` values currently map to structured `CrafterError`
 variants:

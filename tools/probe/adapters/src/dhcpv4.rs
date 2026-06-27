@@ -1251,7 +1251,10 @@ mod tests {
         // BOOTP request carrying a Request with the caller's xid, requested IP
         // (option 50), and server identifier (option 54).
         assert_eq!(dhcpv4.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcpv4.message_type_value(), Some(Dhcpv4MessageType::Request));
+        assert_eq!(
+            dhcpv4.message_type_value(),
+            Some(Dhcpv4MessageType::Request)
+        );
         assert_eq!(dhcpv4.transaction_id_value(), 0x3903_f326);
         assert_eq!(
             dhcpv4.requested_ip_address_value(),
@@ -1389,7 +1392,10 @@ mod tests {
         assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
         // BOOTP request carrying a Discover with the caller's xid and chaddr.
         assert_eq!(dhcpv4.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcpv4.message_type_value(), Some(Dhcpv4MessageType::Discover));
+        assert_eq!(
+            dhcpv4.message_type_value(),
+            Some(Dhcpv4MessageType::Discover)
+        );
         assert_eq!(dhcpv4.transaction_id_value(), 0x3903_f326);
         assert_eq!(
             dhcpv4.client_mac_value(),
@@ -1510,7 +1516,10 @@ mod tests {
         assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
         assert_eq!(dhcpv4.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcpv4.message_type_value(), Some(Dhcpv4MessageType::Discover));
+        assert_eq!(
+            dhcpv4.message_type_value(),
+            Some(Dhcpv4MessageType::Discover)
+        );
         assert_eq!(dhcpv4.transaction_id_value(), 0x3903_f326);
         // The decoded client identifier (option 61) re-encodes to the bytes the
         // plan carried.
@@ -1667,7 +1676,10 @@ mod tests {
         assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
         assert_eq!(dhcpv4.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcpv4.message_type_value(), Some(Dhcpv4MessageType::Discover));
+        assert_eq!(
+            dhcpv4.message_type_value(),
+            Some(Dhcpv4MessageType::Discover)
+        );
         assert_eq!(dhcpv4.transaction_id_value(), 0x3903_f326);
         // The decoded hostname (option 12) round-trips to the planned string.
         assert_eq!(dhcpv4.host_name_value(), plan.hostname.as_deref());
@@ -1978,7 +1990,10 @@ mod tests {
         assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
         assert_eq!(dhcpv4.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcpv4.message_type_value(), Some(Dhcpv4MessageType::Discover));
+        assert_eq!(
+            dhcpv4.message_type_value(),
+            Some(Dhcpv4MessageType::Discover)
+        );
         assert_eq!(dhcpv4.transaction_id_value(), 0x3903_f326);
         // The decoded parameter request list (option 55) is exactly the codes the
         // plan named; the default list the discover builder injects is overridden.
@@ -2098,7 +2113,10 @@ mod tests {
         assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
         assert_eq!(dhcpv4.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcpv4.message_type_value(), Some(Dhcpv4MessageType::Request));
+        assert_eq!(
+            dhcpv4.message_type_value(),
+            Some(Dhcpv4MessageType::Request)
+        );
         assert_eq!(dhcpv4.transaction_id_value(), 0x3903_f326);
         // The bound address is carried in ciaddr.
         assert_eq!(
@@ -2472,7 +2490,10 @@ mod tests {
         assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
         assert_eq!(dhcpv4.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcpv4.message_type_value(), Some(Dhcpv4MessageType::Request));
+        assert_eq!(
+            dhcpv4.message_type_value(),
+            Some(Dhcpv4MessageType::Request)
+        );
         assert_eq!(dhcpv4.transaction_id_value(), 0x3903_f326);
         assert_eq!(
             dhcpv4.requested_ip_address_value(),
@@ -2717,7 +2738,9 @@ mod tests {
         assert_eq!(first_dhcpv4.transaction_id_value(), 0x3903_f326);
         assert_eq!(second_dhcpv4.transaction_id_value(), 0x7c4e_1b09);
         assert_eq!(
-            first_dhcpv4.message_type_value().map(Dhcpv4MessageType::code),
+            first_dhcpv4
+                .message_type_value()
+                .map(Dhcpv4MessageType::code),
             Some(1)
         );
         assert_eq!(

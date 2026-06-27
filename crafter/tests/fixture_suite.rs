@@ -149,7 +149,7 @@ enum CoverageFamily {
     Ipv4UdpDnsEdnsOpt,
     Ipv4UdpDnsRawUnknown,
     Ipv4UdpDnsSectionPlacement,
-    Ipv4UdpDhcp,
+    Ipv4UdpDhcpv4,
     Ipv4UdpSnmp,
     Ipv4Ospf,
     Ipv6Ospfv3,
@@ -2453,7 +2453,7 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
         CoverageFamily::Ipv4UdpDnsSectionPlacement,
         "IPv4 UDP DNS four-section placement",
     ),
-    (CoverageFamily::Ipv4UdpDhcp, "IPv4 UDP DHCP message"),
+    (CoverageFamily::Ipv4UdpDhcpv4, "IPv4 UDP DHCPv4 message"),
     (CoverageFamily::Ipv4UdpSnmp, "IPv4 UDP SNMP message"),
     (
         CoverageFamily::Ipv4UdpOptions,
@@ -2471,42 +2471,42 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
         CoverageFamily::Ipv6ExtensionHeader,
         "IPv6 extension header stack",
     ),
-    (CoverageFamily::Dhcpv4Options, "DHCP option corpus"),
+    (CoverageFamily::Dhcpv4Options, "DHCPv4 option corpus"),
     (
         CoverageFamily::Dhcpv4MessageTypes,
-        "DHCP message type option corpus",
+        "DHCPv4 message type option corpus",
     ),
     (
         CoverageFamily::Dhcpv4RoutesDomains,
-        "DHCP classless route and domain search options",
+        "DHCPv4 classless route and domain search options",
     ),
     (
         CoverageFamily::Dhcpv4ClientIdentifier,
-        "DHCP RFC 4361 client identifier option",
+        "DHCPv4 RFC 4361 client identifier option",
     ),
     (
         CoverageFamily::Dhcpv4AuthForcerenew,
-        "DHCP authentication and FORCERENEW options",
+        "DHCPv4 authentication and FORCERENEW options",
     ),
     (
         CoverageFamily::Dhcpv4Leasequery,
-        "DHCP leasequery and leasequery status options",
+        "DHCPv4 leasequery and leasequery status options",
     ),
     (
         CoverageFamily::Dhcpv4UnknownOptions,
-        "DHCP unknown and private-use options",
+        "DHCPv4 unknown and private-use options",
     ),
     (
         CoverageFamily::Dhcpv4OptionOverload,
-        "DHCP option overload across file and sname",
+        "DHCPv4 option overload across file and sname",
     ),
     (
         CoverageFamily::Dhcpv4LongOption,
-        "DHCP RFC 3396 long option splitting",
+        "DHCPv4 RFC 3396 long option splitting",
     ),
     (
         CoverageFamily::Dhcpv4RelayOption82,
-        "DHCP relay agent option 82 with multiple suboptions",
+        "DHCPv4 relay agent option 82 with multiple suboptions",
     ),
     (
         CoverageFamily::IpsecEsp,
@@ -2640,7 +2640,7 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv4-udp-dns-edns-opt-query" => &[CoverageFamily::Ipv4UdpDnsEdnsOpt],
         "ipv4-udp-dns-raw-unknown-records-response" => &[CoverageFamily::Ipv4UdpDnsRawUnknown],
         "ipv4-udp-dns-section-placement-response" => &[CoverageFamily::Ipv4UdpDnsSectionPlacement],
-        "ipv4-udp-dhcpv4-discover" => &[CoverageFamily::Ipv4UdpDhcp],
+        "ipv4-udp-dhcpv4-discover" => &[CoverageFamily::Ipv4UdpDhcpv4],
         "ethernet-ipv4-udp-snmp-get-request" | "ipv4-udp-snmp-response" => {
             &[CoverageFamily::Ipv4UdpSnmp]
         }
@@ -2716,7 +2716,7 @@ fn packet_target_for_case(case: &ValidFixtureCase) -> PacketDecodeTarget {
         FixtureDecodeTarget::Packet(target) => target,
         FixtureDecodeTarget::Dhcpv4Options => {
             panic!(
-                "pcap fixture {} references DHCP option-only fixture",
+                "pcap fixture {} references DHCPv4 option-only fixture",
                 case.name
             )
         }
@@ -4705,16 +4705,19 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
             assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
 
-            let dhcp = expect_layer::<Dhcpv4>(case, packet);
-            assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
+            let dhcpv4 = expect_layer::<Dhcpv4>(case, packet);
+            assert_eq!(dhcpv4.op_value(), BOOTP_REQUEST);
             assert_eq!(
-                dhcp.client_mac_value(),
+                dhcpv4.client_mac_value(),
                 Some(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]))
             );
-            assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
-            assert_eq!(dhcp.flags_value(), 0x8000);
-            assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
-            assert_eq!(dhcp.host_name_value(), Some("agent"));
+            assert_eq!(dhcpv4.transaction_id_value(), 0x3903_f326);
+            assert_eq!(dhcpv4.flags_value(), 0x8000);
+            assert_eq!(
+                dhcpv4.message_type_value(),
+                Some(Dhcpv4MessageType::Discover)
+            );
+            assert_eq!(dhcpv4.host_name_value(), Some("agent"));
         }
         "ipv4-udp-options-known" => {
             let ipv4 = expect_layer::<Ipv4>(case, packet);
@@ -5284,14 +5287,17 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             );
         }
         "dhcpv4-option-overload-file-sname" => {
-            let dhcp = expect_layer::<Dhcpv4>(case, packet);
-            assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
-            assert_eq!(dhcp.transaction_id_value(), 0x0102_0304);
-            assert_eq!(dhcp.option_overload(), Some(OptionOverload::Both));
-            assert!(dhcp.file_is_overloaded());
-            assert!(dhcp.sname_is_overloaded());
+            let dhcpv4 = expect_layer::<Dhcpv4>(case, packet);
             assert_eq!(
-                dhcp.file_options_value(),
+                dhcpv4.message_type_value(),
+                Some(Dhcpv4MessageType::Discover)
+            );
+            assert_eq!(dhcpv4.transaction_id_value(), 0x0102_0304);
+            assert_eq!(dhcpv4.option_overload(), Some(OptionOverload::Both));
+            assert!(dhcpv4.file_is_overloaded());
+            assert!(dhcpv4.sname_is_overloaded());
+            assert_eq!(
+                dhcpv4.file_options_value(),
                 &[
                     Dhcpv4Option::bootfile_name(b"boot/pxelinux.0".to_vec()),
                     Dhcpv4Option::End,
@@ -5299,7 +5305,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                 "overloaded file area must surface the bootfile-name option"
             );
             assert_eq!(
-                dhcp.sname_options_value(),
+                dhcpv4.sname_options_value(),
                 &[
                     Dhcpv4Option::HostName("oracle-server".to_string()),
                     Dhcpv4Option::End,
@@ -5308,11 +5314,14 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             );
         }
         "dhcpv4-rfc3396-long-option" => {
-            let dhcp = expect_layer::<Dhcpv4>(case, packet);
-            assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
-            assert_eq!(dhcp.transaction_id_value(), 0x1111_2222);
+            let dhcpv4 = expect_layer::<Dhcpv4>(case, packet);
+            assert_eq!(
+                dhcpv4.message_type_value(),
+                Some(Dhcpv4MessageType::Discover)
+            );
+            assert_eq!(dhcpv4.transaction_id_value(), 0x1111_2222);
             let expected_domain = format!("{}.example", "a".repeat(300));
-            let concatenated = dhcp
+            let concatenated = dhcpv4
                 .concatenated_option(15)
                 .expect("rfc3396 domain-name option must be present")
                 .unwrap_or_else(|err| {
@@ -5328,10 +5337,13 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             );
         }
         "dhcpv4-relay-option82" => {
-            let dhcp = expect_layer::<Dhcpv4>(case, packet);
-            assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
-            assert_eq!(dhcp.transaction_id_value(), 0x3333_4444);
-            let info = dhcp
+            let dhcpv4 = expect_layer::<Dhcpv4>(case, packet);
+            assert_eq!(
+                dhcpv4.message_type_value(),
+                Some(Dhcpv4MessageType::Discover)
+            );
+            assert_eq!(dhcpv4.transaction_id_value(), 0x3333_4444);
+            let info = dhcpv4
                 .relay_agent_information()
                 .expect("relay agent option 82 must be present")
                 .unwrap_or_else(|err| {
@@ -6353,27 +6365,27 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     }
 }
 
-fn assert_dhcp_option_fixture(case: &ValidFixtureCase, bytes: &[u8]) {
+fn assert_dhcpv4_option_fixture(case: &ValidFixtureCase, bytes: &[u8]) {
     let options = Dhcpv4Option::decode_all(bytes)
         .unwrap_or_else(|err| panic!("fixture {} should decode DHCP options: {err}", case.path));
     assert_eq!(
         options,
-        expected_dhcp_options(case.name),
-        "fixture {} decoded an unexpected DHCP option list",
+        expected_dhcpv4_options(case.name),
+        "fixture {} decoded an unexpected DHCPv4 option list",
         case.path
     );
 
     if case.preserve_exact_bytes {
-        let reencoded = encode_dhcp_options(&options);
+        let reencoded = encode_dhcpv4_options(&options);
         assert_eq!(
             reencoded, bytes,
-            "fixture {} did not preserve DHCP option bytes",
+            "fixture {} did not preserve DHCPv4 option bytes",
             case.path
         );
     }
 }
 
-fn expected_dhcp_options(name: &str) -> Vec<Dhcpv4Option> {
+fn expected_dhcpv4_options(name: &str) -> Vec<Dhcpv4Option> {
     match name {
         "dhcpv4-offer-options" => vec![
             Dhcpv4Option::MessageType(Dhcpv4MessageType::Offer),
@@ -6502,17 +6514,17 @@ fn expected_dhcp_options(name: &str) -> Vec<Dhcpv4Option> {
             Dhcpv4Option::generic(250, vec![0x01, 0x02, 0x03]),
             Dhcpv4Option::End,
         ],
-        other => panic!("DHCP option fixture {other} has no expected option list"),
+        other => panic!("DHCPv4 option fixture {other} has no expected option list"),
     }
 }
 
-fn encode_dhcp_options(options: &[Dhcpv4Option]) -> Vec<u8> {
+fn encode_dhcpv4_options(options: &[Dhcpv4Option]) -> Vec<u8> {
     let mut encoded = Vec::new();
     for option in options {
         encoded.extend(
             option
                 .encode()
-                .unwrap_or_else(|err| panic!("DHCP option should re-encode: {err}")),
+                .unwrap_or_else(|err| panic!("DHCPv4 option should re-encode: {err}")),
         );
     }
     encoded
@@ -7629,7 +7641,7 @@ fn valid_byte_fixtures_decode_compile_and_summarize() {
                 assert_fixture_fields(case, &packet);
                 assert_compile_decode_compile(case, target, &packet, &bytes);
             }
-            FixtureDecodeTarget::Dhcpv4Options => assert_dhcp_option_fixture(case, &bytes),
+            FixtureDecodeTarget::Dhcpv4Options => assert_dhcpv4_option_fixture(case, &bytes),
             FixtureDecodeTarget::QuicDatagram => {
                 let packet = decode_quic_fixture_datagram(&bytes)
                     .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
@@ -7659,7 +7671,7 @@ fn dhcpv4_fixture_catalog_decodes_renamed_fixtures() {
                         | CoverageFamily::Dhcpv4OptionOverload
                         | CoverageFamily::Dhcpv4LongOption
                         | CoverageFamily::Dhcpv4RelayOption82
-                        | CoverageFamily::Ipv4UdpDhcp
+                        | CoverageFamily::Ipv4UdpDhcpv4
                 )
             })
         })
@@ -7688,7 +7700,7 @@ fn dhcpv4_fixture_catalog_decodes_renamed_fixtures() {
                 assert_fixture_fields(case, &packet);
                 assert_compile_decode_compile(case, target, &packet, &bytes);
             }
-            FixtureDecodeTarget::Dhcpv4Options => assert_dhcp_option_fixture(case, &bytes),
+            FixtureDecodeTarget::Dhcpv4Options => assert_dhcpv4_option_fixture(case, &bytes),
             FixtureDecodeTarget::QuicDatagram => unreachable!("DHCPv4 fixture cannot be QUIC"),
         }
     }
@@ -9351,34 +9363,37 @@ fn ipv4_udp_dns_decode_keeps_surplus_options_out_of_application_payload() {
 }
 
 #[test]
-fn ipv4_udp_dhcp_decode_keeps_surplus_options_out_of_application_payload() {
+fn ipv4_udp_dhcpv4_decode_keeps_surplus_options_out_of_application_payload() {
     let client_mac = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]);
-    let dhcp = Dhcpv4::discover(client_mac)
+    let dhcpv4 = Dhcpv4::discover(client_mac)
         .transaction_id(0x3903_f326)
         .flags(0x8000)
         .host_name("agent");
-    let dhcp_len = dhcp.encoded_len();
+    let dhcpv4_len = dhcpv4.encoded_len();
     let option_bytes = [UDP_OPTION_NOP, UDP_OPTION_EOL];
     let bytes = (Ipv4::new()
         .src(Ipv4Addr::UNSPECIFIED)
         .dst(Ipv4Addr::BROADCAST)
         .id(0x3327)
         / Udp::dhcpv4_client()
-        / dhcp
+        / dhcpv4
         / UdpOptions::from_bytes(option_bytes))
     .compile()
     .unwrap();
 
     assert_eq!(
         &bytes.as_bytes()[24..26],
-        &((UDP_HEADER_LEN + dhcp_len) as u16).to_be_bytes()
+        &((UDP_HEADER_LEN + dhcpv4_len) as u16).to_be_bytes()
     );
 
     let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
-    let dhcp = decoded.layer::<Dhcpv4>().unwrap();
-    assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
-    assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
-    assert_eq!(dhcp.host_name_value(), Some("agent"));
+    let dhcpv4 = decoded.layer::<Dhcpv4>().unwrap();
+    assert_eq!(dhcpv4.transaction_id_value(), 0x3903_f326);
+    assert_eq!(
+        dhcpv4.message_type_value(),
+        Some(Dhcpv4MessageType::Discover)
+    );
+    assert_eq!(dhcpv4.host_name_value(), Some("agent"));
     assert!(decoded.layers::<Raw>().next().is_none());
 
     let udp_options = decoded.layer::<UdpOptions>().unwrap();
@@ -10216,7 +10231,7 @@ fn malformed_corpus_rows_are_well_formed() {
     assert!(!rows.is_empty(), "malformed corpus must not be empty");
 
     let valid_targets = HashSet::from([
-        "dhcp",
+        "dhcpv4",
         "dhcpv4-options",
         "dns-name",
         "dot11",

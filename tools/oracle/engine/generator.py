@@ -97,8 +97,8 @@ from .protocols.ripng import _apply_ripng_behavior
 # backend can encode — the same co-locate-and-re-import pattern as the
 # BGP/OSPF/RIP body injectors above.
 from .protocols.dns import _dns_behavior_emits_raw
-# ``DHCPV4_OPTION_MATRIX_TOKENS`` moved to the DHCP sampler plugin
-# (``protocols/dhcpv4.py``) with the rest of the DHCP sampler and ``dhcpv4_behavior``
+# ``DHCPV4_OPTION_MATRIX_TOKENS`` moved to the DHCPv4 sampler plugin
+# (``protocols/dhcpv4.py``) with the rest of the DHCPv4 sampler and ``dhcpv4_behavior``
 # feature behavior. It is re-imported here because
 # ``tools/oracle/tests/test_dhcpv4_oracle.py`` imports it from ``generator`` to pin
 # the cross-backend option matrix — the same co-locate-and-re-import pattern as

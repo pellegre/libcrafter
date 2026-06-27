@@ -66,29 +66,29 @@ def _build(
     index: int,
     scapy_all: Any,
 ) -> Any:
-    return _dhcp(fields, scapy_all)
+    return _dhcpv4(fields, scapy_all)
 
 
-def _dhcp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
-    dhcp_fields = _layer_fields(fields, "dhcpv4")
+def _dhcpv4(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
+    dhcpv4_fields = _layer_fields(fields, "dhcpv4")
     bootp = scapy_all.BOOTP(
-        op=_dhcp_op(_required_field(dhcp_fields, "dhcpv4", "op")),
-        htype=_hardware_type_value(_required_field(dhcp_fields, "dhcpv4", "hardware_type", "htype")),
-        hlen=_int(_required_field(dhcp_fields, "dhcpv4", "hardware_length", "hlen"), 0),
-        xid=_int(_optional_field(dhcp_fields, "transaction_id", "xid"), 0),
-        flags=_dhcp_flags(_required_field(dhcp_fields, "dhcpv4", "flags")),
-        ciaddr=_text(_optional_field(dhcp_fields, "client_ip", "ciaddr"), "0.0.0.0"),
-        yiaddr=_text(_optional_field(dhcp_fields, "your_ip", "yiaddr"), "0.0.0.0"),
-        chaddr=_dhcp_chaddr(
-            _optional_field(dhcp_fields, "client_hardware_address", "chaddr")
+        op=_dhcpv4_op(_required_field(dhcpv4_fields, "dhcpv4", "op")),
+        htype=_hardware_type_value(_required_field(dhcpv4_fields, "dhcpv4", "hardware_type", "htype")),
+        hlen=_int(_required_field(dhcpv4_fields, "dhcpv4", "hardware_length", "hlen"), 0),
+        xid=_int(_optional_field(dhcpv4_fields, "transaction_id", "xid"), 0),
+        flags=_dhcpv4_flags(_required_field(dhcpv4_fields, "dhcpv4", "flags")),
+        ciaddr=_text(_optional_field(dhcpv4_fields, "client_ip", "ciaddr"), "0.0.0.0"),
+        yiaddr=_text(_optional_field(dhcpv4_fields, "your_ip", "yiaddr"), "0.0.0.0"),
+        chaddr=_dhcpv4_chaddr(
+            _optional_field(dhcpv4_fields, "client_hardware_address", "chaddr")
         ),
     )
     return bootp / scapy_all.DHCP(
-        options=_dhcp_options(_required_field(dhcp_fields, "dhcpv4", "options"))
+        options=_dhcpv4_options(_required_field(dhcpv4_fields, "dhcpv4", "options"))
     )
 
 
-def _dhcp_op(value: object) -> int:
+def _dhcpv4_op(value: object) -> int:
     if isinstance(value, str):
         lowered = value.lower().replace("_", "-")
         if lowered in {"bootrequest", "request"}:
@@ -98,7 +98,7 @@ def _dhcp_op(value: object) -> int:
     return _int(value, 1)
 
 
-def _dhcp_flags(value: object) -> int:
+def _dhcpv4_flags(value: object) -> int:
     if isinstance(value, str):
         lowered = value.lower().replace("_", "-")
         if lowered in {"broadcast", "b"}:
@@ -108,7 +108,7 @@ def _dhcp_flags(value: object) -> int:
     return _int(value, 0)
 
 
-def _dhcp_chaddr(value: object) -> bytes:
+def _dhcpv4_chaddr(value: object) -> bytes:
     mac = _text(value, "00:00:5e:00:53:01")
     raw = bytes.fromhex(mac.replace(":", ""))
     return raw.ljust(16, b"\x00")
@@ -119,7 +119,7 @@ def _dhcp_chaddr(value: object) -> bytes:
 # Scapy field name lets the same ``name=value`` option string materialize to
 # identical option bytes through both backends; an unmapped name passes through
 # unchanged so Scapy still recognizes its own native option names.
-_DHCP_OPTION_NAME_TO_SCAPY: dict[str, str] = {
+_DHCPV4_OPTION_NAME_TO_SCAPY: dict[str, str] = {
     "message_type": "message-type",
     "host_name": "hostname",
     "domain_name": "domain",
@@ -131,10 +131,10 @@ _DHCP_OPTION_NAME_TO_SCAPY: dict[str, str] = {
 }
 # Options whose Scapy field is an integer; the generator carries the value as a
 # JSON string, so it must be coerced back to int before Scapy serializes it.
-_DHCP_INTEGER_OPTIONS = frozenset({"lease_time", "renewal_time", "rebinding_time"})
+_DHCPV4_INTEGER_OPTIONS = frozenset({"lease_time", "renewal_time", "rebinding_time"})
 
 
-def _dhcp_options(value: object) -> list[object]:
+def _dhcpv4_options(value: object) -> list[object]:
     if not isinstance(value, list):
         return [("message-type", "discover"), "end"]
     options: list[object] = []
@@ -145,10 +145,10 @@ def _dhcp_options(value: object) -> list[object]:
                 continue
             if "=" in item:
                 name, raw_value = item.split("=", 1)
-                options.append(_dhcp_name_value_option(name, raw_value))
+                options.append(_dhcpv4_name_value_option(name, raw_value))
                 continue
         if isinstance(item, (list, tuple)) and len(item) == 2 and isinstance(item[0], str):
-            options.append((item[0], _dhcp_option_value(item[1])))
+            options.append((item[0], _dhcpv4_option_value(item[1])))
             continue
         options.append(item)
     if not options or options[-1] != "end":
@@ -156,7 +156,7 @@ def _dhcp_options(value: object) -> list[object]:
     return options
 
 
-def _dhcp_name_value_option(name: str, raw_value: str) -> tuple[str, object]:
+def _dhcpv4_name_value_option(name: str, raw_value: str) -> tuple[str, object]:
     """Translate a ``name=value`` option string into a Scapy option tuple.
 
     The option name is normalized to the Scapy field name for the byte-safe
@@ -164,13 +164,13 @@ def _dhcp_name_value_option(name: str, raw_value: str) -> tuple[str, object]:
     and integer-valued options are coerced from their JSON string form.
     """
 
-    scapy_name = _DHCP_OPTION_NAME_TO_SCAPY.get(name, name)
-    if name in _DHCP_INTEGER_OPTIONS:
+    scapy_name = _DHCPV4_OPTION_NAME_TO_SCAPY.get(name, name)
+    if name in _DHCPV4_INTEGER_OPTIONS:
         return scapy_name, int(raw_value, 0)
     return scapy_name, raw_value
 
 
-def _dhcp_option_value(value: object) -> object:
+def _dhcpv4_option_value(value: object) -> object:
     """Translate a JSON-safe option value into a Scapy option payload.
 
     A string value is interpreted as raw option bytes encoded as hex so byte
@@ -196,13 +196,13 @@ def _dhcp_option_value(value: object) -> object:
 # :mod:`..normalize`. Consumed and removed during DHCP field normalization so it
 # never leaks into the comparable model. Re-imported back into ``normalize`` (which
 # owns the capture) so the key stays a single source of truth.
-_DHCP_OPTION_REGION_KEY = "__option_region_hex__"
+_DHCPV4_OPTION_REGION_KEY = "__option_region_hex__"
 
 # DHCP option codes whose payload is a single message-type octet (option 53), plus
 # the single-octet pad (0) / end (255) options.
-_DHCP_OPTION_MESSAGE_TYPE = 53
-_DHCP_OPTION_PAD = 0
-_DHCP_OPTION_END = 255
+_DHCPV4_OPTION_MESSAGE_TYPE = 53
+_DHCPV4_OPTION_PAD = 0
+_DHCPV4_OPTION_END = 255
 
 # Decode-side native-name aliases the DHCPv4 layer owns. ``_LAYER_ALIASES`` maps
 # Scapy class names to the oracle layer name; ``_FIELD_ALIASES`` records the
@@ -237,7 +237,7 @@ _GLOBAL_FIELD_ALIASES: dict[str, str] = {
 
 # The richer per-field rename table checked first, adding ``op -> opcode`` and
 # ``secs -> seconds`` on top of ``_FIELD_ALIASES``.
-_DHCP_FIELD_NAME_ALIASES: dict[str, str] = {
+_DHCPV4_FIELD_NAME_ALIASES: dict[str, str] = {
     "op": "opcode",
     "htype": "hardware_type",
     "hlen": "hardware_length",
@@ -252,14 +252,14 @@ _DHCP_FIELD_NAME_ALIASES: dict[str, str] = {
 
 # Effective DHCPv4 field-name map: global aliases overlaid by layer-specific aliases
 # and then the richer local rename table.
-_DHCP_FIELD_NAME_MAP: dict[str, str] = {
+_DHCPV4_FIELD_NAME_MAP: dict[str, str] = {
     **_GLOBAL_FIELD_ALIASES,
     **dict(_FIELD_ALIASES),
-    **_DHCP_FIELD_NAME_ALIASES,
+    **_DHCPV4_FIELD_NAME_ALIASES,
 }
 
 # Native DHCPv4 fields dropped before the rename pass.
-_DHCP_SKIP_FIELDS = frozenset({"sname", "file", _DHCP_OPTION_REGION_KEY})
+_DHCPV4_SKIP_FIELDS = frozenset({"sname", "file", _DHCPV4_OPTION_REGION_KEY})
 
 
 def _normalize(fields: JSONObject) -> JSONObject:
@@ -268,24 +268,24 @@ def _normalize(fields: JSONObject) -> JSONObject:
     ``sname`` / ``file`` and the synthetic option-region key are dropped, a typed
     ``options`` list is reduced to ``option_count``, each remaining native field
     name is renamed via the DHCPv4 field-name map, and the ``flags`` value is
-    reduced through ``_normalize_dhcp_flags``. The ``client_hardware_address`` is
+    reduced through ``_normalize_dhcpv4_flags``. The ``client_hardware_address`` is
     trimmed to the hardware length, the magic-cookie ``options`` artifact is folded
     into ``magic_cookie``, and the raw option TLV region (if captured) is expanded
     into backend-neutral ``{code, payload_hex}`` option details.
     """
 
-    option_region_hex = fields.get(_DHCP_OPTION_REGION_KEY)
+    option_region_hex = fields.get(_DHCPV4_OPTION_REGION_KEY)
     output: JSONObject = {}
     for native_name, value in fields.items():
-        if native_name in _DHCP_SKIP_FIELDS:
+        if native_name in _DHCPV4_SKIP_FIELDS:
             continue
         if native_name == "options" and isinstance(value, list):
             output["option_count"] = len(value)
             continue
-        normalized_name = _DHCP_FIELD_NAME_MAP.get(native_name, native_name)
+        normalized_name = _DHCPV4_FIELD_NAME_MAP.get(native_name, native_name)
         output[normalized_name] = _normalize_field_value(normalized_name, value)
     if "client_hardware_address" in output:
-        output["client_hardware_address"] = _normalize_dhcp_chaddr(
+        output["client_hardware_address"] = _normalize_dhcpv4_chaddr(
             output["client_hardware_address"],
             output.get("hardware_length"),
         )
@@ -294,17 +294,17 @@ def _normalize(fields: JSONObject) -> JSONObject:
         output["magic_cookie"] = 0x63825363
         output.pop("options", None)
     if isinstance(option_region_hex, str):
-        _apply_dhcp_option_details(output, option_region_hex)
+        _apply_dhcpv4_option_details(output, option_region_hex)
     return output
 
 
 def _normalize_field_value(field_name: str, value: JSONValue) -> JSONValue:
     # Mirror the generic ``normalize._normalize_field_value`` for the DHCP layer:
-    # the ``flags`` value is reduced through ``_normalize_dhcp_flags`` and the
+    # the ``flags`` value is reduced through ``_normalize_dhcpv4_flags`` and the
     # ``is_response``/``more_fragments`` int-to-bool guards are kept for fidelity
     # (no DHCP field is ``linux_sll`` ``source_address``).
     if field_name == "flags":
-        return _normalize_dhcp_flags(value)
+        return _normalize_dhcpv4_flags(value)
     if field_name == "is_response" and isinstance(value, int):
         return bool(value)
     if field_name == "more_fragments" and isinstance(value, int):
@@ -312,7 +312,7 @@ def _normalize_field_value(field_name: str, value: JSONValue) -> JSONValue:
     return value
 
 
-def _normalize_dhcp_flags(value: JSONValue) -> JSONValue:
+def _normalize_dhcpv4_flags(value: JSONValue) -> JSONValue:
     if value == "B":
         return 0x8000
     if value in {"", "none", "0"}:
@@ -320,7 +320,7 @@ def _normalize_dhcp_flags(value: JSONValue) -> JSONValue:
     return _normalize_flags(value)
 
 
-def _normalize_dhcp_chaddr(value: JSONValue, hardware_length: JSONValue) -> JSONValue:
+def _normalize_dhcpv4_chaddr(value: JSONValue, hardware_length: JSONValue) -> JSONValue:
     if not isinstance(value, Mapping):
         return value
     hex_value = value.get("hex")
@@ -330,7 +330,7 @@ def _normalize_dhcp_chaddr(value: JSONValue, hardware_length: JSONValue) -> JSON
     return {"hex": hex_value[: length * 2]}
 
 
-def _apply_dhcp_option_details(output: JSONObject, option_region_hex: str) -> None:
+def _apply_dhcpv4_option_details(output: JSONObject, option_region_hex: str) -> None:
     """Record backend-neutral DHCP option details from the raw TLV region.
 
     Each option is normalized to a stable ``{code, payload_hex}`` pair carrying
@@ -340,20 +340,20 @@ def _apply_dhcp_option_details(output: JSONObject, option_region_hex: str) -> No
     so option coverage records it directly rather than only as a count.
     """
 
-    options = _decode_dhcp_option_tlvs(option_region_hex)
+    options = _decode_dhcpv4_option_tlvs(option_region_hex)
     if options is None:
         return
     output["options"] = options
     output["option_count"] = len(options)
     for option in options:
-        if option["code"] == _DHCP_OPTION_MESSAGE_TYPE:
+        if option["code"] == _DHCPV4_OPTION_MESSAGE_TYPE:
             payload = bytes.fromhex(option["payload_hex"])
             if len(payload) == 1:
                 output["message_type"] = payload[0]
             break
 
 
-def _decode_dhcp_option_tlvs(option_region_hex: str) -> list[JSONObject] | None:
+def _decode_dhcpv4_option_tlvs(option_region_hex: str) -> list[JSONObject] | None:
     """Parse a DHCP option TLV region into ``{code, payload_hex}`` entries.
 
     Pad (0) and end (255) are single-octet options with empty payloads. A
@@ -371,10 +371,10 @@ def _decode_dhcp_option_tlvs(option_region_hex: str) -> list[JSONObject] | None:
     while index < length:
         code = raw[index]
         index += 1
-        if code == _DHCP_OPTION_PAD:
+        if code == _DHCPV4_OPTION_PAD:
             options.append({"code": code, "payload_hex": ""})
             continue
-        if code == _DHCP_OPTION_END:
+        if code == _DHCPV4_OPTION_END:
             options.append({"code": code, "payload_hex": ""})
             break
         if index >= length:

@@ -6,7 +6,9 @@ use crate::endian::read_u32_be;
 use crate::error::Result;
 use crate::packet::{LinkType, NetworkLayer, Packet, Raw};
 use crate::protocols::bgp::{decode::append_bgp_packet_with_registry, BGP_PORT};
-use crate::protocols::dhcp::{append_dhcp_packet, is_dhcp_port_pair, looks_like_dhcp_payload};
+use crate::protocols::dhcp::{
+    append_dhcpv4_packet, is_dhcpv4_port_pair, looks_like_dhcpv4_payload,
+};
 use crate::protocols::dns::{append_dns_packet, DNS_PORT};
 use crate::protocols::eapol::append_eapol_packet;
 use crate::protocols::icmp::{
@@ -381,10 +383,10 @@ impl ProtocolRegistry {
         // bind the port explicitly via `bind_udp`/`bind_udp_port`.
         registry.bind_udp_with_registry(
             |ctx| {
-                is_dhcp_port_pair(ctx.source_port, ctx.destination_port)
-                    && looks_like_dhcp_payload(ctx.payload)
+                is_dhcpv4_port_pair(ctx.source_port, ctx.destination_port)
+                    && looks_like_dhcpv4_payload(ctx.payload)
             },
-            |_registry, packet, payload| append_dhcp_packet(packet, payload),
+            |_registry, packet, payload| append_dhcpv4_packet(packet, payload),
         );
 
         // RIP (RFC 1058 / RFC 2453) decode binds on UDP/520, kept conservative
@@ -834,9 +836,10 @@ impl ProtocolRegistry {
         }
 
         if self.builtin_udp_application_dispatch {
-            if is_dhcp_port_pair(source_port, destination_port) && looks_like_dhcp_payload(payload)
+            if is_dhcpv4_port_pair(source_port, destination_port)
+                && looks_like_dhcpv4_payload(payload)
             {
-                return append_dhcp_packet(packet, payload);
+                return append_dhcpv4_packet(packet, payload);
             }
 
             if (source_port == RIP_UDP_PORT || destination_port == RIP_UDP_PORT)

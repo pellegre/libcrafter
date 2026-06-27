@@ -68,7 +68,7 @@ artifact names.
 | Path | Current DHCPv4 role | Target versioned role |
 | --- | --- | --- |
 | `tools/oracle/specs/layers/` | Defines the DHCPv4 layer schema for BOOTP/DHCPv4 over UDP. | Keep the layer name `dhcpv4` and add a separate `dhcpv6` layer schema when the Rust model exists. |
-| `tools/oracle/specs/features/dhcp-behavior.yaml` | Defines current DHCPv4 behavior cases and option matrix coverage. | Rename current cases to DHCPv4 and add DHCPv6 feature files split by core messages, relay, options, malformed handling, pcap, dry-run live planning, and guarded live validation. |
+| `tools/oracle/specs/features/dhcpv4-behavior.yaml` | Defines current DHCPv4 behavior cases and option matrix coverage. | Rename current cases to DHCPv4 and add DHCPv6 feature files split by core messages, relay, options, malformed handling, pcap, dry-run live planning, and guarded live validation. |
 | `tools/oracle/specs/stacks.yaml` | Contains Ethernet/IPv4/UDP/DHCPv4 stack declarations. | Keep current stacks/layers versioned as `dhcpv4`; add IPv6/UDP/DHCPv6 stacks with `dhcpv6` only on explicit offline or dry-run profiles before live gating. |
 | `tools/oracle/specs/fixtures/scapy-cases.json` | Contains backend-owned DHCPv4 reference cases. | Rename current rows to DHCPv4 and add DHCPv6 backend cases or structured skips as reference support allows. |
 | `tools/oracle/engine/protocols/` | Contains the DHCPv4 generator-stage sampler and feature behavior plugin. | Keep the plugin surface versioned as `dhcpv4.py` or versioned registration; add `dhcpv6.py` for DHCPv6 packet plans. |
@@ -86,7 +86,7 @@ artifact names.
 | `tools/probe/adapters/src/` | Builds DHCPv4 stimulus packets through `crafter`. | Keep adapter names versioned as DHCPv4 and add a DHCPv6 adapter only after public `Dhcpv6` builders exist. |
 | `tools/probe/adapters/src/common.rs` and `tools/probe/adapters/src/lib.rs` | Dispatch to the DHCPv4 adapter. | Keep dispatch names versioned once adapter names split. |
 | `tools/probe/engine/cases.py`, `capabilities.py`, `planning.py`, `target_services.py`, `lab.py`, and CLI parser files | Contain DHCPv4 case/profile/capability wiring and target-service integration. | Keep existing wiring versioned as DHCPv4 and add DHCPv6 capability skips and dry-run planning without sending traffic from the developer host. |
-| `tools/probe/tests/` | Contains DHCP behavior, plan snapshot, rewrite, capability, provider matrix, target service, and protocol coverage tests. | Rename current expectations to DHCPv4 and add DHCPv6 dry-run/provider-matrix expectations. |
+| `tools/probe/tests/` | Contains DHCPv4 behavior, plan snapshot, rewrite, capability, provider matrix, target service, and protocol coverage tests. | Rename current expectations to DHCPv4 and add DHCPv6 dry-run/provider-matrix expectations. |
 | `tools/probe/README.md` | Describes DHCP probe workflow and live constraints. | Keep DHCPv4 and DHCPv6 probe documentation separate and explicit. |
 
 ## Planned DHCPv6 Additions
