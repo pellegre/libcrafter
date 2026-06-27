@@ -8,7 +8,7 @@ exclude = ["target/package-self-test"]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 rust-version = "1.78"
 description = "Packet-level network interaction for Rust tools and agents."

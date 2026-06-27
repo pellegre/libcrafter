@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.2 - 2026-06-27
+
+### Changed
+
+- Add SNMP packet-layer coverage with BER, PDU, v1/v2c/v3 message builders, UDP binding, examples, fixtures, oracle suites, and dry-run probe coverage.
+- Add QUIC packet-layer coverage with invariant/long/short headers, frame sequences, transport parameters, initial protection helpers, datagram/stateless-reset support, fixtures, and oracle/probe coverage.
+- Add DHCPv6 packet-layer coverage with client and relay messages, option registries, DUID/IA helpers, examples, fixtures, oracle/probe coverage, and guarded live dry-run planning.
+- Split DHCPv4 into versioned public modules, keep UDP helper compatibility, expand reply matching filters, and update guides/reference docs for the release.
+
 ## 0.3.1 - 2026-06-24
 
 ### Changed
