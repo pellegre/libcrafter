@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import posixpath
+import shlex
 from collections.abc import Mapping, Sequence
 
 from ..capability_derivation import capability, capability_default_true
@@ -12,7 +15,11 @@ from ..planning_helpers import (
     deterministic_documentation_ipv6,
     deterministic_documentation_mac,
 )
-from ..target_service_helpers import plans_by_destination_port
+from ..target_service_helpers import (
+    dedupe_ints,
+    plans_by_destination_port,
+    probe_plan_send_count,
+)
 from .base import ProtocolPlugin, register
 
 
@@ -590,7 +597,12 @@ _DHCPV6_PLAN_BUILDERS: dict[str, object] = {
 
 
 def dhcpv6_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
-    return [plan for plan in probe_plans if plan.get("case") in _DHCPV6_CASE_BY_NAME]
+    return [
+        plan
+        for plan in probe_plans
+        if plan.get("case") in _DHCPV6_CASE_BY_NAME
+        and int(plan.get("destination_port", 0)) == DHCPV6_SERVER_PORT
+    ]
 
 
 def dhcpv6_target_service_contribution(
@@ -598,22 +610,24 @@ def dhcpv6_target_service_contribution(
     *,
     dry_run: bool,
 ) -> JSONObject:
-    del dry_run
     dhcpv6_plans = dhcpv6_probe_plans(probe_plans)
     plans_by_port = plans_by_destination_port(dhcpv6_plans)
     services = [
         {
             "name": DHCPV6_SERVICE_KIND,
+            "kind": DHCPV6_SERVICE_KIND,
             "protocol": "udp",
             "port": port,
+            "purpose": "dhcpv6",
             "runtime": DHCPV6_RUNTIME,
-            "planned_only": True,
             "deterministic": True,
-            "exchange_count": sum(
-                1
+            "request_count": sum(
+                probe_plan_send_count(item)
                 for item in dhcpv6_plans
                 if int(item.get("destination_port", 0)) == port
             ),
+            "bind_ipv6": _service_ipv6_field(plan, "bind_ipv6", "target_ipv6"),
+            "source_ipv6": _service_ipv6_field(plan, "source_ipv6", "source_ipv6"),
             "behaviors": sorted(
                 {
                     str(item.get("target_service", {}).get("behavior"))
@@ -622,14 +636,251 @@ def dhcpv6_target_service_contribution(
                     and int(item.get("destination_port", 0)) == port
                 }
             ),
+            "expected_replies": sorted(
+                {
+                    str(item.get("dhcpv6", {}).get("expected_message_type"))
+                    for item in dhcpv6_plans
+                    if isinstance(item.get("dhcpv6"), Mapping)
+                    and int(item.get("destination_port", 0)) == port
+                }
+            ),
             "log_paths": [
                 f"live-artifacts/probe/target-services/dhcpv6-responder-{port}.stdout.txt",
                 f"live-artifacts/probe/target-services/dhcpv6-responder-{port}.stderr.txt",
             ],
+            "artifacts": [
+                "live-artifacts/probe/target-services/dhcpv6-plans.json",
+                f"live-artifacts/probe/target-services/dhcpv6-responder-{port}.stdout.txt",
+                f"live-artifacts/probe/target-services/dhcpv6-responder-{port}.stderr.txt",
+                f"live-artifacts/probe/target-services/dhcpv6-responder-{port}.pid",
+            ],
         }
-        for port in plans_by_port
+        for port, plan in plans_by_port.items()
     ]
-    return {"services": services, "starts_services": False}
+    return {
+        "services": services,
+        "starts_services": not dry_run and bool(plans_by_port),
+    }
+
+
+def _service_ipv6_field(plan: JSONObject, service_key: str, plan_key: str) -> str:
+    target_service = plan.get("target_service")
+    if isinstance(target_service, Mapping):
+        value = target_service.get(service_key)
+        if isinstance(value, str):
+            return value
+    value = plan.get(plan_key)
+    return value if isinstance(value, str) else ""
+
+
+def dhcpv6_port_check_lines(dhcpv6_plans: Sequence[JSONObject]) -> list[str]:
+    dhcpv6_ports = dedupe_ints(
+        int(plan["destination_port"])
+        for plan in dhcpv6_plans
+        if isinstance(plan.get("destination_port"), int)
+    )
+    lines: list[str] = []
+    for port in dhcpv6_ports:
+        lines.extend(
+            [
+                f"check_udp6_port_free \"$dhcpv6_bind_ipv6\" {port}",
+            ]
+        )
+    return lines
+
+
+def dhcpv6_responder_setup_lines(
+    *,
+    artifact_root: str,
+    dhcpv6_plans: Sequence[JSONObject],
+) -> list[str]:
+    dhcpv6_plan_json = json.dumps(list(dhcpv6_plans), sort_keys=True)
+    dhcpv6_ports = dedupe_ints(
+        int(plan["destination_port"])
+        for plan in dhcpv6_plans
+        if isinstance(plan.get("destination_port"), int)
+    )
+    lines: list[str] = []
+    if dhcpv6_ports:
+        plan_path = posixpath.join(artifact_root, "dhcpv6-plans.json")
+        service_path = posixpath.join(artifact_root, "dhcpv6-responder.py")
+        lines.extend(
+            [
+                f"cat > {shlex.quote(plan_path)} <<'JSON'",
+                dhcpv6_plan_json,
+                "JSON",
+                f"cat > {shlex.quote(service_path)} <<'PY'",
+                "import ipaddress",
+                "import json",
+                "import signal",
+                "import socket",
+                "import struct",
+                "import sys",
+                "import time",
+                "",
+                "stop = False",
+                "",
+                "def handle_stop(_signum, _frame):",
+                "    global stop",
+                "    stop = True",
+                "",
+                "signal.signal(signal.SIGTERM, handle_stop)",
+                "signal.signal(signal.SIGINT, handle_stop)",
+                "",
+                "plan_path, bind_ip, port_text = sys.argv[1:4]",
+                "port = int(port_text)",
+                "plans = json.load(open(plan_path, encoding='utf-8'))",
+                "entries_by_xid = {}",
+                "entries_by_message = {}",
+                "",
+                "def option_payload(option):",
+                "    code = int(option.get('code', 0))",
+                "    if option.get('duid_hex'):",
+                "        return bytes.fromhex(str(option['duid_hex']))",
+                "    if option.get('data_hex'):",
+                "        return bytes.fromhex(str(option['data_hex']))",
+                "    if code == 23:",
+                "        return b''.join(ipaddress.IPv6Address(item).packed for item in option.get('servers', []))",
+                "    if code == 24:",
+                "        return b''.join(domain_wire(item) for item in option.get('domains', []))",
+                "    if code == 3:",
+                "        nested = b''.join(encode_option(item) for item in option.get('addresses', []))",
+                "        return struct.pack('!III', int(option.get('iaid', 0)), int(option.get('t1', 0)), int(option.get('t2', 0))) + nested",
+                "    if code == 5:",
+                "        return ipaddress.IPv6Address(str(option['ipv6'])).packed + struct.pack('!II', int(option.get('preferred_lifetime', 0)), int(option.get('valid_lifetime', 0)))",
+                "    if code == 25:",
+                "        nested = b''.join(encode_option(item) for item in option.get('prefixes', []))",
+                "        return struct.pack('!III', int(option.get('iaid', 0)), int(option.get('t1', 0)), int(option.get('t2', 0))) + nested",
+                "    if code == 26:",
+                "        preferred = int(option.get('preferred_lifetime', 0))",
+                "        valid = int(option.get('valid_lifetime', 0))",
+                "        length = int(option.get('prefix_length', 0))",
+                "        prefix = ipaddress.IPv6Address(str(option['prefix'])).packed",
+                "        return struct.pack('!IIB', preferred, valid, length) + prefix",
+                "    if code == 9:",
+                "        return bytes([2]) + b'\\x00\\x00\\x00'",
+                "    if code == 19:",
+                "        return bytes([11])",
+                "    if code == 20 or code == 14:",
+                "        return b''",
+                "    if code == 44:",
+                "        return bytes([1]) + ipaddress.IPv6Address(str(option['address'])).packed",
+                "    if code == 45:",
+                "        return bytes.fromhex(str(option.get('client_identifier_hex', '')))",
+                "    if code == 46:",
+                "        return struct.pack('!I', int(option.get('seconds', 0)))",
+                "    return b''",
+                "",
+                "def encode_option(option):",
+                "    code = int(option.get('code', 0))",
+                "    payload = option_payload(option)",
+                "    return struct.pack('!HH', code, len(payload)) + payload",
+                "",
+                "def encode_options(options):",
+                "    return b''.join(encode_option(option) for option in options)",
+                "",
+                "def domain_wire(value):",
+                "    output = bytearray()",
+                "    for label in str(value).rstrip('.').split('.'):",
+                "        raw = label.encode('ascii')",
+                "        output.append(len(raw))",
+                "        output.extend(raw)",
+                "    output.append(0)",
+                "    return bytes(output)",
+                "",
+                "def register(plan):",
+                "    dhcp = plan.get('dhcpv6') or {}",
+                "    xid = int(dhcp.get('transaction_id', 0))",
+                "    entries_by_xid[xid] = plan",
+                "    entries_by_message.setdefault(int(dhcp.get('message_type_code', 0)), plan)",
+                "",
+                "for plan in plans:",
+                "    register(plan)",
+                "",
+                "def transaction_id_from(data):",
+                "    if len(data) < 4:",
+                "        return 0",
+                "    if data[0] not in (12, 13):",
+                "        return int.from_bytes(data[1:4], 'big')",
+                "    offset = 34",
+                "    while offset + 4 <= len(data):",
+                "        code, size = struct.unpack('!HH', data[offset:offset + 4])",
+                "        payload = data[offset + 4:offset + 4 + size]",
+                "        if code == 9 and len(payload) >= 4:",
+                "            return int.from_bytes(payload[1:4], 'big')",
+                "        offset += 4 + size",
+                "    return 0",
+                "",
+                "def response_for(data):",
+                "    if not data:",
+                "        raise ValueError('empty dhcpv6 request')",
+                "    xid = transaction_id_from(data)",
+                "    plan = entries_by_xid.get(xid) or entries_by_message.get(data[0])",
+                "    if plan is None:",
+                "        raise ValueError(f'no planned dhcpv6 response for xid {xid} message {data[0]}')",
+                "    dhcp = plan['dhcpv6']",
+                "    response_type = int(dhcp['expected_message_type_code'])",
+                "    options = encode_options(dhcp.get('expected_options', []))",
+                "    if response_type == 13:",
+                "        relay = dhcp.get('relay') or {}",
+                "        link = ipaddress.IPv6Address(str(relay.get('link_address') or plan['target_ipv6'])).packed",
+                "        peer = ipaddress.IPv6Address(str(relay.get('peer_address') or plan['source_ipv6'])).packed",
+                "        inner = bytes([2]) + int(dhcp['transaction_id']).to_bytes(3, 'big') + options",
+                "        relay_msg = struct.pack('!HH', 9, len(inner)) + inner",
+                "        response = bytes([13, int(relay.get('hop_count', 0))]) + link + peer + relay_msg",
+                "    else:",
+                "        response = bytes([response_type]) + int(dhcp['transaction_id']).to_bytes(3, 'big') + options",
+                "    return response, plan",
+                "",
+                "sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)",
+                "sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)",
+                "sock.bind((bind_ip, port))",
+                "sock.settimeout(1.0)",
+                "print(json.dumps({'event': 'listening', 'bind_ip': bind_ip, 'port': port, 'planned_responses': len(entries_by_xid)}), flush=True)",
+                "while not stop:",
+                "    try:",
+                "        data, addr = sock.recvfrom(8192)",
+                "    except socket.timeout:",
+                "        continue",
+                "    try:",
+                "        response, plan = response_for(data)",
+                "        response_port = 547 if response[0] == 13 else 546",
+                "        sock.sendto(response, (addr[0], response_port))",
+                "        print(json.dumps({'event': 'answered', 'client': addr[0], 'client_port': addr[1], 'case': plan['case'], 'response_type': response[0]}, sort_keys=True), flush=True)",
+                "    except Exception as exc:",
+                "        print(json.dumps({'event': 'error', 'client': addr[0], 'error': str(exc)}), file=sys.stderr, flush=True)",
+                "sock.close()",
+                "print(json.dumps({'event': 'stopped', 'ts': time.time()}), flush=True)",
+                "PY",
+            ]
+        )
+    for port in dhcpv6_ports:
+        stdout_path = posixpath.join(artifact_root, f"dhcpv6-responder-{port}.stdout.txt")
+        stderr_path = posixpath.join(artifact_root, f"dhcpv6-responder-{port}.stderr.txt")
+        pid_path = posixpath.join(artifact_root, f"dhcpv6-responder-{port}.pid")
+        lines.extend(
+            [
+                f"check_udp6_port_free \"$dhcpv6_bind_ipv6\" {port}",
+                (
+                    f"python3 {shlex.quote(posixpath.join(artifact_root, 'dhcpv6-responder.py'))} "
+                    f"{shlex.quote(posixpath.join(artifact_root, 'dhcpv6-plans.json'))} "
+                    f"\"$dhcpv6_bind_ipv6\" {port} "
+                    f">{shlex.quote(stdout_path)} 2>{shlex.quote(stderr_path)} &"
+                ),
+                "pid=$!",
+                f"echo \"$pid\" > {shlex.quote(pid_path)}",
+                "printf '%s\\n' \"kill $pid 2>/dev/null || true\" >> \"$cleanup\"",
+                f"printf '%s\\n' \"rm -f {shlex.quote(pid_path)}\" >> \"$cleanup\"",
+                "sleep 0.5",
+                "if ! kill -0 \"$pid\" 2>/dev/null; then",
+                f"  cat {shlex.quote(stderr_path)} >&2 || true",
+                f"  echo dhcpv6_responder_{port}=failed >&2",
+                "  exit 73",
+                "fi",
+                f"echo dhcpv6_responder_{port}=running",
+            ]
+        )
+    return lines
 
 
 def dhcpv6_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, object]:
