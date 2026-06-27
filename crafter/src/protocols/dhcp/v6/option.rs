@@ -18,24 +18,25 @@ use super::constants::{
     DHCPV6_AUTH_REPLAY_DETECTION_LEN, DHCPV6_OPTION_4RD, DHCPV6_OPTION_4RD_MAP_RULE,
     DHCPV6_OPTION_4RD_NON_MAP_RULE, DHCPV6_OPTION_ADDR_REG_ENABLE, DHCPV6_OPTION_AUTH,
     DHCPV6_OPTION_BOOTFILE_PARAM, DHCPV6_OPTION_BOOTFILE_URL, DHCPV6_OPTION_CAPTIVE_PORTAL,
-    DHCPV6_OPTION_CLIENTID, DHCPV6_OPTION_CLIENT_ARCH_TYPE, DHCPV6_OPTION_CLIENT_FQDN,
-    DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR, DHCPV6_OPTION_DNS_SERVERS, DHCPV6_OPTION_DOMAIN_LIST,
-    DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN, DHCPV6_OPTION_IAADDR,
-    DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD,
-    DHCPV6_OPTION_INFORMATION_REFRESH_TIME, DHCPV6_OPTION_INF_MAX_RT, DHCPV6_OPTION_INTERFACE_ID,
-    DHCPV6_OPTION_MUD_URL_V6, DHCPV6_OPTION_NEW_POSIX_TIMEZONE, DHCPV6_OPTION_NEW_TZDB_TIMEZONE,
-    DHCPV6_OPTION_NII, DHCPV6_OPTION_NTP_SERVER, DHCPV6_OPTION_ORO, DHCPV6_OPTION_PD_EXCLUDE,
-    DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT, DHCPV6_OPTION_RECONF_ACCEPT,
-    DHCPV6_OPTION_RECONF_MSG, DHCPV6_OPTION_RELAY_ID, DHCPV6_OPTION_RELAY_MSG,
-    DHCPV6_OPTION_REMOTE_ID, DHCPV6_OPTION_RSOO, DHCPV6_OPTION_S46_BIND_IPV6_PREFIX,
-    DHCPV6_OPTION_S46_BR, DHCPV6_OPTION_S46_CONT_LW, DHCPV6_OPTION_S46_CONT_MAPE,
-    DHCPV6_OPTION_S46_CONT_MAPT, DHCPV6_OPTION_S46_DMR, DHCPV6_OPTION_S46_PORTPARAMS,
-    DHCPV6_OPTION_S46_PRIORITY, DHCPV6_OPTION_S46_RULE, DHCPV6_OPTION_S46_V4V6BIND,
-    DHCPV6_OPTION_SERVERID, DHCPV6_OPTION_SIP_SERVER_A, DHCPV6_OPTION_SIP_SERVER_D,
-    DHCPV6_OPTION_SIP_UA_CS_LIST, DHCPV6_OPTION_SNTP_SERVERS, DHCPV6_OPTION_SOL_MAX_RT,
-    DHCPV6_OPTION_STATUS_CODE, DHCPV6_OPTION_SUBSCRIBER_ID, DHCPV6_OPTION_USER_CLASS,
-    DHCPV6_OPTION_V6_DNR, DHCPV6_OPTION_V6_PREFIX64, DHCPV6_OPTION_VENDOR_CLASS,
-    DHCPV6_OPTION_VENDOR_OPTS, DHCPV6_TIME_INFINITY,
+    DHCPV6_OPTION_CLIENTID, DHCPV6_OPTION_CLIENT_ARCH_TYPE, DHCPV6_OPTION_CLIENT_DATA,
+    DHCPV6_OPTION_CLIENT_FQDN, DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR, DHCPV6_OPTION_CLT_TIME,
+    DHCPV6_OPTION_DNS_SERVERS, DHCPV6_OPTION_DOMAIN_LIST, DHCPV6_OPTION_ELAPSED_TIME,
+    DHCPV6_OPTION_HEADER_LEN, DHCPV6_OPTION_IAADDR, DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA,
+    DHCPV6_OPTION_IA_PD, DHCPV6_OPTION_INFORMATION_REFRESH_TIME, DHCPV6_OPTION_INF_MAX_RT,
+    DHCPV6_OPTION_INTERFACE_ID, DHCPV6_OPTION_LQ_CLIENT_LINK, DHCPV6_OPTION_LQ_QUERY,
+    DHCPV6_OPTION_LQ_RELAY_DATA, DHCPV6_OPTION_MUD_URL_V6, DHCPV6_OPTION_NEW_POSIX_TIMEZONE,
+    DHCPV6_OPTION_NEW_TZDB_TIMEZONE, DHCPV6_OPTION_NII, DHCPV6_OPTION_NTP_SERVER,
+    DHCPV6_OPTION_ORO, DHCPV6_OPTION_PD_EXCLUDE, DHCPV6_OPTION_PREFERENCE,
+    DHCPV6_OPTION_RAPID_COMMIT, DHCPV6_OPTION_RECONF_ACCEPT, DHCPV6_OPTION_RECONF_MSG,
+    DHCPV6_OPTION_RELAY_ID, DHCPV6_OPTION_RELAY_MSG, DHCPV6_OPTION_REMOTE_ID, DHCPV6_OPTION_RSOO,
+    DHCPV6_OPTION_S46_BIND_IPV6_PREFIX, DHCPV6_OPTION_S46_BR, DHCPV6_OPTION_S46_CONT_LW,
+    DHCPV6_OPTION_S46_CONT_MAPE, DHCPV6_OPTION_S46_CONT_MAPT, DHCPV6_OPTION_S46_DMR,
+    DHCPV6_OPTION_S46_PORTPARAMS, DHCPV6_OPTION_S46_PRIORITY, DHCPV6_OPTION_S46_RULE,
+    DHCPV6_OPTION_S46_V4V6BIND, DHCPV6_OPTION_SERVERID, DHCPV6_OPTION_SIP_SERVER_A,
+    DHCPV6_OPTION_SIP_SERVER_D, DHCPV6_OPTION_SIP_UA_CS_LIST, DHCPV6_OPTION_SNTP_SERVERS,
+    DHCPV6_OPTION_SOL_MAX_RT, DHCPV6_OPTION_STATUS_CODE, DHCPV6_OPTION_SUBSCRIBER_ID,
+    DHCPV6_OPTION_USER_CLASS, DHCPV6_OPTION_V6_DNR, DHCPV6_OPTION_V6_PREFIX64,
+    DHCPV6_OPTION_VENDOR_CLASS, DHCPV6_OPTION_VENDOR_OPTS, DHCPV6_TIME_INFINITY,
 };
 use super::duid::Dhcpv6Duid;
 use super::message::Dhcpv6MessageType;
@@ -50,6 +51,7 @@ const DHCPV6_PD_EXCLUDE_PAYLOAD_MIN_LEN: usize = 2;
 const DHCPV6_PD_EXCLUDE_PAYLOAD_MAX_LEN: usize = 17;
 const DHCPV6_PD_EXCLUDE_SUBNET_ID_MIN_LEN: usize = 1;
 const DHCPV6_PD_EXCLUDE_SUBNET_ID_MAX_LEN: usize = 16;
+const DHCPV6_LQ_QUERY_HEADER_LEN: usize = 17;
 
 /// DHCPv6 option codepoint.
 ///
@@ -399,6 +401,33 @@ pub struct Dhcpv6Dnr {
     adn: DnsName,
     addresses: Vec<Ipv6Addr>,
     svc_params: Vec<Dhcpv6DnrSvcParam>,
+}
+
+/// DHCPv6 Leasequery query type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Dhcpv6LeasequeryType {
+    /// Query by IPv6 address.
+    ByAddress,
+    /// Query by client identifier.
+    ByClientId,
+    /// Query by relay identifier.
+    ByRelayId,
+    /// Query type unknown to this crate.
+    Unknown(u8),
+}
+
+/// DHCPv6 OPTION_LQ_QUERY payload.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6Leasequery {
+    query_type: Dhcpv6LeasequeryType,
+    link_address: Ipv6Addr,
+    options: Vec<Dhcpv6Option>,
+}
+
+/// DHCPv6 OPTION_CLIENT_DATA payload.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct Dhcpv6ClientData {
+    options: Vec<Dhcpv6Option>,
 }
 
 /// DHCPv6 OPTION_IAADDR address binding.
@@ -1149,6 +1178,134 @@ impl Dhcpv6Dnr {
     pub fn svc_params_from(mut self, params: impl Into<Vec<Dhcpv6DnrSvcParam>>) -> Self {
         self.svc_params = params.into();
         self
+    }
+}
+
+impl Dhcpv6LeasequeryType {
+    /// Create a Leasequery query type from its raw wire octet.
+    pub const fn from_code(code: u8) -> Self {
+        match code {
+            1 => Self::ByAddress,
+            2 => Self::ByClientId,
+            3 => Self::ByRelayId,
+            other => Self::Unknown(other),
+        }
+    }
+
+    /// Raw wire octet.
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::ByAddress => 1,
+            Self::ByClientId => 2,
+            Self::ByRelayId => 3,
+            Self::Unknown(code) => code,
+        }
+    }
+}
+
+impl Dhcpv6Leasequery {
+    /// Create an OPTION_LQ_QUERY payload.
+    pub fn new(query_type: Dhcpv6LeasequeryType, link_address: Ipv6Addr) -> Self {
+        Self {
+            query_type,
+            link_address,
+            options: Vec::new(),
+        }
+    }
+
+    /// Decode an OPTION_LQ_QUERY payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < DHCPV6_LQ_QUERY_HEADER_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "dhcpv6.option.lq_query",
+                DHCPV6_LQ_QUERY_HEADER_LEN,
+                bytes.len(),
+            ));
+        }
+        Ok(Self {
+            query_type: Dhcpv6LeasequeryType::from_code(bytes[0]),
+            link_address: Ipv6Addr::from(copy_array_16(&bytes[1..17])),
+            options: Dhcpv6Option::decode_all(&bytes[DHCPV6_LQ_QUERY_HEADER_LEN..])?,
+        })
+    }
+
+    /// Encode this OPTION_LQ_QUERY payload.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(
+            DHCPV6_LQ_QUERY_HEADER_LEN
+                + self
+                    .options
+                    .iter()
+                    .map(|option| DHCPV6_OPTION_HEADER_LEN + option.payload_len())
+                    .sum::<usize>(),
+        );
+        out.push(self.query_type.code());
+        out.extend_from_slice(&self.link_address.octets());
+        out.extend_from_slice(&Dhcpv6Option::encode_all(&self.options)?);
+        Ok(out)
+    }
+
+    /// Query type.
+    pub const fn query_type(&self) -> Dhcpv6LeasequeryType {
+        self.query_type
+    }
+
+    /// Link address used for the query.
+    pub const fn link_address(&self) -> Ipv6Addr {
+        self.link_address
+    }
+
+    /// Append a nested query option.
+    pub fn option(mut self, option: Dhcpv6Option) -> Self {
+        self.options.push(option);
+        self
+    }
+
+    /// Replace nested query options.
+    pub fn options(mut self, options: impl Into<Vec<Dhcpv6Option>>) -> Self {
+        self.options = options.into();
+        self
+    }
+
+    /// Borrow nested query options.
+    pub fn options_ref(&self) -> &[Dhcpv6Option] {
+        &self.options
+    }
+}
+
+impl Dhcpv6ClientData {
+    /// Create an empty OPTION_CLIENT_DATA payload.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Decode an OPTION_CLIENT_DATA payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        Ok(Self {
+            options: Dhcpv6Option::decode_all(bytes)?,
+        })
+    }
+
+    /// Encode this OPTION_CLIENT_DATA payload.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        Dhcpv6Option::encode_all(&self.options)
+    }
+
+    /// Append a nested client-data option.
+    pub fn option(mut self, option: Dhcpv6Option) -> Self {
+        self.options.push(option);
+        self
+    }
+
+    /// Replace nested client-data options.
+    pub fn options(mut self, options: impl Into<Vec<Dhcpv6Option>>) -> Self {
+        self.options = options.into();
+        self
+    }
+
+    /// Borrow nested client-data options.
+    pub fn options_ref(&self) -> &[Dhcpv6Option] {
+        &self.options
     }
 }
 
@@ -2288,6 +2445,37 @@ impl Dhcpv6Option {
         Ok(Self::raw(DHCPV6_OPTION_V6_DNR, dnr.encode()?))
     }
 
+    /// Create an OPTION_LQ_QUERY option.
+    pub fn leasequery(query: Dhcpv6Leasequery) -> Result<Self> {
+        Ok(Self::raw(DHCPV6_OPTION_LQ_QUERY, query.encode()?))
+    }
+
+    /// Create an OPTION_CLIENT_DATA option.
+    pub fn client_data(client_data: Dhcpv6ClientData) -> Result<Self> {
+        Ok(Self::raw(DHCPV6_OPTION_CLIENT_DATA, client_data.encode()?))
+    }
+
+    /// Create an OPTION_CLT_TIME option.
+    pub fn client_time(seconds: u32) -> Self {
+        Self::raw(DHCPV6_OPTION_CLT_TIME, seconds.to_be_bytes().to_vec())
+    }
+
+    /// Create an OPTION_LQ_RELAY_DATA option.
+    pub fn leasequery_relay_data(payload: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_LQ_RELAY_DATA, payload)
+    }
+
+    /// Create an OPTION_LQ_CLIENT_LINK option.
+    pub fn leasequery_client_link<I>(addresses: I) -> Self
+    where
+        I: IntoIterator<Item = Ipv6Addr>,
+    {
+        Self::raw(
+            DHCPV6_OPTION_LQ_CLIENT_LINK,
+            encode_ipv6_addr_list(addresses),
+        )
+    }
+
     /// Create an OPTION_REMOTE_ID option.
     pub fn remote_id(remote_id: Dhcpv6RemoteId) -> Self {
         Self::raw(DHCPV6_OPTION_REMOTE_ID, remote_id.encode())
@@ -2689,6 +2877,37 @@ impl Dhcpv6Option {
             Some(payload) => Dhcpv6Dnr::decode(payload).map(Some),
             None => Ok(None),
         }
+    }
+
+    /// Decode OPTION_LQ_QUERY.
+    pub fn leasequery_value(&self) -> Result<Option<Dhcpv6Leasequery>> {
+        match self.payload_if_code(DHCPV6_OPTION_LQ_QUERY) {
+            Some(payload) => Dhcpv6Leasequery::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode OPTION_CLIENT_DATA.
+    pub fn client_data_value(&self) -> Result<Option<Dhcpv6ClientData>> {
+        match self.payload_if_code(DHCPV6_OPTION_CLIENT_DATA) {
+            Some(payload) => Dhcpv6ClientData::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode OPTION_CLT_TIME.
+    pub fn client_time_value(&self) -> Result<Option<u32>> {
+        self.fixed_u32_if_code(DHCPV6_OPTION_CLT_TIME, "dhcpv6.option.clt_time")
+    }
+
+    /// Return OPTION_LQ_RELAY_DATA payload bytes.
+    pub fn leasequery_relay_data_value(&self) -> Option<&[u8]> {
+        self.payload_if_code(DHCPV6_OPTION_LQ_RELAY_DATA)
+    }
+
+    /// Decode OPTION_LQ_CLIENT_LINK.
+    pub fn leasequery_client_link_value(&self) -> Result<Option<Vec<Ipv6Addr>>> {
+        self.ipv6_addr_list_if_code(DHCPV6_OPTION_LQ_CLIENT_LINK, "dhcpv6.option.lq_client_link")
     }
 
     /// Decode OPTION_REMOTE_ID.
