@@ -1,0 +1,6 @@
+# dhcpv6 malformed fixture: IAPREFIX payload is one byte short.
+01 00 00 00
+00 1a 00 18
+00 00 00 00 00 00 00 00
+40
+20 01 0d b8 00 00 00 00 00 00 00 00 00 00 00

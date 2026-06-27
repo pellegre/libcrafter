@@ -1,0 +1,3 @@
+# dhcpv6 malformed fixture: option payload overruns the buffer.
+01 00 00 00
+00 01 00 04 aa

@@ -1,0 +1,4 @@
+# dhcpv6 malformed fixture: relay-forward header is one byte short.
+0c 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00

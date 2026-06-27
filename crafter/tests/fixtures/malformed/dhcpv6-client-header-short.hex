@@ -1,0 +1,2 @@
+# dhcpv6 malformed fixture: short client/server header.
+01 00 00

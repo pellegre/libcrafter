@@ -1,0 +1,5 @@
+# dhcpv6 malformed fixture: IA_NA nested option payload overruns the IA_NA body.
+01 00 00 00
+00 03 00 11
+01 02 03 04 00 00 00 3c 00 00 00 78
+00 0d 00 04 aa
