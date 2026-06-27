@@ -26,7 +26,7 @@ use crafter::core::{
     DNS_SVCB_KEY_ALPN, DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A,
     DNS_TYPE_AAAA, DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NS,
     DNS_TYPE_NSEC, DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV,
-    DNS_TYPE_SVCB, ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_VLAN,
+    DNS_TYPE_SVCB, ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_VLAN,
     ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST,
     IGMP_FIXED_HEADER_LEN, IGMP_QUERY_CODE_V1, IGMP_TYPE_UNASSIGNED_FIRST, IPPROTO_ICMP,
     IPPROTO_ICMPV6, IPPROTO_IGMP, IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1,
@@ -606,6 +606,20 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-udp-dhcpv6-solicit.hex")),
         target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
         expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Dhcpv6,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ethernet-ipv6-udp-dhcpv6-solicit",
+        path: "bytes/ethernet-ipv6-udp-dhcpv6-solicit.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ethernet-ipv6-udp-dhcpv6-solicit.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ethernet)),
+        expected_layers: &[
+            ExpectedLayer::Ethernet,
             ExpectedLayer::Ipv6,
             ExpectedLayer::Udp,
             ExpectedLayer::Dhcpv6,
@@ -2379,6 +2393,34 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
         }],
     },
     PcapFixtureCase {
+        name: "raw-ipv6-udp-dhcpv6-solicit",
+        path: "pcaps/raw-ipv6-udp-dhcpv6-solicit.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv6-udp-dhcpv6-solicit.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv6,
+        records: &[PcapFixtureRecord {
+            seconds: 66,
+            fractional: 601,
+            fixture_name: "ipv6-udp-dhcpv6-solicit",
+        }],
+    },
+    PcapFixtureCase {
+        name: "ethernet-ipv6-udp-dhcpv6-solicit",
+        path: "pcaps/ethernet-ipv6-udp-dhcpv6-solicit.pcap",
+        contents: fixture_bytes!("pcaps/ethernet-ipv6-udp-dhcpv6-solicit.pcap"),
+        pcap_link_type: PcapLinkType::Ethernet,
+        link_type: LinkType::Ethernet,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::Ethernet,
+        records: &[PcapFixtureRecord {
+            seconds: 66,
+            fractional: 602,
+            fixture_name: "ethernet-ipv6-udp-dhcpv6-solicit",
+        }],
+    },
+    PcapFixtureCase {
         name: "raw-ipv6-udp-quic-initial",
         path: "pcaps/raw-ipv6-udp-quic-initial.pcap",
         contents: fixture_bytes!("pcaps/raw-ipv6-udp-quic-initial.pcap"),
@@ -2806,6 +2848,7 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv6-icmpv6-time-exceeded" => &[CoverageFamily::Ipv6IcmpError],
         "ipv6-udp-raw" | "ipv6-base-traffic-flow-udp-raw" => &[CoverageFamily::Ipv6Udp],
         "ipv6-udp-dhcpv6-solicit"
+        | "ethernet-ipv6-udp-dhcpv6-solicit"
         | "ipv6-udp-dhcpv6-advertise"
         | "ipv6-udp-dhcpv6-request"
         | "ipv6-udp-dhcpv6-reply"
@@ -4147,7 +4190,11 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_ipv6_oracle_reference_fixture_fields(case, packet)
         }
         name if name.starts_with("ipv4-igmp-") => assert_igmp_fixture_fields(case, packet),
-        name if name.starts_with("ipv6-udp-dhcpv6-") => assert_dhcpv6_fixture_fields(case, packet),
+        name if name.starts_with("ipv6-udp-dhcpv6-")
+            || name == "ethernet-ipv6-udp-dhcpv6-solicit" =>
+        {
+            assert_dhcpv6_fixture_fields(case, packet)
+        }
         "arp-who-has" => {
             let ethernet = expect_layer::<Ethernet>(case, packet);
             assert_eq!(ethernet.destination(), Some(MacAddr::BROADCAST));
@@ -6590,6 +6637,26 @@ fn assert_dhcpv6_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                 vec![1, 6, 8]
             );
         }
+        "ethernet-ipv6-udp-dhcpv6-solicit" => {
+            let ethernet = expect_layer::<Ethernet>(case, packet);
+            assert_eq!(
+                ethernet.source(),
+                Some(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x06, 0x01]))
+            );
+            assert_eq!(
+                ethernet.destination(),
+                Some(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x06, 0x02]))
+            );
+            assert_eq!(ethernet.ethertype_value(), Some(ETHERTYPE_IPV6));
+            assert_dhcpv6_transport(case, packet, client_addr, server_addr, 546, 547);
+            assert_eq!(dhcpv6.message_type_code_value(), 1);
+            assert_eq!(dhcpv6.transaction_id_value(), 0x010203);
+            assert_eq!(
+                dhcpv6.client_id_value(),
+                Some(dhcpv6_client_duid().as_slice())
+            );
+            assert_eq!(dhcpv6_oro_codes(dhcpv6), vec![23, 24]);
+        }
         "ipv6-udp-dhcpv6-advertise" => {
             assert_dhcpv6_transport(case, packet, server_addr, client_addr, 547, 546);
             assert_eq!(dhcpv6.message_type_code_value(), 2);
@@ -8081,7 +8148,7 @@ fn dhcpv6_fixture_catalog_decodes_byte_fixtures() {
         .iter()
         .filter(|case| coverage_for_case(case.name).contains(&CoverageFamily::Ipv6UdpDhcpv6))
         .collect::<Vec<_>>();
-    assert_eq!(dhcpv6_cases.len(), 10);
+    assert_eq!(dhcpv6_cases.len(), 11);
 
     for case in dhcpv6_cases {
         assert!(
@@ -8639,6 +8706,81 @@ fn snmp_fixture_suite_pcap_decodes_records() {
                 panic!("pcap fixture {} should decode packets: {err}", case.path)
             });
         assert_eq!(records.len(), case.records.len());
+        assert_eq!(packets.len(), case.records.len());
+
+        for ((record, packet), expected) in records.iter().zip(packets.iter()).zip(case.records) {
+            let expected_fixture = valid_fixture_case(expected.fixture_name);
+            let expected_bytes = fixture_bytes_for_case(expected_fixture);
+            let expected_timestamp = PcapTimestamp::new(
+                expected.seconds,
+                expected.fractional,
+                case.timestamp_precision,
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} timestamp should be valid: {err}",
+                    case.path
+                )
+            });
+
+            assert_eq!(record.timestamp(), expected_timestamp);
+            assert_eq!(record.pcap_link_type(), case.pcap_link_type);
+            assert_eq!(record.link_type(), case.link_type);
+            assert_eq!(record.data(), expected_bytes.as_slice());
+            assert_eq!(packet.timestamp(), expected_timestamp);
+            assert_eq!(packet.data(), expected_bytes.as_slice());
+            assert_packet_surface(expected_fixture, packet.packet());
+            assert_fixture_fields(expected_fixture, packet.packet());
+            assert_compile_decode_compile(
+                expected_fixture,
+                packet_target_for_case(expected_fixture),
+                packet.packet(),
+                &expected_bytes,
+            );
+        }
+    }
+}
+
+#[test]
+fn dhcpv6_pcap_fixtures_decode_records() {
+    for name in [
+        "ipv6-udp-dhcpv6-solicit",
+        "ethernet-ipv6-udp-dhcpv6-solicit",
+    ] {
+        let case = valid_fixture_case(name);
+        ensure_fixture_exists(case.path);
+        let bytes = fixture_bytes_for_case(case);
+        let target = packet_target_for_case(case);
+        let packet = decode_packet(target, &bytes)
+            .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+
+        assert_packet_surface(case, &packet);
+        assert_exact_layer_stack(case, &packet);
+        assert_fixture_fields(case, &packet);
+        assert_compile_decode_compile(case, target, &packet, &bytes);
+    }
+
+    for name in [
+        "raw-ipv6-udp-dhcpv6-solicit",
+        "ethernet-ipv6-udp-dhcpv6-solicit",
+    ] {
+        let case = pcap_fixture_case(name);
+        let records = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| panic!("pcap fixture {} should parse header: {err}", case.path))
+            .collect_records()
+            .unwrap_or_else(|err| panic!("pcap fixture {} should read records: {err}", case.path));
+        let packets = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} should parse header for packets: {err}",
+                    case.path
+                )
+            })
+            .collect_packets()
+            .unwrap_or_else(|err| {
+                panic!("pcap fixture {} should decode packets: {err}", case.path)
+            });
+        assert_eq!(records.len(), 1);
         assert_eq!(packets.len(), case.records.len());
 
         for ((record, packet), expected) in records.iter().zip(packets.iter()).zip(case.records) {
@@ -10999,6 +11141,30 @@ fn dhcpv6_packet(src: Ipv6Addr, dst: Ipv6Addr, udp: Udp, dhcpv6: Dhcpv6) -> Pack
     Ipv6::new().src(src).dst(dst) / udp / dhcpv6
 }
 
+fn dhcpv6_solicit_message() -> Dhcpv6 {
+    Dhcpv6::solicit(0x010203)
+        .client_id(dhcpv6_client_duid())
+        .oro([23u16, 24u16])
+        .elapsed_time(1)
+}
+
+fn dhcpv6_raw_solicit_packet() -> Packet {
+    dhcpv6_packet(
+        dhcpv6_doc_addr(0x0010),
+        dhcpv6_doc_addr(0x0001),
+        Udp::dhcpv6_client(),
+        dhcpv6_solicit_message(),
+    )
+}
+
+fn dhcpv6_ethernet_solicit_packet() -> Packet {
+    Ethernet::new()
+        .src(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x06, 0x01]))
+        .dst(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x06, 0x02]))
+        .ethertype(ETHERTYPE_IPV6)
+        / dhcpv6_raw_solicit_packet()
+}
+
 fn dhcpv6_fixture_packets() -> Vec<(&'static str, Packet)> {
     let client = dhcpv6_client_duid();
     let server = dhcpv6_server_duid();
@@ -11034,15 +11200,11 @@ fn dhcpv6_fixture_packets() -> Vec<(&'static str, Packet)> {
     vec![
         (
             "bytes/ipv6-udp-dhcpv6-solicit.hex",
-            dhcpv6_packet(
-                client_addr,
-                server_addr,
-                Udp::dhcpv6_client(),
-                Dhcpv6::solicit(0x010203)
-                    .client_id(client)
-                    .oro([23u16, 24u16])
-                    .elapsed_time(1),
-            ),
+            dhcpv6_raw_solicit_packet(),
+        ),
+        (
+            "bytes/ethernet-ipv6-udp-dhcpv6-solicit.hex",
+            dhcpv6_ethernet_solicit_packet(),
         ),
         (
             "bytes/ipv6-udp-dhcpv6-advertise.hex",
@@ -11165,6 +11327,56 @@ fn dhcpv6_write_byte_fixtures() {
         fs::write(fixture_path(path), hex_byte_fixture(wire.as_bytes()))
             .unwrap_or_else(|err| panic!("DHCPv6 fixture {path} should write: {err}"));
     }
+}
+
+fn dhcpv6_pcap_bytes(
+    pcap_link_type: PcapLinkType,
+    packet: &Packet,
+    timestamp: PcapTimestamp,
+) -> Vec<u8> {
+    let mut pcap = Vec::new();
+    {
+        let options =
+            PcapWriterOptions::new(pcap_link_type).precision(TimestampPrecision::Microseconds);
+        let mut writer = PcapWriter::from_writer_with_options(&mut pcap, options)
+            .expect("DHCPv6 pcap writer should initialize");
+        writer
+            .write_packet_with_timestamp(packet, timestamp)
+            .expect("DHCPv6 pcap packet should write");
+        writer.flush().expect("DHCPv6 pcap should flush");
+    }
+    pcap
+}
+
+fn dhcpv6_raw_solicit_pcap_bytes() -> Vec<u8> {
+    dhcpv6_pcap_bytes(
+        PcapLinkType::RawIp,
+        &dhcpv6_raw_solicit_packet(),
+        PcapTimestamp::micros(66, 601).expect("DHCPv6 RawIp timestamp should be valid"),
+    )
+}
+
+fn dhcpv6_ethernet_solicit_pcap_bytes() -> Vec<u8> {
+    dhcpv6_pcap_bytes(
+        PcapLinkType::Ethernet,
+        &dhcpv6_ethernet_solicit_packet(),
+        PcapTimestamp::micros(66, 602).expect("DHCPv6 Ethernet timestamp should be valid"),
+    )
+}
+
+#[test]
+#[ignore = "regenerates committed DHCPv6 pcap fixtures"]
+fn dhcpv6_pcap_write_fixtures() {
+    fs::write(
+        fixture_path("pcaps/raw-ipv6-udp-dhcpv6-solicit.pcap"),
+        dhcpv6_raw_solicit_pcap_bytes(),
+    )
+    .expect("DHCPv6 RawIp pcap fixture should write");
+    fs::write(
+        fixture_path("pcaps/ethernet-ipv6-udp-dhcpv6-solicit.pcap"),
+        dhcpv6_ethernet_solicit_pcap_bytes(),
+    )
+    .expect("DHCPv6 Ethernet pcap fixture should write");
 }
 
 fn dhcpv6_summary_packet() -> Packet {
