@@ -11,6 +11,28 @@
 //! DHCPv6 Authentication is packet data only. The crate can encode and decode
 //! the option fields, but it never derives keys, signs messages, verifies MACs,
 //! or interprets authentication secrets.
+//!
+//! # Packet-Layer Example
+//!
+//! ```
+//! use crafter::prelude::*;
+//! use std::net::Ipv6Addr;
+//!
+//! let packet =
+//!     Ipv6::new()
+//!         .src(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x10))
+//!         .dst(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x01))
+//!     / Udp::dhcpv6_client()
+//!     / Dhcpv6::information_request(0x010203)
+//!         .client_duid(Dhcpv6Duid::ll(1, [0x02, 0, 0x5e, 0, 0x06, 0x01]))
+//!         .oro([DHCPV6_OPTION_DNS_SERVERS, DHCPV6_OPTION_DOMAIN_LIST]);
+//!
+//! let wire = packet.compile()?;
+//! let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, wire.as_bytes())?;
+//! let dhcpv6 = decoded.layer::<Dhcpv6>().unwrap();
+//! assert_eq!(dhcpv6.message_type_value(), Dhcpv6MessageType::InformationRequest);
+//! # Ok::<(), crafter::CrafterError>(())
+//! ```
 
 pub mod constants;
 pub mod duid;

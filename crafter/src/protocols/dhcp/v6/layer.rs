@@ -1,4 +1,9 @@
 //! DHCPv6 packet layer.
+//!
+//! This module is the wire-layer implementation used by `Packet` composition
+//! and decode. It models DHCPv6 messages and relay envelopes as packet data;
+//! lease state machines, address assignment policy, and live service behavior
+//! belong outside the crate.
 
 use core::any::Any;
 use core::net::Ipv6Addr;
@@ -27,6 +32,13 @@ use super::status::Dhcpv6StatusCode;
 use crate::protocols::dhcp::v4::Dhcpv4;
 
 /// DHCPv6 packet layer.
+///
+/// `Dhcpv6` represents one client/server message or one relay envelope. It
+/// preserves unknown message types and options, exposes typed builders for
+/// common options, and compiles as a normal `Packet` layer under
+/// `Ipv6 / Udp`. Use [`Udp::dhcpv6_client`](crate::Udp::dhcpv6_client),
+/// [`Udp::dhcpv6_server`](crate::Udp::dhcpv6_server), or
+/// [`Udp::dhcpv6_relay`](crate::Udp::dhcpv6_relay) for standard UDP ports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dhcpv6 {
     message_type: Field<Dhcpv6MessageType>,
@@ -36,6 +48,10 @@ pub struct Dhcpv6 {
 }
 
 /// DHCPv6 relay fixed-header fields.
+///
+/// Relay headers are used only with `Relay-forward` and `Relay-reply` message
+/// types. The `link_address` and `peer_address` fields are kept as explicit
+/// wire values; the crate does not interpret relay topology or forward packets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dhcpv6RelayHeader {
     hop_count: Field<u8>,
