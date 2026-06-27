@@ -50,6 +50,8 @@ pub mod exports {
     pub use bgp::{
         Bgp, BgpCapability, BgpKeepalive, BgpNotification, BgpOpen, BgpRouteRefresh, BgpUpdate,
     };
+    /// Re-export `Dhcpv6` and the DHCPv6 public surface through crate root, core, and prelude.
+    pub use dhcp::v6::*;
     pub use dhcp::Dhcpv4;
     pub use dhcp::{
         decode_dhcpv4_tftp_server_addresses, dhcpv4_option_meta, dhcpv4_option_name,
