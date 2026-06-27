@@ -267,6 +267,66 @@ reference-backend roles over the private cloud segment, collects artifacts under
 provider account data, public IPs, host IDs, or captures from the live run in
 tracked files; keep those artifacts under `--out` (an ignored `target/` path).
 
+## DHCPv6 Guarded Live Planning
+
+DHCPv6 live validation is provider-backed packet-equivalence planning for
+`ipv6 / udp / dhcpv6` and `ethernet / ipv6 / udp / dhcpv6` cases selected with
+`--case dhcpv6-solicit` under the `dhcpv6-smoke` profile. It is not a DHCPv6
+server, client state machine, prefix-delegation workflow, or lease negotiation.
+The Solicit packet uses UDP 546 to 547 and DHCPv6 multicast; providers must
+report IPv6 and multicast support before a real exchange is eligible.
+
+Always run the dry-run path first. It creates no endpoints and sends no
+packets; unavailable provider capabilities are reported as stable skip reasons
+such as `requires_ipv6`, `requires_multicast`, `requires_l2`, or
+`requires_provider_mac`:
+
+```sh
+tools/oracle/run live --backend scapy --provider qemu --dry-run --profile dhcpv6-smoke --seed 9917 --count 2 --case dhcpv6-solicit --out target/oracle/dhcpv6-guarded-doc-dry-run
+tools/oracle/run live --backend scapy --provider docker --dry-run --profile dhcpv6-smoke --seed 9917 --count 2 --case dhcpv6-solicit --out target/oracle/dhcpv6-docker-dry-run
+tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile dhcpv6-smoke --seed 9917 --count 2 --case dhcpv6-solicit --out target/oracle/dhcpv6-hetzner-dry-run
+```
+
+Keep real VM execution behind a DHCPv6-specific environment gate plus the
+generic live confirmation flag. The VM matrix must run from disposable QEMU or
+VirtualBox lab endpoints, collect artifacts under `target/oracle/dhcpv6-*`, and
+skip cleanly when provider IPv6 or multicast support is absent:
+
+```sh
+if [ "${LIBCRAFTER_RUN_DHCPV6_VM_LIVE:-0}" = "1" ]; then
+  python3 tools/oracle/engine/live_provider_matrix.py \
+    --providers qemu,virtualbox --backend scapy --profile dhcpv6-smoke \
+    --seed 9917 --count 2 --case dhcpv6-solicit \
+    --real --skip-unavailable --allow-vm-create --confirm-live-run \
+    --out target/oracle/dhcpv6-vm-live
+else
+  echo "skipping protected VM DHCPv6 live run; set LIBCRAFTER_RUN_DHCPV6_VM_LIVE=1 to execute"
+fi
+```
+
+Hetzner remains separately guarded because it uses cloud endpoints and
+credentials. A real run still refuses to exchange packets unless
+`--confirm-live-run` is present, provider credentials are available in the
+environment, and the live capability report says IPv6 and multicast are
+supported:
+
+```sh
+if [ "${LIBCRAFTER_RUN_DHCPV6_HETZNER_LIVE:-0}" = "1" ]; then
+  tools/oracle/run live \
+    --backend scapy --provider hetzner --profile dhcpv6-smoke \
+    --seed 9917 --count 2 --case dhcpv6-solicit \
+    --confirm-live-run \
+    --out target/oracle/dhcpv6-hetzner-live
+else
+  echo "skipping protected Hetzner DHCPv6 live run; set LIBCRAFTER_RUN_DHCPV6_HETZNER_LIVE=1 to execute"
+fi
+```
+
+Do not commit provider account data, endpoint IDs, public IPs, live hostnames,
+or captures. Keep DHCPv6 live reports, pcaps, decoded models, provider
+capability reports, and teardown logs under the requested ignored
+`target/oracle/dhcpv6-*` artifact directory.
+
 ## Exchange Directions
 
 Live reports use the same backend-neutral direction names as offline and pcap
