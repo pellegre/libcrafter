@@ -477,6 +477,73 @@ Some registered codepoints are intentionally kept raw (for example PCP server
 code and payload bytes are preserved so they remain inspectable and
 re-encodable.
 
+## DHCPv6 Packets
+
+`Dhcpv6` is a packet primitive for DHCPv6 client/server and relay messages. It
+builds and inspects packet bytes; it is not a DHCPv6 client, server, relay
+daemon, lease database, policy engine, or address allocator. Compose it under
+IPv6/UDP with `Udp::dhcpv6_client()`, `Udp::dhcpv6_server()`, or
+`Udp::dhcpv6_relay()`, then use the normal `Packet::compile()`,
+`Packet::decode_from_l3`, `summary()`, and `show()` surface.
+
+Named constructors cover common top-level message shapes:
+
+```rust
+let client_duid = Dhcpv6Duid::ll(1, [0x02, 0x00, 0x5e, 0x00, 0x06, 0x01]);
+let solicit = Dhcpv6::solicit(0x010203)
+    .client_duid(client_duid)
+    .oro([DHCPV6_OPTION_DNS_SERVERS, DHCPV6_OPTION_DOMAIN_LIST])
+    .elapsed_time(1);
+
+let packet =
+    Ipv6::new().src("2001:db8::10")?.dst("2001:db8::1")?
+    / Udp::dhcpv6_client()
+    / solicit;
+```
+
+Client/server messages preserve the 24-bit transaction ID. Relay-forward and
+relay-reply messages use the relay header and carry nested DHCPv6 bytes through
+`OPTION_RELAY_MSG`:
+
+```rust
+let relay = Dhcpv6::relay_forward("2001:db8:100::".parse()?, "2001:db8::10".parse()?)
+    .hop_count(1)
+    .interface_id(b"access-loop-1".as_slice())
+    .relay_message(Dhcpv6::solicit(0x0a0b0c).client_id([
+        0x00, 0x03, 0x00, 0x01, 0x02, 0x00, 0x5e, 0x00, 0x06, 0x02,
+    ]))?;
+```
+
+### DHCPv6 options and identities
+
+The DHCPv6 option model preserves order and raw payload bytes. Registered
+helpers cover DUIDs, ORO, elapsed time, status codes, DNS/domain options,
+vendor options, relay metadata, boot options, IA_NA/IA Address, IA_PD/IA
+Prefix, leasequery families, and service discovery options. Unknown,
+private-use, future, or malformed option payloads can still be carried with
+`Dhcpv6Option::raw(...)` or `Dhcpv6::raw_option(...)`.
+
+```rust
+let prefix = Dhcpv6IaPrefix::new(300, 600, 56, "2001:db8:200::".parse()?);
+let ia_pd = Dhcpv6IaPd::new(0x0506_0708, 90, 180).ia_prefix(prefix)?;
+let reply = Dhcpv6::reply(0x050607)
+    .client_id([0x00, 0x03, 0x00, 0x01, 0x02, 0x00, 0x5e, 0x00, 0x06, 0x03])
+    .server_id([0x00, 0x03, 0x00, 0x01, 0x02, 0x00, 0x5e, 0x00, 0x06, 0x04])
+    .ia_pd(ia_pd)?
+    .status(Dhcpv6StatusCode::Success);
+```
+
+### DHCPv6 decode and safe workflows
+
+Decode dispatch is tied to IPv6/UDP DHCPv6 ports and conservative payload
+recognition. Valid but unknown message types, option codepoints, DUID types,
+and status codes remain inspectable instead of being dropped. Truncated headers
+or TLVs return structured errors.
+
+Examples and generated tools should use documentation address space and either
+offline compile/decode or dry-run send plans. Real DHCPv6 traffic belongs in an
+authorized provider-backed endpoint or lab workflow.
+
 ## Address And Range Helpers
 
 ```rust
@@ -507,6 +574,7 @@ let targets = Ipv4Range::parse("192.0.2.1-20")?;
 | ICMPv6 Neighbor Discovery options | `NdpOptions`, `NdpOption` |
 | DNS | `Dns` |
 | DHCPv4 | `Dhcpv4` |
+| DHCPv6 | `Dhcpv6`, `Dhcpv6Option`, `Dhcpv6Duid`, `Dhcpv6IaNa`, `Dhcpv6IaPd` |
 | 802.1Q VLAN | `Vlan` |
 | Null/loopback | `NullLoopback` |
 | Linux cooked capture | `LinuxSll` |
@@ -701,6 +769,10 @@ in the [ICMPv6 guide](../guide/icmpv6.md).
 | `dhcpv4_discover` | DHCPv4 discover construction with an explicit client MAC and link-layer send options. |
 | `dhcpv4_option82` | Offline DHCPv4 relay agent information (option 82), classless static routes, and option overload construction and decode. |
 | `dhcpv4_leasequery` | Offline DHCPv4 leasequery, typed client identifier, authentication, and status/state packet-field construction and decode. |
+| `dhcpv6_solicit` | DHCPv6 Solicit construction, option request data, and network-layer dry-run send planning. |
+| `dhcpv6_information_request` | Offline DHCPv6 Information-request construction, compile, decode, ORO inspection, and hexdump output. |
+| `dhcpv6_prefix_delegation` | Offline DHCPv6 IA_PD and IA Prefix construction, compile, decode, and typed prefix inspection. |
+| `dhcpv6_relay` | Offline DHCPv6 Relay-forward construction with Interface-Id and nested Relay Message decoding. |
 | `icmpv4_error` | ICMPv4 time-exceeded error with a quoted datagram and an RFC 4884/4950 MPLS extension object, compiled and decoded offline. |
 | `icmpv6_echo` | IPv6 ICMPv6 echo construction and optional dry-run send/receive reporting. |
 | `vlan` | 802.1Q VLAN frame construction, compile, and decode. |

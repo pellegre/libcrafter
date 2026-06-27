@@ -226,7 +226,8 @@ preserved as `Raw` payloads when the enclosing header is valid.
 | UDP | UDP with options (RFC 9868) and checksum status | [udp](docs/guide/udp.md) |
 | QUIC | UDP-carried QUIC datagrams, long/short headers, Version Negotiation, Retry, Initial/Handshake/0-RTT packets, frames, transport parameters, protected-payload preservation, and probe dry-run/lab planning; not a QUIC endpoint stack | [quic](docs/guide/quic.md) |
 | DNS | EDNS(0), SVCB/HTTPS, DNSSEC record types | [dns](docs/guide/dns.md) |
-| DHCPv4 | Option overload, RFC 3396 long options, relay agent option 82, client identifiers, authentication, leasequery fields | — |
+| DHCPv4 | BOOTP/DHCPv4 packet construction and decode, option overload, RFC 3396 long options, relay agent option 82, client identifiers, authentication, and leasequery packet fields; not a client, server, or lease engine | — |
+| DHCPv6 | DHCPv6 client/server and relay packet construction and decode, DUIDs, status codes, IA_NA, IA_PD, IA Address, IA Prefix, relay message encapsulation, leasequery families, and unknown option preservation; not a client, server, relay daemon, or lease engine | [dhcpv6](docs/guide/dhcpv6.md) |
 | BGP | OPEN, UPDATE, KEEPALIVE, NOTIFICATION, ROUTE-REFRESH, path attributes, capabilities | [bgp](docs/guide/bgp.md) |
 | MQTT | MQTT 3.1.1 and 5.0 control packets over TCP/1883, typed properties, reason codes, and stacked payload decode | [mqtt](docs/guide/mqtt.md) |
 | SNMP | BER values, VarBinds, SNMPv1/v2c PDUs, SNMPv3 wire framing, UDP/161 and UDP/162 decode dispatch, unknown preservation, and offline pcap fixtures; not a scanner, manager, agent daemon, MIB engine, credential store, or VACM evaluator | [snmp](docs/guide/snmp.md) |
@@ -262,9 +263,11 @@ By category:
 - Pcap and sniffing — `pcap_write`, `pcap_read`, `wire_pcap_sniffer`,
   `wire_transform_chain`, `ip_defrag_offline`, `ip_fragment_offline`,
   `wpa_decrypt_offline`.
-- Protocols — `arp_who_has`, `dns_query`, `dhcpv4_discover`, `icmpv4_error`,
-  `icmpv6_echo`, `snmp_get`, `snmp_trap`, `snmpv3_message`, `vlan`,
-  `dot11_beacon_rsn`, `ipsec_esp`, `bgp_session`, `mqtt_session`. SNMP wire
+- Protocols — `arp_who_has`, `dns_query`, `dhcpv4_discover`,
+  `dhcpv4_option82`, `dhcpv4_leasequery`, `dhcpv6_solicit`,
+  `dhcpv6_information_request`, `dhcpv6_prefix_delegation`, `dhcpv6_relay`,
+  `icmpv4_error`, `icmpv6_echo`, `snmp_get`, `snmp_trap`, `snmpv3_message`,
+  `vlan`, `dot11_beacon_rsn`, `ipsec_esp`, `bgp_session`, `mqtt_session`. SNMP wire
   guidance also lives in
   [docs/guide/snmp.md](docs/guide/snmp.md), and examples stay offline or
   dry-run by default.
@@ -276,9 +279,9 @@ The full annotated table, with safety modes and commands, is in
 
 - [docs/README.md](docs/README.md) is the documentation index.
 - [docs/guide/](docs/guide/) — per-protocol wire coverage for everyday packet
-  work (IPv4, IGMP, IPv6, TCP, UDP, ARP, ICMPv6, DNS, BGP, MQTT, SNMP, OSPF,
-  802.11, IPsec); UDP, ARP, ICMPv6, IGMP, SNMP, and OSPF now have their own
-  guides.
+  work (IPv4, IGMP, IPv6, TCP, UDP, ARP, ICMPv6, DHCPv6, DNS, BGP, MQTT, SNMP,
+  OSPF, 802.11, IPsec); UDP, ARP, ICMPv6, IGMP, DHCPv6, SNMP, and OSPF now
+  have their own guides.
 - [docs/reference/](docs/reference/) — the public API
   ([api.md](docs/reference/api.md)), the wire I/O layer
   ([wire.md](docs/reference/wire.md)), and the example catalog
