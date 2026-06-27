@@ -60,6 +60,75 @@ input policy.
 | errata | RFC Editor errata search pages, e.g. `https://www.rfc-editor.org/errata_search.php?rfc=9112`, `https://www.rfc-editor.org/errata_search.php?rfc=9110`, `https://www.rfc-editor.org/errata_search.php?rfc=3986`, `https://www.rfc-editor.org/errata_search.php?rfc=768`, `https://www.rfc-editor.org/errata_search.php?rfc=1112`, `https://www.rfc-editor.org/errata_search.php?rfc=8200`, `https://www.rfc-editor.org/errata_search.php?rfc=4291`, and `https://www.rfc-editor.org/errata_search.php?rfc=3307` | Errata authority for source-backed corrections to base protocol text. | Any parser, serializer, constant, or fixture that depends on a subtle RFC rule must re-check accepted errata for the exact RFC section. |
 | operational | UPnP Device Architecture discovery guidance in the core UPnP sources | Timing, advertisement, search, and response behavior that can inform probe and lab dry-runs. | Do not add daemon, scanner, retry, cache, or control-point behavior to the crate. Generated tools own workflows above the packet primitive. |
 
+## Authority Classification
+
+SSDP-specific packet behavior is not selected from an RFC in this manifest.
+The selected SSDP authority is the public OCF / UPnP Device Architecture
+family, with RFCs and IANA registries used only for supporting syntax,
+transport, addressing, and assigned-value evidence.
+
+### SSDP-Specific Public Standards
+
+- Selected primary version: OCF / UPnP Forum, "UPnP Device Architecture 2.0",
+  dated in the published filename as `20200417`. Use its discovery text as the
+  current core authority for SSDP request, notification, response, and
+  UPnP-defined header behavior.
+- Selected compatibility version: UPnP Forum, "UPnP Device Architecture 1.1".
+  Use it only for deployed UPnP 1.1 compatibility or when later grammar and
+  codepoint work records a section-level difference from the 2.0 source.
+- Selected IPv6 mapping source: UPnP Forum, "UPnP Device Architecture 1.1
+  Annex A - IPv6". Use it only with IPv6 RFC and IANA multicast evidence; it
+  does not by itself authorize guessed IPv6 scope defaults.
+- Historical version: UPnP Device Architecture 1.0 remains fixture and legacy
+  context. It is not preferred over the selected 2.0 or 1.1 sources for new
+  packet behavior.
+
+### RFC-Defined Support Behavior
+
+- RFC 9110 and RFC 9112 are selected for generic HTTP semantics and HTTP/1.1
+  message syntax that UPnP discovery reuses. They do not make SSDP a generic
+  HTTP client, server, proxy, cache, or TCP protocol in `crafter`.
+- RFC 3986 and RFC 8141 are selected for generic URI and URN syntax checks
+  only where a later SSDP header helper cites a UPnP requirement for that value
+  class. RFC 2141 remains historical URN context.
+- RFC 768, RFC 791, RFC 8200, and the multicast RFCs listed above are selected
+  for UDP, IPv4, IPv6, and multicast support behavior. SSDP-specific
+  destinations, ports, and scope claims still require UPnP and IANA evidence.
+- IANA service, multicast, HTTP method, and HTTP field registries are selected
+  as registry evidence. They can confirm assigned values, but registry absence
+  is not a rejection rule for UPnP-defined or unknown preserved SSDP values.
+
+### Update Relationships
+
+- This manifest's UPnP order is a project authority order, not an RFC
+  Updates/Obsoletes chain: Device Architecture 2.0 is primary, Device
+  Architecture 1.1 is compatibility, Annex A supplies IPv6 mapping context, and
+  Device Architecture 1.0 is historical.
+- Current HTTP support behavior maps through RFC 9110 and RFC 9112. Older UPnP
+  references to RFC 2616 must be treated as historical references and mapped to
+  current RFC 9110/9112 syntax before implementation depends on them.
+- RFC 2774 is historical after the IETF status change moving HTTP experiments
+  to Historic. MAN, EXT, or extension helper behavior must therefore cite UPnP
+  discovery text first; RFC 2774 can only explain historical terminology.
+- Before a later step freezes a subtle RFC-derived rule, check the relevant
+  Datatracker status page and RFC Editor errata page recorded in this manifest.
+
+### Excluded And Ambiguous Candidates
+
+- `draft-cai-ssdp-v1-03` is an expired Internet-Draft with no formal IETF
+  standing. Treat it as historical and ambiguous; draft-only methods, headers,
+  ports, multicast values, cache behavior, and workflow rules are excluded
+  until admitted by UPnP, IANA, or a later explicit extension scope decision.
+- RFC 2774 alone is excluded as authority for generic HTTP extension processing
+  in the SSDP layer.
+- Vendor guides, packet captures, test suites, discovery tool behavior, and
+  web examples are excluded as authority for wire facts. They may be used later
+  only as non-normative fixture context after this manifest's sources define
+  the expected behavior.
+- Any material that conflicts across UPnP 2.0, UPnP 1.1, Annex A, current RFCs,
+  or IANA registries remains ambiguous until a later grammar or codepoint step
+  records the exact section-level decision.
+
 ## Authority Order
 
 1. For SSDP packet behavior, prefer current OCF / UPnP Device Architecture 2.0
@@ -97,10 +166,10 @@ input policy.
 
 ## Unresolved Questions
 
-- unresolved: The initial crate target must choose how to reconcile UPnP Device
-  Architecture 2.0 with widely deployed 1.1 traffic. Until step 03 classifies
-  authority, builders should not assume version-specific required headers that
-  are not common or explicitly mapped.
+- constrained: Step 03 selects UPnP Device Architecture 2.0 as primary SSDP
+  authority and UPnP Device Architecture 1.1 as compatibility authority.
+  Builders still must not assume version-specific required headers that are
+  not common or explicitly mapped by later grammar and codepoint steps.
 - unresolved: Older UPnP text references RFC 2616 while current HTTP syntax is
   split across RFC 9110 and RFC 9112. Step 04 must map the exact SSDP grammar
   to current HTTP syntax and record any intentional deviations.
