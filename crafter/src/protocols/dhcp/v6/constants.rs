@@ -36,6 +36,10 @@ pub const DHCPV6_SERVER_PORT: u16 = 547;
 pub const DHCPV6_OPTION_CLIENTID: u16 = 1;
 /// DHCPv6 OPTION_SERVERID option code.
 pub const DHCPV6_OPTION_SERVERID: u16 = 2;
+/// DHCPv6 OPTION_IA_NA option code.
+pub const DHCPV6_OPTION_IA_NA: u16 = 3;
+/// DHCPv6 OPTION_IAADDR option code.
+pub const DHCPV6_OPTION_IAADDR: u16 = 5;
 /// DHCPv6 OPTION_ORO option code.
 pub const DHCPV6_OPTION_ORO: u16 = 6;
 /// DHCPv6 OPTION_PREFERENCE option code.

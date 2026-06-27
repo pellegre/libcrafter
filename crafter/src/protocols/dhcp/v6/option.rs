@@ -4,15 +4,17 @@
 //! module starts with the raw-preserving data model; the serial codec and IANA
 //! registry classification live in later modules.
 
-use crate::endian::read_u16_be;
+use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 
 use super::constants::{
     DHCPV6_OPTION_CLIENTID, DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN,
-    DHCPV6_OPTION_ORO, DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT,
+    DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_ORO, DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT,
     DHCPV6_OPTION_SERVERID,
 };
 use super::duid::Dhcpv6Duid;
+
+const DHCPV6_IA_NA_HEADER_LEN: usize = 12;
 
 /// DHCPv6 option codepoint.
 ///
@@ -122,6 +124,99 @@ pub struct Dhcpv6Option {
     value: Dhcpv6OptionValue,
 }
 
+/// DHCPv6 OPTION_IA_NA identity association.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6IaNa {
+    iaid: u32,
+    t1: u32,
+    t2: u32,
+    options: Vec<Dhcpv6Option>,
+}
+
+impl Dhcpv6IaNa {
+    /// Create an IA_NA container.
+    pub fn new(iaid: u32, t1: u32, t2: u32) -> Self {
+        Self {
+            iaid,
+            t1,
+            t2,
+            options: Vec::new(),
+        }
+    }
+
+    /// Decode an IA_NA option payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < DHCPV6_IA_NA_HEADER_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "dhcpv6.option.ia_na",
+                DHCPV6_IA_NA_HEADER_LEN,
+                bytes.len(),
+            ));
+        }
+
+        Ok(Self {
+            iaid: read_u32_be(&bytes[0..4])?,
+            t1: read_u32_be(&bytes[4..8])?,
+            t2: read_u32_be(&bytes[8..12])?,
+            options: Dhcpv6Option::decode_all(&bytes[DHCPV6_IA_NA_HEADER_LEN..])?,
+        })
+    }
+
+    /// Encode this IA_NA option payload.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(
+            DHCPV6_IA_NA_HEADER_LEN
+                + self
+                    .options
+                    .iter()
+                    .map(|option| DHCPV6_OPTION_HEADER_LEN + option.payload_len())
+                    .sum::<usize>(),
+        );
+        out.extend_from_slice(&self.iaid.to_be_bytes());
+        out.extend_from_slice(&self.t1.to_be_bytes());
+        out.extend_from_slice(&self.t2.to_be_bytes());
+        out.extend_from_slice(&Dhcpv6Option::encode_all(&self.options)?);
+        Ok(out)
+    }
+
+    /// IAID value.
+    pub const fn iaid(&self) -> u32 {
+        self.iaid
+    }
+
+    /// T1 value.
+    pub const fn t1(&self) -> u32 {
+        self.t1
+    }
+
+    /// T2 value.
+    pub const fn t2(&self) -> u32 {
+        self.t2
+    }
+
+    /// Append a nested option.
+    pub fn option(mut self, option: Dhcpv6Option) -> Self {
+        self.options.push(option);
+        self
+    }
+
+    /// Replace the nested option list.
+    pub fn options(mut self, options: impl Into<Vec<Dhcpv6Option>>) -> Self {
+        self.options = options.into();
+        self
+    }
+
+    /// Borrow nested options.
+    pub fn options_ref(&self) -> &[Dhcpv6Option] {
+        &self.options
+    }
+
+    /// Mutably borrow nested options.
+    pub fn options_mut(&mut self) -> &mut Vec<Dhcpv6Option> {
+        &mut self.options
+    }
+}
+
 impl Dhcpv6Option {
     /// Create an option from a codepoint and raw payload bytes.
     pub fn raw(code: impl Into<Dhcpv6OptionCode>, payload: impl Into<Vec<u8>>) -> Self {
@@ -196,6 +291,11 @@ impl Dhcpv6Option {
     /// Create an OPTION_RAPID_COMMIT option.
     pub fn rapid_commit() -> Self {
         Self::empty(DHCPV6_OPTION_RAPID_COMMIT)
+    }
+
+    /// Create an OPTION_IA_NA option.
+    pub fn ia_na(ia_na: Dhcpv6IaNa) -> Result<Self> {
+        Ok(Self::raw(DHCPV6_OPTION_IA_NA, ia_na.encode()?))
     }
 
     /// Option codepoint.
@@ -312,6 +412,14 @@ impl Dhcpv6Option {
         Ok(self
             .exact_payload_if_code(DHCPV6_OPTION_RAPID_COMMIT, 0, "dhcpv6.option.rapid_commit")?
             .is_some())
+    }
+
+    /// Decode OPTION_IA_NA.
+    pub fn ia_na_value(&self) -> Result<Option<Dhcpv6IaNa>> {
+        match self.payload_if_code(DHCPV6_OPTION_IA_NA) {
+            Some(payload) => Dhcpv6IaNa::decode(payload).map(Some),
+            None => Ok(None),
+        }
     }
 
     /// Encode this option to its DHCPv6 TLV wire bytes.
@@ -637,5 +745,79 @@ mod dhcpv6_basic_options_tests {
             ),
         );
         assert_eq!(decoded[3].payload(), &[0x00, 0x17, 0xff]);
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_ia_na_tests {
+    use super::{Dhcpv6IaNa, Dhcpv6Option};
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{Dhcpv6, DHCPV6_OPTION_IAADDR, DHCPV6_OPTION_IA_NA};
+
+    #[test]
+    fn dhcpv6_ia_na_empty_container_encodes_and_decodes() {
+        let ia_na = Dhcpv6IaNa::new(0x01020304, 300, 600);
+        let option = Dhcpv6Option::ia_na(ia_na.clone()).unwrap();
+
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_IA_NA);
+        assert_eq!(
+            option.encode().unwrap(),
+            vec![
+                0x00, 0x03, 0x00, 0x0c, 0x01, 0x02, 0x03, 0x04, 0x00, 0x00, 0x01, 0x2c, 0x00, 0x00,
+                0x02, 0x58,
+            ],
+        );
+
+        let decoded = option.ia_na_value().unwrap().unwrap();
+        assert_eq!(decoded, ia_na);
+        assert_eq!(decoded.iaid(), 0x01020304);
+        assert_eq!(decoded.t1(), 300);
+        assert_eq!(decoded.t2(), 600);
+        assert!(decoded.options_ref().is_empty());
+    }
+
+    #[test]
+    fn dhcpv6_ia_na_preserves_nested_iaaddr_and_unknown_option_order() {
+        let iaaddr = Dhcpv6Option::raw(DHCPV6_OPTION_IAADDR, vec![0xaa; 24]);
+        let unknown = Dhcpv6Option::raw(65_000u16, [0xde, 0xad].as_slice());
+        let ia_na = Dhcpv6IaNa::new(7, 0, 0)
+            .option(iaaddr.clone())
+            .option(unknown.clone());
+        let option = Dhcpv6Option::ia_na(ia_na).unwrap();
+
+        let decoded = option.ia_na_value().unwrap().unwrap();
+        assert_eq!(decoded.iaid(), 7);
+        assert_eq!(decoded.options_ref(), &[iaaddr, unknown]);
+    }
+
+    #[test]
+    fn dhcpv6_ia_na_short_payload_is_structured_error_and_payload_survives() {
+        let option = Dhcpv6Option::raw(DHCPV6_OPTION_IA_NA, vec![0; 11]);
+
+        assert_eq!(
+            option.ia_na_value().unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.ia_na", 12, 11),
+        );
+        assert_eq!(option.payload(), &[0; 11]);
+    }
+
+    #[test]
+    fn dhcpv6_ia_na_layer_helpers_roundtrip() {
+        let nested = Dhcpv6Option::raw(DHCPV6_OPTION_IAADDR, vec![0xbb; 24]);
+        let ia_na = Dhcpv6IaNa::new(0x11223344, 10, 20).option(nested.clone());
+        let message = Dhcpv6::reply(0x010203).ia_na(ia_na.clone()).unwrap();
+
+        assert_eq!(message.ia_na_value().unwrap(), Some(ia_na.clone()));
+        assert_eq!(message.ia_na_values().unwrap(), vec![ia_na.clone()]);
+
+        let bytes = Packet::from_layer(message).compile().unwrap();
+        let decoded = Dhcpv6::decode(bytes.as_bytes()).unwrap();
+        let decoded_ia_na = decoded.ia_na_value().unwrap().unwrap();
+
+        assert_eq!(decoded_ia_na.iaid(), 0x11223344);
+        assert_eq!(decoded_ia_na.t1(), 10);
+        assert_eq!(decoded_ia_na.t2(), 20);
+        assert_eq!(decoded_ia_na.options_ref(), &[nested]);
     }
 }

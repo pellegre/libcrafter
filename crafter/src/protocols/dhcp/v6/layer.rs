@@ -14,7 +14,7 @@ use super::constants::{
 };
 use super::duid::Dhcpv6Duid;
 use super::message::{dhcpv6_message_type_summary, Dhcpv6MessageType};
-use super::option::{Dhcpv6Option, Dhcpv6OptionCode};
+use super::option::{Dhcpv6IaNa, Dhcpv6Option, Dhcpv6OptionCode};
 
 /// DHCPv6 packet layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -326,6 +326,11 @@ impl Dhcpv6 {
         self.option(Dhcpv6Option::rapid_commit())
     }
 
+    /// Append an OPTION_IA_NA option.
+    pub fn ia_na(self, ia_na: Dhcpv6IaNa) -> Result<Self> {
+        Ok(self.option(Dhcpv6Option::ia_na(ia_na)?))
+    }
+
     /// Replace the option list.
     pub fn options(mut self, options: impl Into<Vec<Dhcpv6Option>>) -> Self {
         self.options = options.into();
@@ -400,6 +405,25 @@ impl Dhcpv6 {
             Some(option) => option.rapid_commit_present(),
             None => Ok(false),
         }
+    }
+
+    /// Decode the first IA_NA option.
+    pub fn ia_na_value(&self) -> Result<Option<Dhcpv6IaNa>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_IA_NA) {
+            Some(option) => option.ia_na_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode all IA_NA options in packet order.
+    pub fn ia_na_values(&self) -> Result<Vec<Dhcpv6IaNa>> {
+        let mut values = Vec::new();
+        for option in &self.options {
+            if let Some(ia_na) = option.ia_na_value()? {
+                values.push(ia_na);
+            }
+        }
+        Ok(values)
     }
 
     /// Encoded DHCPv6 client/server message length.
