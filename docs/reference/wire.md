@@ -227,6 +227,39 @@ what happened. Do not validate IP fragmentation by sending raw live traffic from
 the developer machine; use the lab-backed workflow in [validation.md](../operations/validation.md)
 and [lab.md](../operations/lab.md).
 
+## DHCP Packet Streams
+
+`Dhcpv4` and `Dhcpv6` remain normal packet layers when used through
+`PacketWire`. Offline pcap readers decode DHCP traffic into `PacketRecord`
+values when the enclosing IP/UDP headers and ports identify the protocol;
+unknown DHCPv6 option codepoints and unknown DHCPv4 option payloads remain
+inside the typed layer instead of becoming side-channel metadata.
+
+Raw socket writing for DHCP examples should use dry-run planning by default:
+
+```rust
+use crafter::prelude::*;
+
+let packet =
+    Ipv6::new().src("2001:db8::10")?.dst("2001:db8::1")?
+    / Udp::dhcpv6_client()
+    / Dhcpv6::solicit(0x010203).client_id([
+        0x00, 0x03, 0x00, 0x01, 0x02, 0x00, 0x5e, 0x00, 0x06, 0x01,
+    ]);
+
+let writer = PacketWire::raw_socket_interface("dry-run0")
+    .network_layer()
+    .open()?
+    .writer()?;
+let reports = Transmitter::new(writer).send(packet)?;
+assert!(reports.iter().all(|report| report.is_dry_run()));
+# Ok::<(), crafter::CrafterError>(())
+```
+
+Live DHCP traffic can change network state. Keep examples and tests offline or
+dry-run, and run authorized live behavior only from a disposable provider-backed
+endpoint or lab session with artifacts collected after the run.
+
 `WpaDecrypt` is an inbound transform. It accepts one or more configured SSIDs
 with either passphrases or pre-derived PMKs, observes beacons, RSN information,
 EAPOL-Key handshakes, and protected Dot11 data frames, and emits decrypted

@@ -7,9 +7,10 @@ live-gated capture, send planning, send/receive reports, batch workflows,
 interface helpers, IPv4 ranges, reply matching, and representative protocol
 layers.
 
-IPv6-specific examples stay offline or dry-run by default and use documentation
-address space. See [IPv6 wire coverage](../guide/ipv6.md) for the IPv6 guide, fixtures,
-and validation coverage.
+IPv6-specific examples, including DHCPv6, stay offline or dry-run by default
+and use documentation address space. See [IPv6 wire coverage](../guide/ipv6.md)
+and [DHCPv6 wire coverage](../guide/dhcpv6.md) for guides, fixtures, and
+validation coverage.
 
 For the complete inventory, safety classification, and per-example command map,
 see [`crafter/examples/README.md`](../../crafter/examples/README.md).
@@ -39,7 +40,32 @@ cargo run -p crafter --example snmp_trap
 cargo run -p crafter --example snmpv3_message
 cargo run -p crafter --example ipv4_enrichment
 cargo run -p crafter --example tcp_options
+cargo run -p crafter --example dhcpv6_solicit
+cargo run -p crafter --example dhcpv6_relay
 ```
+
+## DHCPv4 And DHCPv6 Examples
+
+The DHCP examples are packet-primitive smoke tests. `dhcpv4_discover` defaults
+to a dry-run link-layer send plan; `dhcpv4_option82` and `dhcpv4_leasequery`
+compile and decode offline. `dhcpv6_solicit` builds a network-layer dry-run
+send plan; `dhcpv6_information_request`, `dhcpv6_prefix_delegation`, and
+`dhcpv6_relay` compile and decode offline.
+
+```sh
+cargo run -p crafter --example dhcpv4_discover
+cargo run -p crafter --example dhcpv4_option82
+cargo run -p crafter --example dhcpv4_leasequery
+cargo run -p crafter --example dhcpv6_solicit
+cargo run -p crafter --example dhcpv6_information_request
+cargo run -p crafter --example dhcpv6_prefix_delegation
+cargo run -p crafter --example dhcpv6_relay
+```
+
+Both protocol families use the same packet stack surface: compose a typed
+`Dhcpv4` or `Dhcpv6` layer under the right IP/UDP envelope, compile bytes,
+decode fixtures, inspect `summary()`/`show()`, and keep live network I/O behind
+explicit dry-run-to-live workflow gates.
 
 ## TCP Options Snippet
 
