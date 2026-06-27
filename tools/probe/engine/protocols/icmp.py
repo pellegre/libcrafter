@@ -261,6 +261,7 @@ def icmp_rewrite_endpoint_addresses(
     and discarded.
     """
 
+    original_destination_ipv4 = str(plan.get("destination_ipv4", ""))
     updated = dict(plan)
     updated["source_ipv4"] = source_ipv4
     updated["destination_ipv4"] = target_ipv4
@@ -272,11 +273,17 @@ def icmp_rewrite_endpoint_addresses(
             f"icmp and src host {target_ipv4} and dst host {source_ipv4}"
         )
     elif case_name == "ttl-expired":
-        router_ipv4 = str(
-            updated.get("controlled_router_ipv4") or target_ipv4
+        router_ipv4 = (
+            target_ipv4
+            if rewrite_source == "lab_session"
+            else str(updated.get("controlled_router_ipv4") or target_ipv4)
         )
         updated["source_ipv4"] = source_ipv4
-        updated["destination_ipv4"] = target_ipv4
+        updated["destination_ipv4"] = (
+            original_destination_ipv4
+            if rewrite_source == "lab_session"
+            else target_ipv4
+        )
         updated["controlled_router_ipv4"] = router_ipv4
         updated["expected_reply_source_ipv4"] = router_ipv4
         updated["expected_reply_destination_ipv4"] = source_ipv4

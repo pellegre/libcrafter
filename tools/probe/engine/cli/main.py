@@ -286,7 +286,10 @@ def _dry_run_report(
     provider_capabilities = _probe_capabilities_for_request(request, dry_run=True)
     if is_probe_lab_provider(request.provider):
         lab_session = _probe_lab_dry_run_session(request, planned_cases=planned_cases)
-        address_context = probe_address_context_from_lab_session(lab_session)
+        address_context = probe_address_context_from_lab_session(
+            lab_session,
+            target_role=_probe_lab_report_target_role(planned_cases),
+        )
         stimulus_endpoint = _stimulus_endpoint_context(address_context)
         probe_plans = _probe_plans_with_lab_endpoint_addresses(
             probe_plans,
@@ -684,7 +687,11 @@ def _probe_lab_roles(planned_cases: Sequence[ProbeCase]) -> list[LabRole]:
     relay_topology = RELAY_ROLE in role_names
     roles: list[LabRole] = []
     for role_name in role_names:
-        peers = _probe_lab_peer_roles(role_name, relay_topology=relay_topology)
+        peers = _probe_lab_peer_roles(
+            role_name,
+            role_names=role_names,
+            relay_topology=relay_topology,
+        )
         roles.append(
             LabRole(
                 name=role_name,
@@ -715,9 +722,14 @@ def _probe_lab_role_names(planned_cases: Sequence[ProbeCase]) -> list[str]:
     return names
 
 
-def _probe_lab_peer_roles(role_name: str, *, relay_topology: bool) -> list[str]:
+def _probe_lab_peer_roles(
+    role_name: str,
+    *,
+    role_names: Sequence[str],
+    relay_topology: bool,
+) -> list[str]:
     if not relay_topology:
-        return [TARGET_ROLE] if role_name == STIMULUS_ROLE else [STIMULUS_ROLE]
+        return [peer for peer in role_names if peer != role_name]
     if role_name == STIMULUS_ROLE:
         return [RELAY_ROLE]
     if role_name == RELAY_ROLE:
@@ -883,19 +895,69 @@ def _probe_plans_with_lab_endpoint_addresses(
         address_context.get("stimulus_ipv4"),
         _first_plan_address(probe_plans, "source_ipv4", "192.0.2.10"),
     )
-    target_ipv4 = _string_or(
-        address_context.get("target_ipv4"),
-        _first_plan_address(probe_plans, "destination_ipv4", "192.0.2.20"),
-    )
     return [
         _probe_plan_with_endpoint_addresses(
             plan,
             source_ipv4=stimulus_ipv4,
-            target_ipv4=target_ipv4,
+            target_ipv4=_probe_plan_lab_target_ipv4(
+                plan,
+                probe_plans=probe_plans,
+                address_context=address_context,
+            ),
             rewrite_source="lab_session",
         )
         for plan in probe_plans
     ]
+
+
+def _probe_plan_lab_target_ipv4(
+    plan: Mapping[str, JSONValue],
+    *,
+    probe_plans: Sequence[JSONObject],
+    address_context: Mapping[str, JSONValue],
+) -> str:
+    target_role = _probe_case_peer_role(str(plan.get("case", "")))
+    endpoints = _json_mapping(
+        address_context.get("endpoints", {}),
+        "lab_address_context.endpoints",
+    )
+    endpoint = _json_mapping(
+        endpoints.get(target_role, {}),
+        f"lab_address_context.endpoints.{target_role}",
+    )
+    return _string_or(
+        endpoint.get("ipv4"),
+        _string_or(
+            endpoint.get("address"),
+            _string_or(
+                address_context.get("target_ipv4"),
+                _first_plan_address(probe_plans, "destination_ipv4", "192.0.2.20"),
+            ),
+        ),
+    )
+
+
+def _probe_lab_report_target_role(planned_cases: Sequence[ProbeCase]) -> str:
+    role_names = _probe_lab_role_names(planned_cases)
+    if TARGET_ROLE in role_names:
+        return TARGET_ROLE
+    return _first_non_stimulus_role(role_names)
+
+
+def _probe_case_peer_role(case_name: str) -> str:
+    case = _PROBE_CASE_BY_NAME.get(case_name)
+    if case is None or not case.endpoint_roles:
+        return TARGET_ROLE
+    if TARGET_ROLE in case.endpoint_roles:
+        return TARGET_ROLE
+    return _first_non_stimulus_role(case.endpoint_roles)
+
+
+def _first_non_stimulus_role(role_names: Sequence[str]) -> str:
+    for role_name in role_names:
+        if role_name != STIMULUS_ROLE:
+            return role_name
+    return TARGET_ROLE
 
 
 def _first_plan_address(

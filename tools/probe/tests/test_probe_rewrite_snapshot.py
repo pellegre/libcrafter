@@ -96,7 +96,7 @@ REWRITE_DIGESTS: dict[str, str] = {
     "tcp-syn-closed": "9732ff1fed6789850825ccc582b1c6dc7dd2c978f2a29d4833e4fff2bf85f93b",
     "tcp-syn-open": "4d1d4aeecfc025cff25e6bc5ffe6b55854e8d3b763128554e73d03683fd3b0a0",
     "tcp-syn-options": "458186f9cf6827c9b7595092d66c3caf5929df27039cd0ee8388e4f05e885bc2",
-    "ttl-expired": "73434579e916ae5145c22d1d9569660aa68c7eec2eb7a6361a0d0d3d58e656fd",
+    "ttl-expired": "e687bec9ed0649db33ab140084c0c954ae8a5636ddcbc23bed541fb1f786fb91",
     "udp-closed-port-icmp": "f7d41bd23ba83e563baa3c222b99c175ead8d2617acc59318e99989c00ba388c",
     "udp-echo-binary": "209af25593738a4bb62612bf999bb6ad1356f17aeaadd9c60eae5e6330536455",
     "udp-echo-empty": "5cc86db0654fad938694d9002a345bff4bfdb1c53c61bc4aa62f94a4e0f1e9ca",
