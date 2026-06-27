@@ -43,8 +43,10 @@ input policy.
 | base | RFC 2141, "URN Syntax", `https://www.rfc-editor.org/rfc/rfc2141.html` | Historical URN syntax for `urn:` values used in UPnP service and device identifiers. | Treat as mapping context unless a later codepoint document chooses a current URN authority for validation. |
 | base | RFC 8141, "Uniform Resource Names (URNs)", `https://www.rfc-editor.org/rfc/rfc8141.html` | Current URN syntax authority. | Do not reject older UPnP examples solely because they predate RFC 8141; preserve unknown values. |
 | base | RFC 768, "User Datagram Protocol", `https://www.rfc-editor.org/rfc/rfc768.html` | UDP transport authority. | SSDP is an application payload over UDP; UDP checksum, length, and ports stay in the existing UDP layer. |
+| base, mapping | RFC 9868, "Transport Options for UDP", `https://www.rfc-editor.org/rfc/rfc9868.html` | Current update to RFC 768 for UDP option and surplus-area behavior. | SSDP decoders consume only UDP user data selected by the UDP layer. UDP surplus/options are transport data, not SSDP body bytes. |
 | base | RFC 791, "Internet Protocol", `https://www.rfc-editor.org/rfc/rfc791.html` | IPv4 packet baseline when SSDP is composed over IPv4. | No SSDP-specific IPv4 behavior may be inferred beyond the UPnP, multicast, and registry sources. |
 | base | RFC 8200, "Internet Protocol, Version 6 (IPv6) Specification", `https://www.rfc-editor.org/rfc/rfc8200.html` | IPv6 packet baseline when SSDP is composed over IPv6. | No SSDP-specific IPv6 behavior may be inferred beyond UPnP Annex A, multicast RFCs, and IANA assignments. |
+| mapping | RFC 9673, "IPv6 Hop-by-Hop Options Processing Procedures", `https://www.rfc-editor.org/rfc/rfc9673.html` | Current update to RFC 8200 for IPv6 Hop-by-Hop Options processing. | Not an SSDP grammar source. IPv6 packet helpers must not infer SSDP behavior from Hop-by-Hop processing rules. |
 | mapping | RFC 1112, "Host Extensions for IP Multicasting", `https://www.rfc-editor.org/rfc/rfc1112.html` | IPv4 multicast host behavior context. | Use with IANA and UPnP sources for IPv4 multicast destination constants only; do not implement membership management in the packet layer. |
 | mapping | RFC 2365, "Administratively Scoped IP Multicast", `https://www.rfc-editor.org/rfc/rfc2365.html` | Context for administratively scoped IPv4 multicast ranges that include common SSDP addresses. | Packet helpers may expose constants but must not infer routing, TTL, or scope policy without exact UPnP evidence. |
 | mapping | RFC 5771, "IANA Guidelines for IPv4 Multicast Address Assignments", `https://www.rfc-editor.org/rfc/rfc5771.html` | Current IPv4 multicast assignment and registry relationship. | Use as registry context only; exact SSDP address authority should come from IANA plus UPnP discovery text. |
@@ -107,11 +109,70 @@ transport, addressing, and assigned-value evidence.
 - Current HTTP support behavior maps through RFC 9110 and RFC 9112. Older UPnP
   references to RFC 2616 must be treated as historical references and mapped to
   current RFC 9110/9112 syntax before implementation depends on them.
+- RFC 9112 is updated by RFC 9931. That update concerns HTTP/1.1 optimistic
+  protocol transitions, Upgrade, and CONNECT behavior; it does not add SSDP
+  UDP message grammar, and it must not be imported into the packet layer.
 - RFC 2774 is historical after the IETF status change moving HTTP experiments
   to Historic. MAN, EXT, or extension helper behavior must therefore cite UPnP
   discovery text first; RFC 2774 can only explain historical terminology.
+- RFC 3986 is updated by RFC 8820, which obsoletes the earlier RFC 7320 URI
+  design update. SSDP URI helpers may use RFC 3986 syntax with RFC 8820 design
+  constraints, but must not invent scheme-specific substructure for UPnP header
+  values.
+- RFC 768 is updated by RFC 9868. UDP options and surplus-area data are below
+  the SSDP layer; future UDP-option support must not reinterpret transport
+  option bytes as SSDP headers or bodies.
+- RFC 8200 is updated by RFC 9673. The update is limited to IPv6 Hop-by-Hop
+  Options processing and does not authorize SSDP multicast or discovery
+  behavior.
+- RFC 4291 update relationships that affect IPv6 multicast scope terminology,
+  including RFC 7346 and RFC 7371, must be checked before exporting IPv6 SSDP
+  multicast helpers.
 - Before a later step freezes a subtle RFC-derived rule, check the relevant
   Datatracker status page and RFC Editor errata page recorded in this manifest.
+
+## Errata And Update Review
+
+Review date: 2026-06-27.
+
+- UPnP Device Architecture 2.0, UPnP Device Architecture 1.1, and UPnP Device
+  Architecture 1.1 Annex A are published specification PDFs rather than RFCs
+  with RFC Editor errata streams. Treat the selected version order in this
+  manifest as the project authority order. If a later public OCF or UPnP
+  correction conflicts with a frozen SSDP wire rule, stop and record the
+  conflict before changing code.
+- RFC 9110 is still the selected HTTP Semantics source. Its verified errata
+  were reviewed for the SSDP grammar areas used here; none changes the method
+  token, field name, field value, status-code shape, or duplicate-field
+  preservation rules this project relies on. Helpers must stop before importing
+  unrelated corrected behavior such as Accept negotiation, Range, redirects, or
+  TLS identity processing.
+- RFC 9112 is still the selected HTTP/1.1 syntax source, with RFC 9931 noted
+  above as an update that does not affect UDP SSDP grammar. Verified Errata
+  7744 corrects the `obs-text` reference to RFC 9110 Section 5.5; any parser
+  step that consumes the collected field-value ABNF must use that corrected
+  pointer. Verified Errata 8284 is an Appendix C.3 change note and does not
+  change start-line, field-line, CRLF, or message-body grammar.
+- RFC 3986 remains the URI syntax source, with RFC 8820 as the current URI
+  design update. RFC 3986 errata and held update items do not authorize
+  rejecting unknown UPnP `LOCATION`, `ST`, `NT`, or `USN` values at the packet
+  grammar layer; preserve ambiguous values unless a later source-backed helper
+  records a narrower rule.
+- RFC 8141 obsoletes RFC 2141 for current URN syntax. Older UPnP examples that
+  predate RFC 8141 remain compatibility evidence; do not reject preserved
+  `urn:` values solely because a current URN helper has not classified the
+  namespace.
+- RFC 768 is updated by RFC 9868. SSDP message bytes are UDP user data, not UDP
+  options or surplus-area bytes. If the UDP layer later exposes surplus-area
+  data, SSDP decoding must leave it outside the SSDP body model unless a
+  separate source-backed step changes the layer boundary.
+- RFC 8200 errata and the RFC 9673 update were reviewed as IPv6 support
+  material only. They do not change SSDP start-line, header, or body grammar.
+  IPv6 multicast constants still require UPnP Annex A plus IANA and the
+  updated IPv6 multicast RFC relationships recorded above.
+- No reviewed Errata source produced a conflict that changes the current SSDP
+  packet grammar. Existing unresolved or ambiguous items remain blocked until a
+  later source-backed step resolves them explicitly.
 
 ### Excluded And Ambiguous Candidates
 

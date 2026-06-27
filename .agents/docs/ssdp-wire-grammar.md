@@ -20,6 +20,38 @@ later implementation step needs a method, header, status, multicast address,
 port, or URI rule, it must cite this grammar note and then the exact source
 section or registry row used for that narrower fact.
 
+## Errata And Update Review
+
+Review date: 2026-06-27.
+
+- RFC 9112 remains the syntax source for the UDP-carried HTTP-like envelope.
+  RFC 9931 updates RFC 9112 for HTTP/1.1 optimistic protocol transitions,
+  Upgrade, and CONNECT behavior; those mechanisms are not part of SSDP over UDP
+  and do not change this grammar.
+- RFC 9112 verified Errata 7744 corrects the `obs-text` reference to RFC 9110
+  Section 5.5. If a parser step consumes `field-vchar` or `obs-text`, use that
+  corrected reference. RFC 9112 verified Errata 8284 is an appendix change note
+  and does not change the start-line, header-line, CRLF delimiter, or
+  message-body rules used here.
+- RFC 9110 verified errata were reviewed for the grammar areas used by SSDP:
+  method token, field name, field value, status-code shape, and ordered field
+  preservation. None changes this note's packet grammar. Do not import errata
+  or updates for unrelated HTTP semantics such as negotiation, redirects,
+  caching, authentication, or TLS identity into the SSDP layer.
+- RFC 768 is updated by RFC 9868 for UDP options and surplus-area behavior.
+  SSDP parsing receives only UDP user data selected by the UDP layer. UDP
+  option or surplus bytes, if ever exposed by lower-layer support, must not be
+  appended to an SSDP body.
+- RFC 3986 is updated by RFC 8820, and RFC 8141 is the current URN authority.
+  These sources support URI or URN syntax only for later value-specific
+  helpers. They do not change the grammar rule that SSDP header values are
+  preserved byte strings at this layer.
+- No reviewed Errata or update source conflicts with the CRLF-delimited,
+  single-datagram SSDP envelope in this note. If a later official UPnP update,
+  IANA registry change, RFC update, or verified erratum conflicts with a wire
+  rule here, stop and record the conflict before changing parser or serializer
+  behavior.
+
 ## Message Envelope
 
 SSDP discovery traffic is an HTTP-like message carried in one UDP datagram. For
