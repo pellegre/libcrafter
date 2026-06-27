@@ -7,7 +7,10 @@ use crate::error::{CrafterError, Result};
 use crate::field::{Field, FieldState};
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
-use super::constants::{DHCPV6_CLIENT_SERVER_HEADER_LEN, DHCPV6_TRANSACTION_ID_MAX};
+use super::constants::{
+    DHCPV6_CLIENT_PORT, DHCPV6_CLIENT_SERVER_HEADER_LEN, DHCPV6_RELAY_FORW, DHCPV6_RELAY_REPL,
+    DHCPV6_SERVER_PORT, DHCPV6_TRANSACTION_ID_MAX,
+};
 use super::message::{dhcpv6_message_type_summary, Dhcpv6MessageType};
 use super::option::Dhcpv6Option;
 
@@ -202,6 +205,25 @@ where
     }
 }
 
+/// Append a decoded DHCPv6 client/server message to an existing packet stack.
+pub(crate) fn append_dhcpv6_packet(packet: Packet, bytes: &[u8]) -> Result<Packet> {
+    Ok(packet.push(decode_dhcpv6_client_server(bytes)?))
+}
+
+/// Return true when a UDP source/destination pair is a DHCPv6 client/server pair.
+pub(crate) const fn is_dhcpv6_port_pair(source_port: u16, destination_port: u16) -> bool {
+    matches!(
+        (source_port, destination_port),
+        (DHCPV6_CLIENT_PORT, DHCPV6_SERVER_PORT) | (DHCPV6_SERVER_PORT, DHCPV6_CLIENT_PORT)
+    )
+}
+
+/// Return true when bytes have enough shape to decode as a DHCPv6 client/server message.
+pub(crate) fn looks_like_dhcpv6_client_payload(bytes: &[u8]) -> bool {
+    bytes.len() >= DHCPV6_CLIENT_SERVER_HEADER_LEN
+        && !matches!(bytes[0], DHCPV6_RELAY_FORW | DHCPV6_RELAY_REPL)
+}
+
 fn decode_dhcpv6_client_server(bytes: &[u8]) -> Result<Dhcpv6> {
     if bytes.len() < DHCPV6_CLIENT_SERVER_HEADER_LEN {
         return Err(CrafterError::buffer_too_short(
@@ -372,5 +394,67 @@ mod dhcpv6_transaction_id_tests {
                 .unwrap_err(),
             expected,
         );
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_client_decode_tests {
+    use super::{
+        append_dhcpv6_packet, is_dhcpv6_port_pair, looks_like_dhcpv6_client_payload, Dhcpv6,
+    };
+    use crate::error::CrafterError;
+    use crate::packet::{NetworkLayer, Packet, Raw};
+    use crate::protocols::dhcp::v6::{Dhcpv6MessageType, Dhcpv6Option};
+    use crate::protocols::ip::v6::Ipv6;
+    use crate::protocols::transport::Udp;
+
+    #[test]
+    fn dhcpv6_client_decode_append_packet_preserves_unknown_message_type() {
+        let packet = append_dhcpv6_packet(Packet::new(), &[200, 0x01, 0x02, 0x03]).unwrap();
+        let dhcpv6 = packet.layer::<Dhcpv6>().unwrap();
+
+        assert_eq!(dhcpv6.message_type_value(), Dhcpv6MessageType::Unknown(200));
+        assert_eq!(dhcpv6.transaction_id_value(), 0x010203);
+    }
+
+    #[test]
+    fn dhcpv6_client_decode_reports_short_header_and_truncated_options() {
+        assert_eq!(
+            Dhcpv6::decode(&[1, 2, 3]).unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.client_server_header", 4, 3),
+        );
+        assert_eq!(
+            Dhcpv6::decode(&[1, 0, 0, 0, 0, 23, 0, 4, 1]).unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.payload", 8, 5),
+        );
+    }
+
+    #[test]
+    fn dhcpv6_client_decode_port_and_payload_gate_is_conservative() {
+        assert!(is_dhcpv6_port_pair(546, 547));
+        assert!(is_dhcpv6_port_pair(547, 546));
+        assert!(!is_dhcpv6_port_pair(547, 547));
+        assert!(looks_like_dhcpv6_client_payload(&[1, 0, 0, 0]));
+        assert!(looks_like_dhcpv6_client_payload(&[250, 0, 0, 0]));
+        assert!(!looks_like_dhcpv6_client_payload(&[12, 0, 0, 0]));
+        assert!(!looks_like_dhcpv6_client_payload(&[1, 0, 0]));
+    }
+
+    #[test]
+    fn dhcpv6_client_decode_udp_registry_decodes_client_server_payload() {
+        let packet = Ipv6::new()
+            / Udp::dhcpv6_client()
+            / Dhcpv6::new()
+                .message_type(Dhcpv6MessageType::Request)
+                .transaction_id(0x00010203)
+                .option(Dhcpv6Option::empty(14u16));
+        let bytes = packet.compile().unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
+        let dhcpv6 = decoded.layer::<Dhcpv6>().unwrap();
+        assert_eq!(dhcpv6.message_type_value(), Dhcpv6MessageType::Request);
+        assert_eq!(dhcpv6.transaction_id_value(), 0x010203);
+        assert_eq!(dhcpv6.options_ref().len(), 1);
+        assert!(decoded.layer::<Raw>().is_none());
     }
 }

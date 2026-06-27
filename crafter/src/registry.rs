@@ -7,7 +7,8 @@ use crate::error::Result;
 use crate::packet::{LinkType, NetworkLayer, Packet, Raw};
 use crate::protocols::bgp::{decode::append_bgp_packet_with_registry, BGP_PORT};
 use crate::protocols::dhcp::{
-    append_dhcpv4_packet, is_dhcpv4_port_pair, looks_like_dhcpv4_payload,
+    append_dhcpv4_packet, append_dhcpv6_packet, is_dhcpv4_port_pair, is_dhcpv6_port_pair,
+    looks_like_dhcpv4_payload, looks_like_dhcpv6_client_payload,
 };
 use crate::protocols::dns::{append_dns_packet, DNS_PORT};
 use crate::protocols::eapol::append_eapol_packet;
@@ -387,6 +388,13 @@ impl ProtocolRegistry {
                     && looks_like_dhcpv4_payload(ctx.payload)
             },
             |_registry, packet, payload| append_dhcpv4_packet(packet, payload),
+        );
+        registry.bind_udp_with_registry(
+            |ctx| {
+                is_dhcpv6_port_pair(ctx.source_port, ctx.destination_port)
+                    && looks_like_dhcpv6_client_payload(ctx.payload)
+            },
+            |_registry, packet, payload| append_dhcpv6_packet(packet, payload),
         );
 
         // RIP (RFC 1058 / RFC 2453) decode binds on UDP/520, kept conservative
@@ -840,6 +848,12 @@ impl ProtocolRegistry {
                 && looks_like_dhcpv4_payload(payload)
             {
                 return append_dhcpv4_packet(packet, payload);
+            }
+
+            if is_dhcpv6_port_pair(source_port, destination_port)
+                && looks_like_dhcpv6_client_payload(payload)
+            {
+                return append_dhcpv6_packet(packet, payload);
             }
 
             if (source_port == RIP_UDP_PORT || destination_port == RIP_UDP_PORT)
