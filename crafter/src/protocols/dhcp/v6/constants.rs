@@ -46,6 +46,8 @@ pub const DHCPV6_OPTION_ORO: u16 = 6;
 pub const DHCPV6_OPTION_PREFERENCE: u16 = 7;
 /// DHCPv6 OPTION_ELAPSED_TIME option code.
 pub const DHCPV6_OPTION_ELAPSED_TIME: u16 = 8;
+/// DHCPv6 OPTION_STATUS_CODE option code.
+pub const DHCPV6_OPTION_STATUS_CODE: u16 = 13;
 /// DHCPv6 OPTION_RAPID_COMMIT option code.
 pub const DHCPV6_OPTION_RAPID_COMMIT: u16 = 14;
 /// DHCPv6 OPTION_IA_PD option code.

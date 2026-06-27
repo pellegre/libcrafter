@@ -13,9 +13,10 @@ use super::constants::{
     DHCPV6_OPTION_CLIENTID, DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN,
     DHCPV6_OPTION_IAADDR, DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD,
     DHCPV6_OPTION_ORO, DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT,
-    DHCPV6_OPTION_SERVERID,
+    DHCPV6_OPTION_SERVERID, DHCPV6_OPTION_STATUS_CODE,
 };
 use super::duid::Dhcpv6Duid;
+use super::status::Dhcpv6StatusCode;
 
 const DHCPV6_IAADDR_HEADER_LEN: usize = 24;
 const DHCPV6_IA_NA_HEADER_LEN: usize = 12;
@@ -131,6 +132,13 @@ pub struct Dhcpv6Option {
     value: Dhcpv6OptionValue,
 }
 
+/// DHCPv6 OPTION_STATUS_CODE payload.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6StatusCodeOption {
+    status: Dhcpv6StatusCode,
+    message: Vec<u8>,
+}
+
 /// DHCPv6 OPTION_IA_NA identity association.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Dhcpv6IaNa {
@@ -235,6 +243,11 @@ impl Dhcpv6IaAddr {
         self
     }
 
+    /// Append a nested OPTION_STATUS_CODE option.
+    pub fn status_code(self, status: Dhcpv6StatusCodeOption) -> Self {
+        self.option(Dhcpv6Option::status_code(status))
+    }
+
     /// Replace the nested option list.
     pub fn options(mut self, options: impl Into<Vec<Dhcpv6Option>>) -> Self {
         self.options = options.into();
@@ -317,6 +330,11 @@ impl Dhcpv6IaPd {
     pub fn option(mut self, option: Dhcpv6Option) -> Self {
         self.options.push(option);
         self
+    }
+
+    /// Append a nested OPTION_STATUS_CODE option.
+    pub fn status_code(self, status: Dhcpv6StatusCodeOption) -> Self {
+        self.option(Dhcpv6Option::status_code(status))
     }
 
     /// Append a nested IA Prefix option.
@@ -406,6 +424,11 @@ impl Dhcpv6IaNa {
     pub fn option(mut self, option: Dhcpv6Option) -> Self {
         self.options.push(option);
         self
+    }
+
+    /// Append a nested OPTION_STATUS_CODE option.
+    pub fn status_code(self, status: Dhcpv6StatusCodeOption) -> Self {
+        self.option(Dhcpv6Option::status_code(status))
     }
 
     /// Append a nested IA Address option.
@@ -513,6 +536,11 @@ impl Dhcpv6IaPrefix {
         self
     }
 
+    /// Append a nested OPTION_STATUS_CODE option.
+    pub fn status_code(self, status: Dhcpv6StatusCodeOption) -> Self {
+        self.option(Dhcpv6Option::status_code(status))
+    }
+
     /// Replace the nested option list.
     pub fn options(mut self, options: impl Into<Vec<Dhcpv6Option>>) -> Self {
         self.options = options.into();
@@ -527,6 +555,63 @@ impl Dhcpv6IaPrefix {
     /// Mutably borrow nested options.
     pub fn options_mut(&mut self) -> &mut Vec<Dhcpv6Option> {
         &mut self.options
+    }
+}
+
+impl Dhcpv6StatusCodeOption {
+    /// Create a Status Code option payload with no status message bytes.
+    pub fn new(status: Dhcpv6StatusCode) -> Self {
+        Self {
+            status,
+            message: Vec::new(),
+        }
+    }
+
+    /// Create a Status Code option payload with status message bytes.
+    pub fn with_message(status: Dhcpv6StatusCode, message: impl AsRef<[u8]>) -> Self {
+        Self {
+            status,
+            message: message.as_ref().to_vec(),
+        }
+    }
+
+    /// Decode a Status Code option payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < 2 {
+            return Err(CrafterError::buffer_too_short(
+                "dhcpv6.option.status_code",
+                2,
+                bytes.len(),
+            ));
+        }
+
+        Ok(Self {
+            status: Dhcpv6StatusCode::from_code(read_u16_be(&bytes[0..2])?),
+            message: bytes[2..].to_vec(),
+        })
+    }
+
+    /// Encode this Status Code option payload.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(2 + self.message.len());
+        append_u16_be(&mut out, self.status.code());
+        out.extend_from_slice(&self.message);
+        out
+    }
+
+    /// Status code value.
+    pub const fn status(&self) -> Dhcpv6StatusCode {
+        self.status
+    }
+
+    /// Status message bytes.
+    pub fn message_bytes(&self) -> &[u8] {
+        &self.message
+    }
+
+    /// Status message as UTF-8, when the bytes are valid UTF-8.
+    pub fn message_text(&self) -> Option<&str> {
+        core::str::from_utf8(&self.message).ok()
     }
 }
 
@@ -604,6 +689,21 @@ impl Dhcpv6Option {
     /// Create an OPTION_RAPID_COMMIT option.
     pub fn rapid_commit() -> Self {
         Self::empty(DHCPV6_OPTION_RAPID_COMMIT)
+    }
+
+    /// Create an OPTION_STATUS_CODE option.
+    pub fn status_code(status: Dhcpv6StatusCodeOption) -> Self {
+        Self::raw(DHCPV6_OPTION_STATUS_CODE, status.encode())
+    }
+
+    /// Create an OPTION_STATUS_CODE option with no status message bytes.
+    pub fn status(status: Dhcpv6StatusCode) -> Self {
+        Self::status_code(Dhcpv6StatusCodeOption::new(status))
+    }
+
+    /// Create an OPTION_STATUS_CODE option with status message bytes.
+    pub fn status_message(status: Dhcpv6StatusCode, message: impl AsRef<[u8]>) -> Self {
+        Self::status_code(Dhcpv6StatusCodeOption::with_message(status, message))
     }
 
     /// Create an OPTION_IA_NA option.
@@ -740,6 +840,14 @@ impl Dhcpv6Option {
         Ok(self
             .exact_payload_if_code(DHCPV6_OPTION_RAPID_COMMIT, 0, "dhcpv6.option.rapid_commit")?
             .is_some())
+    }
+
+    /// Decode OPTION_STATUS_CODE.
+    pub fn status_code_value(&self) -> Result<Option<Dhcpv6StatusCodeOption>> {
+        match self.payload_if_code(DHCPV6_OPTION_STATUS_CODE) {
+            Some(payload) => Dhcpv6StatusCodeOption::decode(payload).map(Some),
+            None => Ok(None),
+        }
     }
 
     /// Decode OPTION_IA_NA.
@@ -1444,5 +1552,149 @@ mod dhcpv6_iaprefix_tests {
             .unwrap();
         assert_eq!(decoded_prefix, ia_prefix);
         assert_eq!(decoded_prefix.options_ref(), &[nested]);
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_status_option_tests {
+    use core::net::Ipv6Addr;
+
+    use super::{
+        Dhcpv6IaAddr, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6Option, Dhcpv6StatusCodeOption,
+    };
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{Dhcpv6, Dhcpv6StatusCode, DHCPV6_OPTION_STATUS_CODE};
+
+    fn address() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1)
+    }
+
+    fn prefix() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0)
+    }
+
+    #[test]
+    fn dhcpv6_status_option_encodes_success_with_empty_message() {
+        let status = Dhcpv6StatusCodeOption::new(Dhcpv6StatusCode::Success);
+        let option = Dhcpv6Option::status_code(status.clone());
+
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_STATUS_CODE);
+        assert_eq!(option.payload(), &[0x00, 0x00]);
+        assert_eq!(option.status_code_value().unwrap(), Some(status.clone()));
+        assert_eq!(status.status(), Dhcpv6StatusCode::Success);
+        assert_eq!(status.message_bytes(), &[]);
+        assert_eq!(status.message_text(), Some(""));
+    }
+
+    #[test]
+    fn dhcpv6_status_option_preserves_no_addrs_message_text() {
+        let option = Dhcpv6Option::status_message(Dhcpv6StatusCode::NoAddrsAvail, b"no addresses");
+        let decoded = option.status_code_value().unwrap().unwrap();
+
+        assert_eq!(decoded.status(), Dhcpv6StatusCode::NoAddrsAvail);
+        assert_eq!(decoded.message_bytes(), b"no addresses");
+        assert_eq!(decoded.message_text(), Some("no addresses"));
+        assert_eq!(
+            option.encode().unwrap(),
+            [
+                0x00, 0x0d, 0x00, 0x0e, 0x00, 0x02, b'n', b'o', b' ', b'a', b'd', b'd', b'r', b'e',
+                b's', b's', b'e', b's',
+            ],
+        );
+    }
+
+    #[test]
+    fn dhcpv6_status_option_preserves_no_prefix_message_text() {
+        let status =
+            Dhcpv6StatusCodeOption::with_message(Dhcpv6StatusCode::NoPrefixAvail, "no prefix");
+        let decoded = Dhcpv6StatusCodeOption::decode(&status.encode()).unwrap();
+
+        assert_eq!(decoded.status(), Dhcpv6StatusCode::NoPrefixAvail);
+        assert_eq!(decoded.message_text(), Some("no prefix"));
+    }
+
+    #[test]
+    fn dhcpv6_status_option_preserves_unknown_status_codes() {
+        let option = Dhcpv6Option::raw(DHCPV6_OPTION_STATUS_CODE, [0xfd, 0xe8, b'o', b'k']);
+        let decoded = option.status_code_value().unwrap().unwrap();
+
+        assert_eq!(decoded.status(), Dhcpv6StatusCode::Unknown(65_000));
+        assert_eq!(decoded.message_text(), Some("ok"));
+        assert_eq!(
+            Dhcpv6Option::status_code(decoded).payload(),
+            option.payload()
+        );
+    }
+
+    #[test]
+    fn dhcpv6_status_option_preserves_non_utf8_message_bytes() {
+        let option = Dhcpv6Option::raw(DHCPV6_OPTION_STATUS_CODE, [0x00, 0x01, 0xff, 0xfe]);
+        let decoded = option.status_code_value().unwrap().unwrap();
+
+        assert_eq!(decoded.status(), Dhcpv6StatusCode::UnspecFail);
+        assert_eq!(decoded.message_bytes(), &[0xff, 0xfe]);
+        assert_eq!(decoded.message_text(), None);
+    }
+
+    #[test]
+    fn dhcpv6_status_option_rejects_short_payload_without_losing_bytes() {
+        let option = Dhcpv6Option::raw(DHCPV6_OPTION_STATUS_CODE, [0xaa]);
+
+        assert_eq!(
+            option.status_code_value().unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.status_code", 2, 1),
+        );
+        assert_eq!(option.payload(), &[0xaa]);
+    }
+
+    #[test]
+    fn dhcpv6_status_option_helpers_work_top_level_and_nested() {
+        let top = Dhcpv6StatusCodeOption::new(Dhcpv6StatusCode::Success);
+        let no_addrs =
+            Dhcpv6StatusCodeOption::with_message(Dhcpv6StatusCode::NoAddrsAvail, "no address");
+        let no_prefix =
+            Dhcpv6StatusCodeOption::with_message(Dhcpv6StatusCode::NoPrefixAvail, "no prefix");
+
+        let ia_addr = Dhcpv6IaAddr::new(address(), 60, 120).status_code(no_addrs.clone());
+        let ia_na = Dhcpv6IaNa::new(0x01020304, 30, 90)
+            .status_code(no_addrs.clone())
+            .ia_addr(ia_addr)
+            .unwrap();
+        let ia_prefix = Dhcpv6IaPrefix::new(60, 120, 32, prefix()).status_code(no_prefix.clone());
+        let ia_pd = Dhcpv6IaPd::new(0x11223344, 300, 600)
+            .status_code(no_prefix.clone())
+            .ia_prefix(ia_prefix)
+            .unwrap();
+        let message = Dhcpv6::reply(0x0a0b0c)
+            .status_code(top.clone())
+            .ia_na(ia_na)
+            .unwrap()
+            .ia_pd(ia_pd)
+            .unwrap();
+
+        assert_eq!(message.status_code_value().unwrap(), Some(top.clone()));
+        assert_eq!(message.status_code_values().unwrap(), vec![top.clone()]);
+
+        let bytes = Packet::from_layer(message).compile().unwrap();
+        let decoded = Dhcpv6::decode(bytes.as_bytes()).unwrap();
+        let decoded_ia_na = decoded.ia_na_value().unwrap().unwrap();
+        let decoded_ia_pd = decoded.ia_pd_value().unwrap().unwrap();
+
+        assert_eq!(decoded.status_code_value().unwrap(), Some(top));
+        assert_eq!(
+            decoded_ia_na.options_ref()[0]
+                .status_code_value()
+                .unwrap()
+                .unwrap(),
+            no_addrs,
+        );
+        assert_eq!(
+            decoded_ia_pd.options_ref()[0]
+                .status_code_value()
+                .unwrap()
+                .unwrap(),
+            no_prefix,
+        );
     }
 }

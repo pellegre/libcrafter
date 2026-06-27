@@ -14,7 +14,10 @@ use super::constants::{
 };
 use super::duid::Dhcpv6Duid;
 use super::message::{dhcpv6_message_type_summary, Dhcpv6MessageType};
-use super::option::{Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6Option, Dhcpv6OptionCode};
+use super::option::{
+    Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6Option, Dhcpv6OptionCode, Dhcpv6StatusCodeOption,
+};
+use super::status::Dhcpv6StatusCode;
 
 /// DHCPv6 packet layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -326,6 +329,21 @@ impl Dhcpv6 {
         self.option(Dhcpv6Option::rapid_commit())
     }
 
+    /// Append an OPTION_STATUS_CODE option.
+    pub fn status_code(self, status: Dhcpv6StatusCodeOption) -> Self {
+        self.option(Dhcpv6Option::status_code(status))
+    }
+
+    /// Append an OPTION_STATUS_CODE option with no status message bytes.
+    pub fn status(self, status: Dhcpv6StatusCode) -> Self {
+        self.option(Dhcpv6Option::status(status))
+    }
+
+    /// Append an OPTION_STATUS_CODE option with status message bytes.
+    pub fn status_message(self, status: Dhcpv6StatusCode, message: impl AsRef<[u8]>) -> Self {
+        self.option(Dhcpv6Option::status_message(status, message))
+    }
+
     /// Append an OPTION_IA_NA option.
     pub fn ia_na(self, ia_na: Dhcpv6IaNa) -> Result<Self> {
         Ok(self.option(Dhcpv6Option::ia_na(ia_na)?))
@@ -410,6 +428,25 @@ impl Dhcpv6 {
             Some(option) => option.rapid_commit_present(),
             None => Ok(false),
         }
+    }
+
+    /// Decode the first Status Code option.
+    pub fn status_code_value(&self) -> Result<Option<Dhcpv6StatusCodeOption>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_STATUS_CODE) {
+            Some(option) => option.status_code_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode all Status Code options in packet order.
+    pub fn status_code_values(&self) -> Result<Vec<Dhcpv6StatusCodeOption>> {
+        let mut values = Vec::new();
+        for option in &self.options {
+            if let Some(status) = option.status_code_value()? {
+                values.push(status);
+            }
+        }
+        Ok(values)
     }
 
     /// Decode the first IA_NA option.
