@@ -1,4 +1,4 @@
-//! DHCPv6 client/server packet layer.
+//! DHCPv6 packet layer.
 
 use core::any::Any;
 use core::net::Ipv6Addr;
@@ -15,7 +15,7 @@ use super::constants::{
 use super::message::{dhcpv6_message_type_summary, Dhcpv6MessageType};
 use super::option::Dhcpv6Option;
 
-/// DHCPv6 client/server packet layer.
+/// DHCPv6 packet layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dhcpv6 {
     message_type: Field<Dhcpv6MessageType>,
@@ -129,9 +129,9 @@ impl Dhcpv6 {
             .relay_header(Dhcpv6RelayHeader::new(link_address, peer_address))
     }
 
-    /// Decode a DHCPv6 client/server message.
+    /// Decode a DHCPv6 message.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        decode_dhcpv6_client_server(bytes)
+        decode_dhcpv6(bytes)
     }
 
     /// Set the DHCPv6 message type.
@@ -314,11 +314,16 @@ impl Layer for Dhcpv6 {
     }
 
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
-        if self.relay.is_some() {
-            return Err(CrafterError::invalid_field_value(
-                "dhcpv6.relay",
-                "relay compile is implemented by the relay codec",
-            ));
+        if let Some(relay) = &self.relay {
+            out.reserve(self.encoded_dhcpv6_len());
+            out.push(self.message_type_value().code());
+            out.push(relay.hop_count_value());
+            out.extend_from_slice(&relay.link_address_value().octets());
+            out.extend_from_slice(&relay.peer_address_value().octets());
+            for option in &self.options {
+                option.encode_into(out)?;
+            }
+            return Ok(());
         }
 
         let transaction_id = self.transaction_id_value();
@@ -363,9 +368,9 @@ where
     }
 }
 
-/// Append a decoded DHCPv6 client/server message to an existing packet stack.
+/// Append a decoded DHCPv6 message to an existing packet stack.
 pub(crate) fn append_dhcpv6_packet(packet: Packet, bytes: &[u8]) -> Result<Packet> {
-    Ok(packet.push(decode_dhcpv6_client_server(bytes)?))
+    Ok(packet.push(decode_dhcpv6(bytes)?))
 }
 
 /// Return true when a UDP source/destination pair is a DHCPv6 client/server pair.
@@ -376,10 +381,31 @@ pub(crate) const fn is_dhcpv6_port_pair(source_port: u16, destination_port: u16)
     )
 }
 
+/// Return true when a UDP source/destination pair is a DHCPv6 relay/server pair.
+pub(crate) const fn is_dhcpv6_relay_port_pair(source_port: u16, destination_port: u16) -> bool {
+    matches!(
+        (source_port, destination_port),
+        (DHCPV6_SERVER_PORT, DHCPV6_SERVER_PORT)
+    )
+}
+
 /// Return true when bytes have enough shape to decode as a DHCPv6 client/server message.
 pub(crate) fn looks_like_dhcpv6_client_payload(bytes: &[u8]) -> bool {
     bytes.len() >= DHCPV6_CLIENT_SERVER_HEADER_LEN
         && !matches!(bytes[0], DHCPV6_RELAY_FORW | DHCPV6_RELAY_REPL)
+}
+
+/// Return true when bytes have enough shape to decode as a DHCPv6 relay message.
+pub(crate) fn looks_like_dhcpv6_relay_payload(bytes: &[u8]) -> bool {
+    bytes.len() >= DHCPV6_RELAY_HEADER_LEN
+        && matches!(bytes[0], DHCPV6_RELAY_FORW | DHCPV6_RELAY_REPL)
+}
+
+fn decode_dhcpv6(bytes: &[u8]) -> Result<Dhcpv6> {
+    match bytes.first().copied() {
+        Some(DHCPV6_RELAY_FORW | DHCPV6_RELAY_REPL) => decode_dhcpv6_relay(bytes),
+        _ => decode_dhcpv6_client_server(bytes),
+    }
 }
 
 fn decode_dhcpv6_client_server(bytes: &[u8]) -> Result<Dhcpv6> {
@@ -400,6 +426,27 @@ fn decode_dhcpv6_client_server(bytes: &[u8]) -> Result<Dhcpv6> {
     })
 }
 
+fn decode_dhcpv6_relay(bytes: &[u8]) -> Result<Dhcpv6> {
+    if bytes.len() < DHCPV6_RELAY_HEADER_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "dhcpv6.relay_header",
+            DHCPV6_RELAY_HEADER_LEN,
+            bytes.len(),
+        ));
+    }
+
+    Ok(Dhcpv6 {
+        message_type: Field::user(Dhcpv6MessageType::from_code(bytes[0])),
+        transaction_id: Field::defaulted(0),
+        relay: Some(Dhcpv6RelayHeader {
+            hop_count: Field::user(bytes[1]),
+            link_address: Field::user(Ipv6Addr::from(copy_array_16(&bytes[2..18]))),
+            peer_address: Field::user(Ipv6Addr::from(copy_array_16(&bytes[18..34]))),
+        }),
+        options: Dhcpv6Option::decode_all(&bytes[DHCPV6_RELAY_HEADER_LEN..])?,
+    })
+}
+
 fn validate_transaction_id(transaction_id: u32) -> Result<()> {
     if transaction_id > DHCPV6_TRANSACTION_ID_MAX {
         return Err(CrafterError::invalid_field_value(
@@ -408,6 +455,12 @@ fn validate_transaction_id(transaction_id: u32) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+fn copy_array_16(bytes: &[u8]) -> [u8; 16] {
+    let mut out = [0u8; 16];
+    out.copy_from_slice(bytes);
+    out
 }
 
 #[cfg(test)]
@@ -623,7 +676,6 @@ mod dhcpv6_relay_header_tests {
     use core::net::Ipv6Addr;
 
     use super::{Dhcpv6, Dhcpv6RelayHeader};
-    use crate::error::CrafterError;
     use crate::field::FieldState;
     use crate::packet::{Layer, Packet};
     use crate::protocols::dhcp::v6::Dhcpv6MessageType;
@@ -684,18 +736,16 @@ mod dhcpv6_relay_header_tests {
     }
 
     #[test]
-    fn dhcpv6_relay_header_compile_is_deferred_to_relay_codec() {
-        let error = Packet::from_layer(Dhcpv6::relay_forward(link(), peer()))
+    fn dhcpv6_relay_header_compile_emits_fixed_header() {
+        let bytes = Packet::from_layer(Dhcpv6::relay_forward(link(), peer()))
             .compile()
-            .unwrap_err();
+            .unwrap();
 
-        assert_eq!(
-            error,
-            CrafterError::invalid_field_value(
-                "dhcpv6.relay",
-                "relay compile is implemented by the relay codec",
-            ),
-        );
+        assert_eq!(bytes.as_bytes()[0], 12);
+        assert_eq!(bytes.as_bytes()[1], 0);
+        assert_eq!(&bytes.as_bytes()[2..18], &link().octets());
+        assert_eq!(&bytes.as_bytes()[18..34], &peer().octets());
+        assert_eq!(bytes.as_bytes().len(), 34);
     }
 
     #[test]
@@ -705,5 +755,149 @@ mod dhcpv6_relay_header_tests {
         assert_eq!(header.hop_count_value(), 3);
         assert_eq!(header.link_address_value(), link());
         assert_eq!(header.peer_address_value(), peer());
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_relay_codec_tests {
+    use core::net::Ipv6Addr;
+
+    use super::{
+        append_dhcpv6_packet, is_dhcpv6_relay_port_pair, looks_like_dhcpv6_relay_payload, Dhcpv6,
+    };
+    use crate::error::CrafterError;
+    use crate::packet::{NetworkLayer, Packet, Raw};
+    use crate::protocols::dhcp::v6::{Dhcpv6MessageType, Dhcpv6Option};
+    use crate::protocols::ip::v6::Ipv6;
+    use crate::protocols::transport::Udp;
+
+    const RELAY_MESSAGE_OPTION: u16 = 9;
+
+    fn link(segment: u16) -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, segment, 0, 0, 0, 0, 1)
+    }
+
+    fn peer(segment: u16) -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, segment, 0, 0, 0, 0, 2)
+    }
+
+    #[test]
+    fn dhcpv6_relay_codec_encodes_and_decodes_relay_message_option() {
+        let client_bytes =
+            Packet::from_layer(Dhcpv6::solicit(0x010203).option(Dhcpv6Option::empty(14u16)))
+                .compile()
+                .unwrap();
+        let relay = Dhcpv6::relay_forward(link(1), peer(1))
+            .hop_count(1)
+            .option(Dhcpv6Option::raw(
+                RELAY_MESSAGE_OPTION,
+                client_bytes.as_bytes(),
+            ));
+        let relay_bytes = Packet::from_layer(relay).compile().unwrap();
+
+        assert_eq!(relay_bytes.as_bytes()[0], 12);
+        assert_eq!(relay_bytes.as_bytes()[1], 1);
+        assert_eq!(&relay_bytes.as_bytes()[2..18], &link(1).octets());
+        assert_eq!(&relay_bytes.as_bytes()[18..34], &peer(1).octets());
+
+        let decoded = append_dhcpv6_packet(Packet::new(), relay_bytes.as_bytes()).unwrap();
+        let relay = decoded.layer::<Dhcpv6>().unwrap();
+        let relay_header = relay.relay().unwrap();
+        assert_eq!(relay.message_type_value(), Dhcpv6MessageType::RelayForw);
+        assert_eq!(relay_header.hop_count_value(), 1);
+        assert_eq!(relay_header.link_address_value(), link(1));
+        assert_eq!(relay_header.peer_address_value(), peer(1));
+        assert_eq!(relay.options_ref().len(), 1);
+
+        let nested_option = &relay.options_ref()[0];
+        assert_eq!(nested_option.codepoint(), RELAY_MESSAGE_OPTION);
+        let nested = Dhcpv6::decode(nested_option.payload()).unwrap();
+        assert_eq!(nested.message_type_value(), Dhcpv6MessageType::Solicit);
+        assert_eq!(nested.transaction_id_value(), 0x010203);
+        assert_eq!(nested.options_ref()[0].codepoint(), 14);
+    }
+
+    #[test]
+    fn dhcpv6_relay_codec_preserves_multiple_encapsulation_levels() {
+        let client_bytes = Packet::from_layer(
+            Dhcpv6::new()
+                .message_type(Dhcpv6MessageType::Request)
+                .transaction_id(0x040506),
+        )
+        .compile()
+        .unwrap();
+        let inner_relay_bytes =
+            Packet::from_layer(Dhcpv6::relay_forward(link(1), peer(1)).hop_count(2).option(
+                Dhcpv6Option::raw(RELAY_MESSAGE_OPTION, client_bytes.as_bytes()),
+            ))
+            .compile()
+            .unwrap();
+        let outer_relay_bytes =
+            Packet::from_layer(Dhcpv6::relay_forward(link(2), peer(2)).hop_count(3).option(
+                Dhcpv6Option::raw(RELAY_MESSAGE_OPTION, inner_relay_bytes.as_bytes()),
+            ))
+            .compile()
+            .unwrap();
+
+        let outer = Dhcpv6::decode(outer_relay_bytes.as_bytes()).unwrap();
+        assert_eq!(outer.relay().unwrap().hop_count_value(), 3);
+        assert_eq!(outer.relay().unwrap().link_address_value(), link(2));
+
+        let inner = Dhcpv6::decode(outer.options_ref()[0].payload()).unwrap();
+        assert_eq!(inner.message_type_value(), Dhcpv6MessageType::RelayForw);
+        assert_eq!(inner.relay().unwrap().hop_count_value(), 2);
+        assert_eq!(inner.relay().unwrap().link_address_value(), link(1));
+
+        let client = Dhcpv6::decode(inner.options_ref()[0].payload()).unwrap();
+        assert_eq!(client.message_type_value(), Dhcpv6MessageType::Request);
+        assert_eq!(client.transaction_id_value(), 0x040506);
+    }
+
+    #[test]
+    fn dhcpv6_relay_codec_hop_count_roundtrips() {
+        let relay = Dhcpv6::relay_reply(link(4), peer(4)).hop_count(31);
+        let bytes = Packet::from_layer(relay).compile().unwrap();
+        let decoded = Dhcpv6::decode(bytes.as_bytes()).unwrap();
+
+        assert_eq!(decoded.message_type_value(), Dhcpv6MessageType::RelayRepl);
+        assert_eq!(decoded.relay().unwrap().hop_count_value(), 31);
+        assert_eq!(
+            Packet::from_layer(decoded).compile().unwrap().as_bytes(),
+            bytes.as_bytes(),
+        );
+    }
+
+    #[test]
+    fn dhcpv6_relay_codec_reports_truncated_relay_header() {
+        let mut bytes = vec![12, 0];
+        bytes.resize(33, 0);
+
+        assert_eq!(
+            Dhcpv6::decode(&bytes).unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.relay_header", 34, 33),
+        );
+    }
+
+    #[test]
+    fn dhcpv6_relay_codec_udp_registry_decodes_server_relay_payload() {
+        assert!(is_dhcpv6_relay_port_pair(547, 547));
+
+        let payload = Packet::from_layer(Dhcpv6::relay_reply(link(5), peer(5)))
+            .compile()
+            .unwrap();
+        assert!(looks_like_dhcpv6_relay_payload(payload.as_bytes()));
+        assert!(!looks_like_dhcpv6_relay_payload(&payload.as_bytes()[..33]));
+
+        let packet = Ipv6::new()
+            / Udp::new().source_port(547).destination_port(547)
+            / Dhcpv6::relay_reply(link(5), peer(5)).hop_count(4);
+        let bytes = packet.compile().unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
+        let dhcpv6 = decoded.layer::<Dhcpv6>().unwrap();
+        assert_eq!(dhcpv6.message_type_value(), Dhcpv6MessageType::RelayRepl);
+        assert_eq!(dhcpv6.relay().unwrap().hop_count_value(), 4);
+        assert_eq!(dhcpv6.relay().unwrap().peer_address_value(), peer(5));
+        assert!(decoded.layer::<Raw>().is_none());
     }
 }
