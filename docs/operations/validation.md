@@ -462,6 +462,27 @@ bridged interface discovered by `VBoxManage` or requested through
 See [lab.md](lab.md) for lab session metadata and [docs/operations/endpoint.md](endpoint.md)
 for single-endpoint provider credentials, artifacts, and cleanup.
 
+## DHCPv6 Live Validation
+
+DHCPv6 live validation follows the oracle live provider boundary. The default
+workflow is a dry-run plan for `dhcpv6-smoke` and `--case dhcpv6-solicit`; it
+sends no traffic, creates no infrastructure, and records stable skip reasons
+when IPv6, multicast, link-layer send/capture, or provider MAC discovery is not
+available:
+
+```sh
+tools/oracle/run live --backend scapy --provider qemu --dry-run --profile dhcpv6-smoke --seed 9917 --count 2 --case dhcpv6-solicit --out target/oracle/dhcpv6-guarded-doc-dry-run
+tools/oracle/run live --backend scapy --provider docker --dry-run --profile dhcpv6-smoke --seed 9917 --count 2 --case dhcpv6-solicit --out target/oracle/dhcpv6-docker-dry-run
+```
+
+Real DHCPv6 exchange is a protected lab workflow only. It must run from
+disposable provider endpoints, require `--confirm-live-run`, and be wrapped by
+a family-specific environment gate such as `LIBCRAFTER_RUN_DHCPV6_VM_LIVE=1`
+or `LIBCRAFTER_RUN_DHCPV6_HETZNER_LIVE=1`. Store reports, pcaps, decoded
+models, capability reports, and teardown logs under `target/oracle/dhcpv6-*`;
+never commit provider identifiers, public IPs, credentials, live hostnames, or
+captures.
+
 ## ICMPv4 Live Matrix
 
 The ICMPv4 live matrix runs the oracle live path against the `l2:ipv4` root
