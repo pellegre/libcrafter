@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import unittest
 from collections.abc import Mapping, Sequence
+from random import Random
 
 from tools.oracle.engine.generator import generate_plans
 from tools.oracle.engine.model import PacketPlan
+from tools.oracle.engine.protocols import dhcpv6 as dhcpv6_sampler
+from tools.oracle.engine.sampling import _SKIP_FIELD, _SamplingContext
 
 
 _DHCPV6_STACKS = {
@@ -143,6 +146,75 @@ class Dhcpv6GeneratorSelectionTest(unittest.TestCase):
         self.assertEqual(dhcpv6.get("link_address"), "2001:db8:100::")
         self.assertEqual(_option_names(dhcpv6), ["interface_id", "relay_msg"])
         self.assertEqual(plan.fields["ipv6"].get("dst"), "ff05::1:3")
+
+    def test_sampled_relay_message_type_uses_relay_shape(self) -> None:
+        ctx = _SamplingContext(
+            rng=Random(12345),
+            profile="ci",
+            feature_weights={},
+            stack=["ipv6", "udp", "dhcpv6"],
+            payload_min=0,
+            payload_max=0,
+            feature="ah_integrity",
+            case="ah-hmac-tunnel-inner-ip",
+        )
+        current_fields = {"message_type": "relay_forward"}
+
+        self.assertIs(
+            dhcpv6_sampler._sample(
+                ctx,
+                "transaction_id",
+                "deterministic",
+                field_spec={},
+                current_fields=current_fields,
+            ),
+            _SKIP_FIELD,
+        )
+        self.assertEqual(
+            dhcpv6_sampler._sample(
+                ctx,
+                "hop_count",
+                "one",
+                field_spec={},
+                current_fields=current_fields,
+            ),
+            1,
+        )
+        self.assertEqual(
+            dhcpv6_sampler._sample(
+                ctx,
+                "link_address",
+                "documentation_ipv6",
+                field_spec={},
+                current_fields=current_fields,
+            ),
+            "2001:db8:100::",
+        )
+        options = dhcpv6_sampler._sample(
+            ctx,
+            "options",
+            "client_id",
+            field_spec={},
+            current_fields=current_fields,
+        )
+
+        self.assertIsInstance(options, Sequence)
+        self.assertEqual(
+            [option["name"] for option in options if isinstance(option, Mapping)],
+            ["interface_id", "relay_msg"],
+        )
+        fields = {
+            "udp": {"src_port": 546, "dst_port": 547},
+            "dhcpv6": dict(current_fields),
+        }
+
+        dhcpv6_sampler._post_sample(
+            fields,
+            stack=["ipv6", "udp", "dhcpv6"],
+            case="ah-hmac-tunnel-inner-ip",
+        )
+
+        self.assertEqual(fields["udp"], {"src_port": 547, "dst_port": 547})
 
     def test_dhcpv6_identity_association_cases_are_nested(self) -> None:
         plan = _first_plan("dhcpv6-ia-pd-iaprefix")
