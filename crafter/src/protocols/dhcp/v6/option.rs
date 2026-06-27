@@ -4,6 +4,11 @@
 //! module starts with the raw-preserving data model; the serial codec and IANA
 //! registry classification live in later modules.
 
+use crate::endian::read_u16_be;
+use crate::error::{CrafterError, Result};
+
+use super::constants::DHCPV6_OPTION_HEADER_LEN;
+
 /// DHCPv6 option codepoint.
 ///
 /// Every 16-bit value is representable so packets can preserve registered,
@@ -186,6 +191,93 @@ impl Dhcpv6Option {
     pub fn into_parts(self) -> (Dhcpv6OptionCode, Dhcpv6OptionValue) {
         (self.code, self.value)
     }
+
+    /// Encode this option to its DHCPv6 TLV wire bytes.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(DHCPV6_OPTION_HEADER_LEN + self.payload_len());
+        self.encode_into(&mut out)?;
+        Ok(out)
+    }
+
+    /// Append this option's DHCPv6 TLV wire bytes to `out`.
+    pub fn encode_into(&self, out: &mut Vec<u8>) -> Result<()> {
+        let payload_len = u16::try_from(self.payload_len()).map_err(|_| {
+            CrafterError::invalid_field_value("dhcpv6.option.length", "payload exceeds 65535 bytes")
+        })?;
+
+        append_u16_be(out, self.codepoint());
+        append_u16_be(out, payload_len);
+        out.extend_from_slice(self.payload());
+        Ok(())
+    }
+
+    /// Encode a serial list of DHCPv6 options.
+    pub fn encode_all(options: &[Self]) -> Result<Vec<u8>> {
+        let total_len = options
+            .iter()
+            .map(|option| DHCPV6_OPTION_HEADER_LEN + option.payload_len())
+            .sum();
+        let mut out = Vec::with_capacity(total_len);
+        for option in options {
+            option.encode_into(&mut out)?;
+        }
+        Ok(out)
+    }
+
+    /// Decode a serial DHCPv6 option list.
+    pub fn decode_all(bytes: &[u8]) -> Result<Vec<Self>> {
+        let mut options = Vec::new();
+        let mut offset = 0usize;
+
+        while offset < bytes.len() {
+            let code = read_option_code(bytes, offset)?;
+            let payload_len = read_option_len(bytes, offset)? as usize;
+            let payload_start = offset + DHCPV6_OPTION_HEADER_LEN;
+            let payload_end = payload_start + payload_len;
+            ensure_available(bytes, payload_end, "dhcpv6.option.payload")?;
+
+            let payload = &bytes[payload_start..payload_end];
+            let value = if payload.is_empty() {
+                Dhcpv6OptionValue::Empty
+            } else {
+                Dhcpv6OptionValue::Raw(payload.to_vec())
+            };
+            options.push(Self::typed(code, value));
+            offset = payload_end;
+        }
+
+        Ok(options)
+    }
+}
+
+fn append_u16_be(out: &mut Vec<u8>, value: u16) {
+    out.extend_from_slice(&value.to_be_bytes());
+}
+
+fn read_option_code(bytes: &[u8], offset: usize) -> Result<u16> {
+    ensure_available(bytes, offset + 2, "dhcpv6.option.code")?;
+    read_u16_be(&bytes[offset..offset + 2])
+}
+
+fn read_option_len(bytes: &[u8], offset: usize) -> Result<u16> {
+    ensure_available(
+        bytes,
+        offset + DHCPV6_OPTION_HEADER_LEN,
+        "dhcpv6.option.length",
+    )?;
+    read_u16_be(&bytes[offset + 2..offset + DHCPV6_OPTION_HEADER_LEN])
+}
+
+fn ensure_available(bytes: &[u8], required: usize, context: &'static str) -> Result<()> {
+    if bytes.len() < required {
+        Err(CrafterError::buffer_too_short(
+            context,
+            required,
+            bytes.len(),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -235,5 +327,64 @@ mod dhcpv6_option_model_tests {
         let (code, value) = option.into_parts();
         assert_eq!(code.code(), 1);
         assert_eq!(value.into_bytes(), Vec::<u8>::new());
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_option_codec_tests {
+    use super::Dhcpv6Option;
+    use crate::error::CrafterError;
+
+    #[test]
+    fn dhcpv6_option_codec_encodes_zero_length_options() {
+        let option = Dhcpv6Option::empty(14u16);
+
+        assert_eq!(option.encode().unwrap(), vec![0x00, 0x0e, 0x00, 0x00]);
+        let decoded = Dhcpv6Option::decode_all(&[0x00, 0x0e, 0x00, 0x00]).unwrap();
+        assert_eq!(decoded, vec![option]);
+        assert!(decoded[0].is_empty());
+    }
+
+    #[test]
+    fn dhcpv6_option_codec_decodes_multiple_options() {
+        let bytes = [0x00, 0x01, 0x00, 0x02, 0xaa, 0xbb, 0x00, 0x17, 0x00, 0x00];
+        let decoded = Dhcpv6Option::decode_all(&bytes).unwrap();
+
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].codepoint(), 1);
+        assert_eq!(decoded[0].payload(), &[0xaa, 0xbb]);
+        assert_eq!(decoded[1].codepoint(), 23);
+        assert_eq!(decoded[1].payload(), &[]);
+        assert_eq!(Dhcpv6Option::encode_all(&decoded).unwrap(), bytes);
+    }
+
+    #[test]
+    fn dhcpv6_option_codec_unknown_options_roundtrip() {
+        let option = Dhcpv6Option::raw(65_000u16, [0xde, 0xad, 0xbe, 0xef].as_slice());
+        let encoded = option.encode().unwrap();
+
+        assert_eq!(
+            encoded,
+            vec![0xfd, 0xe8, 0x00, 0x04, 0xde, 0xad, 0xbe, 0xef]
+        );
+        assert_eq!(Dhcpv6Option::decode_all(&encoded).unwrap(), vec![option]);
+    }
+
+    #[test]
+    fn dhcpv6_option_codec_truncated_code_length_and_payload_are_structured() {
+        assert_eq!(
+            Dhcpv6Option::decode_all(&[0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.code", 2, 1),
+        );
+
+        assert_eq!(
+            Dhcpv6Option::decode_all(&[0x00, 0x01, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.length", 4, 3),
+        );
+
+        assert_eq!(
+            Dhcpv6Option::decode_all(&[0x00, 0x01, 0x00, 0x04, 0xaa]).unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.payload", 8, 5),
+        );
     }
 }
