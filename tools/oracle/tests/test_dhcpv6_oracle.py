@@ -13,6 +13,19 @@ _DHCPV6_STACKS = {
     ("ethernet", "ipv6", "udp", "dhcpv6"),
     ("ipv6", "udp", "dhcpv6"),
 }
+_DHCPV6_OFFLINE_CASES = {
+    "dhcpv6-solicit",
+    "dhcpv6-request",
+    "dhcpv6-reply",
+    "dhcpv6-information-request",
+    "dhcpv6-information-reply",
+    "dhcpv6-relay-forward",
+    "dhcpv6-relay-reply",
+    "dhcpv6-ia-na-iaaddr",
+    "dhcpv6-ia-pd-iaprefix",
+    "dhcpv6-unknown-option",
+    "dhcpv6-option-matrix",
+}
 
 
 def _require_scapy_backend():
@@ -149,6 +162,32 @@ class Dhcpv6GeneratorSelectionTest(unittest.TestCase):
         first = [plan.to_dict() for plan in _plans_for_case("dhcpv6-option-matrix")]
         second = [plan.to_dict() for plan in _plans_for_case("dhcpv6-option-matrix")]
         self.assertEqual(first, second)
+
+    def test_dhcpv6_smoke_profile_covers_offline_matrix(self) -> None:
+        plans = generate_plans(
+            seed=9915,
+            profile="dhcpv6-smoke",
+            count=20,
+            backend="scapy",
+        )
+        self.assertTrue(plans)
+        self.assertTrue({plan.case for plan in plans} <= _DHCPV6_OFFLINE_CASES)
+        self.assertEqual({plan.case for plan in plans}, _DHCPV6_OFFLINE_CASES)
+        self.assertTrue({tuple(plan.stack) for plan in plans} <= _DHCPV6_STACKS)
+        self.assertEqual(
+            {plan.metadata.get("feature") for plan in plans},
+            {"dhcpv6_behavior"},
+        )
+
+    def test_dhcpv6_smoke_reference_direction_covers_offline_matrix(self) -> None:
+        plans = generate_plans(
+            seed=9916,
+            profile="dhcpv6-smoke",
+            count=12,
+            backend="scapy",
+            direction="reference_to_libcrafter",
+        )
+        self.assertEqual({plan.case for plan in plans}, _DHCPV6_OFFLINE_CASES)
 
 
 class ScapyDhcpv6MaterializationTest(unittest.TestCase):
