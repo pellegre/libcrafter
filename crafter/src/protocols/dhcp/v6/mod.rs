@@ -9,5 +9,7 @@
 //! source-backed DHCPv6 wire behavior.
 
 pub mod constants;
+pub mod message;
 
 pub use constants::*;
+pub use message::Dhcpv6MessageType;
