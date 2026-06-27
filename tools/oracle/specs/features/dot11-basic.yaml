@@ -7,8 +7,8 @@ layers:
   - dot11
   - payload
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
   - roundtrip
 strict_bytes: true
 malformed: false
@@ -94,50 +94,50 @@ coverage_cases:
 supported_cases:
   - name: dot11-data-basic
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
   - name: dot11-qos-data
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
   - name: dot11-tods-fromds-address4
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
   - name: dot11-protected-raw
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: normalized
   - name: dot11-management-basic
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
   - name: dot11-control-basic
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
   - name: dot11-unknown-subtype-raw
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: normalized
   - name: malformed-dot11-truncated-header
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
     offline_byte_comparison: excluded
     generator_policy:

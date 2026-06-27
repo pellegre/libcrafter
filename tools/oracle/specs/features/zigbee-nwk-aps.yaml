@@ -7,8 +7,8 @@ layers:
   - zigbee_nwk
   - zigbee_aps
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
   - roundtrip
 strict_bytes: true
 malformed: false
@@ -82,8 +82,8 @@ coverage_cases:
 supported_cases:
   - name: zigbee-nwk-data-frame
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
     roots:
@@ -111,8 +111,8 @@ supported_cases:
       - .agents/docs/zigbee-manifest.md#NWK-Frame-Types-Discover-Route-and-Protocol-Version-Code-Points
   - name: zigbee-mac-nwk-aps-data-stack
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
     roots:
@@ -165,8 +165,8 @@ supported_cases:
       - .agents/docs/zigbee-manifest.md#Recognizing-a-Zigbee-NWK-Frame-Inside-the-802-15-4-MAC-Payload
   - name: malformed-zigbee-nwk-truncated-fcf
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
     offline_byte_comparison: excluded
     roots:
@@ -179,8 +179,8 @@ supported_cases:
       fixture: crafter/tests/fixtures/malformed/dot15d4-decode-corpus.hex
   - name: malformed-zigbee-nwk-truncated-header
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
     offline_byte_comparison: excluded
     roots:
@@ -193,8 +193,8 @@ supported_cases:
       fixture: crafter/tests/fixtures/malformed/dot15d4-decode-corpus.hex
   - name: malformed-zigbee-aps-truncated-fcf
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
     offline_byte_comparison: excluded
     roots:
@@ -207,8 +207,8 @@ supported_cases:
       fixture: crafter/tests/fixtures/malformed/dot15d4-decode-corpus.hex
   - name: malformed-zigbee-aps-truncated-header
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
     offline_byte_comparison: excluded
     roots:

@@ -31,8 +31,8 @@ summary: RIPng (RFC 2080) route table entry layout — IPv6 prefix, route tag, p
 layers:
   - ripng
 directions:
-  - libcrafter_to_reference
-  - reference_to_libcrafter
+  - libcrafter_to_backend
+  - backend_to_libcrafter
 strict_bytes: true
 malformed: false
 
@@ -40,7 +40,7 @@ behaviors:
   # RTE layout matrix. The behavior name is matched against the case id by the
   # generator, which sets the RIPng RTE layout (prefix, route tag, prefix length,
   # metric) for the selected case. Because Scapy has no native RIPng layer, the
-  # reference_to_libcrafter direction is decoded by the wireshark parser backend
+  # backend_to_libcrafter direction is decoded by the wireshark parser backend
   # and cross-checked against the libcrafter internal round-trip rather than a
   # native Scapy encode.
   - name: route
@@ -84,56 +84,56 @@ coverage_cases:
 
 supported_cases:
   # Well-formed RTE cases. Scapy cannot natively encode/decode RIPng, so the
-  # reference_to_libcrafter direction is parsed by the wireshark parser backend
+  # backend_to_libcrafter direction is parsed by the wireshark parser backend
   # and validated against the libcrafter internal round-trip; this direction is
-  # marked normalized rather than skipped. The libcrafter_to_reference direction
+  # marked normalized rather than skipped. The libcrafter_to_backend direction
   # keeps the libcrafter-internal strict-byte round-trip.
   - name: ripng-rtes-route
     directions:
-      - libcrafter_to_reference
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: ripng-rtes-route-reference-decode
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: normalized
     note: >-
-      Scapy has no native RIPng dissector; the reference_to_libcrafter direction
+      Scapy has no native RIPng dissector; the backend_to_libcrafter direction
       is decoded by the wireshark parser backend and cross-checked against the
       libcrafter internal round-trip, marked normalized rather than skipped.
   - name: ripng-rtes-next-hop-rte
     directions:
-      - libcrafter_to_reference
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: ripng-rtes-next-hop-rte-reference-decode
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: normalized
     note: >-
-      Scapy has no native RIPng dissector; the reference_to_libcrafter direction
+      Scapy has no native RIPng dissector; the backend_to_libcrafter direction
       is decoded by the wireshark parser backend and cross-checked against the
       libcrafter internal round-trip, marked normalized rather than skipped.
   - name: ripng-rtes-multi-rte
     directions:
-      - libcrafter_to_reference
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: ripng-rtes-multi-rte-reference-decode
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: normalized
     note: >-
-      Scapy has no native RIPng dissector; the reference_to_libcrafter direction
+      Scapy has no native RIPng dissector; the backend_to_libcrafter direction
       is decoded by the wireshark parser backend and cross-checked against the
       libcrafter internal round-trip, marked normalized rather than skipped.
   - name: ripng-rtes-request-sentinel
     directions:
-      - libcrafter_to_reference
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: ripng-rtes-request-sentinel-reference-decode
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: normalized
     note: >-
-      Scapy has no native RIPng dissector; the reference_to_libcrafter direction
+      Scapy has no native RIPng dissector; the backend_to_libcrafter direction
       is decoded by the wireshark parser backend and cross-checked against the
       libcrafter internal round-trip, marked normalized rather than skipped.
 
@@ -152,7 +152,7 @@ backend_support:
     notes:
       - Parser-only decode of RIPng route table entries (IPv6 prefix, route tag,
         prefix length, metric) and the next-hop RTE over IPv6 UDP port 521; used
-        for the reference_to_libcrafter decode direction when tshark is available
+        for the backend_to_libcrafter decode direction when tshark is available
         and skipped cleanly otherwise.
   libcrafter:
     status: supported

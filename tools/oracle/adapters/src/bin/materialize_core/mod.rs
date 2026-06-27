@@ -6399,7 +6399,7 @@ mod dhcpv4_oracle_fixtures {
 
 /// Materializer coverage for IPv4-root DHCPv4 plans.
 ///
-/// These tests drive the live offline `libcrafter_to_reference` materialization
+/// These tests drive the live offline `libcrafter_to_backend` materialization
 /// path directly: they feed an `ipv4 / udp / dhcpv4` plan (the shape the seeded
 /// generator emits for `--case dhcpv4-discover` rooted at `l3:ipv4`) to
 /// [`materialize_plan`], then assert the emitted vector roots at `l3:ipv4`,

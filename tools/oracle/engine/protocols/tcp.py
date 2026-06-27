@@ -173,7 +173,7 @@ def _apply_tcp_options_behavior(
     sampling (see _case_supported_in_direction), so they never reach this
     materialization in an offline run; the option bytes are still defined
     here so the spec's declared coverage stays reproducible and so the
-    libcrafter_to_reference and dry-plan paths can render them determinist
+    libcrafter_to_backend and dry-plan paths can render them determinist
     ically. Every value uses fixed, seed-independent bytes.
     """
 

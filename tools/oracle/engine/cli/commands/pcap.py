@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import argparse
 
+from ...directions import PCAP_DIRECTIONS
 from ..main import _pcap
-from ..options import _add_common_options, _add_generation_options
+from ..options import _add_common_options, _add_generation_options, _direction_value
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -18,7 +19,8 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     _add_generation_options(pcap_parser)
     pcap_parser.add_argument(
         "--direction",
-        choices=("reference_to_libcrafter", "libcrafter_to_reference", "roundtrip"),
+        type=_direction_value,
+        choices=PCAP_DIRECTIONS,
         default="roundtrip",
         help="pcap validation direction (default: %(default)s)",
     )

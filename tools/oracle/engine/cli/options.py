@@ -12,7 +12,12 @@ from __future__ import annotations
 import argparse
 
 from ..backends import registered_backend_names
+from ..directions import normalize_direction
 from ..report import DEFAULT_OUTPUT_ROOT
+
+
+def _direction_value(value: str) -> str:
+    return normalize_direction(value)
 
 
 def _add_common_options(parser: argparse.ArgumentParser) -> None:

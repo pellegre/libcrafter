@@ -360,12 +360,12 @@ class Dhcpv4OptionMatrixGeneratorTest(unittest.TestCase):
         )
 
     def test_option_matrix_case_is_sampled_in_both_directions(self) -> None:
-        for direction in ("libcrafter_to_reference", "reference_to_libcrafter"):
+        for direction in ("libcrafter_to_backend", "backend_to_libcrafter"):
             with self.subTest(direction=direction):
                 self._matrix_plans(direction)
 
     def test_option_matrix_plan_covers_listed_option_kinds(self) -> None:
-        for direction in ("libcrafter_to_reference", "reference_to_libcrafter"):
+        for direction in ("libcrafter_to_backend", "backend_to_libcrafter"):
             with self.subTest(direction=direction):
                 plan = self._matrix_plans(direction)[0]
                 kinds = _dhcpv4_option_kinds(plan)
@@ -379,21 +379,21 @@ class Dhcpv4OptionMatrixGeneratorTest(unittest.TestCase):
         # The IPv4-root live stack and the Ethernet-root offline stack both
         # carry the option matrix; at least the IPv4-root stack must appear so
         # live-friendly cross-backend coverage stays available.
-        for direction in ("libcrafter_to_reference", "reference_to_libcrafter"):
+        for direction in ("libcrafter_to_backend", "backend_to_libcrafter"):
             with self.subTest(direction=direction):
                 roots = {_packet_root(plan) for plan in self._matrix_case_plans(direction)}
                 self.assertIn("l3:ipv4", roots)
 
     def test_option_matrix_is_deterministic(self) -> None:
-        first = self._matrix_plans("libcrafter_to_reference")
-        second = self._matrix_plans("libcrafter_to_reference")
+        first = self._matrix_plans("libcrafter_to_backend")
+        second = self._matrix_plans("libcrafter_to_backend")
         self.assertEqual(
             [plan.to_dict() for plan in first],
             [plan.to_dict() for plan in second],
         )
 
     def test_option_matrix_tokens_match_published_order(self) -> None:
-        plan = self._matrix_plans("reference_to_libcrafter")[0]
+        plan = self._matrix_plans("backend_to_libcrafter")[0]
         options = plan.fields["dhcpv4"]["options"]
         self.assertEqual(list(options), list(DHCPV4_OPTION_MATRIX_TOKENS))
 

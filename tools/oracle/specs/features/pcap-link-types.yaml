@@ -10,8 +10,8 @@ layers:
   - icmp
   - udp
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
   - roundtrip
 strict_bytes: true
 malformed: false

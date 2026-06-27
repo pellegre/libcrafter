@@ -76,7 +76,7 @@ def _mqtt_plan(mqtt_fields: Mapping[str, object], *, case: str) -> PacketPlan:
         profile="mqtt-unit",
         seed=_SEED,
         index=0,
-        direction="reference_to_libcrafter",
+        direction="backend_to_libcrafter",
         family="mqtt",
         feature_tags=["baseline", "ipv4", "tcp", "mqtt"],
         case=case,

@@ -13,6 +13,7 @@ from .backends.registry import (
     get_backend_capability_registration,
     registered_backend_capability_names,
 )
+from .directions import FEATURE_DIRECTIONS, normalize_direction
 from .model import JSONObject, JSONValue, JsonModel, to_jsonable
 from .report import REPO_ROOT
 
@@ -21,13 +22,6 @@ SPEC_ROOT = REPO_ROOT / "tools/oracle/specs"
 SUPPORTED_SPEC_VERSION = 1
 BACKEND_CAPABILITY_KEYS = BACKEND_CAPABILITY_NAMES
 BACKEND_SUPPORT_STATUSES = ("planned", "partial", "supported")
-FEATURE_DIRECTIONS = (
-    "reference_to_libcrafter",
-    "libcrafter_to_reference",
-    "roundtrip",
-    "live",
-    "live_exchange",
-)
 PCAP_FILE_FORMATS = ("pcap", "pcapng")
 
 
@@ -544,7 +538,9 @@ def _load_feature(document: JSONObject, path: Path) -> FeatureSpec:
         name=_required_name(document, "name", path, "document"),
         summary=_required_string(document, "summary", path, "document"),
         layers=_required_name_tuple(document, "layers", path, "document"),
-        directions=_required_name_tuple(document, "directions", path, "document"),
+        directions=_direction_tuple(
+            _required_name_tuple(document, "directions", path, "document")
+        ),
         strict_bytes=_required_bool(document, "strict_bytes", path, "document"),
         malformed=_required_bool(document, "malformed", path, "document"),
         coverage_cases=_required_name_tuple(document, "coverage_cases", path, "document"),
@@ -860,12 +856,17 @@ def _validate_feature_references(
 
 
 def _validate_feature_direction(path: Path, feature_name: str, direction: str) -> None:
+    direction = normalize_direction(direction)
     if direction not in FEATURE_DIRECTIONS:
         supported = ", ".join(FEATURE_DIRECTIONS)
         raise SpecValidationError(
             f"{path}: feature {feature_name} references unknown direction {direction}; "
             f"supported: {supported}"
         )
+
+
+def _direction_tuple(values: Sequence[str]) -> tuple[str, ...]:
+    return tuple(normalize_direction(value) for value in values)
 
 
 def _validate_feature_supported_cases(
@@ -889,12 +890,12 @@ def _validate_feature_supported_cases(
                     f"feature {feature.name}.supported_cases[{index}].direction",
                 ),
             )
-        for direction in _optional_name_tuple(
+        for direction in _direction_tuple(_optional_name_tuple(
             case,
             "directions",
             path,
             f"feature {feature.name}.supported_cases[{index}]",
-        ):
+        )):
             _validate_feature_direction(path, f"{feature.name}.{case_name}", direction)
 
         for file_format in _case_file_formats(case, path, feature.name, index):

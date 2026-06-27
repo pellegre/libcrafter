@@ -227,14 +227,22 @@ fn phase_role(request: &EndpointRequest) -> ExampleResult<&str> {
         return Ok(value);
     }
 
-    match request.direction.as_str() {
-        "libcrafter_to_reference" if request.endpoint_role == "libcrafter" => Ok("sender"),
-        "reference_to_libcrafter" if request.endpoint_role == "libcrafter" => Ok("receiver"),
+    match canonical_direction(&request.direction) {
+        "libcrafter_to_backend" if request.endpoint_role == "libcrafter" => Ok("sender"),
+        "backend_to_libcrafter" if request.endpoint_role == "libcrafter" => Ok("receiver"),
         other => Err(format!(
             "cannot infer libcrafter endpoint phase for direction={other} endpoint_role={}",
             request.endpoint_role
         )
         .into()),
+    }
+}
+
+fn canonical_direction(direction: &str) -> &str {
+    match direction {
+        "reference_to_libcrafter" | "scapy_to_libcrafter" => "backend_to_libcrafter",
+        "libcrafter_to_reference" | "libcrafter_to_scapy" => "libcrafter_to_backend",
+        value => value,
     }
 }
 
@@ -450,7 +458,10 @@ fn run_receiver(
     // the sender can transmit its whole burst before the receiver is ready,
     // leaving the receiver to time out having observed zero packets.
     let _ = fs::write(
-        out_dir.join(format!("receiver-ready-{}", request.direction)),
+        out_dir.join(format!(
+            "receiver-ready-{}",
+            canonical_direction(&request.direction)
+        )),
         b"ready",
     );
     let captured = collect_live_capture_records(source.as_mut(), timeout, prepared.len().max(1))?;
@@ -687,7 +698,7 @@ fn endpoint_response(
     json!({
         "provider": request.provider,
         "backend": request.backend,
-        "direction": request.direction,
+        "direction": canonical_direction(&request.direction),
         "endpoint_id": request.endpoint_id,
         "endpoint_role": request.endpoint_role,
         "sent_count": sent_count,
@@ -894,7 +905,7 @@ fn index_status(
 ) -> Value {
     json!({
         "index": index,
-        "direction": request.direction,
+        "direction": canonical_direction(&request.direction),
         "status": status,
         "sent": sent,
         "received": received,
@@ -2646,7 +2657,7 @@ mod ipv4_dhcpv4_live_endpoint {
     fn ipv4_dhcpv4_plan_builds_through_generic_live_endpoint_contract() {
         // The generic batch contract must materialize the DHCPv4 stack with no
         // DHCPv4-specific protocol: ipv4 / udp / dhcpv4, compiled and re-decodable.
-        let request = dhcpv4_request("libcrafter_to_reference");
+        let request = dhcpv4_request("libcrafter_to_backend");
         let prepared = prepare_packets(&request.packet_plans)
             .expect("ipv4/udp/dhcpv4 plans must prepare through the generic contract");
 
@@ -2678,19 +2689,19 @@ mod ipv4_dhcpv4_live_endpoint {
     }
 
     #[test]
-    fn ipv4_dhcpv4_libcrafter_to_reference_assigns_sender_role() {
-        let request = dhcpv4_request("libcrafter_to_reference");
+    fn ipv4_dhcpv4_libcrafter_to_backend_assigns_sender_role() {
+        let request = dhcpv4_request("libcrafter_to_backend");
         // libcrafter is the sender when crafting toward the reference backend.
         assert_eq!(
             phase_role(&request).expect("phase role must resolve"),
             "sender"
         );
 
-        let response = run_dry("libcrafter_to_reference");
+        let response = run_dry("libcrafter_to_backend");
 
         assert_eq!(
             response.get("direction").and_then(Value::as_str),
-            Some("libcrafter_to_reference")
+            Some("libcrafter_to_backend")
         );
         assert_eq!(
             response.get("endpoint_role").and_then(Value::as_str),
@@ -2739,14 +2750,14 @@ mod ipv4_dhcpv4_live_endpoint {
             );
         }
         // Artifact paths echo the request so the orchestrator can collect them.
-        let expected_response_path = artifact_paths("libcrafter_to_reference", "libcrafter")
+        let expected_response_path = artifact_paths("libcrafter_to_backend", "libcrafter")
             .get("response")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned)
             .expect("artifact paths must declare a response path");
         assert!(
             expected_response_path
-                .ends_with("artifacts/libcrafter_to_reference/libcrafter/response.json"),
+                .ends_with("artifacts/libcrafter_to_backend/libcrafter/response.json"),
             "unexpected response artifact path: {expected_response_path}"
         );
         assert_eq!(
@@ -2758,19 +2769,19 @@ mod ipv4_dhcpv4_live_endpoint {
     }
 
     #[test]
-    fn ipv4_dhcpv4_reference_to_libcrafter_assigns_receiver_role() {
-        let request = dhcpv4_request("reference_to_libcrafter");
+    fn ipv4_dhcpv4_backend_to_libcrafter_assigns_receiver_role() {
+        let request = dhcpv4_request("backend_to_libcrafter");
         // libcrafter is the receiver when the reference backend is the sender.
         assert_eq!(
             phase_role(&request).expect("phase role must resolve"),
             "receiver"
         );
 
-        let response = run_dry("reference_to_libcrafter");
+        let response = run_dry("backend_to_libcrafter");
 
         assert_eq!(
             response.get("direction").and_then(Value::as_str),
-            Some("reference_to_libcrafter")
+            Some("backend_to_libcrafter")
         );
         assert_eq!(status_indexes(&response), vec![11, 12]);
         assert_eq!(
@@ -2791,6 +2802,31 @@ mod ipv4_dhcpv4_live_endpoint {
                 Some("l3:ipv4")
             );
         }
+    }
+
+    #[test]
+    fn legacy_direction_aliases_emit_canonical_direction_names() {
+        let sender_request = dhcpv4_request("libcrafter_to_reference");
+        assert_eq!(
+            phase_role(&sender_request).expect("phase role must resolve"),
+            "sender"
+        );
+        let sender_response = run_dry("libcrafter_to_reference");
+        assert_eq!(
+            sender_response.get("direction").and_then(Value::as_str),
+            Some("libcrafter_to_backend")
+        );
+
+        let receiver_request = dhcpv4_request("reference_to_libcrafter");
+        assert_eq!(
+            phase_role(&receiver_request).expect("phase role must resolve"),
+            "receiver"
+        );
+        let receiver_response = run_dry("reference_to_libcrafter");
+        assert_eq!(
+            receiver_response.get("direction").and_then(Value::as_str),
+            Some("backend_to_libcrafter")
+        );
     }
 }
 

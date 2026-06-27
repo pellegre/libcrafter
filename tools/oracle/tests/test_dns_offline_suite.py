@@ -34,28 +34,28 @@ class SupportedCaseDirectionFilterTest(unittest.TestCase):
         for case in ("dns-compressed-names", "dns-name-compressed", "dns-name-records-compressed"):
             with self.subTest(case=case):
                 self.assertTrue(
-                    self.generator._case_supported_in_direction(case, "reference_to_libcrafter")
+                    self.generator._case_supported_in_direction(case, "backend_to_libcrafter")
                 )
                 self.assertFalse(
-                    self.generator._case_supported_in_direction(case, "libcrafter_to_reference")
+                    self.generator._case_supported_in_direction(case, "libcrafter_to_backend")
                 )
 
     def test_libcrafter_only_case_excluded_from_reference_direction(self) -> None:
         case = "crafter-dns-name-uncompressed"
         self.assertTrue(
-            self.generator._case_supported_in_direction(case, "libcrafter_to_reference")
+            self.generator._case_supported_in_direction(case, "libcrafter_to_backend")
         )
         self.assertFalse(
-            self.generator._case_supported_in_direction(case, "reference_to_libcrafter")
+            self.generator._case_supported_in_direction(case, "backend_to_libcrafter")
         )
 
     def test_both_direction_case_allowed_in_both_directions(self) -> None:
         case = "dns-record-txt"
         self.assertTrue(
-            self.generator._case_supported_in_direction(case, "reference_to_libcrafter")
+            self.generator._case_supported_in_direction(case, "backend_to_libcrafter")
         )
         self.assertTrue(
-            self.generator._case_supported_in_direction(case, "libcrafter_to_reference")
+            self.generator._case_supported_in_direction(case, "libcrafter_to_backend")
         )
 
     def test_structured_error_cases_excluded_from_offline_directions(self) -> None:
@@ -68,21 +68,21 @@ class SupportedCaseDirectionFilterTest(unittest.TestCase):
         for case in excluded:
             with self.subTest(case=case):
                 self.assertFalse(
-                    self.generator._case_supported_in_direction(case, "reference_to_libcrafter")
+                    self.generator._case_supported_in_direction(case, "backend_to_libcrafter")
                 )
                 self.assertFalse(
-                    self.generator._case_supported_in_direction(case, "libcrafter_to_reference")
+                    self.generator._case_supported_in_direction(case, "libcrafter_to_backend")
                 )
 
     def test_undeclared_case_keeps_prior_behavior(self) -> None:
         # A case with no supported_cases entry is unaffected by the filter.
         self.assertTrue(
-            self.generator._case_supported_in_direction("ipv4-udp", "libcrafter_to_reference")
+            self.generator._case_supported_in_direction("ipv4-udp", "libcrafter_to_backend")
         )
 
 
 class GeneratedBatchDirectionTest(unittest.TestCase):
-    """A libcrafter_to_reference DNS batch must be materializable by libcrafter."""
+    """A libcrafter_to_backend DNS batch must be materializable by libcrafter."""
 
     def test_no_raw_or_questionless_dns_plans_in_libcrafter_direction(self) -> None:
         plans = generate_plans(
@@ -91,7 +91,7 @@ class GeneratedBatchDirectionTest(unittest.TestCase):
             backend="scapy",
             count=50,
             family="dns",
-            direction="libcrafter_to_reference",
+            direction="libcrafter_to_backend",
         )
         for plan in plans:
             dns = plan.fields.get("dns")
@@ -100,7 +100,7 @@ class GeneratedBatchDirectionTest(unittest.TestCase):
             with self.subTest(case=plan.case):
                 # The libcrafter materializer rejects the Scapy-owned raw bytes
                 # path and requires a questions field; neither must appear in the
-                # libcrafter_to_reference direction.
+                # libcrafter_to_backend direction.
                 self.assertNotIn("dns_raw", dns, f"{plan.case} emitted a raw spec")
                 self.assertIn(
                     "questions",
@@ -115,7 +115,7 @@ class GeneratedBatchDirectionTest(unittest.TestCase):
             backend="scapy",
             count=80,
             family="dns",
-            direction="reference_to_libcrafter",
+            direction="backend_to_libcrafter",
         )
         cases = {plan.case for plan in plans}
         # The reference direction is where the compressed/normalized cases live.
@@ -134,7 +134,7 @@ class OfflineSuiteEmitterTest(unittest.TestCase):
             if case.get("byte_policy") == "structured_error":
                 continue
             directions = case.get("directions", [])
-            for direction in ("reference_to_libcrafter", "libcrafter_to_reference"):
+            for direction in ("backend_to_libcrafter", "libcrafter_to_backend"):
                 if direction in directions or "roundtrip" in directions:
                     expected.add((case["name"], direction))
 
@@ -143,8 +143,8 @@ class OfflineSuiteEmitterTest(unittest.TestCase):
     def test_emitter_excludes_compressed_cases_from_libcrafter_direction(self) -> None:
         entries = _suite_offline_cases("dns_behavior")
         emitted = {(entry["case"], entry["direction"]) for entry in entries}
-        self.assertIn(("dns-compressed-names", "reference_to_libcrafter"), emitted)
-        self.assertNotIn(("dns-compressed-names", "libcrafter_to_reference"), emitted)
+        self.assertIn(("dns-compressed-names", "backend_to_libcrafter"), emitted)
+        self.assertNotIn(("dns-compressed-names", "libcrafter_to_backend"), emitted)
 
     def test_emitter_excludes_structured_error_cases(self) -> None:
         entries = _suite_offline_cases("dns_behavior")
@@ -154,9 +154,9 @@ class OfflineSuiteEmitterTest(unittest.TestCase):
                 self.assertNotIn(case["name"], emitted_cases)
 
     def test_derived_seed_is_deterministic_and_bounded(self) -> None:
-        first = _derive_suite_seed(2701, "dns", "dns-query", "reference_to_libcrafter")
-        second = _derive_suite_seed(2701, "dns", "dns-query", "reference_to_libcrafter")
-        other = _derive_suite_seed(2701, "dns", "dns-query", "libcrafter_to_reference")
+        first = _derive_suite_seed(2701, "dns", "dns-query", "backend_to_libcrafter")
+        second = _derive_suite_seed(2701, "dns", "dns-query", "backend_to_libcrafter")
+        other = _derive_suite_seed(2701, "dns", "dns-query", "libcrafter_to_backend")
         self.assertEqual(first, second)
         self.assertNotEqual(first, other)
         self.assertTrue(0 <= first < 1_000_000)

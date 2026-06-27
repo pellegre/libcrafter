@@ -11,8 +11,8 @@ layers:
   - tcp
   - ipv4
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
 strict_bytes: true
 malformed: false
 
@@ -56,23 +56,23 @@ coverage_cases:
 supported_cases:
   - name: bgp-communities
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: bgp-standard-communities
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: bgp-extended-communities
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: bgp-large-communities
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
 
 backend_support:

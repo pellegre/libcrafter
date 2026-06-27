@@ -10,8 +10,8 @@ layers:
   - ipv6_fragment
   - ipv6_routing
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
 strict_bytes: true
 malformed: false
 
@@ -178,68 +178,68 @@ supported_cases:
   # malformed comparison pathway.
   - name: ipv6-hop-by-hop-options
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: ipv6-destination-options
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: ipv6-option-metadata
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: ipv6-fragment-udp
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: ipv6-routing-generic
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: ipv6-mobile-routing
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: ipv6-segment-routing-udp
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: ipv6-extension-chain-tcp-raw
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: ipv6-routing-icmpv6
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: crafter-ipv6-routing-tcp-raw
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: crafter-ipv6-routing-icmpv6
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: crafter-ipv6-segment-routing-udp
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: malformed-ipv6-extensions
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
 
 backend_support:

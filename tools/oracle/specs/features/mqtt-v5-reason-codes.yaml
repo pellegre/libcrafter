@@ -10,8 +10,8 @@ layers:
   - mqtt
   - tcp
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
 strict_bytes: true
 malformed: false
 
@@ -71,8 +71,8 @@ coverage_cases:
 supported_cases:
   - name: mqtt-v5-connack-reason-code
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     roots:
       - "l3:ipv4"
@@ -97,8 +97,8 @@ supported_cases:
         session_present: true
   - name: mqtt-v5-puback-reason-code
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     roots:
       - "l3:ipv4"
@@ -123,8 +123,8 @@ supported_cases:
         reason_code: 16
   - name: mqtt-v5-pubrec-reason-code
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     roots:
       - "l3:ipv4"
@@ -146,8 +146,8 @@ supported_cases:
         reason_code: 16
   - name: mqtt-v5-pubrel-reason-code
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     roots:
       - "l3:ipv4"
@@ -171,8 +171,8 @@ supported_cases:
         reason_code: 146
   - name: mqtt-v5-pubcomp-reason-code
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     roots:
       - "l3:ipv4"
@@ -194,8 +194,8 @@ supported_cases:
         reason_code: 0
   - name: mqtt-v5-suback-reason-codes
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     roots:
       - "l3:ipv4"
@@ -226,8 +226,8 @@ supported_cases:
           - 131
   - name: mqtt-v5-unsuback-reason-codes
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     roots:
       - "l3:ipv4"
@@ -258,8 +258,8 @@ supported_cases:
           - 143
   - name: mqtt-v5-disconnect-reason-code
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     roots:
       - "l3:ipv4"

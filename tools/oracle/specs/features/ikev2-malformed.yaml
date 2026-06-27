@@ -21,8 +21,8 @@ layers:
   - ikev2
   - udp
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
 strict_bytes: false
 malformed: true
 
@@ -53,18 +53,18 @@ coverage_cases:
 supported_cases:
   - name: ikev2-malformed-truncated-header
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
   - name: ikev2-malformed-payload-length-overrun
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
   - name: ikev2-malformed-bad-next-payload-chain
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
 
 backend_support:

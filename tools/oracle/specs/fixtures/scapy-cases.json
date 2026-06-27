@@ -48,7 +48,7 @@
     {
       "name": "ethernet",
       "family": "link",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -61,7 +61,7 @@
     {
       "name": "arp-request",
       "family": "link",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -74,7 +74,7 @@
     {
       "name": "ipv4-icmp",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -88,7 +88,7 @@
     {
       "name": "ipv6-icmp",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -101,7 +101,7 @@
     {
       "name": "dns-query",
       "family": "dns",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -115,7 +115,7 @@
     {
       "name": "vlan-ipv4-udp",
       "family": "link",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -131,7 +131,7 @@
     {
       "name": "raw-payload-link",
       "family": "link",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "link:raw",
       "expected_stack": [
         "Raw"
@@ -143,7 +143,7 @@
     {
       "name": "arp-reply",
       "family": "link",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -156,7 +156,7 @@
     {
       "name": "arp-request-reply-roundtrip",
       "family": "link",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -169,7 +169,7 @@
     {
       "name": "arp-unknown-opcode-raw",
       "family": "link",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -182,7 +182,7 @@
     {
       "name": "arp-variable-address-lengths",
       "family": "link",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -195,7 +195,7 @@
     {
       "name": "arp-gratuitous-probe",
       "family": "link",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -208,7 +208,7 @@
     {
       "name": "arp-trailing-raw-payload",
       "family": "link",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -222,7 +222,7 @@
     {
       "name": "arp-family-rarp-inarp-codepoints",
       "family": "link",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -235,7 +235,7 @@
     {
       "name": "vlan-boundary-fields",
       "family": "link",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -251,7 +251,7 @@
     {
       "name": "linux-cooked-ipv4-udp",
       "family": "link",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "link:linux-cooked",
       "expected_stack": [
         "CookedLinux",
@@ -266,7 +266,7 @@
     {
       "name": "null-loopback-ipv4-little-endian",
       "family": "link",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "link:null-loopback",
       "expected_stack": [
         "Loopback",
@@ -280,7 +280,7 @@
     {
       "name": "null-loopback-ipv6-big-endian",
       "family": "link",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "link:null-loopback",
       "expected_stack": [
         "Loopback",
@@ -294,7 +294,7 @@
     {
       "name": "ipv4-udp",
       "family": "transport",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -308,7 +308,7 @@
     {
       "name": "ipv4-tcp-syn",
       "family": "transport",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -321,7 +321,7 @@
     {
       "name": "ipv4-boundary-fields",
       "family": "ipv4",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -334,7 +334,7 @@
     {
       "name": "ipv4-unknown-protocol-raw",
       "family": "ipv4",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -347,7 +347,7 @@
     {
       "name": "ipv4-fragment-mf-offset",
       "family": "ipv4",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -360,7 +360,7 @@
     {
       "name": "ipv4-ttl-255",
       "family": "ipv4",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -373,7 +373,7 @@
     {
       "name": "ipv4-options",
       "family": "ipv4",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -386,7 +386,7 @@
     {
       "name": "ipv4-options-source-route-traceroute",
       "family": "ipv4",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -399,7 +399,7 @@
     {
       "name": "ipv6-boundary-fields",
       "family": "ipv6",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -412,7 +412,7 @@
     {
       "name": "ipv6-unknown-next-header-raw",
       "family": "ipv6",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -425,7 +425,7 @@
     {
       "name": "ipv6-fragment-udp",
       "family": "ipv6",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -440,7 +440,7 @@
     {
       "name": "ipv6-routing-generic",
       "family": "ipv6",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -454,7 +454,7 @@
     {
       "name": "ipv6-mobile-routing",
       "family": "ipv6",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -468,7 +468,7 @@
     {
       "name": "ipv6-segment-routing-udp",
       "family": "ipv6",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -483,7 +483,7 @@
     {
       "name": "ipv6-extension-chain-tcp-raw",
       "family": "ipv6",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -498,7 +498,7 @@
     {
       "name": "ipv6-routing-icmpv6",
       "family": "ipv6",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -512,7 +512,7 @@
     {
       "name": "udp-ipv6-checksum-length",
       "family": "transport",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -526,7 +526,7 @@
     {
       "name": "udp-ipv4-zero-checksum",
       "family": "transport",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -540,7 +540,7 @@
     {
       "name": "tcp-all-flags-reserved-offset",
       "family": "transport",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -554,7 +554,7 @@
     {
       "name": "tcp-options",
       "family": "transport",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -567,7 +567,7 @@
     {
       "name": "tcp-options-sack-blocks",
       "family": "transport",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -580,7 +580,7 @@
     {
       "name": "tcp-options-mptcp-fastopen-edo-generic",
       "family": "transport",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -594,7 +594,7 @@
     {
       "name": "tcp-udp-unknown-ports-raw",
       "family": "transport",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -608,7 +608,7 @@
     {
       "name": "icmpv4-echo-reply",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -622,7 +622,7 @@
     {
       "name": "icmpv4-destination-unreachable",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -637,7 +637,7 @@
     {
       "name": "icmpv4-time-exceeded",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -652,7 +652,7 @@
     {
       "name": "icmpv4-parameter-problem",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -667,7 +667,7 @@
     {
       "name": "icmpv4-redirect",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -682,7 +682,7 @@
     {
       "name": "icmpv4-frag-needed-next-hop-mtu",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -697,7 +697,7 @@
     {
       "name": "icmpv4-timestamp",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -711,7 +711,7 @@
     {
       "name": "icmpv4-information",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -724,7 +724,7 @@
     {
       "name": "icmpv4-address-mask",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -738,7 +738,7 @@
     {
       "name": "icmpv4-router-advertisement",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -753,7 +753,7 @@
     {
       "name": "icmpv4-router-solicitation",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -766,7 +766,7 @@
     {
       "name": "icmpv4-extensions-mpls",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -781,7 +781,7 @@
     {
       "name": "icmpv4-extensions-interface-info",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -797,7 +797,7 @@
     {
       "name": "icmpv4-extended-echo-request",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -813,7 +813,7 @@
     {
       "name": "icmpv6-errors",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -828,7 +828,7 @@
     {
       "name": "ndp-router-solicitation",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -842,7 +842,7 @@
     {
       "name": "ndp-router-advertisement",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -857,7 +857,7 @@
     {
       "name": "ndp-neighbor-solicitation",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -871,7 +871,7 @@
     {
       "name": "ndp-neighbor-advertisement",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -885,7 +885,7 @@
     {
       "name": "ndp-redirect",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -900,7 +900,7 @@
     {
       "name": "crafter-ndp-router-solicitation",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -909,12 +909,12 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "libcrafter Icmpv6::router_solicitation_with_source_link_layer (RFC 4861 section 4.1) over IPv6 from a link-local source to ff02::2 decodes in Scapy as IPv6/ICMPv6ND_RS/ICMPv6NDOptSrcLLAddr with the same Reserved word and Source Link-Layer Address, byte-for-byte. Mirrors the scapy_to_libcrafter ndp-router-solicitation case."
+      "notes": "libcrafter Icmpv6::router_solicitation_with_source_link_layer (RFC 4861 section 4.1) over IPv6 from a link-local source to ff02::2 decodes in Scapy as IPv6/ICMPv6ND_RS/ICMPv6NDOptSrcLLAddr with the same Reserved word and Source Link-Layer Address, byte-for-byte. Mirrors the backend_to_libcrafter ndp-router-solicitation case."
     },
     {
       "name": "crafter-ndp-router-advertisement",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -924,12 +924,12 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "libcrafter Icmpv6::router_advertisement_with carrying Prefix Information (RFC 4861 section 4.6.2) and MTU (section 4.6.4) options decodes in Scapy as IPv6/ICMPv6ND_RA/ICMPv6NDOptPrefixInfo/ICMPv6NDOptMTU with the same Cur Hop Limit, M/O flags, Router Lifetime, Reachable Time, Retrans Timer, prefix/lifetimes, and MTU, byte-for-byte. Mirrors the scapy_to_libcrafter ndp-router-advertisement case and proves the option-ordering round-trip. Same RFC 4191 Prf normalization quirk as ndp-router-advertisement: libcrafter sends the RFC 4861 send-as-zero Reserved flag bits (which include the RFC 4191 Prf field) as zero, so the scapy reference must use prf=0 for a strict-byte comparison; the agreed IPv6-level ICMPv6 bytes are 860003484080...05dc."
+      "notes": "libcrafter Icmpv6::router_advertisement_with carrying Prefix Information (RFC 4861 section 4.6.2) and MTU (section 4.6.4) options decodes in Scapy as IPv6/ICMPv6ND_RA/ICMPv6NDOptPrefixInfo/ICMPv6NDOptMTU with the same Cur Hop Limit, M/O flags, Router Lifetime, Reachable Time, Retrans Timer, prefix/lifetimes, and MTU, byte-for-byte. Mirrors the backend_to_libcrafter ndp-router-advertisement case and proves the option-ordering round-trip. Same RFC 4191 Prf normalization quirk as ndp-router-advertisement: libcrafter sends the RFC 4861 send-as-zero Reserved flag bits (which include the RFC 4191 Prf field) as zero, so the scapy reference must use prf=0 for a strict-byte comparison; the agreed IPv6-level ICMPv6 bytes are 860003484080...05dc."
     },
     {
       "name": "crafter-ndp-neighbor-solicitation",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -938,12 +938,12 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "libcrafter Icmpv6::neighbor_solicitation_with_source_link_layer (RFC 4861 section 4.3) resolving 2001:db8:1::10 toward the solicited-node multicast decodes in Scapy as IPv6/ICMPv6ND_NS/ICMPv6NDOptSrcLLAddr with the same Reserved word, Target Address, and Source Link-Layer Address, byte-for-byte. Mirrors the scapy_to_libcrafter ndp-neighbor-solicitation case."
+      "notes": "libcrafter Icmpv6::neighbor_solicitation_with_source_link_layer (RFC 4861 section 4.3) resolving 2001:db8:1::10 toward the solicited-node multicast decodes in Scapy as IPv6/ICMPv6ND_NS/ICMPv6NDOptSrcLLAddr with the same Reserved word, Target Address, and Source Link-Layer Address, byte-for-byte. Mirrors the backend_to_libcrafter ndp-neighbor-solicitation case."
     },
     {
       "name": "crafter-ndp-neighbor-advertisement",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -952,12 +952,12 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "libcrafter Icmpv6::neighbor_advertisement_with_target_link_layer (RFC 4861 section 4.4) with S and O set and R clear decodes in Scapy as IPv6/ICMPv6ND_NA/ICMPv6NDOptDstLLAddr with the same R/S/O flags word, Target Address, and Target Link-Layer Address, byte-for-byte. Mirrors the scapy_to_libcrafter ndp-neighbor-advertisement case."
+      "notes": "libcrafter Icmpv6::neighbor_advertisement_with_target_link_layer (RFC 4861 section 4.4) with S and O set and R clear decodes in Scapy as IPv6/ICMPv6ND_NA/ICMPv6NDOptDstLLAddr with the same R/S/O flags word, Target Address, and Target Link-Layer Address, byte-for-byte. Mirrors the backend_to_libcrafter ndp-neighbor-advertisement case."
     },
     {
       "name": "crafter-ndp-redirect",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -967,12 +967,12 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "libcrafter Icmpv6::redirect (RFC 4861 section 4.5) carrying a Target Link-Layer Address (section 4.6.1) and a Redirected Header option (section 4.6.3) decodes in Scapy as IPv6/ICMPv6ND_Redirect/ICMPv6NDOptDstLLAddr/ICMPv6NDOptRedirectedHdr with the same Reserved word, Target and Destination Addresses, link-layer address, and embedded redirected packet (zero-padded to the 8-octet boundary), byte-for-byte. Mirrors the scapy_to_libcrafter ndp-redirect case."
+      "notes": "libcrafter Icmpv6::redirect (RFC 4861 section 4.5) carrying a Target Link-Layer Address (section 4.6.1) and a Redirected Header option (section 4.6.3) decodes in Scapy as IPv6/ICMPv6ND_Redirect/ICMPv6NDOptDstLLAddr/ICMPv6NDOptRedirectedHdr with the same Reserved word, Target and Destination Addresses, link-layer address, and embedded redirected packet (zero-padded to the 8-octet boundary), byte-for-byte. Mirrors the backend_to_libcrafter ndp-redirect case."
     },
     {
       "name": "ndp-ra-prefix-mtu-rdnss",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -988,7 +988,7 @@
     {
       "name": "crafter-ndp-ra-prefix-mtu-rdnss",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -999,12 +999,12 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "libcrafter Icmpv6::router_advertisement_with carrying Prefix Information (RFC 4861 section 4.6.2), MTU (section 4.6.4), and RDNSS (RFC 8106 section 5.1) options decodes in Scapy as IPv6/ICMPv6ND_RA/ICMPv6NDOptPrefixInfo/ICMPv6NDOptMTU/ICMPv6NDOptRDNSS with the same Cur Hop Limit, M/O flags, Router Lifetime, prefix/flags/lifetimes, MTU, and DNS server/lifetime, byte-for-byte, and the three-option order preserved. Mirrors the scapy_to_libcrafter ndp-ra-prefix-mtu-rdnss case (built by NdpOption::prefix_information / NdpOption::mtu / NdpOption::rdnss; same RFC 4191 Prf=0 normalization; agreed IPv6-level ICMPv6 bytes 8600f417...0db8ffff00000000000000000001)."
+      "notes": "libcrafter Icmpv6::router_advertisement_with carrying Prefix Information (RFC 4861 section 4.6.2), MTU (section 4.6.4), and RDNSS (RFC 8106 section 5.1) options decodes in Scapy as IPv6/ICMPv6ND_RA/ICMPv6NDOptPrefixInfo/ICMPv6NDOptMTU/ICMPv6NDOptRDNSS with the same Cur Hop Limit, M/O flags, Router Lifetime, prefix/flags/lifetimes, MTU, and DNS server/lifetime, byte-for-byte, and the three-option order preserved. Mirrors the backend_to_libcrafter ndp-ra-prefix-mtu-rdnss case (built by NdpOption::prefix_information / NdpOption::mtu / NdpOption::rdnss; same RFC 4191 Prf=0 normalization; agreed IPv6-level ICMPv6 bytes 8600f417...0db8ffff00000000000000000001)."
     },
     {
       "name": "ndp-ra-route-rdnss-dnssl-mtu",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1021,7 +1021,7 @@
     {
       "name": "crafter-ndp-ra-route-rdnss-dnssl-mtu",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1033,12 +1033,12 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "libcrafter Icmpv6::router_advertisement_with carrying Route Information (RFC 4191), RDNSS and DNSSL (RFC 8106), and MTU (RFC 4861) options decodes in Scapy as IPv6/ICMPv6ND_RA/ICMPv6NDOptRouteInfo/ICMPv6NDOptRDNSS/ICMPv6NDOptDNSSL/ICMPv6NDOptMTU with the same flags, lifetimes, route preference and prefix, DNS server, search-list domain, and MTU, byte-for-byte, and the four-option order preserved. Mirrors the scapy_to_libcrafter ndp-ra-route-rdnss-dnssl-mtu case (Route Information pinned to the 16-octet/Length-3 form to match scapy's encoder; verified IPv6-level ICMPv6 bytes 8600c1f4...05dc)."
+      "notes": "libcrafter Icmpv6::router_advertisement_with carrying Route Information (RFC 4191), RDNSS and DNSSL (RFC 8106), and MTU (RFC 4861) options decodes in Scapy as IPv6/ICMPv6ND_RA/ICMPv6NDOptRouteInfo/ICMPv6NDOptRDNSS/ICMPv6NDOptDNSSL/ICMPv6NDOptMTU with the same flags, lifetimes, route preference and prefix, DNS server, search-list domain, and MTU, byte-for-byte, and the four-option order preserved. Mirrors the backend_to_libcrafter ndp-ra-route-rdnss-dnssl-mtu case (Route Information pinned to the 16-octet/Length-3 form to match scapy's encoder; verified IPv6-level ICMPv6 bytes 8600c1f4...05dc)."
     },
     {
       "name": "ndp-pref64",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1052,7 +1052,7 @@
     {
       "name": "crafter-ndp-pref64",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1061,12 +1061,12 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "libcrafter Icmpv6::router_advertisement_with carrying a PREF64 option (RFC 8781) decodes in Scapy as IPv6/ICMPv6ND_RA/ICMPv6NDOptPREF64 with the same Scaled Lifetime, PLC, and high-96 NAT64 prefix, byte-for-byte. Mirrors the scapy_to_libcrafter ndp-pref64 case."
+      "notes": "libcrafter Icmpv6::router_advertisement_with carrying a PREF64 option (RFC 8781) decodes in Scapy as IPv6/ICMPv6ND_RA/ICMPv6NDOptPREF64 with the same Scaled Lifetime, PLC, and high-96 NAT64 prefix, byte-for-byte. Mirrors the backend_to_libcrafter ndp-pref64 case."
     },
     {
       "name": "ndp-captive-portal",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1080,7 +1080,7 @@
     {
       "name": "crafter-ndp-captive-portal",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1089,12 +1089,12 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "libcrafter Icmpv6::router_advertisement_with carrying a Captive Portal option (RFC 8910) decodes in Scapy as IPv6/ICMPv6ND_RA/ICMPv6NDOptCaptivePortal with the same URI (trailing NUL padding stripped on decode), byte-for-byte. Mirrors the scapy_to_libcrafter ndp-captive-portal case."
+      "notes": "libcrafter Icmpv6::router_advertisement_with carrying a Captive Portal option (RFC 8910) decodes in Scapy as IPv6/ICMPv6ND_RA/ICMPv6NDOptCaptivePortal with the same URI (trailing NUL padding stripped on decode), byte-for-byte. Mirrors the backend_to_libcrafter ndp-captive-portal case."
     },
     {
       "name": "ndp-unknown-option",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1108,7 +1108,7 @@
     {
       "name": "crafter-ndp-unknown-option",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1117,12 +1117,12 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "libcrafter Icmpv6::router_advertisement_with carrying a synthetic unknown NDP option (type 253) decodes in Scapy as IPv6/ICMPv6ND_RA/ICMPv6NDOptUnknown with the same option type, length, and value bytes, byte-for-byte, proving unknown-option preservation through re-encode. Mirrors the scapy_to_libcrafter ndp-unknown-option case. Scapy lacks a native class for two of this effort's standards-track options — the Nonce option (RFC 3971, no ICMPv6NDOptNonce in scapy 2.5+) and the RA Flags Extension option (RFC 5175, no ICMPv6NDOptRAFlagsExt) — so those two options have no native-class byte-proof case; they are covered by the crafter/tests/icmpv6_ndp.rs round-trips and the unit tests in crafter/src/protocols/icmp/v6/message/ndp_option.rs, and on the wire they materialize as ICMPv6NDOptUnknown (type 14 / type 26) exactly like this case. This documented limitation is recorded here rather than failing the suite."
+      "notes": "libcrafter Icmpv6::router_advertisement_with carrying a synthetic unknown NDP option (type 253) decodes in Scapy as IPv6/ICMPv6ND_RA/ICMPv6NDOptUnknown with the same option type, length, and value bytes, byte-for-byte, proving unknown-option preservation through re-encode. Mirrors the backend_to_libcrafter ndp-unknown-option case. Scapy lacks a native class for two of this effort's standards-track options — the Nonce option (RFC 3971, no ICMPv6NDOptNonce in scapy 2.5+) and the RA Flags Extension option (RFC 5175, no ICMPv6NDOptRAFlagsExt) — so those two options have no native-class byte-proof case; they are covered by the crafter/tests/icmpv6_ndp.rs round-trips and the unit tests in crafter/src/protocols/icmp/v6/message/ndp_option.rs, and on the wire they materialize as ICMPv6NDOptUnknown (type 14 / type 26) exactly like this case. This documented limitation is recorded here rather than failing the suite."
     },
     {
       "name": "mldv1-general-query",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1135,7 +1135,7 @@
     {
       "name": "crafter-mldv1-general-query",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1143,12 +1143,12 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "libcrafter Icmpv6::mld_general_query (RFC 2710 section 3) over IPv6 from a link-local source to ff02::1 decodes in Scapy as IPv6/ICMPv6MLQuery with the same unspecified Multicast Address and Maximum Response Delay, byte-for-byte. Mirrors the scapy_to_libcrafter mldv1-general-query case (verified IPv6-level ICMPv6 bytes 820059082710...)."
+      "notes": "libcrafter Icmpv6::mld_general_query (RFC 2710 section 3) over IPv6 from a link-local source to ff02::1 decodes in Scapy as IPv6/ICMPv6MLQuery with the same unspecified Multicast Address and Maximum Response Delay, byte-for-byte. Mirrors the backend_to_libcrafter mldv1-general-query case (verified IPv6-level ICMPv6 bytes 820059082710...)."
     },
     {
       "name": "mldv1-report",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1161,7 +1161,7 @@
     {
       "name": "crafter-mldv1-report",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1169,12 +1169,12 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "libcrafter Icmpv6::mld_report (RFC 2710 section 3) decodes in Scapy as IPv6/ICMPv6MLReport with the same group Multicast Address and zero Maximum Response Delay, byte-for-byte. Mirrors the scapy_to_libcrafter mldv1-report case."
+      "notes": "libcrafter Icmpv6::mld_report (RFC 2710 section 3) decodes in Scapy as IPv6/ICMPv6MLReport with the same group Multicast Address and zero Maximum Response Delay, byte-for-byte. Mirrors the backend_to_libcrafter mldv1-report case."
     },
     {
       "name": "mldv1-done",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1187,7 +1187,7 @@
     {
       "name": "crafter-mldv1-done",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1195,12 +1195,12 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "libcrafter Icmpv6::mld_done (RFC 2710 section 3) decodes in Scapy as IPv6/ICMPv6MLDone with the same group Multicast Address and zero Maximum Response Delay, byte-for-byte. Mirrors the scapy_to_libcrafter mldv1-done case."
+      "notes": "libcrafter Icmpv6::mld_done (RFC 2710 section 3) decodes in Scapy as IPv6/ICMPv6MLDone with the same group Multicast Address and zero Maximum Response Delay, byte-for-byte. Mirrors the backend_to_libcrafter mldv1-done case."
     },
     {
       "name": "mldv2-report-two-records",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1213,7 +1213,7 @@
     {
       "name": "crafter-mldv2-report-two-records",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1221,12 +1221,12 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "libcrafter Icmpv6::mldv2_report with two Multicast Address Records (MODE_IS_INCLUDE with two sources + MODE_IS_EXCLUDE with none, RFC 3810 section 5.2) decodes in Scapy as IPv6/ICMPv6MLReport2 with two ICMPv6MLDMultAddrRec records carrying the same record types, groups, and source lists, and the same auto-filled record/source counts, byte-for-byte. Mirrors the scapy_to_libcrafter mldv2-report-two-records case."
+      "notes": "libcrafter Icmpv6::mldv2_report with two Multicast Address Records (MODE_IS_INCLUDE with two sources + MODE_IS_EXCLUDE with none, RFC 3810 section 5.2) decodes in Scapy as IPv6/ICMPv6MLReport2 with two ICMPv6MLDMultAddrRec records carrying the same record types, groups, and source lists, and the same auto-filled record/source counts, byte-for-byte. Mirrors the backend_to_libcrafter mldv2-report-two-records case."
     },
     {
       "name": "mldv2-general-query",
       "family": "icmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1239,7 +1239,7 @@
     {
       "name": "crafter-mldv2-general-query",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1247,12 +1247,12 @@
       ],
       "strict_bytes": true,
       "status": "implemented",
-      "notes": "libcrafter Icmpv6::mldv2_query (RFC 3810 section 5.1) decodes in Scapy as IPv6/ICMPv6MLQuery2 with the same Multicast Address, Maximum Response Code, QRV, QQIC, and (empty) source list, byte-for-byte, and is selected as the MLDv2 query (type 130 longer body) rather than the MLDv1 query. Mirrors the scapy_to_libcrafter mldv2-general-query case."
+      "notes": "libcrafter Icmpv6::mldv2_query (RFC 3810 section 5.1) decodes in Scapy as IPv6/ICMPv6MLQuery2 with the same Multicast Address, Maximum Response Code, QRV, QQIC, and (empty) source list, byte-for-byte, and is selected as the MLDv2 query (type 130 longer body) rather than the MLDv1 query. Mirrors the backend_to_libcrafter mldv2-general-query case."
     },
     {
       "name": "igmp-membership-query",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1265,7 +1265,7 @@
     {
       "name": "igmp-v2-membership-query",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1278,7 +1278,7 @@
     {
       "name": "igmp-v1-membership-report",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1291,7 +1291,7 @@
     {
       "name": "igmp-v2-membership-report",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1304,7 +1304,7 @@
     {
       "name": "igmp-v2-leave-group",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1317,7 +1317,7 @@
     {
       "name": "igmp-checksum-explicit-invalid",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1330,7 +1330,7 @@
     {
       "name": "igmp-unknown-type-raw",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1343,7 +1343,7 @@
     {
       "name": "igmp-unsupported-assigned-type-raw",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1356,7 +1356,7 @@
     {
       "name": "igmp-v3-query-general",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1370,7 +1370,7 @@
     {
       "name": "igmp-v3-query-group-specific",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1384,7 +1384,7 @@
     {
       "name": "igmp-v3-query-group-and-source-specific",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1398,7 +1398,7 @@
     {
       "name": "igmp-v3-query-source-count-override",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1412,7 +1412,7 @@
     {
       "name": "igmp-v3-query-checksum-explicit-invalid",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1426,7 +1426,7 @@
     {
       "name": "igmp-v3-query-ignored-extra-octets",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1441,7 +1441,7 @@
     {
       "name": "igmp-v3-report-empty",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1455,7 +1455,7 @@
     {
       "name": "igmp-v3-report-include-record",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1470,7 +1470,7 @@
     {
       "name": "igmp-v3-report-exclude-record",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1485,7 +1485,7 @@
     {
       "name": "igmp-v3-report-source-list-change-records",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1501,7 +1501,7 @@
     {
       "name": "igmp-v3-report-auxiliary-data-record",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1517,7 +1517,7 @@
     {
       "name": "igmp-v3-report-unknown-record-type",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1532,7 +1532,7 @@
     {
       "name": "igmp-v3-report-count-override",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1546,7 +1546,7 @@
     {
       "name": "igmp-v3-report-checksum-explicit-invalid",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1560,7 +1560,7 @@
     {
       "name": "igmp-extension-query-noop",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1575,7 +1575,7 @@
     {
       "name": "igmp-extension-report-noop-zero-length",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1590,7 +1590,7 @@
     {
       "name": "igmp-extension-unassigned-type",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1604,7 +1604,7 @@
     {
       "name": "igmp-extension-experimental-type",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1618,7 +1618,7 @@
     {
       "name": "igmp-extension-ordered-tlvs",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1632,7 +1632,7 @@
     {
       "name": "igmp-extension-e-flag-clear-raw-tail",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1647,7 +1647,7 @@
     {
       "name": "igmp-mrd-advertisement",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1660,7 +1660,7 @@
     {
       "name": "igmp-mrd-solicitation",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1673,7 +1673,7 @@
     {
       "name": "igmp-mrd-termination",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1686,7 +1686,7 @@
     {
       "name": "igmp-mrd-explicit-checksum-invalid",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1699,7 +1699,7 @@
     {
       "name": "igmp-mrd-reserved-override",
       "family": "igmp",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1712,7 +1712,7 @@
     {
       "name": "icmpv6-extended-echo-request",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1725,7 +1725,7 @@
     {
       "name": "icmpv6-extended-echo-reply",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1738,7 +1738,7 @@
     {
       "name": "icmpv6-node-information-query",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -1751,7 +1751,7 @@
     {
       "name": "dns-response-records",
       "family": "dns",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1765,7 +1765,7 @@
     {
       "name": "dns-a-aaaa-records",
       "family": "dns",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1779,7 +1779,7 @@
     {
       "name": "dns-name-records",
       "family": "dns",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1793,7 +1793,7 @@
     {
       "name": "dns-name-records-compressed",
       "family": "dns",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1802,12 +1802,12 @@
       ],
       "strict_bytes": false,
       "status": "implemented",
-      "notes": "Oracle fixture case. NS, CNAME, and PTR answers whose owner and embedded RDATA names are compression pointers in the Scapy-owned raw bytes; libcrafter normalizes to the same uncompressed DnsRecordData::Name model on decode (reference_to_libcrafter only, normalized byte policy)."
+      "notes": "Oracle fixture case. NS, CNAME, and PTR answers whose owner and embedded RDATA names are compression pointers in the Scapy-owned raw bytes; libcrafter normalizes to the same uncompressed DnsRecordData::Name model on decode (backend_to_libcrafter only, normalized byte policy)."
     },
     {
       "name": "dns-mx-txt-records",
       "family": "dns",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1821,7 +1821,7 @@
     {
       "name": "dns-record-soa",
       "family": "dns",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1835,7 +1835,7 @@
     {
       "name": "dns-record-srv",
       "family": "dns",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1849,7 +1849,7 @@
     {
       "name": "dns-soa-srv-records",
       "family": "dns",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1863,7 +1863,7 @@
     {
       "name": "dns-raw-unknown-records",
       "family": "dns",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1877,7 +1877,7 @@
     {
       "name": "dns-edns-opt-basic",
       "family": "dns",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1891,7 +1891,7 @@
     {
       "name": "dns-edns-options",
       "family": "dns",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1905,7 +1905,7 @@
     {
       "name": "dnssec-ds-dnskey-rrsig",
       "family": "dns",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1919,7 +1919,7 @@
     {
       "name": "dnssec-nsec-bitmaps",
       "family": "dns",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1933,7 +1933,7 @@
     {
       "name": "dnssec-nsec3",
       "family": "dns",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1947,7 +1947,7 @@
     {
       "name": "dns-svcb-https",
       "family": "dns",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1961,7 +1961,7 @@
     {
       "name": "dns-section-placement",
       "family": "dns",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1975,7 +1975,7 @@
     {
       "name": "dns-multiple-questions",
       "family": "dns",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -1989,7 +1989,7 @@
     {
       "name": "dns-generic-record-truncated-rcode",
       "family": "dns",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -2003,7 +2003,7 @@
     {
       "name": "dhcpv4-discover",
       "family": "dhcpv4",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -2019,7 +2019,7 @@
     {
       "name": "dhcpv4-request-offer-ack",
       "family": "dhcpv4",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -2035,7 +2035,7 @@
     {
       "name": "dhcpv4-inform-release-generic-options",
       "family": "dhcpv4",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -2051,7 +2051,7 @@
     {
       "name": "pcap-scapy-ethernet",
       "family": "pcap",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "pcap:ethernet",
       "expected_stack": [
         "Pcap",
@@ -2067,7 +2067,7 @@
     {
       "name": "pcap-scapy-null-loopback",
       "family": "pcap",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "pcap:null-loopback",
       "expected_stack": [
         "Pcap",
@@ -2082,7 +2082,7 @@
     {
       "name": "malformed-ethernet-short",
       "family": "malformed",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "malformed:link:ethernet",
       "expected_stack": [
         "DecodeError"
@@ -2094,7 +2094,7 @@
     {
       "name": "malformed-ipv4-lengths-options",
       "family": "malformed",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "malformed:l3:ipv4",
       "expected_stack": [
         "DecodeError"
@@ -2106,7 +2106,7 @@
     {
       "name": "malformed-ipv6-extensions",
       "family": "malformed",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "malformed:l3:ipv6",
       "expected_stack": [
         "DecodeError"
@@ -2118,7 +2118,7 @@
     {
       "name": "malformed-tcp-options",
       "family": "malformed",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "malformed:l3:ipv4",
       "expected_stack": [
         "DecodeError"
@@ -2130,7 +2130,7 @@
     {
       "name": "malformed-dns-compression",
       "family": "malformed",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "malformed:l3:ipv4",
       "expected_stack": [
         "DecodeError"
@@ -2142,7 +2142,7 @@
     {
       "name": "malformed-dhcpv4-options",
       "family": "malformed",
-      "direction": "scapy_to_libcrafter",
+      "direction": "backend_to_libcrafter",
       "root": "malformed:link:ethernet",
       "expected_stack": [
         "DecodeError"
@@ -2154,7 +2154,7 @@
     {
       "name": "crafter-raw-payload",
       "family": "link",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "link:raw",
       "expected_stack": [
         "Raw"
@@ -2166,7 +2166,7 @@
     {
       "name": "crafter-ethernet-unknown-ethertype",
       "family": "link",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -2179,7 +2179,7 @@
     {
       "name": "crafter-arp-reply",
       "family": "link",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -2192,7 +2192,7 @@
     {
       "name": "crafter-arp-unknown-opcode-raw",
       "family": "link",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -2205,7 +2205,7 @@
     {
       "name": "crafter-arp-variable-address-lengths",
       "family": "link",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -2218,7 +2218,7 @@
     {
       "name": "crafter-arp-gratuitous-probe",
       "family": "link",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -2231,7 +2231,7 @@
     {
       "name": "crafter-arp-family-codepoints",
       "family": "link",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -2244,7 +2244,7 @@
     {
       "name": "crafter-vlan-boundary-fields",
       "family": "link",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -2260,7 +2260,7 @@
     {
       "name": "crafter-linux-cooked-ipv4-udp",
       "family": "link",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "link:linux-cooked",
       "expected_stack": [
         "CookedLinux",
@@ -2275,7 +2275,7 @@
     {
       "name": "crafter-null-loopback-ipv4-little-endian",
       "family": "link",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "link:null-loopback",
       "expected_stack": [
         "Loopback",
@@ -2289,7 +2289,7 @@
     {
       "name": "crafter-ipv4-boundary-fields",
       "family": "ipv4",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -2302,7 +2302,7 @@
     {
       "name": "crafter-ipv4-unknown-protocol-raw",
       "family": "ipv4",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -2315,7 +2315,7 @@
     {
       "name": "crafter-ipv4-fragment-mf-offset",
       "family": "ipv4",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -2328,7 +2328,7 @@
     {
       "name": "crafter-ipv4-ttl-255",
       "family": "ipv4",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -2341,7 +2341,7 @@
     {
       "name": "crafter-ipv4-options",
       "family": "ipv4",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -2354,7 +2354,7 @@
     {
       "name": "crafter-ipv4-source-route-traceroute",
       "family": "ipv4",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -2367,7 +2367,7 @@
     {
       "name": "crafter-ipv6-boundary-fields",
       "family": "ipv6",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -2380,7 +2380,7 @@
     {
       "name": "crafter-ipv6-unknown-next-header-raw",
       "family": "ipv6",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -2393,7 +2393,7 @@
     {
       "name": "crafter-ipv6-fragment-udp",
       "family": "ipv6",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -2408,7 +2408,7 @@
     {
       "name": "crafter-ipv6-routing-generic",
       "family": "ipv6",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -2422,7 +2422,7 @@
     {
       "name": "crafter-ipv6-mobile-routing",
       "family": "ipv6",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -2436,7 +2436,7 @@
     {
       "name": "crafter-ipv6-segment-routing-udp",
       "family": "ipv6",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -2451,7 +2451,7 @@
     {
       "name": "crafter-ipv6-routing-tcp-raw",
       "family": "ipv6",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -2466,7 +2466,7 @@
     {
       "name": "crafter-ipv6-routing-icmpv6",
       "family": "ipv6",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -2480,7 +2480,7 @@
     {
       "name": "crafter-udp-ipv4-ipv6-checksums",
       "family": "transport",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -2494,7 +2494,7 @@
     {
       "name": "crafter-tcp-options",
       "family": "transport",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -2508,7 +2508,7 @@
     {
       "name": "crafter-icmpv4-errors-extensions",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -2521,7 +2521,7 @@
     {
       "name": "crafter-icmpv4-queries",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -2534,7 +2534,7 @@
     {
       "name": "crafter-icmpv4-router-discovery",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -2547,7 +2547,7 @@
     {
       "name": "crafter-icmpv4-extended-echo",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -2561,7 +2561,7 @@
     {
       "name": "crafter-icmpv4-legacy-types",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -2575,7 +2575,7 @@
     {
       "name": "crafter-icmpv6-errors",
       "family": "icmp",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv6",
       "expected_stack": [
         "IPv6",
@@ -2588,7 +2588,7 @@
     {
       "name": "crafter-dns-query-response-compression",
       "family": "dns",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "l3:ipv4",
       "expected_stack": [
         "IP",
@@ -2602,7 +2602,7 @@
     {
       "name": "crafter-dhcpv4-message-matrix",
       "family": "dhcpv4",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "link:ethernet",
       "expected_stack": [
         "Ether",
@@ -2618,7 +2618,7 @@
     {
       "name": "pcap-crafter-ethernet",
       "family": "pcap",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "pcap:ethernet",
       "expected_stack": [
         "Pcap",
@@ -2634,7 +2634,7 @@
     {
       "name": "pcapng-libcrafter-mixed-links",
       "family": "pcap",
-      "direction": "libcrafter_to_scapy",
+      "direction": "libcrafter_to_backend",
       "root": "pcapng:mixed-link-types",
       "expected_stack": [
         "PcapNg",

@@ -8,8 +8,8 @@ layers:
   - udp
   - dhcpv6
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
   - live_exchange
 strict_bytes: true
 malformed: false
@@ -65,58 +65,58 @@ behaviors:
 supported_cases:
   - name: dhcpv6-solicit
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: dhcpv6-request
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: dhcpv6-reply
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: dhcpv6-information-request
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: dhcpv6-information-reply
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: dhcpv6-relay-forward
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: dhcpv6-relay-reply
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: dhcpv6-ia-na-iaaddr
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: dhcpv6-ia-pd-iaprefix
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: dhcpv6-unknown-option
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: dhcpv6-option-matrix
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: dhcpv6-live-plan-client
     directions:

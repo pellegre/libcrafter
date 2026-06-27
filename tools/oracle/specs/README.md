@@ -70,7 +70,7 @@ backend-specific generation logic. The expected profiles are:
   reproducibility coverage rooted at `l3:ipv6`. It samples strict-byte
   comparable base, unknown-next-header, Hop-by-Hop, Destination Options,
   fragment, routing, Segment Routing Header, TCP-chain, and ICMPv6-chain cases
-  in both `reference_to_libcrafter` and `libcrafter_to_reference` directions.
+  in both `backend_to_libcrafter` and `libcrafter_to_backend` directions.
   Its malformed IPv6 extension cases are declared as
   `byte_policy: structured_error` and are therefore excluded from offline byte
   comparison; the oracle reports structured decode-error coverage separately
@@ -91,9 +91,9 @@ backend-specific generation logic. The expected profiles are:
 
 Oracle reports use backend-neutral direction names:
 
-- `reference_to_libcrafter`: reference backend emits bytes or pcaps that
+- `backend_to_libcrafter`: reference backend emits bytes or pcaps that
   libcrafter decodes.
-- `libcrafter_to_reference`: libcrafter emits bytes or pcaps that the reference
+- `libcrafter_to_backend`: libcrafter emits bytes or pcaps that the reference
   backend decodes.
 - `roundtrip`: one side decodes and re-encodes a packet for comparison.
 - `live_exchange`: at least two endpoints exchange packets over a live network.
@@ -106,8 +106,8 @@ A feature that is supported in only one direction must say so in its spec.
 oracle contract for IPv4 and IPv6 packet-stream transforms before the library
 implementation exists. Scapy is the reference backend for byte-level fragment
 behavior: Scapy-owned inputs feed `IpDefrag` in the
-`reference_to_libcrafter` direction, and future `IpFragment` output is decoded
-and normalized by Scapy in the `libcrafter_to_reference` direction. Roundtrip
+`backend_to_libcrafter` direction, and future `IpFragment` output is decoded
+and normalized by Scapy in the `libcrafter_to_backend` direction. Roundtrip
 cases feed `IpFragment` output back into `IpDefrag`, while the live profile is
 reserved for provider-backed constrained-MTU lab sessions.
 

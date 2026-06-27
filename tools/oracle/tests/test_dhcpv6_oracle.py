@@ -261,7 +261,7 @@ class Dhcpv6GeneratorSelectionTest(unittest.TestCase):
             profile="dhcpv6-smoke",
             count=12,
             backend="scapy",
-            direction="reference_to_libcrafter",
+            direction="backend_to_libcrafter",
         )
         self.assertEqual({plan.case for plan in plans}, _DHCPV6_OFFLINE_CASES)
 

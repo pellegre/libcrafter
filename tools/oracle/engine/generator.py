@@ -10,6 +10,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+from .directions import normalize_direction, normalize_direction_list, seed_direction
 from .model import JSONObject, PacketPlan
 from .sampling import (
     EPHEMERAL_PORT_MAX,
@@ -286,7 +287,7 @@ def load_stack_grammar(path: str | Path | None = None) -> JSONObject:
                 "malformed": feature.malformed,
                 "coverage_cases": list(feature.coverage_cases),
                 "behaviors": list(_object_list(feature.raw.get("behaviors", []), "feature.behaviors")),
-                "supported_cases": list(
+                "supported_cases": _normalize_supported_cases(
                     _object_list(feature.raw.get("supported_cases", []), "feature.supported_cases")
                 ),
                 "live_matrix": list(_object_list(feature.raw.get("live_matrix", []), "feature.live_matrix")),
@@ -300,6 +301,18 @@ def load_stack_grammar(path: str | Path | None = None) -> JSONObject:
             for feature in specs.features.values()
         },
     }
+
+
+def _normalize_supported_cases(cases: Sequence[JSONObject]) -> list[JSONObject]:
+    output: list[JSONObject] = []
+    for raw_case in cases:
+        case = dict(raw_case)
+        direction = case.get("direction")
+        if isinstance(direction, str):
+            case["direction"] = normalize_direction(direction)
+        case["directions"] = normalize_direction_list(case.get("directions"))
+        output.append(case)
+    return output
 
 
 def case_byte_policy_index(path: str | Path | None = None) -> dict[str, str]:
@@ -385,8 +398,9 @@ class PacketGenerator:
         family: str | None = None,
         case: str | None = None,
         feature: str | None = None,
-        direction: str = "reference_to_libcrafter",
+        direction: str = "backend_to_libcrafter",
     ) -> PacketPlan:
+        direction = normalize_direction(direction)
         if index < 0:
             raise ValueError(f"index must be non-negative: {index}")
 
@@ -1574,7 +1588,7 @@ class PacketGenerator:
         # compressed-bytes spec the libcrafter materializer cannot encode, unless
         # the case id itself opts into the raw path. This keeps a typed case such
         # as dns-record-txt from being materialized through the name-records
-        # compressed raw builder in the libcrafter_to_reference direction.
+        # compressed raw builder in the libcrafter_to_backend direction.
         if feature == "dns_behavior":
             typed = [name for name in names if not _dns_behavior_emits_raw(case, name)]
             if typed:
@@ -2363,11 +2377,12 @@ def generate_plans(
     family: str | None = None,
     case: str | None = None,
     feature: str | None = None,
-    direction: str = "reference_to_libcrafter",
+    direction: str = "backend_to_libcrafter",
     index: int | None = None,
 ) -> list[PacketPlan]:
     """Generate a deterministic sequence, or one explicit index."""
 
+    direction = normalize_direction(direction)
     if count < 1:
         raise ValueError(f"count must be positive: {count}")
     generator = PacketGenerator(seed=seed, profile=profile, backend=backend)
@@ -2456,7 +2471,7 @@ def _derive_seed(
             family or "",
             case or "",
             feature or "",
-            direction,
+            seed_direction(direction),
         )
     ).encode("utf-8")
     return int.from_bytes(hashlib.sha256(material).digest()[:16], byteorder="big")

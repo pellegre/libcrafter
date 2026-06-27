@@ -244,13 +244,13 @@ Then run the oracle profile with fixed seeds and explicit output directories:
 
 ```sh
 tools/oracle/run offline --profile ipv6-enrichment --seed 2 --count 20 --root l3:ipv6 --out target/oracle/ipv6-enrichment-offline
-tools/oracle/run offline --direction reference_to_libcrafter --profile ipv6-enrichment --seed 3 --count 12 --root l3:ipv6 --out target/oracle/ipv6-enrichment-reference-to-libcrafter
-tools/oracle/run offline --direction libcrafter_to_reference --profile ipv6-enrichment --seed 4 --count 12 --root l3:ipv6 --out target/oracle/ipv6-enrichment-libcrafter-to-reference
+tools/oracle/run offline --direction backend_to_libcrafter --profile ipv6-enrichment --seed 3 --count 12 --root l3:ipv6 --out target/oracle/ipv6-enrichment-reference-to-libcrafter
+tools/oracle/run offline --direction libcrafter_to_backend --profile ipv6-enrichment --seed 4 --count 12 --root l3:ipv6 --out target/oracle/ipv6-enrichment-libcrafter-to-reference
 ```
 
 Use the default offline run for the profile-selected comparison set, then use a
-directed run such as `reference_to_libcrafter` or
-`libcrafter_to_reference` when isolating one side's encode/decode behavior. Use
+directed run such as `backend_to_libcrafter` or
+`libcrafter_to_backend` when isolating one side's encode/decode behavior. Use
 `--seed`, `--count`, and `--index` to make any failure rerunnable. Malformed
 IPv6 extension cases are declared as structured-error coverage, but they are
 not offline byte-compared because malformed extension buffers do not have a
@@ -357,8 +357,8 @@ unknown SAFE/UNSAFE preservation. Use a UDP-filtered corpus when changing
 
 ```sh
 tools/oracle/run offline --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-offline
-tools/oracle/run offline --direction reference_to_libcrafter --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-reference-to-libcrafter
-tools/oracle/run offline --direction libcrafter_to_reference --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-libcrafter-to-reference
+tools/oracle/run offline --direction backend_to_libcrafter --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-reference-to-libcrafter
+tools/oracle/run offline --direction libcrafter_to_backend --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-libcrafter-to-reference
 ```
 
 Pcap mode checks that the same UDP surplus bytes survive classic pcap

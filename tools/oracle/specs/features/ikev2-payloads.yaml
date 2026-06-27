@@ -22,8 +22,8 @@ layers:
   - ikev2
   - udp
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
 strict_bytes: true
 malformed: false
 
@@ -62,25 +62,25 @@ coverage_cases:
 supported_cases:
   - name: ikev2-auth
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: ikev2-sk-encrypted
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   # Unknown payload type is preserved as Raw rather than reinterpreted; compared
   # on decoded structure rather than on a Scapy-native payload type.
   - name: ikev2-unknown-payload-raw
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: crafter-ikev2-auth
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
 
 backend_support:

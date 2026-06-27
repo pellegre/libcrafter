@@ -7,8 +7,8 @@ layers:
   - udp
   - quic
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
   - roundtrip
   - live
 strict_bytes: true
@@ -111,110 +111,110 @@ coverage_cases:
 supported_cases:
   - name: quic-v1-initial
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
       - live
     byte_policy: strict_bytes
   - name: quic-v2-initial
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
       - live
     byte_policy: strict_bytes
   - name: quic-version-negotiation
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
       - live
     byte_policy: strict_bytes
   - name: quic-retry
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
       - live
     byte_policy: strict_bytes
   - name: quic-handshake
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
       - live
     byte_policy: strict_bytes
   - name: quic-zero-rtt
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
       - live
     byte_policy: strict_bytes
   - name: quic-coalesced-initial-handshake
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
       - live
     byte_policy: strict_bytes
   - name: quic-datagram-frame
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
       - live
     byte_policy: strict_bytes
   - name: quic-grease-bit
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: normalized
     contract_only: true
   - name: quic-protected-raw
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
       - live
     byte_policy: strict_bytes
   - name: quic-pcap-udp-4433
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
   - name: quic-short-header-raw
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: normalized
     contract_only: true
   - name: quic-stateless-reset-candidate
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: normalized
     contract_only: true
   - name: quic-frame-sequence
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: normalized
     contract_only: true
   - name: quic-transport-parameters
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: normalized
     contract_only: true
   - name: quic-malformed-exclusions
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: structured_error
 
 backend_support:

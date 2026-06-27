@@ -91,7 +91,7 @@ class WireEligibilityBytePolicyTest(unittest.TestCase):
         # Live exchange runs strict_bytes DNS cases in both directions; eligibility
         # is direction-agnostic, so a strict_bytes plan is eligible regardless of
         # the direction stamped on it.
-        for direction in ("libcrafter_to_reference", "reference_to_libcrafter"):
+        for direction in ("libcrafter_to_backend", "backend_to_libcrafter"):
             plan = _dns_plan("dns-query", direction=direction)
             [packet] = populate_corpus_eligibility(
                 backend="scapy",
@@ -111,7 +111,7 @@ def _eligibility_for(case: str) -> CorpusPacket:
     return packet
 
 
-def _dns_plan(case: str, *, direction: str = "reference_to_libcrafter") -> PacketPlan:
+def _dns_plan(case: str, *, direction: str = "backend_to_libcrafter") -> PacketPlan:
     return PacketPlan(
         stack=["ipv4", "udp", "dns"],
         fields={"ipv4": {"src": "192.0.2.1", "dst": "192.0.2.2"}},

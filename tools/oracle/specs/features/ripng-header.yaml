@@ -26,8 +26,8 @@ summary: RIPng (RFC 2080) header command/version round-trip over IPv6 UDP port 5
 layers:
   - ripng
 directions:
-  - libcrafter_to_reference
-  - reference_to_libcrafter
+  - libcrafter_to_backend
+  - backend_to_libcrafter
 strict_bytes: true
 malformed: false
 
@@ -35,7 +35,7 @@ behaviors:
   # Command/version matrix. The behavior name is matched against the case id by
   # the generator, which sets the RIPng command, version, and RTE layout for the
   # selected case. Because Scapy has no native RIPng layer, the
-  # reference_to_libcrafter direction is decoded by the wireshark parser backend
+  # backend_to_libcrafter direction is decoded by the wireshark parser backend
   # and cross-checked against the libcrafter internal round-trip rather than a
   # native Scapy encode.
   - name: request
@@ -61,32 +61,32 @@ coverage_cases:
 
 supported_cases:
   # Well-formed cases. Scapy cannot natively encode/decode RIPng, so the
-  # reference_to_libcrafter direction is parsed by the wireshark parser backend
+  # backend_to_libcrafter direction is parsed by the wireshark parser backend
   # and validated against the libcrafter internal round-trip; this direction is
-  # marked normalized rather than skipped. The libcrafter_to_reference direction
+  # marked normalized rather than skipped. The libcrafter_to_backend direction
   # keeps the libcrafter-internal strict-byte round-trip.
   - name: ripng-header-request
     directions:
-      - libcrafter_to_reference
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: ripng-header-request-reference-decode
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: normalized
     note: >-
-      Scapy has no native RIPng dissector; the reference_to_libcrafter direction
+      Scapy has no native RIPng dissector; the backend_to_libcrafter direction
       is decoded by the wireshark parser backend and cross-checked against the
       libcrafter internal round-trip, marked normalized rather than skipped.
   - name: ripng-header-response
     directions:
-      - libcrafter_to_reference
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: ripng-header-response-reference-decode
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: normalized
     note: >-
-      Scapy has no native RIPng dissector; the reference_to_libcrafter direction
+      Scapy has no native RIPng dissector; the backend_to_libcrafter direction
       is decoded by the wireshark parser backend and cross-checked against the
       libcrafter internal round-trip, marked normalized rather than skipped.
   # Truncated header (fewer than 4 octets). A header past the available bytes is
@@ -96,8 +96,8 @@ supported_cases:
   # typed BufferTooShort error.
   - name: ripng-header-truncated-header
     directions:
-      - libcrafter_to_reference
-      - reference_to_libcrafter
+      - libcrafter_to_backend
+      - backend_to_libcrafter
     byte_policy: structured_error
     offline_byte_comparison: excluded
 
@@ -118,7 +118,7 @@ backend_support:
       - ripng
     notes:
       - Parser-only decode of the RIPng header (command, version, reserved) over
-        IPv6 UDP port 521; used for the reference_to_libcrafter decode direction
+        IPv6 UDP port 521; used for the backend_to_libcrafter decode direction
         when tshark is available and skipped cleanly otherwise.
   libcrafter:
     status: supported

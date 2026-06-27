@@ -13,8 +13,8 @@ layers:
   - ipv4
   - igmp
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
 strict_bytes: true
 malformed: false
 
@@ -106,51 +106,51 @@ coverage_cases:
 supported_cases:
   - name: igmp-membership-query
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: igmp-v2-membership-query
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: igmp-v1-membership-report
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: igmp-v2-membership-report
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: igmp-v2-leave-group
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: igmp-checksum-explicit-invalid
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: igmp-unknown-type-raw
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: igmp-unsupported-assigned-type-raw
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: malformed-igmp-truncated-header
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: structured_error
   - name: malformed-igmp-v2-truncated-group-address
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: structured_error
 
 source_refs:

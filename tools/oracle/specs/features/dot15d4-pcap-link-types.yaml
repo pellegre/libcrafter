@@ -7,8 +7,8 @@ layers:
   - dot15d4
   - dot15d4_radio
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
   - roundtrip
 strict_bytes: true
 malformed: false
@@ -77,8 +77,8 @@ coverage_cases:
 supported_cases:
   - name: dot15d4-pcap-dlt-195-link-type
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
     file_format: pcap
@@ -97,8 +97,8 @@ supported_cases:
       - decoded_model
   - name: dot15d4-pcap-dlt-230-link-type
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
     file_format: pcap
@@ -117,8 +117,8 @@ supported_cases:
       - decoded_model
   - name: dot15d4-pcap-dlt-283-link-type
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     byte_policy: strict_bytes
     file_format: pcap

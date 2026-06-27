@@ -9,8 +9,8 @@ parents:
   - root
 children: []
 supported_directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
   - roundtrip
 live_eligibility: false
 live_gate: offline_pcap_link_type_only

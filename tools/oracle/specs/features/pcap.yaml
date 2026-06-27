@@ -10,8 +10,8 @@ layers:
   - udp
   - icmp
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
   - roundtrip
 strict_bytes: true
 malformed: false
@@ -30,7 +30,7 @@ file_formats:
 
 supported_cases:
   - name: scapy-writes-pcap-libcrafter-reads
-    direction: reference_to_libcrafter
+    direction: backend_to_libcrafter
     writer: scapy
     reader: libcrafter
     file_format: pcap
@@ -47,7 +47,7 @@ supported_cases:
       - decoded_model
       - timestamp_policy
   - name: libcrafter-writes-pcap-scapy-reads
-    direction: libcrafter_to_reference
+    direction: libcrafter_to_backend
     writer: libcrafter
     reader: scapy
     file_format: pcap
@@ -65,8 +65,8 @@ supported_cases:
       - timestamp_policy
   - name: ethernet-link-type
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     file_formats:
       - pcap
       - pcapng
@@ -80,8 +80,8 @@ supported_cases:
     strict_bytes: true
   - name: linux-cooked-link-type
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     file_formats:
       - pcap
       - pcapng
@@ -95,8 +95,8 @@ supported_cases:
     strict_bytes: true
   - name: null-loopback-link-type
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     file_formats:
       - pcap
       - pcapng
@@ -112,8 +112,8 @@ supported_cases:
     strict_bytes: true
   - name: raw-link-type
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     file_formats:
       - pcap
       - pcapng
@@ -132,8 +132,8 @@ supported_cases:
       - Raw link type cases must declare whether bytes are IPv4, IPv6, or opaque raw before decoding.
   - name: pcapng-mixed-link-types
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
       - roundtrip
     file_format: pcapng
     link_types:

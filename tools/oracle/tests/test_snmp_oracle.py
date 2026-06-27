@@ -38,7 +38,7 @@ def _plan(case: str, feature: str):
         family="snmp",
         case=case,
         feature=feature,
-        direction="reference_to_libcrafter",
+        direction="backend_to_libcrafter",
     )[0]
 
 

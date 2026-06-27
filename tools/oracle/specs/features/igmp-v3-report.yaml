@@ -13,8 +13,8 @@ layers:
   - ipv4
   - igmp
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
 strict_bytes: true
 malformed: false
 
@@ -148,59 +148,59 @@ coverage_cases:
 supported_cases:
   - name: igmp-v3-report-empty
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: igmp-v3-report-include-record
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: igmp-v3-report-exclude-record
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: igmp-v3-report-source-list-change-records
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: igmp-v3-report-auxiliary-data-record
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: igmp-v3-report-unknown-record-type
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: igmp-v3-report-count-override
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: igmp-v3-report-checksum-explicit-invalid
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
   - name: malformed-igmp-v3-report-truncated-body
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: structured_error
   - name: malformed-igmp-v3-report-truncated-group-record
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: structured_error
   - name: malformed-igmp-v3-report-truncated-record-source-list
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: structured_error
   - name: malformed-igmp-v3-report-truncated-record-auxiliary-data
     directions:
-      - reference_to_libcrafter
+      - backend_to_libcrafter
     byte_policy: structured_error
 
 source_refs:

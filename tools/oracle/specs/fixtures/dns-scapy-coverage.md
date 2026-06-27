@@ -18,10 +18,10 @@ Each row names one implemented DNS feature and records:
   cases, `crafter-dns-*` for cases whose canonical source is a libcrafter
   vector, and `malformed-dns-*` for structured-error decode cases.
 - **Directions** — which oracle directions the case exercises:
-  `reference_to_libcrafter` (Scapy or Scapy-owned raw bytes are the source),
-  `libcrafter_to_reference` (a libcrafter `Packet` is the source), or both. The
+  `backend_to_libcrafter` (Scapy or Scapy-owned raw bytes are the source),
+  `libcrafter_to_backend` (a libcrafter `Packet` is the source), or both. The
   case `direction` field in the fixture uses the equivalent
-  `scapy_to_libcrafter` / `libcrafter_to_scapy` spellings.
+  `backend_to_libcrafter` / `libcrafter_to_backend` spellings.
 - **Byte policy** — `strict_bytes` when the deterministic uncompressed encode
   must match Scapy octet-for-octet, or `normalized` when libcrafter normalizes
   the wire shape on encode (for example compressed input, sorted SvcParams, or
@@ -88,11 +88,11 @@ Source read for this matrix:
 | 63-octet label boundary | `dns-name-label-boundary` | both | strict_bytes | yes | no |
 | Escaped presentation name (`\DDD`) | `dns-name-escaped` | both | strict_bytes | partial (raw qname bytes) | yes |
 | Non-text label (non-UTF-8 octets, `\000`, `\255`) | `dns-name-non-text` | both | strict_bytes | no | yes |
-| Combined root + escaped + non-UTF-8 names in one message (root question owner, trailing-dot answer, literal dot/backslash CNAME target, `\000`/`\255` PTR target) | `dns-name-root-escaped` | both | strict_bytes (header + section counts compared) | no (Scapy high-level flattens `\DDD`/`\.`/`\\` to literal text on encode, so the reference encode is not byte-faithful; libcrafter re-encodes the exact octets, so the `libcrafter_to_reference` bytes are faithful and the `crafter` name tests carry the lossless byte-preserving assertions) | partial (faithful only via libcrafter encode) |
-| Compressed-name decode (pointer to earlier name) | `dns-name-compressed` | reference_to_libcrafter | normalized: libcrafter emits the uncompressed name on re-encode, so the decoded `DnsName` model must agree while bytes differ from the compressed Scapy input | partial (Scapy compresses; raw bytes pin the pointer) | yes |
-| Explicit compression pointers across owner names and embedded RDATA <domain-name> fields (compressed question/answer owner names plus pointers in CNAME, NS, PTR, MX exchange, SOA MNAME/RNAME, SRV target, RRSIG signer, NSEC next-domain, and SVCB/HTTPS target RDATA, all built by the Scapy raw helper) | `dns-compressed-names` | reference_to_libcrafter | normalized: libcrafter re-encodes every name uncompressed, so the decoded `DnsName` model agrees while bytes differ from the raw pointer input | no (Scapy raw DNS helper pins the `0xC0` pointers; high-level fields will not emit them) | yes |
-| Compressed NS/CNAME/PTR name records (owner and embedded RDATA names are `0xC0` pointers in the Scapy raw bytes) | `dns-name-records-compressed` | reference_to_libcrafter | normalized: libcrafter re-encodes every name uncompressed, so the decoded `DnsRecordData::Name` model agrees with `dns-name-records` while bytes differ from the raw pointer input | no (Scapy raw DNS helper pins the pointers) | yes |
-| Uncompressed deterministic encode (no compression by default) | `crafter-dns-name-uncompressed` | libcrafter_to_reference | strict_bytes | yes | no |
+| Combined root + escaped + non-UTF-8 names in one message (root question owner, trailing-dot answer, literal dot/backslash CNAME target, `\000`/`\255` PTR target) | `dns-name-root-escaped` | both | strict_bytes (header + section counts compared) | no (Scapy high-level flattens `\DDD`/`\.`/`\\` to literal text on encode, so the reference encode is not byte-faithful; libcrafter re-encodes the exact octets, so the `libcrafter_to_backend` bytes are faithful and the `crafter` name tests carry the lossless byte-preserving assertions) | partial (faithful only via libcrafter encode) |
+| Compressed-name decode (pointer to earlier name) | `dns-name-compressed` | backend_to_libcrafter | normalized: libcrafter emits the uncompressed name on re-encode, so the decoded `DnsName` model must agree while bytes differ from the compressed Scapy input | partial (Scapy compresses; raw bytes pin the pointer) | yes |
+| Explicit compression pointers across owner names and embedded RDATA <domain-name> fields (compressed question/answer owner names plus pointers in CNAME, NS, PTR, MX exchange, SOA MNAME/RNAME, SRV target, RRSIG signer, NSEC next-domain, and SVCB/HTTPS target RDATA, all built by the Scapy raw helper) | `dns-compressed-names` | backend_to_libcrafter | normalized: libcrafter re-encodes every name uncompressed, so the decoded `DnsName` model agrees while bytes differ from the raw pointer input | no (Scapy raw DNS helper pins the `0xC0` pointers; high-level fields will not emit them) | yes |
+| Compressed NS/CNAME/PTR name records (owner and embedded RDATA names are `0xC0` pointers in the Scapy raw bytes) | `dns-name-records-compressed` | backend_to_libcrafter | normalized: libcrafter re-encodes every name uncompressed, so the decoded `DnsRecordData::Name` model agrees with `dns-name-records` while bytes differ from the raw pointer input | no (Scapy raw DNS helper pins the pointers) | yes |
+| Uncompressed deterministic encode (no compression by default) | `crafter-dns-name-uncompressed` | libcrafter_to_backend | strict_bytes | yes | no |
 
 ## 3. Questions
 
@@ -187,26 +187,26 @@ Source read for this matrix:
 
 | Feature | Case ID | Directions | Byte policy | Scapy high-level? | Raw bytes needed? |
 | --- | --- | --- | --- | --- | --- |
-| Compressed-name pointer cycle | `malformed-dns-pointer-cycle` | reference_to_libcrafter | n/a (structured error, no panic) | no | yes |
-| Out-of-range / impossible pointer offset | `malformed-dns-pointer-range` | reference_to_libcrafter | n/a (structured error) | no | yes |
-| Truncated pointer / truncated question | `malformed-dns-truncated-name` | reference_to_libcrafter | n/a (structured error) | no | yes |
-| Reserved label-length marker (0b10) | `malformed-dns-reserved-marker` | reference_to_libcrafter | n/a (structured error) | no | yes |
-| Label / full-name length overrun (>63, >255) | `malformed-dns-name-overrun` | reference_to_libcrafter | n/a (structured error) | no | yes |
-| Trailing bytes after declared records | `malformed-dns-trailing-bytes` | reference_to_libcrafter | n/a (structured error) | no | yes |
+| Compressed-name pointer cycle | `malformed-dns-pointer-cycle` | backend_to_libcrafter | n/a (structured error, no panic) | no | yes |
+| Out-of-range / impossible pointer offset | `malformed-dns-pointer-range` | backend_to_libcrafter | n/a (structured error) | no | yes |
+| Truncated pointer / truncated question | `malformed-dns-truncated-name` | backend_to_libcrafter | n/a (structured error) | no | yes |
+| Reserved label-length marker (0b10) | `malformed-dns-reserved-marker` | backend_to_libcrafter | n/a (structured error) | no | yes |
+| Label / full-name length overrun (>63, >255) | `malformed-dns-name-overrun` | backend_to_libcrafter | n/a (structured error) | no | yes |
+| Trailing bytes after declared records | `malformed-dns-trailing-bytes` | backend_to_libcrafter | n/a (structured error) | no | yes |
 
 ## 12. Malformed RDATA
 
 | Feature | Case ID | Directions | Byte policy | Scapy high-level? | Raw bytes needed? |
 | --- | --- | --- | --- | --- | --- |
-| A / AAAA wrong rdlength | `malformed-dns-address-rdlength` | reference_to_libcrafter | n/a (structured error) | no | yes |
-| SOA wrong fixed-tail length | `malformed-dns-soa-rdlength` | reference_to_libcrafter | n/a (structured error) | no | yes |
-| SRV short header / trailing bytes | `malformed-dns-srv-boundary` | reference_to_libcrafter | n/a (structured error) | no | yes |
-| EDNS option length overrun / truncated header | `malformed-dns-edns-option` | reference_to_libcrafter | n/a (structured error) | no | yes |
-| DNSSEC fixed-header truncation (DS, DNSKEY, RRSIG) | `malformed-dns-dnssec-truncation` | reference_to_libcrafter | n/a (structured error) | no | yes |
-| NSEC3 salt / hash length overrun | `malformed-dns-nsec3-overrun` | reference_to_libcrafter | n/a (structured error) | no | yes |
-| Type-bitmap malformed (zero length, >32, out-of-order window, trailing zero) | `malformed-dns-bitmap` | reference_to_libcrafter | n/a (structured error) | no | yes |
-| SVCB duplicate / out-of-order keys, value length overrun, truncated param | `malformed-dns-svcb-params` | reference_to_libcrafter | n/a (structured error) | no | yes |
-| Encode rejection: TXT >255, EDNS option >65535, record-data/type mismatch | `malformed-dns-encode-reject` | libcrafter_to_reference | n/a (encode error) | no | no |
+| A / AAAA wrong rdlength | `malformed-dns-address-rdlength` | backend_to_libcrafter | n/a (structured error) | no | yes |
+| SOA wrong fixed-tail length | `malformed-dns-soa-rdlength` | backend_to_libcrafter | n/a (structured error) | no | yes |
+| SRV short header / trailing bytes | `malformed-dns-srv-boundary` | backend_to_libcrafter | n/a (structured error) | no | yes |
+| EDNS option length overrun / truncated header | `malformed-dns-edns-option` | backend_to_libcrafter | n/a (structured error) | no | yes |
+| DNSSEC fixed-header truncation (DS, DNSKEY, RRSIG) | `malformed-dns-dnssec-truncation` | backend_to_libcrafter | n/a (structured error) | no | yes |
+| NSEC3 salt / hash length overrun | `malformed-dns-nsec3-overrun` | backend_to_libcrafter | n/a (structured error) | no | yes |
+| Type-bitmap malformed (zero length, >32, out-of-order window, trailing zero) | `malformed-dns-bitmap` | backend_to_libcrafter | n/a (structured error) | no | yes |
+| SVCB duplicate / out-of-order keys, value length overrun, truncated param | `malformed-dns-svcb-params` | backend_to_libcrafter | n/a (structured error) | no | yes |
+| Encode rejection: TXT >255, EDNS option >65535, record-data/type mismatch | `malformed-dns-encode-reject` | libcrafter_to_backend | n/a (encode error) | no | no |
 
 ## 13. Offline
 

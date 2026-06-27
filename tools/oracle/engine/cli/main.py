@@ -32,6 +32,7 @@ from ..backends import (
     registered_backend_names,
 )
 from ..compare import compare_decoded_models, failure_indexes
+from ..directions import normalize_direction, normalize_direction_list
 from ..model import (
     ComparisonResult,
     DecodedModel,
@@ -218,9 +219,22 @@ def _not_implemented(args: argparse.Namespace) -> int:
     return 2
 
 
+def _with_canonical_direction(args: argparse.Namespace) -> argparse.Namespace:
+    direction = getattr(args, "direction", None)
+    if not isinstance(direction, str):
+        return args
+    normalized = normalize_direction(direction)
+    if normalized == direction:
+        return args
+    values = vars(args).copy()
+    values["direction"] = normalized
+    return argparse.Namespace(**values)
+
+
 def _generate(args: argparse.Namespace) -> int:
     from ..generator import generate_plans
 
+    args = _with_canonical_direction(args)
     try:
         plans = generate_plans(
             seed=args.seed,
@@ -273,7 +287,8 @@ def _generate(args: argparse.Namespace) -> int:
 def _corpus(args: argparse.Namespace) -> int:
     from ..corpus import write_corpus_report
 
-    direction = getattr(args, "direction", "reference_to_libcrafter")
+    args = _with_canonical_direction(args)
+    direction = getattr(args, "direction", "backend_to_libcrafter")
     try:
         report = _build_corpus_report_from_generation(args, direction=direction)
     except ValueError as exc:
@@ -293,7 +308,7 @@ def _corpus(args: argparse.Namespace) -> int:
 def _build_corpus_report_from_generation(
     args: argparse.Namespace,
     *,
-    direction: str = "reference_to_libcrafter",
+    direction: str = "backend_to_libcrafter",
 ):
     from ..corpus import build_corpus_report
     from ..generator import generate_plans
@@ -339,7 +354,7 @@ def _build_corpus_report_from_generation(
 def _build_live_corpus_report_from_generation(
     args: argparse.Namespace,
     *,
-    direction: str = "reference_to_libcrafter",
+    direction: str = "backend_to_libcrafter",
 ):
     if not _should_use_udp_live_case_selection(args):
         return _build_corpus_report_from_generation(args, direction=direction)
@@ -485,15 +500,16 @@ def _optional_live_case_string(case: Mapping[str, object], key: str) -> str | No
 def _offline_required_capabilities(
     args: argparse.Namespace,
 ) -> tuple[BackendCapabilityName, ...]:
+    direction = normalize_direction(args.direction)
     if args.emit_decoded:
         return ("encode", "decode")
     if args.emit_vectors:
         return ("encode",)
     if args.dry_plan:
         return ()
-    if args.direction == "reference_to_libcrafter":
+    if direction == "backend_to_libcrafter":
         return ("encode", "decode")
-    if args.direction == "libcrafter_to_reference":
+    if direction == "libcrafter_to_backend":
         return ("decode",)
     return ()
 
@@ -1036,9 +1052,9 @@ def _count_value(value: object) -> int:
 def _pcap_required_capabilities(
     args: argparse.Namespace,
 ) -> tuple[BackendCapabilityName, ...]:
-    if args.direction == "reference_to_libcrafter":
+    if args.direction == "backend_to_libcrafter":
         return ("encode", "pcap_write", "pcap_read")
-    if args.direction == "libcrafter_to_reference":
+    if args.direction == "libcrafter_to_backend":
         return ("pcap_read",)
     if args.direction == "roundtrip":
         return ("encode", "pcap_write", "pcap_read")
@@ -1373,6 +1389,7 @@ def _live_provider_validate_endpoint_bootstrap(
 
 
 def _pcap(args: argparse.Namespace) -> int:
+    args = _with_canonical_direction(args)
     args = _pcap_effective_args(args)
     if args.dry_plan:
         return _pcap_dry_plan(args)
@@ -1387,7 +1404,7 @@ def _pcap(args: argparse.Namespace) -> int:
     )
     if unsupported is not None:
         return unsupported
-    if args.backend != "scapy" and args.direction != "libcrafter_to_reference":
+    if args.backend != "scapy" and args.direction != "libcrafter_to_backend":
         return _backend_not_implemented_report(
             args,
             mode="pcap",
@@ -1411,7 +1428,7 @@ def _pcap_effective_args(args: argparse.Namespace) -> argparse.Namespace:
     if not backend.parser_only:
         return args
     values = vars(args).copy()
-    values["direction"] = "libcrafter_to_reference"
+    values["direction"] = "libcrafter_to_backend"
     return argparse.Namespace(**values)
 
 
@@ -1431,6 +1448,7 @@ def _seed_live_private_group() -> None:
 
 
 def _live(args: argparse.Namespace) -> int:
+    args = _with_canonical_direction(args)
     unsupported = _require_backend_capabilities(
         args,
         mode="live",
@@ -1491,7 +1509,7 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
         plans, corpus_selected_specs, corpus_metadata = _live_corpus_plans(
             args,
             wire_provider=provider_adapter.name,
-            direction=directions[0] if directions else "reference_to_libcrafter",
+            direction=directions[0] if directions else "backend_to_libcrafter",
             provider_capabilities=provider_capabilities,
         )
     except ValueError as exc:
@@ -1634,7 +1652,7 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
 
     for plan in plans:
         for direction in directions:
-            if direction == "reference_to_libcrafter":
+            if direction == "backend_to_libcrafter":
                 sender = endpoints["reference_backend"]
                 receiver = endpoints["libcrafter"]
                 sender_command = scapy_dry_run_command_plan(
@@ -1649,7 +1667,7 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
                 )
                 validations.append(validate_scapy_dry_run_command_plan(sender_command))
                 validations.append(validate_libcrafter_command_plan(receiver_command))
-            elif direction == "libcrafter_to_reference":
+            elif direction == "libcrafter_to_backend":
                 sender = endpoints["libcrafter"]
                 receiver = endpoints["reference_backend"]
                 sender_command = libcrafter_dry_run_command_plan(
@@ -1693,10 +1711,10 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
 
     for direction in directions:
         direction_plans = [replace(plan, direction=direction) for plan in plans]
-        if direction == "reference_to_libcrafter":
+        if direction == "backend_to_libcrafter":
             sender = endpoints["reference_backend"]
             receiver = endpoints["libcrafter"]
-        elif direction == "libcrafter_to_reference":
+        elif direction == "libcrafter_to_backend":
             sender = endpoints["libcrafter"]
             receiver = endpoints["reference_backend"]
         else:
@@ -2947,7 +2965,7 @@ def _live_provider_execute(
         plans, updated_selected_specs, corpus_metadata = _live_corpus_plans(
             args,
             wire_provider=provider_adapter.name,
-            direction=directions[0] if directions else "reference_to_libcrafter",
+            direction=directions[0] if directions else "backend_to_libcrafter",
             provider_capabilities=discovered_capabilities,
         )
         selected_specs = list(dict.fromkeys([*selected_specs, *updated_selected_specs]))
@@ -2963,10 +2981,10 @@ def _live_provider_execute(
             skipped_reason = "no_wire_eligible_packets"
 
         for direction in [] if skipped_reason is not None else directions:
-            if direction == "reference_to_libcrafter":
+            if direction == "backend_to_libcrafter":
                 sender = endpoints["reference_backend"]
                 receiver = endpoints["libcrafter"]
-            elif direction == "libcrafter_to_reference":
+            elif direction == "libcrafter_to_backend":
                 sender = endpoints["libcrafter"]
                 receiver = endpoints["reference_backend"]
             else:
@@ -5052,7 +5070,7 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
         plans, corpus_selected_specs, corpus_metadata = _live_corpus_plans(
             args,
             wire_provider="hetzner",
-            direction=directions[0] if directions else "reference_to_libcrafter",
+            direction=directions[0] if directions else "backend_to_libcrafter",
         )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
@@ -5082,7 +5100,7 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
 
     for plan in plans:
         for direction in directions:
-            if direction == "reference_to_libcrafter":
+            if direction == "backend_to_libcrafter":
                 sender = endpoints["reference_backend"]
                 receiver = endpoints["libcrafter"]
                 sender_command = scapy_dry_run_command_plan(
@@ -5097,7 +5115,7 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
                 )
                 validations.append(validate_scapy_dry_run_command_plan(sender_command))
                 validations.append(validate_libcrafter_command_plan(receiver_command))
-            elif direction == "libcrafter_to_reference":
+            elif direction == "libcrafter_to_backend":
                 sender = endpoints["libcrafter"]
                 receiver = endpoints["reference_backend"]
                 sender_command = libcrafter_dry_run_command_plan(
@@ -5139,10 +5157,10 @@ def _live_local_dry_run(args: argparse.Namespace) -> int:
     endpoint_protocol_batches: list[JSONObject] = []
     for direction in directions:
         direction_plans = [replace(plan, direction=direction) for plan in plans]
-        if direction == "reference_to_libcrafter":
+        if direction == "backend_to_libcrafter":
             sender = endpoints["reference_backend"]
             receiver = endpoints["libcrafter"]
-        elif direction == "libcrafter_to_reference":
+        elif direction == "libcrafter_to_backend":
             sender = endpoints["libcrafter"]
             receiver = endpoints["reference_backend"]
         else:
@@ -5425,8 +5443,8 @@ def _pcap_execute(args: argparse.Namespace) -> int:
                 )
                 write_json(vector_path, vector_report)
 
-                if direction == "reference_to_libcrafter":
-                    run = _pcap_reference_to_libcrafter(
+                if direction == "backend_to_libcrafter":
+                    run = _pcap_backend_to_libcrafter(
                         args=args,
                         run_dir=run_dir,
                         vector_path=vector_path,
@@ -5434,8 +5452,8 @@ def _pcap_execute(args: argparse.Namespace) -> int:
                         plans=plans,  # type: ignore[arg-type]
                         label=label,
                     )
-                elif direction == "libcrafter_to_reference":
-                    run = _pcap_libcrafter_to_reference(
+                elif direction == "libcrafter_to_backend":
+                    run = _pcap_libcrafter_to_backend(
                         args=args,
                         run_dir=run_dir,
                         vector_path=vector_path,
@@ -5525,6 +5543,7 @@ def _pcap_execute(args: argparse.Namespace) -> int:
 
 
 def _offline(args: argparse.Namespace) -> int:
+    args = _with_canonical_direction(args)
     required_capabilities = _offline_required_capabilities(args)
     if required_capabilities:
         unsupported = _require_backend_capabilities(
@@ -5547,10 +5566,10 @@ def _offline(args: argparse.Namespace) -> int:
             )
 
     if not args.dry_plan and not args.emit_vectors and not args.emit_decoded:
-        if args.direction == "reference_to_libcrafter":
-            return _offline_reference_to_libcrafter(args)
-        if args.direction == "libcrafter_to_reference":
-            return _offline_libcrafter_to_reference(args)
+        if args.direction == "backend_to_libcrafter":
+            return _offline_backend_to_libcrafter(args)
+        if args.direction == "libcrafter_to_backend":
+            return _offline_libcrafter_to_backend(args)
         print(f"unsupported offline direction: {args.direction}", file=sys.stderr)
         return 2
 
@@ -5638,8 +5657,8 @@ def _offline(args: argparse.Namespace) -> int:
     return 0
 
 
-def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
-    if args.direction != "reference_to_libcrafter":
+def _offline_backend_to_libcrafter(args: argparse.Namespace) -> int:
+    if args.direction != "backend_to_libcrafter":
         print(f"unsupported offline direction: {args.direction}", file=sys.stderr)
         return 2
 
@@ -5806,8 +5825,8 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
     return 0 if status == "passed" else 1
 
 
-def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
-    if args.direction != "libcrafter_to_reference":
+def _offline_libcrafter_to_backend(args: argparse.Namespace) -> int:
+    if args.direction != "libcrafter_to_backend":
         print(f"unsupported offline direction: {args.direction}", file=sys.stderr)
         return 2
     if args.backend not in {"scapy", "wireshark"}:
@@ -6012,7 +6031,7 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
     return 0 if status == "passed" else 1
 
 
-def _pcap_reference_to_libcrafter(
+def _pcap_backend_to_libcrafter(
     *,
     args: argparse.Namespace,
     run_dir: Path,
@@ -6050,7 +6069,7 @@ def _pcap_reference_to_libcrafter(
 
         results = _compare_pcap_records(
             args=args,
-            direction="reference_to_libcrafter",
+            direction="backend_to_libcrafter",
             expected=expected_records,
             actual=actual_records,
             plans=plans,
@@ -6061,7 +6080,7 @@ def _pcap_reference_to_libcrafter(
             "artifacts": _dedupe_existing_paths(artifacts),
             "bridge_exit_code": bridge["exit_code"],
             "metadata": {
-                "direction": "reference_to_libcrafter",
+                "direction": "backend_to_libcrafter",
                 "writer": "scapy",
                 "reader": "libcrafter",
                 "label": label,
@@ -6076,7 +6095,7 @@ def _pcap_reference_to_libcrafter(
     except (ValueError, RuntimeError) as exc:
         return _pcap_group_failure_run(
             args=args,
-            direction="reference_to_libcrafter",
+            direction="backend_to_libcrafter",
             plans=plans,
             label=label,
             writer="scapy",
@@ -6087,7 +6106,7 @@ def _pcap_reference_to_libcrafter(
         )
 
 
-def _pcap_libcrafter_to_reference(
+def _pcap_libcrafter_to_backend(
     *,
     args: argparse.Namespace,
     run_dir: Path,
@@ -6128,7 +6147,7 @@ def _pcap_libcrafter_to_reference(
 
         results = _compare_pcap_records(
             args=args,
-            direction="libcrafter_to_reference",
+            direction="libcrafter_to_backend",
             expected=expected_records,
             actual=actual_records,
             plans=plans,
@@ -6139,7 +6158,7 @@ def _pcap_libcrafter_to_reference(
             "artifacts": _dedupe_existing_paths(artifacts),
             "bridge_exit_code": bridge["exit_code"],
             "metadata": {
-                "direction": "libcrafter_to_reference",
+                "direction": "libcrafter_to_backend",
                 "writer": "libcrafter",
                 "reader": args.backend,
                 "label": label,
@@ -6160,7 +6179,7 @@ def _pcap_libcrafter_to_reference(
             }
         return _pcap_group_failure_run(
             args=args,
-            direction="libcrafter_to_reference",
+            direction="libcrafter_to_backend",
             plans=plans,
             label=label,
             writer="libcrafter",
@@ -6978,7 +6997,9 @@ def _packet_plan_from_object(value: object, name: str) -> PacketPlan:
         profile=_optional_string(plan.get("profile")) or "unknown",
         seed=_object_int(plan.get("seed"), 0),
         index=_object_int(plan.get("index"), 0),
-        direction=_optional_string(plan.get("direction")) or "libcrafter_to_reference",
+        direction=normalize_direction(
+            _optional_string(plan.get("direction")) or "libcrafter_to_backend"
+        ),
         family=_optional_string(plan.get("family")),
         feature_tags=_string_values(plan.get("feature_tags", [])),
         case=_optional_string(plan.get("case")),
@@ -7082,10 +7103,12 @@ def _select_libcrafter_cases(
 
 
 def _case_supports_direction(case: JSONObject, direction: str) -> bool:
-    directions = case.get("directions")
-    if isinstance(directions, list) and direction in directions:
+    direction = normalize_direction(direction)
+    directions = normalize_direction_list(case.get("directions"))
+    if direction in directions:
         return True
-    return case.get("direction") == direction
+    case_direction = case.get("direction")
+    return isinstance(case_direction, str) and normalize_direction(case_direction) == direction
 
 
 def _libcrafter_case_plan(
@@ -7512,9 +7535,10 @@ def _string_values(value: object) -> list[str]:
 
 
 def _pcap_execution_directions(direction: str) -> list[str]:
+    direction = normalize_direction(direction)
     if direction == "roundtrip":
-        return ["reference_to_libcrafter", "libcrafter_to_reference"]
-    if direction in {"reference_to_libcrafter", "libcrafter_to_reference"}:
+        return ["backend_to_libcrafter", "libcrafter_to_backend"]
+    if direction in {"backend_to_libcrafter", "libcrafter_to_backend"}:
         return [direction]
     raise ValueError(f"unsupported pcap direction: {direction}")
 
@@ -7552,7 +7576,7 @@ def _pcap_cases_for_direction(
         if (
             not selected
             and contract_case_name is None
-            and (direction == "libcrafter_to_reference" or args.feature == "pcap_link_types")
+            and (direction == "libcrafter_to_backend" or args.feature == "pcap_link_types")
         ):
             selected = [
                 _pcap_case_with_roles(pcap_case, direction, args.backend)
@@ -7623,7 +7647,7 @@ def _pcap_corpus_plan_groups(
     corpus_path: Path | None = None
     corpus_source = "generated"
     if getattr(args, "corpus", None) is None:
-        corpus_direction = directions[0] if directions else "reference_to_libcrafter"
+        corpus_direction = directions[0] if directions else "backend_to_libcrafter"
         generation_args = _pcap_generation_args(args)
         corpus_report = _build_corpus_report_from_generation(
             generation_args,
@@ -8080,15 +8104,16 @@ def _pcap_indices(args: argparse.Namespace) -> list[int]:
 
 
 def _pcap_case_supports_direction(pcap_case: JSONObject, direction: str) -> bool:
+    direction = normalize_direction(direction)
     directions = _pcap_case_directions(pcap_case)
     return direction in directions or "roundtrip" in directions
 
 
 def _pcap_case_directions(pcap_case: JSONObject) -> list[str]:
-    directions = _string_values(pcap_case.get("directions"))
+    directions = normalize_direction_list(pcap_case.get("directions"))
     direction = pcap_case.get("direction")
     if isinstance(direction, str):
-        directions.append(direction)
+        directions.append(normalize_direction(direction))
     return list(dict.fromkeys(directions))
 
 
@@ -8121,9 +8146,9 @@ def _pcap_case_roles_match(
 ) -> bool:
     writer = pcap_case.get("writer")
     reader = pcap_case.get("reader")
-    if direction == "reference_to_libcrafter":
+    if direction == "backend_to_libcrafter":
         return writer == backend and reader == "libcrafter"
-    if direction == "libcrafter_to_reference":
+    if direction == "libcrafter_to_backend":
         return writer == "libcrafter" and reader == backend
     return False
 
@@ -8134,10 +8159,10 @@ def _pcap_case_with_roles(
     backend: str,
 ) -> JSONObject:
     output = dict(pcap_case)
-    if direction == "reference_to_libcrafter":
+    if direction == "backend_to_libcrafter":
         output["writer"] = backend
         output["reader"] = "libcrafter"
-    elif direction == "libcrafter_to_reference":
+    elif direction == "libcrafter_to_backend":
         output["writer"] = "libcrafter"
         output["reader"] = backend
     return output
@@ -8361,8 +8386,8 @@ _SUITE_FEATURE_BY_FAMILY = {
 }
 _LAYER_ONLY_SUITE_FAMILIES = frozenset({"igmp"})
 _SUITE_OFFLINE_DIRECTIONS = (
-    "reference_to_libcrafter",
-    "libcrafter_to_reference",
+    "backend_to_libcrafter",
+    "libcrafter_to_backend",
 )
 
 

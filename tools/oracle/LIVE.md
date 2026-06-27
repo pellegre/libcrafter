@@ -180,9 +180,9 @@ client, server, lease negotiation, or reply workflow. The packet under test is
 the `ipv4 / udp / dhcpv4` stack (root `l3:ipv4`, UDP ports 68 to 67), selected
 with `--case dhcpv4-discover`. It runs in both standard directions:
 
-- `libcrafter_to_reference`: libcrafter sends the DHCPv4 packet, the reference
+- `libcrafter_to_backend`: libcrafter sends the DHCPv4 packet, the reference
   backend captures and decodes it.
-- `reference_to_libcrafter`: the reference backend sends the DHCPv4 packet,
+- `backend_to_libcrafter`: the reference backend sends the DHCPv4 packet,
   libcrafter captures and decodes it.
 
 Each direction sends one DHCPv4 packet and compares the receiver's normalized
@@ -345,7 +345,7 @@ python3 tools/oracle/engine/dhcpv6_artifacts.py \
 Live reports use the same backend-neutral direction names as offline and pcap
 reports.
 
-### `libcrafter_to_reference`
+### `libcrafter_to_backend`
 
 The `libcrafter` endpoint is the sender. It materializes a generated packet plan
 with libcrafter, transmits it on the private test interface, and records sender
@@ -356,7 +356,7 @@ The exchange passes when the received observation satisfies the selected live
 feature spec, including stack, field, payload, direction, and strict byte rules
 where those rules apply.
 
-### `reference_to_libcrafter`
+### `backend_to_libcrafter`
 
 The `reference_backend` endpoint is the sender. It materializes the generated
 packet plan with the selected backend, transmits it on the private test
@@ -374,7 +374,7 @@ stateful setup before the packet under test. These flows are represented as a
 `live_exchange` made of ordered phases. Each phase declares:
 
 - `phase`: stable phase name.
-- `direction`: `libcrafter_to_reference` or `reference_to_libcrafter`.
+- `direction`: `libcrafter_to_backend` or `backend_to_libcrafter`.
 - `sender_role`: `libcrafter` or `reference_backend`.
 - `receiver_role`: the opposite endpoint role.
 - `packet_plan`: generated plan or response expectation for this phase.
@@ -442,7 +442,7 @@ Each exchange stores a JSON-compatible artifact record:
   "seed": 1,
   "count": 10,
   "index": 0,
-  "direction": "libcrafter_to_reference",
+  "direction": "libcrafter_to_backend",
   "endpoints": {
     "libcrafter": {
       "endpoint_id": "node-a",

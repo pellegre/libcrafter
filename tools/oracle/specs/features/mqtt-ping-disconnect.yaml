@@ -10,8 +10,8 @@ layers:
   - mqtt
   - tcp
 directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
 strict_bytes: true
 malformed: false
 
@@ -55,8 +55,8 @@ coverage_cases:
 supported_cases:
   - name: mqtt-pingreq
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     roots:
       - "l3:ipv4"
@@ -75,8 +75,8 @@ supported_cases:
         remaining_length: 0
   - name: mqtt-pingresp
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     roots:
       - "l3:ipv4"
@@ -95,8 +95,8 @@ supported_cases:
         remaining_length: 0
   - name: mqtt-disconnect
     directions:
-      - reference_to_libcrafter
-      - libcrafter_to_reference
+      - backend_to_libcrafter
+      - libcrafter_to_backend
     byte_policy: strict_bytes
     roots:
       - "l3:ipv4"

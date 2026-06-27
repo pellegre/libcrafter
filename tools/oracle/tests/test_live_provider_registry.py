@@ -431,12 +431,12 @@ class LiveProviderRegistryTest(unittest.TestCase):
             seed=133,
             profile="smoke",
             packet_plans=[_ipv4_dhcpv4_plan(133)],
-            direction="libcrafter_to_reference",
+            direction="libcrafter_to_backend",
             endpoint=endpoint,
             peer=peer,
             artifact_paths=live_endpoint_artifact_paths(
                 output_dir="/tmp/oracle-live",
-                direction="libcrafter_to_reference",
+                direction="libcrafter_to_backend",
                 endpoint_role="libcrafter",
             ),
         )
@@ -481,12 +481,12 @@ class LiveProviderRegistryTest(unittest.TestCase):
             seed=133,
             profile="smoke",
             packet_plans=[_ipv4_dhcpv4_plan(133)],
-            direction="libcrafter_to_reference",
+            direction="libcrafter_to_backend",
             endpoint=normalized["libcrafter"],
             peer=normalized["reference_backend"],
             artifact_paths=live_endpoint_artifact_paths(
                 output_dir="/tmp/oracle-live",
-                direction="libcrafter_to_reference",
+                direction="libcrafter_to_backend",
                 endpoint_role="libcrafter",
             ),
         )
@@ -633,7 +633,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
             profile="default",
             seed=7,
             index=3,
-            direction="reference_to_libcrafter",
+            direction="backend_to_libcrafter",
             family="ipv4",
             metadata={"root": "l3:ipv4"},
         )
@@ -672,7 +672,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
             profile="default",
             seed=7,
             index=3,
-            direction="reference_to_libcrafter",
+            direction="backend_to_libcrafter",
             family="ipv4",
             metadata={"root": "l3:ipv4"},
         )
@@ -725,7 +725,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
             profile="default",
             seed=7,
             index=3,
-            direction="reference_to_libcrafter",
+            direction="backend_to_libcrafter",
             family="ipv4",
             metadata={"root": "l3:ipv4"},
         )
@@ -855,7 +855,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
                     args=args,
                     provider_adapter=adapter,
                     report_path=report_path,
-                    directions=["reference_to_libcrafter"],
+                    directions=["backend_to_libcrafter"],
                     plans=[plan],
                     selected_specs=["base-spec.yaml"],
                     corpus_metadata=corpus_metadata,
@@ -920,7 +920,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
                 adapter.teardown_purpose,
             )
             artifact_paths = "\n".join(report["artifact_paths"])
-            self.assertIn("provider-exchange/fakecloud/reference_to_libcrafter", artifact_paths)
+            self.assertIn("provider-exchange/fakecloud/backend_to_libcrafter", artifact_paths)
             self.assertNotIn("hetzner-exchange", artifact_paths)
 
     def test_real_live_execution_cleans_stale_lab_session_before_create(self) -> None:
@@ -997,7 +997,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
                     args=args,
                     provider_adapter=adapter,
                     report_path=report_path,
-                    directions=["reference_to_libcrafter"],
+                    directions=["backend_to_libcrafter"],
                     plans=[plan],
                     selected_specs=["base-spec.yaml"],
                     corpus_metadata=corpus_metadata,
@@ -1048,7 +1048,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
                     args=args,
                     provider_adapter=adapter,
                     report_path=report_path,
-                    directions=["reference_to_libcrafter"],
+                    directions=["backend_to_libcrafter"],
                     plans=[plan],
                     selected_specs=["base-spec.yaml"],
                     corpus_metadata=corpus_metadata,
@@ -1068,10 +1068,10 @@ class LiveProviderRegistryTest(unittest.TestCase):
             self.assertTrue(artifact_failures)
 
 
-_DHCP_DIRECTIONS = ("libcrafter_to_reference", "reference_to_libcrafter")
+_DHCP_DIRECTIONS = ("libcrafter_to_backend", "backend_to_libcrafter")
 _DHCP_SENDER_ROLE = {
-    "libcrafter_to_reference": "libcrafter",
-    "reference_to_libcrafter": "reference_backend",
+    "libcrafter_to_backend": "libcrafter",
+    "backend_to_libcrafter": "reference_backend",
 }
 
 
@@ -1229,8 +1229,8 @@ class Dhcpv4LiveEndpointContractTest(unittest.TestCase):
 
     def test_request_assigns_sender_receiver_roles_and_artifacts(self) -> None:
         # Build the request from libcrafter's perspective in each direction so
-        # the sender (libcrafter_to_reference) and receiver
-        # (reference_to_libcrafter) role assignments are both covered.
+        # the sender (libcrafter_to_backend) and receiver
+        # (backend_to_libcrafter) role assignments are both covered.
         for direction in _DHCP_DIRECTIONS:
             with self.subTest(direction=direction):
                 request, _, artifact_paths = self._build_request(
@@ -1260,12 +1260,12 @@ class Dhcpv4LiveEndpointContractTest(unittest.TestCase):
                 )
 
     def test_dry_run_response_validates_against_batch_contract(self) -> None:
-        # Cover libcrafter as the sending endpoint (libcrafter_to_reference) and
-        # as the receiving endpoint (reference_to_libcrafter); the dry-run
+        # Cover libcrafter as the sending endpoint (libcrafter_to_backend) and
+        # as the receiving endpoint (backend_to_libcrafter); the dry-run
         # response must satisfy the decoded-model batch contract in both phases.
         phases = {
-            "libcrafter_to_reference": "send_root",
-            "reference_to_libcrafter": "capture_root",
+            "libcrafter_to_backend": "send_root",
+            "backend_to_libcrafter": "capture_root",
         }
         for direction, phase_root_key in phases.items():
             with self.subTest(direction=direction):
@@ -1443,7 +1443,7 @@ def _real_live_args(provider: str, output_dir: Path) -> SimpleNamespace:
         backend="scapy",
         provider=provider,
         out=str(output_dir),
-        direction="reference_to_libcrafter",
+        direction="backend_to_libcrafter",
         dry_run=False,
         profile="smoke",
         seed=7,
@@ -1466,7 +1466,7 @@ def _fake_packet_plan() -> PacketPlan:
         profile="smoke",
         seed=7,
         index=11,
-        direction="reference_to_libcrafter",
+        direction="backend_to_libcrafter",
         family="ipv4",
         strict_bytes=True,
         metadata={

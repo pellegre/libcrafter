@@ -136,7 +136,7 @@ class WiresharkDhcpv6NormalizationTest(unittest.TestCase):
 
         args = argparse.Namespace(backend="wireshark", direction="roundtrip")
         effective = cli._pcap_effective_args(args)
-        self.assertEqual(effective.direction, "libcrafter_to_reference")
+        self.assertEqual(effective.direction, "libcrafter_to_backend")
 
     def test_pcap_layer_canonicalization_normalizes_dhcpv6(self) -> None:
         from tools.oracle.engine import cli

@@ -10,8 +10,8 @@ children:
   - zigbee_aps
   - payload
 supported_directions:
-  - reference_to_libcrafter
-  - libcrafter_to_reference
+  - backend_to_libcrafter
+  - libcrafter_to_backend
   - roundtrip
 live_eligibility: false
 live_gate: whad_backend_not_yet_available

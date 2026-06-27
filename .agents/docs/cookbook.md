@@ -1830,8 +1830,8 @@ provider disposable:
 
 ```sh
 if [ "${LIBCRAFTER_RUN_LIVE_UDP_OPTIONS:-0}" = "1" ]; then
-  tools/oracle/run live --provider "${LIBCRAFTER_LIVE_PROVIDER:-qemu}" --confirm-live-run --direction reference_to_libcrafter --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-live-reference-to-libcrafter
-  tools/oracle/run live --provider "${LIBCRAFTER_LIVE_PROVIDER:-qemu}" --confirm-live-run --direction libcrafter_to_reference --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-live-libcrafter-to-reference
+  tools/oracle/run live --provider "${LIBCRAFTER_LIVE_PROVIDER:-qemu}" --confirm-live-run --direction backend_to_libcrafter --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-live-reference-to-libcrafter
+  tools/oracle/run live --provider "${LIBCRAFTER_LIVE_PROVIDER:-qemu}" --confirm-live-run --direction libcrafter_to_backend --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-live-libcrafter-to-reference
 else
   echo "set LIBCRAFTER_RUN_LIVE_UDP_OPTIONS=1 to run guarded live UDP option validation"
 fi
