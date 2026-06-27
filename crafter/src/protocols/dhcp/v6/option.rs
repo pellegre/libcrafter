@@ -15,10 +15,12 @@ use super::constants::{
     DHCPV6_AUTH_PROTOCOL_DHCPV6_DELAYED_OBSOLETE, DHCPV6_AUTH_PROTOCOL_RECONFIGURE_KEY,
     DHCPV6_AUTH_PROTOCOL_SPLIT_HORIZON_DNS, DHCPV6_AUTH_RDM_MONOTONIC_COUNTER,
     DHCPV6_AUTH_REPLAY_DETECTION_LEN, DHCPV6_OPTION_AUTH, DHCPV6_OPTION_CLIENTID,
-    DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN, DHCPV6_OPTION_IAADDR,
-    DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD, DHCPV6_OPTION_ORO,
-    DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT, DHCPV6_OPTION_RECONF_ACCEPT,
-    DHCPV6_OPTION_RECONF_MSG, DHCPV6_OPTION_SERVERID, DHCPV6_OPTION_STATUS_CODE,
+    DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR, DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN,
+    DHCPV6_OPTION_IAADDR, DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD,
+    DHCPV6_OPTION_INTERFACE_ID, DHCPV6_OPTION_ORO, DHCPV6_OPTION_PREFERENCE,
+    DHCPV6_OPTION_RAPID_COMMIT, DHCPV6_OPTION_RECONF_ACCEPT, DHCPV6_OPTION_RECONF_MSG,
+    DHCPV6_OPTION_RELAY_ID, DHCPV6_OPTION_RELAY_MSG, DHCPV6_OPTION_REMOTE_ID, DHCPV6_OPTION_RSOO,
+    DHCPV6_OPTION_SERVERID, DHCPV6_OPTION_STATUS_CODE, DHCPV6_OPTION_SUBSCRIBER_ID,
     DHCPV6_OPTION_USER_CLASS, DHCPV6_OPTION_VENDOR_CLASS, DHCPV6_OPTION_VENDOR_OPTS,
 };
 use super::duid::Dhcpv6Duid;
@@ -228,6 +230,26 @@ pub struct Dhcpv6VendorOption {
 pub struct Dhcpv6VendorOptions {
     enterprise_number: u32,
     options: Vec<Dhcpv6VendorOption>,
+}
+
+/// DHCPv6 OPTION_REMOTE_ID payload.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6RemoteId {
+    enterprise_number: u32,
+    remote_id: Vec<u8>,
+}
+
+/// DHCPv6 OPTION_CLIENT_LINKLAYER_ADDR payload.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6ClientLinkLayerAddress {
+    hardware_type: u16,
+    link_layer_address: Vec<u8>,
+}
+
+/// DHCPv6 OPTION_RSOO payload.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6RelaySuppliedOptions {
+    options: Vec<Dhcpv6Option>,
 }
 
 /// DHCPv6 OPTION_STATUS_CODE payload.
@@ -995,6 +1017,132 @@ impl Dhcpv6VendorOptions {
     }
 }
 
+impl Dhcpv6RemoteId {
+    /// Create a Remote-ID payload.
+    pub fn new(enterprise_number: u32, remote_id: impl Into<Vec<u8>>) -> Self {
+        Self {
+            enterprise_number,
+            remote_id: remote_id.into(),
+        }
+    }
+
+    /// Decode a Remote-ID payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < 4 {
+            return Err(CrafterError::buffer_too_short(
+                "dhcpv6.option.remote_id.enterprise_number",
+                4,
+                bytes.len(),
+            ));
+        }
+        Ok(Self {
+            enterprise_number: read_u32_be(&bytes[0..4])?,
+            remote_id: bytes[4..].to_vec(),
+        })
+    }
+
+    /// Encode this Remote-ID payload.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(4 + self.remote_id.len());
+        out.extend_from_slice(&self.enterprise_number.to_be_bytes());
+        out.extend_from_slice(&self.remote_id);
+        out
+    }
+
+    /// Enterprise number.
+    pub const fn enterprise_number(&self) -> u32 {
+        self.enterprise_number
+    }
+
+    /// Remote-ID bytes.
+    pub fn remote_id(&self) -> &[u8] {
+        &self.remote_id
+    }
+}
+
+impl Dhcpv6ClientLinkLayerAddress {
+    /// Create a Client Link-Layer Address payload.
+    pub fn new(hardware_type: u16, link_layer_address: impl Into<Vec<u8>>) -> Self {
+        Self {
+            hardware_type,
+            link_layer_address: link_layer_address.into(),
+        }
+    }
+
+    /// Create a Client Link-Layer Address payload for Ethernet.
+    pub fn ethernet(link_layer_address: [u8; 6]) -> Self {
+        Self::new(1, link_layer_address)
+    }
+
+    /// Decode a Client Link-Layer Address payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < 2 {
+            return Err(CrafterError::buffer_too_short(
+                "dhcpv6.option.client_linklayer_addr.hardware_type",
+                2,
+                bytes.len(),
+            ));
+        }
+        Ok(Self {
+            hardware_type: read_u16_be(&bytes[0..2])?,
+            link_layer_address: bytes[2..].to_vec(),
+        })
+    }
+
+    /// Encode this Client Link-Layer Address payload.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(2 + self.link_layer_address.len());
+        append_u16_be(&mut out, self.hardware_type);
+        out.extend_from_slice(&self.link_layer_address);
+        out
+    }
+
+    /// Hardware type from the ARP hardware type namespace.
+    pub const fn hardware_type(&self) -> u16 {
+        self.hardware_type
+    }
+
+    /// Link-layer address bytes.
+    pub fn link_layer_address(&self) -> &[u8] {
+        &self.link_layer_address
+    }
+}
+
+impl Dhcpv6RelaySuppliedOptions {
+    /// Create a Relay-Supplied Options payload.
+    pub fn new<I>(options: I) -> Self
+    where
+        I: IntoIterator<Item = Dhcpv6Option>,
+    {
+        Self {
+            options: options.into_iter().collect(),
+        }
+    }
+
+    /// Decode a Relay-Supplied Options payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        Ok(Self {
+            options: Dhcpv6Option::decode_all(bytes)?,
+        })
+    }
+
+    /// Encode this Relay-Supplied Options payload.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        Dhcpv6Option::encode_all(&self.options)
+    }
+
+    /// Borrow relay-supplied options.
+    pub fn options(&self) -> &[Dhcpv6Option] {
+        &self.options
+    }
+
+    /// Append a relay-supplied option.
+    pub fn option(mut self, option: Dhcpv6Option) -> Self {
+        self.options.push(option);
+        self
+    }
+}
+
 impl Dhcpv6StatusCodeOption {
     /// Create a Status Code option payload with no status message bytes.
     pub fn new(status: Dhcpv6StatusCode) -> Self {
@@ -1123,6 +1271,11 @@ impl Dhcpv6Option {
         )
     }
 
+    /// Create an OPTION_RELAY_MSG option from raw relayed DHCPv6 bytes.
+    pub fn relay_msg(payload: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_RELAY_MSG, payload)
+    }
+
     /// Create an OPTION_RAPID_COMMIT option.
     pub fn rapid_commit() -> Self {
         Self::empty(DHCPV6_OPTION_RAPID_COMMIT)
@@ -1152,6 +1305,11 @@ impl Dhcpv6Option {
     /// Create an OPTION_VENDOR_OPTS option.
     pub fn vendor_opts(vendor_opts: Dhcpv6VendorOptions) -> Result<Self> {
         Ok(Self::raw(DHCPV6_OPTION_VENDOR_OPTS, vendor_opts.encode()?))
+    }
+
+    /// Create an OPTION_INTERFACE_ID option.
+    pub fn interface_id(interface_id: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_INTERFACE_ID, interface_id)
     }
 
     /// Create an OPTION_RECONF_MSG option.
@@ -1192,6 +1350,31 @@ impl Dhcpv6Option {
     /// Create an OPTION_IAPREFIX option.
     pub fn ia_prefix(ia_prefix: Dhcpv6IaPrefix) -> Result<Self> {
         Ok(Self::raw(DHCPV6_OPTION_IAPREFIX, ia_prefix.encode()?))
+    }
+
+    /// Create an OPTION_REMOTE_ID option.
+    pub fn remote_id(remote_id: Dhcpv6RemoteId) -> Self {
+        Self::raw(DHCPV6_OPTION_REMOTE_ID, remote_id.encode())
+    }
+
+    /// Create an OPTION_SUBSCRIBER_ID option.
+    pub fn subscriber_id(subscriber_id: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_SUBSCRIBER_ID, subscriber_id)
+    }
+
+    /// Create an OPTION_RELAY_ID option.
+    pub fn relay_id(relay_id: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_RELAY_ID, relay_id)
+    }
+
+    /// Create an OPTION_RSOO option.
+    pub fn relay_supplied_options(rsoo: Dhcpv6RelaySuppliedOptions) -> Result<Self> {
+        Ok(Self::raw(DHCPV6_OPTION_RSOO, rsoo.encode()?))
+    }
+
+    /// Create an OPTION_CLIENT_LINKLAYER_ADDR option.
+    pub fn client_link_layer_addr(client: Dhcpv6ClientLinkLayerAddress) -> Self {
+        Self::raw(DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR, client.encode())
     }
 
     /// Create an OPTION_IAADDR option.
@@ -1308,6 +1491,11 @@ impl Dhcpv6Option {
             .map(|payload| u16::from_be_bytes([payload[0], payload[1]])))
     }
 
+    /// Return OPTION_RELAY_MSG payload bytes.
+    pub fn relay_msg_value(&self) -> Option<&[u8]> {
+        self.payload_if_code(DHCPV6_OPTION_RELAY_MSG)
+    }
+
     /// Return true when this is a valid zero-length OPTION_RAPID_COMMIT.
     pub fn rapid_commit_present(&self) -> Result<bool> {
         Ok(self
@@ -1345,6 +1533,11 @@ impl Dhcpv6Option {
             Some(payload) => Dhcpv6VendorOptions::decode(payload).map(Some),
             None => Ok(None),
         }
+    }
+
+    /// Return OPTION_INTERFACE_ID payload bytes.
+    pub fn interface_id_value(&self) -> Option<&[u8]> {
+        self.payload_if_code(DHCPV6_OPTION_INTERFACE_ID)
     }
 
     /// Decode OPTION_RECONF_MSG.
@@ -1393,6 +1586,48 @@ impl Dhcpv6Option {
     pub fn ia_prefix_value(&self) -> Result<Option<Dhcpv6IaPrefix>> {
         match self.payload_if_code(DHCPV6_OPTION_IAPREFIX) {
             Some(payload) => Dhcpv6IaPrefix::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode OPTION_REMOTE_ID.
+    pub fn remote_id_value(&self) -> Result<Option<Dhcpv6RemoteId>> {
+        match self.payload_if_code(DHCPV6_OPTION_REMOTE_ID) {
+            Some(payload) => Dhcpv6RemoteId::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Return OPTION_SUBSCRIBER_ID payload bytes.
+    pub fn subscriber_id_value(&self) -> Option<&[u8]> {
+        self.payload_if_code(DHCPV6_OPTION_SUBSCRIBER_ID)
+    }
+
+    /// Return OPTION_RELAY_ID payload bytes.
+    pub fn relay_id_value(&self) -> Option<&[u8]> {
+        self.payload_if_code(DHCPV6_OPTION_RELAY_ID)
+    }
+
+    /// Decode OPTION_RELAY_ID as a DUID.
+    pub fn relay_duid_value(&self) -> Result<Option<Dhcpv6Duid>> {
+        match self.relay_id_value() {
+            Some(payload) => Dhcpv6Duid::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode OPTION_RSOO.
+    pub fn relay_supplied_options_value(&self) -> Result<Option<Dhcpv6RelaySuppliedOptions>> {
+        match self.payload_if_code(DHCPV6_OPTION_RSOO) {
+            Some(payload) => Dhcpv6RelaySuppliedOptions::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode OPTION_CLIENT_LINKLAYER_ADDR.
+    pub fn client_link_layer_addr_value(&self) -> Result<Option<Dhcpv6ClientLinkLayerAddress>> {
+        match self.payload_if_code(DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR) {
+            Some(payload) => Dhcpv6ClientLinkLayerAddress::decode(payload).map(Some),
             None => Ok(None),
         }
     }

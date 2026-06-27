@@ -15,8 +15,9 @@ use super::constants::{
 use super::duid::Dhcpv6Duid;
 use super::message::{dhcpv6_message_type_summary, Dhcpv6MessageType};
 use super::option::{
-    Dhcpv6Authentication, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6Option, Dhcpv6OptionCode,
-    Dhcpv6StatusCodeOption, Dhcpv6UserClass, Dhcpv6VendorClass, Dhcpv6VendorOptions,
+    Dhcpv6Authentication, Dhcpv6ClientLinkLayerAddress, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6Option,
+    Dhcpv6OptionCode, Dhcpv6RelaySuppliedOptions, Dhcpv6RemoteId, Dhcpv6StatusCodeOption,
+    Dhcpv6UserClass, Dhcpv6VendorClass, Dhcpv6VendorOptions,
 };
 use super::status::Dhcpv6StatusCode;
 
@@ -333,6 +334,17 @@ impl Dhcpv6 {
         self.option(Dhcpv6Option::elapsed_time(centiseconds))
     }
 
+    /// Append an OPTION_RELAY_MSG option from raw relayed DHCPv6 bytes.
+    pub fn relay_msg(self, payload: impl Into<Vec<u8>>) -> Self {
+        self.option(Dhcpv6Option::relay_msg(payload))
+    }
+
+    /// Append an OPTION_RELAY_MSG option from a typed DHCPv6 message.
+    pub fn relay_message(self, message: Dhcpv6) -> Result<Self> {
+        let bytes = Packet::from_layer(message).compile()?;
+        Ok(self.relay_msg(bytes.as_bytes()))
+    }
+
     /// Append an OPTION_RAPID_COMMIT option.
     pub fn rapid_commit(self) -> Self {
         self.option(Dhcpv6Option::rapid_commit())
@@ -356,6 +368,11 @@ impl Dhcpv6 {
     /// Append an OPTION_VENDOR_OPTS option.
     pub fn vendor_opts(self, vendor_opts: Dhcpv6VendorOptions) -> Result<Self> {
         Ok(self.option(Dhcpv6Option::vendor_opts(vendor_opts)?))
+    }
+
+    /// Append an OPTION_INTERFACE_ID option.
+    pub fn interface_id(self, interface_id: impl Into<Vec<u8>>) -> Self {
+        self.option(Dhcpv6Option::interface_id(interface_id))
     }
 
     /// Append an OPTION_RECONF_MSG option.
@@ -391,6 +408,31 @@ impl Dhcpv6 {
     /// Append an OPTION_IA_PD option.
     pub fn ia_pd(self, ia_pd: Dhcpv6IaPd) -> Result<Self> {
         Ok(self.option(Dhcpv6Option::ia_pd(ia_pd)?))
+    }
+
+    /// Append an OPTION_REMOTE_ID option.
+    pub fn remote_id(self, remote_id: Dhcpv6RemoteId) -> Self {
+        self.option(Dhcpv6Option::remote_id(remote_id))
+    }
+
+    /// Append an OPTION_SUBSCRIBER_ID option.
+    pub fn subscriber_id(self, subscriber_id: impl Into<Vec<u8>>) -> Self {
+        self.option(Dhcpv6Option::subscriber_id(subscriber_id))
+    }
+
+    /// Append an OPTION_RELAY_ID option.
+    pub fn relay_id(self, relay_id: impl Into<Vec<u8>>) -> Self {
+        self.option(Dhcpv6Option::relay_id(relay_id))
+    }
+
+    /// Append an OPTION_RSOO option.
+    pub fn relay_supplied_options(self, rsoo: Dhcpv6RelaySuppliedOptions) -> Result<Self> {
+        Ok(self.option(Dhcpv6Option::relay_supplied_options(rsoo)?))
+    }
+
+    /// Append an OPTION_CLIENT_LINKLAYER_ADDR option.
+    pub fn client_link_layer_addr(self, client: Dhcpv6ClientLinkLayerAddress) -> Self {
+        self.option(Dhcpv6Option::client_link_layer_addr(client))
     }
 
     /// Replace the option list.
@@ -461,6 +503,20 @@ impl Dhcpv6 {
         }
     }
 
+    /// Return OPTION_RELAY_MSG payload bytes from the first Relay Message option.
+    pub fn relay_msg_value(&self) -> Option<&[u8]> {
+        self.first_option(super::constants::DHCPV6_OPTION_RELAY_MSG)
+            .and_then(Dhcpv6Option::relay_msg_value)
+    }
+
+    /// Decode the first Relay Message option as a DHCPv6 message.
+    pub fn relayed_message_value(&self) -> Result<Option<Dhcpv6>> {
+        match self.relay_msg_value() {
+            Some(payload) => Dhcpv6::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
     /// Return true when a valid Rapid Commit option is present.
     pub fn rapid_commit_present(&self) -> Result<bool> {
         match self.first_option(super::constants::DHCPV6_OPTION_RAPID_COMMIT) {
@@ -521,6 +577,12 @@ impl Dhcpv6 {
             }
         }
         Ok(values)
+    }
+
+    /// Return OPTION_INTERFACE_ID payload bytes from the first Interface-Id option.
+    pub fn interface_id_value(&self) -> Option<&[u8]> {
+        self.first_option(super::constants::DHCPV6_OPTION_INTERFACE_ID)
+            .and_then(Dhcpv6Option::interface_id_value)
     }
 
     /// Decode the first Reconfigure Message option.
@@ -594,6 +656,50 @@ impl Dhcpv6 {
             }
         }
         Ok(values)
+    }
+
+    /// Decode the first Remote-ID option.
+    pub fn remote_id_value(&self) -> Result<Option<Dhcpv6RemoteId>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_REMOTE_ID) {
+            Some(option) => option.remote_id_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Return OPTION_SUBSCRIBER_ID payload bytes from the first Subscriber-ID option.
+    pub fn subscriber_id_value(&self) -> Option<&[u8]> {
+        self.first_option(super::constants::DHCPV6_OPTION_SUBSCRIBER_ID)
+            .and_then(Dhcpv6Option::subscriber_id_value)
+    }
+
+    /// Return OPTION_RELAY_ID payload bytes from the first Relay-ID option.
+    pub fn relay_id_value(&self) -> Option<&[u8]> {
+        self.first_option(super::constants::DHCPV6_OPTION_RELAY_ID)
+            .and_then(Dhcpv6Option::relay_id_value)
+    }
+
+    /// Decode the first Relay-ID option as a DUID.
+    pub fn relay_duid_value(&self) -> Result<Option<Dhcpv6Duid>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_RELAY_ID) {
+            Some(option) => option.relay_duid_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode the first Relay-Supplied Options option.
+    pub fn relay_supplied_options_value(&self) -> Result<Option<Dhcpv6RelaySuppliedOptions>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_RSOO) {
+            Some(option) => option.relay_supplied_options_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode the first Client Link-Layer Address option.
+    pub fn client_link_layer_addr_value(&self) -> Result<Option<Dhcpv6ClientLinkLayerAddress>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR) {
+            Some(option) => option.client_link_layer_addr_value(),
+            None => Ok(None),
+        }
     }
 
     /// Encoded DHCPv6 client/server message length.
@@ -1350,6 +1456,174 @@ mod dhcpv6_udp_binding_tests {
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
         assert!(decoded.layer::<Dhcpv6>().is_none());
         assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &[12, 0, 0, 0],);
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_relay_options_tests {
+    use core::net::Ipv6Addr;
+
+    use super::Dhcpv6;
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{
+        dhcpv6_rsoo_option_permission, dhcpv6_rsoo_option_permitted, Dhcpv6ClientLinkLayerAddress,
+        Dhcpv6Duid, Dhcpv6MessageType, Dhcpv6Option, Dhcpv6RelaySuppliedOptions, Dhcpv6RemoteId,
+        Dhcpv6RsooOptionPermission, DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR,
+        DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME, DHCPV6_OPTION_INTERFACE_ID, DHCPV6_OPTION_RELAY_MSG,
+        DHCPV6_OPTION_RSOO,
+    };
+
+    fn link() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, 44, 0, 0, 0, 0, 1)
+    }
+
+    fn peer() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, 44, 0, 0, 0, 0, 2)
+    }
+
+    #[test]
+    fn dhcpv6_relay_options_encapsulate_relay_message() {
+        let inner = Dhcpv6::solicit(0x010203).client_id([0x00, 0x03, 0xaa, 0xbb]);
+        let inner_bytes = Packet::from_layer(inner.clone()).compile().unwrap();
+        let relay = Dhcpv6::relay_forward(link(), peer())
+            .interface_id(b"access-loop-7".as_slice())
+            .relay_message(inner)
+            .unwrap();
+
+        let bytes = Packet::from_layer(relay).compile().unwrap();
+        let decoded = Dhcpv6::decode(bytes.as_bytes()).unwrap();
+
+        assert_eq!(decoded.message_type_value(), Dhcpv6MessageType::RelayForw);
+        assert_eq!(decoded.interface_id_value(), Some(&b"access-loop-7"[..]));
+        assert_eq!(decoded.relay_msg_value(), Some(inner_bytes.as_bytes()));
+
+        let relayed = decoded.relayed_message_value().unwrap().unwrap();
+        assert_eq!(relayed.message_type_value(), Dhcpv6MessageType::Solicit);
+        assert_eq!(relayed.transaction_id_value(), 0x010203);
+        assert_eq!(
+            decoded.options_ref()[1].codepoint(),
+            DHCPV6_OPTION_RELAY_MSG
+        );
+    }
+
+    #[test]
+    fn dhcpv6_relay_options_preserve_interface_and_identifier_bytes() {
+        let remote_id = Dhcpv6RemoteId::new(3561, b"slot/1/port/2".as_slice());
+        let relay_duid = Dhcpv6Duid::ll(1, [0x02, 0x00, 0x5e, 0x44, 0x00, 0x01]);
+        let relay = Dhcpv6::relay_forward(link(), peer())
+            .interface_id([0xde, 0xad, 0xbe, 0xef])
+            .remote_id(remote_id.clone())
+            .subscriber_id(b"subscriber-123".as_slice())
+            .relay_id(relay_duid.clone());
+
+        assert_eq!(
+            relay.interface_id_value(),
+            Some(&[0xde, 0xad, 0xbe, 0xef][..])
+        );
+        assert_eq!(relay.remote_id_value().unwrap(), Some(remote_id.clone()));
+        assert_eq!(remote_id.enterprise_number(), 3561);
+        assert_eq!(remote_id.remote_id(), b"slot/1/port/2");
+        assert_eq!(relay.subscriber_id_value(), Some(&b"subscriber-123"[..]));
+        assert_eq!(relay.relay_duid_value().unwrap(), Some(relay_duid.clone()));
+
+        let bytes = Packet::from_layer(relay).compile().unwrap();
+        let decoded = Dhcpv6::decode(bytes.as_bytes()).unwrap();
+        assert_eq!(
+            decoded.interface_id_value(),
+            Some(&[0xde, 0xad, 0xbe, 0xef][..])
+        );
+        assert_eq!(decoded.remote_id_value().unwrap(), Some(remote_id));
+        assert_eq!(decoded.relay_duid_value().unwrap(), Some(relay_duid));
+        assert_eq!(
+            decoded.options_ref()[0].codepoint(),
+            DHCPV6_OPTION_INTERFACE_ID
+        );
+    }
+
+    #[test]
+    fn dhcpv6_relay_options_client_link_layer_address_roundtrips() {
+        let client = Dhcpv6ClientLinkLayerAddress::ethernet([0x02, 0x00, 0x5e, 0x44, 0x00, 0x02]);
+        let option = Dhcpv6Option::client_link_layer_addr(client.clone());
+
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR);
+        assert_eq!(
+            option.payload(),
+            &[0x00, 0x01, 0x02, 0x00, 0x5e, 0x44, 0x00, 0x02],
+        );
+        assert_eq!(
+            option.client_link_layer_addr_value().unwrap(),
+            Some(client.clone()),
+        );
+        assert_eq!(client.hardware_type(), 1);
+        assert_eq!(
+            client.link_layer_address(),
+            &[0x02, 0x00, 0x5e, 0x44, 0x00, 0x02],
+        );
+
+        let relay = Dhcpv6::relay_forward(link(), peer()).client_link_layer_addr(client.clone());
+        let decoded =
+            Dhcpv6::decode(Packet::from_layer(relay).compile().unwrap().as_bytes()).unwrap();
+        assert_eq!(
+            decoded.client_link_layer_addr_value().unwrap(),
+            Some(client),
+        );
+    }
+
+    #[test]
+    fn dhcpv6_relay_options_rsoo_preserves_unknown_options_and_permission_metadata() {
+        let permitted = Dhcpv6Option::raw(DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME, b"example.test");
+        let unknown = Dhcpv6Option::raw(65_000u16, [0xde, 0xad, 0xbe, 0xef]);
+        let rsoo = Dhcpv6RelaySuppliedOptions::new(vec![permitted.clone(), unknown.clone()]);
+        let option = Dhcpv6Option::relay_supplied_options(rsoo.clone()).unwrap();
+
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_RSOO);
+        assert_eq!(
+            option.relay_supplied_options_value().unwrap(),
+            Some(rsoo.clone()),
+        );
+        assert_eq!(rsoo.options(), &[permitted.clone(), unknown.clone()]);
+        assert!(dhcpv6_rsoo_option_permitted(
+            DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME
+        ));
+        assert!(!dhcpv6_rsoo_option_permitted(65_000));
+        assert_eq!(
+            dhcpv6_rsoo_option_permission(65_000),
+            Dhcpv6RsooOptionPermission::NotPermitted,
+        );
+
+        let relay = Dhcpv6::relay_forward(link(), peer())
+            .relay_supplied_options(rsoo.clone())
+            .unwrap();
+        let decoded =
+            Dhcpv6::decode(Packet::from_layer(relay).compile().unwrap().as_bytes()).unwrap();
+        assert_eq!(decoded.relay_supplied_options_value().unwrap(), Some(rsoo));
+        assert_eq!(
+            dhcpv6_rsoo_option_permission(DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME),
+            Dhcpv6RsooOptionPermission::Permitted,
+        );
+    }
+
+    #[test]
+    fn dhcpv6_relay_options_malformed_lengths_are_structured() {
+        assert_eq!(
+            Dhcpv6RemoteId::decode(&[0x00, 0x00, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.remote_id.enterprise_number", 4, 3),
+        );
+        assert_eq!(
+            Dhcpv6ClientLinkLayerAddress::decode(&[0x00]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "dhcpv6.option.client_linklayer_addr.hardware_type",
+                2,
+                1,
+            ),
+        );
+
+        let malformed_rsoo = Dhcpv6Option::raw(DHCPV6_OPTION_RSOO, [0x00, 0x01, 0x00, 0x04, 0xaa]);
+        assert_eq!(
+            malformed_rsoo.relay_supplied_options_value().unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.payload", 8, 5),
+        );
     }
 }
 
