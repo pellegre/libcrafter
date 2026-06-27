@@ -22,6 +22,7 @@ use super::option::{
     Dhcpv6VendorOptions,
 };
 use super::status::Dhcpv6StatusCode;
+use crate::protocols::dhcp::v4::Dhcpv4;
 
 /// DHCPv6 packet layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,6 +208,16 @@ impl Dhcpv6 {
     /// Create a DHCPv6 STARTTLS message with the supplied transaction ID.
     pub fn starttls(transaction_id: u32) -> Self {
         Self::client_server_message(Dhcpv6MessageType::StartTls, transaction_id)
+    }
+
+    /// Create a DHCPv6 DHCPV4-QUERY message with the supplied transaction ID.
+    pub fn dhcpv4_query(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::Dhcpv4Query, transaction_id)
+    }
+
+    /// Create a DHCPv6 DHCPV4-RESPONSE message with the supplied transaction ID.
+    pub fn dhcpv4_response(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::Dhcpv4Response, transaction_id)
     }
 
     /// Create a DHCPv6 ADDR-REG-INFORM message with the supplied transaction ID.
@@ -438,6 +449,16 @@ impl Dhcpv6 {
     /// Append an OPTION_LQ_END_TIME option.
     pub fn leasequery_end_time(self, seconds: u32) -> Self {
         self.option(Dhcpv6Option::leasequery_end_time(seconds))
+    }
+
+    /// Append an OPTION_DHCPV4_MSG option from embedded DHCPv4 bytes.
+    pub fn dhcpv4_msg(self, payload: impl Into<Vec<u8>>) -> Self {
+        self.option(Dhcpv6Option::dhcpv4_msg(payload))
+    }
+
+    /// Append an OPTION_DHCPV4_MSG option from a typed DHCPv4 layer.
+    pub fn dhcpv4_message(self, message: Dhcpv4) -> Result<Self> {
+        Ok(self.option(Dhcpv6Option::dhcpv4_message(message)?))
     }
 
     /// Append an OPTION_AUTH option.
@@ -729,6 +750,20 @@ impl Dhcpv6 {
     pub fn leasequery_end_time_value(&self) -> Result<Option<u32>> {
         match self.first_option(super::constants::DHCPV6_OPTION_LQ_END_TIME) {
             Some(option) => option.leasequery_end_time_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Return OPTION_DHCPV4_MSG payload bytes.
+    pub fn dhcpv4_msg_value(&self) -> Option<&[u8]> {
+        self.first_option(super::constants::DHCPV6_OPTION_DHCPV4_MSG)
+            .and_then(Dhcpv6Option::dhcpv4_msg_value)
+    }
+
+    /// Decode the first OPTION_DHCPV4_MSG as a typed DHCPv4 layer.
+    pub fn dhcpv4_message_value(&self) -> Result<Option<Dhcpv4>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_DHCPV4_MSG) {
+            Some(option) => option.dhcpv4_message_value(),
             None => Ok(None),
         }
     }
@@ -2462,5 +2497,71 @@ mod dhcpv6_active_leasequery_tests {
         );
         assert!(crate::packet::Layer::summary(&decoded).contains("starttls"));
         assert_eq!(Packet::from_layer(decoded).compile().unwrap(), bytes);
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_dhcpv4_query_tests {
+    use super::Dhcpv6;
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v4::Dhcpv4;
+    use crate::protocols::dhcp::v6::{
+        Dhcpv6MessageType, Dhcpv6Option, DHCPV6_DHCPV4_QUERY, DHCPV6_DHCPV4_RESPONSE,
+        DHCPV6_OPTION_DHCPV4_MSG,
+    };
+
+    #[test]
+    fn dhcpv6_dhcpv4_query_message_codepoints_are_named() {
+        assert_eq!(Dhcpv6MessageType::Dhcpv4Query.code(), DHCPV6_DHCPV4_QUERY);
+        assert_eq!(
+            Dhcpv6MessageType::Dhcpv4Response.code(),
+            DHCPV6_DHCPV4_RESPONSE,
+        );
+    }
+
+    #[test]
+    fn dhcpv6_dhcpv4_query_preserves_raw_embedded_payloads() {
+        let embedded = [0x01, 0x02, 0x03, 0x04];
+        let message = Dhcpv6::dhcpv4_query(0x010203).dhcpv4_msg(embedded);
+        let decoded =
+            Dhcpv6::decode(Packet::from_layer(message).compile().unwrap().as_bytes()).unwrap();
+
+        assert_eq!(decoded.message_type_value(), Dhcpv6MessageType::Dhcpv4Query);
+        assert_eq!(decoded.dhcpv4_msg_value(), Some(&embedded[..]));
+        assert_eq!(
+            decoded.options_ref()[0].codepoint(),
+            DHCPV6_OPTION_DHCPV4_MSG
+        );
+    }
+
+    #[test]
+    fn dhcpv6_dhcpv4_response_can_decode_embedded_dhcpv4_layer() {
+        let embedded = Packet::from_layer(Dhcpv4::new()).compile().unwrap();
+        let option = Dhcpv6Option::dhcpv4_msg(embedded.as_bytes());
+        let typed = option.dhcpv4_message_value().unwrap().unwrap();
+        let message = Dhcpv6::dhcpv4_response(0x0a0b0c)
+            .dhcpv4_message(typed)
+            .unwrap();
+        let decoded =
+            Dhcpv6::decode(Packet::from_layer(message).compile().unwrap().as_bytes()).unwrap();
+
+        assert_eq!(
+            decoded.message_type_value(),
+            Dhcpv6MessageType::Dhcpv4Response,
+        );
+        assert_eq!(decoded.dhcpv4_msg_value(), Some(embedded.as_bytes()));
+        assert!(decoded.dhcpv4_message_value().unwrap().is_some());
+    }
+
+    #[test]
+    fn dhcpv6_dhcpv4_query_surfaces_malformed_embedded_payloads() {
+        let malformed = Dhcpv6Option::dhcpv4_msg([0u8; 10]);
+
+        assert_eq!(
+            malformed.dhcpv4_message_value().unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv4 packet", 240, 10),
+        );
+        assert_eq!(malformed.dhcpv4_msg_value(), Some(&[0u8; 10][..]));
     }
 }
