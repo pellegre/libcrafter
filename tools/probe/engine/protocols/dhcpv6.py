@@ -363,6 +363,15 @@ def _dhcpv6_probe_plan(
                 iaid=transaction_id,
                 address=ia_na_ipv6,
             ),
+            "ia_pd": _ia_pd_validation(
+                str(config["option_profile"]),
+                iaid=transaction_id,
+                prefix=delegated_prefix,
+            ),
+            "pd_exchanges": _pd_exchange_sequence(
+                str(config["option_profile"]),
+                transaction_id=transaction_id,
+            ),
         },
         "dhcpv6_sends": sends,
         "target_service": {
@@ -401,6 +410,16 @@ def _dhcpv6_probe_plan(
                 iaid=transaction_id,
                 address=ia_na_ipv6,
             ),
+            "ia_pd": _ia_pd_validation(
+                str(config["option_profile"]),
+                iaid=transaction_id,
+                prefix=delegated_prefix,
+            ),
+            "pd_exchanges": _pd_exchange_sequence(
+                str(config["option_profile"]),
+                transaction_id=transaction_id,
+            ),
+            "route_installation": "out_of_scope",
             "reply_decode": {
                 "protocol": "Dhcpv6",
                 "message_type": str(config["expected_message_type"]),
@@ -473,18 +492,7 @@ def _request_options(
     if option_profile == "rapid_commit":
         base.append({"code": 14, "name": "rapid_commit"})
     if option_profile == "ia_pd":
-        base.append(
-            {
-                "code": 25,
-                "name": "ia_pd",
-                "iaid": transaction_id,
-                "t1": 1800,
-                "t2": 2880,
-                "prefixes": [
-                    {"code": 26, "name": "iaprefix", "prefix": delegated_prefix, "prefix_length": 56, "preferred_lifetime": 3600, "valid_lifetime": 7200}
-                ],
-            }
-        )
+        base.append(_ia_pd_option(transaction_id, delegated_prefix))
     if option_profile == "relay":
         base.extend(
             [
@@ -537,15 +545,8 @@ def _expected_options(
         options.append(_ia_na_option(transaction_id, ia_na_ipv6))
         options.append(_status_success_option())
     if option_profile == "ia_pd":
-        options.append(
-            {
-                "code": 25,
-                "name": "ia_pd",
-                "prefixes": [
-                    {"code": 26, "name": "iaprefix", "prefix": delegated_prefix, "prefix_length": 56, "preferred_lifetime": 3600, "valid_lifetime": 7200}
-                ],
-            }
-        )
+        options.append(_ia_pd_option(transaction_id, delegated_prefix))
+        options.append(_status_success_option())
     if option_profile == "rapid_commit":
         options.append({"code": 14, "name": "rapid_commit"})
     if option_profile == "relay":
@@ -607,6 +608,28 @@ def _status_success_option() -> JSONObject:
     return {"code": 13, "name": "status_code", "status_code": 0, "status": "success"}
 
 
+def _iaprefix_option(prefix: str) -> JSONObject:
+    return {
+        "code": 26,
+        "name": "iaprefix",
+        "prefix": prefix,
+        "prefix_length": 56,
+        "preferred_lifetime": 3600,
+        "valid_lifetime": 7200,
+    }
+
+
+def _ia_pd_option(iaid: int, prefix: str) -> JSONObject:
+    return {
+        "code": 25,
+        "name": "ia_pd",
+        "iaid": iaid,
+        "t1": 1800,
+        "t2": 2880,
+        "prefixes": [_iaprefix_option(prefix)],
+    }
+
+
 def _ia_na_validation(option_profile: str, *, iaid: int, address: str) -> JSONObject:
     if option_profile not in {"solicit", "ia_na", "rapid_commit"}:
         return {"enabled": False}
@@ -625,10 +648,52 @@ def _ia_na_validation(option_profile: str, *, iaid: int, address: str) -> JSONOb
     }
 
 
+def _ia_pd_validation(option_profile: str, *, iaid: int, prefix: str) -> JSONObject:
+    if option_profile != "ia_pd":
+        return {"enabled": False}
+    return {
+        "enabled": True,
+        "iaid": iaid,
+        "t1": 1800,
+        "t2": 2880,
+        "iaprefix": {
+            "prefix": prefix,
+            "prefix_length": 56,
+            "preferred_lifetime": 3600,
+            "valid_lifetime": 7200,
+        },
+        "status_code": 0,
+        "status": "success",
+    }
+
+
+def _pd_exchange_sequence(option_profile: str, *, transaction_id: int) -> list[JSONObject]:
+    if option_profile != "ia_pd":
+        return []
+    advertise_xid = transaction_id
+    reply_xid = ((transaction_id ^ 0xA5A5A5) & 0xFFFFFF) or 1
+    return [
+        {
+            "stimulus": "solicit",
+            "expected_response": "advertise",
+            "transaction_id": advertise_xid,
+            "transaction_id_match": True,
+        },
+        {
+            "stimulus": "request",
+            "expected_response": "reply",
+            "transaction_id": reply_xid,
+            "transaction_id_match": True,
+        },
+    ]
+
+
 def _required_reply_option_names(option_profile: str) -> list[str]:
     names = ["server_identifier"]
     if option_profile in {"solicit", "ia_na", "rapid_commit"}:
         names.extend(["client_identifier", "ia_na", "iaaddr", "status_code"])
+    if option_profile == "ia_pd":
+        names.extend(["client_identifier", "ia_pd", "iaprefix", "status_code"])
     return names
 
 
