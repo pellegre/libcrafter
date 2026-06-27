@@ -385,6 +385,11 @@ impl Dhcpv6 {
             .unwrap_or(Dhcpv6MessageType::Solicit)
     }
 
+    /// Current raw message type codepoint.
+    pub fn message_type_code_value(&self) -> u8 {
+        self.message_type_value().code()
+    }
+
     /// State of the message type field.
     pub const fn message_type_state(&self) -> FieldState {
         self.message_type.state()
@@ -457,6 +462,20 @@ impl Dhcpv6 {
     pub fn option(mut self, option: Dhcpv6Option) -> Self {
         self.options.push(option);
         self
+    }
+
+    /// Append a raw option by codepoint and payload bytes.
+    pub fn raw_option(
+        self,
+        code: impl Into<Dhcpv6OptionCode>,
+        payload: impl Into<Vec<u8>>,
+    ) -> Self {
+        self.option(Dhcpv6Option::raw(code, payload))
+    }
+
+    /// Append a zero-length option by codepoint.
+    pub fn empty_option(self, code: impl Into<Dhcpv6OptionCode>) -> Self {
+        self.option(Dhcpv6Option::empty(code))
     }
 
     /// Append an OPTION_CLIENTID option.
@@ -1601,6 +1620,102 @@ mod dhcpv6_singleton_tests {
         assert_eq!(unknown_entry.singleton, None);
         assert!(!unknown_entry.is_duplicate_singleton());
         assert_eq!(report.entries().len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_raw_escape_tests {
+    use super::Dhcpv6;
+    use core::net::Ipv6Addr;
+
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{
+        Dhcpv6IaNa, Dhcpv6MessageType, Dhcpv6Option, DHCPV6_OPTION_IAADDR, DHCPV6_OPTION_IA_NA,
+        DHCPV6_OPTION_STATUS_CODE,
+    };
+
+    #[test]
+    fn dhcpv6_raw_escape_compiles_unknown_message_type_and_options() {
+        let message = Dhcpv6::new()
+            .message_type_code(250)
+            .transaction_id(0x00ff_00ff)
+            .raw_option(65_000u16, [0xaa, 0xbb, 0xcc])
+            .empty_option(65_001u16);
+        let bytes = Packet::from_layer(message).compile().unwrap();
+
+        assert_eq!(
+            bytes.as_bytes(),
+            &[
+                250, 0xff, 0x00, 0xff, 0xfd, 0xe8, 0x00, 0x03, 0xaa, 0xbb, 0xcc, 0xfd, 0xe9, 0x00,
+                0x00,
+            ],
+        );
+
+        let decoded = Dhcpv6::decode(bytes.as_bytes()).unwrap();
+        assert_eq!(
+            decoded.message_type_value(),
+            Dhcpv6MessageType::Unknown(250)
+        );
+        assert_eq!(decoded.message_type_code_value(), 250);
+        assert_eq!(decoded.transaction_id_value(), 0x00ff_00ff);
+        assert_eq!(decoded.options_ref()[0].codepoint(), 65_000);
+        assert_eq!(decoded.options_ref()[0].payload(), &[0xaa, 0xbb, 0xcc]);
+        assert_eq!(decoded.options_ref()[1].codepoint(), 65_001);
+        assert!(decoded.options_ref()[1].is_empty());
+    }
+
+    #[test]
+    fn dhcpv6_raw_escape_preserves_explicit_relay_hop_count_and_raw_option() {
+        let link = Ipv6Addr::new(0x2001, 0x0db8, 1, 0, 0, 0, 0, 1);
+        let peer = Ipv6Addr::new(0x2001, 0x0db8, 2, 0, 0, 0, 0, 2);
+        let relay = Dhcpv6::relay_forward(link, peer)
+            .hop_count(255)
+            .raw_option(65_002u16, [0x01, 0x02]);
+        let decoded = Dhcpv6::decode(Packet::from_layer(relay).compile().unwrap().as_bytes())
+            .expect("valid relay envelope should decode");
+
+        let relay_header = decoded.relay().unwrap();
+        assert_eq!(relay_header.hop_count_value(), 255);
+        assert_eq!(relay_header.link_address_value(), link);
+        assert_eq!(relay_header.peer_address_value(), peer);
+        assert_eq!(decoded.options_ref()[0].codepoint(), 65_002);
+        assert_eq!(decoded.options_ref()[0].payload(), &[0x01, 0x02]);
+    }
+
+    #[test]
+    fn dhcpv6_raw_escape_keeps_malformed_nested_options_inspectable() {
+        let ia_na = Dhcpv6IaNa::new(0x0102_0304, 60, 120)
+            .raw_option(DHCPV6_OPTION_IAADDR, [0xaa])
+            .raw_option(65_003u16, [0xde, 0xad]);
+        let message = Dhcpv6::reply(0x010203)
+            .option(Dhcpv6Option::ia_na(ia_na).unwrap())
+            .raw_option(65_004u16, [0xbe, 0xef]);
+        let decoded = Dhcpv6::decode(Packet::from_layer(message).compile().unwrap().as_bytes())
+            .expect("valid DHCPv6 envelope should decode");
+        let decoded_ia_na = decoded.options_ref()[0].ia_na_value().unwrap().unwrap();
+
+        assert_eq!(decoded.options_ref()[0].codepoint(), DHCPV6_OPTION_IA_NA);
+        assert_eq!(
+            decoded_ia_na.options_ref()[0].codepoint(),
+            DHCPV6_OPTION_IAADDR
+        );
+        assert_eq!(decoded_ia_na.options_ref()[0].payload(), &[0xaa]);
+        assert!(decoded_ia_na.options_ref()[0].ia_addr_value().is_err());
+        assert_eq!(decoded_ia_na.options_ref()[1].codepoint(), 65_003);
+        assert_eq!(decoded_ia_na.options_ref()[1].payload(), &[0xde, 0xad]);
+        assert_eq!(decoded.options_ref()[1].codepoint(), 65_004);
+    }
+
+    #[test]
+    fn dhcpv6_raw_escape_decodes_valid_header_with_malformed_typed_option() {
+        let decoded = Dhcpv6::decode(&[7, 0x01, 0x02, 0x03, 0x00, 0x0d, 0x00, 0x01, 0xff]).unwrap();
+        let option = &decoded.options_ref()[0];
+
+        assert_eq!(decoded.message_type_value(), Dhcpv6MessageType::Reply);
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_STATUS_CODE);
+        assert_eq!(option.payload(), &[0xff]);
+        assert!(option.status_code_value().is_err());
+        assert!(option.summary().contains("status=malformed"));
     }
 }
 

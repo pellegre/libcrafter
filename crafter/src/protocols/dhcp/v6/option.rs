@@ -521,6 +521,15 @@ impl Dhcpv6IaAddr {
         self
     }
 
+    /// Append a raw nested option by codepoint and payload bytes.
+    pub fn raw_option(
+        self,
+        code: impl Into<Dhcpv6OptionCode>,
+        payload: impl Into<Vec<u8>>,
+    ) -> Self {
+        self.option(Dhcpv6Option::raw(code, payload))
+    }
+
     /// Append a nested OPTION_STATUS_CODE option.
     pub fn status_code(self, status: Dhcpv6StatusCodeOption) -> Self {
         self.option(Dhcpv6Option::status_code(status))
@@ -613,6 +622,15 @@ impl Dhcpv6IaPd {
     pub fn option(mut self, option: Dhcpv6Option) -> Self {
         self.options.push(option);
         self
+    }
+
+    /// Append a raw nested option by codepoint and payload bytes.
+    pub fn raw_option(
+        self,
+        code: impl Into<Dhcpv6OptionCode>,
+        payload: impl Into<Vec<u8>>,
+    ) -> Self {
+        self.option(Dhcpv6Option::raw(code, payload))
     }
 
     /// Append a nested OPTION_STATUS_CODE option.
@@ -712,6 +730,15 @@ impl Dhcpv6IaNa {
     pub fn option(mut self, option: Dhcpv6Option) -> Self {
         self.options.push(option);
         self
+    }
+
+    /// Append a raw nested option by codepoint and payload bytes.
+    pub fn raw_option(
+        self,
+        code: impl Into<Dhcpv6OptionCode>,
+        payload: impl Into<Vec<u8>>,
+    ) -> Self {
+        self.option(Dhcpv6Option::raw(code, payload))
     }
 
     /// Append a nested OPTION_STATUS_CODE option.
@@ -832,6 +859,15 @@ impl Dhcpv6IaPrefix {
     pub fn option(mut self, option: Dhcpv6Option) -> Self {
         self.options.push(option);
         self
+    }
+
+    /// Append a raw nested option by codepoint and payload bytes.
+    pub fn raw_option(
+        self,
+        code: impl Into<Dhcpv6OptionCode>,
+        payload: impl Into<Vec<u8>>,
+    ) -> Self {
+        self.option(Dhcpv6Option::raw(code, payload))
     }
 
     /// Append a nested OPTION_STATUS_CODE option.
