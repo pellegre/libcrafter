@@ -1532,6 +1532,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
     json!({
         "backend": BACKEND_NAME,
         "summary": packet.summary(),
+        "show": packet.show(),
         "raw_hex": hex_bytes(raw),
         "ethernet": ethernet.map(|layer| json!({
             "src": layer.source().map(|mac| mac.to_string()),

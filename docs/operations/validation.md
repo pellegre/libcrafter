@@ -483,6 +483,24 @@ models, capability reports, and teardown logs under `target/oracle/dhcpv6-*`;
 never commit provider identifiers, public IPs, credentials, live hostnames, or
 captures.
 
+Every non-dry-run DHCPv6 oracle artifact set must be reviewable offline. Keep
+the provider session metadata, endpoint/provider manifests, planned topology,
+stimulus and reply bytes, pcap or pcapng captures, decoded `summary()` and
+`show()` text, normalized comparison JSON, command stdout/stderr paths, final
+reports, and teardown records under the selected `target/oracle/dhcpv6-*`
+directory. Audit one or more artifact roots before treating a live run as
+complete:
+
+```sh
+python3 tools/oracle/engine/dhcpv6_artifacts.py \
+  --input target/oracle/dhcpv6-vm-live \
+  --out target/oracle/dhcpv6-artifact-audit
+```
+
+Dry-run or skipped DHCPv6 artifact roots are allowed to audit as `skipped`;
+they still preserve the plan, capability, and skip reason needed to reproduce
+why no packet exchange occurred.
+
 ## ICMPv4 Live Matrix
 
 The ICMPv4 live matrix runs the oracle live path against the `l2:ipv4` root

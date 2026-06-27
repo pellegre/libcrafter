@@ -327,6 +327,19 @@ or captures. Keep DHCPv6 live reports, pcaps, decoded models, provider
 capability reports, and teardown logs under the requested ignored
 `target/oracle/dhcpv6-*` artifact directory.
 
+Before declaring a real DHCPv6 oracle or probe exchange complete, audit the
+artifact root. A passing live audit requires provider session metadata,
+endpoint/provider manifests, planned topology, stimulus and reply bytes, pcaps,
+decoded `summary()` and `show()` text, normalized comparison JSON, command logs,
+final reports, and teardown records. Dry-run and capability-skipped roots audit
+as `skipped` rather than `passed`.
+
+```sh
+python3 tools/oracle/engine/dhcpv6_artifacts.py \
+  --input target/oracle/dhcpv6-vm-live \
+  --out target/oracle/dhcpv6-artifact-audit
+```
+
 ## Exchange Directions
 
 Live reports use the same backend-neutral direction names as offline and pcap

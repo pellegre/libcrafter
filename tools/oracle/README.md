@@ -358,6 +358,21 @@ include the mode, backend, profile, seed, count, direction, and packet index.
 Reproduce a failing generated packet with the same command coordinates and add
 `--index <n>` when the report identifies a single packet.
 
+DHCPv6 live runs use `target/oracle/dhcpv6-*` roots. After a confirmed live
+exchange, run the DHCPv6 artifact audit over the oracle root and any paired
+probe root:
+
+```sh
+python3 tools/oracle/engine/dhcpv6_artifacts.py \
+  --input target/oracle/dhcpv6-live \
+  --input target/probe/dhcpv6-live \
+  --out target/oracle/dhcpv6-artifact-audit
+```
+
+The audit is offline-only. It checks for provider/session metadata, manifests,
+planned topology, stimulus and reply bytes, pcaps, decoded `summary()`/`show()`,
+normalized comparison JSON, command logs, reports, and teardown records.
+
 ## Specs And Backends
 
 Executable specs define packet families, stack roots, features, pcap contracts,

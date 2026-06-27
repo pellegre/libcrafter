@@ -420,5 +420,23 @@ workflows into ignored artifact directories or the configured runner output
 directory. See [docs/operations/endpoint.md](endpoint.md) for single-endpoint provider
 credentials, artifacts, and cleanup.
 
+DHCPv6 live probe artifacts must use `target/probe/dhcpv6-*` roots and mirror
+the oracle live evidence set: provider session metadata, endpoint/provider
+manifests, planned topology, stimulus and reply bytes, pcaps when packets were
+captured, decoded `summary()` and `show()` text, normalized validation JSON,
+command logs, final reports, and teardown records. The probe stimulus endpoint
+emits `sent_decoded.summary` and `sent_decoded.show` in dry-run and live
+metadata so a failed run can be inspected without re-decoding the packet.
+
+Use the DHCPv6 artifact audit helper against probe and oracle roots together
+when a live probe is paired with an oracle comparison:
+
+```sh
+python3 tools/oracle/engine/dhcpv6_artifacts.py \
+  --input target/probe/dhcpv6-live \
+  --input target/oracle/dhcpv6-live \
+  --out target/probe/dhcpv6-artifact-audit
+```
+
 Do not commit provider state, public host addresses, live host identifiers,
 packet captures from non-disposable networks, or credentials.
