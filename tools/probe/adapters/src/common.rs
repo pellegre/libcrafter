@@ -17,7 +17,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::{arp, dhcpv4, dns, icmp, mqtt, ndp, ospf, quic, rip, snmp, tcp, udp};
+use crate::{arp, dhcpv4, dhcpv6, dns, icmp, mqtt, ndp, ospf, quic, rip, snmp, tcp, udp};
 
 pub type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -351,6 +351,24 @@ pub struct ProbePlan {
     // independently-decoded Offers. Single-send DHCPv4 cases leave this unset.
     #[serde(default)]
     pub dhcpv4_sends: Option<Vec<Dhcpv4Send>>,
+    // DHCPv6 behavioral case fields. The planner keeps the source-backed
+    // DHCPv6 contract in nested JSON because the option surface spans client,
+    // server, relay, IA_NA, IA_PD, Reconfigure, and Leasequery behavior. The
+    // DHCPv6 adapter owns materializing those rows into typed libcrafter
+    // `Dhcpv6` options, while preserving the original contract in dry-run and
+    // failure reports.
+    #[serde(default)]
+    pub dhcpv6: Option<Value>,
+    #[serde(default)]
+    pub dhcpv6_sends: Option<Value>,
+    #[serde(default)]
+    pub protocol: Option<String>,
+    #[serde(default)]
+    pub planned_only: Option<bool>,
+    #[serde(default)]
+    pub planned_only_reason: Option<String>,
+    #[serde(default)]
+    pub target_service: Option<Value>,
     // Multi-send UDP behavioral case fields (`udp-multi-shot-order`). The plan
     // carries a `udp_sends` array (one entry per datagram), each with its own
     // ordered sequence marker and payload while sharing the same peer tuple. The
@@ -1083,6 +1101,36 @@ fn dispatch_case(
         ) => dhcpv4::run_dhcpv4_live(request, plan),
         (
             RunMode::DryRun,
+            "dhcpv6-information-request-reply"
+            | "dhcpv6-solicit-advertise"
+            | "dhcpv6-request-reply-ia-na"
+            | "dhcpv6-prefix-delegation"
+            | "dhcpv6-rapid-commit"
+            | "dhcpv6-relay-forward-reply"
+            | "dhcpv6-reconfigure-observation"
+            | "dhcpv6-leasequery-plan"
+            | "dhcpv6-bulk-leasequery-plan"
+            | "dhcpv6-active-leasequery-plan"
+            | "dhcpv6-unknown-option-preservation"
+            | "dhcpv6-repeated-transaction-id",
+        ) => dhcpv6::run_dhcpv6_dry_run(request, plan),
+        (
+            RunMode::Live,
+            "dhcpv6-information-request-reply"
+            | "dhcpv6-solicit-advertise"
+            | "dhcpv6-request-reply-ia-na"
+            | "dhcpv6-prefix-delegation"
+            | "dhcpv6-rapid-commit"
+            | "dhcpv6-relay-forward-reply"
+            | "dhcpv6-reconfigure-observation"
+            | "dhcpv6-leasequery-plan"
+            | "dhcpv6-bulk-leasequery-plan"
+            | "dhcpv6-active-leasequery-plan"
+            | "dhcpv6-unknown-option-preservation"
+            | "dhcpv6-repeated-transaction-id",
+        ) => dhcpv6::run_dhcpv6_live(request, plan),
+        (
+            RunMode::DryRun,
             "arp-basic-who-has"
             | "arp-repeat-two-replies"
             | "arp-source-address-preserved"
@@ -1344,6 +1392,11 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "send_count": plan.send_count,
         "sends": dns::sends_json(plan.sends.as_deref()),
         "dhcpv4_sends": dhcpv4::sends_json(plan.dhcpv4_sends.as_deref()),
+        "dhcpv6": plan.dhcpv6,
+        "dhcpv6_sends": plan.dhcpv6_sends,
+        "protocol": plan.protocol,
+        "planned_only": plan.planned_only,
+        "planned_only_reason": plan.planned_only_reason,
         "udp_sends": udp::sends_json(plan.udp_sends.as_deref()),
         "client_mac": plan.client_mac,
         "transaction_id": plan.transaction_id,
@@ -1469,11 +1522,13 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
     let udp = packet.layer::<Udp>();
     let dns = packet.layer::<Dns>();
     let dhcpv4 = packet.layer::<Dhcpv4>();
+    let dhcpv6 = packet.layer::<Dhcpv6>();
     let snmp_layer = packet.layer::<Snmp>();
     let quic_layer = packet.layer::<Quic>();
     let udp_options = packet.layer::<UdpOptions>();
     let ethernet = packet.layer::<Ethernet>();
     let arp_layer = packet.layer::<Arp>();
+    let ipv6 = packet.layer::<Ipv6>();
     json!({
         "backend": BACKEND_NAME,
         "summary": packet.summary(),
@@ -1489,6 +1544,12 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
             "dst": layer.destination().to_string(),
             "ttl": layer.ttl_value(),
             "protocol": layer.protocol_value(),
+        })),
+        "ipv6": ipv6.map(|layer| json!({
+            "src": layer.source().to_string(),
+            "dst": layer.destination().to_string(),
+            "hop_limit": layer.hop_limit_value(),
+            "next_header": layer.next_header_value(),
         })),
         "icmp": icmp.map(|layer| json!({
             "type": layer.icmp_type_value(),
@@ -1516,6 +1577,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
         "udp_options": udp::udp_options_json(udp_options),
         "dns": dns.map(dns::dns_json),
         "dhcpv4": dhcpv4.map(dhcpv4::dhcpv4_json),
+        "dhcpv6": dhcpv6.map(dhcpv6::dhcpv6_json),
         "snmp": snmp_layer.map(snmp::snmp_json),
         "quic": quic_layer.map(quic::quic_json),
         "payload_hex": hex_bytes(raw_payload(packet)),
@@ -1623,6 +1685,18 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
                 plan.source_port.unwrap_or(DHCPV4_CLIENT_PORT),
             )
         }
+        "dhcpv6-information-request-reply"
+        | "dhcpv6-solicit-advertise"
+        | "dhcpv6-request-reply-ia-na"
+        | "dhcpv6-prefix-delegation"
+        | "dhcpv6-rapid-commit"
+        | "dhcpv6-relay-forward-reply"
+        | "dhcpv6-reconfigure-observation"
+        | "dhcpv6-leasequery-plan"
+        | "dhcpv6-bulk-leasequery-plan"
+        | "dhcpv6-active-leasequery-plan"
+        | "dhcpv6-unknown-option-preservation"
+        | "dhcpv6-repeated-transaction-id" => dhcpv6::capture_filter(plan),
         "udp-echo-empty"
         | "udp-echo-short"
         | "udp-echo-binary"
@@ -1712,6 +1786,18 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "dhcpv4-inform-ack" => "dhcpv4_ack",
             "dhcpv4-request-nak" => "dhcpv4_nak",
             "dhcpv4-rapid-repeat" => "dhcpv4_offer",
+            "dhcpv6-information-request-reply" => "dhcpv6_reply",
+            "dhcpv6-solicit-advertise" => "dhcpv6_advertise",
+            "dhcpv6-request-reply-ia-na" => "dhcpv6_reply",
+            "dhcpv6-prefix-delegation" => "dhcpv6_reply",
+            "dhcpv6-rapid-commit" => "dhcpv6_reply",
+            "dhcpv6-relay-forward-reply" => "dhcpv6_relay_reply",
+            "dhcpv6-reconfigure-observation" => "dhcpv6_reconfigure_observed",
+            "dhcpv6-leasequery-plan" => "dhcpv6_leasequery_reply",
+            "dhcpv6-bulk-leasequery-plan" => "dhcpv6_leasequery_done",
+            "dhcpv6-active-leasequery-plan" => "dhcpv6_active_leasequery_stream",
+            "dhcpv6-unknown-option-preservation" => "dhcpv6_reply",
+            "dhcpv6-repeated-transaction-id" => "dhcpv6_reply",
             "udp-echo-empty"
             | "udp-echo-short"
             | "udp-echo-binary"
@@ -2066,6 +2152,29 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
                 "sends": dhcpv4::repeat_sends_json(plan.dhcpv4_sends.as_deref()),
             },
         }),
+        "dhcpv6-information-request-reply"
+        | "dhcpv6-solicit-advertise"
+        | "dhcpv6-request-reply-ia-na"
+        | "dhcpv6-prefix-delegation"
+        | "dhcpv6-rapid-commit"
+        | "dhcpv6-relay-forward-reply"
+        | "dhcpv6-reconfigure-observation"
+        | "dhcpv6-leasequery-plan"
+        | "dhcpv6-bulk-leasequery-plan"
+        | "dhcpv6-active-leasequery-plan"
+        | "dhcpv6-unknown-option-preservation"
+        | "dhcpv6-repeated-transaction-id" => plan.target_service.clone().unwrap_or_else(|| {
+            json!({
+                "required": true,
+                "kind": "dhcpv6-controlled-responder",
+                "protocol": "udp",
+                "port": plan.destination_port,
+                "source_ipv6": plan.source_ipv6,
+                "bind_ipv6": plan.target_ipv6,
+                "planned_only": plan.planned_only,
+                "planned_only_reason": plan.planned_only_reason,
+            })
+        }),
         "udp-echo-empty"
         | "udp-echo-short"
         | "udp-echo-binary"
@@ -2306,6 +2415,18 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
 
 pub fn validation_json(plan: &ProbePlan) -> Value {
     match plan.case.as_str() {
+        "dhcpv6-information-request-reply"
+        | "dhcpv6-solicit-advertise"
+        | "dhcpv6-request-reply-ia-na"
+        | "dhcpv6-prefix-delegation"
+        | "dhcpv6-rapid-commit"
+        | "dhcpv6-relay-forward-reply"
+        | "dhcpv6-reconfigure-observation"
+        | "dhcpv6-leasequery-plan"
+        | "dhcpv6-bulk-leasequery-plan"
+        | "dhcpv6-active-leasequery-plan"
+        | "dhcpv6-unknown-option-preservation"
+        | "dhcpv6-repeated-transaction-id" => dhcpv6::validation_json(plan),
         "udp-echo-empty"
         | "udp-echo-short"
         | "udp-echo-binary"

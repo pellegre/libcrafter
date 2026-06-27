@@ -9,8 +9,9 @@ use crate::field::{Field, FieldState};
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 use super::constants::{
-    DHCPV6_CLIENT_PORT, DHCPV6_CLIENT_SERVER_HEADER_LEN, DHCPV6_RELAY_FORW,
-    DHCPV6_RELAY_HEADER_LEN, DHCPV6_RELAY_REPL, DHCPV6_SERVER_PORT, DHCPV6_TRANSACTION_ID_MAX,
+    DHCPV6_CLIENT_PORT, DHCPV6_CLIENT_SERVER_HEADER_LEN, DHCPV6_LEASEQUERY,
+    DHCPV6_LEASEQUERY_REPLY, DHCPV6_RELAY_FORW, DHCPV6_RELAY_HEADER_LEN, DHCPV6_RELAY_REPL,
+    DHCPV6_SERVER_PORT, DHCPV6_TRANSACTION_ID_MAX,
 };
 use super::duid::Dhcpv6Duid;
 use super::message::{dhcpv6_message_type_summary, Dhcpv6MessageType};
@@ -1347,6 +1348,12 @@ pub(crate) fn looks_like_dhcpv6_relay_payload(bytes: &[u8]) -> bool {
         && matches!(bytes[0], DHCPV6_RELAY_FORW | DHCPV6_RELAY_REPL)
 }
 
+/// Return true when bytes have enough shape to decode as DHCPv6 server-port data.
+pub(crate) fn looks_like_dhcpv6_server_port_payload(bytes: &[u8]) -> bool {
+    bytes.len() >= DHCPV6_CLIENT_SERVER_HEADER_LEN
+        && matches!(bytes[0], DHCPV6_LEASEQUERY | DHCPV6_LEASEQUERY_REPLY)
+}
+
 /// Return true when the UDP port pair and payload shape plausibly carry DHCPv6.
 pub(crate) fn looks_like_dhcpv6_payload(
     source_port: u16,
@@ -1358,7 +1365,7 @@ pub(crate) fn looks_like_dhcpv6_payload(
     }
 
     is_dhcpv6_relay_port_pair(source_port, destination_port)
-        && looks_like_dhcpv6_relay_payload(bytes)
+        && (looks_like_dhcpv6_relay_payload(bytes) || looks_like_dhcpv6_server_port_payload(bytes))
 }
 
 fn decode_dhcpv6(bytes: &[u8]) -> Result<Dhcpv6> {
@@ -2084,7 +2091,9 @@ mod dhcpv6_udp_binding_tests {
         is_dhcpv6_port_pair, is_dhcpv6_relay_port_pair, looks_like_dhcpv6_payload, Dhcpv6,
     };
     use crate::packet::{NetworkLayer, Packet, Raw};
-    use crate::protocols::dhcp::v6::Dhcpv6MessageType;
+    use crate::protocols::dhcp::v6::{
+        Dhcpv6Leasequery, Dhcpv6LeasequeryType, Dhcpv6MessageType, Dhcpv6Option,
+    };
     use crate::protocols::ip::v6::Ipv6;
     use crate::protocols::transport::Udp;
 
@@ -2113,8 +2122,12 @@ mod dhcpv6_udp_binding_tests {
         assert!(!looks_like_dhcpv6_payload(546, 547, &[1, 0, 0]));
 
         assert!(looks_like_dhcpv6_payload(547, 547, &relay));
+        assert!(looks_like_dhcpv6_payload(547, 547, &[14, 0, 0, 2]));
+        assert!(looks_like_dhcpv6_payload(547, 547, &[15, 0, 0, 3]));
         assert!(!looks_like_dhcpv6_payload(547, 547, &[12, 0, 0, 0]));
         assert!(!looks_like_dhcpv6_payload(547, 547, &[1, 0, 0, 0]));
+        assert!(!looks_like_dhcpv6_payload(547, 547, &[22, 0, 0, 4]));
+        assert!(!looks_like_dhcpv6_payload(547, 547, &[200, 0, 0, 5]));
         assert!(!looks_like_dhcpv6_payload(546, 546, &[1, 0, 0, 0]));
     }
 
@@ -2144,6 +2157,25 @@ mod dhcpv6_udp_binding_tests {
     }
 
     #[test]
+    fn dhcpv6_udp_binding_decodes_base_leasequery_on_server_ports() {
+        let query = Dhcpv6Leasequery::new(Dhcpv6LeasequeryType::ByAddress, link())
+            .option(Dhcpv6Option::client_id([0, 3, 0, 1, 0xaa, 0xbb]));
+        let packet = Ipv6::new()
+            / Udp::dhcpv6_relay()
+            / Dhcpv6::leasequery(0x010203)
+                .leasequery_option(query.clone())
+                .unwrap();
+        let bytes = packet.compile().unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
+        let dhcpv6 = decoded.layer::<Dhcpv6>().unwrap();
+        assert_eq!(dhcpv6.message_type_value(), Dhcpv6MessageType::LeaseQuery);
+        assert_eq!(dhcpv6.transaction_id_value(), 0x010203);
+        assert_eq!(dhcpv6.leasequery_value().unwrap(), Some(query));
+        assert!(decoded.layer::<Raw>().is_none());
+    }
+
+    #[test]
     fn dhcpv6_udp_binding_leaves_unrelated_payload_raw() {
         let packet = Ipv6::new() / Udp::dhcpv6_client() / Raw::from_bytes([12, 0, 0, 0]);
         let bytes = packet.compile().unwrap();
@@ -2151,6 +2183,16 @@ mod dhcpv6_udp_binding_tests {
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
         assert!(decoded.layer::<Dhcpv6>().is_none());
         assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &[12, 0, 0, 0],);
+    }
+
+    #[test]
+    fn dhcpv6_udp_binding_leaves_non_udp_server_port_payload_raw() {
+        let packet = Ipv6::new() / Udp::dhcpv6_relay() / Raw::from_bytes([22, 0, 0, 4]);
+        let bytes = packet.compile().unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
+        assert!(decoded.layer::<Dhcpv6>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &[22, 0, 0, 4],);
     }
 }
 

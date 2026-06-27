@@ -8,7 +8,7 @@
 //! The implementation is split into a shared [`common`] module (request/plan
 //! contracts, dry-run/live dispatch, response and artifact helpers) and one
 //! module per protocol family: [`icmp`], [`tcp`], [`dns`], [`udp`], [`dhcpv4`],
-//! [`arp`], [`ndp`] (IPv6 Neighbor Discovery), [`rip`] (Routing Information
+//! [`dhcpv6`], [`arp`], [`ndp`] (IPv6 Neighbor Discovery), [`rip`] (Routing Information
 //! Protocol), [`igmp`], [`mqtt`], [`quic`], and [`snmp`]. The binary is a thin
 //! wrapper that calls [`common::run`].
 
@@ -20,6 +20,7 @@
 pub mod arp;
 pub mod common;
 pub mod dhcpv4;
+pub mod dhcpv6;
 pub mod dns;
 pub mod icmp;
 pub mod igmp;
@@ -152,6 +153,12 @@ pub(crate) mod test_support {
             expected_renewal_time: None,
             expected_rebinding_time: None,
             dhcpv4_sends: None,
+            dhcpv6: None,
+            dhcpv6_sends: None,
+            protocol: None,
+            planned_only: None,
+            planned_only_reason: None,
+            target_service: None,
             udp_sends: None,
             ethertype: None,
             hardware_type: None,
