@@ -15,9 +15,9 @@ use super::constants::{
 use super::duid::Dhcpv6Duid;
 use super::message::{dhcpv6_message_type_summary, Dhcpv6MessageType};
 use super::option::{
-    Dhcpv6Authentication, Dhcpv6ClientLinkLayerAddress, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6Option,
-    Dhcpv6OptionCode, Dhcpv6RelaySuppliedOptions, Dhcpv6RemoteId, Dhcpv6StatusCodeOption,
-    Dhcpv6UserClass, Dhcpv6VendorClass, Dhcpv6VendorOptions,
+    Dhcpv6Authentication, Dhcpv6ClientLinkLayerAddress, Dhcpv6DomainList, Dhcpv6IaNa, Dhcpv6IaPd,
+    Dhcpv6Option, Dhcpv6OptionCode, Dhcpv6RelaySuppliedOptions, Dhcpv6RemoteId,
+    Dhcpv6StatusCodeOption, Dhcpv6UserClass, Dhcpv6VendorClass, Dhcpv6VendorOptions,
 };
 use super::status::Dhcpv6StatusCode;
 
@@ -385,6 +385,19 @@ impl Dhcpv6 {
         self.option(Dhcpv6Option::reconfigure_accept())
     }
 
+    /// Append an OPTION_DNS_SERVERS option.
+    pub fn dns_servers<I>(self, servers: I) -> Self
+    where
+        I: IntoIterator<Item = Ipv6Addr>,
+    {
+        self.option(Dhcpv6Option::dns_servers(servers))
+    }
+
+    /// Append an OPTION_DOMAIN_LIST option.
+    pub fn domain_list(self, domain_list: Dhcpv6DomainList) -> Result<Self> {
+        Ok(self.option(Dhcpv6Option::domain_list(domain_list)?))
+    }
+
     /// Append an OPTION_STATUS_CODE option.
     pub fn status_code(self, status: Dhcpv6StatusCodeOption) -> Self {
         self.option(Dhcpv6Option::status_code(status))
@@ -598,6 +611,22 @@ impl Dhcpv6 {
         match self.first_option(super::constants::DHCPV6_OPTION_RECONF_ACCEPT) {
             Some(option) => option.reconfigure_accept_present(),
             None => Ok(false),
+        }
+    }
+
+    /// Decode the first DNS Servers option.
+    pub fn dns_servers_value(&self) -> Result<Option<Vec<Ipv6Addr>>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_DNS_SERVERS) {
+            Some(option) => option.dns_servers_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode the first Domain List option.
+    pub fn domain_list_value(&self) -> Result<Option<Dhcpv6DomainList>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_DOMAIN_LIST) {
+            Some(option) => option.domain_list_value(),
+            None => Ok(None),
         }
     }
 

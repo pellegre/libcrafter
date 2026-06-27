@@ -8,6 +8,7 @@ use core::net::Ipv6Addr;
 
 use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
+use crate::protocols::dns::{decode_dns_name_typed, DnsName};
 
 use super::constants::{
     DHCPV6_AUTH_ALGORITHM_CONFIGURATION_TOKEN, DHCPV6_AUTH_ALGORITHM_HMAC_MD5,
@@ -15,13 +16,14 @@ use super::constants::{
     DHCPV6_AUTH_PROTOCOL_DHCPV6_DELAYED_OBSOLETE, DHCPV6_AUTH_PROTOCOL_RECONFIGURE_KEY,
     DHCPV6_AUTH_PROTOCOL_SPLIT_HORIZON_DNS, DHCPV6_AUTH_RDM_MONOTONIC_COUNTER,
     DHCPV6_AUTH_REPLAY_DETECTION_LEN, DHCPV6_OPTION_AUTH, DHCPV6_OPTION_CLIENTID,
-    DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR, DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN,
-    DHCPV6_OPTION_IAADDR, DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD,
-    DHCPV6_OPTION_INTERFACE_ID, DHCPV6_OPTION_ORO, DHCPV6_OPTION_PREFERENCE,
-    DHCPV6_OPTION_RAPID_COMMIT, DHCPV6_OPTION_RECONF_ACCEPT, DHCPV6_OPTION_RECONF_MSG,
-    DHCPV6_OPTION_RELAY_ID, DHCPV6_OPTION_RELAY_MSG, DHCPV6_OPTION_REMOTE_ID, DHCPV6_OPTION_RSOO,
-    DHCPV6_OPTION_SERVERID, DHCPV6_OPTION_STATUS_CODE, DHCPV6_OPTION_SUBSCRIBER_ID,
-    DHCPV6_OPTION_USER_CLASS, DHCPV6_OPTION_VENDOR_CLASS, DHCPV6_OPTION_VENDOR_OPTS,
+    DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR, DHCPV6_OPTION_DNS_SERVERS, DHCPV6_OPTION_DOMAIN_LIST,
+    DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN, DHCPV6_OPTION_IAADDR,
+    DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD, DHCPV6_OPTION_INTERFACE_ID,
+    DHCPV6_OPTION_ORO, DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT,
+    DHCPV6_OPTION_RECONF_ACCEPT, DHCPV6_OPTION_RECONF_MSG, DHCPV6_OPTION_RELAY_ID,
+    DHCPV6_OPTION_RELAY_MSG, DHCPV6_OPTION_REMOTE_ID, DHCPV6_OPTION_RSOO, DHCPV6_OPTION_SERVERID,
+    DHCPV6_OPTION_STATUS_CODE, DHCPV6_OPTION_SUBSCRIBER_ID, DHCPV6_OPTION_USER_CLASS,
+    DHCPV6_OPTION_VENDOR_CLASS, DHCPV6_OPTION_VENDOR_OPTS,
 };
 use super::duid::Dhcpv6Duid;
 use super::message::Dhcpv6MessageType;
@@ -250,6 +252,12 @@ pub struct Dhcpv6ClientLinkLayerAddress {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Dhcpv6RelaySuppliedOptions {
     options: Vec<Dhcpv6Option>,
+}
+
+/// DHCPv6 OPTION_DOMAIN_LIST payload.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6DomainList {
+    names: Vec<DnsName>,
 }
 
 /// DHCPv6 OPTION_STATUS_CODE payload.
@@ -1143,6 +1151,62 @@ impl Dhcpv6RelaySuppliedOptions {
     }
 }
 
+impl Dhcpv6DomainList {
+    /// Create a Domain List payload from typed DNS names.
+    pub fn new<I>(names: I) -> Self
+    where
+        I: IntoIterator<Item = DnsName>,
+    {
+        Self {
+            names: names.into_iter().collect(),
+        }
+    }
+
+    /// Parse presentation-form domain names into a Domain List payload.
+    pub fn parse<I, S>(names: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let mut parsed = Vec::new();
+        for name in names {
+            parsed.push(DnsName::parse(name.as_ref())?);
+        }
+        Ok(Self::new(parsed))
+    }
+
+    /// Decode a Domain List payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let mut names = Vec::new();
+        let mut offset = 0usize;
+        while offset < bytes.len() {
+            let (name, consumed) = decode_dns_name_typed(bytes, offset)?;
+            names.push(name);
+            offset += consumed;
+        }
+        Ok(Self { names })
+    }
+
+    /// Encode this Domain List payload.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        for name in &self.names {
+            out.extend_from_slice(&name.encode_uncompressed()?);
+        }
+        Ok(out)
+    }
+
+    /// Borrow domain names.
+    pub fn names(&self) -> &[DnsName] {
+        &self.names
+    }
+
+    /// Domain names as canonical presentation strings.
+    pub fn presentations(&self) -> Vec<&str> {
+        self.names.iter().map(DnsName::presentation).collect()
+    }
+}
+
 impl Dhcpv6StatusCodeOption {
     /// Create a Status Code option payload with no status message bytes.
     pub fn new(status: Dhcpv6StatusCode) -> Self {
@@ -1320,6 +1384,23 @@ impl Dhcpv6Option {
     /// Create an OPTION_RECONF_ACCEPT option.
     pub fn reconfigure_accept() -> Self {
         Self::empty(DHCPV6_OPTION_RECONF_ACCEPT)
+    }
+
+    /// Create an OPTION_DNS_SERVERS option.
+    pub fn dns_servers<I>(servers: I) -> Self
+    where
+        I: IntoIterator<Item = Ipv6Addr>,
+    {
+        let mut payload = Vec::new();
+        for server in servers {
+            payload.extend_from_slice(&server.octets());
+        }
+        Self::raw(DHCPV6_OPTION_DNS_SERVERS, payload)
+    }
+
+    /// Create an OPTION_DOMAIN_LIST option.
+    pub fn domain_list(domain_list: Dhcpv6DomainList) -> Result<Self> {
+        Ok(Self::raw(DHCPV6_OPTION_DOMAIN_LIST, domain_list.encode()?))
     }
 
     /// Create an OPTION_STATUS_CODE option.
@@ -1556,6 +1637,33 @@ impl Dhcpv6Option {
                 "dhcpv6.option.reconf_accept",
             )?
             .is_some())
+    }
+
+    /// Decode OPTION_DNS_SERVERS.
+    pub fn dns_servers_value(&self) -> Result<Option<Vec<Ipv6Addr>>> {
+        let Some(payload) = self.payload_if_code(DHCPV6_OPTION_DNS_SERVERS) else {
+            return Ok(None);
+        };
+        if payload.len() % 16 != 0 {
+            return Err(CrafterError::invalid_field_value(
+                "dhcpv6.option.dns_servers",
+                "payload length must be a multiple of 16 bytes",
+            ));
+        }
+
+        let mut servers = Vec::with_capacity(payload.len() / 16);
+        for chunk in payload.chunks_exact(16) {
+            servers.push(Ipv6Addr::from(copy_array_16(chunk)));
+        }
+        Ok(Some(servers))
+    }
+
+    /// Decode OPTION_DOMAIN_LIST.
+    pub fn domain_list_value(&self) -> Result<Option<Dhcpv6DomainList>> {
+        match self.payload_if_code(DHCPV6_OPTION_DOMAIN_LIST) {
+            Some(payload) => Dhcpv6DomainList::decode(payload).map(Some),
+            None => Ok(None),
+        }
     }
 
     /// Decode OPTION_STATUS_CODE.
@@ -2778,6 +2886,112 @@ mod dhcpv6_vendor_class_tests {
         assert_eq!(
             short_vendor_payload.vendor_opts_value().unwrap_err(),
             CrafterError::buffer_too_short("dhcpv6.option.vendor_opts.option_payload", 12, 9),
+        );
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_dns_domain_tests {
+    use core::net::Ipv6Addr;
+
+    use super::{Dhcpv6DomainList, Dhcpv6Option, Dhcpv6OptionCode};
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{
+        Dhcpv6, DHCPV6_OPTION_DNS_SERVERS, DHCPV6_OPTION_DOMAIN_LIST,
+    };
+
+    fn dns_server(index: u16) -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, index)
+    }
+
+    #[test]
+    fn dhcpv6_dns_domain_servers_preserve_multiple_ipv6_addresses() {
+        let servers = vec![dns_server(53), dns_server(54)];
+        let option = Dhcpv6Option::dns_servers(servers.clone());
+
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_DNS_SERVERS);
+        assert_eq!(option.payload_len(), 32);
+        assert_eq!(option.dns_servers_value().unwrap(), Some(servers.clone()));
+        assert_eq!(&option.payload()[0..16], &dns_server(53).octets());
+        assert_eq!(&option.payload()[16..32], &dns_server(54).octets());
+
+        let message = Dhcpv6::reply(0x010203).dns_servers(servers.clone());
+        let decoded =
+            Dhcpv6::decode(Packet::from_layer(message).compile().unwrap().as_bytes()).unwrap();
+        assert_eq!(decoded.dns_servers_value().unwrap(), Some(servers));
+    }
+
+    #[test]
+    fn dhcpv6_dns_domain_list_uses_dns_name_wire_format() {
+        let domain_list = Dhcpv6DomainList::parse(["example.com", "lab.example."]).unwrap();
+        let option = Dhcpv6Option::domain_list(domain_list.clone()).unwrap();
+
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_DOMAIN_LIST);
+        assert_eq!(
+            option.payload(),
+            &[
+                7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0, 3, b'l', b'a',
+                b'b', 7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0,
+            ],
+        );
+
+        let decoded = option.domain_list_value().unwrap().unwrap();
+        assert_eq!(decoded, domain_list);
+        assert_eq!(
+            decoded.presentations(),
+            vec!["example.com.", "lab.example."]
+        );
+        assert_eq!(decoded.names()[0].presentation(), "example.com.");
+    }
+
+    #[test]
+    fn dhcpv6_dns_domain_list_reports_truncated_domain_names() {
+        let option = Dhcpv6Option::raw(DHCPV6_OPTION_DOMAIN_LIST, [7, b'e', b'x']);
+
+        assert_eq!(
+            option.domain_list_value().unwrap_err(),
+            CrafterError::buffer_too_short("dns.name.label", 8, 3),
+        );
+    }
+
+    #[test]
+    fn dhcpv6_dns_domain_oro_request_and_response_roundtrip() {
+        let request = Dhcpv6::information_request(0x0a0b0c)
+            .oro([DHCPV6_OPTION_DNS_SERVERS, DHCPV6_OPTION_DOMAIN_LIST]);
+        assert_eq!(
+            request.oro_value().unwrap(),
+            Some(vec![
+                Dhcpv6OptionCode::from_code(DHCPV6_OPTION_DNS_SERVERS),
+                Dhcpv6OptionCode::from_code(DHCPV6_OPTION_DOMAIN_LIST),
+            ]),
+        );
+
+        let domains = Dhcpv6DomainList::parse(["example.com.", "ops.example.com."]).unwrap();
+        let response = Dhcpv6::reply(0x0a0b0c)
+            .dns_servers([dns_server(53), dns_server(54)])
+            .domain_list(domains.clone())
+            .unwrap();
+        let decoded =
+            Dhcpv6::decode(Packet::from_layer(response).compile().unwrap().as_bytes()).unwrap();
+
+        assert_eq!(
+            decoded.dns_servers_value().unwrap(),
+            Some(vec![dns_server(53), dns_server(54)]),
+        );
+        assert_eq!(decoded.domain_list_value().unwrap(), Some(domains));
+    }
+
+    #[test]
+    fn dhcpv6_dns_domain_servers_reject_truncated_address_list() {
+        let option = Dhcpv6Option::raw(DHCPV6_OPTION_DNS_SERVERS, vec![0; 15]);
+
+        assert_eq!(
+            option.dns_servers_value().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.dns_servers",
+                "payload length must be a multiple of 16 bytes",
+            ),
         );
     }
 }
