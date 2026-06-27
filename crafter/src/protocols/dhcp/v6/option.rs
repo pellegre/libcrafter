@@ -13,9 +13,11 @@ use super::constants::{
     DHCPV6_OPTION_CLIENTID, DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN,
     DHCPV6_OPTION_IAADDR, DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD,
     DHCPV6_OPTION_ORO, DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT,
-    DHCPV6_OPTION_SERVERID, DHCPV6_OPTION_STATUS_CODE,
+    DHCPV6_OPTION_RECONF_ACCEPT, DHCPV6_OPTION_RECONF_MSG, DHCPV6_OPTION_SERVERID,
+    DHCPV6_OPTION_STATUS_CODE,
 };
 use super::duid::Dhcpv6Duid;
+use super::message::Dhcpv6MessageType;
 use super::status::Dhcpv6StatusCode;
 
 const DHCPV6_IAADDR_HEADER_LEN: usize = 24;
@@ -691,6 +693,16 @@ impl Dhcpv6Option {
         Self::empty(DHCPV6_OPTION_RAPID_COMMIT)
     }
 
+    /// Create an OPTION_RECONF_MSG option.
+    pub fn reconfigure_message(message_type: Dhcpv6MessageType) -> Self {
+        Self::raw(DHCPV6_OPTION_RECONF_MSG, vec![message_type.code()])
+    }
+
+    /// Create an OPTION_RECONF_ACCEPT option.
+    pub fn reconfigure_accept() -> Self {
+        Self::empty(DHCPV6_OPTION_RECONF_ACCEPT)
+    }
+
     /// Create an OPTION_STATUS_CODE option.
     pub fn status_code(status: Dhcpv6StatusCodeOption) -> Self {
         Self::raw(DHCPV6_OPTION_STATUS_CODE, status.encode())
@@ -839,6 +851,24 @@ impl Dhcpv6Option {
     pub fn rapid_commit_present(&self) -> Result<bool> {
         Ok(self
             .exact_payload_if_code(DHCPV6_OPTION_RAPID_COMMIT, 0, "dhcpv6.option.rapid_commit")?
+            .is_some())
+    }
+
+    /// Decode OPTION_RECONF_MSG.
+    pub fn reconfigure_message_value(&self) -> Result<Option<Dhcpv6MessageType>> {
+        Ok(self
+            .exact_payload_if_code(DHCPV6_OPTION_RECONF_MSG, 1, "dhcpv6.option.reconf_msg")?
+            .map(|payload| Dhcpv6MessageType::from_code(payload[0])))
+    }
+
+    /// Return true when this is a valid zero-length OPTION_RECONF_ACCEPT.
+    pub fn reconfigure_accept_present(&self) -> Result<bool> {
+        Ok(self
+            .exact_payload_if_code(
+                DHCPV6_OPTION_RECONF_ACCEPT,
+                0,
+                "dhcpv6.option.reconf_accept",
+            )?
             .is_some())
     }
 
