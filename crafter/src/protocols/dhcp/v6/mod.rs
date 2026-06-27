@@ -28,10 +28,11 @@ pub use message::Dhcpv6MessageType;
 pub use option::{
     Dhcpv6AuthAlgorithm, Dhcpv6AuthProtocol, Dhcpv6Authentication, Dhcpv6BootfileParam,
     Dhcpv6ClientArchitecture, Dhcpv6ClientLinkLayerAddress, Dhcpv6DomainList, Dhcpv6IaAddr,
-    Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6NetworkInterfaceIdentifier, Dhcpv6Option,
-    Dhcpv6OptionCode, Dhcpv6OptionFormat, Dhcpv6OptionValue, Dhcpv6RelaySuppliedOptions,
-    Dhcpv6RemoteId, Dhcpv6ReplayDetectionMethod, Dhcpv6StatusCodeOption, Dhcpv6UserClass,
-    Dhcpv6VendorClass, Dhcpv6VendorOption, Dhcpv6VendorOptions,
+    Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6NetworkInterfaceIdentifier, Dhcpv6NtpServer,
+    Dhcpv6NtpSuboption, Dhcpv6Option, Dhcpv6OptionCode, Dhcpv6OptionFormat, Dhcpv6OptionValue,
+    Dhcpv6RelaySuppliedOptions, Dhcpv6RemoteId, Dhcpv6ReplayDetectionMethod,
+    Dhcpv6StatusCodeOption, Dhcpv6UserClass, Dhcpv6VendorClass, Dhcpv6VendorOption,
+    Dhcpv6VendorOptions,
 };
 pub use registry::{
     dhcpv6_option_meta, dhcpv6_option_name, dhcpv6_option_status, dhcpv6_rsoo_option_permission,
