@@ -21,12 +21,14 @@ use super::constants::{
     DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN, DHCPV6_OPTION_IAADDR,
     DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD,
     DHCPV6_OPTION_INFORMATION_REFRESH_TIME, DHCPV6_OPTION_INF_MAX_RT, DHCPV6_OPTION_INTERFACE_ID,
-    DHCPV6_OPTION_NII, DHCPV6_OPTION_ORO, DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT,
-    DHCPV6_OPTION_RECONF_ACCEPT, DHCPV6_OPTION_RECONF_MSG, DHCPV6_OPTION_RELAY_ID,
-    DHCPV6_OPTION_RELAY_MSG, DHCPV6_OPTION_REMOTE_ID, DHCPV6_OPTION_RSOO, DHCPV6_OPTION_SERVERID,
-    DHCPV6_OPTION_SOL_MAX_RT, DHCPV6_OPTION_STATUS_CODE, DHCPV6_OPTION_SUBSCRIBER_ID,
-    DHCPV6_OPTION_USER_CLASS, DHCPV6_OPTION_VENDOR_CLASS, DHCPV6_OPTION_VENDOR_OPTS,
-    DHCPV6_TIME_INFINITY,
+    DHCPV6_OPTION_NEW_POSIX_TIMEZONE, DHCPV6_OPTION_NEW_TZDB_TIMEZONE, DHCPV6_OPTION_NII,
+    DHCPV6_OPTION_NTP_SERVER, DHCPV6_OPTION_ORO, DHCPV6_OPTION_PREFERENCE,
+    DHCPV6_OPTION_RAPID_COMMIT, DHCPV6_OPTION_RECONF_ACCEPT, DHCPV6_OPTION_RECONF_MSG,
+    DHCPV6_OPTION_RELAY_ID, DHCPV6_OPTION_RELAY_MSG, DHCPV6_OPTION_REMOTE_ID, DHCPV6_OPTION_RSOO,
+    DHCPV6_OPTION_SERVERID, DHCPV6_OPTION_SIP_SERVER_A, DHCPV6_OPTION_SIP_SERVER_D,
+    DHCPV6_OPTION_SIP_UA_CS_LIST, DHCPV6_OPTION_SNTP_SERVERS, DHCPV6_OPTION_SOL_MAX_RT,
+    DHCPV6_OPTION_STATUS_CODE, DHCPV6_OPTION_SUBSCRIBER_ID, DHCPV6_OPTION_USER_CLASS,
+    DHCPV6_OPTION_VENDOR_CLASS, DHCPV6_OPTION_VENDOR_OPTS, DHCPV6_TIME_INFINITY,
 };
 use super::duid::Dhcpv6Duid;
 use super::message::Dhcpv6MessageType;
@@ -284,6 +286,19 @@ pub struct Dhcpv6NetworkInterfaceIdentifier {
     pub major: u8,
     /// Minor revision octet.
     pub minor: u8,
+}
+
+/// DHCPv6 OPTION_NTP_SERVER suboption.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6NtpSuboption {
+    code: Dhcpv6OptionCode,
+    payload: Vec<u8>,
+}
+
+/// DHCPv6 OPTION_NTP_SERVER payload.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6NtpServer {
+    suboptions: Vec<Dhcpv6NtpSuboption>,
 }
 
 /// DHCPv6 OPTION_STATUS_CODE payload.
@@ -1364,6 +1379,109 @@ impl Dhcpv6NetworkInterfaceIdentifier {
     }
 }
 
+impl Dhcpv6NtpSuboption {
+    /// Create an NTP Server suboption.
+    pub fn new(code: impl Into<Dhcpv6OptionCode>, payload: impl Into<Vec<u8>>) -> Self {
+        Self {
+            code: code.into(),
+            payload: payload.into(),
+        }
+    }
+
+    /// Create an NTP server address suboption.
+    pub fn server_address(address: Ipv6Addr) -> Self {
+        Self::new(1u16, address.octets())
+    }
+
+    /// Create an NTP server FQDN suboption.
+    pub fn server_fqdn(name: DnsName) -> Result<Self> {
+        Ok(Self::new(2u16, name.encode_uncompressed()?))
+    }
+
+    /// Suboption code.
+    pub const fn code(&self) -> Dhcpv6OptionCode {
+        self.code
+    }
+
+    /// Raw suboption codepoint.
+    pub const fn codepoint(&self) -> u16 {
+        self.code.code()
+    }
+
+    /// Suboption payload bytes.
+    pub fn payload(&self) -> &[u8] {
+        &self.payload
+    }
+
+    fn encode_into(&self, out: &mut Vec<u8>) -> Result<()> {
+        let payload_len = u16::try_from(self.payload.len()).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.ntp_server.suboption_length",
+                "payload exceeds 65535 bytes",
+            )
+        })?;
+        append_u16_be(out, self.codepoint());
+        append_u16_be(out, payload_len);
+        out.extend_from_slice(&self.payload);
+        Ok(())
+    }
+}
+
+impl Dhcpv6NtpServer {
+    /// Create an NTP Server payload.
+    pub fn new<I>(suboptions: I) -> Self
+    where
+        I: IntoIterator<Item = Dhcpv6NtpSuboption>,
+    {
+        Self {
+            suboptions: suboptions.into_iter().collect(),
+        }
+    }
+
+    /// Decode an NTP Server payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let mut suboptions = Vec::new();
+        let mut offset = 0usize;
+        while offset < bytes.len() {
+            ensure_available(bytes, offset + 2, "dhcpv6.option.ntp_server.suboption_code")?;
+            let code = read_u16_be(&bytes[offset..offset + 2])?;
+            ensure_available(
+                bytes,
+                offset + 4,
+                "dhcpv6.option.ntp_server.suboption_length",
+            )?;
+            let payload_len = read_u16_be(&bytes[offset + 2..offset + 4])? as usize;
+            let payload_start = offset + 4;
+            let payload_end = payload_start + payload_len;
+            ensure_available(
+                bytes,
+                payload_end,
+                "dhcpv6.option.ntp_server.suboption_payload",
+            )?;
+            suboptions.push(Dhcpv6NtpSuboption::new(
+                code,
+                bytes[payload_start..payload_end].to_vec(),
+            ));
+            offset = payload_end;
+        }
+        Ok(Self { suboptions })
+    }
+
+    /// Encode this NTP Server payload.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        for suboption in &self.suboptions {
+            suboption.encode_into(&mut out)?;
+        }
+        Ok(out)
+    }
+
+    /// Borrow NTP suboptions.
+    pub fn suboptions(&self) -> &[Dhcpv6NtpSuboption] {
+        &self.suboptions
+    }
+}
+
 impl Dhcpv6StatusCodeOption {
     /// Create a Status Code option payload with no status message bytes.
     pub fn new(status: Dhcpv6StatusCode) -> Self {
@@ -1548,16 +1666,33 @@ impl Dhcpv6Option {
     where
         I: IntoIterator<Item = Ipv6Addr>,
     {
-        let mut payload = Vec::new();
-        for server in servers {
-            payload.extend_from_slice(&server.octets());
-        }
-        Self::raw(DHCPV6_OPTION_DNS_SERVERS, payload)
+        Self::raw(DHCPV6_OPTION_DNS_SERVERS, encode_ipv6_addr_list(servers))
+    }
+
+    /// Create an OPTION_SIP_SERVER_D option.
+    pub fn sip_server_domains(domain_list: Dhcpv6DomainList) -> Result<Self> {
+        Ok(Self::raw(DHCPV6_OPTION_SIP_SERVER_D, domain_list.encode()?))
+    }
+
+    /// Create an OPTION_SIP_SERVER_A option.
+    pub fn sip_server_addresses<I>(addresses: I) -> Self
+    where
+        I: IntoIterator<Item = Ipv6Addr>,
+    {
+        Self::raw(DHCPV6_OPTION_SIP_SERVER_A, encode_ipv6_addr_list(addresses))
     }
 
     /// Create an OPTION_DOMAIN_LIST option.
     pub fn domain_list(domain_list: Dhcpv6DomainList) -> Result<Self> {
         Ok(Self::raw(DHCPV6_OPTION_DOMAIN_LIST, domain_list.encode()?))
+    }
+
+    /// Create an OPTION_SNTP_SERVERS option.
+    pub fn sntp_servers<I>(servers: I) -> Self
+    where
+        I: IntoIterator<Item = Ipv6Addr>,
+    {
+        Self::raw(DHCPV6_OPTION_SNTP_SERVERS, encode_ipv6_addr_list(servers))
     }
 
     /// Create an OPTION_INFORMATION_REFRESH_TIME option.
@@ -1623,6 +1758,19 @@ impl Dhcpv6Option {
         Self::raw(DHCPV6_OPTION_RELAY_ID, relay_id)
     }
 
+    /// Create an OPTION_NTP_SERVER option.
+    pub fn ntp_server(ntp: Dhcpv6NtpServer) -> Result<Self> {
+        Ok(Self::raw(DHCPV6_OPTION_NTP_SERVER, ntp.encode()?))
+    }
+
+    /// Create an OPTION_SIP_UA_CS_LIST option.
+    pub fn sip_ua_cs_list(domain_list: Dhcpv6DomainList) -> Result<Self> {
+        Ok(Self::raw(
+            DHCPV6_OPTION_SIP_UA_CS_LIST,
+            domain_list.encode()?,
+        ))
+    }
+
     /// Create an OPT_BOOTFILE_URL option.
     pub fn bootfile_url(url: impl Into<Vec<u8>>) -> Self {
         Self::raw(DHCPV6_OPTION_BOOTFILE_URL, url)
@@ -1651,6 +1799,16 @@ impl Dhcpv6Option {
     /// Create an OPTION_CLIENT_LINKLAYER_ADDR option.
     pub fn client_link_layer_addr(client: Dhcpv6ClientLinkLayerAddress) -> Self {
         Self::raw(DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR, client.encode())
+    }
+
+    /// Create an OPTION_NEW_POSIX_TIMEZONE option.
+    pub fn posix_timezone(value: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_NEW_POSIX_TIMEZONE, value)
+    }
+
+    /// Create an OPTION_NEW_TZDB_TIMEZONE option.
+    pub fn tzdb_timezone(value: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_NEW_TZDB_TIMEZONE, value)
     }
 
     /// Create an OPTION_IAADDR option.
@@ -1836,21 +1994,20 @@ impl Dhcpv6Option {
 
     /// Decode OPTION_DNS_SERVERS.
     pub fn dns_servers_value(&self) -> Result<Option<Vec<Ipv6Addr>>> {
-        let Some(payload) = self.payload_if_code(DHCPV6_OPTION_DNS_SERVERS) else {
-            return Ok(None);
-        };
-        if payload.len() % 16 != 0 {
-            return Err(CrafterError::invalid_field_value(
-                "dhcpv6.option.dns_servers",
-                "payload length must be a multiple of 16 bytes",
-            ));
-        }
+        self.ipv6_addr_list_if_code(DHCPV6_OPTION_DNS_SERVERS, "dhcpv6.option.dns_servers")
+    }
 
-        let mut servers = Vec::with_capacity(payload.len() / 16);
-        for chunk in payload.chunks_exact(16) {
-            servers.push(Ipv6Addr::from(copy_array_16(chunk)));
+    /// Decode OPTION_SIP_SERVER_D.
+    pub fn sip_server_domains_value(&self) -> Result<Option<Dhcpv6DomainList>> {
+        match self.payload_if_code(DHCPV6_OPTION_SIP_SERVER_D) {
+            Some(payload) => Dhcpv6DomainList::decode(payload).map(Some),
+            None => Ok(None),
         }
-        Ok(Some(servers))
+    }
+
+    /// Decode OPTION_SIP_SERVER_A.
+    pub fn sip_server_addresses_value(&self) -> Result<Option<Vec<Ipv6Addr>>> {
+        self.ipv6_addr_list_if_code(DHCPV6_OPTION_SIP_SERVER_A, "dhcpv6.option.sip_server_a")
     }
 
     /// Decode OPTION_DOMAIN_LIST.
@@ -1859,6 +2016,11 @@ impl Dhcpv6Option {
             Some(payload) => Dhcpv6DomainList::decode(payload).map(Some),
             None => Ok(None),
         }
+    }
+
+    /// Decode OPTION_SNTP_SERVERS.
+    pub fn sntp_servers_value(&self) -> Result<Option<Vec<Ipv6Addr>>> {
+        self.ipv6_addr_list_if_code(DHCPV6_OPTION_SNTP_SERVERS, "dhcpv6.option.sntp_servers")
     }
 
     /// Decode OPTION_INFORMATION_REFRESH_TIME.
@@ -1929,6 +2091,22 @@ impl Dhcpv6Option {
         self.payload_if_code(DHCPV6_OPTION_RELAY_ID)
     }
 
+    /// Decode OPTION_NTP_SERVER.
+    pub fn ntp_server_value(&self) -> Result<Option<Dhcpv6NtpServer>> {
+        match self.payload_if_code(DHCPV6_OPTION_NTP_SERVER) {
+            Some(payload) => Dhcpv6NtpServer::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode OPTION_SIP_UA_CS_LIST.
+    pub fn sip_ua_cs_list_value(&self) -> Result<Option<Dhcpv6DomainList>> {
+        match self.payload_if_code(DHCPV6_OPTION_SIP_UA_CS_LIST) {
+            Some(payload) => Dhcpv6DomainList::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
     /// Return OPT_BOOTFILE_URL payload bytes.
     pub fn bootfile_url_value(&self) -> Option<&[u8]> {
         self.payload_if_code(DHCPV6_OPTION_BOOTFILE_URL)
@@ -1988,6 +2166,28 @@ impl Dhcpv6Option {
             Some(payload) => Dhcpv6ClientLinkLayerAddress::decode(payload).map(Some),
             None => Ok(None),
         }
+    }
+
+    /// Return OPTION_NEW_POSIX_TIMEZONE bytes.
+    pub fn posix_timezone_value(&self) -> Option<&[u8]> {
+        self.payload_if_code(DHCPV6_OPTION_NEW_POSIX_TIMEZONE)
+    }
+
+    /// Return OPTION_NEW_POSIX_TIMEZONE as UTF-8 text when valid.
+    pub fn posix_timezone_text(&self) -> Option<&str> {
+        self.posix_timezone_value()
+            .and_then(|payload| core::str::from_utf8(payload).ok())
+    }
+
+    /// Return OPTION_NEW_TZDB_TIMEZONE bytes.
+    pub fn tzdb_timezone_value(&self) -> Option<&[u8]> {
+        self.payload_if_code(DHCPV6_OPTION_NEW_TZDB_TIMEZONE)
+    }
+
+    /// Return OPTION_NEW_TZDB_TIMEZONE as UTF-8 text when valid.
+    pub fn tzdb_timezone_text(&self) -> Option<&str> {
+        self.tzdb_timezone_value()
+            .and_then(|payload| core::str::from_utf8(payload).ok())
     }
 
     /// Decode OPTION_IAADDR.
@@ -2082,6 +2282,43 @@ impl Dhcpv6Option {
             .exact_payload_if_code(code, 4, context)?
             .map(|payload| u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]])))
     }
+
+    fn ipv6_addr_list_if_code(
+        &self,
+        code: u16,
+        context: &'static str,
+    ) -> Result<Option<Vec<Ipv6Addr>>> {
+        let Some(payload) = self.payload_if_code(code) else {
+            return Ok(None);
+        };
+        decode_ipv6_addr_list(payload, context).map(Some)
+    }
+}
+
+fn encode_ipv6_addr_list<I>(addresses: I) -> Vec<u8>
+where
+    I: IntoIterator<Item = Ipv6Addr>,
+{
+    let mut out = Vec::new();
+    for address in addresses {
+        out.extend_from_slice(&address.octets());
+    }
+    out
+}
+
+fn decode_ipv6_addr_list(bytes: &[u8], context: &'static str) -> Result<Vec<Ipv6Addr>> {
+    if bytes.len() % 16 != 0 {
+        return Err(CrafterError::invalid_field_value(
+            context,
+            "payload length must be a multiple of 16 bytes",
+        ));
+    }
+
+    let mut addresses = Vec::with_capacity(bytes.len() / 16);
+    for chunk in bytes.chunks_exact(16) {
+        addresses.push(Ipv6Addr::from(copy_array_16(chunk)));
+    }
+    Ok(addresses)
 }
 
 fn decode_class_data_list(bytes: &[u8], context: &'static str) -> Result<Vec<Vec<u8>>> {
@@ -3489,6 +3726,129 @@ mod dhcpv6_boot_options_tests {
                 "dhcpv6.option.client_arch_type",
                 "payload length must be a non-zero multiple of 2 bytes",
             ),
+        );
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_service_options_tests {
+    use core::net::Ipv6Addr;
+
+    use super::{Dhcpv6DomainList, Dhcpv6NtpServer, Dhcpv6NtpSuboption, Dhcpv6Option};
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{
+        Dhcpv6, DHCPV6_OPTION_NEW_POSIX_TIMEZONE, DHCPV6_OPTION_NEW_TZDB_TIMEZONE,
+        DHCPV6_OPTION_NTP_SERVER, DHCPV6_OPTION_SIP_SERVER_A, DHCPV6_OPTION_SIP_SERVER_D,
+        DHCPV6_OPTION_SIP_UA_CS_LIST, DHCPV6_OPTION_SNTP_SERVERS,
+    };
+    use crate::protocols::dns::DnsName;
+
+    fn addr(index: u16) -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, 48, 0, 0, 0, 0, index)
+    }
+
+    #[test]
+    fn dhcpv6_service_options_sip_and_sntp_address_lists_roundtrip() {
+        let sip = Dhcpv6Option::sip_server_addresses([addr(10), addr(11)]);
+        let sntp = Dhcpv6Option::sntp_servers([addr(20), addr(21)]);
+
+        assert_eq!(sip.codepoint(), DHCPV6_OPTION_SIP_SERVER_A);
+        assert_eq!(
+            sip.sip_server_addresses_value().unwrap(),
+            Some(vec![addr(10), addr(11)]),
+        );
+        assert_eq!(sntp.codepoint(), DHCPV6_OPTION_SNTP_SERVERS);
+        assert_eq!(
+            sntp.sntp_servers_value().unwrap(),
+            Some(vec![addr(20), addr(21)]),
+        );
+
+        let decoded = Dhcpv6::decode(
+            Packet::from_layer(
+                Dhcpv6::reply(0x010203)
+                    .option(sip.clone())
+                    .option(sntp.clone()),
+            )
+            .compile()
+            .unwrap()
+            .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            decoded.options_ref()[0]
+                .sip_server_addresses_value()
+                .unwrap(),
+            Some(vec![addr(10), addr(11)]),
+        );
+        assert_eq!(
+            decoded.options_ref()[1].sntp_servers_value().unwrap(),
+            Some(vec![addr(20), addr(21)]),
+        );
+    }
+
+    #[test]
+    fn dhcpv6_service_options_sip_domain_lists_use_dns_wire_format() {
+        let domains = Dhcpv6DomainList::parse(["sip.example.com.", "backup.example.com."]).unwrap();
+        let sip_domains = Dhcpv6Option::sip_server_domains(domains.clone()).unwrap();
+        let ua_domains = Dhcpv6Option::sip_ua_cs_list(domains.clone()).unwrap();
+
+        assert_eq!(sip_domains.codepoint(), DHCPV6_OPTION_SIP_SERVER_D);
+        assert_eq!(ua_domains.codepoint(), DHCPV6_OPTION_SIP_UA_CS_LIST);
+        assert_eq!(
+            sip_domains.sip_server_domains_value().unwrap(),
+            Some(domains.clone()),
+        );
+        assert_eq!(ua_domains.sip_ua_cs_list_value().unwrap(), Some(domains));
+    }
+
+    #[test]
+    fn dhcpv6_service_options_ntp_suboptions_preserve_unknown_payloads() {
+        let ntp = Dhcpv6NtpServer::new(vec![
+            Dhcpv6NtpSuboption::server_address(addr(123)),
+            Dhcpv6NtpSuboption::server_fqdn(DnsName::parse("time.example.com.").unwrap()).unwrap(),
+            Dhcpv6NtpSuboption::new(65_000u16, [0xde, 0xad, 0xbe, 0xef]),
+        ]);
+        let option = Dhcpv6Option::ntp_server(ntp.clone()).unwrap();
+
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_NTP_SERVER);
+        let decoded = option.ntp_server_value().unwrap().unwrap();
+        assert_eq!(decoded, ntp);
+        assert_eq!(decoded.suboptions()[0].codepoint(), 1);
+        assert_eq!(decoded.suboptions()[0].payload(), &addr(123).octets());
+        assert_eq!(decoded.suboptions()[2].codepoint(), 65_000);
+        assert_eq!(decoded.suboptions()[2].payload(), &[0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    #[test]
+    fn dhcpv6_service_options_timezone_bytes_have_text_views() {
+        let posix = Dhcpv6Option::posix_timezone(b"EST5EDT,M3.2.0/2,M11.1.0/2".as_slice());
+        let tzdb = Dhcpv6Option::tzdb_timezone(b"America/New_York".as_slice());
+
+        assert_eq!(posix.codepoint(), DHCPV6_OPTION_NEW_POSIX_TIMEZONE);
+        assert_eq!(
+            posix.posix_timezone_text(),
+            Some("EST5EDT,M3.2.0/2,M11.1.0/2")
+        );
+        assert_eq!(tzdb.codepoint(), DHCPV6_OPTION_NEW_TZDB_TIMEZONE);
+        assert_eq!(tzdb.tzdb_timezone_text(), Some("America/New_York"));
+    }
+
+    #[test]
+    fn dhcpv6_service_options_malformed_payloads_are_structured() {
+        let bad_sip = Dhcpv6Option::raw(DHCPV6_OPTION_SIP_SERVER_A, vec![0; 15]);
+        assert_eq!(
+            bad_sip.sip_server_addresses_value().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.sip_server_a",
+                "payload length must be a multiple of 16 bytes",
+            ),
+        );
+
+        let bad_ntp = Dhcpv6Option::raw(DHCPV6_OPTION_NTP_SERVER, [0x00, 0x01, 0x00, 0x04, 0xaa]);
+        assert_eq!(
+            bad_ntp.ntp_server_value().unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.ntp_server.suboption_payload", 8, 5),
         );
     }
 }
