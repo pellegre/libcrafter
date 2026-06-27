@@ -22,8 +22,8 @@ pub(crate) use layer::{append_dhcpv6_packet, looks_like_dhcpv6_payload};
 pub use layer::{Dhcpv6, Dhcpv6RelayHeader};
 pub use message::Dhcpv6MessageType;
 pub use option::{
-    Dhcpv6IaAddr, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6Option, Dhcpv6OptionCode, Dhcpv6OptionFormat,
-    Dhcpv6OptionValue,
+    Dhcpv6IaAddr, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6Option, Dhcpv6OptionCode,
+    Dhcpv6OptionFormat, Dhcpv6OptionValue,
 };
 pub use registry::{
     dhcpv6_option_meta, dhcpv6_option_name, dhcpv6_option_status, Dhcpv6ClientOro,

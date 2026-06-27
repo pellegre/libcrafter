@@ -11,14 +11,17 @@ use crate::error::{CrafterError, Result};
 
 use super::constants::{
     DHCPV6_OPTION_CLIENTID, DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN,
-    DHCPV6_OPTION_IAADDR, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD, DHCPV6_OPTION_ORO,
-    DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT, DHCPV6_OPTION_SERVERID,
+    DHCPV6_OPTION_IAADDR, DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD,
+    DHCPV6_OPTION_ORO, DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT,
+    DHCPV6_OPTION_SERVERID,
 };
 use super::duid::Dhcpv6Duid;
 
 const DHCPV6_IAADDR_HEADER_LEN: usize = 24;
 const DHCPV6_IA_NA_HEADER_LEN: usize = 12;
 const DHCPV6_IA_PD_HEADER_LEN: usize = 12;
+const DHCPV6_IAPREFIX_HEADER_LEN: usize = 25;
+const DHCPV6_PREFIX_LEN_MAX: u8 = 128;
 
 /// DHCPv6 option codepoint.
 ///
@@ -143,6 +146,16 @@ pub struct Dhcpv6IaPd {
     iaid: u32,
     t1: u32,
     t2: u32,
+    options: Vec<Dhcpv6Option>,
+}
+
+/// DHCPv6 OPTION_IAPREFIX delegated prefix.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6IaPrefix {
+    preferred_lifetime: u32,
+    valid_lifetime: u32,
+    prefix_length: u8,
+    prefix: Ipv6Addr,
     options: Vec<Dhcpv6Option>,
 }
 
@@ -306,6 +319,11 @@ impl Dhcpv6IaPd {
         self
     }
 
+    /// Append a nested IA Prefix option.
+    pub fn ia_prefix(self, ia_prefix: Dhcpv6IaPrefix) -> Result<Self> {
+        Ok(self.option(Dhcpv6Option::ia_prefix(ia_prefix)?))
+    }
+
     /// Replace the nested option list.
     pub fn options(mut self, options: impl Into<Vec<Dhcpv6Option>>) -> Self {
         self.options = options.into();
@@ -412,6 +430,106 @@ impl Dhcpv6IaNa {
     }
 }
 
+impl Dhcpv6IaPrefix {
+    /// Create an IA Prefix option body.
+    pub fn new(
+        preferred_lifetime: u32,
+        valid_lifetime: u32,
+        prefix_length: u8,
+        prefix: Ipv6Addr,
+    ) -> Self {
+        Self {
+            preferred_lifetime,
+            valid_lifetime,
+            prefix_length,
+            prefix,
+            options: Vec::new(),
+        }
+    }
+
+    /// Decode an IA Prefix option payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < DHCPV6_IAPREFIX_HEADER_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "dhcpv6.option.iaprefix",
+                DHCPV6_IAPREFIX_HEADER_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let prefix_length = bytes[8];
+        validate_prefix_length(prefix_length)?;
+        Ok(Self {
+            preferred_lifetime: read_u32_be(&bytes[0..4])?,
+            valid_lifetime: read_u32_be(&bytes[4..8])?,
+            prefix_length,
+            prefix: Ipv6Addr::from(copy_array_16(&bytes[9..25])),
+            options: Dhcpv6Option::decode_all(&bytes[DHCPV6_IAPREFIX_HEADER_LEN..])?,
+        })
+    }
+
+    /// Encode this IA Prefix option payload.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        validate_prefix_length(self.prefix_length)?;
+        let mut out = Vec::with_capacity(
+            DHCPV6_IAPREFIX_HEADER_LEN
+                + self
+                    .options
+                    .iter()
+                    .map(|option| DHCPV6_OPTION_HEADER_LEN + option.payload_len())
+                    .sum::<usize>(),
+        );
+        out.extend_from_slice(&self.preferred_lifetime.to_be_bytes());
+        out.extend_from_slice(&self.valid_lifetime.to_be_bytes());
+        out.push(self.prefix_length);
+        out.extend_from_slice(&self.prefix.octets());
+        out.extend_from_slice(&Dhcpv6Option::encode_all(&self.options)?);
+        Ok(out)
+    }
+
+    /// Preferred lifetime value.
+    pub const fn preferred_lifetime(&self) -> u32 {
+        self.preferred_lifetime
+    }
+
+    /// Valid lifetime value.
+    pub const fn valid_lifetime(&self) -> u32 {
+        self.valid_lifetime
+    }
+
+    /// Prefix length.
+    pub const fn prefix_length(&self) -> u8 {
+        self.prefix_length
+    }
+
+    /// Prefix address bytes.
+    pub const fn prefix(&self) -> Ipv6Addr {
+        self.prefix
+    }
+
+    /// Append a nested option.
+    pub fn option(mut self, option: Dhcpv6Option) -> Self {
+        self.options.push(option);
+        self
+    }
+
+    /// Replace the nested option list.
+    pub fn options(mut self, options: impl Into<Vec<Dhcpv6Option>>) -> Self {
+        self.options = options.into();
+        self
+    }
+
+    /// Borrow nested options.
+    pub fn options_ref(&self) -> &[Dhcpv6Option] {
+        &self.options
+    }
+
+    /// Mutably borrow nested options.
+    pub fn options_mut(&mut self) -> &mut Vec<Dhcpv6Option> {
+        &mut self.options
+    }
+}
+
 impl Dhcpv6Option {
     /// Create an option from a codepoint and raw payload bytes.
     pub fn raw(code: impl Into<Dhcpv6OptionCode>, payload: impl Into<Vec<u8>>) -> Self {
@@ -496,6 +614,11 @@ impl Dhcpv6Option {
     /// Create an OPTION_IA_PD option.
     pub fn ia_pd(ia_pd: Dhcpv6IaPd) -> Result<Self> {
         Ok(Self::raw(DHCPV6_OPTION_IA_PD, ia_pd.encode()?))
+    }
+
+    /// Create an OPTION_IAPREFIX option.
+    pub fn ia_prefix(ia_prefix: Dhcpv6IaPrefix) -> Result<Self> {
+        Ok(Self::raw(DHCPV6_OPTION_IAPREFIX, ia_prefix.encode()?))
     }
 
     /// Create an OPTION_IAADDR option.
@@ -635,6 +758,14 @@ impl Dhcpv6Option {
         }
     }
 
+    /// Decode OPTION_IAPREFIX.
+    pub fn ia_prefix_value(&self) -> Result<Option<Dhcpv6IaPrefix>> {
+        match self.payload_if_code(DHCPV6_OPTION_IAPREFIX) {
+            Some(payload) => Dhcpv6IaPrefix::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
     /// Decode OPTION_IAADDR.
     pub fn ia_addr_value(&self) -> Result<Option<Dhcpv6IaAddr>> {
         match self.payload_if_code(DHCPV6_OPTION_IAADDR) {
@@ -731,6 +862,16 @@ fn copy_array_16(bytes: &[u8]) -> [u8; 16] {
     let mut out = [0u8; 16];
     out.copy_from_slice(bytes);
     out
+}
+
+fn validate_prefix_length(prefix_length: u8) -> Result<()> {
+    if prefix_length > DHCPV6_PREFIX_LEN_MAX {
+        return Err(CrafterError::invalid_field_value(
+            "dhcpv6.option.iaprefix.prefix_length",
+            "prefix length must be at most 128",
+        ));
+    }
+    Ok(())
 }
 
 fn read_option_code(bytes: &[u8], offset: usize) -> Result<u16> {
@@ -1203,5 +1344,105 @@ mod dhcpv6_ia_pd_tests {
         assert_eq!(decoded_ia_pd.t1(), 10);
         assert_eq!(decoded_ia_pd.t2(), 20);
         assert_eq!(decoded_ia_pd.options_ref(), &[nested]);
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_iaprefix_tests {
+    use core::net::Ipv6Addr;
+
+    use super::{Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6Option};
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{Dhcpv6, DHCPV6_OPTION_IAPREFIX};
+
+    fn prefix() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0)
+    }
+
+    #[test]
+    fn dhcpv6_iaprefix_encodes_and_decodes_documentation_prefix() {
+        let ia_prefix = Dhcpv6IaPrefix::new(3600, 7200, 32, prefix());
+        let option = Dhcpv6Option::ia_prefix(ia_prefix.clone()).unwrap();
+
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_IAPREFIX);
+        assert_eq!(option.payload_len(), 25);
+
+        let decoded = option.ia_prefix_value().unwrap().unwrap();
+        assert_eq!(decoded, ia_prefix);
+        assert_eq!(decoded.preferred_lifetime(), 3600);
+        assert_eq!(decoded.valid_lifetime(), 7200);
+        assert_eq!(decoded.prefix_length(), 32);
+        assert_eq!(decoded.prefix(), prefix());
+        assert!(decoded.options_ref().is_empty());
+    }
+
+    #[test]
+    fn dhcpv6_iaprefix_preserves_nested_unknown_options() {
+        let unknown = Dhcpv6Option::raw(65_000u16, [0xde, 0xad].as_slice());
+        let ia_prefix = Dhcpv6IaPrefix::new(1, 2, 48, prefix()).option(unknown.clone());
+        let decoded = Dhcpv6Option::ia_prefix(ia_prefix)
+            .unwrap()
+            .ia_prefix_value()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(decoded.options_ref(), &[unknown]);
+    }
+
+    #[test]
+    fn dhcpv6_iaprefix_rejects_short_payload_and_bad_prefix_length() {
+        let short = Dhcpv6Option::raw(DHCPV6_OPTION_IAPREFIX, vec![0; 24]);
+        assert_eq!(
+            short.ia_prefix_value().unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.iaprefix", 25, 24),
+        );
+
+        let invalid = Dhcpv6IaPrefix::new(1, 2, 129, prefix());
+        assert_eq!(
+            invalid.encode().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.iaprefix.prefix_length",
+                "prefix length must be at most 128",
+            ),
+        );
+
+        let mut payload = vec![0; 25];
+        payload[8] = 129;
+        let invalid_wire = Dhcpv6Option::raw(DHCPV6_OPTION_IAPREFIX, payload.clone());
+        assert_eq!(
+            invalid_wire.ia_prefix_value().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.iaprefix.prefix_length",
+                "prefix length must be at most 128",
+            ),
+        );
+        assert_eq!(invalid_wire.payload(), payload.as_slice());
+    }
+
+    #[test]
+    fn dhcpv6_iaprefix_roundtrips_under_ia_pd() {
+        let nested = Dhcpv6Option::raw(65_001u16, [0xaa, 0xbb].as_slice());
+        let ia_prefix = Dhcpv6IaPrefix::new(60, 120, 32, prefix()).option(nested.clone());
+        let ia_pd = Dhcpv6IaPd::new(0x01020304, 30, 90)
+            .ia_prefix(ia_prefix.clone())
+            .unwrap();
+        let message = Dhcpv6::reply(0x0a0b0c).ia_pd(ia_pd).unwrap();
+        let bytes = Packet::from_layer(message).compile().unwrap();
+        let decoded = Dhcpv6::decode(bytes.as_bytes()).unwrap();
+
+        let decoded_ia_pd = decoded.ia_pd_value().unwrap().unwrap();
+        assert_eq!(decoded_ia_pd.options_ref().len(), 1);
+        assert_eq!(
+            decoded_ia_pd.options_ref()[0].codepoint(),
+            DHCPV6_OPTION_IAPREFIX
+        );
+
+        let decoded_prefix = decoded_ia_pd.options_ref()[0]
+            .ia_prefix_value()
+            .unwrap()
+            .unwrap();
+        assert_eq!(decoded_prefix, ia_prefix);
+        assert_eq!(decoded_prefix.options_ref(), &[nested]);
     }
 }
