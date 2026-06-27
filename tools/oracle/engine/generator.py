@@ -681,6 +681,7 @@ class PacketGenerator:
                     "eapol-smoke",
                     "rsn-smoke",
                     "bgp-smoke",
+                    "dhcpv6-smoke",
                     "ospf-smoke",
                     *_IPSEC_SMOKE_PROFILES,
                 }
@@ -716,6 +717,13 @@ class PacketGenerator:
                 and case is None
                 and self.profile == "bgp-smoke"
                 and not _has_bgp_smoke_case(coverage_cases)
+            ):
+                continue
+            if (
+                feature is None
+                and case is None
+                and self.profile == "dhcpv6-smoke"
+                and not _has_dhcpv6_smoke_case(coverage_cases)
             ):
                 continue
             if (
@@ -763,8 +771,23 @@ class PacketGenerator:
         return candidates
 
     def _stack_deck(self, stacks: Sequence[JSONObject], *, direction: str) -> list[JSONObject]:
-        if self.profile == "ipv6-enrichment":
+        if self.profile in _DHCPV6_SMOKE_PROFILES:
             deck: list[JSONObject] = []
+            for stack in stacks:
+                coverage_cases = _string_list(
+                    stack.get("coverage_cases", []),
+                    "stack.coverage_cases",
+                )
+                for case in coverage_cases:
+                    if not _is_dhcpv6_smoke_case(case):
+                        continue
+                    if not self._case_supported_in_direction(case, direction):
+                        continue
+                    deck.append({**stack, "coverage_cases": [case]})
+            if deck:
+                return deck
+        if self.profile == "ipv6-enrichment":
+            deck = []
             for stack in stacks:
                 coverage_cases = _string_list(
                     stack.get("coverage_cases", []),
@@ -959,6 +982,10 @@ class PacketGenerator:
             # packet-type cases so a default/raw payload case is never paired
             # with the ipv4/ospf stack.
             coverage_cases = [case for case in coverage_cases if _is_ospf_smoke_case(case)]
+        if feature is None and self.profile in _DHCPV6_SMOKE_PROFILES:
+            # Focused DHCPv6 smoke set: keep selection on DHCPv6 packet cases
+            # so unrelated IPv6/UDP features never attach to the same stack.
+            coverage_cases = [case for case in coverage_cases if _is_dhcpv6_smoke_case(case)]
         if feature is None and self.profile == "ipv6-enrichment":
             # Focused IPv6 enrichment profile: restrict to stack-declared
             # base/unknown-next-header and strict-byte extension cases. This
@@ -1038,6 +1065,12 @@ class PacketGenerator:
         # cases and skip the generic cross-feature expansion below so an
         # unrelated case is never paired with the ipv4/ospf stack.
         if feature is None and self.profile == "ospf-smoke":
+            if not choices:
+                return "default"
+            return weighted_choice(rng, choices)
+        # dhcpv6-smoke profile: select only from stack-declared DHCPv6 packet
+        # cases and skip generic cross-feature expansion below.
+        if feature is None and self.profile in _DHCPV6_SMOKE_PROFILES:
             if not choices:
                 return "default"
             return weighted_choice(rng, choices)
@@ -1237,6 +1270,10 @@ class PacketGenerator:
             # feature selection on the QUIC feature so unrelated IPv4/UDP
             # features do not attach to the same transport stack.
             if self.profile in {"quic-smoke", "quic-ci"} and name != "quic_behavior":
+                continue
+            # DHCPv6 profile is focused on DHCPv6 message/option behavior over
+            # IPv6 UDP; keep adjacent IPv6 and UDP features out of the sample.
+            if self.profile in _DHCPV6_SMOKE_PROFILES and name != "dhcpv6_behavior":
                 continue
             feature = _object(raw_feature, f"features.{name}")
             layers = _string_list(feature.get("layers"), f"features.{name}.layers")
@@ -2232,6 +2269,7 @@ _IP_FRAGMENT_SMOKE_PROFILES = frozenset(
         "ip-fragment-smoke",
     }
 )
+_DHCPV6_SMOKE_PROFILES = frozenset({"dhcpv6-smoke"})
 # Focused IPSec offline profiles. Like the dot11/rsn smoke profiles they keep the
 # stack and case selection on their own IPSec families (esp/ah/ikev2) rather than
 # letting the generic cross-feature case expansion draw unrelated cases onto the
@@ -2254,6 +2292,17 @@ def _has_ip_fragment_smoke_case(cases: Sequence[str]) -> bool:
 
 def _is_ip_fragment_smoke_case(case: str) -> bool:
     return "fragment" in case.replace("_", "-")
+
+
+def _has_dhcpv6_smoke_case(cases: Sequence[str]) -> bool:
+    """Whether ``cases`` contains an offline DHCPv6 smoke coverage case."""
+
+    return any(_is_dhcpv6_smoke_case(case) for case in cases)
+
+
+def _is_dhcpv6_smoke_case(case: str) -> bool:
+    normalized = case.replace("_", "-")
+    return normalized.startswith("dhcpv6-") and "live-plan" not in normalized
 
 
 # Behavior names of the focused single-option tcp_options cases (tcp-option-*).

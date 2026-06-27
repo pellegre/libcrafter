@@ -1,0 +1,20 @@
+version: 1
+kind: profiles
+name: dhcpv6_profiles
+
+profiles:
+  - name: dhcpv6-smoke
+    purpose: focused offline DHCPv6 message, relay, identity association, and option coverage
+    default_count: 20
+    family_weights:
+      - name: dhcpv6
+        weight: 1
+    payload_length:
+      min: 0
+      max: 0
+    feature_weights:
+      baseline: 10
+      boundary: 4
+      malformed: 0
+      pcap: 0
+      live: 0
