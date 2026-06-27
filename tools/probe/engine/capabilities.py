@@ -43,6 +43,7 @@ SKIP_REQUIRES_BGP_PEER = "requires_bgp_peer"
 SKIP_REQUIRES_RIP_PEER = "requires_rip_peer"
 SKIP_REQUIRES_MQTT_BROKER = "requires_mqtt_broker"
 SKIP_REQUIRES_DHCPV6_SERVICE = "requires_dhcpv6_service"
+SKIP_REQUIRES_DHCPV6_RELAY_TOPOLOGY = "requires_dhcpv6_relay_topology"
 SKIP_REQUIRES_IPV4_MULTICAST = "requires_ipv4_multicast"
 SKIP_REQUIRES_IGMP_PEER = "requires_igmp_peer"
 # IPSec ESP/AH cases need a peer that holds the matching Security Association
@@ -87,6 +88,7 @@ _CAPABILITY_SKIP_REASONS = {
     "rip_peer": SKIP_REQUIRES_RIP_PEER,
     "mqtt_broker": SKIP_REQUIRES_MQTT_BROKER,
     "dhcpv6_service": SKIP_REQUIRES_DHCPV6_SERVICE,
+    "dhcpv6_relay_topology": SKIP_REQUIRES_DHCPV6_RELAY_TOPOLOGY,
     "ipv4_multicast": SKIP_REQUIRES_IPV4_MULTICAST,
     "igmp_peer": SKIP_REQUIRES_IGMP_PEER,
     # An IPSec-capable peer is missing: ESP/AH need the matching SA, IKEv2 needs
@@ -262,6 +264,7 @@ __all__ = [
     "SKIP_REQUIRES_CONTROLLED_ROUTER",
     "SKIP_REQUIRES_CONTROLLED_SERVICE",
     "SKIP_REQUIRES_DHCPV6_SERVICE",
+    "SKIP_REQUIRES_DHCPV6_RELAY_TOPOLOGY",
     "SKIP_REQUIRES_IKEV2_RESPONDER",
     "SKIP_REQUIRES_IGMP_PEER",
     "SKIP_REQUIRES_IPSEC_PEER",

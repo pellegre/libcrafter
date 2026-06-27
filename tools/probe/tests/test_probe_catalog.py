@@ -93,7 +93,7 @@ class ProbeCatalogTest(unittest.TestCase):
             self.assertIsInstance(payload["metadata"], dict)
 
         roles = [role.role for role in cases.ENDPOINT_ROLES]
-        self.assertEqual(roles, ["stimulus", "target", "router"])
+        self.assertEqual(roles, ["stimulus", "target", "relay", "router"])
         self.assertEqual(len(roles), len(set(roles)))
 
     def test_cli_reexports_catalog_for_backward_compatibility(self) -> None:

@@ -59,6 +59,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
         for name in (
             "dhcpv4_service",
             "dhcpv6_service",
+            "dhcpv6_relay_topology",
             "udp_service",
             "udp_large_payload",
             "udp_ipv4_zero_checksum",
@@ -90,6 +91,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "dns_service",
             "dhcpv4_service",
             "dhcpv6_service",
+            "dhcpv6_relay_topology",
             "udp_service",
             "udp_large_payload",
             "udp_ipv4_zero_checksum",
@@ -150,6 +152,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
         for denied in (
             "dhcpv4_service",
             "dhcpv6_service",
+            "dhcpv6_relay_topology",
             "arp_resolution",
             "link_layer_arp",
             "provider_mac",
@@ -257,6 +260,32 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             dry_run=True,
         )
         self.assertIs(derived["dhcpv6_service"], True)
+        self.assertIs(derived["dhcpv6_relay_topology"], True)
+
+    def test_dhcpv6_relay_topology_can_be_denied_independently(self) -> None:
+        substrate = dict(_LINK_LAYER_SUBSTRATE)
+        substrate["dhcpv6_relay_topology"] = False
+
+        derived = probe_capabilities_from_lab_capabilities(
+            "dhcpv6-test",
+            substrate,
+            dry_run=True,
+        )
+
+        self.assertIs(derived["dhcpv6_service"], True)
+        self.assertIs(derived["dhcpv6_relay_topology"], False)
+        relay_case = cases.PROBE_CASE_BY_NAME["dhcpv6-relay-forward-reply"]
+        self.assertEqual(
+            capabilities.missing_capabilities(relay_case, derived),
+            ["dhcpv6_relay_topology"],
+        )
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(
+                relay_case,
+                "dhcpv6_relay_topology",
+            ),
+            capabilities.SKIP_REQUIRES_DHCPV6_RELAY_TOPOLOGY,
+        )
 
     def test_explicit_dhcpv6_service_denial_disables_dhcpv6_only(self) -> None:
         substrate = dict(_LINK_LAYER_SUBSTRATE)
@@ -705,6 +734,14 @@ class ProbeCapabilityBackwardCompatTest(unittest.TestCase):
         self.assertEqual(
             cli.SKIP_REQUIRES_MQTT_BROKER,
             capabilities.SKIP_REQUIRES_MQTT_BROKER,
+        )
+        self.assertEqual(
+            cli.SKIP_REQUIRES_DHCPV6_SERVICE,
+            capabilities.SKIP_REQUIRES_DHCPV6_SERVICE,
+        )
+        self.assertEqual(
+            cli.SKIP_REQUIRES_DHCPV6_RELAY_TOPOLOGY,
+            capabilities.SKIP_REQUIRES_DHCPV6_RELAY_TOPOLOGY,
         )
 
 

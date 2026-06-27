@@ -32,6 +32,7 @@ from .protocols import registered_plugins as _registered_protocol_plugins
 LOCAL_DRY_RUN_PROVIDER = "local-dry-run"
 STIMULUS_ROLE = "stimulus"
 TARGET_ROLE = "target"
+RELAY_ROLE = "relay"
 PROBE_LAB_ROLES = (STIMULUS_ROLE, TARGET_ROLE)
 # ``PROBE_CAPABILITY_NAMES`` stays here as cross-protocol metadata rather than
 # being derived from the registered plugins. It is the canonical *ordered*
@@ -50,6 +51,7 @@ PROBE_CAPABILITY_NAMES = (
     "dns_service",
     "dhcpv4_service",
     "dhcpv6_service",
+    "dhcpv6_relay_topology",
     "udp_service",
     "udp_large_payload",
     "udp_ipv4_zero_checksum",
@@ -294,6 +296,10 @@ def probe_capabilities_from_lab_capabilities(
                 "ipv6_unicast",
                 "multicast",
                 "controlled_services",
+            ],
+            "dhcpv6_relay_topology": [
+                "dhcpv6_service",
+                "dhcpv6_relay_topology",
             ],
             "udp_service": ["ipv4_unicast", "controlled_services"],
             "udp_large_payload": [
@@ -541,6 +547,7 @@ __all__ = [
     "LOCAL_DRY_RUN_PROVIDER",
     "PROBE_CAPABILITY_NAMES",
     "PROBE_LAB_ROLES",
+    "RELAY_ROLE",
     "STIMULUS_ROLE",
     "TARGET_ROLE",
     "UDP_ECHO_LARGE_PAYLOAD_LENGTH",

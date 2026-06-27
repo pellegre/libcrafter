@@ -34,7 +34,9 @@ DHCPV6_ALL_SERVERS = "ff05::1:3"
 DHCPV6_MULTICAST_MAC_RELAY_AGENTS_AND_SERVERS = "33:33:00:01:00:02"
 DHCPV6_MULTICAST_MAC_ALL_SERVERS = "33:33:00:01:00:03"
 DHCPV6_DOCUMENTATION_PREFIX = "2001:db8::/32"
+DHCPV6_RELAY_INTERFACE_ID_HEX = "646f632d72656c6179"
 _DHCPV6_CAPABILITIES = ["dhcpv6_service"]
+_DHCPV6_RELAY_CAPABILITIES = ["dhcpv6_service", "dhcpv6_relay_topology"]
 
 
 DHCPV6_SMOKE_CASES: tuple[ProbeCase, ...] = (
@@ -88,9 +90,14 @@ DHCPV6_SMOKE_CASES: tuple[ProbeCase, ...] = (
         description="Plan a Relay-forward and Relay-reply exchange.",
         stimulus="dhcpv6_relay_forward",
         expected_response="dhcpv6_relay_reply",
-        required_capabilities=_DHCPV6_CAPABILITIES,
+        required_capabilities=_DHCPV6_RELAY_CAPABILITIES,
         protocol="dhcpv6",
-        metadata={"service": DHCPV6_SERVICE_KIND, "planned_only": True},
+        endpoint_roles=["stimulus", "relay", "target"],
+        metadata={
+            "service": DHCPV6_SERVICE_KIND,
+            "planned_only": True,
+            "topology": "stimulus-relay-target",
+        },
     ),
     _behavior_case(
         name="dhcpv6-reconfigure-observation",
@@ -314,7 +321,7 @@ def _dhcpv6_probe_plan(
         message_type_code=int(config["message_type_code"]),
         transaction_id=transaction_id,
     )
-    return {
+    plan: JSONObject = {
         "schema_version": 1,
         "case": case_name,
         "sequence": sequence,
@@ -357,6 +364,7 @@ def _dhcpv6_probe_plan(
                 option_profile=str(config["option_profile"]),
                 link_address=link_address,
                 peer_address=client_ipv6,
+                transaction_id=transaction_id,
             ),
             "ia_na": _ia_na_validation(
                 str(config["option_profile"]),
@@ -438,6 +446,14 @@ def _dhcpv6_probe_plan(
         },
         "digest_hex": digest.hex()[:16],
     }
+    if str(config["option_profile"]) == "relay":
+        plan["wire_requirements"]["requires_relay_topology"] = True
+        plan["validation"]["relay"] = _relay_validation(
+            link_address=link_address,
+            peer_address=client_ipv6,
+            transaction_id=transaction_id,
+        )
+    return plan
 
 
 def _destination_addresses(
@@ -496,7 +512,11 @@ def _request_options(
     if option_profile == "relay":
         base.extend(
             [
-                {"code": 18, "name": "interface_id", "hex": "646f632d72656c6179"},
+                {
+                    "code": 18,
+                    "name": "interface_id",
+                    "hex": DHCPV6_RELAY_INTERFACE_ID_HEX,
+                },
                 {"code": 9, "name": "relay_message", "message_type": "solicit"},
             ]
         )
@@ -571,6 +591,7 @@ def _relay_metadata(
     option_profile: str,
     link_address: str,
     peer_address: str,
+    transaction_id: int,
 ) -> JSONObject:
     if option_profile != "relay":
         return {"enabled": False}
@@ -580,6 +601,66 @@ def _relay_metadata(
         "hop_count": 0,
         "link_address": link_address,
         "peer_address": peer_address,
+        "interface_id_hex": DHCPV6_RELAY_INTERFACE_ID_HEX,
+        "relay_message": {
+            "message_type": "solicit",
+            "message_type_code": 1,
+            "transaction_id": transaction_id,
+        },
+        "expected_relay_message": {
+            "message_type": "advertise",
+            "message_type_code": 2,
+            "transaction_id": transaction_id,
+        },
+    }
+
+
+def _relay_validation(
+    *,
+    link_address: str,
+    peer_address: str,
+    transaction_id: int,
+) -> JSONObject:
+    return {
+        "enabled": True,
+        "topology_roles": ["stimulus", "relay", "target"],
+        "relay_forward": {
+            "message_type": "relay-forward",
+            "message_type_code": 12,
+            "hop_count": 0,
+            "link_address": link_address,
+            "peer_address": peer_address,
+            "interface_id_hex": DHCPV6_RELAY_INTERFACE_ID_HEX,
+            "relay_message": {
+                "nested": True,
+                "message_type": "solicit",
+                "message_type_code": 1,
+                "transaction_id": transaction_id,
+            },
+        },
+        "relay_reply": {
+            "message_type": "relay-reply",
+            "message_type_code": 13,
+            "hop_count": 0,
+            "link_address": link_address,
+            "peer_address": peer_address,
+            "interface_id_echo": True,
+            "interface_id_hex": DHCPV6_RELAY_INTERFACE_ID_HEX,
+            "relay_message": {
+                "nested": True,
+                "message_type": "advertise",
+                "message_type_code": 2,
+                "transaction_id": transaction_id,
+            },
+        },
+        "relay_message_nesting": True,
+        "reply_decapsulation": {
+            "enabled": True,
+            "outer_message_type": "relay-reply",
+            "inner_message_type": "advertise",
+            "transaction_id_match": True,
+        },
+        "transaction_id_match": True,
     }
 
 
@@ -694,6 +775,8 @@ def _required_reply_option_names(option_profile: str) -> list[str]:
         names.extend(["client_identifier", "ia_na", "iaaddr", "status_code"])
     if option_profile == "ia_pd":
         names.extend(["client_identifier", "ia_pd", "iaprefix", "status_code"])
+    if option_profile == "relay":
+        names.extend(["interface_id", "relay_message"])
     return names
 
 
@@ -957,8 +1040,10 @@ def dhcpv6_responder_setup_lines(
                 "        link = ipaddress.IPv6Address(str(relay.get('link_address') or plan['target_ipv6'])).packed",
                 "        peer = ipaddress.IPv6Address(str(relay.get('peer_address') or plan['source_ipv6'])).packed",
                 "        inner = bytes([2]) + int(dhcp['transaction_id']).to_bytes(3, 'big') + options",
+                "        interface_id = bytes.fromhex(str(relay.get('interface_id_hex') or ''))",
+                "        interface_opt = struct.pack('!HH', 18, len(interface_id)) + interface_id",
                 "        relay_msg = struct.pack('!HH', 9, len(inner)) + inner",
-                "        response = bytes([13, int(relay.get('hop_count', 0))]) + link + peer + relay_msg",
+                "        response = bytes([13, int(relay.get('hop_count', 0))]) + link + peer + interface_opt + relay_msg",
                 "    else:",
                 "        response = bytes([response_type]) + int(dhcp['transaction_id']).to_bytes(3, 'big') + options",
                 "    return response, plan",
@@ -1022,12 +1107,17 @@ def dhcpv6_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, 
         "controlled_services",
         "controlled_service",
     )
+    dhcpv6_service = (
+        ipv6_unicast
+        and multicast
+        and controlled_services
+        and capability_default_true(substrate, "dhcpv6_service")
+    )
     return {
-        "dhcpv6_service": (
-            ipv6_unicast
-            and multicast
-            and controlled_services
-            and capability_default_true(substrate, "dhcpv6_service")
+        "dhcpv6_service": dhcpv6_service,
+        "dhcpv6_relay_topology": (
+            dhcpv6_service
+            and capability_default_true(substrate, "dhcpv6_relay_topology")
         ),
     }
 

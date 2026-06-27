@@ -33,6 +33,7 @@ _LEGACY_CASE_NAMES = (
 # catalog so the suite can grow without re-pinning a literal here.
 _BEHAVIOR_CASE_COUNT = len(cases.BEHAVIOR_PROFILE_CASE_NAMES)
 _BGP_CASE_COUNT = len(cases.BGP_SESSION_PROFILE_CASE_NAMES)
+_DHCPV6_RELAY_CASE_COUNT = len(cases.DHCPV6_RELAY_PROFILE_CASE_NAMES)
 _DHCPV6_SMOKE_CASE_COUNT = len(cases.DHCPV6_SMOKE_PROFILE_CASE_NAMES)
 _MQTT_SMOKE_CASE_COUNT = len(cases.MQTT_SMOKE_PROFILE_CASE_NAMES)
 _OSPF_SMOKE_CASE_COUNT = len(cases.OSPF_SMOKE_PROFILE_CASE_NAMES)
@@ -135,6 +136,7 @@ class ProbeProfileMembershipTest(unittest.TestCase):
             (
                 "behavior",
                 "bgp-smoke",
+                "dhcpv6-relay",
                 "dhcpv6-smoke",
                 "igmp",
                 "ipsec",
@@ -218,10 +220,31 @@ class ProbeProfileMembershipTest(unittest.TestCase):
         for case in selected:
             self.assertEqual(case.metadata["protocol"], "dhcpv6")
             self.assertIs(case.metadata["planned_only"], True)
-            self.assertEqual(case.required_capabilities, ["dhcpv6_service"])
+            expected_capabilities = (
+                ["dhcpv6_service", "dhcpv6_relay_topology"]
+                if case.name == "dhcpv6-relay-forward-reply"
+                else ["dhcpv6_service"]
+            )
+            self.assertEqual(case.required_capabilities, expected_capabilities)
         self.assertNotIn(
             "dhcpv6-information-request-reply",
             cases.BEHAVIOR_PROFILE_CASE_NAMES,
+        )
+
+    def test_dhcpv6_relay_profile_selects_relay_case(self) -> None:
+        names = cases.profile_case_names("dhcpv6-relay")
+
+        self.assertEqual(names, ("dhcpv6-relay-forward-reply",))
+        selected = cases.profile_selected_cases("dhcpv6-relay", [])
+        self.assertEqual([case.name for case in selected], list(names))
+        self.assertEqual(
+            cases.profile_default_count("dhcpv6-relay"),
+            _DHCPV6_RELAY_CASE_COUNT,
+        )
+        self.assertEqual(selected[0].endpoint_roles, ["stimulus", "relay", "target"])
+        self.assertEqual(
+            selected[0].required_capabilities,
+            ["dhcpv6_service", "dhcpv6_relay_topology"],
         )
 
     def test_quic_smoke_profile_selects_quic_cases(self) -> None:

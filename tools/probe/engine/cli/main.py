@@ -27,6 +27,8 @@ from ..capabilities import (
     SKIP_REQUIRES_BROADCAST,
     SKIP_REQUIRES_CONTROLLED_ROUTER,
     SKIP_REQUIRES_CONTROLLED_SERVICE,
+    SKIP_REQUIRES_DHCPV6_RELAY_TOPOLOGY,
+    SKIP_REQUIRES_DHCPV6_SERVICE,
     SKIP_REQUIRES_LINK_LAYER,
     SKIP_REQUIRES_MQTT_BROKER,
     SKIP_REQUIRES_PRIVILEGED_PORT,
@@ -52,6 +54,7 @@ from ..cases import (
 from ..lab import (
     LOCAL_DRY_RUN_PROVIDER,
     PROBE_LAB_ROLES,
+    RELAY_ROLE,
     STIMULUS_ROLE,
     TARGET_ROLE,
     is_probe_lab_provider,
@@ -282,7 +285,7 @@ def _dry_run_report(
     stimulus_endpoint: JSONObject = {}
     provider_capabilities = _probe_capabilities_for_request(request, dry_run=True)
     if is_probe_lab_provider(request.provider):
-        lab_session = _probe_lab_dry_run_session(request)
+        lab_session = _probe_lab_dry_run_session(request, planned_cases=planned_cases)
         address_context = probe_address_context_from_lab_session(lab_session)
         stimulus_endpoint = _stimulus_endpoint_context(address_context)
         probe_plans = _probe_plans_with_lab_endpoint_addresses(
@@ -631,43 +634,38 @@ def _stimulus_endpoint_request_plans(
     return _stimulus_endpoint_plans(probe_plans)
 
 
-def _probe_lab_dry_run_session(request: ProbeRunRequest) -> LabSession:
+def _probe_lab_dry_run_session(
+    request: ProbeRunRequest,
+    *,
+    planned_cases: Sequence[ProbeCase] = (),
+) -> LabSession:
     adapter = resolve_probe_lab_provider(request.provider)
-    return adapter.plan_session(_probe_lab_request(request, dry_run=True))
+    return adapter.plan_session(
+        _probe_lab_request(request, dry_run=True, planned_cases=planned_cases)
+    )
 
 
 def _probe_lab_request(
     request: ProbeRunRequest,
     *,
     dry_run: bool,
+    planned_cases: Sequence[ProbeCase] = (),
     confirm_live_run: bool = False,
     remote_dir: str | None = None,
 ) -> LabRequest:
+    lab_roles = _probe_lab_roles(planned_cases)
     return LabRequest(
         provider=request.provider,
         profile=request.profile,
         seed=request.seed,
-        roles=[
-            LabRole(
-                name=STIMULUS_ROLE,
-                peer_roles=[TARGET_ROLE],
-                capabilities=["raw_send", "packet_capture"],
-                workload_metadata={"workload": "probe", "role": STIMULUS_ROLE},
-            ),
-            LabRole(
-                name=TARGET_ROLE,
-                peer_roles=[STIMULUS_ROLE],
-                capabilities=["kernel_reply", "controlled_services"],
-                workload_metadata={"workload": "probe", "role": TARGET_ROLE},
-            ),
-        ],
+        roles=lab_roles,
         dry_run=dry_run,
         confirm_live_run=confirm_live_run,
         remote_dir=remote_dir,
         workload_label="probe",
         metadata={
             "workload": "probe",
-            "role_names": list(PROBE_LAB_ROLES),
+            "role_names": [role.name for role in lab_roles],
             "probe": {
                 "provider": request.provider,
                 "profile": request.profile,
@@ -679,6 +677,68 @@ def _probe_lab_request(
             },
         },
     )
+
+
+def _probe_lab_roles(planned_cases: Sequence[ProbeCase]) -> list[LabRole]:
+    role_names = _probe_lab_role_names(planned_cases)
+    relay_topology = RELAY_ROLE in role_names
+    roles: list[LabRole] = []
+    for role_name in role_names:
+        peers = _probe_lab_peer_roles(role_name, relay_topology=relay_topology)
+        roles.append(
+            LabRole(
+                name=role_name,
+                peer_roles=peers,
+                capabilities=_probe_lab_role_capabilities(role_name),
+                workload_metadata={
+                    "workload": "probe",
+                    "role": role_name,
+                    "topology": (
+                        "stimulus-relay-target"
+                        if relay_topology
+                        else "stimulus-target"
+                    ),
+                },
+            )
+        )
+    return roles
+
+
+def _probe_lab_role_names(planned_cases: Sequence[ProbeCase]) -> list[str]:
+    names: list[str] = []
+    for case in planned_cases:
+        for role_name in case.endpoint_roles or PROBE_LAB_ROLES:
+            if role_name not in names:
+                names.append(role_name)
+    if not names:
+        names.extend(PROBE_LAB_ROLES)
+    return names
+
+
+def _probe_lab_peer_roles(role_name: str, *, relay_topology: bool) -> list[str]:
+    if not relay_topology:
+        return [TARGET_ROLE] if role_name == STIMULUS_ROLE else [STIMULUS_ROLE]
+    if role_name == STIMULUS_ROLE:
+        return [RELAY_ROLE]
+    if role_name == RELAY_ROLE:
+        return [STIMULUS_ROLE, TARGET_ROLE]
+    if role_name == TARGET_ROLE:
+        return [RELAY_ROLE]
+    return [
+        name
+        for name in (STIMULUS_ROLE, RELAY_ROLE, TARGET_ROLE)
+        if name != role_name
+    ]
+
+
+def _probe_lab_role_capabilities(role_name: str) -> list[str]:
+    if role_name == STIMULUS_ROLE:
+        return ["raw_send", "packet_capture"]
+    if role_name == TARGET_ROLE:
+        return ["kernel_reply", "controlled_services"]
+    if role_name == RELAY_ROLE:
+        return ["raw_send", "packet_capture", "dhcpv6_relay"]
+    return []
 
 
 def _lab_session_probe_report_metadata(

@@ -7,6 +7,7 @@ import unittest
 
 from tools.probe.engine import capabilities
 from tools.probe.engine import cases as probe_cases
+from tools.probe.engine import cli as probe_cli
 from tools.probe.engine import lab as probe_lab
 from tools.probe.engine import planning
 from tools.probe.engine import target_services
@@ -68,7 +69,12 @@ class Dhcpv6ProbeProfileTest(unittest.TestCase):
             case = probe_cases.PROBE_CASE_BY_NAME[name]
             with self.subTest(case=name):
                 self.assertEqual(case.metadata["protocol"], "dhcpv6")
-                self.assertEqual(case.required_capabilities, ["dhcpv6_service"])
+                expected_capabilities = (
+                    ["dhcpv6_service", "dhcpv6_relay_topology"]
+                    if name == RELAY_CASE
+                    else ["dhcpv6_service"]
+                )
+                self.assertEqual(case.required_capabilities, expected_capabilities)
                 self.assertIs(case.metadata["planned_only"], True)
 
     def test_provider_without_dhcpv6_service_skips_with_stable_reason(self) -> None:
@@ -210,6 +216,8 @@ class Dhcpv6ProbePlanTest(unittest.TestCase):
     def test_relay_plan_targets_all_servers_multicast(self) -> None:
         plan = _dhcpv6_plan(RELAY_CASE)
 
+        case = probe_cases.PROBE_CASE_BY_NAME[RELAY_CASE]
+        self.assertEqual(case.endpoint_roles, ["stimulus", "relay", "target"])
         self.assertEqual(plan["source_port"], 547)
         self.assertEqual(plan["destination_port"], 547)
         self.assertEqual(plan["destination_ipv6"], "ff05::1:3")
@@ -217,6 +225,47 @@ class Dhcpv6ProbePlanTest(unittest.TestCase):
         self.assertTrue(plan["dhcpv6"]["relay"]["enabled"])
         self.assertEqual(plan["dhcpv6"]["message_type"], "relay-forward")
         self.assertEqual(plan["dhcpv6"]["expected_message_type"], "relay-reply")
+        relay = plan["validation"]["relay"]
+        self.assertEqual(relay["topology_roles"], ["stimulus", "relay", "target"])
+        self.assertEqual(relay["relay_forward"]["hop_count"], 0)
+        self.assertEqual(
+            relay["relay_forward"]["link_address"],
+            plan["dhcpv6"]["relay"]["link_address"],
+        )
+        self.assertEqual(
+            relay["relay_forward"]["peer_address"],
+            plan["dhcpv6"]["relay"]["peer_address"],
+        )
+        self.assertEqual(
+            relay["relay_forward"]["interface_id_hex"],
+            "646f632d72656c6179",
+        )
+        self.assertTrue(relay["relay_message_nesting"])
+        self.assertTrue(relay["relay_reply"]["interface_id_echo"])
+        self.assertTrue(relay["reply_decapsulation"]["enabled"])
+        self.assertTrue(relay["reply_decapsulation"]["transaction_id_match"])
+        self.assertEqual(
+            plan["validation"]["reply_decode"]["required_options"],
+            ["server_identifier", "interface_id", "relay_message"],
+        )
+
+    def test_relay_profile_plans_three_lab_roles(self) -> None:
+        request = _request(profile="dhcpv6-relay", count=4)
+        selected = probe_cases.profile_selected_cases(request.profile, request.case_names)
+        planned = planning.planned_cases(selected, seed=request.seed, count=request.count)
+        session = probe_cli._probe_lab_dry_run_session(
+            request,
+            planned_cases=planned,
+        )
+
+        self.assertEqual(
+            [role.name for role in session.roles],
+            ["stimulus", "relay", "target"],
+        )
+        peers = {role.name: role.peer_roles for role in session.roles}
+        self.assertEqual(peers["stimulus"], ["relay"])
+        self.assertEqual(peers["relay"], ["stimulus", "target"])
+        self.assertEqual(peers["target"], ["relay"])
 
     def test_repeated_transaction_id_plan_sends_two_matching_transactions(self) -> None:
         plan = _dhcpv6_plan(REPEATED_XID_CASE)

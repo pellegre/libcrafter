@@ -28,6 +28,7 @@ def _behavior_case(
     required_capabilities: list[str],
     protocol: str,
     metadata: JSONObject | None = None,
+    endpoint_roles: Sequence[str] | None = None,
 ) -> ProbeCase:
     case_metadata: JSONObject = {
         "protocol": protocol,
@@ -41,7 +42,7 @@ def _behavior_case(
         stimulus=stimulus,
         expected_response=expected_response,
         required_capabilities=list(required_capabilities),
-        endpoint_roles=["stimulus", "target"],
+        endpoint_roles=list(endpoint_roles or ("stimulus", "target")),
         metadata=case_metadata,
     )
 
