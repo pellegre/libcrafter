@@ -93,26 +93,26 @@ class ProbeLabProviderDryRunMatrixTest(unittest.TestCase):
         self.assertEqual(wire_plan["lab_session_id"], session_id)
 
         roles = [role["name"] for role in _objects(lab_session["roles"])]
-        self.assertEqual(roles, ["stimulus", "target"])
+        self.assertEqual(roles, ["stimulus", "router"])
         endpoints = _object(metadata["endpoints"])
-        self.assertEqual(set(endpoints), {"stimulus", "target"})
+        self.assertEqual(set(endpoints), {"stimulus", "router"})
         stimulus = _object(endpoints["stimulus"])
-        target = _object(endpoints["target"])
+        router = _object(endpoints["router"])
         self.assertEqual(stimulus["role"], "stimulus")
-        self.assertEqual(target["role"], "target")
+        self.assertEqual(router["role"], "router")
         self.assertEqual(stimulus["interface"], expected_interface)
-        self.assertEqual(target["interface"], expected_interface)
-        self.assertEqual(stimulus["metadata"]["peer_role"], "target")
-        self.assertEqual(target["metadata"]["peer_role"], "stimulus")
+        self.assertEqual(router["interface"], expected_interface)
+        self.assertEqual(stimulus["metadata"]["peer_role"], "router")
+        self.assertEqual(router["metadata"]["peer_role"], "stimulus")
         self.assertEqual(stimulus["metadata"]["lab_session_id"], session_id)
-        self.assertEqual(target["metadata"]["lab_session_id"], session_id)
+        self.assertEqual(router["metadata"]["lab_session_id"], session_id)
 
         self.assertEqual(wire_plan["provider"], provider)
         self.assertEqual(wire_plan["wire_provider"], provider)
         self.assertEqual(wire_plan["exposure"], expected_exposure)
         self.assertTrue(wire_plan["dry_run"])
         self.assertEqual(wire_plan["endpoint_count"], 2)
-        self.assertEqual(set(_object(wire_plan["endpoints"])), {"stimulus", "target"})
+        self.assertEqual(set(_object(wire_plan["endpoints"])), {"stimulus", "router"})
 
         provider_workflow = _objects(metadata["provider_workflow"])
         provider_commands = _objects(metadata["provider_commands"])
@@ -131,7 +131,7 @@ class ProbeLabProviderDryRunMatrixTest(unittest.TestCase):
         )
         self.assertEqual(
             [command["role"] for command in provider_commands],
-            ["stimulus", "target"],
+            ["stimulus", "router"],
         )
         self.assertTrue(
             all(command["operation"] == "endpoint.create" for command in provider_commands)
@@ -169,11 +169,14 @@ class ProbeLabProviderDryRunMatrixTest(unittest.TestCase):
         probe_plan = _object(report.metadata["probe_plans"][0])
         self.assertEqual(probe_plan["case"], "ttl-expired")
         self.assertEqual(probe_plan["source_ipv4"], stimulus["ipv4"])
-        self.assertEqual(probe_plan["destination_ipv4"], target["ipv4"])
+        self.assertEqual(probe_plan["controlled_router_ipv4"], router["ipv4"])
+        self.assertEqual(probe_plan["expected_reply_source_ipv4"], router["ipv4"])
+        self.assertEqual(_object(probe_plan["validation"])["source_ipv4"], router["ipv4"])
+        self.assertIn(f"src host {router['ipv4']}", str(probe_plan["capture_filter"]))
         address_rewrite = _object(probe_plan["live_address_rewrite"])
         self.assertEqual(address_rewrite["source"], "lab_session")
         self.assertEqual(address_rewrite["stimulus_ipv4"], stimulus["ipv4"])
-        self.assertEqual(address_rewrite["target_ipv4"], target["ipv4"])
+        self.assertEqual(address_rewrite["target_ipv4"], router["ipv4"])
 
     def _assert_stimulus_request_artifact(
         self,
