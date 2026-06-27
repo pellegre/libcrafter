@@ -91,7 +91,7 @@ jobs:
             --seed "$ORACLE_LIVE_SEED" \
             --count "$ORACLE_LIVE_COUNT"
 
-      - name: Run oracle DHCP IPv4 VM matrix dry run
+      - name: Run oracle DHCPv4 VM matrix dry run
         run: |
           backend="sca""py"
           python3 tools/oracle/engine/live_provider_matrix.py \
@@ -100,9 +100,9 @@ jobs:
             --profile smoke \
             --seed 133 \
             --count 2 \
-            --case dhcp-discover \
+            --case dhcpv4-discover \
             --dry-run \
-            --out target/oracle/dhcp-vm-matrix-dry-run
+            --out target/oracle/dhcpv4-vm-matrix-dry-run
 
       - name: Run probe Hetzner wire dry run
         run: |
@@ -119,7 +119,7 @@ jobs:
           if-no-files-found: ignore
           path: |
             target/oracle/live
-            target/oracle/dhcp-vm-matrix-dry-run
+            target/oracle/dhcpv4-vm-matrix-dry-run
             target/probe
 
   hetzner-live:
@@ -245,14 +245,14 @@ jobs:
             target/probe
             target/wire-artifacts
 
-  vm-dhcp-live:
-    name: protected VM DHCP live exchange
+  vm-dhcpv4-live:
+    name: protected VM DHCPv4 live exchange
     runs-on: [self-hosted, linux]
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_vm_dhcp_live == 'run' }}
     environment: vm-live
     timeout-minutes: 120
     concurrency:
-      group: vm-dhcp-live
+      group: vm-dhcpv4-live
       cancel-in-progress: false
     env:
       CONFIRM_VM_DHCP_LIVE: ${{ github.event.inputs.confirm_vm_dhcp_live }}
@@ -274,7 +274,7 @@ jobs:
         run: |
           python3 --version
 
-      - name: Run real VM DHCP oracle exchange
+      - name: Run real VM DHCPv4 oracle exchange
         run: |
           backend="sca""py"
           python3 tools/oracle/engine/live_provider_matrix.py \
@@ -283,17 +283,17 @@ jobs:
             --profile smoke \
             --seed 133 \
             --count 2 \
-            --case dhcp-discover \
+            --case dhcpv4-discover \
             --real \
             --allow-vm-create \
             --strict-vm-smoke \
             --confirm-live-run \
-            --out target/oracle/dhcp-vm-matrix-live
+            --out target/oracle/dhcpv4-vm-matrix-live
 
-      - name: Upload VM DHCP artifacts
+      - name: Upload VM DHCPv4 artifacts
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: libcrafter-wire-vm-dhcp-${{ github.run_id }}
+          name: libcrafter-wire-vm-dhcpv4-${{ github.run_id }}
           if-no-files-found: ignore
-          path: target/oracle/dhcp-vm-matrix-live
+          path: target/oracle/dhcpv4-vm-matrix-live
