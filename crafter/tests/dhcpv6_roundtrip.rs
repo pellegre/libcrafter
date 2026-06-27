@@ -8,6 +8,12 @@ use crafter::protocols::dhcp::{
     Dhcpv6, Dhcpv6IaAddr, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6MessageType, Dhcpv6Option,
     Dhcpv6StatusCode,
 };
+use proptest::prelude::*;
+use proptest::test_runner::TestCaseError;
+
+fn prop_result<T>(result: crafter::Result<T>) -> std::result::Result<T, TestCaseError> {
+    result.map_err(|error| TestCaseError::fail(error.to_string()))
+}
 
 fn doc_addr(host: u16) -> Ipv6Addr {
     Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, host)
@@ -74,6 +80,23 @@ fn parse_hex(name: &str, input: &str) -> Vec<u8> {
                 .unwrap_or_else(|_| panic!("{name} fixture has invalid hex byte {byte}"))
         })
         .collect()
+}
+
+fn small_payload(max_len: usize) -> impl Strategy<Value = Vec<u8>> {
+    prop::collection::vec(any::<u8>(), 0..=max_len)
+}
+
+fn raw_option_strategy() -> impl Strategy<Value = Dhcpv6Option> {
+    (0u16..=u16::MAX, small_payload(16))
+        .prop_map(|(code, payload)| Dhcpv6Option::raw(code, payload))
+}
+
+fn raw_option_sequence_strategy() -> impl Strategy<Value = Vec<Dhcpv6Option>> {
+    prop::collection::vec(raw_option_strategy(), 0..=8)
+}
+
+fn encoded_options(options: &[Dhcpv6Option]) -> std::result::Result<Vec<u8>, TestCaseError> {
+    prop_result(Dhcpv6Option::encode_all(options))
 }
 
 #[test]
@@ -410,4 +433,109 @@ fn dhcpv6_summary_and_show_stay_stable_after_roundtrip() -> crafter::Result<()> 
     assert_eq!(second.show(), show);
 
     Ok(())
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+
+    #[test]
+    fn proptest_dhcpv6_option_sequences_roundtrip(options in raw_option_sequence_strategy()) {
+        let encoded = encoded_options(&options)?;
+        let decoded = prop_result(Dhcpv6Option::decode_all(&encoded))?;
+        prop_assert_eq!(encoded_options(&decoded)?, encoded);
+    }
+
+    #[test]
+    fn proptest_dhcpv6_nested_option_sequences_roundtrip(
+        selector in 0u8..=3,
+        options in raw_option_sequence_strategy(),
+    ) {
+        match selector {
+            0 => {
+                let ia_na = Dhcpv6IaNa::new(0x0102_0304, 60, 120).options(options);
+                let encoded = prop_result(ia_na.encode())?;
+                let decoded = prop_result(Dhcpv6IaNa::decode(&encoded))?;
+                prop_assert_eq!(prop_result(decoded.encode())?, encoded);
+            }
+            1 => {
+                let ia_pd = Dhcpv6IaPd::new(0x0506_0708, 90, 180).options(options);
+                let encoded = prop_result(ia_pd.encode())?;
+                let decoded = prop_result(Dhcpv6IaPd::decode(&encoded))?;
+                prop_assert_eq!(prop_result(decoded.encode())?, encoded);
+            }
+            2 => {
+                let ia_addr = Dhcpv6IaAddr::new(doc_addr(0x0100), 300, 600).options(options);
+                let encoded = prop_result(ia_addr.encode())?;
+                let decoded = prop_result(Dhcpv6IaAddr::decode(&encoded))?;
+                prop_assert_eq!(prop_result(decoded.encode())?, encoded);
+            }
+            _ => {
+                let ia_prefix = Dhcpv6IaPrefix::new(300, 600, 56, doc_prefix(0x0200)).options(options);
+                let encoded = prop_result(ia_prefix.encode())?;
+                let decoded = prop_result(Dhcpv6IaPrefix::decode(&encoded))?;
+                prop_assert_eq!(prop_result(decoded.encode())?, encoded);
+            }
+        }
+    }
+
+    #[test]
+    fn proptest_dhcpv6_unknown_option_payloads_roundtrip(
+        code in 65_000u16..=u16::MAX,
+        payload in small_payload(64),
+    ) {
+        let decoded = prop_result(assert_packet_roundtrip(
+            "unknown-option-property",
+            packet(
+                doc_addr(0x0010),
+                doc_addr(0x0001),
+                Udp::dhcpv6_client(),
+                Dhcpv6::solicit(0x010203).raw_option(code, payload.clone()),
+            ),
+        ))?;
+        let dhcpv6 = decoded
+            .layer::<Dhcpv6>()
+            .expect("generated packet should decode as DHCPv6");
+        let option = dhcpv6
+            .options_ref()
+            .last()
+            .expect("generated packet should carry the unknown option");
+        prop_assert_eq!(option.codepoint(), code);
+        prop_assert_eq!(option.payload(), payload.as_slice());
+    }
+
+    #[test]
+    fn proptest_dhcpv6_malformed_option_tails_report_structured_errors(
+        prefix in raw_option_sequence_strategy(),
+        code in any::<u16>(),
+        (declared_len, actual_payload) in (1usize..=16).prop_flat_map(|declared_len| {
+            (
+                Just(declared_len),
+                prop::collection::vec(any::<u8>(), 0..declared_len),
+            )
+        }),
+    ) {
+        let mut bytes = encoded_options(&prefix)?;
+        let tail_start = bytes.len();
+        bytes.extend_from_slice(&code.to_be_bytes());
+        bytes.extend_from_slice(&(declared_len as u16).to_be_bytes());
+        bytes.extend_from_slice(&actual_payload);
+
+        let error = Dhcpv6Option::decode_all(&bytes).unwrap_err();
+        match error {
+            crafter::CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                prop_assert_eq!(context, "dhcpv6.option.payload");
+                prop_assert_eq!(required, tail_start + 4 + declared_len);
+                prop_assert_eq!(available, tail_start + 4 + actual_payload.len());
+            }
+            other => {
+                return Err(TestCaseError::fail(format!(
+                    "malformed tail should report BufferTooShort, got {other:?}"
+                )));
+            }
+        }
+    }
 }
