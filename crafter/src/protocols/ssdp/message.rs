@@ -1,10 +1,12 @@
-//! SSDP message model scaffold.
+//! SSDP message model.
 //!
-//! Request, response, unknown-value, and body-preserving message types are added
-//! after the source-backed start line and header models exist.
+//! SSDP messages are HTTP-like UDP payloads with one start line, ordered
+//! headers, and opaque body bytes.
 
 use core::fmt;
 use core::str::FromStr;
+
+use super::header::{SsdpHeaderNameParseError, SsdpHeaderValue, SsdpHeaders};
 
 const METHOD_NOTIFY: &str = "NOTIFY";
 const METHOD_M_SEARCH: &str = "M-SEARCH";
@@ -18,6 +20,300 @@ const EXPECTED_REQUEST_TARGET: &str =
 const EXPECTED_HTTP_VERSION: &str = "HTTP-version token formatted as HTTP/<DIGIT>.<DIGIT>";
 const EXPECTED_STATUS_CODE: &str = "three decimal digits";
 const EXPECTED_REASON_PHRASE: &str = "HTTP reason-phrase bytes: HTAB, SP, VCHAR, or obs-text";
+
+/// SSDP UDP application layer message.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Ssdp {
+    message: SsdpMessage,
+}
+
+impl Ssdp {
+    /// Build an SSDP layer from an already assembled message.
+    pub fn new(message: SsdpMessage) -> Self {
+        Self { message }
+    }
+
+    /// Build a source-backed `M-SEARCH * HTTP/1.1` request.
+    pub fn m_search() -> Self {
+        Self::new(SsdpMessage::m_search())
+    }
+
+    /// Build a source-backed `NOTIFY * HTTP/1.1` request.
+    pub fn notify() -> Self {
+        Self::new(SsdpMessage::notify())
+    }
+
+    /// Build a source-backed `HTTP/1.1 200 OK` response.
+    pub fn response_ok() -> Self {
+        Self::new(SsdpMessage::response_ok())
+    }
+
+    /// Build a request message from explicit start-line values.
+    pub fn request(method: SsdpMethod, target: SsdpRequestTarget, version: SsdpVersion) -> Self {
+        Self::new(SsdpMessage::request(method, target, version))
+    }
+
+    /// Build a response message from explicit status-line values.
+    pub fn response(version: SsdpVersion, code: SsdpStatusCode, reason: SsdpReasonPhrase) -> Self {
+        Self::new(SsdpMessage::response(version, code, reason))
+    }
+
+    /// Return the owned SSDP message.
+    pub fn message(&self) -> &SsdpMessage {
+        &self.message
+    }
+
+    /// Return the ordered SSDP headers.
+    pub fn headers(&self) -> &SsdpHeaders {
+        self.message.headers()
+    }
+
+    /// Return the opaque body bytes.
+    pub fn body(&self) -> &[u8] {
+        self.message.body()
+    }
+
+    /// Consume the layer and return the message.
+    pub fn into_message(self) -> SsdpMessage {
+        self.message
+    }
+
+    /// Append a raw header, preserving insertion order and caller spelling.
+    pub fn with_raw_header(
+        mut self,
+        name: impl Into<String>,
+        value: impl Into<SsdpHeaderValue>,
+    ) -> Result<Self, SsdpHeaderNameParseError> {
+        self.message.push_raw_header(name, value)?;
+        Ok(self)
+    }
+
+    /// Replace the opaque body bytes with caller-supplied bytes.
+    pub fn with_body(mut self, body: impl Into<Vec<u8>>) -> Self {
+        self.message = self.message.with_body(body);
+        self
+    }
+}
+
+/// Complete SSDP message payload model.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SsdpMessage {
+    start_line: SsdpStartLine,
+    headers: SsdpHeaders,
+    body: Vec<u8>,
+}
+
+impl SsdpMessage {
+    /// Build a header-empty message with an empty body.
+    pub fn new(start_line: SsdpStartLine) -> Self {
+        Self {
+            start_line,
+            headers: SsdpHeaders::new(),
+            body: Vec::new(),
+        }
+    }
+
+    /// Build a source-backed `M-SEARCH * HTTP/1.1` request message.
+    pub fn m_search() -> Self {
+        Self::new(SsdpStartLine::m_search())
+    }
+
+    /// Build a source-backed `NOTIFY * HTTP/1.1` request message.
+    pub fn notify() -> Self {
+        Self::new(SsdpStartLine::notify())
+    }
+
+    /// Build a source-backed `HTTP/1.1 200 OK` response message.
+    pub fn response_ok() -> Self {
+        Self::new(SsdpStartLine::response_ok())
+    }
+
+    /// Build a request message from explicit start-line values.
+    pub fn request(method: SsdpMethod, target: SsdpRequestTarget, version: SsdpVersion) -> Self {
+        Self::new(SsdpStartLine::Request(SsdpRequestLine::new(
+            method, target, version,
+        )))
+    }
+
+    /// Build a response message from explicit status-line values.
+    pub fn response(version: SsdpVersion, code: SsdpStatusCode, reason: SsdpReasonPhrase) -> Self {
+        Self::new(SsdpStartLine::Response(SsdpStatusLine::new(
+            version, code, reason,
+        )))
+    }
+
+    /// Return the preserved start line.
+    pub fn start_line(&self) -> &SsdpStartLine {
+        &self.start_line
+    }
+
+    /// Return the ordered header collection.
+    pub fn headers(&self) -> &SsdpHeaders {
+        &self.headers
+    }
+
+    /// Return the opaque body bytes.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// Consume the message and return its parts.
+    pub fn into_parts(self) -> (SsdpStartLine, SsdpHeaders, Vec<u8>) {
+        (self.start_line, self.headers, self.body)
+    }
+
+    /// Append a raw header, preserving order and duplicate entries.
+    pub fn push_raw_header(
+        &mut self,
+        name: impl Into<String>,
+        value: impl Into<SsdpHeaderValue>,
+    ) -> Result<(), SsdpHeaderNameParseError> {
+        self.headers.push_raw(name, value)
+    }
+
+    /// Replace the opaque body bytes with caller-supplied bytes.
+    pub fn with_body(mut self, body: impl Into<Vec<u8>>) -> Self {
+        self.body = body.into();
+        self
+    }
+}
+
+/// SSDP start line.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum SsdpStartLine {
+    /// Request-line form: `method SP request-target SP HTTP-version`.
+    Request(SsdpRequestLine),
+    /// Status-line form: `HTTP-version SP status-code SP reason-phrase`.
+    Response(SsdpStatusLine),
+}
+
+impl SsdpStartLine {
+    /// Build a source-backed `M-SEARCH * HTTP/1.1` request line.
+    pub fn m_search() -> Self {
+        Self::Request(SsdpRequestLine::m_search())
+    }
+
+    /// Build a source-backed `NOTIFY * HTTP/1.1` request line.
+    pub fn notify() -> Self {
+        Self::Request(SsdpRequestLine::notify())
+    }
+
+    /// Build a source-backed `HTTP/1.1 200 OK` status line.
+    pub fn response_ok() -> Self {
+        Self::Response(SsdpStatusLine::ok())
+    }
+
+    /// Return the request line when this is a request.
+    pub fn as_request(&self) -> Option<&SsdpRequestLine> {
+        match self {
+            Self::Request(line) => Some(line),
+            Self::Response(_) => None,
+        }
+    }
+
+    /// Return the status line when this is a response.
+    pub fn as_response(&self) -> Option<&SsdpStatusLine> {
+        match self {
+            Self::Request(_) => None,
+            Self::Response(line) => Some(line),
+        }
+    }
+}
+
+/// SSDP request-line values.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SsdpRequestLine {
+    method: SsdpMethod,
+    target: SsdpRequestTarget,
+    version: SsdpVersion,
+}
+
+impl SsdpRequestLine {
+    /// Build a request line from explicit values.
+    pub fn new(method: SsdpMethod, target: SsdpRequestTarget, version: SsdpVersion) -> Self {
+        Self {
+            method,
+            target,
+            version,
+        }
+    }
+
+    /// Build a source-backed `M-SEARCH * HTTP/1.1` request line.
+    pub fn m_search() -> Self {
+        Self::new(
+            SsdpMethod::m_search(),
+            SsdpRequestTarget::asterisk(),
+            SsdpVersion::http_1_1(),
+        )
+    }
+
+    /// Build a source-backed `NOTIFY * HTTP/1.1` request line.
+    pub fn notify() -> Self {
+        Self::new(
+            SsdpMethod::notify(),
+            SsdpRequestTarget::asterisk(),
+            SsdpVersion::http_1_1(),
+        )
+    }
+
+    /// Return the method token.
+    pub fn method(&self) -> &SsdpMethod {
+        &self.method
+    }
+
+    /// Return the request target.
+    pub fn target(&self) -> &SsdpRequestTarget {
+        &self.target
+    }
+
+    /// Return the HTTP-version token.
+    pub fn version(&self) -> &SsdpVersion {
+        &self.version
+    }
+}
+
+/// SSDP status-line values.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SsdpStatusLine {
+    version: SsdpVersion,
+    code: SsdpStatusCode,
+    reason: SsdpReasonPhrase,
+}
+
+impl SsdpStatusLine {
+    /// Build a status line from explicit values.
+    pub fn new(version: SsdpVersion, code: SsdpStatusCode, reason: SsdpReasonPhrase) -> Self {
+        Self {
+            version,
+            code,
+            reason,
+        }
+    }
+
+    /// Build a source-backed `HTTP/1.1 200 OK` status line.
+    pub fn ok() -> Self {
+        Self::new(
+            SsdpVersion::http_1_1(),
+            SsdpStatusCode::ok(),
+            SsdpReasonPhrase::ok(),
+        )
+    }
+
+    /// Return the HTTP-version token.
+    pub fn version(&self) -> &SsdpVersion {
+        &self.version
+    }
+
+    /// Return the status code.
+    pub const fn code(&self) -> SsdpStatusCode {
+        self.code
+    }
+
+    /// Return the reason phrase.
+    pub fn reason(&self) -> &SsdpReasonPhrase {
+        &self.reason
+    }
+}
 
 /// SSDP request method token.
 ///
@@ -624,7 +920,129 @@ fn is_reason_phrase_byte(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::header::{SsdpHeaderField, SsdpHeaderNameKind};
     use super::*;
+
+    #[test]
+    fn ssdp_message_builders_m_search_and_notify_request_defaults() {
+        for (message, expected_method) in [
+            (Ssdp::m_search(), SsdpMethod::MSearch),
+            (Ssdp::notify(), SsdpMethod::Notify),
+        ] {
+            let request = message
+                .message()
+                .start_line()
+                .as_request()
+                .expect("request start line");
+
+            assert_eq!(request.method(), &expected_method);
+            assert_eq!(request.target().as_str(), "*");
+            assert!(request.target().is_asterisk());
+            assert_eq!(request.version().as_str(), "HTTP/1.1");
+            assert!(request.version().is_http_1_1());
+            assert!(message.headers().is_empty());
+            assert!(message.body().is_empty());
+        }
+    }
+
+    #[test]
+    fn ssdp_message_builders_request_accepts_explicit_unknown_valid_values() {
+        let method = SsdpMethod::try_from("X-SEARCH").expect("valid unknown method");
+        let target = SsdpRequestTarget::try_from("/device.xml").expect("valid target");
+        let version = SsdpVersion::try_from("HTTP/1.0").expect("valid version");
+
+        let message = Ssdp::request(method.clone(), target.clone(), version.clone());
+        let request = message
+            .message()
+            .start_line()
+            .as_request()
+            .expect("request start line");
+
+        assert_eq!(request.method(), &method);
+        assert_eq!(request.target(), &target);
+        assert_eq!(request.version(), &version);
+    }
+
+    #[test]
+    fn ssdp_message_builders_response_ok_defaults() {
+        let response = Ssdp::response_ok();
+        let status = response
+            .message()
+            .start_line()
+            .as_response()
+            .expect("response start line");
+
+        assert_eq!(status.version().as_str(), "HTTP/1.1");
+        assert!(status.version().is_http_1_1());
+        assert_eq!(status.code(), SsdpStatusCode::ok());
+        assert_eq!(status.code().code(), 200);
+        assert_eq!(status.reason().as_str(), "OK");
+        assert!(status.reason().is_ok());
+        assert!(response.headers().is_empty());
+        assert!(response.body().is_empty());
+    }
+
+    #[test]
+    fn ssdp_message_builders_response_accepts_explicit_unknown_valid_values() {
+        let version = SsdpVersion::try_from("HTTP/1.0").expect("valid version");
+        let code = SsdpStatusCode::try_from("299").expect("valid status code");
+        let reason = SsdpReasonPhrase::try_from("Odd Success").expect("valid reason");
+
+        let message = Ssdp::response(version.clone(), code, reason.clone());
+        let status = message
+            .message()
+            .start_line()
+            .as_response()
+            .expect("response start line");
+
+        assert_eq!(status.version(), &version);
+        assert_eq!(status.code(), code);
+        assert_eq!(status.reason(), &reason);
+    }
+
+    #[test]
+    fn ssdp_message_builders_raw_headers_preserve_order_and_unknown_names() {
+        let message = Ssdp::m_search()
+            .with_raw_header("X-DEVICE.UPNP.ORG", "opaque")
+            .expect("unknown header")
+            .with_raw_header("HOST", "239.255.255.250:1900")
+            .expect("host header")
+            .with_raw_header("x-device.upnp.org", b"second")
+            .expect("second unknown header");
+
+        let entries = message.headers().iter().collect::<Vec<_>>();
+
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].name().kind(), SsdpHeaderNameKind::Unknown);
+        assert_eq!(entries[0].name().original(), "X-DEVICE.UPNP.ORG");
+        assert_eq!(entries[0].value().as_bytes(), b"opaque");
+        assert_eq!(entries[1].name().kind(), SsdpHeaderNameKind::Host);
+        assert_eq!(entries[1].name().original(), "HOST");
+        assert_eq!(entries[2].name().kind(), SsdpHeaderNameKind::Unknown);
+        assert_eq!(entries[2].name().original(), "x-device.upnp.org");
+        assert_eq!(entries[2].value().as_bytes(), b"second");
+    }
+
+    #[test]
+    fn ssdp_message_builders_body_bytes_are_preserved() {
+        let body = vec![0x00, b'\r', b'\n', 0xff, b':', b' '];
+        let message = Ssdp::notify().with_body(body.clone());
+
+        assert_eq!(message.body(), body.as_slice());
+
+        let (_, _, preserved_body) = message.into_message().into_parts();
+        assert_eq!(preserved_body, body);
+    }
+
+    #[test]
+    fn ssdp_message_builders_invalid_raw_header_name_returns_header_parse_error() {
+        let error = Ssdp::m_search()
+            .with_raw_header("bad name", "value")
+            .expect_err("invalid raw header name");
+
+        assert_eq!(error.field(), SsdpHeaderField::Name);
+        assert_eq!(error.value(), "bad name");
+    }
 
     #[test]
     fn ssdp_method_known_tokens_map_to_named_variants() {
