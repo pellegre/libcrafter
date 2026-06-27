@@ -541,8 +541,8 @@ and status codes remain inspectable instead of being dropped. Truncated headers
 or TLVs return structured errors.
 
 Examples and generated tools should use documentation address space and either
-offline compile/decode or dry-run send plans. Real DHCPv6 traffic belongs in an
-authorized provider-backed endpoint or lab workflow.
+offline compile/decode or dry-run send/receive plans. Real DHCPv6 traffic
+belongs in an authorized provider-backed endpoint or lab workflow.
 
 ## Address And Range Helpers
 
@@ -769,8 +769,8 @@ in the [ICMPv6 guide](../guide/icmpv6.md).
 | `dhcpv4_discover` | DHCPv4 discover construction with an explicit client MAC and link-layer send options. |
 | `dhcpv4_option82` | Offline DHCPv4 relay agent information (option 82), classless static routes, and option overload construction and decode. |
 | `dhcpv4_leasequery` | Offline DHCPv4 leasequery, typed client identifier, authentication, and status/state packet-field construction and decode. |
-| `dhcpv6_solicit` | DHCPv6 Solicit construction, option request data, and network-layer dry-run send planning. |
-| `dhcpv6_information_request` | Offline DHCPv6 Information-request construction, compile, decode, ORO inspection, and hexdump output. |
+| `dhcpv6_solicit` | DHCPv6 Solicit construction, option request data, derived reply filter, and network-layer dry-run send/receive planning. |
+| `dhcpv6_information_request` | DHCPv6 Information-request construction, dry-run send/receive reporting, decode, ORO inspection, and hexdump output. |
 | `dhcpv6_prefix_delegation` | Offline DHCPv6 IA_PD and IA Prefix construction, compile, decode, and typed prefix inspection. |
 | `dhcpv6_relay` | Offline DHCPv6 Relay-forward construction with Interface-Id and nested Relay Message decoding. |
 | `icmpv4_error` | ICMPv4 time-exceeded error with a quoted datagram and an RFC 4884/4950 MPLS extension object, compiled and decoded offline. |
