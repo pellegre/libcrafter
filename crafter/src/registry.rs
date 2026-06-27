@@ -8,7 +8,8 @@ use crate::packet::{LinkType, NetworkLayer, Packet, Raw};
 use crate::protocols::bgp::{decode::append_bgp_packet_with_registry, BGP_PORT};
 use crate::protocols::dhcp::{
     append_dhcpv4_packet, append_dhcpv6_packet, is_dhcpv4_port_pair, is_dhcpv6_port_pair,
-    looks_like_dhcpv4_payload, looks_like_dhcpv6_client_payload,
+    is_dhcpv6_relay_port_pair, looks_like_dhcpv4_payload, looks_like_dhcpv6_client_payload,
+    looks_like_dhcpv6_relay_payload,
 };
 use crate::protocols::dns::{append_dns_packet, DNS_PORT};
 use crate::protocols::eapol::append_eapol_packet;
@@ -393,6 +394,13 @@ impl ProtocolRegistry {
             |ctx| {
                 is_dhcpv6_port_pair(ctx.source_port, ctx.destination_port)
                     && looks_like_dhcpv6_client_payload(ctx.payload)
+            },
+            |_registry, packet, payload| append_dhcpv6_packet(packet, payload),
+        );
+        registry.bind_udp_with_registry(
+            |ctx| {
+                is_dhcpv6_relay_port_pair(ctx.source_port, ctx.destination_port)
+                    && looks_like_dhcpv6_relay_payload(ctx.payload)
             },
             |_registry, packet, payload| append_dhcpv6_packet(packet, payload),
         );
@@ -852,6 +860,12 @@ impl ProtocolRegistry {
 
             if is_dhcpv6_port_pair(source_port, destination_port)
                 && looks_like_dhcpv6_client_payload(payload)
+            {
+                return append_dhcpv6_packet(packet, payload);
+            }
+
+            if is_dhcpv6_relay_port_pair(source_port, destination_port)
+                && looks_like_dhcpv6_relay_payload(payload)
             {
                 return append_dhcpv6_packet(packet, payload);
             }
