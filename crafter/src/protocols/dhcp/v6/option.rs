@@ -1,8 +1,9 @@
 //! DHCPv6 generic option model.
 //!
 //! DHCPv6 options are 16-bit code, 16-bit length, variable payload TLVs. This
-//! module starts with the raw-preserving data model; the serial codec and IANA
-//! registry classification live in later modules.
+//! module provides the raw-preserving data model plus typed payload helpers for
+//! common RFC/IANA options. Unknown option codes and unknown payload bytes stay
+//! constructible so generated tools can emit and inspect exact wire data.
 
 use core::net::Ipv6Addr;
 
@@ -334,6 +335,10 @@ pub struct Dhcpv6StatusCodeOption {
 }
 
 /// DHCPv6 OPTION_IA_NA identity association.
+///
+/// This is the packet payload for a non-temporary address identity association.
+/// It stores IAID, T1/T2 timers, and nested options such as `IAADDR`; it does
+/// not assign or track addresses.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Dhcpv6IaNa {
     iaid: u32,
@@ -343,6 +348,10 @@ pub struct Dhcpv6IaNa {
 }
 
 /// DHCPv6 OPTION_IA_PD identity association for prefix delegation.
+///
+/// This is the packet payload for a prefix-delegation identity association. It
+/// stores IAID, T1/T2 timers, and nested `IAPREFIX` options; routing or prefix
+/// installation is outside the crate.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Dhcpv6IaPd {
     iaid: u32,
@@ -352,6 +361,9 @@ pub struct Dhcpv6IaPd {
 }
 
 /// DHCPv6 OPTION_IAPREFIX delegated prefix.
+///
+/// `Dhcpv6IaPrefix` represents the preferred/valid lifetimes, prefix length,
+/// prefix address, and nested options carried inside `IA_PD`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Dhcpv6IaPrefix {
     preferred_lifetime: u32,
@@ -422,6 +434,9 @@ pub enum Dhcpv6LeasequeryType {
 }
 
 /// DHCPv6 OPTION_LQ_QUERY payload.
+///
+/// Leasequery support is packet data only. The crate builds and decodes query
+/// payloads but does not maintain a lease database.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Dhcpv6Leasequery {
     query_type: Dhcpv6LeasequeryType,
@@ -436,6 +451,9 @@ pub struct Dhcpv6ClientData {
 }
 
 /// DHCPv6 OPTION_IAADDR address binding.
+///
+/// `Dhcpv6IaAddr` stores one address binding payload with preferred and valid
+/// lifetimes plus nested options. It is not an address allocator.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Dhcpv6IaAddr {
     address: Ipv6Addr,

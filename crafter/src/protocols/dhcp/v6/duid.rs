@@ -1,4 +1,9 @@
 //! DHCPv6 DUID packet data.
+//!
+//! A DHCP Unique Identifier is encoded inside Client ID, Server ID, Relay ID,
+//! and related DHCPv6 options. This module preserves unknown DUID types so
+//! packets can round-trip even when the crate has no semantic helper for a
+//! future or private DUID form.
 
 use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
@@ -6,6 +11,10 @@ use crate::error::{CrafterError, Result};
 use super::constants::{DHCPV6_DUID_EN, DHCPV6_DUID_LL, DHCPV6_DUID_LLT, DHCPV6_DUID_UUID};
 
 /// DHCPv6 DHCP Unique Identifier.
+///
+/// `Dhcpv6Duid` is a byte-level identity value. It can be attached to DHCPv6
+/// messages through `client_duid`/`server_duid` helpers, decoded back from
+/// option payloads, and re-encoded without contacting any DHCP service.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Dhcpv6Duid {
     /// DUID-LLT: link-layer address plus time.
