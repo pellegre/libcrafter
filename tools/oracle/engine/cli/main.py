@@ -1118,8 +1118,21 @@ def _backend_has_local_pcap_read_fallback(
         mode == "pcap"
         and backend.name == "wireshark"
         and tuple(required) == ("pcap_read",)
-        and getattr(args, "family", None) == "quic"
+        and _pcap_fallback_family(args) in {"dhcpv6", "quic"}
     )
+
+
+def _pcap_fallback_family(args: argparse.Namespace) -> str | None:
+    family = getattr(args, "family", None)
+    if isinstance(family, str) and family:
+        return family
+    case_name = getattr(args, "case_name", None)
+    if isinstance(case_name, str):
+        if case_name.startswith("dhcpv6-"):
+            return "dhcpv6"
+        if case_name.startswith("quic-"):
+            return "quic"
+    return None
 
 
 def _missing_capability_message(
@@ -1360,6 +1373,7 @@ def _live_provider_validate_endpoint_bootstrap(
 
 
 def _pcap(args: argparse.Namespace) -> int:
+    args = _pcap_effective_args(args)
     if args.dry_plan:
         return _pcap_dry_plan(args)
 
@@ -1383,6 +1397,22 @@ def _pcap(args: argparse.Namespace) -> int:
         )
 
     return _pcap_execute(args)
+
+
+def _pcap_effective_args(args: argparse.Namespace) -> argparse.Namespace:
+    """Use the read-only pcap direction by default for parser-only backends."""
+
+    if getattr(args, "direction", None) != "roundtrip":
+        return args
+    try:
+        backend = get_backend(args.backend)
+    except UnknownBackendError:
+        return args
+    if not backend.parser_only:
+        return args
+    values = vars(args).copy()
+    values["direction"] = "libcrafter_to_reference"
+    return argparse.Namespace(**values)
 
 
 def _seed_live_private_group() -> None:
@@ -6988,6 +7018,7 @@ def _canonical_pcap_record(value: object, context: str) -> JSONObject:
 
 def _canonical_pcap_layers(value: object) -> list[str]:
     aliases = {
+        "Dhcpv6": "dhcpv6",
         "Ipv6DestinationOptionsHeader": "ipv6_destination_options",
         "Ipv6HopByHopOptionsHeader": "ipv6_hop_by_hop",
         "Snmp": "snmp",

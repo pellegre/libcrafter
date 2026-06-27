@@ -98,3 +98,12 @@ backend_support:
       - Encodes and decodes client/server messages, relay messages, DUIDs,
         status codes, IA_NA, IAADDR, IA_PD, IAPREFIX, relay options, leasequery
         families, and unknown options.
+  wireshark:
+    status: supported
+    native_layers:
+      - dhcpv6
+    decode: true
+    pcap_read: true
+    notes:
+      - Parser-only DHCPv6 pcap reads normalize message fields and raw option
+        TLVs from tshark output plus packet bytes.
