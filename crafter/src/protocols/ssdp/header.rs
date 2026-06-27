@@ -1,6 +1,8 @@
-//! SSDP header model scaffold.
+//! SSDP header model.
 //!
-//! Ordered header collection and value types are added in later steps.
+//! SSDP headers are ordered HTTP-like field lines. Names are case-insensitive
+//! for lookup, while original spelling, duplicate order, unknown names, and raw
+//! value bytes are preserved for serialization and inspection.
 
 use core::fmt;
 use core::str::FromStr;
@@ -152,6 +154,244 @@ impl TryFrom<String> for SsdpHeaderName {
 impl From<SsdpHeaderName> for String {
     fn from(name: SsdpHeaderName) -> Self {
         name.original
+    }
+}
+
+/// Raw SSDP header field value bytes.
+///
+/// Values are intentionally byte-preserving. Empty values are valid, including
+/// the UPnP-backed empty `EXT` response field.
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub struct SsdpHeaderValue {
+    raw: Vec<u8>,
+}
+
+impl SsdpHeaderValue {
+    /// Build a value from raw field-value bytes.
+    pub fn from_bytes(raw: impl Into<Vec<u8>>) -> Self {
+        Self { raw: raw.into() }
+    }
+
+    /// Build an empty header value.
+    pub fn empty() -> Self {
+        Self { raw: Vec::new() }
+    }
+
+    /// Return the preserved field-value bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.raw
+    }
+
+    /// Return the number of preserved field-value bytes.
+    pub fn len(&self) -> usize {
+        self.raw.len()
+    }
+
+    /// Return true when this value has no bytes.
+    pub fn is_empty(&self) -> bool {
+        self.raw.is_empty()
+    }
+
+    /// Consume the wrapper and return the preserved bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.raw
+    }
+}
+
+impl AsRef<[u8]> for SsdpHeaderValue {
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
+impl From<Vec<u8>> for SsdpHeaderValue {
+    fn from(raw: Vec<u8>) -> Self {
+        Self::from_bytes(raw)
+    }
+}
+
+impl From<&[u8]> for SsdpHeaderValue {
+    fn from(raw: &[u8]) -> Self {
+        Self::from_bytes(raw.to_vec())
+    }
+}
+
+impl<const N: usize> From<&[u8; N]> for SsdpHeaderValue {
+    fn from(raw: &[u8; N]) -> Self {
+        Self::from_bytes(raw.to_vec())
+    }
+}
+
+impl From<String> for SsdpHeaderValue {
+    fn from(raw: String) -> Self {
+        Self::from_bytes(raw.into_bytes())
+    }
+}
+
+impl From<&str> for SsdpHeaderValue {
+    fn from(raw: &str) -> Self {
+        Self::from_bytes(raw.as_bytes().to_vec())
+    }
+}
+
+/// One ordered SSDP header field line.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SsdpHeader {
+    name: SsdpHeaderName,
+    value: SsdpHeaderValue,
+}
+
+impl SsdpHeader {
+    /// Build a header from a validated name and raw value bytes.
+    pub fn new(name: SsdpHeaderName, value: impl Into<SsdpHeaderValue>) -> Self {
+        Self {
+            name,
+            value: value.into(),
+        }
+    }
+
+    /// Build a header after validating the field-name syntax.
+    pub fn raw(
+        name: impl Into<String>,
+        value: impl Into<SsdpHeaderValue>,
+    ) -> Result<Self, SsdpHeaderNameParseError> {
+        Ok(Self::new(SsdpHeaderName::new(name)?, value))
+    }
+
+    /// Return the preserved header name.
+    pub fn name(&self) -> &SsdpHeaderName {
+        &self.name
+    }
+
+    /// Return the preserved header value.
+    pub fn value(&self) -> &SsdpHeaderValue {
+        &self.value
+    }
+
+    /// Consume the header and return its parts.
+    pub fn into_parts(self) -> (SsdpHeaderName, SsdpHeaderValue) {
+        (self.name, self.value)
+    }
+
+    /// Serialize this header as one SSDP field line.
+    pub fn serialize(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.name.original().as_bytes());
+        out.extend_from_slice(b":");
+        if !self.value.is_empty() {
+            out.extend_from_slice(b" ");
+            out.extend_from_slice(self.value.as_bytes());
+        }
+        out.extend_from_slice(b"\r\n");
+    }
+
+    /// Return this header serialized as one SSDP field line.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        self.serialize(&mut out);
+        out
+    }
+}
+
+/// Ordered SSDP header collection.
+///
+/// The collection preserves insertion order and duplicate fields. Lookups use
+/// the canonical [`SsdpHeaderNameKind`] selected by the header-name parser.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SsdpHeaders {
+    entries: Vec<SsdpHeader>,
+}
+
+impl SsdpHeaders {
+    /// Build an empty header collection.
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    /// Build a header collection from already validated header entries.
+    pub fn from_entries(entries: impl IntoIterator<Item = SsdpHeader>) -> Self {
+        Self {
+            entries: entries.into_iter().collect(),
+        }
+    }
+
+    /// Return the number of stored header entries.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Return true when no headers are stored.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Iterate over every stored header in wire order.
+    pub fn iter(&self) -> core::slice::Iter<'_, SsdpHeader> {
+        self.entries.iter()
+    }
+
+    /// Append one already validated header, preserving insertion order.
+    pub fn push(&mut self, header: SsdpHeader) {
+        self.entries.push(header);
+    }
+
+    /// Validate and append one raw header field.
+    pub fn push_raw(
+        &mut self,
+        name: impl Into<String>,
+        value: impl Into<SsdpHeaderValue>,
+    ) -> Result<(), SsdpHeaderNameParseError> {
+        self.push(SsdpHeader::raw(name, value)?);
+        Ok(())
+    }
+
+    /// Return the first value whose header name has the requested kind.
+    pub fn get_first(&self, kind: SsdpHeaderNameKind) -> Option<&SsdpHeaderValue> {
+        self.entries
+            .iter()
+            .find(|header| header.name.kind() == kind)
+            .map(SsdpHeader::value)
+    }
+
+    /// Return every value whose header name has the requested kind, in wire order.
+    pub fn get_all(&self, kind: SsdpHeaderNameKind) -> impl Iterator<Item = &SsdpHeaderValue> + '_ {
+        self.entries
+            .iter()
+            .filter(move |header| header.name.kind() == kind)
+            .map(SsdpHeader::value)
+    }
+
+    /// Serialize all headers as SSDP field lines in stored order.
+    pub fn serialize(&self, out: &mut Vec<u8>) {
+        for header in &self.entries {
+            header.serialize(out);
+        }
+    }
+
+    /// Return all headers serialized as SSDP field lines in stored order.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        self.serialize(&mut out);
+        out
+    }
+}
+
+impl IntoIterator for SsdpHeaders {
+    type Item = SsdpHeader;
+    type IntoIter = std::vec::IntoIter<SsdpHeader>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a SsdpHeaders {
+    type Item = &'a SsdpHeader;
+    type IntoIter = core::slice::Iter<'a, SsdpHeader>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 
@@ -491,5 +731,129 @@ mod tests {
             assert_eq!(error.value(), invalid);
             assert_eq!(error.expected(), EXPECTED_HEADER_NAME);
         }
+    }
+
+    #[test]
+    fn ssdp_header_collection_preserves_duplicate_order() {
+        let mut headers = SsdpHeaders::new();
+        headers.push_raw("ST", "ssdp:all").expect("first ST header");
+        headers
+            .push_raw("HOST", "239.255.255.250:1900")
+            .expect("HOST header");
+        headers
+            .push_raw("st", "upnp:rootdevice")
+            .expect("second ST header");
+
+        let entries = headers.iter().collect::<Vec<_>>();
+
+        assert_eq!(headers.len(), 3);
+        assert_eq!(entries[0].name().original(), "ST");
+        assert_eq!(entries[0].value().as_bytes(), b"ssdp:all");
+        assert_eq!(entries[1].name().original(), "HOST");
+        assert_eq!(entries[2].name().original(), "st");
+        assert_eq!(entries[2].value().as_bytes(), b"upnp:rootdevice");
+    }
+
+    #[test]
+    fn ssdp_header_collection_first_and_all_lookup_use_canonical_kind() {
+        let mut headers = SsdpHeaders::new();
+        headers
+            .push_raw("st", "ssdp:all")
+            .expect("lowercase ST header");
+        headers
+            .push_raw("HOST", "239.255.255.250:1900")
+            .expect("HOST header");
+        headers
+            .push_raw("ST", "upnp:rootdevice")
+            .expect("uppercase ST header");
+
+        let first = headers
+            .get_first(SsdpHeaderNameKind::St)
+            .expect("first ST value");
+        let all = headers
+            .get_all(SsdpHeaderNameKind::St)
+            .map(SsdpHeaderValue::as_bytes)
+            .collect::<Vec<_>>();
+
+        assert_eq!(first.as_bytes(), b"ssdp:all");
+        assert_eq!(
+            all,
+            vec![b"ssdp:all".as_slice(), b"upnp:rootdevice".as_slice()]
+        );
+        assert!(headers.get_first(SsdpHeaderNameKind::Ext).is_none());
+    }
+
+    #[test]
+    fn ssdp_header_collection_preserves_unknown_and_extension_headers() {
+        let mut headers = SsdpHeaders::new();
+        headers
+            .push_raw("X-DEVICE.UPNP.ORG", "opaque")
+            .expect("unknown extension header");
+        headers
+            .push_raw("01-NLS", "17")
+            .expect("namespace-prefixed NLS header");
+
+        let entries = headers.iter().collect::<Vec<_>>();
+
+        assert_eq!(entries[0].name().kind(), SsdpHeaderNameKind::Unknown);
+        assert_eq!(entries[0].name().original(), "X-DEVICE.UPNP.ORG");
+        assert_eq!(entries[0].value().as_bytes(), b"opaque");
+        assert_eq!(entries[1].name().kind(), SsdpHeaderNameKind::NlsPrefixed);
+        assert_eq!(entries[1].name().nls_namespace(), Some("01"));
+        assert_eq!(
+            headers.to_bytes(),
+            b"X-DEVICE.UPNP.ORG: opaque\r\n01-NLS: 17\r\n"
+        );
+    }
+
+    #[test]
+    fn ssdp_header_collection_supports_empty_ext_value() {
+        let mut headers = SsdpHeaders::new();
+        headers
+            .push_raw("EXT", SsdpHeaderValue::empty())
+            .expect("empty EXT header");
+
+        let ext = headers
+            .get_first(SsdpHeaderNameKind::Ext)
+            .expect("EXT value");
+
+        assert!(ext.is_empty());
+        assert_eq!(headers.to_bytes(), b"EXT:\r\n");
+    }
+
+    #[test]
+    fn ssdp_header_collection_serializes_in_stored_order() {
+        let mut headers = SsdpHeaders::new();
+        headers
+            .push_raw("HOST", "239.255.255.250:1900")
+            .expect("HOST header");
+        headers
+            .push_raw("MAN", "\"ssdp:discover\"")
+            .expect("MAN header");
+        headers.push_raw("MX", "2").expect("MX header");
+        headers.push_raw("ST", "ssdp:all").expect("ST header");
+
+        assert_eq!(
+            headers.to_bytes(),
+            b"HOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: ssdp:all\r\n"
+        );
+    }
+
+    #[test]
+    fn ssdp_header_collection_invalid_raw_names_return_structured_errors() {
+        let mut headers = SsdpHeaders::new();
+        headers
+            .push_raw("HOST", "239.255.255.250:1900")
+            .expect("valid header");
+
+        let error = headers
+            .push_raw("bad name", "value")
+            .expect_err("invalid raw header name");
+
+        assert_eq!(error.field(), SsdpHeaderField::Name);
+        assert_eq!(error.value(), "bad name");
+        assert_eq!(error.expected(), EXPECTED_HEADER_NAME);
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers.to_bytes(), b"HOST: 239.255.255.250:1900\r\n");
     }
 }
