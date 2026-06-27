@@ -28,6 +28,9 @@ Per-protocol wire coverage for building and decoding packets.
   checksums, decode, inspection, and sizing helpers.
 - [UDP wire coverage](guide/udp.md) — UDP datagram construction, length and
   checksum auto-fill, decode dispatch, and the implemented RFCs.
+- [DHCPv6 wire coverage](guide/dhcpv6.md) — DHCPv6 client/server and relay
+  packet construction, typed options, prefix delegation, decode, inspection,
+  offline fixtures, and the dry-run/live boundary.
 - [ARP wire coverage](guide/arp.md) — ARP request/reply construction over
   Ethernet, IPv4 address resolution, decode, and the implemented RFCs.
 - [ICMPv6 wire coverage](guide/icmpv6.md) — ICMPv6 error/informational messages,
