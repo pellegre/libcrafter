@@ -26,13 +26,15 @@ pub(crate) use layer::{append_dhcpv6_packet, looks_like_dhcpv6_payload};
 pub use layer::{Dhcpv6, Dhcpv6RelayHeader};
 pub use message::Dhcpv6MessageType;
 pub use option::{
-    Dhcpv6AuthAlgorithm, Dhcpv6AuthProtocol, Dhcpv6Authentication, Dhcpv6IaAddr, Dhcpv6IaNa,
-    Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6Option, Dhcpv6OptionCode, Dhcpv6OptionFormat,
-    Dhcpv6OptionValue, Dhcpv6ReplayDetectionMethod, Dhcpv6StatusCodeOption, Dhcpv6UserClass,
-    Dhcpv6VendorClass, Dhcpv6VendorOption, Dhcpv6VendorOptions,
+    Dhcpv6AuthAlgorithm, Dhcpv6AuthProtocol, Dhcpv6Authentication, Dhcpv6ClientLinkLayerAddress,
+    Dhcpv6IaAddr, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6Option, Dhcpv6OptionCode,
+    Dhcpv6OptionFormat, Dhcpv6OptionValue, Dhcpv6RelaySuppliedOptions, Dhcpv6RemoteId,
+    Dhcpv6ReplayDetectionMethod, Dhcpv6StatusCodeOption, Dhcpv6UserClass, Dhcpv6VendorClass,
+    Dhcpv6VendorOption, Dhcpv6VendorOptions,
 };
 pub use registry::{
-    dhcpv6_option_meta, dhcpv6_option_name, dhcpv6_option_status, Dhcpv6ClientOro,
-    Dhcpv6OptionMeta, Dhcpv6OptionSingleton, Dhcpv6OptionStatus,
+    dhcpv6_option_meta, dhcpv6_option_name, dhcpv6_option_status, dhcpv6_rsoo_option_permission,
+    dhcpv6_rsoo_option_permitted, Dhcpv6ClientOro, Dhcpv6OptionMeta, Dhcpv6OptionSingleton,
+    Dhcpv6OptionStatus, Dhcpv6RsooOptionPermission,
 };
 pub use status::Dhcpv6StatusCode;

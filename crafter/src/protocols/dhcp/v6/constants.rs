@@ -46,6 +46,8 @@ pub const DHCPV6_OPTION_ORO: u16 = 6;
 pub const DHCPV6_OPTION_PREFERENCE: u16 = 7;
 /// DHCPv6 OPTION_ELAPSED_TIME option code.
 pub const DHCPV6_OPTION_ELAPSED_TIME: u16 = 8;
+/// DHCPv6 OPTION_RELAY_MSG option code.
+pub const DHCPV6_OPTION_RELAY_MSG: u16 = 9;
 /// DHCPv6 OPTION_AUTH option code.
 pub const DHCPV6_OPTION_AUTH: u16 = 11;
 /// DHCPv6 OPTION_STATUS_CODE option code.
@@ -58,6 +60,8 @@ pub const DHCPV6_OPTION_USER_CLASS: u16 = 15;
 pub const DHCPV6_OPTION_VENDOR_CLASS: u16 = 16;
 /// DHCPv6 OPTION_VENDOR_OPTS option code.
 pub const DHCPV6_OPTION_VENDOR_OPTS: u16 = 17;
+/// DHCPv6 OPTION_INTERFACE_ID option code.
+pub const DHCPV6_OPTION_INTERFACE_ID: u16 = 18;
 /// DHCPv6 OPTION_RECONF_MSG option code.
 pub const DHCPV6_OPTION_RECONF_MSG: u16 = 19;
 /// DHCPv6 OPTION_RECONF_ACCEPT option code.
@@ -66,6 +70,18 @@ pub const DHCPV6_OPTION_RECONF_ACCEPT: u16 = 20;
 pub const DHCPV6_OPTION_IA_PD: u16 = 25;
 /// DHCPv6 OPTION_IAPREFIX option code.
 pub const DHCPV6_OPTION_IAPREFIX: u16 = 26;
+/// DHCPv6 OPTION_REMOTE_ID option code.
+pub const DHCPV6_OPTION_REMOTE_ID: u16 = 37;
+/// DHCPv6 OPTION_SUBSCRIBER_ID option code.
+pub const DHCPV6_OPTION_SUBSCRIBER_ID: u16 = 38;
+/// DHCPv6 OPTION_RELAY_ID option code.
+pub const DHCPV6_OPTION_RELAY_ID: u16 = 53;
+/// DHCPv6 OPTION_ERP_LOCAL_DOMAIN_NAME option code.
+pub const DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME: u16 = 65;
+/// DHCPv6 OPTION_RSOO option code.
+pub const DHCPV6_OPTION_RSOO: u16 = 66;
+/// DHCPv6 OPTION_CLIENT_LINKLAYER_ADDR option code.
+pub const DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR: u16 = 79;
 
 /// Fixed length in octets of the DHCPv6 Authentication option payload header.
 pub const DHCPV6_AUTH_HEADER_LEN: usize = 11;

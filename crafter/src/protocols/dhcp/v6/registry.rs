@@ -6,6 +6,8 @@
 //! columns where IANA publishes them. The wire-format codec remains raw-first:
 //! metadata classifies codepoints but does not require typed payload support.
 
+use super::constants::DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME;
+
 /// Registry assignment status for a DHCPv6 option codepoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Dhcpv6OptionStatus {
@@ -43,6 +45,15 @@ pub enum Dhcpv6OptionSingleton {
     Yes,
     /// Multiple instances may be present in the enclosing option scope.
     No,
+}
+
+/// IANA "Options Permitted in the Relay-Supplied Options Option" status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Dhcpv6RsooOptionPermission {
+    /// The option is listed as permitted in OPTION_RSOO.
+    Permitted,
+    /// The option is not listed as permitted in OPTION_RSOO.
+    NotPermitted,
 }
 
 impl Dhcpv6OptionSingleton {
@@ -100,6 +111,24 @@ pub const fn dhcpv6_option_name(code: u16) -> Option<&'static str> {
         | Dhcpv6OptionStatus::Unassigned
         | Dhcpv6OptionStatus::Unknown => None,
     }
+}
+
+/// Permission metadata for an option inside OPTION_RSOO.
+///
+/// Source: IANA "Options Permitted in the Relay-Supplied Options Option".
+pub const fn dhcpv6_rsoo_option_permission(code: u16) -> Dhcpv6RsooOptionPermission {
+    match code {
+        DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME => Dhcpv6RsooOptionPermission::Permitted,
+        _ => Dhcpv6RsooOptionPermission::NotPermitted,
+    }
+}
+
+/// True when IANA lists an option as permitted in OPTION_RSOO.
+pub const fn dhcpv6_rsoo_option_permitted(code: u16) -> bool {
+    matches!(
+        dhcpv6_rsoo_option_permission(code),
+        Dhcpv6RsooOptionPermission::Permitted
+    )
 }
 
 const fn entry(
