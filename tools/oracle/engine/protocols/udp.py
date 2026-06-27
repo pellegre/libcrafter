@@ -49,9 +49,12 @@ _SUPPORTED_FIELDS = frozenset({"src_port", "dst_port", "checksum", "options"})
 
 
 def _sample_udp_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
+    dhcpv6_case = ctx.case.replace("_", "-")
     if field_name == "src_port":
         if "dhcpv4" in ctx.stack:
             return 68
+        if "dhcpv6" in ctx.stack:
+            return 547 if ("relay" in dhcpv6_case or "reply" in dhcpv6_case) else 546
         if "dns" in ctx.stack:
             return ephemeral_port(ctx.rng)
         # RIP (UDP/520, RFC 1058 §3.4) and RIPng (UDP/521, RFC 2080 §2) are
@@ -66,6 +69,10 @@ def _sample_udp_field(ctx: _SamplingContext, field_name: str, domain: object) ->
     if field_name == "dst_port":
         if "dhcpv4" in ctx.stack:
             return 67
+        if "dhcpv6" in ctx.stack:
+            if "relay" in dhcpv6_case:
+                return 547
+            return 546 if "reply" in dhcpv6_case else 547
         if "dns" in ctx.stack:
             return 53
         if "rip" in ctx.stack:

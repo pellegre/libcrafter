@@ -1,0 +1,159 @@
+version: 1
+kind: feature
+name: dhcpv6_behavior
+summary: DHCPv6 message, relay, identity association, and option behavior.
+
+layers:
+  - ipv6
+  - udp
+  - dhcpv6
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - live_exchange
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: solicit
+    message_types:
+      - solicit
+  - name: request
+    message_types:
+      - request
+  - name: reply
+    message_types:
+      - reply
+  - name: information_request
+    message_types:
+      - information_request
+  - name: information_reply
+    message_types:
+      - reply
+  - name: relay_forward
+    message_types:
+      - relay_forward
+  - name: relay_reply
+    message_types:
+      - relay_reply
+  - name: ia_na_iaaddr
+    option_kinds:
+      - ia_na
+      - ia_addr
+  - name: ia_pd_iaprefix
+    option_kinds:
+      - ia_pd
+      - ia_prefix
+  - name: unknown_option
+    option_kinds:
+      - unknown
+  - name: option_matrix
+    option_kinds:
+      - client_id
+      - server_id
+      - oro
+      - elapsed_time
+      - status_code
+      - ia_na
+      - ia_addr
+      - ia_pd
+      - ia_prefix
+      - relay_msg
+      - interface_id
+      - unknown
+
+supported_cases:
+  - name: dhcpv6-solicit
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dhcpv6-request
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dhcpv6-reply
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dhcpv6-information-request
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dhcpv6-information-reply
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dhcpv6-relay-forward
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dhcpv6-relay-reply
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dhcpv6-ia-na-iaaddr
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dhcpv6-ia-pd-iaprefix
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dhcpv6-unknown-option
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dhcpv6-option-matrix
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: dhcpv6-live-plan-client
+    directions:
+      - live_exchange
+    byte_policy: strict_bytes
+    contract_only: true
+  - name: dhcpv6-live-plan-relay
+    directions:
+      - live_exchange
+    byte_policy: strict_bytes
+    contract_only: true
+
+coverage_cases:
+  - dhcpv6-solicit
+  - dhcpv6-request
+  - dhcpv6-reply
+  - dhcpv6-information-request
+  - dhcpv6-information-reply
+  - dhcpv6-relay-forward
+  - dhcpv6-relay-reply
+  - dhcpv6-ia-na-iaaddr
+  - dhcpv6-ia-pd-iaprefix
+  - dhcpv6-unknown-option
+  - dhcpv6-option-matrix
+  - dhcpv6-live-plan-client
+  - dhcpv6-live-plan-relay
+
+backend_support:
+  scapy:
+    status: partial
+    native_layers:
+      - DHCP6
+    notes:
+      - Backend byte materialization is registered separately; these cases define
+        the data-driven matrix and keep live cases as plan-only contracts.
+  libcrafter:
+    status: supported
+    notes:
+      - The crate supports the message, relay, identity association, and unknown
+        option cases listed here through typed builders and decode.
