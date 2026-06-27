@@ -14,7 +14,7 @@ use super::constants::{
 };
 use super::duid::Dhcpv6Duid;
 use super::message::{dhcpv6_message_type_summary, Dhcpv6MessageType};
-use super::option::{Dhcpv6IaNa, Dhcpv6Option, Dhcpv6OptionCode};
+use super::option::{Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6Option, Dhcpv6OptionCode};
 
 /// DHCPv6 packet layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -331,6 +331,11 @@ impl Dhcpv6 {
         Ok(self.option(Dhcpv6Option::ia_na(ia_na)?))
     }
 
+    /// Append an OPTION_IA_PD option.
+    pub fn ia_pd(self, ia_pd: Dhcpv6IaPd) -> Result<Self> {
+        Ok(self.option(Dhcpv6Option::ia_pd(ia_pd)?))
+    }
+
     /// Replace the option list.
     pub fn options(mut self, options: impl Into<Vec<Dhcpv6Option>>) -> Self {
         self.options = options.into();
@@ -421,6 +426,25 @@ impl Dhcpv6 {
         for option in &self.options {
             if let Some(ia_na) = option.ia_na_value()? {
                 values.push(ia_na);
+            }
+        }
+        Ok(values)
+    }
+
+    /// Decode the first IA_PD option.
+    pub fn ia_pd_value(&self) -> Result<Option<Dhcpv6IaPd>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_IA_PD) {
+            Some(option) => option.ia_pd_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode all IA_PD options in packet order.
+    pub fn ia_pd_values(&self) -> Result<Vec<Dhcpv6IaPd>> {
+        let mut values = Vec::new();
+        for option in &self.options {
+            if let Some(ia_pd) = option.ia_pd_value()? {
+                values.push(ia_pd);
             }
         }
         Ok(values)
