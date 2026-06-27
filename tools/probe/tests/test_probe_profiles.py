@@ -1,7 +1,7 @@
 """Unit coverage for probe sampling profiles.
 
 These tests pin the profile-to-case mapping (smoke stays the legacy set, behavior
-selects the full DNS/DHCP/ARP/NDP/UDP suite plus the live-capable OSPF Hello
+selects the full DNS/DHCPv4/ARP/NDP/UDP suite plus the live-capable OSPF Hello
 exchange, and the planned-only OSPF Database Description exchange is isolated in
 the dry-run ospf-smoke profile) and the deterministic seed/count planning the
 profile feeds into the planner.
@@ -24,9 +24,9 @@ _LEGACY_CASE_NAMES = (
     "arp-resolution",
 )
 
-# The behavior suite carries ten cases each for DNS, DHCP, ARP, and UDP, the
+# The behavior suite carries ten cases each for DNS, DHCPv4, ARP, and UDP, the
 # three IPv6 Neighbor Discovery behavior cases (NS->NA, RS->RA, DAD), and the
-# single live-capable OSPF case (the Hello exchange). It is ordered dns, dhcp,
+# single live-capable OSPF case (the Hello exchange). It is ordered dns, dhcpv4,
 # arp, ndp, udp, ospf. The planned-only OSPF Database Description exchange is
 # kept out of this live profile (it lives in the dry-run ospf-smoke profile), so
 # the behavior profile stays fully live-routable. Derive the count from the
@@ -39,7 +39,7 @@ _QUIC_SMOKE_CASE_COUNT = len(cases.QUIC_SMOKE_PROFILE_CASE_NAMES)
 _SNMP_CASE_COUNT = len(cases.SNMP_SMOKE_PROFILE_CASE_NAMES)
 _BEHAVIOR_PROTOCOL_COMPOSITION = {
     "dns": 10,
-    "dhcp": 10,
+    "dhcpv4": 10,
     "arp": 10,
     "ndp": 3,
     "udp": 10,
@@ -47,7 +47,7 @@ _BEHAVIOR_PROTOCOL_COMPOSITION = {
 }
 _BEHAVIOR_PROTOCOL_ORDER = (
     ["dns"] * 10
-    + ["dhcp"] * 10
+    + ["dhcpv4"] * 10
     + ["arp"] * 10
     + ["ndp"] * 3
     + ["udp"] * 10
@@ -86,7 +86,7 @@ class ProbeProfileMembershipTest(unittest.TestCase):
 
         self.assertEqual(by_protocol, _BEHAVIOR_PROTOCOL_COMPOSITION)
 
-    def test_behavior_profile_order_is_dns_dhcp_arp_ndp_udp_ospf(self) -> None:
+    def test_behavior_profile_order_is_dns_dhcpv4_arp_ndp_udp_ospf(self) -> None:
         selected = cases.profile_selected_cases("behavior", [])
         protocols = [str(case.metadata.get("protocol")) for case in selected]
 

@@ -9,7 +9,7 @@
 //! target hardware/protocol address (the original sender), and the Ethernet
 //! source/destination of the reply.
 //!
-//! ARP rides Ethernet directly (no IP/UDP), unlike the DNS/DHCP cases: the
+//! ARP rides Ethernet directly (no IP/UDP), unlike the DNS/DHCPv4 cases: the
 //! send/capture path is link-layer (`SendOptions::link_layer`) and the decode
 //! entrypoint decodes the Ethernet frame
 //! (`Packet::decode_from_link(LinkType::Ethernet, ..)`), not an L3 packet.

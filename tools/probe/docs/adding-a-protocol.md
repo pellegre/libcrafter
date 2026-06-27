@@ -161,7 +161,7 @@ the builder (`from ..cases import PROBE_CASE_BY_NAME`) to avoid the
 
 A plan dict is the **cross-language wire contract** consumed by the Rust adapter
 under `tools/probe/adapters/`. There is one adapter module per protocol —
-`tools/probe/adapters/src/{arp,dns,dhcp,udp,ndp,icmp,tcp,igmp,ospf,rip}.rs` — and
+`tools/probe/adapters/src/{arp,dns,dhcpv4,udp,ndp,icmp,tcp,igmp,ospf,rip}.rs` — and
 `tools/probe/adapters/src/common.rs` dispatches `(mode, case_name)` to it; the
 `stimulus_endpoint` binary is `tools/probe/adapters/src/bin/stimulus_endpoint.rs`.
 
@@ -187,7 +187,7 @@ are part of the contributor recipe.
 ## Tests, the builder-identity pins, and the gate
 
 Add a `tools/probe/tests/test_<proto>_behavior.py` (the convention used by
-`test_arp_behavior.py`, `test_dns_behavior.py`, `test_dhcp_behavior.py`,
+`test_arp_behavior.py`, `test_dns_behavior.py`, `test_dhcpv4_behavior.py`,
 `test_udp_behavior.py`, `test_ndp_behavior.py`). Such a test:
 
 - asserts the deterministic plan shape each case produces (build plans through a
@@ -240,7 +240,7 @@ silently alter a plan, a rewrite, or the registry coverage:
 locks the plug-and-play end state:
 
 - **Full coverage** — the registry is exactly the known protocol set
-  (`arp, dns, dhcp, udp, ndp, icmp, tcp, bgp, rip, ospf, igmp, ipsec`), nothing
+  (`arp, dns, dhcpv4, udp, ndp, icmp, tcp, bgp, rip, ospf, igmp, ipsec`), nothing
   more or less. **A new protocol must be added to `ALL_PROTOCOLS` in this test**,
   or the equality assertion fails.
 - **Exactly-one ownership** — every case in `PROBE_CASE_BY_NAME` is owned by

@@ -1,7 +1,7 @@
 """ICMP probe protocol plugin: cases, plan builders, and full live surface.
 
 This is the ICMP full migration (a single step, after the ARP vertical slice and
-the DNS / DHCP / UDP / NDP migrations). ICMP has a small surface and no responder
+the DNS / DHCPv4 / UDP / NDP migrations). ICMP has a small surface and no responder
 target service -- both of its cases ride a bare kernel -- so its entire surface
 fits in one step:
 

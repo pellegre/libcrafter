@@ -1,7 +1,7 @@
 """NDP probe protocol plugin: cases, plan builders, and planning surface.
 
 This is the NDP (IPv6 Neighbor Discovery, RFC 4861) *planning half* migration
-(after the ARP vertical slice and the DNS / DHCP / UDP migrations). It bundles
+(after the ARP vertical slice and the DNS / DHCPv4 / UDP migrations). It bundles
 NDP's planning surface in one place:
 
 * the three NDP behavioral cases plus the NDP capability constant (the catalog

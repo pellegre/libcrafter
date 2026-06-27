@@ -1,6 +1,6 @@
 """Guarded live behavior-suite coverage.
 
-The full DNS/DHCP/ARP/NDP/UDP behavior suite -- plus the live-capable OSPF Hello
+The full DNS/DHCPv4/ARP/NDP/UDP behavior suite -- plus the live-capable OSPF Hello
 exchange -- must stay dry-run safe by default, but when a live provider is
 explicitly selected it must route through the protected lab-backed execution
 path. Because every behavior-profile case is live-routable (the planned-only
@@ -77,7 +77,7 @@ class GuardedBehaviorCommandDocsTest(unittest.TestCase):
 
 
 class BehaviorDryRunSetupTest(unittest.TestCase):
-    def test_full_behavior_dry_run_advertises_dhcp_and_arp_setup(self) -> None:
+    def test_full_behavior_dry_run_advertises_dhcpv4_and_arp_setup(self) -> None:
         report, endpoint_request = _dry_run_report_and_request()
         setup = report.metadata["target_service_setup"]
 
@@ -88,15 +88,15 @@ class BehaviorDryRunSetupTest(unittest.TestCase):
 
         services = setup["services"]
         self.assertTrue(any(service["name"] == "dns-responder" for service in services))
-        self.assertTrue(any(service["name"] == "dhcp-responder" for service in services))
+        self.assertTrue(any(service["name"] == "dhcpv4-responder" for service in services))
         self.assertTrue(any(service["name"] == "udp-responder" for service in services))
 
-        dhcp_services = [
-            service for service in services if service["name"] == "dhcp-responder"
+        dhcpv4_services = [
+            service for service in services if service["name"] == "dhcpv4-responder"
         ]
-        self.assertEqual(len(dhcp_services), 1)
-        self.assertEqual(dhcp_services[0]["port"], 67)
-        self.assertEqual(dhcp_services[0]["request_count"], 11)
+        self.assertEqual(len(dhcpv4_services), 1)
+        self.assertEqual(dhcpv4_services[0]["port"], 67)
+        self.assertEqual(dhcpv4_services[0]["request_count"], 11)
 
         arp_state = setup["arp_kernel_state"]
         self.assertTrue(arp_state["planned"])
@@ -108,7 +108,7 @@ class BehaviorDryRunSetupTest(unittest.TestCase):
         self.assertTrue(arp_state["alt_sender_addresses"])
         self.assertEqual(len(arp_state["decoy_events"]), 1)
 
-    def test_live_setup_script_renders_dhcp_and_arp_blocks(self) -> None:
+    def test_live_setup_script_renders_dhcpv4_and_arp_blocks(self) -> None:
         _request, _selected, _planned, probe_plans = _planned_behavior(dry_run=True)
         script = target_services.target_service_setup_script(
             artifact_root="/root/libcrafter/artifacts/probe/target-services",
@@ -116,15 +116,15 @@ class BehaviorDryRunSetupTest(unittest.TestCase):
             open_ports=[],
             closed_ports=[],
             dns_plans=target_services.dns_probe_plans(probe_plans),
-            dhcp_plans=target_services.dhcp_probe_plans(probe_plans),
+            dhcpv4_plans=target_services.dhcpv4_probe_plans(probe_plans),
             arp_plans=target_services.arp_probe_plans(probe_plans),
             udp_plans=target_services.udp_probe_plans(probe_plans),
             closed_udp_ports=[43217],
             target_interface="eth1",
         )
 
-        self.assertIn("dhcp-responder.py", script)
-        self.assertIn("echo dhcp_responder_67=running", script)
+        self.assertIn("dhcpv4-responder.py", script)
+        self.assertIn("echo dhcpv4_responder_67=running", script)
         self.assertIn("arp_kernel_state=configured", script)
         self.assertIn("target_interface=eth1", script)
         self.assertIn("arp-decoy-emitter.py", script)

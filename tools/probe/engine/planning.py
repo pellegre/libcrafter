@@ -4,7 +4,7 @@ This module owns the deterministic byte/address helpers, the seed-driven
 selection that cycles the requested cases into a planned sequence, and the
 per-case plan generators for the existing ICMP/TCP/DNS/TTL/ARP behavioral
 cases. Plan generation is dispatched through :data:`PLAN_BUILDERS`, a registry
-keyed by case name. The behavior suite extends the registry with DNS, DHCP,
+keyed by case name. The behavior suite extends the registry with DNS, DHCPv4,
 ARP, and UDP planners without touching the dispatcher or the selection logic.
 
 The JSON shape produced here is the stable probe plan contract consumed by the
@@ -86,29 +86,26 @@ from .protocols.dns import (  # noqa: F401  (re-exported for identity/back-compa
     dns_target_name,
     dns_txt_strings,
 )
-# The DHCP planning surface (cases, builders, deterministic client identity /
-# option helpers) lives in the DHCP plugin module. Re-import each moved builder,
-# the multi-send helper, and the DHCP-only ``dhcp_*`` helpers so
-# ``planning._<builder>`` resolves to the *same* function object the plugin
-# registered and the merged ``PLAN_BUILDERS`` exposes -- the DHCP behavior tests
-# pin ``planning.PLAN_BUILDERS[name] is planning._<builder>`` via ``assertIs``,
-# so object identity must be preserved.
-from .protocols.dhcp import (  # noqa: F401  (re-exported for identity/back-compat)
-    _dhcp_client_identifier_probe_plan,
-    _dhcp_discover_offer_probe_plan,
-    _dhcp_hostname_probe_plan,
-    _dhcp_inform_ack_probe_plan,
-    _dhcp_lease_time_probe_plan,
-    _dhcp_parameter_request_list_probe_plan,
-    _dhcp_rapid_repeat_probe_plan,
-    _dhcp_rapid_repeat_send,
-    _dhcp_renewal_unicast_ack_probe_plan,
-    _dhcp_request_ack_probe_plan,
-    _dhcp_request_nak_probe_plan,
-    dhcp_client_identifier,
-    dhcp_client_mac,
-    dhcp_hostname,
-    dhcp_parameter_request_list,
+# The DHCPv4 planning surface (cases, builders, deterministic client identity /
+# option helpers) lives in the DHCPv4 plugin module. Re-import the builders and
+# helpers so identity-based behavior tests compare the same function objects that
+# the registry exposes.
+from .protocols.dhcpv4 import (  # noqa: F401  (re-exported for identity)
+    _dhcpv4_client_identifier_probe_plan,
+    _dhcpv4_discover_offer_probe_plan,
+    _dhcpv4_hostname_probe_plan,
+    _dhcpv4_inform_ack_probe_plan,
+    _dhcpv4_lease_time_probe_plan,
+    _dhcpv4_parameter_request_list_probe_plan,
+    _dhcpv4_rapid_repeat_probe_plan,
+    _dhcpv4_rapid_repeat_send,
+    _dhcpv4_renewal_unicast_ack_probe_plan,
+    _dhcpv4_request_ack_probe_plan,
+    _dhcpv4_request_nak_probe_plan,
+    dhcpv4_client_identifier,
+    dhcpv4_client_mac,
+    dhcpv4_hostname,
+    dhcpv4_parameter_request_list,
 )
 # The UDP planning surface (cases, builders, the multi-send helper, the shared
 # echo scaffolding, and the MTU/length-boundary constants) lives in the UDP
@@ -376,7 +373,7 @@ PLANNED_ONLY_REGISTERED_CASES: frozenset[str] = frozenset(
 def register_plan_builder(case_name: str, builder: PlanBuilder) -> None:
     """Register a plan builder for ``case_name``.
 
-    Used by behavior-suite case groups to add DNS, DHCP, ARP, and UDP planners
+    Used by behavior-suite case groups to add DNS, DHCPv4, ARP, and UDP planners
     without modifying the dispatcher.
     """
 

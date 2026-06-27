@@ -105,7 +105,7 @@ _IPSEC_CAPABILITIES = [
 # authenticates a datagram (or builds an IKE_SA_INIT), the peer accepts it
 # (decrypts/verifies the ICV, or parses the IKE header), and its protected reply
 # or IKE_SA_INIT response is captured and decoded. The ``stateful`` metadata
-# flag mirrors the DHCP precedent (an exchange whose response depends on shared
+# flag mirrors the DHCPv4 precedent (an exchange whose response depends on shared
 # per-exchange state -- here the SA / IKE SPI pair -- rather than a stateless
 # echo); ``requires_tunnel`` marks the tunnel-mode ESP case the way NDP marks
 # ``requires_router_target``, so a peer without tunnel-mode SAs can skip it

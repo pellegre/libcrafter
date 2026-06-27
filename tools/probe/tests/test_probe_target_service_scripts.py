@@ -219,15 +219,15 @@ class TargetServiceDescriptorTest(unittest.TestCase):
             descriptor.artifacts,
         )
 
-    def test_dhcp_responder_descriptor_requires_link_layer(self) -> None:
-        descriptor = ts.dhcp_responder_descriptor(
+    def test_dhcpv4_responder_descriptor_requires_link_layer(self) -> None:
+        descriptor = ts.dhcpv4_responder_descriptor(
             bind_ipv4="10.77.0.20",
             source_ipv4="10.77.0.10",
             port=67,
             artifact_root="/root/probe/target-services",
         )
-        self.assertEqual(descriptor.name, "dhcp-responder")
-        self.assertEqual(descriptor.purpose, "dhcp")
+        self.assertEqual(descriptor.name, "dhcpv4-responder")
+        self.assertEqual(descriptor.purpose, "dhcpv4")
         self.assertIn(ts.SKIP_REQUIRES_LINK_LAYER, descriptor.requires)
         self.assertEqual(descriptor.metadata["layer"], "link")
 
