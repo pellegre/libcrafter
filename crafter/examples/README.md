@@ -47,8 +47,8 @@ values use `Ipv4Protocol`.
 | `dhcpv4_discover` | Protocols | Dry-run by default; live-gated with `--live` | DHCPv4 discover construction with an explicit client MAC and link-layer send options. | `cargo run -p crafter --example dhcpv4_discover` |
 | `dhcpv4_option82` | Protocols | Offline | DHCPv4 relay agent information (option 82), classless static routes, and option overload construction and offline decode. | `cargo run -p crafter --example dhcpv4_option82` |
 | `dhcpv4_leasequery` | Protocols | Offline | DHCPv4 leasequery, typed client identifier, authentication, and status/state packet-field construction and offline decode. | `cargo run -p crafter --example dhcpv4_leasequery` |
-| `dhcpv6_solicit` | Protocols | Dry-run | DHCPv6 Solicit construction, option request data, and network-layer send planning. | `cargo run -p crafter --example dhcpv6_solicit` |
-| `dhcpv6_information_request` | Protocols | Offline | DHCPv6 Information-request construction, compile, decode, ORO inspection, and hexdump output. | `cargo run -p crafter --example dhcpv6_information_request` |
+| `dhcpv6_solicit` | Protocols | Dry-run send/receive | DHCPv6 Solicit construction, option request data, derived reply filter, and network-layer send/receive planning. | `cargo run -p crafter --example dhcpv6_solicit` |
+| `dhcpv6_information_request` | Protocols | Dry-run send/receive plus offline decode | DHCPv6 Information-request construction, dry-run send/receive reporting, decode, ORO inspection, and hexdump output. | `cargo run -p crafter --example dhcpv6_information_request` |
 | `dhcpv6_prefix_delegation` | Protocols | Offline | DHCPv6 IA_PD and IA Prefix construction, compile, decode, and typed prefix inspection. | `cargo run -p crafter --example dhcpv6_prefix_delegation` |
 | `dhcpv6_relay` | Protocols | Offline | DHCPv6 Relay-forward construction with Interface-Id and nested Relay Message decoding. | `cargo run -p crafter --example dhcpv6_relay` |
 | `icmpv4_error` | Protocols | Offline | ICMPv4 time-exceeded error with a quoted datagram and an RFC 4884/4950 MPLS extension object, compiled and decoded offline. | `cargo run -p crafter --example icmpv4_error` |

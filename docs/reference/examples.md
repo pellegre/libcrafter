@@ -48,8 +48,9 @@ cargo run -p crafter --example dhcpv6_relay
 
 The DHCP examples are packet-primitive smoke tests. `dhcpv4_discover` defaults
 to a dry-run link-layer send plan; `dhcpv4_option82` and `dhcpv4_leasequery`
-compile and decode offline. `dhcpv6_solicit` builds a network-layer dry-run
-send plan; `dhcpv6_information_request`, `dhcpv6_prefix_delegation`, and
+compile and decode offline. `dhcpv6_solicit` and
+`dhcpv6_information_request` use `SendRecv::new().dry_run()` for
+network-layer send/receive planning; `dhcpv6_prefix_delegation` and
 `dhcpv6_relay` compile and decode offline.
 
 ```sh
@@ -65,7 +66,9 @@ cargo run -p crafter --example dhcpv6_relay
 Both protocol families use the same packet stack surface: compose a typed
 `Dhcpv4` or `Dhcpv6` layer under the right IP/UDP envelope, compile bytes,
 decode fixtures, inspect `summary()`/`show()`, and keep live network I/O behind
-explicit dry-run-to-live workflow gates.
+explicit dry-run-to-live workflow gates. DHCPv6 live validation belongs in the
+provider-backed lab, oracle, and probe workflows under `docs/operations/`,
+where artifacts and teardown are part of the run.
 
 ## TCP Options Snippet
 
