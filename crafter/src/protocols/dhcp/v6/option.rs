@@ -17,9 +17,9 @@ use super::constants::{
     DHCPV6_AUTH_PROTOCOL_SPLIT_HORIZON_DNS, DHCPV6_AUTH_RDM_MONOTONIC_COUNTER,
     DHCPV6_AUTH_REPLAY_DETECTION_LEN, DHCPV6_OPTION_AUTH, DHCPV6_OPTION_BOOTFILE_PARAM,
     DHCPV6_OPTION_BOOTFILE_URL, DHCPV6_OPTION_CLIENTID, DHCPV6_OPTION_CLIENT_ARCH_TYPE,
-    DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR, DHCPV6_OPTION_DNS_SERVERS, DHCPV6_OPTION_DOMAIN_LIST,
-    DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN, DHCPV6_OPTION_IAADDR,
-    DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD,
+    DHCPV6_OPTION_CLIENT_FQDN, DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR, DHCPV6_OPTION_DNS_SERVERS,
+    DHCPV6_OPTION_DOMAIN_LIST, DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN,
+    DHCPV6_OPTION_IAADDR, DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD,
     DHCPV6_OPTION_INFORMATION_REFRESH_TIME, DHCPV6_OPTION_INF_MAX_RT, DHCPV6_OPTION_INTERFACE_ID,
     DHCPV6_OPTION_NEW_POSIX_TIMEZONE, DHCPV6_OPTION_NEW_TZDB_TIMEZONE, DHCPV6_OPTION_NII,
     DHCPV6_OPTION_NTP_SERVER, DHCPV6_OPTION_ORO, DHCPV6_OPTION_PREFERENCE,
@@ -299,6 +299,13 @@ pub struct Dhcpv6NtpSuboption {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Dhcpv6NtpServer {
     suboptions: Vec<Dhcpv6NtpSuboption>,
+}
+
+/// DHCPv6 OPTION_CLIENT_FQDN payload.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6ClientFqdn {
+    flags: u8,
+    domain_name: DnsName,
 }
 
 /// DHCPv6 OPTION_STATUS_CODE payload.
@@ -1482,6 +1489,54 @@ impl Dhcpv6NtpServer {
     }
 }
 
+impl Dhcpv6ClientFqdn {
+    /// Create a Client FQDN payload.
+    pub const fn new(flags: u8, domain_name: DnsName) -> Self {
+        Self { flags, domain_name }
+    }
+
+    /// Decode a Client FQDN payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.is_empty() {
+            return Err(CrafterError::buffer_too_short(
+                "dhcpv6.option.client_fqdn.flags",
+                1,
+                0,
+            ));
+        }
+        let (domain_name, consumed) =
+            decode_uncompressed_dns_name(bytes, 1, "dhcpv6.option.client_fqdn.name")?;
+        if consumed + 1 != bytes.len() {
+            return Err(CrafterError::invalid_field_value(
+                "dhcpv6.option.client_fqdn.name",
+                "trailing bytes after domain name",
+            ));
+        }
+        Ok(Self {
+            flags: bytes[0],
+            domain_name,
+        })
+    }
+
+    /// Encode this Client FQDN payload.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(1);
+        out.push(self.flags);
+        out.extend_from_slice(&self.domain_name.encode_uncompressed()?);
+        Ok(out)
+    }
+
+    /// Raw FQDN flags octet.
+    pub const fn flags(&self) -> u8 {
+        self.flags
+    }
+
+    /// Domain name.
+    pub const fn domain_name(&self) -> &DnsName {
+        &self.domain_name
+    }
+}
+
 impl Dhcpv6StatusCodeOption {
     /// Create a Status Code option payload with no status message bytes.
     pub fn new(status: Dhcpv6StatusCode) -> Self {
@@ -1789,6 +1844,11 @@ impl Dhcpv6Option {
     /// Create an OPTION_NII option.
     pub fn network_interface_identifier(nii: Dhcpv6NetworkInterfaceIdentifier) -> Self {
         Self::raw(DHCPV6_OPTION_NII, nii.encode())
+    }
+
+    /// Create an OPTION_CLIENT_FQDN option.
+    pub fn client_fqdn(fqdn: Dhcpv6ClientFqdn) -> Result<Self> {
+        Ok(Self::raw(DHCPV6_OPTION_CLIENT_FQDN, fqdn.encode()?))
     }
 
     /// Create an OPTION_RSOO option.
@@ -2144,6 +2204,14 @@ impl Dhcpv6Option {
         }
     }
 
+    /// Decode OPTION_CLIENT_FQDN.
+    pub fn client_fqdn_value(&self) -> Result<Option<Dhcpv6ClientFqdn>> {
+        match self.payload_if_code(DHCPV6_OPTION_CLIENT_FQDN) {
+            Some(payload) => Dhcpv6ClientFqdn::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
     /// Decode OPTION_RELAY_ID as a DUID.
     pub fn relay_duid_value(&self) -> Result<Option<Dhcpv6Duid>> {
         match self.relay_id_value() {
@@ -2319,6 +2387,34 @@ fn decode_ipv6_addr_list(bytes: &[u8], context: &'static str) -> Result<Vec<Ipv6
         addresses.push(Ipv6Addr::from(copy_array_16(chunk)));
     }
     Ok(addresses)
+}
+
+fn decode_uncompressed_dns_name(
+    bytes: &[u8],
+    offset: usize,
+    context: &'static str,
+) -> Result<(DnsName, usize)> {
+    let mut labels = Vec::new();
+    let mut cursor = offset;
+    loop {
+        ensure_available(bytes, cursor + 1, context)?;
+        let label_len = bytes[cursor];
+        if label_len & 0xc0 != 0 {
+            return Err(CrafterError::invalid_field_value(
+                context,
+                "compressed or reserved DNS label markers are not valid here",
+            ));
+        }
+        cursor += 1;
+        if label_len == 0 {
+            let used = cursor - offset;
+            return Ok((DnsName::from_labels(labels)?, used));
+        }
+        let label_end = cursor + label_len as usize;
+        ensure_available(bytes, label_end, context)?;
+        labels.push(bytes[cursor..label_end].to_vec());
+        cursor = label_end;
+    }
 }
 
 fn decode_class_data_list(bytes: &[u8], context: &'static str) -> Result<Vec<Vec<u8>>> {
@@ -3849,6 +3945,75 @@ mod dhcpv6_service_options_tests {
         assert_eq!(
             bad_ntp.ntp_server_value().unwrap_err(),
             CrafterError::buffer_too_short("dhcpv6.option.ntp_server.suboption_payload", 8, 5),
+        );
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_fqdn_tests {
+    use super::{Dhcpv6ClientFqdn, Dhcpv6Option};
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{Dhcpv6, DHCPV6_OPTION_CLIENT_FQDN};
+    use crate::protocols::dns::DnsName;
+
+    #[test]
+    fn dhcpv6_fqdn_encodes_fully_qualified_name() {
+        let fqdn = Dhcpv6ClientFqdn::new(0x01, DnsName::parse("host.example.com.").unwrap());
+        let option = Dhcpv6Option::client_fqdn(fqdn.clone()).unwrap();
+
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_CLIENT_FQDN);
+        assert_eq!(
+            option.payload(),
+            &[
+                0x01, 4, b'h', b'o', b's', b't', 7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3,
+                b'c', b'o', b'm', 0,
+            ],
+        );
+        assert_eq!(option.client_fqdn_value().unwrap(), Some(fqdn.clone()));
+
+        let decoded = Dhcpv6::decode(
+            Packet::from_layer(Dhcpv6::reply(0x010203).option(option))
+                .compile()
+                .unwrap()
+                .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            decoded.options_ref()[0].client_fqdn_value().unwrap(),
+            Some(fqdn)
+        );
+    }
+
+    #[test]
+    fn dhcpv6_fqdn_preserves_root_name_and_unknown_flags() {
+        let root = Dhcpv6ClientFqdn::new(0xf8, DnsName::root());
+        let decoded = Dhcpv6Option::client_fqdn(root.clone())
+            .unwrap()
+            .client_fqdn_value()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(decoded.flags(), 0xf8);
+        assert_eq!(decoded.domain_name().presentation(), ".");
+        assert_eq!(decoded, root);
+    }
+
+    #[test]
+    fn dhcpv6_fqdn_rejects_compressed_or_truncated_names() {
+        let compressed = Dhcpv6Option::raw(DHCPV6_OPTION_CLIENT_FQDN, [0x00, 0xc0, 0x00]);
+        assert_eq!(
+            compressed.client_fqdn_value().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.client_fqdn.name",
+                "compressed or reserved DNS label markers are not valid here",
+            ),
+        );
+
+        let truncated = Dhcpv6Option::raw(DHCPV6_OPTION_CLIENT_FQDN, [0x00, 7, b'e', b'x']);
+        assert_eq!(
+            truncated.client_fqdn_value().unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.client_fqdn.name", 9, 4),
         );
     }
 }
