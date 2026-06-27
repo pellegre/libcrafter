@@ -471,8 +471,8 @@ when IPv6, multicast, link-layer send/capture, or provider MAC discovery is not
 available:
 
 ```sh
-tools/oracle/run live --backend scapy --provider qemu --dry-run --profile dhcpv6-smoke --seed 9917 --count 2 --case dhcpv6-solicit --out target/oracle/dhcpv6-guarded-doc-dry-run
-tools/oracle/run live --backend scapy --provider docker --dry-run --profile dhcpv6-smoke --seed 9917 --count 2 --case dhcpv6-solicit --out target/oracle/dhcpv6-docker-dry-run
+tools/oracle/run live --backend "$ORACLE_BACKEND" --provider qemu --dry-run --profile dhcpv6-smoke --seed 9917 --count 2 --case dhcpv6-solicit --out target/oracle/dhcpv6-guarded-doc-dry-run
+tools/oracle/run live --backend "$ORACLE_BACKEND" --provider docker --dry-run --profile dhcpv6-smoke --seed 9917 --count 2 --case dhcpv6-solicit --out target/oracle/dhcpv6-docker-dry-run
 ```
 
 Real DHCPv6 exchange is a protected lab workflow only. It must run from
