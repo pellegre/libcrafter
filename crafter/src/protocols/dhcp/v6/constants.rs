@@ -74,6 +74,8 @@ pub const DHCPV6_OPTION_DOMAIN_LIST: u16 = 24;
 pub const DHCPV6_OPTION_IA_PD: u16 = 25;
 /// DHCPv6 OPTION_IAPREFIX option code.
 pub const DHCPV6_OPTION_IAPREFIX: u16 = 26;
+/// DHCPv6 OPTION_INFORMATION_REFRESH_TIME option code.
+pub const DHCPV6_OPTION_INFORMATION_REFRESH_TIME: u16 = 32;
 /// DHCPv6 OPTION_REMOTE_ID option code.
 pub const DHCPV6_OPTION_REMOTE_ID: u16 = 37;
 /// DHCPv6 OPTION_SUBSCRIBER_ID option code.
@@ -86,6 +88,12 @@ pub const DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME: u16 = 65;
 pub const DHCPV6_OPTION_RSOO: u16 = 66;
 /// DHCPv6 OPTION_CLIENT_LINKLAYER_ADDR option code.
 pub const DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR: u16 = 79;
+/// DHCPv6 OPTION_SOL_MAX_RT option code.
+pub const DHCPV6_OPTION_SOL_MAX_RT: u16 = 82;
+/// DHCPv6 OPTION_INF_MAX_RT option code.
+pub const DHCPV6_OPTION_INF_MAX_RT: u16 = 83;
+/// DHCPv6 infinite lifetime/timer sentinel where a field defines infinity.
+pub const DHCPV6_TIME_INFINITY: u32 = u32::MAX;
 
 /// Fixed length in octets of the DHCPv6 Authentication option payload header.
 pub const DHCPV6_AUTH_HEADER_LEN: usize = 11;

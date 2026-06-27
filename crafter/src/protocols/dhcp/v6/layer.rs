@@ -398,6 +398,21 @@ impl Dhcpv6 {
         Ok(self.option(Dhcpv6Option::domain_list(domain_list)?))
     }
 
+    /// Append an OPTION_INFORMATION_REFRESH_TIME option.
+    pub fn information_refresh_time(self, seconds: u32) -> Self {
+        self.option(Dhcpv6Option::information_refresh_time(seconds))
+    }
+
+    /// Append an OPTION_SOL_MAX_RT option.
+    pub fn sol_max_rt(self, seconds: u32) -> Self {
+        self.option(Dhcpv6Option::sol_max_rt(seconds))
+    }
+
+    /// Append an OPTION_INF_MAX_RT option.
+    pub fn inf_max_rt(self, seconds: u32) -> Self {
+        self.option(Dhcpv6Option::inf_max_rt(seconds))
+    }
+
     /// Append an OPTION_STATUS_CODE option.
     pub fn status_code(self, status: Dhcpv6StatusCodeOption) -> Self {
         self.option(Dhcpv6Option::status_code(status))
@@ -626,6 +641,30 @@ impl Dhcpv6 {
     pub fn domain_list_value(&self) -> Result<Option<Dhcpv6DomainList>> {
         match self.first_option(super::constants::DHCPV6_OPTION_DOMAIN_LIST) {
             Some(option) => option.domain_list_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode the first Information Refresh Time option.
+    pub fn information_refresh_time_value(&self) -> Result<Option<u32>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_INFORMATION_REFRESH_TIME) {
+            Some(option) => option.information_refresh_time_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode the first SOL_MAX_RT option.
+    pub fn sol_max_rt_value(&self) -> Result<Option<u32>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_SOL_MAX_RT) {
+            Some(option) => option.sol_max_rt_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode the first INF_MAX_RT option.
+    pub fn inf_max_rt_value(&self) -> Result<Option<u32>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_INF_MAX_RT) {
+            Some(option) => option.inf_max_rt_value(),
             None => Ok(None),
         }
     }

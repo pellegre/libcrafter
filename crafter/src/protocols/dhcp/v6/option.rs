@@ -18,12 +18,14 @@ use super::constants::{
     DHCPV6_AUTH_REPLAY_DETECTION_LEN, DHCPV6_OPTION_AUTH, DHCPV6_OPTION_CLIENTID,
     DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR, DHCPV6_OPTION_DNS_SERVERS, DHCPV6_OPTION_DOMAIN_LIST,
     DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN, DHCPV6_OPTION_IAADDR,
-    DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD, DHCPV6_OPTION_INTERFACE_ID,
+    DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD,
+    DHCPV6_OPTION_INFORMATION_REFRESH_TIME, DHCPV6_OPTION_INF_MAX_RT, DHCPV6_OPTION_INTERFACE_ID,
     DHCPV6_OPTION_ORO, DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT,
     DHCPV6_OPTION_RECONF_ACCEPT, DHCPV6_OPTION_RECONF_MSG, DHCPV6_OPTION_RELAY_ID,
     DHCPV6_OPTION_RELAY_MSG, DHCPV6_OPTION_REMOTE_ID, DHCPV6_OPTION_RSOO, DHCPV6_OPTION_SERVERID,
-    DHCPV6_OPTION_STATUS_CODE, DHCPV6_OPTION_SUBSCRIBER_ID, DHCPV6_OPTION_USER_CLASS,
-    DHCPV6_OPTION_VENDOR_CLASS, DHCPV6_OPTION_VENDOR_OPTS,
+    DHCPV6_OPTION_SOL_MAX_RT, DHCPV6_OPTION_STATUS_CODE, DHCPV6_OPTION_SUBSCRIBER_ID,
+    DHCPV6_OPTION_USER_CLASS, DHCPV6_OPTION_VENDOR_CLASS, DHCPV6_OPTION_VENDOR_OPTS,
+    DHCPV6_TIME_INFINITY,
 };
 use super::duid::Dhcpv6Duid;
 use super::message::Dhcpv6MessageType;
@@ -360,9 +362,19 @@ impl Dhcpv6IaAddr {
         self.preferred_lifetime
     }
 
+    /// True when the preferred lifetime uses the DHCPv6 infinity sentinel.
+    pub const fn preferred_lifetime_is_infinite(&self) -> bool {
+        self.preferred_lifetime == DHCPV6_TIME_INFINITY
+    }
+
     /// Valid lifetime value.
     pub const fn valid_lifetime(&self) -> u32 {
         self.valid_lifetime
+    }
+
+    /// True when the valid lifetime uses the DHCPv6 infinity sentinel.
+    pub const fn valid_lifetime_is_infinite(&self) -> bool {
+        self.valid_lifetime == DHCPV6_TIME_INFINITY
     }
 
     /// Append a nested option.
@@ -452,6 +464,11 @@ impl Dhcpv6IaPd {
     /// T2 value.
     pub const fn t2(&self) -> u32 {
         self.t2
+    }
+
+    /// T1 and T2 timer values.
+    pub const fn timers(&self) -> (u32, u32) {
+        (self.t1, self.t2)
     }
 
     /// Append a nested option.
@@ -546,6 +563,11 @@ impl Dhcpv6IaNa {
     /// T2 value.
     pub const fn t2(&self) -> u32 {
         self.t2
+    }
+
+    /// T1 and T2 timer values.
+    pub const fn timers(&self) -> (u32, u32) {
+        (self.t1, self.t2)
     }
 
     /// Append a nested option.
@@ -643,9 +665,19 @@ impl Dhcpv6IaPrefix {
         self.preferred_lifetime
     }
 
+    /// True when the preferred lifetime uses the DHCPv6 infinity sentinel.
+    pub const fn preferred_lifetime_is_infinite(&self) -> bool {
+        self.preferred_lifetime == DHCPV6_TIME_INFINITY
+    }
+
     /// Valid lifetime value.
     pub const fn valid_lifetime(&self) -> u32 {
         self.valid_lifetime
+    }
+
+    /// True when the valid lifetime uses the DHCPv6 infinity sentinel.
+    pub const fn valid_lifetime_is_infinite(&self) -> bool {
+        self.valid_lifetime == DHCPV6_TIME_INFINITY
     }
 
     /// Prefix length.
@@ -1403,6 +1435,24 @@ impl Dhcpv6Option {
         Ok(Self::raw(DHCPV6_OPTION_DOMAIN_LIST, domain_list.encode()?))
     }
 
+    /// Create an OPTION_INFORMATION_REFRESH_TIME option.
+    pub fn information_refresh_time(seconds: u32) -> Self {
+        Self::raw(
+            DHCPV6_OPTION_INFORMATION_REFRESH_TIME,
+            seconds.to_be_bytes().to_vec(),
+        )
+    }
+
+    /// Create an OPTION_SOL_MAX_RT option.
+    pub fn sol_max_rt(seconds: u32) -> Self {
+        Self::raw(DHCPV6_OPTION_SOL_MAX_RT, seconds.to_be_bytes().to_vec())
+    }
+
+    /// Create an OPTION_INF_MAX_RT option.
+    pub fn inf_max_rt(seconds: u32) -> Self {
+        Self::raw(DHCPV6_OPTION_INF_MAX_RT, seconds.to_be_bytes().to_vec())
+    }
+
     /// Create an OPTION_STATUS_CODE option.
     pub fn status_code(status: Dhcpv6StatusCodeOption) -> Self {
         Self::raw(DHCPV6_OPTION_STATUS_CODE, status.encode())
@@ -1666,6 +1716,24 @@ impl Dhcpv6Option {
         }
     }
 
+    /// Decode OPTION_INFORMATION_REFRESH_TIME.
+    pub fn information_refresh_time_value(&self) -> Result<Option<u32>> {
+        self.fixed_u32_if_code(
+            DHCPV6_OPTION_INFORMATION_REFRESH_TIME,
+            "dhcpv6.option.information_refresh_time",
+        )
+    }
+
+    /// Decode OPTION_SOL_MAX_RT.
+    pub fn sol_max_rt_value(&self) -> Result<Option<u32>> {
+        self.fixed_u32_if_code(DHCPV6_OPTION_SOL_MAX_RT, "dhcpv6.option.sol_max_rt")
+    }
+
+    /// Decode OPTION_INF_MAX_RT.
+    pub fn inf_max_rt_value(&self) -> Result<Option<u32>> {
+        self.fixed_u32_if_code(DHCPV6_OPTION_INF_MAX_RT, "dhcpv6.option.inf_max_rt")
+    }
+
     /// Decode OPTION_STATUS_CODE.
     pub fn status_code_value(&self) -> Result<Option<Dhcpv6StatusCodeOption>> {
         match self.payload_if_code(DHCPV6_OPTION_STATUS_CODE) {
@@ -1825,6 +1893,12 @@ impl Dhcpv6Option {
             ));
         }
         Ok(Some(payload))
+    }
+
+    fn fixed_u32_if_code(&self, code: u16, context: &'static str) -> Result<Option<u32>> {
+        Ok(self
+            .exact_payload_if_code(code, 4, context)?
+            .map(|payload| u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]])))
     }
 }
 
@@ -2993,5 +3067,116 @@ mod dhcpv6_dns_domain_tests {
                 "payload length must be a multiple of 16 bytes",
             ),
         );
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_information_refresh_tests {
+    use core::net::Ipv6Addr;
+
+    use super::{Dhcpv6IaAddr, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6Option};
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{
+        Dhcpv6, DHCPV6_OPTION_INFORMATION_REFRESH_TIME, DHCPV6_OPTION_INF_MAX_RT,
+        DHCPV6_OPTION_SOL_MAX_RT, DHCPV6_TIME_INFINITY,
+    };
+
+    fn address() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, 46, 0, 0, 0, 0, 1)
+    }
+
+    fn prefix() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, 46, 0, 0, 0, 0, 0)
+    }
+
+    #[test]
+    fn dhcpv6_information_refresh_encodes_valid_32_bit_values() {
+        let information_refresh = Dhcpv6Option::information_refresh_time(86_400);
+        let sol_max_rt = Dhcpv6Option::sol_max_rt(3_600);
+        let inf_max_rt = Dhcpv6Option::inf_max_rt(DHCPV6_TIME_INFINITY);
+
+        assert_eq!(
+            information_refresh.codepoint(),
+            DHCPV6_OPTION_INFORMATION_REFRESH_TIME,
+        );
+        assert_eq!(information_refresh.payload(), &86_400u32.to_be_bytes());
+        assert_eq!(
+            information_refresh
+                .information_refresh_time_value()
+                .unwrap(),
+            Some(86_400),
+        );
+        assert_eq!(sol_max_rt.codepoint(), DHCPV6_OPTION_SOL_MAX_RT);
+        assert_eq!(sol_max_rt.sol_max_rt_value().unwrap(), Some(3_600));
+        assert_eq!(inf_max_rt.codepoint(), DHCPV6_OPTION_INF_MAX_RT);
+        assert_eq!(
+            inf_max_rt.inf_max_rt_value().unwrap(),
+            Some(DHCPV6_TIME_INFINITY),
+        );
+    }
+
+    #[test]
+    fn dhcpv6_information_refresh_layer_roundtrips_timers() {
+        let message = Dhcpv6::reply(0x010203)
+            .information_refresh_time(600)
+            .sol_max_rt(3_600)
+            .inf_max_rt(7_200);
+        let decoded =
+            Dhcpv6::decode(Packet::from_layer(message).compile().unwrap().as_bytes()).unwrap();
+
+        assert_eq!(decoded.information_refresh_time_value().unwrap(), Some(600));
+        assert_eq!(decoded.sol_max_rt_value().unwrap(), Some(3_600));
+        assert_eq!(decoded.inf_max_rt_value().unwrap(), Some(7_200));
+    }
+
+    #[test]
+    fn dhcpv6_information_refresh_ia_timer_and_infinity_helpers() {
+        let ia_na = Dhcpv6IaNa::new(0x01020304, 300, 600);
+        let ia_pd = Dhcpv6IaPd::new(0x11223344, 900, 1_800);
+        let ia_addr = Dhcpv6IaAddr::new(address(), DHCPV6_TIME_INFINITY, DHCPV6_TIME_INFINITY);
+        let ia_prefix =
+            Dhcpv6IaPrefix::new(DHCPV6_TIME_INFINITY, DHCPV6_TIME_INFINITY, 48, prefix());
+
+        assert_eq!(ia_na.timers(), (300, 600));
+        assert_eq!(ia_pd.timers(), (900, 1_800));
+        assert!(ia_addr.preferred_lifetime_is_infinite());
+        assert!(ia_addr.valid_lifetime_is_infinite());
+        assert!(ia_prefix.preferred_lifetime_is_infinite());
+        assert!(ia_prefix.valid_lifetime_is_infinite());
+    }
+
+    #[test]
+    fn dhcpv6_information_refresh_rejects_malformed_fixed_length_payloads() {
+        for (option, field) in [
+            (
+                Dhcpv6Option::raw(DHCPV6_OPTION_INFORMATION_REFRESH_TIME, [0, 0, 0]),
+                "dhcpv6.option.information_refresh_time",
+            ),
+            (
+                Dhcpv6Option::raw(DHCPV6_OPTION_SOL_MAX_RT, [0, 0, 0]),
+                "dhcpv6.option.sol_max_rt",
+            ),
+            (
+                Dhcpv6Option::raw(DHCPV6_OPTION_INF_MAX_RT, [0, 0, 0]),
+                "dhcpv6.option.inf_max_rt",
+            ),
+        ] {
+            let error = match option.codepoint() {
+                DHCPV6_OPTION_INFORMATION_REFRESH_TIME => {
+                    option.information_refresh_time_value().unwrap_err()
+                }
+                DHCPV6_OPTION_SOL_MAX_RT => option.sol_max_rt_value().unwrap_err(),
+                DHCPV6_OPTION_INF_MAX_RT => option.inf_max_rt_value().unwrap_err(),
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                error,
+                CrafterError::invalid_field_value(
+                    field,
+                    "payload length does not match option format",
+                ),
+            );
+        }
     }
 }
