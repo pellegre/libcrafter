@@ -272,6 +272,9 @@ def _dhcpv6_probe_plan(
     server_ipv6 = deterministic_documentation_ipv6(
         deterministic_bytes(f"{case_name}-server", profile, seed, sequence)
     )
+    ia_na_ipv6 = deterministic_documentation_ipv6(
+        deterministic_bytes(f"{case_name}-ia-na", profile, seed, sequence)
+    )
     link_address = deterministic_documentation_ipv6(
         deterministic_bytes(f"{case_name}-relay-link", profile, seed, sequence)
     )
@@ -293,13 +296,16 @@ def _dhcpv6_probe_plan(
         server_duid=server_duid,
         transaction_id=transaction_id,
         client_ipv6=client_ipv6,
+        ia_na_ipv6=ia_na_ipv6,
         delegated_prefix=delegated_prefix,
     )
     expected_options = _expected_options(
         str(config["option_profile"]),
         client_duid=client_duid,
         server_duid=server_duid,
+        transaction_id=transaction_id,
         client_ipv6=client_ipv6,
+        ia_na_ipv6=ia_na_ipv6,
         delegated_prefix=delegated_prefix,
     )
     sends = _dhcpv6_send_sequence(
@@ -322,6 +328,7 @@ def _dhcpv6_probe_plan(
         "source_ipv6": client_ipv6,
         "destination_ipv6": destination_ipv6,
         "target_ipv6": server_ipv6,
+        "assigned_ipv6": ia_na_ipv6,
         "expected_reply_source_ipv6": server_ipv6,
         "expected_reply_destination_ipv6": client_ipv6,
         "source_port": source_port,
@@ -351,6 +358,11 @@ def _dhcpv6_probe_plan(
                 link_address=link_address,
                 peer_address=client_ipv6,
             ),
+            "ia_na": _ia_na_validation(
+                str(config["option_profile"]),
+                iaid=transaction_id,
+                address=ia_na_ipv6,
+            ),
         },
         "dhcpv6_sends": sends,
         "target_service": {
@@ -379,8 +391,24 @@ def _dhcpv6_probe_plan(
             "expected_message_type": str(config["expected_message_type"]),
             "expected_message_type_code": int(config["expected_message_type_code"]),
             "transaction_id": transaction_id,
+            "transaction_id_match": True,
             "packet_count": packet_count,
             "target_behavior": str(config["behavior"]),
+            "client_duid_hex": client_duid,
+            "server_duid_hex": server_duid,
+            "ia_na": _ia_na_validation(
+                str(config["option_profile"]),
+                iaid=transaction_id,
+                address=ia_na_ipv6,
+            ),
+            "reply_decode": {
+                "protocol": "Dhcpv6",
+                "message_type": str(config["expected_message_type"]),
+                "message_type_code": int(config["expected_message_type_code"]),
+                "required_options": _required_reply_option_names(
+                    str(config["option_profile"])
+                ),
+            },
         },
         "wire_requirements": {
             "requires_ipv6_unicast": True,
@@ -428,6 +456,7 @@ def _request_options(
     server_duid: str,
     transaction_id: int,
     client_ipv6: str,
+    ia_na_ipv6: str,
     delegated_prefix: str,
 ) -> list[JSONObject]:
     base: list[JSONObject] = [
@@ -439,21 +468,10 @@ def _request_options(
         base.append({"code": 6, "name": "option_request", "requested": [23, 24]})
     if option_profile in {"solicit", "rapid_commit"}:
         base.append({"code": 8, "name": "elapsed_time", "centiseconds": 0})
+    if option_profile in {"solicit", "ia_na", "rapid_commit"}:
+        base.append(_ia_na_option(transaction_id, ia_na_ipv6))
     if option_profile == "rapid_commit":
         base.append({"code": 14, "name": "rapid_commit"})
-    if option_profile == "ia_na":
-        base.append(
-            {
-                "code": 3,
-                "name": "ia_na",
-                "iaid": transaction_id,
-                "t1": 1800,
-                "t2": 2880,
-                "addresses": [
-                    {"code": 5, "name": "iaaddr", "ipv6": client_ipv6, "preferred_lifetime": 3600, "valid_lifetime": 7200}
-                ],
-            }
-        )
     if option_profile == "ia_pd":
         base.append(
             {
@@ -498,7 +516,9 @@ def _expected_options(
     *,
     client_duid: str,
     server_duid: str,
+    transaction_id: int,
     client_ipv6: str,
+    ia_na_ipv6: str,
     delegated_prefix: str,
 ) -> list[JSONObject]:
     options: list[JSONObject] = [
@@ -513,16 +533,9 @@ def _expected_options(
                 {"code": 24, "name": "domain_search_list", "domains": ["example.test"]},
             ]
         )
-    if option_profile in {"ia_na", "rapid_commit"}:
-        options.append(
-            {
-                "code": 3,
-                "name": "ia_na",
-                "addresses": [
-                    {"code": 5, "name": "iaaddr", "ipv6": client_ipv6, "preferred_lifetime": 3600, "valid_lifetime": 7200}
-                ],
-            }
-        )
+    if option_profile in {"solicit", "ia_na", "rapid_commit"}:
+        options.append(_ia_na_option(transaction_id, ia_na_ipv6))
+        options.append(_status_success_option())
     if option_profile == "ia_pd":
         options.append(
             {
@@ -567,6 +580,56 @@ def _relay_metadata(
         "link_address": link_address,
         "peer_address": peer_address,
     }
+
+
+def _iaaddr_option(address: str) -> JSONObject:
+    return {
+        "code": 5,
+        "name": "iaaddr",
+        "ipv6": address,
+        "preferred_lifetime": 3600,
+        "valid_lifetime": 7200,
+    }
+
+
+def _ia_na_option(iaid: int, address: str) -> JSONObject:
+    return {
+        "code": 3,
+        "name": "ia_na",
+        "iaid": iaid,
+        "t1": 1800,
+        "t2": 2880,
+        "addresses": [_iaaddr_option(address)],
+    }
+
+
+def _status_success_option() -> JSONObject:
+    return {"code": 13, "name": "status_code", "status_code": 0, "status": "success"}
+
+
+def _ia_na_validation(option_profile: str, *, iaid: int, address: str) -> JSONObject:
+    if option_profile not in {"solicit", "ia_na", "rapid_commit"}:
+        return {"enabled": False}
+    return {
+        "enabled": True,
+        "iaid": iaid,
+        "t1": 1800,
+        "t2": 2880,
+        "iaaddr": {
+            "ipv6": address,
+            "preferred_lifetime": 3600,
+            "valid_lifetime": 7200,
+        },
+        "status_code": 0,
+        "status": "success",
+    }
+
+
+def _required_reply_option_names(option_profile: str) -> list[str]:
+    names = ["server_identifier"]
+    if option_profile in {"solicit", "ia_na", "rapid_commit"}:
+        names.extend(["client_identifier", "ia_na", "iaaddr", "status_code"])
+    return names
 
 
 def _dhcpv6_send_sequence(
@@ -761,6 +824,9 @@ def dhcpv6_responder_setup_lines(
                 "        return bytes([2]) + b'\\x00\\x00\\x00'",
                 "    if code == 19:",
                 "        return bytes([11])",
+                "    if code == 13:",
+                "        text = str(option.get('status', '')).encode('utf-8')",
+                "        return struct.pack('!H', int(option.get('status_code', 0))) + text",
                 "    if code == 20 or code == 14:",
                 "        return b''",
                 "    if code == 44:",
