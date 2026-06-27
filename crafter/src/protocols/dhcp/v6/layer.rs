@@ -16,7 +16,7 @@ use super::duid::Dhcpv6Duid;
 use super::message::{dhcpv6_message_type_summary, Dhcpv6MessageType};
 use super::option::{
     Dhcpv6Authentication, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6Option, Dhcpv6OptionCode,
-    Dhcpv6StatusCodeOption,
+    Dhcpv6StatusCodeOption, Dhcpv6UserClass, Dhcpv6VendorClass, Dhcpv6VendorOptions,
 };
 use super::status::Dhcpv6StatusCode;
 
@@ -343,6 +343,21 @@ impl Dhcpv6 {
         self.option(Dhcpv6Option::authentication(authentication))
     }
 
+    /// Append an OPTION_USER_CLASS option.
+    pub fn user_class(self, user_class: Dhcpv6UserClass) -> Result<Self> {
+        Ok(self.option(Dhcpv6Option::user_class(user_class)?))
+    }
+
+    /// Append an OPTION_VENDOR_CLASS option.
+    pub fn vendor_class(self, vendor_class: Dhcpv6VendorClass) -> Result<Self> {
+        Ok(self.option(Dhcpv6Option::vendor_class(vendor_class)?))
+    }
+
+    /// Append an OPTION_VENDOR_OPTS option.
+    pub fn vendor_opts(self, vendor_opts: Dhcpv6VendorOptions) -> Result<Self> {
+        Ok(self.option(Dhcpv6Option::vendor_opts(vendor_opts)?))
+    }
+
     /// Append an OPTION_RECONF_MSG option.
     pub fn reconfigure_message(self, message_type: Dhcpv6MessageType) -> Self {
         self.option(Dhcpv6Option::reconfigure_message(message_type))
@@ -460,6 +475,52 @@ impl Dhcpv6 {
             Some(option) => option.authentication_value(),
             None => Ok(None),
         }
+    }
+
+    /// Decode the first User Class option.
+    pub fn user_class_value(&self) -> Result<Option<Dhcpv6UserClass>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_USER_CLASS) {
+            Some(option) => option.user_class_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode the first Vendor Class option.
+    pub fn vendor_class_value(&self) -> Result<Option<Dhcpv6VendorClass>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_VENDOR_CLASS) {
+            Some(option) => option.vendor_class_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode all Vendor Class options in packet order.
+    pub fn vendor_class_values(&self) -> Result<Vec<Dhcpv6VendorClass>> {
+        let mut values = Vec::new();
+        for option in &self.options {
+            if let Some(vendor_class) = option.vendor_class_value()? {
+                values.push(vendor_class);
+            }
+        }
+        Ok(values)
+    }
+
+    /// Decode the first Vendor Options option.
+    pub fn vendor_opts_value(&self) -> Result<Option<Dhcpv6VendorOptions>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_VENDOR_OPTS) {
+            Some(option) => option.vendor_opts_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode all Vendor Options options in packet order.
+    pub fn vendor_opts_values(&self) -> Result<Vec<Dhcpv6VendorOptions>> {
+        let mut values = Vec::new();
+        for option in &self.options {
+            if let Some(vendor_opts) = option.vendor_opts_value()? {
+                values.push(vendor_opts);
+            }
+        }
+        Ok(values)
     }
 
     /// Decode the first Reconfigure Message option.

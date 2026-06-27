@@ -19,6 +19,7 @@ use super::constants::{
     DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD, DHCPV6_OPTION_ORO,
     DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT, DHCPV6_OPTION_RECONF_ACCEPT,
     DHCPV6_OPTION_RECONF_MSG, DHCPV6_OPTION_SERVERID, DHCPV6_OPTION_STATUS_CODE,
+    DHCPV6_OPTION_USER_CLASS, DHCPV6_OPTION_VENDOR_CLASS, DHCPV6_OPTION_VENDOR_OPTS,
 };
 use super::duid::Dhcpv6Duid;
 use super::message::Dhcpv6MessageType;
@@ -200,6 +201,33 @@ pub struct Dhcpv6Authentication {
     pub replay_detection: u64,
     /// Authentication Information bytes, preserved verbatim.
     pub authentication_information: Vec<u8>,
+}
+
+/// DHCPv6 OPTION_USER_CLASS payload.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6UserClass {
+    class_data: Vec<Vec<u8>>,
+}
+
+/// DHCPv6 OPTION_VENDOR_CLASS payload.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6VendorClass {
+    enterprise_number: u32,
+    class_data: Vec<Vec<u8>>,
+}
+
+/// DHCPv6 enterprise-scoped Vendor Options suboption.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6VendorOption {
+    code: Dhcpv6OptionCode,
+    payload: Vec<u8>,
+}
+
+/// DHCPv6 OPTION_VENDOR_OPTS payload.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6VendorOptions {
+    enterprise_number: u32,
+    options: Vec<Dhcpv6VendorOption>,
 }
 
 /// DHCPv6 OPTION_STATUS_CODE payload.
@@ -747,6 +775,226 @@ impl Dhcpv6Authentication {
     }
 }
 
+impl Dhcpv6UserClass {
+    /// Create a User Class payload from opaque class-data entries.
+    pub fn new<C, D>(class_data: C) -> Self
+    where
+        C: IntoIterator<Item = D>,
+        D: Into<Vec<u8>>,
+    {
+        Self {
+            class_data: class_data.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    /// Decode a User Class payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        Ok(Self {
+            class_data: decode_class_data_list(bytes, "dhcpv6.option.user_class")?,
+        })
+    }
+
+    /// Encode this User Class payload.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        encode_class_data_list(&self.class_data, "dhcpv6.option.user_class")
+    }
+
+    /// Borrow class-data entries.
+    pub fn class_data(&self) -> &[Vec<u8>] {
+        &self.class_data
+    }
+
+    /// Consume this value into class-data entries.
+    pub fn into_class_data(self) -> Vec<Vec<u8>> {
+        self.class_data
+    }
+}
+
+impl Dhcpv6VendorClass {
+    /// Create a Vendor Class payload scoped to an enterprise number.
+    pub fn new<C, D>(enterprise_number: u32, class_data: C) -> Self
+    where
+        C: IntoIterator<Item = D>,
+        D: Into<Vec<u8>>,
+    {
+        Self {
+            enterprise_number,
+            class_data: class_data.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    /// Decode a Vendor Class payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < 4 {
+            return Err(CrafterError::buffer_too_short(
+                "dhcpv6.option.vendor_class.enterprise_number",
+                4,
+                bytes.len(),
+            ));
+        }
+
+        Ok(Self {
+            enterprise_number: read_u32_be(&bytes[0..4])?,
+            class_data: decode_class_data_list(&bytes[4..], "dhcpv6.option.vendor_class")?,
+        })
+    }
+
+    /// Encode this Vendor Class payload.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(4 + encoded_class_data_len(&self.class_data));
+        out.extend_from_slice(&self.enterprise_number.to_be_bytes());
+        out.extend_from_slice(&encode_class_data_list(
+            &self.class_data,
+            "dhcpv6.option.vendor_class",
+        )?);
+        Ok(out)
+    }
+
+    /// Enterprise number.
+    pub const fn enterprise_number(&self) -> u32 {
+        self.enterprise_number
+    }
+
+    /// Borrow vendor class-data entries.
+    pub fn class_data(&self) -> &[Vec<u8>] {
+        &self.class_data
+    }
+
+    /// Consume this value into its enterprise number and class-data entries.
+    pub fn into_parts(self) -> (u32, Vec<Vec<u8>>) {
+        (self.enterprise_number, self.class_data)
+    }
+}
+
+impl Dhcpv6VendorOption {
+    /// Create an enterprise-scoped Vendor Options suboption.
+    pub fn new(code: impl Into<Dhcpv6OptionCode>, payload: impl Into<Vec<u8>>) -> Self {
+        Self {
+            code: code.into(),
+            payload: payload.into(),
+        }
+    }
+
+    /// Suboption codepoint.
+    pub const fn code(&self) -> Dhcpv6OptionCode {
+        self.code
+    }
+
+    /// Raw suboption codepoint.
+    pub const fn codepoint(&self) -> u16 {
+        self.code.code()
+    }
+
+    /// Suboption payload bytes.
+    pub fn payload(&self) -> &[u8] {
+        &self.payload
+    }
+
+    /// Suboption payload length.
+    pub fn payload_len(&self) -> usize {
+        self.payload.len()
+    }
+
+    fn encode_into(&self, out: &mut Vec<u8>) -> Result<()> {
+        let payload_len = u16::try_from(self.payload.len()).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.vendor_opts.option_length",
+                "payload exceeds 65535 bytes",
+            )
+        })?;
+        append_u16_be(out, self.codepoint());
+        append_u16_be(out, payload_len);
+        out.extend_from_slice(&self.payload);
+        Ok(())
+    }
+}
+
+impl Dhcpv6VendorOptions {
+    /// Create a Vendor Options payload scoped to an enterprise number.
+    pub fn new<I>(enterprise_number: u32, options: I) -> Self
+    where
+        I: IntoIterator<Item = Dhcpv6VendorOption>,
+    {
+        Self {
+            enterprise_number,
+            options: options.into_iter().collect(),
+        }
+    }
+
+    /// Decode a Vendor Options payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < 4 {
+            return Err(CrafterError::buffer_too_short(
+                "dhcpv6.option.vendor_opts.enterprise_number",
+                4,
+                bytes.len(),
+            ));
+        }
+
+        let mut options = Vec::new();
+        let mut offset = 4usize;
+        while offset < bytes.len() {
+            ensure_available(bytes, offset + 2, "dhcpv6.option.vendor_opts.option_code")?;
+            let code = read_u16_be(&bytes[offset..offset + 2])?;
+            ensure_available(bytes, offset + 4, "dhcpv6.option.vendor_opts.option_length")?;
+            let payload_len = read_u16_be(&bytes[offset + 2..offset + 4])? as usize;
+            let payload_start = offset + 4;
+            let payload_end = payload_start + payload_len;
+            ensure_available(
+                bytes,
+                payload_end,
+                "dhcpv6.option.vendor_opts.option_payload",
+            )?;
+            options.push(Dhcpv6VendorOption::new(
+                code,
+                bytes[payload_start..payload_end].to_vec(),
+            ));
+            offset = payload_end;
+        }
+
+        Ok(Self {
+            enterprise_number: read_u32_be(&bytes[0..4])?,
+            options,
+        })
+    }
+
+    /// Encode this Vendor Options payload.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let total_len = 4 + self
+            .options
+            .iter()
+            .map(|option| DHCPV6_OPTION_HEADER_LEN + option.payload_len())
+            .sum::<usize>();
+        let mut out = Vec::with_capacity(total_len);
+        out.extend_from_slice(&self.enterprise_number.to_be_bytes());
+        for option in &self.options {
+            option.encode_into(&mut out)?;
+        }
+        Ok(out)
+    }
+
+    /// Enterprise number.
+    pub const fn enterprise_number(&self) -> u32 {
+        self.enterprise_number
+    }
+
+    /// Borrow vendor suboptions.
+    pub fn options(&self) -> &[Dhcpv6VendorOption] {
+        &self.options
+    }
+
+    /// Append a vendor suboption.
+    pub fn option(mut self, option: Dhcpv6VendorOption) -> Self {
+        self.options.push(option);
+        self
+    }
+
+    /// Consume this value into its enterprise number and suboptions.
+    pub fn into_parts(self) -> (u32, Vec<Dhcpv6VendorOption>) {
+        (self.enterprise_number, self.options)
+    }
+}
+
 impl Dhcpv6StatusCodeOption {
     /// Create a Status Code option payload with no status message bytes.
     pub fn new(status: Dhcpv6StatusCode) -> Self {
@@ -886,6 +1134,24 @@ impl Dhcpv6Option {
     /// sign, or verify authentication material.
     pub fn authentication(authentication: Dhcpv6Authentication) -> Self {
         Self::raw(DHCPV6_OPTION_AUTH, authentication.encode())
+    }
+
+    /// Create an OPTION_USER_CLASS option.
+    pub fn user_class(user_class: Dhcpv6UserClass) -> Result<Self> {
+        Ok(Self::raw(DHCPV6_OPTION_USER_CLASS, user_class.encode()?))
+    }
+
+    /// Create an OPTION_VENDOR_CLASS option.
+    pub fn vendor_class(vendor_class: Dhcpv6VendorClass) -> Result<Self> {
+        Ok(Self::raw(
+            DHCPV6_OPTION_VENDOR_CLASS,
+            vendor_class.encode()?,
+        ))
+    }
+
+    /// Create an OPTION_VENDOR_OPTS option.
+    pub fn vendor_opts(vendor_opts: Dhcpv6VendorOptions) -> Result<Self> {
+        Ok(Self::raw(DHCPV6_OPTION_VENDOR_OPTS, vendor_opts.encode()?))
     }
 
     /// Create an OPTION_RECONF_MSG option.
@@ -1057,6 +1323,30 @@ impl Dhcpv6Option {
         }
     }
 
+    /// Decode OPTION_USER_CLASS.
+    pub fn user_class_value(&self) -> Result<Option<Dhcpv6UserClass>> {
+        match self.payload_if_code(DHCPV6_OPTION_USER_CLASS) {
+            Some(payload) => Dhcpv6UserClass::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode OPTION_VENDOR_CLASS.
+    pub fn vendor_class_value(&self) -> Result<Option<Dhcpv6VendorClass>> {
+        match self.payload_if_code(DHCPV6_OPTION_VENDOR_CLASS) {
+            Some(payload) => Dhcpv6VendorClass::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode OPTION_VENDOR_OPTS.
+    pub fn vendor_opts_value(&self) -> Result<Option<Dhcpv6VendorOptions>> {
+        match self.payload_if_code(DHCPV6_OPTION_VENDOR_OPTS) {
+            Some(payload) => Dhcpv6VendorOptions::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
     /// Decode OPTION_RECONF_MSG.
     pub fn reconfigure_message_value(&self) -> Result<Option<Dhcpv6MessageType>> {
         Ok(self
@@ -1193,6 +1483,36 @@ impl Dhcpv6Option {
         }
         Ok(Some(payload))
     }
+}
+
+fn decode_class_data_list(bytes: &[u8], context: &'static str) -> Result<Vec<Vec<u8>>> {
+    let mut entries = Vec::new();
+    let mut offset = 0usize;
+    while offset < bytes.len() {
+        ensure_available(bytes, offset + 2, context)?;
+        let data_len = read_u16_be(&bytes[offset..offset + 2])? as usize;
+        let data_start = offset + 2;
+        let data_end = data_start + data_len;
+        ensure_available(bytes, data_end, context)?;
+        entries.push(bytes[data_start..data_end].to_vec());
+        offset = data_end;
+    }
+    Ok(entries)
+}
+
+fn encoded_class_data_len(entries: &[Vec<u8>]) -> usize {
+    entries.iter().map(|entry| 2 + entry.len()).sum()
+}
+
+fn encode_class_data_list(entries: &[Vec<u8>], context: &'static str) -> Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(encoded_class_data_len(entries));
+    for entry in entries {
+        let entry_len = u16::try_from(entry.len())
+            .map_err(|_| CrafterError::invalid_field_value(context, "entry exceeds 65535 bytes"))?;
+        append_u16_be(&mut out, entry_len);
+        out.extend_from_slice(entry);
+    }
+    Ok(out)
 }
 
 fn append_u16_be(out: &mut Vec<u8>, value: u16) {
@@ -2074,5 +2394,155 @@ mod dhcpv6_authentication_tests {
         let decoded = Dhcpv6Authentication::decode(&header_only).unwrap();
         assert!(decoded.authentication_information.is_empty());
         assert_eq!(decoded.encode(), header_only);
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_vendor_class_tests {
+    use super::{
+        Dhcpv6Option, Dhcpv6UserClass, Dhcpv6VendorClass, Dhcpv6VendorOption, Dhcpv6VendorOptions,
+    };
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{
+        Dhcpv6, DHCPV6_OPTION_USER_CLASS, DHCPV6_OPTION_VENDOR_CLASS, DHCPV6_OPTION_VENDOR_OPTS,
+    };
+
+    #[test]
+    fn dhcpv6_vendor_class_user_class_preserves_multiple_entries() {
+        let user_class =
+            Dhcpv6UserClass::new(vec![b"alpha-client".to_vec(), b"install-profile".to_vec()]);
+        let option = Dhcpv6Option::user_class(user_class.clone()).unwrap();
+
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_USER_CLASS);
+        assert_eq!(
+            option.payload(),
+            &[
+                0x00, 0x0c, b'a', b'l', b'p', b'h', b'a', b'-', b'c', b'l', b'i', b'e', b'n', b't',
+                0x00, 0x0f, b'i', b'n', b's', b't', b'a', b'l', b'l', b'-', b'p', b'r', b'o', b'f',
+                b'i', b'l', b'e',
+            ],
+        );
+        assert_eq!(option.user_class_value().unwrap(), Some(user_class.clone()));
+
+        let message = Dhcpv6::request(0x010203)
+            .user_class(user_class.clone())
+            .unwrap();
+        let bytes = Packet::from_layer(message).compile().unwrap();
+        let decoded = Dhcpv6::decode(bytes.as_bytes()).unwrap();
+        assert_eq!(decoded.user_class_value().unwrap(), Some(user_class));
+    }
+
+    #[test]
+    fn dhcpv6_vendor_class_preserves_enterprise_and_multiple_entries() {
+        let vendor_class = Dhcpv6VendorClass::new(
+            3561,
+            vec![
+                b"PXEClient:Arch:00009".to_vec(),
+                vec![0xde, 0xad, 0xbe, 0xef],
+            ],
+        );
+        let option = Dhcpv6Option::vendor_class(vendor_class.clone()).unwrap();
+
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_VENDOR_CLASS);
+        assert_eq!(&option.payload()[0..4], &3561u32.to_be_bytes());
+        assert_eq!(
+            option.vendor_class_value().unwrap(),
+            Some(vendor_class.clone()),
+        );
+        assert_eq!(vendor_class.enterprise_number(), 3561);
+        assert_eq!(vendor_class.class_data()[1], vec![0xde, 0xad, 0xbe, 0xef]);
+
+        let message = Dhcpv6::request(0x010203)
+            .vendor_class(vendor_class.clone())
+            .unwrap();
+        let decoded =
+            Dhcpv6::decode(Packet::from_layer(message).compile().unwrap().as_bytes()).unwrap();
+        assert_eq!(
+            decoded.vendor_class_value().unwrap(),
+            Some(vendor_class.clone())
+        );
+        assert_eq!(decoded.vendor_class_values().unwrap(), vec![vendor_class]);
+    }
+
+    #[test]
+    fn dhcpv6_vendor_class_vendor_opts_preserve_unknown_suboptions() {
+        let unknown = Dhcpv6VendorOption::new(65_000u16, vec![0xde, 0xad, 0xbe, 0xef]);
+        let empty = Dhcpv6VendorOption::new(7u16, Vec::<u8>::new());
+        let vendor_opts = Dhcpv6VendorOptions::new(32_473, vec![unknown.clone(), empty.clone()]);
+        let option = Dhcpv6Option::vendor_opts(vendor_opts.clone()).unwrap();
+
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_VENDOR_OPTS);
+        assert_eq!(
+            option.payload(),
+            &[
+                0x00, 0x00, 0x7e, 0xd9, 0xfd, 0xe8, 0x00, 0x04, 0xde, 0xad, 0xbe, 0xef, 0x00, 0x07,
+                0x00, 0x00,
+            ],
+        );
+
+        let decoded = option.vendor_opts_value().unwrap().unwrap();
+        assert_eq!(decoded.enterprise_number(), 32_473);
+        assert_eq!(decoded.options(), &[unknown.clone(), empty.clone()]);
+        assert_eq!(decoded.options()[0].codepoint(), 65_000);
+        assert_eq!(decoded.options()[0].payload(), &[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(decoded.options()[1].payload(), &[]);
+
+        let second = Dhcpv6VendorOptions::new(311, vec![Dhcpv6VendorOption::new(1u16, [0xaa])]);
+        let message = Dhcpv6::request(0x010203)
+            .vendor_opts(vendor_opts.clone())
+            .unwrap()
+            .vendor_opts(second.clone())
+            .unwrap();
+        let decoded_message =
+            Dhcpv6::decode(Packet::from_layer(message).compile().unwrap().as_bytes()).unwrap();
+        assert_eq!(
+            decoded_message.vendor_opts_value().unwrap(),
+            Some(vendor_opts.clone()),
+        );
+        assert_eq!(
+            decoded_message.vendor_opts_values().unwrap(),
+            vec![vendor_opts, second],
+        );
+    }
+
+    #[test]
+    fn dhcpv6_vendor_class_malformed_lengths_are_structured() {
+        let short_user = Dhcpv6Option::raw(DHCPV6_OPTION_USER_CLASS, [0x00, 0x04, 0xaa]);
+        assert_eq!(
+            short_user.user_class_value().unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.user_class", 6, 3),
+        );
+
+        let short_vendor_class = Dhcpv6Option::raw(DHCPV6_OPTION_VENDOR_CLASS, [0x00, 0x00, 0x00]);
+        assert_eq!(
+            short_vendor_class.vendor_class_value().unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.vendor_class.enterprise_number", 4, 3,),
+        );
+
+        let short_vendor_class_entry = Dhcpv6Option::raw(
+            DHCPV6_OPTION_VENDOR_CLASS,
+            [0x00, 0x00, 0x00, 0x01, 0x00, 0x04, 0xaa],
+        );
+        assert_eq!(
+            short_vendor_class_entry.vendor_class_value().unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.vendor_class", 6, 3),
+        );
+
+        let short_vendor_code =
+            Dhcpv6Option::raw(DHCPV6_OPTION_VENDOR_OPTS, [0x00, 0x00, 0x00, 0x01, 0xfd]);
+        assert_eq!(
+            short_vendor_code.vendor_opts_value().unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.vendor_opts.option_code", 6, 5),
+        );
+
+        let short_vendor_payload = Dhcpv6Option::raw(
+            DHCPV6_OPTION_VENDOR_OPTS,
+            [0x00, 0x00, 0x00, 0x01, 0x00, 0x07, 0x00, 0x04, 0xaa],
+        );
+        assert_eq!(
+            short_vendor_payload.vendor_opts_value().unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.vendor_opts.option_payload", 12, 9),
+        );
     }
 }
