@@ -10,6 +10,8 @@
 
 pub mod constants;
 pub mod message;
+pub mod status;
 
 pub use constants::*;
 pub use message::Dhcpv6MessageType;
+pub use status::Dhcpv6StatusCode;
