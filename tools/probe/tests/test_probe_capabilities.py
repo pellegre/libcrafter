@@ -53,7 +53,7 @@ def _request(**overrides: object) -> ProbeRunRequest:
 class ProbeCapabilityDerivationTest(unittest.TestCase):
     def test_new_capability_names_are_registered(self) -> None:
         for name in (
-            "dhcp_service",
+            "dhcpv4_service",
             "udp_service",
             "udp_large_payload",
             "udp_ipv4_zero_checksum",
@@ -74,7 +74,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
         ):
             self.assertIn(name, PROBE_CAPABILITY_NAMES)
 
-    def test_link_layer_substrate_grants_dhcp_and_arp_capabilities(self) -> None:
+    def test_link_layer_substrate_grants_dhcpv4_and_arp_capabilities(self) -> None:
         derived = probe_capabilities_from_lab_capabilities(
             "qemu",
             _LINK_LAYER_SUBSTRATE,
@@ -83,7 +83,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
 
         for name in (
             "dns_service",
-            "dhcp_service",
+            "dhcpv4_service",
             "udp_service",
             "udp_large_payload",
             "udp_ipv4_zero_checksum",
@@ -140,9 +140,9 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
         ):
             self.assertIs(derived[granted], True, granted)
 
-        # DHCP and ARP need a link-layer substrate, broadcast, and provider MAC.
+        # DHCPv4 and ARP need a link-layer substrate, broadcast, and provider MAC.
         for denied in (
-            "dhcp_service",
+            "dhcpv4_service",
             "arp_resolution",
             "link_layer_arp",
             "provider_mac",

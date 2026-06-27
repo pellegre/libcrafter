@@ -73,7 +73,7 @@ _PLUGIN_MODULE_CAP = math.ceil(2354 * 1.2)  # 2825
 # surviving profile scaffolding (``BEHAVIOR_PROFILE_CASE_NAMES``,
 # ``_<P>_BEHAVIOR_CASE_NAMES``), which are differently named.
 _DEAD_CASE_TABLE_RE = re.compile(
-    r"^BEHAVIOR_(ARP|DNS|DHCP|UDP|NDP|ICMP|TCP|BGP|RIP|RIPNG|OSPF|IGMP|IPSEC)"
+    r"^BEHAVIOR_(ARP|DNS|DHCPv4|UDP|NDP|ICMP|TCP|BGP|RIP|RIPNG|OSPF|IGMP|IPSEC)"
     r"_CASES\s*[:=]",
     re.MULTILINE,
 )

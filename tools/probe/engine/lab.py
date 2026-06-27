@@ -48,7 +48,7 @@ PROBE_CAPABILITY_NAMES = (
     "tcp_open_port",
     "tcp_closed_port",
     "dns_service",
-    "dhcp_service",
+    "dhcpv4_service",
     "udp_service",
     "udp_large_payload",
     "udp_ipv4_zero_checksum",
@@ -196,7 +196,7 @@ def probe_capabilities_from_lab_capabilities(
     # ``ipv6_multicast`` (the NDP IPv6-multicast substrate gate) is likewise
     # derived by the NDP plugin's ``lab_capabilities`` hook (folded in below); the
     # shared ``capability_sources`` table still lists it.
-    # ``dhcp_service`` is derived by the DHCP plugin's ``lab_capabilities`` hook
+    # ``dhcpv4_service`` is derived by the DHCPv4 plugin's ``lab_capabilities`` hook
     # (folded in below), not here. The shared ``capability_names`` /
     # ``capability_sources`` tables still list it. The ``udp_*`` derived
     # capabilities (``udp_service`` / ``udp_large_payload`` /
@@ -243,10 +243,10 @@ def probe_capabilities_from_lab_capabilities(
         # plugin's ``lab_capabilities`` hook (folded in below), not here. The
         # shared ``capability_names`` / ``capability_sources`` tables still list
         # them.
-        # ``dns_service`` / ``dhcp_service`` and the ``udp_*`` capabilities
+        # ``dns_service`` / ``dhcpv4_service`` and the ``udp_*`` capabilities
         # (``udp_service`` / ``udp_large_payload`` / ``udp_ipv4_zero_checksum`` /
         # ``udp_options_surplus`` / ``privileged_udp_port``, plus the advertised
-        # ``udp_safe_payload_size`` echo) are contributed by the DNS / DHCP / UDP
+        # ``udp_safe_payload_size`` echo) are contributed by the DNS / DHCPv4 / UDP
         # plugins' ``lab_capabilities`` hooks (folded in below), not here. The
         # shared ``capability_names`` / ``capability_sources`` tables still list
         # them.
@@ -282,7 +282,7 @@ def probe_capabilities_from_lab_capabilities(
             "tcp_open_port": ["ipv4_unicast", "controlled_services"],
             "tcp_closed_port": ["ipv4_unicast"],
             "dns_service": ["ipv4_unicast", "controlled_services"],
-            "dhcp_service": [
+            "dhcpv4_service": [
                 "ipv4_unicast",
                 "controlled_services",
                 "link_layer_send",

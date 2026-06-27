@@ -1,7 +1,7 @@
 """Provider capability policy and stable probe skip reasons.
 
 Behavioral DNS and UDP cases mostly need IPv4 unicast plus controlled services,
-while DHCP and ARP cases need link-layer send/capture, broadcast, privileged
+while DHCPv4 and ARP cases need link-layer send/capture, broadcast, privileged
 ports, and provider MAC knowledge. This module is the single owner of:
 
 - the stable skip-reason strings,
@@ -55,7 +55,7 @@ SKIP_REQUIRES_SNMP_PEER = "requires_snmp_peer"
 
 # Capabilities that imply a link-layer (Ethernet/ARP/broadcast) substrate. A
 # case that needs any of these and is denied it skips with the stable
-# link-layer reason so DHCP and ARP report a single shared cause.
+# link-layer reason so DHCPv4 and ARP report a single shared cause.
 _LINK_LAYER_CAPABILITIES = frozenset(
     {
         "arp_resolution",

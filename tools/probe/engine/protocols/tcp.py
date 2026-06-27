@@ -1,7 +1,7 @@
 """TCP probe protocol plugin: cases, plan builders, and full live surface.
 
 This is the TCP full migration (a single step, after the ARP vertical slice and
-the DNS / DHCP / UDP / NDP / ICMP migrations). TCP bundles its entire surface in
+the DNS / DHCPv4 / UDP / NDP / ICMP migrations). TCP bundles its entire surface in
 one place:
 
 * the three inline TCP cases (``tcp-syn-open`` / ``tcp-syn-closed`` /
@@ -399,7 +399,7 @@ def tcp_target_service_contribution(
 #
 # The TCP setup-script contribution is split into two blocks that the legacy
 # ``target_service_setup_script`` emitted at two distinct positions: a per-port
-# closed-TCP-port free check (rendered after the DNS/DHCP port checks, before the
+# closed-TCP-port free check (rendered after the DNS/DHCPv4 port checks, before the
 # closed-UDP-port checks) and the open-listener heredoc + per-port launch loop
 # (rendered after the closed-UDP-port checks, before the DNS responder block).
 # They are co-located here and called *directly* by
@@ -412,7 +412,7 @@ def tcp_closed_port_check_lines(closed_ports: Sequence[int]) -> list[str]:
     """Render the closed-TCP-port free-check block for the setup script.
 
     Moved verbatim from the ``for port in closed_ports:`` loop that ran after the
-    DNS/DHCP port checks in ``target_service_setup_script``; binds
+    DNS/DHCPv4 port checks in ``target_service_setup_script``; binds
     ``$tcp_bind_ipv4:port`` to confirm the port stays free so the target kernel
     emits a RST for a SYN.
     """

@@ -16,15 +16,15 @@ _MATRIX_PROVIDERS = ("hetzner", "qemu", "virtualbox", "docker")
 class ProbeProviderDryRunMatrixTest(unittest.TestCase):
     def test_behavior_matrix_summarizes_provider_planning(self) -> None:
         behavior_count = len(cases.BEHAVIOR_PROFILE_CASE_NAMES)
-        # Hetzner has no link-layer substrate, so every DHCP, ARP, and NDP
+        # Hetzner has no link-layer substrate, so every DHCPv4, ARP, and NDP
         # behavioral case skips for a capability reason; the IPv6 NDP cases
         # ride the same link-layer requirement as ARP. DNS and UDP unicast
         # cases stay executable.
         link_layer_skipped = (
             _behavior_cases_by_protocol("arp") | _behavior_cases_by_protocol("ndp")
         )
-        dhcp_skipped = _behavior_cases_by_protocol("dhcp")
-        hetzner_skipped_cases = dhcp_skipped | link_layer_skipped
+        dhcpv4_skipped = _behavior_cases_by_protocol("dhcpv4")
+        hetzner_skipped_cases = dhcpv4_skipped | link_layer_skipped
         hetzner_skipped = len(hetzner_skipped_cases)
         hetzner_executable = behavior_count - hetzner_skipped
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -70,7 +70,7 @@ class ProbeProviderDryRunMatrixTest(unittest.TestCase):
             self.assertEqual(
                 hetzner["skip_counts_by_reason"],
                 {
-                    capabilities.SKIP_CAPABILITY_UNAVAILABLE: len(dhcp_skipped),
+                    capabilities.SKIP_CAPABILITY_UNAVAILABLE: len(dhcpv4_skipped),
                     capabilities.SKIP_REQUIRES_LINK_LAYER: len(link_layer_skipped),
                 },
             )
@@ -82,7 +82,7 @@ class ProbeProviderDryRunMatrixTest(unittest.TestCase):
             hetzner_caps = hetzner["provider_capabilities"]
             self.assertTrue(hetzner_caps["dns_service"])
             self.assertTrue(hetzner_caps["udp_service"])
-            self.assertFalse(hetzner_caps["dhcp_service"])
+            self.assertFalse(hetzner_caps["dhcpv4_service"])
             self.assertFalse(hetzner_caps["arp_resolution"])
             self.assertFalse(hetzner_caps["ipv6_multicast"])
 
@@ -95,7 +95,7 @@ class ProbeProviderDryRunMatrixTest(unittest.TestCase):
                     self.assertEqual(report["skip_counts_by_reason"], {})
                     caps = report["provider_capabilities"]
                     self.assertTrue(caps["dns_service"])
-                    self.assertTrue(caps["dhcp_service"])
+                    self.assertTrue(caps["dhcpv4_service"])
                     self.assertTrue(caps["udp_service"])
                     self.assertTrue(caps["arp_resolution"])
                     self.assertTrue(caps["link_layer_arp"])

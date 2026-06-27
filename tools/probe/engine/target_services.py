@@ -4,13 +4,13 @@ The probe target endpoint exposes controlled, disposable services and kernel
 behavior the stimulus endpoint exercises. This module owns:
 
 - the dry-run/live ``target_service_setup`` plan,
-- typed service descriptors for the DNS responder, DHCP responder, UDP
+- typed service descriptors for the DNS responder, DHCPv4 responder, UDP
   responder, FRR BGP peer, ARP alias/sysctl setup, and closed UDP port
   validation,
 - the deterministic, artifact-producing setup script for the live target,
 - the cleanup script invocation that tears those services down.
 
-Keeping the target-service surface here lets the behavior suite grow DNS, DHCP,
+Keeping the target-service surface here lets the behavior suite grow DNS, DHCPv4,
 UDP, and ARP target setup in one place without enlarging the CLI orchestration
 module. The lab-wire transport helpers stay in :mod:`cli`; the wire setup and
 cleanup entry points accept them so this module has no import cycle with the
@@ -80,22 +80,15 @@ from .protocols.dns import (
     dns_responder_setup_lines,
 )
 
-# DHCP's target-service descriptor, plan selector, and the setup-script blocks
-# were migrated into the DHCP plugin (:mod:`tools.probe.engine.protocols.dhcp`).
-# They are re-imported here so ``target_services.dhcp_responder_descriptor`` /
-# ``target_services.dhcp_probe_plans`` keep resolving (the behavior/script tests,
-# ``prepare_wire_probe_target``, and ``__all__`` reference them), and so
-# ``target_service_setup_script`` can render the DHCP setup blocks. The DHCP
-# responder case set (``_DHCP_RESPONDER_CASES``) is no longer re-imported: the
-# registry partition diverts the DHCP cases to the plugin's ``target_service``
-# hook, so the legacy plan body no longer selects them and no caller references
-# ``target_services._DHCP_RESPONDER_CASES``. The DHCP plugin module does not
-# import ``target_services``, so this does not cycle.
-from .protocols.dhcp import (
-    dhcp_port_check_lines,
-    dhcp_probe_plans,
-    dhcp_responder_descriptor,
-    dhcp_responder_setup_lines,
+# DHCPv4's target-service descriptor, plan selector, and setup-script blocks live
+# in the DHCPv4 plugin (:mod:`tools.probe.engine.protocols.dhcpv4`). They are
+# re-imported here so the live target setup path can render the DHCPv4 blocks
+# without creating an import cycle.
+from .protocols.dhcpv4 import (
+    dhcpv4_port_check_lines,
+    dhcpv4_probe_plans,
+    dhcpv4_responder_descriptor,
+    dhcpv4_responder_setup_lines,
 )
 
 # UDP's target-service descriptors (responder + closed-port), responder /
@@ -506,14 +499,9 @@ def _legacy_target_service_setup_plan(
 # ``target_services.probe_plan_requires_mqtt_broker`` keep resolving.
 
 
-# The DHCP responder case set (``_DHCP_RESPONDER_CASES``) and the
-# ``dhcp_probe_plans`` selector now live in
-# :mod:`tools.probe.engine.protocols.dhcp`. ``dhcp_probe_plans`` is re-imported
-# above so ``target_services.dhcp_probe_plans`` keeps resolving for
-# ``prepare_wire_probe_target`` / the tests (the partition reroutes DHCP plans to
-# the plugin's ``target_service`` hook). ``_DHCP_RESPONDER_CASES`` is no longer
-# re-imported: the legacy plan body no longer selects DHCP cases and no caller
-# references it.
+# DHCPv4 plan selection and responder service contribution live in
+# :mod:`tools.probe.engine.protocols.dhcpv4`; this module imports only the public
+# helpers needed by live target setup.
 
 
 # The UDP responder / closed-port case sets (``_UDP_RESPONDER_CASES`` /
@@ -576,7 +564,7 @@ def prepare_wire_probe_target(
 
     tcp_plans = tcp_probe_plans(probe_plans)
     dns_plans = dns_probe_plans(probe_plans)
-    dhcp_plans = dhcp_probe_plans(probe_plans)
+    dhcpv4_plans = dhcpv4_probe_plans(probe_plans)
     arp_plans = arp_probe_plans(probe_plans)
     ndp_plans = ndp_probe_plans(probe_plans)
     udp_plans = [*udp_probe_plans(probe_plans), *quic_udp_probe_plans(probe_plans)]
@@ -584,7 +572,7 @@ def prepare_wire_probe_target(
     if (
         not tcp_plans
         and not dns_plans
-        and not dhcp_plans
+        and not dhcpv4_plans
         and not arp_plans
         and not ndp_plans
         and not udp_plans
@@ -613,7 +601,7 @@ def prepare_wire_probe_target(
         open_ports=open_ports,
         closed_ports=closed_ports,
         dns_plans=dns_plans,
-        dhcp_plans=dhcp_plans,
+        dhcpv4_plans=dhcpv4_plans,
         arp_plans=arp_plans,
         ndp_plans=ndp_plans,
         udp_plans=udp_plans,
@@ -665,7 +653,7 @@ def target_service_setup_script(
     open_ports: Sequence[int],
     closed_ports: Sequence[int],
     dns_plans: Sequence[JSONObject],
-    dhcp_plans: Sequence[JSONObject] = (),
+    dhcpv4_plans: Sequence[JSONObject] = (),
     arp_plans: Sequence[JSONObject] = (),
     ndp_plans: Sequence[JSONObject] = (),
     udp_plans: Sequence[JSONObject] = (),
@@ -684,7 +672,7 @@ def target_service_setup_script(
         f"artifact_root={shlex.quote(artifact_root)}",
         f"tcp_bind_ipv4={shlex.quote(bind_ipv4)}",
         f"dns_bind_ipv4={shlex.quote(bind_ipv4)}",
-        f"dhcp_bind_ipv4={shlex.quote(bind_ipv4)}",
+        f"dhcpv4_bind_ipv4={shlex.quote(bind_ipv4)}",
         f"udp_bind_ipv4={shlex.quote(bind_ipv4)}",
         f"target_interface={shlex.quote(target_interface)}",
         'mkdir -p "$artifact_root"',
@@ -729,10 +717,8 @@ def target_service_setup_script(
     # ``protocols.dns.dns_port_check_lines``; render it here so the script bytes
     # stay byte-identical to the legacy inline ``for port in dns_ports:`` loop.
     lines.extend(dns_port_check_lines(dns_plans))
-    # The DHCP per-port UDP port-free check moved to
-    # ``protocols.dhcp.dhcp_port_check_lines``; render it here so the script bytes
-    # stay byte-identical to the legacy inline ``for port in dhcp_ports:`` loop.
-    lines.extend(dhcp_port_check_lines(dhcp_plans))
+    # DHCPv4 renders its per-port UDP free checks with the materialized plans.
+    lines.extend(dhcpv4_port_check_lines(dhcpv4_plans))
     # The closed-TCP-port free-check moved to
     # ``protocols.tcp.tcp_closed_port_check_lines``; render it here so the script
     # bytes stay byte-identical to the legacy inline ``for port in closed_ports:``
@@ -762,13 +748,12 @@ def target_service_setup_script(
             dns_plans=dns_plans,
         )
     )
-    # The DHCP responder heredoc + launch block moved to
-    # ``protocols.dhcp.dhcp_responder_setup_lines``; render it here so the
-    # script bytes stay byte-identical to the legacy inline blocks.
+    # DHCPv4 renders its responder heredoc and launch block with the materialized
+    # plans.
     lines.extend(
-        dhcp_responder_setup_lines(
+        dhcpv4_responder_setup_lines(
             artifact_root=artifact_root,
-            dhcp_plans=dhcp_plans,
+            dhcpv4_plans=dhcpv4_plans,
         )
     )
     # The UDP responder heredoc + launch block moved to
@@ -852,8 +837,8 @@ __all__ = [
     "closed_udp_probe_plans",
     "closed_udp_port_descriptor",
     "dedupe_ints",
-    "dhcp_probe_plans",
-    "dhcp_responder_descriptor",
+    "dhcpv4_probe_plans",
+    "dhcpv4_responder_descriptor",
     "dns_probe_plans",
     "dns_responder_descriptor",
     "mqtt_broker_descriptor",

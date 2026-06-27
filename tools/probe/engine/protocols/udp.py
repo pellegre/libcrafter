@@ -1,7 +1,7 @@
 """UDP probe protocol plugin: cases, plan builders, and planning surface.
 
 This is the UDP *planning half* migration (after the ARP vertical slice and the
-DNS / DHCP migrations). It bundles UDP's planning surface in one place:
+DNS / DHCPv4 migrations). It bundles UDP's planning surface in one place:
 
 * the ten UDP behavioral cases plus the UDP capability constants (the catalog
   contribution),
@@ -1140,7 +1140,7 @@ def udp_target_service_contribution(
 # ``target_service_setup_script`` emitted at two distinct positions: a per-port
 # closed-UDP-port free check (rendered after the closed TCP-port checks, before
 # the open-port listeners) and the UDP responder heredoc + per-port launch loop
-# (rendered after the DHCP responder block, before the ARP block). They are
+# (rendered after the DHCPv4 responder block, before the ARP block). They are
 # co-located here and called *directly* by ``target_service_setup_script`` (the
 # plugin ``setup_script`` hook receives no plan context), so the rendered bytes
 # stay byte-identical to the legacy inline blocks.

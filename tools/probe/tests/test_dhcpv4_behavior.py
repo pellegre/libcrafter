@@ -1,14 +1,14 @@
-"""Focused coverage for the DHCP behavioral probe cases.
+"""Focused coverage for the DHCPv4 behavioral probe cases.
 
 Each test asserts the deterministic plan shape its case produces and, when the
 ``uv``/``cargo`` toolchains are available, drives the case end to end through the
 probe planner dry-run and the Rust ``stimulus_endpoint`` dry-run via the shared
 :mod:`tools.probe.testing.probe_acceptance` harness.
 
-``dhcp-discover-offer`` is the baseline DHCP behavioral check: a BOOTP/DHCP
+``dhcpv4-discover-offer`` is the baseline DHCPv4 behavioral check: a BOOTP/DHCPv4
 Discover sent from the client port (68) to the server port (67) against a
-controlled DHCP responder on a private L2 lab segment, whose Offer the endpoint
-decodes (IPv4/UDP/BOOTP/DHCP) and validates for message type, transaction id,
+controlled DHCPv4 responder on a private L2 lab segment, whose Offer the endpoint
+decodes (IPv4/UDP/BOOTP/DHCPv4) and validates for message type, transaction id,
 client hardware address, offered address, server identifier, lease options, and
 response direction.
 """
@@ -35,114 +35,114 @@ def _request(
         "profile": "behavior",
         "seed": 1020,
         "count": 1,
-        "case_names": case_names or ["dhcp-discover-offer"],
+        "case_names": case_names or ["dhcpv4-discover-offer"],
         "dry_run": True,
     }
     base.update(overrides)
     return ProbeRunRequest(**base)  # type: ignore[arg-type]
 
 
-def _dhcp_discover_offer_plan(*, seed: int = 1020, sequence: int = 0) -> dict:
+def _dhcpv4_discover_offer_plan(*, seed: int = 1020, sequence: int = 0) -> dict:
     return planning.probe_plan_for_case(
         request=_request(seed=seed),
-        case=planning.PROBE_CASE_BY_NAME["dhcp-discover-offer"],
+        case=planning.PROBE_CASE_BY_NAME["dhcpv4-discover-offer"],
         sequence=sequence,
     )
 
 
-def _dhcp_request_ack_plan(*, seed: int = 1021, sequence: int = 0) -> dict:
+def _dhcpv4_request_ack_plan(*, seed: int = 1021, sequence: int = 0) -> dict:
     return planning.probe_plan_for_case(
-        request=_request(seed=seed, case_names=["dhcp-request-ack"]),
-        case=planning.PROBE_CASE_BY_NAME["dhcp-request-ack"],
+        request=_request(seed=seed, case_names=["dhcpv4-request-ack"]),
+        case=planning.PROBE_CASE_BY_NAME["dhcpv4-request-ack"],
         sequence=sequence,
     )
 
 
-def _dhcp_client_identifier_plan(*, seed: int = 1022, sequence: int = 0) -> dict:
+def _dhcpv4_client_identifier_plan(*, seed: int = 1022, sequence: int = 0) -> dict:
     return planning.probe_plan_for_case(
-        request=_request(seed=seed, case_names=["dhcp-client-identifier"]),
-        case=planning.PROBE_CASE_BY_NAME["dhcp-client-identifier"],
+        request=_request(seed=seed, case_names=["dhcpv4-client-identifier"]),
+        case=planning.PROBE_CASE_BY_NAME["dhcpv4-client-identifier"],
         sequence=sequence,
     )
 
 
-def _dhcp_hostname_plan(*, seed: int = 1023, sequence: int = 0) -> dict:
+def _dhcpv4_hostname_plan(*, seed: int = 1023, sequence: int = 0) -> dict:
     return planning.probe_plan_for_case(
-        request=_request(seed=seed, case_names=["dhcp-hostname"]),
-        case=planning.PROBE_CASE_BY_NAME["dhcp-hostname"],
+        request=_request(seed=seed, case_names=["dhcpv4-hostname"]),
+        case=planning.PROBE_CASE_BY_NAME["dhcpv4-hostname"],
         sequence=sequence,
     )
 
 
-def _dhcp_parameter_request_list_plan(*, seed: int = 1024, sequence: int = 0) -> dict:
+def _dhcpv4_parameter_request_list_plan(*, seed: int = 1024, sequence: int = 0) -> dict:
     return planning.probe_plan_for_case(
-        request=_request(seed=seed, case_names=["dhcp-parameter-request-list"]),
-        case=planning.PROBE_CASE_BY_NAME["dhcp-parameter-request-list"],
+        request=_request(seed=seed, case_names=["dhcpv4-parameter-request-list"]),
+        case=planning.PROBE_CASE_BY_NAME["dhcpv4-parameter-request-list"],
         sequence=sequence,
     )
 
 
-def _dhcp_lease_time_plan(*, seed: int = 1025, sequence: int = 0) -> dict:
+def _dhcpv4_lease_time_plan(*, seed: int = 1025, sequence: int = 0) -> dict:
     return planning.probe_plan_for_case(
-        request=_request(seed=seed, case_names=["dhcp-lease-time"]),
-        case=planning.PROBE_CASE_BY_NAME["dhcp-lease-time"],
+        request=_request(seed=seed, case_names=["dhcpv4-lease-time"]),
+        case=planning.PROBE_CASE_BY_NAME["dhcpv4-lease-time"],
         sequence=sequence,
     )
 
 
-def _dhcp_renewal_unicast_ack_plan(*, seed: int = 1026, sequence: int = 0) -> dict:
+def _dhcpv4_renewal_unicast_ack_plan(*, seed: int = 1026, sequence: int = 0) -> dict:
     return planning.probe_plan_for_case(
-        request=_request(seed=seed, case_names=["dhcp-renewal-unicast-ack"]),
-        case=planning.PROBE_CASE_BY_NAME["dhcp-renewal-unicast-ack"],
+        request=_request(seed=seed, case_names=["dhcpv4-renewal-unicast-ack"]),
+        case=planning.PROBE_CASE_BY_NAME["dhcpv4-renewal-unicast-ack"],
         sequence=sequence,
     )
 
 
-def _dhcp_inform_ack_plan(*, seed: int = 1027, sequence: int = 0) -> dict:
+def _dhcpv4_inform_ack_plan(*, seed: int = 1027, sequence: int = 0) -> dict:
     return planning.probe_plan_for_case(
-        request=_request(seed=seed, case_names=["dhcp-inform-ack"]),
-        case=planning.PROBE_CASE_BY_NAME["dhcp-inform-ack"],
+        request=_request(seed=seed, case_names=["dhcpv4-inform-ack"]),
+        case=planning.PROBE_CASE_BY_NAME["dhcpv4-inform-ack"],
         sequence=sequence,
     )
 
 
-def _dhcp_request_nak_plan(*, seed: int = 1028, sequence: int = 0) -> dict:
+def _dhcpv4_request_nak_plan(*, seed: int = 1028, sequence: int = 0) -> dict:
     return planning.probe_plan_for_case(
-        request=_request(seed=seed, case_names=["dhcp-request-nak"]),
-        case=planning.PROBE_CASE_BY_NAME["dhcp-request-nak"],
+        request=_request(seed=seed, case_names=["dhcpv4-request-nak"]),
+        case=planning.PROBE_CASE_BY_NAME["dhcpv4-request-nak"],
         sequence=sequence,
     )
 
 
-def _dhcp_rapid_repeat_plan(*, seed: int = 1029, sequence: int = 0) -> dict:
+def _dhcpv4_rapid_repeat_plan(*, seed: int = 1029, sequence: int = 0) -> dict:
     return planning.probe_plan_for_case(
-        request=_request(seed=seed, case_names=["dhcp-rapid-repeat"]),
-        case=planning.PROBE_CASE_BY_NAME["dhcp-rapid-repeat"],
+        request=_request(seed=seed, case_names=["dhcpv4-rapid-repeat"]),
+        case=planning.PROBE_CASE_BY_NAME["dhcpv4-rapid-repeat"],
         sequence=sequence,
     )
 
 
-class DhcpDiscoverOfferPlanTest(unittest.TestCase):
+class Dhcpv4DiscoverOfferPlanTest(unittest.TestCase):
     """The plan carries an RFC-correct Discover stimulus and Offer contract."""
 
     def test_plan_uses_dedicated_builder(self) -> None:
-        self.assertIn("dhcp-discover-offer", planning.PLAN_BUILDERS)
+        self.assertIn("dhcpv4-discover-offer", planning.PLAN_BUILDERS)
         self.assertIs(
-            planning.PLAN_BUILDERS["dhcp-discover-offer"],
-            planning._dhcp_discover_offer_probe_plan,
+            planning.PLAN_BUILDERS["dhcpv4-discover-offer"],
+            planning._dhcpv4_discover_offer_probe_plan,
         )
 
     def test_plan_is_deterministic(self) -> None:
-        self.assertEqual(_dhcp_discover_offer_plan(), _dhcp_discover_offer_plan())
+        self.assertEqual(_dhcpv4_discover_offer_plan(), _dhcpv4_discover_offer_plan())
 
     def test_plan_carries_a_discover_stimulus(self) -> None:
-        plan = _dhcp_discover_offer_plan()
+        plan = _dhcpv4_discover_offer_plan()
 
-        self.assertEqual(plan["case"], "dhcp-discover-offer")
-        self.assertEqual(plan["stimulus"], "dhcp_discover")
-        self.assertEqual(plan["expected_response"], "dhcp_offer")
+        self.assertEqual(plan["case"], "dhcpv4-discover-offer")
+        self.assertEqual(plan["stimulus"], "dhcpv4_discover")
+        self.assertEqual(plan["expected_response"], "dhcpv4_offer")
 
-        # DHCP fixed ports: client 68 -> server 67.
+        # DHCPv4 fixed ports: client 68 -> server 67.
         self.assertEqual(plan["source_port"], 68)
         self.assertEqual(plan["destination_port"], 67)
 
@@ -154,7 +154,7 @@ class DhcpDiscoverOfferPlanTest(unittest.TestCase):
         self.assertTrue(1 <= plan["transaction_id"] <= 0xFFFFFFFF)
 
     def test_plan_offer_expectations(self) -> None:
-        plan = _dhcp_discover_offer_plan()
+        plan = _dhcpv4_discover_offer_plan()
 
         # Offered address is in documentation space (198.51.100.0/24); the server
         # identifier is the responder (target) address.
@@ -170,7 +170,7 @@ class DhcpDiscoverOfferPlanTest(unittest.TestCase):
         self.assertLess(plan["expected_rebinding_time"], plan["expected_lease_time"])
 
     def test_validation_contract_covers_offer_fields_and_direction(self) -> None:
-        plan = _dhcp_discover_offer_plan()
+        plan = _dhcpv4_discover_offer_plan()
         validation = plan["validation"]
 
         # Peer addresses and ports (Offer flows server -> client, 67 -> 68).
@@ -199,29 +199,29 @@ class DhcpDiscoverOfferPlanTest(unittest.TestCase):
         self.assertEqual(validation["renewal_time"], plan["expected_renewal_time"])
         self.assertEqual(validation["rebinding_time"], plan["expected_rebinding_time"])
 
-    def test_target_service_is_controlled_dhcp_responder(self) -> None:
-        target_service = _dhcp_discover_offer_plan()["target_service"]
+    def test_target_service_is_controlled_dhcpv4_responder(self) -> None:
+        target_service = _dhcpv4_discover_offer_plan()["target_service"]
         self.assertTrue(target_service["required"])
-        self.assertEqual(target_service["kind"], "dhcp-responder")
+        self.assertEqual(target_service["kind"], "dhcpv4-responder")
         self.assertEqual(target_service["port"], 67)
         self.assertEqual(target_service["client_port"], 68)
-        self.assertEqual(target_service["client_mac"], _dhcp_discover_offer_plan()["client_mac"])
+        self.assertEqual(target_service["client_mac"], _dhcpv4_discover_offer_plan()["client_mac"])
 
     def test_capture_filter_matches_offer_direction(self) -> None:
-        plan = _dhcp_discover_offer_plan()
+        plan = _dhcpv4_discover_offer_plan()
         self.assertIn("src port 67", plan["capture_filter"])
         self.assertIn("dst port 68", plan["capture_filter"])
         self.assertIn(f"src host {plan['expected_reply_source_ipv4']}", plan["capture_filter"])
 
 
-class DhcpDiscoverOfferTest(unittest.TestCase):
+class Dhcpv4DiscoverOfferTest(unittest.TestCase):
     """End-to-end focused acceptance through planner and stimulus endpoint."""
 
     def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             outcome = probe_acceptance.assert_focused_case(
                 self,
-                "dhcp-discover-offer",
+                "dhcpv4-discover-offer",
                 out_dir=Path(temp_dir) / "harness",
                 provider="qemu",
                 profile="behavior",
@@ -230,16 +230,16 @@ class DhcpDiscoverOfferTest(unittest.TestCase):
 
             self.assertEqual(outcome.report.get("status"), "dry-run")
             planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
-            self.assertIn("dhcp-discover-offer", planned)
+            self.assertIn("dhcpv4-discover-offer", planned)
 
             # The endpoint produced a result for the focused case and it built
             # the Discover (a dry-run plan compiles the outgoing stimulus packet).
             results = [
                 result
                 for result in outcome.response.get("results", [])
-                if result.get("case") == "dhcp-discover-offer"
+                if result.get("case") == "dhcpv4-discover-offer"
             ]
-            self.assertTrue(results, "endpoint emitted no dhcp-discover-offer result")
+            self.assertTrue(results, "endpoint emitted no dhcpv4-discover-offer result")
             for result in results:
                 metadata = result.get("metadata", {})
                 self.assertTrue(metadata.get("dry_run"))
@@ -247,27 +247,27 @@ class DhcpDiscoverOfferTest(unittest.TestCase):
                 self.assertTrue(metadata.get("sent_raw_hex"))
 
 
-class DhcpRequestAckPlanTest(unittest.TestCase):
+class Dhcpv4RequestAckPlanTest(unittest.TestCase):
     """The plan carries an RFC-correct Request stimulus and Ack contract."""
 
     def test_plan_uses_dedicated_builder(self) -> None:
-        self.assertIn("dhcp-request-ack", planning.PLAN_BUILDERS)
+        self.assertIn("dhcpv4-request-ack", planning.PLAN_BUILDERS)
         self.assertIs(
-            planning.PLAN_BUILDERS["dhcp-request-ack"],
-            planning._dhcp_request_ack_probe_plan,
+            planning.PLAN_BUILDERS["dhcpv4-request-ack"],
+            planning._dhcpv4_request_ack_probe_plan,
         )
 
     def test_plan_is_deterministic(self) -> None:
-        self.assertEqual(_dhcp_request_ack_plan(), _dhcp_request_ack_plan())
+        self.assertEqual(_dhcpv4_request_ack_plan(), _dhcpv4_request_ack_plan())
 
     def test_plan_carries_a_request_stimulus(self) -> None:
-        plan = _dhcp_request_ack_plan()
+        plan = _dhcpv4_request_ack_plan()
 
-        self.assertEqual(plan["case"], "dhcp-request-ack")
-        self.assertEqual(plan["stimulus"], "dhcp_request")
-        self.assertEqual(plan["expected_response"], "dhcp_ack")
+        self.assertEqual(plan["case"], "dhcpv4-request-ack")
+        self.assertEqual(plan["stimulus"], "dhcpv4_request")
+        self.assertEqual(plan["expected_response"], "dhcpv4_ack")
 
-        # DHCP fixed ports: client 68 -> server 67.
+        # DHCPv4 fixed ports: client 68 -> server 67.
         self.assertEqual(plan["source_port"], 68)
         self.assertEqual(plan["destination_port"], 67)
 
@@ -285,7 +285,7 @@ class DhcpRequestAckPlanTest(unittest.TestCase):
         self.assertEqual(plan["server_identifier"], plan["destination_ipv4"])
 
     def test_plan_ack_expectations(self) -> None:
-        plan = _dhcp_request_ack_plan()
+        plan = _dhcpv4_request_ack_plan()
 
         # The assigned address equals the requested address and stays in
         # documentation space; the server identifier is the responder address.
@@ -308,7 +308,7 @@ class DhcpRequestAckPlanTest(unittest.TestCase):
         self.assertLess(plan["expected_rebinding_time"], plan["expected_lease_time"])
 
     def test_validation_contract_covers_ack_fields_and_direction(self) -> None:
-        plan = _dhcp_request_ack_plan()
+        plan = _dhcpv4_request_ack_plan()
         validation = plan["validation"]
 
         # Peer addresses and ports (Ack flows server -> client, 67 -> 68).
@@ -340,21 +340,21 @@ class DhcpRequestAckPlanTest(unittest.TestCase):
         self.assertEqual(validation["renewal_time"], plan["expected_renewal_time"])
         self.assertEqual(validation["rebinding_time"], plan["expected_rebinding_time"])
 
-    def test_target_service_is_controlled_dhcp_responder(self) -> None:
-        target_service = _dhcp_request_ack_plan()["target_service"]
+    def test_target_service_is_controlled_dhcpv4_responder(self) -> None:
+        target_service = _dhcpv4_request_ack_plan()["target_service"]
         self.assertTrue(target_service["required"])
-        self.assertEqual(target_service["kind"], "dhcp-responder")
+        self.assertEqual(target_service["kind"], "dhcpv4-responder")
         self.assertEqual(target_service["port"], 67)
         self.assertEqual(target_service["client_port"], 68)
         self.assertEqual(
-            target_service["client_mac"], _dhcp_request_ack_plan()["client_mac"]
+            target_service["client_mac"], _dhcpv4_request_ack_plan()["client_mac"]
         )
         self.assertEqual(
-            target_service["requested_ipv4"], _dhcp_request_ack_plan()["requested_ipv4"]
+            target_service["requested_ipv4"], _dhcpv4_request_ack_plan()["requested_ipv4"]
         )
 
     def test_capture_filter_matches_ack_direction(self) -> None:
-        plan = _dhcp_request_ack_plan()
+        plan = _dhcpv4_request_ack_plan()
         self.assertIn("src port 67", plan["capture_filter"])
         self.assertIn("dst port 68", plan["capture_filter"])
         self.assertIn(
@@ -362,14 +362,14 @@ class DhcpRequestAckPlanTest(unittest.TestCase):
         )
 
 
-class DhcpRequestAckTest(unittest.TestCase):
+class Dhcpv4RequestAckTest(unittest.TestCase):
     """End-to-end focused acceptance through planner and stimulus endpoint."""
 
     def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             outcome = probe_acceptance.assert_focused_case(
                 self,
-                "dhcp-request-ack",
+                "dhcpv4-request-ack",
                 out_dir=Path(temp_dir) / "harness",
                 provider="qemu",
                 profile="behavior",
@@ -378,16 +378,16 @@ class DhcpRequestAckTest(unittest.TestCase):
 
             self.assertEqual(outcome.report.get("status"), "dry-run")
             planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
-            self.assertIn("dhcp-request-ack", planned)
+            self.assertIn("dhcpv4-request-ack", planned)
 
             # The endpoint produced a result for the focused case and it built
             # the Request (a dry-run plan compiles the outgoing stimulus packet).
             results = [
                 result
                 for result in outcome.response.get("results", [])
-                if result.get("case") == "dhcp-request-ack"
+                if result.get("case") == "dhcpv4-request-ack"
             ]
-            self.assertTrue(results, "endpoint emitted no dhcp-request-ack result")
+            self.assertTrue(results, "endpoint emitted no dhcpv4-request-ack result")
             for result in results:
                 metadata = result.get("metadata", {})
                 self.assertTrue(metadata.get("dry_run"))
@@ -395,29 +395,29 @@ class DhcpRequestAckTest(unittest.TestCase):
                 self.assertTrue(metadata.get("sent_raw_hex"))
 
 
-class DhcpClientIdentifierPlanTest(unittest.TestCase):
+class Dhcpv4ClientIdentifierPlanTest(unittest.TestCase):
     """The plan carries a Discover with a client identifier and an echo contract."""
 
     def test_plan_uses_dedicated_builder(self) -> None:
-        self.assertIn("dhcp-client-identifier", planning.PLAN_BUILDERS)
+        self.assertIn("dhcpv4-client-identifier", planning.PLAN_BUILDERS)
         self.assertIs(
-            planning.PLAN_BUILDERS["dhcp-client-identifier"],
-            planning._dhcp_client_identifier_probe_plan,
+            planning.PLAN_BUILDERS["dhcpv4-client-identifier"],
+            planning._dhcpv4_client_identifier_probe_plan,
         )
 
     def test_plan_is_deterministic(self) -> None:
         self.assertEqual(
-            _dhcp_client_identifier_plan(), _dhcp_client_identifier_plan()
+            _dhcpv4_client_identifier_plan(), _dhcpv4_client_identifier_plan()
         )
 
     def test_plan_carries_a_discover_with_client_identifier(self) -> None:
-        plan = _dhcp_client_identifier_plan()
+        plan = _dhcpv4_client_identifier_plan()
 
-        self.assertEqual(plan["case"], "dhcp-client-identifier")
-        self.assertEqual(plan["stimulus"], "dhcp_discover")
-        self.assertEqual(plan["expected_response"], "dhcp_offer")
+        self.assertEqual(plan["case"], "dhcpv4-client-identifier")
+        self.assertEqual(plan["stimulus"], "dhcpv4_discover")
+        self.assertEqual(plan["expected_response"], "dhcpv4_offer")
 
-        # DHCP fixed ports: client 68 -> server 67.
+        # DHCPv4 fixed ports: client 68 -> server 67.
         self.assertEqual(plan["source_port"], 68)
         self.assertEqual(plan["destination_port"], 67)
 
@@ -439,7 +439,7 @@ class DhcpClientIdentifierPlanTest(unittest.TestCase):
         self.assertNotEqual(client_id_hex, mac.replace(":", ""))
 
     def test_offer_expectations_echo_the_client_identifier(self) -> None:
-        plan = _dhcp_client_identifier_plan()
+        plan = _dhcpv4_client_identifier_plan()
 
         self.assertEqual(plan["expected_message_type"], "offer")
         self.assertEqual(plan["expected_message_type_value"], 2)
@@ -452,7 +452,7 @@ class DhcpClientIdentifierPlanTest(unittest.TestCase):
         )
 
     def test_validation_contract_covers_client_identifier(self) -> None:
-        plan = _dhcp_client_identifier_plan()
+        plan = _dhcpv4_client_identifier_plan()
         validation = plan["validation"]
 
         # Peer addresses and ports (Offer flows server -> client, 67 -> 68).
@@ -475,10 +475,10 @@ class DhcpClientIdentifierPlanTest(unittest.TestCase):
         )
 
     def test_target_service_records_the_client_identifier(self) -> None:
-        plan = _dhcp_client_identifier_plan()
+        plan = _dhcpv4_client_identifier_plan()
         target_service = plan["target_service"]
         self.assertTrue(target_service["required"])
-        self.assertEqual(target_service["kind"], "dhcp-responder")
+        self.assertEqual(target_service["kind"], "dhcpv4-responder")
         self.assertEqual(target_service["port"], 67)
         self.assertEqual(target_service["client_port"], 68)
         self.assertEqual(
@@ -486,19 +486,19 @@ class DhcpClientIdentifierPlanTest(unittest.TestCase):
         )
 
     def test_capture_filter_matches_offer_direction(self) -> None:
-        plan = _dhcp_client_identifier_plan()
+        plan = _dhcpv4_client_identifier_plan()
         self.assertIn("src port 67", plan["capture_filter"])
         self.assertIn("dst port 68", plan["capture_filter"])
 
 
-class DhcpClientIdentifierTest(unittest.TestCase):
+class Dhcpv4ClientIdentifierTest(unittest.TestCase):
     """End-to-end focused acceptance through planner and stimulus endpoint."""
 
     def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             outcome = probe_acceptance.assert_focused_case(
                 self,
-                "dhcp-client-identifier",
+                "dhcpv4-client-identifier",
                 out_dir=Path(temp_dir) / "harness",
                 provider="qemu",
                 profile="behavior",
@@ -507,17 +507,17 @@ class DhcpClientIdentifierTest(unittest.TestCase):
 
             self.assertEqual(outcome.report.get("status"), "dry-run")
             planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
-            self.assertIn("dhcp-client-identifier", planned)
+            self.assertIn("dhcpv4-client-identifier", planned)
 
             # The endpoint produced a result for the focused case and it built
             # the Discover (a dry-run plan compiles the outgoing stimulus packet).
             results = [
                 result
                 for result in outcome.response.get("results", [])
-                if result.get("case") == "dhcp-client-identifier"
+                if result.get("case") == "dhcpv4-client-identifier"
             ]
             self.assertTrue(
-                results, "endpoint emitted no dhcp-client-identifier result"
+                results, "endpoint emitted no dhcpv4-client-identifier result"
             )
             for result in results:
                 metadata = result.get("metadata", {})
@@ -526,27 +526,27 @@ class DhcpClientIdentifierTest(unittest.TestCase):
                 self.assertTrue(metadata.get("sent_raw_hex"))
 
 
-class DhcpHostnamePlanTest(unittest.TestCase):
+class Dhcpv4HostnamePlanTest(unittest.TestCase):
     """The plan carries a Discover with a hostname (option 12) and an echo contract."""
 
     def test_plan_uses_dedicated_builder(self) -> None:
-        self.assertIn("dhcp-hostname", planning.PLAN_BUILDERS)
+        self.assertIn("dhcpv4-hostname", planning.PLAN_BUILDERS)
         self.assertIs(
-            planning.PLAN_BUILDERS["dhcp-hostname"],
-            planning._dhcp_hostname_probe_plan,
+            planning.PLAN_BUILDERS["dhcpv4-hostname"],
+            planning._dhcpv4_hostname_probe_plan,
         )
 
     def test_plan_is_deterministic(self) -> None:
-        self.assertEqual(_dhcp_hostname_plan(), _dhcp_hostname_plan())
+        self.assertEqual(_dhcpv4_hostname_plan(), _dhcpv4_hostname_plan())
 
     def test_plan_carries_a_discover_with_hostname(self) -> None:
-        plan = _dhcp_hostname_plan()
+        plan = _dhcpv4_hostname_plan()
 
-        self.assertEqual(plan["case"], "dhcp-hostname")
-        self.assertEqual(plan["stimulus"], "dhcp_discover")
-        self.assertEqual(plan["expected_response"], "dhcp_offer")
+        self.assertEqual(plan["case"], "dhcpv4-hostname")
+        self.assertEqual(plan["stimulus"], "dhcpv4_discover")
+        self.assertEqual(plan["expected_response"], "dhcpv4_offer")
 
-        # DHCP fixed ports: client 68 -> server 67.
+        # DHCPv4 fixed ports: client 68 -> server 67.
         self.assertEqual(plan["source_port"], 68)
         self.assertEqual(plan["destination_port"], 67)
 
@@ -562,7 +562,7 @@ class DhcpHostnamePlanTest(unittest.TestCase):
         self.assertTrue(hostname)
 
     def test_offer_expectations_echo_the_hostname(self) -> None:
-        plan = _dhcp_hostname_plan()
+        plan = _dhcpv4_hostname_plan()
 
         self.assertEqual(plan["expected_message_type"], "offer")
         self.assertEqual(plan["expected_message_type_value"], 2)
@@ -573,7 +573,7 @@ class DhcpHostnamePlanTest(unittest.TestCase):
         self.assertEqual(plan["expected_hostname"], plan["hostname"])
 
     def test_validation_contract_covers_hostname(self) -> None:
-        plan = _dhcp_hostname_plan()
+        plan = _dhcpv4_hostname_plan()
         validation = plan["validation"]
 
         # Peer addresses and ports (Offer flows server -> client, 67 -> 68).
@@ -594,28 +594,28 @@ class DhcpHostnamePlanTest(unittest.TestCase):
         )
 
     def test_target_service_records_the_hostname(self) -> None:
-        plan = _dhcp_hostname_plan()
+        plan = _dhcpv4_hostname_plan()
         target_service = plan["target_service"]
         self.assertTrue(target_service["required"])
-        self.assertEqual(target_service["kind"], "dhcp-responder")
+        self.assertEqual(target_service["kind"], "dhcpv4-responder")
         self.assertEqual(target_service["port"], 67)
         self.assertEqual(target_service["client_port"], 68)
         self.assertEqual(target_service["hostname"], plan["hostname"])
 
     def test_capture_filter_matches_offer_direction(self) -> None:
-        plan = _dhcp_hostname_plan()
+        plan = _dhcpv4_hostname_plan()
         self.assertIn("src port 67", plan["capture_filter"])
         self.assertIn("dst port 68", plan["capture_filter"])
 
 
-class DhcpHostnameTest(unittest.TestCase):
+class Dhcpv4HostnameTest(unittest.TestCase):
     """End-to-end focused acceptance through planner and stimulus endpoint."""
 
     def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             outcome = probe_acceptance.assert_focused_case(
                 self,
-                "dhcp-hostname",
+                "dhcpv4-hostname",
                 out_dir=Path(temp_dir) / "harness",
                 provider="qemu",
                 profile="behavior",
@@ -624,16 +624,16 @@ class DhcpHostnameTest(unittest.TestCase):
 
             self.assertEqual(outcome.report.get("status"), "dry-run")
             planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
-            self.assertIn("dhcp-hostname", planned)
+            self.assertIn("dhcpv4-hostname", planned)
 
             # The endpoint produced a result for the focused case and it built
             # the Discover (a dry-run plan compiles the outgoing stimulus packet).
             results = [
                 result
                 for result in outcome.response.get("results", [])
-                if result.get("case") == "dhcp-hostname"
+                if result.get("case") == "dhcpv4-hostname"
             ]
-            self.assertTrue(results, "endpoint emitted no dhcp-hostname result")
+            self.assertTrue(results, "endpoint emitted no dhcpv4-hostname result")
             for result in results:
                 metadata = result.get("metadata", {})
                 self.assertTrue(metadata.get("dry_run"))
@@ -645,29 +645,29 @@ class DhcpHostnameTest(unittest.TestCase):
                 self.assertTrue(plan_view.get("hostname"))
 
 
-class DhcpParameterRequestListPlanTest(unittest.TestCase):
+class Dhcpv4ParameterRequestListPlanTest(unittest.TestCase):
     """The plan carries a Discover with a parameter request list (option 55)."""
 
     def test_plan_uses_dedicated_builder(self) -> None:
-        self.assertIn("dhcp-parameter-request-list", planning.PLAN_BUILDERS)
+        self.assertIn("dhcpv4-parameter-request-list", planning.PLAN_BUILDERS)
         self.assertIs(
-            planning.PLAN_BUILDERS["dhcp-parameter-request-list"],
-            planning._dhcp_parameter_request_list_probe_plan,
+            planning.PLAN_BUILDERS["dhcpv4-parameter-request-list"],
+            planning._dhcpv4_parameter_request_list_probe_plan,
         )
 
     def test_plan_is_deterministic(self) -> None:
         self.assertEqual(
-            _dhcp_parameter_request_list_plan(), _dhcp_parameter_request_list_plan()
+            _dhcpv4_parameter_request_list_plan(), _dhcpv4_parameter_request_list_plan()
         )
 
     def test_plan_carries_a_discover_with_parameter_request_list(self) -> None:
-        plan = _dhcp_parameter_request_list_plan()
+        plan = _dhcpv4_parameter_request_list_plan()
 
-        self.assertEqual(plan["case"], "dhcp-parameter-request-list")
-        self.assertEqual(plan["stimulus"], "dhcp_discover")
-        self.assertEqual(plan["expected_response"], "dhcp_offer")
+        self.assertEqual(plan["case"], "dhcpv4-parameter-request-list")
+        self.assertEqual(plan["stimulus"], "dhcpv4_discover")
+        self.assertEqual(plan["expected_response"], "dhcpv4_offer")
 
-        # DHCP fixed ports: client 68 -> server 67.
+        # DHCPv4 fixed ports: client 68 -> server 67.
         self.assertEqual(plan["source_port"], 68)
         self.assertEqual(plan["destination_port"], 67)
 
@@ -685,7 +685,7 @@ class DhcpParameterRequestListPlanTest(unittest.TestCase):
         self.assertEqual(request_list, [1, 3, 6, 51, 58, 59])
 
     def test_offer_expectations_return_the_requested_options(self) -> None:
-        plan = _dhcp_parameter_request_list_plan()
+        plan = _dhcpv4_parameter_request_list_plan()
 
         self.assertEqual(plan["expected_message_type"], "offer")
         self.assertEqual(plan["expected_message_type_value"], 2)
@@ -706,7 +706,7 @@ class DhcpParameterRequestListPlanTest(unittest.TestCase):
         self.assertLess(plan["expected_rebinding_time"], plan["expected_lease_time"])
 
     def test_validation_contract_covers_requested_options(self) -> None:
-        plan = _dhcp_parameter_request_list_plan()
+        plan = _dhcpv4_parameter_request_list_plan()
         validation = plan["validation"]
 
         # Peer addresses and ports (Offer flows server -> client, 67 -> 68).
@@ -737,10 +737,10 @@ class DhcpParameterRequestListPlanTest(unittest.TestCase):
         self.assertEqual(validation["rebinding_time"], plan["expected_rebinding_time"])
 
     def test_target_service_records_the_parameter_request_list(self) -> None:
-        plan = _dhcp_parameter_request_list_plan()
+        plan = _dhcpv4_parameter_request_list_plan()
         target_service = plan["target_service"]
         self.assertTrue(target_service["required"])
-        self.assertEqual(target_service["kind"], "dhcp-responder")
+        self.assertEqual(target_service["kind"], "dhcpv4-responder")
         self.assertEqual(target_service["port"], 67)
         self.assertEqual(target_service["client_port"], 68)
         self.assertEqual(
@@ -752,19 +752,19 @@ class DhcpParameterRequestListPlanTest(unittest.TestCase):
         self.assertEqual(target_service["dns_ipv4"], plan["expected_dns_ipv4"])
 
     def test_capture_filter_matches_offer_direction(self) -> None:
-        plan = _dhcp_parameter_request_list_plan()
+        plan = _dhcpv4_parameter_request_list_plan()
         self.assertIn("src port 67", plan["capture_filter"])
         self.assertIn("dst port 68", plan["capture_filter"])
 
 
-class DhcpParameterRequestListTest(unittest.TestCase):
+class Dhcpv4ParameterRequestListTest(unittest.TestCase):
     """End-to-end focused acceptance through planner and stimulus endpoint."""
 
     def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             outcome = probe_acceptance.assert_focused_case(
                 self,
-                "dhcp-parameter-request-list",
+                "dhcpv4-parameter-request-list",
                 out_dir=Path(temp_dir) / "harness",
                 provider="qemu",
                 profile="behavior",
@@ -773,17 +773,17 @@ class DhcpParameterRequestListTest(unittest.TestCase):
 
             self.assertEqual(outcome.report.get("status"), "dry-run")
             planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
-            self.assertIn("dhcp-parameter-request-list", planned)
+            self.assertIn("dhcpv4-parameter-request-list", planned)
 
             # The endpoint produced a result for the focused case and it built
             # the Discover (a dry-run plan compiles the outgoing stimulus packet).
             results = [
                 result
                 for result in outcome.response.get("results", [])
-                if result.get("case") == "dhcp-parameter-request-list"
+                if result.get("case") == "dhcpv4-parameter-request-list"
             ]
             self.assertTrue(
-                results, "endpoint emitted no dhcp-parameter-request-list result"
+                results, "endpoint emitted no dhcpv4-parameter-request-list result"
             )
             for result in results:
                 metadata = result.get("metadata", {})
@@ -799,27 +799,27 @@ class DhcpParameterRequestListTest(unittest.TestCase):
                 )
 
 
-class DhcpLeaseTimePlanTest(unittest.TestCase):
+class Dhcpv4LeaseTimePlanTest(unittest.TestCase):
     """The plan carries a Discover whose Offer returns the three timing options."""
 
     def test_plan_uses_dedicated_builder(self) -> None:
-        self.assertIn("dhcp-lease-time", planning.PLAN_BUILDERS)
+        self.assertIn("dhcpv4-lease-time", planning.PLAN_BUILDERS)
         self.assertIs(
-            planning.PLAN_BUILDERS["dhcp-lease-time"],
-            planning._dhcp_lease_time_probe_plan,
+            planning.PLAN_BUILDERS["dhcpv4-lease-time"],
+            planning._dhcpv4_lease_time_probe_plan,
         )
 
     def test_plan_is_deterministic(self) -> None:
-        self.assertEqual(_dhcp_lease_time_plan(), _dhcp_lease_time_plan())
+        self.assertEqual(_dhcpv4_lease_time_plan(), _dhcpv4_lease_time_plan())
 
     def test_plan_carries_a_discover_stimulus(self) -> None:
-        plan = _dhcp_lease_time_plan()
+        plan = _dhcpv4_lease_time_plan()
 
-        self.assertEqual(plan["case"], "dhcp-lease-time")
-        self.assertEqual(plan["stimulus"], "dhcp_discover")
-        self.assertEqual(plan["expected_response"], "dhcp_offer")
+        self.assertEqual(plan["case"], "dhcpv4-lease-time")
+        self.assertEqual(plan["stimulus"], "dhcpv4_discover")
+        self.assertEqual(plan["expected_response"], "dhcpv4_offer")
 
-        # DHCP fixed ports: client 68 -> server 67.
+        # DHCPv4 fixed ports: client 68 -> server 67.
         self.assertEqual(plan["source_port"], 68)
         self.assertEqual(plan["destination_port"], 67)
 
@@ -831,7 +831,7 @@ class DhcpLeaseTimePlanTest(unittest.TestCase):
         self.assertTrue(1 <= plan["transaction_id"] <= 0xFFFFFFFF)
 
     def test_offer_expectations_carry_three_timing_options(self) -> None:
-        plan = _dhcp_lease_time_plan()
+        plan = _dhcpv4_lease_time_plan()
 
         self.assertEqual(plan["expected_message_type"], "offer")
         self.assertEqual(plan["expected_message_type_value"], 2)
@@ -850,7 +850,7 @@ class DhcpLeaseTimePlanTest(unittest.TestCase):
         self.assertLess(rebinding, lease)
 
     def test_validation_contract_covers_each_timing_option_and_identity(self) -> None:
-        plan = _dhcp_lease_time_plan()
+        plan = _dhcpv4_lease_time_plan()
         validation = plan["validation"]
 
         # Peer addresses and ports (Offer flows server -> client, 67 -> 68).
@@ -880,10 +880,10 @@ class DhcpLeaseTimePlanTest(unittest.TestCase):
         self.assertEqual(validation["rebinding_time"], plan["expected_rebinding_time"])
 
     def test_target_service_records_the_timing_options(self) -> None:
-        plan = _dhcp_lease_time_plan()
+        plan = _dhcpv4_lease_time_plan()
         target_service = plan["target_service"]
         self.assertTrue(target_service["required"])
-        self.assertEqual(target_service["kind"], "dhcp-responder")
+        self.assertEqual(target_service["kind"], "dhcpv4-responder")
         self.assertEqual(target_service["port"], 67)
         self.assertEqual(target_service["client_port"], 68)
         self.assertEqual(target_service["lease_time"], plan["expected_lease_time"])
@@ -893,19 +893,19 @@ class DhcpLeaseTimePlanTest(unittest.TestCase):
         )
 
     def test_capture_filter_matches_offer_direction(self) -> None:
-        plan = _dhcp_lease_time_plan()
+        plan = _dhcpv4_lease_time_plan()
         self.assertIn("src port 67", plan["capture_filter"])
         self.assertIn("dst port 68", plan["capture_filter"])
 
 
-class DhcpLeaseTimeTest(unittest.TestCase):
+class Dhcpv4LeaseTimeTest(unittest.TestCase):
     """End-to-end focused acceptance through planner and stimulus endpoint."""
 
     def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             outcome = probe_acceptance.assert_focused_case(
                 self,
-                "dhcp-lease-time",
+                "dhcpv4-lease-time",
                 out_dir=Path(temp_dir) / "harness",
                 provider="qemu",
                 profile="behavior",
@@ -914,16 +914,16 @@ class DhcpLeaseTimeTest(unittest.TestCase):
 
             self.assertEqual(outcome.report.get("status"), "dry-run")
             planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
-            self.assertIn("dhcp-lease-time", planned)
+            self.assertIn("dhcpv4-lease-time", planned)
 
             # The endpoint produced a result for the focused case and it built
             # the Discover (a dry-run plan compiles the outgoing stimulus packet).
             results = [
                 result
                 for result in outcome.response.get("results", [])
-                if result.get("case") == "dhcp-lease-time"
+                if result.get("case") == "dhcpv4-lease-time"
             ]
-            self.assertTrue(results, "endpoint emitted no dhcp-lease-time result")
+            self.assertTrue(results, "endpoint emitted no dhcpv4-lease-time result")
             for result in results:
                 metadata = result.get("metadata", {})
                 self.assertTrue(metadata.get("dry_run"))
@@ -937,29 +937,29 @@ class DhcpLeaseTimeTest(unittest.TestCase):
                 self.assertIsInstance(target_service.get("rebinding_time"), int)
 
 
-class DhcpRenewalUnicastAckPlanTest(unittest.TestCase):
+class Dhcpv4RenewalUnicastAckPlanTest(unittest.TestCase):
     """The plan carries a RENEWING-state unicast Request and a unicast Ack contract."""
 
     def test_plan_uses_dedicated_builder(self) -> None:
-        self.assertIn("dhcp-renewal-unicast-ack", planning.PLAN_BUILDERS)
+        self.assertIn("dhcpv4-renewal-unicast-ack", planning.PLAN_BUILDERS)
         self.assertIs(
-            planning.PLAN_BUILDERS["dhcp-renewal-unicast-ack"],
-            planning._dhcp_renewal_unicast_ack_probe_plan,
+            planning.PLAN_BUILDERS["dhcpv4-renewal-unicast-ack"],
+            planning._dhcpv4_renewal_unicast_ack_probe_plan,
         )
 
     def test_plan_is_deterministic(self) -> None:
         self.assertEqual(
-            _dhcp_renewal_unicast_ack_plan(), _dhcp_renewal_unicast_ack_plan()
+            _dhcpv4_renewal_unicast_ack_plan(), _dhcpv4_renewal_unicast_ack_plan()
         )
 
     def test_plan_carries_a_renewing_unicast_request_stimulus(self) -> None:
-        plan = _dhcp_renewal_unicast_ack_plan()
+        plan = _dhcpv4_renewal_unicast_ack_plan()
 
-        self.assertEqual(plan["case"], "dhcp-renewal-unicast-ack")
-        self.assertEqual(plan["stimulus"], "dhcp_request")
-        self.assertEqual(plan["expected_response"], "dhcp_ack")
+        self.assertEqual(plan["case"], "dhcpv4-renewal-unicast-ack")
+        self.assertEqual(plan["stimulus"], "dhcpv4_request")
+        self.assertEqual(plan["expected_response"], "dhcpv4_ack")
 
-        # DHCP fixed ports: client 68 -> server 67.
+        # DHCPv4 fixed ports: client 68 -> server 67.
         self.assertEqual(plan["source_port"], 68)
         self.assertEqual(plan["destination_port"], 67)
 
@@ -988,7 +988,7 @@ class DhcpRenewalUnicastAckPlanTest(unittest.TestCase):
         self.assertNotEqual(plan["destination_ipv4"], "255.255.255.255")
 
     def test_plan_ack_expectations(self) -> None:
-        plan = _dhcp_renewal_unicast_ack_plan()
+        plan = _dhcpv4_renewal_unicast_ack_plan()
 
         # The renewed address equals the bound address and stays in documentation
         # space; the server identifier is the responder address.
@@ -1011,7 +1011,7 @@ class DhcpRenewalUnicastAckPlanTest(unittest.TestCase):
         self.assertLess(plan["expected_rebinding_time"], plan["expected_lease_time"])
 
     def test_validation_contract_covers_unicast_ack_fields_and_direction(self) -> None:
-        plan = _dhcp_renewal_unicast_ack_plan()
+        plan = _dhcpv4_renewal_unicast_ack_plan()
         validation = plan["validation"]
 
         # Peer addresses and ports (Ack flows server -> client, 67 -> 68).
@@ -1047,17 +1047,17 @@ class DhcpRenewalUnicastAckPlanTest(unittest.TestCase):
         self.assertEqual(validation["rebinding_time"], plan["expected_rebinding_time"])
 
     def test_target_service_records_the_bound_address(self) -> None:
-        plan = _dhcp_renewal_unicast_ack_plan()
+        plan = _dhcpv4_renewal_unicast_ack_plan()
         target_service = plan["target_service"]
         self.assertTrue(target_service["required"])
-        self.assertEqual(target_service["kind"], "dhcp-responder")
+        self.assertEqual(target_service["kind"], "dhcpv4-responder")
         self.assertEqual(target_service["port"], 67)
         self.assertEqual(target_service["client_port"], 68)
         self.assertEqual(target_service["client_ciaddr"], plan["client_ciaddr"])
         self.assertTrue(target_service["renewal_unicast"])
 
     def test_capture_filter_matches_unicast_ack_direction(self) -> None:
-        plan = _dhcp_renewal_unicast_ack_plan()
+        plan = _dhcpv4_renewal_unicast_ack_plan()
         self.assertIn("src port 67", plan["capture_filter"])
         self.assertIn("dst port 68", plan["capture_filter"])
         self.assertIn(
@@ -1065,14 +1065,14 @@ class DhcpRenewalUnicastAckPlanTest(unittest.TestCase):
         )
 
 
-class DhcpRenewalUnicastAckTest(unittest.TestCase):
+class Dhcpv4RenewalUnicastAckTest(unittest.TestCase):
     """End-to-end focused acceptance through planner and stimulus endpoint."""
 
     def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             outcome = probe_acceptance.assert_focused_case(
                 self,
-                "dhcp-renewal-unicast-ack",
+                "dhcpv4-renewal-unicast-ack",
                 out_dir=Path(temp_dir) / "harness",
                 provider="qemu",
                 profile="behavior",
@@ -1081,7 +1081,7 @@ class DhcpRenewalUnicastAckTest(unittest.TestCase):
 
             self.assertEqual(outcome.report.get("status"), "dry-run")
             planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
-            self.assertIn("dhcp-renewal-unicast-ack", planned)
+            self.assertIn("dhcpv4-renewal-unicast-ack", planned)
 
             # The endpoint produced a result for the focused case and it built
             # the unicast renewal Request (a dry-run plan compiles the outgoing
@@ -1089,10 +1089,10 @@ class DhcpRenewalUnicastAckTest(unittest.TestCase):
             results = [
                 result
                 for result in outcome.response.get("results", [])
-                if result.get("case") == "dhcp-renewal-unicast-ack"
+                if result.get("case") == "dhcpv4-renewal-unicast-ack"
             ]
             self.assertTrue(
-                results, "endpoint emitted no dhcp-renewal-unicast-ack result"
+                results, "endpoint emitted no dhcpv4-renewal-unicast-ack result"
             )
             for result in results:
                 metadata = result.get("metadata", {})
@@ -1105,27 +1105,27 @@ class DhcpRenewalUnicastAckTest(unittest.TestCase):
                 self.assertTrue(plan_view.get("client_ciaddr"))
 
 
-class DhcpInformAckPlanTest(unittest.TestCase):
+class Dhcpv4InformAckPlanTest(unittest.TestCase):
     """The plan carries an Inform stimulus and a no-allocation Ack contract."""
 
     def test_plan_uses_dedicated_builder(self) -> None:
-        self.assertIn("dhcp-inform-ack", planning.PLAN_BUILDERS)
+        self.assertIn("dhcpv4-inform-ack", planning.PLAN_BUILDERS)
         self.assertIs(
-            planning.PLAN_BUILDERS["dhcp-inform-ack"],
-            planning._dhcp_inform_ack_probe_plan,
+            planning.PLAN_BUILDERS["dhcpv4-inform-ack"],
+            planning._dhcpv4_inform_ack_probe_plan,
         )
 
     def test_plan_is_deterministic(self) -> None:
-        self.assertEqual(_dhcp_inform_ack_plan(), _dhcp_inform_ack_plan())
+        self.assertEqual(_dhcpv4_inform_ack_plan(), _dhcpv4_inform_ack_plan())
 
     def test_plan_carries_an_inform_stimulus(self) -> None:
-        plan = _dhcp_inform_ack_plan()
+        plan = _dhcpv4_inform_ack_plan()
 
-        self.assertEqual(plan["case"], "dhcp-inform-ack")
-        self.assertEqual(plan["stimulus"], "dhcp_inform")
-        self.assertEqual(plan["expected_response"], "dhcp_ack")
+        self.assertEqual(plan["case"], "dhcpv4-inform-ack")
+        self.assertEqual(plan["stimulus"], "dhcpv4_inform")
+        self.assertEqual(plan["expected_response"], "dhcpv4_ack")
 
-        # DHCP fixed ports: client 68 -> server 67.
+        # DHCPv4 fixed ports: client 68 -> server 67.
         self.assertEqual(plan["source_port"], 68)
         self.assertEqual(plan["destination_port"], 67)
 
@@ -1147,7 +1147,7 @@ class DhcpInformAckPlanTest(unittest.TestCase):
         self.assertNotIn("requested_ipv4", plan)
 
     def test_plan_inform_ack_expectations(self) -> None:
-        plan = _dhcp_inform_ack_plan()
+        plan = _dhcpv4_inform_ack_plan()
 
         # The Ack returns configuration metadata but allocates no address and
         # grants no lease (RFC 2131 section 4.3.5).
@@ -1168,7 +1168,7 @@ class DhcpInformAckPlanTest(unittest.TestCase):
         self.assertEqual(plan["expected_server_identifier"], plan["destination_ipv4"])
 
     def test_validation_contract_covers_inform_ack_fields_and_direction(self) -> None:
-        plan = _dhcp_inform_ack_plan()
+        plan = _dhcpv4_inform_ack_plan()
         validation = plan["validation"]
 
         # Peer addresses and ports (Ack flows server -> client, 67 -> 68).
@@ -1207,10 +1207,10 @@ class DhcpInformAckPlanTest(unittest.TestCase):
         )
 
     def test_target_service_records_the_inform_invariants(self) -> None:
-        plan = _dhcp_inform_ack_plan()
+        plan = _dhcpv4_inform_ack_plan()
         target_service = plan["target_service"]
         self.assertTrue(target_service["required"])
-        self.assertEqual(target_service["kind"], "dhcp-responder")
+        self.assertEqual(target_service["kind"], "dhcpv4-responder")
         self.assertEqual(target_service["port"], 67)
         self.assertEqual(target_service["client_port"], 68)
         self.assertEqual(target_service["client_ciaddr"], plan["client_ciaddr"])
@@ -1222,7 +1222,7 @@ class DhcpInformAckPlanTest(unittest.TestCase):
         self.assertTrue(target_service["no_lease_time"])
 
     def test_capture_filter_matches_ack_direction(self) -> None:
-        plan = _dhcp_inform_ack_plan()
+        plan = _dhcpv4_inform_ack_plan()
         self.assertIn("src port 67", plan["capture_filter"])
         self.assertIn("dst port 68", plan["capture_filter"])
         self.assertIn(
@@ -1230,14 +1230,14 @@ class DhcpInformAckPlanTest(unittest.TestCase):
         )
 
 
-class DhcpInformAckTest(unittest.TestCase):
+class Dhcpv4InformAckTest(unittest.TestCase):
     """End-to-end focused acceptance through planner and stimulus endpoint."""
 
     def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             outcome = probe_acceptance.assert_focused_case(
                 self,
-                "dhcp-inform-ack",
+                "dhcpv4-inform-ack",
                 out_dir=Path(temp_dir) / "harness",
                 provider="qemu",
                 profile="behavior",
@@ -1246,16 +1246,16 @@ class DhcpInformAckTest(unittest.TestCase):
 
             self.assertEqual(outcome.report.get("status"), "dry-run")
             planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
-            self.assertIn("dhcp-inform-ack", planned)
+            self.assertIn("dhcpv4-inform-ack", planned)
 
             # The endpoint produced a result for the focused case and it built the
             # Inform (a dry-run plan compiles the outgoing stimulus packet).
             results = [
                 result
                 for result in outcome.response.get("results", [])
-                if result.get("case") == "dhcp-inform-ack"
+                if result.get("case") == "dhcpv4-inform-ack"
             ]
-            self.assertTrue(results, "endpoint emitted no dhcp-inform-ack result")
+            self.assertTrue(results, "endpoint emitted no dhcpv4-inform-ack result")
             for result in results:
                 metadata = result.get("metadata", {})
                 self.assertTrue(metadata.get("dry_run"))
@@ -1270,27 +1270,27 @@ class DhcpInformAckTest(unittest.TestCase):
                 self.assertTrue(plan_view.get("expected_no_lease_time"))
 
 
-class DhcpRequestNakPlanTest(unittest.TestCase):
+class Dhcpv4RequestNakPlanTest(unittest.TestCase):
     """The plan carries a Request for an invalid address and a Nak contract."""
 
     def test_plan_uses_dedicated_builder(self) -> None:
-        self.assertIn("dhcp-request-nak", planning.PLAN_BUILDERS)
+        self.assertIn("dhcpv4-request-nak", planning.PLAN_BUILDERS)
         self.assertIs(
-            planning.PLAN_BUILDERS["dhcp-request-nak"],
-            planning._dhcp_request_nak_probe_plan,
+            planning.PLAN_BUILDERS["dhcpv4-request-nak"],
+            planning._dhcpv4_request_nak_probe_plan,
         )
 
     def test_plan_is_deterministic(self) -> None:
-        self.assertEqual(_dhcp_request_nak_plan(), _dhcp_request_nak_plan())
+        self.assertEqual(_dhcpv4_request_nak_plan(), _dhcpv4_request_nak_plan())
 
     def test_plan_carries_a_request_for_an_invalid_address(self) -> None:
-        plan = _dhcp_request_nak_plan()
+        plan = _dhcpv4_request_nak_plan()
 
-        self.assertEqual(plan["case"], "dhcp-request-nak")
-        self.assertEqual(plan["stimulus"], "dhcp_request")
-        self.assertEqual(plan["expected_response"], "dhcp_nak")
+        self.assertEqual(plan["case"], "dhcpv4-request-nak")
+        self.assertEqual(plan["stimulus"], "dhcpv4_request")
+        self.assertEqual(plan["expected_response"], "dhcpv4_nak")
 
-        # DHCP fixed ports: client 68 -> server 67.
+        # DHCPv4 fixed ports: client 68 -> server 67.
         self.assertEqual(plan["source_port"], 68)
         self.assertEqual(plan["destination_port"], 67)
 
@@ -1312,7 +1312,7 @@ class DhcpRequestNakPlanTest(unittest.TestCase):
         self.assertEqual(plan["server_identifier"], plan["destination_ipv4"])
 
     def test_plan_nak_expectations(self) -> None:
-        plan = _dhcp_request_nak_plan()
+        plan = _dhcpv4_request_nak_plan()
 
         # RFC 2131 section 4.3.2: the server refuses with a DHCPNAK (type 6) that
         # allocates no address and grants no lease.
@@ -1329,7 +1329,7 @@ class DhcpRequestNakPlanTest(unittest.TestCase):
         self.assertIn(plan["requested_ipv4"], plan["expected_message"])
 
     def test_validation_contract_covers_nak_fields_and_direction(self) -> None:
-        plan = _dhcp_request_nak_plan()
+        plan = _dhcpv4_request_nak_plan()
         validation = plan["validation"]
 
         # Peer addresses and ports (Nak flows server -> client, 67 -> 68).
@@ -1364,10 +1364,10 @@ class DhcpRequestNakPlanTest(unittest.TestCase):
         self.assertEqual(validation["message"], plan["expected_message"])
 
     def test_target_service_records_the_nak_invariants(self) -> None:
-        plan = _dhcp_request_nak_plan()
+        plan = _dhcpv4_request_nak_plan()
         target_service = plan["target_service"]
         self.assertTrue(target_service["required"])
-        self.assertEqual(target_service["kind"], "dhcp-responder")
+        self.assertEqual(target_service["kind"], "dhcpv4-responder")
         self.assertEqual(target_service["port"], 67)
         self.assertEqual(target_service["client_port"], 68)
         self.assertEqual(target_service["requested_ipv4"], plan["requested_ipv4"])
@@ -1377,7 +1377,7 @@ class DhcpRequestNakPlanTest(unittest.TestCase):
         self.assertEqual(target_service["message"], plan["expected_message"])
 
     def test_capture_filter_matches_nak_direction(self) -> None:
-        plan = _dhcp_request_nak_plan()
+        plan = _dhcpv4_request_nak_plan()
         self.assertIn("src port 67", plan["capture_filter"])
         self.assertIn("dst port 68", plan["capture_filter"])
         self.assertIn(
@@ -1385,14 +1385,14 @@ class DhcpRequestNakPlanTest(unittest.TestCase):
         )
 
 
-class DhcpRequestNakTest(unittest.TestCase):
+class Dhcpv4RequestNakTest(unittest.TestCase):
     """End-to-end focused acceptance through planner and stimulus endpoint."""
 
     def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             outcome = probe_acceptance.assert_focused_case(
                 self,
-                "dhcp-request-nak",
+                "dhcpv4-request-nak",
                 out_dir=Path(temp_dir) / "harness",
                 provider="qemu",
                 profile="behavior",
@@ -1401,16 +1401,16 @@ class DhcpRequestNakTest(unittest.TestCase):
 
             self.assertEqual(outcome.report.get("status"), "dry-run")
             planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
-            self.assertIn("dhcp-request-nak", planned)
+            self.assertIn("dhcpv4-request-nak", planned)
 
             # The endpoint produced a result for the focused case and it built the
             # Request (a dry-run plan compiles the outgoing stimulus packet).
             results = [
                 result
                 for result in outcome.response.get("results", [])
-                if result.get("case") == "dhcp-request-nak"
+                if result.get("case") == "dhcpv4-request-nak"
             ]
-            self.assertTrue(results, "endpoint emitted no dhcp-request-nak result")
+            self.assertTrue(results, "endpoint emitted no dhcpv4-request-nak result")
             for result in results:
                 metadata = result.get("metadata", {})
                 self.assertTrue(metadata.get("dry_run"))
@@ -1426,27 +1426,27 @@ class DhcpRequestNakTest(unittest.TestCase):
                 self.assertTrue(plan_view.get("expected_message"))
 
 
-class DhcpRapidRepeatPlanTest(unittest.TestCase):
+class Dhcpv4RapidRepeatPlanTest(unittest.TestCase):
     """The plan carries two Discover->Offer sends with distinct identities."""
 
     def test_plan_uses_dedicated_builder(self) -> None:
-        self.assertIn("dhcp-rapid-repeat", planning.PLAN_BUILDERS)
+        self.assertIn("dhcpv4-rapid-repeat", planning.PLAN_BUILDERS)
         self.assertIs(
-            planning.PLAN_BUILDERS["dhcp-rapid-repeat"],
-            planning._dhcp_rapid_repeat_probe_plan,
+            planning.PLAN_BUILDERS["dhcpv4-rapid-repeat"],
+            planning._dhcpv4_rapid_repeat_probe_plan,
         )
 
     def test_plan_is_deterministic(self) -> None:
-        self.assertEqual(_dhcp_rapid_repeat_plan(), _dhcp_rapid_repeat_plan())
+        self.assertEqual(_dhcpv4_rapid_repeat_plan(), _dhcpv4_rapid_repeat_plan())
 
     def test_plan_carries_two_sends_with_distinct_xids_and_clients(self) -> None:
-        plan = _dhcp_rapid_repeat_plan()
+        plan = _dhcpv4_rapid_repeat_plan()
 
-        self.assertEqual(plan["case"], "dhcp-rapid-repeat")
-        self.assertEqual(plan["stimulus"], "dhcp_discover")
-        self.assertEqual(plan["expected_response"], "dhcp_offer")
+        self.assertEqual(plan["case"], "dhcpv4-rapid-repeat")
+        self.assertEqual(plan["stimulus"], "dhcpv4_discover")
+        self.assertEqual(plan["expected_response"], "dhcpv4_offer")
 
-        sends = plan["dhcp_sends"]
+        sends = plan["dhcpv4_sends"]
         self.assertEqual(plan["send_count"], 2)
         self.assertEqual(len(sends), 2)
 
@@ -1458,7 +1458,7 @@ class DhcpRapidRepeatPlanTest(unittest.TestCase):
         # Each Offer carries its own recognizably different offered address.
         self.assertNotEqual(first["expected_yiaddr"], second["expected_yiaddr"])
         for send in sends:
-            # DHCP fixed privileged ports: client 68 -> server 67.
+            # DHCPv4 fixed privileged ports: client 68 -> server 67.
             self.assertEqual(send["source_port"], 68)
             self.assertEqual(send["destination_port"], 67)
             self.assertEqual(send["expected_message_type_value"], 2)
@@ -1469,8 +1469,8 @@ class DhcpRapidRepeatPlanTest(unittest.TestCase):
             self.assertTrue(send["client_mac"].startswith("00:00:5e:00:53:"))
 
     def test_each_send_validation_matches_its_own_xid_chaddr_and_yiaddr(self) -> None:
-        plan = _dhcp_rapid_repeat_plan()
-        for send in plan["dhcp_sends"]:
+        plan = _dhcpv4_rapid_repeat_plan()
+        for send in plan["dhcpv4_sends"]:
             validation = send["validation"]
             # Each Offer is matched back to its Discover by the echoed xid/chaddr.
             self.assertEqual(validation["transaction_id"], send["transaction_id"])
@@ -1486,10 +1486,10 @@ class DhcpRapidRepeatPlanTest(unittest.TestCase):
             self.assertEqual(validation["destination_port"], send["source_port"])
 
     def test_target_service_describes_per_send_offers(self) -> None:
-        plan = _dhcp_rapid_repeat_plan()
+        plan = _dhcpv4_rapid_repeat_plan()
         target_service = plan["target_service"]
         self.assertTrue(target_service["required"])
-        self.assertEqual(target_service["kind"], "dhcp-responder")
+        self.assertEqual(target_service["kind"], "dhcpv4-responder")
         repeat_sends = target_service["rapid_repeat"]["sends"]
         self.assertEqual(len(repeat_sends), 2)
         # The responder keys one Offer per (xid, chaddr) so each Discover gets its
@@ -1502,14 +1502,14 @@ class DhcpRapidRepeatPlanTest(unittest.TestCase):
         self.assertEqual(len(offers), 2)
 
 
-class DhcpRapidRepeatTest(unittest.TestCase):
+class Dhcpv4RapidRepeatTest(unittest.TestCase):
     """End-to-end focused acceptance through planner and stimulus endpoint."""
 
     def test_focused_case_drives_planner_and_stimulus_endpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             outcome = probe_acceptance.assert_focused_case(
                 self,
-                "dhcp-rapid-repeat",
+                "dhcpv4-rapid-repeat",
                 out_dir=Path(temp_dir) / "harness",
                 provider="qemu",
                 profile="behavior",
@@ -1518,14 +1518,14 @@ class DhcpRapidRepeatTest(unittest.TestCase):
 
             self.assertEqual(outcome.report.get("status"), "dry-run")
             planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
-            self.assertIn("dhcp-rapid-repeat", planned)
+            self.assertIn("dhcpv4-rapid-repeat", planned)
 
             results = [
                 result
                 for result in outcome.response.get("results", [])
-                if result.get("case") == "dhcp-rapid-repeat"
+                if result.get("case") == "dhcpv4-rapid-repeat"
             ]
-            self.assertTrue(results, "endpoint emitted no dhcp-rapid-repeat result")
+            self.assertTrue(results, "endpoint emitted no dhcpv4-rapid-repeat result")
             for result in results:
                 metadata = result.get("metadata", {})
                 self.assertTrue(metadata.get("dry_run"))

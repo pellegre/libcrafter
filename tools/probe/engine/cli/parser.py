@@ -40,7 +40,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_PROFILE,
         help=(
             "probe sampling profile (default: %(default)s); "
-            "'behavior' selects the full DNS/DHCP/ARP/UDP suite"
+            "'behavior' selects the full DNS/DHCPv4/ARP/UDP suite"
         ),
     )
     parser.add_argument(

@@ -43,12 +43,12 @@ tools/probe/run --provider qemu --dry-run --profile ipsec --out target/probe/ips
 python3 tools/probe/engine/provider_matrix.py --providers hetzner,qemu,virtualbox,docker --dry-run --profile behavior --seed 1052 --count 40 --out target/probe/provider-matrix
 ```
 
-The `behavior` profile is the DNS/DHCP/ARP/UDP peer-response suite. It selects
+The `behavior` profile is the DNS/DHCPv4/ARP/UDP peer-response suite. It selects
 forty cases in a stable order, ten per protocol:
 
 - DNS: success and negative answers for A, AAAA, CNAME, NXDOMAIN, NODATA, TXT,
   MX, SRV, EDNS OPT, and repeated transaction ids over separate source ports.
-- DHCP: Discover/Offer, Request/Ack, client identifier, hostname, parameter
+- DHCPv4: Discover/Offer, Request/Ack, client identifier, hostname, parameter
   request list, lease timing, renewal, Inform/Ack, invalid-address Nak, and
   repeated Discover.
 - ARP: broadcast and unicast who-has exchanges, repeated replies, sender
@@ -82,7 +82,7 @@ metadata in the report. Probe still owns target service setup, TCP RST guards,
 stimulus execution, response parsing, and result assembly.
 
 Provider capability checks decide whether a case can run. DNS and UDP need IPv4
-unicast plus controlled services. DHCP needs a private link-layer segment with
+unicast plus controlled services. DHCPv4 needs a private link-layer segment with
 broadcast and controlled services. ARP needs link-layer send/capture and
 broadcast; some ARP cases also need provider MAC metadata. IPSec ESP/AH need a
 peer that holds the matching Security Association, and IKEv2 needs an IKE
@@ -92,7 +92,7 @@ reasons and do not count as failures. Build, send, decode, or validation errors
 on supported cases must remain failures.
 
 Target setup is controlled and disposable. The target endpoint runs generated
-Python DNS, DHCP, and UDP responders where needed, and uses kernel behavior for
+Python DNS, DHCPv4, and UDP responders where needed, and uses kernel behavior for
 ARP and closed UDP port ICMP responses. Dry-runs report the exact setup plan
 without starting services. Live runs start services only on disposable lab
 endpoints and collect their artifacts.

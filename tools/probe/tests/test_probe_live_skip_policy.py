@@ -9,7 +9,7 @@ it is never relabeled as a skip. The metadata split asserted here
 ``skipped_by_confirmation``) is what lets a reader tell those apart.
 
 The full-suite assertions prove the documented provider policy: a Hetzner
-dry-run skips every DHCP, ARP, and NDP behavioral case for stable capability
+dry-run skips every DHCPv4, ARP, and NDP behavioral case for stable capability
 reasons (it has no link-layer substrate, and IPv6 Neighbor Discovery rides the
 same link layer as ARP), while a QEMU dry-run plans the whole behavior suite.
 """
@@ -150,19 +150,19 @@ class DryRunSkipMetadataTest(unittest.TestCase):
 
 
 class HetznerSkipsQemuPlansTest(unittest.TestCase):
-    def test_hetzner_skips_dhcp_arp_and_ndp_for_capability_reasons(self) -> None:
+    def test_hetzner_skips_dhcpv4_arp_and_ndp_for_capability_reasons(self) -> None:
         report = _dry_run_report_for("hetzner")
         skipped = {skip.case for skip in report.skips}
-        dhcp = _behavior_cases_by_protocol("dhcp")
+        dhcpv4 = _behavior_cases_by_protocol("dhcpv4")
         arp = _behavior_cases_by_protocol("arp")
         ndp = _behavior_cases_by_protocol("ndp")
-        self.assertTrue(dhcp, "behavior suite defines DHCP cases")
+        self.assertTrue(dhcpv4, "behavior suite defines DHCPv4 cases")
         self.assertTrue(arp, "behavior suite defines ARP cases")
         self.assertTrue(ndp, "behavior suite defines NDP cases")
-        # Every DHCP, ARP, and NDP behavioral case skips on the L3-only
+        # Every DHCPv4, ARP, and NDP behavioral case skips on the L3-only
         # provider. IPv6 Neighbor Discovery rides the same link-layer substrate
         # as ARP, so Hetzner (no link layer) skips the NDP cases too.
-        self.assertTrue(dhcp <= skipped)
+        self.assertTrue(dhcpv4 <= skipped)
         self.assertTrue(arp <= skipped)
         self.assertTrue(ndp <= skipped)
         # The skips are capability skips with stable reasons, not failures and
@@ -171,7 +171,7 @@ class HetznerSkipsQemuPlansTest(unittest.TestCase):
         self.assertEqual(report.metadata["skipped_by_confirmation"], 0)
         self.assertEqual(
             report.metadata["skipped_by_capability"],
-            len(dhcp) + len(arp) + len(ndp),
+            len(dhcpv4) + len(arp) + len(ndp),
         )
         for skip in report.skips:
             with self.subTest(case=skip.case):
@@ -196,10 +196,10 @@ class HetznerSkipsQemuPlansTest(unittest.TestCase):
         self.assertEqual(report.metadata["skipped_by_capability"], 0)
         self.assertEqual(report.metadata["skipped_by_confirmation"], 0)
         self.assertEqual(report.skips, [])
-        # The DHCP, ARP, and NDP cases Hetzner skips are planned on QEMU, which
+        # The DHCPv4, ARP, and NDP cases Hetzner skips are planned on QEMU, which
         # carries the same-segment link-layer multicast substrate NDP needs.
         planned = {case.name for case in report.cases}
-        self.assertTrue(_behavior_cases_by_protocol("dhcp") <= planned)
+        self.assertTrue(_behavior_cases_by_protocol("dhcpv4") <= planned)
         self.assertTrue(_behavior_cases_by_protocol("arp") <= planned)
         self.assertTrue(_behavior_cases_by_protocol("ndp") <= planned)
 

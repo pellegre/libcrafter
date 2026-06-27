@@ -12,7 +12,7 @@ with the full case set in :data:`tools.probe.engine.cases.PROBE_CASE_BY_NAME`.
 Three guarantees are asserted:
 
 * Full registry coverage -- every one of the 15 known probe protocols
-  (``arp``, ``dns``, ``dhcp``, ``udp``, ``ndp``, ``icmp``, ``tcp``, ``bgp``,
+  (``arp``, ``dns``, ``dhcpv4``, ``udp``, ``ndp``, ``icmp``, ``tcp``, ``bgp``,
   ``rip``, ``ospf``, ``igmp``, ``ipsec``, ``mqtt``, ``quic``, ``snmp``) has
   a registered plugin, and no registered plugin names a non-protocol.
 * Exactly-one ownership -- every case in ``PROBE_CASE_BY_NAME`` is owned by
@@ -52,7 +52,7 @@ ALL_PROTOCOLS: frozenset[str] = frozenset(
     {
         "arp",
         "dns",
-        "dhcp",
+        "dhcpv4",
         "udp",
         "ndp",
         "icmp",
@@ -204,7 +204,7 @@ class ProbeNoLegacyDispatcherTest(unittest.TestCase):
     _MIGRATED_CASE_TUPLE_PROTOCOLS = (
         "ARP",
         "DNS",
-        "DHCP",
+        "DHCPv4",
         "UDP",
         "NDP",
         "ICMP",
@@ -230,7 +230,7 @@ class ProbeNoLegacyDispatcherTest(unittest.TestCase):
         # Other protocols' per-protocol rewrite case sets, now plugin-owned.
         "_ARP_REWRITE_CASES",
         "_DNS_REWRITE_CASES",
-        "_DHCP_REWRITE_CASES",
+        "_DHCPV4_REWRITE_CASES",
         "_UDP_REWRITE_CASES",
         "_TCP_REWRITE_CASES",
         "_ICMP_REWRITE_CASES",

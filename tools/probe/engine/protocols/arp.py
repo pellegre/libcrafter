@@ -18,7 +18,7 @@ object identity for the ARP behavior tests' ``assertIs`` pins. ARP carries no
 ``planned_only`` cases, and its ``profile_counts`` is intentionally empty: ARP's
 membership in the ``smoke`` and ``behavior`` profiles is order-sensitive
 (``arp-resolution`` is last in ``smoke``; the ARP behavioral cases sit between
-DHCP and NDP in ``behavior``), and the registry-first profile merge would move
+DHCPv4 and NDP in ``behavior``), and the registry-first profile merge would move
 the registry contribution to the front of those profiles, so the legacy
 ordered profile name tables in :mod:`tools.probe.engine.cases` keep owning ARP's
 profile membership to preserve byte-identical selection order.

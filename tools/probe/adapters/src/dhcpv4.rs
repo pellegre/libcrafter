@@ -1,9 +1,9 @@
-//! DHCP behavioral probe cases.
+//! DHCPv4 behavioral probe cases.
 //!
-//! `dhcp-discover-offer` is the baseline DHCP behavioral check: build a
-//! BOOTP/DHCP Discover with libcrafter, send it from the client port (68) to
-//! the server port (67) against a controlled DHCP responder on a private L2
-//! lab segment, capture the Offer, decode the IPv4/UDP/BOOTP/DHCP response with
+//! `dhcpv4-discover-offer` is the baseline DHCPv4 behavioral check: build a
+//! BOOTP/DHCPv4 Discover with libcrafter, send it from the client port (68) to
+//! the server port (67) against a controlled DHCPv4 responder on a private L2
+//! lab segment, capture the Offer, decode the IPv4/UDP/BOOTP/DHCPv4 response with
 //! libcrafter, and validate the BOOTP opcode (reply), the message type (Offer,
 //! option 53), the echoed transaction id (xid), the client hardware address
 //! (chaddr), the offered address (yiaddr), the server identifier (option 54),
@@ -23,17 +23,17 @@ use crate::common::{
     FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
 };
 
-/// Stable identifier for the DHCP case module.
-pub const MODULE_NAME: &str = "dhcp";
+/// Stable identifier for the DHCPv4 case module.
+pub const MODULE_NAME: &str = "dhcpv4";
 
-pub fn run_dhcp_dry_run(
+pub fn run_dhcpv4_dry_run(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
-    if let Some(sends) = plan.dhcp_sends.as_deref() {
-        return run_dhcp_multi_send_dry_run(request, plan, sends);
+    if let Some(sends) = plan.dhcpv4_sends.as_deref() {
+        return run_dhcpv4_multi_send_dry_run(request, plan, sends);
     }
-    let packet = dhcp_packet(plan)?;
+    let packet = dhcpv4_packet(plan)?;
     let report = SocketSender::new(
         SendOptions::new()
             .iface(request.interface.clone())
@@ -79,14 +79,14 @@ pub fn run_dhcp_dry_run(
     })
 }
 
-pub fn run_dhcp_live(
+pub fn run_dhcpv4_live(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
-    if let Some(sends) = plan.dhcp_sends.as_deref() {
-        return run_dhcp_multi_send_live(request, plan, sends);
+    if let Some(sends) = plan.dhcpv4_sends.as_deref() {
+        return run_dhcpv4_multi_send_live(request, plan, sends);
     }
-    let packet = dhcp_packet(plan)?;
+    let packet = dhcpv4_packet(plan)?;
     let timeout = Duration::from_secs(request.timeout_seconds.max(1));
     let mut sniffer =
         match open_capture_sniffer(request.interface.clone(), timeout, 64, capture_filter(plan)) {
@@ -139,7 +139,7 @@ pub fn run_dhcp_live(
             ));
         }
     } {
-        match validate_dhcp_candidate(plan, captured.packet(), captured_data(&captured))? {
+        match validate_dhcpv4_candidate(plan, captured.packet(), captured_data(&captured))? {
             CandidateValidation::Ignore => {}
             CandidateValidation::Passed(decoded) => {
                 let raw_hex = hex_bytes(captured_data(&captured));
@@ -187,7 +187,7 @@ pub fn run_dhcp_live(
         return Ok(failed_outcome(
             plan,
             FAILURE_WRONG_PAYLOAD,
-            vec!["captured DHCP response did not match the expected Offer contract".to_string()],
+            vec!["captured DHCPv4 response did not match the expected Offer contract".to_string()],
             Some(json!({
                 "send_report": send_report_json(&send_report),
                 "decoded": decoded,
@@ -201,7 +201,7 @@ pub fn run_dhcp_live(
         return Ok(failed_outcome(
             plan,
             FAILURE_WRONG_PEER,
-            vec!["captured DHCP response did not match expected peer or ports".to_string()],
+            vec!["captured DHCPv4 response did not match expected peer or ports".to_string()],
             Some(json!({
                 "send_report": send_report_json(&send_report),
                 "decoded": decoded,
@@ -214,7 +214,7 @@ pub fn run_dhcp_live(
     Ok(failed_outcome(
         plan,
         FAILURE_TIMEOUT,
-        vec!["timed out waiting for DHCP Offer".to_string()],
+        vec!["timed out waiting for DHCPv4 Offer".to_string()],
         Some(json!({
             "send_report": send_report_json(&send_report),
             "capture_filter": capture_filter(plan),
@@ -224,19 +224,19 @@ pub fn run_dhcp_live(
     ))
 }
 
-/// Derive a single-send `ProbePlan` for one entry of a multi-send DHCP case's
-/// `dhcp_sends` array. The derived plan reuses the parent's case and shared
+/// Derive a single-send `ProbePlan` for one entry of a multi-send DHCPv4 case's
+/// `dhcpv4_sends` array. The derived plan reuses the parent's case and shared
 /// fields but overrides the per-send transaction id, client identity (chaddr),
 /// source/destination ports, peer addresses, offered address, server identifier,
 /// lease timing options, and capture filter so the existing single-send builders
-/// (`dhcp_packet`, `validate_dhcp_candidate`) operate on exactly this one
+/// (`dhcpv4_packet`, `validate_dhcpv4_candidate`) operate on exactly this one
 /// Discover and its own expected Offer.
 fn send_as_plan(parent: &ProbePlan, send: &Dhcpv4Send) -> ProbePlan {
     let mut derived = parent.clone();
     // This send is a single, self-contained Discover->Offer exchange; clear the
     // multi-send markers so the single-send build/validate path runs against just
     // this send.
-    derived.dhcp_sends = None;
+    derived.dhcpv4_sends = None;
     derived.send_count = None;
     if let Some(value) = send.source_ipv4.clone() {
         derived.source_ipv4 = Some(value);
@@ -289,12 +289,12 @@ fn send_as_plan(parent: &ProbePlan, send: &Dhcpv4Send) -> ProbePlan {
     derived
 }
 
-/// Dry-run a multi-send DHCP case (`dhcp-rapid-repeat`): compile every per-send
+/// Dry-run a multi-send DHCPv4 case (`dhcpv4-rapid-repeat`): compile every per-send
 /// Discover with libcrafter and emit one planned send and one expected Offer per
 /// send. No traffic leaves the host. The output carries a `planned_sends` array
 /// (one entry per build) and a top-level `send_count` so an inspector sees two
 /// planned sends and two expected responses.
-fn run_dhcp_multi_send_dry_run(
+fn run_dhcpv4_multi_send_dry_run(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
     sends: &[Dhcpv4Send],
@@ -302,7 +302,7 @@ fn run_dhcp_multi_send_dry_run(
     let mut planned_sends = Vec::with_capacity(sends.len());
     for (offset, send) in sends.iter().enumerate() {
         let send_plan = send_as_plan(plan, send);
-        let packet = dhcp_packet(&send_plan)?;
+        let packet = dhcpv4_packet(&send_plan)?;
         let report = SocketSender::new(
             SendOptions::new()
                 .iface(request.interface.clone())
@@ -321,7 +321,7 @@ fn run_dhcp_multi_send_dry_run(
             "send_report": send_report_json(&report),
             "sent_raw_hex": sent_raw_hex,
             "capture_filter": capture_filter(&send_plan),
-            "expected_response": dhcp_expected_response_json(&send_plan),
+            "expected_response": dhcpv4_expected_response_json(&send_plan),
         }));
     }
     let expected_responses: Vec<Value> = planned_sends
@@ -366,14 +366,14 @@ fn run_dhcp_multi_send_dry_run(
     })
 }
 
-/// Live multi-send DHCP case (`dhcp-rapid-repeat`): build and send every per-send
+/// Live multi-send DHCPv4 case (`dhcpv4-rapid-repeat`): build and send every per-send
 /// libcrafter Discover, capture the Offers, decode each, and validate every Offer
 /// against *its* send's transaction id (xid), client identity (chaddr), and
 /// offered address. Each send opens its own capture filtered to the client port,
 /// so two Offers that share the lab transport are never confused — every Offer is
 /// matched to the Discover that produced it by the echoed xid. The case passes
 /// only when every send validates.
-fn run_dhcp_multi_send_live(
+fn run_dhcpv4_multi_send_live(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
     sends: &[Dhcpv4Send],
@@ -387,7 +387,7 @@ fn run_dhcp_multi_send_live(
 
     for (offset, send) in sends.iter().enumerate() {
         let send_plan = send_as_plan(plan, send);
-        let outcome = run_dhcp_live(request, &send_plan)?;
+        let outcome = run_dhcpv4_live(request, &send_plan)?;
         any_sent |= outcome.sent;
         any_received |= outcome.received;
         let status = outcome
@@ -488,7 +488,7 @@ fn static_failure_reason(reason: &str) -> &'static str {
 /// JSON view of one send's expected Offer (peer/ports, transaction id, message
 /// type, offered address, server identifier, and lease options) for the dry-run
 /// report.
-fn dhcp_expected_response_json(send_plan: &ProbePlan) -> Value {
+fn dhcpv4_expected_response_json(send_plan: &ProbePlan) -> Value {
     json!({
         "source_ipv4": send_plan.expected_reply_source_ipv4,
         "destination_ipv4": send_plan.expected_reply_destination_ipv4,
@@ -507,7 +507,7 @@ fn dhcp_expected_response_json(send_plan: &ProbePlan) -> Value {
     })
 }
 
-/// JSON view of a plan's `dhcp_sends` array for the plan echo. `None` renders
+/// JSON view of a plan's `dhcpv4_sends` array for the plan echo. `None` renders
 /// null.
 pub fn sends_json(sends: Option<&[Dhcpv4Send]>) -> Value {
     match sends {
@@ -542,7 +542,7 @@ pub fn sends_json(sends: Option<&[Dhcpv4Send]>) -> Value {
     }
 }
 
-/// JSON view of a plan's `dhcp_sends` for the responder's `rapid_repeat`
+/// JSON view of a plan's `dhcpv4_sends` for the responder's `rapid_repeat`
 /// descriptor: the per-send transaction id, client MAC, and offered address the
 /// responder keys each Offer to.
 pub fn repeat_sends_json(sends: Option<&[Dhcpv4Send]>) -> Value {
@@ -563,19 +563,19 @@ pub fn repeat_sends_json(sends: Option<&[Dhcpv4Send]>) -> Value {
     }
 }
 
-/// Build the IPv4/UDP/BOOTP/DHCP stimulus packet with libcrafter.
+/// Build the IPv4/UDP/BOOTP/DHCPv4 stimulus packet with libcrafter.
 ///
-/// `dhcp-discover-offer` builds a Discover (message type 1); `dhcp-request-ack`
+/// `dhcpv4-discover-offer` builds a Discover (message type 1); `dhcpv4-request-ack`
 /// builds a SELECTING-state Request (message type 3) carrying the requested-IP
 /// option (50) and the chosen server-identifier option (54);
-/// `dhcp-renewal-unicast-ack` builds a RENEWING-state Request (message type 3)
+/// `dhcpv4-renewal-unicast-ack` builds a RENEWING-state Request (message type 3)
 /// that is unicast directly to the leasing server, setting `ciaddr` to the
-/// bound address and omitting options 50/54. The stimulus is sent from the DHCP
+/// bound address and omitting options 50/54. The stimulus is sent from the DHCPv4
 /// client port (68) to the server port (67). `compile()` fills the BOOTP
 /// op/htype/hlen, magic cookie, lengths, and the UDP/IPv4 checksums; the
 /// caller-set client MAC, transaction id, ciaddr, requested IP, and server
 /// identifier survive untouched.
-pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
+pub fn dhcpv4_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
     let source: Ipv4Addr = required_str(plan.source_ipv4.as_deref(), "source_ipv4")?.parse()?;
     let destination: Ipv4Addr =
         required_str(plan.destination_ipv4.as_deref(), "destination_ipv4")?.parse()?;
@@ -584,11 +584,11 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
     let client_mac: MacAddr = required_str(plan.client_mac.as_deref(), "client_mac")?.parse()?;
     let transaction_id = required_u32(plan.transaction_id, "transaction_id")?;
 
-    let dhcp = if plan.case == "dhcp-request-ack" || plan.case == "dhcp-request-nak" {
+    let dhcpv4 = if plan.case == "dhcpv4-request-ack" || plan.case == "dhcpv4-request-nak" {
         // RFC 2131 section 4.3.2: a DHCPREQUEST in response to a DHCPOFFER names
         // the address it wants to commit in the requested-IP option (50) and the
         // chosen server in the server-identifier option (54), echoing the xid. The
-        // `dhcp-request-nak` stimulus is the same SELECTING/INIT-REBOOT-style
+        // `dhcpv4-request-nak` stimulus is the same SELECTING/INIT-REBOOT-style
         // Request shape, except the requested-IP names an address outside the
         // responder's served pool, which the server refuses with a DHCPNAK.
         let requested_ip: Ipv4Addr =
@@ -596,7 +596,7 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
         let server_identifier: Ipv4Addr =
             required_str(plan.server_identifier.as_deref(), "server_identifier")?.parse()?;
         Dhcpv4::request(client_mac, requested_ip, server_identifier).transaction_id(transaction_id)
-    } else if plan.case == "dhcp-renewal-unicast-ack" {
+    } else if plan.case == "dhcpv4-renewal-unicast-ack" {
         // RFC 2131 section 4.3.6 (table 4) and section 4.4.5: a client in the
         // RENEWING state unicasts its DHCPREQUEST directly to the server that
         // leased its address. It fills `ciaddr` with the address it is already
@@ -623,7 +623,7 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
             .ciaddr(client_ciaddr)
             .transaction_id(transaction_id)
             .parameter_request_list(requests)
-    } else if plan.case == "dhcp-inform-ack" {
+    } else if plan.case == "dhcpv4-inform-ack" {
         // RFC 2131 section 3.4 and section 4.4.3: a client that already has an
         // externally configured IP address uses a DHCPINFORM to ask only for
         // local configuration parameters. It fills `ciaddr` with the address it
@@ -648,7 +648,7 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
             .ciaddr(client_ciaddr)
             .transaction_id(transaction_id)
             .parameter_request_list(requests)
-    } else if plan.case == "dhcp-client-identifier" {
+    } else if plan.case == "dhcpv4-client-identifier" {
         // RFC 2132 section 9.14: a client may identify itself with the client
         // identifier option (61) in addition to chaddr. The encoded option-61
         // payload (the type octet plus identifier) is carried verbatim in the
@@ -660,7 +660,7 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
         Dhcpv4::discover(client_mac)
             .transaction_id(transaction_id)
             .client_id(client_identifier)
-    } else if plan.case == "dhcp-hostname" {
+    } else if plan.case == "dhcpv4-hostname" {
         // RFC 2132 section 3.14: a client may name itself with the hostname
         // option (12), a string option, in addition to chaddr. The hostname is
         // carried verbatim in the plan; `compile()` fills the option
@@ -669,7 +669,7 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
         Dhcpv4::discover(client_mac)
             .transaction_id(transaction_id)
             .hostname(hostname)
-    } else if plan.case == "dhcp-parameter-request-list" {
+    } else if plan.case == "dhcpv4-parameter-request-list" {
         // RFC 2132 section 9.8: the client names the option codes it wants the
         // server to return in the parameter request list (option 55). The plan
         // carries an explicit deterministic list, so build the Discover shape
@@ -697,16 +697,16 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
 
     Ok(Ipv4::new().src(source).dst(destination)
         / Udp::new().sport(source_port).dport(destination_port)
-        / dhcp)
+        / dhcpv4)
 }
 
-/// Validate one captured candidate against the DHCP Discover->Offer contract.
+/// Validate one captured candidate against the DHCPv4 Discover->Offer contract.
 ///
 /// Peer/port mismatches surface as `WrongPeer`; a packet that reaches the right
-/// peer but fails the BOOTP/DHCP contract (opcode, message type, transaction
+/// peer but fails the BOOTP/DHCPv4 contract (opcode, message type, transaction
 /// id, chaddr, yiaddr, server identifier, lease options, direction) surfaces as
 /// `WrongPayload`. A fully matching Offer surfaces as `Passed`.
-pub fn validate_dhcp_candidate(
+pub fn validate_dhcpv4_candidate(
     plan: &ProbePlan,
     packet: &Packet,
     raw: &[u8],
@@ -776,11 +776,11 @@ pub fn validate_dhcp_candidate(
         })));
     }
 
-    let Some(dhcp) = packet.layer::<Dhcpv4>() else {
+    let Some(dhcpv4) = packet.layer::<Dhcpv4>() else {
         return Ok(CandidateValidation::WrongPayload(json!({
             "packet": decoded,
             "mismatches": [{
-                "field": "dhcp",
+                "field": "dhcpv4",
                 "expected": "present",
                 "actual": "missing",
             }],
@@ -789,23 +789,23 @@ pub fn validate_dhcp_candidate(
 
     let mut mismatches = Vec::new();
 
-    // Response direction: a DHCP Offer is a BOOTP reply (op 2). Combined with the
+    // Response direction: a DHCPv4 Offer is a BOOTP reply (op 2). Combined with the
     // ports checked above (server 67 -> client 68), this confirms the
     // server -> client direction.
-    if dhcp.op_value() != BOOTP_REPLY {
+    if dhcpv4.op_value() != BOOTP_REPLY {
         mismatches.push(json!({
-            "field": "dhcp.op",
+            "field": "dhcpv4.op",
             "expected": BOOTP_REPLY,
-            "actual": dhcp.op_value(),
+            "actual": dhcpv4.op_value(),
         }));
     }
 
     // Message type (option 53): Offer.
     let expected_message_type = plan.expected_message_type_value.unwrap_or(DHCPV4_OFFER);
-    let actual_message_type = dhcp.message_type_value().map(Dhcpv4MessageType::code);
+    let actual_message_type = dhcpv4.message_type_value().map(Dhcpv4MessageType::code);
     if actual_message_type != Some(expected_message_type) {
         mismatches.push(json!({
-            "field": "dhcp.message_type",
+            "field": "dhcpv4.message_type",
             "expected": expected_message_type,
             "actual": actual_message_type,
         }));
@@ -813,31 +813,31 @@ pub fn validate_dhcp_candidate(
 
     // Transaction id (xid) echoed from the Discover.
     let expected_xid = required_u32(plan.transaction_id, "transaction_id")?;
-    if dhcp.transaction_id_value() != expected_xid {
+    if dhcpv4.transaction_id_value() != expected_xid {
         mismatches.push(json!({
-            "field": "dhcp.xid",
+            "field": "dhcpv4.xid",
             "expected": expected_xid,
-            "actual": dhcp.transaction_id_value(),
+            "actual": dhcpv4.transaction_id_value(),
         }));
     }
 
     // Client hardware address (chaddr) echoed from the Discover.
     let expected_chaddr: MacAddr =
         required_str(plan.client_mac.as_deref(), "client_mac")?.parse()?;
-    match dhcp.client_mac_value() {
+    match dhcpv4.client_mac_value() {
         Some(actual_chaddr) => {
             if actual_chaddr != expected_chaddr {
                 mismatches.push(json!({
-                    "field": "dhcp.chaddr",
+                    "field": "dhcpv4.chaddr",
                     "expected": expected_chaddr.to_string(),
                     "actual": actual_chaddr.to_string(),
                 }));
             }
         }
         None => mismatches.push(json!({
-            "field": "dhcp.chaddr",
+            "field": "dhcpv4.chaddr",
             "expected": expected_chaddr.to_string(),
-            "actual": hex_bytes(dhcp.client_hardware_address_value()),
+            "actual": hex_bytes(dhcpv4.client_hardware_address_value()),
         })),
     }
 
@@ -845,10 +845,10 @@ pub fn validate_dhcp_candidate(
     // allocates no address, so for the Inform case the plan asserts `yiaddr` is
     // the all-zero address instead of naming a concrete `expected_yiaddr`.
     if plan.expected_yiaddr_zero.unwrap_or(false) {
-        let actual_yiaddr = dhcp.your_ip_address_value();
+        let actual_yiaddr = dhcpv4.your_ip_address_value();
         if actual_yiaddr != Ipv4Addr::UNSPECIFIED {
             mismatches.push(json!({
-                "field": "dhcp.yiaddr",
+                "field": "dhcpv4.yiaddr",
                 "expected": Ipv4Addr::UNSPECIFIED.to_string(),
                 "actual": actual_yiaddr.to_string(),
             }));
@@ -856,20 +856,20 @@ pub fn validate_dhcp_candidate(
     } else {
         let expected_yiaddr: Ipv4Addr =
             required_str(plan.expected_yiaddr.as_deref(), "expected_yiaddr")?.parse()?;
-        match dhcp.offered_ip_address() {
+        match dhcpv4.offered_ip_address() {
             Some(actual_yiaddr) => {
                 if actual_yiaddr != expected_yiaddr {
                     mismatches.push(json!({
-                        "field": "dhcp.yiaddr",
+                        "field": "dhcpv4.yiaddr",
                         "expected": expected_yiaddr.to_string(),
                         "actual": actual_yiaddr.to_string(),
                     }));
                 }
             }
             None => mismatches.push(json!({
-                "field": "dhcp.yiaddr",
+                "field": "dhcpv4.yiaddr",
                 "expected": expected_yiaddr.to_string(),
-                "actual": dhcp.your_ip_address_value().to_string(),
+                "actual": dhcpv4.your_ip_address_value().to_string(),
             })),
         }
     }
@@ -880,32 +880,32 @@ pub fn validate_dhcp_candidate(
         "expected_server_identifier",
     )?
     .parse()?;
-    match dhcp.server_identifier_value() {
+    match dhcpv4.server_identifier_value() {
         Some(actual_server_identifier) => {
             if actual_server_identifier != expected_server_identifier {
                 mismatches.push(json!({
-                    "field": "dhcp.server_identifier",
+                    "field": "dhcpv4.server_identifier",
                     "expected": expected_server_identifier.to_string(),
                     "actual": actual_server_identifier.to_string(),
                 }));
             }
         }
         None => mismatches.push(json!({
-            "field": "dhcp.server_identifier",
+            "field": "dhcpv4.server_identifier",
             "expected": expected_server_identifier.to_string(),
             "actual": Value::Null,
         })),
     }
 
-    // DHCP message (option 56) returned by the responder when the plan names it
+    // DHCPv4 message (option 56) returned by the responder when the plan names it
     // (RFC 2132 section 9.9). A DHCPNAK MAY carry a text message explaining the
     // refusal; the decoded string option must match the planned message exactly so
     // the option-56 text round-trips through libcrafter encode and decode.
     if let Some(expected_message) = plan.expected_message.as_deref() {
-        match dhcp.message_value() {
+        match dhcpv4.message_value() {
             Some(actual) if actual == expected_message => {}
             actual => mismatches.push(json!({
-                "field": "dhcp.message",
+                "field": "dhcpv4.message",
                 "expected": expected_message,
                 "actual": actual,
             })),
@@ -919,24 +919,24 @@ pub fn validate_dhcp_candidate(
     // bytes the stimulus carried.
     if let Some(expected_client_identifier_hex) = plan.expected_client_identifier_hex.as_deref() {
         let expected = decode_hex(expected_client_identifier_hex)?;
-        match dhcp.client_identifier_value() {
+        match dhcpv4.client_identifier_value() {
             Some(Ok(identifier)) => {
                 let actual = identifier.encode();
                 if actual != expected {
                     mismatches.push(json!({
-                        "field": "dhcp.client_identifier",
+                        "field": "dhcpv4.client_identifier",
                         "expected": hex_bytes(&expected),
                         "actual": hex_bytes(&actual),
                     }));
                 }
             }
             Some(Err(err)) => mismatches.push(json!({
-                "field": "dhcp.client_identifier",
+                "field": "dhcpv4.client_identifier",
                 "expected": hex_bytes(&expected),
                 "actual": format!("decode error: {err}"),
             })),
             None => mismatches.push(json!({
-                "field": "dhcp.client_identifier",
+                "field": "dhcpv4.client_identifier",
                 "expected": hex_bytes(&expected),
                 "actual": Value::Null,
             })),
@@ -948,10 +948,10 @@ pub fn validate_dhcp_candidate(
     // match the planned hostname exactly so the string option round-trips
     // through libcrafter encode and decode.
     if let Some(expected_hostname) = plan.expected_hostname.as_deref() {
-        match dhcp.host_name_value() {
+        match dhcpv4.host_name_value() {
             Some(actual) if actual == expected_hostname => {}
             actual => mismatches.push(json!({
-                "field": "dhcp.host_name",
+                "field": "dhcpv4.host_name",
                 "expected": expected_hostname,
                 "actual": actual,
             })),
@@ -960,10 +960,10 @@ pub fn validate_dhcp_candidate(
 
     // Lease time option (51); renewal (58) and rebinding (59) when planned.
     if let Some(expected_lease_time) = plan.expected_lease_time {
-        match dhcp.lease_time_value() {
+        match dhcpv4.lease_time_value() {
             Some(actual) if actual == expected_lease_time => {}
             actual => mismatches.push(json!({
-                "field": "dhcp.lease_time",
+                "field": "dhcpv4.lease_time",
                 "expected": expected_lease_time,
                 "actual": actual,
             })),
@@ -973,29 +973,29 @@ pub fn validate_dhcp_candidate(
     // carry an IP-address-lease-time option (51). When the plan asserts this
     // negative invariant, any lease-time option present is a payload mismatch.
     if plan.expected_no_lease_time.unwrap_or(false) {
-        if let Some(actual) = dhcp.lease_time_value() {
+        if let Some(actual) = dhcpv4.lease_time_value() {
             mismatches.push(json!({
-                "field": "dhcp.lease_time",
+                "field": "dhcpv4.lease_time",
                 "expected": Value::Null,
                 "actual": actual,
             }));
         }
     }
     if let Some(expected_renewal_time) = plan.expected_renewal_time {
-        match dhcp.renewal_time_value() {
+        match dhcpv4.renewal_time_value() {
             Some(actual) if actual == expected_renewal_time => {}
             actual => mismatches.push(json!({
-                "field": "dhcp.renewal_time",
+                "field": "dhcpv4.renewal_time",
                 "expected": expected_renewal_time,
                 "actual": actual,
             })),
         }
     }
     if let Some(expected_rebinding_time) = plan.expected_rebinding_time {
-        match dhcp.rebinding_time_value() {
+        match dhcpv4.rebinding_time_value() {
             Some(actual) if actual == expected_rebinding_time => {}
             actual => mismatches.push(json!({
-                "field": "dhcp.rebinding_time",
+                "field": "dhcpv4.rebinding_time",
                 "expected": expected_rebinding_time,
                 "actual": actual,
             })),
@@ -1006,10 +1006,10 @@ pub fn validate_dhcp_candidate(
     // and DNS server (6) when the plan names them.
     if let Some(expected_subnet_mask) = plan.expected_subnet_mask.as_deref() {
         let expected: Ipv4Addr = expected_subnet_mask.parse()?;
-        match dhcp.subnet_mask_value() {
+        match dhcpv4.subnet_mask_value() {
             Some(actual) if actual == expected => {}
             actual => mismatches.push(json!({
-                "field": "dhcp.subnet_mask",
+                "field": "dhcpv4.subnet_mask",
                 "expected": expected.to_string(),
                 "actual": actual.map(|address| address.to_string()),
             })),
@@ -1017,10 +1017,10 @@ pub fn validate_dhcp_candidate(
     }
     if let Some(expected_router) = plan.expected_router_ipv4.as_deref() {
         let expected: Ipv4Addr = expected_router.parse()?;
-        let routers = dhcp.routers();
+        let routers = dhcpv4.routers();
         if !routers.contains(&expected) {
             mismatches.push(json!({
-                "field": "dhcp.router",
+                "field": "dhcpv4.router",
                 "expected": expected.to_string(),
                 "actual": routers
                     .iter()
@@ -1031,10 +1031,10 @@ pub fn validate_dhcp_candidate(
     }
     if let Some(expected_dns) = plan.expected_dns_ipv4.as_deref() {
         let expected: Ipv4Addr = expected_dns.parse()?;
-        let dns_servers = dhcp.domain_name_servers();
+        let dns_servers = dhcpv4.domain_name_servers();
         if !dns_servers.contains(&expected) {
             mismatches.push(json!({
-                "field": "dhcp.domain_name_server",
+                "field": "dhcpv4.domain_name_server",
                 "expected": expected.to_string(),
                 "actual": dns_servers
                     .iter()
@@ -1054,41 +1054,41 @@ pub fn validate_dhcp_candidate(
     Ok(CandidateValidation::Passed(decoded))
 }
 
-/// JSON view of a decoded DHCP layer for the observed-response artifact.
-pub fn dhcp_json(dhcp: &Dhcpv4) -> Value {
+/// JSON view of a decoded DHCPv4 layer for the observed-response artifact.
+pub fn dhcpv4_json(dhcpv4: &Dhcpv4) -> Value {
     json!({
-        "op": dhcp.op_value(),
-        "is_reply": dhcp.op_value() == BOOTP_REPLY,
-        "hardware_type": dhcp.hardware_type_value(),
-        "hardware_len": dhcp.hardware_len_value(),
-        "transaction_id": dhcp.transaction_id_value(),
-        "flags": dhcp.flags_value(),
-        "client_ip_address": dhcp.client_ip_address_value().to_string(),
-        "your_ip_address": dhcp.your_ip_address_value().to_string(),
-        "server_ip_address": dhcp.server_ip_address_value().to_string(),
-        "gateway_ip_address": dhcp.gateway_ip_address_value().to_string(),
-        "client_hardware_address": hex_bytes(dhcp.client_hardware_address_value()),
-        "client_mac": dhcp.client_mac_value().map(|mac| mac.to_string()),
-        "message_type": dhcp.message_type_value().map(Dhcpv4MessageType::code),
-        "server_identifier": dhcp
+        "op": dhcpv4.op_value(),
+        "is_reply": dhcpv4.op_value() == BOOTP_REPLY,
+        "hardware_type": dhcpv4.hardware_type_value(),
+        "hardware_len": dhcpv4.hardware_len_value(),
+        "transaction_id": dhcpv4.transaction_id_value(),
+        "flags": dhcpv4.flags_value(),
+        "client_ip_address": dhcpv4.client_ip_address_value().to_string(),
+        "your_ip_address": dhcpv4.your_ip_address_value().to_string(),
+        "server_ip_address": dhcpv4.server_ip_address_value().to_string(),
+        "gateway_ip_address": dhcpv4.gateway_ip_address_value().to_string(),
+        "client_hardware_address": hex_bytes(dhcpv4.client_hardware_address_value()),
+        "client_mac": dhcpv4.client_mac_value().map(|mac| mac.to_string()),
+        "message_type": dhcpv4.message_type_value().map(Dhcpv4MessageType::code),
+        "server_identifier": dhcpv4
             .server_identifier_value()
             .map(|address| address.to_string()),
-        "client_identifier_hex": dhcp
+        "client_identifier_hex": dhcpv4
             .client_identifier_value()
             .and_then(|identifier| identifier.ok())
             .map(|identifier| hex_bytes(&identifier.encode())),
-        "host_name": dhcp.host_name_value(),
-        "message": dhcp.message_value(),
-        "subnet_mask": dhcp.subnet_mask_value().map(|address| address.to_string()),
-        "routers": dhcp
+        "host_name": dhcpv4.host_name_value(),
+        "message": dhcpv4.message_value(),
+        "subnet_mask": dhcpv4.subnet_mask_value().map(|address| address.to_string()),
+        "routers": dhcpv4
             .routers()
             .iter()
             .map(|address| address.to_string())
             .collect::<Vec<_>>(),
-        "lease_time": dhcp.lease_time_value(),
-        "renewal_time": dhcp.renewal_time_value(),
-        "rebinding_time": dhcp.rebinding_time_value(),
-        "options": dhcp
+        "lease_time": dhcpv4.lease_time_value(),
+        "renewal_time": dhcpv4.renewal_time_value(),
+        "rebinding_time": dhcpv4.rebinding_time_value(),
+        "options": dhcpv4
             .options_value()
             .iter()
             .map(|option| json!({ "code": option.code() }))
@@ -1102,7 +1102,7 @@ mod tests {
     use crate::test_support::base_plan;
 
     fn discover_plan() -> ProbePlan {
-        let mut plan = base_plan("dhcp-discover-offer");
+        let mut plan = base_plan("dhcpv4-discover-offer");
         plan.source_ipv4 = Some("10.64.0.10".to_string());
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
@@ -1131,7 +1131,7 @@ mod tests {
             .parse()
             .unwrap();
         let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
-        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
+        let dhcpv4 = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1155,11 +1155,11 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp
+            / dhcpv4
     }
 
     fn request_plan() -> ProbePlan {
-        let mut plan = base_plan("dhcp-request-ack");
+        let mut plan = base_plan("dhcpv4-request-ack");
         plan.source_ipv4 = Some("10.64.0.10".to_string());
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
@@ -1206,7 +1206,7 @@ mod tests {
             .parse()
             .unwrap();
         let dns: Ipv4Addr = plan.expected_dns_ipv4.as_deref().unwrap().parse().unwrap();
-        let dhcp = Dhcpv4::ack(client_mac, assigned, server_identifier)
+        let dhcpv4 = Dhcpv4::ack(client_mac, assigned, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1232,50 +1232,50 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp
+            / dhcpv4
     }
 
     #[test]
-    fn dhcp_request_compiles_with_requested_ip_and_server_identifier() {
+    fn dhcpv4_request_compiles_with_requested_ip_and_server_identifier() {
         let plan = request_plan();
-        let packet = dhcp_packet(&plan).unwrap();
+        let packet = dhcpv4_packet(&plan).unwrap();
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
 
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let udp = decoded.layer::<Udp>().unwrap();
-        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
+        let dhcpv4 = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67.
         assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
         // BOOTP request carrying a Request with the caller's xid, requested IP
         // (option 50), and server identifier (option 54).
-        assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Request));
-        assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
+        assert_eq!(dhcpv4.op_value(), BOOTP_REQUEST);
+        assert_eq!(dhcpv4.message_type_value(), Some(Dhcpv4MessageType::Request));
+        assert_eq!(dhcpv4.transaction_id_value(), 0x3903_f326);
         assert_eq!(
-            dhcp.requested_ip_address_value(),
+            dhcpv4.requested_ip_address_value(),
             Some("198.51.100.42".parse().unwrap())
         );
         assert_eq!(
-            dhcp.server_identifier_value(),
+            dhcpv4.server_identifier_value(),
             Some("10.64.0.20".parse().unwrap())
         );
-        assert_eq!(dhcp.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
+        assert_eq!(dhcpv4.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
     }
 
     #[test]
-    fn dhcp_request_requires_requested_ip() {
+    fn dhcpv4_request_requires_requested_ip() {
         let mut plan = request_plan();
         plan.requested_ipv4 = None;
-        assert!(dhcp_packet(&plan).is_err());
+        assert!(dhcpv4_packet(&plan).is_err());
     }
 
     #[test]
-    fn dhcp_request_requires_server_identifier() {
+    fn dhcpv4_request_requires_server_identifier() {
         let mut plan = request_plan();
         plan.server_identifier = None;
-        assert!(dhcp_packet(&plan).is_err());
+        assert!(dhcpv4_packet(&plan).is_err());
     }
 
     #[test]
@@ -1283,7 +1283,7 @@ mod tests {
         let plan = request_plan();
         let bytes = ack_packet(&plan).compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(
             matches!(validation, CandidateValidation::Passed(_)),
             "expected Passed, got {validation:?}"
@@ -1301,7 +1301,7 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        let dhcp =
+        let dhcpv4 =
             Dhcpv4::nak(client_mac, server_identifier).transaction_id(plan.transaction_id.unwrap());
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
@@ -1309,10 +1309,10 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp;
+            / dhcpv4;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
@@ -1328,7 +1328,7 @@ mod tests {
             .unwrap();
         let assigned: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
         // Same Ack but without the DNS server option (6) the plan requires.
-        let dhcp = Dhcpv4::ack(client_mac, assigned, server_identifier)
+        let dhcpv4 = Dhcpv4::ack(client_mac, assigned, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1352,51 +1352,51 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp;
+            / dhcpv4;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
     #[test]
-    fn dhcp_packet_requires_client_mac() {
+    fn dhcpv4_packet_requires_client_mac() {
         let mut plan = discover_plan();
         plan.client_mac = None;
-        assert!(dhcp_packet(&plan).is_err());
+        assert!(dhcpv4_packet(&plan).is_err());
     }
 
     #[test]
-    fn dhcp_packet_requires_transaction_id() {
+    fn dhcpv4_packet_requires_transaction_id() {
         let mut plan = discover_plan();
         plan.transaction_id = None;
-        assert!(dhcp_packet(&plan).is_err());
+        assert!(dhcpv4_packet(&plan).is_err());
     }
 
     #[test]
-    fn dhcp_discover_compiles_with_client_ports_and_message_type() {
+    fn dhcpv4_discover_compiles_with_client_ports_and_message_type() {
         let plan = discover_plan();
-        let packet = dhcp_packet(&plan).unwrap();
+        let packet = dhcpv4_packet(&plan).unwrap();
         let compiled = packet.compile().unwrap();
         let bytes = compiled.as_bytes().to_vec();
 
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let udp = decoded.layer::<Udp>().unwrap();
-        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
+        let dhcpv4 = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67.
         assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
         // BOOTP request carrying a Discover with the caller's xid and chaddr.
-        assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
-        assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
+        assert_eq!(dhcpv4.op_value(), BOOTP_REQUEST);
+        assert_eq!(dhcpv4.message_type_value(), Some(Dhcpv4MessageType::Discover));
+        assert_eq!(dhcpv4.transaction_id_value(), 0x3903_f326);
         assert_eq!(
-            dhcp.client_mac_value(),
+            dhcpv4.client_mac_value(),
             Some("00:00:5e:00:53:2a".parse().unwrap())
         );
         // compile() filled the magic cookie.
-        assert_eq!(dhcp.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
+        assert_eq!(dhcpv4.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
     }
 
     #[test]
@@ -1404,7 +1404,7 @@ mod tests {
         let plan = discover_plan();
         let bytes = offer_packet(&plan).compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(
             matches!(validation, CandidateValidation::Passed(_)),
             "expected Passed, got {validation:?}"
@@ -1417,7 +1417,7 @@ mod tests {
         let bytes = offer_packet(&plan).compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         plan.expected_yiaddr = Some("198.51.100.99".to_string());
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
@@ -1427,7 +1427,7 @@ mod tests {
         let bytes = offer_packet(&plan).compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         plan.transaction_id = Some(0x0102_0304);
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
@@ -1435,7 +1435,7 @@ mod tests {
         // RFC 4361 node-specific client identifier: type 0xff, a 4-octet IAID
         // (11223344), then a DUID-LL (type 3, hardware type 1, MAC 00:00:5e:00:53:99).
         let client_identifier_hex = "ff112233440003000100005e005399".to_string();
-        let mut plan = base_plan("dhcp-client-identifier");
+        let mut plan = base_plan("dhcpv4-client-identifier");
         plan.source_ipv4 = Some("10.64.0.10".to_string());
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
@@ -1468,7 +1468,7 @@ mod tests {
         let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
         let client_identifier =
             decode_hex(plan.expected_client_identifier_hex.as_deref().unwrap()).unwrap();
-        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
+        let dhcpv4 = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1493,38 +1493,38 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp
+            / dhcpv4
     }
 
     #[test]
-    fn dhcp_discover_compiles_with_client_identifier_option() {
+    fn dhcpv4_discover_compiles_with_client_identifier_option() {
         let plan = client_identifier_plan();
-        let packet = dhcp_packet(&plan).unwrap();
+        let packet = dhcpv4_packet(&plan).unwrap();
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
 
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let udp = decoded.layer::<Udp>().unwrap();
-        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
+        let dhcpv4 = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67; a Discover carrying chaddr plus option 61.
         assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
-        assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
-        assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
+        assert_eq!(dhcpv4.op_value(), BOOTP_REQUEST);
+        assert_eq!(dhcpv4.message_type_value(), Some(Dhcpv4MessageType::Discover));
+        assert_eq!(dhcpv4.transaction_id_value(), 0x3903_f326);
         // The decoded client identifier (option 61) re-encodes to the bytes the
         // plan carried.
         let expected = decode_hex(plan.expected_client_identifier_hex.as_deref().unwrap()).unwrap();
-        let actual = dhcp.client_identifier_value().unwrap().unwrap().encode();
+        let actual = dhcpv4.client_identifier_value().unwrap().unwrap().encode();
         assert_eq!(actual, expected);
-        assert_eq!(dhcp.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
+        assert_eq!(dhcpv4.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
     }
 
     #[test]
-    fn dhcp_client_identifier_requires_client_identifier_hex() {
+    fn dhcpv4_client_identifier_requires_client_identifier_hex() {
         let mut plan = client_identifier_plan();
         plan.client_identifier_hex = None;
-        assert!(dhcp_packet(&plan).is_err());
+        assert!(dhcpv4_packet(&plan).is_err());
     }
 
     #[test]
@@ -1536,7 +1536,7 @@ mod tests {
             .as_bytes()
             .to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(
             matches!(validation, CandidateValidation::Passed(_)),
             "expected Passed, got {validation:?}"
@@ -1556,7 +1556,7 @@ mod tests {
             .parse()
             .unwrap();
         let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
-        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
+        let dhcpv4 = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1568,10 +1568,10 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp;
+            / dhcpv4;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
@@ -1587,13 +1587,13 @@ mod tests {
         // The responder echoed the Discover's identifier, but the plan now expects
         // a different one: a payload mismatch on option 61.
         plan.expected_client_identifier_hex = Some("ff99887766".to_string());
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
     fn hostname_plan() -> ProbePlan {
         let hostname = "probe-qemu-1023-0".to_string();
-        let mut plan = base_plan("dhcp-hostname");
+        let mut plan = base_plan("dhcpv4-hostname");
         plan.source_ipv4 = Some("10.64.0.10".to_string());
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
@@ -1625,7 +1625,7 @@ mod tests {
             .unwrap();
         let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
         let hostname = plan.expected_hostname.as_deref().unwrap().to_string();
-        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
+        let dhcpv4 = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1650,35 +1650,35 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp
+            / dhcpv4
     }
 
     #[test]
-    fn dhcp_discover_compiles_with_hostname_option() {
+    fn dhcpv4_discover_compiles_with_hostname_option() {
         let plan = hostname_plan();
-        let packet = dhcp_packet(&plan).unwrap();
+        let packet = dhcpv4_packet(&plan).unwrap();
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
 
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let udp = decoded.layer::<Udp>().unwrap();
-        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
+        let dhcpv4 = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67; a Discover carrying chaddr plus option 12.
         assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
-        assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
-        assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
+        assert_eq!(dhcpv4.op_value(), BOOTP_REQUEST);
+        assert_eq!(dhcpv4.message_type_value(), Some(Dhcpv4MessageType::Discover));
+        assert_eq!(dhcpv4.transaction_id_value(), 0x3903_f326);
         // The decoded hostname (option 12) round-trips to the planned string.
-        assert_eq!(dhcp.host_name_value(), plan.hostname.as_deref());
-        assert_eq!(dhcp.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
+        assert_eq!(dhcpv4.host_name_value(), plan.hostname.as_deref());
+        assert_eq!(dhcpv4.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
     }
 
     #[test]
-    fn dhcp_hostname_requires_hostname() {
+    fn dhcpv4_hostname_requires_hostname() {
         let mut plan = hostname_plan();
         plan.hostname = None;
-        assert!(dhcp_packet(&plan).is_err());
+        assert!(dhcpv4_packet(&plan).is_err());
     }
 
     #[test]
@@ -1690,7 +1690,7 @@ mod tests {
             .as_bytes()
             .to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(
             matches!(validation, CandidateValidation::Passed(_)),
             "expected Passed, got {validation:?}"
@@ -1710,7 +1710,7 @@ mod tests {
             .parse()
             .unwrap();
         let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
-        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
+        let dhcpv4 = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1722,10 +1722,10 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp;
+            / dhcpv4;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
@@ -1741,7 +1741,7 @@ mod tests {
         // The responder echoed the Discover's hostname, but the plan now expects
         // a different one: a payload mismatch on option 12.
         plan.expected_hostname = Some("other-host".to_string());
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
@@ -1749,7 +1749,7 @@ mod tests {
         // RFC 2132: the responder returns the IP address lease time (option 51),
         // the renewal T1 time value (option 58), and the rebinding T2 time value
         // (option 59) as 32-bit second counts; T1 < T2 < lease.
-        let mut plan = base_plan("dhcp-lease-time");
+        let mut plan = base_plan("dhcpv4-lease-time");
         plan.source_ipv4 = Some("10.64.0.10".to_string());
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
@@ -1768,7 +1768,7 @@ mod tests {
     }
 
     /// Build the canonical Offer the controlled responder would unicast back,
-    /// carrying the three DHCP timing options (lease 51, renewal 58, rebinding 59).
+    /// carrying the three DHCPv4 timing options (lease 51, renewal 58, rebinding 59).
     fn offer_with_timing_options_packet(plan: &ProbePlan) -> Packet {
         let client_mac: MacAddr = plan.client_mac.as_deref().unwrap().parse().unwrap();
         let server_identifier: Ipv4Addr = plan
@@ -1778,7 +1778,7 @@ mod tests {
             .parse()
             .unwrap();
         let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
-        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
+        let dhcpv4 = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1802,7 +1802,7 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp
+            / dhcpv4
     }
 
     #[test]
@@ -1814,11 +1814,11 @@ mod tests {
             .as_bytes()
             .to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
+        let dhcpv4 = decoded.layer::<Dhcpv4>().unwrap();
         // Each timing option decodes to the planned 32-bit second count.
-        assert_eq!(dhcp.lease_time_value(), Some(3600));
-        assert_eq!(dhcp.renewal_time_value(), Some(1800));
-        assert_eq!(dhcp.rebinding_time_value(), Some(3150));
+        assert_eq!(dhcpv4.lease_time_value(), Some(3600));
+        assert_eq!(dhcpv4.renewal_time_value(), Some(1800));
+        assert_eq!(dhcpv4.rebinding_time_value(), Some(3150));
     }
 
     #[test]
@@ -1830,7 +1830,7 @@ mod tests {
             .as_bytes()
             .to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(
             matches!(validation, CandidateValidation::Passed(_)),
             "expected Passed, got {validation:?}"
@@ -1849,7 +1849,7 @@ mod tests {
         // The responder returned T1 = 1800, but the plan now expects a different
         // renewal time: a payload mismatch on option 58.
         plan.expected_renewal_time = Some(900);
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
@@ -1866,7 +1866,7 @@ mod tests {
             .parse()
             .unwrap();
         let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
-        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
+        let dhcpv4 = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1877,10 +1877,10 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp;
+            / dhcpv4;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
@@ -1889,7 +1889,7 @@ mod tests {
         // router (3), DNS server (6), lease time (51), renewal T1 (58), and
         // rebinding T2 (59). The responder returns those requested options and the
         // validator confirms the corresponding values.
-        let mut plan = base_plan("dhcp-parameter-request-list");
+        let mut plan = base_plan("dhcpv4-parameter-request-list");
         plan.source_ipv4 = Some("10.64.0.10".to_string());
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
@@ -1935,7 +1935,7 @@ mod tests {
             .parse()
             .unwrap();
         let dns: Ipv4Addr = plan.expected_dns_ipv4.as_deref().unwrap().parse().unwrap();
-        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
+        let dhcpv4 = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1961,39 +1961,39 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp
+            / dhcpv4
     }
 
     #[test]
-    fn dhcp_discover_compiles_with_parameter_request_list() {
+    fn dhcpv4_discover_compiles_with_parameter_request_list() {
         let plan = parameter_request_list_plan();
-        let packet = dhcp_packet(&plan).unwrap();
+        let packet = dhcpv4_packet(&plan).unwrap();
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
 
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let udp = decoded.layer::<Udp>().unwrap();
-        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
+        let dhcpv4 = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67; a Discover carrying chaddr plus option 55.
         assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
-        assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
-        assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
+        assert_eq!(dhcpv4.op_value(), BOOTP_REQUEST);
+        assert_eq!(dhcpv4.message_type_value(), Some(Dhcpv4MessageType::Discover));
+        assert_eq!(dhcpv4.transaction_id_value(), 0x3903_f326);
         // The decoded parameter request list (option 55) is exactly the codes the
         // plan named; the default list the discover builder injects is overridden.
         assert_eq!(
-            dhcp.parameter_request_list_value(),
+            dhcpv4.parameter_request_list_value(),
             Some([1u8, 3, 6, 51, 58, 59].as_slice())
         );
-        assert_eq!(dhcp.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
+        assert_eq!(dhcpv4.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
     }
 
     #[test]
-    fn dhcp_parameter_request_list_requires_the_list() {
+    fn dhcpv4_parameter_request_list_requires_the_list() {
         let mut plan = parameter_request_list_plan();
         plan.parameter_request_list = None;
-        assert!(dhcp_packet(&plan).is_err());
+        assert!(dhcpv4_packet(&plan).is_err());
     }
 
     #[test]
@@ -2005,7 +2005,7 @@ mod tests {
             .as_bytes()
             .to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(
             matches!(validation, CandidateValidation::Passed(_)),
             "expected Passed, got {validation:?}"
@@ -2025,7 +2025,7 @@ mod tests {
             .parse()
             .unwrap();
         let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
-        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
+        let dhcpv4 = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -2049,10 +2049,10 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp;
+            / dhcpv4;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
@@ -2061,7 +2061,7 @@ mod tests {
         // unicasts its Request directly to the leasing server. It sets ciaddr,
         // leaves the broadcast flag clear, and omits the requested-IP (50) and
         // server-identifier (54) options. The server renews the same address.
-        let mut plan = base_plan("dhcp-renewal-unicast-ack");
+        let mut plan = base_plan("dhcpv4-renewal-unicast-ack");
         plan.source_ipv4 = Some("10.64.0.10".to_string());
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
@@ -2085,46 +2085,46 @@ mod tests {
     }
 
     #[test]
-    fn dhcp_renewal_compiles_with_ciaddr_and_no_request_or_server_options() {
+    fn dhcpv4_renewal_compiles_with_ciaddr_and_no_request_or_server_options() {
         let plan = renewal_plan();
-        let packet = dhcp_packet(&plan).unwrap();
+        let packet = dhcpv4_packet(&plan).unwrap();
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
 
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let udp = decoded.layer::<Udp>().unwrap();
-        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
+        let dhcpv4 = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67; a RENEWING-state Request.
         assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
-        assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Request));
-        assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
+        assert_eq!(dhcpv4.op_value(), BOOTP_REQUEST);
+        assert_eq!(dhcpv4.message_type_value(), Some(Dhcpv4MessageType::Request));
+        assert_eq!(dhcpv4.transaction_id_value(), 0x3903_f326);
         // The bound address is carried in ciaddr.
         assert_eq!(
-            dhcp.client_ip_address_value(),
+            dhcpv4.client_ip_address_value(),
             "198.51.100.42".parse::<Ipv4Addr>().unwrap()
         );
         // RFC 2131 section 4.3.6: RENEWING omits the requested-IP (50) and
         // server-identifier (54) options; the request is addressed to the one
         // server directly, not broadcast to all servers.
-        assert_eq!(dhcp.requested_ip_address_value(), None);
-        assert_eq!(dhcp.server_identifier_value(), None);
+        assert_eq!(dhcpv4.requested_ip_address_value(), None);
+        assert_eq!(dhcpv4.server_identifier_value(), None);
         // The broadcast flag stays clear (unicast renewal).
-        assert_eq!(dhcp.flags_value() & 0x8000, 0);
+        assert_eq!(dhcpv4.flags_value() & 0x8000, 0);
         // The parameter request list (option 55) names the options the Ack confirms.
         assert_eq!(
-            dhcp.parameter_request_list_value(),
+            dhcpv4.parameter_request_list_value(),
             Some([1u8, 3, 6, 51, 58, 59].as_slice())
         );
-        assert_eq!(dhcp.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
+        assert_eq!(dhcpv4.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
     }
 
     #[test]
-    fn dhcp_renewal_requires_client_ciaddr() {
+    fn dhcpv4_renewal_requires_client_ciaddr() {
         let mut plan = renewal_plan();
         plan.client_ciaddr = None;
-        assert!(dhcp_packet(&plan).is_err());
+        assert!(dhcpv4_packet(&plan).is_err());
     }
 
     #[test]
@@ -2135,7 +2135,7 @@ mod tests {
         // and configuration options).
         let bytes = ack_packet(&plan).compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(
             matches!(validation, CandidateValidation::Passed(_)),
             "expected Passed, got {validation:?}"
@@ -2150,7 +2150,7 @@ mod tests {
         // The server renewed 198.51.100.42, but the plan now expects a different
         // address: a payload mismatch on the renewed yiaddr.
         plan.expected_yiaddr = Some("198.51.100.99".to_string());
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
@@ -2160,7 +2160,7 @@ mod tests {
         // configuration-only parameter request list (subnet 1, router 3, DNS 6).
         // The server replies with an Ack that returns those options but allocates
         // no address (yiaddr 0.0.0.0) and grants no lease (no option 51).
-        let mut plan = base_plan("dhcp-inform-ack");
+        let mut plan = base_plan("dhcpv4-inform-ack");
         plan.source_ipv4 = Some("10.64.0.10".to_string());
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
@@ -2209,7 +2209,7 @@ mod tests {
         // An Ack in response to an Inform commits no binding: yiaddr is left as the
         // all-zero address (Dhcpv4::ack with the unspecified address) and no lease
         // timing options are set.
-        let dhcp = Dhcpv4::ack(client_mac, Ipv4Addr::UNSPECIFIED, server_identifier)
+        let dhcpv4 = Dhcpv4::ack(client_mac, Ipv4Addr::UNSPECIFIED, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .subnet_mask(subnet_mask)
             .router(vec![router])
@@ -2232,53 +2232,53 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp
+            / dhcpv4
     }
 
     #[test]
-    fn dhcp_inform_compiles_with_ciaddr_and_config_only_request_list() {
+    fn dhcpv4_inform_compiles_with_ciaddr_and_config_only_request_list() {
         let plan = inform_plan();
-        let packet = dhcp_packet(&plan).unwrap();
+        let packet = dhcpv4_packet(&plan).unwrap();
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
 
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let udp = decoded.layer::<Udp>().unwrap();
-        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
+        let dhcpv4 = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67; a BOOTP request carrying an Inform (type 8).
         assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
-        assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Inform));
-        assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
+        assert_eq!(dhcpv4.op_value(), BOOTP_REQUEST);
+        assert_eq!(dhcpv4.message_type_value(), Some(Dhcpv4MessageType::Inform));
+        assert_eq!(dhcpv4.transaction_id_value(), 0x3903_f326);
         // The externally-configured address is carried in ciaddr.
         assert_eq!(
-            dhcp.client_ip_address_value(),
+            dhcpv4.client_ip_address_value(),
             "198.51.100.42".parse::<Ipv4Addr>().unwrap()
         );
         // RFC 2131 section 3.4: an Inform asks for no lease, so it omits the
         // requested-IP option (50); the request list names configuration options
         // only (no lease options 51/58/59).
-        assert_eq!(dhcp.requested_ip_address_value(), None);
+        assert_eq!(dhcpv4.requested_ip_address_value(), None);
         assert_eq!(
-            dhcp.parameter_request_list_value(),
+            dhcpv4.parameter_request_list_value(),
             Some([1u8, 3, 6].as_slice())
         );
-        assert_eq!(dhcp.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
+        assert_eq!(dhcpv4.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
     }
 
     #[test]
-    fn dhcp_inform_requires_client_ciaddr() {
+    fn dhcpv4_inform_requires_client_ciaddr() {
         let mut plan = inform_plan();
         plan.client_ciaddr = None;
-        assert!(dhcp_packet(&plan).is_err());
+        assert!(dhcpv4_packet(&plan).is_err());
     }
 
     #[test]
-    fn dhcp_inform_requires_parameter_request_list() {
+    fn dhcpv4_inform_requires_parameter_request_list() {
         let mut plan = inform_plan();
         plan.parameter_request_list = None;
-        assert!(dhcp_packet(&plan).is_err());
+        assert!(dhcpv4_packet(&plan).is_err());
     }
 
     #[test]
@@ -2291,10 +2291,10 @@ mod tests {
             .to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         // The Inform Ack carries config options, no allocated address, and no lease.
-        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
-        assert_eq!(dhcp.your_ip_address_value(), Ipv4Addr::UNSPECIFIED);
-        assert_eq!(dhcp.lease_time_value(), None);
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let dhcpv4 = decoded.layer::<Dhcpv4>().unwrap();
+        assert_eq!(dhcpv4.your_ip_address_value(), Ipv4Addr::UNSPECIFIED);
+        assert_eq!(dhcpv4.lease_time_value(), None);
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(
             matches!(validation, CandidateValidation::Passed(_)),
             "expected Passed, got {validation:?}"
@@ -2313,7 +2313,7 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        let dhcp = Dhcpv4::ack(
+        let dhcpv4 = Dhcpv4::ack(
             client_mac,
             "198.51.100.42".parse().unwrap(),
             server_identifier,
@@ -2328,10 +2328,10 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp;
+            / dhcpv4;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
@@ -2347,7 +2347,7 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        let dhcp = Dhcpv4::ack(client_mac, Ipv4Addr::UNSPECIFIED, server_identifier)
+        let dhcpv4 = Dhcpv4::ack(client_mac, Ipv4Addr::UNSPECIFIED, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(3600)
             .subnet_mask("255.255.255.0".parse().unwrap())
@@ -2359,10 +2359,10 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp;
+            / dhcpv4;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
@@ -2378,7 +2378,7 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        let dhcp = Dhcpv4::ack(client_mac, Ipv4Addr::UNSPECIFIED, server_identifier)
+        let dhcpv4 = Dhcpv4::ack(client_mac, Ipv4Addr::UNSPECIFIED, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .subnet_mask("255.255.255.0".parse().unwrap())
             .router(vec!["10.64.0.1".parse().unwrap()]);
@@ -2388,10 +2388,10 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp;
+            / dhcpv4;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
@@ -2402,7 +2402,7 @@ mod tests {
         // refuses with a DHCPNAK (type 6) that carries no allocation (yiaddr
         // 0.0.0.0), no lease (no option 51), the server identifier (54), and an
         // optional message (option 56) per RFC 2132 section 9.9.
-        let mut plan = base_plan("dhcp-request-nak");
+        let mut plan = base_plan("dhcpv4-request-nak");
         plan.source_ipv4 = Some("10.64.0.10".to_string());
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
@@ -2433,7 +2433,7 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        let dhcp = Dhcpv4::nak(client_mac, server_identifier)
+        let dhcpv4 = Dhcpv4::nak(client_mac, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .message(plan.expected_message.as_deref().unwrap().to_string());
         Ipv4::new()
@@ -2454,35 +2454,35 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp
+            / dhcpv4
     }
 
     #[test]
-    fn dhcp_request_nak_stimulus_compiles_with_invalid_requested_ip() {
+    fn dhcpv4_request_nak_stimulus_compiles_with_invalid_requested_ip() {
         let plan = nak_plan();
-        let packet = dhcp_packet(&plan).unwrap();
+        let packet = dhcpv4_packet(&plan).unwrap();
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
 
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let udp = decoded.layer::<Udp>().unwrap();
-        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
+        let dhcpv4 = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67; a SELECTING-style Request carrying the invalid
         // requested IP (option 50) and the chosen server (option 54).
         assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
-        assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Request));
-        assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
+        assert_eq!(dhcpv4.op_value(), BOOTP_REQUEST);
+        assert_eq!(dhcpv4.message_type_value(), Some(Dhcpv4MessageType::Request));
+        assert_eq!(dhcpv4.transaction_id_value(), 0x3903_f326);
         assert_eq!(
-            dhcp.requested_ip_address_value(),
+            dhcpv4.requested_ip_address_value(),
             Some("192.0.2.42".parse().unwrap())
         );
         assert_eq!(
-            dhcp.server_identifier_value(),
+            dhcpv4.server_identifier_value(),
             Some("10.64.0.20".parse().unwrap())
         );
-        assert_eq!(dhcp.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
+        assert_eq!(dhcpv4.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
     }
 
     #[test]
@@ -2492,15 +2492,15 @@ mod tests {
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         // The Nak refuses the request: message type 6, no allocation, no lease, the
         // server identifier (54), and the message (56) decode as planned.
-        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
-        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Nak));
-        assert_eq!(dhcp.your_ip_address_value(), Ipv4Addr::UNSPECIFIED);
-        assert_eq!(dhcp.lease_time_value(), None);
+        let dhcpv4 = decoded.layer::<Dhcpv4>().unwrap();
+        assert_eq!(dhcpv4.message_type_value(), Some(Dhcpv4MessageType::Nak));
+        assert_eq!(dhcpv4.your_ip_address_value(), Ipv4Addr::UNSPECIFIED);
+        assert_eq!(dhcpv4.lease_time_value(), None);
         assert_eq!(
-            dhcp.message_value(),
+            dhcpv4.message_value(),
             Some("requested address 192.0.2.42 is not on this network")
         );
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(
             matches!(validation, CandidateValidation::Passed(_)),
             "expected Passed, got {validation:?}"
@@ -2520,7 +2520,7 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        let dhcp = Dhcpv4::ack(client_mac, "192.0.2.42".parse().unwrap(), server_identifier)
+        let dhcpv4 = Dhcpv4::ack(client_mac, "192.0.2.42".parse().unwrap(), server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(3600);
         let packet = Ipv4::new()
@@ -2529,10 +2529,10 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp;
+            / dhcpv4;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
@@ -2548,7 +2548,7 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        let dhcp =
+        let dhcpv4 =
             Dhcpv4::nak(client_mac, server_identifier).transaction_id(plan.transaction_id.unwrap());
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
@@ -2556,10 +2556,10 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp;
+            / dhcpv4;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
@@ -2571,7 +2571,7 @@ mod tests {
         // The responder returned its message, but the plan now expects different
         // text: a payload mismatch on option 56.
         plan.expected_message = Some("some other reason".to_string());
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
@@ -2587,7 +2587,7 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        let dhcp = Dhcpv4::nak(client_mac, server_identifier)
+        let dhcpv4 = Dhcpv4::nak(client_mac, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .yiaddr("192.0.2.42".parse().unwrap())
             .message(plan.expected_message.as_deref().unwrap().to_string());
@@ -2597,10 +2597,10 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_CLIENT_PORT)
-            / dhcp;
+            / dhcpv4;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPayload(_)));
     }
 
@@ -2617,7 +2617,7 @@ mod tests {
             .parse()
             .unwrap();
         let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
-        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
+        let dhcpv4 = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap());
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
@@ -2625,14 +2625,14 @@ mod tests {
             / Udp::new()
                 .sport(DHCPV4_SERVER_PORT)
                 .dport(DHCPV4_SERVER_PORT)
-            / dhcp;
+            / dhcpv4;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&plan, &decoded, &bytes).unwrap();
         assert!(matches!(validation, CandidateValidation::WrongPeer(_)));
     }
 
-    /// Build one `Dhcpv4Send` for a `dhcp-rapid-repeat` plan with a distinct
+    /// Build one `Dhcpv4Send` for a `dhcpv4-rapid-repeat` plan with a distinct
     /// transaction id, client identity (chaddr), and offered address.
     fn rapid_repeat_send(
         index: usize,
@@ -2666,16 +2666,16 @@ mod tests {
         }
     }
 
-    /// A `dhcp-rapid-repeat` plan carrying two Discover->Offer sends with
+    /// A `dhcpv4-rapid-repeat` plan carrying two Discover->Offer sends with
     /// distinct xids, client identities, and offered addresses.
     fn rapid_repeat_plan() -> ProbePlan {
         let sends = vec![
             rapid_repeat_send(0, 0x3903_f326, "00:00:5e:00:53:2a", "198.51.100.42"),
             rapid_repeat_send(1, 0x7c4e_1b09, "00:00:5e:00:53:7f", "198.51.100.77"),
         ];
-        let mut plan = base_plan("dhcp-rapid-repeat");
+        let mut plan = base_plan("dhcpv4-rapid-repeat");
         // Top-level fields mirror the first send so single-send consumers keep
-        // working; the dispatch detects `dhcp_sends` and drives both sends.
+        // working; the dispatch detects `dhcpv4_sends` and drives both sends.
         plan.source_ipv4 = Some("10.64.0.10".to_string());
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
@@ -2692,14 +2692,14 @@ mod tests {
         plan.expected_renewal_time = Some(1800);
         plan.expected_rebinding_time = Some(3150);
         plan.send_count = Some(sends.len());
-        plan.dhcp_sends = Some(sends);
+        plan.dhcpv4_sends = Some(sends);
         plan
     }
 
     #[test]
     fn rapid_repeat_sends_build_distinct_discovers() {
         let plan = rapid_repeat_plan();
-        let sends = plan.dhcp_sends.clone().unwrap();
+        let sends = plan.dhcpv4_sends.clone().unwrap();
         assert_eq!(sends.len(), 2);
 
         let first = send_as_plan(&plan, &sends[0]);
@@ -2710,18 +2710,18 @@ mod tests {
         assert_ne!(first.client_mac, second.client_mac);
         assert_ne!(first.expected_yiaddr, second.expected_yiaddr);
         // Each derived plan compiles into a real Discover with its own xid/chaddr.
-        let first_packet = dhcp_packet(&first).unwrap();
-        let second_packet = dhcp_packet(&second).unwrap();
-        let first_dhcp = first_packet.layer::<Dhcpv4>().unwrap();
-        let second_dhcp = second_packet.layer::<Dhcpv4>().unwrap();
-        assert_eq!(first_dhcp.transaction_id_value(), 0x3903_f326);
-        assert_eq!(second_dhcp.transaction_id_value(), 0x7c4e_1b09);
+        let first_packet = dhcpv4_packet(&first).unwrap();
+        let second_packet = dhcpv4_packet(&second).unwrap();
+        let first_dhcpv4 = first_packet.layer::<Dhcpv4>().unwrap();
+        let second_dhcpv4 = second_packet.layer::<Dhcpv4>().unwrap();
+        assert_eq!(first_dhcpv4.transaction_id_value(), 0x3903_f326);
+        assert_eq!(second_dhcpv4.transaction_id_value(), 0x7c4e_1b09);
         assert_eq!(
-            first_dhcp.message_type_value().map(Dhcpv4MessageType::code),
+            first_dhcpv4.message_type_value().map(Dhcpv4MessageType::code),
             Some(1)
         );
         assert_eq!(
-            second_dhcp
+            second_dhcpv4
                 .message_type_value()
                 .map(Dhcpv4MessageType::code),
             Some(1)
@@ -2731,7 +2731,7 @@ mod tests {
     #[test]
     fn rapid_repeat_each_offer_validates_against_its_own_send() {
         let plan = rapid_repeat_plan();
-        let sends = plan.dhcp_sends.clone().unwrap();
+        let sends = plan.dhcpv4_sends.clone().unwrap();
         for send in &sends {
             let send_plan = send_as_plan(&plan, send);
             // The responder's Offer for this Discover, keyed to its xid/chaddr.
@@ -2741,7 +2741,7 @@ mod tests {
                 .as_bytes()
                 .to_vec();
             let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-            let validation = validate_dhcp_candidate(&send_plan, &decoded, &bytes).unwrap();
+            let validation = validate_dhcpv4_candidate(&send_plan, &decoded, &bytes).unwrap();
             assert!(
                 matches!(validation, CandidateValidation::Passed(_)),
                 "expected Passed for send {:?}, got {validation:?}",
@@ -2753,7 +2753,7 @@ mod tests {
     #[test]
     fn rapid_repeat_offer_for_wrong_send_is_wrong_payload() {
         let plan = rapid_repeat_plan();
-        let sends = plan.dhcp_sends.clone().unwrap();
+        let sends = plan.dhcpv4_sends.clone().unwrap();
         // The second send's Offer (its xid/chaddr/yiaddr) must NOT validate
         // against the first send's contract: the two Offers are never confused.
         let second_plan = send_as_plan(&plan, &sends[1]);
@@ -2764,7 +2764,7 @@ mod tests {
             .to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let first_plan = send_as_plan(&plan, &sends[0]);
-        let validation = validate_dhcp_candidate(&first_plan, &decoded, &bytes).unwrap();
+        let validation = validate_dhcpv4_candidate(&first_plan, &decoded, &bytes).unwrap();
         assert!(
             matches!(validation, CandidateValidation::WrongPayload(_)),
             "expected WrongPayload matching the second Offer against the first send, got {validation:?}"

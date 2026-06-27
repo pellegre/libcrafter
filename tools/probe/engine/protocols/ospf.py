@@ -34,7 +34,7 @@ is a single-step full migration. The surface this module bundles:
 * the ``lab_capabilities`` hook (the ``ospf_neighbor_peer`` derived capability).
 
 OSPF's ``profile_counts`` is intentionally empty: ``ospf-hello-exchange`` rides
-the live ``behavior`` profile (after the DNS/DHCP/ARP/NDP/UDP groups) and
+the live ``behavior`` profile (after the DNS/DHCPv4/ARP/NDP/UDP groups) and
 ``ospf-dd-exchange`` rides the dry-run ``ospf-smoke`` profile, both in fixed
 positions, and the registry-first profile merge would move the registry
 contribution to the front of those profiles. The legacy ordered profile name

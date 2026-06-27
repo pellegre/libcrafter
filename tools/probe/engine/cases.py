@@ -34,7 +34,7 @@ from .protocols.mqtt import (  # noqa: F401  (re-exported for back-compat)
 
 
 # Capabilities required by each behavioral protocol group. DNS and UDP need only
-# IPv4 unicast plus a controlled service; DHCP and ARP additionally need a
+# IPv4 unicast plus a controlled service; DHCPv4 and ARP additionally need a
 # link-layer (Ethernet/broadcast) substrate; NDP needs an IPv6 link-layer
 # multicast substrate (solicited-node / all-routers multicast, not broadcast).
 # The capability names match the probe capability derivation in
@@ -43,8 +43,8 @@ from .protocols.mqtt import (  # noqa: F401  (re-exported for back-compat)
 # validation wiring lands in the later per-case steps; here the cases route
 # through the planned-only dispatcher fallback.
 UDP_ECHO_LARGE_PAYLOAD_LENGTH = 1200
-# DNS's, DHCP's, and UDP's capability constants and case tuples now live in their
-# plugin modules (``protocols/dns.py``, ``protocols/dhcp.py``,
+# DNS's, DHCPv4's, and UDP's capability constants and case tuples now live in their
+# plugin modules (``protocols/dns.py``, ``protocols/dhcpv4.py``,
 # ``protocols/udp.py``); the merged catalog/profile tables below pick those cases
 # up from the registry. ``UDP_ECHO_LARGE_PAYLOAD_LENGTH`` stays here because
 # :mod:`tools.probe.engine.lab` also reads it; the UDP plugin imports it lazily.
@@ -236,15 +236,13 @@ _DNS_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
     if case.metadata.get("protocol") == "dns" and case.name != "dns-query"
 )
 
-# The ten DHCP behavioral case names, in declaration order, sourced from the
-# DHCP plugin's registered cases. DHCP's profile membership stays in these legacy
-# ordered tables (rather than the plugin's ``profile_counts``) so the behavior
-# selection order is byte-identical: the registry-first profile merge would
-# otherwise move DHCP to the front of the behavior profile.
-_DHCP_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
+# The ten DHCPv4 behavioral case names, in declaration order, sourced from the
+# DHCPv4 plugin's registered cases. DHCPv4's profile membership stays in these
+# explicit ordered tables so the behavior selection order remains deterministic.
+_DHCPV4_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
     case.name
     for case in _registry_cases()
-    if case.metadata.get("protocol") == "dhcp"
+    if case.metadata.get("protocol") == "dhcpv4"
 )
 
 # The ten ARP behavioral case names, in declaration order, sourced from the ARP
@@ -307,9 +305,9 @@ _OSPF_SMOKE_CASE_NAMES: tuple[str, ...] = tuple(
     and case.metadata.get("planned_only")
 )
 
-# The behavior profile selects the full DNS/DHCP/ARP/NDP/UDP behavioral catalog
+# The behavior profile selects the full DNS/DHCPv4/ARP/NDP/UDP behavioral catalog
 # plus the live-capable OSPF case in a stable deterministic order: each protocol
-# group in declaration order, grouped DNS -> DHCP -> ARP -> NDP -> UDP -> OSPF.
+# group in declaration order, grouped DNS -> DHCPv4 -> ARP -> NDP -> UDP -> OSPF.
 # Only the live-routable OSPF case (``ospf-hello-exchange``, sourced into
 # ``_OSPF_BEHAVIOR_CASE_NAMES``) is included; the planned-only ``ospf-dd-exchange``
 # sits in the dry-run ``ospf-smoke`` profile so the behavior profile stays fully
@@ -317,7 +315,7 @@ _OSPF_SMOKE_CASE_NAMES: tuple[str, ...] = tuple(
 # ``--profile behavior`` plans the complete suite.
 BEHAVIOR_PROFILE_CASE_NAMES: tuple[str, ...] = (
     *_DNS_BEHAVIOR_CASE_NAMES,
-    *_DHCP_BEHAVIOR_CASE_NAMES,
+    *_DHCPV4_BEHAVIOR_CASE_NAMES,
     *_ARP_BEHAVIOR_CASE_NAMES,
     *_NDP_BEHAVIOR_CASE_NAMES,
     *_UDP_BEHAVIOR_CASE_NAMES,

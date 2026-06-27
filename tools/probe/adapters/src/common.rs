@@ -2,7 +2,7 @@
 //! stimulus endpoint.
 //!
 //! Case-specific packet construction, capture, and validation live in the
-//! per-protocol modules (`icmp`, `tcp`, `dns`, `udp`, `dhcp`, `arp`). This
+//! per-protocol modules (`icmp`, `tcp`, `dns`, `udp`, `dhcpv4`, `arp`). This
 //! module owns everything those cases share: argument parsing, the JSON
 //! request/plan contracts, the dry-run/live dispatch in [`run_endpoint`], and
 //! the response/artifact helpers.
@@ -17,7 +17,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::{arp, dhcp, dns, icmp, mqtt, ndp, ospf, quic, rip, snmp, tcp, udp};
+use crate::{arp, dhcpv4, dns, icmp, mqtt, ndp, ospf, quic, rip, snmp, tcp, udp};
 
 pub type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -259,7 +259,7 @@ pub struct ProbePlan {
     pub send_count: Option<usize>,
     #[serde(default)]
     pub sends: Option<Vec<DnsSend>>,
-    // DHCP/BOOTP behavioral case fields. The stimulus builds a Discover from the
+    // DHCPv4/BOOTP behavioral case fields. The stimulus builds a Discover from the
     // client MAC and transaction id; the validation contract names the expected
     // Offer message type, offered address (`yiaddr`), server identifier, and
     // lease timing options decoded out of the response.
@@ -269,41 +269,41 @@ pub struct ProbePlan {
     pub transaction_id: Option<u32>,
     // The address the client wants to commit in the requested-IP option (50) and
     // the chosen server it names in the server-identifier option (54). Both are
-    // set on a DHCP Request stimulus (`dhcp-request-ack`); a Discover leaves them
+    // set on a DHCPv4 Request stimulus (`dhcpv4-request-ack`); a Discover leaves them
     // unset.
     #[serde(default)]
     pub requested_ipv4: Option<String>,
     #[serde(default)]
     pub server_identifier: Option<String>,
     // The address a bound client carries in `ciaddr` when it renews its lease.
-    // A RENEWING-state renewal Request (`dhcp-renewal-unicast-ack`) is unicast
+    // A RENEWING-state renewal Request (`dhcpv4-renewal-unicast-ack`) is unicast
     // directly to the leasing server: it sets `ciaddr` to the address it already
     // holds, leaves the broadcast flag clear, and omits the requested-IP (50) and
-    // server-identifier (54) options. Other DHCP cases leave it unset.
+    // server-identifier (54) options. Other DHCPv4 cases leave it unset.
     #[serde(default)]
     pub client_ciaddr: Option<String>,
-    // The DHCP client identifier (option 61, RFC 2132 section 9.14), carried as
+    // The DHCPv4 client identifier (option 61, RFC 2132 section 9.14), carried as
     // the lowercase hex of the encoded option payload (type octet plus
     // identifier). `client_identifier_hex` is set on the stimulus Discover that
-    // identifies with option 61 (`dhcp-client-identifier`);
+    // identifies with option 61 (`dhcpv4-client-identifier`);
     // `expected_client_identifier_hex` is the value the responder must echo back
     // in its Offer. A case that relies only on `chaddr` leaves both unset.
     #[serde(default)]
     pub client_identifier_hex: Option<String>,
     #[serde(default)]
     pub expected_client_identifier_hex: Option<String>,
-    // The DHCP hostname (option 12, RFC 2132 section 3.14), a string option.
+    // The DHCPv4 hostname (option 12, RFC 2132 section 3.14), a string option.
     // `hostname` is set on the stimulus Discover that names itself with option 12
-    // (`dhcp-hostname`); `expected_hostname` is the value the responder must echo
+    // (`dhcpv4-hostname`); `expected_hostname` is the value the responder must echo
     // back in its Offer. A case that does not name a hostname leaves both unset.
     #[serde(default)]
     pub hostname: Option<String>,
     #[serde(default)]
     pub expected_hostname: Option<String>,
-    // The DHCP parameter request list (option 55, RFC 2132 section 9.8): the list
+    // The DHCPv4 parameter request list (option 55, RFC 2132 section 9.8): the list
     // of option codes the client asks the server to return. `parameter_request_list`
     // is set on the stimulus Discover that names the wanted options
-    // (`dhcp-parameter-request-list`); the responder returns those options and the
+    // (`dhcpv4-parameter-request-list`); the responder returns those options and the
     // validator confirms the corresponding values. A case that does not name a
     // parameter request list leaves it unset (the builders inject a default list).
     #[serde(default)]
@@ -316,7 +316,7 @@ pub struct ProbePlan {
     // MUST be 0.0.0.0 and the Ack MUST NOT carry an IP-address-lease-time option
     // (51). `expected_yiaddr_zero` asserts the decoded `yiaddr` is the all-zero
     // address; `expected_no_lease_time` asserts no lease-time (51) option is
-    // present. They are set on the Inform Ack case (`dhcp-inform-ack`) and left
+    // present. They are set on the Inform Ack case (`dhcpv4-inform-ack`) and left
     // unset by the lease-granting cases. When `expected_yiaddr_zero` is set, the
     // positive `expected_yiaddr` match is skipped in favor of the zero assertion.
     #[serde(default)]
@@ -325,10 +325,10 @@ pub struct ProbePlan {
     pub expected_no_lease_time: Option<bool>,
     #[serde(default)]
     pub expected_server_identifier: Option<String>,
-    // RFC 2132 section 9.9: the optional DHCP message option (56), a text status
+    // RFC 2132 section 9.9: the optional DHCPv4 message option (56), a text status
     // message a server includes in a DHCPNAK (or DHCPDECLINE) to explain the
     // refusal. `expected_message` is the text the responder must return in the Nak
-    // (`dhcp-request-nak`); a case that does not name a message leaves it unset and
+    // (`dhcpv4-request-nak`); a case that does not name a message leaves it unset and
     // the validator skips the option-56 text check.
     #[serde(default)]
     pub expected_message: Option<String>,
@@ -344,13 +344,13 @@ pub struct ProbePlan {
     pub expected_renewal_time: Option<u32>,
     #[serde(default)]
     pub expected_rebinding_time: Option<u32>,
-    // Multi-send DHCP behavioral case fields (`dhcp-rapid-repeat`). The plan
-    // carries a `dhcp_sends` array (one entry per Discover->Offer send), each with
+    // Multi-send DHCPv4 behavioral case fields (`dhcpv4-rapid-repeat`). The plan
+    // carries a `dhcpv4_sends` array (one entry per Discover->Offer send), each with
     // its own distinct transaction id, client identity (chaddr), and offered
-    // address, so the DHCP dispatch can build/send two Discovers and validate two
-    // independently-decoded Offers. Single-send DHCP cases leave this unset.
+    // address, so the DHCPv4 dispatch can build/send two Discovers and validate two
+    // independently-decoded Offers. Single-send DHCPv4 cases leave this unset.
     #[serde(default)]
-    pub dhcp_sends: Option<Vec<Dhcpv4Send>>,
+    pub dhcpv4_sends: Option<Vec<Dhcpv4Send>>,
     // Multi-send UDP behavioral case fields (`udp-multi-shot-order`). The plan
     // carries a `udp_sends` array (one entry per datagram), each with its own
     // ordered sequence marker and payload while sharing the same peer tuple. The
@@ -617,7 +617,7 @@ pub struct ArpSend {
     pub validation: Option<ArpValidation>,
 }
 
-/// One send of a multi-send DHCP probe case (`dhcp-rapid-repeat`).
+/// One send of a multi-send DHCPv4 probe case (`dhcpv4-rapid-repeat`).
 ///
 /// Each send carries its own transaction id (xid), client hardware address
 /// (chaddr), source/destination ports, offered address (yiaddr), server
@@ -1057,30 +1057,30 @@ fn dispatch_case(
         (RunMode::Live, "ttl-expired") => icmp::run_ttl_expired_live(request, plan),
         (
             RunMode::DryRun,
-            "dhcp-discover-offer"
-            | "dhcp-request-ack"
-            | "dhcp-client-identifier"
-            | "dhcp-hostname"
-            | "dhcp-parameter-request-list"
-            | "dhcp-lease-time"
-            | "dhcp-renewal-unicast-ack"
-            | "dhcp-inform-ack"
-            | "dhcp-request-nak"
-            | "dhcp-rapid-repeat",
-        ) => dhcp::run_dhcp_dry_run(request, plan),
+            "dhcpv4-discover-offer"
+            | "dhcpv4-request-ack"
+            | "dhcpv4-client-identifier"
+            | "dhcpv4-hostname"
+            | "dhcpv4-parameter-request-list"
+            | "dhcpv4-lease-time"
+            | "dhcpv4-renewal-unicast-ack"
+            | "dhcpv4-inform-ack"
+            | "dhcpv4-request-nak"
+            | "dhcpv4-rapid-repeat",
+        ) => dhcpv4::run_dhcpv4_dry_run(request, plan),
         (
             RunMode::Live,
-            "dhcp-discover-offer"
-            | "dhcp-request-ack"
-            | "dhcp-client-identifier"
-            | "dhcp-hostname"
-            | "dhcp-parameter-request-list"
-            | "dhcp-lease-time"
-            | "dhcp-renewal-unicast-ack"
-            | "dhcp-inform-ack"
-            | "dhcp-request-nak"
-            | "dhcp-rapid-repeat",
-        ) => dhcp::run_dhcp_live(request, plan),
+            "dhcpv4-discover-offer"
+            | "dhcpv4-request-ack"
+            | "dhcpv4-client-identifier"
+            | "dhcpv4-hostname"
+            | "dhcpv4-parameter-request-list"
+            | "dhcpv4-lease-time"
+            | "dhcpv4-renewal-unicast-ack"
+            | "dhcpv4-inform-ack"
+            | "dhcpv4-request-nak"
+            | "dhcpv4-rapid-repeat",
+        ) => dhcpv4::run_dhcpv4_live(request, plan),
         (
             RunMode::DryRun,
             "arp-basic-who-has"
@@ -1343,7 +1343,7 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "expected_embedded_prefix_length": plan.expected_embedded_prefix_length,
         "send_count": plan.send_count,
         "sends": dns::sends_json(plan.sends.as_deref()),
-        "dhcp_sends": dhcp::sends_json(plan.dhcp_sends.as_deref()),
+        "dhcpv4_sends": dhcpv4::sends_json(plan.dhcpv4_sends.as_deref()),
         "udp_sends": udp::sends_json(plan.udp_sends.as_deref()),
         "client_mac": plan.client_mac,
         "transaction_id": plan.transaction_id,
@@ -1468,7 +1468,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
     let mqtt_layer = packet.layer::<Mqtt>();
     let udp = packet.layer::<Udp>();
     let dns = packet.layer::<Dns>();
-    let dhcp = packet.layer::<Dhcpv4>();
+    let dhcpv4 = packet.layer::<Dhcpv4>();
     let snmp_layer = packet.layer::<Snmp>();
     let quic_layer = packet.layer::<Quic>();
     let udp_options = packet.layer::<UdpOptions>();
@@ -1515,7 +1515,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
         })),
         "udp_options": udp::udp_options_json(udp_options),
         "dns": dns.map(dns::dns_json),
-        "dhcp": dhcp.map(dhcp::dhcp_json),
+        "dhcpv4": dhcpv4.map(dhcpv4::dhcpv4_json),
         "snmp": snmp_layer.map(snmp::snmp_json),
         "quic": quic_layer.map(quic::quic_json),
         "payload_hex": hex_bytes(raw_payload(packet)),
@@ -1603,16 +1603,16 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
                 .as_deref()
                 .unwrap_or("")
         ),
-        "dhcp-discover-offer"
-        | "dhcp-request-ack"
-        | "dhcp-client-identifier"
-        | "dhcp-hostname"
-        | "dhcp-parameter-request-list"
-        | "dhcp-lease-time"
-        | "dhcp-renewal-unicast-ack"
-        | "dhcp-inform-ack"
-        | "dhcp-request-nak"
-        | "dhcp-rapid-repeat" => {
+        "dhcpv4-discover-offer"
+        | "dhcpv4-request-ack"
+        | "dhcpv4-client-identifier"
+        | "dhcpv4-hostname"
+        | "dhcpv4-parameter-request-list"
+        | "dhcpv4-lease-time"
+        | "dhcpv4-renewal-unicast-ack"
+        | "dhcpv4-inform-ack"
+        | "dhcpv4-request-nak"
+        | "dhcpv4-rapid-repeat" => {
             format!(
                 "udp and src host {} and dst host {} and src port {} and dst port {}",
                 plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
@@ -1702,16 +1702,16 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             | "dns-edns-opt"
             | "dns-repeat-transaction" => "dns_response",
             "ttl-expired" => "icmp_ttl_expired",
-            "dhcp-discover-offer" => "dhcp_offer",
-            "dhcp-request-ack" => "dhcp_ack",
-            "dhcp-client-identifier" => "dhcp_offer",
-            "dhcp-hostname" => "dhcp_offer",
-            "dhcp-parameter-request-list" => "dhcp_offer",
-            "dhcp-lease-time" => "dhcp_offer",
-            "dhcp-renewal-unicast-ack" => "dhcp_ack",
-            "dhcp-inform-ack" => "dhcp_ack",
-            "dhcp-request-nak" => "dhcp_nak",
-            "dhcp-rapid-repeat" => "dhcp_offer",
+            "dhcpv4-discover-offer" => "dhcpv4_offer",
+            "dhcpv4-request-ack" => "dhcpv4_ack",
+            "dhcpv4-client-identifier" => "dhcpv4_offer",
+            "dhcpv4-hostname" => "dhcpv4_offer",
+            "dhcpv4-parameter-request-list" => "dhcpv4_offer",
+            "dhcpv4-lease-time" => "dhcpv4_offer",
+            "dhcpv4-renewal-unicast-ack" => "dhcpv4_ack",
+            "dhcpv4-inform-ack" => "dhcpv4_ack",
+            "dhcpv4-request-nak" => "dhcpv4_nak",
+            "dhcpv4-rapid-repeat" => "dhcpv4_offer",
             "udp-echo-empty"
             | "udp-echo-short"
             | "udp-echo-binary"
@@ -1888,9 +1888,9 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "snmp_request": plan.snmp_request,
             "expected_snmp_response": plan.expected_snmp_response,
         }),
-        "dhcp-discover-offer" => json!({
+        "dhcpv4-discover-offer" => json!({
             "required": true,
-            "kind": "dhcp-responder",
+            "kind": "dhcpv4-responder",
             "port": plan.destination_port,
             "client_port": plan.source_port,
             "client_mac": plan.client_mac,
@@ -1903,9 +1903,9 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "renewal_time": plan.expected_renewal_time,
             "rebinding_time": plan.expected_rebinding_time,
         }),
-        "dhcp-request-ack" => json!({
+        "dhcpv4-request-ack" => json!({
             "required": true,
-            "kind": "dhcp-responder",
+            "kind": "dhcpv4-responder",
             "port": plan.destination_port,
             "client_port": plan.source_port,
             "client_mac": plan.client_mac,
@@ -1920,9 +1920,9 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "renewal_time": plan.expected_renewal_time,
             "rebinding_time": plan.expected_rebinding_time,
         }),
-        "dhcp-client-identifier" => json!({
+        "dhcpv4-client-identifier" => json!({
             "required": true,
-            "kind": "dhcp-responder",
+            "kind": "dhcpv4-responder",
             "port": plan.destination_port,
             "client_port": plan.source_port,
             "client_mac": plan.client_mac,
@@ -1936,9 +1936,9 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "renewal_time": plan.expected_renewal_time,
             "rebinding_time": plan.expected_rebinding_time,
         }),
-        "dhcp-hostname" => json!({
+        "dhcpv4-hostname" => json!({
             "required": true,
-            "kind": "dhcp-responder",
+            "kind": "dhcpv4-responder",
             "port": plan.destination_port,
             "client_port": plan.source_port,
             "client_mac": plan.client_mac,
@@ -1952,9 +1952,9 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "renewal_time": plan.expected_renewal_time,
             "rebinding_time": plan.expected_rebinding_time,
         }),
-        "dhcp-parameter-request-list" => json!({
+        "dhcpv4-parameter-request-list" => json!({
             "required": true,
-            "kind": "dhcp-responder",
+            "kind": "dhcpv4-responder",
             "port": plan.destination_port,
             "client_port": plan.source_port,
             "client_mac": plan.client_mac,
@@ -1969,9 +1969,9 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "renewal_time": plan.expected_renewal_time,
             "rebinding_time": plan.expected_rebinding_time,
         }),
-        "dhcp-lease-time" => json!({
+        "dhcpv4-lease-time" => json!({
             "required": true,
-            "kind": "dhcp-responder",
+            "kind": "dhcpv4-responder",
             "port": plan.destination_port,
             "client_port": plan.source_port,
             "client_mac": plan.client_mac,
@@ -1984,9 +1984,9 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "renewal_time": plan.expected_renewal_time,
             "rebinding_time": plan.expected_rebinding_time,
         }),
-        "dhcp-renewal-unicast-ack" => json!({
+        "dhcpv4-renewal-unicast-ack" => json!({
             "required": true,
-            "kind": "dhcp-responder",
+            "kind": "dhcpv4-responder",
             "port": plan.destination_port,
             "client_port": plan.source_port,
             "client_mac": plan.client_mac,
@@ -2005,9 +2005,9 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "renewal_time": plan.expected_renewal_time,
             "rebinding_time": plan.expected_rebinding_time,
         }),
-        "dhcp-inform-ack" => json!({
+        "dhcpv4-inform-ack" => json!({
             "required": true,
-            "kind": "dhcp-responder",
+            "kind": "dhcpv4-responder",
             "port": plan.destination_port,
             "client_port": plan.source_port,
             "client_mac": plan.client_mac,
@@ -2026,9 +2026,9 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "router_ipv4": plan.expected_router_ipv4,
             "dns_ipv4": plan.expected_dns_ipv4,
         }),
-        "dhcp-request-nak" => json!({
+        "dhcpv4-request-nak" => json!({
             "required": true,
-            "kind": "dhcp-responder",
+            "kind": "dhcpv4-responder",
             "port": plan.destination_port,
             "client_port": plan.source_port,
             "client_mac": plan.client_mac,
@@ -2045,9 +2045,9 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "server_identifier": plan.expected_server_identifier,
             "message": plan.expected_message,
         }),
-        "dhcp-rapid-repeat" => json!({
+        "dhcpv4-rapid-repeat" => json!({
             "required": true,
-            "kind": "dhcp-responder",
+            "kind": "dhcpv4-responder",
             "port": plan.destination_port,
             "client_port": plan.source_port,
             "client_mac": plan.client_mac,
@@ -2063,7 +2063,7 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             // keyed by the per-send xid/chaddr, so each decoded Offer is matched
             // back to its Discover and carries its own offered address.
             "rapid_repeat": {
-                "sends": dhcp::repeat_sends_json(plan.dhcp_sends.as_deref()),
+                "sends": dhcpv4::repeat_sends_json(plan.dhcpv4_sends.as_deref()),
             },
         }),
         "udp-echo-empty"

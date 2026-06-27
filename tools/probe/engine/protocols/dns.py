@@ -1722,7 +1722,7 @@ def dns_port_check_lines(dns_plans: Sequence[JSONObject]) -> list[str]:
     """Render the DNS per-port UDP port-free check block.
 
     Moved verbatim from the ``for port in dns_ports:`` loop that ran before the
-    DHCP/closed/open-port handling in ``target_service_setup_script``; binds
+    DHCPv4/closed/open-port handling in ``target_service_setup_script``; binds
     ``$dns_bind_ipv4:port`` to confirm the port is free before the responder
     starts.
     """
