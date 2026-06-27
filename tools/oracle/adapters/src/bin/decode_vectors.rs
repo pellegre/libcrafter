@@ -1,6 +1,6 @@
 use crafter::core::{
-    Ah, Arp, Dhcpv4, Dns, Dot11, Eapol, EapolKey, Esp, Ethernet, Icmpv4, Icmpv4QuotedIp, Icmpv6,
-    Ipv4, Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
+    Ah, Arp, Dhcpv4, Dhcpv6, Dns, Dot11, Eapol, EapolKey, Esp, Ethernet, Icmpv4, Icmpv4QuotedIp,
+    Icmpv6, Ipv4, Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
     Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6Option, Ipv6RoutingHeader,
     Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll, LlcSnap,
     NetworkLayer, NullLoopback, Packet, Radiotap, Raw, RsnAkmSuite, RsnCipherSuite, RsnInformation,
@@ -479,6 +479,8 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "dns"
     } else if layer.as_any().is::<Dhcpv4>() {
         "dhcpv4"
+    } else if layer.as_any().is::<Dhcpv6>() {
+        "dhcpv6"
     } else if layer.as_any().is::<Snmp>() {
         "snmp"
     } else if layer.as_any().is::<Eapol>() {
@@ -621,6 +623,9 @@ fn normalized_layer_fields(
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Dhcpv4>() {
         return dhcpv4_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<Dhcpv6>() {
+        return dhcpv6_fields(layer);
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Snmp>() {
         return snmp_fields(layer);
@@ -2572,6 +2577,44 @@ fn dhcpv4_options(layer: &Dhcpv4) -> Vec<Value> {
             json!({
                 "code": option.code(),
                 "payload_hex": hex_bytes(&payload),
+            })
+        })
+        .collect()
+}
+
+fn dhcpv6_fields(layer: &Dhcpv6) -> BTreeMap<String, Value> {
+    let mut fields = map([
+        ("message_type", json!(layer.message_type_code_value())),
+        ("option_count", json!(layer.options_ref().len())),
+        ("options", json!(dhcpv6_options(layer))),
+    ]);
+    if let Some(relay) = layer.relay() {
+        fields.insert("hop_count".to_string(), json!(relay.hop_count_value()));
+        fields.insert(
+            "link_address".to_string(),
+            json!(relay.link_address_value().to_string()),
+        );
+        fields.insert(
+            "peer_address".to_string(),
+            json!(relay.peer_address_value().to_string()),
+        );
+    } else {
+        fields.insert(
+            "transaction_id".to_string(),
+            json!(layer.transaction_id_value()),
+        );
+    }
+    fields
+}
+
+fn dhcpv6_options(layer: &Dhcpv6) -> Vec<Value> {
+    layer
+        .options_ref()
+        .iter()
+        .map(|option| {
+            json!({
+                "code": option.codepoint(),
+                "payload_hex": hex_bytes(option.payload()),
             })
         })
         .collect()

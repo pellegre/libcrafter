@@ -146,12 +146,13 @@ coverage_cases:
 
 backend_support:
   scapy:
-    status: partial
+    status: supported
     native_layers:
       - DHCP6
     notes:
-      - Backend byte materialization is registered separately; these cases define
-        the data-driven matrix and keep live cases as plan-only contracts.
+      - Scapy DHCP6 layers cover the offline message, relay, identity
+        association, and unknown-option cases; live cases remain plan-only
+        contracts until provider validation runs them.
   libcrafter:
     status: supported
     notes:
