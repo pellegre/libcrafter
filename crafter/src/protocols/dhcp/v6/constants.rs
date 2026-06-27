@@ -32,6 +32,19 @@ pub const DHCPV6_CLIENT_PORT: u16 = 546;
 /// DHCPv6 server and relay-agent UDP port.
 pub const DHCPV6_SERVER_PORT: u16 = 547;
 
+/// DHCPv6 OPTION_CLIENTID option code.
+pub const DHCPV6_OPTION_CLIENTID: u16 = 1;
+/// DHCPv6 OPTION_SERVERID option code.
+pub const DHCPV6_OPTION_SERVERID: u16 = 2;
+/// DHCPv6 OPTION_ORO option code.
+pub const DHCPV6_OPTION_ORO: u16 = 6;
+/// DHCPv6 OPTION_PREFERENCE option code.
+pub const DHCPV6_OPTION_PREFERENCE: u16 = 7;
+/// DHCPv6 OPTION_ELAPSED_TIME option code.
+pub const DHCPV6_OPTION_ELAPSED_TIME: u16 = 8;
+/// DHCPv6 OPTION_RAPID_COMMIT option code.
+pub const DHCPV6_OPTION_RAPID_COMMIT: u16 = 14;
+
 /// DHCPv6 SOLICIT message type.
 pub const DHCPV6_SOLICIT: u8 = 1;
 /// DHCPv6 ADVERTISE message type.

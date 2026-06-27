@@ -13,7 +13,7 @@ use super::constants::{
     DHCPV6_RELAY_HEADER_LEN, DHCPV6_RELAY_REPL, DHCPV6_SERVER_PORT, DHCPV6_TRANSACTION_ID_MAX,
 };
 use super::message::{dhcpv6_message_type_summary, Dhcpv6MessageType};
-use super::option::Dhcpv6Option;
+use super::option::{Dhcpv6Option, Dhcpv6OptionCode};
 
 /// DHCPv6 packet layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -281,6 +281,40 @@ impl Dhcpv6 {
         self
     }
 
+    /// Append an OPTION_CLIENTID option.
+    pub fn client_id(self, duid: impl Into<Vec<u8>>) -> Self {
+        self.option(Dhcpv6Option::client_id(duid))
+    }
+
+    /// Append an OPTION_SERVERID option.
+    pub fn server_id(self, duid: impl Into<Vec<u8>>) -> Self {
+        self.option(Dhcpv6Option::server_id(duid))
+    }
+
+    /// Append an OPTION_ORO option.
+    pub fn oro<I, C>(self, codes: I) -> Self
+    where
+        I: IntoIterator<Item = C>,
+        C: Into<Dhcpv6OptionCode>,
+    {
+        self.option(Dhcpv6Option::oro(codes))
+    }
+
+    /// Append an OPTION_PREFERENCE option.
+    pub fn preference(self, preference: u8) -> Self {
+        self.option(Dhcpv6Option::preference(preference))
+    }
+
+    /// Append an OPTION_ELAPSED_TIME option in hundredths of a second.
+    pub fn elapsed_time(self, centiseconds: u16) -> Self {
+        self.option(Dhcpv6Option::elapsed_time(centiseconds))
+    }
+
+    /// Append an OPTION_RAPID_COMMIT option.
+    pub fn rapid_commit(self) -> Self {
+        self.option(Dhcpv6Option::rapid_commit())
+    }
+
     /// Replace the option list.
     pub fn options(mut self, options: impl Into<Vec<Dhcpv6Option>>) -> Self {
         self.options = options.into();
@@ -297,6 +331,50 @@ impl Dhcpv6 {
         &mut self.options
     }
 
+    /// Return OPTION_CLIENTID DUID bytes from the first Client ID option.
+    pub fn client_id_value(&self) -> Option<&[u8]> {
+        self.first_option(super::constants::DHCPV6_OPTION_CLIENTID)
+            .and_then(Dhcpv6Option::client_id_value)
+    }
+
+    /// Return OPTION_SERVERID DUID bytes from the first Server ID option.
+    pub fn server_id_value(&self) -> Option<&[u8]> {
+        self.first_option(super::constants::DHCPV6_OPTION_SERVERID)
+            .and_then(Dhcpv6Option::server_id_value)
+    }
+
+    /// Decode requested option codepoints from the first ORO option.
+    pub fn oro_value(&self) -> Result<Option<Vec<Dhcpv6OptionCode>>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_ORO) {
+            Some(option) => option.oro_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode the first Preference option.
+    pub fn preference_value(&self) -> Result<Option<u8>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_PREFERENCE) {
+            Some(option) => option.preference_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode the first Elapsed Time option.
+    pub fn elapsed_time_value(&self) -> Result<Option<u16>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_ELAPSED_TIME) {
+            Some(option) => option.elapsed_time_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Return true when a valid Rapid Commit option is present.
+    pub fn rapid_commit_present(&self) -> Result<bool> {
+        match self.first_option(super::constants::DHCPV6_OPTION_RAPID_COMMIT) {
+            Some(option) => option.rapid_commit_present(),
+            None => Ok(false),
+        }
+    }
+
     /// Encoded DHCPv6 client/server message length.
     pub fn encoded_dhcpv6_len(&self) -> usize {
         let header_len = if self.relay.is_some() {
@@ -310,6 +388,12 @@ impl Dhcpv6 {
                 .iter()
                 .map(|option| super::constants::DHCPV6_OPTION_HEADER_LEN + option.payload_len())
                 .sum::<usize>()
+    }
+
+    fn first_option(&self, code: u16) -> Option<&Dhcpv6Option> {
+        self.options
+            .iter()
+            .find(|option| option.codepoint() == code)
     }
 }
 
@@ -1045,5 +1129,62 @@ mod dhcpv6_udp_binding_tests {
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
         assert!(decoded.layer::<Dhcpv6>().is_none());
         assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &[12, 0, 0, 0],);
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_basic_options_layer_tests {
+    use super::Dhcpv6;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{Dhcpv6MessageType, Dhcpv6OptionCode};
+
+    #[test]
+    fn dhcpv6_basic_options_layer_helpers_append_query_and_roundtrip() {
+        let message = Dhcpv6::solicit(0x010203)
+            .client_id([0x00, 0x03, 0xaa, 0xbb])
+            .server_id([0x00, 0x01, 0xcc, 0xdd])
+            .oro([23u16, 24u16])
+            .preference(99)
+            .elapsed_time(123)
+            .rapid_commit();
+
+        assert_eq!(
+            message.client_id_value(),
+            Some(&[0x00, 0x03, 0xaa, 0xbb][..])
+        );
+        assert_eq!(
+            message.server_id_value(),
+            Some(&[0x00, 0x01, 0xcc, 0xdd][..])
+        );
+        assert_eq!(
+            message.oro_value().unwrap(),
+            Some(vec![
+                Dhcpv6OptionCode::from_code(23),
+                Dhcpv6OptionCode::from_code(24),
+            ]),
+        );
+        assert_eq!(message.preference_value().unwrap(), Some(99));
+        assert_eq!(message.elapsed_time_value().unwrap(), Some(123));
+        assert!(message.rapid_commit_present().unwrap());
+
+        let bytes = Packet::from_layer(message).compile().unwrap();
+        let decoded = Dhcpv6::decode(bytes.as_bytes()).unwrap();
+
+        assert_eq!(decoded.message_type_value(), Dhcpv6MessageType::Solicit);
+        assert_eq!(decoded.transaction_id_value(), 0x010203);
+        assert_eq!(
+            decoded.client_id_value(),
+            Some(&[0x00, 0x03, 0xaa, 0xbb][..])
+        );
+        assert_eq!(
+            decoded.oro_value().unwrap(),
+            Some(vec![
+                Dhcpv6OptionCode::from_code(23),
+                Dhcpv6OptionCode::from_code(24),
+            ]),
+        );
+        assert_eq!(decoded.preference_value().unwrap(), Some(99));
+        assert_eq!(decoded.elapsed_time_value().unwrap(), Some(123));
+        assert!(decoded.rapid_commit_present().unwrap());
     }
 }

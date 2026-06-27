@@ -7,7 +7,11 @@
 use crate::endian::read_u16_be;
 use crate::error::{CrafterError, Result};
 
-use super::constants::DHCPV6_OPTION_HEADER_LEN;
+use super::constants::{
+    DHCPV6_OPTION_CLIENTID, DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN,
+    DHCPV6_OPTION_ORO, DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT,
+    DHCPV6_OPTION_SERVERID,
+};
 
 /// DHCPv6 option codepoint.
 ///
@@ -142,6 +146,47 @@ impl Dhcpv6Option {
         }
     }
 
+    /// Create an OPTION_CLIENTID option carrying DUID bytes.
+    pub fn client_id(duid: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_CLIENTID, duid)
+    }
+
+    /// Create an OPTION_SERVERID option carrying DUID bytes.
+    pub fn server_id(duid: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_SERVERID, duid)
+    }
+
+    /// Create an OPTION_ORO option from requested option codepoints.
+    pub fn oro<I, C>(codes: I) -> Self
+    where
+        I: IntoIterator<Item = C>,
+        C: Into<Dhcpv6OptionCode>,
+    {
+        let mut payload = Vec::new();
+        for code in codes {
+            append_u16_be(&mut payload, code.into().code());
+        }
+        Self::raw(DHCPV6_OPTION_ORO, payload)
+    }
+
+    /// Create an OPTION_PREFERENCE option.
+    pub fn preference(preference: u8) -> Self {
+        Self::raw(DHCPV6_OPTION_PREFERENCE, vec![preference])
+    }
+
+    /// Create an OPTION_ELAPSED_TIME option in hundredths of a second.
+    pub fn elapsed_time(centiseconds: u16) -> Self {
+        Self::raw(
+            DHCPV6_OPTION_ELAPSED_TIME,
+            centiseconds.to_be_bytes().to_vec(),
+        )
+    }
+
+    /// Create an OPTION_RAPID_COMMIT option.
+    pub fn rapid_commit() -> Self {
+        Self::empty(DHCPV6_OPTION_RAPID_COMMIT)
+    }
+
     /// Option codepoint.
     pub const fn code(&self) -> Dhcpv6OptionCode {
         self.code
@@ -190,6 +235,56 @@ impl Dhcpv6Option {
     /// Consume this option into its codepoint and payload value.
     pub fn into_parts(self) -> (Dhcpv6OptionCode, Dhcpv6OptionValue) {
         (self.code, self.value)
+    }
+
+    /// Return OPTION_CLIENTID DUID bytes when this option is Client ID.
+    pub fn client_id_value(&self) -> Option<&[u8]> {
+        self.payload_if_code(DHCPV6_OPTION_CLIENTID)
+    }
+
+    /// Return OPTION_SERVERID DUID bytes when this option is Server ID.
+    pub fn server_id_value(&self) -> Option<&[u8]> {
+        self.payload_if_code(DHCPV6_OPTION_SERVERID)
+    }
+
+    /// Decode OPTION_ORO requested option codepoints.
+    pub fn oro_value(&self) -> Result<Option<Vec<Dhcpv6OptionCode>>> {
+        let Some(payload) = self.payload_if_code(DHCPV6_OPTION_ORO) else {
+            return Ok(None);
+        };
+        if payload.len() % 2 != 0 {
+            return Err(CrafterError::invalid_field_value(
+                "dhcpv6.option.oro",
+                "payload length must be a multiple of 2 bytes",
+            ));
+        }
+
+        let mut codes = Vec::with_capacity(payload.len() / 2);
+        for chunk in payload.chunks_exact(2) {
+            codes.push(Dhcpv6OptionCode::from_code(read_u16_be(chunk)?));
+        }
+        Ok(Some(codes))
+    }
+
+    /// Decode OPTION_PREFERENCE.
+    pub fn preference_value(&self) -> Result<Option<u8>> {
+        Ok(self
+            .exact_payload_if_code(DHCPV6_OPTION_PREFERENCE, 1, "dhcpv6.option.preference")?
+            .map(|payload| payload[0]))
+    }
+
+    /// Decode OPTION_ELAPSED_TIME.
+    pub fn elapsed_time_value(&self) -> Result<Option<u16>> {
+        Ok(self
+            .exact_payload_if_code(DHCPV6_OPTION_ELAPSED_TIME, 2, "dhcpv6.option.elapsed_time")?
+            .map(|payload| u16::from_be_bytes([payload[0], payload[1]])))
+    }
+
+    /// Return true when this is a valid zero-length OPTION_RAPID_COMMIT.
+    pub fn rapid_commit_present(&self) -> Result<bool> {
+        Ok(self
+            .exact_payload_if_code(DHCPV6_OPTION_RAPID_COMMIT, 0, "dhcpv6.option.rapid_commit")?
+            .is_some())
     }
 
     /// Encode this option to its DHCPv6 TLV wire bytes.
@@ -247,6 +342,28 @@ impl Dhcpv6Option {
         }
 
         Ok(options)
+    }
+
+    fn payload_if_code(&self, code: u16) -> Option<&[u8]> {
+        (self.codepoint() == code).then(|| self.payload())
+    }
+
+    fn exact_payload_if_code(
+        &self,
+        code: u16,
+        expected_len: usize,
+        context: &'static str,
+    ) -> Result<Option<&[u8]>> {
+        let Some(payload) = self.payload_if_code(code) else {
+            return Ok(None);
+        };
+        if payload.len() != expected_len {
+            return Err(CrafterError::invalid_field_value(
+                context,
+                "payload length does not match option format",
+            ));
+        }
+        Ok(Some(payload))
     }
 }
 
@@ -386,5 +503,112 @@ mod dhcpv6_option_codec_tests {
             Dhcpv6Option::decode_all(&[0x00, 0x01, 0x00, 0x04, 0xaa]).unwrap_err(),
             CrafterError::buffer_too_short("dhcpv6.option.payload", 8, 5),
         );
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_basic_options_tests {
+    use super::{Dhcpv6Option, Dhcpv6OptionCode};
+    use crate::error::CrafterError;
+    use crate::protocols::dhcp::v6::{
+        DHCPV6_OPTION_CLIENTID, DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_ORO,
+        DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT, DHCPV6_OPTION_SERVERID,
+    };
+
+    #[test]
+    fn dhcpv6_basic_options_constructors_encode_core_tlvs() {
+        let client_id = Dhcpv6Option::client_id([0x00, 0x03, 0xaa, 0xbb]);
+        let server_id = Dhcpv6Option::server_id([0x00, 0x01, 0xcc, 0xdd]);
+        let oro = Dhcpv6Option::oro([23u16, 24u16]);
+        let preference = Dhcpv6Option::preference(200);
+        let elapsed_time = Dhcpv6Option::elapsed_time(37);
+        let rapid_commit = Dhcpv6Option::rapid_commit();
+
+        assert_eq!(client_id.codepoint(), DHCPV6_OPTION_CLIENTID);
+        assert_eq!(
+            client_id.client_id_value(),
+            Some(&[0x00, 0x03, 0xaa, 0xbb][..])
+        );
+        assert_eq!(server_id.codepoint(), DHCPV6_OPTION_SERVERID);
+        assert_eq!(
+            server_id.server_id_value(),
+            Some(&[0x00, 0x01, 0xcc, 0xdd][..])
+        );
+        assert_eq!(oro.codepoint(), DHCPV6_OPTION_ORO);
+        assert_eq!(
+            oro.oro_value().unwrap(),
+            Some(vec![
+                Dhcpv6OptionCode::from_code(23),
+                Dhcpv6OptionCode::from_code(24),
+            ]),
+        );
+        assert_eq!(preference.codepoint(), DHCPV6_OPTION_PREFERENCE);
+        assert_eq!(preference.preference_value().unwrap(), Some(200));
+        assert_eq!(elapsed_time.codepoint(), DHCPV6_OPTION_ELAPSED_TIME);
+        assert_eq!(elapsed_time.elapsed_time_value().unwrap(), Some(37));
+        assert_eq!(rapid_commit.codepoint(), DHCPV6_OPTION_RAPID_COMMIT);
+        assert!(rapid_commit.rapid_commit_present().unwrap());
+
+        assert_eq!(
+            Dhcpv6Option::encode_all(&[
+                client_id,
+                server_id,
+                oro,
+                preference,
+                elapsed_time,
+                rapid_commit,
+            ])
+            .unwrap(),
+            vec![
+                0x00, 0x01, 0x00, 0x04, 0x00, 0x03, 0xaa, 0xbb, 0x00, 0x02, 0x00, 0x04, 0x00, 0x01,
+                0xcc, 0xdd, 0x00, 0x06, 0x00, 0x04, 0x00, 0x17, 0x00, 0x18, 0x00, 0x07, 0x00, 0x01,
+                200, 0x00, 0x08, 0x00, 0x02, 0x00, 37, 0x00, 0x0e, 0x00, 0x00,
+            ],
+        );
+    }
+
+    #[test]
+    fn dhcpv6_basic_options_value_decoders_validate_fixed_lengths() {
+        let decoded = Dhcpv6Option::decode_all(&[
+            0x00, 0x07, 0x00, 0x02, 0xaa, 0xbb, 0x00, 0x08, 0x00, 0x01, 0xcc, 0x00, 0x0e, 0x00,
+            0x01, 0xdd, 0x00, 0x06, 0x00, 0x03, 0x00, 0x17, 0xff,
+        ])
+        .unwrap();
+
+        assert_eq!(
+            decoded[0].preference_value().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.preference",
+                "payload length does not match option format",
+            ),
+        );
+        assert_eq!(decoded[0].payload(), &[0xaa, 0xbb]);
+
+        assert_eq!(
+            decoded[1].elapsed_time_value().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.elapsed_time",
+                "payload length does not match option format",
+            ),
+        );
+        assert_eq!(decoded[1].payload(), &[0xcc]);
+
+        assert_eq!(
+            decoded[2].rapid_commit_present().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.rapid_commit",
+                "payload length does not match option format",
+            ),
+        );
+        assert_eq!(decoded[2].payload(), &[0xdd]);
+
+        assert_eq!(
+            decoded[3].oro_value().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.oro",
+                "payload length must be a multiple of 2 bytes",
+            ),
+        );
+        assert_eq!(decoded[3].payload(), &[0x00, 0x17, 0xff]);
     }
 }
