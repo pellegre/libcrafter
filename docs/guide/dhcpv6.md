@@ -5,9 +5,9 @@ it under IPv6/UDP, compile it, decode it, and inspect it. It is not a DHCP
 client, server, relay daemon, lease database, scanner, or policy engine.
 
 The implementation follows the packet shapes and registry model documented in
-[the DHCPv6 RFC manifest](../dhcpv6-rfc-manifest.md). Unknown but well-formed
-message types, option codepoints, DUID types, status codes, and nested option
-payloads are preserved as packet data.
+the local DHCPv6 manifest under `.agents/docs/`. Unknown but well-formed message
+types, option codepoints, DUID types, status codes, and nested option payloads
+are preserved as packet data.
 
 All examples below use documentation IPv6 address space and synthetic DUID/MAC
 bytes.
