@@ -134,6 +134,14 @@ ENDPOINT_ROLES: tuple[EndpointRole, ...] = (
         capabilities=["kernel_reply", "tcp_listener", "dns_service"],
     ),
     EndpointRole(
+        role="relay",
+        responsibilities=[
+            "forward_dhcpv6_client_messages",
+            "decapsulate_relay_replies",
+        ],
+        capabilities=["raw_send", "packet_capture", "dhcpv6_relay"],
+    ),
+    EndpointRole(
         role="router",
         responsibilities=["emit_ttl_expired"],
         capabilities=["controlled_router"],
@@ -196,6 +204,7 @@ IPSEC_PROFILE = "ipsec"
 QUIC_SMOKE_PROFILE = "quic-smoke"
 SNMP_SMOKE_PROFILE = "snmp-smoke"
 DHCPV6_SMOKE_PROFILE = "dhcpv6-smoke"
+DHCPV6_RELAY_PROFILE = "dhcpv6-relay"
 
 # Legacy default count used by the smoke profile and any profile without an
 # explicit default; preserves the pre-behavior-suite CLI behavior.
@@ -427,6 +436,12 @@ DHCPV6_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     if case.metadata.get("protocol") == "dhcpv6"
 )
 
+# Relay validation needs a three-role stimulus/relay/target lab topology, so it
+# also has a focused profile that repeats only the relay-forward/reply case.
+DHCPV6_RELAY_PROFILE_CASE_NAMES: tuple[str, ...] = (
+    "dhcpv6-relay-forward-reply",
+)
+
 
 # Profiles that select an explicit ordered case subset. A profile not listed
 # here selects the full catalog. ``smoke`` is pinned to the historical
@@ -450,6 +465,7 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     QUIC_SMOKE_PROFILE: QUIC_SMOKE_PROFILE_CASE_NAMES,
     SNMP_SMOKE_PROFILE: SNMP_SMOKE_PROFILE_CASE_NAMES,
     DHCPV6_SMOKE_PROFILE: DHCPV6_SMOKE_PROFILE_CASE_NAMES,
+    DHCPV6_RELAY_PROFILE: DHCPV6_RELAY_PROFILE_CASE_NAMES,
 }
 
 # Per-profile default counts used when no explicit ``--count`` is supplied. The
@@ -466,6 +482,7 @@ _PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     QUIC_SMOKE_PROFILE: len(QUIC_SMOKE_PROFILE_CASE_NAMES),
     SNMP_SMOKE_PROFILE: len(SNMP_SMOKE_PROFILE_CASE_NAMES),
     DHCPV6_SMOKE_PROFILE: len(DHCPV6_SMOKE_PROFILE_CASE_NAMES),
+    DHCPV6_RELAY_PROFILE: len(DHCPV6_RELAY_PROFILE_CASE_NAMES),
 }
 
 
