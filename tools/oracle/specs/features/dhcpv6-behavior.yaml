@@ -158,3 +158,10 @@ backend_support:
     notes:
       - The crate supports the message, relay, identity association, and unknown
         option cases listed here through typed builders and decode.
+  wireshark:
+    status: supported
+    decode: true
+    pcap_read: true
+    notes:
+      - Parser-only pcap reads normalize DHCPv6 message, relay, identity
+        association, status, DUID, and unknown-option bytes for comparison.

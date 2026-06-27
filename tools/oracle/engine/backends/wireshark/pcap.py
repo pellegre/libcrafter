@@ -12,6 +12,7 @@ from .normalize import (
     normalize_packet_json,
     _tshark_json_packets,
 )
+from .protocols.dhcpv6 import dhcpv6_fields_from_bytes
 from .protocols.quic import quic_fields_from_bytes
 
 
@@ -69,7 +70,7 @@ def read_pcap(path: str | Path) -> list[JSONObject]:
                 source_hex=raw_hex,
             )
         elif fallback_reason is not None:
-            decoded = _fallback_quic_decoded_model(
+            decoded = _fallback_decoded_model(
                 raw_hex=raw_hex,
                 root=root,
                 reason=fallback_reason,
@@ -92,7 +93,7 @@ def read_pcap(path: str | Path) -> list[JSONObject]:
     return records
 
 
-def _fallback_quic_decoded_model(
+def _fallback_decoded_model(
     *,
     raw_hex: str,
     root: str,
@@ -109,10 +110,13 @@ def _fallback_quic_decoded_model(
     udp_payload = _parse_l3_udp(raw, offset, layers, fields)
     if udp_payload is None:
         raise WiresharkNormalizationUnsupported(
-            f"{reason}; no byte-level QUIC pcap fallback matched"
+            f"{reason}; no byte-level pcap fallback matched"
         )
-    fields["quic"] = quic_fields_from_bytes(udp_payload)
-    layers.append("quic")
+    parser = _apply_udp_payload_fallback(udp_payload, layers, fields)
+    if parser is None:
+        raise WiresharkNormalizationUnsupported(
+            f"{reason}; no byte-level pcap fallback matched"
+        )
     return DecodedModel(
         backend=BACKEND_NAME,
         layers=layers,
@@ -122,7 +126,7 @@ def _fallback_quic_decoded_model(
         metadata={
             "fallback": {
                 "reason": reason,
-                "parser": "classic_pcap_quic_bytes_without_tshark",
+                "parser": parser,
             },
             "reencoded_hex": raw_hex,
         },
@@ -231,9 +235,28 @@ def _parse_udp_payload(
         "dst_port": dst_port,
         "length": udp_length,
     }
-    if src_port not in {443, 4433} and dst_port not in {443, 4433}:
-        return None
     return raw[udp_offset + 8 : udp_offset + udp_length]
+
+
+def _apply_udp_payload_fallback(
+    udp_payload: bytes,
+    layers: list[str],
+    fields: dict[str, JSONObject],
+) -> str | None:
+    udp = fields.get("udp", {})
+    ports = {udp.get("src_port"), udp.get("dst_port")}
+    if ports & {443, 4433}:
+        fields["quic"] = quic_fields_from_bytes(udp_payload)
+        layers.append("quic")
+        return "classic_pcap_quic_bytes_without_tshark"
+    if ports & {546, 547}:
+        dhcpv6_fields = dhcpv6_fields_from_bytes(udp_payload)
+        if dhcpv6_fields is None:
+            return None
+        fields["dhcpv6"] = dhcpv6_fields
+        layers.append("dhcpv6")
+        return "classic_pcap_dhcpv6_bytes_without_tshark"
+    return None
 
 
 def _read_classic_pcap_records(path: Path) -> list[JSONObject]:

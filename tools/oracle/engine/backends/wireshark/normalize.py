@@ -65,6 +65,7 @@ _PROTOCOL_LAYER_ALIASES: dict[str, str | None] = {
     "bootp": "dhcpv4",
     "data": "payload",
     "dhcp": "dhcpv4",
+    "dhcpv6": "dhcpv6",
     "eapol": "eapol",
     "eth": "ethernet",
     "ethertype": None,
