@@ -144,10 +144,18 @@ pub const DHCPV6_OPTION_4RD: u16 = 97;
 pub const DHCPV6_OPTION_4RD_MAP_RULE: u16 = 98;
 /// DHCPv6 OPTION_4RD_NON_MAP_RULE option code.
 pub const DHCPV6_OPTION_4RD_NON_MAP_RULE: u16 = 99;
+/// DHCPv6 Captive-Portal option code.
+pub const DHCPV6_OPTION_CAPTIVE_PORTAL: u16 = 103;
 /// DHCPv6 OPTION_S46_PRIORITY option code.
 pub const DHCPV6_OPTION_S46_PRIORITY: u16 = 111;
+/// DHCPv6 OPTION_MUD_URL_V6 option code.
+pub const DHCPV6_OPTION_MUD_URL_V6: u16 = 112;
+/// DHCPv6 OPTION_V6_PREFIX64 option code.
+pub const DHCPV6_OPTION_V6_PREFIX64: u16 = 113;
 /// DHCPv6 OPTION_S46_BIND_IPV6_PREFIX option code.
 pub const DHCPV6_OPTION_S46_BIND_IPV6_PREFIX: u16 = 137;
+/// DHCPv6 OPTION_V6_DNR option code.
+pub const DHCPV6_OPTION_V6_DNR: u16 = 144;
 /// DHCPv6 infinite lifetime/timer sentinel where a field defines infinity.
 pub const DHCPV6_TIME_INFINITY: u32 = u32::MAX;
 

@@ -17,22 +17,23 @@ use super::constants::{
     DHCPV6_AUTH_PROTOCOL_SPLIT_HORIZON_DNS, DHCPV6_AUTH_RDM_MONOTONIC_COUNTER,
     DHCPV6_AUTH_REPLAY_DETECTION_LEN, DHCPV6_OPTION_4RD, DHCPV6_OPTION_4RD_MAP_RULE,
     DHCPV6_OPTION_4RD_NON_MAP_RULE, DHCPV6_OPTION_AUTH, DHCPV6_OPTION_BOOTFILE_PARAM,
-    DHCPV6_OPTION_BOOTFILE_URL, DHCPV6_OPTION_CLIENTID, DHCPV6_OPTION_CLIENT_ARCH_TYPE,
-    DHCPV6_OPTION_CLIENT_FQDN, DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR, DHCPV6_OPTION_DNS_SERVERS,
-    DHCPV6_OPTION_DOMAIN_LIST, DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN,
-    DHCPV6_OPTION_IAADDR, DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD,
-    DHCPV6_OPTION_INFORMATION_REFRESH_TIME, DHCPV6_OPTION_INF_MAX_RT, DHCPV6_OPTION_INTERFACE_ID,
-    DHCPV6_OPTION_NEW_POSIX_TIMEZONE, DHCPV6_OPTION_NEW_TZDB_TIMEZONE, DHCPV6_OPTION_NII,
-    DHCPV6_OPTION_NTP_SERVER, DHCPV6_OPTION_ORO, DHCPV6_OPTION_PD_EXCLUDE,
-    DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT, DHCPV6_OPTION_RECONF_ACCEPT,
-    DHCPV6_OPTION_RECONF_MSG, DHCPV6_OPTION_RELAY_ID, DHCPV6_OPTION_RELAY_MSG,
-    DHCPV6_OPTION_REMOTE_ID, DHCPV6_OPTION_RSOO, DHCPV6_OPTION_S46_BIND_IPV6_PREFIX,
-    DHCPV6_OPTION_S46_BR, DHCPV6_OPTION_S46_CONT_LW, DHCPV6_OPTION_S46_CONT_MAPE,
-    DHCPV6_OPTION_S46_CONT_MAPT, DHCPV6_OPTION_S46_DMR, DHCPV6_OPTION_S46_PORTPARAMS,
-    DHCPV6_OPTION_S46_PRIORITY, DHCPV6_OPTION_S46_RULE, DHCPV6_OPTION_S46_V4V6BIND,
-    DHCPV6_OPTION_SERVERID, DHCPV6_OPTION_SIP_SERVER_A, DHCPV6_OPTION_SIP_SERVER_D,
-    DHCPV6_OPTION_SIP_UA_CS_LIST, DHCPV6_OPTION_SNTP_SERVERS, DHCPV6_OPTION_SOL_MAX_RT,
-    DHCPV6_OPTION_STATUS_CODE, DHCPV6_OPTION_SUBSCRIBER_ID, DHCPV6_OPTION_USER_CLASS,
+    DHCPV6_OPTION_BOOTFILE_URL, DHCPV6_OPTION_CAPTIVE_PORTAL, DHCPV6_OPTION_CLIENTID,
+    DHCPV6_OPTION_CLIENT_ARCH_TYPE, DHCPV6_OPTION_CLIENT_FQDN, DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR,
+    DHCPV6_OPTION_DNS_SERVERS, DHCPV6_OPTION_DOMAIN_LIST, DHCPV6_OPTION_ELAPSED_TIME,
+    DHCPV6_OPTION_HEADER_LEN, DHCPV6_OPTION_IAADDR, DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA,
+    DHCPV6_OPTION_IA_PD, DHCPV6_OPTION_INFORMATION_REFRESH_TIME, DHCPV6_OPTION_INF_MAX_RT,
+    DHCPV6_OPTION_INTERFACE_ID, DHCPV6_OPTION_MUD_URL_V6, DHCPV6_OPTION_NEW_POSIX_TIMEZONE,
+    DHCPV6_OPTION_NEW_TZDB_TIMEZONE, DHCPV6_OPTION_NII, DHCPV6_OPTION_NTP_SERVER,
+    DHCPV6_OPTION_ORO, DHCPV6_OPTION_PD_EXCLUDE, DHCPV6_OPTION_PREFERENCE,
+    DHCPV6_OPTION_RAPID_COMMIT, DHCPV6_OPTION_RECONF_ACCEPT, DHCPV6_OPTION_RECONF_MSG,
+    DHCPV6_OPTION_RELAY_ID, DHCPV6_OPTION_RELAY_MSG, DHCPV6_OPTION_REMOTE_ID, DHCPV6_OPTION_RSOO,
+    DHCPV6_OPTION_S46_BIND_IPV6_PREFIX, DHCPV6_OPTION_S46_BR, DHCPV6_OPTION_S46_CONT_LW,
+    DHCPV6_OPTION_S46_CONT_MAPE, DHCPV6_OPTION_S46_CONT_MAPT, DHCPV6_OPTION_S46_DMR,
+    DHCPV6_OPTION_S46_PORTPARAMS, DHCPV6_OPTION_S46_PRIORITY, DHCPV6_OPTION_S46_RULE,
+    DHCPV6_OPTION_S46_V4V6BIND, DHCPV6_OPTION_SERVERID, DHCPV6_OPTION_SIP_SERVER_A,
+    DHCPV6_OPTION_SIP_SERVER_D, DHCPV6_OPTION_SIP_UA_CS_LIST, DHCPV6_OPTION_SNTP_SERVERS,
+    DHCPV6_OPTION_SOL_MAX_RT, DHCPV6_OPTION_STATUS_CODE, DHCPV6_OPTION_SUBSCRIBER_ID,
+    DHCPV6_OPTION_USER_CLASS, DHCPV6_OPTION_V6_DNR, DHCPV6_OPTION_V6_PREFIX64,
     DHCPV6_OPTION_VENDOR_CLASS, DHCPV6_OPTION_VENDOR_OPTS, DHCPV6_TIME_INFINITY,
 };
 use super::duid::Dhcpv6Duid;
@@ -381,6 +382,22 @@ pub struct Dhcpv6S46Container {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Dhcpv6S46Priority {
     option_codes: Vec<u16>,
+}
+
+/// DHCPv6 OPTION_V6_DNR SvcParam tuple.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6DnrSvcParam {
+    key: u16,
+    value: Vec<u8>,
+}
+
+/// DHCPv6 OPTION_V6_DNR resolver instance.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6Dnr {
+    service_priority: u16,
+    adn: DnsName,
+    addresses: Vec<Ipv6Addr>,
+    svc_params: Vec<Dhcpv6DnrSvcParam>,
 }
 
 /// DHCPv6 OPTION_IAADDR address binding.
@@ -977,6 +994,160 @@ impl Dhcpv6S46Priority {
     /// Ordered option codes in priority order.
     pub fn option_codes(&self) -> &[u16] {
         &self.option_codes
+    }
+}
+
+impl Dhcpv6DnrSvcParam {
+    /// Create a DNR resolver parameter from an explicit SvcParamKey and value bytes.
+    pub fn new(key: u16, value: impl Into<Vec<u8>>) -> Self {
+        Self {
+            key,
+            value: value.into(),
+        }
+    }
+
+    /// SvcParamKey value.
+    pub const fn key(&self) -> u16 {
+        self.key
+    }
+
+    /// SvcParamValue bytes, preserved verbatim.
+    pub fn value(&self) -> &[u8] {
+        &self.value
+    }
+}
+
+impl Dhcpv6Dnr {
+    /// Create an OPTION_V6_DNR resolver instance.
+    pub fn new(service_priority: u16, adn: DnsName) -> Self {
+        Self {
+            service_priority,
+            adn,
+            addresses: Vec::new(),
+            svc_params: Vec::new(),
+        }
+    }
+
+    /// Decode an OPTION_V6_DNR payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        ensure_available(bytes, 4, "dhcpv6.option.v6_dnr")?;
+        let service_priority = read_u16_be(&bytes[0..2])?;
+        let adn_len = read_u16_be(&bytes[2..4])? as usize;
+        let adn_start = 4;
+        let adn_end = adn_start + adn_len;
+        ensure_available(bytes, adn_end, "dhcpv6.option.v6_dnr.adn")?;
+        let (adn, consumed) =
+            decode_uncompressed_dns_name(bytes, adn_start, "dhcpv6.option.v6_dnr.adn")?;
+        if consumed != adn_len {
+            return Err(CrafterError::invalid_field_value(
+                "dhcpv6.option.v6_dnr.adn",
+                "ADN length does not match encoded DNS name",
+            ));
+        }
+
+        let mut offset = adn_end;
+        let mut addresses = Vec::new();
+        let svc_params = if offset == bytes.len() {
+            Vec::new()
+        } else {
+            ensure_available(bytes, offset + 2, "dhcpv6.option.v6_dnr.address_len")?;
+            let address_len = read_u16_be(&bytes[offset..offset + 2])? as usize;
+            offset += 2;
+            if address_len % 16 != 0 {
+                return Err(CrafterError::invalid_field_value(
+                    "dhcpv6.option.v6_dnr.addresses",
+                    "address hint length must be a multiple of 16 bytes",
+                ));
+            }
+            let address_end = offset + address_len;
+            ensure_available(bytes, address_end, "dhcpv6.option.v6_dnr.addresses")?;
+            for chunk in bytes[offset..address_end].chunks_exact(16) {
+                addresses.push(Ipv6Addr::from(copy_array_16(chunk)));
+            }
+            offset = address_end;
+            decode_dnr_svc_params(&bytes[offset..])?
+        };
+
+        Ok(Self {
+            service_priority,
+            adn,
+            addresses,
+            svc_params,
+        })
+    }
+
+    /// Encode this OPTION_V6_DNR payload.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        validate_dnr_svc_params(&self.svc_params)?;
+        let adn = self.adn.encode_uncompressed()?;
+        let adn_len = u16::try_from(adn.len()).map_err(|_| {
+            CrafterError::invalid_field_value("dhcpv6.option.v6_dnr.adn", "ADN exceeds 65535 bytes")
+        })?;
+        let address_len = self
+            .addresses
+            .len()
+            .checked_mul(16)
+            .and_then(|len| u16::try_from(len).ok())
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "dhcpv6.option.v6_dnr.addresses",
+                    "address hint list exceeds 65535 bytes",
+                )
+            })?;
+
+        let mut out = Vec::new();
+        append_u16_be(&mut out, self.service_priority);
+        append_u16_be(&mut out, adn_len);
+        out.extend_from_slice(&adn);
+        if !self.addresses.is_empty() || !self.svc_params.is_empty() {
+            append_u16_be(&mut out, address_len);
+            for address in &self.addresses {
+                out.extend_from_slice(&address.octets());
+            }
+            encode_dnr_svc_params(&self.svc_params, &mut out)?;
+        }
+        Ok(out)
+    }
+
+    /// Service priority value.
+    pub const fn service_priority(&self) -> u16 {
+        self.service_priority
+    }
+
+    /// Authentication Domain Name.
+    pub const fn adn(&self) -> &DnsName {
+        &self.adn
+    }
+
+    /// IPv6 address hints.
+    pub fn addresses(&self) -> &[Ipv6Addr] {
+        &self.addresses
+    }
+
+    /// Resolver parameters.
+    pub fn svc_params(&self) -> &[Dhcpv6DnrSvcParam] {
+        &self.svc_params
+    }
+
+    /// Replace IPv6 address hints.
+    pub fn addresses_from<I>(mut self, addresses: I) -> Self
+    where
+        I: IntoIterator<Item = Ipv6Addr>,
+    {
+        self.addresses = addresses.into_iter().collect();
+        self
+    }
+
+    /// Append one resolver parameter.
+    pub fn svc_param(mut self, param: Dhcpv6DnrSvcParam) -> Self {
+        self.svc_params.push(param);
+        self
+    }
+
+    /// Replace resolver parameters.
+    pub fn svc_params_from(mut self, params: impl Into<Vec<Dhcpv6DnrSvcParam>>) -> Self {
+        self.svc_params = params.into();
+        self
     }
 }
 
@@ -2091,6 +2262,26 @@ impl Dhcpv6Option {
         Self::raw(DHCPV6_OPTION_S46_BIND_IPV6_PREFIX, payload)
     }
 
+    /// Create the DHCPv6 Captive-Portal URI option.
+    pub fn captive_portal_uri(uri: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_CAPTIVE_PORTAL, uri)
+    }
+
+    /// Create an OPTION_MUD_URL_V6 option.
+    pub fn mud_url_v6(uri: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_MUD_URL_V6, uri)
+    }
+
+    /// Create an OPTION_V6_PREFIX64 option with raw payload bytes.
+    pub fn v6_prefix64(payload: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_V6_PREFIX64, payload)
+    }
+
+    /// Create an OPTION_V6_DNR option.
+    pub fn v6_dnr(dnr: Dhcpv6Dnr) -> Result<Self> {
+        Ok(Self::raw(DHCPV6_OPTION_V6_DNR, dnr.encode()?))
+    }
+
     /// Create an OPTION_REMOTE_ID option.
     pub fn remote_id(remote_id: Dhcpv6RemoteId) -> Self {
         Self::raw(DHCPV6_OPTION_REMOTE_ID, remote_id.encode())
@@ -2450,6 +2641,39 @@ impl Dhcpv6Option {
         }
     }
 
+    /// Return Captive-Portal URI bytes.
+    pub fn captive_portal_uri_value(&self) -> Option<&[u8]> {
+        self.payload_if_code(DHCPV6_OPTION_CAPTIVE_PORTAL)
+    }
+
+    /// Return Captive-Portal URI as UTF-8 text when valid.
+    pub fn captive_portal_uri_text(&self) -> Option<&str> {
+        core::str::from_utf8(self.captive_portal_uri_value()?).ok()
+    }
+
+    /// Return OPTION_MUD_URL_V6 URI bytes.
+    pub fn mud_url_v6_value(&self) -> Option<&[u8]> {
+        self.payload_if_code(DHCPV6_OPTION_MUD_URL_V6)
+    }
+
+    /// Return OPTION_MUD_URL_V6 URI as UTF-8 text when valid.
+    pub fn mud_url_v6_text(&self) -> Option<&str> {
+        core::str::from_utf8(self.mud_url_v6_value()?).ok()
+    }
+
+    /// Return OPTION_V6_PREFIX64 payload bytes.
+    pub fn v6_prefix64_value(&self) -> Option<&[u8]> {
+        self.payload_if_code(DHCPV6_OPTION_V6_PREFIX64)
+    }
+
+    /// Decode OPTION_V6_DNR.
+    pub fn v6_dnr_value(&self) -> Result<Option<Dhcpv6Dnr>> {
+        match self.payload_if_code(DHCPV6_OPTION_V6_DNR) {
+            Some(payload) => Dhcpv6Dnr::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
     /// Decode OPTION_REMOTE_ID.
     pub fn remote_id_value(&self) -> Result<Option<Dhcpv6RemoteId>> {
         match self.payload_if_code(DHCPV6_OPTION_REMOTE_ID) {
@@ -2704,6 +2928,54 @@ fn decode_ipv6_addr_list(bytes: &[u8], context: &'static str) -> Result<Vec<Ipv6
         addresses.push(Ipv6Addr::from(copy_array_16(chunk)));
     }
     Ok(addresses)
+}
+
+fn encode_dnr_svc_params(params: &[Dhcpv6DnrSvcParam], out: &mut Vec<u8>) -> Result<()> {
+    validate_dnr_svc_params(params)?;
+    for param in params {
+        let value_len = u16::try_from(param.value.len()).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.v6_dnr.svc_params",
+                "SvcParamValue exceeds 65535 bytes",
+            )
+        })?;
+        append_u16_be(out, param.key);
+        append_u16_be(out, value_len);
+        out.extend_from_slice(&param.value);
+    }
+    Ok(())
+}
+
+fn decode_dnr_svc_params(bytes: &[u8]) -> Result<Vec<Dhcpv6DnrSvcParam>> {
+    let mut params = Vec::new();
+    let mut offset = 0usize;
+    while offset < bytes.len() {
+        ensure_available(bytes, offset + 4, "dhcpv6.option.v6_dnr.svc_params")?;
+        let key = read_u16_be(&bytes[offset..offset + 2])?;
+        let value_len = read_u16_be(&bytes[offset + 2..offset + 4])? as usize;
+        let value_start = offset + 4;
+        let value_end = value_start + value_len;
+        ensure_available(bytes, value_end, "dhcpv6.option.v6_dnr.svc_params")?;
+        params.push(Dhcpv6DnrSvcParam::new(
+            key,
+            bytes[value_start..value_end].to_vec(),
+        ));
+        offset = value_end;
+    }
+    validate_dnr_svc_params(&params)?;
+    Ok(params)
+}
+
+fn validate_dnr_svc_params(params: &[Dhcpv6DnrSvcParam]) -> Result<()> {
+    for pair in params.windows(2) {
+        if pair[0].key >= pair[1].key {
+            return Err(CrafterError::invalid_field_value(
+                "dhcpv6.option.v6_dnr.svc_params",
+                "SvcParamKeys must be in strictly increasing order",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn decode_uncompressed_dns_name(
@@ -3599,6 +3871,116 @@ mod dhcpv6_softwire_tests {
             CrafterError::invalid_field_value(
                 "dhcpv6.option.s46_priority",
                 "payload length must be a multiple of 2 bytes",
+            ),
+        );
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_modern_options_tests {
+    use core::net::Ipv6Addr;
+
+    use super::{Dhcpv6Dnr, Dhcpv6DnrSvcParam, Dhcpv6Option};
+    use crate::error::CrafterError;
+    use crate::protocols::dhcp::v6::{
+        dhcpv6_option_meta, DHCPV6_OPTION_CAPTIVE_PORTAL, DHCPV6_OPTION_MUD_URL_V6,
+        DHCPV6_OPTION_V6_DNR, DHCPV6_OPTION_V6_PREFIX64,
+    };
+    use crate::protocols::dns::DnsName;
+
+    #[test]
+    fn dhcpv6_modern_options_preserve_uri_payloads_and_registry_metadata() {
+        let captive = Dhcpv6Option::captive_portal_uri(b"https://cp.example.net/api".as_slice());
+        let mud = Dhcpv6Option::mud_url_v6(b"https://mud.example.net/model.json".as_slice());
+        let prefix64 = Dhcpv6Option::v6_prefix64([0x40, 0x00, 0x64, 0xff, 0x9b]);
+
+        assert_eq!(captive.codepoint(), DHCPV6_OPTION_CAPTIVE_PORTAL);
+        assert_eq!(
+            captive.captive_portal_uri_text(),
+            Some("https://cp.example.net/api")
+        );
+        assert_eq!(mud.codepoint(), DHCPV6_OPTION_MUD_URL_V6);
+        assert_eq!(
+            mud.mud_url_v6_text(),
+            Some("https://mud.example.net/model.json"),
+        );
+        assert_eq!(prefix64.codepoint(), DHCPV6_OPTION_V6_PREFIX64);
+        assert_eq!(
+            prefix64.v6_prefix64_value(),
+            Some(&[0x40, 0x00, 0x64, 0xff, 0x9b][..])
+        );
+
+        assert_eq!(
+            dhcpv6_option_meta(DHCPV6_OPTION_CAPTIVE_PORTAL).name,
+            "DHCP Captive-Portal",
+        );
+        assert_eq!(
+            dhcpv6_option_meta(DHCPV6_OPTION_MUD_URL_V6).name,
+            "OPTION_MUD_URL_V6",
+        );
+        assert_eq!(
+            dhcpv6_option_meta(DHCPV6_OPTION_V6_DNR).name,
+            "OPTION_V6_DNR",
+        );
+    }
+
+    #[test]
+    fn dhcpv6_modern_options_dnr_roundtrips_addresses_and_unknown_params() {
+        let addr_a = Ipv6Addr::new(0x2001, 0x0db8, 53, 0, 0, 0, 0, 1);
+        let addr_b = Ipv6Addr::new(0x2001, 0x0db8, 53, 0, 0, 0, 0, 2);
+        let alpn = Dhcpv6DnrSvcParam::new(1, b"\x02h2".to_vec());
+        let unknown = Dhcpv6DnrSvcParam::new(65_000, [0xde, 0xad, 0xbe, 0xef]);
+        let dnr = Dhcpv6Dnr::new(10, DnsName::parse("resolver.example.").unwrap())
+            .addresses_from([addr_a, addr_b])
+            .svc_params_from(vec![alpn.clone(), unknown.clone()]);
+        let option = Dhcpv6Option::v6_dnr(dnr.clone()).unwrap();
+
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_V6_DNR);
+        let decoded = option.v6_dnr_value().unwrap().unwrap();
+        assert_eq!(decoded, dnr);
+        assert_eq!(decoded.service_priority(), 10);
+        assert_eq!(decoded.adn().presentation(), "resolver.example.");
+        assert_eq!(decoded.addresses(), &[addr_a, addr_b]);
+        assert_eq!(decoded.svc_params(), &[alpn, unknown]);
+        assert_eq!(decoded.svc_params()[1].key(), 65_000);
+        assert_eq!(decoded.svc_params()[1].value(), &[0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    #[test]
+    fn dhcpv6_modern_options_reject_malformed_dnr_payloads() {
+        let short = Dhcpv6Option::raw(DHCPV6_OPTION_V6_DNR, [0, 1, 0]);
+        assert_eq!(
+            short.v6_dnr_value().unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.v6_dnr", 4, 3),
+        );
+
+        let compressed_adn = Dhcpv6Option::raw(DHCPV6_OPTION_V6_DNR, [0, 1, 0, 2, 0xc0, 0x00]);
+        assert_eq!(
+            compressed_adn.v6_dnr_value().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.v6_dnr.adn",
+                "compressed or reserved DNS label markers are not valid here",
+            ),
+        );
+
+        let bad_addr_len = Dhcpv6Option::raw(DHCPV6_OPTION_V6_DNR, [0, 1, 0, 1, 0, 0, 1, 0xff]);
+        assert_eq!(
+            bad_addr_len.v6_dnr_value().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.v6_dnr.addresses",
+                "address hint length must be a multiple of 16 bytes",
+            ),
+        );
+
+        let out_of_order = Dhcpv6Dnr::new(1, DnsName::root()).svc_params_from(vec![
+            Dhcpv6DnrSvcParam::new(5, []),
+            Dhcpv6DnrSvcParam::new(4, []),
+        ]);
+        assert_eq!(
+            out_of_order.encode().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.v6_dnr.svc_params",
+                "SvcParamKeys must be in strictly increasing order",
             ),
         );
     }
