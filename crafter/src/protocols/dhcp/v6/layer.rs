@@ -220,6 +220,66 @@ impl Dhcpv6 {
         Self::client_server_message(Dhcpv6MessageType::Dhcpv4Response, transaction_id)
     }
 
+    /// Create a DHCPv6 BNDUPD failover message.
+    pub fn bndupd(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::BndUpd, transaction_id)
+    }
+
+    /// Create a DHCPv6 BNDREPLY failover message.
+    pub fn bndreply(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::BndReply, transaction_id)
+    }
+
+    /// Create a DHCPv6 POOLREQ failover message.
+    pub fn poolreq(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::PoolReq, transaction_id)
+    }
+
+    /// Create a DHCPv6 POOLRESP failover message.
+    pub fn poolresp(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::PoolResp, transaction_id)
+    }
+
+    /// Create a DHCPv6 UPDREQ failover message.
+    pub fn updreq(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::UpdReq, transaction_id)
+    }
+
+    /// Create a DHCPv6 UPDREQALL failover message.
+    pub fn updreqall(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::UpdReqAll, transaction_id)
+    }
+
+    /// Create a DHCPv6 UPDDONE failover message.
+    pub fn upddone(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::UpdDone, transaction_id)
+    }
+
+    /// Create a DHCPv6 CONNECT failover message.
+    pub fn connect(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::Connect, transaction_id)
+    }
+
+    /// Create a DHCPv6 CONNECTREPLY failover message.
+    pub fn connect_reply(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::ConnectReply, transaction_id)
+    }
+
+    /// Create a DHCPv6 DISCONNECT failover message.
+    pub fn disconnect(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::Disconnect, transaction_id)
+    }
+
+    /// Create a DHCPv6 STATE failover message.
+    pub fn state(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::State, transaction_id)
+    }
+
+    /// Create a DHCPv6 CONTACT failover message.
+    pub fn contact(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::Contact, transaction_id)
+    }
+
     /// Create a DHCPv6 ADDR-REG-INFORM message with the supplied transaction ID.
     pub fn addr_reg_inform(transaction_id: u32) -> Self {
         Self::client_server_message(Dhcpv6MessageType::AddrRegInform, transaction_id)
@@ -459,6 +519,11 @@ impl Dhcpv6 {
     /// Append an OPTION_DHCPV4_MSG option from a typed DHCPv4 layer.
     pub fn dhcpv4_message(self, message: Dhcpv4) -> Result<Self> {
         Ok(self.option(Dhcpv6Option::dhcpv4_message(message)?))
+    }
+
+    /// Append a raw DHCPv6 failover option from the registered F_* option range.
+    pub fn failover_option(self, code: u16, payload: impl Into<Vec<u8>>) -> Result<Self> {
+        Ok(self.option(Dhcpv6Option::failover_option(code, payload)?))
     }
 
     /// Append an OPTION_AUTH option.
@@ -2563,5 +2628,88 @@ mod dhcpv6_dhcpv4_query_tests {
             CrafterError::buffer_too_short("dhcpv4 packet", 240, 10),
         );
         assert_eq!(malformed.dhcpv4_msg_value(), Some(&[0u8; 10][..]));
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_failover_codepoints_tests {
+    use super::Dhcpv6;
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{
+        Dhcpv6MessageType, Dhcpv6Option, DHCPV6_BNDUPD, DHCPV6_CONTACT,
+        DHCPV6_OPTION_F_BINDING_STATUS, DHCPV6_OPTION_F_SERVER_STATE,
+    };
+
+    #[test]
+    fn dhcpv6_failover_codepoints_constructors_encode_decode_and_summarize() {
+        let cases = [
+            (Dhcpv6::bndupd(1), Dhcpv6MessageType::BndUpd, "bndupd"),
+            (Dhcpv6::bndreply(2), Dhcpv6MessageType::BndReply, "bndreply"),
+            (Dhcpv6::poolreq(3), Dhcpv6MessageType::PoolReq, "poolreq"),
+            (Dhcpv6::poolresp(4), Dhcpv6MessageType::PoolResp, "poolresp"),
+            (Dhcpv6::updreq(5), Dhcpv6MessageType::UpdReq, "updreq"),
+            (
+                Dhcpv6::updreqall(6),
+                Dhcpv6MessageType::UpdReqAll,
+                "updreqall",
+            ),
+            (Dhcpv6::upddone(7), Dhcpv6MessageType::UpdDone, "upddone"),
+            (Dhcpv6::connect(8), Dhcpv6MessageType::Connect, "connect"),
+            (
+                Dhcpv6::connect_reply(9),
+                Dhcpv6MessageType::ConnectReply,
+                "connectreply",
+            ),
+            (
+                Dhcpv6::disconnect(10),
+                Dhcpv6MessageType::Disconnect,
+                "disconnect",
+            ),
+            (Dhcpv6::state(11), Dhcpv6MessageType::State, "state"),
+            (Dhcpv6::contact(12), Dhcpv6MessageType::Contact, "contact"),
+        ];
+
+        assert_eq!(Dhcpv6MessageType::BndUpd.code(), DHCPV6_BNDUPD);
+        assert_eq!(Dhcpv6MessageType::Contact.code(), DHCPV6_CONTACT);
+        for (message, message_type, label) in cases {
+            let decoded =
+                Dhcpv6::decode(Packet::from_layer(message).compile().unwrap().as_bytes()).unwrap();
+            assert_eq!(decoded.message_type_value(), message_type);
+            assert!(crate::packet::Layer::summary(&decoded).contains(label));
+        }
+    }
+
+    #[test]
+    fn dhcpv6_failover_codepoints_preserve_registered_raw_options() {
+        let option = Dhcpv6Option::failover_option(DHCPV6_OPTION_F_BINDING_STATUS, [0x01]).unwrap();
+        let message = Dhcpv6::connect(0x010203)
+            .failover_option(DHCPV6_OPTION_F_SERVER_STATE, [0x02])
+            .unwrap()
+            .option(option.clone());
+        let decoded =
+            Dhcpv6::decode(Packet::from_layer(message).compile().unwrap().as_bytes()).unwrap();
+
+        assert_eq!(option.failover_option_value(), Some(&[0x01][..]));
+        assert_eq!(
+            decoded.options_ref()[0].codepoint(),
+            DHCPV6_OPTION_F_SERVER_STATE
+        );
+        assert_eq!(
+            decoded.options_ref()[0].failover_option_value(),
+            Some(&[0x02][..])
+        );
+        assert_eq!(decoded.options_ref()[1], option);
+    }
+
+    #[test]
+    fn dhcpv6_failover_codepoints_reject_non_failover_option_code() {
+        assert_eq!(
+            Dhcpv6Option::failover_option(65_000, [0]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.failover.code",
+                "option code is not in the DHCPv6 failover option range",
+            ),
+        );
     }
 }

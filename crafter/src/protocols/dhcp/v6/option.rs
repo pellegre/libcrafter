@@ -22,7 +22,8 @@ use super::constants::{
     DHCPV6_OPTION_CLIENTID, DHCPV6_OPTION_CLIENT_ARCH_TYPE, DHCPV6_OPTION_CLIENT_DATA,
     DHCPV6_OPTION_CLIENT_FQDN, DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR, DHCPV6_OPTION_CLT_TIME,
     DHCPV6_OPTION_DHCPV4_MSG, DHCPV6_OPTION_DNS_SERVERS, DHCPV6_OPTION_DOMAIN_LIST,
-    DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN, DHCPV6_OPTION_IAADDR,
+    DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_F_BINDING_STATUS,
+    DHCPV6_OPTION_F_STATE_EXPIRATION_TIME, DHCPV6_OPTION_HEADER_LEN, DHCPV6_OPTION_IAADDR,
     DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD,
     DHCPV6_OPTION_INFORMATION_REFRESH_TIME, DHCPV6_OPTION_INF_MAX_RT, DHCPV6_OPTION_INTERFACE_ID,
     DHCPV6_OPTION_LQ_BASE_TIME, DHCPV6_OPTION_LQ_CLIENT_LINK, DHCPV6_OPTION_LQ_END_TIME,
@@ -2505,6 +2506,17 @@ impl Dhcpv6Option {
         Ok(Self::dhcpv4_msg(bytes.as_bytes()))
     }
 
+    /// Create a raw DHCPv6 failover option from the registered F_* option range.
+    pub fn failover_option(code: u16, payload: impl Into<Vec<u8>>) -> Result<Self> {
+        if !dhcpv6_failover_option_code(code) {
+            return Err(CrafterError::invalid_field_value(
+                "dhcpv6.option.failover.code",
+                "option code is not in the DHCPv6 failover option range",
+            ));
+        }
+        Ok(Self::raw(code, payload))
+    }
+
     /// Create an OPTION_REMOTE_ID option.
     pub fn remote_id(remote_id: Dhcpv6RemoteId) -> Self {
         Self::raw(DHCPV6_OPTION_REMOTE_ID, remote_id.encode())
@@ -2967,6 +2979,11 @@ impl Dhcpv6Option {
         }
     }
 
+    /// Return raw payload bytes for registered DHCPv6 failover options.
+    pub fn failover_option_value(&self) -> Option<&[u8]> {
+        dhcpv6_failover_option_code(self.codepoint()).then(|| self.payload())
+    }
+
     /// Decode OPTION_REMOTE_ID.
     pub fn remote_id_value(&self) -> Result<Option<Dhcpv6RemoteId>> {
         match self.payload_if_code(DHCPV6_OPTION_REMOTE_ID) {
@@ -3341,6 +3358,10 @@ fn copy_array_16(bytes: &[u8]) -> [u8; 16] {
 
 fn validate_prefix_length(prefix_length: u8) -> Result<()> {
     validate_prefix_length_for("dhcpv6.option.iaprefix.prefix_length", prefix_length)
+}
+
+fn dhcpv6_failover_option_code(code: u16) -> bool {
+    (DHCPV6_OPTION_F_BINDING_STATUS..=DHCPV6_OPTION_F_STATE_EXPIRATION_TIME).contains(&code)
 }
 
 fn validate_prefix_length_for(context: &'static str, prefix_length: u8) -> Result<()> {
