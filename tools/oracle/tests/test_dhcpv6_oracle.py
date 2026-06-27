@@ -189,6 +189,16 @@ class Dhcpv6GeneratorSelectionTest(unittest.TestCase):
         )
         self.assertEqual({plan.case for plan in plans}, _DHCPV6_OFFLINE_CASES)
 
+    def test_dhcpv6_smoke_short_pcap_batch_uses_raw_and_ethernet_roots(self) -> None:
+        plans = generate_plans(
+            seed=9915,
+            profile="dhcpv6-smoke",
+            count=10,
+            backend="scapy",
+        )
+        roots = {plan.metadata.get("root_decoder") for plan in plans}
+        self.assertEqual(roots, {"link:ethernet", "l3:ipv6"})
+
 
 class ScapyDhcpv6MaterializationTest(unittest.TestCase):
     def _decoded_for_case(self, case: str):

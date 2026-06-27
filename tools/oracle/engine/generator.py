@@ -772,7 +772,7 @@ class PacketGenerator:
 
     def _stack_deck(self, stacks: Sequence[JSONObject], *, direction: str) -> list[JSONObject]:
         if self.profile in _DHCPV6_SMOKE_PROFILES:
-            deck: list[JSONObject] = []
+            entries_by_case: dict[str, list[JSONObject]] = {}
             for stack in stacks:
                 coverage_cases = _string_list(
                     stack.get("coverage_cases", []),
@@ -783,9 +783,15 @@ class PacketGenerator:
                         continue
                     if not self._case_supported_in_direction(case, direction):
                         continue
-                    deck.append({**stack, "coverage_cases": [case]})
-            if deck:
-                return deck
+                    entries_by_case.setdefault(case, []).append({**stack, "coverage_cases": [case]})
+            if entries_by_case:
+                primary: list[JSONObject] = []
+                secondary: list[JSONObject] = []
+                for offset, entries in enumerate(entries_by_case.values()):
+                    chosen = offset % len(entries)
+                    primary.append(entries[chosen])
+                    secondary.extend([entry for index, entry in enumerate(entries) if index != chosen])
+                return [*primary, *secondary]
         if self.profile == "ipv6-enrichment":
             deck = []
             for stack in stacks:

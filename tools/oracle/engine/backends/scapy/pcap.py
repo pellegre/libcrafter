@@ -287,6 +287,12 @@ def _decode_packet_for_write(root: str | None, raw: bytes, scapy_all: Any) -> An
         "BTLE_PHDR",
         "link:bluetooth-le-ll-with-phdr",
         "link:bluetooth_le_ll_with_phdr",
+        "Raw",
+        "link:raw",
+        "l3:ipv4",
+        "l3:ipv6",
+        "IP",
+        "IPv6",
         # The IEEE 802.15.4 TAP (DLT 283) pseudo-header has no native Scapy
         # dissector, so write its bytes verbatim like the BLE LL-with-PHDR form.
         "link:ieee802154-tap",
