@@ -23,8 +23,9 @@ use super::constants::{
     DHCPV6_OPTION_DNS_SERVERS, DHCPV6_OPTION_DOMAIN_LIST, DHCPV6_OPTION_ELAPSED_TIME,
     DHCPV6_OPTION_HEADER_LEN, DHCPV6_OPTION_IAADDR, DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA,
     DHCPV6_OPTION_IA_PD, DHCPV6_OPTION_INFORMATION_REFRESH_TIME, DHCPV6_OPTION_INF_MAX_RT,
-    DHCPV6_OPTION_INTERFACE_ID, DHCPV6_OPTION_LQ_CLIENT_LINK, DHCPV6_OPTION_LQ_QUERY,
-    DHCPV6_OPTION_LQ_RELAY_DATA, DHCPV6_OPTION_MUD_URL_V6, DHCPV6_OPTION_NEW_POSIX_TIMEZONE,
+    DHCPV6_OPTION_INTERFACE_ID, DHCPV6_OPTION_LQ_BASE_TIME, DHCPV6_OPTION_LQ_CLIENT_LINK,
+    DHCPV6_OPTION_LQ_END_TIME, DHCPV6_OPTION_LQ_QUERY, DHCPV6_OPTION_LQ_RELAY_DATA,
+    DHCPV6_OPTION_LQ_START_TIME, DHCPV6_OPTION_MUD_URL_V6, DHCPV6_OPTION_NEW_POSIX_TIMEZONE,
     DHCPV6_OPTION_NEW_TZDB_TIMEZONE, DHCPV6_OPTION_NII, DHCPV6_OPTION_NTP_SERVER,
     DHCPV6_OPTION_ORO, DHCPV6_OPTION_PD_EXCLUDE, DHCPV6_OPTION_PREFERENCE,
     DHCPV6_OPTION_RAPID_COMMIT, DHCPV6_OPTION_RECONF_ACCEPT, DHCPV6_OPTION_RECONF_MSG,
@@ -2476,6 +2477,21 @@ impl Dhcpv6Option {
         )
     }
 
+    /// Create an OPTION_LQ_BASE_TIME option.
+    pub fn leasequery_base_time(seconds: u32) -> Self {
+        Self::raw(DHCPV6_OPTION_LQ_BASE_TIME, seconds.to_be_bytes().to_vec())
+    }
+
+    /// Create an OPTION_LQ_START_TIME option.
+    pub fn leasequery_start_time(seconds: u32) -> Self {
+        Self::raw(DHCPV6_OPTION_LQ_START_TIME, seconds.to_be_bytes().to_vec())
+    }
+
+    /// Create an OPTION_LQ_END_TIME option.
+    pub fn leasequery_end_time(seconds: u32) -> Self {
+        Self::raw(DHCPV6_OPTION_LQ_END_TIME, seconds.to_be_bytes().to_vec())
+    }
+
     /// Create an OPTION_REMOTE_ID option.
     pub fn remote_id(remote_id: Dhcpv6RemoteId) -> Self {
         Self::raw(DHCPV6_OPTION_REMOTE_ID, remote_id.encode())
@@ -2908,6 +2924,21 @@ impl Dhcpv6Option {
     /// Decode OPTION_LQ_CLIENT_LINK.
     pub fn leasequery_client_link_value(&self) -> Result<Option<Vec<Ipv6Addr>>> {
         self.ipv6_addr_list_if_code(DHCPV6_OPTION_LQ_CLIENT_LINK, "dhcpv6.option.lq_client_link")
+    }
+
+    /// Decode OPTION_LQ_BASE_TIME.
+    pub fn leasequery_base_time_value(&self) -> Result<Option<u32>> {
+        self.fixed_u32_if_code(DHCPV6_OPTION_LQ_BASE_TIME, "dhcpv6.option.lq_base_time")
+    }
+
+    /// Decode OPTION_LQ_START_TIME.
+    pub fn leasequery_start_time_value(&self) -> Result<Option<u32>> {
+        self.fixed_u32_if_code(DHCPV6_OPTION_LQ_START_TIME, "dhcpv6.option.lq_start_time")
+    }
+
+    /// Decode OPTION_LQ_END_TIME.
+    pub fn leasequery_end_time_value(&self) -> Result<Option<u32>> {
+        self.fixed_u32_if_code(DHCPV6_OPTION_LQ_END_TIME, "dhcpv6.option.lq_end_time")
     }
 
     /// Decode OPTION_REMOTE_ID.

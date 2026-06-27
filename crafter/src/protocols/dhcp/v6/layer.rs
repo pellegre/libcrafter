@@ -189,6 +189,16 @@ impl Dhcpv6 {
         Self::client_server_message(Dhcpv6MessageType::LeaseQueryReply, transaction_id)
     }
 
+    /// Create a DHCPv6 LEASEQUERY-DONE message with the supplied transaction ID.
+    pub fn leasequery_done(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::LeaseQueryDone, transaction_id)
+    }
+
+    /// Create a DHCPv6 LEASEQUERY-DATA message with the supplied transaction ID.
+    pub fn leasequery_data(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::LeaseQueryData, transaction_id)
+    }
+
     /// Create a DHCPv6 ADDR-REG-INFORM message with the supplied transaction ID.
     pub fn addr_reg_inform(transaction_id: u32) -> Self {
         Self::client_server_message(Dhcpv6MessageType::AddrRegInform, transaction_id)
@@ -403,6 +413,21 @@ impl Dhcpv6 {
         I: IntoIterator<Item = Ipv6Addr>,
     {
         self.option(Dhcpv6Option::leasequery_client_link(addresses))
+    }
+
+    /// Append an OPTION_LQ_BASE_TIME option.
+    pub fn leasequery_base_time(self, seconds: u32) -> Self {
+        self.option(Dhcpv6Option::leasequery_base_time(seconds))
+    }
+
+    /// Append an OPTION_LQ_START_TIME option.
+    pub fn leasequery_start_time(self, seconds: u32) -> Self {
+        self.option(Dhcpv6Option::leasequery_start_time(seconds))
+    }
+
+    /// Append an OPTION_LQ_END_TIME option.
+    pub fn leasequery_end_time(self, seconds: u32) -> Self {
+        self.option(Dhcpv6Option::leasequery_end_time(seconds))
     }
 
     /// Append an OPTION_AUTH option.
@@ -670,6 +695,30 @@ impl Dhcpv6 {
     pub fn leasequery_client_link_value(&self) -> Result<Option<Vec<Ipv6Addr>>> {
         match self.first_option(super::constants::DHCPV6_OPTION_LQ_CLIENT_LINK) {
             Some(option) => option.leasequery_client_link_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode the first Leasequery Base Time option.
+    pub fn leasequery_base_time_value(&self) -> Result<Option<u32>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_LQ_BASE_TIME) {
+            Some(option) => option.leasequery_base_time_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode the first Leasequery Start Time option.
+    pub fn leasequery_start_time_value(&self) -> Result<Option<u32>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_LQ_START_TIME) {
+            Some(option) => option.leasequery_start_time_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode the first Leasequery End Time option.
+    pub fn leasequery_end_time_value(&self) -> Result<Option<u32>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_LQ_END_TIME) {
+            Some(option) => option.leasequery_end_time_value(),
             None => Ok(None),
         }
     }
@@ -2227,5 +2276,108 @@ mod dhcpv6_leasequery_base_tests {
                 "payload length must be a multiple of 16 bytes",
             ),
         );
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_bulk_leasequery_tests {
+    use super::Dhcpv6;
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{
+        Dhcpv6ClientData, Dhcpv6MessageType, Dhcpv6Option, Dhcpv6StatusCode,
+        DHCPV6_LEASEQUERY_DATA, DHCPV6_LEASEQUERY_DONE, DHCPV6_OPTION_LQ_BASE_TIME,
+        DHCPV6_OPTION_LQ_END_TIME, DHCPV6_OPTION_LQ_START_TIME,
+    };
+
+    #[test]
+    fn dhcpv6_bulk_leasequery_message_codepoints_are_named() {
+        assert_eq!(
+            Dhcpv6MessageType::LeaseQueryData.code(),
+            DHCPV6_LEASEQUERY_DATA
+        );
+        assert_eq!(
+            Dhcpv6MessageType::LeaseQueryDone.code(),
+            DHCPV6_LEASEQUERY_DONE
+        );
+    }
+
+    #[test]
+    fn dhcpv6_bulk_leasequery_data_roundtrips_client_payloads() {
+        let client_data =
+            Dhcpv6ClientData::new().option(Dhcpv6Option::raw(65_007u16, [0xaa, 0xbb]));
+        let message = Dhcpv6::leasequery_data(0x010203)
+            .client_data(client_data.clone())
+            .unwrap()
+            .client_time(60)
+            .leasequery_base_time(1_000)
+            .option(Dhcpv6Option::raw(65_008u16, [0xde, 0xad]));
+        let decoded =
+            Dhcpv6::decode(Packet::from_layer(message).compile().unwrap().as_bytes()).unwrap();
+
+        assert_eq!(
+            decoded.message_type_value(),
+            Dhcpv6MessageType::LeaseQueryData
+        );
+        assert_eq!(decoded.client_data_value().unwrap(), Some(client_data));
+        assert_eq!(decoded.client_time_value().unwrap(), Some(60));
+        assert_eq!(decoded.leasequery_base_time_value().unwrap(), Some(1_000));
+        assert_eq!(
+            decoded.options_ref().last().unwrap().payload(),
+            &[0xde, 0xad]
+        );
+    }
+
+    #[test]
+    fn dhcpv6_bulk_leasequery_done_roundtrips_status_and_window_times() {
+        let message = Dhcpv6::leasequery_done(0x0a0b0c)
+            .status(Dhcpv6StatusCode::QueryTerminated)
+            .leasequery_start_time(10)
+            .leasequery_end_time(20);
+        let decoded =
+            Dhcpv6::decode(Packet::from_layer(message).compile().unwrap().as_bytes()).unwrap();
+
+        assert_eq!(
+            decoded.message_type_value(),
+            Dhcpv6MessageType::LeaseQueryDone
+        );
+        assert_eq!(
+            decoded.status_code_value().unwrap().unwrap().status(),
+            Dhcpv6StatusCode::QueryTerminated,
+        );
+        assert_eq!(decoded.leasequery_start_time_value().unwrap(), Some(10));
+        assert_eq!(decoded.leasequery_end_time_value().unwrap(), Some(20));
+    }
+
+    #[test]
+    fn dhcpv6_bulk_leasequery_rejects_malformed_time_options() {
+        for (option, context) in [
+            (
+                Dhcpv6Option::raw(DHCPV6_OPTION_LQ_BASE_TIME, [0, 0, 0]),
+                "dhcpv6.option.lq_base_time",
+            ),
+            (
+                Dhcpv6Option::raw(DHCPV6_OPTION_LQ_START_TIME, [0, 0, 0]),
+                "dhcpv6.option.lq_start_time",
+            ),
+            (
+                Dhcpv6Option::raw(DHCPV6_OPTION_LQ_END_TIME, [0, 0, 0]),
+                "dhcpv6.option.lq_end_time",
+            ),
+        ] {
+            let error = match option.codepoint() {
+                DHCPV6_OPTION_LQ_BASE_TIME => option.leasequery_base_time_value().unwrap_err(),
+                DHCPV6_OPTION_LQ_START_TIME => option.leasequery_start_time_value().unwrap_err(),
+                DHCPV6_OPTION_LQ_END_TIME => option.leasequery_end_time_value().unwrap_err(),
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                error,
+                CrafterError::invalid_field_value(
+                    context,
+                    "payload length does not match option format",
+                ),
+            );
+        }
     }
 }
