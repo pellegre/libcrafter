@@ -126,6 +126,8 @@ pub const DHCPV6_OPTION_RSOO: u16 = 66;
 pub const DHCPV6_OPTION_PD_EXCLUDE: u16 = 67;
 /// DHCPv6 OPTION_CLIENT_LINKLAYER_ADDR option code.
 pub const DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR: u16 = 79;
+/// DHCPv6 OPTION_RADIUS option code.
+pub const DHCPV6_OPTION_RADIUS: u16 = 81;
 /// DHCPv6 OPTION_SOL_MAX_RT option code.
 pub const DHCPV6_OPTION_SOL_MAX_RT: u16 = 82;
 /// DHCPv6 OPTION_INF_MAX_RT option code.
@@ -212,6 +214,8 @@ pub const DHCPV6_OPTION_F_SERVER_STATE: u16 = 132;
 pub const DHCPV6_OPTION_F_START_TIME_OF_STATE: u16 = 133;
 /// DHCPv6 OPTION_F_STATE_EXPIRATION_TIME option code.
 pub const DHCPV6_OPTION_F_STATE_EXPIRATION_TIME: u16 = 134;
+/// DHCPv6 OPTION_RELAY_PORT option code.
+pub const DHCPV6_OPTION_RELAY_PORT: u16 = 135;
 /// DHCPv6 OPTION_S46_BIND_IPV6_PREFIX option code.
 pub const DHCPV6_OPTION_S46_BIND_IPV6_PREFIX: u16 = 137;
 /// DHCPv6 OPTION_V6_DNR option code.
@@ -220,6 +224,32 @@ pub const DHCPV6_OPTION_V6_DNR: u16 = 144;
 pub const DHCPV6_OPTION_ADDR_REG_ENABLE: u16 = 148;
 /// DHCPv6 infinite lifetime/timer sentinel where a field defines infinity.
 pub const DHCPV6_TIME_INFINITY: u32 = u32::MAX;
+
+/// OPTION_V6_DNR Supported Transport bit for DNS over mutually authenticated TLS.
+pub const DHCPV6_SUPPORTED_TRANSPORT_DOMTLS_BIT: u8 = 0;
+/// Lowest bit covered by the OPTION_V6_DNR Supported Transport registry.
+pub const DHCPV6_SUPPORTED_TRANSPORT_MIN_BIT: u8 = 0;
+/// Highest bit covered by the OPTION_V6_DNR Supported Transport registry.
+pub const DHCPV6_SUPPORTED_TRANSPORT_MAX_BIT: u8 = 15;
+
+/// RADIUS Vendor-Specific attribute type permitted in OPTION_RADIUS.
+pub const DHCPV6_RADIUS_ATTRIBUTE_VENDOR_SPECIFIC: u8 = 26;
+/// RADIUS Delegated-IPv6-Prefix attribute type permitted in OPTION_RADIUS.
+pub const DHCPV6_RADIUS_ATTRIBUTE_DELEGATED_IPV6_PREFIX: u8 = 123;
+/// RADIUS DS-Lite-Tunnel-Name attribute type permitted in OPTION_RADIUS.
+pub const DHCPV6_RADIUS_ATTRIBUTE_DS_LITE_TUNNEL_NAME: u8 = 144;
+/// RADIUS Framed-IPv6-Address attribute type permitted in OPTION_RADIUS.
+pub const DHCPV6_RADIUS_ATTRIBUTE_FRAMED_IPV6_ADDRESS: u8 = 168;
+/// RADIUS DNS-Server-IPv6-Address attribute type permitted in OPTION_RADIUS.
+pub const DHCPV6_RADIUS_ATTRIBUTE_DNS_SERVER_IPV6_ADDRESS: u8 = 169;
+/// RADIUS Delegated-IPv6-Prefix-Pool attribute type permitted in OPTION_RADIUS.
+pub const DHCPV6_RADIUS_ATTRIBUTE_DELEGATED_IPV6_PREFIX_POOL: u8 = 171;
+/// RADIUS Stateful-IPv6-Address-Pool attribute type permitted in OPTION_RADIUS.
+pub const DHCPV6_RADIUS_ATTRIBUTE_STATEFUL_IPV6_ADDRESS_POOL: u8 = 172;
+/// RADIUS Extended-Type-1 attribute type carrying the DHCPv6-Options extended type.
+pub const DHCPV6_RADIUS_ATTRIBUTE_EXTENDED_TYPE_1: u8 = 245;
+/// RADIUS extended type for the DHCPv6-Options attribute.
+pub const DHCPV6_RADIUS_ATTRIBUTE_DHCPV6_OPTIONS_EXTENDED_TYPE: u8 = 3;
 
 /// Fixed length in octets of the DHCPv6 Authentication option payload header.
 pub const DHCPV6_AUTH_HEADER_LEN: usize = 11;
