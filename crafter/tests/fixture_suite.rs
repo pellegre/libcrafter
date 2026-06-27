@@ -34,6 +34,7 @@ use crafter::core::{
     IPV6_ROUTING_TYPE_MOBILE, IPV6_ROUTING_TYPE_SEGMENT, QUIC_VERSION_1, QUIC_VERSION_2, SNMP_PORT,
     TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
+use crafter::protocols::dhcp::{Dhcpv6, Dhcpv6IaAddr, Dhcpv6IaNa, Dhcpv6Option, Dhcpv6StatusCode};
 use crafter::protocols::igmp::IgmpExtension;
 use crafter::wire::backend::pcap::{
     PcapError, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter, PcapWriterOptions,
@@ -10569,6 +10570,38 @@ fn summary_fixture_reader_matches_current_summary_fixture() {
         packet
             .raw_string_lossy()
             .expect("raw fixture should stringify")
+    );
+
+    assert_eq!(actual, expected);
+}
+
+fn dhcpv6_summary_packet() -> Packet {
+    let ia_addr = Dhcpv6IaAddr::new(
+        Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0010),
+        300,
+        600,
+    );
+    let ia_na = Dhcpv6IaNa::new(0x0102_0304, 60, 120)
+        .ia_addr(ia_addr)
+        .expect("IA_NA fixture payload should encode");
+    let dhcpv6 = Dhcpv6::reply(0x0a0b0c)
+        .client_id([0x00, 0x03, 0xaa, 0xbb])
+        .server_id([0x00, 0x01, 0xcc, 0xdd])
+        .ia_na(ia_na)
+        .expect("IA_NA option should encode")
+        .status_message(Dhcpv6StatusCode::NoAddrsAvail, b"no addresses")
+        .option(Dhcpv6Option::raw(65_000u16, [0xde, 0xad]));
+    Packet::from_layer(dhcpv6)
+}
+
+#[test]
+fn dhcpv6_summary_fixture_matches_output() {
+    let packet = dhcpv6_summary_packet();
+    let expected = read_summary_fixture("summaries/dhcpv6-summary-show.summary.txt");
+    let actual = format!(
+        "summary:\n{}\n\nshow:\n{}\n",
+        packet.summary(),
+        packet.show()
     );
 
     assert_eq!(actual, expected);

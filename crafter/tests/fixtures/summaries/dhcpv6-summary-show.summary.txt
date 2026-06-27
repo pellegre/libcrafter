@@ -1,0 +1,15 @@
+summary:
+Dhcpv6(type=reply, xid=0x0a0b0c, options=5 [OPTION_CLIENTID,OPTION_SERVERID,OPTION_IA_NA,OPTION_STATUS_CODE,code65000])
+
+show:
+Packet(len=88, layers=1)
+  [0] Dhcpv6
+      message_type: reply
+      transaction_id: 0x0a0b0c
+      options: 5
+      option_names: OPTION_CLIENTID,OPTION_SERVERID,OPTION_IA_NA,OPTION_STATUS_CODE,code65000
+      option: [0] OPTION_CLIENTID(code=1,len=4,duid_len=4)
+      option: [1] OPTION_SERVERID(code=2,len=4,duid_len=4)
+      option: [2] OPTION_IA_NA(code=3,len=40,iaid=0x01020304,t1=60,t2=120,nested=1)
+      option: [3] OPTION_STATUS_CODE(code=13,len=14,status=NoAddrsAvail,message_len=12)
+      option: [4] code65000(code=65000,len=2)

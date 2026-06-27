@@ -21,7 +21,7 @@ use super::option::{
     Dhcpv6RemoteId, Dhcpv6StatusCodeOption, Dhcpv6UserClass, Dhcpv6VendorClass,
     Dhcpv6VendorOptions,
 };
-use super::registry::{dhcpv6_option_meta, Dhcpv6OptionSingleton};
+use super::registry::{dhcpv6_option_meta, dhcpv6_option_name, Dhcpv6OptionSingleton};
 use super::status::Dhcpv6StatusCode;
 use crate::protocols::dhcp::v4::Dhcpv4;
 
@@ -1178,21 +1178,24 @@ impl Layer for Dhcpv6 {
     }
 
     fn summary(&self) -> String {
+        let option_summary = dhcpv6_option_summary_suffix(&self.options);
         if let Some(relay) = &self.relay {
             return format!(
-                "Dhcpv6(type={}, hop_count={}, link_address={}, peer_address={}, options={})",
+                "Dhcpv6(type={}, hop_count={}, link_address={}, peer_address={}, options={}{})",
                 dhcpv6_message_type_summary(self.message_type_value()),
                 relay.hop_count_value(),
                 relay.link_address_value(),
                 relay.peer_address_value(),
                 self.options.len(),
+                option_summary,
             );
         }
         format!(
-            "Dhcpv6(type={}, xid=0x{:06x}, options={})",
+            "Dhcpv6(type={}, xid=0x{:06x}, options={}{})",
             dhcpv6_message_type_summary(self.message_type_value()),
             self.transaction_id_value(),
             self.options.len(),
+            option_summary,
         )
     }
 
@@ -1212,6 +1215,23 @@ impl Layer for Dhcpv6 {
             fields.push(("hop_count", relay.hop_count_value().to_string()));
             fields.push(("link_address", relay.link_address_value().to_string()));
             fields.push(("peer_address", relay.peer_address_value().to_string()));
+        }
+        if !self.options.is_empty() {
+            fields.push(("option_names", dhcpv6_option_name_list(&self.options)));
+            for (index, option) in self.options.iter().enumerate() {
+                fields.push(("option", format!("[{index}] {}", option.summary())));
+            }
+        }
+        let repetition = self.option_repetition_report();
+        for entry in repetition.duplicate_singletons() {
+            fields.push((
+                "duplicate_singleton",
+                format!(
+                    "{} count={}",
+                    dhcpv6_option_code_label(entry.code),
+                    entry.count
+                ),
+            ));
         }
         fields
     }
@@ -1394,6 +1414,34 @@ fn option_repetition_report_for(options: &[Dhcpv6Option]) -> Dhcpv6OptionRepetit
     }
 
     Dhcpv6OptionRepetitionReport { entries }
+}
+
+fn dhcpv6_option_summary_suffix(options: &[Dhcpv6Option]) -> String {
+    if options.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", dhcpv6_option_name_list(options))
+    }
+}
+
+fn dhcpv6_option_name_list(options: &[Dhcpv6Option]) -> String {
+    const MAX_OPTION_LABELS: usize = 5;
+
+    let mut labels = options
+        .iter()
+        .take(MAX_OPTION_LABELS)
+        .map(|option| dhcpv6_option_code_label(option.codepoint()))
+        .collect::<Vec<_>>();
+    if options.len() > MAX_OPTION_LABELS {
+        labels.push(format!("+{} more", options.len() - MAX_OPTION_LABELS));
+    }
+    labels.join(",")
+}
+
+fn dhcpv6_option_code_label(code: u16) -> String {
+    dhcpv6_option_name(code)
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("code{}", code))
 }
 
 fn copy_array_16(bytes: &[u8]) -> [u8; 16] {
