@@ -23,11 +23,24 @@ _SUPPORTED_FIELDS = frozenset(
 _CLIENT_DUID = "0003000102005e000601"
 _SERVER_DUID = "0003000102005e000602"
 _RELAY_DUID = "0003000102005e000603"
+_RELAY_MESSAGE_TYPES = frozenset(
+    {"relay-forward", "relay_forward", "relay-reply", "relay_reply", 12, 13}
+)
+_RELAY_REPLY_MESSAGE_TYPES = frozenset({"relay-reply", "relay_reply", 13})
+_SERVER_TO_CLIENT_MESSAGE_TYPES = frozenset(
+    {"advertise", "reply", "reconfigure", "reconf", 2, 7, 10}
+)
 
 
-def _sample_dhcpv6_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
+def _sample_dhcpv6_field(
+    ctx: _SamplingContext,
+    field_name: str,
+    domain: object,
+    *,
+    current_fields: Mapping[str, object],
+) -> object:
     case = ctx.case.replace("_", "-")
-    relay = "relay" in case
+    relay = _current_message_is_relay(current_fields) or "relay" in case
     if field_name == "message_type":
         if relay:
             return "relay_reply" if "reply" in case else "relay_forward"
@@ -43,14 +56,20 @@ def _sample_dhcpv6_field(ctx: _SamplingContext, field_name: str, domain: object)
     if field_name == "peer_address":
         return ctx.src_ipv6 if relay else _SKIP_FIELD
     if field_name == "options":
-        return _dhcpv6_option_domains(ctx, domain)
+        return _dhcpv6_option_domains(ctx, domain, current_fields=current_fields)
     raise ValueError(f"spec error: unsupported dhcpv6 field sampler: {field_name}")
 
 
-def _dhcpv6_option_domains(ctx: _SamplingContext, domain: object) -> list[JSONObject]:
+def _dhcpv6_option_domains(
+    ctx: _SamplingContext,
+    domain: object,
+    *,
+    current_fields: Mapping[str, object],
+) -> list[JSONObject]:
     case = ctx.case.replace("_", "-")
-    if "relay" in case:
-        return _relay_options("relay-reply" in case)
+    if _current_message_is_relay(current_fields) or "relay" in case:
+        reply = _current_message_is_relay_reply(current_fields) or "relay-reply" in case
+        return _relay_options(reply)
     if domain == "option_matrix" or "option-matrix" in case:
         return _option_matrix()
     if "ia-na" in case:
@@ -64,6 +83,25 @@ def _dhcpv6_option_domains(ctx: _SamplingContext, domain: object) -> list[JSONOb
     if "information-reply" in case:
         return [_client_id(), _server_id(), _dns_servers(), _domain_list()]
     return [_client_id(), _oro(), _elapsed_time()]
+
+
+def _current_message_is_relay(current_fields: Mapping[str, object]) -> bool:
+    return _normalized_message_type(current_fields) in _RELAY_MESSAGE_TYPES
+
+
+def _current_message_is_relay_reply(current_fields: Mapping[str, object]) -> bool:
+    return _normalized_message_type(current_fields) in _RELAY_REPLY_MESSAGE_TYPES
+
+
+def _current_message_is_server_to_client(current_fields: Mapping[str, object]) -> bool:
+    return _normalized_message_type(current_fields) in _SERVER_TO_CLIENT_MESSAGE_TYPES
+
+
+def _normalized_message_type(current_fields: Mapping[str, object]) -> object:
+    message_type = current_fields.get("message_type")
+    if isinstance(message_type, str):
+        return message_type.replace("_", "-")
+    return message_type
 
 
 def _apply_dhcpv6_behavior(
@@ -257,7 +295,7 @@ def _sample(
     field_spec: Mapping[str, object],
     current_fields: Mapping[str, object],
 ) -> object:
-    return _sample_dhcpv6_field(ctx, field_name, domain)
+    return _sample_dhcpv6_field(ctx, field_name, domain, current_fields=current_fields)
 
 
 def _apply_behavior(
@@ -276,6 +314,23 @@ def _handles_feature(feature: str) -> bool:
     return feature == "dhcpv6_behavior"
 
 
+def _post_sample(fields: dict[str, JSONObject], *, stack: Sequence[str], case: str) -> None:
+    del stack, case
+    dhcpv6 = fields.get("dhcpv6")
+    if not isinstance(dhcpv6, Mapping):
+        return
+    udp = fields.setdefault("udp", {})
+    if _current_message_is_relay(dhcpv6):
+        udp["src_port"] = 547
+        udp["dst_port"] = 547
+    elif _current_message_is_server_to_client(dhcpv6):
+        udp["src_port"] = 547
+        udp["dst_port"] = 546
+    else:
+        udp["src_port"] = 546
+        udp["dst_port"] = 547
+
+
 register(
     ProtocolSampler(
         layer="dhcpv6",
@@ -283,5 +338,6 @@ register(
         sample=_sample,
         apply_behavior=_apply_behavior,
         handles_feature=_handles_feature,
+        post_sample=_post_sample,
     )
 )
