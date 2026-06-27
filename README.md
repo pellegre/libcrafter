@@ -226,7 +226,7 @@ preserved as `Raw` payloads when the enclosing header is valid.
 | UDP | UDP with options (RFC 9868) and checksum status | [udp](docs/guide/udp.md) |
 | QUIC | UDP-carried QUIC datagrams, long/short headers, Version Negotiation, Retry, Initial/Handshake/0-RTT packets, frames, transport parameters, protected-payload preservation, and probe dry-run/lab planning; not a QUIC endpoint stack | [quic](docs/guide/quic.md) |
 | DNS | EDNS(0), SVCB/HTTPS, DNSSEC record types | [dns](docs/guide/dns.md) |
-| DHCPv4 | BOOTP/DHCPv4 packet construction and decode, option overload, RFC 3396 long options, relay agent option 82, client identifiers, authentication, and leasequery packet fields; not a client, server, or lease engine | — |
+| DHCPv4 | BOOTP/DHCPv4 packet construction and decode, option overload, RFC 3396 long options, relay agent option 82, client identifiers, authentication, and leasequery packet fields; not a client, server, or lease engine | [dhcpv4](docs/guide/dhcpv4.md) |
 | DHCPv6 | DHCPv6 client/server and relay packet construction and decode, DUIDs, status codes, IA_NA, IA_PD, IA Address, IA Prefix, relay message encapsulation, leasequery families, and unknown option preservation; not a client, server, relay daemon, or lease engine | [dhcpv6](docs/guide/dhcpv6.md) |
 | BGP | OPEN, UPDATE, KEEPALIVE, NOTIFICATION, ROUTE-REFRESH, path attributes, capabilities | [bgp](docs/guide/bgp.md) |
 | MQTT | MQTT 3.1.1 and 5.0 control packets over TCP/1883, typed properties, reason codes, and stacked payload decode | [mqtt](docs/guide/mqtt.md) |
