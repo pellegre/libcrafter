@@ -106,6 +106,8 @@ pub const DHCPV6_OPTION_BOOTFILE_PARAM: u16 = 60;
 pub const DHCPV6_OPTION_CLIENT_ARCH_TYPE: u16 = 61;
 /// DHCPv6 OPTION_NII option code.
 pub const DHCPV6_OPTION_NII: u16 = 62;
+/// DHCPv6 OPTION_AFTR_NAME option code.
+pub const DHCPV6_OPTION_AFTR_NAME: u16 = 64;
 /// DHCPv6 OPTION_ERP_LOCAL_DOMAIN_NAME option code.
 pub const DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME: u16 = 65;
 /// DHCPv6 OPTION_RSOO option code.
@@ -118,6 +120,34 @@ pub const DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR: u16 = 79;
 pub const DHCPV6_OPTION_SOL_MAX_RT: u16 = 82;
 /// DHCPv6 OPTION_INF_MAX_RT option code.
 pub const DHCPV6_OPTION_INF_MAX_RT: u16 = 83;
+/// DHCPv6 OPTION_DHCP4_O_DHCP6_SERVER option code.
+pub const DHCPV6_OPTION_DHCP4_O_DHCP6_SERVER: u16 = 88;
+/// DHCPv6 OPTION_S46_RULE option code.
+pub const DHCPV6_OPTION_S46_RULE: u16 = 89;
+/// DHCPv6 OPTION_S46_BR option code.
+pub const DHCPV6_OPTION_S46_BR: u16 = 90;
+/// DHCPv6 OPTION_S46_DMR option code.
+pub const DHCPV6_OPTION_S46_DMR: u16 = 91;
+/// DHCPv6 OPTION_S46_V4V6BIND option code.
+pub const DHCPV6_OPTION_S46_V4V6BIND: u16 = 92;
+/// DHCPv6 OPTION_S46_PORTPARAMS option code.
+pub const DHCPV6_OPTION_S46_PORTPARAMS: u16 = 93;
+/// DHCPv6 OPTION_S46_CONT_MAPE option code.
+pub const DHCPV6_OPTION_S46_CONT_MAPE: u16 = 94;
+/// DHCPv6 OPTION_S46_CONT_MAPT option code.
+pub const DHCPV6_OPTION_S46_CONT_MAPT: u16 = 95;
+/// DHCPv6 OPTION_S46_CONT_LW option code.
+pub const DHCPV6_OPTION_S46_CONT_LW: u16 = 96;
+/// DHCPv6 OPTION_4RD option code.
+pub const DHCPV6_OPTION_4RD: u16 = 97;
+/// DHCPv6 OPTION_4RD_MAP_RULE option code.
+pub const DHCPV6_OPTION_4RD_MAP_RULE: u16 = 98;
+/// DHCPv6 OPTION_4RD_NON_MAP_RULE option code.
+pub const DHCPV6_OPTION_4RD_NON_MAP_RULE: u16 = 99;
+/// DHCPv6 OPTION_S46_PRIORITY option code.
+pub const DHCPV6_OPTION_S46_PRIORITY: u16 = 111;
+/// DHCPv6 OPTION_S46_BIND_IPV6_PREFIX option code.
+pub const DHCPV6_OPTION_S46_BIND_IPV6_PREFIX: u16 = 137;
 /// DHCPv6 infinite lifetime/timer sentinel where a field defines infinity.
 pub const DHCPV6_TIME_INFINITY: u32 = u32::MAX;
 
