@@ -9,6 +9,7 @@
 //! source-backed DHCPv6 wire behavior.
 
 pub mod constants;
+pub mod duid;
 pub mod layer;
 pub mod message;
 pub mod option;
@@ -16,6 +17,7 @@ pub mod registry;
 pub mod status;
 
 pub use constants::*;
+pub use duid::Dhcpv6Duid;
 pub(crate) use layer::{append_dhcpv6_packet, looks_like_dhcpv6_payload};
 pub use layer::{Dhcpv6, Dhcpv6RelayHeader};
 pub use message::Dhcpv6MessageType;
