@@ -43,7 +43,8 @@ use super::constants::{
     DHCPV6_OPTION_VENDOR_OPTS, DHCPV6_TIME_INFINITY,
 };
 use super::duid::Dhcpv6Duid;
-use super::message::Dhcpv6MessageType;
+use super::message::{dhcpv6_message_type_summary, Dhcpv6MessageType};
+use super::registry::dhcpv6_option_name;
 use super::status::Dhcpv6StatusCode;
 
 const DHCPV6_IAADDR_HEADER_LEN: usize = 24;
@@ -2628,6 +2629,142 @@ impl Dhcpv6Option {
     /// Payload length in bytes.
     pub fn payload_len(&self) -> usize {
         self.value.len()
+    }
+
+    /// Registered option name, when this codepoint is assigned.
+    pub fn registered_name(&self) -> Option<&'static str> {
+        dhcpv6_option_name(self.codepoint())
+    }
+
+    /// One-line option summary for layer inspection output.
+    pub fn summary(&self) -> String {
+        let code = self.codepoint();
+        let name = self
+            .registered_name()
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("code{}", code));
+        let mut parts = vec![
+            format!("code={code}"),
+            format!("len={}", self.payload_len()),
+        ];
+
+        match code {
+            DHCPV6_OPTION_CLIENTID | DHCPV6_OPTION_SERVERID => {
+                parts.push(format!("duid_len={}", self.payload_len()));
+            }
+            DHCPV6_OPTION_ORO => match self.oro_value() {
+                Ok(Some(codes)) => parts.push(format!("requested={}", codes.len())),
+                Err(_) => parts.push("requested=malformed".to_string()),
+                Ok(None) => {}
+            },
+            DHCPV6_OPTION_PREFERENCE => match self.preference_value() {
+                Ok(Some(value)) => parts.push(format!("preference={value}")),
+                Err(_) => parts.push("preference=malformed".to_string()),
+                Ok(None) => {}
+            },
+            DHCPV6_OPTION_ELAPSED_TIME => match self.elapsed_time_value() {
+                Ok(Some(value)) => parts.push(format!("elapsed_cs={value}")),
+                Err(_) => parts.push("elapsed_cs=malformed".to_string()),
+                Ok(None) => {}
+            },
+            DHCPV6_OPTION_RECONF_MSG => match self.reconfigure_message_value() {
+                Ok(Some(message)) => {
+                    parts.push(format!("message={}", dhcpv6_message_type_summary(message)));
+                }
+                Err(_) => parts.push("message=malformed".to_string()),
+                Ok(None) => {}
+            },
+            DHCPV6_OPTION_STATUS_CODE => match self.status_code_value() {
+                Ok(Some(status)) => {
+                    parts.push(format!("status={}", status.status()));
+                    if !status.message_bytes().is_empty() {
+                        parts.push(format!("message_len={}", status.message_bytes().len()));
+                    }
+                }
+                Err(_) => parts.push("status=malformed".to_string()),
+                Ok(None) => {}
+            },
+            DHCPV6_OPTION_IA_NA => match self.ia_na_value() {
+                Ok(Some(ia)) => {
+                    parts.push(format!("iaid=0x{:08x}", ia.iaid()));
+                    parts.push(format!("t1={}", ia.t1()));
+                    parts.push(format!("t2={}", ia.t2()));
+                    parts.push(format!("nested={}", ia.options_ref().len()));
+                }
+                Err(_) => parts.push("ia_na=malformed".to_string()),
+                Ok(None) => {}
+            },
+            DHCPV6_OPTION_IA_PD => match self.ia_pd_value() {
+                Ok(Some(ia)) => {
+                    parts.push(format!("iaid=0x{:08x}", ia.iaid()));
+                    parts.push(format!("t1={}", ia.t1()));
+                    parts.push(format!("t2={}", ia.t2()));
+                    parts.push(format!("nested={}", ia.options_ref().len()));
+                }
+                Err(_) => parts.push("ia_pd=malformed".to_string()),
+                Ok(None) => {}
+            },
+            DHCPV6_OPTION_IAADDR => match self.ia_addr_value() {
+                Ok(Some(iaaddr)) => {
+                    parts.push(format!("address={}", iaaddr.address()));
+                    parts.push(format!("preferred={}", iaaddr.preferred_lifetime()));
+                    parts.push(format!("valid={}", iaaddr.valid_lifetime()));
+                    parts.push(format!("nested={}", iaaddr.options_ref().len()));
+                }
+                Err(_) => parts.push("iaaddr=malformed".to_string()),
+                Ok(None) => {}
+            },
+            DHCPV6_OPTION_IAPREFIX => match self.ia_prefix_value() {
+                Ok(Some(prefix)) => {
+                    parts.push(format!("{}/{}", prefix.prefix(), prefix.prefix_length()));
+                    parts.push(format!("preferred={}", prefix.preferred_lifetime()));
+                    parts.push(format!("valid={}", prefix.valid_lifetime()));
+                    parts.push(format!("nested={}", prefix.options_ref().len()));
+                }
+                Err(_) => parts.push("iaprefix=malformed".to_string()),
+                Ok(None) => {}
+            },
+            DHCPV6_OPTION_DNS_SERVERS => match self.dns_servers_value() {
+                Ok(Some(addresses)) => parts.push(format!("addresses={}", addresses.len())),
+                Err(_) => parts.push("addresses=malformed".to_string()),
+                Ok(None) => {}
+            },
+            DHCPV6_OPTION_DOMAIN_LIST => match self.domain_list_value() {
+                Ok(Some(domains)) => parts.push(format!("domains={}", domains.names().len())),
+                Err(_) => parts.push("domains=malformed".to_string()),
+                Ok(None) => {}
+            },
+            DHCPV6_OPTION_SNTP_SERVERS | DHCPV6_OPTION_SIP_SERVER_A => {
+                let addresses = if code == DHCPV6_OPTION_SNTP_SERVERS {
+                    self.sntp_servers_value()
+                } else {
+                    self.sip_server_addresses_value()
+                };
+                match addresses {
+                    Ok(Some(addresses)) => parts.push(format!("addresses={}", addresses.len())),
+                    Err(_) => parts.push("addresses=malformed".to_string()),
+                    Ok(None) => {}
+                }
+            }
+            DHCPV6_OPTION_SIP_SERVER_D | DHCPV6_OPTION_SIP_UA_CS_LIST => {
+                let domains = if code == DHCPV6_OPTION_SIP_SERVER_D {
+                    self.sip_server_domains_value()
+                } else {
+                    self.sip_ua_cs_list_value()
+                };
+                match domains {
+                    Ok(Some(domains)) => parts.push(format!("domains={}", domains.names().len())),
+                    Err(_) => parts.push("domains=malformed".to_string()),
+                    Ok(None) => {}
+                }
+            }
+            DHCPV6_OPTION_RELAY_MSG | DHCPV6_OPTION_DHCPV4_MSG | DHCPV6_OPTION_LQ_RELAY_DATA => {
+                parts.push(format!("message_len={}", self.payload_len()));
+            }
+            _ => {}
+        }
+
+        format!("{name}({})", parts.join(","))
     }
 
     /// True when the payload has zero bytes.
