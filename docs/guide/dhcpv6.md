@@ -197,19 +197,16 @@ assert!(show.contains("OPTION_STATUS_CODE"));
 # Ok::<(), crafter::CrafterError>(())
 ```
 
-## Dry-Run Send Planning
+## Dry-Run Send/Receive Planning
 
-Offline planning is the default. Opening a raw socket writer without `.live()`
-builds dry-run reports instead of putting packets on the wire.
+Offline planning is the default. Use `SendRecv::new().dry_run()` to inspect the
+compiled DHCPv6 request, derived reply filter, target, and retry settings
+without opening capture or putting packets on the wire.
 
 ```rust
 use crafter::prelude::*;
 use std::net::Ipv6Addr;
-
-let writer = PacketWire::raw_socket_interface("dry-run0")
-    .network_layer()
-    .open()?
-    .writer()?;
+use std::time::Duration;
 
 let packet =
     Ipv6::new()
@@ -218,10 +215,26 @@ let packet =
     / Udp::dhcpv6_client()
     / Dhcpv6::solicit(0x010203);
 
-let reports = Transmitter::new(writer).send(packet)?;
-assert!(reports.iter().all(|report| report.is_dry_run()));
+let report = packet.send_recv_report(
+    SendRecv::new()
+        .iface("dry-run0")
+        .network_layer()
+        .dry_run()
+        .timeout(Duration::from_millis(250))
+        .retries(1),
+)?;
+
+assert_eq!(report.attempts(), 1);
+assert!(report.reply().is_none());
+assert_eq!(
+    report.effective_filter(),
+    Some("udp and src host 2001:db8::1 and dst host 2001:db8::10 and src port 547 and dst port 546"),
+);
+assert!(report.send_reports().iter().all(|send| send.is_dry_run()));
 # Ok::<(), crafter::CrafterError>(())
 ```
 
-Live transmission requires an explicit live opt-in and should be run from an
-authorized provider-backed lab or endpoint, not from a default developer host.
+Live DHCPv6 validation should start from the provider-backed lab, oracle, or
+probe workflows in `docs/operations/`, which create disposable endpoints,
+preserve artifacts, and tear them down. Do not turn DHCPv6 examples into
+developer-host raw traffic examples.
