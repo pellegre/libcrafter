@@ -3697,6 +3697,76 @@ mod dhcpv6_information_refresh_tests {
 }
 
 #[cfg(test)]
+mod dhcpv6_max_rt_tests {
+    use super::Dhcpv6Option;
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{
+        Dhcpv6, DHCPV6_OPTION_INF_MAX_RT, DHCPV6_OPTION_SOL_MAX_RT, DHCPV6_TIME_INFINITY,
+    };
+
+    #[test]
+    fn dhcpv6_max_rt_encodes_normal_and_boundary_values() {
+        let sol_zero = Dhcpv6Option::sol_max_rt(0);
+        let sol_normal = Dhcpv6Option::sol_max_rt(3_600);
+        let inf_infinity = Dhcpv6Option::inf_max_rt(DHCPV6_TIME_INFINITY);
+
+        assert_eq!(sol_zero.codepoint(), DHCPV6_OPTION_SOL_MAX_RT);
+        assert_eq!(sol_zero.payload(), &0u32.to_be_bytes());
+        assert_eq!(sol_zero.sol_max_rt_value().unwrap(), Some(0));
+        assert_eq!(sol_normal.sol_max_rt_value().unwrap(), Some(3_600));
+
+        assert_eq!(inf_infinity.codepoint(), DHCPV6_OPTION_INF_MAX_RT);
+        assert_eq!(inf_infinity.payload(), &DHCPV6_TIME_INFINITY.to_be_bytes());
+        assert_eq!(
+            inf_infinity.inf_max_rt_value().unwrap(),
+            Some(DHCPV6_TIME_INFINITY),
+        );
+    }
+
+    #[test]
+    fn dhcpv6_max_rt_layer_roundtrips_values() {
+        let message = Dhcpv6::reply(0x010203).sol_max_rt(3_600).inf_max_rt(7_200);
+        let decoded =
+            Dhcpv6::decode(Packet::from_layer(message).compile().unwrap().as_bytes()).unwrap();
+
+        assert_eq!(decoded.sol_max_rt_value().unwrap(), Some(3_600));
+        assert_eq!(decoded.inf_max_rt_value().unwrap(), Some(7_200));
+    }
+
+    #[test]
+    fn dhcpv6_max_rt_rejects_wrong_length_payloads() {
+        for (option, expected) in [
+            (
+                Dhcpv6Option::raw(DHCPV6_OPTION_SOL_MAX_RT, []),
+                "dhcpv6.option.sol_max_rt",
+            ),
+            (
+                Dhcpv6Option::raw(DHCPV6_OPTION_SOL_MAX_RT, [0, 0, 0]),
+                "dhcpv6.option.sol_max_rt",
+            ),
+            (
+                Dhcpv6Option::raw(DHCPV6_OPTION_INF_MAX_RT, [0, 0, 0, 0, 0]),
+                "dhcpv6.option.inf_max_rt",
+            ),
+        ] {
+            let error = match option.codepoint() {
+                DHCPV6_OPTION_SOL_MAX_RT => option.sol_max_rt_value().unwrap_err(),
+                DHCPV6_OPTION_INF_MAX_RT => option.inf_max_rt_value().unwrap_err(),
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                error,
+                CrafterError::invalid_field_value(
+                    expected,
+                    "payload length does not match option format",
+                ),
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod dhcpv6_boot_options_tests {
     use super::{
         Dhcpv6BootfileParam, Dhcpv6ClientArchitecture, Dhcpv6NetworkInterfaceIdentifier,
