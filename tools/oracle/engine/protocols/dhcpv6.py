@@ -85,6 +85,12 @@ def _apply_dhcpv6_behavior(
         dhcpv6["options"] = _relay_options("reply" in key)
         udp["src_port"] = 547
         udp["dst_port"] = 547
+        if dhcpv6["message_type"] == "relay_forward":
+            _apply_ipv6_multicast_target(
+                fields,
+                ipv6_destination="ff05::1:3",
+                ethernet_destination="33:33:00:01:00:03",
+            )
         return
 
     dhcpv6.pop("hop_count", None)
@@ -125,6 +131,26 @@ def _apply_dhcpv6_behavior(
     else:
         udp["src_port"] = 546
         udp["dst_port"] = 547
+        _apply_ipv6_multicast_target(
+            fields,
+            ipv6_destination="ff02::1:2",
+            ethernet_destination="33:33:00:01:00:02",
+        )
+
+
+def _apply_ipv6_multicast_target(
+    fields: dict[str, JSONObject],
+    *,
+    ipv6_destination: str,
+    ethernet_destination: str,
+) -> None:
+    ipv6 = fields.get("ipv6")
+    if ipv6 is not None:
+        ipv6["dst"] = ipv6_destination
+        ipv6["hop_limit"] = 1
+    ethernet = fields.get("ethernet")
+    if ethernet is not None:
+        ethernet["dst"] = ethernet_destination
 
 
 def _client_id() -> JSONObject:

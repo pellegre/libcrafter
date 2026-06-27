@@ -116,6 +116,9 @@ class Dhcpv6GeneratorSelectionTest(unittest.TestCase):
         self.assertEqual(dhcpv6.get("message_type"), "solicit")
         self.assertIn("transaction_id", dhcpv6)
         self.assertEqual(_option_names(dhcpv6), ["client_id", "oro", "elapsed_time"])
+        self.assertEqual(plan.fields["ipv6"].get("dst"), "ff02::1:2")
+        if "ethernet" in plan.fields:
+            self.assertEqual(plan.fields["ethernet"].get("dst"), "33:33:00:01:00:02")
 
     def test_dhcpv6_reply_uses_server_ports_and_status(self) -> None:
         plan = _first_plan("dhcpv6-reply")
@@ -139,6 +142,7 @@ class Dhcpv6GeneratorSelectionTest(unittest.TestCase):
         self.assertEqual(dhcpv6.get("hop_count"), 1)
         self.assertEqual(dhcpv6.get("link_address"), "2001:db8:100::")
         self.assertEqual(_option_names(dhcpv6), ["interface_id", "relay_msg"])
+        self.assertEqual(plan.fields["ipv6"].get("dst"), "ff05::1:3")
 
     def test_dhcpv6_identity_association_cases_are_nested(self) -> None:
         plan = _first_plan("dhcpv6-ia-pd-iaprefix")

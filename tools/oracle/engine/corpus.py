@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -48,6 +49,7 @@ SKIP_REQUIRES_IPV4 = "requires_ipv4"
 SKIP_REQUIRES_IPV6 = "requires_ipv6"
 SKIP_REQUIRES_L2 = "requires_l2"
 SKIP_REQUIRES_BROADCAST = "requires_broadcast"
+SKIP_REQUIRES_MULTICAST = "requires_multicast"
 SKIP_REQUIRES_PROVIDER_MAC = "requires_provider_mac"
 SKIP_REQUIRES_CONTROLLED_SERVICE = "requires_controlled_service"
 SKIP_PROVIDER_CAPABILITY_UNAVAILABLE = "provider_capability_unavailable"
@@ -95,6 +97,7 @@ _WIRE_PROVIDER_CAPABILITY_PROFILES: dict[str, JSONObject] = {
         "ipv6": True,
         "l2": False,
         "broadcast": False,
+        "multicast": False,
         "provider_mac": False,
         "controlled_service": False,
     },
@@ -106,12 +109,14 @@ _WIRE_PROVIDER_CAPABILITY_PROFILES: dict[str, JSONObject] = {
         "link_layer_send": False,
         "link_layer_capture": False,
         "broadcast": False,
+        "multicast": False,
         "provider_mac_known": False,
         "controlled_services": True,
         "controlled_router": False,
         "ipv4": True,
         "ipv6": False,
         "l2": False,
+        "multicast": False,
         "provider_mac": False,
         "controlled_service": True,
         "unsupported_live_cases": ["icmpv4-source-quench"],
@@ -680,6 +685,13 @@ def _wire_profile_decision(
         reasons.append(SKIP_REQUIRES_L2)
     if _requires_broadcast(plan) and not _capability_bool(capabilities, "broadcast"):
         reasons.append(SKIP_REQUIRES_BROADCAST)
+    if _requires_multicast(plan) and not _provider_capability_bool(
+        capabilities,
+        "multicast",
+        "multicast_send",
+        "ipv6_multicast",
+    ):
+        reasons.append(SKIP_REQUIRES_MULTICAST)
     if _requires_provider_mac(plan) and not _provider_capability_bool(
         capabilities,
         "provider_mac_known",
@@ -744,6 +756,7 @@ def _wire_profile_decision(
                 "link_layer_send": _requires_l2(plan),
                 "link_layer_capture": _requires_l2(plan),
                 "broadcast": _requires_broadcast(plan),
+                "multicast": _requires_multicast(plan),
                 "provider_mac_known": _requires_provider_mac(plan),
                 "controlled_services": _requires_controlled_service(plan),
                 "controlled_router": False,
@@ -799,6 +812,7 @@ def _wire_capability_metadata(capabilities: Mapping[str, object]) -> JSONObject:
         "ipv6",
         "l2",
         "broadcast",
+        "multicast",
         "provider_mac",
         "controlled_service",
         "blocked_udp_ports",
@@ -889,6 +903,10 @@ def _requires_broadcast(plan: PacketPlan) -> bool:
             "broadcast",
         },
     )
+
+
+def _requires_multicast(plan: PacketPlan) -> bool:
+    return _fields_contain_multicast_address(plan.fields)
 
 
 def _requires_provider_mac(plan: PacketPlan) -> bool:
@@ -1127,6 +1145,36 @@ def _fields_contain_value(value: object, needles: set[str]) -> bool:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return any(_fields_contain_value(item, needles) for item in value)
     return False
+
+
+def _fields_contain_multicast_address(value: object) -> bool:
+    if isinstance(value, str):
+        return _is_multicast_address(value)
+    if isinstance(value, Mapping):
+        return any(_fields_contain_multicast_address(item) for item in value.values())
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return any(_fields_contain_multicast_address(item) for item in value)
+    return False
+
+
+def _is_multicast_address(value: str) -> bool:
+    text = value.strip()
+    try:
+        return ipaddress.ip_address(text).is_multicast
+    except ValueError:
+        pass
+    octets = text.split(":")
+    if len(octets) != 6:
+        return False
+    try:
+        mac = [int(octet, 16) for octet in octets]
+    except ValueError:
+        return False
+    if any(octet < 0 or octet > 0xFF for octet in mac):
+        return False
+    if all(octet == 0xFF for octet in mac):
+        return False
+    return bool(mac[0] & 0x01)
 
 
 def _capability_bool(capabilities: Mapping[str, object], key: str) -> bool:
