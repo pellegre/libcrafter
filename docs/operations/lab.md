@@ -181,6 +181,16 @@ that creates endpoints must tear them down before the run is considered
 complete; use `--keep-wire-endpoints` only for an operator-approved debugging
 session and record the manual cleanup plan.
 
+DHCPv6 live validation follows the same lab artifact boundary. Oracle runs use
+`target/oracle/dhcpv6-*`; probe runs use `target/probe/dhcpv6-*`. A confirmed
+run must retain provider session metadata, endpoint/provider manifests, planned
+topology, stimulus and reply bytes, pcaps, decoded `summary()`/`show()` output,
+normalized comparison or validation JSON, command logs, final reports, and
+teardown records. Audit the artifact roots with
+`tools/oracle/engine/dhcpv6_artifacts.py`; dry-run and capability-skipped roots
+should audit as `skipped`, while non-dry-run roots must pass before the lab
+session is considered complete.
+
 ## Metadata And Artifacts
 
 Lab-backed reports include:
