@@ -16,10 +16,7 @@ pub mod registry;
 pub mod status;
 
 pub use constants::*;
-pub(crate) use layer::{
-    append_dhcpv6_packet, is_dhcpv6_port_pair, is_dhcpv6_relay_port_pair,
-    looks_like_dhcpv6_client_payload, looks_like_dhcpv6_relay_payload,
-};
+pub(crate) use layer::{append_dhcpv6_packet, looks_like_dhcpv6_payload};
 pub use layer::{Dhcpv6, Dhcpv6RelayHeader};
 pub use message::Dhcpv6MessageType;
 pub use option::{Dhcpv6Option, Dhcpv6OptionCode, Dhcpv6OptionFormat, Dhcpv6OptionValue};
