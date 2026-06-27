@@ -162,6 +162,14 @@ impl Dhcpv6 {
         Self::client_server_message(Dhcpv6MessageType::Reconfigure, transaction_id)
     }
 
+    /// Create a DHCPv6 Reconfigure message carrying OPTION_RECONF_MSG.
+    pub fn reconfigure_with_message(
+        transaction_id: u32,
+        requested_message_type: Dhcpv6MessageType,
+    ) -> Self {
+        Self::reconfigure(transaction_id).reconfigure_message(requested_message_type)
+    }
+
     /// Create a DHCPv6 Information-request message with the supplied transaction ID.
     pub fn information_request(transaction_id: u32) -> Self {
         Self::client_server_message(Dhcpv6MessageType::InformationRequest, transaction_id)
@@ -329,6 +337,16 @@ impl Dhcpv6 {
         self.option(Dhcpv6Option::rapid_commit())
     }
 
+    /// Append an OPTION_RECONF_MSG option.
+    pub fn reconfigure_message(self, message_type: Dhcpv6MessageType) -> Self {
+        self.option(Dhcpv6Option::reconfigure_message(message_type))
+    }
+
+    /// Append an OPTION_RECONF_ACCEPT option.
+    pub fn reconfigure_accept(self) -> Self {
+        self.option(Dhcpv6Option::reconfigure_accept())
+    }
+
     /// Append an OPTION_STATUS_CODE option.
     pub fn status_code(self, status: Dhcpv6StatusCodeOption) -> Self {
         self.option(Dhcpv6Option::status_code(status))
@@ -426,6 +444,22 @@ impl Dhcpv6 {
     pub fn rapid_commit_present(&self) -> Result<bool> {
         match self.first_option(super::constants::DHCPV6_OPTION_RAPID_COMMIT) {
             Some(option) => option.rapid_commit_present(),
+            None => Ok(false),
+        }
+    }
+
+    /// Decode the first Reconfigure Message option.
+    pub fn reconfigure_message_value(&self) -> Result<Option<Dhcpv6MessageType>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_RECONF_MSG) {
+            Some(option) => option.reconfigure_message_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Return true when a valid Reconfigure Accept option is present.
+    pub fn reconfigure_accept_present(&self) -> Result<bool> {
+        match self.first_option(super::constants::DHCPV6_OPTION_RECONF_ACCEPT) {
+            Some(option) => option.reconfigure_accept_present(),
             None => Ok(false),
         }
     }
@@ -1298,5 +1332,124 @@ mod dhcpv6_basic_options_layer_tests {
         assert_eq!(decoded.preference_value().unwrap(), Some(99));
         assert_eq!(decoded.elapsed_time_value().unwrap(), Some(123));
         assert!(decoded.rapid_commit_present().unwrap());
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_reconfigure_tests {
+    use super::Dhcpv6;
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{
+        Dhcpv6MessageType, Dhcpv6Option, DHCPV6_OPTION_RECONF_ACCEPT, DHCPV6_OPTION_RECONF_MSG,
+    };
+
+    #[test]
+    fn dhcpv6_reconfigure_message_option_accepts_registered_target_values() {
+        let renew = Dhcpv6Option::reconfigure_message(Dhcpv6MessageType::Renew);
+        let information_request =
+            Dhcpv6Option::reconfigure_message(Dhcpv6MessageType::InformationRequest);
+
+        assert_eq!(renew.codepoint(), DHCPV6_OPTION_RECONF_MSG);
+        assert_eq!(renew.payload(), &[Dhcpv6MessageType::Renew.code()]);
+        assert_eq!(
+            renew.reconfigure_message_value().unwrap(),
+            Some(Dhcpv6MessageType::Renew),
+        );
+        assert_eq!(
+            information_request.reconfigure_message_value().unwrap(),
+            Some(Dhcpv6MessageType::InformationRequest),
+        );
+    }
+
+    #[test]
+    fn dhcpv6_reconfigure_message_option_preserves_unknown_values() {
+        let option = Dhcpv6Option::reconfigure_message(Dhcpv6MessageType::Unknown(250));
+
+        assert_eq!(option.payload(), &[250]);
+        assert_eq!(
+            option.reconfigure_message_value().unwrap(),
+            Some(Dhcpv6MessageType::Unknown(250)),
+        );
+    }
+
+    #[test]
+    fn dhcpv6_reconfigure_accept_option_is_zero_length() {
+        let option = Dhcpv6Option::reconfigure_accept();
+
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_RECONF_ACCEPT);
+        assert_eq!(option.payload(), &[]);
+        assert!(option.reconfigure_accept_present().unwrap());
+        assert_eq!(option.encode().unwrap(), vec![0x00, 0x14, 0x00, 0x00],);
+    }
+
+    #[test]
+    fn dhcpv6_reconfigure_options_reject_bad_lengths() {
+        let empty_reconfigure = Dhcpv6Option::empty(DHCPV6_OPTION_RECONF_MSG);
+        let long_reconfigure = Dhcpv6Option::raw(DHCPV6_OPTION_RECONF_MSG, [5, 11]);
+        let bad_accept = Dhcpv6Option::raw(DHCPV6_OPTION_RECONF_ACCEPT, [1]);
+
+        assert_eq!(
+            empty_reconfigure.reconfigure_message_value().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.reconf_msg",
+                "payload length does not match option format",
+            ),
+        );
+        assert_eq!(
+            long_reconfigure.reconfigure_message_value().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.reconf_msg",
+                "payload length does not match option format",
+            ),
+        );
+        assert_eq!(
+            bad_accept.reconfigure_accept_present().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.reconf_accept",
+                "payload length does not match option format",
+            ),
+        );
+        assert_eq!(long_reconfigure.payload(), &[5, 11]);
+        assert_eq!(bad_accept.payload(), &[1]);
+    }
+
+    #[test]
+    fn dhcpv6_reconfigure_packet_builder_roundtrips_message_option() {
+        let message = Dhcpv6::reconfigure_with_message(0x010203, Dhcpv6MessageType::Renew)
+            .reconfigure_accept();
+
+        assert_eq!(message.message_type_value(), Dhcpv6MessageType::Reconfigure);
+        assert_eq!(
+            message.reconfigure_message_value().unwrap(),
+            Some(Dhcpv6MessageType::Renew),
+        );
+        assert!(message.reconfigure_accept_present().unwrap());
+
+        let bytes = Packet::from_layer(message).compile().unwrap();
+        assert_eq!(
+            bytes.as_bytes(),
+            &[10, 0x01, 0x02, 0x03, 0x00, 0x13, 0x00, 0x01, 0x05, 0x00, 0x14, 0x00, 0x00,],
+        );
+
+        let decoded = Dhcpv6::decode(bytes.as_bytes()).unwrap();
+        assert_eq!(decoded.message_type_value(), Dhcpv6MessageType::Reconfigure);
+        assert_eq!(
+            decoded.reconfigure_message_value().unwrap(),
+            Some(Dhcpv6MessageType::Renew),
+        );
+        assert!(decoded.reconfigure_accept_present().unwrap());
+    }
+
+    #[test]
+    fn dhcpv6_reconfigure_packet_decodes_unknown_message_option() {
+        let bytes = [10, 0xaa, 0xbb, 0xcc, 0x00, 0x13, 0x00, 0x01, 250];
+        let decoded = Dhcpv6::decode(&bytes).unwrap();
+
+        assert_eq!(decoded.transaction_id_value(), 0xaabbcc);
+        assert_eq!(
+            decoded.reconfigure_message_value().unwrap(),
+            Some(Dhcpv6MessageType::Unknown(250)),
+        );
     }
 }
