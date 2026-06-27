@@ -49,6 +49,7 @@ PROBE_CAPABILITY_NAMES = (
     "tcp_closed_port",
     "dns_service",
     "dhcpv4_service",
+    "dhcpv6_service",
     "udp_service",
     "udp_large_payload",
     "udp_ipv4_zero_checksum",
@@ -288,6 +289,11 @@ def probe_capabilities_from_lab_capabilities(
                 "link_layer_send",
                 "link_layer_capture",
                 "broadcast",
+            ],
+            "dhcpv6_service": [
+                "ipv6_unicast",
+                "multicast",
+                "controlled_services",
             ],
             "udp_service": ["ipv4_unicast", "controlled_services"],
             "udp_large_payload": [

@@ -33,6 +33,7 @@ _LEGACY_CASE_NAMES = (
 # catalog so the suite can grow without re-pinning a literal here.
 _BEHAVIOR_CASE_COUNT = len(cases.BEHAVIOR_PROFILE_CASE_NAMES)
 _BGP_CASE_COUNT = len(cases.BGP_SESSION_PROFILE_CASE_NAMES)
+_DHCPV6_SMOKE_CASE_COUNT = len(cases.DHCPV6_SMOKE_PROFILE_CASE_NAMES)
 _MQTT_SMOKE_CASE_COUNT = len(cases.MQTT_SMOKE_PROFILE_CASE_NAMES)
 _OSPF_SMOKE_CASE_COUNT = len(cases.OSPF_SMOKE_PROFILE_CASE_NAMES)
 _QUIC_SMOKE_CASE_COUNT = len(cases.QUIC_SMOKE_PROFILE_CASE_NAMES)
@@ -134,6 +135,7 @@ class ProbeProfileMembershipTest(unittest.TestCase):
             (
                 "behavior",
                 "bgp-smoke",
+                "dhcpv6-smoke",
                 "igmp",
                 "ipsec",
                 "mqtt-smoke",
@@ -192,6 +194,35 @@ class ProbeProfileMembershipTest(unittest.TestCase):
                 self.assertIs(case.metadata["stateful"], True)
                 self.assertIs(case.metadata["planned_only"], True)
         self.assertNotIn("mqtt-connect-connack", cases.SMOKE_PROFILE_CASE_NAMES)
+
+    def test_dhcpv6_smoke_profile_selects_planned_only_cases(self) -> None:
+        names = cases.profile_case_names("dhcpv6-smoke")
+
+        self.assertEqual(
+            names,
+            (
+                "dhcpv6-information-request-reply",
+                "dhcpv6-solicit-advertise",
+                "dhcpv6-request-reply-ia-na",
+                "dhcpv6-prefix-delegation",
+                "dhcpv6-rapid-commit",
+                "dhcpv6-relay-forward-reply",
+                "dhcpv6-reconfigure-observation",
+                "dhcpv6-leasequery-plan",
+                "dhcpv6-unknown-option-preservation",
+                "dhcpv6-repeated-transaction-id",
+            ),
+        )
+        selected = cases.profile_selected_cases("dhcpv6-smoke", [])
+        self.assertEqual([case.name for case in selected], list(names))
+        for case in selected:
+            self.assertEqual(case.metadata["protocol"], "dhcpv6")
+            self.assertIs(case.metadata["planned_only"], True)
+            self.assertEqual(case.required_capabilities, ["dhcpv6_service"])
+        self.assertNotIn(
+            "dhcpv6-information-request-reply",
+            cases.BEHAVIOR_PROFILE_CASE_NAMES,
+        )
 
     def test_quic_smoke_profile_selects_quic_cases(self) -> None:
         names = cases.profile_case_names("quic-smoke")
@@ -317,6 +348,16 @@ class ProbeProfileDefaultCountTest(unittest.TestCase):
         self.assertEqual(
             cases.profile_default_count("bgp-smoke"),
             len(cases.BGP_SESSION_PROFILE_CASE_NAMES),
+        )
+
+    def test_dhcpv6_smoke_profile_default_count_is_full_suite(self) -> None:
+        self.assertEqual(
+            cases.profile_default_count("dhcpv6-smoke"),
+            _DHCPV6_SMOKE_CASE_COUNT,
+        )
+        self.assertEqual(
+            cases.profile_default_count("dhcpv6-smoke"),
+            len(cases.DHCPV6_SMOKE_PROFILE_CASE_NAMES),
         )
 
     def test_mqtt_smoke_profile_default_count_is_full_suite(self) -> None:

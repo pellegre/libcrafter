@@ -419,6 +419,19 @@ class ProbePlanningRegistryTest(unittest.TestCase):
                         name,
                     )
                     self.assertEqual(plan["validation"]["driver"], "snmp_probe", name)
+                elif case.metadata.get("protocol") == "dhcpv6":
+                    self.assertEqual(plan["protocol"], "dhcpv6", name)
+                    self.assertIn("dhcpv6", plan, name)
+                    self.assertEqual(
+                        plan["target_service"]["kind"],
+                        "dhcpv6-controlled-responder",
+                        name,
+                    )
+                    self.assertEqual(
+                        plan["stimulus_driver"]["name"],
+                        "dhcpv6_probe",
+                        name,
+                    )
                 else:
                     self.fail(f"unhandled planned-only registered case {name}")
             else:
