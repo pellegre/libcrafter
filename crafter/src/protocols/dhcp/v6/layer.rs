@@ -179,6 +179,16 @@ impl Dhcpv6 {
         Self::client_server_message(Dhcpv6MessageType::InformationRequest, transaction_id)
     }
 
+    /// Create a DHCPv6 ADDR-REG-INFORM message with the supplied transaction ID.
+    pub fn addr_reg_inform(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::AddrRegInform, transaction_id)
+    }
+
+    /// Create a DHCPv6 ADDR-REG-REPLY message with the supplied transaction ID.
+    pub fn addr_reg_reply(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::AddrRegReply, transaction_id)
+    }
+
     /// Create a DHCPv6 Relay-forward message body.
     pub fn relay_forward(link_address: Ipv6Addr, peer_address: Ipv6Addr) -> Self {
         Self::new()
@@ -350,6 +360,11 @@ impl Dhcpv6 {
     /// Append an OPTION_RAPID_COMMIT option.
     pub fn rapid_commit(self) -> Self {
         self.option(Dhcpv6Option::rapid_commit())
+    }
+
+    /// Append an OPTION_ADDR_REG_ENABLE option.
+    pub fn addr_reg_enable(self) -> Self {
+        self.option(Dhcpv6Option::addr_reg_enable())
     }
 
     /// Append an OPTION_AUTH option.
@@ -571,6 +586,14 @@ impl Dhcpv6 {
     pub fn rapid_commit_present(&self) -> Result<bool> {
         match self.first_option(super::constants::DHCPV6_OPTION_RAPID_COMMIT) {
             Some(option) => option.rapid_commit_present(),
+            None => Ok(false),
+        }
+    }
+
+    /// Return true when a valid Address Registration Enable option is present.
+    pub fn addr_reg_enable_present(&self) -> Result<bool> {
+        match self.first_option(super::constants::DHCPV6_OPTION_ADDR_REG_ENABLE) {
+            Some(option) => option.addr_reg_enable_present(),
             None => Ok(false),
         }
     }
@@ -1818,7 +1841,9 @@ mod dhcpv6_reconfigure_tests {
     use crate::error::CrafterError;
     use crate::packet::Packet;
     use crate::protocols::dhcp::v6::{
-        Dhcpv6MessageType, Dhcpv6Option, DHCPV6_OPTION_RECONF_ACCEPT, DHCPV6_OPTION_RECONF_MSG,
+        Dhcpv6MessageType, Dhcpv6Option, Dhcpv6StatusCode, DHCPV6_ADDR_REG_INFORM,
+        DHCPV6_ADDR_REG_REPLY, DHCPV6_OPTION_ADDR_REG_ENABLE, DHCPV6_OPTION_RECONF_ACCEPT,
+        DHCPV6_OPTION_RECONF_MSG,
     };
 
     #[test]
@@ -1928,5 +1953,70 @@ mod dhcpv6_reconfigure_tests {
             decoded.reconfigure_message_value().unwrap(),
             Some(Dhcpv6MessageType::Unknown(250)),
         );
+    }
+
+    #[test]
+    fn dhcpv6_address_registration_message_codepoints_and_enable_option() {
+        let enable = Dhcpv6Option::addr_reg_enable();
+
+        assert_eq!(
+            Dhcpv6MessageType::AddrRegInform.code(),
+            DHCPV6_ADDR_REG_INFORM
+        );
+        assert_eq!(
+            Dhcpv6MessageType::AddrRegReply.code(),
+            DHCPV6_ADDR_REG_REPLY
+        );
+        assert_eq!(enable.codepoint(), DHCPV6_OPTION_ADDR_REG_ENABLE);
+        assert_eq!(enable.payload(), &[]);
+        assert!(enable.addr_reg_enable_present().unwrap());
+
+        assert_eq!(
+            Dhcpv6Option::raw(DHCPV6_OPTION_ADDR_REG_ENABLE, [1])
+                .addr_reg_enable_present()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.addr_reg_enable",
+                "payload length does not match option format",
+            ),
+        );
+    }
+
+    #[test]
+    fn dhcpv6_address_registration_inform_roundtrips_unknown_options() {
+        let unknown = Dhcpv6Option::raw(65_004u16, [0xde, 0xad]);
+        let message = Dhcpv6::addr_reg_inform(0x010203)
+            .addr_reg_enable()
+            .client_id([0, 3, 0, 1, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff])
+            .option(unknown.clone());
+        let bytes = Packet::from_layer(message).compile().unwrap();
+        let decoded = Dhcpv6::decode(bytes.as_bytes()).unwrap();
+
+        assert_eq!(
+            decoded.message_type_value(),
+            Dhcpv6MessageType::AddrRegInform
+        );
+        assert_eq!(decoded.transaction_id_value(), 0x010203);
+        assert!(decoded.addr_reg_enable_present().unwrap());
+        assert_eq!(decoded.options_ref().last(), Some(&unknown));
+        assert_eq!(Packet::from_layer(decoded).compile().unwrap(), bytes);
+    }
+
+    #[test]
+    fn dhcpv6_address_registration_reply_carries_status_only_as_packet_data() {
+        let message = Dhcpv6::addr_reg_reply(0x0a0b0c)
+            .status(Dhcpv6StatusCode::AddressInUse)
+            .option(Dhcpv6Option::raw(65_005u16, [1, 2, 3]));
+        let decoded =
+            Dhcpv6::decode(Packet::from_layer(message).compile().unwrap().as_bytes()).unwrap();
+        let status = decoded.status_code_value().unwrap().unwrap();
+
+        assert_eq!(
+            decoded.message_type_value(),
+            Dhcpv6MessageType::AddrRegReply
+        );
+        assert_eq!(status.status(), Dhcpv6StatusCode::AddressInUse);
+        assert_eq!(status.message_bytes(), &[]);
+        assert_eq!(decoded.options_ref()[1].payload(), &[1, 2, 3]);
     }
 }
