@@ -103,6 +103,90 @@ fn dhcpv4_public_api_exports_build_discover() -> crafter::Result<()> {
     Ok(())
 }
 
+#[test]
+fn dhcpv6_public_api_prelude_builds_reply() -> crafter::Result<()> {
+    let client_duid = Dhcpv6Duid::ll(1, documentation_mac(0x61).octets());
+    let server_duid = Dhcpv6Duid::ll(1, documentation_mac(0x62).octets());
+    let ia_na = Dhcpv6IaNa::new(0x0102_0304, 60, 120).ia_addr(Dhcpv6IaAddr::new(
+        Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x61),
+        300,
+        600,
+    ))?;
+
+    let dhcpv6: Dhcpv6 = Dhcpv6::reply(0x0a0b0c)
+        .client_duid(client_duid.clone())
+        .server_duid(server_duid.clone())
+        .ia_na(ia_na)?
+        .status(Dhcpv6StatusCode::Success)
+        .option(Dhcpv6Option::raw(65_000u16, [0xde, 0xad]));
+
+    let packet = Ipv6::new()
+        .src(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1))
+        .dst(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x61))
+        / Udp::dhcpv6_server()
+        / dhcpv6;
+    let compiled = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, compiled.as_bytes())?;
+    let decoded_dhcpv6 = decoded
+        .layer::<Dhcpv6>()
+        .expect("prelude-built packet should decode as DHCPv6");
+
+    assert_eq!(
+        decoded_dhcpv6.message_type_value(),
+        Dhcpv6MessageType::Reply
+    );
+    assert_eq!(decoded_dhcpv6.transaction_id_value(), 0x0a0b0c);
+    assert_eq!(decoded_dhcpv6.client_duid_value()?, Some(client_duid));
+    assert_eq!(decoded_dhcpv6.server_duid_value()?, Some(server_duid));
+    assert_eq!(decoded_dhcpv6.ia_na_value()?.unwrap().iaid(), 0x0102_0304);
+    assert_eq!(DHCPV6_CLIENT_PORT, 546);
+    assert_eq!(DHCPV6_SERVER_PORT, 547);
+
+    Ok(())
+}
+
+#[test]
+fn dhcpv6_public_api_crate_root_imports_build_relay() -> crafter::Result<()> {
+    use crafter::{
+        Dhcpv6 as RootDhcpv6, Dhcpv6Duid as RootDhcpv6Duid,
+        Dhcpv6MessageType as RootDhcpv6MessageType, Dhcpv6RelayHeader as RootDhcpv6RelayHeader,
+        DHCPV6_RELAY_FORW,
+    };
+
+    let client_duid = RootDhcpv6Duid::ll(1, documentation_mac(0x63).octets());
+    let relay_header = RootDhcpv6RelayHeader::new(
+        Ipv6Addr::new(0x2001, 0x0db8, 0x0100, 0, 0, 0, 0, 0),
+        Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x63),
+    )
+    .hop_count(1);
+    let dhcpv6 = RootDhcpv6::new()
+        .message_type(RootDhcpv6MessageType::RelayForw)
+        .relay_header(relay_header)
+        .interface_id(b"root-api".to_vec())
+        .relay_message(RootDhcpv6::solicit(0x010203).client_duid(client_duid.clone()))?;
+
+    let packet = crafter::Ipv6::new()
+        .src(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0xfe))
+        .dst(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1))
+        / crafter::Udp::dhcpv6_relay()
+        / dhcpv6;
+    let compiled = packet.compile()?;
+    let decoded =
+        crafter::Packet::decode_from_l3(crafter::NetworkLayer::Ipv6, compiled.as_bytes())?;
+    let decoded_dhcpv6 = decoded
+        .layer::<RootDhcpv6>()
+        .expect("crate-root imports should decode as DHCPv6");
+    let relayed = decoded_dhcpv6
+        .relayed_message_value()?
+        .expect("relay-forward should preserve inner message");
+
+    assert_eq!(decoded_dhcpv6.message_type_code_value(), DHCPV6_RELAY_FORW);
+    assert_eq!(relayed.message_type_value(), RootDhcpv6MessageType::Solicit);
+    assert_eq!(relayed.client_duid_value()?, Some(client_duid));
+
+    Ok(())
+}
+
 #[cfg(feature = "whad")]
 #[test]
 fn whad_reexport_public_api_compile() {
