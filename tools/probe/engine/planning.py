@@ -107,6 +107,15 @@ from .protocols.dhcpv4 import (  # noqa: F401  (re-exported for identity)
     dhcpv4_hostname,
     dhcpv4_parameter_request_list,
 )
+# The DHCPv6 planning surface (the planned-only smoke cases' shared
+# ``_dhcpv6_probe_plan`` builder plus deterministic identity helpers) lives in
+# the DHCPv6 plugin module. Re-import it so identity pins can compare the same
+# function object that the registry exposes.
+from .protocols.dhcpv6 import (  # noqa: F401  (re-exported for identity)
+    _dhcpv6_probe_plan,
+    dhcpv6_duid_ll,
+    dhcpv6_transaction_id,
+)
 # The UDP planning surface (cases, builders, the multi-send helper, the shared
 # echo scaffolding, and the MTU/length-boundary constants) lives in the UDP
 # plugin module. Re-import each moved builder, the multi-send helper, and the

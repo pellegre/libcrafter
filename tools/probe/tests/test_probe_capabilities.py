@@ -15,11 +15,13 @@ from tools.probe.engine.model import ProbeRunRequest
 _LINK_LAYER_SUBSTRATE = {
     "provider": "qemu",
     "ipv4_unicast": True,
+    "ipv6_unicast": True,
     "controlled_services": True,
     "controlled_router": False,
     "link_layer_send": True,
     "link_layer_capture": True,
     "broadcast": True,
+    "multicast": True,
     "provider_mac_known": True,
     "live_packet_exchange": True,
 }
@@ -27,11 +29,13 @@ _LINK_LAYER_SUBSTRATE = {
 _L3_ONLY_SUBSTRATE = {
     "provider": "hetzner",
     "ipv4_unicast": True,
+    "ipv6_unicast": False,
     "controlled_services": True,
     "controlled_router": False,
     "link_layer_send": False,
     "link_layer_capture": False,
     "broadcast": False,
+    "multicast": False,
     "provider_mac_known": False,
     "live_packet_exchange": True,
 }
@@ -54,6 +58,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
     def test_new_capability_names_are_registered(self) -> None:
         for name in (
             "dhcpv4_service",
+            "dhcpv6_service",
             "udp_service",
             "udp_large_payload",
             "udp_ipv4_zero_checksum",
@@ -84,6 +89,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
         for name in (
             "dns_service",
             "dhcpv4_service",
+            "dhcpv6_service",
             "udp_service",
             "udp_large_payload",
             "udp_ipv4_zero_checksum",
@@ -143,6 +149,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
         # DHCPv4 and ARP need a link-layer substrate, broadcast, and provider MAC.
         for denied in (
             "dhcpv4_service",
+            "dhcpv6_service",
             "arp_resolution",
             "link_layer_arp",
             "provider_mac",
@@ -225,8 +232,45 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "ikev2",
             "ospf_neighbor_peer",
             "snmp_peer",
+            "dhcpv6_service",
         ):
             self.assertIs(derived[denied], False, denied)
+
+    def test_dhcpv6_service_requires_ipv6_multicast_and_controlled_service(self) -> None:
+        base = dict(_LINK_LAYER_SUBSTRATE)
+
+        for key in ("ipv6_unicast", "multicast", "controlled_services"):
+            with self.subTest(missing=key):
+                substrate = dict(base)
+                substrate[key] = False
+                derived = probe_capabilities_from_lab_capabilities(
+                    "dhcpv6-test",
+                    substrate,
+                    dry_run=True,
+                )
+
+                self.assertIs(derived["dhcpv6_service"], False)
+
+        derived = probe_capabilities_from_lab_capabilities(
+            "dhcpv6-test",
+            base,
+            dry_run=True,
+        )
+        self.assertIs(derived["dhcpv6_service"], True)
+
+    def test_explicit_dhcpv6_service_denial_disables_dhcpv6_only(self) -> None:
+        substrate = dict(_LINK_LAYER_SUBSTRATE)
+        substrate["dhcpv6_service"] = False
+
+        derived = probe_capabilities_from_lab_capabilities(
+            "qemu",
+            substrate,
+            dry_run=True,
+        )
+
+        self.assertIs(derived["dhcpv6_service"], False)
+        self.assertIs(derived["dhcpv4_service"], True)
+        self.assertIs(derived["dns_service"], True)
 
     def test_explicit_bgp_peer_denial_disables_bgp_only(self) -> None:
         substrate = dict(_LINK_LAYER_SUBSTRATE)
@@ -518,6 +562,13 @@ class ProbeSkipReasonTest(unittest.TestCase):
         self.assertEqual(
             capabilities.skip_reason_for_missing_capability(case, "snmp_peer"),
             capabilities.SKIP_REQUIRES_SNMP_PEER,
+        )
+
+    def test_dhcpv6_service_maps_to_stable_reason(self) -> None:
+        case = cases.PROBE_CASE_BY_NAME["dhcpv6-information-request-reply"]
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(case, "dhcpv6_service"),
+            capabilities.SKIP_REQUIRES_DHCPV6_SERVICE,
         )
 
     def test_unknown_capability_falls_back_to_unavailable(self) -> None:

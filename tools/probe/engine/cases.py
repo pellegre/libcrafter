@@ -195,6 +195,7 @@ IGMP_PROFILE = "igmp"
 IPSEC_PROFILE = "ipsec"
 QUIC_SMOKE_PROFILE = "quic-smoke"
 SNMP_SMOKE_PROFILE = "snmp-smoke"
+DHCPV6_SMOKE_PROFILE = "dhcpv6-smoke"
 
 # Legacy default count used by the smoke profile and any profile without an
 # explicit default; preserves the pre-behavior-suite CLI behavior.
@@ -417,6 +418,15 @@ QUIC_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     if case.metadata.get("protocol") == "quic"
 )
 
+# The DHCPv6 smoke profile carries planned-only DHCPv6 client/server and relay
+# exchanges. It is isolated from the general behavior profile until the
+# stimulus endpoint grows a live DHCPv6 adapter.
+DHCPV6_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name
+    for case in _registry_cases()
+    if case.metadata.get("protocol") == "dhcpv6"
+)
+
 
 # Profiles that select an explicit ordered case subset. A profile not listed
 # here selects the full catalog. ``smoke`` is pinned to the historical
@@ -439,6 +449,7 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     IPSEC_PROFILE: IPSEC_PROFILE_CASE_NAMES,
     QUIC_SMOKE_PROFILE: QUIC_SMOKE_PROFILE_CASE_NAMES,
     SNMP_SMOKE_PROFILE: SNMP_SMOKE_PROFILE_CASE_NAMES,
+    DHCPV6_SMOKE_PROFILE: DHCPV6_SMOKE_PROFILE_CASE_NAMES,
 }
 
 # Per-profile default counts used when no explicit ``--count`` is supplied. The
@@ -454,6 +465,7 @@ _PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     IPSEC_PROFILE: len(IPSEC_PROFILE_CASE_NAMES),
     QUIC_SMOKE_PROFILE: len(QUIC_SMOKE_PROFILE_CASE_NAMES),
     SNMP_SMOKE_PROFILE: len(SNMP_SMOKE_PROFILE_CASE_NAMES),
+    DHCPV6_SMOKE_PROFILE: len(DHCPV6_SMOKE_PROFILE_CASE_NAMES),
 }
 
 
