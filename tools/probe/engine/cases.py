@@ -205,6 +205,7 @@ QUIC_SMOKE_PROFILE = "quic-smoke"
 SNMP_SMOKE_PROFILE = "snmp-smoke"
 DHCPV6_SMOKE_PROFILE = "dhcpv6-smoke"
 DHCPV6_RELAY_PROFILE = "dhcpv6-relay"
+DHCPV6_ADVANCED_PROFILE = "dhcpv6-advanced"
 
 # Legacy default count used by the smoke profile and any profile without an
 # explicit default; preserves the pre-behavior-suite CLI behavior.
@@ -434,12 +435,23 @@ DHCPV6_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     case.name
     for case in _registry_cases()
     if case.metadata.get("protocol") == "dhcpv6"
+    and case.metadata.get("profile") != DHCPV6_ADVANCED_PROFILE
 )
 
 # Relay validation needs a three-role stimulus/relay/target lab topology, so it
 # also has a focused profile that repeats only the relay-forward/reply case.
 DHCPV6_RELAY_PROFILE_CASE_NAMES: tuple[str, ...] = (
     "dhcpv6-relay-forward-reply",
+)
+
+# Advanced DHCPv6 behavior has an isolated profile because Reconfigure, Bulk
+# Leasequery, and Active Leasequery need controlled peers beyond the current
+# UDP responder path.
+DHCPV6_ADVANCED_PROFILE_CASE_NAMES: tuple[str, ...] = (
+    "dhcpv6-reconfigure-observation",
+    "dhcpv6-leasequery-plan",
+    "dhcpv6-bulk-leasequery-plan",
+    "dhcpv6-active-leasequery-plan",
 )
 
 
@@ -466,6 +478,7 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     SNMP_SMOKE_PROFILE: SNMP_SMOKE_PROFILE_CASE_NAMES,
     DHCPV6_SMOKE_PROFILE: DHCPV6_SMOKE_PROFILE_CASE_NAMES,
     DHCPV6_RELAY_PROFILE: DHCPV6_RELAY_PROFILE_CASE_NAMES,
+    DHCPV6_ADVANCED_PROFILE: DHCPV6_ADVANCED_PROFILE_CASE_NAMES,
 }
 
 # Per-profile default counts used when no explicit ``--count`` is supplied. The
@@ -483,6 +496,7 @@ _PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     SNMP_SMOKE_PROFILE: len(SNMP_SMOKE_PROFILE_CASE_NAMES),
     DHCPV6_SMOKE_PROFILE: len(DHCPV6_SMOKE_PROFILE_CASE_NAMES),
     DHCPV6_RELAY_PROFILE: len(DHCPV6_RELAY_PROFILE_CASE_NAMES),
+    DHCPV6_ADVANCED_PROFILE: len(DHCPV6_ADVANCED_PROFILE_CASE_NAMES),
 }
 
 

@@ -33,6 +33,7 @@ _LEGACY_CASE_NAMES = (
 # catalog so the suite can grow without re-pinning a literal here.
 _BEHAVIOR_CASE_COUNT = len(cases.BEHAVIOR_PROFILE_CASE_NAMES)
 _BGP_CASE_COUNT = len(cases.BGP_SESSION_PROFILE_CASE_NAMES)
+_DHCPV6_ADVANCED_CASE_COUNT = len(cases.DHCPV6_ADVANCED_PROFILE_CASE_NAMES)
 _DHCPV6_RELAY_CASE_COUNT = len(cases.DHCPV6_RELAY_PROFILE_CASE_NAMES)
 _DHCPV6_SMOKE_CASE_COUNT = len(cases.DHCPV6_SMOKE_PROFILE_CASE_NAMES)
 _MQTT_SMOKE_CASE_COUNT = len(cases.MQTT_SMOKE_PROFILE_CASE_NAMES)
@@ -136,6 +137,7 @@ class ProbeProfileMembershipTest(unittest.TestCase):
             (
                 "behavior",
                 "bgp-smoke",
+                "dhcpv6-advanced",
                 "dhcpv6-relay",
                 "dhcpv6-smoke",
                 "igmp",
@@ -246,6 +248,29 @@ class ProbeProfileMembershipTest(unittest.TestCase):
             selected[0].required_capabilities,
             ["dhcpv6_service", "dhcpv6_relay_topology"],
         )
+
+    def test_dhcpv6_advanced_profile_selects_advanced_cases(self) -> None:
+        names = cases.profile_case_names("dhcpv6-advanced")
+
+        self.assertEqual(
+            names,
+            (
+                "dhcpv6-reconfigure-observation",
+                "dhcpv6-leasequery-plan",
+                "dhcpv6-bulk-leasequery-plan",
+                "dhcpv6-active-leasequery-plan",
+            ),
+        )
+        selected = cases.profile_selected_cases("dhcpv6-advanced", [])
+        self.assertEqual([case.name for case in selected], list(names))
+        self.assertEqual(
+            cases.profile_default_count("dhcpv6-advanced"),
+            _DHCPV6_ADVANCED_CASE_COUNT,
+        )
+        for case in selected:
+            self.assertEqual(case.metadata["protocol"], "dhcpv6")
+            self.assertIs(case.metadata["planned_only"], True)
+            self.assertEqual(case.required_capabilities, ["dhcpv6_service"])
 
     def test_quic_smoke_profile_selects_quic_cases(self) -> None:
         names = cases.profile_case_names("quic-smoke")
