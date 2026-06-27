@@ -22,13 +22,14 @@ use super::constants::{
     DHCPV6_OPTION_IAADDR, DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD,
     DHCPV6_OPTION_INFORMATION_REFRESH_TIME, DHCPV6_OPTION_INF_MAX_RT, DHCPV6_OPTION_INTERFACE_ID,
     DHCPV6_OPTION_NEW_POSIX_TIMEZONE, DHCPV6_OPTION_NEW_TZDB_TIMEZONE, DHCPV6_OPTION_NII,
-    DHCPV6_OPTION_NTP_SERVER, DHCPV6_OPTION_ORO, DHCPV6_OPTION_PREFERENCE,
-    DHCPV6_OPTION_RAPID_COMMIT, DHCPV6_OPTION_RECONF_ACCEPT, DHCPV6_OPTION_RECONF_MSG,
-    DHCPV6_OPTION_RELAY_ID, DHCPV6_OPTION_RELAY_MSG, DHCPV6_OPTION_REMOTE_ID, DHCPV6_OPTION_RSOO,
-    DHCPV6_OPTION_SERVERID, DHCPV6_OPTION_SIP_SERVER_A, DHCPV6_OPTION_SIP_SERVER_D,
-    DHCPV6_OPTION_SIP_UA_CS_LIST, DHCPV6_OPTION_SNTP_SERVERS, DHCPV6_OPTION_SOL_MAX_RT,
-    DHCPV6_OPTION_STATUS_CODE, DHCPV6_OPTION_SUBSCRIBER_ID, DHCPV6_OPTION_USER_CLASS,
-    DHCPV6_OPTION_VENDOR_CLASS, DHCPV6_OPTION_VENDOR_OPTS, DHCPV6_TIME_INFINITY,
+    DHCPV6_OPTION_NTP_SERVER, DHCPV6_OPTION_ORO, DHCPV6_OPTION_PD_EXCLUDE,
+    DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT, DHCPV6_OPTION_RECONF_ACCEPT,
+    DHCPV6_OPTION_RECONF_MSG, DHCPV6_OPTION_RELAY_ID, DHCPV6_OPTION_RELAY_MSG,
+    DHCPV6_OPTION_REMOTE_ID, DHCPV6_OPTION_RSOO, DHCPV6_OPTION_SERVERID,
+    DHCPV6_OPTION_SIP_SERVER_A, DHCPV6_OPTION_SIP_SERVER_D, DHCPV6_OPTION_SIP_UA_CS_LIST,
+    DHCPV6_OPTION_SNTP_SERVERS, DHCPV6_OPTION_SOL_MAX_RT, DHCPV6_OPTION_STATUS_CODE,
+    DHCPV6_OPTION_SUBSCRIBER_ID, DHCPV6_OPTION_USER_CLASS, DHCPV6_OPTION_VENDOR_CLASS,
+    DHCPV6_OPTION_VENDOR_OPTS, DHCPV6_TIME_INFINITY,
 };
 use super::duid::Dhcpv6Duid;
 use super::message::Dhcpv6MessageType;
@@ -39,6 +40,10 @@ const DHCPV6_IA_NA_HEADER_LEN: usize = 12;
 const DHCPV6_IA_PD_HEADER_LEN: usize = 12;
 const DHCPV6_IAPREFIX_HEADER_LEN: usize = 25;
 const DHCPV6_PREFIX_LEN_MAX: u8 = 128;
+const DHCPV6_PD_EXCLUDE_PAYLOAD_MIN_LEN: usize = 2;
+const DHCPV6_PD_EXCLUDE_PAYLOAD_MAX_LEN: usize = 17;
+const DHCPV6_PD_EXCLUDE_SUBNET_ID_MIN_LEN: usize = 1;
+const DHCPV6_PD_EXCLUDE_SUBNET_ID_MAX_LEN: usize = 16;
 
 /// DHCPv6 option codepoint.
 ///
@@ -341,6 +346,13 @@ pub struct Dhcpv6IaPrefix {
     prefix_length: u8,
     prefix: Ipv6Addr,
     options: Vec<Dhcpv6Option>,
+}
+
+/// DHCPv6 OPTION_PD_EXCLUDE payload.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6PdExclude {
+    prefix_length: u8,
+    subnet_id: Vec<u8>,
 }
 
 /// DHCPv6 OPTION_IAADDR address binding.
@@ -747,6 +759,21 @@ impl Dhcpv6IaPrefix {
         self.option(Dhcpv6Option::status_code(status))
     }
 
+    /// Append a nested OPTION_PD_EXCLUDE option.
+    pub fn pd_exclude(self, pd_exclude: Dhcpv6PdExclude) -> Result<Self> {
+        Ok(self.option(Dhcpv6Option::pd_exclude(pd_exclude)?))
+    }
+
+    /// Decode the first nested OPTION_PD_EXCLUDE option, if present.
+    pub fn pd_exclude_value(&self) -> Result<Option<Dhcpv6PdExclude>> {
+        for option in &self.options {
+            if let Some(pd_exclude) = option.pd_exclude_value()? {
+                return Ok(Some(pd_exclude));
+            }
+        }
+        Ok(None)
+    }
+
     /// Replace the nested option list.
     pub fn options(mut self, options: impl Into<Vec<Dhcpv6Option>>) -> Self {
         self.options = options.into();
@@ -761,6 +788,52 @@ impl Dhcpv6IaPrefix {
     /// Mutably borrow nested options.
     pub fn options_mut(&mut self) -> &mut Vec<Dhcpv6Option> {
         &mut self.options
+    }
+}
+
+impl Dhcpv6PdExclude {
+    /// Create an OPTION_PD_EXCLUDE payload.
+    pub fn new(prefix_length: u8, subnet_id: impl Into<Vec<u8>>) -> Result<Self> {
+        validate_prefix_length_for("dhcpv6.option.pd_exclude.prefix_length", prefix_length)?;
+        let subnet_id = subnet_id.into();
+        validate_pd_exclude_subnet_id_len(subnet_id.len())?;
+        Ok(Self {
+            prefix_length,
+            subnet_id,
+        })
+    }
+
+    /// Decode an OPTION_PD_EXCLUDE payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < DHCPV6_PD_EXCLUDE_PAYLOAD_MIN_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "dhcpv6.option.pd_exclude",
+                DHCPV6_PD_EXCLUDE_PAYLOAD_MIN_LEN,
+                bytes.len(),
+            ));
+        }
+        validate_pd_exclude_payload_len(bytes.len())?;
+        Self::new(bytes[0], bytes[1..].to_vec())
+    }
+
+    /// Encode this OPTION_PD_EXCLUDE payload.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        validate_prefix_length_for("dhcpv6.option.pd_exclude.prefix_length", self.prefix_length)?;
+        validate_pd_exclude_subnet_id_len(self.subnet_id.len())?;
+        let mut out = Vec::with_capacity(1 + self.subnet_id.len());
+        out.push(self.prefix_length);
+        out.extend_from_slice(&self.subnet_id);
+        Ok(out)
+    }
+
+    /// Excluded prefix length.
+    pub const fn prefix_length(&self) -> u8 {
+        self.prefix_length
+    }
+
+    /// Subnet-ID bytes that identify the excluded prefix under the enclosing prefix.
+    pub fn subnet_id(&self) -> &[u8] {
+        &self.subnet_id
     }
 }
 
@@ -1798,6 +1871,11 @@ impl Dhcpv6Option {
         Ok(Self::raw(DHCPV6_OPTION_IAPREFIX, ia_prefix.encode()?))
     }
 
+    /// Create an OPTION_PD_EXCLUDE option.
+    pub fn pd_exclude(pd_exclude: Dhcpv6PdExclude) -> Result<Self> {
+        Ok(Self::raw(DHCPV6_OPTION_PD_EXCLUDE, pd_exclude.encode()?))
+    }
+
     /// Create an OPTION_REMOTE_ID option.
     pub fn remote_id(remote_id: Dhcpv6RemoteId) -> Self {
         Self::raw(DHCPV6_OPTION_REMOTE_ID, remote_id.encode())
@@ -2133,6 +2211,14 @@ impl Dhcpv6Option {
         }
     }
 
+    /// Decode OPTION_PD_EXCLUDE.
+    pub fn pd_exclude_value(&self) -> Result<Option<Dhcpv6PdExclude>> {
+        match self.payload_if_code(DHCPV6_OPTION_PD_EXCLUDE) {
+            Some(payload) => Dhcpv6PdExclude::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
     /// Decode OPTION_REMOTE_ID.
     pub fn remote_id_value(&self) -> Result<Option<Dhcpv6RemoteId>> {
         match self.payload_if_code(DHCPV6_OPTION_REMOTE_ID) {
@@ -2458,10 +2544,34 @@ fn copy_array_16(bytes: &[u8]) -> [u8; 16] {
 }
 
 fn validate_prefix_length(prefix_length: u8) -> Result<()> {
+    validate_prefix_length_for("dhcpv6.option.iaprefix.prefix_length", prefix_length)
+}
+
+fn validate_prefix_length_for(context: &'static str, prefix_length: u8) -> Result<()> {
     if prefix_length > DHCPV6_PREFIX_LEN_MAX {
         return Err(CrafterError::invalid_field_value(
-            "dhcpv6.option.iaprefix.prefix_length",
+            context,
             "prefix length must be at most 128",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_pd_exclude_payload_len(len: usize) -> Result<()> {
+    if !(DHCPV6_PD_EXCLUDE_PAYLOAD_MIN_LEN..=DHCPV6_PD_EXCLUDE_PAYLOAD_MAX_LEN).contains(&len) {
+        return Err(CrafterError::invalid_field_value(
+            "dhcpv6.option.pd_exclude",
+            "payload length must be between 2 and 17 bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_pd_exclude_subnet_id_len(len: usize) -> Result<()> {
+    if !(DHCPV6_PD_EXCLUDE_SUBNET_ID_MIN_LEN..=DHCPV6_PD_EXCLUDE_SUBNET_ID_MAX_LEN).contains(&len) {
+        return Err(CrafterError::invalid_field_value(
+            "dhcpv6.option.pd_exclude.subnet_id",
+            "subnet id length must be between 1 and 16 bytes",
         ));
     }
     Ok(())
@@ -3037,6 +3147,101 @@ mod dhcpv6_iaprefix_tests {
             .unwrap();
         assert_eq!(decoded_prefix, ia_prefix);
         assert_eq!(decoded_prefix.options_ref(), &[nested]);
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_prefix_extensions_tests {
+    use core::net::Ipv6Addr;
+
+    use super::{Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6Option, Dhcpv6PdExclude};
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{Dhcpv6, DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_PD_EXCLUDE};
+
+    fn prefix() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0x0db8, 0x5100, 0, 0, 0, 0, 0)
+    }
+
+    #[test]
+    fn dhcpv6_prefix_extensions_encode_pd_exclude_boundaries() {
+        let min = Dhcpv6PdExclude::new(0, [0x00]).unwrap();
+        let max = Dhcpv6PdExclude::new(128, [0xff; 16]).unwrap();
+        let min_option = Dhcpv6Option::pd_exclude(min.clone()).unwrap();
+        let max_option = Dhcpv6Option::pd_exclude(max.clone()).unwrap();
+
+        assert_eq!(min_option.codepoint(), DHCPV6_OPTION_PD_EXCLUDE);
+        assert_eq!(min_option.payload(), &[0, 0]);
+        assert_eq!(min_option.pd_exclude_value().unwrap(), Some(min));
+
+        assert_eq!(max_option.payload_len(), 17);
+        assert_eq!(max_option.payload()[0], 128);
+        assert_eq!(max_option.pd_exclude_value().unwrap(), Some(max.clone()));
+        assert_eq!(max.prefix_length(), 128);
+        assert_eq!(max.subnet_id(), &[0xff; 16]);
+    }
+
+    #[test]
+    fn dhcpv6_prefix_extensions_roundtrip_under_iaprefix_and_preserve_unknown() {
+        let exclude = Dhcpv6PdExclude::new(56, [0x2a]).unwrap();
+        let unknown = Dhcpv6Option::raw(65_002u16, [0xaa, 0xbb, 0xcc]);
+        let ia_prefix = Dhcpv6IaPrefix::new(600, 1_200, 48, prefix())
+            .pd_exclude(exclude.clone())
+            .unwrap()
+            .option(unknown.clone());
+        let ia_pd = Dhcpv6IaPd::new(0x01020304, 300, 600)
+            .ia_prefix(ia_prefix.clone())
+            .unwrap();
+        let message = Dhcpv6::reply(0x112233).ia_pd(ia_pd).unwrap();
+        let decoded =
+            Dhcpv6::decode(Packet::from_layer(message).compile().unwrap().as_bytes()).unwrap();
+
+        let decoded_ia_pd = decoded.ia_pd_value().unwrap().unwrap();
+        assert_eq!(
+            decoded_ia_pd.options_ref()[0].codepoint(),
+            DHCPV6_OPTION_IAPREFIX,
+        );
+        let decoded_prefix = decoded_ia_pd.options_ref()[0]
+            .ia_prefix_value()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(decoded_prefix.pd_exclude_value().unwrap(), Some(exclude));
+        assert_eq!(decoded_prefix.options_ref()[1], unknown);
+        assert_eq!(decoded_prefix, ia_prefix);
+    }
+
+    #[test]
+    fn dhcpv6_prefix_extensions_reject_malformed_pd_exclude_payloads() {
+        assert_eq!(
+            Dhcpv6PdExclude::new(129, [0]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.pd_exclude.prefix_length",
+                "prefix length must be at most 128",
+            ),
+        );
+        assert_eq!(
+            Dhcpv6PdExclude::new(64, []).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.pd_exclude.subnet_id",
+                "subnet id length must be between 1 and 16 bytes",
+            ),
+        );
+
+        let short = Dhcpv6Option::raw(DHCPV6_OPTION_PD_EXCLUDE, [64]);
+        assert_eq!(
+            short.pd_exclude_value().unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.pd_exclude", 2, 1),
+        );
+
+        let long = Dhcpv6Option::raw(DHCPV6_OPTION_PD_EXCLUDE, [64; 18]);
+        assert_eq!(
+            long.pd_exclude_value().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.pd_exclude",
+                "payload length must be between 2 and 17 bytes",
+            ),
+        );
     }
 }
 
