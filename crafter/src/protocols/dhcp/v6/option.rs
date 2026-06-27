@@ -15,7 +15,8 @@ use super::constants::{
     DHCPV6_AUTH_HEADER_LEN, DHCPV6_AUTH_PROTOCOL_CONFIGURATION_TOKEN, DHCPV6_AUTH_PROTOCOL_DELAYED,
     DHCPV6_AUTH_PROTOCOL_DHCPV6_DELAYED_OBSOLETE, DHCPV6_AUTH_PROTOCOL_RECONFIGURE_KEY,
     DHCPV6_AUTH_PROTOCOL_SPLIT_HORIZON_DNS, DHCPV6_AUTH_RDM_MONOTONIC_COUNTER,
-    DHCPV6_AUTH_REPLAY_DETECTION_LEN, DHCPV6_OPTION_AUTH, DHCPV6_OPTION_BOOTFILE_PARAM,
+    DHCPV6_AUTH_REPLAY_DETECTION_LEN, DHCPV6_OPTION_4RD, DHCPV6_OPTION_4RD_MAP_RULE,
+    DHCPV6_OPTION_4RD_NON_MAP_RULE, DHCPV6_OPTION_AUTH, DHCPV6_OPTION_BOOTFILE_PARAM,
     DHCPV6_OPTION_BOOTFILE_URL, DHCPV6_OPTION_CLIENTID, DHCPV6_OPTION_CLIENT_ARCH_TYPE,
     DHCPV6_OPTION_CLIENT_FQDN, DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR, DHCPV6_OPTION_DNS_SERVERS,
     DHCPV6_OPTION_DOMAIN_LIST, DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN,
@@ -25,11 +26,14 @@ use super::constants::{
     DHCPV6_OPTION_NTP_SERVER, DHCPV6_OPTION_ORO, DHCPV6_OPTION_PD_EXCLUDE,
     DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT, DHCPV6_OPTION_RECONF_ACCEPT,
     DHCPV6_OPTION_RECONF_MSG, DHCPV6_OPTION_RELAY_ID, DHCPV6_OPTION_RELAY_MSG,
-    DHCPV6_OPTION_REMOTE_ID, DHCPV6_OPTION_RSOO, DHCPV6_OPTION_SERVERID,
-    DHCPV6_OPTION_SIP_SERVER_A, DHCPV6_OPTION_SIP_SERVER_D, DHCPV6_OPTION_SIP_UA_CS_LIST,
-    DHCPV6_OPTION_SNTP_SERVERS, DHCPV6_OPTION_SOL_MAX_RT, DHCPV6_OPTION_STATUS_CODE,
-    DHCPV6_OPTION_SUBSCRIBER_ID, DHCPV6_OPTION_USER_CLASS, DHCPV6_OPTION_VENDOR_CLASS,
-    DHCPV6_OPTION_VENDOR_OPTS, DHCPV6_TIME_INFINITY,
+    DHCPV6_OPTION_REMOTE_ID, DHCPV6_OPTION_RSOO, DHCPV6_OPTION_S46_BIND_IPV6_PREFIX,
+    DHCPV6_OPTION_S46_BR, DHCPV6_OPTION_S46_CONT_LW, DHCPV6_OPTION_S46_CONT_MAPE,
+    DHCPV6_OPTION_S46_CONT_MAPT, DHCPV6_OPTION_S46_DMR, DHCPV6_OPTION_S46_PORTPARAMS,
+    DHCPV6_OPTION_S46_PRIORITY, DHCPV6_OPTION_S46_RULE, DHCPV6_OPTION_S46_V4V6BIND,
+    DHCPV6_OPTION_SERVERID, DHCPV6_OPTION_SIP_SERVER_A, DHCPV6_OPTION_SIP_SERVER_D,
+    DHCPV6_OPTION_SIP_UA_CS_LIST, DHCPV6_OPTION_SNTP_SERVERS, DHCPV6_OPTION_SOL_MAX_RT,
+    DHCPV6_OPTION_STATUS_CODE, DHCPV6_OPTION_SUBSCRIBER_ID, DHCPV6_OPTION_USER_CLASS,
+    DHCPV6_OPTION_VENDOR_CLASS, DHCPV6_OPTION_VENDOR_OPTS, DHCPV6_TIME_INFINITY,
 };
 use super::duid::Dhcpv6Duid;
 use super::message::Dhcpv6MessageType;
@@ -353,6 +357,30 @@ pub struct Dhcpv6IaPrefix {
 pub struct Dhcpv6PdExclude {
     prefix_length: u8,
     subnet_id: Vec<u8>,
+}
+
+/// DHCPv6 S46 container option kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Dhcpv6S46ContainerKind {
+    /// OPTION_S46_CONT_MAPE.
+    MapE,
+    /// OPTION_S46_CONT_MAPT.
+    MapT,
+    /// OPTION_S46_CONT_LW.
+    Lightweight4Over6,
+}
+
+/// DHCPv6 S46 container payload with nested DHCPv6 options.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6S46Container {
+    kind: Dhcpv6S46ContainerKind,
+    options: Vec<Dhcpv6Option>,
+}
+
+/// DHCPv6 OPTION_S46_PRIORITY payload.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6S46Priority {
+    option_codes: Vec<u16>,
 }
 
 /// DHCPv6 OPTION_IAADDR address binding.
@@ -834,6 +862,121 @@ impl Dhcpv6PdExclude {
     /// Subnet-ID bytes that identify the excluded prefix under the enclosing prefix.
     pub fn subnet_id(&self) -> &[u8] {
         &self.subnet_id
+    }
+}
+
+impl Dhcpv6S46ContainerKind {
+    /// Create a S46 container kind from its DHCPv6 option code.
+    pub const fn from_code(code: u16) -> Option<Self> {
+        match code {
+            DHCPV6_OPTION_S46_CONT_MAPE => Some(Self::MapE),
+            DHCPV6_OPTION_S46_CONT_MAPT => Some(Self::MapT),
+            DHCPV6_OPTION_S46_CONT_LW => Some(Self::Lightweight4Over6),
+            _ => None,
+        }
+    }
+
+    /// DHCPv6 option code for this container.
+    pub const fn code(self) -> u16 {
+        match self {
+            Self::MapE => DHCPV6_OPTION_S46_CONT_MAPE,
+            Self::MapT => DHCPV6_OPTION_S46_CONT_MAPT,
+            Self::Lightweight4Over6 => DHCPV6_OPTION_S46_CONT_LW,
+        }
+    }
+}
+
+impl Dhcpv6S46Container {
+    /// Create an empty S46 container payload.
+    pub fn new(kind: Dhcpv6S46ContainerKind) -> Self {
+        Self {
+            kind,
+            options: Vec::new(),
+        }
+    }
+
+    /// Decode an S46 container payload.
+    pub fn decode(kind: Dhcpv6S46ContainerKind, bytes: &[u8]) -> Result<Self> {
+        Ok(Self {
+            kind,
+            options: Dhcpv6Option::decode_all(bytes)?,
+        })
+    }
+
+    /// Encode this S46 container payload.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        Dhcpv6Option::encode_all(&self.options)
+    }
+
+    /// Container kind.
+    pub const fn kind(&self) -> Dhcpv6S46ContainerKind {
+        self.kind
+    }
+
+    /// DHCPv6 option code for this container.
+    pub const fn codepoint(&self) -> u16 {
+        self.kind.code()
+    }
+
+    /// Append a nested S46 option.
+    pub fn option(mut self, option: Dhcpv6Option) -> Self {
+        self.options.push(option);
+        self
+    }
+
+    /// Replace the nested option list.
+    pub fn options(mut self, options: impl Into<Vec<Dhcpv6Option>>) -> Self {
+        self.options = options.into();
+        self
+    }
+
+    /// Borrow nested options.
+    pub fn options_ref(&self) -> &[Dhcpv6Option] {
+        &self.options
+    }
+
+    /// Mutably borrow nested options.
+    pub fn options_mut(&mut self) -> &mut Vec<Dhcpv6Option> {
+        &mut self.options
+    }
+}
+
+impl Dhcpv6S46Priority {
+    /// Create an OPTION_S46_PRIORITY payload from ordered option codes.
+    pub fn new(option_codes: impl Into<Vec<u16>>) -> Self {
+        Self {
+            option_codes: option_codes.into(),
+        }
+    }
+
+    /// Decode an OPTION_S46_PRIORITY payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() % 2 != 0 {
+            return Err(CrafterError::invalid_field_value(
+                "dhcpv6.option.s46_priority",
+                "payload length must be a multiple of 2 bytes",
+            ));
+        }
+
+        let mut option_codes = Vec::with_capacity(bytes.len() / 2);
+        for chunk in bytes.chunks_exact(2) {
+            option_codes.push(read_u16_be(chunk)?);
+        }
+        Ok(Self { option_codes })
+    }
+
+    /// Encode this OPTION_S46_PRIORITY payload.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.option_codes.len() * 2);
+        for code in &self.option_codes {
+            append_u16_be(&mut out, *code);
+        }
+        out
+    }
+
+    /// Ordered option codes in priority order.
+    pub fn option_codes(&self) -> &[u16] {
+        &self.option_codes
     }
 }
 
@@ -1876,6 +2019,78 @@ impl Dhcpv6Option {
         Ok(Self::raw(DHCPV6_OPTION_PD_EXCLUDE, pd_exclude.encode()?))
     }
 
+    /// Create an OPTION_S46_RULE option with raw payload bytes.
+    pub fn s46_rule(payload: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_S46_RULE, payload)
+    }
+
+    /// Create an OPTION_S46_BR option with raw payload bytes.
+    pub fn s46_br(payload: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_S46_BR, payload)
+    }
+
+    /// Create an OPTION_S46_DMR option with raw payload bytes.
+    pub fn s46_dmr(payload: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_S46_DMR, payload)
+    }
+
+    /// Create an OPTION_S46_V4V6BIND option with raw payload bytes.
+    pub fn s46_v4v6bind(payload: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_S46_V4V6BIND, payload)
+    }
+
+    /// Create an OPTION_S46_PORTPARAMS option with raw payload bytes.
+    pub fn s46_portparams(payload: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_S46_PORTPARAMS, payload)
+    }
+
+    /// Create an S46 container option.
+    pub fn s46_container(container: Dhcpv6S46Container) -> Result<Self> {
+        Ok(Self::raw(container.codepoint(), container.encode()?))
+    }
+
+    /// Create an OPTION_S46_CONT_MAPE option from nested options.
+    pub fn s46_cont_mape(options: impl Into<Vec<Dhcpv6Option>>) -> Result<Self> {
+        Self::s46_container(Dhcpv6S46Container::new(Dhcpv6S46ContainerKind::MapE).options(options))
+    }
+
+    /// Create an OPTION_S46_CONT_MAPT option from nested options.
+    pub fn s46_cont_mapt(options: impl Into<Vec<Dhcpv6Option>>) -> Result<Self> {
+        Self::s46_container(Dhcpv6S46Container::new(Dhcpv6S46ContainerKind::MapT).options(options))
+    }
+
+    /// Create an OPTION_S46_CONT_LW option from nested options.
+    pub fn s46_cont_lw(options: impl Into<Vec<Dhcpv6Option>>) -> Result<Self> {
+        Self::s46_container(
+            Dhcpv6S46Container::new(Dhcpv6S46ContainerKind::Lightweight4Over6).options(options),
+        )
+    }
+
+    /// Create an OPTION_4RD option with raw payload bytes.
+    pub fn four_rd(payload: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_4RD, payload)
+    }
+
+    /// Create an OPTION_4RD_MAP_RULE option with raw payload bytes.
+    pub fn four_rd_map_rule(payload: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_4RD_MAP_RULE, payload)
+    }
+
+    /// Create an OPTION_4RD_NON_MAP_RULE option with raw payload bytes.
+    pub fn four_rd_non_map_rule(payload: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_4RD_NON_MAP_RULE, payload)
+    }
+
+    /// Create an OPTION_S46_PRIORITY option.
+    pub fn s46_priority(priority: Dhcpv6S46Priority) -> Self {
+        Self::raw(DHCPV6_OPTION_S46_PRIORITY, priority.encode())
+    }
+
+    /// Create an OPTION_S46_BIND_IPV6_PREFIX option with raw payload bytes.
+    pub fn s46_bind_ipv6_prefix(payload: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_S46_BIND_IPV6_PREFIX, payload)
+    }
+
     /// Create an OPTION_REMOTE_ID option.
     pub fn remote_id(remote_id: Dhcpv6RemoteId) -> Self {
         Self::raw(DHCPV6_OPTION_REMOTE_ID, remote_id.encode())
@@ -2215,6 +2430,22 @@ impl Dhcpv6Option {
     pub fn pd_exclude_value(&self) -> Result<Option<Dhcpv6PdExclude>> {
         match self.payload_if_code(DHCPV6_OPTION_PD_EXCLUDE) {
             Some(payload) => Dhcpv6PdExclude::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode OPTION_S46_CONT_MAPE, OPTION_S46_CONT_MAPT, or OPTION_S46_CONT_LW.
+    pub fn s46_container_value(&self) -> Result<Option<Dhcpv6S46Container>> {
+        match Dhcpv6S46ContainerKind::from_code(self.codepoint()) {
+            Some(kind) => Dhcpv6S46Container::decode(kind, self.payload()).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode OPTION_S46_PRIORITY.
+    pub fn s46_priority_value(&self) -> Result<Option<Dhcpv6S46Priority>> {
+        match self.payload_if_code(DHCPV6_OPTION_S46_PRIORITY) {
+            Some(payload) => Dhcpv6S46Priority::decode(payload).map(Some),
             None => Ok(None),
         }
     }
@@ -3240,6 +3471,134 @@ mod dhcpv6_prefix_extensions_tests {
             CrafterError::invalid_field_value(
                 "dhcpv6.option.pd_exclude",
                 "payload length must be between 2 and 17 bytes",
+            ),
+        );
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_softwire_tests {
+    use super::{Dhcpv6Option, Dhcpv6S46ContainerKind, Dhcpv6S46Priority};
+    use crate::error::CrafterError;
+    use crate::protocols::dhcp::v6::{
+        dhcpv6_option_meta, dhcpv6_s46_priority_option_permitted, Dhcpv6ClientOro,
+        Dhcpv6OptionSingleton, DHCPV6_OPTION_4RD, DHCPV6_OPTION_4RD_MAP_RULE,
+        DHCPV6_OPTION_4RD_NON_MAP_RULE, DHCPV6_OPTION_S46_BIND_IPV6_PREFIX, DHCPV6_OPTION_S46_BR,
+        DHCPV6_OPTION_S46_CONT_LW, DHCPV6_OPTION_S46_CONT_MAPE, DHCPV6_OPTION_S46_CONT_MAPT,
+        DHCPV6_OPTION_S46_PRIORITY, DHCPV6_OPTION_S46_RULE, DHCPV6_OPTION_S46_V4V6BIND,
+    };
+
+    #[test]
+    fn dhcpv6_softwire_containers_preserve_nested_options() {
+        let rule = Dhcpv6Option::s46_rule([0x20, 0x08, 0xc0, 0x00, 0x02]);
+        let unknown = Dhcpv6Option::raw(65_003u16, [0xaa, 0xbb]);
+        let container = Dhcpv6Option::s46_cont_mape(vec![rule.clone(), unknown.clone()]).unwrap();
+
+        assert_eq!(container.codepoint(), DHCPV6_OPTION_S46_CONT_MAPE);
+        let decoded = container.s46_container_value().unwrap().unwrap();
+        assert_eq!(decoded.kind(), Dhcpv6S46ContainerKind::MapE);
+        assert_eq!(decoded.codepoint(), DHCPV6_OPTION_S46_CONT_MAPE);
+        assert_eq!(decoded.options_ref(), &[rule, unknown]);
+
+        let mapt = Dhcpv6Option::s46_cont_mapt(vec![Dhcpv6Option::s46_dmr([0x40, 0x20])]).unwrap();
+        assert_eq!(
+            mapt.s46_container_value().unwrap().unwrap().kind(),
+            Dhcpv6S46ContainerKind::MapT,
+        );
+        let lw =
+            Dhcpv6Option::s46_cont_lw(vec![Dhcpv6Option::s46_portparams([0, 8, 0, 1])]).unwrap();
+        assert_eq!(
+            lw.s46_container_value().unwrap().unwrap().kind(),
+            Dhcpv6S46ContainerKind::Lightweight4Over6,
+        );
+    }
+
+    #[test]
+    fn dhcpv6_softwire_raw_fields_and_priority_roundtrip() {
+        for (option, code, payload) in [
+            (
+                Dhcpv6Option::s46_br([0x20, 0x01]),
+                DHCPV6_OPTION_S46_BR,
+                vec![0x20, 0x01],
+            ),
+            (
+                Dhcpv6Option::s46_v4v6bind([0xc0, 0x00, 0x02, 0x01]),
+                DHCPV6_OPTION_S46_V4V6BIND,
+                vec![0xc0, 0x00, 0x02, 0x01],
+            ),
+            (Dhcpv6Option::four_rd([0x01]), DHCPV6_OPTION_4RD, vec![0x01]),
+            (
+                Dhcpv6Option::four_rd_map_rule([0x02]),
+                DHCPV6_OPTION_4RD_MAP_RULE,
+                vec![0x02],
+            ),
+            (
+                Dhcpv6Option::four_rd_non_map_rule([0x03]),
+                DHCPV6_OPTION_4RD_NON_MAP_RULE,
+                vec![0x03],
+            ),
+            (
+                Dhcpv6Option::s46_bind_ipv6_prefix([0x40, 0x20, 0x01]),
+                DHCPV6_OPTION_S46_BIND_IPV6_PREFIX,
+                vec![0x40, 0x20, 0x01],
+            ),
+        ] {
+            assert_eq!(option.codepoint(), code);
+            assert_eq!(option.payload(), payload.as_slice());
+        }
+
+        let priority = Dhcpv6S46Priority::new(vec![
+            DHCPV6_OPTION_S46_CONT_MAPE,
+            DHCPV6_OPTION_S46_CONT_MAPT,
+            DHCPV6_OPTION_S46_CONT_LW,
+        ]);
+        let option = Dhcpv6Option::s46_priority(priority.clone());
+
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_S46_PRIORITY);
+        assert_eq!(option.s46_priority_value().unwrap(), Some(priority.clone()));
+        assert_eq!(
+            priority.option_codes(),
+            &[
+                DHCPV6_OPTION_S46_CONT_MAPE,
+                DHCPV6_OPTION_S46_CONT_MAPT,
+                DHCPV6_OPTION_S46_CONT_LW,
+            ],
+        );
+    }
+
+    #[test]
+    fn dhcpv6_softwire_registry_metadata_and_malformed_lengths() {
+        let meta = dhcpv6_option_meta(DHCPV6_OPTION_S46_CONT_MAPE);
+        assert_eq!(meta.name, "OPTION_S46_CONT_MAPE");
+        assert_eq!(meta.client_oro, Some(Dhcpv6ClientOro::Yes));
+        assert_eq!(meta.singleton, Some(Dhcpv6OptionSingleton::No));
+
+        assert!(dhcpv6_s46_priority_option_permitted(
+            DHCPV6_OPTION_S46_CONT_MAPE
+        ));
+        assert!(dhcpv6_s46_priority_option_permitted(
+            DHCPV6_OPTION_S46_CONT_MAPT
+        ));
+        assert!(dhcpv6_s46_priority_option_permitted(
+            DHCPV6_OPTION_S46_CONT_LW
+        ));
+        assert!(!dhcpv6_s46_priority_option_permitted(
+            DHCPV6_OPTION_S46_RULE
+        ));
+
+        let malformed =
+            Dhcpv6Option::raw(DHCPV6_OPTION_S46_CONT_MAPE, [0x00, 0x59, 0x00, 0x02, 0xaa]);
+        assert_eq!(
+            malformed.s46_container_value().unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.payload", 6, 5),
+        );
+
+        let odd_priority = Dhcpv6Option::raw(DHCPV6_OPTION_S46_PRIORITY, [0x00]);
+        assert_eq!(
+            odd_priority.s46_priority_value().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.s46_priority",
+                "payload length must be a multiple of 2 bytes",
             ),
         );
     }

@@ -31,12 +31,14 @@ pub use option::{
     Dhcpv6IaAddr, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6NetworkInterfaceIdentifier,
     Dhcpv6NtpServer, Dhcpv6NtpSuboption, Dhcpv6Option, Dhcpv6OptionCode, Dhcpv6OptionFormat,
     Dhcpv6OptionValue, Dhcpv6PdExclude, Dhcpv6RelaySuppliedOptions, Dhcpv6RemoteId,
-    Dhcpv6ReplayDetectionMethod, Dhcpv6StatusCodeOption, Dhcpv6UserClass, Dhcpv6VendorClass,
-    Dhcpv6VendorOption, Dhcpv6VendorOptions,
+    Dhcpv6ReplayDetectionMethod, Dhcpv6S46Container, Dhcpv6S46ContainerKind, Dhcpv6S46Priority,
+    Dhcpv6StatusCodeOption, Dhcpv6UserClass, Dhcpv6VendorClass, Dhcpv6VendorOption,
+    Dhcpv6VendorOptions,
 };
 pub use registry::{
     dhcpv6_option_meta, dhcpv6_option_name, dhcpv6_option_status, dhcpv6_rsoo_option_permission,
-    dhcpv6_rsoo_option_permitted, Dhcpv6ClientOro, Dhcpv6OptionMeta, Dhcpv6OptionSingleton,
-    Dhcpv6OptionStatus, Dhcpv6RsooOptionPermission,
+    dhcpv6_rsoo_option_permitted, dhcpv6_s46_priority_option_permission,
+    dhcpv6_s46_priority_option_permitted, Dhcpv6ClientOro, Dhcpv6OptionMeta, Dhcpv6OptionSingleton,
+    Dhcpv6OptionStatus, Dhcpv6RsooOptionPermission, Dhcpv6S46PriorityOptionPermission,
 };
 pub use status::Dhcpv6StatusCode;

@@ -6,7 +6,11 @@
 //! columns where IANA publishes them. The wire-format codec remains raw-first:
 //! metadata classifies codepoints but does not require typed payload support.
 
-use super::constants::DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME;
+use super::constants::{
+    DHCPV6_OPTION_AFTR_NAME, DHCPV6_OPTION_DHCP4_O_DHCP6_SERVER,
+    DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME, DHCPV6_OPTION_S46_CONT_LW, DHCPV6_OPTION_S46_CONT_MAPE,
+    DHCPV6_OPTION_S46_CONT_MAPT,
+};
 
 /// Registry assignment status for a DHCPv6 option codepoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -53,6 +57,15 @@ pub enum Dhcpv6RsooOptionPermission {
     /// The option is listed as permitted in OPTION_RSOO.
     Permitted,
     /// The option is not listed as permitted in OPTION_RSOO.
+    NotPermitted,
+}
+
+/// IANA "Options Permitted in the S46 Priority Option" status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Dhcpv6S46PriorityOptionPermission {
+    /// The option is listed as permitted in OPTION_S46_PRIORITY.
+    Permitted,
+    /// The option is not listed as permitted in OPTION_S46_PRIORITY.
     NotPermitted,
 }
 
@@ -128,6 +141,28 @@ pub const fn dhcpv6_rsoo_option_permitted(code: u16) -> bool {
     matches!(
         dhcpv6_rsoo_option_permission(code),
         Dhcpv6RsooOptionPermission::Permitted
+    )
+}
+
+/// Permission metadata for an option inside OPTION_S46_PRIORITY.
+///
+/// Source: IANA "Options Permitted in the S46 Priority Option".
+pub const fn dhcpv6_s46_priority_option_permission(code: u16) -> Dhcpv6S46PriorityOptionPermission {
+    match code {
+        DHCPV6_OPTION_AFTR_NAME
+        | DHCPV6_OPTION_DHCP4_O_DHCP6_SERVER
+        | DHCPV6_OPTION_S46_CONT_MAPE
+        | DHCPV6_OPTION_S46_CONT_MAPT
+        | DHCPV6_OPTION_S46_CONT_LW => Dhcpv6S46PriorityOptionPermission::Permitted,
+        _ => Dhcpv6S46PriorityOptionPermission::NotPermitted,
+    }
+}
+
+/// True when IANA lists an option as permitted in OPTION_S46_PRIORITY.
+pub const fn dhcpv6_s46_priority_option_permitted(code: u16) -> bool {
+    matches!(
+        dhcpv6_s46_priority_option_permission(code),
+        Dhcpv6S46PriorityOptionPermission::Permitted
     )
 }
 
