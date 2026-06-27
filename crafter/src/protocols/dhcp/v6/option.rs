@@ -157,6 +157,16 @@ impl Dhcpv6Option {
         Self::raw(DHCPV6_OPTION_SERVERID, duid)
     }
 
+    /// Create an OPTION_CLIENTID option from a typed DUID.
+    pub fn client_duid(duid: Dhcpv6Duid) -> Self {
+        Self::client_id(duid)
+    }
+
+    /// Create an OPTION_SERVERID option from a typed DUID.
+    pub fn server_duid(duid: Dhcpv6Duid) -> Self {
+        Self::server_id(duid)
+    }
+
     /// Create an OPTION_ORO option from requested option codepoints.
     pub fn oro<I, C>(codes: I) -> Self
     where
