@@ -23,7 +23,7 @@ pub mod status;
 pub use constants::*;
 pub use duid::Dhcpv6Duid;
 pub(crate) use layer::{append_dhcpv6_packet, looks_like_dhcpv6_payload};
-pub use layer::{Dhcpv6, Dhcpv6RelayHeader};
+pub use layer::{Dhcpv6, Dhcpv6OptionRepetition, Dhcpv6OptionRepetitionReport, Dhcpv6RelayHeader};
 pub use message::Dhcpv6MessageType;
 pub use option::{
     Dhcpv6AuthAlgorithm, Dhcpv6AuthProtocol, Dhcpv6Authentication, Dhcpv6BootfileParam,

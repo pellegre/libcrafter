@@ -21,6 +21,7 @@ use super::option::{
     Dhcpv6RemoteId, Dhcpv6StatusCodeOption, Dhcpv6UserClass, Dhcpv6VendorClass,
     Dhcpv6VendorOptions,
 };
+use super::registry::{dhcpv6_option_meta, Dhcpv6OptionSingleton};
 use super::status::Dhcpv6StatusCode;
 use crate::protocols::dhcp::v4::Dhcpv4;
 
@@ -39,6 +40,56 @@ pub struct Dhcpv6RelayHeader {
     hop_count: Field<u8>,
     link_address: Field<Ipv6Addr>,
     peer_address: Field<Ipv6Addr>,
+}
+
+/// Report for repeated DHCPv6 options in one option list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Dhcpv6OptionRepetitionReport {
+    entries: Vec<Dhcpv6OptionRepetition>,
+}
+
+/// Repetition metadata for one DHCPv6 option codepoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Dhcpv6OptionRepetition {
+    /// Wire option codepoint.
+    pub code: u16,
+    /// Number of occurrences in the inspected option list.
+    pub count: usize,
+    /// IANA singleton column for the option codepoint, when known.
+    pub singleton: Option<Dhcpv6OptionSingleton>,
+}
+
+impl Dhcpv6OptionRepetitionReport {
+    /// Ordered repetition entries, keyed by first occurrence in the option list.
+    pub fn entries(&self) -> &[Dhcpv6OptionRepetition] {
+        &self.entries
+    }
+
+    /// Return the repetition entry for an option codepoint.
+    pub fn for_code(&self, code: u16) -> Option<&Dhcpv6OptionRepetition> {
+        self.entries.iter().find(|entry| entry.code == code)
+    }
+
+    /// True when any singleton option appears more than once.
+    pub fn has_duplicate_singletons(&self) -> bool {
+        self.entries
+            .iter()
+            .any(Dhcpv6OptionRepetition::is_duplicate_singleton)
+    }
+
+    /// Iterate over duplicate singleton entries.
+    pub fn duplicate_singletons(&self) -> impl Iterator<Item = &Dhcpv6OptionRepetition> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.is_duplicate_singleton())
+    }
+}
+
+impl Dhcpv6OptionRepetition {
+    /// True when this option is registry-marked singleton and appears more than once.
+    pub fn is_duplicate_singleton(&self) -> bool {
+        self.count > 1 && self.singleton == Some(Dhcpv6OptionSingleton::Yes)
+    }
 }
 
 impl Dhcpv6RelayHeader {
@@ -673,6 +724,11 @@ impl Dhcpv6 {
     /// Mutably borrow the option list.
     pub fn options_mut(&mut self) -> &mut Vec<Dhcpv6Option> {
         &mut self.options
+    }
+
+    /// Report repeated top-level options without rejecting malformed packets.
+    pub fn option_repetition_report(&self) -> Dhcpv6OptionRepetitionReport {
+        option_repetition_report_for(&self.options)
     }
 
     /// Return OPTION_CLIENTID DUID bytes from the first Client ID option.
@@ -1322,6 +1378,24 @@ fn validate_transaction_id(transaction_id: u32) -> Result<()> {
     Ok(())
 }
 
+fn option_repetition_report_for(options: &[Dhcpv6Option]) -> Dhcpv6OptionRepetitionReport {
+    let mut entries = Vec::<Dhcpv6OptionRepetition>::new();
+
+    for option in options {
+        let code = option.codepoint();
+        match entries.iter_mut().find(|entry| entry.code == code) {
+            Some(entry) => entry.count += 1,
+            None => entries.push(Dhcpv6OptionRepetition {
+                code,
+                count: 1,
+                singleton: dhcpv6_option_meta(code).singleton,
+            }),
+        }
+    }
+
+    Dhcpv6OptionRepetitionReport { entries }
+}
+
 fn copy_array_16(bytes: &[u8]) -> [u8; 16] {
     let mut out = [0u8; 16];
     out.copy_from_slice(bytes);
@@ -1407,6 +1481,78 @@ mod dhcpv6_client_header_tests {
             error,
             CrafterError::invalid_field_value("dhcpv6.transaction_id", "value exceeds 24 bits",),
         );
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_singleton_tests {
+    use super::Dhcpv6;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{
+        Dhcpv6Option, Dhcpv6OptionSingleton, DHCPV6_OPTION_CLIENTID, DHCPV6_OPTION_IA_NA,
+        DHCPV6_OPTION_VENDOR_OPTS,
+    };
+
+    #[test]
+    fn dhcpv6_singleton_reports_duplicate_client_id_without_blocking_compile() {
+        let dhcpv6 = Dhcpv6::solicit(0x010203)
+            .client_id([0x00, 0x01])
+            .client_id([0x00, 0x02]);
+        let report = dhcpv6.option_repetition_report();
+        let client_id = report.for_code(DHCPV6_OPTION_CLIENTID).unwrap();
+
+        assert_eq!(client_id.code, DHCPV6_OPTION_CLIENTID);
+        assert_eq!(client_id.count, 2);
+        assert_eq!(client_id.singleton, Some(Dhcpv6OptionSingleton::Yes));
+        assert!(client_id.is_duplicate_singleton());
+        assert!(report.has_duplicate_singletons());
+        assert_eq!(report.duplicate_singletons().count(), 1);
+        assert!(Packet::from_layer(dhcpv6).compile().is_ok());
+    }
+
+    #[test]
+    fn dhcpv6_singleton_allows_repeated_ia_na() {
+        let ia_na = Dhcpv6Option::raw(DHCPV6_OPTION_IA_NA, [0; 12]);
+        let dhcpv6 = Dhcpv6::reply(0x010203).option(ia_na.clone()).option(ia_na);
+        let report = dhcpv6.option_repetition_report();
+        let ia_na_entry = report.for_code(DHCPV6_OPTION_IA_NA).unwrap();
+
+        assert_eq!(ia_na_entry.count, 2);
+        assert_eq!(ia_na_entry.singleton, Some(Dhcpv6OptionSingleton::No));
+        assert!(!ia_na_entry.is_duplicate_singleton());
+        assert!(!report.has_duplicate_singletons());
+        assert!(Packet::from_layer(dhcpv6).compile().is_ok());
+    }
+
+    #[test]
+    fn dhcpv6_singleton_allows_repeated_vendor_options() {
+        let vendor = Dhcpv6Option::raw(DHCPV6_OPTION_VENDOR_OPTS, [0x00, 0x00, 0x00, 0x01]);
+        let dhcpv6 = Dhcpv6::reply(0x010203)
+            .option(vendor.clone())
+            .option(vendor);
+        let report = dhcpv6.option_repetition_report();
+        let vendor_entry = report.for_code(DHCPV6_OPTION_VENDOR_OPTS).unwrap();
+
+        assert_eq!(vendor_entry.count, 2);
+        assert_eq!(vendor_entry.singleton, Some(Dhcpv6OptionSingleton::No));
+        assert!(!vendor_entry.is_duplicate_singleton());
+        assert!(!report.has_duplicate_singletons());
+    }
+
+    #[test]
+    fn dhcpv6_singleton_preserves_unknown_repetitions_without_flagging() {
+        let unknown = Dhcpv6Option::raw(65_000u16, [0xde, 0xad]);
+        let dhcpv6 = Dhcpv6::reply(0x010203)
+            .option(unknown.clone())
+            .option(unknown);
+        let report = dhcpv6.option_repetition_report();
+        let unknown_entry = report.for_code(65_000).unwrap();
+
+        assert_eq!(unknown_entry.code, 65_000);
+        assert_eq!(unknown_entry.count, 2);
+        assert_eq!(unknown_entry.singleton, None);
+        assert!(!unknown_entry.is_duplicate_singleton());
+        assert_eq!(report.entries().len(), 1);
     }
 }
 
