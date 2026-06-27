@@ -53,6 +53,7 @@ PROVIDER_CAPABILITY_NAMES = (
     "link_layer_send",
     "link_layer_capture",
     "broadcast",
+    "multicast",
     "provider_mac_known",
     "controlled_services",
     "controlled_router",

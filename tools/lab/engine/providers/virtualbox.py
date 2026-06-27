@@ -50,6 +50,7 @@ PROVIDER_CAPABILITY_NAMES = (
     "link_layer_send",
     "link_layer_capture",
     "broadcast",
+    "multicast",
     "provider_mac_known",
     "controlled_services",
     "controlled_router",
@@ -121,6 +122,7 @@ def virtualbox_default_provider_capabilities(
         "link_layer_send": True,
         "link_layer_capture": True,
         "broadcast": True,
+        "multicast": True,
         "provider_mac_known": True,
         "controlled_services": True,
         "controlled_router": False,
@@ -151,6 +153,11 @@ def virtualbox_default_provider_capabilities(
                 "status": "planned" if dry_run else "default",
                 "value": True,
                 "reason": "VirtualBox internal networking carries same-segment broadcast traffic",
+            },
+            "multicast": {
+                "status": "planned" if dry_run else "default",
+                "value": True,
+                "reason": "VirtualBox internal networking carries same-segment multicast traffic",
             },
             "provider_mac_known": {
                 "status": "planned" if dry_run else "manifest_required",

@@ -57,6 +57,7 @@ PROVIDER_CAPABILITY_NAMES = (
     "link_layer_send",
     "link_layer_capture",
     "broadcast",
+    "multicast",
     "provider_mac_known",
     "controlled_services",
     "controlled_router",
@@ -111,6 +112,7 @@ def hetzner_default_provider_capabilities(
         "link_layer_send": False,
         "link_layer_capture": False,
         "broadcast": False,
+        "multicast": False,
         "provider_mac_known": False,
         "controlled_services": True,
         "controlled_router": False,
@@ -142,6 +144,11 @@ def hetzner_default_provider_capabilities(
                 "status": "not_proven",
                 "value": False,
                 "reason": "broadcast delivery is not assumed on the provider network",
+            },
+            "multicast": {
+                "status": "not_proven",
+                "value": False,
+                "reason": "multicast delivery is not assumed on the provider network",
             },
             "provider_mac_known": {
                 "status": "manifest_required",

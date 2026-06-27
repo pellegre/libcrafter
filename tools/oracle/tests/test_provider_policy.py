@@ -9,11 +9,14 @@ from tools.oracle.engine.corpus import (
     SKIP_PROVIDER_CAPABILITY_UNAVAILABLE,
     SKIP_REQUIRES_BROADCAST,
     SKIP_REQUIRES_CONTROLLED_SERVICE,
+    SKIP_REQUIRES_IPV6,
     SKIP_REQUIRES_L2,
+    SKIP_REQUIRES_MULTICAST,
     SKIP_REQUIRES_PROVIDER_MAC,
     populate_corpus_eligibility,
     wire_comparison_policy,
 )
+from tools.oracle.engine.providers.docker import docker_default_provider_capabilities
 from tools.oracle.engine.model import PacketPlan
 from tools.oracle.engine.providers.hetzner import hetzner_default_provider_capabilities
 from tools.oracle.engine.providers.qemu import qemu_default_provider_capabilities
@@ -347,6 +350,91 @@ class Dhcpv4LiveEligibilityPolicyTest(unittest.TestCase):
         self.assertTrue(requirements["provider_mac_known"])
 
 
+class Dhcpv6LiveEligibilityPolicyTest(unittest.TestCase):
+    """Prove DHCPv6 live planning reports stable provider capability gaps."""
+
+    def test_qemu_skips_dhcpv6_on_unplanned_ipv6(self) -> None:
+        self._assert_private_provider_skips_on_ipv6(
+            qemu_default_provider_capabilities(dry_run=True),
+            provider="qemu",
+        )
+
+    def test_docker_skips_dhcpv6_on_unplanned_ipv6(self) -> None:
+        self._assert_private_provider_skips_on_ipv6(
+            docker_default_provider_capabilities(dry_run=True),
+            provider="docker",
+        )
+
+    def test_virtualbox_skips_dhcpv6_on_unplanned_ipv6(self) -> None:
+        self._assert_private_provider_skips_on_ipv6(
+            virtualbox_default_provider_capabilities(dry_run=True),
+            provider="virtualbox",
+        )
+
+    def test_hetzner_skips_dhcpv6_on_ipv6_and_multicast_gaps(self) -> None:
+        [packet] = populate_corpus_eligibility(
+            backend="scapy",
+            packets=[CorpusPacket.from_plan(_ipv6_dhcpv6_plan())],
+            provider_capabilities=hetzner_default_provider_capabilities(dry_run=True),
+            wire_provider="hetzner",
+        )
+
+        self.assertEqual(packet.wire.metadata["provider"], "hetzner")
+        self.assertFalse(packet.wire.eligible)
+        self.assertEqual(packet.wire.compare_root, "l3:ipv6")
+        self.assertIn(SKIP_REQUIRES_IPV6, packet.wire.skip_reasons)
+        self.assertIn(SKIP_REQUIRES_MULTICAST, packet.wire.skip_reasons)
+        requirements = packet.wire.metadata["provider_profiles"]["hetzner"]["metadata"][
+            "requirements"
+        ]
+        self.assertTrue(requirements["ipv6_unicast"])
+        self.assertTrue(requirements["multicast"])
+
+    def test_ipv6_provider_without_multicast_skips_dhcpv6_multicast(self) -> None:
+        capabilities = qemu_default_provider_capabilities(dry_run=True)
+        capabilities["provider"] = "ipv6-no-multicast"
+        capabilities["ipv6_unicast"] = True
+        capabilities["ipv6"] = True
+        capabilities["multicast"] = False
+
+        [packet] = populate_corpus_eligibility(
+            backend="scapy",
+            packets=[CorpusPacket.from_plan(_ipv6_dhcpv6_plan())],
+            provider_capabilities=capabilities,
+            wire_provider="ipv6-no-multicast",
+        )
+
+        self.assertEqual(packet.wire.metadata["provider"], "ipv6-no-multicast")
+        self.assertFalse(packet.wire.eligible)
+        self.assertNotIn(SKIP_REQUIRES_IPV6, packet.wire.skip_reasons)
+        self.assertEqual(packet.wire.skip_reasons, [SKIP_REQUIRES_MULTICAST])
+
+    def _assert_private_provider_skips_on_ipv6(
+        self,
+        capabilities: dict[str, object],
+        *,
+        provider: str,
+    ) -> None:
+        [packet] = populate_corpus_eligibility(
+            backend="scapy",
+            packets=[CorpusPacket.from_plan(_ipv6_dhcpv6_plan())],
+            provider_capabilities=capabilities,
+            wire_provider=provider,
+        )
+
+        self.assertEqual(packet.wire.metadata["provider"], provider)
+        self.assertFalse(packet.wire.eligible)
+        self.assertEqual(packet.wire.compare_root, "l3:ipv6")
+        self.assertEqual(packet.wire.skip_reasons, [SKIP_REQUIRES_IPV6])
+        requirements = packet.wire.metadata["provider_profiles"][provider]["metadata"][
+            "requirements"
+        ]
+        self.assertTrue(requirements["ipv6_unicast"])
+        self.assertTrue(requirements["multicast"])
+        self.assertFalse(requirements["link_layer_send"])
+        self.assertFalse(requirements["link_layer_capture"])
+
+
 def _ipv4_plan() -> PacketPlan:
     return PacketPlan(
         stack=["ipv4"],
@@ -397,6 +485,25 @@ def _ethernet_dhcpv4_plan() -> PacketPlan:
         family="ipv4",
         case="dhcpv4-discover",
         metadata={"root": "link:ethernet"},
+    )
+
+
+def _ipv6_dhcpv6_plan() -> PacketPlan:
+    return PacketPlan(
+        stack=["ipv6", "udp", "dhcpv6"],
+        fields={
+            "ipv6": {"src": "2001:db8::10", "dst": "ff02::1:2"},
+            "udp": {"sport": 546, "dport": 547},
+            "dhcpv6": {"message_type": "solicit", "transaction_id": 0x010203},
+        },
+        profile="dhcpv6-smoke",
+        seed=9915,
+        index=0,
+        direction="live_exchange",
+        family="ipv6",
+        feature_tags=["baseline", "ipv6", "udp", "dhcpv6"],
+        case="dhcpv6-solicit",
+        metadata={"root": "l3:ipv6", "root_decoder": "l3:ipv6"},
     )
 
 
