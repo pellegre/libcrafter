@@ -26,8 +26,9 @@ pub(crate) use layer::{append_dhcpv6_packet, looks_like_dhcpv6_payload};
 pub use layer::{Dhcpv6, Dhcpv6RelayHeader};
 pub use message::Dhcpv6MessageType;
 pub use option::{
-    Dhcpv6AuthAlgorithm, Dhcpv6AuthProtocol, Dhcpv6Authentication, Dhcpv6ClientLinkLayerAddress,
-    Dhcpv6DomainList, Dhcpv6IaAddr, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6Option,
+    Dhcpv6AuthAlgorithm, Dhcpv6AuthProtocol, Dhcpv6Authentication, Dhcpv6BootfileParam,
+    Dhcpv6ClientArchitecture, Dhcpv6ClientLinkLayerAddress, Dhcpv6DomainList, Dhcpv6IaAddr,
+    Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6NetworkInterfaceIdentifier, Dhcpv6Option,
     Dhcpv6OptionCode, Dhcpv6OptionFormat, Dhcpv6OptionValue, Dhcpv6RelaySuppliedOptions,
     Dhcpv6RemoteId, Dhcpv6ReplayDetectionMethod, Dhcpv6StatusCodeOption, Dhcpv6UserClass,
     Dhcpv6VendorClass, Dhcpv6VendorOption, Dhcpv6VendorOptions,

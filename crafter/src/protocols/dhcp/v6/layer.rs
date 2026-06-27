@@ -15,9 +15,11 @@ use super::constants::{
 use super::duid::Dhcpv6Duid;
 use super::message::{dhcpv6_message_type_summary, Dhcpv6MessageType};
 use super::option::{
-    Dhcpv6Authentication, Dhcpv6ClientLinkLayerAddress, Dhcpv6DomainList, Dhcpv6IaNa, Dhcpv6IaPd,
-    Dhcpv6Option, Dhcpv6OptionCode, Dhcpv6RelaySuppliedOptions, Dhcpv6RemoteId,
-    Dhcpv6StatusCodeOption, Dhcpv6UserClass, Dhcpv6VendorClass, Dhcpv6VendorOptions,
+    Dhcpv6Authentication, Dhcpv6BootfileParam, Dhcpv6ClientArchitecture,
+    Dhcpv6ClientLinkLayerAddress, Dhcpv6DomainList, Dhcpv6IaNa, Dhcpv6IaPd,
+    Dhcpv6NetworkInterfaceIdentifier, Dhcpv6Option, Dhcpv6OptionCode, Dhcpv6RelaySuppliedOptions,
+    Dhcpv6RemoteId, Dhcpv6StatusCodeOption, Dhcpv6UserClass, Dhcpv6VendorClass,
+    Dhcpv6VendorOptions,
 };
 use super::status::Dhcpv6StatusCode;
 
@@ -453,6 +455,26 @@ impl Dhcpv6 {
         self.option(Dhcpv6Option::relay_id(relay_id))
     }
 
+    /// Append an OPT_BOOTFILE_URL option.
+    pub fn bootfile_url(self, url: impl Into<Vec<u8>>) -> Self {
+        self.option(Dhcpv6Option::bootfile_url(url))
+    }
+
+    /// Append an OPT_BOOTFILE_PARAM option.
+    pub fn bootfile_param(self, params: Dhcpv6BootfileParam) -> Result<Self> {
+        Ok(self.option(Dhcpv6Option::bootfile_param(params)?))
+    }
+
+    /// Append an OPTION_CLIENT_ARCH_TYPE option.
+    pub fn client_arch_type(self, arch: Dhcpv6ClientArchitecture) -> Self {
+        self.option(Dhcpv6Option::client_arch_type(arch))
+    }
+
+    /// Append an OPTION_NII option.
+    pub fn network_interface_identifier(self, nii: Dhcpv6NetworkInterfaceIdentifier) -> Self {
+        self.option(Dhcpv6Option::network_interface_identifier(nii))
+    }
+
     /// Append an OPTION_RSOO option.
     pub fn relay_supplied_options(self, rsoo: Dhcpv6RelaySuppliedOptions) -> Result<Self> {
         Ok(self.option(Dhcpv6Option::relay_supplied_options(rsoo)?))
@@ -744,6 +766,44 @@ impl Dhcpv6 {
     pub fn relay_id_value(&self) -> Option<&[u8]> {
         self.first_option(super::constants::DHCPV6_OPTION_RELAY_ID)
             .and_then(Dhcpv6Option::relay_id_value)
+    }
+
+    /// Return OPT_BOOTFILE_URL payload bytes.
+    pub fn bootfile_url_value(&self) -> Option<&[u8]> {
+        self.first_option(super::constants::DHCPV6_OPTION_BOOTFILE_URL)
+            .and_then(Dhcpv6Option::bootfile_url_value)
+    }
+
+    /// Return OPT_BOOTFILE_URL as UTF-8 text when valid.
+    pub fn bootfile_url_text(&self) -> Option<&str> {
+        self.first_option(super::constants::DHCPV6_OPTION_BOOTFILE_URL)
+            .and_then(Dhcpv6Option::bootfile_url_text)
+    }
+
+    /// Decode the first Bootfile Param option.
+    pub fn bootfile_param_value(&self) -> Result<Option<Dhcpv6BootfileParam>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_BOOTFILE_PARAM) {
+            Some(option) => option.bootfile_param_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode the first Client Architecture option.
+    pub fn client_arch_type_value(&self) -> Result<Option<Dhcpv6ClientArchitecture>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_CLIENT_ARCH_TYPE) {
+            Some(option) => option.client_arch_type_value(),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode the first Network Interface Identifier option.
+    pub fn network_interface_identifier_value(
+        &self,
+    ) -> Result<Option<Dhcpv6NetworkInterfaceIdentifier>> {
+        match self.first_option(super::constants::DHCPV6_OPTION_NII) {
+            Some(option) => option.network_interface_identifier_value(),
+            None => Ok(None),
+        }
     }
 
     /// Decode the first Relay-ID option as a DUID.

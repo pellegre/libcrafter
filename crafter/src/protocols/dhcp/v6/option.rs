@@ -15,12 +15,13 @@ use super::constants::{
     DHCPV6_AUTH_HEADER_LEN, DHCPV6_AUTH_PROTOCOL_CONFIGURATION_TOKEN, DHCPV6_AUTH_PROTOCOL_DELAYED,
     DHCPV6_AUTH_PROTOCOL_DHCPV6_DELAYED_OBSOLETE, DHCPV6_AUTH_PROTOCOL_RECONFIGURE_KEY,
     DHCPV6_AUTH_PROTOCOL_SPLIT_HORIZON_DNS, DHCPV6_AUTH_RDM_MONOTONIC_COUNTER,
-    DHCPV6_AUTH_REPLAY_DETECTION_LEN, DHCPV6_OPTION_AUTH, DHCPV6_OPTION_CLIENTID,
+    DHCPV6_AUTH_REPLAY_DETECTION_LEN, DHCPV6_OPTION_AUTH, DHCPV6_OPTION_BOOTFILE_PARAM,
+    DHCPV6_OPTION_BOOTFILE_URL, DHCPV6_OPTION_CLIENTID, DHCPV6_OPTION_CLIENT_ARCH_TYPE,
     DHCPV6_OPTION_CLIENT_LINKLAYER_ADDR, DHCPV6_OPTION_DNS_SERVERS, DHCPV6_OPTION_DOMAIN_LIST,
     DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN, DHCPV6_OPTION_IAADDR,
     DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD,
     DHCPV6_OPTION_INFORMATION_REFRESH_TIME, DHCPV6_OPTION_INF_MAX_RT, DHCPV6_OPTION_INTERFACE_ID,
-    DHCPV6_OPTION_ORO, DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT,
+    DHCPV6_OPTION_NII, DHCPV6_OPTION_ORO, DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT,
     DHCPV6_OPTION_RECONF_ACCEPT, DHCPV6_OPTION_RECONF_MSG, DHCPV6_OPTION_RELAY_ID,
     DHCPV6_OPTION_RELAY_MSG, DHCPV6_OPTION_REMOTE_ID, DHCPV6_OPTION_RSOO, DHCPV6_OPTION_SERVERID,
     DHCPV6_OPTION_SOL_MAX_RT, DHCPV6_OPTION_STATUS_CODE, DHCPV6_OPTION_SUBSCRIBER_ID,
@@ -260,6 +261,29 @@ pub struct Dhcpv6RelaySuppliedOptions {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Dhcpv6DomainList {
     names: Vec<DnsName>,
+}
+
+/// DHCPv6 OPT_BOOTFILE_PARAM payload.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6BootfileParam {
+    parameters: Vec<Vec<u8>>,
+}
+
+/// DHCPv6 OPTION_CLIENT_ARCH_TYPE payload.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6ClientArchitecture {
+    architectures: Vec<u16>,
+}
+
+/// DHCPv6 OPTION_NII payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Dhcpv6NetworkInterfaceIdentifier {
+    /// Interface type octet.
+    pub interface_type: u8,
+    /// Major revision octet.
+    pub major: u8,
+    /// Minor revision octet.
+    pub minor: u8,
 }
 
 /// DHCPv6 OPTION_STATUS_CODE payload.
@@ -1239,6 +1263,107 @@ impl Dhcpv6DomainList {
     }
 }
 
+impl Dhcpv6BootfileParam {
+    /// Create a Bootfile Param payload from opaque parameter strings.
+    pub fn new<P, D>(parameters: P) -> Self
+    where
+        P: IntoIterator<Item = D>,
+        D: Into<Vec<u8>>,
+    {
+        Self {
+            parameters: parameters.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    /// Decode a Bootfile Param payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        Ok(Self {
+            parameters: decode_class_data_list(bytes, "dhcpv6.option.bootfile_param")?,
+        })
+    }
+
+    /// Encode this Bootfile Param payload.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        encode_class_data_list(&self.parameters, "dhcpv6.option.bootfile_param")
+    }
+
+    /// Borrow bootfile parameters.
+    pub fn parameters(&self) -> &[Vec<u8>] {
+        &self.parameters
+    }
+}
+
+impl Dhcpv6ClientArchitecture {
+    /// Create a Client Architecture payload from processor architecture values.
+    pub fn new(architectures: impl Into<Vec<u16>>) -> Self {
+        Self {
+            architectures: architectures.into(),
+        }
+    }
+
+    /// Decode a Client Architecture payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.is_empty() || bytes.len() % 2 != 0 {
+            return Err(CrafterError::invalid_field_value(
+                "dhcpv6.option.client_arch_type",
+                "payload length must be a non-zero multiple of 2 bytes",
+            ));
+        }
+
+        let mut architectures = Vec::with_capacity(bytes.len() / 2);
+        for chunk in bytes.chunks_exact(2) {
+            architectures.push(read_u16_be(chunk)?);
+        }
+        Ok(Self { architectures })
+    }
+
+    /// Encode this Client Architecture payload.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.architectures.len() * 2);
+        for architecture in &self.architectures {
+            append_u16_be(&mut out, *architecture);
+        }
+        out
+    }
+
+    /// Borrow architecture values.
+    pub fn architectures(&self) -> &[u16] {
+        &self.architectures
+    }
+}
+
+impl Dhcpv6NetworkInterfaceIdentifier {
+    /// Create a Network Interface Identifier payload.
+    pub const fn new(interface_type: u8, major: u8, minor: u8) -> Self {
+        Self {
+            interface_type,
+            major,
+            minor,
+        }
+    }
+
+    /// Create a UNDI Network Interface Identifier payload.
+    pub const fn undi(major: u8, minor: u8) -> Self {
+        Self::new(1, major, minor)
+    }
+
+    /// Decode a Network Interface Identifier payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() != 3 {
+            return Err(CrafterError::invalid_field_value(
+                "dhcpv6.option.nii",
+                "payload length does not match option format",
+            ));
+        }
+        Ok(Self::new(bytes[0], bytes[1], bytes[2]))
+    }
+
+    /// Encode this Network Interface Identifier payload.
+    pub const fn encode(self) -> [u8; 3] {
+        [self.interface_type, self.major, self.minor]
+    }
+}
+
 impl Dhcpv6StatusCodeOption {
     /// Create a Status Code option payload with no status message bytes.
     pub fn new(status: Dhcpv6StatusCode) -> Self {
@@ -1496,6 +1621,26 @@ impl Dhcpv6Option {
     /// Create an OPTION_RELAY_ID option.
     pub fn relay_id(relay_id: impl Into<Vec<u8>>) -> Self {
         Self::raw(DHCPV6_OPTION_RELAY_ID, relay_id)
+    }
+
+    /// Create an OPT_BOOTFILE_URL option.
+    pub fn bootfile_url(url: impl Into<Vec<u8>>) -> Self {
+        Self::raw(DHCPV6_OPTION_BOOTFILE_URL, url)
+    }
+
+    /// Create an OPT_BOOTFILE_PARAM option.
+    pub fn bootfile_param(params: Dhcpv6BootfileParam) -> Result<Self> {
+        Ok(Self::raw(DHCPV6_OPTION_BOOTFILE_PARAM, params.encode()?))
+    }
+
+    /// Create an OPTION_CLIENT_ARCH_TYPE option.
+    pub fn client_arch_type(arch: Dhcpv6ClientArchitecture) -> Self {
+        Self::raw(DHCPV6_OPTION_CLIENT_ARCH_TYPE, arch.encode())
+    }
+
+    /// Create an OPTION_NII option.
+    pub fn network_interface_identifier(nii: Dhcpv6NetworkInterfaceIdentifier) -> Self {
+        Self::raw(DHCPV6_OPTION_NII, nii.encode())
     }
 
     /// Create an OPTION_RSOO option.
@@ -1782,6 +1927,43 @@ impl Dhcpv6Option {
     /// Return OPTION_RELAY_ID payload bytes.
     pub fn relay_id_value(&self) -> Option<&[u8]> {
         self.payload_if_code(DHCPV6_OPTION_RELAY_ID)
+    }
+
+    /// Return OPT_BOOTFILE_URL payload bytes.
+    pub fn bootfile_url_value(&self) -> Option<&[u8]> {
+        self.payload_if_code(DHCPV6_OPTION_BOOTFILE_URL)
+    }
+
+    /// Return OPT_BOOTFILE_URL as UTF-8 text when valid.
+    pub fn bootfile_url_text(&self) -> Option<&str> {
+        self.bootfile_url_value()
+            .and_then(|payload| core::str::from_utf8(payload).ok())
+    }
+
+    /// Decode OPT_BOOTFILE_PARAM.
+    pub fn bootfile_param_value(&self) -> Result<Option<Dhcpv6BootfileParam>> {
+        match self.payload_if_code(DHCPV6_OPTION_BOOTFILE_PARAM) {
+            Some(payload) => Dhcpv6BootfileParam::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode OPTION_CLIENT_ARCH_TYPE.
+    pub fn client_arch_type_value(&self) -> Result<Option<Dhcpv6ClientArchitecture>> {
+        match self.payload_if_code(DHCPV6_OPTION_CLIENT_ARCH_TYPE) {
+            Some(payload) => Dhcpv6ClientArchitecture::decode(payload).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Decode OPTION_NII.
+    pub fn network_interface_identifier_value(
+        &self,
+    ) -> Result<Option<Dhcpv6NetworkInterfaceIdentifier>> {
+        match self.payload_if_code(DHCPV6_OPTION_NII) {
+            Some(payload) => Dhcpv6NetworkInterfaceIdentifier::decode(payload).map(Some),
+            None => Ok(None),
+        }
     }
 
     /// Decode OPTION_RELAY_ID as a DUID.
@@ -3178,5 +3360,135 @@ mod dhcpv6_information_refresh_tests {
                 ),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_boot_options_tests {
+    use super::{
+        Dhcpv6BootfileParam, Dhcpv6ClientArchitecture, Dhcpv6NetworkInterfaceIdentifier,
+        Dhcpv6Option,
+    };
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{
+        Dhcpv6, DHCPV6_OPTION_BOOTFILE_PARAM, DHCPV6_OPTION_BOOTFILE_URL,
+        DHCPV6_OPTION_CLIENT_ARCH_TYPE, DHCPV6_OPTION_NII,
+    };
+
+    #[test]
+    fn dhcpv6_boot_options_preserve_url_and_multiple_parameters() {
+        let url = b"tftp://[2001:db8::1]/bootx64.efi".as_slice();
+        let params = Dhcpv6BootfileParam::new(vec![
+            b"root-path=/srv/netboot".to_vec(),
+            b"console=ttyS0".to_vec(),
+        ]);
+        let param_option = Dhcpv6Option::bootfile_param(params.clone()).unwrap();
+
+        assert_eq!(
+            Dhcpv6Option::bootfile_url(url).codepoint(),
+            DHCPV6_OPTION_BOOTFILE_URL,
+        );
+        assert_eq!(
+            Dhcpv6Option::bootfile_url(url).bootfile_url_text(),
+            Some("tftp://[2001:db8::1]/bootx64.efi")
+        );
+        assert_eq!(param_option.codepoint(), DHCPV6_OPTION_BOOTFILE_PARAM);
+        assert_eq!(
+            param_option.payload(),
+            &[
+                0x00, 0x16, b'r', b'o', b'o', b't', b'-', b'p', b'a', b't', b'h', b'=', b'/', b's',
+                b'r', b'v', b'/', b'n', b'e', b't', b'b', b'o', b'o', b't', 0x00, 0x0d, b'c', b'o',
+                b'n', b's', b'o', b'l', b'e', b'=', b't', b't', b'y', b'S', b'0',
+            ],
+        );
+
+        let message = Dhcpv6::reply(0x010203)
+            .bootfile_url(url)
+            .bootfile_param(params.clone())
+            .unwrap();
+        let decoded =
+            Dhcpv6::decode(Packet::from_layer(message).compile().unwrap().as_bytes()).unwrap();
+        assert_eq!(decoded.bootfile_url_value(), Some(url));
+        assert_eq!(
+            decoded.bootfile_url_text(),
+            Some("tftp://[2001:db8::1]/bootx64.efi")
+        );
+        assert_eq!(decoded.bootfile_param_value().unwrap(), Some(params));
+    }
+
+    #[test]
+    fn dhcpv6_boot_options_preserve_unknown_architecture_values() {
+        let arch = Dhcpv6ClientArchitecture::new(vec![0, 7, 9, 0xffff]);
+        let option = Dhcpv6Option::client_arch_type(arch.clone());
+
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_CLIENT_ARCH_TYPE);
+        assert_eq!(
+            option.payload(),
+            &[0x00, 0x00, 0x00, 0x07, 0x00, 0x09, 0xff, 0xff]
+        );
+        assert_eq!(option.client_arch_type_value().unwrap(), Some(arch.clone()));
+        assert_eq!(arch.architectures(), &[0, 7, 9, 0xffff]);
+
+        let decoded = Dhcpv6::decode(
+            Packet::from_layer(Dhcpv6::reply(0x010203).client_arch_type(arch.clone()))
+                .compile()
+                .unwrap()
+                .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(decoded.client_arch_type_value().unwrap(), Some(arch));
+    }
+
+    #[test]
+    fn dhcpv6_boot_options_nii_roundtrips_and_rejects_bad_lengths() {
+        let nii = Dhcpv6NetworkInterfaceIdentifier::undi(2, 1);
+        let option = Dhcpv6Option::network_interface_identifier(nii);
+
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_NII);
+        assert_eq!(option.payload(), &[1, 2, 1]);
+        assert_eq!(
+            option.network_interface_identifier_value().unwrap(),
+            Some(nii)
+        );
+
+        let decoded = Dhcpv6::decode(
+            Packet::from_layer(Dhcpv6::reply(0x010203).network_interface_identifier(nii))
+                .compile()
+                .unwrap()
+                .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            decoded.network_interface_identifier_value().unwrap(),
+            Some(nii)
+        );
+
+        let malformed = Dhcpv6Option::raw(DHCPV6_OPTION_NII, [1, 2]);
+        assert_eq!(
+            malformed.network_interface_identifier_value().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.nii",
+                "payload length does not match option format",
+            ),
+        );
+    }
+
+    #[test]
+    fn dhcpv6_boot_options_reject_malformed_parameter_and_arch_lengths() {
+        let malformed_param = Dhcpv6Option::raw(DHCPV6_OPTION_BOOTFILE_PARAM, [0x00, 0x04, b'a']);
+        assert_eq!(
+            malformed_param.bootfile_param_value().unwrap_err(),
+            CrafterError::buffer_too_short("dhcpv6.option.bootfile_param", 6, 3),
+        );
+
+        let malformed_arch = Dhcpv6Option::raw(DHCPV6_OPTION_CLIENT_ARCH_TYPE, [0x00]);
+        assert_eq!(
+            malformed_arch.client_arch_type_value().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "dhcpv6.option.client_arch_type",
+                "payload length must be a non-zero multiple of 2 bytes",
+            ),
+        );
     }
 }
