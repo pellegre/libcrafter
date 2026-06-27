@@ -37,9 +37,15 @@ pub use option::{
     Dhcpv6VendorOptions,
 };
 pub use registry::{
-    dhcpv6_option_meta, dhcpv6_option_name, dhcpv6_option_status, dhcpv6_rsoo_option_permission,
-    dhcpv6_rsoo_option_permitted, dhcpv6_s46_priority_option_permission,
-    dhcpv6_s46_priority_option_permitted, Dhcpv6ClientOro, Dhcpv6OptionMeta, Dhcpv6OptionSingleton,
-    Dhcpv6OptionStatus, Dhcpv6RsooOptionPermission, Dhcpv6S46PriorityOptionPermission,
+    dhcpv6_option_meta, dhcpv6_option_name, dhcpv6_option_status, dhcpv6_radius_attribute_meta,
+    dhcpv6_radius_attribute_name, dhcpv6_radius_attribute_permitted,
+    dhcpv6_radius_dhcpv6_option_permission, dhcpv6_radius_dhcpv6_option_permitted,
+    dhcpv6_rsoo_option_permission, dhcpv6_rsoo_option_permitted,
+    dhcpv6_s46_priority_option_permission, dhcpv6_s46_priority_option_permitted,
+    dhcpv6_supported_transport_meta, dhcpv6_supported_transport_name,
+    Dhcpv6AuxiliaryRegistryStatus, Dhcpv6ClientOro, Dhcpv6OptionMeta, Dhcpv6OptionSingleton,
+    Dhcpv6OptionStatus, Dhcpv6RadiusAttributeCode, Dhcpv6RadiusAttributeMeta,
+    Dhcpv6RadiusDhcpv6OptionPermission, Dhcpv6RsooOptionPermission,
+    Dhcpv6S46PriorityOptionPermission, Dhcpv6SupportedTransportMeta,
 };
 pub use status::Dhcpv6StatusCode;

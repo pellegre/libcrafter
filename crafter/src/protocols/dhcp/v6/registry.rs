@@ -9,7 +9,14 @@
 use super::constants::{
     DHCPV6_OPTION_AFTR_NAME, DHCPV6_OPTION_DHCP4_O_DHCP6_SERVER,
     DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME, DHCPV6_OPTION_S46_CONT_LW, DHCPV6_OPTION_S46_CONT_MAPE,
-    DHCPV6_OPTION_S46_CONT_MAPT,
+    DHCPV6_OPTION_S46_CONT_MAPT, DHCPV6_OPTION_V6_DNR,
+    DHCPV6_RADIUS_ATTRIBUTE_DELEGATED_IPV6_PREFIX,
+    DHCPV6_RADIUS_ATTRIBUTE_DELEGATED_IPV6_PREFIX_POOL,
+    DHCPV6_RADIUS_ATTRIBUTE_DHCPV6_OPTIONS_EXTENDED_TYPE,
+    DHCPV6_RADIUS_ATTRIBUTE_DNS_SERVER_IPV6_ADDRESS, DHCPV6_RADIUS_ATTRIBUTE_DS_LITE_TUNNEL_NAME,
+    DHCPV6_RADIUS_ATTRIBUTE_EXTENDED_TYPE_1, DHCPV6_RADIUS_ATTRIBUTE_FRAMED_IPV6_ADDRESS,
+    DHCPV6_RADIUS_ATTRIBUTE_STATEFUL_IPV6_ADDRESS_POOL, DHCPV6_RADIUS_ATTRIBUTE_VENDOR_SPECIFIC,
+    DHCPV6_SUPPORTED_TRANSPORT_DOMTLS_BIT, DHCPV6_SUPPORTED_TRANSPORT_MAX_BIT,
 };
 
 /// Registry assignment status for a DHCPv6 option codepoint.
@@ -69,10 +76,96 @@ pub enum Dhcpv6S46PriorityOptionPermission {
     NotPermitted,
 }
 
+/// Assignment status for auxiliary DHCPv6 registries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Dhcpv6AuxiliaryRegistryStatus {
+    /// The value is assigned by the auxiliary registry.
+    Assigned,
+    /// The value is unassigned by the auxiliary registry.
+    Unassigned,
+    /// The value is outside the range covered by the auxiliary registry.
+    Unknown,
+}
+
+/// RADIUS attribute type code, including extended RADIUS attributes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Dhcpv6RadiusAttributeCode {
+    type_code: u8,
+    extended_type: Option<u8>,
+}
+
+/// One IANA "RADIUS Attributes Permitted in the DHCPv6 RADIUS Option" entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Dhcpv6RadiusAttributeMeta {
+    /// RADIUS attribute type code.
+    pub code: Dhcpv6RadiusAttributeCode,
+    /// Attribute name or status label.
+    pub name: &'static str,
+    /// Auxiliary registry assignment status.
+    pub status: Dhcpv6AuxiliaryRegistryStatus,
+}
+
+/// One IANA "Supported Transport" bit-position entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Dhcpv6SupportedTransportMeta {
+    /// Wire bit position.
+    pub bit_position: u8,
+    /// Transport description or status label.
+    pub description: &'static str,
+    /// IANA mnemonic for assigned bits.
+    pub mnemonic: Option<&'static str>,
+    /// Auxiliary registry assignment status.
+    pub status: Dhcpv6AuxiliaryRegistryStatus,
+}
+
+/// IANA "DHCPv6 Options Permitted in the RADIUS DHCPv6-Options Attribute" status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Dhcpv6RadiusDhcpv6OptionPermission {
+    /// The option is listed as permitted in the RADIUS DHCPv6-Options attribute.
+    Permitted,
+    /// The option is not listed as permitted in the RADIUS DHCPv6-Options attribute.
+    NotPermitted,
+}
+
 impl Dhcpv6OptionSingleton {
     /// True when the registry marks the option as singleton.
     pub const fn is_singleton(self) -> bool {
         matches!(self, Self::Yes)
+    }
+}
+
+impl Dhcpv6AuxiliaryRegistryStatus {
+    /// True when the auxiliary registry assigns this value.
+    pub const fn is_assigned(self) -> bool {
+        matches!(self, Self::Assigned)
+    }
+}
+
+impl Dhcpv6RadiusAttributeCode {
+    /// Create a non-extended RADIUS attribute code.
+    pub const fn standard(type_code: u8) -> Self {
+        Self {
+            type_code,
+            extended_type: None,
+        }
+    }
+
+    /// Create an extended RADIUS attribute code.
+    pub const fn extended(type_code: u8, extended_type: u8) -> Self {
+        Self {
+            type_code,
+            extended_type: Some(extended_type),
+        }
+    }
+
+    /// Return the base RADIUS attribute type code.
+    pub const fn type_code(self) -> u8 {
+        self.type_code
+    }
+
+    /// Return the extended RADIUS attribute type code when present.
+    pub const fn extended_type(self) -> Option<u8> {
+        self.extended_type
     }
 }
 
@@ -164,6 +257,136 @@ pub const fn dhcpv6_s46_priority_option_permitted(code: u16) -> bool {
         dhcpv6_s46_priority_option_permission(code),
         Dhcpv6S46PriorityOptionPermission::Permitted
     )
+}
+
+/// Metadata for a RADIUS attribute permitted in OPTION_RADIUS.
+///
+/// Source: IANA "RADIUS Attributes Permitted in the DHCPv6 RADIUS Option".
+pub const fn dhcpv6_radius_attribute_meta(
+    code: Dhcpv6RadiusAttributeCode,
+) -> Dhcpv6RadiusAttributeMeta {
+    match (code.type_code, code.extended_type) {
+        (DHCPV6_RADIUS_ATTRIBUTE_VENDOR_SPECIFIC, None) => radius_attr(
+            code,
+            "Vendor-Specific",
+            Dhcpv6AuxiliaryRegistryStatus::Assigned,
+        ),
+        (DHCPV6_RADIUS_ATTRIBUTE_DELEGATED_IPV6_PREFIX, None) => radius_attr(
+            code,
+            "Delegated-IPv6-Prefix",
+            Dhcpv6AuxiliaryRegistryStatus::Assigned,
+        ),
+        (DHCPV6_RADIUS_ATTRIBUTE_DS_LITE_TUNNEL_NAME, None) => radius_attr(
+            code,
+            "DS-Lite-Tunnel-Name",
+            Dhcpv6AuxiliaryRegistryStatus::Assigned,
+        ),
+        (DHCPV6_RADIUS_ATTRIBUTE_FRAMED_IPV6_ADDRESS, None) => radius_attr(
+            code,
+            "Framed-IPv6-Address",
+            Dhcpv6AuxiliaryRegistryStatus::Assigned,
+        ),
+        (DHCPV6_RADIUS_ATTRIBUTE_DNS_SERVER_IPV6_ADDRESS, None) => radius_attr(
+            code,
+            "DNS-Server-IPv6-Address",
+            Dhcpv6AuxiliaryRegistryStatus::Assigned,
+        ),
+        (DHCPV6_RADIUS_ATTRIBUTE_DELEGATED_IPV6_PREFIX_POOL, None) => radius_attr(
+            code,
+            "Delegated-IPv6-Prefix-Pool",
+            Dhcpv6AuxiliaryRegistryStatus::Assigned,
+        ),
+        (DHCPV6_RADIUS_ATTRIBUTE_STATEFUL_IPV6_ADDRESS_POOL, None) => radius_attr(
+            code,
+            "Stateful-IPv6-Address-Pool",
+            Dhcpv6AuxiliaryRegistryStatus::Assigned,
+        ),
+        (
+            DHCPV6_RADIUS_ATTRIBUTE_EXTENDED_TYPE_1,
+            Some(DHCPV6_RADIUS_ATTRIBUTE_DHCPV6_OPTIONS_EXTENDED_TYPE),
+        ) => radius_attr(
+            code,
+            "DHCPv6-Options",
+            Dhcpv6AuxiliaryRegistryStatus::Assigned,
+        ),
+        _ => radius_attr(
+            code,
+            "Unassigned",
+            Dhcpv6AuxiliaryRegistryStatus::Unassigned,
+        ),
+    }
+}
+
+/// Registered RADIUS attribute name for OPTION_RADIUS, when assigned.
+pub const fn dhcpv6_radius_attribute_name(code: Dhcpv6RadiusAttributeCode) -> Option<&'static str> {
+    match dhcpv6_radius_attribute_meta(code).status {
+        Dhcpv6AuxiliaryRegistryStatus::Assigned => Some(dhcpv6_radius_attribute_meta(code).name),
+        Dhcpv6AuxiliaryRegistryStatus::Unassigned | Dhcpv6AuxiliaryRegistryStatus::Unknown => None,
+    }
+}
+
+/// True when IANA lists the RADIUS attribute as permitted in OPTION_RADIUS.
+pub const fn dhcpv6_radius_attribute_permitted(code: Dhcpv6RadiusAttributeCode) -> bool {
+    dhcpv6_radius_attribute_meta(code).status.is_assigned()
+}
+
+/// Metadata for an OPTION_V6_DNR Supported Transport registry bit.
+///
+/// Source: IANA "Supported Transport".
+pub const fn dhcpv6_supported_transport_meta(bit_position: u8) -> Dhcpv6SupportedTransportMeta {
+    match bit_position {
+        DHCPV6_SUPPORTED_TRANSPORT_DOMTLS_BIT => Dhcpv6SupportedTransportMeta {
+            bit_position,
+            description: "DNS over mutually authenticated TLS",
+            mnemonic: Some("DomTLS"),
+            status: Dhcpv6AuxiliaryRegistryStatus::Assigned,
+        },
+        1..=DHCPV6_SUPPORTED_TRANSPORT_MAX_BIT => Dhcpv6SupportedTransportMeta {
+            bit_position,
+            description: "Unassigned",
+            mnemonic: None,
+            status: Dhcpv6AuxiliaryRegistryStatus::Unassigned,
+        },
+        _ => Dhcpv6SupportedTransportMeta {
+            bit_position,
+            description: "Unknown",
+            mnemonic: None,
+            status: Dhcpv6AuxiliaryRegistryStatus::Unknown,
+        },
+    }
+}
+
+/// Registered Supported Transport mnemonic, when assigned.
+pub const fn dhcpv6_supported_transport_name(bit_position: u8) -> Option<&'static str> {
+    dhcpv6_supported_transport_meta(bit_position).mnemonic
+}
+
+/// Permission metadata for a DHCPv6 option inside the RADIUS DHCPv6-Options attribute.
+///
+/// Source: IANA "DHCPv6 Options Permitted in the RADIUS DHCPv6-Options Attribute".
+pub const fn dhcpv6_radius_dhcpv6_option_permission(
+    code: u16,
+) -> Dhcpv6RadiusDhcpv6OptionPermission {
+    match code {
+        DHCPV6_OPTION_V6_DNR => Dhcpv6RadiusDhcpv6OptionPermission::Permitted,
+        _ => Dhcpv6RadiusDhcpv6OptionPermission::NotPermitted,
+    }
+}
+
+/// True when IANA lists a DHCPv6 option as permitted in the RADIUS DHCPv6-Options attribute.
+pub const fn dhcpv6_radius_dhcpv6_option_permitted(code: u16) -> bool {
+    matches!(
+        dhcpv6_radius_dhcpv6_option_permission(code),
+        Dhcpv6RadiusDhcpv6OptionPermission::Permitted
+    )
+}
+
+const fn radius_attr(
+    code: Dhcpv6RadiusAttributeCode,
+    name: &'static str,
+    status: Dhcpv6AuxiliaryRegistryStatus,
+) -> Dhcpv6RadiusAttributeMeta {
+    Dhcpv6RadiusAttributeMeta { code, name, status }
 }
 
 const fn entry(
@@ -1247,9 +1470,24 @@ const DHCPV6_OPTION_META: [Dhcpv6OptionMeta; 151] = [
 
 #[cfg(test)]
 mod dhcpv6_option_registry_tests {
+    use crate::protocols::dhcp::v6::constants::{
+        DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME, DHCPV6_OPTION_RADIUS, DHCPV6_OPTION_S46_CONT_MAPE,
+        DHCPV6_OPTION_S46_RULE, DHCPV6_OPTION_V6_DNR,
+        DHCPV6_RADIUS_ATTRIBUTE_DHCPV6_OPTIONS_EXTENDED_TYPE,
+        DHCPV6_RADIUS_ATTRIBUTE_EXTENDED_TYPE_1, DHCPV6_RADIUS_ATTRIBUTE_VENDOR_SPECIFIC,
+        DHCPV6_SUPPORTED_TRANSPORT_DOMTLS_BIT,
+    };
+
     use super::{
-        dhcpv6_option_meta, dhcpv6_option_name, dhcpv6_option_status, Dhcpv6ClientOro,
-        Dhcpv6OptionSingleton, Dhcpv6OptionStatus, DHCPV6_OPTION_REGISTRY_EXPLICIT_END,
+        dhcpv6_option_meta, dhcpv6_option_name, dhcpv6_option_status, dhcpv6_radius_attribute_meta,
+        dhcpv6_radius_attribute_name, dhcpv6_radius_attribute_permitted,
+        dhcpv6_radius_dhcpv6_option_permission, dhcpv6_radius_dhcpv6_option_permitted,
+        dhcpv6_rsoo_option_permission, dhcpv6_rsoo_option_permitted,
+        dhcpv6_s46_priority_option_permission, dhcpv6_s46_priority_option_permitted,
+        dhcpv6_supported_transport_meta, dhcpv6_supported_transport_name,
+        Dhcpv6AuxiliaryRegistryStatus, Dhcpv6ClientOro, Dhcpv6OptionSingleton, Dhcpv6OptionStatus,
+        Dhcpv6RadiusAttributeCode, Dhcpv6RadiusDhcpv6OptionPermission, Dhcpv6RsooOptionPermission,
+        Dhcpv6S46PriorityOptionPermission, DHCPV6_OPTION_REGISTRY_EXPLICIT_END,
         DHCPV6_OPTION_UNASSIGNED_END, DHCPV6_OPTION_UNASSIGNED_START,
     };
 
@@ -1339,5 +1577,104 @@ mod dhcpv6_option_registry_tests {
         assert_eq!(dhcpv6_option_name(10), None);
         assert_eq!(dhcpv6_option_name(0), None);
         assert_eq!(dhcpv6_option_name(151), None);
+    }
+
+    #[test]
+    fn dhcpv6_auxiliary_registry_radius_attributes_have_labels() {
+        let vendor = Dhcpv6RadiusAttributeCode::standard(DHCPV6_RADIUS_ATTRIBUTE_VENDOR_SPECIFIC);
+        let vendor_meta = dhcpv6_radius_attribute_meta(vendor);
+        assert_eq!(vendor_meta.code, vendor);
+        assert_eq!(vendor_meta.name, "Vendor-Specific");
+        assert_eq!(vendor_meta.status, Dhcpv6AuxiliaryRegistryStatus::Assigned);
+        assert_eq!(
+            dhcpv6_radius_attribute_name(vendor),
+            Some("Vendor-Specific")
+        );
+        assert!(dhcpv6_radius_attribute_permitted(vendor));
+
+        let options = Dhcpv6RadiusAttributeCode::extended(
+            DHCPV6_RADIUS_ATTRIBUTE_EXTENDED_TYPE_1,
+            DHCPV6_RADIUS_ATTRIBUTE_DHCPV6_OPTIONS_EXTENDED_TYPE,
+        );
+        assert_eq!(options.type_code(), DHCPV6_RADIUS_ATTRIBUTE_EXTENDED_TYPE_1);
+        assert_eq!(
+            options.extended_type(),
+            Some(DHCPV6_RADIUS_ATTRIBUTE_DHCPV6_OPTIONS_EXTENDED_TYPE)
+        );
+        assert_eq!(
+            dhcpv6_radius_attribute_name(options),
+            Some("DHCPv6-Options")
+        );
+
+        let unknown = Dhcpv6RadiusAttributeCode::extended(245, 250);
+        let unknown_meta = dhcpv6_radius_attribute_meta(unknown);
+        assert_eq!(unknown_meta.code, unknown);
+        assert_eq!(unknown_meta.name, "Unassigned");
+        assert_eq!(
+            unknown_meta.status,
+            Dhcpv6AuxiliaryRegistryStatus::Unassigned
+        );
+        assert_eq!(dhcpv6_radius_attribute_name(unknown), None);
+        assert!(!dhcpv6_radius_attribute_permitted(unknown));
+    }
+
+    #[test]
+    fn dhcpv6_auxiliary_registry_supported_transport_preserves_unknown_bits() {
+        let domtls = dhcpv6_supported_transport_meta(DHCPV6_SUPPORTED_TRANSPORT_DOMTLS_BIT);
+        assert_eq!(domtls.bit_position, DHCPV6_SUPPORTED_TRANSPORT_DOMTLS_BIT);
+        assert_eq!(domtls.description, "DNS over mutually authenticated TLS");
+        assert_eq!(domtls.mnemonic, Some("DomTLS"));
+        assert_eq!(domtls.status, Dhcpv6AuxiliaryRegistryStatus::Assigned);
+        assert_eq!(
+            dhcpv6_supported_transport_name(DHCPV6_SUPPORTED_TRANSPORT_DOMTLS_BIT),
+            Some("DomTLS")
+        );
+
+        let unassigned = dhcpv6_supported_transport_meta(15);
+        assert_eq!(unassigned.bit_position, 15);
+        assert_eq!(unassigned.status, Dhcpv6AuxiliaryRegistryStatus::Unassigned);
+        assert_eq!(unassigned.mnemonic, None);
+
+        let unknown = dhcpv6_supported_transport_meta(250);
+        assert_eq!(unknown.bit_position, 250);
+        assert_eq!(unknown.status, Dhcpv6AuxiliaryRegistryStatus::Unknown);
+        assert_eq!(dhcpv6_supported_transport_name(250), None);
+    }
+
+    #[test]
+    fn dhcpv6_auxiliary_registry_option_permissions_preserve_unknown_values() {
+        assert_eq!(
+            dhcpv6_rsoo_option_permission(DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME),
+            Dhcpv6RsooOptionPermission::Permitted
+        );
+        assert!(dhcpv6_rsoo_option_permitted(
+            DHCPV6_OPTION_ERP_LOCAL_DOMAIN_NAME
+        ));
+        assert_eq!(
+            dhcpv6_rsoo_option_permission(DHCPV6_OPTION_RADIUS),
+            Dhcpv6RsooOptionPermission::NotPermitted
+        );
+
+        assert_eq!(
+            dhcpv6_s46_priority_option_permission(DHCPV6_OPTION_S46_CONT_MAPE),
+            Dhcpv6S46PriorityOptionPermission::Permitted
+        );
+        assert!(dhcpv6_s46_priority_option_permitted(
+            DHCPV6_OPTION_S46_CONT_MAPE
+        ));
+        assert_eq!(
+            dhcpv6_s46_priority_option_permission(DHCPV6_OPTION_S46_RULE),
+            Dhcpv6S46PriorityOptionPermission::NotPermitted
+        );
+
+        assert_eq!(
+            dhcpv6_radius_dhcpv6_option_permission(DHCPV6_OPTION_V6_DNR),
+            Dhcpv6RadiusDhcpv6OptionPermission::Permitted
+        );
+        assert!(dhcpv6_radius_dhcpv6_option_permitted(DHCPV6_OPTION_V6_DNR));
+        assert_eq!(
+            dhcpv6_radius_dhcpv6_option_permission(DHCPV6_OPTION_RADIUS),
+            Dhcpv6RadiusDhcpv6OptionPermission::NotPermitted
+        );
     }
 }
