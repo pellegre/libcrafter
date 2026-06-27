@@ -10,11 +10,15 @@ use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 
 use super::constants::{
-    DHCPV6_OPTION_CLIENTID, DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN,
-    DHCPV6_OPTION_IAADDR, DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD,
-    DHCPV6_OPTION_ORO, DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT,
-    DHCPV6_OPTION_RECONF_ACCEPT, DHCPV6_OPTION_RECONF_MSG, DHCPV6_OPTION_SERVERID,
-    DHCPV6_OPTION_STATUS_CODE,
+    DHCPV6_AUTH_ALGORITHM_CONFIGURATION_TOKEN, DHCPV6_AUTH_ALGORITHM_HMAC_MD5,
+    DHCPV6_AUTH_HEADER_LEN, DHCPV6_AUTH_PROTOCOL_CONFIGURATION_TOKEN, DHCPV6_AUTH_PROTOCOL_DELAYED,
+    DHCPV6_AUTH_PROTOCOL_DHCPV6_DELAYED_OBSOLETE, DHCPV6_AUTH_PROTOCOL_RECONFIGURE_KEY,
+    DHCPV6_AUTH_PROTOCOL_SPLIT_HORIZON_DNS, DHCPV6_AUTH_RDM_MONOTONIC_COUNTER,
+    DHCPV6_AUTH_REPLAY_DETECTION_LEN, DHCPV6_OPTION_AUTH, DHCPV6_OPTION_CLIENTID,
+    DHCPV6_OPTION_ELAPSED_TIME, DHCPV6_OPTION_HEADER_LEN, DHCPV6_OPTION_IAADDR,
+    DHCPV6_OPTION_IAPREFIX, DHCPV6_OPTION_IA_NA, DHCPV6_OPTION_IA_PD, DHCPV6_OPTION_ORO,
+    DHCPV6_OPTION_PREFERENCE, DHCPV6_OPTION_RAPID_COMMIT, DHCPV6_OPTION_RECONF_ACCEPT,
+    DHCPV6_OPTION_RECONF_MSG, DHCPV6_OPTION_SERVERID, DHCPV6_OPTION_STATUS_CODE,
 };
 use super::duid::Dhcpv6Duid;
 use super::message::Dhcpv6MessageType;
@@ -132,6 +136,70 @@ impl From<&[u8]> for Dhcpv6OptionValue {
 pub struct Dhcpv6Option {
     code: Dhcpv6OptionCode,
     value: Dhcpv6OptionValue,
+}
+
+/// DHCPv6 Authentication Protocol field.
+///
+/// Values come from the IANA DHCP Authentication Option protocol namespace.
+/// Unknown values are preserved, and the crate never runs an authentication
+/// protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Dhcpv6AuthProtocol {
+    /// Configuration token protocol.
+    ConfigurationToken,
+    /// Delayed authentication protocol.
+    Delayed,
+    /// DHCPv6 delayed authentication protocol, now obsolete.
+    Dhcpv6DelayedObsolete,
+    /// DHCPv6 Reconfigure Key Authentication Protocol.
+    ReconfigureKey,
+    /// Split-horizon DNS authentication protocol.
+    SplitHorizonDns,
+    /// Any other protocol value, preserved verbatim.
+    Unknown(u8),
+}
+
+/// DHCPv6 Authentication Algorithm field.
+///
+/// Algorithm values are interpreted by the selected protocol. This enum names
+/// registered byte values only and does not compute or verify authentication
+/// material.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Dhcpv6AuthAlgorithm {
+    /// Configuration token algorithm value.
+    ConfigurationToken,
+    /// HMAC-MD5 keyed hash algorithm value.
+    HmacMd5,
+    /// Any other algorithm value, preserved verbatim.
+    Unknown(u8),
+}
+
+/// DHCPv6 Authentication Replay Detection Method field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Dhcpv6ReplayDetectionMethod {
+    /// A monotonically increasing 64-bit replay detection value.
+    MonotonicCounter,
+    /// Any other RDM value, preserved verbatim.
+    Unknown(u8),
+}
+
+/// DHCPv6 OPTION_AUTH payload.
+///
+/// This type models the fixed Authentication option fields and preserves the
+/// variable authentication information bytes. It is packet data only: the crate
+/// never derives keys, signs messages, verifies MACs, or interprets secrets.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dhcpv6Authentication {
+    /// Authentication Protocol field.
+    pub protocol: Dhcpv6AuthProtocol,
+    /// Authentication Algorithm field.
+    pub algorithm: Dhcpv6AuthAlgorithm,
+    /// Replay Detection Method field.
+    pub rdm: Dhcpv6ReplayDetectionMethod,
+    /// 64-bit Replay Detection field.
+    pub replay_detection: u64,
+    /// Authentication Information bytes, preserved verbatim.
+    pub authentication_information: Vec<u8>,
 }
 
 /// DHCPv6 OPTION_STATUS_CODE payload.
@@ -560,6 +628,125 @@ impl Dhcpv6IaPrefix {
     }
 }
 
+impl Dhcpv6AuthProtocol {
+    /// Create an authentication protocol value from a raw octet.
+    pub const fn from_code(code: u8) -> Self {
+        match code {
+            DHCPV6_AUTH_PROTOCOL_CONFIGURATION_TOKEN => Self::ConfigurationToken,
+            DHCPV6_AUTH_PROTOCOL_DELAYED => Self::Delayed,
+            DHCPV6_AUTH_PROTOCOL_DHCPV6_DELAYED_OBSOLETE => Self::Dhcpv6DelayedObsolete,
+            DHCPV6_AUTH_PROTOCOL_RECONFIGURE_KEY => Self::ReconfigureKey,
+            DHCPV6_AUTH_PROTOCOL_SPLIT_HORIZON_DNS => Self::SplitHorizonDns,
+            other => Self::Unknown(other),
+        }
+    }
+
+    /// Wire octet value.
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::ConfigurationToken => DHCPV6_AUTH_PROTOCOL_CONFIGURATION_TOKEN,
+            Self::Delayed => DHCPV6_AUTH_PROTOCOL_DELAYED,
+            Self::Dhcpv6DelayedObsolete => DHCPV6_AUTH_PROTOCOL_DHCPV6_DELAYED_OBSOLETE,
+            Self::ReconfigureKey => DHCPV6_AUTH_PROTOCOL_RECONFIGURE_KEY,
+            Self::SplitHorizonDns => DHCPV6_AUTH_PROTOCOL_SPLIT_HORIZON_DNS,
+            Self::Unknown(code) => code,
+        }
+    }
+}
+
+impl Dhcpv6AuthAlgorithm {
+    /// Create an authentication algorithm value from a raw octet.
+    pub const fn from_code(code: u8) -> Self {
+        match code {
+            DHCPV6_AUTH_ALGORITHM_CONFIGURATION_TOKEN => Self::ConfigurationToken,
+            DHCPV6_AUTH_ALGORITHM_HMAC_MD5 => Self::HmacMd5,
+            other => Self::Unknown(other),
+        }
+    }
+
+    /// Wire octet value.
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::ConfigurationToken => DHCPV6_AUTH_ALGORITHM_CONFIGURATION_TOKEN,
+            Self::HmacMd5 => DHCPV6_AUTH_ALGORITHM_HMAC_MD5,
+            Self::Unknown(code) => code,
+        }
+    }
+}
+
+impl Dhcpv6ReplayDetectionMethod {
+    /// Create a replay detection method value from a raw octet.
+    pub const fn from_code(code: u8) -> Self {
+        match code {
+            DHCPV6_AUTH_RDM_MONOTONIC_COUNTER => Self::MonotonicCounter,
+            other => Self::Unknown(other),
+        }
+    }
+
+    /// Wire octet value.
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::MonotonicCounter => DHCPV6_AUTH_RDM_MONOTONIC_COUNTER,
+            Self::Unknown(code) => code,
+        }
+    }
+}
+
+impl Dhcpv6Authentication {
+    /// Create an Authentication option payload from typed header fields and raw
+    /// authentication information bytes.
+    pub fn new(
+        protocol: Dhcpv6AuthProtocol,
+        algorithm: Dhcpv6AuthAlgorithm,
+        rdm: Dhcpv6ReplayDetectionMethod,
+        replay_detection: u64,
+        authentication_information: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self {
+            protocol,
+            algorithm,
+            rdm,
+            replay_detection,
+            authentication_information: authentication_information.into(),
+        }
+    }
+
+    /// Decode an Authentication option payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < DHCPV6_AUTH_HEADER_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "dhcpv6.option.authentication",
+                DHCPV6_AUTH_HEADER_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let replay_end = 3 + DHCPV6_AUTH_REPLAY_DETECTION_LEN;
+        let mut replay_detection = [0u8; DHCPV6_AUTH_REPLAY_DETECTION_LEN];
+        replay_detection.copy_from_slice(&bytes[3..replay_end]);
+
+        Ok(Self {
+            protocol: Dhcpv6AuthProtocol::from_code(bytes[0]),
+            algorithm: Dhcpv6AuthAlgorithm::from_code(bytes[1]),
+            rdm: Dhcpv6ReplayDetectionMethod::from_code(bytes[2]),
+            replay_detection: u64::from_be_bytes(replay_detection),
+            authentication_information: bytes[replay_end..].to_vec(),
+        })
+    }
+
+    /// Encode this Authentication option payload.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out =
+            Vec::with_capacity(DHCPV6_AUTH_HEADER_LEN + self.authentication_information.len());
+        out.push(self.protocol.code());
+        out.push(self.algorithm.code());
+        out.push(self.rdm.code());
+        out.extend_from_slice(&self.replay_detection.to_be_bytes());
+        out.extend_from_slice(&self.authentication_information);
+        out
+    }
+}
+
 impl Dhcpv6StatusCodeOption {
     /// Create a Status Code option payload with no status message bytes.
     pub fn new(status: Dhcpv6StatusCode) -> Self {
@@ -691,6 +878,14 @@ impl Dhcpv6Option {
     /// Create an OPTION_RAPID_COMMIT option.
     pub fn rapid_commit() -> Self {
         Self::empty(DHCPV6_OPTION_RAPID_COMMIT)
+    }
+
+    /// Create an OPTION_AUTH option.
+    ///
+    /// This serializes the supplied packet fields only; it does not derive,
+    /// sign, or verify authentication material.
+    pub fn authentication(authentication: Dhcpv6Authentication) -> Self {
+        Self::raw(DHCPV6_OPTION_AUTH, authentication.encode())
     }
 
     /// Create an OPTION_RECONF_MSG option.
@@ -852,6 +1047,14 @@ impl Dhcpv6Option {
         Ok(self
             .exact_payload_if_code(DHCPV6_OPTION_RAPID_COMMIT, 0, "dhcpv6.option.rapid_commit")?
             .is_some())
+    }
+
+    /// Decode OPTION_AUTH.
+    pub fn authentication_value(&self) -> Result<Option<Dhcpv6Authentication>> {
+        match self.payload_if_code(DHCPV6_OPTION_AUTH) {
+            Some(payload) => Dhcpv6Authentication::decode(payload).map(Some),
+            None => Ok(None),
+        }
     }
 
     /// Decode OPTION_RECONF_MSG.
@@ -1726,5 +1929,150 @@ mod dhcpv6_status_option_tests {
                 .unwrap(),
             no_prefix,
         );
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_authentication_tests {
+    use super::{
+        Dhcpv6AuthAlgorithm, Dhcpv6AuthProtocol, Dhcpv6Authentication, Dhcpv6Option,
+        Dhcpv6ReplayDetectionMethod,
+    };
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{
+        Dhcpv6, Dhcpv6MessageType, DHCPV6_AUTH_HEADER_LEN, DHCPV6_OPTION_AUTH,
+    };
+
+    fn build_and_decode(authentication: Dhcpv6Authentication) -> Dhcpv6 {
+        let bytes = Packet::from_layer(Dhcpv6::request(0x010203).authentication(authentication))
+            .compile()
+            .unwrap();
+        Dhcpv6::decode(bytes.as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn dhcpv6_authentication_option_roundtrips_packet_fields_only() {
+        // The authentication information bytes are arbitrary documentation data,
+        // not a generated MAC. The crate encodes and decodes the packet fields
+        // only; it does not derive, sign, or verify authentication material.
+        let mut auth_info = Vec::new();
+        auth_info.extend_from_slice(&[0x00, 0x00, 0x00, 0x2a]);
+        auth_info.extend_from_slice(&[0xabu8; 16]);
+        let authentication = Dhcpv6Authentication::new(
+            Dhcpv6AuthProtocol::Delayed,
+            Dhcpv6AuthAlgorithm::HmacMd5,
+            Dhcpv6ReplayDetectionMethod::MonotonicCounter,
+            0x0102_0304_0506_0708,
+            auth_info.clone(),
+        );
+
+        let payload = authentication.encode();
+        let mut expected = vec![1u8, 1, 0];
+        expected.extend_from_slice(&0x0102_0304_0506_0708u64.to_be_bytes());
+        expected.extend_from_slice(&auth_info);
+        assert_eq!(payload, expected);
+        assert_eq!(
+            Dhcpv6Authentication::decode(&payload).unwrap(),
+            authentication
+        );
+
+        let option = Dhcpv6Option::authentication(authentication.clone());
+        assert_eq!(option.codepoint(), DHCPV6_OPTION_AUTH);
+        assert_eq!(
+            option.authentication_value().unwrap(),
+            Some(authentication.clone()),
+        );
+
+        let parsed = build_and_decode(authentication.clone());
+        assert_eq!(parsed.message_type_value(), Dhcpv6MessageType::Request);
+        assert_eq!(parsed.authentication_value().unwrap(), Some(authentication));
+        assert_eq!(
+            parsed
+                .authentication_value()
+                .unwrap()
+                .unwrap()
+                .authentication_information,
+            auth_info
+        );
+    }
+
+    #[test]
+    fn dhcpv6_authentication_unknown_field_codes_are_preserved() {
+        let authentication = Dhcpv6Authentication::new(
+            Dhcpv6AuthProtocol::Unknown(0x7f),
+            Dhcpv6AuthAlgorithm::Unknown(0x42),
+            Dhcpv6ReplayDetectionMethod::Unknown(0x99),
+            0,
+            vec![0xde, 0xad, 0xbe, 0xef],
+        );
+        let payload = authentication.encode();
+
+        assert_eq!(payload[0], 0x7f);
+        assert_eq!(payload[1], 0x42);
+        assert_eq!(payload[2], 0x99);
+
+        let decoded = Dhcpv6Authentication::decode(&payload).unwrap();
+        assert_eq!(decoded, authentication);
+        assert_eq!(decoded.protocol.code(), 0x7f);
+        assert_eq!(decoded.algorithm.code(), 0x42);
+        assert_eq!(decoded.rdm.code(), 0x99);
+        assert_eq!(
+            build_and_decode(authentication.clone())
+                .authentication_value()
+                .unwrap(),
+            Some(authentication),
+        );
+    }
+
+    #[test]
+    fn dhcpv6_authentication_registered_code_values_are_named() {
+        assert_eq!(Dhcpv6AuthProtocol::ConfigurationToken.code(), 0);
+        assert_eq!(Dhcpv6AuthProtocol::Delayed.code(), 1);
+        assert_eq!(Dhcpv6AuthProtocol::Dhcpv6DelayedObsolete.code(), 2);
+        assert_eq!(Dhcpv6AuthProtocol::ReconfigureKey.code(), 3);
+        assert_eq!(Dhcpv6AuthProtocol::SplitHorizonDns.code(), 4);
+        assert_eq!(
+            Dhcpv6AuthProtocol::from_code(2),
+            Dhcpv6AuthProtocol::Dhcpv6DelayedObsolete,
+        );
+        assert_eq!(
+            Dhcpv6AuthAlgorithm::from_code(0),
+            Dhcpv6AuthAlgorithm::ConfigurationToken,
+        );
+        assert_eq!(
+            Dhcpv6AuthAlgorithm::from_code(1),
+            Dhcpv6AuthAlgorithm::HmacMd5,
+        );
+        assert_eq!(
+            Dhcpv6ReplayDetectionMethod::from_code(0),
+            Dhcpv6ReplayDetectionMethod::MonotonicCounter,
+        );
+    }
+
+    #[test]
+    fn dhcpv6_authentication_malformed_lengths_are_structured() {
+        for len in 0..DHCPV6_AUTH_HEADER_LEN {
+            let short = vec![0u8; len];
+            assert_eq!(
+                Dhcpv6Authentication::decode(&short).unwrap_err(),
+                CrafterError::buffer_too_short(
+                    "dhcpv6.option.authentication",
+                    DHCPV6_AUTH_HEADER_LEN,
+                    len,
+                ),
+            );
+
+            let option = Dhcpv6Option::raw(DHCPV6_OPTION_AUTH, short);
+            assert!(matches!(
+                option.authentication_value(),
+                Err(CrafterError::BufferTooShort { .. }),
+            ));
+        }
+
+        let header_only = vec![1u8, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let decoded = Dhcpv6Authentication::decode(&header_only).unwrap();
+        assert!(decoded.authentication_information.is_empty());
+        assert_eq!(decoded.encode(), header_only);
     }
 }
