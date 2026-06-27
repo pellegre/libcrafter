@@ -156,6 +156,8 @@ pub const DHCPV6_OPTION_V6_PREFIX64: u16 = 113;
 pub const DHCPV6_OPTION_S46_BIND_IPV6_PREFIX: u16 = 137;
 /// DHCPv6 OPTION_V6_DNR option code.
 pub const DHCPV6_OPTION_V6_DNR: u16 = 144;
+/// DHCPv6 OPTION_ADDR_REG_ENABLE option code.
+pub const DHCPV6_OPTION_ADDR_REG_ENABLE: u16 = 148;
 /// DHCPv6 infinite lifetime/timer sentinel where a field defines infinity.
 pub const DHCPV6_TIME_INFINITY: u32 = u32::MAX;
 
