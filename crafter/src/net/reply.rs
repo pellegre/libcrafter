@@ -1,9 +1,10 @@
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 use crate::{
-    Arp, ArpOperation, Dhcpv4, Dhcpv4ClientIdentifier, Dhcpv4MessageType, Dns, Icmpv4, Icmpv6,
-    Igmp, Ipv4, Ipv6, Packet, Tcp, Udp, BOOTP_REPLY, DHCPV4_CLIENT_PORT, DHCPV4_SERVER_PORT,
-    DNS_PORT, ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST, ICMP_ECHO_REPLY, ICMP_ECHO_REQUEST,
+    Arp, ArpOperation, Dhcpv4, Dhcpv4ClientIdentifier, Dhcpv4MessageType, Dhcpv6,
+    Dhcpv6MessageType, Dns, Icmpv4, Icmpv6, Igmp, Ipv4, Ipv6, Packet, Tcp, Udp, BOOTP_REPLY,
+    DHCPV4_CLIENT_PORT, DHCPV4_SERVER_PORT, DHCPV6_CLIENT_PORT, DHCPV6_SERVER_PORT, DNS_PORT,
+    ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST, ICMP_ECHO_REPLY, ICMP_ECHO_REQUEST,
 };
 
 pub struct ReplyMatcher {
@@ -42,6 +43,9 @@ pub fn reply_matches(request: &Packet, candidate: &Packet) -> bool {
     if request.layer::<Dhcpv4>().is_some() {
         return dhcpv4_reply_matches(request, candidate);
     }
+    if request.layer::<Dhcpv6>().is_some() {
+        return dhcpv6_reply_matches(request, candidate);
+    }
 
     arp_reply_matches(request, candidate)
         || icmp_reply_matches(request, candidate)
@@ -53,6 +57,9 @@ pub fn reply_matches(request: &Packet, candidate: &Packet) -> bool {
 fn request_reply_filter(packet: &Packet) -> Option<String> {
     if packet.layer::<Dhcpv4>().is_some() {
         return Some(dhcpv4_filter());
+    }
+    if packet.layer::<Dhcpv6>().is_some() {
+        return Some(dhcpv6_filter(packet));
     }
     if packet.layer::<Dns>().is_some() {
         return Some(transport_filter("udp", packet, Some(DNS_PORT), None));
@@ -125,6 +132,45 @@ pub(crate) fn batch_reply_filter(packets: &[Packet]) -> Option<String> {
 
 fn dhcpv4_filter() -> String {
     format!("udp and src port {DHCPV4_SERVER_PORT} and dst port {DHCPV4_CLIENT_PORT}")
+}
+
+fn dhcpv6_filter(packet: &Packet) -> String {
+    let mut terms = vec!["udp".to_string()];
+    if let Some(hosts) = dhcpv6_reversed_ipv6_host_terms(packet) {
+        terms.extend(hosts);
+    }
+
+    let (source_port, destination_port) = match packet.layer::<Udp>() {
+        Some(udp) => (udp.destination_port_value(), udp.source_port_value()),
+        None => (DHCPV6_SERVER_PORT, DHCPV6_CLIENT_PORT),
+    };
+    terms.push(format!("src port {source_port}"));
+    terms.push(format!("dst port {destination_port}"));
+    terms.join(" and ")
+}
+
+fn dhcpv6_reversed_ipv6_host_terms(packet: &Packet) -> Option<Vec<String>> {
+    let ipv6 = packet.layer::<Ipv6>()?;
+    let source = ipv6.source();
+    let destination = ipv6.destination();
+    let mut terms = Vec::new();
+
+    if dhcpv6_ipv6_addr_can_be_matched_as_remote(destination) {
+        terms.push(format!("src host {destination}"));
+    }
+    if dhcpv6_ipv6_addr_can_be_matched_as_local(source) {
+        terms.push(format!("dst host {source}"));
+    }
+
+    (!terms.is_empty()).then_some(terms)
+}
+
+fn dhcpv6_ipv6_addr_can_be_matched_as_remote(address: Ipv6Addr) -> bool {
+    !address.is_unspecified() && !address.is_multicast()
+}
+
+fn dhcpv6_ipv6_addr_can_be_matched_as_local(address: Ipv6Addr) -> bool {
+    !address.is_unspecified() && !address.is_multicast()
 }
 
 fn arp_filter(arp: &Arp) -> String {
@@ -443,6 +489,203 @@ fn dhcpv4_transport_reply_matches(request: &Packet, candidate: &Packet) -> bool 
                 && request_udp.destination_port_value() == DHCPV4_SERVER_PORT
                 && candidate_udp.source_port_value() == DHCPV4_SERVER_PORT
                 && candidate_udp.destination_port_value() == DHCPV4_CLIENT_PORT
+        }
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn dhcpv6_reply_matches(request: &Packet, candidate: &Packet) -> bool {
+    let Some(request_dhcpv6) = request.layer::<Dhcpv6>() else {
+        return false;
+    };
+    let Some(candidate_dhcpv6) = candidate.layer::<Dhcpv6>() else {
+        return false;
+    };
+
+    dhcpv6_transport_reply_matches(request, candidate)
+        && dhcpv6_ipv6_reply_matches(request, candidate)
+        && dhcpv6_message_pair_matches(request_dhcpv6, candidate_dhcpv6)
+}
+
+fn dhcpv6_message_pair_matches(request: &Dhcpv6, candidate: &Dhcpv6) -> bool {
+    match (request.message_type_value(), candidate.message_type_value()) {
+        (Dhcpv6MessageType::RelayForw, Dhcpv6MessageType::RelayRepl) => {
+            dhcpv6_relay_reply_matches(request, candidate)
+        }
+        (Dhcpv6MessageType::RelayForw, _) | (_, Dhcpv6MessageType::RelayRepl) => false,
+        _ => {
+            request.transaction_id_value() == candidate.transaction_id_value()
+                && dhcpv6_client_id_matches(request, candidate)
+                && dhcpv6_server_id_matches(request, candidate)
+                && dhcpv6_message_type_family_matches(request, candidate)
+        }
+    }
+}
+
+fn dhcpv6_relay_reply_matches(request: &Dhcpv6, candidate: &Dhcpv6) -> bool {
+    if !dhcpv6_relay_header_matches(request, candidate) {
+        return false;
+    }
+    if !dhcpv6_relay_interface_id_matches(request, candidate) {
+        return false;
+    }
+
+    match (
+        request.relayed_message_value(),
+        candidate.relayed_message_value(),
+    ) {
+        (Ok(Some(request_inner)), Ok(Some(candidate_inner))) => {
+            dhcpv6_message_pair_matches(&request_inner, &candidate_inner)
+        }
+        _ => false,
+    }
+}
+
+fn dhcpv6_relay_header_matches(request: &Dhcpv6, candidate: &Dhcpv6) -> bool {
+    match (request.relay(), candidate.relay()) {
+        (Some(request_relay), Some(candidate_relay)) => {
+            request_relay.link_address_value() == candidate_relay.link_address_value()
+                && request_relay.peer_address_value() == candidate_relay.peer_address_value()
+        }
+        _ => false,
+    }
+}
+
+fn dhcpv6_relay_interface_id_matches(request: &Dhcpv6, candidate: &Dhcpv6) -> bool {
+    match (request.interface_id_value(), candidate.interface_id_value()) {
+        (Some(request_id), Some(candidate_id)) => request_id == candidate_id,
+        (Some(_), None) => false,
+        _ => true,
+    }
+}
+
+fn dhcpv6_client_id_matches(request: &Dhcpv6, candidate: &Dhcpv6) -> bool {
+    match (request.client_id_value(), candidate.client_id_value()) {
+        (Some(request_id), Some(candidate_id)) => request_id == candidate_id,
+        (Some(_), None) => false,
+        _ => true,
+    }
+}
+
+fn dhcpv6_server_id_matches(request: &Dhcpv6, candidate: &Dhcpv6) -> bool {
+    match (request.server_id_value(), candidate.server_id_value()) {
+        (Some(request_id), Some(candidate_id)) => request_id == candidate_id,
+        (Some(_), None) => false,
+        _ => true,
+    }
+}
+
+fn dhcpv6_message_type_family_matches(request: &Dhcpv6, candidate: &Dhcpv6) -> bool {
+    let candidate_type = candidate.message_type_value();
+    match request.message_type_value() {
+        Dhcpv6MessageType::Solicit => {
+            matches!(
+                candidate_type,
+                Dhcpv6MessageType::Advertise | Dhcpv6MessageType::Reply
+            )
+        }
+        Dhcpv6MessageType::Request
+        | Dhcpv6MessageType::Confirm
+        | Dhcpv6MessageType::Renew
+        | Dhcpv6MessageType::Rebind
+        | Dhcpv6MessageType::Release
+        | Dhcpv6MessageType::Decline
+        | Dhcpv6MessageType::InformationRequest => {
+            matches!(candidate_type, Dhcpv6MessageType::Reply)
+        }
+        Dhcpv6MessageType::Reconfigure => {
+            dhcpv6_reconfigure_response_type_matches(request, candidate_type)
+        }
+        Dhcpv6MessageType::LeaseQuery => {
+            matches!(candidate_type, Dhcpv6MessageType::LeaseQueryReply)
+        }
+        Dhcpv6MessageType::ActiveLeaseQuery => {
+            matches!(
+                candidate_type,
+                Dhcpv6MessageType::LeaseQueryData | Dhcpv6MessageType::LeaseQueryDone
+            )
+        }
+        Dhcpv6MessageType::ReconfigureRequest => {
+            matches!(candidate_type, Dhcpv6MessageType::ReconfigureReply)
+        }
+        Dhcpv6MessageType::Dhcpv4Query => {
+            matches!(candidate_type, Dhcpv6MessageType::Dhcpv4Response)
+        }
+        Dhcpv6MessageType::BndUpd => matches!(candidate_type, Dhcpv6MessageType::BndReply),
+        Dhcpv6MessageType::PoolReq => matches!(candidate_type, Dhcpv6MessageType::PoolResp),
+        Dhcpv6MessageType::UpdReq | Dhcpv6MessageType::UpdReqAll => {
+            matches!(candidate_type, Dhcpv6MessageType::UpdDone)
+        }
+        Dhcpv6MessageType::Connect => {
+            matches!(candidate_type, Dhcpv6MessageType::ConnectReply)
+        }
+        Dhcpv6MessageType::AddrRegInform => {
+            matches!(candidate_type, Dhcpv6MessageType::AddrRegReply)
+        }
+        _ => false,
+    }
+}
+
+fn dhcpv6_reconfigure_response_type_matches(
+    request: &Dhcpv6,
+    candidate_type: Dhcpv6MessageType,
+) -> bool {
+    match request.reconfigure_message_value() {
+        Ok(Some(requested_type)) => candidate_type == requested_type,
+        _ => matches!(
+            candidate_type,
+            Dhcpv6MessageType::Renew
+                | Dhcpv6MessageType::Rebind
+                | Dhcpv6MessageType::InformationRequest
+        ),
+    }
+}
+
+fn dhcpv6_transport_reply_matches(request: &Packet, candidate: &Packet) -> bool {
+    match (request.layer::<Udp>(), candidate.layer::<Udp>()) {
+        (Some(request_udp), Some(candidate_udp)) => {
+            request_udp.source_port_value() == candidate_udp.destination_port_value()
+                && request_udp.destination_port_value() == candidate_udp.source_port_value()
+                && dhcpv6_udp_port_pair_is_valid(
+                    request_udp.source_port_value(),
+                    request_udp.destination_port_value(),
+                )
+                && dhcpv6_udp_port_pair_is_valid(
+                    candidate_udp.source_port_value(),
+                    candidate_udp.destination_port_value(),
+                )
+        }
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn dhcpv6_udp_port_pair_is_valid(source_port: u16, destination_port: u16) -> bool {
+    matches!(
+        (source_port, destination_port),
+        (DHCPV6_CLIENT_PORT, DHCPV6_SERVER_PORT)
+            | (DHCPV6_SERVER_PORT, DHCPV6_CLIENT_PORT)
+            | (DHCPV6_SERVER_PORT, DHCPV6_SERVER_PORT)
+    )
+}
+
+fn dhcpv6_ipv6_reply_matches(request: &Packet, candidate: &Packet) -> bool {
+    match (request.layer::<Ipv6>(), candidate.layer::<Ipv6>()) {
+        (Some(request_ip), Some(candidate_ip)) => {
+            let request_source = request_ip.source();
+            let request_destination = request_ip.destination();
+            if dhcpv6_ipv6_addr_can_be_matched_as_local(request_source)
+                && candidate_ip.destination() != request_source
+            {
+                return false;
+            }
+            if dhcpv6_ipv6_addr_can_be_matched_as_remote(request_destination)
+                && candidate_ip.source() != request_destination
+            {
+                return false;
+            }
+            true
         }
         (None, None) => true,
         _ => false,

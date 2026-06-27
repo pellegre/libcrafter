@@ -535,7 +535,9 @@ mod send_recv_filters {
     use std::net::{Ipv4Addr, Ipv6Addr};
     use std::time::Duration;
 
-    use crate::{Arp, Dns, Icmpv4, Icmpv6, Igmp, IntoPacket, Ipv4, Ipv6, MacAddr, Tcp, Udp};
+    use crate::{
+        Arp, Dhcpv6, Dns, Icmpv4, Icmpv6, Igmp, IntoPacket, Ipv4, Ipv6, MacAddr, Tcp, Udp,
+    };
 
     use crate::net::{PacketSendRecvExt, SendRecv};
 
@@ -644,6 +646,34 @@ mod send_recv_filters {
     }
 
     #[test]
+    fn dhcpv6_reply_filter_for_client_request_uses_server_to_client_ports_and_hosts() {
+        let packet = Ipv6::new()
+            .src(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x10))
+            .dst(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x01))
+            / Udp::dhcpv6_client()
+            / Dhcpv6::information_request(0x010203).client_id([0, 3, 0xaa, 0xbb]);
+
+        assert_eq!(
+            packet.reply_filter().unwrap(),
+            "udp and src host 2001:db8::1 and dst host 2001:db8::10 and src port 547 and dst port 546"
+        );
+    }
+
+    #[test]
+    fn dhcpv6_reply_filter_for_multicast_solicit_keeps_usable_host_terms() {
+        let packet = Ipv6::new()
+            .src(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x10))
+            .dst(Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 1, 2))
+            / Udp::dhcpv6_client()
+            / Dhcpv6::solicit(0x010203).client_id([0, 3, 0xaa, 0xbb]);
+
+        assert_eq!(
+            packet.reply_filter().unwrap(),
+            "udp and dst host 2001:db8::10 and src port 547 and dst port 546"
+        );
+    }
+
+    #[test]
     fn reply_filter_for_arp_uses_target_and_sender_hosts() {
         let packet = Arp::who_has(
             Ipv4Addr::new(192, 0, 2, 10),
@@ -712,9 +742,9 @@ mod reply_matching {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use crate::{
-        Arp, ArpOperation, Dhcpv4, Dhcpv4ClientIdentifier, Dhcpv4MessageType, Dns, DnsRecord,
-        Icmpv4, Icmpv6, IntoPacket, Ipv4, Ipv6, MacAddr, Packet, Raw, Tcp, Udp, DNS_TYPE_A,
-        TCP_FLAG_ACK, TCP_FLAG_RST, TCP_FLAG_SYN,
+        Arp, ArpOperation, Dhcpv4, Dhcpv4ClientIdentifier, Dhcpv4MessageType, Dhcpv6,
+        Dhcpv6MessageType, Dns, DnsRecord, Icmpv4, Icmpv6, IntoPacket, Ipv4, Ipv6, MacAddr, Packet,
+        Raw, Tcp, Udp, DNS_TYPE_A, TCP_FLAG_ACK, TCP_FLAG_RST, TCP_FLAG_SYN,
     };
 
     use crate::net::{reply_matches, ReplyMatcher};
@@ -1152,6 +1182,118 @@ mod reply_matching {
 
         assert!(reply_matches(&request, &same_relay));
         assert!(!reply_matches(&request, &other_relay));
+    }
+
+    #[test]
+    fn dhcpv6_reply_matches_by_transaction_duids_ports_and_ipv6_hosts() {
+        let client_duid = [0, 3, 0, 1, 0xaa, 0xbb, 0xcc, 0xdd];
+        let server_duid = [0, 1, 0xcc, 0xdd];
+        let client = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x10);
+        let server = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x01);
+        let request = Ipv6::new().src(client).dst(server)
+            / Udp::dhcpv6_client()
+            / Dhcpv6::request(0x010203)
+                .client_id(client_duid)
+                .server_id(server_duid);
+        let reply = Ipv6::new().src(server).dst(client)
+            / Udp::dhcpv6_server()
+            / Dhcpv6::reply(0x010203)
+                .client_id(client_duid)
+                .server_id(server_duid);
+        let wrong_xid = Ipv6::new().src(server).dst(client)
+            / Udp::dhcpv6_server()
+            / Dhcpv6::reply(0x010204)
+                .client_id(client_duid)
+                .server_id(server_duid);
+        let missing_client_id = Ipv6::new().src(server).dst(client)
+            / Udp::dhcpv6_server()
+            / Dhcpv6::reply(0x010203).server_id(server_duid);
+        let wrong_server_id = Ipv6::new().src(server).dst(client)
+            / Udp::dhcpv6_server()
+            / Dhcpv6::reply(0x010203)
+                .client_id(client_duid)
+                .server_id([0, 1, 0xee, 0xff]);
+
+        assert!(reply_matches(&request, &reply));
+        assert!(!reply_matches(&request, &wrong_xid));
+        assert!(!reply_matches(&request, &missing_client_id));
+        assert!(!reply_matches(&request, &wrong_server_id));
+    }
+
+    #[test]
+    fn dhcpv6_reply_rejects_unrelated_udp_on_dhcpv6_ports() {
+        let client = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x10);
+        let server = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x01);
+        let request = Ipv6::new().src(client).dst(server)
+            / Udp::dhcpv6_client()
+            / Dhcpv6::information_request(0x010203).client_id([0, 3, 0xaa, 0xbb]);
+        let raw_udp =
+            Ipv6::new().src(server).dst(client) / Udp::dhcpv6_server() / Raw::from("not-dhcpv6");
+
+        assert!(!reply_matches(&request, &raw_udp));
+    }
+
+    #[test]
+    fn dhcpv6_reply_matches_relay_reply_nesting() {
+        let client_duid = [0, 3, 0, 1, 0xaa, 0xbb, 0xcc, 0xdd];
+        let server_duid = [0, 1, 0xcc, 0xdd];
+        let relay_addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0xfe);
+        let server_addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x01);
+        let peer_addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x10);
+        let link_addr = Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 0);
+        let request_inner = Dhcpv6::request(0x010203)
+            .client_id(client_duid)
+            .server_id(server_duid);
+        let reply_inner = Dhcpv6::reply(0x010203)
+            .client_id(client_duid)
+            .server_id(server_duid);
+        let relay_forw = Dhcpv6::relay_forward(link_addr, peer_addr)
+            .interface_id(b"access-loop-7".as_slice())
+            .relay_message(request_inner)
+            .unwrap();
+        let relay_repl = Dhcpv6::relay_reply(link_addr, peer_addr)
+            .interface_id(b"access-loop-7".as_slice())
+            .relay_message(reply_inner.clone())
+            .unwrap();
+        let wrong_interface = Dhcpv6::relay_reply(link_addr, peer_addr)
+            .interface_id(b"access-loop-8".as_slice())
+            .relay_message(reply_inner.clone())
+            .unwrap();
+        let wrong_nested_type = Dhcpv6::relay_reply(link_addr, peer_addr)
+            .interface_id(b"access-loop-7".as_slice())
+            .relay_message(Dhcpv6::request(0x010203).client_id(client_duid))
+            .unwrap();
+        let request =
+            Ipv6::new().src(relay_addr).dst(server_addr) / Udp::dhcpv6_relay() / relay_forw;
+        let reply = Ipv6::new().src(server_addr).dst(relay_addr) / Udp::dhcpv6_relay() / relay_repl;
+        let wrong_interface_reply =
+            Ipv6::new().src(server_addr).dst(relay_addr) / Udp::dhcpv6_relay() / wrong_interface;
+        let wrong_nested_reply =
+            Ipv6::new().src(server_addr).dst(relay_addr) / Udp::dhcpv6_relay() / wrong_nested_type;
+
+        assert!(reply_matches(&request, &reply));
+        assert!(!reply_matches(&request, &wrong_interface_reply));
+        assert!(!reply_matches(&request, &wrong_nested_reply));
+    }
+
+    #[test]
+    fn dhcpv6_reply_matches_reconfigure_requested_type() {
+        let server = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x01);
+        let client = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x10);
+        let client_duid = [0, 3, 0xaa, 0xbb];
+        let request = Ipv6::new().src(server).dst(client)
+            / Udp::dhcpv6_server()
+            / Dhcpv6::reconfigure_with_message(0x010203, Dhcpv6MessageType::Renew)
+                .client_id(client_duid);
+        let renew = Ipv6::new().src(client).dst(server)
+            / Udp::dhcpv6_client()
+            / Dhcpv6::renew(0x010203).client_id(client_duid);
+        let information_request = Ipv6::new().src(client).dst(server)
+            / Udp::dhcpv6_client()
+            / Dhcpv6::information_request(0x010203).client_id(client_duid);
+
+        assert!(reply_matches(&request, &renew));
+        assert!(!reply_matches(&request, &information_request));
     }
 }
 
