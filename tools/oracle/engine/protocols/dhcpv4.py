@@ -1,7 +1,7 @@
 """Generator-stage sampler plugin for the DHCPv4 layer.
 
-Moves the ``_sample_dhcp_field`` sampler and the ``dhcpv4_behavior`` feature
-behavior (``_apply_dhcp_behavior``) out of :mod:`generator` and registers them
+Moves the ``_sample_dhcpv4_field`` sampler and the ``dhcpv4_behavior`` feature
+behavior (``_apply_dhcpv4_behavior``) out of :mod:`generator` and registers them
 through the uniform :class:`~.base.ProtocolSampler` contract. The sampling and
 behavior logic is moved verbatim (behavior must stay byte-identical); only the
 dispatch moves from the generator's legacy if/elif into this self-contained
@@ -29,7 +29,7 @@ from collections.abc import Mapping, Sequence
 from ..model import JSONObject
 from ..sampling import (
     _SamplingContext,
-    _is_ipv4_root_dhcp_stack,
+    _is_ipv4_root_dhcpv4_stack,
     bounded_int,
 )
 from .base import ProtocolSampler, register
@@ -51,7 +51,7 @@ _SUPPORTED_FIELDS = frozenset(
 )
 
 
-def _sample_dhcp_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
+def _sample_dhcpv4_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
     if field_name == "op":
         return domain
     if field_name == "hardware_type":
@@ -61,7 +61,7 @@ def _sample_dhcp_field(ctx: _SamplingContext, field_name: str, domain: object) -
     if field_name == "transaction_id":
         return bounded_int(ctx.rng, 0, (1 << 32) - 1)
     if field_name == "flags":
-        if domain == "broadcast" and _is_ipv4_root_dhcp_stack(ctx.stack):
+        if domain == "broadcast" and _is_ipv4_root_dhcpv4_stack(ctx.stack):
             return "none"
         return domain
     if field_name == "client_ip":
@@ -71,11 +71,11 @@ def _sample_dhcp_field(ctx: _SamplingContext, field_name: str, domain: object) -
     if field_name == "client_hardware_address":
         return ctx.src_mac
     if field_name == "options":
-        return _dhcp_option_domains(ctx, domain)
+        return _dhcpv4_option_domains(ctx, domain)
     raise ValueError(f"spec error: unsupported dhcpv4 field sampler: {field_name}")
 
 
-def _dhcp_option_domains(ctx: _SamplingContext, domain: object) -> list[object]:
+def _dhcpv4_option_domains(ctx: _SamplingContext, domain: object) -> list[object]:
     options: list[object] = ["message-type=discover"]
     boundary = ctx.profile in {"boundary", "fuzz"}
     if domain == "hostname" and ctx.profile != "smoke":
@@ -126,7 +126,7 @@ DHCPV4_OPTION_MATRIX_TOKENS: tuple[str, ...] = (
 )
 
 
-def _dhcp_option_matrix() -> list[object]:
+def _dhcpv4_option_matrix() -> list[object]:
     """Return the deterministic byte-safe DHCPv4 option matrix in option order.
 
     The matrix spans every cross-backend option kind the dhcpv4_behavior
@@ -138,10 +138,10 @@ def _dhcp_option_matrix() -> list[object]:
     return list(DHCPV4_OPTION_MATRIX_TOKENS)
 
 
-def _apply_dhcp_behavior(fields: JSONObject, *, case: str, behavior: str) -> None:
+def _apply_dhcpv4_behavior(fields: JSONObject, *, case: str, behavior: str) -> None:
     key = f"{case} {behavior}".replace("_", "-")
     if "option-matrix" in key:
-        fields["options"] = _dhcp_option_matrix()
+        fields["options"] = _dhcpv4_option_matrix()
         return
     if "offer" in key or "ack" in key:
         fields["op"] = "bootreply"
@@ -176,7 +176,7 @@ def _sample(
 ) -> object:
     """Uniform sampler adapter: DHCPv4 uses only ``ctx``/``field_name``/``domain``."""
 
-    return _sample_dhcp_field(ctx, field_name, domain)
+    return _sample_dhcpv4_field(ctx, field_name, domain)
 
 
 def _apply_behavior(
@@ -195,7 +195,7 @@ def _apply_behavior(
     """
 
     if "dhcpv4" in fields:
-        _apply_dhcp_behavior(fields["dhcpv4"], case=case, behavior=behavior)
+        _apply_dhcpv4_behavior(fields["dhcpv4"], case=case, behavior=behavior)
 
 
 def _handles_feature(feature: str) -> bool:

@@ -15,11 +15,11 @@ respond as expected, and can libcrafter decode and validate that response? Keep
 those behavioral checks in `tools/probe/`; they are not oracle packet
 equivalence cases.
 
-The probe `behavior` profile is the full DNS/DHCP/ARP/UDP peer-response suite:
+The probe `behavior` profile is the full DNS/DHCPv4/ARP/UDP peer-response suite:
 forty deterministic cases, ten per protocol, with dry-run plans that expose the
 stimulus, expected response, provider requirements, target setup, and validation
 contract. DNS and UDP use controlled target services plus decoded UDP/DNS or
-UDP/ICMP validation. DHCP uses a controlled DHCP/BOOTP responder on a private
+UDP/ICMP validation. DHCPv4 uses a controlled DHCPv4/BOOTP responder on a private
 link-layer segment. ARP uses target kernel behavior on a link-layer-capable
 segment with setup for aliases, cache flushes, padding, provider MAC checks,
 and filtered captures.
@@ -44,7 +44,7 @@ fi
 ```
 
 Provider capability skips are part of the probe contract. Hetzner can plan
-IPv4 unicast DNS and UDP service cases but skips DHCP and ARP link-layer cases.
+IPv4 unicast DNS and UDP service cases but skips DHCPv4 and ARP link-layer cases.
 QEMU, VirtualBox, and Docker private sessions can plan the full private-lab
 behavior suite when local prerequisites are available. A provider skip must
 come from a missing declared capability; a supported case that fails to build,
@@ -372,7 +372,7 @@ cargo test -p crafter --test fixture_suite udp_options
 Provider-backed live planning stays dry-run by default. The local dry-run path
 filters the bounded UDP option live case set without sending packets, and the
 provider matrix records provider-specific skips for cases such as IPv6
-zero-checksum status or DHCP-style L2 broadcast requirements:
+zero-checksum status or DHCPv4-style L2 broadcast requirements:
 
 ```sh
 tools/oracle/run live --provider local-dry-run --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-live-local-dry-run

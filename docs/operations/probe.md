@@ -31,9 +31,9 @@ profile. The flags are `--provider`, `--profile`, `--seed`, `--count`, `--case`,
 - `smoke` (default, default `--count` 5) — the legacy ICMP/TCP/DNS/TTL/ARP
   sample: `icmp-echo`, `tcp-syn-open`, `tcp-syn-closed`, `dns-query`,
   `ttl-expired`, `arp-resolution`.
-- `behavior` (default `--count` 44) — the full DNS/DHCP/ARP/NDP/UDP/OSPF behavioral
-  suite in deterministic DNS → DHCP → ARP → NDP → UDP → OSPF order: ten DNS cases,
-  ten DHCP cases, ten ARP cases, three NDP cases, ten UDP cases, and one
+- `behavior` (default `--count` 44) — the full DNS/DHCPv4/ARP/NDP/UDP/OSPF behavioral
+  suite in deterministic DNS → DHCPv4 → ARP → NDP → UDP → OSPF order: ten DNS cases,
+  ten DHCPv4 cases, ten ARP cases, three NDP cases, ten UDP cases, and one
   live-capable OSPF case (`ospf-hello-exchange`).
 - `bgp-smoke` (default `--count` 1) — the `bgp-session-smoke` case, which plans a
   BGP session exchange against a probe-owned FRR peer target service.
@@ -46,7 +46,7 @@ profile. The flags are `--provider`, `--profile`, `--seed`, `--count`, `--case`,
   IPSec-capable peer.
 
 A provider-capability skip is the only way a supported case becomes a skip.
-Hetzner plans the IPv4 unicast DNS and UDP service cases but skips the DHCP, ARP,
+Hetzner plans the IPv4 unicast DNS and UDP service cases but skips the DHCPv4, ARP,
 and NDP link-layer cases (and `ttl-expired`, which needs a controlled router);
 QEMU, VirtualBox, and Docker private sessions plan the full private-lab behavior
 suite when local prerequisites are available, though Docker advertises no IPv6 so
@@ -113,8 +113,8 @@ a controlled router.
 
 ### Behavior Profile
 
-The `behavior` profile is the full DNS/DHCP/ARP/NDP/UDP/OSPF behavioral suite. It
-selects forty-four cases in deterministic DNS, DHCP, ARP, NDP, UDP, OSPF order and
+The `behavior` profile is the full DNS/DHCPv4/ARP/NDP/UDP/OSPF behavioral suite. It
+selects forty-four cases in deterministic DNS, DHCPv4, ARP, NDP, UDP, OSPF order and
 defaults `--count` to all forty-four cases when no explicit count is supplied:
 
 ```sh
@@ -138,21 +138,21 @@ matching:
 - `dns-edns-opt`
 - `dns-repeat-transaction`
 
-DHCP behavior cases use a controlled DHCP/BOOTP responder on a private
-link-layer segment and validate decoded UDP, BOOTP, and DHCP responses for
+DHCPv4 behavior cases use a controlled DHCPv4/BOOTP responder on a private
+link-layer segment and validate decoded UDP, BOOTP, and DHCPv4 responses for
 message type, transaction id, client identity, address assignment, server
 identifier, lease/configuration options, and response direction:
 
-- `dhcp-discover-offer`
-- `dhcp-request-ack`
-- `dhcp-client-identifier`
-- `dhcp-hostname`
-- `dhcp-parameter-request-list`
-- `dhcp-lease-time`
-- `dhcp-renewal-unicast-ack`
-- `dhcp-inform-ack`
-- `dhcp-request-nak`
-- `dhcp-rapid-repeat`
+- `dhcpv4-discover-offer`
+- `dhcpv4-request-ack`
+- `dhcpv4-client-identifier`
+- `dhcpv4-hostname`
+- `dhcpv4-parameter-request-list`
+- `dhcpv4-lease-time`
+- `dhcpv4-renewal-unicast-ack`
+- `dhcpv4-inform-ack`
+- `dhcpv4-request-nak`
+- `dhcpv4-rapid-repeat`
 
 ARP behavior cases use a private link-layer segment and validate decoded
 Ethernet and ARP replies from the target kernel, including sender preservation,
@@ -232,7 +232,7 @@ libcrafter or probe infrastructure can be fixed.
 DNS and UDP behavior cases need IPv4 unicast and controlled services. Large UDP
 payload cases also require the provider's advertised safe payload size to cover
 the planned datagram, while zero-checksum and surplus-option cases require the
-matching provider capabilities. DHCP cases need IPv4 unicast, controlled
+matching provider capabilities. DHCPv4 cases need IPv4 unicast, controlled
 services, link-layer send/capture, and broadcast. ARP cases need link-layer
 send/capture and broadcast; `arp-unicast-request-reply` and
 `arp-mac-validation` also need provider MAC metadata. NDP cases ride the same
@@ -242,7 +242,7 @@ plans and skip wherever ARP skips.
 
 Expected provider behavior:
 
-- Hetzner plans IPv4 unicast DNS and UDP service cases, and skips DHCP, ARP, and
+- Hetzner plans IPv4 unicast DNS and UDP service cases, and skips DHCPv4, ARP, and
   NDP link-layer cases with stable capability reasons.
 - QEMU and VirtualBox private lab sessions are expected to plan the full
   behavior suite when local VM prerequisites are available.
@@ -270,8 +270,8 @@ dry-run reports and rendered into the live setup script only after
 Controlled target behavior is intentionally local to the lab segment:
 
 - DNS uses a generated Python UDP responder bound to the target endpoint.
-- DHCP uses a generated responder scoped to the planned DHCP contracts, not a
-  general DHCP server.
+- DHCPv4 uses a generated responder scoped to the planned DHCPv4 contracts, not a
+  general DHCPv4 server.
 - UDP uses generated echo/transform responders for service cases.
 - Closed UDP port behavior relies on the target kernel's ICMP port-unreachable
   response.
@@ -342,7 +342,7 @@ tools/probe/run --provider virtualbox --confirm-live-run --profile smoke --seed 
 tools/probe/run --provider docker --confirm-live-run --profile smoke --seed 21 --count 25
 ```
 
-The full DNS/DHCP/ARP/UDP behavior suite has a guarded command path. It runs a
+The full DNS/DHCPv4/ARP/UDP behavior suite has a guarded command path. It runs a
 live provider only when `LIBCRAFTER_PROBE_LIVE_PROVIDER` is set; otherwise it
 keeps the default dry-run boundary:
 

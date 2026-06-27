@@ -1164,7 +1164,7 @@ fn typed_layer_fields(layer: &dyn Layer, name: &str) -> Option<Map<String, Value
         "icmp" => layer.as_any().downcast_ref::<Icmpv4>().map(icmp_fields),
         "icmpv6" => layer.as_any().downcast_ref::<Icmpv6>().map(icmpv6_fields),
         "dns" => layer.as_any().downcast_ref::<Dns>().map(dns_fields),
-        "dhcpv4" => layer.as_any().downcast_ref::<Dhcpv4>().map(dhcp_fields),
+        "dhcpv4" => layer.as_any().downcast_ref::<Dhcpv4>().map(dhcpv4_fields),
         _ => None,
     }
 }
@@ -1361,7 +1361,7 @@ fn dns_fields(layer: &Dns) -> Map<String, Value> {
     fields
 }
 
-fn dhcp_fields(layer: &Dhcpv4) -> Map<String, Value> {
+fn dhcpv4_fields(layer: &Dhcpv4) -> Map<String, Value> {
     let mut fields = Map::new();
     fields.insert("opcode".to_string(), json!(layer.op_value()));
     fields.insert(
@@ -1407,14 +1407,14 @@ fn dhcp_fields(layer: &Dhcpv4) -> Map<String, Value> {
         "option_count".to_string(),
         json!(layer.options_value().len()),
     );
-    fields.insert("options".to_string(), json!(decoded_dhcp_options(layer)));
+    fields.insert("options".to_string(), json!(decoded_dhcpv4_options(layer)));
     if let Some(message_type) = layer.message_type_value() {
         fields.insert("message_type".to_string(), json!(message_type.code()));
     }
     fields
 }
 
-fn decoded_dhcp_options(layer: &Dhcpv4) -> Vec<Value> {
+fn decoded_dhcpv4_options(layer: &Dhcpv4) -> Vec<Value> {
     layer
         .options_value()
         .iter()
@@ -1754,7 +1754,7 @@ fn dns_answer(object: &Map<String, Value>) -> ExampleResult<DnsRecord> {
     Ok(DnsRecord::a(name, Ipv4Addr::from_str(address)?, ttl))
 }
 
-fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcpv4> {
+fn dhcpv4_layer(plan: &Value) -> ExampleResult<Dhcpv4> {
     let fields = layer_fields(plan, "dhcpv4")?;
     // The fixed BOOTP header fields are optional: a minimal live-friendly DHCP
     // plan emits only op/flags/options and relies on `Dhcpv4::new()` defaults
@@ -1763,7 +1763,7 @@ fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcpv4> {
     // adapter so DHCPv4 flows through the same generic endpoint batch contract.
     let mut layer = Dhcpv4::new();
     if let Some(value) = optional(fields, &["op"]) {
-        layer = layer.op(dhcp_op(value)?);
+        layer = layer.op(dhcpv4_op(value)?);
     }
     if let Some(value) = optional(fields, &["hardware_type", "htype"]) {
         layer = layer.hardware_type(hardware_type_value(value)? as u8);
@@ -1775,7 +1775,7 @@ fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcpv4> {
         layer = layer.xid(u32_value(value)?);
     }
     if let Some(value) = optional(fields, &["flags"]) {
-        layer = layer.flags(dhcp_flags(value)?);
+        layer = layer.flags(dhcpv4_flags(value)?);
     }
     if let Some(value) = optional(fields, &["client_ip", "ciaddr"]) {
         layer = layer.ciaddr(Ipv4Addr::from_str(text_value(value)?)?);
@@ -1787,12 +1787,12 @@ fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcpv4> {
         layer = layer.chaddr(mac_bytes(text_value(value)?)?);
     }
     if let Some(options) = optional(fields, &["options"]) {
-        layer = layer.options(dhcp_options(options)?);
+        layer = layer.options(dhcpv4_options(options)?);
     }
     Ok(layer)
 }
 
-fn dhcp_options(value: &Value) -> ExampleResult<Vec<Dhcpv4Option>> {
+fn dhcpv4_options(value: &Value) -> ExampleResult<Vec<Dhcpv4Option>> {
     let mut options = Vec::new();
     for item in array_values(value)? {
         if let Some(text) = item.as_str() {
@@ -1805,7 +1805,7 @@ fn dhcp_options(value: &Value) -> ExampleResult<Vec<Dhcpv4Option>> {
                 continue;
             }
             if let Some((name, raw_value)) = text.split_once('=') {
-                options.push(dhcp_option_pair(name, raw_value)?);
+                options.push(dhcpv4_option_pair(name, raw_value)?);
                 continue;
             }
         }
@@ -1816,7 +1816,7 @@ fn dhcp_options(value: &Value) -> ExampleResult<Vec<Dhcpv4Option>> {
     Ok(options)
 }
 
-fn dhcp_option_pair(name: &str, value: &str) -> ExampleResult<Dhcpv4Option> {
+fn dhcpv4_option_pair(name: &str, value: &str) -> ExampleResult<Dhcpv4Option> {
     match name.replace('-', "_").as_str() {
         "message_type" => Ok(Dhcpv4Option::message_type(dhcpv4_message_type(value))),
         "hostname" | "host_name" => Ok(Dhcpv4Option::host_name(value)),
@@ -1853,7 +1853,7 @@ fn dhcpv4_message_type(value: &str) -> Dhcpv4MessageType {
     }
 }
 
-fn dhcp_op(value: &Value) -> ExampleResult<u8> {
+fn dhcpv4_op(value: &Value) -> ExampleResult<u8> {
     if let Some(text) = value.as_str() {
         return match text.to_ascii_lowercase().replace('_', "-").as_str() {
             "bootrequest" | "request" => Ok(BOOTP_REQUEST),
@@ -1864,7 +1864,7 @@ fn dhcp_op(value: &Value) -> ExampleResult<u8> {
     u8_value(value)
 }
 
-fn dhcp_flags(value: &Value) -> ExampleResult<u16> {
+fn dhcpv4_flags(value: &Value) -> ExampleResult<u16> {
     if let Some(text) = value.as_str() {
         return match text.to_ascii_lowercase().replace('_', "-").as_str() {
             "broadcast" | "b" => Ok(0x8000),
@@ -2499,7 +2499,7 @@ mod live_capture_polling {
 /// directions. The dry-run path sends and captures nothing; all addresses are
 /// RFC 5737 documentation space and the run never touches a network.
 #[cfg(test)]
-mod ipv4_dhcp_live_endpoint {
+mod ipv4_dhcpv4_live_endpoint {
     use super::*;
     use serde_json::json;
 
@@ -2517,7 +2517,7 @@ mod ipv4_dhcp_live_endpoint {
     /// A minimal live-friendly `ipv4 / udp / dhcpv4` plan matching the seeded
     /// generator output: only the DHCP op/flags/options are set so the fixed
     /// BOOTP header falls back to `Dhcpv4::new()` defaults.
-    fn ipv4_dhcp_discover_plan(index: usize) -> Value {
+    fn ipv4_dhcpv4_discover_plan(index: usize) -> Value {
         json!({
             "stack": ["ipv4", "udp", "dhcpv4"],
             "index": index,
@@ -2571,8 +2571,8 @@ mod ipv4_dhcp_live_endpoint {
     /// Build a libcrafter live endpoint batch request for one direction. The
     /// `phase_role` is left to be inferred from the direction so the binary's
     /// own role-assignment logic is exercised.
-    fn dhcp_request(direction: &str) -> EndpointRequest {
-        let plans = vec![ipv4_dhcp_discover_plan(11), ipv4_dhcp_discover_plan(12)];
+    fn dhcpv4_request(direction: &str) -> EndpointRequest {
+        let plans = vec![ipv4_dhcpv4_discover_plan(11), ipv4_dhcpv4_discover_plan(12)];
         let artifact_paths = artifact_paths(direction, "libcrafter");
         EndpointRequest {
             provider: "local-dry-run".to_string(),
@@ -2599,7 +2599,7 @@ mod ipv4_dhcp_live_endpoint {
     }
 
     fn run_dry(direction: &str) -> Value {
-        let request = dhcp_request(direction);
+        let request = dhcpv4_request(direction);
         let request_json = serde_json::to_value(json!({
             "provider": request.provider,
             "backend": request.backend,
@@ -2643,10 +2643,10 @@ mod ipv4_dhcp_live_endpoint {
     }
 
     #[test]
-    fn ipv4_dhcp_plan_builds_through_generic_live_endpoint_contract() {
+    fn ipv4_dhcpv4_plan_builds_through_generic_live_endpoint_contract() {
         // The generic batch contract must materialize the DHCPv4 stack with no
         // DHCPv4-specific protocol: ipv4 / udp / dhcpv4, compiled and re-decodable.
-        let request = dhcp_request("libcrafter_to_reference");
+        let request = dhcpv4_request("libcrafter_to_reference");
         let prepared = prepare_packets(&request.packet_plans)
             .expect("ipv4/udp/dhcpv4 plans must prepare through the generic contract");
 
@@ -2678,8 +2678,8 @@ mod ipv4_dhcp_live_endpoint {
     }
 
     #[test]
-    fn ipv4_dhcp_libcrafter_to_reference_assigns_sender_role() {
-        let request = dhcp_request("libcrafter_to_reference");
+    fn ipv4_dhcpv4_libcrafter_to_reference_assigns_sender_role() {
+        let request = dhcpv4_request("libcrafter_to_reference");
         // libcrafter is the sender when crafting toward the reference backend.
         assert_eq!(
             phase_role(&request).expect("phase role must resolve"),
@@ -2758,8 +2758,8 @@ mod ipv4_dhcp_live_endpoint {
     }
 
     #[test]
-    fn ipv4_dhcp_reference_to_libcrafter_assigns_receiver_role() {
-        let request = dhcp_request("reference_to_libcrafter");
+    fn ipv4_dhcpv4_reference_to_libcrafter_assigns_receiver_role() {
+        let request = dhcpv4_request("reference_to_libcrafter");
         // libcrafter is the receiver when the reference backend is the sender.
         assert_eq!(
             phase_role(&request).expect("phase role must resolve"),

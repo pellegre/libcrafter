@@ -97,15 +97,15 @@ fn exercise_ipv4_like_decode(bytes: &[u8]) {
     }
 }
 
-fn compile_dhcp_payload(dhcp: Dhcpv4) -> Vec<u8> {
-    Packet::from_layer(dhcp)
+fn compile_dhcpv4_payload(dhcpv4: Dhcpv4) -> Vec<u8> {
+    Packet::from_layer(dhcpv4)
         .compile()
-        .expect("DHCP test frame should compile")
+        .expect("DHCPv4 test frame should compile")
         .as_bytes()
         .to_vec()
 }
 
-fn dhcp_payload_with_options(options: impl AsRef<[u8]>) -> Vec<u8> {
+fn dhcpv4_payload_with_options(options: impl AsRef<[u8]>) -> Vec<u8> {
     let mut bytes = vec![0u8; DHCPV4_MIN_LEN];
     bytes[0] = 1; // BOOTREQUEST
     bytes[1] = 1; // Ethernet
@@ -292,8 +292,8 @@ fn parse_target(name: &str, target: &str) -> DecodeTarget {
         "ipv6" => DecodeTarget::Ipv6,
         "ipv4-options" => DecodeTarget::Ipv4Options,
         "tcp-options" => DecodeTarget::TcpOptions,
-        "dhcp" => DecodeTarget::Dhcpv4,
-        "dhcp-options" => DecodeTarget::Dhcpv4Options,
+        "dhcpv4" => DecodeTarget::Dhcpv4,
+        "dhcpv4-options" => DecodeTarget::Dhcpv4Options,
         "dns-name" => DecodeTarget::DnsName,
         _ => panic!("malformed corpus case {name} has unknown target {target}"),
     }
@@ -577,14 +577,14 @@ fn required_malformed_families() -> &'static [&'static str] {
         "dns svcb param length overrun",
         "dns name reserved marker",
         "dns name full length overrun",
-        "short dhcp packet",
-        "missing dhcp magic cookie",
-        "truncated dhcp option",
-        "invalid dhcp fixed option length",
-        "dhcp missing end marker",
-        "dhcp non-padding after end",
-        "dhcp invalid fixed length",
-        "dhcp malformed option overload",
+        "short dhcpv4 packet",
+        "missing dhcpv4 magic cookie",
+        "truncated dhcpv4 option",
+        "invalid dhcpv4 fixed option length",
+        "dhcpv4 missing end marker",
+        "dhcpv4 non-padding after end",
+        "dhcpv4 invalid fixed length",
+        "dhcpv4 malformed option overload",
     ]
 }
 
@@ -684,16 +684,16 @@ fn malformed_family(name: &str) -> Option<&'static str> {
         "dns-svcb-param-length-overrun" => Some("dns svcb param length overrun"),
         "dns-name-reserved-marker" => Some("dns name reserved marker"),
         "dns-name-full-length-overrun" => Some("dns name full length overrun"),
-        "dhcp-short-fixed-header" => Some("short dhcp packet"),
-        "dhcp-missing-magic-cookie" => Some("missing dhcp magic cookie"),
-        "dhcp-truncated-option" | "dhcp-overload-file-truncated-option" => {
-            Some("truncated dhcp option")
+        "dhcpv4-short-fixed-header" => Some("short dhcpv4 packet"),
+        "dhcpv4-missing-magic-cookie" => Some("missing dhcpv4 magic cookie"),
+        "dhcpv4-truncated-option" | "dhcpv4-overload-file-truncated-option" => {
+            Some("truncated dhcpv4 option")
         }
-        "dhcp-invalid-fixed-option-length" => Some("invalid dhcp fixed option length"),
-        "dhcp-missing-end-marker" => Some("dhcp missing end marker"),
-        "dhcp-non-padding-after-end" => Some("dhcp non-padding after end"),
-        "dhcp-invalid-hardware-length" => Some("dhcp invalid fixed length"),
-        "dhcp-overload-file-missing-end" => Some("dhcp malformed option overload"),
+        "dhcpv4-invalid-fixed-option-length" => Some("invalid dhcpv4 fixed option length"),
+        "dhcpv4-missing-end-marker" => Some("dhcpv4 missing end marker"),
+        "dhcpv4-non-padding-after-end" => Some("dhcpv4 non-padding after end"),
+        "dhcpv4-invalid-hardware-length" => Some("dhcpv4 invalid fixed length"),
+        "dhcpv4-overload-file-missing-end" => Some("dhcpv4 malformed option overload"),
         _ => None,
     }
 }
@@ -748,7 +748,7 @@ fn deterministic_payload(len: usize, seed: u8) -> Vec<u8> {
         .collect()
 }
 
-fn dhcp_client_mac() -> MacAddr {
+fn dhcpv4_client_mac() -> MacAddr {
     MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01])
 }
 
@@ -1070,26 +1070,26 @@ fn malformed_ipv6_home_address_option_summary_is_inspectable() -> crafter::core:
     Ok(())
 }
 
-/// Malformed DHCP option payloads whose typed views are only decoded lazily
+/// Malformed DHCPv4 option payloads whose typed views are only decoded lazily
 /// through the `Dhcpv4` accessors (the structural `Dhcpv4::decode` preserves them
 /// as raw `Generic` segments). Each accessor must surface a structured
-/// `CrafterError` with a stable `dhcp.option.*` context and never panic, and
+/// `CrafterError` with a stable `dhcpv4.option.*` context and never panic, and
 /// the raw bytes must remain inspectable on the decoded layer.
 #[test]
-fn malformed_dhcp_typed_option_views_report_structured_errors() {
-    // dhcp relay suboption: option 82 circuit-id suboption declares length 32
+fn malformed_dhcpv4_typed_option_views_report_structured_errors() {
+    // dhcpv4 relay suboption: option 82 circuit-id suboption declares length 32
     // but only one payload octet is present (RFC 3046 sub-option TLV overrun).
-    let relay = Dhcpv4::discover(dhcp_client_mac())
+    let relay = Dhcpv4::discover(dhcpv4_client_mac())
         .transaction_id(0x0102_0304)
         .option(Dhcpv4Option::generic(82, vec![0x01, 0x20, 0x00]));
-    let bytes = compile_dhcp_payload(relay);
+    let bytes = compile_dhcpv4_payload(relay);
     let decoded = Dhcpv4::decode(&bytes).expect("relay frame must decode structurally");
     match decoded.relay_agent_information() {
         Some(Err(CrafterError::BufferTooShort { context, .. })) => {
-            assert_eq!(context, "dhcp.option.relay_agent_information");
+            assert_eq!(context, "dhcpv4.option.relay_agent_information");
         }
         other => {
-            panic!("malformed dhcp relay suboption expected a structured error, got {other:?}")
+            panic!("malformed dhcpv4 relay suboption expected a structured error, got {other:?}")
         }
     }
     // Raw option 82 bytes remain inspectable on the decoded layer.
@@ -1098,41 +1098,43 @@ fn malformed_dhcp_typed_option_views_report_structured_errors() {
         .iter()
         .any(|o| matches!(o, Dhcpv4Option::Generic { code: 82, .. })));
 
-    // dhcp classless route: option 121 prefix length 24 needs three subnet
+    // dhcpv4 classless route: option 121 prefix length 24 needs three subnet
     // octets plus a four-octet router, but only a truncated payload is present
     // (RFC 3442 destination-descriptor underrun).
     let route = Dhcpv4::ack(
-        dhcp_client_mac(),
+        dhcpv4_client_mac(),
         Ipv4Addr::new(192, 0, 2, 100),
         Ipv4Addr::new(192, 0, 2, 1),
     )
     .option(Dhcpv4Option::generic(121, vec![24, 192, 0]));
-    let bytes = compile_dhcp_payload(route);
+    let bytes = compile_dhcpv4_payload(route);
     let decoded = Dhcpv4::decode(&bytes).expect("classless route frame must decode structurally");
     match decoded.classless_static_routes() {
         Some(Err(CrafterError::BufferTooShort { context, .. })) => {
-            assert_eq!(context, "dhcp.option.classless_static_route");
+            assert_eq!(context, "dhcpv4.option.classless_static_route");
         }
         other => {
-            panic!("malformed dhcp classless route expected a structured error, got {other:?}")
+            panic!("malformed dhcpv4 classless route expected a structured error, got {other:?}")
         }
     }
 
-    // dhcp domain search: option 119 label length 7 with a truncated label
+    // dhcpv4 domain search: option 119 label length 7 with a truncated label
     // (RFC 1035 label-length overrun read through RFC 3397 concatenation).
     let domain = Dhcpv4::ack(
-        dhcp_client_mac(),
+        dhcpv4_client_mac(),
         Ipv4Addr::new(192, 0, 2, 100),
         Ipv4Addr::new(192, 0, 2, 1),
     )
     .option(Dhcpv4Option::generic(119, vec![7, 101, 120]));
-    let bytes = compile_dhcp_payload(domain);
+    let bytes = compile_dhcpv4_payload(domain);
     let decoded = Dhcpv4::decode(&bytes).expect("domain search frame must decode structurally");
     match decoded.domain_search() {
         Some(Err(CrafterError::BufferTooShort { context, .. })) => {
-            assert_eq!(context, "dhcp.option.domain_search");
+            assert_eq!(context, "dhcpv4.option.domain_search");
         }
-        other => panic!("malformed dhcp domain search expected a structured error, got {other:?}"),
+        other => {
+            panic!("malformed dhcpv4 domain search expected a structured error, got {other:?}")
+        }
     }
 }
 
@@ -1148,13 +1150,13 @@ fn malformed_dhcp_typed_option_views_report_structured_errors() {
 /// the same dimension the relay/route/domain views cover above, but for the RFC
 /// 4388 / RFC 6926 leasequery option family.
 #[test]
-fn malformed_dhcp_leasequery_option_views_report_structured_errors() {
+fn malformed_dhcpv4_leasequery_option_views_report_structured_errors() {
     use crafter::core::{Dhcpv4DataSource, Dhcpv4State, Dhcpv4StatusCode};
 
-    // Codepoints from the IANA BOOTP/DHCP options registry: RFC 4388
+    // Codepoints from the IANA BOOTP/DHCPv4 options registry: RFC 4388
     // client-last-transaction-time (91) and associated-ip (92); RFC 6926
-    // status-code (151), base-time (152), dhcp-state (156), and data-source
-    // (157). Building from a real DHCPLEASEQUERY frame keeps this on the public
+    // status-code (151), base-time (152), dhcpv4-state (156), and data-source
+    // (157). Building from a real DHCPv4 DHCPLEASEQUERY frame keeps this on the public
     // packet surface.
     const CLIENT_LAST_TRANSACTION_TIME: u8 = 91;
     const ASSOCIATED_IP: u8 = 92;
@@ -1167,7 +1169,7 @@ fn malformed_dhcp_leasequery_option_views_report_structured_errors() {
         let frame = Dhcpv4::lease_query_by_ip(Ipv4Addr::new(192, 0, 2, 50))
             .transaction_id(0x0102_0304)
             .option(Dhcpv4Option::generic(code, payload));
-        let bytes = compile_dhcp_payload(frame);
+        let bytes = compile_dhcpv4_payload(frame);
         Dhcpv4::decode(&bytes).expect("leasequery frame must decode structurally")
     }
 
@@ -1199,7 +1201,7 @@ fn malformed_dhcp_leasequery_option_views_report_structured_errors() {
     let decoded = decode_lease_query_with(STATUS_CODE, Vec::new());
     match decoded.status_code() {
         Some(Err(CrafterError::BufferTooShort { context, .. })) => {
-            assert_eq!(context, "dhcp.option.value");
+            assert_eq!(context, "dhcpv4.option.value");
         }
         other => panic!("malformed status-code expected a structured error, got {other:?}"),
     }
@@ -1212,11 +1214,11 @@ fn malformed_dhcp_leasequery_option_views_report_structured_errors() {
         other => panic!("malformed base-time expected a structured error, got {other:?}"),
     }
 
-    // dhcp-state (156): a single State octet; two octets is malformed.
+    // dhcpv4-state (156): a single State octet; two octets is malformed.
     let decoded = decode_lease_query_with(DHCPV4_STATE, vec![0x01, 0x02]);
     match decoded.dhcp_state() {
         Some(Err(CrafterError::InvalidFieldValue { .. })) => {}
-        other => panic!("malformed dhcp-state expected a structured error, got {other:?}"),
+        other => panic!("malformed dhcpv4-state expected a structured error, got {other:?}"),
     }
 
     // data-source (157): a single Flags octet; an empty payload is malformed.
@@ -1234,7 +1236,7 @@ fn malformed_dhcp_leasequery_option_views_report_structured_errors() {
         .option(Dhcpv4Option::generic(STATUS_CODE, vec![0x40, 0xff, 0x00]))
         .option(Dhcpv4Option::generic(DHCPV4_STATE, vec![0x55]))
         .option(Dhcpv4Option::generic(DATA_SOURCE, vec![0xFE]));
-    let bytes = compile_dhcp_payload(good);
+    let bytes = compile_dhcpv4_payload(good);
     let decoded = Dhcpv4::decode(&bytes).expect("leasequery frame must decode structurally");
     let status = decoded
         .status_code()
@@ -1260,70 +1262,70 @@ fn malformed_dhcp_leasequery_option_views_report_structured_errors() {
     assert_eq!(source, Dhcpv4DataSource::new(0xFE));
 }
 
-/// DHCP-family malformed corpus rows: the names whose [`malformed_family`]
-/// mapping covers a DHCP decode dimension the step requires (short fixed
+/// DHCPv4 malformed corpus rows: the names whose [`malformed_family`]
+/// mapping covers a DHCPv4 decode dimension the step requires (short fixed
 /// headers, missing magic cookie, truncated options, invalid fixed option
 /// lengths, missing end marker, non-padding after end, invalid hardware
 /// lengths, and malformed option overload).
-fn is_dhcp_malformed_case(case: &MalformedCase) -> bool {
+fn is_dhcpv4_malformed_case(case: &MalformedCase) -> bool {
     matches!(
         case.target,
         DecodeTarget::Dhcpv4 | DecodeTarget::Dhcpv4Options
     )
 }
 
-/// Every malformed DHCP vector must surface a fully structured `CrafterError`,
+/// Every malformed DHCPv4 vector must surface a fully structured `CrafterError`,
 /// not just the right variant: a `BufferTooShort` must carry the stable
 /// `context` plus `required > available` (a buffer underrun, by definition),
 /// and an `InvalidFieldValue` must carry the stable `field` plus a non-empty,
 /// stable `reason`. This asserts the `context`/`required`/`available` fields the
 /// step calls out, on top of the variant/context coverage the corpus runner
-/// already checks, and confirms decoding never panics for any DHCP vector.
+/// already checks, and confirms decoding never panics for any DHCPv4 vector.
 ///
 /// It is driven entirely off the existing malformed corpus so no fixture bytes
-/// are duplicated; the DHCP rows already cover short fixed headers, missing
+/// are duplicated; the DHCPv4 rows already cover short fixed headers, missing
 /// magic cookie, truncated options, invalid fixed option lengths, missing end
 /// marker, non-padding after end, invalid hardware lengths, and malformed
 /// option overload.
 #[test]
-fn malformed_dhcp_corpus_errors_carry_structured_fields() {
+fn malformed_dhcpv4_corpus_errors_carry_structured_fields() {
     let cases = malformed_cases();
-    let dhcp_cases = cases
+    let dhcpv4_cases = cases
         .iter()
-        .filter(|case| is_dhcp_malformed_case(case))
+        .filter(|case| is_dhcpv4_malformed_case(case))
         .collect::<Vec<_>>();
     assert!(
-        !dhcp_cases.is_empty(),
-        "malformed corpus must carry DHCP vectors"
+        !dhcpv4_cases.is_empty(),
+        "malformed corpus must carry DHCPv4 vectors"
     );
 
-    // Every required DHCP decode dimension must be represented among the rows
+    // Every required DHCPv4 decode dimension must be represented among the rows
     // under test so this never silently narrows.
-    let dhcp_required_families = [
-        "short dhcp packet",
-        "missing dhcp magic cookie",
-        "truncated dhcp option",
-        "invalid dhcp fixed option length",
-        "dhcp missing end marker",
-        "dhcp non-padding after end",
-        "dhcp invalid fixed length",
-        "dhcp malformed option overload",
+    let dhcpv4_required_families = [
+        "short dhcpv4 packet",
+        "missing dhcpv4 magic cookie",
+        "truncated dhcpv4 option",
+        "invalid dhcpv4 fixed option length",
+        "dhcpv4 missing end marker",
+        "dhcpv4 non-padding after end",
+        "dhcpv4 invalid fixed length",
+        "dhcpv4 malformed option overload",
     ];
-    let covered = dhcp_cases
+    let covered = dhcpv4_cases
         .iter()
         .filter_map(|case| malformed_family(case.name))
         .collect::<std::collections::HashSet<_>>();
-    for family in dhcp_required_families {
+    for family in dhcpv4_required_families {
         assert!(
             covered.contains(family),
-            "malformed DHCP corpus missing structured-field coverage for {family}"
+            "malformed DHCPv4 corpus missing structured-field coverage for {family}"
         );
     }
 
-    for case in dhcp_cases {
+    for case in dhcpv4_cases {
         let Err(error) = decode_malformed_case(case) else {
             panic!(
-                "malformed DHCP corpus case {} unexpectedly decoded",
+                "malformed DHCPv4 corpus case {} unexpectedly decoded",
                 case.name
             );
         };
@@ -1332,7 +1334,7 @@ fn malformed_dhcp_corpus_errors_carry_structured_fields() {
         assert_error_matches(case, error.clone());
         let ExpectedOutcome::Error(expected_error) = case.expected_outcome else {
             panic!(
-                "malformed DHCP case {} expected structured error outcome",
+                "malformed DHCPv4 case {} expected structured error outcome",
                 case.name
             );
         };
@@ -1344,12 +1346,12 @@ fn malformed_dhcp_corpus_errors_carry_structured_fields() {
             } => {
                 assert_eq!(
                     context, expected_error.context_or_field,
-                    "malformed DHCP case {} carried an unexpected buffer context",
+                    "malformed DHCPv4 case {} carried an unexpected buffer context",
                     case.name
                 );
                 assert!(
                     required > available,
-                    "malformed DHCP case {} BufferTooShort must require more ({required}) \
+                    "malformed DHCPv4 case {} BufferTooShort must require more ({required}) \
                      than is available ({available})",
                     case.name
                 );
@@ -1357,27 +1359,27 @@ fn malformed_dhcp_corpus_errors_carry_structured_fields() {
             CrafterError::InvalidFieldValue { field, reason } => {
                 assert_eq!(
                     field, expected_error.context_or_field,
-                    "malformed DHCP case {} carried an unexpected invalid field",
+                    "malformed DHCPv4 case {} carried an unexpected invalid field",
                     case.name
                 );
                 assert!(
                     !reason.is_empty(),
-                    "malformed DHCP case {} InvalidFieldValue must carry a non-empty reason",
+                    "malformed DHCPv4 case {} InvalidFieldValue must carry a non-empty reason",
                     case.name
                 );
             }
             other => panic!(
-                "malformed DHCP case {} returned an unexpected error {other:?}",
+                "malformed DHCPv4 case {} returned an unexpected error {other:?}",
                 case.name
             ),
         }
     }
 }
 
-/// Malformed DHCP vectors built from test-local raw bytes must decode to
+/// Malformed DHCPv4 vectors built from test-local raw bytes must decode to
 /// structured `CrafterError`s with the `required`/`available`/`reason` fields
 /// populated and never panic. The public crate intentionally has no
-/// DHCP-specific malformed builder; these fixtures keep decoder coverage
+/// DHCPv4-specific malformed builder; these fixtures keep decoder coverage
 /// without exposing a one-off API.
 ///
 /// This exercises short fixed header (truncation), missing magic cookie,
@@ -1385,9 +1387,9 @@ fn malformed_dhcp_corpus_errors_carry_structured_fields() {
 /// marker, invalid hardware length, an oversized (length-truncated) option
 /// payload, and a malformed option-overload file area.
 #[test]
-fn raw_malformed_dhcp_vectors_report_structured_errors() {
-    // Short fixed header: a complete DHCP frame truncated below DHCPV4_MIN_LEN.
-    let full = dhcp_payload_with_options([DHCPV4_OPTION_MESSAGE_TYPE, 1, 1, DHCPV4_OPTION_END]);
+fn raw_malformed_dhcpv4_vectors_report_structured_errors() {
+    // Short fixed header: a complete DHCPv4 frame truncated below DHCPV4_MIN_LEN.
+    let full = dhcpv4_payload_with_options([DHCPV4_OPTION_MESSAGE_TYPE, 1, 1, DHCPV4_OPTION_END]);
     let short = &full[..8.min(full.len())];
     match Dhcpv4::decode(short) {
         Err(CrafterError::BufferTooShort {
@@ -1395,70 +1397,70 @@ fn raw_malformed_dhcp_vectors_report_structured_errors() {
             required,
             available,
         }) => {
-            assert_eq!(context, "dhcp packet");
+            assert_eq!(context, "dhcpv4 packet");
             assert!(
                 required > available,
                 "short fixed header must require more ({required}) than available ({available})"
             );
             assert_eq!(available, short.len());
         }
-        other => panic!("short DHCP fixed header expected BufferTooShort, got {other:?}"),
+        other => panic!("short DHCPv4 fixed header expected BufferTooShort, got {other:?}"),
     }
 
     // Missing magic cookie: a full-length frame whose cookie is corrupted.
     let mut bytes =
-        dhcp_payload_with_options([DHCPV4_OPTION_MESSAGE_TYPE, 1, 1, DHCPV4_OPTION_END]);
+        dhcpv4_payload_with_options([DHCPV4_OPTION_MESSAGE_TYPE, 1, 1, DHCPV4_OPTION_END]);
     bytes[DHCPV4_FIXED_HEADER_LEN..DHCPV4_MIN_LEN].copy_from_slice(&0u32.to_be_bytes());
     match Dhcpv4::decode(&bytes) {
         Err(CrafterError::InvalidFieldValue { field, reason }) => {
-            assert_eq!(field, "dhcp.magic_cookie");
+            assert_eq!(field, "dhcpv4.magic_cookie");
             assert!(!reason.is_empty());
         }
-        other => panic!("invalid DHCP magic cookie expected InvalidFieldValue, got {other:?}"),
+        other => panic!("invalid DHCPv4 magic cookie expected InvalidFieldValue, got {other:?}"),
     }
 
     // Truncated option: a message-type option declares length 1 but supplies no
     // payload octet.
-    let bytes = dhcp_payload_with_options([DHCPV4_OPTION_MESSAGE_TYPE, 1]);
+    let bytes = dhcpv4_payload_with_options([DHCPV4_OPTION_MESSAGE_TYPE, 1]);
     match Dhcpv4::decode(&bytes) {
         Err(CrafterError::BufferTooShort {
             context,
             required,
             available,
         }) => {
-            assert_eq!(context, "dhcp option data");
+            assert_eq!(context, "dhcpv4 option data");
             assert!(required > available);
         }
-        other => panic!("truncated DHCP option expected BufferTooShort, got {other:?}"),
+        other => panic!("truncated DHCPv4 option expected BufferTooShort, got {other:?}"),
     }
 
     // Invalid fixed option length: message-type (53) declares length 2 but the
     // option is a fixed single octet.
     let bytes =
-        dhcp_payload_with_options([DHCPV4_OPTION_MESSAGE_TYPE, 2, 0x01, 0x00, DHCPV4_OPTION_END]);
+        dhcpv4_payload_with_options([DHCPV4_OPTION_MESSAGE_TYPE, 2, 0x01, 0x00, DHCPV4_OPTION_END]);
     match Dhcpv4::decode(&bytes) {
         Err(CrafterError::InvalidFieldValue { field, reason }) => {
-            assert_eq!(field, "dhcp.option.message_type");
+            assert_eq!(field, "dhcpv4.option.message_type");
             assert!(!reason.is_empty());
         }
         other => {
-            panic!("invalid fixed DHCP option length expected InvalidFieldValue, got {other:?}")
+            panic!("invalid fixed DHCPv4 option length expected InvalidFieldValue, got {other:?}")
         }
     }
 
     // Missing end marker: a non-empty options area without the trailing end
     // option.
-    let bytes = dhcp_payload_with_options([DHCPV4_OPTION_MESSAGE_TYPE, 0x01, 0x01]);
+    let bytes = dhcpv4_payload_with_options([DHCPV4_OPTION_MESSAGE_TYPE, 0x01, 0x01]);
     match Dhcpv4::decode(&bytes) {
         Err(CrafterError::InvalidFieldValue { field, reason }) => {
-            assert_eq!(field, "dhcp.options");
+            assert_eq!(field, "dhcpv4.options");
             assert!(!reason.is_empty());
         }
-        other => panic!("missing DHCP end marker expected InvalidFieldValue, got {other:?}"),
+        other => panic!("missing DHCPv4 end marker expected InvalidFieldValue, got {other:?}"),
     }
 
     // Non-padding after end: a complete option segment follows the end option.
-    let bytes = dhcp_payload_with_options([
+    let bytes = dhcpv4_payload_with_options([
         DHCPV4_OPTION_MESSAGE_TYPE,
         0x01,
         0x01,
@@ -1469,29 +1471,29 @@ fn raw_malformed_dhcp_vectors_report_structured_errors() {
     ]);
     match Dhcpv4::decode(&bytes) {
         Err(CrafterError::InvalidFieldValue { field, reason }) => {
-            assert_eq!(field, "dhcp.option.end");
+            assert_eq!(field, "dhcpv4.option.end");
             assert!(!reason.is_empty());
         }
-        other => panic!("non-padding after DHCP end expected InvalidFieldValue, got {other:?}"),
+        other => panic!("non-padding after DHCPv4 end expected InvalidFieldValue, got {other:?}"),
     }
 
     // Invalid hardware length: hlen 32 exceeds the 16-byte chaddr field.
     let mut bytes =
-        dhcp_payload_with_options([DHCPV4_OPTION_MESSAGE_TYPE, 1, 1, DHCPV4_OPTION_END]);
+        dhcpv4_payload_with_options([DHCPV4_OPTION_MESSAGE_TYPE, 1, 1, DHCPV4_OPTION_END]);
     bytes[2] = 32;
     match Dhcpv4::decode(&bytes) {
         Err(CrafterError::InvalidFieldValue { field, reason }) => {
-            assert_eq!(field, "dhcp.hlen");
+            assert_eq!(field, "dhcpv4.hlen");
             assert!(!reason.is_empty());
         }
-        other => panic!("invalid DHCP hardware length expected InvalidFieldValue, got {other:?}"),
+        other => panic!("invalid DHCPv4 hardware length expected InvalidFieldValue, got {other:?}"),
     }
 
     // Malformed typed option payload via oversized payload: a 300-octet payload
     // with a length-truncated (300 % 256 = 44) length byte overruns the option.
     let mut options = vec![43, 44];
     options.extend(vec![0u8; 300]);
-    let bytes = dhcp_payload_with_options(options);
+    let bytes = dhcpv4_payload_with_options(options);
     // The decoder must not panic; it may surface a structured error or preserve
     // the bytes as a raw generic segment depending on the truncated length, but
     // it must never panic.
@@ -1500,7 +1502,7 @@ fn raw_malformed_dhcp_vectors_report_structured_errors() {
     // Malformed option overload: option 52 (in the normal options area) marks
     // the file area overloaded, but the file area carries a truncated option
     // (declared length overruns the 128-byte field) and no end marker.
-    let mut bytes = dhcp_payload_with_options([52, 1, 1, DHCPV4_OPTION_END]);
+    let mut bytes = dhcpv4_payload_with_options([52, 1, 1, DHCPV4_OPTION_END]);
     let mut file_area = [0u8; 128];
     file_area[0] = 0x43; // option 67 (bootfile name)
     file_area[1] = 200; // declared length overruns the 128-byte file area
@@ -2480,7 +2482,7 @@ proptest! {
     }
 
     #[test]
-    fn dhcp_option_scan_decode_encode_never_panics(bytes in prop::collection::vec(any::<u8>(), 0..256)) {
+    fn dhcpv4_option_scan_decode_encode_never_panics(bytes in prop::collection::vec(any::<u8>(), 0..256)) {
         // The raw segment scanner must never panic on arbitrary input across
         // every option area.
         for area in [Dhcpv4OptionArea::Options, Dhcpv4OptionArea::File, Dhcpv4OptionArea::Sname] {
@@ -2497,42 +2499,42 @@ proptest! {
         }
     }
 
-    /// Arbitrary bytes carried through the real `ipv4 / udp / dhcp` decode
+    /// Arbitrary bytes carried through the real `ipv4 / udp / dhcpv4` decode
     /// boundary must never panic. Unlike [`malformed_random_decode_inputs_never_panic`],
     /// which feeds raw bytes into the L3 entrypoint (where they almost never
-    /// satisfy the conservative DHCP dispatch gate), this builds a well-formed
-    /// IPv4/UDP frame on the standard DHCP client/server port pair with a valid
+    /// satisfy the conservative DHCPv4 dispatch gate), this builds a well-formed
+    /// IPv4/UDP frame on the standard DHCPv4 client/server port pair with a valid
     /// BOOTP fixed header and magic cookie, then fuzzes only the option region.
     /// That guarantees the UDP-port-pair + magic-cookie registry gate fires and
-    /// the full stack actually routes into the DHCP option decoder, so the
-    /// boundary the DHCP live oracle relies on (`decode_from_l3(Ipv4, ..)` ->
-    /// UDP 68->67 -> DHCP) is exercised over arbitrary option bytes. The decoder
+    /// the full stack actually routes into the DHCPv4 option decoder, so the
+    /// boundary the DHCPv4 live oracle relies on (`decode_from_l3(Ipv4, ..)` ->
+    /// UDP 68->67 -> DHCPv4) is exercised over arbitrary option bytes. The decoder
     /// must surface a structured error or preserve the bytes as raw `Generic`
     /// segments, never panic; whenever it does decode, `summary`/`show`/`compile`
     /// must also stay panic-free.
     #[test]
-    fn ipv4_udp_dhcp_boundary_decode_never_panics(
+    fn ipv4_udp_dhcpv4_boundary_decode_never_panics(
         option_bytes in prop::collection::vec(any::<u8>(), 0..200),
     ) {
         // A valid BOOTP fixed header + magic cookie keeps the registry gate
-        // (`is_dhcp_port_pair` && `looks_like_dhcp_payload`) satisfied so the
-        // arbitrary option-region bytes reach the DHCP decoder through the real
-        // boundary rather than being dropped as non-DHCP UDP traffic.
-        let dhcp_payload = dhcp_payload_with_options(option_bytes);
+        // (`is_dhcpv4_port_pair` && `looks_like_dhcpv4_payload`) satisfied so the
+        // arbitrary option-region bytes reach the DHCPv4 decoder through the real
+        // boundary rather than being dropped as non-DHCPv4 UDP traffic.
+        let dhcpv4_payload = dhcpv4_payload_with_options(option_bytes);
 
         let frame = Ipv4::with_addresses(Ipv4Addr::UNSPECIFIED, Ipv4Addr::BROADCAST)
             / Udp::new()
                 .source_port(DHCPV4_CLIENT_PORT)
                 .destination_port(DHCPV4_SERVER_PORT)
-            / Raw::from_bytes(&dhcp_payload);
+            / Raw::from_bytes(&dhcpv4_payload);
 
         // The fuzzed options never make the fixed header invalid, so the frame
-        // always compiles to wire bytes carrying a real DHCP magic cookie.
+        // always compiles to wire bytes carrying a real DHCPv4 magic cookie.
         let bytes = frame
             .compile()
-            .expect("ipv4/udp/dhcp boundary frame should compile");
+            .expect("ipv4/udp/dhcpv4 boundary frame should compile");
 
-        // Decoding the whole frame from the IPv4 root must never panic. The DHCP
+        // Decoding the whole frame from the IPv4 root must never panic. The DHCPv4
         // option region may be malformed, so the result is either a structured
         // error or a successful decode that preserves the bytes; both are
         // acceptable as long as nothing panics and the decoded model stays

@@ -2358,13 +2358,13 @@ fn udp_decode_surplus_dns_uses_user_payload_and_preserves_options() {
 }
 
 #[test]
-fn udp_decode_surplus_dhcp_uses_user_payload_and_preserves_options() {
+fn udp_decode_surplus_dhcpv4_uses_user_payload_and_preserves_options() {
     let client_mac = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]);
-    let dhcp = Dhcpv4::discover(client_mac)
+    let dhcpv4 = Dhcpv4::discover(client_mac)
         .transaction_id(0x3903_f326)
         .flags(0x8000)
         .host_name("agent");
-    let dhcp_len = dhcp.encoded_len();
+    let dhcpv4_len = dhcpv4.encoded_len();
     let surplus = [UDP_OPTION_NOP, UDP_OPTION_EOL, 0];
 
     let bytes = (Ipv4::new()
@@ -2372,30 +2372,36 @@ fn udp_decode_surplus_dhcp_uses_user_payload_and_preserves_options() {
         .dst(Ipv4Addr::BROADCAST)
         .id(0x2227)
         / Udp::dhcpv4_client()
-        / dhcp
+        / dhcpv4
         / UdpOptions::from_bytes(surplus))
     .compile()
     .unwrap();
 
     assert_eq!(
         &bytes.as_bytes()[2..4],
-        &((20 + UDP_HEADER_LEN + dhcp_len + udp_surplus(bytes.as_bytes()).len()) as u16)
+        &((20 + UDP_HEADER_LEN + dhcpv4_len + udp_surplus(bytes.as_bytes()).len()) as u16)
             .to_be_bytes()
     );
     assert_eq!(
         &bytes.as_bytes()[24..26],
-        &((UDP_HEADER_LEN + dhcp_len) as u16).to_be_bytes()
+        &((UDP_HEADER_LEN + dhcpv4_len) as u16).to_be_bytes()
     );
 
     let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
     let udp = decoded.layer::<Udp>().unwrap();
-    let dhcp = decoded.layer::<Dhcpv4>().unwrap();
+    let dhcpv4 = decoded.layer::<Dhcpv4>().unwrap();
     let udp_options = decoded.layer::<UdpOptions>().unwrap();
 
-    assert_eq!(udp.length_value(), Some((UDP_HEADER_LEN + dhcp_len) as u16));
-    assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
-    assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
-    assert_eq!(dhcp.host_name_value(), Some("agent"));
+    assert_eq!(
+        udp.length_value(),
+        Some((UDP_HEADER_LEN + dhcpv4_len) as u16)
+    );
+    assert_eq!(dhcpv4.transaction_id_value(), 0x3903_f326);
+    assert_eq!(
+        dhcpv4.message_type_value(),
+        Some(Dhcpv4MessageType::Discover)
+    );
+    assert_eq!(dhcpv4.host_name_value(), Some("agent"));
     assert!(decoded.layers::<Raw>().next().is_none());
     assert_eq!(udp_options.as_bytes(), &surplus);
     assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());

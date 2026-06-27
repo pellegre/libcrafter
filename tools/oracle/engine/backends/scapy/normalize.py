@@ -44,12 +44,12 @@ from .protocols.ipv6 import (
 # co-located there but, like the IPv6 ext-header option-region helpers, are also
 # consumed by the whole-packet ``_packet_layers`` capture below; they are re-imported
 # here so that capture and the existing ``test_dhcpv4_oracle.py`` references
-# (``normalize._decode_dhcp_option_tlvs`` / ``normalize._apply_dhcp_option_details``)
+# (``normalize._decode_dhcpv4_option_tlvs`` / ``normalize._apply_dhcpv4_option_details``)
 # keep resolving through the ``normalize`` module after the move.
 from .protocols.dhcpv4 import (
-    _DHCP_OPTION_REGION_KEY,
-    _apply_dhcp_option_details,
-    _decode_dhcp_option_tlvs,
+    _DHCPV4_OPTION_REGION_KEY,
+    _apply_dhcpv4_option_details,
+    _decode_dhcpv4_option_tlvs,
 )
 from .protocols.quic import canonicalize_quic_payload
 
@@ -491,9 +491,9 @@ def _packet_layers(packet: Any) -> list[JSONObject]:
             # Scapy-typed option list, which is not byte-comparable across
             # backends. The DHCP sub-layer's wire bytes are exactly the option
             # region (after the BOOTP fixed fields and magic cookie).
-            option_bytes = _dhcp_option_region_bytes(current)
+            option_bytes = _dhcpv4_option_region_bytes(current)
             if option_bytes is not None:
-                fields[_DHCP_OPTION_REGION_KEY] = option_bytes.hex()
+                fields[_DHCPV4_OPTION_REGION_KEY] = option_bytes.hex()
         if current.__class__.__name__ in {"IPv6ExtHdrHopByHop", "IPv6ExtHdrDestOpt"}:
             option_bytes = _ipv6_option_region_bytes(current)
             if option_bytes is not None:
@@ -519,9 +519,9 @@ def _packet_layers(packet: Any) -> list[JSONObject]:
     return layers
 
 
-def _dhcp_option_region_bytes(dhcp_layer: Any) -> bytes | None:
+def _dhcpv4_option_region_bytes(dhcpv4_layer: Any) -> bytes | None:
     try:
-        return bytes(import_scapy()["all"].raw(dhcp_layer))
+        return bytes(import_scapy()["all"].raw(dhcpv4_layer))
     except Exception:  # pragma: no cover - Scapy serialization edge cases.
         return None
 

@@ -36,21 +36,21 @@ _RAW_IPV4_DHCP_DISCOVER_HEX = (
 )
 
 # DHCPv4 magic cookie (RFC 2132) as the shared integer view both backends emit.
-_DHCP_MAGIC_COOKIE = 0x63825363
+_DHCPV4_MAGIC_COOKIE = 0x63825363
 
 
-def _synthetic_dhcpv4_packet(*, dhcp_prefix: str) -> dict:
+def _synthetic_dhcpv4_packet(*, dissector_prefix: str) -> dict:
     """Build a tshark ``-T json`` style packet object for the raw IPv4 DHCPv4 bytes.
 
-    ``dhcp_prefix`` is ``"dhcp"`` (Wireshark >= 3.0) or ``"bootp"`` (older
+    ``dissector_prefix`` is ``"dhcp"`` (Wireshark >= 3.0) or ``"bootp"`` (older
     Wireshark); the normalizer must accept either dissector field prefix.
     """
 
-    layer_key = dhcp_prefix
+    layer_key = dissector_prefix
     return {
         "_source": {
             "layers": {
-                "frame": {"frame.protocols": f"raw:ip:udp:{dhcp_prefix}"},
+                "frame": {"frame.protocols": f"raw:ip:udp:{dissector_prefix}"},
                 "ip": {
                     "ip.version": "4",
                     "ip.hdr_len": "20",
@@ -70,20 +70,20 @@ def _synthetic_dhcpv4_packet(*, dhcp_prefix: str) -> dict:
                     "udp.checksum": "0x0000",
                 },
                 layer_key: {
-                    f"{dhcp_prefix}.type": "1",
-                    f"{dhcp_prefix}.hw.type": "1",
-                    f"{dhcp_prefix}.hw.len": "6",
-                    f"{dhcp_prefix}.hops": "0",
-                    f"{dhcp_prefix}.id": "0x11223344",
-                    f"{dhcp_prefix}.secs": "0",
-                    f"{dhcp_prefix}.flags": "0x0000",
-                    f"{dhcp_prefix}.ip.client": "0.0.0.0",
-                    f"{dhcp_prefix}.ip.your": "0.0.0.0",
-                    f"{dhcp_prefix}.ip.server": "0.0.0.0",
-                    f"{dhcp_prefix}.ip.relay": "0.0.0.0",
-                    f"{dhcp_prefix}.hw.mac_addr": "02:00:00:00:00:01",
-                    f"{dhcp_prefix}.cookie": "0x63825363",
-                    f"{dhcp_prefix}.option.dhcp": "1",
+                    f"{dissector_prefix}.type": "1",
+                    f"{dissector_prefix}.hw.type": "1",
+                    f"{dissector_prefix}.hw.len": "6",
+                    f"{dissector_prefix}.hops": "0",
+                    f"{dissector_prefix}.id": "0x11223344",
+                    f"{dissector_prefix}.secs": "0",
+                    f"{dissector_prefix}.flags": "0x0000",
+                    f"{dissector_prefix}.ip.client": "0.0.0.0",
+                    f"{dissector_prefix}.ip.your": "0.0.0.0",
+                    f"{dissector_prefix}.ip.server": "0.0.0.0",
+                    f"{dissector_prefix}.ip.relay": "0.0.0.0",
+                    f"{dissector_prefix}.hw.mac_addr": "02:00:00:00:00:01",
+                    f"{dissector_prefix}.cookie": "0x63825363",
+                    f"{dissector_prefix}.option.dhcp": "1",
                 },
             }
         }
@@ -120,7 +120,7 @@ def _assert_ipv4_dhcpv4_discover(testcase: unittest.TestCase, model) -> None:
     testcase.assertEqual(dhcpv4.get("your_ip"), "0.0.0.0")
     testcase.assertEqual(dhcpv4.get("server_ip"), "0.0.0.0")
     testcase.assertEqual(dhcpv4.get("relay_ip"), "0.0.0.0")
-    testcase.assertEqual(dhcpv4.get("magic_cookie"), _DHCP_MAGIC_COOKIE)
+    testcase.assertEqual(dhcpv4.get("magic_cookie"), _DHCPV4_MAGIC_COOKIE)
     testcase.assertEqual(
         dhcpv4.get("client_hardware_address"), {"hex": "020000000001"}
     )
@@ -140,8 +140,8 @@ def _assert_ipv4_dhcpv4_discover(testcase: unittest.TestCase, model) -> None:
 class WiresharkDhcpv4NormalizationTest(unittest.TestCase):
     """Pure-Python normalizer coverage (no ``tshark`` executable required)."""
 
-    def test_normalizes_raw_ipv4_dhcpv4_discover_dhcp_prefix(self) -> None:
-        packet = _synthetic_dhcpv4_packet(dhcp_prefix="dhcp")
+    def test_normalizes_raw_ipv4_dhcpv4_discover_modern_prefix(self) -> None:
+        packet = _synthetic_dhcpv4_packet(dissector_prefix="dhcp")
         model = wireshark.normalize_packet_json(
             packet, root="l3:ipv4", source_hex=_RAW_IPV4_DHCP_DISCOVER_HEX
         )
@@ -150,7 +150,7 @@ class WiresharkDhcpv4NormalizationTest(unittest.TestCase):
     def test_normalizes_raw_ipv4_dhcpv4_discover_bootp_prefix(self) -> None:
         # Older Wireshark exposes the dissector under the ``bootp`` prefix; the
         # normalized field names must be identical.
-        packet = _synthetic_dhcpv4_packet(dhcp_prefix="bootp")
+        packet = _synthetic_dhcpv4_packet(dissector_prefix="bootp")
         model = wireshark.normalize_packet_json(
             packet, root="l3:ipv4", source_hex=_RAW_IPV4_DHCP_DISCOVER_HEX
         )

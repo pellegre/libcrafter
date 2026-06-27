@@ -416,7 +416,7 @@ Unknown, private-use, removed, ambiguous, and vendor-specific option payloads
 are preserved as raw bytes rather than dropped or guessed.
 
 ```rust
-let dhcp = Dhcpv4::discover(client_mac)
+let dhcpv4 = Dhcpv4::discover(client_mac)
     .option(Dhcpv4Option::parameter_request_list([1, 3, 6, 15]))
     .host_name("workstation");
 ```
@@ -446,8 +446,8 @@ let relay = Dhcpv4RelayAgentInfo::new(vec![
     Dhcpv4RelaySuboption::circuit_id(b"eth0:vlan100".to_vec()),
     Dhcpv4RelaySuboption::remote_id(b"relay-1".to_vec()),
 ]);
-let dhcp = Dhcpv4::discover(client_mac).relay_agent_info(relay);
-let recovered = dhcp.relay_agent_information();
+let dhcpv4 = Dhcpv4::discover(client_mac).relay_agent_info(relay);
+let recovered = dhcpv4.relay_agent_information();
 ```
 
 ### Client identifiers (option 61)
@@ -457,8 +457,8 @@ node-specific (IAID + DUID) form, and a raw fallback:
 
 ```rust
 let id = Dhcpv4ClientIdentifier::ethernet_mac(client_mac.octets());
-let dhcp = Dhcpv4::discover(client_mac).client_id_value(id);
-let recovered = dhcp.client_identifier_value();
+let dhcpv4 = Dhcpv4::discover(client_mac).client_id_value(id);
+let recovered = dhcpv4.client_identifier_value();
 ```
 
 ### Authentication and leasequery packet fields

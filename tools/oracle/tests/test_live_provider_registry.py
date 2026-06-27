@@ -430,7 +430,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
             backend="scapy",
             seed=133,
             profile="smoke",
-            packet_plans=[_ipv4_dhcp_plan(133)],
+            packet_plans=[_ipv4_dhcpv4_plan(133)],
             direction="libcrafter_to_reference",
             endpoint=endpoint,
             peer=peer,
@@ -480,7 +480,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
             backend="scapy",
             seed=133,
             profile="smoke",
-            packet_plans=[_ipv4_dhcp_plan(133)],
+            packet_plans=[_ipv4_dhcpv4_plan(133)],
             direction="libcrafter_to_reference",
             endpoint=normalized["libcrafter"],
             peer=normalized["reference_backend"],
@@ -1075,7 +1075,7 @@ _DHCP_SENDER_ROLE = {
 }
 
 
-def _ipv4_dhcp_plan(index: int) -> PacketPlan:
+def _ipv4_dhcpv4_plan(index: int) -> PacketPlan:
     """An IPv4-root ``ipv4 / udp / dhcpv4`` plan carrying corpus/wire metadata.
 
     DHCPv4 flows through the same generic endpoint batch contract as every other
@@ -1131,7 +1131,7 @@ def _ipv4_dhcp_plan(index: int) -> PacketPlan:
     )
 
 
-class DhcpLiveEndpointContractTest(unittest.TestCase):
+class Dhcpv4LiveEndpointContractTest(unittest.TestCase):
     """Cover live endpoint batch construction for IPv4-root DHCPv4.
 
     The IPv4-root ``ipv4 / udp / dhcpv4`` stack must ride the existing generic
@@ -1159,7 +1159,7 @@ class DhcpLiveEndpointContractTest(unittest.TestCase):
     }
 
     def _build_request(self, direction: str, endpoint_role: str = "libcrafter"):
-        plans = [_ipv4_dhcp_plan(11), _ipv4_dhcp_plan(12)]
+        plans = [_ipv4_dhcpv4_plan(11), _ipv4_dhcpv4_plan(12)]
         peer_role = (
             "reference_backend" if endpoint_role == "libcrafter" else "libcrafter"
         )
@@ -1183,7 +1183,7 @@ class DhcpLiveEndpointContractTest(unittest.TestCase):
         )
         return request, plans, artifact_paths
 
-    def test_request_carries_dhcp_packet_ids_and_ipv4_compare_root(self) -> None:
+    def test_request_carries_dhcpv4_packet_ids_and_ipv4_compare_root(self) -> None:
         for direction in _DHCP_DIRECTIONS:
             with self.subTest(direction=direction):
                 request, plans, _ = self._build_request(direction)
@@ -1206,7 +1206,7 @@ class DhcpLiveEndpointContractTest(unittest.TestCase):
                     ),
                     msg=f"DHCPv4 live packets must compare at l3:ipv4 for {direction}",
                 )
-                # The packet is DHCP over UDP over IPv4: the capture match
+                # The packet is DHCPv4 over UDP over IPv4: the capture match
                 # records the stack and an IPv4 + UDP BPF filter.
                 self.assertTrue(
                     all(
@@ -1290,7 +1290,7 @@ class DhcpLiveEndpointContractTest(unittest.TestCase):
                 )
                 self.assertTrue(
                     check.passed,
-                    msg=f"DHCP dry-run batch contract failed: {check.errors}",
+                    msg=f"DHCPv4 dry-run batch contract failed: {check.errors}",
                 )
                 # Each per-index status reports the IPv4 compare root for the
                 # phase libcrafter plays in this direction.

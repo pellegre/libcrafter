@@ -287,10 +287,10 @@ fn dns_reply_matches(request: &Packet, candidate: &Packet) -> bool {
 }
 
 fn dhcpv4_reply_matches(request: &Packet, candidate: &Packet) -> bool {
-    let Some(request_dhcp) = request.layer::<Dhcpv4>() else {
+    let Some(request_dhcpv4) = request.layer::<Dhcpv4>() else {
         return false;
     };
-    let Some(candidate_dhcp) = candidate.layer::<Dhcpv4>() else {
+    let Some(candidate_dhcpv4) = candidate.layer::<Dhcpv4>() else {
         return false;
     };
 
@@ -298,8 +298,8 @@ fn dhcpv4_reply_matches(request: &Packet, candidate: &Packet) -> bool {
     // transaction id the client chose. That pairing is the spine of every
     // DHCPv4 exchange (DISCOVER/OFFER, REQUEST/ACK|NAK, and the RFC 4388
     // leasequery families), so it is always required.
-    if candidate_dhcp.op_value() != BOOTP_REPLY
-        || request_dhcp.transaction_id_value() != candidate_dhcp.transaction_id_value()
+    if candidate_dhcpv4.op_value() != BOOTP_REPLY
+        || request_dhcpv4.transaction_id_value() != candidate_dhcpv4.transaction_id_value()
     {
         return false;
     }
@@ -312,11 +312,11 @@ fn dhcpv4_reply_matches(request: &Packet, candidate: &Packet) -> bool {
     // carries. Each identifier is only enforced when both sides expose it, so a
     // leasequery-by-IP request (which has no chaddr) still matches its reply
     // while a normal DISCOVER/OFFER also pins the client hardware address.
-    dhcpv4_client_hardware_address_matches(request_dhcp, candidate_dhcp)
-        && dhcpv4_client_identifier_matches(request_dhcp, candidate_dhcp)
-        && dhcpv4_server_identifier_matches(request_dhcp, candidate_dhcp)
-        && dhcpv4_relay_giaddr_matches(request_dhcp, candidate_dhcp)
-        && dhcpv4_message_type_matches(request_dhcp, candidate_dhcp)
+    dhcpv4_client_hardware_address_matches(request_dhcpv4, candidate_dhcpv4)
+        && dhcpv4_client_identifier_matches(request_dhcpv4, candidate_dhcpv4)
+        && dhcpv4_server_identifier_matches(request_dhcpv4, candidate_dhcpv4)
+        && dhcpv4_relay_giaddr_matches(request_dhcpv4, candidate_dhcpv4)
+        && dhcpv4_message_type_matches(request_dhcpv4, candidate_dhcpv4)
 }
 
 /// Match the BOOTP `chaddr` fixed field when both messages carry one.
@@ -350,8 +350,8 @@ fn dhcpv4_client_identifier_matches(request: &Dhcpv4, candidate: &Dhcpv4) -> boo
     }
 }
 
-fn dhcpv4_client_identifier(dhcp: &Dhcpv4) -> Option<Dhcpv4ClientIdentifier> {
-    dhcp.client_identifier_value().and_then(Result::ok)
+fn dhcpv4_client_identifier(dhcpv4: &Dhcpv4) -> Option<Dhcpv4ClientIdentifier> {
+    dhcpv4.client_identifier_value().and_then(Result::ok)
 }
 
 /// Match the server identifier (option 53's companion option 54) when relevant.

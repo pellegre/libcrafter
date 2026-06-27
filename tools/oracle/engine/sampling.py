@@ -513,7 +513,7 @@ def _dot11_is_management(frame_control: int) -> bool:
     return ((frame_control >> 2) & 0x3) == 0
 
 
-def _is_ipv4_root_dhcp_stack(stack: Sequence[str]) -> bool:
+def _is_ipv4_root_dhcpv4_stack(stack: Sequence[str]) -> bool:
     """Return True for the IPv4-root, unicast live DHCPv4 stack.
 
     The ``ipv4 / udp / dhcpv4`` stack carries DHCPv4 as a one-way unicast oracle

@@ -121,7 +121,7 @@ use constants::{
 };
 use message::dhcpv4_message_type_summary;
 use option::{
-    decode_dhcp_option, decode_overload_area_options, encode_dhcp_options,
+    decode_dhcpv4_option, decode_overload_area_options, encode_dhcpv4_options,
     encode_overload_area_options, encoded_options_len_lossy, find_option_overload,
 };
 
@@ -370,7 +370,7 @@ impl Dhcpv4 {
 
     /// Decode a DHCP packet payload.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        decode_dhcp(bytes)
+        decode_dhcpv4(bytes)
     }
 
     /// Set the BOOTP opcode.
@@ -507,7 +507,7 @@ impl Dhcpv4 {
         self
     }
 
-    /// Set the DHCP magic cookie explicitly.
+    /// Set the DHCPv4 magic cookie explicitly.
     pub fn magic_cookie(mut self, magic_cookie: u32) -> Self {
         self.magic_cookie.set_user(magic_cookie);
         self
@@ -519,13 +519,13 @@ impl Dhcpv4 {
         self
     }
 
-    /// Replace all DHCP options.
+    /// Replace all DHCPv4 options.
     pub fn options(mut self, options: impl Into<Vec<Dhcpv4Option>>) -> Self {
         self.options = options.into();
         self
     }
 
-    /// Remove all DHCP options.
+    /// Remove all DHCPv4 options.
     pub fn clear_options(mut self) -> Self {
         self.options.clear();
         self
@@ -784,7 +784,7 @@ impl Dhcpv4 {
         value_or_copy(&self.magic_cookie, DHCPV4_MAGIC_COOKIE)
     }
 
-    /// DHCP options in the normal options area.
+    /// DHCPv4 options in the normal options area.
     pub fn options_value(&self) -> &[Dhcpv4Option] {
         &self.options
     }
@@ -829,7 +829,7 @@ impl Dhcpv4 {
                 }
             }
         }
-        payload.map(|bytes| decode_dhcp_option(code, &bytes))
+        payload.map(|bytes| decode_dhcpv4_option(code, &bytes))
     }
 
     /// Resolve which fixed fields are overloaded with options (RFC 2132 section
@@ -1343,7 +1343,7 @@ impl Dhcpv4 {
         self.u32_value_in_areas(DHCPV4_OPTION_QUERY_END_TIME)
     }
 
-    /// RFC 6926 dhcp-state (option 156), concatenated across areas.
+    /// RFC 6926 dhcpv4-state (option 156), concatenated across areas.
     ///
     /// Source: RFC 6926 section 6.2.7. Decodes the single State octet into a
     /// typed [`Dhcpv4State`] (unknown values preserved). Returns `None` when no
@@ -1472,7 +1472,7 @@ impl Dhcpv4 {
         })
     }
 
-    /// Encode the normal-area DHCP options, appending an end marker when needed.
+    /// Encode the normal-area DHCPv4 options, appending an end marker when needed.
     ///
     /// When the `file` or `sname` areas carry options and the caller did not
     /// set an explicit option-overload option (52), one is inserted here so the
@@ -1480,9 +1480,9 @@ impl Dhcpv4 {
     /// 9.3).
     pub fn encoded_options(&self) -> Result<Vec<u8>> {
         if self.synthetic_option_overload().is_none() {
-            encode_dhcp_options(&self.options)
+            encode_dhcpv4_options(&self.options)
         } else {
-            encode_dhcp_options(&self.effective_normal_options())
+            encode_dhcpv4_options(&self.effective_normal_options())
         }
     }
 
@@ -1526,7 +1526,7 @@ impl Dhcpv4 {
             return Ok(None);
         }
         Ok(Some(encode_overload_area_options(
-            "dhcp.file.options",
+            "dhcpv4.file.options",
             &self.file_options,
             DHCPV4_FILE_LEN,
         )?))
@@ -1538,7 +1538,7 @@ impl Dhcpv4 {
             return Ok(None);
         }
         Ok(Some(encode_overload_area_options(
-            "dhcp.sname.options",
+            "dhcpv4.sname.options",
             &self.sname_options,
             DHCPV4_SNAME_LEN,
         )?))
@@ -1547,45 +1547,45 @@ impl Dhcpv4 {
     fn validate_fixed_fields(&self) -> Result<()> {
         if self.hardware_len_value() as usize > DHCPV4_CHADDR_LEN {
             return Err(CrafterError::invalid_field_value(
-                "dhcp.hlen",
+                "dhcpv4.hlen",
                 "hardware address length must fit in the 16-byte chaddr field",
             ));
         }
         if self.client_hardware_address.len() > DHCPV4_CHADDR_LEN {
             return Err(CrafterError::invalid_field_value(
-                "dhcp.chaddr",
+                "dhcpv4.chaddr",
                 "client hardware address field must be at most 16 bytes",
             ));
         }
         if self.server_name.len() > DHCPV4_SNAME_LEN {
             return Err(CrafterError::invalid_field_value(
-                "dhcp.sname",
+                "dhcpv4.sname",
                 "server name field must be at most 64 bytes",
             ));
         }
         if self.boot_file_name.len() > DHCPV4_FILE_LEN {
             return Err(CrafterError::invalid_field_value(
-                "dhcp.file",
+                "dhcpv4.file",
                 "boot file name field must be at most 128 bytes",
             ));
         }
         // A field cannot be both a normal string and an overloaded option area.
         if !self.file_options.is_empty() && !self.boot_file_name.is_empty() {
             return Err(CrafterError::invalid_field_value(
-                "dhcp.file",
+                "dhcpv4.file",
                 "boot file name string and overloaded file options are mutually exclusive",
             ));
         }
         if !self.sname_options.is_empty() && !self.server_name.is_empty() {
             return Err(CrafterError::invalid_field_value(
-                "dhcp.sname",
+                "dhcpv4.sname",
                 "server name string and overloaded sname options are mutually exclusive",
             ));
         }
         Ok(())
     }
 
-    fn encoded_dhcp_len(&self) -> usize {
+    fn encoded_dhcpv4_len(&self) -> usize {
         DHCPV4_MIN_LEN
             + if self.synthetic_option_overload().is_none() {
                 encoded_options_len_lossy(&self.options)
@@ -1650,7 +1650,7 @@ impl Layer for Dhcpv4 {
     }
 
     fn encoded_len(&self) -> usize {
-        self.encoded_dhcp_len()
+        self.encoded_dhcpv4_len()
     }
 
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
@@ -1694,26 +1694,26 @@ impl Layer for Dhcpv4 {
 impl_layer_div!(Dhcpv4);
 
 /// Append a decoded DHCP message to an existing packet stack.
-pub(crate) fn append_dhcp_packet(packet: Packet, bytes: &[u8]) -> Result<Packet> {
-    Ok(packet.push(decode_dhcp(bytes)?))
+pub(crate) fn append_dhcpv4_packet(packet: Packet, bytes: &[u8]) -> Result<Packet> {
+    Ok(packet.push(decode_dhcpv4(bytes)?))
 }
 
 /// Return true when bytes have enough structure to decode as DHCP.
-pub(crate) fn looks_like_dhcp_payload(bytes: &[u8]) -> bool {
+pub(crate) fn looks_like_dhcpv4_payload(bytes: &[u8]) -> bool {
     bytes.len() >= DHCPV4_MIN_LEN
         && bytes[DHCPV4_FIXED_HEADER_LEN..DHCPV4_MIN_LEN] == DHCPV4_MAGIC_COOKIE.to_be_bytes()
 }
 
 /// Return true when the UDP source/destination pair is a DHCP client/server pair.
-pub(crate) const fn is_dhcp_port_pair(source_port: u16, destination_port: u16) -> bool {
+pub(crate) const fn is_dhcpv4_port_pair(source_port: u16, destination_port: u16) -> bool {
     matches!(source_port, DHCPV4_CLIENT_PORT | DHCPV4_SERVER_PORT)
         && matches!(destination_port, DHCPV4_CLIENT_PORT | DHCPV4_SERVER_PORT)
 }
 
-fn decode_dhcp(bytes: &[u8]) -> Result<Dhcpv4> {
+fn decode_dhcpv4(bytes: &[u8]) -> Result<Dhcpv4> {
     if bytes.len() < DHCPV4_MIN_LEN {
         return Err(CrafterError::buffer_too_short(
-            "dhcp packet",
+            "dhcpv4 packet",
             DHCPV4_MIN_LEN,
             bytes.len(),
         ));
@@ -1722,7 +1722,7 @@ fn decode_dhcp(bytes: &[u8]) -> Result<Dhcpv4> {
     let hardware_len = bytes[2];
     if hardware_len as usize > DHCPV4_CHADDR_LEN {
         return Err(CrafterError::invalid_field_value(
-            "dhcp.hlen",
+            "dhcpv4.hlen",
             "hardware address length must fit in the 16-byte chaddr field",
         ));
     }
@@ -1730,8 +1730,8 @@ fn decode_dhcp(bytes: &[u8]) -> Result<Dhcpv4> {
     let magic_cookie = read_u32_be(&bytes[DHCPV4_FIXED_HEADER_LEN..DHCPV4_MIN_LEN])?;
     if magic_cookie != DHCPV4_MAGIC_COOKIE {
         return Err(CrafterError::invalid_field_value(
-            "dhcp.magic_cookie",
-            "DHCP magic cookie is missing or invalid",
+            "dhcpv4.magic_cookie",
+            "DHCPv4 magic cookie is missing or invalid",
         ));
     }
 
@@ -1804,7 +1804,7 @@ fn value_or_copy<T: Copy>(field: &Field<T>, default: T) -> T {
 /// guards against an internal mapping regression rather than wire data.
 fn missing_typed_value(code: u8) -> CrafterError {
     CrafterError::invalid_field_value(
-        "dhcp.option.value",
+        "dhcpv4.option.value",
         match code {
             DHCPV4_OPTION_STATIC_ROUTE => "static route option has no typed value",
             DHCPV4_OPTION_CLASSLESS_STATIC_ROUTE => {
@@ -1829,7 +1829,7 @@ fn hex_bytes(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
-mod dhcp_tests {
+mod dhcpv4_tests {
     use super::{
         Dhcpv4, Dhcpv4MessageType, BOOTP_REPLY, DHCPV4_CLIENT_PORT, DHCPV4_MAGIC_COOKIE,
         DHCPV4_SERVER_PORT,
@@ -1866,19 +1866,22 @@ mod dhcp_tests {
 
         assert_eq!(&bytes.as_bytes()[20..22], &DHCPV4_CLIENT_PORT.to_be_bytes());
         assert_eq!(&bytes.as_bytes()[22..24], &DHCPV4_SERVER_PORT.to_be_bytes());
-        let dhcp_start = 20 + 8;
+        let dhcpv4_start = 20 + 8;
         assert_eq!(
-            &bytes.as_bytes()[dhcp_start + 236..dhcp_start + 240],
+            &bytes.as_bytes()[dhcpv4_start + 236..dhcpv4_start + 240],
             &DHCPV4_MAGIC_COOKIE.to_be_bytes()
         );
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
-        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
+        let dhcpv4 = decoded.layer::<Dhcpv4>().unwrap();
 
-        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
-        assert_eq!(dhcp.client_mac_value(), Some(mac()));
-        assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
-        assert_eq!(dhcp.host_name_value(), Some("agent"));
+        assert_eq!(
+            dhcpv4.message_type_value(),
+            Some(Dhcpv4MessageType::Discover)
+        );
+        assert_eq!(dhcpv4.client_mac_value(), Some(mac()));
+        assert_eq!(dhcpv4.transaction_id_value(), 0x3903_f326);
+        assert_eq!(dhcpv4.host_name_value(), Some("agent"));
         assert_eq!(decoded.compile().unwrap(), bytes);
     }
 
@@ -1900,31 +1903,34 @@ mod dhcp_tests {
         .unwrap();
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
-        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
+        let dhcpv4 = decoded.layer::<Dhcpv4>().unwrap();
 
-        assert_eq!(dhcp.op_value(), BOOTP_REPLY);
-        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Offer));
-        assert_eq!(dhcp.offered_ip_address(), Some(offered));
-        assert_eq!(dhcp.server_identifier_value(), Some(server));
+        assert_eq!(dhcpv4.op_value(), BOOTP_REPLY);
+        assert_eq!(dhcpv4.message_type_value(), Some(Dhcpv4MessageType::Offer));
+        assert_eq!(dhcpv4.offered_ip_address(), Some(offered));
+        assert_eq!(dhcpv4.server_identifier_value(), Some(server));
         assert_eq!(
-            dhcp.subnet_mask_value(),
+            dhcpv4.subnet_mask_value(),
             Some(Ipv4Addr::new(255, 255, 255, 0))
         );
-        assert_eq!(dhcp.routers(), vec![router]);
-        assert_eq!(dhcp.domain_name_servers(), vec![dns]);
-        assert_eq!(dhcp.lease_time_value(), Some(3600));
+        assert_eq!(dhcpv4.routers(), vec![router]);
+        assert_eq!(dhcpv4.domain_name_servers(), vec![dns]);
+        assert_eq!(dhcpv4.lease_time_value(), Some(3600));
     }
 
     #[test]
     fn request_builder_sets_requested_ip_and_server_identifier() {
         let requested = Ipv4Addr::new(192, 0, 2, 42);
         let server = Ipv4Addr::new(192, 0, 2, 1);
-        let dhcp = Dhcpv4::request(mac(), requested, server).xid(7);
+        let dhcpv4 = Dhcpv4::request(mac(), requested, server).xid(7);
 
-        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Request));
-        assert_eq!(dhcp.requested_ip_address_value(), Some(requested));
-        assert_eq!(dhcp.server_identifier_value(), Some(server));
-        assert_eq!(dhcp.transaction_id_value(), 7);
+        assert_eq!(
+            dhcpv4.message_type_value(),
+            Some(Dhcpv4MessageType::Request)
+        );
+        assert_eq!(dhcpv4.requested_ip_address_value(), Some(requested));
+        assert_eq!(dhcpv4.server_identifier_value(), Some(server));
+        assert_eq!(dhcpv4.transaction_id_value(), 7);
     }
 
     #[test]
@@ -1946,10 +1952,10 @@ mod dhcp_tests {
         .unwrap();
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
-        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
+        let dhcpv4 = decoded.layer::<Dhcpv4>().unwrap();
 
         assert_eq!(
-            dhcp.parameter_request_list_value(),
+            dhcpv4.parameter_request_list_value(),
             Some(requests.as_slice())
         );
     }
@@ -1958,14 +1964,14 @@ mod dhcp_tests {
     fn discover_default_parameter_request_list_is_readable() {
         // The Discover builder injects the default parameter request list, which
         // the typed accessor surfaces without requiring the caller to set it.
-        let dhcp = Dhcpv4::discover(mac());
-        let requests = dhcp.parameter_request_list_value().unwrap();
+        let dhcpv4 = Dhcpv4::discover(mac());
+        let requests = dhcpv4.parameter_request_list_value().unwrap();
         assert!(!requests.is_empty());
     }
 }
 
 #[cfg(test)]
-mod dhcp_malformed {
+mod dhcpv4_malformed {
     use super::{
         Dhcpv4, Dhcpv4Option, DHCPV4_FIXED_HEADER_LEN, DHCPV4_MAGIC_COOKIE, DHCPV4_MIN_LEN,
         DHCPV4_OPTION_END, DHCPV4_OPTION_MESSAGE_TYPE,
@@ -1995,7 +2001,7 @@ mod dhcp_malformed {
         let error = Dhcpv4::decode(&payload).unwrap_err();
         assert!(matches!(
             error,
-            crate::error::CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.magic_cookie"
+            crate::error::CrafterError::InvalidFieldValue { field, .. } if field == "dhcpv4.magic_cookie"
         ));
     }
 
@@ -2021,12 +2027,12 @@ mod dhcp_malformed {
     }
 
     #[test]
-    fn non_dhcp_udp_on_dhcp_ports_stays_raw() {
+    fn non_dhcpv4_udp_on_dhcpv4_ports_stays_raw() {
         let bytes = (Ipv4::new()
             .src(Ipv4Addr::UNSPECIFIED)
             .dst(Ipv4Addr::BROADCAST)
             / Udp::dhcpv4_client()
-            / Raw::from("not a dhcp packet"))
+            / Raw::from("not a dhcpv4 packet"))
         .compile()
         .unwrap();
 
@@ -2035,7 +2041,7 @@ mod dhcp_malformed {
         assert!(decoded.layer::<Dhcpv4>().is_none());
         assert_eq!(
             decoded.layer::<Raw>().unwrap().as_bytes(),
-            b"not a dhcp packet"
+            b"not a dhcpv4 packet"
         );
     }
 
@@ -2054,7 +2060,7 @@ mod dhcp_malformed {
 }
 
 #[cfg(test)]
-mod dhcp_fixed_header {
+mod dhcpv4_fixed_header {
     use super::{
         Dhcpv4, Dhcpv4MessageType, BOOTP_REPLY, DHCPV4_FIXED_HEADER_LEN, DHCPV4_MAGIC_COOKIE,
         DHCPV4_MIN_LEN,
@@ -2068,13 +2074,13 @@ mod dhcp_fixed_header {
     }
 
     #[test]
-    fn dhcp_fixed_header_roundtrips_exact_bytes() {
+    fn dhcpv4_fixed_header_roundtrips_exact_bytes() {
         // Build a packet that exercises every fixed BOOTP field (RFC 2131
         // section 2) with deliberately odd-but-valid values, then prove the
         // exact wire bytes survive compile -> decode -> compile unchanged and
         // that each typed accessor reports the value that was set.
         let chaddr = [0x02u8, 0x00, 0x5e, 0x10, 0x00, 0x02];
-        let dhcp = Dhcpv4::new()
+        let dhcpv4 = Dhcpv4::new()
             .op(BOOTP_REPLY)
             .htype(6)
             .hlen(6)
@@ -2091,7 +2097,7 @@ mod dhcp_fixed_header {
             .file("pxelinux.0")
             .message_type(Dhcpv4MessageType::Ack);
 
-        let compiled = Packet::from_layer(dhcp.clone()).compile().unwrap();
+        let compiled = Packet::from_layer(dhcpv4.clone()).compile().unwrap();
         let bytes = compiled.as_bytes();
 
         // The fixed header occupies the first 236 bytes; the magic cookie
@@ -2157,14 +2163,14 @@ mod dhcp_fixed_header {
         // Values the caller set explicitly must survive compile untouched, even
         // when they are unusual: a BOOTP reply opcode on a request-style packet,
         // a non-Ethernet hardware type, and a zero hlen with a populated chaddr.
-        let dhcp = Dhcpv4::new()
+        let dhcpv4 = Dhcpv4::new()
             .op(0x42)
             .htype(0xfe)
             .hlen(0)
             .chaddr([0xaa, 0xbb, 0xcc])
             .message_type(Dhcpv4MessageType::Discover);
 
-        let bytes = Packet::from_layer(dhcp).compile().unwrap();
+        let bytes = Packet::from_layer(dhcpv4).compile().unwrap();
         let parsed = Dhcpv4::decode(bytes.as_bytes()).unwrap();
 
         assert_eq!(parsed.op_value(), 0x42);
@@ -2185,7 +2191,7 @@ mod dhcp_fixed_header {
             .unwrap_err();
         assert!(matches!(
             error,
-            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.hlen"
+            CrafterError::InvalidFieldValue { field, .. } if field == "dhcpv4.hlen"
         ));
 
         let mut bytes = vec![0u8; DHCPV4_MIN_LEN];
@@ -2195,13 +2201,13 @@ mod dhcp_fixed_header {
         let decode_error = Dhcpv4::decode(&bytes).unwrap_err();
         assert!(matches!(
             decode_error,
-            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.hlen"
+            CrafterError::InvalidFieldValue { field, .. } if field == "dhcpv4.hlen"
         ));
     }
 }
 
 #[cfg(test)]
-mod dhcp_option_overload {
+mod dhcpv4_option_overload {
     use super::{
         Dhcpv4, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionArea, OptionOverload,
         DHCPV4_CLIENT_PORT, DHCPV4_FILE_LEN, DHCPV4_MIN_LEN, DHCPV4_OPTION_OVERLOAD,
@@ -2218,8 +2224,8 @@ mod dhcp_option_overload {
     const FILE_START: usize = 108;
     const FILE_END: usize = FILE_START + DHCPV4_FILE_LEN;
 
-    fn compiled_bytes(dhcp: Dhcpv4) -> Vec<u8> {
-        Packet::from_layer(dhcp)
+    fn compiled_bytes(dhcpv4: Dhcpv4) -> Vec<u8> {
+        Packet::from_layer(dhcpv4)
             .compile()
             .unwrap()
             .as_bytes()
@@ -2227,19 +2233,19 @@ mod dhcp_option_overload {
     }
 
     #[test]
-    fn dhcp_option_overload_normal_only_keeps_string_fields() {
+    fn dhcpv4_option_overload_normal_only_keeps_string_fields() {
         // Without any overloaded options, `sname`/`file` stay plain strings and
         // no option 52 is emitted.
-        let dhcp = Dhcpv4::new()
+        let dhcpv4 = Dhcpv4::new()
             .message_type(Dhcpv4MessageType::Discover)
             .sname("boot-server")
             .file("pxelinux.0");
 
-        assert_eq!(dhcp.option_overload(), None);
-        assert!(!dhcp.file_is_overloaded());
-        assert!(!dhcp.sname_is_overloaded());
+        assert_eq!(dhcpv4.option_overload(), None);
+        assert!(!dhcpv4.file_is_overloaded());
+        assert!(!dhcpv4.sname_is_overloaded());
 
-        let bytes = compiled_bytes(dhcp);
+        let bytes = compiled_bytes(dhcpv4);
         assert_eq!(&bytes[SNAME_START..SNAME_START + 11], b"boot-server");
         assert_eq!(&bytes[FILE_START..FILE_START + 10], b"pxelinux.0");
 
@@ -2261,20 +2267,20 @@ mod dhcp_option_overload {
     }
 
     #[test]
-    fn dhcp_option_overload_file_only() {
+    fn dhcpv4_option_overload_file_only() {
         // Placing options in the `file` area overloads only `file`; option 52 is
         // auto-inserted with value 1.
-        let dhcp = Dhcpv4::new()
+        let dhcpv4 = Dhcpv4::new()
             .message_type(Dhcpv4MessageType::Ack)
             .sname("boot-server")
             .file_option(Dhcpv4Option::host_name("from-file"))
             .file_option(Dhcpv4Option::End);
 
-        assert_eq!(dhcp.option_overload(), Some(OptionOverload::File));
-        assert!(dhcp.file_is_overloaded());
-        assert!(!dhcp.sname_is_overloaded());
+        assert_eq!(dhcpv4.option_overload(), Some(OptionOverload::File));
+        assert!(dhcpv4.file_is_overloaded());
+        assert!(!dhcpv4.sname_is_overloaded());
 
-        let bytes = compiled_bytes(dhcp);
+        let bytes = compiled_bytes(dhcpv4);
         // The normal options area carries the auto-inserted overload option.
         let parsed = Dhcpv4::decode(&bytes).unwrap();
         assert_eq!(parsed.option_overload(), Some(OptionOverload::File));
@@ -2294,16 +2300,16 @@ mod dhcp_option_overload {
     }
 
     #[test]
-    fn dhcp_option_overload_sname_only() {
-        let dhcp = Dhcpv4::new()
+    fn dhcpv4_option_overload_sname_only() {
+        let dhcpv4 = Dhcpv4::new()
             .message_type(Dhcpv4MessageType::Ack)
             .file("pxelinux.0")
             .sname_option(Dhcpv4Option::host_name("from-sname"))
             .sname_option(Dhcpv4Option::End);
 
-        assert_eq!(dhcp.option_overload(), Some(OptionOverload::Sname));
+        assert_eq!(dhcpv4.option_overload(), Some(OptionOverload::Sname));
 
-        let bytes = compiled_bytes(dhcp);
+        let bytes = compiled_bytes(dhcpv4);
         let parsed = Dhcpv4::decode(&bytes).unwrap();
         assert_eq!(parsed.option_overload(), Some(OptionOverload::Sname));
         assert!(parsed.sname_is_overloaded());
@@ -2322,11 +2328,11 @@ mod dhcp_option_overload {
     }
 
     #[test]
-    fn dhcp_option_overload_decodes_file_and_sname_areas() {
+    fn dhcpv4_option_overload_decodes_file_and_sname_areas() {
         // Both fields overloaded: option 52 value 3, with distinct options in
         // each area plus the normal area. Decode must surface each option with
         // exact source-area metadata and re-encode consistently.
-        let dhcp = Dhcpv4::new()
+        let dhcpv4 = Dhcpv4::new()
             .message_type(Dhcpv4MessageType::Ack)
             .server_identifier(Ipv4Addr::new(192, 0, 2, 1))
             .file_option(Dhcpv4Option::subnet_mask(Ipv4Addr::new(255, 255, 255, 0)))
@@ -2334,14 +2340,14 @@ mod dhcp_option_overload {
             .sname_option(Dhcpv4Option::router([Ipv4Addr::new(192, 0, 2, 254)]))
             .sname_option(Dhcpv4Option::End);
 
-        assert_eq!(dhcp.option_overload(), Some(OptionOverload::Both));
+        assert_eq!(dhcpv4.option_overload(), Some(OptionOverload::Both));
 
-        let bytes = compiled_bytes(dhcp.clone());
+        let bytes = compiled_bytes(dhcpv4.clone());
 
         // Fixed fields are exactly their fixed widths even when overloaded.
         assert_eq!(
             bytes.len(),
-            DHCPV4_MIN_LEN + dhcp.encoded_options().unwrap().len()
+            DHCPV4_MIN_LEN + dhcpv4.encoded_options().unwrap().len()
         );
 
         let parsed = Dhcpv4::decode(&bytes).unwrap();
@@ -2409,7 +2415,7 @@ mod dhcp_option_overload {
     }
 
     #[test]
-    fn dhcp_option_overload_is_visible_in_show_for_each_area() {
+    fn dhcpv4_option_overload_is_visible_in_show_for_each_area() {
         // Inspection output (`show()`) must surface the resolved option-overload
         // value so an agent never has to guess which fixed fields carry options.
         // None: no overload row value other than `none`.
@@ -2471,15 +2477,15 @@ mod dhcp_option_overload {
     }
 
     #[test]
-    fn ipv4_udp_dhcp_summary_and_show_surface_key_fields() {
-        // An agent inspecting a live-shaped `ipv4 / udp / dhcp` packet must be able
-        // to read the DHCP message type, transaction id, client hardware address,
+    fn ipv4_udp_dhcpv4_summary_and_show_surface_key_fields() {
+        // An agent inspecting a live-shaped `ipv4 / udp / dhcpv4` packet must be able
+        // to read the DHCPv4 message type, transaction id, client hardware address,
         // and representative options out of `summary()`/`show()` without decoding
         // bytes by hand. Build the stack, then re-decode from the wire so the
         // assertions hold on a fully round-tripped packet, not just the builder.
         let chaddr = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]);
         let xid = 0x3903_f326u32;
-        let dhcp = Dhcpv4::new()
+        let dhcpv4 = Dhcpv4::new()
             .message_type(Dhcpv4MessageType::Discover)
             .transaction_id(xid)
             .client_mac(chaddr)
@@ -2493,12 +2499,12 @@ mod dhcp_option_overload {
             / Udp::new()
                 .source_port(DHCPV4_CLIENT_PORT)
                 .destination_port(DHCPV4_SERVER_PORT)
-            / dhcp;
+            / dhcpv4;
 
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes).unwrap();
 
-        // One-line summary: full IPv4/UDP/DHCP chain with message type, xid, yiaddr.
+        // One-line summary: full IPv4/UDP/DHCPv4 chain with message type, xid, yiaddr.
         let summary = decoded.summary();
         assert!(
             summary.contains("Ipv4(") && summary.contains("Udp(sport=68, dport=67"),
@@ -2506,7 +2512,7 @@ mod dhcp_option_overload {
         );
         assert!(
             summary.contains("Dhcpv4(type=discover, xid=0x3903f326, yiaddr=0.0.0.0)"),
-            "summary must surface DHCP message type, xid, and yiaddr: {summary}"
+            "summary must surface DHCPv4 message type, xid, and yiaddr: {summary}"
         );
 
         // Multi-line show: message type, transaction id, client hardware address,
@@ -2514,37 +2520,37 @@ mod dhcp_option_overload {
         let show = decoded.show();
         assert!(
             show.contains("message_type: discover"),
-            "show must surface the DHCP message type: {show}"
+            "show must surface the DHCPv4 message type: {show}"
         );
         assert!(
             show.contains("xid: 0x3903f326"),
-            "show must surface the DHCP transaction id: {show}"
+            "show must surface the DHCPv4 transaction id: {show}"
         );
         assert!(
             show.contains("chaddr: 02 00 5e 00 53 01"),
-            "show must surface the DHCP client hardware address: {show}"
+            "show must surface the DHCPv4 client hardware address: {show}"
         );
         // host-name + end are preserved as decoded options; message_type lives in
         // the option list too, so the count reflects all three.
-        let dhcp_layer = decoded.layer::<Dhcpv4>().expect("dhcp layer present");
+        let dhcpv4_layer = decoded.layer::<Dhcpv4>().expect("dhcpv4 layer present");
         assert_eq!(
-            dhcp_layer.message_type_value(),
+            dhcpv4_layer.message_type_value(),
             Some(Dhcpv4MessageType::Discover)
         );
-        assert_eq!(dhcp_layer.transaction_id_value(), xid);
+        assert_eq!(dhcpv4_layer.transaction_id_value(), xid);
         assert_eq!(
-            dhcp_layer.client_hardware_address_value(),
+            dhcpv4_layer.client_hardware_address_value(),
             &chaddr.octets()[..]
         );
         assert!(
-            dhcp_layer
+            dhcpv4_layer
                 .options_value()
                 .iter()
                 .any(|o| *o == Dhcpv4Option::host_name("agent")),
             "decoded options must preserve the representative host-name option"
         );
         assert!(
-            show.contains(&format!("options: {}", dhcp_layer.options_value().len())),
+            show.contains(&format!("options: {}", dhcpv4_layer.options_value().len())),
             "show must report the decoded option count: {show}"
         );
         // No overload was requested, so it must read back as none.
@@ -2555,16 +2561,16 @@ mod dhcp_option_overload {
     }
 
     #[test]
-    fn dhcp_option_overload_honors_explicit_option_52() {
+    fn dhcpv4_option_overload_honors_explicit_option_52() {
         // When the caller sets option 52 explicitly, it is honored untouched and
         // not duplicated by the auto-insert path.
-        let dhcp = Dhcpv4::new()
+        let dhcpv4 = Dhcpv4::new()
             .message_type(Dhcpv4MessageType::Ack)
             .option(Dhcpv4Option::option_overload(OptionOverload::File))
             .file_option(Dhcpv4Option::host_name("from-file"))
             .file_option(Dhcpv4Option::End);
 
-        let bytes = compiled_bytes(dhcp);
+        let bytes = compiled_bytes(dhcpv4);
         let parsed = Dhcpv4::decode(&bytes).unwrap();
         // Exactly one option 52 survives the round-trip.
         let count = parsed
@@ -2585,7 +2591,7 @@ mod dhcp_option_overload {
     }
 
     #[test]
-    fn dhcp_option_overload_rejects_string_and_options_in_same_field() {
+    fn dhcpv4_option_overload_rejects_string_and_options_in_same_field() {
         // A field cannot be both a string and an overloaded option area.
         let file_conflict = Dhcpv4::new()
             .message_type(Dhcpv4MessageType::Ack)
@@ -2595,7 +2601,7 @@ mod dhcp_option_overload {
         let error = Packet::from_layer(file_conflict).compile().unwrap_err();
         assert!(matches!(
             error,
-            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.file"
+            CrafterError::InvalidFieldValue { field, .. } if field == "dhcpv4.file"
         ));
 
         let sname_conflict = Dhcpv4::new()
@@ -2606,12 +2612,12 @@ mod dhcp_option_overload {
         let error = Packet::from_layer(sname_conflict).compile().unwrap_err();
         assert!(matches!(
             error,
-            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.sname"
+            CrafterError::InvalidFieldValue { field, .. } if field == "dhcpv4.sname"
         ));
     }
 
     #[test]
-    fn dhcp_option_overload_rejects_options_exceeding_field_width() {
+    fn dhcpv4_option_overload_rejects_options_exceeding_field_width() {
         // Overloaded option data that does not fit the fixed field width is a
         // structured error, not a panic.
         let too_big = Dhcpv4::new()
@@ -2621,21 +2627,21 @@ mod dhcp_option_overload {
         let error = Packet::from_layer(too_big).compile().unwrap_err();
         assert!(matches!(
             error,
-            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.sname.options"
+            CrafterError::InvalidFieldValue { field, .. } if field == "dhcpv4.sname.options"
         ));
     }
 
     #[test]
-    fn dhcp_option_overload_missing_end_marker_in_field_is_structured() {
+    fn dhcpv4_option_overload_missing_end_marker_in_field_is_structured() {
         // Build a valid overloaded packet, then corrupt the overloaded `file`
         // field so it lacks an end marker. Decode must report a structured
         // error scoped to the file area and never panic.
-        let dhcp = Dhcpv4::new()
+        let dhcpv4 = Dhcpv4::new()
             .message_type(Dhcpv4MessageType::Ack)
             .option(Dhcpv4Option::option_overload(OptionOverload::File))
             .file_option(Dhcpv4Option::host_name("from-file"))
             .file_option(Dhcpv4Option::End);
-        let mut bytes = compiled_bytes(dhcp);
+        let mut bytes = compiled_bytes(dhcpv4);
         // Overwrite the entire overloaded `file` field with pad bytes so it
         // contains options-area data but no terminating end marker (255).
         for byte in &mut bytes[FILE_START..FILE_END] {
@@ -2644,13 +2650,13 @@ mod dhcp_option_overload {
         let error = Dhcpv4::decode(&bytes).unwrap_err();
         assert!(matches!(
             error,
-            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.file.options"
+            CrafterError::InvalidFieldValue { field, .. } if field == "dhcpv4.file.options"
         ));
     }
 }
 
 #[cfg(test)]
-mod dhcp_forcerenew {
+mod dhcpv4_forcerenew {
     use super::constants::DHCPV4_FORCE_RENEW;
     use super::{
         Dhcpv4, Dhcpv4AuthAlgorithm, Dhcpv4AuthProtocol, Dhcpv4Authentication,
@@ -2661,7 +2667,7 @@ mod dhcp_forcerenew {
     use core::net::Ipv4Addr;
 
     #[test]
-    fn dhcp_forcerenew_packet_fields_roundtrip() {
+    fn dhcpv4_forcerenew_packet_fields_roundtrip() {
         // RFC 3203 section 4: the DHCPFORCERENEW message (message type 9) uses
         // the normal DHCP message layout, is sent by a server (BOOTP reply
         // opcode), and MUST be authenticated using the RFC 3118 authentication
@@ -2681,7 +2687,7 @@ mod dhcp_forcerenew {
         );
         let nonce_capable = Dhcpv4ForcerenewNonceCapable::hmac_md5();
 
-        let dhcp = Dhcpv4::new()
+        let dhcpv4 = Dhcpv4::new()
             .op(BOOTP_REPLY)
             .xid(0xCAFE_F00D)
             .ciaddr(Ipv4Addr::new(192, 0, 2, 25))
@@ -2692,7 +2698,7 @@ mod dhcp_forcerenew {
                 nonce_capable.clone(),
             ));
 
-        let compiled = Packet::from_layer(dhcp).compile().unwrap();
+        let compiled = Packet::from_layer(dhcpv4).compile().unwrap();
         let bytes = compiled.as_bytes().to_vec();
         let parsed = Dhcpv4::decode(&bytes).unwrap();
 
@@ -2736,7 +2742,7 @@ mod dhcp_forcerenew {
 }
 
 #[cfg(test)]
-mod dhcp_message_builders {
+mod dhcpv4_message_builders {
     use super::{
         Dhcpv4, Dhcpv4ClientIdentifier, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4RelayAgentInfo,
         Dhcpv4RelaySuboption, BOOTP_REPLY, BOOTP_REQUEST,
@@ -2755,8 +2761,8 @@ mod dhcp_message_builders {
     /// Compile a [`Dhcpv4`] layer to wire bytes and decode it back, returning the
     /// re-decoded layer. Also asserts the re-compile reproduces the exact bytes,
     /// proving each builder produces a spec-shaped, round-tripping packet.
-    fn roundtrip(dhcp: Dhcpv4) -> Dhcpv4 {
-        let bytes = Packet::from_layer(dhcp)
+    fn roundtrip(dhcpv4: Dhcpv4) -> Dhcpv4 {
+        let bytes = Packet::from_layer(dhcpv4)
             .compile()
             .unwrap()
             .as_bytes()
@@ -2768,7 +2774,7 @@ mod dhcp_message_builders {
     }
 
     #[test]
-    fn dhcp_expanded_message_builders_compile_and_decode() {
+    fn dhcpv4_expanded_message_builders_compile_and_decode() {
         let assigned = Ipv4Addr::new(192, 0, 2, 50);
 
         // DHCPDISCOVER (RFC 2131 section 3.1 step 1): client BOOTREQUEST.
@@ -2914,7 +2920,7 @@ mod dhcp_message_builders {
     }
 
     #[test]
-    fn dhcp_nak_message_option_round_trips() {
+    fn dhcpv4_nak_message_option_round_trips() {
         // RFC 2132 section 9.9: a server may include a text message option (56)
         // in a DHCPNAK to explain the refusal. The builder appends it, compile()
         // encodes it as the typed string option, and decode surfaces it through
@@ -2935,13 +2941,13 @@ mod dhcp_message_builders {
     }
 
     #[test]
-    fn dhcp_builder_overrides_are_preserved() {
+    fn dhcpv4_builder_overrides_are_preserved() {
         // Every value a caller sets must survive compile untouched, even when it
         // diverges from the builder's protocol-correct default. Start from the
         // discover constructor and override the opcode, transaction id, flags,
         // seconds, hops, and the magic cookie with deliberate values.
         let weird_cookie = 0xDEAD_BEEF;
-        let dhcp = Dhcpv4::discover(client_mac())
+        let dhcpv4 = Dhcpv4::discover(client_mac())
             .op(BOOTP_REPLY) // discover normally sets BOOTREQUEST
             .xid(0x0BAD_F00D)
             .flags(0x8000)
@@ -2950,7 +2956,7 @@ mod dhcp_message_builders {
             .siaddr(Ipv4Addr::new(192, 0, 2, 9))
             .magic_cookie(weird_cookie);
 
-        let parsed = roundtrip_keep_cookie(dhcp, weird_cookie);
+        let parsed = roundtrip_keep_cookie(dhcpv4, weird_cookie);
 
         // The overridden fixed-header values survive compile -> decode unchanged.
         assert_eq!(parsed.op_value(), BOOTP_REPLY);
@@ -2974,8 +2980,8 @@ mod dhcp_message_builders {
     /// from the canonical value. `Dhcpv4::decode` rejects a non-standard cookie, so
     /// the override is verified directly on the compiled bytes and the rebuilt
     /// layer rather than through `decode`.
-    fn roundtrip_keep_cookie(dhcp: Dhcpv4, expected_cookie: u32) -> Dhcpv4 {
-        let bytes = Packet::from_layer(dhcp.clone())
+    fn roundtrip_keep_cookie(dhcpv4: Dhcpv4, expected_cookie: u32) -> Dhcpv4 {
+        let bytes = Packet::from_layer(dhcpv4.clone())
             .compile()
             .unwrap()
             .as_bytes()
@@ -2986,6 +2992,6 @@ mod dhcp_message_builders {
             &expected_cookie.to_be_bytes(),
             "explicit magic cookie override must survive compile",
         );
-        dhcp
+        dhcpv4
     }
 }

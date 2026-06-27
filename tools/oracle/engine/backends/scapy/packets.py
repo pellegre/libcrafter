@@ -892,10 +892,9 @@ def _capability_contract(
     return capabilities
 
 
-# The DHCP (BOOTP / DHCP) materializer ``_dhcp`` and its ``_dhcp_op`` /
-# ``_dhcp_flags`` / ``_dhcp_chaddr`` / ``_dhcp_options`` option helpers moved to
-# ``protocols/dhcpv4.py`` and are registered in ``SCAPY_REGISTRY`` (so ``_build_layer``
-# routes ``dhcpv4`` to the plugin's ``build``).
+# The DHCPv4 (BOOTP / DHCP) materializer and its option helpers live in
+# ``protocols/dhcpv4.py`` and are registered in ``SCAPY_REGISTRY`` (so
+# ``_build_layer`` routes ``dhcpv4`` to the plugin's ``build``).
 
 
 def _scapy_decoder(root: str) -> str:

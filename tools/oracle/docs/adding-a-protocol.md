@@ -253,7 +253,7 @@ predicate sees the stack alone.
 
 Some spec entities are **sub-layers**, not top-level `OracleSpecs.layers`: IPv6
 extension headers (declared under `ipv6.yaml extension_layers`), and the
-IGMP/DNS/DHCP whole-packet bits. The strict coverage test forbids registering a
+IGMP/DNS/DHCPv4 whole-packet bits. The strict coverage test forbids registering a
 plugin under a name that is not a top-level spec layer, so these are co-located
 in the owning protocol's plugin modules but reached through the orchestrator's
 remaining sub-layer dispatch and whole-packet canonicalize passes. If your

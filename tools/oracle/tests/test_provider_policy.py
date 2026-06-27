@@ -194,25 +194,25 @@ class LiveProviderPolicyTest(unittest.TestCase):
         self.assertFalse(policy["transit_mutations"])
 
 
-class DhcpLiveEligibilityPolicyTest(unittest.TestCase):
-    """Prove DHCP is wire-eligible only where provider capabilities allow it."""
+class Dhcpv4LiveEligibilityPolicyTest(unittest.TestCase):
+    """Prove DHCPv4 is wire-eligible only where provider capabilities allow it."""
 
-    def test_qemu_marks_ipv4_root_dhcp_wire_eligible(self) -> None:
-        self._assert_ipv4_root_dhcp_eligible(
+    def test_qemu_marks_ipv4_root_dhcpv4_wire_eligible(self) -> None:
+        self._assert_ipv4_root_dhcpv4v4_eligible(
             qemu_default_provider_capabilities(dry_run=True),
             provider="qemu",
         )
 
-    def test_virtualbox_marks_ipv4_root_dhcp_wire_eligible(self) -> None:
-        self._assert_ipv4_root_dhcp_eligible(
+    def test_virtualbox_marks_ipv4_root_dhcpv4_wire_eligible(self) -> None:
+        self._assert_ipv4_root_dhcpv4v4_eligible(
             virtualbox_default_provider_capabilities(dry_run=True),
             provider="virtualbox",
         )
 
-    def test_hetzner_skips_ipv4_root_dhcp_on_blocked_provider_ports(self) -> None:
+    def test_hetzner_skips_ipv4_root_dhcpv4_on_blocked_provider_ports(self) -> None:
         [packet] = populate_corpus_eligibility(
             backend="scapy",
-            packets=[CorpusPacket.from_plan(_ipv4_dhcp_plan())],
+            packets=[CorpusPacket.from_plan(_ipv4_dhcpv4_plan())],
             provider_capabilities=hetzner_default_provider_capabilities(dry_run=True),
             wire_provider="hetzner",
         )
@@ -227,25 +227,25 @@ class DhcpLiveEligibilityPolicyTest(unittest.TestCase):
         self.assertNotIn(SKIP_REQUIRES_L2, packet.wire.skip_reasons)
         self.assertNotIn(SKIP_REQUIRES_PROVIDER_MAC, packet.wire.skip_reasons)
 
-    def test_qemu_marks_ethernet_root_dhcp_wire_eligible(self) -> None:
-        self._assert_ethernet_root_dhcp_eligible(
+    def test_qemu_marks_ethernet_root_dhcpv4_wire_eligible(self) -> None:
+        self._assert_ethernet_root_dhcpv4v4_eligible(
             qemu_default_provider_capabilities(dry_run=True),
             provider="qemu",
         )
 
-    def test_virtualbox_marks_ethernet_root_dhcp_wire_eligible(self) -> None:
-        self._assert_ethernet_root_dhcp_eligible(
+    def test_virtualbox_marks_ethernet_root_dhcpv4_wire_eligible(self) -> None:
+        self._assert_ethernet_root_dhcpv4v4_eligible(
             virtualbox_default_provider_capabilities(dry_run=True),
             provider="virtualbox",
         )
 
-    def test_ethernet_root_dhcp_skipped_on_routed_only_provider_without_l2(
+    def test_ethernet_root_dhcpv4_skipped_on_routed_only_provider_without_l2(
         self,
     ) -> None:
-        # Adding IPv4-root DHCPv4 must not make ethernet / ipv4 / udp / dhcpv4 look
+        # Adding IPv4-root DHCPv4v4 must not make ethernet / ipv4 / udp / dhcpv4 look
         # safe for live validation on a routed-only provider. Build a provider
         # that explicitly lacks L2 send/capture, broadcast, and provider MAC
-        # discovery, then prove the Ethernet-root DHCP plan stays gated with
+        # discovery, then prove the Ethernet-root DHCPv4 plan stays gated with
         # link-layer reasons rather than becoming wire-eligible.
         capabilities = {
             "provider": "routed-only",
@@ -262,12 +262,12 @@ class DhcpLiveEligibilityPolicyTest(unittest.TestCase):
         self.assertFalse(capabilities["link_layer_send"])
         self.assertFalse(capabilities["link_layer_capture"])
 
-        self._assert_ethernet_root_dhcp_skipped(
+        self._assert_ethernet_root_dhcpv4v4_skipped(
             capabilities,
             provider="routed-only",
         )
 
-    def _assert_ipv4_root_dhcp_eligible(
+    def _assert_ipv4_root_dhcpv4v4_eligible(
         self,
         capabilities: dict[str, object],
         *,
@@ -275,7 +275,7 @@ class DhcpLiveEligibilityPolicyTest(unittest.TestCase):
     ) -> None:
         [packet] = populate_corpus_eligibility(
             backend="scapy",
-            packets=[CorpusPacket.from_plan(_ipv4_dhcp_plan())],
+            packets=[CorpusPacket.from_plan(_ipv4_dhcpv4_plan())],
             provider_capabilities=capabilities,
             wire_provider=provider,
         )
@@ -284,7 +284,7 @@ class DhcpLiveEligibilityPolicyTest(unittest.TestCase):
         self.assertTrue(packet.wire.eligible)
         self.assertEqual(packet.wire.skip_reasons, [])
         self.assertEqual(packet.wire.compare_root, "l3:ipv4")
-        # IPv4-root DHCPv4 is a one-way application payload, not a service or
+        # IPv4-root DHCPv4v4 is a one-way application payload, not a service or
         # lease workflow, so it must not demand a controlled DHCPv4 service nor
         # any other link-layer substrate capability.
         self.assertNotIn(SKIP_REQUIRES_CONTROLLED_SERVICE, packet.wire.skip_reasons)
@@ -301,7 +301,7 @@ class DhcpLiveEligibilityPolicyTest(unittest.TestCase):
         self.assertFalse(requirements["provider_mac_known"])
         self.assertFalse(requirements["controlled_services"])
 
-    def _assert_ethernet_root_dhcp_skipped(
+    def _assert_ethernet_root_dhcpv4v4_skipped(
         self,
         capabilities: dict[str, object],
         *,
@@ -309,7 +309,7 @@ class DhcpLiveEligibilityPolicyTest(unittest.TestCase):
     ) -> None:
         [packet] = populate_corpus_eligibility(
             backend="scapy",
-            packets=[CorpusPacket.from_plan(_ethernet_dhcp_plan())],
+            packets=[CorpusPacket.from_plan(_ethernet_dhcpv4_plan())],
             provider_capabilities=capabilities,
             wire_provider=provider,
         )
@@ -321,7 +321,7 @@ class DhcpLiveEligibilityPolicyTest(unittest.TestCase):
         self.assertIn(SKIP_REQUIRES_PROVIDER_MAC, packet.wire.skip_reasons)
         self.assertIn(SKIP_REQUIRES_BROADCAST, packet.wire.skip_reasons)
 
-    def _assert_ethernet_root_dhcp_eligible(
+    def _assert_ethernet_root_dhcpv4v4_eligible(
         self,
         capabilities: dict[str, object],
         *,
@@ -329,7 +329,7 @@ class DhcpLiveEligibilityPolicyTest(unittest.TestCase):
     ) -> None:
         [packet] = populate_corpus_eligibility(
             backend="scapy",
-            packets=[CorpusPacket.from_plan(_ethernet_dhcp_plan())],
+            packets=[CorpusPacket.from_plan(_ethernet_dhcpv4_plan())],
             provider_capabilities=capabilities,
             wire_provider=provider,
         )
@@ -360,7 +360,7 @@ def _ipv4_plan() -> PacketPlan:
     )
 
 
-def _ipv4_dhcp_plan() -> PacketPlan:
+def _ipv4_dhcpv4_plan() -> PacketPlan:
     return PacketPlan(
         stack=["ipv4", "udp", "dhcpv4"],
         fields={
@@ -378,7 +378,7 @@ def _ipv4_dhcp_plan() -> PacketPlan:
     )
 
 
-def _ethernet_dhcp_plan() -> PacketPlan:
+def _ethernet_dhcpv4_plan() -> PacketPlan:
     return PacketPlan(
         stack=["ethernet", "ipv4", "udp", "dhcpv4"],
         fields={

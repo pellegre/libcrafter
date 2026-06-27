@@ -419,9 +419,9 @@ def _dot11_source_model(
 # plugin's ``normalize``).
 
 
-# The DHCP tshark normalizer ``_normalize_dhcp`` and its ``_dhcp_flags`` /
-# ``_dhcp_options_from_source`` / ``_decode_dhcp_option_tlvs`` / ``_dhcp_layer``
-# helpers and the DHCP option/cookie constants moved to ``protocols/dhcpv4.py`` and are
+# The DHCP tshark normalizer ``_normalize_dhcpv4`` and its ``_dhcpv4_flags`` /
+# ``_dhcpv4_options_from_source`` / ``_decode_dhcpv4_option_tlvs`` / ``_dhcpv4_layer``
+# helpers and the DHCPv4 option/cookie constants moved to ``protocols/dhcpv4.py`` and are
 # registered in ``WIRESHARK_REGISTRY`` (so ``_normalize_protocol_fields`` routes the
 # canonical ``dhcpv4`` layer to the plugin's ``normalize``).
 

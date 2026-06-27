@@ -12,7 +12,7 @@ reproduces the legacy ``ipv4_options`` branch of ``_apply_feature_behavior`` and
 ``handles_feature`` claims ownership of the ``"ipv4_options"`` feature name, so the
 generator's registry-first feature loop runs it exactly once.
 
-Shared primitives (``_is_ipv4_root_dhcp_stack``, ``_next_layer_after``) live in
+Shared primitives (``_is_ipv4_root_dhcpv4_stack``, ``_next_layer_after``) live in
 :mod:`..sampling` because they are cross-layer stack grammar still used by other
 (unmigrated) layers; they are imported here rather than duplicated. Relative
 imports only so the package resolves under both the ``engine.*`` (CLI) and
@@ -27,7 +27,7 @@ from ..model import JSONObject
 from ..sampling import (
     _SamplingContext,
     _integer_domain_value,
-    _is_ipv4_root_dhcp_stack,
+    _is_ipv4_root_dhcpv4_stack,
     _next_layer_after,
 )
 from .base import ProtocolSampler, register
@@ -56,7 +56,7 @@ def _ipv4_for_domain(
     if domain == "zero":
         return "0.0.0.0"
     if domain == "broadcast" and dst:
-        if _is_ipv4_root_dhcp_stack(ctx.stack):
+        if _is_ipv4_root_dhcpv4_stack(ctx.stack):
             return default
         return "255.255.255.255"
     return default

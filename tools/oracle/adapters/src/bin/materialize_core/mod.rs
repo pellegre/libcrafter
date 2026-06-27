@@ -262,7 +262,7 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "igmp_report" => Ok(Box::new(igmp_report_layer(plan)?)),
         "igmp_extension" => Ok(Box::new(igmp_extension_layer(plan)?)),
         "dns" => Ok(Box::new(dns_layer(plan)?)),
-        "dhcpv4" => Ok(Box::new(dhcp_layer(plan)?)),
+        "dhcpv4" => Ok(Box::new(dhcpv4_layer(plan)?)),
         "snmp" => Ok(Box::new(snmp_layer(plan)?)),
         "rip" => Ok(Box::new(rip_layer(plan)?)),
         "ripng" => Ok(Box::new(ripng_layer(plan)?)),
@@ -3430,7 +3430,7 @@ fn dns_question(question: &Value) -> ExampleResult<DnsQuestion> {
     })
 }
 
-fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcpv4> {
+fn dhcpv4_layer(plan: &Value) -> ExampleResult<Dhcpv4> {
     let fields = layer_fields(plan, "dhcpv4")?;
     // The fixed BOOTP header fields are optional: a minimal live-friendly DHCP
     // plan emits only op/flags/options and relies on `Dhcpv4::new()` defaults
@@ -3439,7 +3439,7 @@ fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcpv4> {
     // provide and leave the rest at their protocol-correct defaults.
     let mut layer = Dhcpv4::new();
     if let Some(value) = optional(fields, &["op"]) {
-        layer = layer.op(dhcp_op(value)?);
+        layer = layer.op(dhcpv4_op(value)?);
     }
     if let Some(value) = optional(fields, &["hardware_type", "htype"]) {
         layer = layer.hardware_type(hardware_type_value(value)? as u8);
@@ -3451,7 +3451,7 @@ fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcpv4> {
         layer = layer.xid(u32_value(value)?);
     }
     if let Some(value) = optional(fields, &["flags"]) {
-        layer = layer.flags(dhcp_flags(value)?);
+        layer = layer.flags(dhcpv4_flags(value)?);
     }
     if let Some(value) = optional(fields, &["client_ip", "ciaddr"]) {
         layer = layer.ciaddr(Ipv4Addr::from_str(text_value(value)?)?);
@@ -3463,7 +3463,7 @@ fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcpv4> {
         layer = layer.chaddr(mac_bytes(text_value(value)?)?);
     }
     if let Some(options) = optional(fields, &["options"]) {
-        layer = layer.options(dhcp_options(options)?);
+        layer = layer.options(dhcpv4_options(options)?);
     }
     Ok(layer)
 }
@@ -5123,7 +5123,7 @@ fn dns_class(value: &Value) -> ExampleResult<u16> {
     u16_value(value)
 }
 
-fn dhcp_options(value: &Value) -> ExampleResult<Vec<Dhcpv4Option>> {
+fn dhcpv4_options(value: &Value) -> ExampleResult<Vec<Dhcpv4Option>> {
     let mut options = Vec::new();
     for item in array_values(value)? {
         if let Some(text) = item.as_str() {
@@ -5136,7 +5136,7 @@ fn dhcp_options(value: &Value) -> ExampleResult<Vec<Dhcpv4Option>> {
                 continue;
             }
             if let Some((name, raw_value)) = text.split_once('=') {
-                options.push(dhcp_option_pair(name, raw_value)?);
+                options.push(dhcpv4_option_pair(name, raw_value)?);
                 continue;
             }
         }
@@ -5147,7 +5147,7 @@ fn dhcp_options(value: &Value) -> ExampleResult<Vec<Dhcpv4Option>> {
     Ok(options)
 }
 
-fn dhcp_option_pair(name: &str, value: &str) -> ExampleResult<Dhcpv4Option> {
+fn dhcpv4_option_pair(name: &str, value: &str) -> ExampleResult<Dhcpv4Option> {
     match name.replace('-', "_").as_str() {
         "message_type" => Ok(Dhcpv4Option::message_type(dhcpv4_message_type(value))),
         "hostname" | "host_name" => Ok(Dhcpv4Option::host_name(value)),
@@ -5726,7 +5726,7 @@ fn dns_opcode(value: &Value) -> ExampleResult<u8> {
     u8_value(value)
 }
 
-fn dhcp_op(value: &Value) -> ExampleResult<u8> {
+fn dhcpv4_op(value: &Value) -> ExampleResult<u8> {
     if let Some(text) = value.as_str() {
         return match text.to_ascii_lowercase().replace('_', "-").as_str() {
             "bootrequest" | "request" => Ok(BOOTP_REQUEST),
@@ -5737,7 +5737,7 @@ fn dhcp_op(value: &Value) -> ExampleResult<u8> {
     u8_value(value)
 }
 
-fn dhcp_flags(value: &Value) -> ExampleResult<u16> {
+fn dhcpv4_flags(value: &Value) -> ExampleResult<u16> {
     if let Some(text) = value.as_str() {
         return match text.to_ascii_lowercase().replace('_', "-").as_str() {
             "broadcast" | "b" => Ok(0x8000),
@@ -5949,7 +5949,7 @@ mod bgp_materializer_tests {
 /// MACs are RFC 7042 documentation EUI-48 values; nothing here touches a
 /// network.
 #[cfg(test)]
-mod dhcp_oracle_fixtures {
+mod dhcpv4_oracle_fixtures {
     use crafter::prelude::*;
     use std::net::Ipv4Addr;
 
@@ -6016,7 +6016,7 @@ mod dhcp_oracle_fixtures {
     }
 
     #[test]
-    fn dhcp_option_overload_file_and_sname() {
+    fn dhcpv4_option_overload_file_and_sname() {
         // Option 52 marks both file and sname as overloaded option areas
         // (RFC 2131 section 4.1). Scapy does not model overloaded BOOTP fields.
         let dhcp = Dhcpv4::discover(client_mac())
@@ -6028,7 +6028,7 @@ mod dhcp_oracle_fixtures {
     }
 
     #[test]
-    fn dhcp_rfc3396_long_option_concatenation() {
+    fn dhcpv4_rfc3396_long_option_concatenation() {
         // RFC 3396: a value longer than 255 octets is split across repeated
         // instances of the same option code and read back as one logical value.
         let long_domain = format!("{}.example", "a".repeat(300));
@@ -6051,7 +6051,7 @@ mod dhcp_oracle_fixtures {
     }
 
     #[test]
-    fn dhcp_relay_agent_option82_suboptions() {
+    fn dhcpv4_relay_agent_option82_suboptions() {
         // RFC 3046 relay-agent option 82 with typed circuit-id and remote-id
         // sub-options. Scapy treats option 82 as opaque bytes.
         let info = Dhcpv4RelayAgentInfo::new(vec![
@@ -6070,7 +6070,7 @@ mod dhcp_oracle_fixtures {
     }
 
     #[test]
-    fn dhcp_rfc4361_node_specific_client_identifier() {
+    fn dhcpv4_rfc4361_node_specific_client_identifier() {
         // RFC 4361 type-255 client identifier (IAID + DUID). Scapy carries
         // option 61 only as an opaque string.
         let identifier =
@@ -6087,7 +6087,7 @@ mod dhcp_oracle_fixtures {
     }
 
     #[test]
-    fn dhcp_rfc3118_authentication_option() {
+    fn dhcpv4_rfc3118_authentication_option() {
         // RFC 3118 option 90 delayed authentication with HMAC-MD5. Scapy has no
         // typed authentication option.
         let auth = Dhcpv4Authentication::new(
@@ -6113,7 +6113,7 @@ mod dhcp_oracle_fixtures {
     }
 
     #[test]
-    fn dhcp_classless_static_routes_option121() {
+    fn dhcpv4_classless_static_routes_option121() {
         // RFC 3442 classless static routes (option 121) with the canonical
         // significant-octet widths.
         let routes = vec![
@@ -6143,7 +6143,7 @@ mod dhcp_oracle_fixtures {
     }
 
     #[test]
-    fn dhcp_leasequery_status_and_state() {
+    fn dhcpv4_leasequery_status_and_state() {
         // RFC 4388 leasequery reply carrying a status-code option (151) and a
         // dhcp-state option (153). Scapy has no leasequery option support.
         let status = Dhcpv4StatusCodeOption::new(Dhcpv4StatusCode::Success, b"ok".to_vec());
@@ -6174,7 +6174,7 @@ mod dhcp_oracle_fixtures {
 /// `decode_from_l3` entrypoint with a recoverable DHCPv4 message type. Addresses
 /// are RFC 5737 documentation space; nothing touches a network.
 #[cfg(test)]
-mod ipv4_dhcp_materialization {
+mod ipv4_dhcpv4_materialization {
     use super::{decode_hex, materialize_plan};
     use crafter::prelude::*;
     use serde_json::{json, Value};
@@ -6182,7 +6182,7 @@ mod ipv4_dhcp_materialization {
     /// A minimal live-friendly `ipv4 / udp / dhcpv4` plan, matching the seeded
     /// generator output: only the DHCP op/flags/options are set, so the fixed
     /// BOOTP header fields must fall back to `Dhcpv4::new()` defaults.
-    fn ipv4_dhcp_discover_plan() -> Value {
+    fn ipv4_dhcpv4_discover_plan() -> Value {
         json!({
             "stack": ["ipv4", "udp", "dhcpv4"],
             "metadata": {
@@ -6214,8 +6214,8 @@ mod ipv4_dhcp_materialization {
     }
 
     #[test]
-    fn ipv4_dhcp_plan_materializes_through_public_surface() {
-        let plan = ipv4_dhcp_discover_plan();
+    fn ipv4_dhcpv4_plan_materializes_through_public_surface() {
+        let plan = ipv4_dhcpv4_discover_plan();
         let vector = materialize_plan(&plan).expect("ipv4/udp/dhcpv4 plan must materialize");
 
         // The vector must root at the IPv4 network layer.
@@ -6270,11 +6270,11 @@ mod ipv4_dhcp_materialization {
     }
 
     #[test]
-    fn ipv4_dhcp_plan_defaults_fixed_bootp_fields() {
+    fn ipv4_dhcpv4_plan_defaults_fixed_bootp_fields() {
         // A plan that omits xid/ciaddr/yiaddr/chaddr (as the smoke generator
         // does) must still materialize via Dhcpv4::new() defaults rather than
         // failing with a missing-required-field error.
-        let plan = ipv4_dhcp_discover_plan();
+        let plan = ipv4_dhcpv4_discover_plan();
         let vector = materialize_plan(&plan)
             .expect("ipv4/udp/dhcpv4 plan without fixed BOOTP fields must materialize");
         let raw_hex = vector
