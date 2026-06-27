@@ -136,6 +136,47 @@ class Dhcpv6ProbePlanTest(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertIn(ipaddress.ip_address(plan[key]), documentation)
 
+    def test_solicit_advertise_plan_carries_ia_na_assignment(self) -> None:
+        plan = _dhcpv6_plan("dhcpv6-solicit-advertise")
+
+        self.assertEqual(plan["dhcpv6"]["message_type"], "solicit")
+        self.assertEqual(plan["dhcpv6"]["expected_message_type"], "advertise")
+        request_options = {option["name"]: option for option in plan["dhcpv6"]["options"]}
+        expected_options = {
+            option["name"]: option for option in plan["dhcpv6"]["expected_options"]
+        }
+        self.assertIn("ia_na", request_options)
+        self.assertIn("server_identifier", expected_options)
+        self.assertIn("ia_na", expected_options)
+        self.assertEqual(expected_options["status_code"]["status"], "success")
+        iaaddr = expected_options["ia_na"]["addresses"][0]
+        self.assertEqual(iaaddr["preferred_lifetime"], 3600)
+        self.assertEqual(iaaddr["valid_lifetime"], 7200)
+        self.assertEqual(plan["validation"]["reply_decode"]["protocol"], "Dhcpv6")
+        self.assertIn("iaaddr", plan["validation"]["reply_decode"]["required_options"])
+
+    def test_request_reply_ia_na_validates_lifetimes_status_and_xid(self) -> None:
+        plan = _dhcpv6_plan("dhcpv6-request-reply-ia-na")
+
+        ia_na = plan["validation"]["ia_na"]
+        self.assertTrue(ia_na["enabled"])
+        self.assertEqual(ia_na["iaid"], plan["dhcpv6"]["transaction_id"])
+        self.assertEqual(ia_na["t1"], 1800)
+        self.assertEqual(ia_na["t2"], 2880)
+        self.assertEqual(ia_na["iaaddr"]["preferred_lifetime"], 3600)
+        self.assertEqual(ia_na["iaaddr"]["valid_lifetime"], 7200)
+        self.assertEqual(ia_na["status_code"], 0)
+        self.assertEqual(ia_na["status"], "success")
+        self.assertIs(plan["validation"]["transaction_id_match"], True)
+        self.assertEqual(
+            plan["validation"]["client_duid_hex"],
+            plan["dhcpv6"]["client_duid_hex"],
+        )
+        self.assertEqual(
+            plan["validation"]["server_duid_hex"],
+            plan["dhcpv6"]["server_duid_hex"],
+        )
+
     def test_relay_plan_targets_all_servers_multicast(self) -> None:
         plan = _dhcpv6_plan(RELAY_CASE)
 
