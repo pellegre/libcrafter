@@ -125,6 +125,95 @@ class ProbeProviderDryRunMatrixTest(unittest.TestCase):
                     self.assertTrue(report["target_service_setup"]["planned"])
                     self.assertTrue(report["target_service_setup"]["services"])
 
+    def test_dhcpv6_smoke_matrix_records_capability_skips(self) -> None:
+        dhcpv6_count = len(cases.DHCPV6_SMOKE_PROFILE_CASE_NAMES)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            out = Path(temp_dir) / "dhcpv6-matrix"
+            matrix = provider_matrix.build_provider_matrix(
+                providers=_MATRIX_PROVIDERS,
+                dry_run=True,
+                profile=cases.DHCPV6_SMOKE_PROFILE,
+                seed=9924,
+                count=dhcpv6_count,
+                out=out,
+            )
+
+            self.assertEqual(matrix["mode"], "probe-provider-matrix")
+            self.assertEqual(matrix["status"], "dry-run")
+            self.assertEqual(matrix["providers"], list(_MATRIX_PROVIDERS))
+            self.assertEqual(matrix["profile"], cases.DHCPV6_SMOKE_PROFILE)
+            self.assertEqual(matrix["seed"], 9924)
+            self.assertEqual(matrix["count"], dhcpv6_count)
+            self.assertEqual(matrix["planned_count"], dhcpv6_count)
+            self.assertEqual(
+                matrix["selected_cases"],
+                list(cases.DHCPV6_SMOKE_PROFILE_CASE_NAMES),
+            )
+            self.assertEqual(
+                set(matrix["planned_cases"]),
+                set(cases.DHCPV6_SMOKE_PROFILE_CASE_NAMES),
+            )
+
+            reports = _provider_reports(matrix)
+            self.assertEqual(set(reports), set(_MATRIX_PROVIDERS))
+
+            for provider, report in reports.items():
+                with self.subTest(provider=provider):
+                    self.assertEqual(report["planned_count"], dhcpv6_count)
+                    self.assertEqual(report["executable_count"], 0)
+                    self.assertEqual(report["skipped_count"], dhcpv6_count)
+                    self.assertEqual(report["skipped_by_capability"], dhcpv6_count)
+                    self.assertEqual(report["skipped_by_confirmation"], 0)
+                    self.assertEqual(
+                        report["skip_counts_by_reason"],
+                        {capabilities.SKIP_REQUIRES_DHCPV6_SERVICE: dhcpv6_count},
+                    )
+                    self.assertEqual(
+                        {skip["case"] for skip in report["skipped_cases"]},
+                        set(cases.DHCPV6_SMOKE_PROFILE_CASE_NAMES),
+                    )
+                    for skip in report["skipped_cases"]:
+                        self.assertEqual(skip["reason"], "requires_dhcpv6_service")
+                        self.assertEqual(skip["capability"], "dhcpv6_service")
+                        self.assertIn(
+                            "dhcpv6_service",
+                            skip["missing_capabilities"],
+                        )
+
+                    relay_skip = next(
+                        skip
+                        for skip in report["skipped_cases"]
+                        if skip["case"] == "dhcpv6-relay-forward-reply"
+                    )
+                    self.assertEqual(
+                        relay_skip["missing_capabilities"],
+                        ["dhcpv6_service", "dhcpv6_relay_topology"],
+                    )
+
+                    provider_caps = report["provider_capabilities"]
+                    self.assertIs(provider_caps["dhcpv6_service"], False)
+                    self.assertIs(provider_caps["dhcpv6_relay_topology"], False)
+                    self.assertIs(
+                        provider_caps["lab_capabilities"]["ipv6_unicast"],
+                        False,
+                    )
+                    self.assertTrue(report["target_service_setup"]["planned"])
+                    self.assertTrue(report["target_service_setup"]["services"])
+
+            for provider in ("qemu", "virtualbox", "docker"):
+                with self.subTest(provider=provider, multicast=True):
+                    lab_caps = reports[provider]["provider_capabilities"][
+                        "lab_capabilities"
+                    ]
+                    self.assertIs(lab_caps["multicast"], True)
+                    self.assertIs(lab_caps["controlled_services"], True)
+
+            hetzner_lab_caps = reports["hetzner"]["provider_capabilities"][
+                "lab_capabilities"
+            ]
+            self.assertIs(hetzner_lab_caps["multicast"], False)
+            self.assertIs(hetzner_lab_caps["controlled_services"], True)
+
     def test_cli_main_writes_combined_report(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             out = Path(temp_dir) / "provider-matrix.json"

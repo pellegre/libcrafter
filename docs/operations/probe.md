@@ -240,6 +240,14 @@ same-segment link-layer multicast substrate as ARP (derived `ipv6_multicast`
 capability = link-layer send/capture plus broadcast), so they plan wherever ARP
 plans and skip wherever ARP skips.
 
+DHCPv6 smoke cases use explicit DHCPv6 capability gates. Client/server behavior
+requires `dhcpv6_service`, derived from IPv6 unicast, multicast, and controlled
+services. Relay behavior also requires `dhcpv6_relay_topology`. Providers that
+can carry same-segment multicast but do not yet advertise IPv6 unicast still
+skip the DHCPv6 smoke profile with `requires_dhcpv6_service`; once IPv6 unicast
+is declared, QEMU and VirtualBox private labs are expected to plan the full
+DHCPv6 smoke suite, with relay remaining gated by the relay-topology bit.
+
 Expected provider behavior:
 
 - Hetzner plans IPv4 unicast DNS and UDP service cases, and skips DHCPv4, ARP, and
@@ -249,6 +257,11 @@ Expected provider behavior:
 - Docker private sessions advertise IPv4 unicast, link-layer send/capture,
   broadcast, provider MAC knowledge, and controlled services, but no IPv6 or
   controlled router.
+- DHCPv6 cases skip only through declared DHCPv6 capability bits. With the
+  current provider defaults, QEMU, VirtualBox, Docker, and Hetzner skip the
+  `dhcpv6-smoke` profile with `requires_dhcpv6_service`; QEMU and VirtualBox
+  will become full-suite candidates once their lab capabilities declare IPv6
+  unicast.
 - Any provider missing link-layer send/capture, broadcast, provider MAC
   metadata, controlled services, or UDP payload/option support reports a
   stable capability skip instead of a failure.
@@ -258,6 +271,7 @@ providers without live traffic:
 
 ```sh
 python3 tools/probe/engine/provider_matrix.py --providers hetzner,qemu,virtualbox,docker --dry-run --profile behavior --seed 1052 --count 44 --out target/probe/provider-matrix
+python3 tools/probe/engine/provider_matrix.py --providers hetzner,qemu,virtualbox,docker --dry-run --profile dhcpv6-smoke --seed 9924 --count 10 --out target/probe/dhcpv6-provider-matrix
 ```
 
 ## Target Services
