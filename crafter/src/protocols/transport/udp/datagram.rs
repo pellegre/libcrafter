@@ -1,7 +1,9 @@
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Layer, LayerContext, Packet, Raw, TransportChecksumContext};
-use crate::protocols::dhcp::{Dhcpv4, DHCPV4_CLIENT_PORT, DHCPV4_SERVER_PORT};
+use crate::protocols::dhcp::{
+    Dhcpv4, DHCPV4_CLIENT_PORT, DHCPV4_SERVER_PORT, DHCPV6_CLIENT_PORT, DHCPV6_SERVER_PORT,
+};
 use crate::protocols::dns::Dns;
 use crate::protocols::ipv4::IPPROTO_UDP;
 use crate::protocols::quic::Quic;
@@ -12,10 +14,6 @@ use super::super::common::{
 };
 use super::constants::UDP_HEADER_LEN;
 use super::surplus::{udp_decoded_surplus_offset_in_ip_datagram, UdpOptions};
-
-// DHCPv6 UDP ports from the base DHCPv6 specification.
-const DHCPV6_CLIENT_PORT: u16 = 546;
-const DHCPV6_SERVER_PORT: u16 = 547;
 
 /// Inspection status for UDP checksum handling.
 ///
@@ -94,6 +92,13 @@ impl Udp {
         Self::new()
             .source_port(DHCPV6_SERVER_PORT)
             .destination_port(DHCPV6_CLIENT_PORT)
+    }
+
+    /// Create a DHCPv6 relay-to-server UDP header.
+    pub fn dhcpv6_relay() -> Self {
+        Self::new()
+            .source_port(DHCPV6_SERVER_PORT)
+            .destination_port(DHCPV6_SERVER_PORT)
     }
 
     /// Set the source port.
