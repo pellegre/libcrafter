@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import posixpath
 import shlex
 from collections.abc import Mapping, Sequence
@@ -15,6 +16,9 @@ from tools.appliance.engine.image import (
     appliance_image_metadata,
     requested_appliance_image,
 )
+from tools.appliance.engine.profile import ApplianceProfile
+from tools.appliance.engine.profiles import resolve_profile
+from tools.appliance.engine.runtime import DockerRunPlan, render_docker_run_plan
 from tools.appliance.engine.ssh_docker import (
     CommandRunner,
     SSHCommandPlan,
@@ -35,8 +39,10 @@ DEFAULT_APPLIANCE_REMOTE_BASE = "/var/lib/libcrafter/appliance"
 DOCKER_ENDPOINT_TRANSPORT = "docker-localhost-port-forward"
 DEFAULT_APPLIANCE_DEPLOY_ARTIFACT_DIRNAME = "appliance-deploy"
 DEFAULT_APPLIANCE_SYNC_ARTIFACT_DIRNAME = "appliance-sync"
+DEFAULT_APPLIANCE_RUN_ARTIFACT_DIRNAME = "appliance-run"
 DEFAULT_APPLIANCE_SYNC_ARCHIVE_NAME = "workspace.tar.gz"
 DEFAULT_APPLIANCE_SYNC_RUN_ID = "default"
+DEFAULT_APPLIANCE_RUN_ID = DEFAULT_APPLIANCE_SYNC_RUN_ID
 DEFAULT_APPLIANCE_SYNC_ARCHIVE_EXCLUDES = (
     ".git",
     "target",
@@ -392,6 +398,219 @@ class EndpointApplianceSyncResult(JsonModel):
                 result
                 if isinstance(result, EndpointApplianceSyncCommandResult)
                 else EndpointApplianceSyncCommandResult(
+                    **dict(_mapping(result, "command_results[]"))
+                )
+                for result in self.command_results
+            ],
+        )
+        object.__setattr__(self, "metadata", json_object(self.metadata, "metadata"))
+
+
+@dataclass(frozen=True, slots=True)
+class EndpointApplianceRunPlan(JsonModel):
+    """Dry-run plan for running one appliance profile command on an endpoint."""
+
+    kind: str
+    endpoint_id: str
+    target: EndpointApplianceTarget
+    profile: str
+    image_tag: str
+    command_argv: list[str]
+    run_id: str
+    remote_work_root: str
+    remote_artifact_root: str
+    local_artifact_dir: str
+    local_stdout_path: str
+    local_stderr_path: str
+    local_metadata_path: str
+    docker_run: DockerRunPlan
+    commands: list[SSHCommandPlan]
+    executes: bool = False
+    metadata: JSONObject = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "kind", _require_non_empty_string(self.kind, "kind"))
+        object.__setattr__(
+            self,
+            "endpoint_id",
+            _require_non_empty_string(self.endpoint_id, "endpoint_id"),
+        )
+        if not isinstance(self.target, EndpointApplianceTarget):
+            raise TypeError("target must be an EndpointApplianceTarget")
+        object.__setattr__(self, "profile", _require_non_empty_string(self.profile, "profile"))
+        object.__setattr__(
+            self,
+            "image_tag",
+            _require_non_empty_string(self.image_tag, "image_tag"),
+        )
+        object.__setattr__(
+            self,
+            "command_argv",
+            _non_empty_string_list(self.command_argv, "command_argv"),
+        )
+        object.__setattr__(self, "run_id", _remote_component(self.run_id, "run_id"))
+        object.__setattr__(
+            self,
+            "remote_work_root",
+            _remote_absolute_path(self.remote_work_root, "remote_work_root"),
+        )
+        object.__setattr__(
+            self,
+            "remote_artifact_root",
+            _remote_absolute_path(self.remote_artifact_root, "remote_artifact_root"),
+        )
+        object.__setattr__(
+            self,
+            "local_artifact_dir",
+            _absolute_path(self.local_artifact_dir, "local_artifact_dir"),
+        )
+        object.__setattr__(
+            self,
+            "local_stdout_path",
+            _absolute_path(self.local_stdout_path, "local_stdout_path"),
+        )
+        object.__setattr__(
+            self,
+            "local_stderr_path",
+            _absolute_path(self.local_stderr_path, "local_stderr_path"),
+        )
+        object.__setattr__(
+            self,
+            "local_metadata_path",
+            _absolute_path(self.local_metadata_path, "local_metadata_path"),
+        )
+        if not isinstance(self.docker_run, DockerRunPlan):
+            object.__setattr__(
+                self,
+                "docker_run",
+                DockerRunPlan(**dict(_mapping(self.docker_run, "docker_run"))),
+            )
+        commands = [
+            command
+            if isinstance(command, SSHCommandPlan)
+            else SSHCommandPlan(**dict(_mapping(command, "commands[]")))
+            for command in self.commands
+        ]
+        if not commands:
+            raise ValueError("commands must not be empty")
+        object.__setattr__(self, "commands", commands)
+        object.__setattr__(self, "executes", _bool(self.executes, "executes"))
+        object.__setattr__(self, "metadata", json_object(self.metadata, "metadata"))
+
+
+@dataclass(frozen=True, slots=True)
+class EndpointApplianceRunCommandResult(JsonModel):
+    """Recorded result and stdout/stderr artifact paths for one run command."""
+
+    name: str
+    kind: str
+    command_argv: list[str]
+    exit_code: int
+    ok: bool
+    stdout_path: str
+    stderr_path: str
+    timed_out: bool = False
+    error: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "name", _require_non_empty_string(self.name, "name"))
+        object.__setattr__(self, "kind", _require_non_empty_string(self.kind, "kind"))
+        object.__setattr__(
+            self,
+            "command_argv",
+            _non_empty_string_list(self.command_argv, "command_argv"),
+        )
+        object.__setattr__(self, "exit_code", _int(self.exit_code, "exit_code"))
+        object.__setattr__(self, "ok", _bool(self.ok, "ok"))
+        object.__setattr__(self, "stdout_path", _absolute_path(self.stdout_path, "stdout_path"))
+        object.__setattr__(self, "stderr_path", _absolute_path(self.stderr_path, "stderr_path"))
+        object.__setattr__(self, "timed_out", _bool(self.timed_out, "timed_out"))
+        if self.error is not None:
+            object.__setattr__(self, "error", _require_non_empty_string(self.error, "error"))
+
+
+@dataclass(frozen=True, slots=True)
+class EndpointApplianceRunResult(JsonModel):
+    """Live appliance run outcome for one endpoint target."""
+
+    kind: str
+    endpoint_id: str
+    ok: bool
+    plan: EndpointApplianceRunPlan
+    profile: str
+    image_tag: str
+    command_argv: list[str]
+    exit_code: int
+    remote_work_root: str
+    remote_artifact_root: str
+    local_artifact_dir: str
+    local_stdout_path: str
+    local_stderr_path: str
+    local_metadata_path: str
+    artifact_dir: str
+    command_results: list[EndpointApplianceRunCommandResult] = field(default_factory=list)
+    metadata: JSONObject = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "kind", _require_non_empty_string(self.kind, "kind"))
+        object.__setattr__(
+            self,
+            "endpoint_id",
+            _require_non_empty_string(self.endpoint_id, "endpoint_id"),
+        )
+        object.__setattr__(self, "ok", _bool(self.ok, "ok"))
+        if not isinstance(self.plan, EndpointApplianceRunPlan):
+            raise TypeError("plan must be an EndpointApplianceRunPlan")
+        object.__setattr__(self, "profile", _require_non_empty_string(self.profile, "profile"))
+        object.__setattr__(
+            self,
+            "image_tag",
+            _require_non_empty_string(self.image_tag, "image_tag"),
+        )
+        object.__setattr__(
+            self,
+            "command_argv",
+            _non_empty_string_list(self.command_argv, "command_argv"),
+        )
+        object.__setattr__(self, "exit_code", _int(self.exit_code, "exit_code"))
+        object.__setattr__(
+            self,
+            "remote_work_root",
+            _remote_absolute_path(self.remote_work_root, "remote_work_root"),
+        )
+        object.__setattr__(
+            self,
+            "remote_artifact_root",
+            _remote_absolute_path(self.remote_artifact_root, "remote_artifact_root"),
+        )
+        object.__setattr__(
+            self,
+            "local_artifact_dir",
+            _absolute_path(self.local_artifact_dir, "local_artifact_dir"),
+        )
+        object.__setattr__(
+            self,
+            "local_stdout_path",
+            _absolute_path(self.local_stdout_path, "local_stdout_path"),
+        )
+        object.__setattr__(
+            self,
+            "local_stderr_path",
+            _absolute_path(self.local_stderr_path, "local_stderr_path"),
+        )
+        object.__setattr__(
+            self,
+            "local_metadata_path",
+            _absolute_path(self.local_metadata_path, "local_metadata_path"),
+        )
+        object.__setattr__(self, "artifact_dir", _absolute_path(self.artifact_dir, "artifact_dir"))
+        object.__setattr__(
+            self,
+            "command_results",
+            [
+                result
+                if isinstance(result, EndpointApplianceRunCommandResult)
+                else EndpointApplianceRunCommandResult(
                     **dict(_mapping(result, "command_results[]"))
                 )
                 for result in self.command_results
@@ -850,6 +1069,391 @@ def sync_endpoint_appliance_workspace(
             return _sync_result(plan, output_dir, command_results, ok=False)
 
     return _sync_result(plan, output_dir, command_results, ok=True)
+
+
+def render_endpoint_appliance_run_plan(
+    target: EndpointApplianceTarget,
+    profile: str | ApplianceProfile | Mapping[str, object],
+    command_argv: Sequence[str],
+    *,
+    sync_context: (
+        EndpointApplianceSyncPlan | EndpointApplianceSyncResult | Mapping[str, object] | None
+    ) = None,
+    artifact_dir: str | Path | None = None,
+    run_id: str = DEFAULT_APPLIANCE_RUN_ID,
+    image_tag: str | None = None,
+    env: Mapping[str, str] | None = None,
+    remote_work_root: str | None = None,
+    remote_artifact_root: str | None = None,
+    connect_timeout: int = DEFAULT_CONNECT_TIMEOUT,
+    profile_dir: str | Path | None = None,
+) -> EndpointApplianceRunPlan:
+    """Return a dry-run plan for running an appliance command on an endpoint."""
+
+    if not isinstance(target, EndpointApplianceTarget):
+        raise TypeError("target must be an EndpointApplianceTarget")
+    _require_docker_execution_supported(target)
+    appliance_profile = _appliance_profile(profile, profile_dir=profile_dir)
+    command = _command_sequence(command_argv, "command_argv")
+    run_component, remote_work, remote_artifacts = _run_remote_paths(
+        target,
+        run_id=run_id,
+        sync_context=sync_context,
+        remote_work_root=remote_work_root,
+        remote_artifact_root=remote_artifact_root,
+    )
+    local_artifacts = _run_artifact_dir(target, artifact_dir, run_component, create=False)
+    stdout_path = local_artifacts / "run.stdout.txt"
+    stderr_path = local_artifacts / "run.stderr.txt"
+    metadata_path = local_artifacts / "run.metadata.json"
+    docker_run = render_docker_run_plan(
+        appliance_profile,
+        image_tag=image_tag,
+        work_dir=remote_work,
+        artifact_dir=remote_artifacts,
+        command_argv=command,
+        env=env,
+        docker_command=target.target.docker_command,
+    )
+    mkdir_plan = _render_ssh_command_plan(
+        target.target,
+        kind="ssh-appliance-run-mkdir",
+        remote_command_argv=["mkdir", "-p", remote_work, remote_artifacts],
+        connect_timeout=connect_timeout,
+        metadata={
+            "paths": [remote_work, remote_artifacts],
+            "run_id": run_component,
+        },
+    )
+    run_plan = _render_ssh_command_plan(
+        target.target,
+        kind="ssh-appliance-run-docker",
+        remote_command_argv=docker_run.docker_argv,
+        connect_timeout=connect_timeout,
+        metadata={
+            "run_id": run_component,
+            "profile": appliance_profile.name,
+            "image_tag": docker_run.image_tag,
+            "remote_work_root": remote_work,
+            "remote_artifact_root": remote_artifacts,
+        },
+    )
+    return EndpointApplianceRunPlan(
+        kind="endpoint-appliance-run-plan",
+        endpoint_id=target.endpoint_id,
+        target=target,
+        profile=appliance_profile.name,
+        image_tag=docker_run.image_tag,
+        command_argv=command,
+        run_id=run_component,
+        remote_work_root=remote_work,
+        remote_artifact_root=remote_artifacts,
+        local_artifact_dir=str(local_artifacts),
+        local_stdout_path=str(stdout_path),
+        local_stderr_path=str(stderr_path),
+        local_metadata_path=str(metadata_path),
+        docker_run=docker_run,
+        commands=[mkdir_plan, run_plan],
+        metadata={
+            "local_artifact_paths": {
+                "stdout": str(stdout_path),
+                "stderr": str(stderr_path),
+                "metadata": str(metadata_path),
+            },
+            "remote_path_source": _run_remote_path_source(
+                sync_context=sync_context,
+                remote_work_root=remote_work_root,
+                remote_artifact_root=remote_artifact_root,
+            ),
+        },
+    )
+
+
+def run_endpoint_appliance_command(
+    target: EndpointApplianceTarget,
+    profile: str | ApplianceProfile | Mapping[str, object],
+    command_argv: Sequence[str],
+    *,
+    runner: CommandRunner,
+    sync_context: (
+        EndpointApplianceSyncPlan | EndpointApplianceSyncResult | Mapping[str, object] | None
+    ) = None,
+    artifact_dir: str | Path | None = None,
+    run_id: str = DEFAULT_APPLIANCE_RUN_ID,
+    image_tag: str | None = None,
+    env: Mapping[str, str] | None = None,
+    remote_work_root: str | None = None,
+    remote_artifact_root: str | None = None,
+    connect_timeout: int = DEFAULT_CONNECT_TIMEOUT,
+    profile_dir: str | Path | None = None,
+    timeout: float | None = None,
+) -> EndpointApplianceRunResult:
+    """Explicitly execute an endpoint appliance run plan with an injected runner."""
+
+    if runner is None:
+        raise ValueError("runner is required")
+    plan = render_endpoint_appliance_run_plan(
+        target,
+        profile,
+        command_argv,
+        sync_context=sync_context,
+        artifact_dir=artifact_dir,
+        run_id=run_id,
+        image_tag=image_tag,
+        env=env,
+        remote_work_root=remote_work_root,
+        remote_artifact_root=remote_artifact_root,
+        connect_timeout=connect_timeout,
+        profile_dir=profile_dir,
+    )
+    output_dir = Path(plan.local_artifact_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    command_results: list[EndpointApplianceRunCommandResult] = []
+
+    mkdir = _execute_run_command(
+        plan.commands[0],
+        name="01-remote-mkdir",
+        artifact_dir=output_dir,
+        runner=runner,
+        timeout=timeout,
+    )
+    command_results.append(mkdir)
+    if not mkdir.ok:
+        result = _run_result(plan, command_results, ok=False, exit_code=mkdir.exit_code)
+        _write_run_metadata(result)
+        return result
+
+    run = _execute_run_command(
+        plan.commands[1],
+        name="02-docker-run",
+        artifact_dir=output_dir,
+        runner=runner,
+        timeout=timeout,
+    )
+    command_results.append(run)
+    Path(plan.local_stdout_path).write_text(
+        Path(run.stdout_path).read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    Path(plan.local_stderr_path).write_text(
+        Path(run.stderr_path).read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    result = _run_result(plan, command_results, ok=run.ok, exit_code=run.exit_code)
+    _write_run_metadata(result)
+    return result
+
+
+def _appliance_profile(
+    value: str | ApplianceProfile | Mapping[str, object],
+    *,
+    profile_dir: str | Path | None,
+) -> ApplianceProfile:
+    if isinstance(value, ApplianceProfile):
+        return value
+    if isinstance(value, str):
+        return resolve_profile(value, profile_dir=profile_dir)
+    return ApplianceProfile.from_dict(value)
+
+
+def _command_sequence(value: Sequence[str], name: str) -> list[str]:
+    if isinstance(value, (str, bytes, bytearray)):
+        raise ValueError(f"{name} must be a list")
+    return _non_empty_string_list([str(item) for item in value], name)
+
+
+def _run_remote_paths(
+    target: EndpointApplianceTarget,
+    *,
+    run_id: str,
+    sync_context: (
+        EndpointApplianceSyncPlan | EndpointApplianceSyncResult | Mapping[str, object] | None
+    ),
+    remote_work_root: str | None,
+    remote_artifact_root: str | None,
+) -> tuple[str, str, str]:
+    if (remote_work_root is None) != (remote_artifact_root is None):
+        raise ValueError("remote_work_root and remote_artifact_root must be provided together")
+    if remote_work_root is not None and remote_artifact_root is not None:
+        return (
+            _remote_component(run_id, "run_id"),
+            _remote_absolute_path(remote_work_root, "remote_work_root"),
+            _remote_absolute_path(remote_artifact_root, "remote_artifact_root"),
+        )
+    if sync_context is not None:
+        context = _sync_context_run_paths(sync_context)
+        return context
+
+    run_component = _remote_component(run_id, "run_id")
+    return (
+        run_component,
+        _remote_absolute_path(
+            posixpath.join(target.target.remote_work_root, "runs", run_component, "workspace"),
+            "remote_work_root",
+        ),
+        _remote_absolute_path(
+            posixpath.join(target.target.remote_artifact_root, "runs", run_component),
+            "remote_artifact_root",
+        ),
+    )
+
+
+def _sync_context_run_paths(
+    context: EndpointApplianceSyncPlan | EndpointApplianceSyncResult | Mapping[str, object],
+) -> tuple[str, str, str]:
+    if isinstance(context, EndpointApplianceSyncResult):
+        return (
+            context.plan.run_id,
+            context.plan.remote_workspace_dir,
+            context.plan.remote_artifact_dir,
+        )
+    if isinstance(context, EndpointApplianceSyncPlan):
+        return (context.run_id, context.remote_workspace_dir, context.remote_artifact_dir)
+
+    data = _mapping(context, "sync_context")
+    plan_data = data.get("plan")
+    if isinstance(plan_data, Mapping):
+        data = _mapping(plan_data, "sync_context.plan")
+    run_id = _require_non_empty_string(data.get("run_id"), "sync_context.run_id")
+    work = data.get("remote_workspace_dir", data.get("remote_work_root"))
+    artifacts = data.get("remote_artifact_dir", data.get("remote_artifact_root"))
+    return (
+        _remote_component(run_id, "sync_context.run_id"),
+        _remote_absolute_path(
+            _require_non_empty_string(work, "sync_context.remote_workspace_dir"),
+            "sync_context.remote_workspace_dir",
+        ),
+        _remote_absolute_path(
+            _require_non_empty_string(artifacts, "sync_context.remote_artifact_dir"),
+            "sync_context.remote_artifact_dir",
+        ),
+    )
+
+
+def _run_remote_path_source(
+    *,
+    sync_context: object,
+    remote_work_root: str | None,
+    remote_artifact_root: str | None,
+) -> str:
+    if remote_work_root is not None or remote_artifact_root is not None:
+        return "explicit"
+    if sync_context is not None:
+        return "sync-context"
+    return "default-run-id"
+
+
+def _run_artifact_dir(
+    target: EndpointApplianceTarget,
+    artifact_dir: str | Path | None,
+    run_id: str,
+    *,
+    create: bool,
+) -> Path:
+    if artifact_dir is not None:
+        output = Path(_absolute_path(artifact_dir, "artifact_dir"))
+    else:
+        endpoint_artifact_dir = _optional_string(
+            target.metadata.get("artifact_dir"),
+            "metadata.artifact_dir",
+        )
+        if endpoint_artifact_dir is None:
+            raise ValueError("artifact_dir is required when target metadata has no artifact_dir")
+        output = (
+            Path(_absolute_path(endpoint_artifact_dir, "metadata.artifact_dir"))
+            / DEFAULT_APPLIANCE_RUN_ARTIFACT_DIRNAME
+            / run_id
+        )
+    if create:
+        output.mkdir(parents=True, exist_ok=True)
+    return output.resolve(strict=False)
+
+
+def _execute_run_command(
+    plan: SSHCommandPlan,
+    *,
+    name: str,
+    artifact_dir: Path,
+    runner: CommandRunner,
+    timeout: float | None,
+) -> EndpointApplianceRunCommandResult:
+    result = execute_command_plan(plan, runner=runner, timeout=timeout)
+    return _record_run_command_result(
+        name=name,
+        kind=plan.kind,
+        command_argv=plan.command_argv,
+        result=result,
+        artifact_dir=artifact_dir,
+    )
+
+
+def _record_run_command_result(
+    *,
+    name: str,
+    kind: str,
+    command_argv: list[str],
+    result: CommandResult,
+    artifact_dir: Path,
+) -> EndpointApplianceRunCommandResult:
+    stdout_path = artifact_dir / f"{name}.stdout.txt"
+    stderr_path = artifact_dir / f"{name}.stderr.txt"
+    stdout_path.write_text(result.stdout, encoding="utf-8")
+    stderr_path.write_text(result.stderr, encoding="utf-8")
+    return EndpointApplianceRunCommandResult(
+        name=name,
+        kind=kind,
+        command_argv=command_argv,
+        exit_code=result.exit_code,
+        ok=result.ok,
+        stdout_path=str(stdout_path),
+        stderr_path=str(stderr_path),
+        timed_out=result.timed_out,
+        error=result.error,
+    )
+
+
+def _run_result(
+    plan: EndpointApplianceRunPlan,
+    command_results: list[EndpointApplianceRunCommandResult],
+    *,
+    ok: bool,
+    exit_code: int,
+) -> EndpointApplianceRunResult:
+    return EndpointApplianceRunResult(
+        kind="endpoint-appliance-run",
+        endpoint_id=plan.endpoint_id,
+        ok=ok,
+        plan=plan,
+        profile=plan.profile,
+        image_tag=plan.image_tag,
+        command_argv=plan.command_argv,
+        exit_code=exit_code,
+        remote_work_root=plan.remote_work_root,
+        remote_artifact_root=plan.remote_artifact_root,
+        local_artifact_dir=plan.local_artifact_dir,
+        local_stdout_path=plan.local_stdout_path,
+        local_stderr_path=plan.local_stderr_path,
+        local_metadata_path=plan.local_metadata_path,
+        artifact_dir=plan.local_artifact_dir,
+        command_results=command_results,
+        metadata={
+            "commands_executed": len(command_results),
+            "local_artifact_paths": {
+                "stdout": plan.local_stdout_path,
+                "stderr": plan.local_stderr_path,
+                "metadata": plan.local_metadata_path,
+            },
+        },
+    )
+
+
+def _write_run_metadata(result: EndpointApplianceRunResult) -> None:
+    path = Path(result.local_metadata_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(result.to_dict(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _manifest(value: EndpointManifest | Mapping[str, object]) -> EndpointManifest:
@@ -1438,6 +2042,8 @@ def _deploy_result(
 __all__ = [
     "DEFAULT_APPLIANCE_REMOTE_BASE",
     "DEFAULT_APPLIANCE_DEPLOY_ARTIFACT_DIRNAME",
+    "DEFAULT_APPLIANCE_RUN_ARTIFACT_DIRNAME",
+    "DEFAULT_APPLIANCE_RUN_ID",
     "DEFAULT_APPLIANCE_SYNC_ARCHIVE_EXCLUDES",
     "DEFAULT_APPLIANCE_SYNC_ARCHIVE_NAME",
     "DEFAULT_APPLIANCE_SYNC_ARTIFACT_DIRNAME",
@@ -1447,6 +2053,9 @@ __all__ = [
     "EndpointApplianceDeployCommandResult",
     "EndpointApplianceDeployPlan",
     "EndpointApplianceDeployResult",
+    "EndpointApplianceRunCommandResult",
+    "EndpointApplianceRunPlan",
+    "EndpointApplianceRunResult",
     "EndpointApplianceSyncCommandResult",
     "EndpointApplianceSyncPlan",
     "EndpointApplianceSyncResult",
@@ -1455,7 +2064,9 @@ __all__ = [
     "deploy_endpoint_appliance_target",
     "read_endpoint_appliance_target",
     "render_endpoint_appliance_deploy_plan",
+    "render_endpoint_appliance_run_plan",
     "render_endpoint_appliance_sync_plan",
     "resolve_endpoint_appliance_target",
+    "run_endpoint_appliance_command",
     "sync_endpoint_appliance_workspace",
 ]
