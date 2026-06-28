@@ -17,7 +17,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::{arp, dhcpv4, dhcpv6, dns, icmp, mqtt, ndp, ospf, quic, rip, snmp, tcp, udp};
+use crate::{arp, dhcpv4, dhcpv6, dns, icmp, mqtt, ndp, ospf, quic, rip, snmp, ssdp, tcp, udp};
 
 pub type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -1201,6 +1201,14 @@ fn dispatch_case(
             | "snmp-notification-trap"
             | "snmpv3-engine-discovery-report",
         ) => snmp::run_snmp_live(request, plan),
+        (
+            RunMode::DryRun,
+            "ssdp-ipv4-search-exchange" | "ssdp-ipv6-search-exchange" | "ssdp-notify-capture",
+        ) => ssdp::run_ssdp_dry_run(request, plan),
+        (
+            RunMode::Live,
+            "ssdp-ipv4-search-exchange" | "ssdp-ipv6-search-exchange" | "ssdp-notify-capture",
+        ) => ssdp::run_ssdp_live(request, plan),
         (
             RunMode::DryRun,
             "udp-echo-empty"
