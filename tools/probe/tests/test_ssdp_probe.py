@@ -63,6 +63,10 @@ class SsdpProbeRegistrationTest(unittest.TestCase):
             {name: 1 for name in SSDP_CASE_NAMES},
         )
         self.assertEqual(plugin.planned_only_cases, frozenset(SSDP_CASE_NAMES))
+        self.assertIs(
+            plugin.rewrite_endpoint_addresses,
+            ssdp_protocol.ssdp_rewrite_endpoint_addresses,
+        )
 
     def test_ssdp_cases_are_catalog_entries_with_expected_capabilities(self) -> None:
         expected_capabilities = {
@@ -276,6 +280,156 @@ class SsdpProbeSkipReasonTest(unittest.TestCase):
                     expected_failures[case_name],
                 )
                 self.assertFalse(plan["live_capable"])
+
+
+class SsdpProbeAddressRewriteTest(unittest.TestCase):
+    def _rewrite(self, case_name: str, **metadata: object) -> dict:
+        return ssdp_protocol.ssdp_rewrite_endpoint_addresses(
+            _ssdp_plan(case_name),
+            source_ipv4="10.77.0.10",
+            target_ipv4="10.77.0.20",
+            rewrite_source="lab_session",
+            **metadata,
+        )
+
+    def test_ipv4_search_rewrite_uses_lab_hosts_and_keeps_multicast_send(self) -> None:
+        rewritten = self._rewrite("ssdp-ipv4-search-exchange")
+        source_port = rewritten["source_port"]
+
+        self.assertEqual(rewritten["source_ipv4"], "10.77.0.10")
+        self.assertEqual(rewritten["destination_ipv4"], "239.255.255.250")
+        self.assertEqual(rewritten["target_ipv4"], "10.77.0.20")
+        self.assertEqual(rewritten["expected_reply_source_ipv4"], "10.77.0.20")
+        self.assertEqual(rewritten["expected_reply_destination_ipv4"], "10.77.0.10")
+        self.assertEqual(
+            rewritten["capture_filter"],
+            (
+                "udp and src host 10.77.0.20 and dst host 10.77.0.10 "
+                f"and src port 1900 and dst port {source_port}"
+            ),
+        )
+        self.assertEqual(rewritten["validation"]["source_ipv4"], "10.77.0.20")
+        self.assertEqual(rewritten["validation"]["destination_ipv4"], "10.77.0.10")
+        self.assertEqual(rewritten["target_service"]["bind_ipv4"], "10.77.0.20")
+        self.assertEqual(rewritten["target_service"]["source_ipv4"], "10.77.0.10")
+        self.assertEqual(
+            rewritten["live_address_rewrite"],
+            {
+                "source": "lab_session",
+                "status": "rewritten",
+                "stimulus_ipv4": "10.77.0.10",
+                "target_ipv4": "10.77.0.20",
+                "emitted_source_ipv4": "10.77.0.10",
+                "preserved_destination_ipv4": "239.255.255.250",
+            },
+        )
+
+    def test_notify_rewrite_emits_from_target_and_keeps_multicast_destination(self) -> None:
+        rewritten = self._rewrite("ssdp-notify-capture")
+
+        self.assertEqual(rewritten["source_ipv4"], "10.77.0.20")
+        self.assertEqual(rewritten["destination_ipv4"], "239.255.255.250")
+        self.assertEqual(rewritten["target_ipv4"], "10.77.0.20")
+        self.assertEqual(rewritten["expected_reply_source_ipv4"], "10.77.0.20")
+        self.assertEqual(rewritten["expected_reply_destination_ipv4"], "10.77.0.10")
+        self.assertEqual(
+            rewritten["capture_filter"],
+            (
+                "udp and src host 10.77.0.20 and dst host 239.255.255.250 "
+                "and src port 1900 and dst port 1900"
+            ),
+        )
+        self.assertEqual(rewritten["validation"]["source_ipv4"], "10.77.0.20")
+        self.assertEqual(
+            rewritten["validation"]["destination_ipv4"],
+            "239.255.255.250",
+        )
+        self.assertEqual(rewritten["target_service"]["bind_ipv4"], "10.77.0.20")
+        self.assertEqual(rewritten["target_service"]["source_ipv4"], "10.77.0.10")
+        self.assertEqual(
+            rewritten["live_address_rewrite"]["preserved_destination_ipv4"],
+            "239.255.255.250",
+        )
+        self.assertEqual(
+            rewritten["live_address_rewrite"]["emitted_source_ipv4"],
+            "10.77.0.20",
+        )
+
+    def test_ipv6_link_local_rewrite_uses_mac_derived_addresses(self) -> None:
+        rewritten = self._rewrite(
+            "ssdp-ipv6-search-exchange",
+            source_mac="02:00:00:00:00:10",
+            target_mac="02:00:00:00:00:20",
+            target_interface="eth1",
+        )
+
+        self.assertEqual(rewritten["source_ipv6"], "fe80::ff:fe00:10")
+        self.assertEqual(rewritten["destination_ipv6"], "ff02::c")
+        self.assertEqual(rewritten["target_ipv6"], "fe80::ff:fe00:20")
+        self.assertEqual(rewritten["expected_reply_source_ipv6"], "fe80::ff:fe00:20")
+        self.assertEqual(
+            rewritten["expected_reply_destination_ipv6"],
+            "fe80::ff:fe00:10",
+        )
+        self.assertEqual(
+            rewritten["capture_filter"],
+            (
+                "ip6 and udp and src host fe80::ff:fe00:20 "
+                "and dst host fe80::ff:fe00:10 "
+                f"and src port 1900 and dst port {rewritten['source_port']}"
+            ),
+        )
+        self.assertEqual(rewritten["validation"]["source_ipv6"], "fe80::ff:fe00:20")
+        self.assertEqual(
+            rewritten["validation"]["destination_ipv6"],
+            "fe80::ff:fe00:10",
+        )
+        self.assertEqual(rewritten["target_service"]["bind_ipv6"], "fe80::ff:fe00:20")
+        self.assertEqual(
+            rewritten["target_service"]["source_ipv6"],
+            "fe80::ff:fe00:10",
+        )
+        self.assertEqual(rewritten["target_service"]["interface"], "eth1")
+        self.assertEqual(
+            rewritten["live_address_rewrite"]["preserved_destination_ipv6"],
+            "ff02::c",
+        )
+        self.assertNotIn("source_ipv4", rewritten)
+        self.assertNotIn("destination_ipv4", rewritten)
+
+    def test_ipv6_link_local_rewrite_skips_without_ipv6_scope_metadata(self) -> None:
+        plan = _ssdp_plan("ssdp-ipv6-search-exchange")
+        rewritten = self._rewrite("ssdp-ipv6-search-exchange")
+
+        self.assertEqual(rewritten["source_ipv6"], plan["source_ipv6"])
+        self.assertEqual(rewritten["destination_ipv6"], "ff02::c")
+        self.assertEqual(rewritten["target_ipv6"], plan["target_ipv6"])
+        self.assertNotIn("source_ipv4", rewritten)
+        self.assertNotIn("destination_ipv4", rewritten)
+        self.assertEqual(
+            rewritten["skip_reasons"]["address_rewrite"],
+            ["requires_ipv6_link_local_scope_metadata"],
+        )
+        self.assertEqual(
+            rewritten["wire_requirements"]["address_rewrite_skip_reason"],
+            "requires_ipv6_link_local_scope_metadata",
+        )
+        self.assertEqual(
+            rewritten["live_address_rewrite"],
+            {
+                "source": "lab_session",
+                "status": "skipped",
+                "reason": "requires_ipv6_link_local_scope_metadata",
+                "stimulus_ipv4": "10.77.0.10",
+                "target_ipv4": "10.77.0.20",
+                "multicast_group": "ff02::c",
+                "required_metadata": [
+                    "source_mac",
+                    "target_mac",
+                    "target_interface",
+                ],
+            },
+        )
 
 
 if __name__ == "__main__":
