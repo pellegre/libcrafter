@@ -17,6 +17,7 @@ CHECK_KIND_IMAGE_AVAILABLE = "image-available"
 CHECK_KIND_INTERFACE_EXISTS = "interface-exists"
 CHECK_KIND_RAW_SOCKET_PERMISSION = "raw-socket-permission"
 CHECK_KIND_PCAP_OPEN = "pcap-open"
+CHECK_KIND_LAN_REACHABILITY_PLAN = "lan-reachability-plan"
 CHECK_KIND_SERIAL_DEVICE_EXISTS = "serial-device-exists"
 CHECK_KIND_WHAD_DISCOVERY = "whad-discovery"
 CHECK_KIND_DOT11_MONITOR_INTERFACE = "dot11-monitor-interface"
@@ -28,6 +29,7 @@ CHECK_KINDS = (
     CHECK_KIND_INTERFACE_EXISTS,
     CHECK_KIND_RAW_SOCKET_PERMISSION,
     CHECK_KIND_PCAP_OPEN,
+    CHECK_KIND_LAN_REACHABILITY_PLAN,
     CHECK_KIND_SERIAL_DEVICE_EXISTS,
     CHECK_KIND_WHAD_DISCOVERY,
     CHECK_KIND_DOT11_MONITOR_INTERFACE,
@@ -48,6 +50,9 @@ _CHECK_KIND_ALIASES = {
     CHECK_KIND_RAW_SOCKET_PERMISSION: CHECK_KIND_RAW_SOCKET_PERMISSION,
     "pcap": CHECK_KIND_PCAP_OPEN,
     CHECK_KIND_PCAP_OPEN: CHECK_KIND_PCAP_OPEN,
+    "lan-reachability": CHECK_KIND_LAN_REACHABILITY_PLAN,
+    "lan-reachability-planning": CHECK_KIND_LAN_REACHABILITY_PLAN,
+    CHECK_KIND_LAN_REACHABILITY_PLAN: CHECK_KIND_LAN_REACHABILITY_PLAN,
     "serial": CHECK_KIND_SERIAL_DEVICE_EXISTS,
     "serial-device": CHECK_KIND_SERIAL_DEVICE_EXISTS,
     CHECK_KIND_SERIAL_DEVICE_EXISTS: CHECK_KIND_SERIAL_DEVICE_EXISTS,
@@ -65,6 +70,7 @@ _SCRIPT_MODULES = {
     CHECK_KIND_INTERFACE_EXISTS: "tools.appliance.checks.interface_exists",
     CHECK_KIND_RAW_SOCKET_PERMISSION: "tools.appliance.checks.raw_socket_permission",
     CHECK_KIND_PCAP_OPEN: "tools.appliance.checks.pcap_open",
+    CHECK_KIND_LAN_REACHABILITY_PLAN: "tools.appliance.checks.lan_reachability_plan",
     CHECK_KIND_SERIAL_DEVICE_EXISTS: "tools.appliance.checks.serial_device_exists",
     CHECK_KIND_WHAD_DISCOVERY: "tools.appliance.checks.whad_discovery",
     CHECK_KIND_DOT11_MONITOR_INTERFACE: "tools.appliance.checks.dot11_monitor_interface",
@@ -77,6 +83,7 @@ _DEFAULT_DESCRIPTIONS = {
     CHECK_KIND_INTERFACE_EXISTS: "Verify that the selected network interface exists.",
     CHECK_KIND_RAW_SOCKET_PERMISSION: "Verify that raw socket creation is permitted.",
     CHECK_KIND_PCAP_OPEN: "Verify that libpcap can open the selected interface.",
+    CHECK_KIND_LAN_REACHABILITY_PLAN: "Plan a LAN reachability check for the selected interface.",
     CHECK_KIND_SERIAL_DEVICE_EXISTS: "Verify that the selected serial device exists.",
     CHECK_KIND_WHAD_DISCOVERY: "Verify that WHAD discovery can inspect available adapters.",
     CHECK_KIND_DOT11_MONITOR_INTERFACE: "Verify that the selected interface is in monitor mode.",
@@ -89,6 +96,7 @@ _DEFAULT_SCOPES = {
     CHECK_KIND_INTERFACE_EXISTS: "host",
     CHECK_KIND_RAW_SOCKET_PERMISSION: "container",
     CHECK_KIND_PCAP_OPEN: "container",
+    CHECK_KIND_LAN_REACHABILITY_PLAN: "container",
     CHECK_KIND_SERIAL_DEVICE_EXISTS: "host",
     CHECK_KIND_WHAD_DISCOVERY: "container",
     CHECK_KIND_DOT11_MONITOR_INTERFACE: "host",
@@ -294,6 +302,17 @@ def _render_known_command(
             default_env=_default_interface_env(profile, kind),
         )
         return [*command, *args], resolved, {}
+    if kind == CHECK_KIND_LAN_REACHABILITY_PLAN:
+        args, resolved = _interface_args(
+            profile,
+            parameters,
+            env,
+            default_env="LIBCRAFTER_IFACE",
+        )
+        return [*command, "--dry-run", *args], resolved, {
+            "live_transmit": False,
+            "placeholder": True,
+        }
     if kind == CHECK_KIND_SERIAL_DEVICE_EXISTS:
         args, resolved = _device_args(profile, parameters, env)
         return [*command, *args], resolved, {}
@@ -561,6 +580,7 @@ __all__ = [
     "CHECK_KIND_DOT11_MONITOR_INTERFACE",
     "CHECK_KIND_IMAGE_AVAILABLE",
     "CHECK_KIND_INTERFACE_EXISTS",
+    "CHECK_KIND_LAN_REACHABILITY_PLAN",
     "CHECK_KIND_PCAP_OPEN",
     "CHECK_KIND_RAW_SOCKET_PERMISSION",
     "CHECK_KIND_SERIAL_DEVICE_EXISTS",
