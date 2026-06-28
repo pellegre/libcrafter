@@ -1,0 +1,286 @@
+version: 1
+kind: feature
+name: ssdp_headers
+summary: Source-backed SSDP known, unknown, duplicate, extension, and boundary header behavior.
+
+# SSDP header oracle coverage is a strict-byte UDP payload contract. Backend
+# adapters should materialize each case as one CRLF-delimited SSDP datagram and
+# compare ordered header metadata without normalizing away spelling, duplicate
+# order, extension names, empty values, or explicit numeric boundaries.
+
+layers:
+  - udp
+  - ssdp
+directions:
+  - backend_to_libcrafter
+  - libcrafter_to_backend
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: known-headers
+    summary: Source-backed search, notification, and response headers with canonical names and stable values.
+    message_kind: m_search
+    start_line: "M-SEARCH * HTTP/1.1"
+    udp:
+      source_port: 1900
+      destination_port: 1900
+    headers:
+      - name: HOST
+        value: "239.255.255.250:1900"
+      - name: MAN
+        value: "\"ssdp:discover\""
+      - name: MX
+        value: "1"
+      - name: ST
+        value: "ssdp:all"
+      - name: USER-AGENT
+        value: "example-os/1.0 UPnP/2.0 example-control/1.0"
+    checks:
+      - known_header_names_classified
+      - canonical_name_lookup_case_insensitive
+      - header_values_preserved
+      - ordered_header_list_preserved
+  - name: unknown-headers
+    summary: Structurally valid SSDP headers with unknown names and non-canonical known-name spelling are preserved.
+    message_kind: unknown_request_preserved
+    start_line: "M-SEARCH-EXAMPLE * HTTP/1.1"
+    udp:
+      source_port: 1900
+      destination_port: 1900
+    headers:
+      - name: host
+        value: "239.255.255.250:1900"
+      - name: X-EXAMPLE.ORG
+        value: "one"
+      - name: Vendor-Token
+        value: "opaque;v=1"
+      - name: NT-EXAMPLE
+        value: "unknown target value"
+    checks:
+      - unknown_header_names_preserved
+      - original_header_spelling_preserved
+      - noncanonical_known_lookup_preserved
+      - unknown_values_not_rejected
+  - name: duplicate-headers
+    summary: Duplicate field lines stay in original order without merge, deduplication, or sort.
+    message_kind: notify
+    start_line: "NOTIFY * HTTP/1.1"
+    udp:
+      source_port: 1900
+      destination_port: 1900
+    headers:
+      - name: HOST
+        value: "239.255.255.250:1900"
+      - name: NT
+        value: "upnp:rootdevice"
+      - name: NT
+        value: "uuid:device-001"
+      - name: USN
+        value: "uuid:device-001::upnp:rootdevice"
+      - name: USN
+        value: "uuid:device-001"
+      - name: CACHE-CONTROL
+        value: "max-age=1800"
+      - name: CACHE-CONTROL
+        value: "max-age=60"
+    checks:
+      - duplicate_header_order_preserved
+      - duplicate_index_preserved
+      - duplicate_values_not_combined
+      - recompile_matches_input
+  - name: extension-headers
+    summary: UPnP extension headers, IPv6 OPT/NLS names, secure location, and explicit unicast response ports are preserved.
+    message_kind: notify
+    start_line: "NOTIFY * HTTP/1.1"
+    udp:
+      source_port: 1900
+      destination_port: 1900
+    headers:
+      - name: HOST
+        value: "[ff05::c]:1900"
+      - name: BOOTID.UPNP.ORG
+        value: "1"
+      - name: CONFIGID.UPNP.ORG
+        value: "16777215"
+      - name: NEXTBOOTID.UPNP.ORG
+        value: "2"
+      - name: SEARCHPORT.UPNP.ORG
+        value: "49152"
+      - name: TCPPORT.UPNP.ORG
+        value: "65535"
+      - name: CPFN.UPNP.ORG
+        value: "Example Control Point"
+      - name: CPUUID.UPNP.ORG
+        value: "uuid:control-point-001"
+      - name: SECURELOCATION.UPNP.ORG
+        value: "https://192.0.2.10:8443/root.xml"
+      - name: OPT
+        value: "\"http://schemas.upnp.org/upnp/1/0/\"; ns=01"
+      - name: 01-NLS
+        value: "1"
+    checks:
+      - extension_header_names_classified
+      - nls_namespace_preserved
+      - source_backed_numeric_boundaries_preserved
+      - extension_values_preserved
+  - name: boundary-headers
+    summary: Valid header boundaries preserve empty values, zero and maximum numeric values, whitespace-trimmed values, and opaque binary body separation.
+    message_kind: response
+    start_line: "HTTP/1.1 200 OK"
+    udp:
+      source_port: 1900
+      destination_port: 1900
+    headers:
+      - name: EXT
+        value: ""
+      - name: MX
+        value: "0"
+      - name: BOOTID.UPNP.ORG
+        value: "2147483647"
+      - name: CONFIGID.UPNP.ORG
+        value: "16777216"
+      - name: SEARCHPORT.UPNP.ORG
+        value: "65535"
+      - name: CACHE-CONTROL
+        value: "max-age=0"
+      - name: X-EMPTY
+        value: ""
+      - name: X-OWS
+        wire_value: "  trimmed value\t"
+        value: "trimmed value"
+    body:
+      encoding: hex
+      value: "626f64792d6279746573"
+    checks:
+      - empty_header_values_preserved
+      - numeric_boundary_values_preserved
+      - valid_reserved_configid_preserved
+      - optional_whitespace_trimmed_for_value
+      - body_boundary_not_folded_into_headers
+
+coverage_cases:
+  - ssdp-known-headers
+  - ssdp-unknown-headers
+  - ssdp-duplicate-headers
+  - ssdp-extension-headers
+  - ssdp-boundary-headers
+
+supported_cases:
+  - name: ssdp-known-headers
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: ssdp-unknown-headers
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: ssdp-duplicate-headers
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: ssdp-extension-headers
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: ssdp-boundary-headers
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+
+case_groups:
+  - name: ssdp-header-classification
+    summary: Known and unknown header-name classification with spelling and value preservation.
+    byte_policy: strict_bytes
+    cases:
+      - ssdp-known-headers
+      - ssdp-unknown-headers
+  - name: ssdp-header-preservation
+    summary: Duplicate order, extension names, empty values, numeric boundaries, OWS, and body separation.
+    byte_policy: strict_bytes
+    cases:
+      - ssdp-duplicate-headers
+      - ssdp-extension-headers
+      - ssdp-boundary-headers
+
+normalized_model:
+  udp:
+    - source_port
+    - destination_port
+    - length
+    - checksum
+  message:
+    - message_kind
+    - start_line
+    - headers
+    - body
+    - body_length
+  header:
+    - name
+    - original_name
+    - canonical_name
+    - name_kind
+    - value
+    - wire_value
+    - order
+    - duplicate_index
+    - nls_namespace
+  registry:
+    - header_name_status
+    - extension_header_status
+
+source_refs:
+  - UPnP Device Architecture 2.0 Discovery
+  - UPnP Device Architecture 1.1 Discovery
+  - UPnP Device Architecture 1.1 Annex A
+  - RFC 9110
+  - RFC 9112
+  - RFC 2774
+  - .agents/docs/ssdp-source-manifest.md
+  - .agents/docs/ssdp-wire-grammar.md
+  - .agents/docs/ssdp-codepoints.md
+
+notes:
+  - >-
+    Header names are case-insensitive for lookup, but decoding and
+    serialization preserve the original spelling, insertion order, duplicate
+    field lines, extension fields, empty values, and unknown names.
+  - >-
+    Boundary cases are valid SSDP messages. Malformed header delimiters,
+    invalid field-name tokens, folded lines, and missing terminators are owned
+    by the later malformed SSDP oracle feature.
+  - >-
+    Numeric extension values in this feature are preserved packet data. Oracle
+    adapters must not infer live ports, multicast membership, retry behavior, or
+    TCP behavior from SEARCHPORT.UPNP.ORG or TCPPORT.UPNP.ORG.
+  - >-
+    Fixture values use documentation address space and synthetic product
+    strings only. No live host identifiers, provider endpoints, credentials, or
+    local paths belong in generated artifacts from these cases.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - Raw
+    notes:
+      - >-
+        SSDP header materialization is assigned to later backend steps. These
+        cases can be emitted as deterministic UDP Raw payloads and normalized
+        from Raw bytes once the Scapy SSDP backend adapter exists.
+  libcrafter:
+    status: supported
+    native_layers:
+      - Udp
+      - Ssdp
+    notes:
+      - >-
+        The crate preserves SSDP header spelling, lookup classification,
+        duplicates, extension headers, empty values, boundary numeric values,
+        and body bytes through typed builders, parsing, serialization, decode,
+        summary, and show paths.
