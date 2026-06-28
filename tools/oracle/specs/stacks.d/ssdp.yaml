@@ -1,0 +1,122 @@
+version: 1
+kind: stack_grammar
+name: ssdp_stacks
+
+families:
+  - name: ssdp
+    default_stack:
+      - ipv4
+      - udp
+      - ssdp
+    feature_tags:
+      - ipv4
+      - ipv6
+      - udp
+      - ssdp
+
+stacks:
+  - name: ipv4_udp_ssdp
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - udp
+      - ssdp
+    coverage_cases:
+      - ssdp-m-search
+      - ssdp-notify-alive
+      - ssdp-notify-byebye
+      - ssdp-notify-update
+      - ssdp-response-ok
+      - ssdp-unknown-preservation
+      - ssdp-body-bytes
+      - ssdp-raw-fallback
+      - ssdp-known-headers
+      - ssdp-unknown-headers
+      - ssdp-duplicate-headers
+      - ssdp-extension-headers
+      - ssdp-boundary-headers
+      - ssdp-ipv4-multicast
+      - malformed-ssdp-missing-delimiter
+      - malformed-ssdp-bare-lf
+      - malformed-ssdp-bad-header
+      - malformed-ssdp-bad-status
+  - name: ipv6_udp_ssdp
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - udp
+      - ssdp
+    coverage_cases:
+      - ssdp-m-search
+      - ssdp-response-ok
+      - ssdp-unknown-preservation
+      - ssdp-body-bytes
+      - ssdp-known-headers
+      - ssdp-unknown-headers
+      - ssdp-duplicate-headers
+      - ssdp-extension-headers
+      - ssdp-boundary-headers
+      - ssdp-ipv6-multicast
+  - name: ethernet_ipv4_udp_ssdp
+    root: "link:ethernet"
+    layers:
+      - ethernet
+      - ipv4
+      - udp
+      - ssdp
+    coverage_cases:
+      - ssdp-m-search
+      - ssdp-notify-alive
+      - ssdp-response-ok
+      - ssdp-raw-fallback
+      - ssdp-ipv4-multicast
+      - malformed-ssdp-missing-delimiter
+      - malformed-ssdp-bare-lf
+      - malformed-ssdp-bad-header
+      - malformed-ssdp-bad-status
+  - name: ethernet_ipv6_udp_ssdp
+    root: "link:ethernet"
+    layers:
+      - ethernet
+      - ipv6
+      - udp
+      - ssdp
+    coverage_cases:
+      - ssdp-m-search
+      - ssdp-response-ok
+      - ssdp-ipv6-multicast
+      - ssdp-extension-headers
+
+constraints:
+  - name: ssdp_udp_children
+    parent: udp
+    children:
+      - ssdp
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - IP
+      - IPv6
+      - UDP
+      - Raw
+    notes:
+      - >-
+        SSDP stack materialization is planned as deterministic IP or IPv6 over
+        UDP with Raw SSDP payload bytes until the backend adapter adds typed
+        SSDP normalization.
+  libcrafter:
+    status: supported
+    native_layers:
+      - Ethernet
+      - Ipv4
+      - Ipv6
+      - Udp
+      - Ssdp
+      - Raw
+    notes:
+      - >-
+        The crate builds, decodes, inspects, and round-trips IPv4, IPv6, and
+        Ethernet-framed SSDP packet stacks offline while preserving UDP/1900
+        raw fallback behavior.
