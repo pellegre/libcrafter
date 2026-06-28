@@ -31,6 +31,7 @@ def _planned_endpoint_manifest(
     role: str,
     private_group: str | None,
     private_ip: str | None,
+    env: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     endpoint_id = _planned_endpoint_id(
         provider=provider,
@@ -44,7 +45,7 @@ def _planned_endpoint_manifest(
         "dry_run": True,
         "state_dir": str(layout.state_dir),
         "manifest_path": str(layout.manifest_path),
-        "appliance": hetzner_appliance_metadata(exposure),
+        "appliance": hetzner_appliance_metadata(exposure, endpoint_id=endpoint_id, env=env),
     }
     interfaces = [
         NetworkInterface(
@@ -198,6 +199,7 @@ def _write_failed_wan_manifest(
     public_ipv6: str | None,
     ssh_host: str | None,
     error: str,
+    env: Mapping[str, str] | None = None,
 ) -> None:
     try:
         write_endpoint_manifest(
@@ -243,6 +245,7 @@ def _write_failed_wan_manifest(
                 artifact_dir=str(getattr(layout, "artifact_dir")),
                 metadata={
                     **_wan_manifest_metadata(
+                        endpoint_id=endpoint_id,
                         created=True,
                         dry_run=False,
                         layout=layout,
@@ -250,6 +253,7 @@ def _write_failed_wan_manifest(
                         server_name=server_name,
                         ssh_key_id=ssh_key_id,
                         ssh_key_name=ssh_key_name,
+                        env=env,
                     ),
                     "error": error,
                 },
@@ -278,6 +282,7 @@ def _write_failed_private_manifest(
     public_ipv6: str | None,
     ssh_host: str | None,
     error: str,
+    env: Mapping[str, str] | None = None,
 ) -> None:
     try:
         write_endpoint_manifest(
@@ -327,6 +332,7 @@ def _write_failed_private_manifest(
                 artifact_dir=str(getattr(layout, "artifact_dir")),
                 metadata={
                     **_private_manifest_metadata(
+                        endpoint_id=endpoint_id,
                         created=True,
                         dry_run=False,
                         layout=layout,
@@ -338,6 +344,7 @@ def _write_failed_private_manifest(
                         server_name=server_name,
                         ssh_key_id=ssh_key_id,
                         ssh_key_name=ssh_key_name,
+                        env=env,
                     ),
                     "error": error,
                 },
@@ -349,6 +356,7 @@ def _write_failed_private_manifest(
 
 def _wan_manifest_metadata(
     *,
+    endpoint_id: str,
     created: bool,
     dry_run: bool,
     layout: object,
@@ -356,6 +364,7 @@ def _wan_manifest_metadata(
     server_name: str,
     ssh_key_id: str | None,
     ssh_key_name: str,
+    env: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     state_dir = getattr(layout, "state_dir")
     manifest_path = getattr(layout, "manifest_path")
@@ -364,7 +373,7 @@ def _wan_manifest_metadata(
         "dry_run": dry_run,
         "state_dir": str(state_dir),
         "manifest_path": str(manifest_path),
-        "appliance": hetzner_appliance_metadata("wan"),
+        "appliance": hetzner_appliance_metadata("wan", endpoint_id=endpoint_id, env=env),
         "cleanup": {
             "server_id": server_id,
             "ssh_key_id": ssh_key_id,
@@ -376,6 +385,7 @@ def _wan_manifest_metadata(
 
 def _private_manifest_metadata(
     *,
+    endpoint_id: str,
     created: bool,
     dry_run: bool,
     layout: object,
@@ -387,8 +397,10 @@ def _private_manifest_metadata(
     server_name: str,
     ssh_key_id: str | None,
     ssh_key_name: str,
+    env: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     metadata = _wan_manifest_metadata(
+        endpoint_id=endpoint_id,
         created=created,
         dry_run=dry_run,
         layout=layout,
@@ -396,8 +408,13 @@ def _private_manifest_metadata(
         server_name=server_name,
         ssh_key_id=ssh_key_id,
         ssh_key_name=ssh_key_name,
+        env=env,
     )
-    metadata["appliance"] = hetzner_appliance_metadata("private")
+    metadata["appliance"] = hetzner_appliance_metadata(
+        "private",
+        endpoint_id=endpoint_id,
+        env=env,
+    )
     metadata.update(
         {
             "private_group": private_group,

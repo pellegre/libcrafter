@@ -90,6 +90,7 @@ def create_endpoint(
             role=role,
             private_group=private_group,
             private_ip=private_ip,
+            env=env,
         )
 
     if not confirm_live_run:
@@ -226,6 +227,7 @@ def _create_wan_endpoint(
             )
         ]
         base_metadata = _wan_manifest_metadata(
+            endpoint_id=endpoint_id,
             created=True,
             dry_run=False,
             layout=layout,
@@ -233,6 +235,7 @@ def _create_wan_endpoint(
             server_name=server_name,
             ssh_key_id=ssh_key_id,
             ssh_key_name=ssh_key_name,
+            env=environ,
         )
 
         write_endpoint_manifest(
@@ -344,6 +347,7 @@ def _create_wan_endpoint(
                 public_ipv6=public_ipv6,
                 ssh_host=ssh_host,
                 error=str(exc),
+                env=environ,
             )
         _cleanup_partial_wan(server_id=server_id, ssh_key_id=ssh_key_id, env=hcloud_env)
         raise
@@ -517,6 +521,7 @@ def _create_private_endpoint(
             server_name=server_name,
         )
         base_metadata = _private_manifest_metadata(
+            endpoint_id=endpoint_id,
             created=True,
             dry_run=False,
             layout=layout,
@@ -528,6 +533,7 @@ def _create_private_endpoint(
             server_name=server_name,
             ssh_key_id=ssh_key_id,
             ssh_key_name=ssh_key_name,
+            env=environ,
         )
 
         write_endpoint_manifest(
@@ -692,6 +698,7 @@ def _create_private_endpoint(
                 public_ipv6=public_ipv6,
                 ssh_host=ssh_host,
                 error=str(exc),
+                env=environ,
             )
         _cleanup_partial_wan(server_id=server_id, ssh_key_id=ssh_key_id, env=hcloud_env)
         if network_created and not group_record_written:

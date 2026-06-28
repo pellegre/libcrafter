@@ -7,11 +7,12 @@ import json
 import os
 import tempfile
 import unittest
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+from tools.appliance.engine import image as appliance_image
 from tools.endpoint.engine import cli as wire_cli
 from tools.endpoint.engine.model import NetworkInterface
 from tools.endpoint.engine.process import CommandResult
@@ -199,7 +200,21 @@ class HetznerCreateEndpointTest(unittest.TestCase):
         def fake_runner(argv: Sequence[str], **_: object) -> CommandResult:
             self.fail(f"dry-run create should not run hcloud: {argv}")
 
+        secret = "dry-run-secret-should-not-leak"
+        image_tag = "registry.example.invalid/libcrafter/appliance:dry-run"
+
         with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            wan = hetzner.create_endpoint(
+                provider="hetzner",
+                exposure="wan",
+                role="probe",
+                dry_run=True,
+                env={
+                    "HETZNER_API_TOKEN": secret,
+                    appliance_image.LIBCRAFTER_APPLIANCE_IMAGE: image_tag,
+                },
+                command_runner=fake_runner,
+            )
             output = hetzner.create_endpoint(
                 provider="hetzner",
                 exposure="private",
@@ -207,9 +222,30 @@ class HetznerCreateEndpointTest(unittest.TestCase):
                 private_group="pair-a",
                 private_ip="10.42.19.9",
                 dry_run=True,
+                env={
+                    "HETZNER_API_TOKEN": secret,
+                    appliance_image.LIBCRAFTER_APPLIANCE_IMAGE: image_tag,
+                },
                 command_runner=fake_runner,
             )
 
+        self.assertNotIn(secret, json.dumps({"wan": wan, "private": output}, sort_keys=True))
+        _assert_appliance_metadata(
+            self,
+            wan,
+            expected_profile="wan-raw",
+            expected_network_scope="wan",
+            expected_image_tag=image_tag,
+            private_lab=False,
+        )
+        _assert_appliance_metadata(
+            self,
+            output,
+            expected_profile="lan-raw",
+            expected_network_scope="private-lab",
+            expected_image_tag=image_tag,
+            private_lab=True,
+        )
         self.assertFalse(output["created"])
         self.assertTrue(output["dry_run"])
         self.assertEqual(output["status"], "planned")
@@ -238,6 +274,8 @@ class HetznerCreateEndpointTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             calls: list[tuple[str, ...]] = []
+            secret = "wan-live-secret-should-not-leak"
+            image_tag = "registry.example.invalid/libcrafter/appliance:wan-live"
 
             def fake_runner(argv: Sequence[str], **_: object) -> CommandResult:
                 calls.append(tuple(argv))
@@ -250,7 +288,10 @@ class HetznerCreateEndpointTest(unittest.TestCase):
                     role="probe",
                     dry_run=False,
                     confirm_live_run=True,
-                    env={"HETZNER_API_TOKEN": "token"},
+                    env={
+                        "HETZNER_API_TOKEN": secret,
+                        appliance_image.LIBCRAFTER_APPLIANCE_IMAGE: image_tag,
+                    },
                     command_runner=fake_runner,
                 )
                 stored = read_endpoint_manifest(str(output["endpoint_id"]))
@@ -260,6 +301,26 @@ class HetznerCreateEndpointTest(unittest.TestCase):
             self.assertFalse(output["dry_run"])
             self.assertEqual(stored.status, "active")
             self.assertEqual(stored.ssh.host, "198.51.100.44")
+            self.assertNotIn(
+                secret,
+                json.dumps({"output": output, "stored": stored.to_dict()}, sort_keys=True),
+            )
+            _assert_appliance_metadata(
+                self,
+                output,
+                expected_profile="wan-raw",
+                expected_network_scope="wan",
+                expected_image_tag=image_tag,
+                private_lab=False,
+            )
+            _assert_appliance_metadata(
+                self,
+                stored.to_dict(),
+                expected_profile="wan-raw",
+                expected_network_scope="wan",
+                expected_image_tag=image_tag,
+                private_lab=False,
+            )
             self.assertEqual(
                 calls,
                 [
@@ -307,6 +368,8 @@ class HetznerCreateEndpointTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             calls: list[tuple[str, ...]] = []
+            secret = "private-live-secret-should-not-leak"
+            image_tag = "registry.example.invalid/libcrafter/appliance:private-live"
 
             def fake_runner(argv: Sequence[str], **_: object) -> CommandResult:
                 calls.append(tuple(argv))
@@ -321,7 +384,10 @@ class HetznerCreateEndpointTest(unittest.TestCase):
                     private_ip="10.42.19.9",
                     dry_run=False,
                     confirm_live_run=True,
-                    env={"HCLOUD_TOKEN": "token"},
+                    env={
+                        "HCLOUD_TOKEN": secret,
+                        appliance_image.LIBCRAFTER_APPLIANCE_IMAGE: image_tag,
+                    },
                     command_runner=fake_runner,
                 )
                 stored = read_endpoint_manifest(str(output["endpoint_id"]))
@@ -335,6 +401,26 @@ class HetznerCreateEndpointTest(unittest.TestCase):
             self.assertEqual(stored.interfaces[0].mac, "86:00:00:00:00:09")
             self.assertEqual(stored.metadata["discovery"]["private_interface"], "ens10")
             self.assertTrue(stored.metadata["discovery"]["private_interface_matched"])
+            self.assertNotIn(
+                secret,
+                json.dumps({"output": output, "stored": stored.to_dict()}, sort_keys=True),
+            )
+            _assert_appliance_metadata(
+                self,
+                output,
+                expected_profile="lan-raw",
+                expected_network_scope="private-lab",
+                expected_image_tag=image_tag,
+                private_lab=True,
+            )
+            _assert_appliance_metadata(
+                self,
+                stored.to_dict(),
+                expected_profile="lan-raw",
+                expected_network_scope="private-lab",
+                expected_image_tag=image_tag,
+                private_lab=True,
+            )
             self.assertEqual(record.allocated_endpoint_ids, [endpoint_id])
             self.assertEqual(record.allocated_private_ipv4s, ["10.42.19.9"])
             self.assertEqual(record.network_resource["network_id"], "network-303")
@@ -847,6 +933,45 @@ class HetznerPrivateNetworkSubnetTest(unittest.TestCase):
             ),
         )
         self.assertTrue(outcome["created"])
+
+
+def _assert_appliance_metadata(
+    case: unittest.TestCase,
+    manifest: Mapping[str, object],
+    *,
+    expected_profile: str,
+    expected_network_scope: str,
+    expected_image_tag: str,
+    private_lab: bool,
+) -> None:
+    metadata = manifest["metadata"]  # type: ignore[index]
+    appliance = metadata["appliance"]  # type: ignore[index]
+    endpoint_id = str(manifest["endpoint_id"])
+    remote_root = f"/var/lib/libcrafter/appliance/{endpoint_id}"
+    case.assertTrue(appliance["appliance_capable"])  # type: ignore[index]
+    case.assertTrue(appliance["nested_docker"])  # type: ignore[index]
+    case.assertTrue(appliance["docker_execution_supported"])  # type: ignore[index]
+    case.assertEqual(appliance["docker_command"], "docker")  # type: ignore[index]
+    case.assertEqual(appliance["substrate"], "ssh-docker")  # type: ignore[index]
+    case.assertEqual(appliance["docker_setup"], "install-or-verify")  # type: ignore[index]
+    case.assertEqual(appliance["docker_host_readiness"], "check-before-use")  # type: ignore[index]
+    case.assertEqual(appliance["image_tag"], expected_image_tag)  # type: ignore[index]
+    case.assertEqual(appliance["supported_profiles"], [expected_profile])  # type: ignore[index]
+    case.assertEqual(appliance["raw_profile"], expected_profile)  # type: ignore[index]
+    case.assertEqual(appliance["remote_base"], "/var/lib/libcrafter/appliance")  # type: ignore[index]
+    case.assertEqual(appliance["remote_work_root"], f"{remote_root}/work")  # type: ignore[index]
+    case.assertEqual(
+        appliance["remote_artifact_root"],  # type: ignore[index]
+        f"{remote_root}/artifacts",
+    )
+    case.assertEqual(
+        appliance["profile_hints"],  # type: ignore[index]
+        {"raw_profile": expected_profile, "network_scope": expected_network_scope},
+    )
+    if private_lab:
+        case.assertTrue(appliance["private_lab"])  # type: ignore[index]
+    else:
+        case.assertNotIn("private_lab", appliance)
 
 
 if __name__ == "__main__":
