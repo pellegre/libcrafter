@@ -12,6 +12,8 @@ from pathlib import Path
 from tools.appliance.checks import serial_device_exists
 from tools.appliance.engine.checks import (
     CHECK_KIND_DOCKER_DAEMON,
+    CHECK_KIND_DOT11_INJECTION_SMOKE,
+    CHECK_KIND_DOT11_MONITOR_INTERFACE,
     CHECK_KIND_INTERFACE_EXISTS,
     CHECK_KIND_LAN_REACHABILITY_PLAN,
     CHECK_KIND_PCAP_OPEN,
@@ -243,6 +245,78 @@ class BuiltinProfilesTest(unittest.TestCase):
             environment={"LIBCRAFTER_WHAD_DEVICE": "/dev/ttyACM9"},
         )
         self.assertEqual(override_plans[1].command_argv[-2:], ["--device", "/dev/ttyACM9"])
+
+    def test_dot11_monitor_profile_is_registered_with_wifi_monitor_placement(self) -> None:
+        self.assertIn("dot11-monitor", list_profile_names())
+
+        profile = resolve_profile("dot11-monitor")
+
+        self.assertEqual(profile.metadata["placement"], "wifi-monitor")
+        self.assertEqual(profile.image, DEFAULT_IMAGE)
+        self.assertEqual(profile.network_mode, "host")
+        self.assertEqual(profile.cap_add, ["NET_RAW", "NET_ADMIN"])
+        self.assertEqual(profile.devices, [])
+        self.assertEqual(profile.env, {"LIBCRAFTER_DOT11_IFACE": ""})
+        self.assertEqual(profile.metadata["interface_env"], "LIBCRAFTER_DOT11_IFACE")
+        self.assertEqual(profile.metadata["optional_channel"]["env"], "LIBCRAFTER_DOT11_CHANNEL")
+        self.assertFalse(profile.metadata["optional_channel"]["required"])
+
+    def test_dot11_monitor_profile_documents_host_or_vm_prep_ownership(self) -> None:
+        profile = resolve_profile("dot11-monitor")
+
+        requirement_text = " ".join(profile.host_requirements).lower()
+        self.assertIn("host or vm preparation owns", requirement_text)
+        self.assertIn("wi-fi kernel driver", requirement_text)
+        self.assertIn("monitor-mode setup", requirement_text)
+        self.assertIn("already exist and be in monitor mode", requirement_text)
+        prep = profile.metadata["host_or_vm_prep"]
+        self.assertTrue(prep["owns_kernel_driver"])
+        self.assertTrue(prep["owns_monitor_mode"])
+
+    def test_dot11_monitor_profile_renders_checks_and_missing_live_iface_policy(self) -> None:
+        profile = resolve_profile("dot11-monitor")
+
+        check_plans = render_profile_check_plans(profile)
+        self.assertEqual(
+            [plan.kind for plan in check_plans],
+            [
+                CHECK_KIND_DOCKER_DAEMON,
+                CHECK_KIND_INTERFACE_EXISTS,
+                CHECK_KIND_DOT11_MONITOR_INTERFACE,
+                CHECK_KIND_PCAP_OPEN,
+                CHECK_KIND_DOT11_INJECTION_SMOKE,
+            ],
+        )
+        self.assertEqual(check_plans[1].command_argv[-2:], ["--iface-env", "LIBCRAFTER_DOT11_IFACE"])
+        self.assertEqual(check_plans[2].command_argv[-2:], ["--iface-env", "LIBCRAFTER_DOT11_IFACE"])
+        self.assertEqual(check_plans[3].command_argv[-2:], ["--iface-env", "LIBCRAFTER_DOT11_IFACE"])
+
+        injection = check_plans[4]
+        self.assertFalse(injection.required)
+        self.assertIn("--dry-run", injection.command_argv)
+        self.assertEqual(injection.command_argv[-2:], ["--iface-env", "LIBCRAFTER_DOT11_IFACE"])
+        self.assertEqual(injection.metadata["missing_interface_policy"], "reject-live-check")
+        self.assertTrue(injection.metadata["requires_interface_configuration"])
+        self.assertTrue(injection.metadata["requires_live_gate"])
+        self.assertFalse(injection.metadata["live_transmit"])
+
+        override_plans = render_profile_check_plans(
+            profile,
+            environment={"LIBCRAFTER_DOT11_IFACE": "mon0"},
+        )
+        self.assertEqual(override_plans[4].command_argv[-2:], ["--iface", "mon0"])
+
+    def test_dot11_monitor_profile_does_not_claim_docker_wifi_isolation(self) -> None:
+        profile = resolve_profile("dot11-monitor")
+        isolation = profile.metadata["docker_wifi_isolation"]
+
+        self.assertIsInstance(isolation, dict)
+        self.assertFalse(isolation["sufficient"])
+        self.assertIn("userland execution only", isolation["reason"])
+        self.assertIn("host or VM preparation", isolation["reason"])
+        profile_json = json.dumps(profile.to_dict(), sort_keys=True).lower()
+        self.assertNotIn("docker is sufficient", profile_json)
+        self.assertNotIn("docker alone is sufficient", profile_json)
 
     def test_tracked_appliance_manifests_do_not_store_real_hardware_serials(self) -> None:
         for path in _tracked_manifest_paths():
