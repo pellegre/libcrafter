@@ -14,11 +14,11 @@ use crate::protocols::transport::Udp;
 use super::constants::{
     SSDP_HEADER_CACHE_CONTROL, SSDP_HEADER_EXT, SSDP_HEADER_HOST, SSDP_HEADER_LOCATION,
     SSDP_HEADER_MAN, SSDP_HEADER_MX, SSDP_HEADER_NT, SSDP_HEADER_NTS, SSDP_HEADER_SECURELOCATION,
-    SSDP_HEADER_ST, SSDP_HEADER_USN, SSDP_HTTP_VERSION as HTTP_VERSION_1_1,
-    SSDP_IPV4_MULTICAST_HOST, SSDP_MAN_DISCOVER, SSDP_METHOD_M_SEARCH as METHOD_M_SEARCH,
-    SSDP_METHOD_NOTIFY as METHOD_NOTIFY, SSDP_NTS_ALIVE, SSDP_NTS_BYEBYE, SSDP_NTS_UPDATE,
-    SSDP_REASON_OK as REASON_OK, SSDP_STATUS_OK as STATUS_OK, SSDP_ST_ALL, SSDP_TARGET_ROOTDEVICE,
-    SSDP_UDP_PORT,
+    SSDP_HEADER_SERVER, SSDP_HEADER_ST, SSDP_HEADER_USER_AGENT, SSDP_HEADER_USN,
+    SSDP_HTTP_VERSION as HTTP_VERSION_1_1, SSDP_IPV4_MULTICAST_HOST, SSDP_MAN_DISCOVER,
+    SSDP_METHOD_M_SEARCH as METHOD_M_SEARCH, SSDP_METHOD_NOTIFY as METHOD_NOTIFY, SSDP_NTS_ALIVE,
+    SSDP_NTS_BYEBYE, SSDP_NTS_UPDATE, SSDP_REASON_OK as REASON_OK, SSDP_STATUS_OK as STATUS_OK,
+    SSDP_ST_ALL, SSDP_TARGET_ROOTDEVICE, SSDP_UDP_PORT,
 };
 use super::header::{SsdpHeaderNameKind, SsdpHeaderNameParseError, SsdpHeaderValue, SsdpHeaders};
 
@@ -225,6 +225,16 @@ impl Ssdp {
     /// Append an empty source-backed `EXT` header.
     pub fn ext_empty(self) -> Self {
         self.with_source_header(SSDP_HEADER_EXT, SsdpHeaderValue::empty())
+    }
+
+    /// Append an explicit `SERVER` header.
+    pub fn server(self, value: impl Into<SsdpHeaderValue>) -> Self {
+        self.with_source_header(SSDP_HEADER_SERVER, value)
+    }
+
+    /// Append an explicit `USER-AGENT` header.
+    pub fn user_agent(self, value: impl Into<SsdpHeaderValue>) -> Self {
+        self.with_source_header(SSDP_HEADER_USER_AGENT, value)
     }
 
     /// Replace the opaque body bytes with caller-supplied bytes.
@@ -2503,6 +2513,72 @@ mod tests {
                     .as_bytes(),
                 expected.as_bytes()
             );
+        }
+    }
+
+    #[test]
+    fn ssdp_server_headers_explicit_server_and_user_agent_values_are_preserved() {
+        let notify = Ssdp::notify_alive().server("OS/1.0 UPnP/2.0 Product/3.0");
+        let search = Ssdp::m_search_all().user_agent("ControlPoint/1.0 UPnP/2.0 Product/3.0");
+
+        assert_eq!(
+            notify
+                .headers()
+                .get_first(SsdpHeaderNameKind::Server)
+                .expect("SERVER header")
+                .as_bytes(),
+            b"OS/1.0 UPnP/2.0 Product/3.0"
+        );
+        assert_eq!(
+            search
+                .headers()
+                .get_first(SsdpHeaderNameKind::UserAgent)
+                .expect("USER-AGENT header")
+                .as_bytes(),
+            b"ControlPoint/1.0 UPnP/2.0 Product/3.0"
+        );
+    }
+
+    #[test]
+    fn ssdp_server_headers_helpers_append_duplicates_without_parsing() {
+        let message = Ssdp::response_ok()
+            .server("first")
+            .server("second")
+            .user_agent("agent-one")
+            .user_agent("agent-two");
+        let servers = message
+            .headers()
+            .get_all(SsdpHeaderNameKind::Server)
+            .map(SsdpHeaderValue::as_bytes)
+            .collect::<Vec<_>>();
+        let user_agents = message
+            .headers()
+            .get_all(SsdpHeaderNameKind::UserAgent)
+            .map(SsdpHeaderValue::as_bytes)
+            .collect::<Vec<_>>();
+
+        assert_eq!(servers, vec![b"first".as_slice(), b"second".as_slice()]);
+        assert_eq!(
+            user_agents,
+            vec![b"agent-one".as_slice(), b"agent-two".as_slice()]
+        );
+    }
+
+    #[test]
+    fn ssdp_server_headers_constructors_do_not_infer_local_product_details() {
+        for message in [
+            Ssdp::notify_alive(),
+            Ssdp::response_ok_with_ext(),
+            Ssdp::m_search_all(),
+        ] {
+            assert!(message
+                .headers()
+                .get_first(SsdpHeaderNameKind::Server)
+                .is_none());
+            assert!(message
+                .headers()
+                .get_first(SsdpHeaderNameKind::UserAgent)
+                .is_none());
         }
     }
 
