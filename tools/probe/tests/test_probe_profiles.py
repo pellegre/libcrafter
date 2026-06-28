@@ -148,6 +148,7 @@ class ProbeProfileMembershipTest(unittest.TestCase):
                 "rip-smoke",
                 "smoke",
                 "snmp-smoke",
+                "ssdp-smoke",
                 "tcp-smoke",
             ),
         )
