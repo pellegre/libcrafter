@@ -528,7 +528,7 @@ pub mod exports {
         SNMP_V3_FLAG_REPORTABLE, SNMP_V3_FLAG_RESERVED_MASK,
     };
     pub use ssdp::{
-        Ssdp, SsdpHeader, SsdpHeaderField, SsdpHeaderName, SsdpHeaderNameKind,
+        Ssdp, SsdpCacheControl, SsdpHeader, SsdpHeaderField, SsdpHeaderName, SsdpHeaderNameKind,
         SsdpHeaderNameParseError, SsdpHeaderValue, SsdpHeaders, SsdpLocation, SsdpLocationField,
         SsdpLocationParseError, SsdpMessage, SsdpMethod, SsdpMethodParseError, SsdpParseError,
         SsdpParseErrorKind, SsdpParseField, SsdpReasonPhrase, SsdpRequestLine, SsdpRequestTarget,

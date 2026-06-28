@@ -12,12 +12,13 @@ use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::protocols::transport::Udp;
 
 use super::constants::{
-    SSDP_HEADER_EXT, SSDP_HEADER_HOST, SSDP_HEADER_LOCATION, SSDP_HEADER_MAN, SSDP_HEADER_MX,
-    SSDP_HEADER_NT, SSDP_HEADER_NTS, SSDP_HEADER_SECURELOCATION, SSDP_HEADER_ST, SSDP_HEADER_USN,
-    SSDP_HTTP_VERSION as HTTP_VERSION_1_1, SSDP_IPV4_MULTICAST_HOST, SSDP_MAN_DISCOVER,
-    SSDP_METHOD_M_SEARCH as METHOD_M_SEARCH, SSDP_METHOD_NOTIFY as METHOD_NOTIFY, SSDP_NTS_ALIVE,
-    SSDP_NTS_BYEBYE, SSDP_NTS_UPDATE, SSDP_REASON_OK as REASON_OK, SSDP_STATUS_OK as STATUS_OK,
-    SSDP_ST_ALL, SSDP_TARGET_ROOTDEVICE, SSDP_UDP_PORT,
+    SSDP_HEADER_CACHE_CONTROL, SSDP_HEADER_EXT, SSDP_HEADER_HOST, SSDP_HEADER_LOCATION,
+    SSDP_HEADER_MAN, SSDP_HEADER_MX, SSDP_HEADER_NT, SSDP_HEADER_NTS, SSDP_HEADER_SECURELOCATION,
+    SSDP_HEADER_ST, SSDP_HEADER_USN, SSDP_HTTP_VERSION as HTTP_VERSION_1_1,
+    SSDP_IPV4_MULTICAST_HOST, SSDP_MAN_DISCOVER, SSDP_METHOD_M_SEARCH as METHOD_M_SEARCH,
+    SSDP_METHOD_NOTIFY as METHOD_NOTIFY, SSDP_NTS_ALIVE, SSDP_NTS_BYEBYE, SSDP_NTS_UPDATE,
+    SSDP_REASON_OK as REASON_OK, SSDP_STATUS_OK as STATUS_OK, SSDP_ST_ALL, SSDP_TARGET_ROOTDEVICE,
+    SSDP_UDP_PORT,
 };
 use super::header::{SsdpHeaderNameKind, SsdpHeaderNameParseError, SsdpHeaderValue, SsdpHeaders};
 
@@ -209,6 +210,16 @@ impl Ssdp {
     /// Append an explicit `SECURELOCATION.UPNP.ORG` header.
     pub fn secure_location(self, value: impl Into<SsdpHeaderValue>) -> Self {
         self.with_source_header(SSDP_HEADER_SECURELOCATION, value)
+    }
+
+    /// Append an explicit `CACHE-CONTROL` header.
+    pub fn cache_control(self, value: impl Into<SsdpHeaderValue>) -> Self {
+        self.with_source_header(SSDP_HEADER_CACHE_CONTROL, value)
+    }
+
+    /// Append a source-backed `CACHE-CONTROL: max-age=<seconds>` header.
+    pub fn max_age(self, seconds: u32) -> Self {
+        self.cache_control(SsdpCacheControl::max_age(seconds))
     }
 
     /// Replace the opaque body bytes with caller-supplied bytes.
@@ -1284,6 +1295,69 @@ impl fmt::Display for SsdpLocationParseError {
 
 impl std::error::Error for SsdpLocationParseError {}
 
+/// Raw-preserving SSDP cache-control value.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SsdpCacheControl(String);
+
+impl SsdpCacheControl {
+    /// Build a source-backed `max-age=<seconds>` cache directive.
+    pub fn max_age(seconds: u32) -> Self {
+        Self(format!("max-age={seconds}"))
+    }
+
+    /// Preserve a caller-supplied cache-control value.
+    pub fn raw(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// Return the preserved cache-control value.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Return the first parseable `max-age` directive value, if present.
+    pub fn max_age_seconds(&self) -> Option<u32> {
+        self.0
+            .split(',')
+            .find_map(|directive| parse_max_age_directive(directive.trim()))
+    }
+
+    /// Consume the wrapper and return the preserved cache-control string.
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl fmt::Display for SsdpCacheControl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<String> for SsdpCacheControl {
+    fn from(value: String) -> Self {
+        Self::raw(value)
+    }
+}
+
+impl From<&str> for SsdpCacheControl {
+    fn from(value: &str) -> Self {
+        Self::raw(value)
+    }
+}
+
+impl From<SsdpCacheControl> for String {
+    fn from(cache_control: SsdpCacheControl) -> Self {
+        cache_control.0
+    }
+}
+
+impl From<SsdpCacheControl> for SsdpHeaderValue {
+    fn from(cache_control: SsdpCacheControl) -> Self {
+        Self::from(cache_control.0)
+    }
+}
+
 fn source_target(
     domain: impl Into<String>,
     kind: &'static str,
@@ -1321,6 +1395,22 @@ fn is_uri_scheme_byte(byte: u8) -> bool {
 
 fn is_visible_uri_byte(byte: u8) -> bool {
     matches!(byte, 0x21..=0x7e)
+}
+
+fn parse_max_age_directive(directive: &str) -> Option<u32> {
+    let (name, value) = directive.split_once('=')?;
+    if !name.trim().eq_ignore_ascii_case("max-age") {
+        return None;
+    }
+
+    let value = value.trim();
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+
+    value.bytes().try_fold(0u32, |acc, byte| {
+        acc.checked_mul(10)?.checked_add(u32::from(byte - b'0'))
+    })
 }
 
 /// Start-line field rejected by SSDP syntax validation.
@@ -2279,6 +2369,62 @@ mod tests {
             assert_eq!(error.field(), SsdpLocationField::Uri);
             assert_eq!(error.value(), invalid);
             assert!(error.expected().contains("absolute URI"));
+        }
+    }
+
+    #[test]
+    fn ssdp_cache_control_max_age_helper_sets_source_backed_header() {
+        let cache = SsdpCacheControl::max_age(1_800);
+        let message = Ssdp::notify_alive().max_age(1_800);
+
+        assert_eq!(cache.as_str(), "max-age=1800");
+        assert_eq!(cache.to_string(), cache.as_str());
+        assert_eq!(cache.max_age_seconds(), Some(1_800));
+        assert_eq!(
+            message
+                .headers()
+                .get_first(SsdpHeaderNameKind::CacheControl)
+                .expect("CACHE-CONTROL header")
+                .as_bytes(),
+            b"max-age=1800"
+        );
+    }
+
+    #[test]
+    fn ssdp_cache_control_preserves_unknown_directives_and_parses_max_age() {
+        let cache = SsdpCacheControl::raw("foo=bar, max-age = 42, stale=while-revalidate");
+        let message = Ssdp::response_ok().cache_control(cache.clone());
+        let decoded = decode_ssdp(&message.to_bytes()).expect("cache-control response decodes");
+
+        assert_eq!(String::from(cache.clone()), cache.as_str());
+        assert_eq!(cache.max_age_seconds(), Some(42));
+        assert_eq!(decoded, message);
+        assert_eq!(
+            decoded
+                .headers()
+                .get_first(SsdpHeaderNameKind::CacheControl)
+                .expect("CACHE-CONTROL header")
+                .as_bytes(),
+            b"foo=bar, max-age = 42, stale=while-revalidate"
+        );
+    }
+
+    #[test]
+    fn ssdp_cache_control_max_age_parser_handles_boundaries() {
+        for (raw, expected) in [
+            ("max-age=0", Some(0)),
+            ("MAX-AGE=5", Some(5)),
+            ("max-age=4294967295", Some(u32::MAX)),
+            ("max-age=4294967296", None),
+            ("max-age=-1", None),
+            ("max-age=", None),
+            ("foo=1", None),
+            ("max-age= 7 ", Some(7)),
+            ("foo=1, max-age=9", Some(9)),
+        ] {
+            let cache = SsdpCacheControl::raw(raw);
+
+            assert_eq!(cache.max_age_seconds(), expected, "{raw}");
         }
     }
 
