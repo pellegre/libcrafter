@@ -319,6 +319,60 @@ class LabBootstrapApiTest(unittest.TestCase):
             self.assertIn("POLICY_ENV=from-policy", env_args)
             self.assertNotIn("docker.sock", " ".join(docker_argv))
 
+    def test_endpoint_container_runtime_executes_without_nested_docker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            archive = root / "repo.tar.gz"
+            archive.write_bytes(b"archive")
+            runtime = _appliance_runtime(
+                image_tag="registry.example.invalid/libcrafter/appliance:docker",
+                container_policy={
+                    "execution_mode": "endpoint-container",
+                    "nested_docker": False,
+                    "docker_execution_supported": False,
+                },
+            )
+            client = _FakeEndpointClient()
+
+            result = bootstrap_lab_session(
+                _session(stimulus_appliance_runtime=runtime),
+                {"stimulus": ["bash", "-lc", "printf direct"]},
+                remote_dir="/opt/libcrafter-lab/session",
+                archive=archive,
+                output_dir=root / "bootstrap",
+                client=client,
+            )
+
+            self.assertTrue(result.ok)
+            workload = _workload_record(result, "stimulus")
+            appliance = workload.metadata["appliance"]
+            self.assertFalse(appliance["wrapped"])
+            self.assertTrue(appliance["endpoint_container"])
+            self.assertEqual(appliance["execution_mode"], "endpoint-container")
+            self.assertEqual(appliance["original_argv"], ["bash", "-lc", "printf direct"])
+            self.assertNotIn("docker run", " ".join(workload.argv))
+
+            stimulus_calls = [
+                call
+                for call in client.exec_calls
+                if call["endpoint_id"] == "endpoint-stimulus"
+                and call["command"][-3:] == ("bash", "-lc", "printf direct")
+            ]
+            self.assertEqual(len(stimulus_calls), 1)
+            command = stimulus_calls[0]["command"]
+            self.assertEqual(command[0], "bash")
+            self.assertEqual(command[1], "-lc")
+            self.assertIn("cd /opt/libcrafter-lab/session", command[2])
+            self.assertIn("LIBCRAFTER_ENDPOINT_ROLE=stimulus", command[2])
+            self.assertIn("LIBCRAFTER_PRIVATE_INTERFACE=eth1", command[2])
+            self.assertIn(
+                "LIBCRAFTER_BOOTSTRAP_ARTIFACT_DIR="
+                "/opt/libcrafter-lab/session/artifacts/bootstrap/stimulus",
+                command[2],
+            )
+            self.assertIn("LIBCRAFTER_WORK_DIR=/opt/libcrafter-lab/session", command[2])
+            self.assertNotIn("docker", command[2])
+
 
 class WorkloadBootstrapScriptHelperTest(unittest.TestCase):
     def test_render_workload_bootstrap_script_uses_unpacked_repo_context(self) -> None:

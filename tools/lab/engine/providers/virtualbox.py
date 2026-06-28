@@ -29,9 +29,11 @@ from ..model import (
 from .base import LabProviderAdapter
 from .common import (
     build_command_plan,
+    lab_appliance_runtime_from_manifest,
     lab_endpoint_from_manifest,
     normalize_provider_capabilities as normalize_common_provider_capabilities,
     request_session_label,
+    session_appliance_runtime_from_endpoints,
     slug_label,
     validate_remote_dir,
 )
@@ -634,12 +636,26 @@ class VirtualBoxLabProviderAdapter:
     ) -> LabEndpoint:
         """Convert an endpoint manifest into a provider-neutral endpoint."""
 
+        appliance_runtime = lab_appliance_runtime_from_manifest(
+            manifest,
+            default_profile="lan-raw",
+            default_substrate="ssh-docker",
+            default_execution_mode="ssh-docker-host",
+            metadata={
+                "provider": self.name,
+                "private_group": virtualbox_private_group(request),
+                "private_network": True,
+                "bridged_lan": False,
+                "wire_policy": dict(VIRTUALBOX_WIRE_POLICY),
+            },
+        )
         return lab_endpoint_from_manifest(
             manifest,
             role=role,
             exposure=self.wire_exposure,
             peer_roles=peer_roles,
             dry_run=request.dry_run,
+            appliance_runtime=appliance_runtime,
             metadata={
                 "provider": self.name,
                 "wire_provider": self.wire_provider,
@@ -683,6 +699,11 @@ class VirtualBoxLabProviderAdapter:
         endpoint_plan = self.wire_endpoint_plan(planned_request, client=client)
         endpoints = _endpoint_models(endpoint_plan, planned_request.roles)
         command_records = _command_models(endpoint_plan)
+        appliance_runtime = session_appliance_runtime_from_endpoints(
+            endpoints,
+            remote_work_root=remote_dir,
+            remote_artifact_root=remote_artifacts,
+        )
 
         session = LabSession(
             provider=self.name,
@@ -697,6 +718,7 @@ class VirtualBoxLabProviderAdapter:
             command_records=command_records,
             remote_dir=remote_dir,
             remote_artifact_root=remote_artifacts,
+            appliance_runtime=appliance_runtime,
             created_endpoint_ids=[
                 item
                 for item in endpoint_plan.get("created_endpoint_ids", [])

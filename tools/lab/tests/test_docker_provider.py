@@ -188,6 +188,44 @@ class DockerProviderSessionPlanningTest(unittest.TestCase):
         self.assertEqual(session.metadata["private_group"], "lab-docker-probe-smoke-seed-1-private")
         self.assertTrue(session.metadata["private_network"])
         self.assertEqual(session.metadata["wire_policy"], DOCKER_WIRE_POLICY)
+        self.assertIsNotNone(session.appliance_runtime)
+        self.assertEqual(session.appliance_runtime.profile, "lan-raw")
+        self.assertEqual(
+            session.appliance_runtime.image_tag,
+            "registry.example.invalid/libcrafter/appliance:docker",
+        )
+        self.assertEqual(
+            session.appliance_runtime.container_policy["execution_mode"],
+            "endpoint-container",
+        )
+        self.assertFalse(session.appliance_runtime.container_policy["nested_docker"])
+        self.assertFalse(
+            session.appliance_runtime.container_policy["docker_execution_supported"]
+        )
+        self.assertTrue(
+            session.appliance_runtime.container_policy["already_inside_appliance"]
+        )
+        self.assertEqual(
+            session.appliance_runtime.container_policy["runtime"],
+            "endpoint-container",
+        )
+        self.assertNotIn("network_mode", session.appliance_runtime.container_policy)
+        self.assertNotIn("docker_command", session.appliance_runtime.container_policy)
+        self.assertEqual(session.appliance_runtime.metadata["source"], "endpoint-runtimes")
+        self.assertTrue(session.appliance_runtime.metadata["endpoint_container_appliance"])
+        endpoint_runtime = session.endpoints[0].appliance_runtime
+        self.assertIsNotNone(endpoint_runtime)
+        self.assertEqual(endpoint_runtime.profile, "lan-raw")
+        self.assertEqual(
+            endpoint_runtime.image_tag,
+            "registry.example.invalid/libcrafter/appliance:docker",
+        )
+        self.assertEqual(
+            endpoint_runtime.metadata["execution_mode"],
+            "endpoint-container",
+        )
+        self.assertEqual(endpoint_runtime.metadata["source"], "provider-defaults")
+        self.assertTrue(endpoint_runtime.metadata["docker_endpoint_container"])
         self.assertEqual(len(session.command_records), 2)
         self.assertEqual(session.created_endpoint_ids, [])
         self.assertTrue(all(check.passed for check in session.validation_checks))
@@ -376,6 +414,18 @@ def _manifest(
                 "private_group": private_group,
                 "private_network": True,
                 "network": network,
+                "container": {
+                    "type": "docker-container",
+                    "image": "registry.example.invalid/libcrafter/appliance:docker",
+                    "is_appliance": True,
+                    "appliance_capable": True,
+                },
+                "image": {
+                    "tag": "registry.example.invalid/libcrafter/appliance:docker",
+                },
+            },
+            "docker_image": {
+                "tag": "registry.example.invalid/libcrafter/appliance:docker",
             },
         },
     )

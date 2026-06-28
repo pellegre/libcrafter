@@ -93,6 +93,37 @@ class LabProviderMatrixTest(unittest.TestCase):
                     "controlled_router",
                     session.provider_capabilities["capability_names"],
                 )
+                self.assertIsNotNone(session.appliance_runtime)
+                self.assertEqual(session.appliance_runtime.profile, "lan-raw")
+                self.assertEqual(
+                    [endpoint.appliance_runtime is not None for endpoint in session.endpoints],
+                    [True, True],
+                )
+                if case.name == "docker":
+                    self.assertEqual(
+                        session.appliance_runtime.container_policy["execution_mode"],
+                        "endpoint-container",
+                    )
+                    self.assertFalse(
+                        session.appliance_runtime.container_policy["nested_docker"]
+                    )
+                    self.assertEqual(
+                        session.appliance_runtime.image_tag,
+                        "registry.example.invalid/libcrafter/appliance:matrix-docker",
+                    )
+                    self.assertTrue(
+                        session.endpoints[0].appliance_runtime.metadata[
+                            "docker_endpoint_container"
+                        ]
+                    )
+                else:
+                    self.assertEqual(
+                        session.appliance_runtime.container_policy["execution_mode"],
+                        "ssh-docker-host",
+                    )
+                    self.assertTrue(
+                        session.appliance_runtime.container_policy["nested_docker"]
+                    )
                 self.assertTrue(
                     all(check.passed for check in session.validation_checks),
                     session.validation_checks,
@@ -356,6 +387,25 @@ def _manifest(
         )
     )
 
+    endpoint_metadata: dict[str, object] = (
+        {"private_group": private_group} if private_group is not None else {}
+    )
+    if provider == "docker":
+        endpoint_metadata["docker"] = {
+            "container": {
+                "type": "docker-container",
+                "image": "registry.example.invalid/libcrafter/appliance:matrix-docker",
+                "is_appliance": True,
+                "appliance_capable": True,
+            },
+            "image": {
+                "tag": "registry.example.invalid/libcrafter/appliance:matrix-docker",
+            },
+        }
+        endpoint_metadata["docker_image"] = {
+            "tag": "registry.example.invalid/libcrafter/appliance:matrix-docker",
+        }
+
     return EndpointManifest(
         endpoint_id=f"planned-{provider}-{exposure}-{role}",
         provider=provider,
@@ -367,7 +417,7 @@ def _manifest(
         interfaces=interfaces,
         provider_resources=ProviderResources(),
         artifact_dir=f"/tmp/libcrafter-lab-provider-matrix/{provider}-{exposure}-{role}",
-        metadata={"private_group": private_group} if private_group is not None else {},
+        metadata=endpoint_metadata,
     )
 
 
