@@ -12,8 +12,8 @@ use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::protocols::transport::Udp;
 
 use super::constants::{
-    SSDP_HEADER_HOST, SSDP_HEADER_MAN, SSDP_HEADER_MX, SSDP_HEADER_NT, SSDP_HEADER_NTS,
-    SSDP_HEADER_ST, SSDP_HEADER_USN, SSDP_HTTP_VERSION as HTTP_VERSION_1_1,
+    SSDP_HEADER_EXT, SSDP_HEADER_HOST, SSDP_HEADER_MAN, SSDP_HEADER_MX, SSDP_HEADER_NT,
+    SSDP_HEADER_NTS, SSDP_HEADER_ST, SSDP_HEADER_USN, SSDP_HTTP_VERSION as HTTP_VERSION_1_1,
     SSDP_IPV4_MULTICAST_HOST, SSDP_MAN_DISCOVER, SSDP_METHOD_M_SEARCH as METHOD_M_SEARCH,
     SSDP_METHOD_NOTIFY as METHOD_NOTIFY, SSDP_NTS_ALIVE, SSDP_NTS_BYEBYE, SSDP_NTS_UPDATE,
     SSDP_REASON_OK as REASON_OK, SSDP_STATUS_OK as STATUS_OK, SSDP_ST_ALL, SSDP_TARGET_ROOTDEVICE,
@@ -80,6 +80,23 @@ impl Ssdp {
     /// Build a source-backed `HTTP/1.1 200 OK` response.
     pub fn response_ok() -> Self {
         Self::new(SsdpMessage::response_ok())
+    }
+
+    /// Build a source-backed `HTTP/1.1 200 OK` response with an empty `EXT`.
+    pub fn response_ok_with_ext() -> Self {
+        Self::response_ok().with_source_header(SSDP_HEADER_EXT, SsdpHeaderValue::empty())
+    }
+
+    /// Build a response using a caller-supplied three-digit status and reason.
+    pub fn response_with_status(
+        code: u16,
+        reason: impl Into<String>,
+    ) -> Result<Self, SsdpStartLineParseError> {
+        Ok(Self::response(
+            SsdpVersion::http_1_1(),
+            SsdpStatusCode::try_from(code)?,
+            SsdpReasonPhrase::try_from(reason.into())?,
+        ))
     }
 
     /// Build a UDP header for SSDP's source-backed `ssdp/udp` service port.
@@ -1667,6 +1684,85 @@ mod tests {
                 .as_bytes(),
             b"ssdp:custom"
         );
+    }
+
+    #[test]
+    fn ssdp_response_builders_ok_with_ext_source_backed_success() {
+        let message = Ssdp::response_ok_with_ext();
+        let status = message
+            .message()
+            .start_line()
+            .as_response()
+            .expect("response status line");
+        let ext = message
+            .headers()
+            .get_first(SsdpHeaderNameKind::Ext)
+            .expect("EXT header");
+
+        assert_eq!(status.version().as_str(), HTTP_VERSION_1_1);
+        assert_eq!(status.code(), SsdpStatusCode::ok());
+        assert_eq!(status.reason().as_str(), REASON_OK);
+        assert!(ext.is_empty());
+        assert_eq!(message.to_bytes(), b"HTTP/1.1 200 OK\r\nEXT:\r\n\r\n");
+    }
+
+    #[test]
+    fn ssdp_response_builders_error_like_status_preserves_reason_phrase() {
+        let message =
+            Ssdp::response_with_status(404, "Not Found").expect("valid error-like response status");
+        let status = message
+            .message()
+            .start_line()
+            .as_response()
+            .expect("response status line");
+
+        assert_eq!(status.version().as_str(), HTTP_VERSION_1_1);
+        assert_eq!(status.code().code(), 404);
+        assert_eq!(status.reason().as_str(), "Not Found");
+        assert_eq!(message.to_bytes(), b"HTTP/1.1 404 Not Found\r\n\r\n");
+    }
+
+    #[test]
+    fn ssdp_response_builders_unknown_status_preserves_headers_and_reason() {
+        let message = Ssdp::response_with_status(777, "Experimental Status")
+            .expect("valid unknown response status")
+            .with_raw_header("X-DEVICE.UPNP.ORG", "opaque")
+            .expect("extension header");
+        let decoded = decode_ssdp(&message.to_bytes()).expect("response should decode");
+        let status = decoded
+            .message()
+            .start_line()
+            .as_response()
+            .expect("response status line");
+
+        assert_eq!(status.code().code(), 777);
+        assert_eq!(status.reason().as_str(), "Experimental Status");
+        assert_eq!(
+            decoded
+                .headers()
+                .iter()
+                .next()
+                .expect("extension header")
+                .name()
+                .original(),
+            "X-DEVICE.UPNP.ORG"
+        );
+        assert_eq!(decoded, message);
+    }
+
+    #[test]
+    fn ssdp_response_builders_invalid_status_or_reason_returns_structured_error() {
+        let bad_status =
+            Ssdp::response_with_status(1_000, "Invalid").expect_err("status is too large");
+
+        assert_eq!(bad_status.field(), SsdpStartLineField::StatusCode);
+        assert_eq!(bad_status.value(), "1000");
+
+        let bad_reason =
+            Ssdp::response_with_status(599, "Bad\rReason").expect_err("reason contains CR");
+
+        assert_eq!(bad_reason.field(), SsdpStartLineField::ReasonPhrase);
+        assert_eq!(bad_reason.value(), "Bad\rReason");
     }
 
     #[test]
