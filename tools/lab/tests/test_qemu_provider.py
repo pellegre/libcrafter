@@ -157,6 +157,31 @@ class QemuProviderSessionPlanningTest(unittest.TestCase):
         self.assertEqual(session.endpoints[0].peer_addresses, {"target": {"ipv4": "10.77.0.20"}})
         self.assertEqual(session.metadata["private_group"], qemu_private_group(request))
         self.assertEqual(session.metadata["wire_policy"], QEMU_WIRE_POLICY)
+        self.assertIsNotNone(session.appliance_runtime)
+        self.assertEqual(session.appliance_runtime.profile, "lan-raw")
+        self.assertEqual(
+            session.appliance_runtime.image_tag,
+            "registry.example.invalid/libcrafter/appliance:qemu",
+        )
+        self.assertEqual(
+            session.appliance_runtime.container_policy["execution_mode"],
+            "ssh-docker-host",
+        )
+        self.assertTrue(session.appliance_runtime.container_policy["nested_docker"])
+        self.assertEqual(
+            session.appliance_runtime.container_policy["capabilities"],
+            ["NET_RAW"],
+        )
+        endpoint_runtime = session.endpoints[0].appliance_runtime
+        self.assertIsNotNone(endpoint_runtime)
+        self.assertEqual(endpoint_runtime.profile, "lan-raw")
+        self.assertEqual(
+            endpoint_runtime.remote_artifact_root,
+            "/var/lib/libcrafter/appliance/"
+            "planned-qemu-private-stimulus-lab-qemu-probe-smoke-seed-1-private/artifacts",
+        )
+        self.assertEqual(endpoint_runtime.metadata["source"], "endpoint-manifest")
+        self.assertEqual(endpoint_runtime.metadata["substrate"], "ssh-docker")
         self.assertEqual(len(session.command_records), 2)
         self.assertEqual(session.created_endpoint_ids, [])
         self.assertTrue(all(check.passed for check in session.validation_checks))
@@ -296,6 +321,7 @@ def _manifest(
     endpoint_group = _slug(private_group or "private")
     endpoint_id = f"planned-qemu-private-{endpoint_role}-{endpoint_group}"
     network = qemu_private_network_metadata(private_group or "private")
+    remote_root = f"/var/lib/libcrafter/appliance/{endpoint_id}"
     return EndpointManifest(
         endpoint_id=endpoint_id,
         provider="qemu",
@@ -324,6 +350,21 @@ def _manifest(
             "private_group": private_group,
             "private_network": network,
             "qemu": {"network": {"private": network}},
+            "appliance": {
+                "appliance_capable": True,
+                "nested_docker": True,
+                "docker_execution_supported": True,
+                "docker_command": "docker",
+                "substrate": "ssh-docker",
+                "remote_base": "/var/lib/libcrafter/appliance",
+                "remote_work_root": f"{remote_root}/work",
+                "remote_artifact_root": f"{remote_root}/artifacts",
+                "supported_profiles": ["lan-raw"],
+                "raw_profile": "lan-raw",
+                "image_tag": "registry.example.invalid/libcrafter/appliance:qemu",
+                "docker_setup": "install-or-verify",
+                "private_lab": True,
+            },
         },
     )
 

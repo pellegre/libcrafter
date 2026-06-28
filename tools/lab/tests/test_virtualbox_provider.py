@@ -172,6 +172,27 @@ class VirtualBoxProviderSessionPlanningTest(unittest.TestCase):
         self.assertTrue(session.metadata["private_network"])
         self.assertFalse(session.metadata["bridged_lan"])
         self.assertEqual(session.metadata["wire_policy"], VIRTUALBOX_WIRE_POLICY)
+        self.assertIsNotNone(session.appliance_runtime)
+        self.assertEqual(session.appliance_runtime.profile, "lan-raw")
+        self.assertEqual(
+            session.appliance_runtime.image_tag,
+            "registry.example.invalid/libcrafter/appliance:virtualbox",
+        )
+        self.assertEqual(
+            session.appliance_runtime.container_policy["execution_mode"],
+            "ssh-docker-host",
+        )
+        self.assertTrue(session.appliance_runtime.container_policy["nested_docker"])
+        endpoint_runtime = session.endpoints[0].appliance_runtime
+        self.assertIsNotNone(endpoint_runtime)
+        self.assertEqual(endpoint_runtime.profile, "lan-raw")
+        self.assertEqual(
+            endpoint_runtime.remote_work_root,
+            "/var/lib/libcrafter/appliance/planned-virtualbox-private-stimulus/work",
+        )
+        self.assertEqual(endpoint_runtime.metadata["source"], "endpoint-manifest")
+        self.assertEqual(endpoint_runtime.metadata["substrate"], "ssh-docker")
+        self.assertFalse(endpoint_runtime.metadata["bridged_lan"])
         self.assertEqual(len(session.command_records), 2)
         self.assertEqual(session.created_endpoint_ids, [])
         self.assertTrue(all(check.passed for check in session.validation_checks))
@@ -303,6 +324,7 @@ class _FakeEndpointCreateResponse:
 def _manifest(*, role: str, dry_run: bool) -> EndpointManifest:
     endpoint_role = _slug(role)
     endpoint_id = f"planned-virtualbox-private-{endpoint_role}"
+    remote_root = f"/var/lib/libcrafter/appliance/{endpoint_id}"
     return EndpointManifest(
         endpoint_id=endpoint_id,
         provider="virtualbox",
@@ -348,6 +370,21 @@ def _manifest(*, role: str, dry_run: bool) -> EndpointManifest:
                 "command": "VBoxManage",
                 "private_group": "lab-virtualbox-probe-smoke-seed-1-private",
                 "private_network": True,
+            },
+            "appliance": {
+                "appliance_capable": True,
+                "nested_docker": True,
+                "docker_execution_supported": True,
+                "docker_command": "docker",
+                "substrate": "ssh-docker",
+                "remote_base": "/var/lib/libcrafter/appliance",
+                "remote_work_root": f"{remote_root}/work",
+                "remote_artifact_root": f"{remote_root}/artifacts",
+                "supported_profiles": ["lan-raw"],
+                "raw_profile": "lan-raw",
+                "image_tag": "registry.example.invalid/libcrafter/appliance:virtualbox",
+                "docker_setup": "install-or-verify",
+                "private_lab": True,
             },
         },
     )

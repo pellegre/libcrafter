@@ -144,6 +144,29 @@ class HetznerProviderSessionPlanningTest(unittest.TestCase):
         self.assertEqual(session.endpoints[0].ipv4, "10.0.25.10")
         self.assertEqual(session.endpoints[0].peer_addresses, {"target": {"ipv4": "10.0.25.20"}})
         self.assertEqual(session.metadata["private_group"], hetzner_private_group(request))
+        self.assertIsNotNone(session.appliance_runtime)
+        self.assertEqual(session.appliance_runtime.profile, "lan-raw")
+        self.assertEqual(
+            session.appliance_runtime.image_tag,
+            "registry.example.invalid/libcrafter/appliance:hetzner",
+        )
+        self.assertEqual(
+            session.appliance_runtime.container_policy["execution_mode"],
+            "ssh-docker-host",
+        )
+        self.assertTrue(session.appliance_runtime.container_policy["nested_docker"])
+        self.assertTrue(
+            session.appliance_runtime.container_policy["docker_execution_supported"]
+        )
+        endpoint_runtime = session.endpoints[0].appliance_runtime
+        self.assertIsNotNone(endpoint_runtime)
+        self.assertEqual(endpoint_runtime.profile, "lan-raw")
+        self.assertEqual(
+            endpoint_runtime.remote_work_root,
+            "/var/lib/libcrafter/appliance/planned-hetzner-private-stimulus/work",
+        )
+        self.assertEqual(endpoint_runtime.metadata["source"], "endpoint-manifest")
+        self.assertEqual(endpoint_runtime.metadata["substrate"], "ssh-docker")
         self.assertEqual(len(session.command_records), 2)
         self.assertEqual(session.created_endpoint_ids, [])
         self.assertTrue(all(check.passed for check in session.validation_checks))
@@ -281,6 +304,7 @@ def _manifest(
 ) -> EndpointManifest:
     endpoint_role = _slug(role)
     endpoint_id = f"planned-hetzner-private-{endpoint_role}"
+    remote_root = f"/var/lib/libcrafter/appliance/{endpoint_id}"
     return EndpointManifest(
         endpoint_id=endpoint_id,
         provider="hetzner",
@@ -300,7 +324,25 @@ def _manifest(
         ],
         provider_resources=ProviderResources(),
         artifact_dir=f"/tmp/libcrafter-lab/{endpoint_id}",
-        metadata={"private_group": private_group},
+        metadata={
+            "private_group": private_group,
+            "appliance": {
+                "appliance_capable": True,
+                "nested_docker": True,
+                "docker_execution_supported": True,
+                "docker_command": "docker",
+                "substrate": "ssh-docker",
+                "remote_base": "/var/lib/libcrafter/appliance",
+                "remote_work_root": f"{remote_root}/work",
+                "remote_artifact_root": f"{remote_root}/artifacts",
+                "supported_profiles": ["lan-raw"],
+                "raw_profile": "lan-raw",
+                "image_tag": "registry.example.invalid/libcrafter/appliance:hetzner",
+                "docker_setup": "install-or-verify",
+                "docker_host_readiness": "check-before-use",
+                "private_lab": True,
+            },
+        },
     )
 
 

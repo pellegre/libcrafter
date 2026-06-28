@@ -757,7 +757,41 @@ def _bootstrap_execution_command(
         return _BootstrapExecutionCommand(argv=list(bootstrap.argv))
 
     artifact_dir = _appliance_role_artifact_dir(context)
-    env = _appliance_bootstrap_env(context)
+    if _appliance_runtime_execution_mode(runtime) == "endpoint-container":
+        env = _appliance_bootstrap_env(
+            context,
+            work_dir=context.remote_dir,
+            artifact_dir=artifact_dir,
+        )
+        command = _endpoint_container_command(
+            context.remote_dir,
+            artifact_dir,
+            bootstrap.argv,
+            env,
+        )
+        return _BootstrapExecutionCommand(
+            argv=command,
+            metadata={
+                "appliance": {
+                    "wrapped": False,
+                    "endpoint_container": True,
+                    "runtime": runtime.to_dict(),
+                    "profile": runtime.profile,
+                    "image_tag": runtime.image_tag,
+                    "original_argv": list(bootstrap.argv),
+                    "work_dir": context.remote_dir,
+                    "artifact_dir": artifact_dir,
+                    "environment": env,
+                    "execution_mode": "endpoint-container",
+                }
+            },
+        )
+
+    env = _appliance_bootstrap_env(
+        context,
+        work_dir=CONTAINER_WORK_DIR,
+        artifact_dir=CONTAINER_ARTIFACT_DIR,
+    )
     run_plan = _appliance_bootstrap_run_plan(
         runtime,
         context=context,
@@ -794,7 +828,12 @@ def _appliance_role_artifact_dir(context: RepoBootstrapContext) -> str:
     return posixpath.join(context.remote_artifact_root, "bootstrap", context.role.name)
 
 
-def _appliance_bootstrap_env(context: RepoBootstrapContext) -> dict[str, str]:
+def _appliance_bootstrap_env(
+    context: RepoBootstrapContext,
+    *,
+    work_dir: str,
+    artifact_dir: str,
+) -> dict[str, str]:
     peer_ipv4 = context.peer_endpoints[0].ipv4 if context.peer_endpoints else ""
     return {
         "LIBCRAFTER_ENDPOINT_ROLE": context.role.name,
@@ -802,8 +841,8 @@ def _appliance_bootstrap_env(context: RepoBootstrapContext) -> dict[str, str]:
         "LIBCRAFTER_PEER_PRIVATE_IPV4": peer_ipv4,
         "LIBCRAFTER_PRIVATE_INTERFACE": context.endpoint.interface,
         "LIBCRAFTER_IFACE": context.endpoint.interface,
-        "LIBCRAFTER_WORK_DIR": CONTAINER_WORK_DIR,
-        BOOTSTRAP_ARTIFACT_DIR_ENV: CONTAINER_ARTIFACT_DIR,
+        "LIBCRAFTER_WORK_DIR": work_dir,
+        BOOTSTRAP_ARTIFACT_DIR_ENV: artifact_dir,
     }
 
 
@@ -845,6 +884,33 @@ def _mkdir_then_docker_run_command(
         f"exec {render_argv(run_plan.docker_argv)}"
     )
     return ["bash", "-lc", script]
+
+
+def _endpoint_container_command(
+    work_dir: str,
+    artifact_dir: str,
+    command_argv: Sequence[str],
+    env: Mapping[str, str],
+) -> list[str]:
+    env_args = " ".join(shlex.quote(f"{key}={value}") for key, value in sorted(env.items()))
+    env_prefix = f"env {env_args} " if env_args else ""
+    script = (
+        f"mkdir -p {shlex.quote(artifact_dir)} && "
+        f"cd {shlex.quote(work_dir)} && "
+        f"exec {env_prefix}\"$@\""
+    )
+    return ["bash", "-lc", script, "libcrafter-appliance-endpoint", *command_argv]
+
+
+def _appliance_runtime_execution_mode(runtime: LabApplianceRuntime) -> str | None:
+    for metadata in (runtime.container_policy, runtime.metadata):
+        value = metadata.get("execution_mode")
+        if value is None:
+            continue
+        if not isinstance(value, str) or value == "":
+            raise ValueError("appliance_runtime execution_mode must be a string")
+        return value
+    return None
 
 
 def _optional_policy_string(policy: Mapping[str, object], key: str) -> str | None:

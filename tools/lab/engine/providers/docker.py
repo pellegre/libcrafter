@@ -36,10 +36,13 @@ from ..model import (
 )
 from .base import LabProviderAdapter
 from .common import (
+    DEFAULT_REMOTE_DIR,
     build_command_plan,
+    lab_appliance_runtime_from_manifest,
     lab_endpoint_from_manifest,
     normalize_provider_capabilities as normalize_common_provider_capabilities,
     request_session_label,
+    session_appliance_runtime_from_endpoints,
     slug_label,
     validate_remote_dir,
 )
@@ -667,12 +670,32 @@ class DockerLabProviderAdapter:
 
         private_group = self.private_group(request)
         private_network = docker_private_network_metadata(private_group)
+        appliance_runtime = lab_appliance_runtime_from_manifest(
+            manifest,
+            default_profile="lan-raw",
+            default_substrate="endpoint-container",
+            default_execution_mode="endpoint-container",
+            default_remote_work_root=DEFAULT_REMOTE_DIR,
+            default_remote_artifact_root=f"{DEFAULT_REMOTE_DIR}/artifacts",
+            default_docker_command=DOCKER_COMMAND,
+            metadata={
+                "provider": self.name,
+                "private_group": private_group,
+                "private_network": True,
+                "docker_private_network": private_network,
+                "endpoint_container_appliance": True,
+                "nested_docker": False,
+                "docker_execution_supported": False,
+                "wire_policy": dict(DOCKER_WIRE_POLICY),
+            },
+        )
         return lab_endpoint_from_manifest(
             manifest,
             role=role,
             exposure=self.wire_exposure,
             peer_roles=peer_roles,
             dry_run=request.dry_run,
+            appliance_runtime=appliance_runtime,
             metadata={
                 "provider": self.name,
                 "wire_provider": self.wire_provider,
@@ -730,6 +753,11 @@ class DockerLabProviderAdapter:
         endpoint_plan = self.wire_endpoint_plan(planned_request, client=client)
         endpoints = _endpoint_models(endpoint_plan, planned_request.roles)
         command_records = _command_models(endpoint_plan)
+        appliance_runtime = session_appliance_runtime_from_endpoints(
+            endpoints,
+            remote_work_root=remote_dir,
+            remote_artifact_root=remote_artifacts,
+        )
 
         session = LabSession(
             provider=self.name,
@@ -744,6 +772,7 @@ class DockerLabProviderAdapter:
             command_records=command_records,
             remote_dir=remote_dir,
             remote_artifact_root=remote_artifacts,
+            appliance_runtime=appliance_runtime,
             created_endpoint_ids=[
                 item
                 for item in endpoint_plan.get("created_endpoint_ids", [])
