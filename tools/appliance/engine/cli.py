@@ -14,10 +14,11 @@ from pathlib import Path
 from . import image
 from . import modules as module_registry
 from . import profiles as profile_registry
+from . import substrates as substrate_registry
 
 
 PACKAGE_NAME = "appliance"
-COMMANDS = ("info", "image", "profiles", "modules")
+COMMANDS = ("info", "image", "profiles", "modules", "run-plan")
 
 CommandRunner = Callable[[Sequence[str]], object]
 
@@ -140,6 +141,49 @@ def build_parser() -> argparse.ArgumentParser:
     modules_show.add_argument("--json", action="store_true", help="print JSON output")
     modules_show.set_defaults(modules_command_name="show")
 
+    run_plan = subparsers.add_parser(
+        "run-plan",
+        help="print a local appliance Docker run plan",
+        description="Print a deterministic appliance run plan without running Docker.",
+    )
+    run_plan.add_argument(
+        "--substrate",
+        default=substrate_registry.LOCAL_SUBSTRATE,
+        help="execution substrate to plan for",
+    )
+    run_plan.add_argument(
+        "--profile",
+        required=True,
+        help="appliance runtime profile to plan",
+    )
+    run_plan.add_argument(
+        "--work-dir",
+        help="host work directory to mount at /work; defaults to the repository root",
+    )
+    run_plan.add_argument(
+        "--artifact-dir",
+        help="host artifact directory to mount at /artifacts",
+    )
+    run_plan.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="environment value to include in the planned appliance container",
+    )
+    run_plan.add_argument(
+        "--json",
+        action="store_true",
+        help="print JSON output; run-plan is JSON by default",
+    )
+    run_plan.add_argument(
+        "command_argv",
+        metavar="COMMAND",
+        nargs=argparse.REMAINDER,
+        help="command to run inside the planned appliance container",
+    )
+    run_plan.set_defaults(command_name="run-plan")
+
     return parser
 
 
@@ -259,6 +303,26 @@ def _registry_error_payload(
     }
 
 
+def _run_plan_error_payload(command: str, error: str, exc: Exception) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "ok": False,
+        "command": command,
+        "error": error,
+        "message": str(exc),
+    }
+    if isinstance(exc, profile_registry.UnknownApplianceProfileError):
+        payload["name"] = exc.name
+        payload["known"] = list(exc.known)
+    elif isinstance(exc, substrate_registry.UnknownApplianceSubstrateError):
+        payload["name"] = exc.name
+        payload["known"] = list(exc.known)
+    elif isinstance(exc, substrate_registry.UnsupportedSubstrateProfileError):
+        payload["substrate"] = exc.substrate
+        payload["profile"] = exc.profile
+        payload["supported"] = list(exc.supported)
+    return payload
+
+
 def _default_command_runner(argv: Sequence[str]) -> int:
     return subprocess.run(list(argv), check=False).returncode
 
@@ -334,6 +398,57 @@ def _run_modules_command(args: argparse.Namespace) -> int:
     raise ValueError(f"unknown modules command: {args.modules_command_name}")
 
 
+def _run_plan_command(args: argparse.Namespace) -> int:
+    try:
+        profile = profile_registry.resolve_profile(args.profile)
+        substrate = substrate_registry.resolve_substrate(args.substrate)
+        command_argv = _remainder_command(args.command_argv)
+        plan = substrate.render_run_plan(
+            profile,
+            command_argv=command_argv,
+            work_dir=args.work_dir,
+            artifact_dir=args.artifact_dir,
+            environment=_parse_env_options(args.env),
+            repo_root=repo_root(),
+        )
+    except profile_registry.UnknownApplianceProfileError as exc:
+        _write_json(_run_plan_error_payload("run-plan", "unknown_profile", exc))
+        return 2
+    except substrate_registry.UnknownApplianceSubstrateError as exc:
+        _write_json(_run_plan_error_payload("run-plan", "unknown_substrate", exc))
+        return 2
+    except substrate_registry.UnsupportedSubstrateProfileError as exc:
+        _write_json(_run_plan_error_payload("run-plan", "unsupported_profile", exc))
+        return 2
+    except ValueError as exc:
+        _write_json(_run_plan_error_payload("run-plan", "invalid_run_plan", exc))
+        return 2
+
+    _write_json(plan.to_dict())
+    return 0
+
+
+def _remainder_command(value: Sequence[str]) -> list[str]:
+    command = list(value)
+    if command and command[0] == "--":
+        command = command[1:]
+    if not command:
+        raise ValueError("COMMAND must not be empty")
+    return command
+
+
+def _parse_env_options(values: Sequence[str]) -> dict[str, str]:
+    output: dict[str, str] = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError("--env values must use NAME=VALUE")
+        key, item = value.split("=", maxsplit=1)
+        if key == "":
+            raise ValueError("--env keys must be non-empty")
+        output[key] = item
+    return output
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -354,6 +469,8 @@ def main(
         return _run_profiles_command(args)
     if args.command_name == "modules":
         return _run_modules_command(args)
+    if args.command_name == "run-plan":
+        return _run_plan_command(args)
     parser.error(f"{args.command_name!r} is not implemented yet")
     return 2
 
