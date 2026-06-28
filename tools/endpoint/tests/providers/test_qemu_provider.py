@@ -172,6 +172,7 @@ class QemuCreateEndpointTest(unittest.TestCase):
         self.assertEqual(output["metadata"]["qemu"]["acceleration"], "tcg")  # type: ignore[index]
         self.assertEqual(output["metadata"]["vm_guest_artifacts"]["disk_format"], "qcow2")  # type: ignore[index]
         self.assertIn("artifact_paths", output["metadata"])  # type: ignore[operator]
+        _assert_appliance_metadata(self, output, expected_profile="wan-raw")
 
         manifest = EndpointManifest.from_dict(output)
         self.assertEqual(manifest.provider, "qemu")
@@ -219,6 +220,12 @@ class QemuCreateEndpointTest(unittest.TestCase):
         self.assertEqual(output["metadata"]["qemu"]["acceleration"], "kvm")  # type: ignore[index]
         self.assertIsNotNone(
             output["metadata"]["vm_guest_artifacts"]["network_config_path"]  # type: ignore[index]
+        )
+        _assert_appliance_metadata(
+            self,
+            output,
+            expected_profile="lan-raw",
+            private_lab=True,
         )
 
     def test_wan_rejects_private_group_and_ip(self) -> None:
@@ -329,6 +336,8 @@ class QemuCreateEndpointTest(unittest.TestCase):
 
         self.assertEqual(stored["status"], "active")
         self.assertEqual(stored["metadata"]["qemu"]["pid"], 4242)
+        _assert_appliance_metadata(self, output, expected_profile="wan-raw")
+        _assert_appliance_metadata(self, stored, expected_profile="wan-raw")
         resource_kinds = [resource["kind"] for resource in stored["provider_resources"]["resources"]]
         self.assertIn("process", resource_kinds)
 
@@ -404,6 +413,18 @@ class QemuCreateEndpointTest(unittest.TestCase):
         self.assertIn("10.77.0.2/24", network_config)
         self.assertIn(str(interfaces["private"]["mac"]), network_config)
         self.assertEqual(stored["metadata"]["private_group_record"]["provider"], "qemu")
+        _assert_appliance_metadata(
+            self,
+            output,
+            expected_profile="lan-raw",
+            private_lab=True,
+        )
+        _assert_appliance_metadata(
+            self,
+            stored,
+            expected_profile="lan-raw",
+            private_lab=True,
+        )
 
     def test_live_private_create_honors_requested_static_ip(self) -> None:
         endpoint_id = "qemu-private-probe-20260526231100-abcdef"
@@ -713,6 +734,45 @@ def _wire_env(root: Path, extra: Mapping[str, str] | None = None) -> Iterator[No
 
 def _fail_runner(argv: Sequence[object], **_: object) -> CommandResult:
     raise AssertionError(f"unexpected command: {argv}")
+
+
+def _assert_appliance_metadata(
+    case: unittest.TestCase,
+    manifest: Mapping[str, object],
+    *,
+    expected_profile: str,
+    private_lab: bool = False,
+) -> None:
+    metadata = manifest["metadata"]  # type: ignore[index]
+    appliance = metadata["appliance"]  # type: ignore[index]
+    endpoint_id = str(manifest["endpoint_id"])
+    remote_root = f"/var/lib/libcrafter/appliance/{endpoint_id}"
+    case.assertTrue(appliance["appliance_capable"])  # type: ignore[index]
+    case.assertTrue(appliance["nested_docker"])  # type: ignore[index]
+    case.assertTrue(appliance["docker_execution_supported"])  # type: ignore[index]
+    case.assertEqual(appliance["docker_command"], "docker")  # type: ignore[index]
+    case.assertEqual(appliance["substrate"], "ssh-docker")  # type: ignore[index]
+    case.assertEqual(appliance["docker_setup"], "install-or-verify")  # type: ignore[index]
+    case.assertEqual(appliance["supported_profiles"], [expected_profile])  # type: ignore[index]
+    case.assertEqual(appliance["raw_profile"], expected_profile)  # type: ignore[index]
+    case.assertEqual(appliance["remote_base"], "/var/lib/libcrafter/appliance")  # type: ignore[index]
+    case.assertEqual(appliance["remote_work_root"], f"{remote_root}/work")  # type: ignore[index]
+    case.assertEqual(
+        appliance["remote_artifact_root"],  # type: ignore[index]
+        f"{remote_root}/artifacts",
+    )
+    case.assertEqual(
+        appliance["profile_hints"]["raw_profile"],  # type: ignore[index]
+        expected_profile,
+    )
+    case.assertEqual(
+        appliance["profile_hints"]["network_scope"],  # type: ignore[index]
+        "private-lab" if private_lab else "wan",
+    )
+    if private_lab:
+        case.assertTrue(appliance["private_lab"])  # type: ignore[index]
+    else:
+        case.assertNotIn("private_lab", appliance)
 
 
 class _QemuLiveFakeRunner:

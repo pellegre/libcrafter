@@ -73,6 +73,10 @@ VBOX_SSH_HOST = "127.0.0.1"
 VBOX_SSH_GUEST_PORT = 22
 VBOX_SSH_USER = "root"
 COMMAND_LOG_NAME = "virtualbox-commands.json"
+VBOX_APPLIANCE_REMOTE_BASE = "/var/lib/libcrafter/appliance"
+VBOX_APPLIANCE_SUBSTRATE = "ssh-docker"
+VBOX_LAN_APPLIANCE_PROFILES = ("lan-raw",)
+VBOX_PRIVATE_APPLIANCE_PROFILES = ("lan-raw",)
 DownloadRunner = Callable[[str, Path], None]
 
 
@@ -217,6 +221,7 @@ def _planned_endpoint_manifest(
             "dry_run": True,
             "state_dir": str(layout.state_dir),
             "manifest_path": str(layout.manifest_path),
+            "appliance": _appliance_metadata(endpoint_id=endpoint_id, exposure=exposure),
             "virtualbox": {
                 "command": VBOXMANAGE_COMMAND,
                 "vm_name": vm_name,
@@ -279,6 +284,42 @@ def _planned_endpoint_id(
     if private_group is not None:
         parts.append(private_group)
     return "-".join(path_component(part) for part in parts)
+
+
+def _appliance_metadata(*, endpoint_id: str, exposure: str) -> dict[str, object]:
+    supported_profiles = _appliance_profiles(exposure)
+    remote_base = VBOX_APPLIANCE_REMOTE_BASE
+    remote_root = f"{remote_base}/{path_component(endpoint_id, fallback='endpoint')}"
+    raw_profile = supported_profiles[0] if supported_profiles else None
+    metadata: dict[str, object] = {
+        "appliance_capable": True,
+        "nested_docker": True,
+        "docker_execution_supported": True,
+        "docker_command": "docker",
+        "substrate": VBOX_APPLIANCE_SUBSTRATE,
+        "remote_base": remote_base,
+        "remote_work_root": f"{remote_root}/work",
+        "remote_artifact_root": f"{remote_root}/artifacts",
+        "supported_profiles": supported_profiles,
+        "docker_setup": "install-or-verify",
+    }
+    if raw_profile is not None:
+        metadata["raw_profile"] = raw_profile
+        metadata["profile_hints"] = {
+            "raw_profile": raw_profile,
+            "network_scope": "private-lab" if exposure == "private" else "lan",
+        }
+    if exposure == "private":
+        metadata["private_lab"] = True
+    return metadata
+
+
+def _appliance_profiles(exposure: str) -> list[str]:
+    if exposure == "lan":
+        return list(VBOX_LAN_APPLIANCE_PROFILES)
+    if exposure == "private":
+        return list(VBOX_PRIVATE_APPLIANCE_PROFILES)
+    return []
 
 
 def _create_live_endpoint(
@@ -384,6 +425,8 @@ def _create_live_endpoint(
         metadata = _virtualbox_manifest_metadata(
             created=False,
             dry_run=False,
+            endpoint_id=endpoint_id,
+            exposure=exposure,
             layout=layout,
             vm_name=vm_name,
             ssh_port=ssh_port,
@@ -425,6 +468,8 @@ def _create_live_endpoint(
         metadata = _virtualbox_manifest_metadata(
             created=True,
             dry_run=False,
+            endpoint_id=endpoint_id,
+            exposure=exposure,
             layout=layout,
             vm_name=vm_name,
             ssh_port=ssh_port,
@@ -1037,6 +1082,8 @@ def _virtualbox_manifest_metadata(
     *,
     created: bool,
     dry_run: bool,
+    endpoint_id: str,
+    exposure: str,
     layout: object,
     vm_name: str,
     ssh_port: int,
@@ -1077,6 +1124,7 @@ def _virtualbox_manifest_metadata(
         "dry_run": dry_run,
         "state_dir": str(getattr(layout, "state_dir")),
         "manifest_path": str(getattr(layout, "manifest_path")),
+        "appliance": _appliance_metadata(endpoint_id=endpoint_id, exposure=exposure),
         "virtualbox": virtualbox,
         **artifacts.to_manifest_metadata(),  # type: ignore[attr-defined]
     }
@@ -1156,6 +1204,8 @@ def _write_failed_manifest(
                 **_virtualbox_manifest_metadata(
                     created=vm_registered,
                     dry_run=False,
+                    endpoint_id=endpoint_id,
+                    exposure=exposure,
                     layout=layout,
                     vm_name=vm_name,
                     ssh_port=ssh_port,
