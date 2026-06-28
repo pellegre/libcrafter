@@ -1,0 +1,6 @@
+NOTIFY * HTTP/1.1
+HOST: 239.255.255.250:1900
+NT: upnp:rootdevice
+NTS: ssdp:alive
+USN: uuid:device-1::upnp:rootdevice
+
