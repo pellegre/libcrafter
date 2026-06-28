@@ -1,0 +1,90 @@
+version: 1
+kind: profiles
+name: ssdp_profiles
+
+profiles:
+  - name: ssdp-smoke
+    purpose: focused offline SSDP UDP payload and multicast helper smoke coverage
+    default_count: 10
+    family_weights:
+      - name: ssdp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 0
+    feature_weights:
+      baseline: 10
+      boundary: 3
+      malformed: 0
+      pcap: 0
+      live: 0
+  - name: ssdp-ci
+    purpose: deterministic SSDP pull request coverage for strict-byte and structured-error cases
+    default_count: 200
+    family_weights:
+      - name: ssdp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 0
+    feature_weights:
+      baseline: 10
+      boundary: 5
+      malformed: 1
+      pcap: 1
+      live: 0
+  - name: ssdp-boundary
+    purpose: focused SSDP header, multicast, unknown-preservation, and malformed boundary coverage
+    default_count: 100
+    family_weights:
+      - name: ssdp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 0
+    feature_weights:
+      baseline: 3
+      boundary: 10
+      malformed: 4
+      pcap: 1
+      live: 0
+  - name: ssdp-pcap
+    purpose: focused classic pcap coverage for SSDP RawIp and Ethernet-framed packet shapes
+    default_count: 20
+    family_weights:
+      - name: ssdp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 0
+    feature_weights:
+      baseline: 2
+      boundary: 2
+      malformed: 0
+      pcap: 10
+      live: 0
+  - name: ssdp-live-dry-run
+    purpose: provider-neutral SSDP live validation dry-run planning
+    default_count: 10
+    family_weights:
+      - name: ssdp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 0
+    feature_weights:
+      baseline: 2
+      boundary: 4
+      malformed: 0
+      pcap: 0
+      live: 0
+
+backend_support:
+  scapy:
+    status: planned
+    notes:
+      - Profiles affect SSDP generator sampling after the Scapy backend adapter lands.
+  libcrafter:
+    status: supported
+    notes:
+      - Profiles remain offline or dry-run and use documentation-safe SSDP fixtures and packet shapes.
