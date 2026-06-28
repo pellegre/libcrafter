@@ -4,12 +4,13 @@
 //! headers, and opaque body bytes.
 
 use core::fmt;
-use core::net::Ipv4Addr;
+use core::net::{Ipv4Addr, Ipv6Addr};
 use core::str::FromStr;
 
 use crate::error::Result as CrafterResult;
 use crate::packet::{Layer, LayerContext, Packet};
 use crate::protocols::ip::v4::Ipv4;
+use crate::protocols::ip::v6::Ipv6;
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::protocols::transport::Udp;
 
@@ -20,10 +21,10 @@ use super::constants::{
     SSDP_HEADER_NTS, SSDP_HEADER_OPT, SSDP_HEADER_SEARCHPORT, SSDP_HEADER_SECURELOCATION,
     SSDP_HEADER_SERVER, SSDP_HEADER_ST, SSDP_HEADER_TCPPORT, SSDP_HEADER_USER_AGENT,
     SSDP_HEADER_USN, SSDP_HTTP_VERSION as HTTP_VERSION_1_1, SSDP_IPV4_MULTICAST_ADDR,
-    SSDP_IPV4_MULTICAST_HOST, SSDP_MAN_DISCOVER, SSDP_METHOD_M_SEARCH as METHOD_M_SEARCH,
-    SSDP_METHOD_NOTIFY as METHOD_NOTIFY, SSDP_NTS_ALIVE, SSDP_NTS_BYEBYE, SSDP_NTS_UPDATE,
-    SSDP_REASON_OK as REASON_OK, SSDP_STATUS_OK as STATUS_OK, SSDP_ST_ALL, SSDP_TARGET_ROOTDEVICE,
-    SSDP_UDP_PORT,
+    SSDP_IPV4_MULTICAST_HOST, SSDP_IPV6_SITE_LOCAL_MULTICAST_ADDR, SSDP_MAN_DISCOVER,
+    SSDP_METHOD_M_SEARCH as METHOD_M_SEARCH, SSDP_METHOD_NOTIFY as METHOD_NOTIFY, SSDP_NTS_ALIVE,
+    SSDP_NTS_BYEBYE, SSDP_NTS_UPDATE, SSDP_REASON_OK as REASON_OK, SSDP_STATUS_OK as STATUS_OK,
+    SSDP_ST_ALL, SSDP_TARGET_ROOTDEVICE, SSDP_UDP_PORT,
 };
 use super::header::{SsdpHeaderNameKind, SsdpHeaderNameParseError, SsdpHeaderValue, SsdpHeaders};
 
@@ -35,6 +36,7 @@ const EXPECTED_REQUEST_TARGET: &str =
 const EXPECTED_HTTP_VERSION: &str = "HTTP-version token formatted as HTTP/<DIGIT>.<DIGIT>";
 const EXPECTED_STATUS_CODE: &str = "three decimal digits";
 const EXPECTED_REASON_PHRASE: &str = "HTTP reason-phrase bytes: HTAB, SP, VCHAR, or obs-text";
+const SSDP_IPV6_SITE_LOCAL_HOP_LIMIT: u8 = 5;
 
 /// SSDP UDP application layer message.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -394,6 +396,33 @@ pub fn ssdp_ipv4_multicast_packet_with(
     message: Ssdp,
 ) -> Packet {
     Ipv4::new().src(source).dst(destination).ttl(ttl) / udp / message
+}
+
+/// Build an offline IPv6/UDP/SSDP multicast packet with source-backed defaults.
+pub fn ssdp_ipv6_multicast_packet(source: Ipv6Addr, message: Ssdp) -> Packet {
+    ssdp_ipv6_multicast_packet_with(
+        source,
+        SSDP_IPV6_SITE_LOCAL_MULTICAST_ADDR,
+        SSDP_IPV6_SITE_LOCAL_HOP_LIMIT,
+        Ssdp::udp(),
+        message,
+    )
+}
+
+/// Build an offline IPv6/UDP/SSDP packet with explicit multicast helper overrides.
+pub fn ssdp_ipv6_multicast_packet_with(
+    source: Ipv6Addr,
+    destination: Ipv6Addr,
+    hop_limit: u8,
+    udp: Udp,
+    message: Ssdp,
+) -> Packet {
+    Ipv6::new()
+        .src(source)
+        .dst(destination)
+        .hop_limit(hop_limit)
+        / udp
+        / message
 }
 
 /// Complete SSDP message payload model.
@@ -1706,15 +1735,19 @@ fn header_names_summary(headers: &SsdpHeaders) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::constants::SSDP_IPV6_LINK_LOCAL_MULTICAST_ADDR;
     use super::super::decode::decode_ssdp;
     use super::super::header::{SsdpHeaderField, SsdpHeaderNameKind, SsdpHeaderValue};
     use super::*;
-    use crate::checksum::{ipv4_header_checksum, ipv4_pseudo_header_checksum};
+    use crate::checksum::{
+        ipv4_header_checksum, ipv4_pseudo_header_checksum, ipv6_pseudo_header_checksum,
+    };
     use crate::packet::{Layer, Packet};
     use crate::protocols::ip::shared::IPPROTO_UDP;
     use crate::protocols::ip::v4::Ipv4;
+    use crate::protocols::ip::v6::Ipv6;
     use crate::protocols::transport::{Udp, UDP_HEADER_LEN};
-    use core::net::Ipv4Addr;
+    use core::net::{Ipv4Addr, Ipv6Addr};
 
     fn packet_composition_src() -> Ipv4Addr {
         Ipv4Addr::new(192, 0, 2, 10)
@@ -1722,6 +1755,10 @@ mod tests {
 
     fn packet_composition_dst() -> Ipv4Addr {
         Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    fn packet_composition_ipv6_src() -> Ipv6Addr {
+        Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 10)
     }
 
     fn packet_composition_message() -> Ssdp {
@@ -1748,6 +1785,26 @@ mod tests {
             IPPROTO_UDP,
             &udp,
         );
+
+        if checksum == 0 {
+            0xffff
+        } else {
+            checksum
+        }
+    }
+
+    fn packet_composition_ipv6_udp_checksum(
+        bytes: &[u8],
+        source: Ipv6Addr,
+        destination: Ipv6Addr,
+        payload_len: usize,
+    ) -> u16 {
+        let udp_start = 40;
+        let udp_end = udp_start + UDP_HEADER_LEN + payload_len;
+        let mut udp = bytes[udp_start..udp_end].to_vec();
+        udp[6] = 0;
+        udp[7] = 0;
+        let checksum = ipv6_pseudo_header_checksum(source, destination, IPPROTO_UDP, &udp);
 
         if checksum == 0 {
             0xffff
@@ -1879,6 +1936,64 @@ mod tests {
         assert_eq!(ipv4.source(), source);
         assert_eq!(ipv4.destination(), destination);
         assert_eq!(ipv4.ttl_value(), 5);
+        assert_eq!(udp.source_port_value(), 49_152);
+        assert_eq!(udp.destination_port_value(), 49_153);
+        assert_eq!(packet.layer::<Ssdp>(), Some(&ssdp));
+    }
+
+    #[test]
+    fn ssdp_ipv6_multicast_helper_builds_typed_offline_packet_with_defaults() {
+        let source = packet_composition_ipv6_src();
+        let ssdp = Ssdp::m_search_all();
+        let packet = ssdp_ipv6_multicast_packet(source, ssdp.clone());
+        let ipv6 = packet.layer::<Ipv6>().expect("IPv6 layer");
+        let udp = packet.layer::<Udp>().expect("UDP layer");
+
+        assert_eq!(ipv6.source(), source);
+        assert_eq!(ipv6.destination(), SSDP_IPV6_SITE_LOCAL_MULTICAST_ADDR);
+        assert_eq!(ipv6.hop_limit_value(), SSDP_IPV6_SITE_LOCAL_HOP_LIMIT);
+        assert_eq!(udp.source_port_value(), SSDP_UDP_PORT);
+        assert_eq!(udp.destination_port_value(), SSDP_UDP_PORT);
+        assert_eq!(packet.layer::<Ssdp>(), Some(&ssdp));
+
+        let compiled = packet
+            .compile()
+            .expect("offline IPv6 SSDP multicast packet compiles");
+        let bytes = compiled.as_bytes();
+        let payload = ssdp.to_bytes();
+        let checksum = u16::from_be_bytes([bytes[46], bytes[47]]);
+
+        assert_eq!(bytes[6], IPPROTO_UDP);
+        assert_ne!(checksum, 0);
+        assert_eq!(
+            checksum,
+            packet_composition_ipv6_udp_checksum(
+                bytes,
+                source,
+                SSDP_IPV6_SITE_LOCAL_MULTICAST_ADDR,
+                payload.len()
+            )
+        );
+        assert_eq!(&bytes[40 + UDP_HEADER_LEN..], payload.as_slice());
+    }
+
+    #[test]
+    fn ssdp_ipv6_multicast_helper_preserves_explicit_overrides() {
+        let source = packet_composition_ipv6_src();
+        let ssdp = Ssdp::m_search_rootdevice();
+        let packet = ssdp_ipv6_multicast_packet_with(
+            source,
+            SSDP_IPV6_LINK_LOCAL_MULTICAST_ADDR,
+            1,
+            Ssdp::udp().sport(49_152).dport(49_153),
+            ssdp.clone(),
+        );
+        let ipv6 = packet.layer::<Ipv6>().expect("IPv6 layer");
+        let udp = packet.layer::<Udp>().expect("UDP layer");
+
+        assert_eq!(ipv6.source(), source);
+        assert_eq!(ipv6.destination(), SSDP_IPV6_LINK_LOCAL_MULTICAST_ADDR);
+        assert_eq!(ipv6.hop_limit_value(), 1);
         assert_eq!(udp.source_port_value(), 49_152);
         assert_eq!(udp.destination_port_value(), 49_153);
         assert_eq!(packet.layer::<Ssdp>(), Some(&ssdp));

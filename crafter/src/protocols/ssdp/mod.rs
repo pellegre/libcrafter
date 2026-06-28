@@ -19,11 +19,11 @@ pub use header::{
     SsdpHeaderValue, SsdpHeaders,
 };
 pub use message::{
-    ssdp_ipv4_multicast_packet, ssdp_ipv4_multicast_packet_with, Ssdp, SsdpCacheControl,
-    SsdpLocation, SsdpLocationField, SsdpLocationParseError, SsdpMessage, SsdpMethod,
-    SsdpMethodParseError, SsdpReasonPhrase, SsdpRequestLine, SsdpRequestTarget, SsdpStartLine,
-    SsdpStartLineField, SsdpStartLineParseError, SsdpStatusCode, SsdpStatusLine, SsdpTarget,
-    SsdpUsn, SsdpVersion,
+    ssdp_ipv4_multicast_packet, ssdp_ipv4_multicast_packet_with, ssdp_ipv6_multicast_packet,
+    ssdp_ipv6_multicast_packet_with, Ssdp, SsdpCacheControl, SsdpLocation, SsdpLocationField,
+    SsdpLocationParseError, SsdpMessage, SsdpMethod, SsdpMethodParseError, SsdpReasonPhrase,
+    SsdpRequestLine, SsdpRequestTarget, SsdpStartLine, SsdpStartLineField, SsdpStartLineParseError,
+    SsdpStatusCode, SsdpStatusLine, SsdpTarget, SsdpUsn, SsdpVersion,
 };
 
 #[cfg(test)]
