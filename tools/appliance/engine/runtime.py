@@ -120,6 +120,7 @@ def render_docker_run_plan(
     if env is not None:
         merged_env.update(_environment(env, "env"))
 
+    profile_devices = _profile_devices(appliance_profile, merged_env)
     return DockerRunPlan(
         profile=appliance_profile.name,
         image_tag=image_tag or appliance_profile.image,
@@ -134,7 +135,7 @@ def render_docker_run_plan(
                 *_string_list(capabilities, "capabilities"),
             ]
         ),
-        devices=[*appliance_profile.devices, *_devices(devices)],
+        devices=[*profile_devices, *_devices(devices)],
         mounts=[*appliance_profile.mounts, *_mounts(mounts)],
         env=merged_env,
         docker_command=docker_command,
@@ -196,6 +197,39 @@ def _profile(value: ApplianceProfile | Mapping[str, object]) -> ApplianceProfile
     if isinstance(value, ApplianceProfile):
         return value
     return ApplianceProfile.from_dict(value)
+
+
+def _profile_devices(profile: ApplianceProfile, env: Mapping[str, str]) -> list[ProfileDevice]:
+    devices = list(profile.devices)
+    device_env = profile.metadata.get("device_env")
+    if not isinstance(device_env, str) or not device_env:
+        return devices
+    selected_device = env.get(device_env, "")
+    if not selected_device:
+        return devices
+    if not devices:
+        return [
+            ProfileDevice(
+                host_path=selected_device,
+                container_path=selected_device,
+                permissions="rw",
+            )
+        ]
+
+    template = devices[0]
+    container_path = (
+        selected_device
+        if template.container_path == template.host_path
+        else template.container_path
+    )
+    return [
+        ProfileDevice(
+            host_path=selected_device,
+            container_path=container_path,
+            permissions=template.permissions,
+        ),
+        *devices[1:],
+    ]
 
 
 def _command_argv(value: Sequence[str]) -> list[str]:
