@@ -125,15 +125,14 @@ fn split_header_section(bytes: &[u8]) -> ParseResult<(&[u8], &[u8])> {
 fn parse_request_start_line(
     line: &[u8],
 ) -> ParseResult<(SsdpMethod, SsdpRequestTarget, SsdpVersion)> {
-    let line_text = str::from_utf8(line).map_err(|_| {
-        SsdpParseError::invalid_request_start_line(0, lossy(line), "request-line must be ASCII")
-    })?;
+    let line_text = str::from_utf8(line)
+        .map_err(|err| SsdpParseError::invalid_request_start_line_bytes(0, line, err))?;
 
     if line_text.starts_with("HTTP/") {
         return Err(SsdpParseError::unsupported_start_line_form(
             0,
             line_text,
-            "response status-line parsing is not implemented in this step",
+            "response status-line is not a request-line",
         ));
     }
 
@@ -172,13 +171,8 @@ fn parse_request_start_line(
 fn parse_response_start_line(
     line: &[u8],
 ) -> ParseResult<(SsdpVersion, SsdpStatusCode, SsdpReasonPhrase)> {
-    let line_text = str::from_utf8(line).map_err(|_| {
-        SsdpParseError::invalid_response_start_line(
-            0,
-            lossy(line),
-            "status-line must be UTF-8 text for current SSDP wrappers",
-        )
-    })?;
+    let line_text = str::from_utf8(line)
+        .map_err(|err| SsdpParseError::invalid_response_start_line_bytes(0, line, err))?;
 
     if !line_text.starts_with("HTTP/") {
         return Err(SsdpParseError::invalid_response_start_line(
@@ -257,10 +251,11 @@ fn parse_header_line(
         ));
     }
 
-    let name = str::from_utf8(&line[..colon]).map_err(|_| {
+    let name = str::from_utf8(&line[..colon]).map_err(|err| {
         SsdpParseError::invalid_header_name_bytes(
             line_number,
             &line[..colon],
+            err,
             "field-name must contain ASCII token bytes",
         )
     })?;
@@ -283,10 +278,6 @@ fn trim_ows(bytes: &[u8]) -> &[u8] {
         .unwrap_or(start);
 
     &bytes[start..end]
-}
-
-fn lossy(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).into_owned()
 }
 
 struct HeaderLineIter<'a> {
@@ -407,6 +398,23 @@ impl SsdpParseError {
         }
     }
 
+    fn invalid_request_start_line_bytes(
+        offset: usize,
+        line: &[u8],
+        source: str::Utf8Error,
+    ) -> Self {
+        Self {
+            kind: SsdpParseErrorKind::InvalidRequestStartLineBytes {
+                offset,
+                line: line.to_vec(),
+                valid_up_to: source.valid_up_to(),
+                error_len: source.error_len(),
+                reason: "request-line must be valid UTF-8 text for current SSDP wrappers",
+                expected: EXPECTED_REQUEST_LINE,
+            },
+        }
+    }
+
     fn invalid_request_method(
         offset: usize,
         line: impl Into<String>,
@@ -465,6 +473,23 @@ impl SsdpParseError {
         }
     }
 
+    fn invalid_response_start_line_bytes(
+        offset: usize,
+        line: &[u8],
+        source: str::Utf8Error,
+    ) -> Self {
+        Self {
+            kind: SsdpParseErrorKind::InvalidResponseStartLineBytes {
+                offset,
+                line: line.to_vec(),
+                valid_up_to: source.valid_up_to(),
+                error_len: source.error_len(),
+                reason: "status-line must be valid UTF-8 text for current SSDP wrappers",
+                expected: EXPECTED_RESPONSE_LINE,
+            },
+        }
+    }
+
     fn invalid_response_version(
         offset: usize,
         line: impl Into<String>,
@@ -511,7 +536,7 @@ impl SsdpParseError {
         Self {
             kind: SsdpParseErrorKind::BadHeaderDelimiter {
                 line_number,
-                line: lossy(line),
+                line: line.to_vec(),
                 expected: EXPECTED_HEADER_DELIMITER,
             },
         }
@@ -521,7 +546,7 @@ impl SsdpParseError {
         Self {
             kind: SsdpParseErrorKind::WhitespaceBeforeColon {
                 line_number,
-                name: lossy(name),
+                name: name.to_vec(),
                 expected: "field-name followed immediately by ':'",
             },
         }
@@ -550,11 +575,18 @@ impl SsdpParseError {
         }
     }
 
-    fn invalid_header_name_bytes(line_number: usize, name: &[u8], reason: &'static str) -> Self {
+    fn invalid_header_name_bytes(
+        line_number: usize,
+        name: &[u8],
+        source: str::Utf8Error,
+        reason: &'static str,
+    ) -> Self {
         Self {
             kind: SsdpParseErrorKind::InvalidHeaderNameBytes {
                 line_number,
-                name: lossy(name),
+                name: name.to_vec(),
+                valid_up_to: source.valid_up_to(),
+                error_len: source.error_len(),
                 reason,
                 expected: "HTTP field-name token",
             },
@@ -608,6 +640,21 @@ pub(crate) enum SsdpParseErrorKind {
         /// Human-readable expectation.
         expected: &'static str,
     },
+    /// The request start line was not valid UTF-8 for the current wrappers.
+    InvalidRequestStartLineBytes {
+        /// Datagram offset of the start line.
+        offset: usize,
+        /// Rejected start-line bytes.
+        line: Vec<u8>,
+        /// Number of valid UTF-8 bytes before the first error.
+        valid_up_to: usize,
+        /// Length of the invalid byte sequence, or `None` for incomplete input.
+        error_len: Option<usize>,
+        /// Stable rejection reason.
+        reason: &'static str,
+        /// Human-readable expectation.
+        expected: &'static str,
+    },
     /// The request method failed HTTP token validation.
     InvalidRequestMethod {
         /// Datagram offset of the start line.
@@ -648,6 +695,21 @@ pub(crate) enum SsdpParseErrorKind {
         /// Human-readable expectation.
         expected: &'static str,
     },
+    /// The response status line was not valid UTF-8 for the current wrappers.
+    InvalidResponseStartLineBytes {
+        /// Datagram offset of the start line.
+        offset: usize,
+        /// Rejected start-line bytes.
+        line: Vec<u8>,
+        /// Number of valid UTF-8 bytes before the first error.
+        valid_up_to: usize,
+        /// Length of the invalid byte sequence, or `None` for incomplete input.
+        error_len: Option<usize>,
+        /// Stable rejection reason.
+        reason: &'static str,
+        /// Human-readable expectation.
+        expected: &'static str,
+    },
     /// The response HTTP-version failed wrapper validation.
     InvalidResponseVersion {
         /// Datagram offset of the start line.
@@ -679,8 +741,8 @@ pub(crate) enum SsdpParseErrorKind {
     BadHeaderDelimiter {
         /// One-based message line number.
         line_number: usize,
-        /// Rejected header line text.
-        line: String,
+        /// Rejected header line bytes.
+        line: Vec<u8>,
         /// Human-readable expectation.
         expected: &'static str,
     },
@@ -688,8 +750,8 @@ pub(crate) enum SsdpParseErrorKind {
     WhitespaceBeforeColon {
         /// One-based message line number.
         line_number: usize,
-        /// Rejected name portion.
-        name: String,
+        /// Rejected name portion bytes.
+        name: Vec<u8>,
         /// Human-readable expectation.
         expected: &'static str,
     },
@@ -713,8 +775,12 @@ pub(crate) enum SsdpParseErrorKind {
     InvalidHeaderNameBytes {
         /// One-based message line number.
         line_number: usize,
-        /// Rejected header name text, decoded lossily for diagnostics.
-        name: String,
+        /// Rejected header name bytes.
+        name: Vec<u8>,
+        /// Number of valid UTF-8 bytes before the first error.
+        valid_up_to: usize,
+        /// Length of the invalid byte sequence, or `None` for incomplete input.
+        error_len: Option<usize>,
         /// Stable rejection reason.
         reason: &'static str,
         /// Human-readable expectation.
@@ -755,6 +821,18 @@ impl fmt::Display for SsdpParseError {
                 f,
                 "invalid SSDP request-start-line: {line:?}: {reason} (expected {expected})"
             ),
+            SsdpParseErrorKind::InvalidRequestStartLineBytes {
+                line,
+                valid_up_to,
+                error_len,
+                reason,
+                expected,
+                ..
+            } => write!(
+                f,
+                "invalid SSDP request-start-line: {:?}: {reason} at byte {valid_up_to} len {error_len:?} (expected {expected})",
+                String::from_utf8_lossy(line)
+            ),
             SsdpParseErrorKind::InvalidRequestMethod {
                 line,
                 source,
@@ -777,6 +855,18 @@ impl fmt::Display for SsdpParseError {
                 f,
                 "invalid SSDP response-start-line: {line:?}: {reason} (expected {expected})"
             ),
+            SsdpParseErrorKind::InvalidResponseStartLineBytes {
+                line,
+                valid_up_to,
+                error_len,
+                reason,
+                expected,
+                ..
+            } => write!(
+                f,
+                "invalid SSDP response-start-line: {:?}: {reason} at byte {valid_up_to} len {error_len:?} (expected {expected})",
+                String::from_utf8_lossy(line)
+            ),
             SsdpParseErrorKind::InvalidResponseVersion { line, source, .. }
             | SsdpParseErrorKind::InvalidResponseStatusCode { line, source, .. }
             | SsdpParseErrorKind::InvalidResponseReasonPhrase { line, source, .. } => {
@@ -788,11 +878,13 @@ impl fmt::Display for SsdpParseError {
                 ..
             } => write!(
                 f,
-                "invalid SSDP header-line: {line:?} (expected {expected})"
+                "invalid SSDP header-line: {:?} (expected {expected})",
+                String::from_utf8_lossy(line)
             ),
             SsdpParseErrorKind::WhitespaceBeforeColon { name, expected, .. } => write!(
                 f,
-                "invalid SSDP header-line: whitespace before colon after {name:?} (expected {expected})"
+                "invalid SSDP header-line: whitespace before colon after {:?} (expected {expected})",
+                String::from_utf8_lossy(name)
             ),
             SsdpParseErrorKind::ObsoleteFoldedHeader { reason, .. } => {
                 write!(f, "invalid SSDP header-line: {reason}")
@@ -802,12 +894,15 @@ impl fmt::Display for SsdpParseError {
             }
             SsdpParseErrorKind::InvalidHeaderNameBytes {
                 name,
+                valid_up_to,
+                error_len,
                 reason,
                 expected,
                 ..
             } => write!(
                 f,
-                "invalid SSDP header-name: {name:?}: {reason} (expected {expected})"
+                "invalid SSDP header-name: {:?}: {reason} at byte {valid_up_to} len {error_len:?} (expected {expected})",
+                String::from_utf8_lossy(name)
             ),
         }
     }
@@ -817,8 +912,8 @@ impl std::error::Error for SsdpParseError {}
 
 #[cfg(test)]
 mod tests {
-    use super::super::header::SsdpHeaderNameKind;
-    use super::super::message::SsdpMethod;
+    use super::super::header::{SsdpHeaderField, SsdpHeaderNameKind};
+    use super::super::message::{SsdpMethod, SsdpStartLineField};
     use super::*;
 
     fn request_line(ssdp: &Ssdp) -> &super::super::message::SsdpRequestLine {
@@ -863,6 +958,388 @@ mod tests {
 
         assert_eq!(parsed.body(), expected_body);
         assert_eq!(parsed.to_bytes(), bytes);
+    }
+
+    fn expect_request_error(bytes: &[u8]) -> SsdpParseError {
+        parse_ssdp_request(bytes).expect_err("request payload is malformed")
+    }
+
+    fn expect_response_error(bytes: &[u8]) -> SsdpParseError {
+        parse_ssdp_response(bytes).expect_err("response payload is malformed")
+    }
+
+    #[test]
+    fn ssdp_malformed_empty_payload_is_truncated_for_requests_and_responses() {
+        for error in [expect_request_error(b""), expect_response_error(b"")] {
+            assert_eq!(
+                error.kind(),
+                &SsdpParseErrorKind::Truncated {
+                    context: CONTEXT_PAYLOAD,
+                    required: 1,
+                    available: 0,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn ssdp_malformed_short_and_bad_line_delimiters_are_structured() {
+        let lone_cr = expect_request_error(b"\r");
+        assert_eq!(
+            lone_cr.kind(),
+            &SsdpParseErrorKind::Truncated {
+                context: CONTEXT_LINE_DELIMITER,
+                required: 2,
+                available: 1,
+            }
+        );
+
+        let short = expect_response_error(b"H");
+        assert_eq!(
+            short.kind(),
+            &SsdpParseErrorKind::MissingHeaderDelimiter {
+                offset: 1,
+                expected: EXPECTED_CRLF_DELIMITER,
+            }
+        );
+
+        let cr_without_lf = expect_request_error(b"M-SEARCH * HTTP/1.1\rHOST: value\r\n\r\n");
+        assert_eq!(
+            cr_without_lf.kind(),
+            &SsdpParseErrorKind::BadDelimiter {
+                field: SsdpParseField::LineDelimiter,
+                offset: 19,
+                reason: "CR must be followed by LF",
+                expected: "CRLF",
+            }
+        );
+
+        let bare_lf = expect_response_error(b"HTTP/1.1 200 OK\nST: ssdp:all\n\n");
+        assert_eq!(
+            bare_lf.kind(),
+            &SsdpParseErrorKind::BadDelimiter {
+                field: SsdpParseField::LineDelimiter,
+                offset: 15,
+                reason: "bare LF is not a valid SSDP line delimiter",
+                expected: "CRLF",
+            }
+        );
+    }
+
+    #[test]
+    fn ssdp_malformed_missing_delimiter_empty_start_line_and_header_only_are_structured() {
+        let missing = expect_request_error(b"M-SEARCH * HTTP/1.1\r\nHOST: example\r\n");
+        assert_eq!(
+            missing.kind(),
+            &SsdpParseErrorKind::MissingHeaderDelimiter {
+                offset: 36,
+                expected: EXPECTED_CRLF_DELIMITER,
+            }
+        );
+
+        let empty_request_start = expect_request_error(b"\r\n\r\n");
+        assert_eq!(
+            empty_request_start.kind(),
+            &SsdpParseErrorKind::InvalidRequestStartLine {
+                offset: 0,
+                line: String::new(),
+                reason: "missing request start line",
+                expected: EXPECTED_REQUEST_LINE,
+            }
+        );
+
+        let empty_response_start = expect_response_error(b"\r\n\r\n");
+        assert_eq!(
+            empty_response_start.kind(),
+            &SsdpParseErrorKind::InvalidResponseStartLine {
+                offset: 0,
+                line: String::new(),
+                reason: "missing response status line",
+                expected: EXPECTED_RESPONSE_LINE,
+            }
+        );
+
+        let header_only_request = expect_request_error(b"HOST: example\r\n\r\n");
+        assert_eq!(
+            header_only_request.kind(),
+            &SsdpParseErrorKind::InvalidRequestStartLine {
+                offset: 0,
+                line: "HOST: example".to_string(),
+                reason: "request-line must contain exactly three SP-separated tokens",
+                expected: EXPECTED_REQUEST_LINE,
+            }
+        );
+
+        let header_only_response = expect_response_error(b"HOST: example\r\n\r\n");
+        assert_eq!(
+            header_only_response.kind(),
+            &SsdpParseErrorKind::InvalidResponseStartLine {
+                offset: 0,
+                line: "HOST: example".to_string(),
+                reason: "response status-line must start with HTTP-version",
+                expected: EXPECTED_RESPONSE_LINE,
+            }
+        );
+    }
+
+    #[test]
+    fn ssdp_malformed_request_start_line_variants_are_structured() {
+        let bad_arity = expect_request_error(b"M-SEARCH * HTTP/1.1 extra\r\n\r\n");
+        assert_eq!(
+            bad_arity.kind(),
+            &SsdpParseErrorKind::InvalidRequestStartLine {
+                offset: 0,
+                line: "M-SEARCH * HTTP/1.1 extra".to_string(),
+                reason: "request-line must contain exactly three SP-separated tokens",
+                expected: EXPECTED_REQUEST_LINE,
+            }
+        );
+
+        let invalid_utf8 = expect_request_error(b"M-\xff * HTTP/1.1\r\n\r\n");
+        assert_eq!(
+            invalid_utf8.kind(),
+            &SsdpParseErrorKind::InvalidRequestStartLineBytes {
+                offset: 0,
+                line: b"M-\xff * HTTP/1.1".to_vec(),
+                valid_up_to: 2,
+                error_len: Some(1),
+                reason: "request-line must be valid UTF-8 text for current SSDP wrappers",
+                expected: EXPECTED_REQUEST_LINE,
+            }
+        );
+
+        let invalid_method = expect_request_error(b"M@SEARCH * HTTP/1.1\r\n\r\n");
+        match invalid_method.kind() {
+            SsdpParseErrorKind::InvalidRequestMethod {
+                offset,
+                line,
+                source,
+                expected,
+            } => {
+                assert_eq!(*offset, 0);
+                assert_eq!(line, "M@SEARCH * HTTP/1.1");
+                assert_eq!(source.token(), "M@SEARCH");
+                assert_eq!(*expected, "HTTP method token");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        let invalid_target = expect_request_error(b"M-SEARCH bad\ttarget HTTP/1.1\r\n\r\n");
+        match invalid_target.kind() {
+            SsdpParseErrorKind::InvalidRequestTarget {
+                offset,
+                line,
+                source,
+            } => {
+                assert_eq!(*offset, 0);
+                assert_eq!(line, "M-SEARCH bad\ttarget HTTP/1.1");
+                assert_eq!(source.field(), SsdpStartLineField::RequestTarget);
+                assert_eq!(source.value(), "bad\ttarget");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        let invalid_version = expect_request_error(b"M-SEARCH * HTTP/1\r\n\r\n");
+        match invalid_version.kind() {
+            SsdpParseErrorKind::InvalidRequestVersion {
+                offset,
+                line,
+                source,
+            } => {
+                assert_eq!(*offset, 0);
+                assert_eq!(line, "M-SEARCH * HTTP/1");
+                assert_eq!(source.field(), SsdpStartLineField::Version);
+                assert_eq!(source.value(), "HTTP/1");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ssdp_malformed_response_start_line_variants_are_structured() {
+        let bad_arity = expect_response_error(b"HTTP/1.1 200\r\n\r\n");
+        assert_eq!(
+            bad_arity.kind(),
+            &SsdpParseErrorKind::InvalidResponseStartLine {
+                offset: 0,
+                line: "HTTP/1.1 200".to_string(),
+                reason: "status-line must include SP after status-code",
+                expected: EXPECTED_RESPONSE_LINE,
+            }
+        );
+
+        let invalid_utf8 = expect_response_error(b"HTTP/1.1 200 O\xff\r\n\r\n");
+        assert_eq!(
+            invalid_utf8.kind(),
+            &SsdpParseErrorKind::InvalidResponseStartLineBytes {
+                offset: 0,
+                line: b"HTTP/1.1 200 O\xff".to_vec(),
+                valid_up_to: 14,
+                error_len: Some(1),
+                reason: "status-line must be valid UTF-8 text for current SSDP wrappers",
+                expected: EXPECTED_RESPONSE_LINE,
+            }
+        );
+
+        let invalid_version = expect_response_error(b"HTTP/1 200 OK\r\n\r\n");
+        match invalid_version.kind() {
+            SsdpParseErrorKind::InvalidResponseVersion {
+                offset,
+                line,
+                source,
+            } => {
+                assert_eq!(*offset, 0);
+                assert_eq!(line, "HTTP/1 200 OK");
+                assert_eq!(source.field(), SsdpStartLineField::Version);
+                assert_eq!(source.value(), "HTTP/1");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        let invalid_status = expect_response_error(b"HTTP/1.1 20A OK\r\n\r\n");
+        match invalid_status.kind() {
+            SsdpParseErrorKind::InvalidResponseStatusCode {
+                offset,
+                line,
+                source,
+            } => {
+                assert_eq!(*offset, 0);
+                assert_eq!(line, "HTTP/1.1 20A OK");
+                assert_eq!(source.field(), SsdpStartLineField::StatusCode);
+                assert_eq!(source.value(), "20A");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        let invalid_reason = expect_response_error(b"HTTP/1.1 200 Bad\0Reason\r\n\r\n");
+        match invalid_reason.kind() {
+            SsdpParseErrorKind::InvalidResponseReasonPhrase {
+                offset,
+                line,
+                source,
+            } => {
+                assert_eq!(*offset, 0);
+                assert_eq!(line, "HTTP/1.1 200 Bad\0Reason");
+                assert_eq!(source.field(), SsdpStartLineField::ReasonPhrase);
+                assert_eq!(source.value(), "Bad\0Reason");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ssdp_malformed_header_syntax_variants_are_structured() {
+        let without_colon = expect_request_error(b"M-SEARCH * HTTP/1.1\r\nHOST value\r\n\r\n");
+        assert_eq!(
+            without_colon.kind(),
+            &SsdpParseErrorKind::BadHeaderDelimiter {
+                line_number: 2,
+                line: b"HOST value".to_vec(),
+                expected: EXPECTED_HEADER_DELIMITER,
+            }
+        );
+
+        let whitespace_before_colon =
+            expect_response_error(b"HTTP/1.1 200 OK\r\nHOST : value\r\n\r\n");
+        assert_eq!(
+            whitespace_before_colon.kind(),
+            &SsdpParseErrorKind::WhitespaceBeforeColon {
+                line_number: 2,
+                name: b"HOST ".to_vec(),
+                expected: "field-name followed immediately by ':'",
+            }
+        );
+
+        let folded =
+            expect_request_error(b"M-SEARCH * HTTP/1.1\r\nHOST: value\r\n continued\r\n\r\n");
+        assert_eq!(
+            folded.kind(),
+            &SsdpParseErrorKind::ObsoleteFoldedHeader {
+                line_number: 3,
+                reason: "header line starts with SP or HTAB",
+            }
+        );
+
+        let invalid_name_bytes =
+            expect_response_error(b"HTTP/1.1 200 OK\r\nHO\xffST: value\r\n\r\n");
+        assert_eq!(
+            invalid_name_bytes.kind(),
+            &SsdpParseErrorKind::InvalidHeaderNameBytes {
+                line_number: 2,
+                name: b"HO\xffST".to_vec(),
+                valid_up_to: 2,
+                error_len: Some(1),
+                reason: "field-name must contain ASCII token bytes",
+                expected: "HTTP field-name token",
+            }
+        );
+
+        let invalid_name_token =
+            expect_request_error(b"M-SEARCH * HTTP/1.1\r\nBad Name: value\r\n\r\n");
+        match invalid_name_token.kind() {
+            SsdpParseErrorKind::InvalidHeaderName {
+                line_number,
+                name,
+                source,
+            } => {
+                assert_eq!(*line_number, 2);
+                assert_eq!(name, "Bad Name");
+                assert_eq!(source.field(), SsdpHeaderField::Name);
+                assert_eq!(source.value(), "Bad Name");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ssdp_malformed_unrelated_binary_and_text_payloads_are_structured() {
+        let unrelated_text_request = expect_request_error(b"hello world\r\n\r\n");
+        assert_eq!(
+            unrelated_text_request.kind(),
+            &SsdpParseErrorKind::InvalidRequestStartLine {
+                offset: 0,
+                line: "hello world".to_string(),
+                reason: "request-line must contain exactly three SP-separated tokens",
+                expected: EXPECTED_REQUEST_LINE,
+            }
+        );
+
+        let unrelated_text_response = expect_response_error(b"hello world\r\n\r\n");
+        assert_eq!(
+            unrelated_text_response.kind(),
+            &SsdpParseErrorKind::InvalidResponseStartLine {
+                offset: 0,
+                line: "hello world".to_string(),
+                reason: "response status-line must start with HTTP-version",
+                expected: EXPECTED_RESPONSE_LINE,
+            }
+        );
+
+        let unrelated_binary_request = expect_request_error(b"\x00\xff\r\n\r\n");
+        assert_eq!(
+            unrelated_binary_request.kind(),
+            &SsdpParseErrorKind::InvalidRequestStartLineBytes {
+                offset: 0,
+                line: b"\x00\xff".to_vec(),
+                valid_up_to: 1,
+                error_len: Some(1),
+                reason: "request-line must be valid UTF-8 text for current SSDP wrappers",
+                expected: EXPECTED_REQUEST_LINE,
+            }
+        );
+
+        let unrelated_binary_response = expect_response_error(b"\x00\xff\r\n\r\n");
+        assert_eq!(
+            unrelated_binary_response.kind(),
+            &SsdpParseErrorKind::InvalidResponseStartLineBytes {
+                offset: 0,
+                line: b"\x00\xff".to_vec(),
+                valid_up_to: 1,
+                error_len: Some(1),
+                reason: "status-line must be valid UTF-8 text for current SSDP wrappers",
+                expected: EXPECTED_RESPONSE_LINE,
+            }
+        );
     }
 
     #[test]
