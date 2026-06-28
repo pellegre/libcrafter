@@ -13,6 +13,8 @@ from pathlib import Path
 from unittest import mock
 
 from tools.appliance.engine import image as appliance_image
+from tools.appliance.engine.profile import ApplianceProfile
+from tools.appliance.engine.runtime import render_docker_run_plan
 from tools.endpoint.engine.model import EndpointManifest
 from tools.endpoint.engine.process import CommandResult
 from tools.endpoint.engine.providers import docker, resolve_provider
@@ -648,6 +650,83 @@ class DockerCreateEndpointDryRunTest(unittest.TestCase):
                     self.assertEqual(
                         output["provider_resources"]["metadata"]["mode"],  # type: ignore[index]
                         case["mode"],
+                    )
+
+    def test_dry_run_endpoint_container_argv_stays_constrained_for_shared_appliance_image(
+        self,
+    ) -> None:
+        appliance_host_plan = render_docker_run_plan(
+            ApplianceProfile(
+                name="wan-raw",
+                image=DOCKER_DEFAULT_IMAGE,
+                network_mode="host",
+                cap_add=["NET_RAW"],
+            ),
+            work_dir="/tmp/libcrafter-appliance-work",
+            artifact_dir="/tmp/libcrafter-appliance-artifacts",
+            command_argv=["true"],
+        )
+        self.assertEqual(_option_values(appliance_host_plan.docker_argv, "--network"), ["host"])
+        self.assertIn("--rm", appliance_host_plan.docker_argv)
+        self.assertNotIn("--cap-drop", appliance_host_plan.docker_argv)
+        self.assertNotIn("--publish", appliance_host_plan.docker_argv)
+
+        cases = {
+            "private": {
+                "role": "oracle",
+                "port": 27422,
+                "env": {},
+                "kwargs": {
+                    "private_group": "pair-security",
+                    "private_ip": "10.79.0.42",
+                },
+                "network_name": "wire-private-pair-security",
+                "cap_add": ["NET_RAW", "NET_ADMIN", "SYS_CHROOT", "SETGID", "SETUID"],
+            },
+            "lan": {
+                "role": "probe",
+                "port": 27423,
+                "env": {DOCKER_LAN_NETWORK_ENV: "wire-lan-security"},
+                "kwargs": {},
+                "network_name": "wire-lan-security",
+                "cap_add": ["NET_RAW", "SYS_CHROOT", "SETGID", "SETUID"],
+            },
+            "wan": {
+                "role": "client",
+                "port": 27424,
+                "env": {DOCKER_WAN_NETWORK_ENV: "wire-wan-security"},
+                "kwargs": {},
+                "network_name": "wire-wan-security",
+                "cap_add": ["NET_RAW", "SYS_CHROOT", "SETGID", "SETUID"],
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            for exposure, case in cases.items():
+                with self.subTest(exposure=exposure):
+                    with mock.patch(
+                        "tools.endpoint.engine.providers.docker.create.free_localhost_tcp_port",
+                        return_value=case["port"],
+                    ):
+                        output = docker.create_endpoint(
+                            provider="docker",
+                            exposure=exposure,
+                            role=str(case["role"]),
+                            dry_run=True,
+                            env=case["env"],  # type: ignore[arg-type]
+                            **case["kwargs"],  # type: ignore[arg-type]
+                        )
+
+                    container = output["metadata"]["docker"]["container"]  # type: ignore[index]
+                    run_argv = container["run_argv"]  # type: ignore[index]
+                    self.assertNotEqual(run_argv, appliance_host_plan.docker_argv)
+                    self.assertEqual(run_argv[-1], DOCKER_DEFAULT_IMAGE)  # type: ignore[index]
+                    _assert_endpoint_container_security_argv(
+                        self,
+                        run_argv,  # type: ignore[arg-type]
+                        expected_network=str(case["network_name"]),
+                        expected_publish=f"127.0.0.1:{case['port']}:22",
+                        expected_cap_add=case["cap_add"],  # type: ignore[arg-type]
                     )
 
     def test_lan_and_wan_reject_private_options(self) -> None:
@@ -1613,6 +1692,40 @@ def _option_values(argv: Sequence[str], option: str) -> list[str]:
         if part == option and index + 1 < len(argv):
             values.append(argv[index + 1])
     return values
+
+
+def _assert_endpoint_container_security_argv(
+    case: unittest.TestCase,
+    argv: Sequence[str],
+    *,
+    expected_network: str,
+    expected_publish: str,
+    expected_cap_add: Sequence[str],
+) -> None:
+    case.assertEqual(argv[:2], ["docker", "run"])
+    case.assertIn("--detach", argv)
+    case.assertNotIn("--rm", argv)
+    case.assertEqual(_option_values(argv, "--network"), [expected_network])
+    case.assertNotIn("host", _option_values(argv, "--network"))
+    case.assertNotIn("host", _option_values(argv, "--net"))
+    case.assertNotIn("--network=host", argv)
+    case.assertNotIn("--net=host", argv)
+    case.assertEqual(_option_values(argv, "--publish"), [expected_publish])
+    case.assertEqual(_option_values(argv, "--cap-drop"), ["ALL"])
+    case.assertEqual(_option_values(argv, "--cap-add"), list(expected_cap_add))
+    case.assertEqual(_option_values(argv, "--security-opt"), [])
+    case.assertNotIn("--privileged", argv)
+
+    mount_args = _option_values(argv, "--mount")
+    case.assertEqual(len(mount_args), 1)
+    case.assertIn("target=/run/libcrafter/authorized_key.pub", mount_args[0])
+    case.assertIn("readonly", mount_args[0])
+    for forbidden in (
+        "/var/run/docker.sock",
+        "target=/work",
+        "target=/artifacts",
+    ):
+        case.assertNotIn(forbidden, " ".join(argv))
 
 
 def _docker_private_network_inspect_stdout() -> str:
