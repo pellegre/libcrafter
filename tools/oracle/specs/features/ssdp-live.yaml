@@ -1,0 +1,285 @@
+version: 1
+kind: feature
+name: ssdp_live
+summary: >-
+  SSDP provider-backed live-exchange dry-run planning for a search stimulus
+  role and a Scapy reference-backend role, without sending traffic by default.
+
+# This feature is metadata for the protected live workflow. It declares the
+# exchange shape that later oracle live providers may materialize after explicit
+# confirmation; the default path is a dry-run plan only and never a developer
+# host raw send.
+intended_roots:
+  - l2:ipv4
+  - l3:ipv6
+comparison_roots:
+  - l3:ipv4
+  - l3:ipv6
+
+layers:
+  - ipv4
+  - ipv6
+  - udp
+  - ssdp
+directions:
+  - live_exchange
+strict_bytes: true
+malformed: false
+
+roles:
+  - name: stimulus
+    owner: libcrafter
+    purpose: Build source-backed SSDP M-SEARCH packets and emit only dry-run send plans by default.
+    allowed_default_mode: dry_run
+    live_requires:
+      - provider_lab_endpoint
+      - protected_confirmation
+      - artifact_collection
+  - name: reference-backend
+    owner: scapy
+    purpose: Capture and normalize the planned SSDP datagram, then provide a source-backed response fixture.
+    allowed_default_mode: dry_run
+    live_requires:
+      - provider_lab_endpoint
+      - protected_confirmation
+      - artifact_collection
+
+live_defaults:
+  default_mode: dry_run
+  provider_required: true
+  protected_confirmation_required: true
+  developer_host_raw_send: false
+  collect_artifacts_from:
+    - stimulus
+    - reference-backend
+  redact_artifacts:
+    - provider_public_ip
+    - live_host_identifier
+    - capture_interface_identifier
+    - provider_account_metadata
+
+live_matrix:
+  - behavior: ipv4_search_exchange_dry_run
+    coverage_case: ssdp-live-ipv4-search-exchange
+    directions:
+      - live_exchange
+    representation: raw_compatible
+    scapy_support: planned
+    skip_reason: requires_protected_provider_confirmation
+    roles:
+      stimulus: libcrafter
+      reference_backend: scapy
+    root: l2:ipv4
+    comparison_root: l3:ipv4
+    stimulus:
+      message_kind: m_search
+      start_line: "M-SEARCH * HTTP/1.1"
+      ip:
+        version: 4
+        source: "192.0.2.10"
+        destination: "239.255.255.250"
+        ttl: 2
+      udp:
+        source_port: 1900
+        destination_port: 1900
+      headers:
+        - name: HOST
+          value: "239.255.255.250:1900"
+        - name: MAN
+          value: "\"ssdp:discover\""
+        - name: MX
+          value: "1"
+        - name: ST
+          value: "ssdp:all"
+    reference_response:
+      message_kind: response
+      start_line: "HTTP/1.1 200 OK"
+      ip:
+        version: 4
+        source: "192.0.2.20"
+        destination: "192.0.2.10"
+        ttl: 64
+      udp:
+        source_port: 1900
+        destination_port: 1900
+      headers:
+        - name: CACHE-CONTROL
+          value: "max-age=1800"
+        - name: EXT
+          value: ""
+        - name: LOCATION
+          value: "http://192.0.2.20:8000/root.xml"
+        - name: SERVER
+          value: "example-os/1.0 UPnP/2.0 example-product/1.0"
+        - name: ST
+          value: "upnp:rootdevice"
+        - name: USN
+          value: "uuid:device-020::upnp:rootdevice"
+    checks:
+      - dry_run_plan_only
+      - stimulus_uses_source_backed_ipv4_multicast
+      - reference_backend_response_is_documentation_addressed
+      - artifacts_collected_from_both_roles
+      - protected_live_confirmation_required
+      - developer_host_raw_send_forbidden
+  - behavior: ipv6_search_exchange_dry_run
+    coverage_case: ssdp-live-ipv6-search-exchange
+    directions:
+      - live_exchange
+    representation: raw_compatible
+    scapy_support: planned
+    skip_reason: requires_protected_provider_confirmation
+    roles:
+      stimulus: libcrafter
+      reference_backend: scapy
+    root: l3:ipv6
+    comparison_root: l3:ipv6
+    stimulus:
+      message_kind: m_search
+      start_line: "M-SEARCH * HTTP/1.1"
+      ip:
+        version: 6
+        source: "2001:db8::10"
+        destination: "ff05::c"
+        hop_limit: 5
+      udp:
+        source_port: 1900
+        destination_port: 1900
+      headers:
+        - name: HOST
+          value: "[ff05::c]:1900"
+        - name: MAN
+          value: "\"ssdp:discover\""
+        - name: MX
+          value: "1"
+        - name: ST
+          value: "ssdp:all"
+    reference_response:
+      message_kind: response
+      start_line: "HTTP/1.1 200 OK"
+      ip:
+        version: 6
+        source: "2001:db8::20"
+        destination: "2001:db8::10"
+        hop_limit: 64
+      udp:
+        source_port: 1900
+        destination_port: 1900
+      headers:
+        - name: CACHE-CONTROL
+          value: "max-age=1800"
+        - name: EXT
+          value: ""
+        - name: LOCATION
+          value: "http://[2001:db8::20]:8000/root.xml"
+        - name: SERVER
+          value: "example-os/1.0 UPnP/2.0 example-product/1.0"
+        - name: ST
+          value: "upnp:rootdevice"
+        - name: USN
+          value: "uuid:device-020::upnp:rootdevice"
+    checks:
+      - dry_run_plan_only
+      - stimulus_uses_source_backed_ipv6_site_scope_multicast
+      - reference_backend_response_is_documentation_addressed
+      - artifacts_collected_from_both_roles
+      - protected_live_confirmation_required
+      - developer_host_raw_send_forbidden
+
+coverage_cases:
+  - ssdp-live-ipv4-search-exchange
+  - ssdp-live-ipv6-search-exchange
+
+supported_cases:
+  - name: ssdp-live-ipv4-search-exchange
+    directions:
+      - live_exchange
+    byte_policy: strict_bytes
+    roles:
+      - stimulus
+      - reference-backend
+    provider_required: true
+    protected_confirmation_required: true
+    default_mode: dry_run
+  - name: ssdp-live-ipv6-search-exchange
+    directions:
+      - live_exchange
+    byte_policy: strict_bytes
+    roles:
+      - stimulus
+      - reference-backend
+    provider_required: true
+    protected_confirmation_required: true
+    default_mode: dry_run
+
+normalized_model:
+  plan:
+    - roles
+    - default_mode
+    - provider_required
+    - protected_confirmation_required
+    - developer_host_raw_send
+  exchange:
+    - root
+    - comparison_root
+    - stimulus
+    - reference_response
+    - artifact_policy
+  message:
+    - start_line
+    - headers
+    - udp
+    - ip
+
+source_refs:
+  - .agents/docs/ssdp-validation-safety.md
+  - .agents/docs/ssdp-wire-grammar.md
+  - .agents/docs/ssdp-codepoints.md
+  - tools/oracle/specs/layers/ssdp.yaml
+  - tools/oracle/specs/features/ssdp-multicast.yaml
+
+notes:
+  - >-
+    This feature does not authorize live traffic. It records the dry-run plan
+    inputs a later protected provider workflow must satisfy before any packet is
+    sent.
+  - >-
+    The Scapy role is the reference backend for normalization, but native SSDP
+    backend support is still planned; packets may be represented as UDP Raw
+    payloads until the backend adapter materializes typed SSDP cases.
+  - >-
+    All addresses are documentation or source-backed multicast values. The spec
+    contains no provider endpoint identifiers, credentials, sensitive captures,
+    local absolute paths, or live host identifiers.
+
+backend_support:
+  scapy:
+    status: planned
+    encode: true
+    decode: true
+    live_endpoint: true
+    native_layers:
+      - IP
+      - IPv6
+      - UDP
+      - Raw
+    notes:
+      - >-
+        The reference-backend role may materialize the live dry-run exchange as
+        IP/UDP/Raw payload bytes until typed SSDP support lands in the Scapy
+        adapter.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    live_endpoint: true
+    native_layers:
+      - Ipv4
+      - Ipv6
+      - Udp
+      - Ssdp
+    notes:
+      - >-
+        The stimulus role builds typed SSDP multicast search packets and
+        reference response packet shapes, but default execution remains a
+        provider-backed dry-run plan.
