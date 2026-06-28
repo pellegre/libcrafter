@@ -56,6 +56,22 @@ class PcapRecordCanonicalizationTest(unittest.TestCase):
         self.assertEqual(records[0]["layers"], ["radiotap", "dot11"])
         self.assertEqual(records[0]["raw_hex"], "010203")
 
+    def test_libcrafter_ssdp_layer_name_canonicalizes(self) -> None:
+        report = {
+            "metadata": {
+                "records": [
+                    {
+                        "layers": ["ethernet", "ipv4", "udp", "SSDP"],
+                        "raw_hex": "00",
+                    }
+                ]
+            }
+        }
+
+        records = cli._pcap_records(report)
+
+        self.assertEqual(records[0]["layers"], ["ethernet", "ipv4", "udp", "ssdp"])
+
 
 class PcapOutputDirTest(unittest.TestCase):
     def test_default_output_uses_mode_subdir(self) -> None:
