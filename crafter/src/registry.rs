@@ -2181,6 +2181,27 @@ mod ssdp_udp_binding {
         assert!(decoded.layer::<Ssdp>().is_none());
         assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), payload);
     }
+
+    #[test]
+    fn ssdp_application_decoding_toggle_preserves_valid_ssdp_as_raw() {
+        let payload = search_payload().to_bytes();
+        let registry = ProtocolRegistry::new().application_decoding(false);
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(239, 255, 255, 250))
+            / Udp::new().sport(49_152).dport(SSDP_UDP_PORT)
+            / Raw::from_bytes(&payload);
+        let decoded = Packet::decode_from_l3_with_registry(
+            &registry,
+            NetworkLayer::Ipv4,
+            packet.compile().unwrap().as_bytes(),
+        )
+        .unwrap();
+
+        assert!(decoded.layer::<Udp>().is_some());
+        assert!(decoded.layer::<Ssdp>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), payload);
+    }
 }
 
 #[cfg(test)]
