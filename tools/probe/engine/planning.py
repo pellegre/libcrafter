@@ -208,6 +208,13 @@ from .protocols.rip import (  # noqa: F401  (re-exported for identity/back-compa
 from .protocols.snmp import (  # noqa: F401  (re-exported for identity/back-compat)
     _snmp_probe_plan,
 )
+# The SSDP planning surface (the planned-only SSDP discovery cases' shared
+# ``_ssdp_probe_plan`` builder) lives in the SSDP plugin module. Re-import the
+# moved builder so ``planning._ssdp_probe_plan`` resolves to the same function
+# object the plugin registered and the merged ``PLAN_BUILDERS`` exposes.
+from .protocols.ssdp import (  # noqa: F401  (re-exported for identity)
+    _ssdp_probe_plan,
+)
 # The IGMP planning surface (the four IGMP cases' shared ``_igmp_probe_plan``
 # builder, the ``_igmp_target_service`` plan-building helper, and the
 # ``deterministic_igmp_group`` / ``deterministic_igmp_source_list`` helpers) lives
