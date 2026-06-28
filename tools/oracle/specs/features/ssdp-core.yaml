@@ -1,0 +1,364 @@
+version: 1
+kind: feature
+name: ssdp_core
+summary: Source-backed SSDP search, notification, response, unknown-preservation, body-preservation, and UDP raw-fallback behavior.
+
+# Core SSDP oracle coverage is a strict-byte UDP payload contract. Later
+# backend steps materialize these cases as complete UDP datagrams; this spec is
+# the data source for M-SEARCH requests, NOTIFY advertisements, 200 OK search
+# responses, structurally valid unknown values, opaque body bytes, and unrelated
+# UDP/1900 payloads that must remain Raw.
+
+layers:
+  - udp
+  - ssdp
+directions:
+  - backend_to_libcrafter
+  - libcrafter_to_backend
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: m-search
+    summary: Source-backed active discovery request over UDP/1900.
+    message_kind: m_search
+    start_line: "M-SEARCH * HTTP/1.1"
+    udp:
+      source_port: 1900
+      destination_port: 1900
+    headers:
+      - name: HOST
+        value: "239.255.255.250:1900"
+      - name: MAN
+        value: "\"ssdp:discover\""
+      - name: MX
+        value: "1"
+      - name: ST
+        value: "ssdp:all"
+    checks:
+      - method_m_search_preserved
+      - asterisk_request_target_preserved
+      - http_1_1_version_preserved
+      - source_backed_search_headers_present
+      - udp_service_port_1900
+  - name: notify-alive
+    summary: Source-backed availability advertisement with cache, location, target, subtype, and USN fields.
+    message_kind: notify
+    start_line: "NOTIFY * HTTP/1.1"
+    udp:
+      source_port: 1900
+      destination_port: 1900
+    headers:
+      - name: HOST
+        value: "239.255.255.250:1900"
+      - name: CACHE-CONTROL
+        value: "max-age=1800"
+      - name: LOCATION
+        value: "http://192.0.2.10:8000/root.xml"
+      - name: NT
+        value: "upnp:rootdevice"
+      - name: NTS
+        value: "ssdp:alive"
+      - name: SERVER
+        value: "example-os/1.0 UPnP/2.0 example-product/1.0"
+      - name: USN
+        value: "uuid:device-001::upnp:rootdevice"
+      - name: BOOTID.UPNP.ORG
+        value: "1"
+      - name: CONFIGID.UPNP.ORG
+        value: "1"
+    checks:
+      - method_notify_preserved
+      - nts_alive_preserved
+      - target_and_usn_preserved
+      - source_backed_notify_headers_present
+  - name: notify-byebye
+    summary: Source-backed withdrawal advertisement preserving the NOTIFY start line and byebye subtype.
+    message_kind: notify
+    start_line: "NOTIFY * HTTP/1.1"
+    udp:
+      source_port: 1900
+      destination_port: 1900
+    headers:
+      - name: HOST
+        value: "239.255.255.250:1900"
+      - name: NT
+        value: "upnp:rootdevice"
+      - name: NTS
+        value: "ssdp:byebye"
+      - name: USN
+        value: "uuid:device-001::upnp:rootdevice"
+      - name: BOOTID.UPNP.ORG
+        value: "1"
+      - name: CONFIGID.UPNP.ORG
+        value: "1"
+    checks:
+      - method_notify_preserved
+      - nts_byebye_preserved
+      - target_and_usn_preserved
+  - name: notify-update
+    summary: Source-backed update advertisement preserving next-boot metadata.
+    message_kind: notify
+    start_line: "NOTIFY * HTTP/1.1"
+    udp:
+      source_port: 1900
+      destination_port: 1900
+    headers:
+      - name: HOST
+        value: "239.255.255.250:1900"
+      - name: NT
+        value: "upnp:rootdevice"
+      - name: NTS
+        value: "ssdp:update"
+      - name: USN
+        value: "uuid:device-001::upnp:rootdevice"
+      - name: BOOTID.UPNP.ORG
+        value: "1"
+      - name: NEXTBOOTID.UPNP.ORG
+        value: "2"
+      - name: CONFIGID.UPNP.ORG
+        value: "1"
+    checks:
+      - method_notify_preserved
+      - nts_update_preserved
+      - next_boot_id_preserved
+  - name: response-ok
+    summary: Source-backed search response with an empty EXT field and discovery metadata.
+    message_kind: response
+    start_line: "HTTP/1.1 200 OK"
+    udp:
+      source_port: 1900
+      destination_port: 1900
+    headers:
+      - name: CACHE-CONTROL
+        value: "max-age=1800"
+      - name: DATE
+        value: "Fri, 01 Jan 2027 00:00:00 GMT"
+      - name: EXT
+        value: ""
+      - name: LOCATION
+        value: "http://192.0.2.10:8000/root.xml"
+      - name: SERVER
+        value: "example-os/1.0 UPnP/2.0 example-product/1.0"
+      - name: ST
+        value: "upnp:rootdevice"
+      - name: USN
+        value: "uuid:device-001::upnp:rootdevice"
+      - name: BOOTID.UPNP.ORG
+        value: "1"
+      - name: CONFIGID.UPNP.ORG
+        value: "1"
+    checks:
+      - status_200_ok_preserved
+      - empty_ext_header_preserved
+      - source_backed_response_headers_present
+  - name: unknown-preservation
+    summary: Structurally valid SSDP-like request preserving an unknown method, unknown headers, duplicates, and non-canonical spelling.
+    message_kind: unknown_request_preserved
+    start_line: "M-SEARCH-EXAMPLE * HTTP/1.1"
+    udp:
+      source_port: 1900
+      destination_port: 1900
+    headers:
+      - name: host
+        value: "239.255.255.250:1900"
+      - name: X-EXAMPLE.ORG
+        value: "one"
+      - name: X-EXAMPLE.ORG
+        value: "two"
+      - name: 01-NLS
+        value: "1"
+    checks:
+      - unknown_method_preserved
+      - original_header_spelling_preserved
+      - duplicate_header_order_preserved
+      - extension_header_preserved
+  - name: body-bytes
+    summary: Structurally valid SSDP response preserving opaque bytes after the header delimiter.
+    message_kind: response
+    start_line: "HTTP/1.1 200 OK"
+    udp:
+      source_port: 1900
+      destination_port: 1900
+    headers:
+      - name: EXT
+        value: ""
+      - name: ST
+        value: "upnp:rootdevice"
+      - name: USN
+        value: "uuid:device-001::upnp:rootdevice"
+    body:
+      encoding: hex
+      value: "000d0a626f64793a6279746573ff"
+    checks:
+      - body_bytes_preserved
+      - no_content_length_inference
+      - recompile_matches_input
+  - name: raw-fallback
+    summary: Unrelated UDP data on SSDP-related ports remains Raw rather than decoding as SSDP.
+    message_kind: raw_preserved
+    udp:
+      source_port: 1900
+      destination_port: 1900
+    payload:
+      encoding: utf8
+      value: "not an SSDP message\r\nwithout the required shape"
+    expected_layers:
+      - udp
+      - raw
+    checks:
+      - no_ssdp_layer
+      - raw_payload_preserved
+      - udp_ports_preserved
+
+coverage_cases:
+  - ssdp-m-search
+  - ssdp-notify-alive
+  - ssdp-notify-byebye
+  - ssdp-notify-update
+  - ssdp-response-ok
+  - ssdp-unknown-preservation
+  - ssdp-body-bytes
+  - ssdp-raw-fallback
+
+supported_cases:
+  - name: ssdp-m-search
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: ssdp-notify-alive
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: ssdp-notify-byebye
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: ssdp-notify-update
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: ssdp-response-ok
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: ssdp-unknown-preservation
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: ssdp-body-bytes
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: ssdp-raw-fallback
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+
+case_groups:
+  - name: ssdp-core-source-backed
+    summary: UPnP-backed M-SEARCH, NOTIFY, and 200 OK response datagrams.
+    byte_policy: strict_bytes
+    cases:
+      - ssdp-m-search
+      - ssdp-notify-alive
+      - ssdp-notify-byebye
+      - ssdp-notify-update
+      - ssdp-response-ok
+  - name: ssdp-core-preservation
+    summary: Structurally valid unknown values, body bytes, and non-SSDP UDP/1900 raw fallback.
+    byte_policy: strict_bytes
+    cases:
+      - ssdp-unknown-preservation
+      - ssdp-body-bytes
+      - ssdp-raw-fallback
+
+normalized_model:
+  udp:
+    - source_port
+    - destination_port
+    - length
+    - checksum
+  message:
+    - message_kind
+    - start_line
+    - method
+    - request_target
+    - version
+    - status_code
+    - reason_phrase
+    - headers
+    - body
+    - body_length
+  header:
+    - name
+    - original_name
+    - canonical_name
+    - name_kind
+    - value
+    - order
+    - duplicate_index
+  raw_fallback:
+    - payload
+    - payload_length
+    - no_ssdp_layer
+
+source_refs:
+  - UPnP Device Architecture 2.0 Discovery
+  - UPnP Device Architecture 1.1 Discovery
+  - RFC 768
+  - RFC 9110
+  - RFC 9112
+  - IANA Service Name and Transport Protocol Port Number Registry
+  - .agents/docs/ssdp-source-manifest.md
+  - .agents/docs/ssdp-wire-grammar.md
+  - .agents/docs/ssdp-codepoints.md
+
+notes:
+  - >-
+    Search, notify, and response cases are source-backed SSDP discovery payloads
+    carried as one UDP datagram. UDP length and checksum autofill remain lower
+    layer behavior; SSDP comparison starts at the UDP payload and normalized UDP
+    port metadata.
+  - >-
+    Unknown methods, non-canonical header spelling, duplicate fields,
+    namespace-prefixed NLS extension headers, and body bytes remain preserved
+    when the enclosing SSDP message is structurally valid.
+  - >-
+    The raw-fallback case is intentionally on UDP/1900 but lacks the
+    conservative SSDP shape. It must normalize as UDP plus Raw, not as an SSDP
+    layer or a malformed SSDP packet.
+  - >-
+    Fixture values use documentation address space and synthetic product
+    strings only. No live host identifiers, provider endpoints, credentials, or
+    local paths belong in generated artifacts from these cases.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - Raw
+    notes:
+      - >-
+        SSDP backend materialization is assigned to later steps. These cases can
+        be emitted as deterministic UDP Raw payloads and normalized from Raw
+        bytes once the Scapy SSDP backend adapter exists.
+  libcrafter:
+    status: supported
+    native_layers:
+      - Udp
+      - Ssdp
+      - Raw
+    notes:
+      - >-
+        The crate can build, serialize, decode, inspect, and round-trip the
+        typed SSDP cases, and it preserves unrelated UDP/1900 payloads as Raw
+        through the conservative SSDP shape gate.
