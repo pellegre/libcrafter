@@ -52,8 +52,28 @@ class ProbeAcceptanceHarnessTest(unittest.TestCase):
             self.assertTrue(outcome.request_path.is_file())
             self.assertTrue(outcome.response_path.is_file())
             self.assertEqual(outcome.report.get("status"), "dry-run")
-            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            metadata = outcome.report.get("metadata", {})
+            planned = metadata.get("planned_case_names", [])
             self.assertIn(HARNESS_CASE, planned)
+            runtime = metadata.get("appliance_runtime", {})
+            self.assertEqual(runtime.get("profile"), "lan-raw")
+            self.assertEqual(metadata.get("session_appliance_runtime"), runtime)
+            endpoint_runtimes = metadata.get("endpoint_appliance_runtimes", {})
+            self.assertIn("stimulus", endpoint_runtimes)
+            self.assertEqual(endpoint_runtimes["stimulus"].get("profile"), "lan-raw")
+            command_records = metadata.get("command_records", [])
+            self.assertTrue(command_records)
+            for command in command_records:
+                role = command.get("role")
+                if role in endpoint_runtimes:
+                    self.assertEqual(
+                        command.get("metadata", {}).get("appliance_runtime"),
+                        endpoint_runtimes[role],
+                    )
+            self.assertEqual(
+                outcome.request["metadata"]["stimulus_endpoint"]["interface_source"],
+                "lab_endpoint",
+            )
 
 
 if __name__ == "__main__":

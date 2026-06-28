@@ -83,6 +83,35 @@ class BehaviorDryRunSetupTest(unittest.TestCase):
 
         self.assertEqual(report.metadata["planned_count"], COUNT)
         self.assertEqual(len(endpoint_request["probe_plans"]), COUNT)
+        runtime = report.metadata["appliance_runtime"]
+        self.assertEqual(runtime["profile"], "lan-raw")
+        self.assertEqual(report.metadata["session_appliance_runtime"], runtime)
+        endpoint_runtimes = report.metadata["endpoint_appliance_runtimes"]
+        self.assertEqual(set(endpoint_runtimes), {"stimulus", "target"})
+        self.assertEqual(endpoint_runtimes["stimulus"]["profile"], "lan-raw")
+        self.assertEqual(
+            report.metadata["endpoint_plan"]["endpoint_appliance_runtimes"],
+            endpoint_runtimes,
+        )
+        self.assertEqual(
+            report.metadata["planned_infrastructure"]["appliance_runtime"],
+            runtime,
+        )
+        self.assertNotIn("appliance_runtime", setup)
+        for command in report.metadata["command_records"]:
+            role = command["role"]
+            self.assertEqual(
+                command["metadata"]["appliance_runtime"],
+                endpoint_runtimes[role],
+            )
+            self.assertEqual(
+                command["metadata"]["endpoint_appliance_runtime"],
+                endpoint_runtimes[role],
+            )
+        self.assertEqual(
+            endpoint_request["metadata"]["stimulus_endpoint"]["interface_source"],
+            "lab_endpoint",
+        )
         self.assertFalse(setup["starts_services"])
         self.assertFalse(setup["dry_run_starts_services"])
 
