@@ -12,9 +12,10 @@ use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::protocols::transport::Udp;
 
 use super::constants::{
-    SSDP_HEADER_HOST, SSDP_HEADER_MAN, SSDP_HEADER_MX, SSDP_HEADER_ST,
-    SSDP_HTTP_VERSION as HTTP_VERSION_1_1, SSDP_IPV4_MULTICAST_HOST, SSDP_MAN_DISCOVER,
-    SSDP_METHOD_M_SEARCH as METHOD_M_SEARCH, SSDP_METHOD_NOTIFY as METHOD_NOTIFY,
+    SSDP_HEADER_HOST, SSDP_HEADER_MAN, SSDP_HEADER_MX, SSDP_HEADER_NT, SSDP_HEADER_NTS,
+    SSDP_HEADER_ST, SSDP_HEADER_USN, SSDP_HTTP_VERSION as HTTP_VERSION_1_1,
+    SSDP_IPV4_MULTICAST_HOST, SSDP_MAN_DISCOVER, SSDP_METHOD_M_SEARCH as METHOD_M_SEARCH,
+    SSDP_METHOD_NOTIFY as METHOD_NOTIFY, SSDP_NTS_ALIVE, SSDP_NTS_BYEBYE, SSDP_NTS_UPDATE,
     SSDP_REASON_OK as REASON_OK, SSDP_STATUS_OK as STATUS_OK, SSDP_ST_ALL, SSDP_TARGET_ROOTDEVICE,
     SSDP_UDP_PORT,
 };
@@ -59,6 +60,21 @@ impl Ssdp {
     /// Build a source-backed `NOTIFY * HTTP/1.1` request.
     pub fn notify() -> Self {
         Self::new(SsdpMessage::notify())
+    }
+
+    /// Build a source-backed `NOTIFY` request with `NTS: ssdp:alive`.
+    pub fn notify_alive() -> Self {
+        Self::notify().with_notify_defaults_for(SSDP_NTS_ALIVE)
+    }
+
+    /// Build a source-backed `NOTIFY` request with `NTS: ssdp:byebye`.
+    pub fn notify_byebye() -> Self {
+        Self::notify().with_notify_defaults_for(SSDP_NTS_BYEBYE)
+    }
+
+    /// Build a source-backed `NOTIFY` request with `NTS: ssdp:update`.
+    pub fn notify_update() -> Self {
+        Self::notify().with_notify_defaults_for(SSDP_NTS_UPDATE)
     }
 
     /// Build a source-backed `HTTP/1.1 200 OK` response.
@@ -153,6 +169,21 @@ impl Ssdp {
         self.with_source_header(SSDP_HEADER_ST, value)
     }
 
+    /// Append an explicit `NT` notification type header.
+    pub fn notification_type(self, value: impl Into<SsdpHeaderValue>) -> Self {
+        self.with_source_header(SSDP_HEADER_NT, value)
+    }
+
+    /// Append an explicit `NTS` notification subtype header.
+    pub fn notification_subtype(self, value: impl Into<SsdpHeaderValue>) -> Self {
+        self.with_source_header(SSDP_HEADER_NTS, value)
+    }
+
+    /// Append an explicit `USN` unique service name header.
+    pub fn unique_service_name(self, value: impl Into<SsdpHeaderValue>) -> Self {
+        self.with_source_header(SSDP_HEADER_USN, value)
+    }
+
     /// Replace the opaque body bytes with caller-supplied bytes.
     pub fn with_body(mut self, body: impl Into<Vec<u8>>) -> Self {
         self.message = self.message.with_body(body);
@@ -168,6 +199,15 @@ impl Ssdp {
         .with_source_default_header(SsdpHeaderNameKind::Man, SSDP_HEADER_MAN, SSDP_MAN_DISCOVER)
         .with_source_default_header(SsdpHeaderNameKind::Mx, SSDP_HEADER_MX, "1")
         .with_source_default_header(SsdpHeaderNameKind::St, SSDP_HEADER_ST, target)
+    }
+
+    fn with_notify_defaults_for(self, subtype: impl Into<SsdpHeaderValue>) -> Self {
+        self.with_source_default_header(
+            SsdpHeaderNameKind::Host,
+            SSDP_HEADER_HOST,
+            SSDP_IPV4_MULTICAST_HOST,
+        )
+        .with_source_default_header(SsdpHeaderNameKind::Nts, SSDP_HEADER_NTS, subtype)
     }
 
     fn with_source_default_header(
@@ -1541,6 +1581,91 @@ mod tests {
         assert_eq!(
             headers[3].value().as_bytes(),
             b"urn:schemas-upnp-org:service:ContentDirectory:1"
+        );
+    }
+
+    #[test]
+    fn ssdp_notify_builders_source_backed_subtypes() {
+        for (message, expected_subtype) in [
+            (Ssdp::notify_alive(), SSDP_NTS_ALIVE),
+            (Ssdp::notify_byebye(), SSDP_NTS_BYEBYE),
+            (Ssdp::notify_update(), SSDP_NTS_UPDATE),
+        ] {
+            let request = message
+                .message()
+                .start_line()
+                .as_request()
+                .expect("NOTIFY request line");
+            let host = message
+                .headers()
+                .get_first(SsdpHeaderNameKind::Host)
+                .expect("HOST header");
+            let nts = message
+                .headers()
+                .get_first(SsdpHeaderNameKind::Nts)
+                .expect("NTS header");
+
+            assert_eq!(request.method(), &SsdpMethod::Notify);
+            assert_eq!(request.target().as_str(), "*");
+            assert_eq!(request.version().as_str(), HTTP_VERSION_1_1);
+            assert_eq!(host.as_bytes(), SSDP_IPV4_MULTICAST_HOST.as_bytes());
+            assert_eq!(nts.as_bytes(), expected_subtype.as_bytes());
+        }
+    }
+
+    #[test]
+    fn ssdp_notify_builders_typed_setters_preserve_unknown_notification_values() {
+        let message = Ssdp::notify()
+            .host("[ff05::c]:1900")
+            .notification_type("urn:schemas-upnp-org:device:MediaServer:1")
+            .notification_subtype("ssdp:custom")
+            .unique_service_name("uuid:device-1::urn:schemas-upnp-org:device:MediaServer:1");
+        let headers = message.headers().iter().collect::<Vec<_>>();
+
+        assert_eq!(headers.len(), 4);
+        assert_eq!(headers[0].name().original(), SSDP_HEADER_HOST);
+        assert_eq!(headers[0].value().as_bytes(), b"[ff05::c]:1900");
+        assert_eq!(headers[1].name().original(), SSDP_HEADER_NT);
+        assert_eq!(
+            headers[1].value().as_bytes(),
+            b"urn:schemas-upnp-org:device:MediaServer:1"
+        );
+        assert_eq!(headers[2].name().original(), SSDP_HEADER_NTS);
+        assert_eq!(headers[2].value().as_bytes(), b"ssdp:custom");
+        assert_eq!(headers[3].name().original(), SSDP_HEADER_USN);
+        assert_eq!(
+            headers[3].value().as_bytes(),
+            b"uuid:device-1::urn:schemas-upnp-org:device:MediaServer:1"
+        );
+    }
+
+    #[test]
+    fn ssdp_notify_builders_source_defaults_preserve_raw_extensions_and_overrides() {
+        let message = Ssdp::notify()
+            .with_raw_header("X-DEVICE.UPNP.ORG", "opaque")
+            .expect("extension header")
+            .with_raw_header("NTS", "ssdp:custom")
+            .expect("explicit NTS header")
+            .with_notify_defaults_for(SSDP_NTS_ALIVE);
+        let headers = message.headers().iter().collect::<Vec<_>>();
+
+        assert_eq!(headers.len(), 3);
+        assert_eq!(headers[0].name().original(), "X-DEVICE.UPNP.ORG");
+        assert_eq!(headers[0].value().as_bytes(), b"opaque");
+        assert_eq!(headers[1].name().original(), "NTS");
+        assert_eq!(headers[1].value().as_bytes(), b"ssdp:custom");
+        assert_eq!(headers[2].name().original(), SSDP_HEADER_HOST);
+        assert_eq!(
+            headers[2].value().as_bytes(),
+            SSDP_IPV4_MULTICAST_HOST.as_bytes()
+        );
+        assert_eq!(
+            message
+                .headers()
+                .get_first(SsdpHeaderNameKind::Nts)
+                .expect("NTS header")
+                .as_bytes(),
+            b"ssdp:custom"
         );
     }
 
