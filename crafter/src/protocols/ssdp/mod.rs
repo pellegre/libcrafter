@@ -7,7 +7,7 @@
 //! composition without introducing a discovery workflow.
 
 mod constants;
-mod decode;
+pub(crate) mod decode;
 mod header;
 mod message;
 mod registry;

@@ -50,6 +50,10 @@ use crate::protocols::snmp::{
     decode::{append_snmp_packet, looks_like_snmp_payload},
     SNMP_PORT, SNMP_TRAP_PORT,
 };
+use crate::protocols::ssdp::{
+    decode::{append_ssdp_packet, looks_like_ssdp_payload},
+    SSDP_UDP_PORT,
+};
 use crate::protocols::transport::{
     append_tcp_packet_with_registry, append_udp_packet_with_registry,
 };
@@ -429,6 +433,17 @@ impl ProtocolRegistry {
                     && looks_like_snmp_payload(ctx.payload)
             },
             |_registry, packet, payload| append_snmp_packet(packet, payload),
+        );
+
+        // SSDP binds only to the source-backed UDP/1900 service port and a
+        // conservative HTTP-like SSDP shape gate. The port alone is not enough:
+        // unrelated HTTP-ish or binary UDP payloads on 1900 stay `Raw`.
+        registry.bind_udp_with_registry(
+            |ctx| {
+                (ctx.source_port == SSDP_UDP_PORT || ctx.destination_port == SSDP_UDP_PORT)
+                    && looks_like_ssdp_payload(ctx.payload)
+            },
+            |_registry, packet, payload| append_ssdp_packet(packet, payload),
         );
 
         registry.bind_tcp_port_with_registry(BGP_PORT, |registry, packet, payload| {
@@ -867,6 +882,12 @@ impl ProtocolRegistry {
                 && looks_like_snmp_payload(payload)
             {
                 return append_snmp_packet(packet, payload);
+            }
+
+            if (source_port == SSDP_UDP_PORT || destination_port == SSDP_UDP_PORT)
+                && looks_like_ssdp_payload(payload)
+            {
+                return append_ssdp_packet(packet, payload);
             }
 
             if (source_port == NATT_UDP_PORT || destination_port == NATT_UDP_PORT)
@@ -1984,6 +2005,141 @@ mod snmp_udp_decode {
         assert!(decoded.layer::<Raw>().is_none());
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod ssdp_udp_binding {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    use super::ProtocolRegistry;
+    use crate::{
+        Ipv4, Ipv6, NetworkLayer, Packet, Raw, Ssdp, Udp, SSDP_HEADER_EXT, SSDP_HEADER_HOST,
+        SSDP_HEADER_ST, SSDP_HEADER_USN, SSDP_IPV4_MULTICAST_HOST, SSDP_ST_ALL, SSDP_UDP_PORT,
+    };
+
+    fn search_payload() -> Ssdp {
+        Ssdp::m_search()
+            .with_raw_header(SSDP_HEADER_HOST, SSDP_IPV4_MULTICAST_HOST)
+            .expect("HOST header is valid")
+            .with_raw_header(SSDP_HEADER_ST, SSDP_ST_ALL)
+            .expect("ST header is valid")
+    }
+
+    fn response_payload() -> Ssdp {
+        Ssdp::response_ok()
+            .with_raw_header(SSDP_HEADER_EXT, "")
+            .expect("EXT header is valid")
+            .with_raw_header(SSDP_HEADER_ST, SSDP_ST_ALL)
+            .expect("ST header is valid")
+            .with_raw_header(SSDP_HEADER_USN, "uuid:device-1::ssdp:all")
+            .expect("USN header is valid")
+    }
+
+    #[test]
+    fn ssdp_udp_binding_decodes_ipv4_request_and_ipv6_response_on_port_1900() {
+        let ipv4_packet = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(239, 255, 255, 250))
+            / Udp::new().sport(49_152).dport(SSDP_UDP_PORT)
+            / search_payload();
+        let ipv4_decoded = Packet::decode_from_l3(
+            NetworkLayer::Ipv4,
+            ipv4_packet.compile().unwrap().as_bytes(),
+        )
+        .unwrap();
+
+        assert!(ipv4_decoded.layer::<Ssdp>().is_some());
+        assert!(ipv4_decoded.layer::<Raw>().is_none());
+
+        let ipv6_packet = Ipv6::new()
+            .src("2001:db8::10".parse::<Ipv6Addr>().unwrap())
+            .dst("ff02::c".parse::<Ipv6Addr>().unwrap())
+            / Udp::new().sport(SSDP_UDP_PORT).dport(49_153)
+            / response_payload();
+        let ipv6_decoded = Packet::decode_from_l3(
+            NetworkLayer::Ipv6,
+            ipv6_packet.compile().unwrap().as_bytes(),
+        )
+        .unwrap();
+
+        assert!(ipv6_decoded.layer::<Ssdp>().is_some());
+        assert!(ipv6_decoded.layer::<Raw>().is_none());
+    }
+
+    #[test]
+    fn ssdp_udp_binding_preserves_non_ssdp_payloads_on_port_1900_as_raw() {
+        let cases: &[(&str, &[u8])] = &[
+            (
+                "generic_http",
+                b"GET / HTTP/1.1\r\nHOST: example.test\r\n\r\n",
+            ),
+            (
+                "truncated_candidate",
+                b"M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\n",
+            ),
+            ("binary", b"\x00\x01\x02\x03"),
+        ];
+
+        for (name, payload) in cases {
+            let packet = Ipv4::new()
+                .src(Ipv4Addr::new(192, 0, 2, 10))
+                .dst(Ipv4Addr::new(239, 255, 255, 250))
+                / Udp::new().sport(49_152).dport(SSDP_UDP_PORT)
+                / Raw::from_bytes(payload);
+            let decoded =
+                Packet::decode_from_l3(NetworkLayer::Ipv4, packet.compile().unwrap().as_bytes())
+                    .unwrap_or_else(|err| panic!("{name} should decode as raw: {err}"));
+
+            assert!(
+                decoded.layer::<Ssdp>().is_none(),
+                "{name} should not produce SSDP"
+            );
+            assert_eq!(
+                decoded.layer::<Raw>().unwrap().as_bytes(),
+                *payload,
+                "{name} raw payload should be preserved"
+            );
+        }
+    }
+
+    #[test]
+    fn ssdp_udp_binding_requires_source_backed_port() {
+        let payload = search_payload().to_bytes();
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 10))
+            / Udp::new().sport(49_152).dport(49_153)
+            / Raw::from_bytes(&payload);
+        let decoded =
+            Packet::decode_from_l3(NetworkLayer::Ipv4, packet.compile().unwrap().as_bytes())
+                .unwrap();
+
+        assert!(decoded.layer::<Ssdp>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), payload);
+    }
+
+    #[test]
+    fn ssdp_udp_binding_custom_binding_overrides_builtin() {
+        let mut registry = ProtocolRegistry::new();
+        registry.bind_udp_port(SSDP_UDP_PORT, |packet, payload| {
+            Ok(packet.push(Raw::from_bytes(payload)))
+        });
+
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(239, 255, 255, 250))
+            / Udp::new().sport(49_152).dport(SSDP_UDP_PORT)
+            / search_payload();
+        let decoded = Packet::decode_from_l3_with_registry(
+            &registry,
+            NetworkLayer::Ipv4,
+            packet.compile().unwrap().as_bytes(),
+        )
+        .unwrap();
+
+        assert!(decoded.layer::<Ssdp>().is_none());
+        assert!(decoded.layer::<Raw>().is_some());
     }
 }
 

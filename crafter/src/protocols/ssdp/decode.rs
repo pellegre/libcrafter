@@ -7,6 +7,9 @@
 use core::fmt;
 use core::str;
 
+use crate::error::{CrafterError, Result};
+use crate::packet::Packet;
+
 use super::header::{SsdpHeaderNameKind, SsdpHeaderNameParseError, SsdpHeaderValue};
 use super::message::{
     Ssdp, SsdpMessage, SsdpMethod, SsdpMethodParseError, SsdpReasonPhrase, SsdpRequestLine,
@@ -67,6 +70,12 @@ pub(crate) fn decode_ssdp(bytes: &[u8]) -> ParseResult<Ssdp> {
     } else {
         parse_ssdp_request(bytes)
     }
+}
+
+/// Append a decoded SSDP layer to an existing packet stack.
+pub(crate) fn append_ssdp_packet(packet: Packet, bytes: &[u8]) -> Result<Packet> {
+    let ssdp = decode_ssdp(bytes).map_err(|error| error.to_crafter_error())?;
+    Ok(packet.push(ssdp))
 }
 
 /// Return true when a UDP payload has enough SSDP structure for dispatch.
@@ -654,6 +663,17 @@ impl SsdpParseError {
     /// Return the structured parser error kind.
     pub(crate) const fn kind(&self) -> &SsdpParseErrorKind {
         &self.kind
+    }
+
+    fn to_crafter_error(&self) -> CrafterError {
+        match self.kind() {
+            SsdpParseErrorKind::Truncated {
+                context,
+                required,
+                available,
+            } => CrafterError::buffer_too_short(context, *required, *available),
+            _ => CrafterError::invalid_field_value("ssdp.payload", "malformed SSDP message"),
+        }
     }
 }
 
