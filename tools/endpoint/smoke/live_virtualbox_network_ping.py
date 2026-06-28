@@ -4,7 +4,8 @@
 This script intentionally does not run under default unittest discovery. Use
 ``--plan-only`` to inspect the command sequence without creating a VM, or pass
 ``--live --i-understand-isolated-lab`` to create a confirmed VirtualBox LAN
-endpoint and send one ICMP echo request to the LAN router.
+endpoint and send one ICMP echo request to the LAN router through the endpoint
+appliance runtime.
 """
 
 from __future__ import annotations
@@ -19,7 +20,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+try:
+    from appliance_support import runtime_plan_lines, ssh_docker_runtime_metadata
+except ImportError:  # pragma: no cover - package import path
+    from tools.endpoint.smoke.appliance_support import (
+        runtime_plan_lines,
+        ssh_docker_runtime_metadata,
+    )
 
+APPLIANCE_PROFILE = "lan-raw"
 DEFAULT_REMOTE_BIN = "/root/network_ping"
 DEFAULT_ROLE = "network-ping-smoke"
 DEFAULT_ROUTER = "192.168.0.1"
@@ -30,8 +39,11 @@ DEFAULT_GUEST_STATE_COMMAND = (
     "ip route; "
     "echo '### uname -a'; "
     "uname -a; "
-    "echo '### network_ping'; "
-    "ls -l /root/network_ping"
+    "echo '### cargo'; "
+    "cargo --version; "
+    "echo '### workspace'; "
+    "pwd; "
+    "ls -la"
 )
 
 
@@ -66,21 +78,15 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     repo_root = Path(__file__).resolve().parents[3]
     wire = repo_root / "tools" / "endpoint" / "run"
-    binary = (
-        repo_root / "target" / "debug" / "examples" / "network_ping"
-        if args.binary is None
-        else Path(args.binary).expanduser().resolve()
-    )
 
     plan = _plan_commands(
         repo_root=repo_root,
         wire=wire,
-        binary=binary,
         router=args.router,
-        remote_bin=args.remote_bin,
         role=args.role,
         icmp_id=args.icmp_id,
         icmp_seq=args.icmp_seq,
+        guest_state_command=args.guest_state_command,
     )
     if args.plan_only:
         print(plan)
@@ -127,81 +133,73 @@ def main(argv: list[str] | None = None) -> int:
         _write_result_artifacts(artifact_dir, "create_endpoint", create)
 
         lan_iface, lan_src = _lan_endpoint(manifest)
+        appliance_artifact_dir = artifact_dir / "appliance-network-ping"
 
-        build = _run(
-            ["cargo", "build", "-p", "crafter", "--example", "network_ping"],
+        deploy = _run(
+            [
+                str(wire),
+                "appliance",
+                "deploy",
+                endpoint_id,
+                APPLIANCE_PROFILE,
+                "--artifact-dir",
+                str(appliance_artifact_dir / "deploy"),
+                "--json",
+            ],
             cwd=repo_root,
             timeout=args.build_timeout,
         )
-        _write_result_artifacts(artifact_dir, "build_network_ping", build)
-        if not build.ok:
-            raise SmokeError("network_ping build failed", build.exit_code)
-        if not binary.is_file():
-            raise SmokeError(f"network_ping binary not found after build: {binary}")
-
-        upload = _run(
-            [str(wire), "upload", endpoint_id, str(binary), args.remote_bin],
-            cwd=repo_root,
-            timeout=args.transfer_timeout,
-        )
-        _write_result_artifacts(artifact_dir, "upload_network_ping", upload)
-        if not upload.ok:
-            raise SmokeError("network_ping upload failed", upload.exit_code)
-
-        chmod = _run(
-            [str(wire), "exec", endpoint_id, "--", "chmod", "0755", args.remote_bin],
-            cwd=repo_root,
-            timeout=args.exec_timeout,
-        )
-        _write_result_artifacts(artifact_dir, "chmod_network_ping", chmod)
-        if not chmod.ok:
-            raise SmokeError("network_ping chmod failed", chmod.exit_code)
+        _write_result_artifacts(artifact_dir, "appliance_deploy", deploy)
+        if not deploy.ok:
+            raise SmokeError("endpoint appliance deploy failed", deploy.exit_code)
 
         network_ping = _run(
             [
                 str(wire),
-                "exec",
+                "appliance",
+                "run",
                 endpoint_id,
+                APPLIANCE_PROFILE,
+                "--work-dir",
+                str(repo_root),
+                "--artifact-dir",
+                str(appliance_artifact_dir),
+                "--json",
                 "--",
-                "env",
-                "LIBCRAFTER_ENDPOINT=1",
-                args.remote_bin,
-                "--live",
-                "--i-understand-isolated-lab",
-                "--iface",
-                lan_iface,
-                "--src",
-                lan_src,
-                "--dst",
-                args.router,
-                "--id",
-                str(args.icmp_id),
-                "--seq",
-                str(args.icmp_seq),
+                "sh",
+                "-lc",
+                _appliance_network_ping_command(
+                    args=args,
+                    lan_iface=lan_iface,
+                    lan_src=lan_src,
+                ),
             ],
             cwd=repo_root,
             timeout=args.ping_timeout,
         )
-        _write_result_artifacts(artifact_dir, "network_ping", network_ping)
-        if not network_ping.ok:
-            raise SmokeError("network_ping execution failed", network_ping.exit_code)
+        _write_result_artifacts(artifact_dir, "appliance_network_ping", network_ping)
 
-        guest_state = _run(
+        collect = _run(
             [
                 str(wire),
-                "exec",
+                "appliance",
+                "collect",
                 endpoint_id,
+                APPLIANCE_PROFILE,
+                "--artifact-dir",
+                str(appliance_artifact_dir),
+                "--json",
                 "--",
-                "sh",
-                "-lc",
-                args.guest_state_command,
+                "true",
             ],
             cwd=repo_root,
-            timeout=args.exec_timeout,
+            timeout=args.transfer_timeout,
         )
-        _write_result_artifacts(artifact_dir, "guest_state", guest_state)
-        if not guest_state.ok:
-            raise SmokeError("guest state collection failed", guest_state.exit_code)
+        _write_result_artifacts(artifact_dir, "appliance_collect", collect)
+        if not network_ping.ok:
+            raise SmokeError("network_ping appliance execution failed", network_ping.exit_code)
+        if not collect.ok:
+            raise SmokeError("network_ping appliance artifact collection failed", collect.exit_code)
 
         _write_json(
             artifact_dir / "network_ping_smoke.json",
@@ -211,7 +209,9 @@ def main(argv: list[str] | None = None) -> int:
                 "router": args.router,
                 "iface": lan_iface,
                 "src": lan_src,
-                "remote_bin": args.remote_bin,
+                "appliance_profile": APPLIANCE_PROFILE,
+                "appliance_artifact_dir": str(appliance_artifact_dir),
+                "appliance_runtime": ssh_docker_runtime_metadata(profile=APPLIANCE_PROFILE),
                 "artifact_dir": str(artifact_dir),
             },
         )
@@ -277,12 +277,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--binary",
         default=None,
-        help="absolute or relative local network_ping binary path after cargo build",
+        help="accepted for compatibility; appliance runs build from the synced workspace",
     )
     parser.add_argument(
         "--remote-bin",
         default=DEFAULT_REMOTE_BIN,
-        help="absolute guest path for the uploaded network_ping binary",
+        help="accepted for compatibility; appliance runs do not upload this binary path",
     )
     parser.add_argument("--id", dest="icmp_id", type=_uint16, default=0x4242)
     parser.add_argument("--seq", dest="icmp_seq", type=_uint16, default=1)
@@ -304,13 +304,13 @@ def _plan_commands(
     *,
     repo_root: Path,
     wire: Path,
-    binary: Path,
     router: str,
-    remote_bin: str,
     role: str,
     icmp_id: int,
     icmp_seq: int,
+    guest_state_command: str,
 ) -> str:
+    runtime = ssh_docker_runtime_metadata(profile=APPLIANCE_PROFILE)
     commands = [
         [
             str(wire),
@@ -324,38 +324,52 @@ def _plan_commands(
             "--confirm-live-run",
             "--json",
         ],
-        ["cargo", "build", "-p", "crafter", "--example", "network_ping"],
-        [str(wire), "upload", "<endpoint_id>", str(binary), remote_bin],
-        [str(wire), "exec", "<endpoint_id>", "--", "chmod", "0755", remote_bin],
         [
             str(wire),
-            "exec",
+            "appliance",
+            "deploy",
             "<endpoint_id>",
-            "--",
-            "env",
-            "LIBCRAFTER_ENDPOINT=1",
-            remote_bin,
-            "--live",
-            "--i-understand-isolated-lab",
-            "--iface",
-            "<lan_iface>",
-            "--src",
-            "<lan_ipv4>",
-            "--dst",
-            router,
-            "--id",
-            str(icmp_id),
-            "--seq",
-            str(icmp_seq),
+            APPLIANCE_PROFILE,
+            "--artifact-dir",
+            "<artifact_dir>/appliance-network-ping/deploy",
+            "--json",
         ],
         [
             str(wire),
-            "exec",
+            "appliance",
+            "run",
             "<endpoint_id>",
+            APPLIANCE_PROFILE,
+            "--work-dir",
+            str(repo_root),
+            "--artifact-dir",
+            "<artifact_dir>/appliance-network-ping",
+            "--json",
             "--",
             "sh",
             "-lc",
-            DEFAULT_GUEST_STATE_COMMAND,
+            _appliance_network_ping_command(
+                args=argparse.Namespace(
+                    router=router,
+                    icmp_id=icmp_id,
+                    icmp_seq=icmp_seq,
+                    guest_state_command=guest_state_command,
+                ),
+                lan_iface="<lan_iface>",
+                lan_src="<lan_ipv4>",
+            ),
+        ],
+        [
+            str(wire),
+            "appliance",
+            "collect",
+            "<endpoint_id>",
+            APPLIANCE_PROFILE,
+            "--artifact-dir",
+            "<artifact_dir>/appliance-network-ping",
+            "--json",
+            "--",
+            "true",
         ],
         [str(wire), "destroy", "<endpoint_id>", "--json"],
     ]
@@ -363,10 +377,52 @@ def _plan_commands(
         "VirtualBox LAN network_ping smoke plan",
         f"repo: {repo_root}",
         "no VM is created in --plan-only mode",
+        *runtime_plan_lines(runtime),
         "",
     ]
     lines.extend(f"{index}. {shlex.join(command)}" for index, command in enumerate(commands, 1))
     return "\n".join(lines)
+
+
+def _appliance_network_ping_command(
+    *,
+    args: argparse.Namespace,
+    lan_iface: str,
+    lan_src: str,
+) -> str:
+    log = "/artifacts/network_ping.log"
+    guest_state = "/artifacts/guest_state.txt"
+    network_ping = [
+        "cargo",
+        "run",
+        "-p",
+        "crafter",
+        "--example",
+        "network_ping",
+        "--",
+        "--live",
+        "--i-understand-isolated-lab",
+        "--iface",
+        lan_iface,
+        "--src",
+        lan_src,
+        "--dst",
+        args.router,
+        "--id",
+        str(args.icmp_id),
+        "--seq",
+        str(args.icmp_seq),
+    ]
+    return (
+        "set -eu; "
+        "mkdir -p /artifacts; "
+        f"{{ {args.guest_state_command}; }} > {shlex.quote(guest_state)} 2>&1; "
+        f"LIBCRAFTER_ENDPOINT=1 {shlex.join(network_ping)} > {shlex.quote(log)} 2>&1; "
+        "rc=$?; "
+        f"cat {shlex.quote(guest_state)}; "
+        f"cat {shlex.quote(log)}; "
+        "exit $rc"
+    )
 
 
 def _run(argv: list[str], *, cwd: Path, timeout: float) -> CommandCapture:
