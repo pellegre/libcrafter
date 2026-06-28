@@ -989,6 +989,180 @@ impl From<SsdpReasonPhrase> for String {
     }
 }
 
+/// SSDP target value used by `ST` and `NT` headers.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SsdpTarget(String);
+
+impl SsdpTarget {
+    /// Build the source-backed `ssdp:all` search target.
+    pub fn all() -> Self {
+        Self(SSDP_ST_ALL.to_string())
+    }
+
+    /// Build the source-backed `upnp:rootdevice` target.
+    pub fn rootdevice() -> Self {
+        Self(SSDP_TARGET_ROOTDEVICE.to_string())
+    }
+
+    /// Build a source-backed UUID target.
+    pub fn uuid(device_uuid: impl Into<String>) -> Self {
+        Self(format!("uuid:{}", device_uuid.into()))
+    }
+
+    /// Build a UPnP Forum device type target.
+    pub fn upnp_device_type(device_type: impl Into<String>, version: u32) -> Self {
+        source_target("schemas-upnp-org", "device", device_type, version)
+    }
+
+    /// Build a UPnP Forum service type target.
+    pub fn upnp_service_type(service_type: impl Into<String>, version: u32) -> Self {
+        source_target("schemas-upnp-org", "service", service_type, version)
+    }
+
+    /// Build a vendor device type target.
+    pub fn vendor_device_type(
+        domain: impl Into<String>,
+        device_type: impl Into<String>,
+        version: u32,
+    ) -> Self {
+        source_target(domain, "device", device_type, version)
+    }
+
+    /// Build a vendor service type target.
+    pub fn vendor_service_type(
+        domain: impl Into<String>,
+        service_type: impl Into<String>,
+        version: u32,
+    ) -> Self {
+        source_target(domain, "service", service_type, version)
+    }
+
+    /// Preserve a caller-supplied target value.
+    pub fn raw(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// Return the preserved target bytes as UTF-8 text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Consume the wrapper and return the preserved target string.
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl fmt::Display for SsdpTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<String> for SsdpTarget {
+    fn from(value: String) -> Self {
+        Self::raw(value)
+    }
+}
+
+impl From<&str> for SsdpTarget {
+    fn from(value: &str) -> Self {
+        Self::raw(value)
+    }
+}
+
+impl From<SsdpTarget> for String {
+    fn from(target: SsdpTarget) -> Self {
+        target.0
+    }
+}
+
+impl From<SsdpTarget> for SsdpHeaderValue {
+    fn from(target: SsdpTarget) -> Self {
+        Self::from(target.0)
+    }
+}
+
+/// SSDP unique service name value used by the `USN` header.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SsdpUsn(String);
+
+impl SsdpUsn {
+    /// Build a UUID-only USN.
+    pub fn uuid(device_uuid: impl Into<String>) -> Self {
+        Self(format!("uuid:{}", device_uuid.into()))
+    }
+
+    /// Build a root-device USN.
+    pub fn rootdevice(device_uuid: impl Into<String>) -> Self {
+        Self::target(device_uuid, SsdpTarget::rootdevice())
+    }
+
+    /// Build a UUID plus target USN.
+    pub fn target(device_uuid: impl Into<String>, target: impl Into<SsdpTarget>) -> Self {
+        let target = target.into();
+        Self(format!("uuid:{}::{}", device_uuid.into(), target.as_str()))
+    }
+
+    /// Preserve a caller-supplied USN value.
+    pub fn raw(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// Return the preserved USN bytes as UTF-8 text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Consume the wrapper and return the preserved USN string.
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl fmt::Display for SsdpUsn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<String> for SsdpUsn {
+    fn from(value: String) -> Self {
+        Self::raw(value)
+    }
+}
+
+impl From<&str> for SsdpUsn {
+    fn from(value: &str) -> Self {
+        Self::raw(value)
+    }
+}
+
+impl From<SsdpUsn> for String {
+    fn from(usn: SsdpUsn) -> Self {
+        usn.0
+    }
+}
+
+impl From<SsdpUsn> for SsdpHeaderValue {
+    fn from(usn: SsdpUsn) -> Self {
+        Self::from(usn.0)
+    }
+}
+
+fn source_target(
+    domain: impl Into<String>,
+    kind: &'static str,
+    type_name: impl Into<String>,
+    version: u32,
+) -> SsdpTarget {
+    SsdpTarget(format!(
+        "urn:{}:{kind}:{}:{version}",
+        domain.into(),
+        type_name.into()
+    ))
+}
+
 /// Start-line field rejected by SSDP syntax validation.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum SsdpStartLineField {
@@ -1763,6 +1937,120 @@ mod tests {
 
         assert_eq!(bad_reason.field(), SsdpStartLineField::ReasonPhrase);
         assert_eq!(bad_reason.value(), "Bad\rReason");
+    }
+
+    #[test]
+    fn ssdp_target_headers_source_backed_target_constructors() {
+        assert_eq!(SsdpTarget::all().as_str(), SSDP_ST_ALL);
+        assert_eq!(SsdpTarget::rootdevice().as_str(), SSDP_TARGET_ROOTDEVICE);
+        assert_eq!(SsdpTarget::uuid("device-1").as_str(), "uuid:device-1");
+        assert_eq!(
+            SsdpTarget::upnp_device_type("MediaServer", 1).as_str(),
+            "urn:schemas-upnp-org:device:MediaServer:1"
+        );
+        assert_eq!(
+            SsdpTarget::upnp_service_type("ContentDirectory", 2).as_str(),
+            "urn:schemas-upnp-org:service:ContentDirectory:2"
+        );
+        assert_eq!(
+            SsdpTarget::vendor_device_type("example.com", "Bridge", 3).as_str(),
+            "urn:example.com:device:Bridge:3"
+        );
+        assert_eq!(
+            SsdpTarget::vendor_service_type("example.com", "SwitchPower", 4).as_str(),
+            "urn:example.com:service:SwitchPower:4"
+        );
+    }
+
+    #[test]
+    fn ssdp_target_headers_usn_constructors_compose_uuid_and_targets() {
+        let target = SsdpTarget::upnp_service_type("ContentDirectory", 1);
+
+        assert_eq!(SsdpUsn::uuid("device-1").as_str(), "uuid:device-1");
+        assert_eq!(
+            SsdpUsn::rootdevice("device-1").as_str(),
+            "uuid:device-1::upnp:rootdevice"
+        );
+        assert_eq!(
+            SsdpUsn::target("device-1", target).as_str(),
+            "uuid:device-1::urn:schemas-upnp-org:service:ContentDirectory:1"
+        );
+    }
+
+    #[test]
+    fn ssdp_target_headers_setters_accept_typed_targets_and_usns() {
+        let search_target = SsdpTarget::upnp_device_type("MediaServer", 1);
+        let usn = SsdpUsn::target("device-1", search_target.clone());
+        let search = Ssdp::m_search().search_target(search_target.clone());
+        let notify = Ssdp::notify_alive()
+            .notification_type(SsdpTarget::rootdevice())
+            .unique_service_name(SsdpUsn::rootdevice("device-1"));
+        let response = Ssdp::response_ok_with_ext()
+            .search_target(search_target.clone())
+            .unique_service_name(usn.clone());
+
+        assert_eq!(
+            search
+                .headers()
+                .get_first(SsdpHeaderNameKind::St)
+                .expect("ST header")
+                .as_bytes(),
+            search_target.as_str().as_bytes()
+        );
+        assert_eq!(
+            notify
+                .headers()
+                .get_first(SsdpHeaderNameKind::Nt)
+                .expect("NT header")
+                .as_bytes(),
+            SSDP_TARGET_ROOTDEVICE.as_bytes()
+        );
+        assert_eq!(
+            notify
+                .headers()
+                .get_first(SsdpHeaderNameKind::Usn)
+                .expect("USN header")
+                .as_bytes(),
+            b"uuid:device-1::upnp:rootdevice"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get_first(SsdpHeaderNameKind::Usn)
+                .expect("USN header")
+                .as_bytes(),
+            usn.as_str().as_bytes()
+        );
+    }
+
+    #[test]
+    fn ssdp_target_headers_raw_unknown_values_are_preserved() {
+        let target = SsdpTarget::raw("urn:example-com:device:OddDevice:99");
+        let usn = SsdpUsn::raw("uuid:device-1::urn:example-com:device:OddDevice:99");
+        let message = Ssdp::notify()
+            .notification_type(target.clone())
+            .unique_service_name(usn.clone());
+        let decoded = decode_ssdp(&message.to_bytes()).expect("typed target headers decode");
+
+        assert_eq!(String::from(target.clone()), target.as_str());
+        assert_eq!(String::from(usn.clone()), usn.as_str());
+        assert_eq!(decoded, message);
+        assert_eq!(
+            decoded
+                .headers()
+                .get_first(SsdpHeaderNameKind::Nt)
+                .expect("NT header")
+                .as_bytes(),
+            target.as_str().as_bytes()
+        );
+        assert_eq!(
+            decoded
+                .headers()
+                .get_first(SsdpHeaderNameKind::Usn)
+                .expect("USN header")
+                .as_bytes(),
+            usn.as_str().as_bytes()
+        );
     }
 
     #[test]

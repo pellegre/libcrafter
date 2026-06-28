@@ -21,7 +21,7 @@ pub use header::{
 pub use message::{
     Ssdp, SsdpMessage, SsdpMethod, SsdpMethodParseError, SsdpReasonPhrase, SsdpRequestLine,
     SsdpRequestTarget, SsdpStartLine, SsdpStartLineField, SsdpStartLineParseError, SsdpStatusCode,
-    SsdpStatusLine, SsdpVersion,
+    SsdpStatusLine, SsdpTarget, SsdpUsn, SsdpVersion,
 };
 
 #[cfg(test)]
