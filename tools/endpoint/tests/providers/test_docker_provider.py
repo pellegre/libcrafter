@@ -12,15 +12,18 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
+from tools.appliance.engine import image as appliance_image
 from tools.endpoint.engine.model import EndpointManifest
 from tools.endpoint.engine.process import CommandResult
 from tools.endpoint.engine.providers import docker, resolve_provider
+from tools.endpoint.engine.providers.docker import resources as docker_resources
 from tools.endpoint.engine.providers.docker.constants import (
     CONFIRMATION_ERROR,
     DOCKER_DEFAULT_IMAGE,
     DOCKER_DEFAULT_LAN_NETWORK,
     DOCKER_DEFAULT_PRIVATE_CIDR,
     DOCKER_DEFAULT_WAN_NETWORK,
+    DOCKER_IMAGE_ENV,
     DOCKER_LAN_NETWORK_ENV,
     DOCKER_PRIVATE_CIDR_ENV,
     DOCKER_WAN_NETWORK_ENV,
@@ -218,6 +221,36 @@ class DockerDoctorTest(unittest.TestCase):
         self.assertEqual(lan_report["configuration"]["selected_exposure"], "lan")  # type: ignore[index]
         self.assertEqual(wan_report["configuration"]["selected_exposure"], "wan")  # type: ignore[index]
 
+    def test_doctor_reports_docker_image_precedence_metadata(self) -> None:
+        env = {
+            DOCKER_IMAGE_ENV: "registry.example/legacy:endpoint",
+            appliance_image.LIBCRAFTER_APPLIANCE_IMAGE: "registry.example/appliance:endpoint",
+        }
+
+        with mock.patch(
+            "tools.endpoint.engine.providers.docker.doctor.shutil.which",
+            side_effect=lambda command: f"/usr/bin/{command}",
+        ):
+            report = docker.doctor(
+                provider="docker",
+                exposure="private",
+                dry_run=True,
+                env=env,
+                command_runner=_successful_runner,
+            )
+
+        self.assertTrue(report["ok"])
+        image = report["configuration"]["image"]  # type: ignore[index]
+        self.assertEqual(image["tag"], "registry.example/legacy:endpoint")  # type: ignore[index]
+        self.assertEqual(image["source"], "legacy_env")  # type: ignore[index]
+        self.assertEqual(image["source_env"], DOCKER_IMAGE_ENV)  # type: ignore[index]
+        self.assertEqual(image["env"], DOCKER_IMAGE_ENV)  # type: ignore[index]
+        self.assertEqual(
+            image["appliance_env"],  # type: ignore[index]
+            appliance_image.LIBCRAFTER_APPLIANCE_IMAGE,
+        )
+        self.assertEqual(image["default"], appliance_image.DEFAULT_APPLIANCE_IMAGE)  # type: ignore[index]
+
     def test_doctor_reports_private_capabilities_and_security_model(self) -> None:
         with mock.patch(
             "tools.endpoint.engine.providers.docker.doctor.shutil.which",
@@ -281,6 +314,101 @@ class DockerDoctorTest(unittest.TestCase):
         self.assertNotIn("run", calls[0])
         self.assertNotIn("create", calls[0])
         self.assertNotIn("network", calls[0])
+
+
+class DockerImageMetadataTest(unittest.TestCase):
+    def test_docker_image_helpers_delegate_to_appliance_context(self) -> None:
+        metadata = docker_resources.docker_image_metadata(env={}, docker_command="podman")
+
+        self.assertEqual(DOCKER_DEFAULT_IMAGE, appliance_image.DEFAULT_APPLIANCE_IMAGE)
+        self.assertEqual(
+            docker_resources.docker_image_context_dir(),
+            appliance_image.appliance_image_context_dir(),
+        )
+        self.assertEqual(
+            docker_resources.docker_image_dockerfile_path(),
+            appliance_image.appliance_image_dockerfile_path(),
+        )
+        self.assertEqual(
+            docker_resources.docker_image_context_digest(),
+            appliance_image.appliance_image_context_digest(),
+        )
+        self.assertEqual(metadata["tag"], appliance_image.DEFAULT_APPLIANCE_IMAGE)
+        self.assertEqual(metadata["default"], appliance_image.DEFAULT_APPLIANCE_IMAGE)
+        self.assertEqual(metadata["appliance_default"], appliance_image.DEFAULT_APPLIANCE_IMAGE)
+        self.assertEqual(metadata["env"], DOCKER_IMAGE_ENV)
+        self.assertEqual(metadata["legacy_env"], DOCKER_IMAGE_ENV)
+        self.assertEqual(metadata["appliance_env"], appliance_image.LIBCRAFTER_APPLIANCE_IMAGE)
+        self.assertEqual(metadata["source"], "default")
+        self.assertIsNone(metadata["source_env"])
+        self.assertTrue(metadata["uses_default"])
+        self.assertEqual(
+            metadata["env_precedence"],
+            [DOCKER_IMAGE_ENV, appliance_image.LIBCRAFTER_APPLIANCE_IMAGE, "default"],
+        )
+        self.assertEqual(
+            Path(str(metadata["context_dir"])),
+            appliance_image.appliance_image_context_dir(),
+        )
+        self.assertEqual(
+            Path(str(metadata["dockerfile_path"])),
+            appliance_image.appliance_image_dockerfile_path(),
+        )
+        self.assertEqual(
+            metadata["context_digest"],
+            appliance_image.appliance_image_context_digest(),
+        )
+        self.assertEqual(
+            metadata["context_label"],
+            appliance_image.APPLIANCE_IMAGE_CONTEXT_LABEL,
+        )
+        self.assertEqual(metadata["context_files"], ["Dockerfile", "image/entrypoint.sh"])
+        self.assertEqual(
+            metadata["inspect_argv"],
+            ["podman", "image", "inspect", appliance_image.DEFAULT_APPLIANCE_IMAGE],
+        )
+        self.assertEqual(
+            metadata["build_argv"],
+            appliance_image.appliance_image_build_argv(
+                appliance_image.DEFAULT_APPLIANCE_IMAGE,
+                docker_command="podman",
+            ),
+        )
+
+    def test_docker_image_env_precedence_preserves_legacy_override(self) -> None:
+        env = {
+            DOCKER_IMAGE_ENV: "registry.example/legacy:endpoint",
+            appliance_image.LIBCRAFTER_APPLIANCE_IMAGE: "registry.example/appliance:endpoint",
+        }
+
+        metadata = docker_resources.docker_image_metadata(env=env)
+
+        self.assertEqual(
+            docker_resources.requested_docker_image(env),
+            "registry.example/legacy:endpoint",
+        )
+        self.assertEqual(metadata["tag"], "registry.example/legacy:endpoint")
+        self.assertEqual(metadata["source"], "legacy_env")
+        self.assertEqual(metadata["source_env"], DOCKER_IMAGE_ENV)
+
+    def test_docker_image_uses_appliance_env_when_legacy_env_is_unset(self) -> None:
+        env = {
+            DOCKER_IMAGE_ENV: " ",
+            appliance_image.LIBCRAFTER_APPLIANCE_IMAGE: "registry.example/appliance:endpoint",
+        }
+
+        metadata = docker_resources.docker_image_metadata(env=env)
+
+        self.assertEqual(
+            docker_resources.requested_docker_image(env),
+            "registry.example/appliance:endpoint",
+        )
+        self.assertEqual(metadata["tag"], "registry.example/appliance:endpoint")
+        self.assertEqual(metadata["source"], "appliance_env")
+        self.assertEqual(
+            metadata["source_env"],
+            appliance_image.LIBCRAFTER_APPLIANCE_IMAGE,
+        )
 
 
 class DockerCreateEndpointDryRunTest(unittest.TestCase):
@@ -1626,16 +1754,47 @@ def _assert_common_dry_run_manifest(
     image = metadata["docker_image"]  # type: ignore[index]
     case.assertEqual(image["tag"], DOCKER_DEFAULT_IMAGE)  # type: ignore[index]
     case.assertEqual(image["default"], DOCKER_DEFAULT_IMAGE)  # type: ignore[index]
+    case.assertEqual(image["env"], DOCKER_IMAGE_ENV)  # type: ignore[index]
+    case.assertEqual(image["legacy_env"], DOCKER_IMAGE_ENV)  # type: ignore[index]
+    case.assertEqual(
+        image["appliance_env"],  # type: ignore[index]
+        appliance_image.LIBCRAFTER_APPLIANCE_IMAGE,
+    )
+    case.assertEqual(image["appliance_default"], appliance_image.DEFAULT_APPLIANCE_IMAGE)  # type: ignore[index]
+    case.assertEqual(image["source"], "default")  # type: ignore[index]
+    case.assertIsNone(image["source_env"])  # type: ignore[index]
+    case.assertEqual(
+        image["env_precedence"],  # type: ignore[index]
+        [DOCKER_IMAGE_ENV, appliance_image.LIBCRAFTER_APPLIANCE_IMAGE, "default"],
+    )
     case.assertTrue(image["uses_default"])  # type: ignore[index]
     case.assertFalse(image["rebuild_requested"])  # type: ignore[index]
-    case.assertTrue(Path(str(image["context_dir"])).is_absolute())  # type: ignore[index]
-    case.assertTrue(Path(str(image["dockerfile_path"])).is_absolute())  # type: ignore[index]
+    case.assertEqual(
+        Path(str(image["context_dir"])),  # type: ignore[index]
+        appliance_image.appliance_image_context_dir(),
+    )
+    case.assertEqual(
+        Path(str(image["dockerfile_path"])),  # type: ignore[index]
+        appliance_image.appliance_image_dockerfile_path(),
+    )
+    case.assertEqual(
+        image["context_digest"],  # type: ignore[index]
+        appliance_image.appliance_image_context_digest(),
+    )
+    case.assertEqual(
+        image["context_label"],  # type: ignore[index]
+        appliance_image.APPLIANCE_IMAGE_CONTEXT_LABEL,
+    )
+    case.assertEqual(image["context_files"], ["Dockerfile", "image/entrypoint.sh"])  # type: ignore[index]
     case.assertEqual(Path(str(image["command_log_path"])).parent, expected_artifact_dir)  # type: ignore[index]
     case.assertEqual(
         image["inspect_argv"],  # type: ignore[index]
         ["docker", "image", "inspect", DOCKER_DEFAULT_IMAGE],
     )
-    case.assertIn(DOCKER_DEFAULT_IMAGE, image["build_argv"])  # type: ignore[index]
+    case.assertEqual(
+        image["build_argv"],  # type: ignore[index]
+        appliance_image.appliance_image_build_argv(DOCKER_DEFAULT_IMAGE),
+    )
 
     provider_resources = output["provider_resources"]  # type: ignore[assignment]
     case.assertEqual(

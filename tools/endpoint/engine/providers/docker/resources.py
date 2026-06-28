@@ -10,6 +10,17 @@ from ipaddress import IPv4Address, IPv4Network, ip_address, ip_network
 from pathlib import Path
 from typing import Any
 
+from tools.appliance.engine.image import (
+    APPLIANCE_IMAGE_CONTEXT_LABEL,
+    LIBCRAFTER_APPLIANCE_IMAGE,
+    appliance_image_build_argv,
+    appliance_image_context_digest,
+    appliance_image_context_dir,
+    appliance_image_context_paths,
+    appliance_image_dockerfile_path,
+    appliance_image_inspect_argv,
+)
+
 from ...model import ProviderResource, ProviderResources, write_json
 from ...process import CommandResult, render_argv, run_command
 from ..vm import (
@@ -44,7 +55,7 @@ DOCKER_LABEL_EXPOSURE = f"{DOCKER_LABEL_PREFIX}.exposure"
 DOCKER_LABEL_ROLE = f"{DOCKER_LABEL_PREFIX}.role"
 DOCKER_LABEL_CREATED_AT = f"{DOCKER_LABEL_PREFIX}.created-at"
 DOCKER_LABEL_MANAGED = f"{DOCKER_LABEL_PREFIX}.managed"
-DOCKER_IMAGE_CONTEXT_LABEL = f"{DOCKER_LABEL_PREFIX}.image-context-sha256"
+DOCKER_IMAGE_CONTEXT_LABEL = APPLIANCE_IMAGE_CONTEXT_LABEL
 
 DOCKER_MANAGED_LABEL_VALUE = "true"
 DOCKER_CONTAINER_KIND = "docker-container"
@@ -436,9 +447,8 @@ def docker_argv(
 def requested_docker_image(env: Mapping[str, str] | None = None) -> str:
     """Return the requested Docker endpoint image tag from env or the default."""
 
-    environ = _env_source(env)
-    image = (environ.get(DOCKER_IMAGE_ENV) or DOCKER_DEFAULT_IMAGE).strip()
-    return image or DOCKER_DEFAULT_IMAGE
+    image, _source, _source_env = _requested_docker_image_parts(env)
+    return image
 
 
 def docker_rebuild_requested(env: Mapping[str, str] | None = None) -> bool:
@@ -448,30 +458,22 @@ def docker_rebuild_requested(env: Mapping[str, str] | None = None) -> bool:
     return (environ.get(DOCKER_REBUILD_ENV) or "").strip() == "1"
 
 
-def docker_image_context_dir() -> Path:
-    """Return the provider-owned Docker image build context directory."""
+def docker_image_context_dir(root: str | Path | None = None) -> Path:
+    """Return the shared appliance Docker image build context directory."""
 
-    return Path(__file__).resolve(strict=False).parent / "image"
-
-
-def docker_image_dockerfile_path() -> Path:
-    """Return the provider-owned endpoint image Dockerfile path."""
-
-    return docker_image_context_dir() / "Dockerfile"
+    return appliance_image_context_dir(root)
 
 
-def docker_image_context_digest() -> str:
-    """Return a deterministic digest of the provider-owned image context."""
+def docker_image_dockerfile_path(root: str | Path | None = None) -> Path:
+    """Return the shared appliance endpoint image Dockerfile path."""
 
-    context_dir = docker_image_context_dir()
-    digest = sha256()
-    for path in sorted(item for item in context_dir.rglob("*") if item.is_file()):
-        relative = path.relative_to(context_dir).as_posix()
-        digest.update(relative.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(path.read_bytes())
-        digest.update(b"\0")
-    return digest.hexdigest()
+    return appliance_image_dockerfile_path(root)
+
+
+def docker_image_context_digest(root: str | Path | None = None) -> str:
+    """Return a deterministic digest of the shared appliance image context."""
+
+    return appliance_image_context_digest(root)
 
 
 def docker_image_command_log_path(
@@ -488,39 +490,30 @@ def docker_image_command_log_path(
 
 
 def docker_image_inspect_argv(
-    image_tag: str,
+    image_tag: str | None = None,
     *,
     env: Mapping[str, str] | None = None,
     docker_command: str | None = None,
 ) -> list[str]:
     """Return argv for a Docker image existence check."""
 
-    return docker_argv(
-        "image",
-        "inspect",
-        _non_empty_string(image_tag, "image_tag"),
+    return appliance_image_inspect_argv(
+        _docker_image_tag(image_tag, env),
         env=env,
         docker_command=docker_command,
     )
 
 
 def docker_image_build_argv(
-    image_tag: str,
+    image_tag: str | None = None,
     *,
     env: Mapping[str, str] | None = None,
     docker_command: str | None = None,
 ) -> list[str]:
-    """Return argv for building the provider-owned Docker endpoint image."""
+    """Return argv for building the shared appliance Docker endpoint image."""
 
-    return docker_argv(
-        "build",
-        "-t",
-        _non_empty_string(image_tag, "image_tag"),
-        "--label",
-        f"{DOCKER_IMAGE_CONTEXT_LABEL}={docker_image_context_digest()}",
-        "-f",
-        docker_image_dockerfile_path(),
-        docker_image_context_dir(),
+    return appliance_image_build_argv(
+        _docker_image_tag(image_tag, env),
         env=env,
         docker_command=docker_command,
     )
@@ -537,18 +530,29 @@ def docker_image_metadata(
     """Return manifest-ready Docker image metadata for dry-run or live output."""
 
     environ = _env_source(env)
-    image_tag = requested_docker_image(environ)
+    image_tag, image_source, source_env = _requested_docker_image_parts(environ)
+    context_dir = docker_image_context_dir()
     metadata: dict[str, object] = {
         "tag": image_tag,
         "env": DOCKER_IMAGE_ENV,
+        "legacy_env": DOCKER_IMAGE_ENV,
+        "appliance_env": LIBCRAFTER_APPLIANCE_IMAGE,
         "default": DOCKER_DEFAULT_IMAGE,
+        "appliance_default": DOCKER_DEFAULT_IMAGE,
         "uses_default": image_tag == DOCKER_DEFAULT_IMAGE,
+        "source": image_source,
+        "source_env": source_env,
+        "env_precedence": [DOCKER_IMAGE_ENV, LIBCRAFTER_APPLIANCE_IMAGE, "default"],
         "rebuild_env": DOCKER_REBUILD_ENV,
         "rebuild_requested": docker_rebuild_requested(environ),
-        "context_digest": docker_image_context_digest(),
+        "context_digest": docker_image_context_digest(context_dir),
         "context_label": DOCKER_IMAGE_CONTEXT_LABEL,
-        "dockerfile_path": str(docker_image_dockerfile_path()),
-        "context_dir": str(docker_image_context_dir()),
+        "dockerfile_path": str(docker_image_dockerfile_path(context_dir)),
+        "context_dir": str(context_dir),
+        "context_files": [
+            path.relative_to(context_dir).as_posix()
+            for path in appliance_image_context_paths(context_dir)
+        ],
         "inspect_argv": docker_image_inspect_argv(
             image_tag,
             env=environ,
@@ -819,6 +823,30 @@ def docker_inspect_name(record: Mapping[str, object]) -> str | None:
 
 def _env_source(env: Mapping[str, str] | None) -> Mapping[str, str]:
     return os.environ if env is None else env
+
+
+def _requested_docker_image_parts(
+    env: Mapping[str, str] | None,
+) -> tuple[str, str, str | None]:
+    environ = _env_source(env)
+    legacy_image = (environ.get(DOCKER_IMAGE_ENV) or "").strip()
+    if legacy_image:
+        return legacy_image, "legacy_env", DOCKER_IMAGE_ENV
+
+    appliance_image = (environ.get(LIBCRAFTER_APPLIANCE_IMAGE) or "").strip()
+    if appliance_image:
+        return appliance_image, "appliance_env", LIBCRAFTER_APPLIANCE_IMAGE
+
+    return DOCKER_DEFAULT_IMAGE, "default", None
+
+
+def _docker_image_tag(
+    image_tag: str | None,
+    env: Mapping[str, str] | None,
+) -> str:
+    if image_tag is None:
+        return requested_docker_image(env)
+    return _non_empty_string(image_tag, "image_tag")
 
 
 def _recording_docker_runner(
