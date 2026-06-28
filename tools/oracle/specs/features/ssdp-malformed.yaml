@@ -24,7 +24,7 @@ malformed: true
 behaviors:
   - name: missing-delimiter
     summary: SSDP-like input without the required CRLF CRLF header delimiter.
-    fixture: crafter/tests/fixtures/ssdp/malformed_missing_delimiter.ssdp
+    fixture: crafter/tests/fixtures/ssdp/malformed-missing-delimiter.ssdp
     expected_error:
       kind: MissingHeaderDelimiter
       context: ssdp header delimiter
@@ -34,7 +34,7 @@ behaviors:
       - not_byte_compared
   - name: bare-lf
     summary: SSDP-like input using LF as a line delimiter instead of CRLF.
-    fixture: crafter/tests/fixtures/ssdp/malformed_bare_lf.ssdp
+    fixture: crafter/tests/fixtures/ssdp/malformed-bare-lf.ssdp
     expected_error:
       kind: BadDelimiter
       context: ssdp line delimiter
@@ -44,7 +44,7 @@ behaviors:
       - not_byte_compared
   - name: bad-header
     summary: Header field line without a valid colon delimiter.
-    fixture: crafter/tests/fixtures/ssdp/malformed_bad_header.ssdp
+    fixture: crafter/tests/fixtures/ssdp/malformed-bad-header.ssdp
     expected_error:
       kind: BadHeaderDelimiter
       context: ssdp header
@@ -53,7 +53,7 @@ behaviors:
       - not_byte_compared
   - name: bad-status
     summary: Response status line whose status code is not exactly three digits.
-    fixture: crafter/tests/fixtures/ssdp/malformed_bad_status.ssdp
+    fixture: crafter/tests/fixtures/ssdp/malformed-bad-status.ssdp
     expected_error:
       kind: InvalidResponseStatusCode
       field: status_code

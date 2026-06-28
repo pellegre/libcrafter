@@ -8,21 +8,21 @@ const FIXTURES: &[(&str, &[u8])] = &[
         "m-search",
         include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/ssdp/valid_m_search.ssdp"
+            "/tests/fixtures/ssdp/valid-m-search.ssdp"
         )),
     ),
     (
         "notify",
         include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/ssdp/valid_notify.ssdp"
+            "/tests/fixtures/ssdp/valid-notify.ssdp"
         )),
     ),
     (
         "response",
         include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/ssdp/valid_response.ssdp"
+            "/tests/fixtures/ssdp/valid-response.ssdp"
         )),
     ),
 ];
