@@ -13,6 +13,7 @@ mod message;
 mod registry;
 
 pub use constants::*;
+pub use decode::{SsdpParseError, SsdpParseErrorKind, SsdpParseField};
 pub use header::{
     SsdpHeader, SsdpHeaderField, SsdpHeaderName, SsdpHeaderNameKind, SsdpHeaderNameParseError,
     SsdpHeaderValue, SsdpHeaders,

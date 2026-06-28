@@ -72,6 +72,17 @@ pub(crate) fn decode_ssdp(bytes: &[u8]) -> ParseResult<Ssdp> {
     }
 }
 
+impl Ssdp {
+    /// Parse one SSDP request or response payload.
+    ///
+    /// Explicit parsing returns structured errors for malformed candidates. UDP
+    /// auto-dispatch remains narrower and uses the SSDP payload shape gate
+    /// before appending a typed layer.
+    pub fn parse(bytes: &[u8]) -> core::result::Result<Self, SsdpParseError> {
+        decode_ssdp(bytes)
+    }
+}
+
 /// Append a decoded SSDP layer to an existing packet stack.
 pub(crate) fn append_ssdp_packet(packet: Packet, bytes: &[u8]) -> Result<Packet> {
     let ssdp = decode_ssdp(bytes).map_err(|error| error.to_crafter_error())?;
@@ -385,7 +396,7 @@ impl<'a> Iterator for HeaderLineIter<'a> {
 
 /// Field or boundary rejected by the SSDP request parser.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum SsdpParseField {
+pub enum SsdpParseField {
     /// CRLF line delimiter.
     LineDelimiter,
 }
@@ -400,7 +411,7 @@ impl SsdpParseField {
 
 /// Structured SSDP parser error.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct SsdpParseError {
+pub struct SsdpParseError {
     kind: SsdpParseErrorKind,
 }
 
@@ -661,7 +672,7 @@ impl SsdpParseError {
     }
 
     /// Return the structured parser error kind.
-    pub(crate) const fn kind(&self) -> &SsdpParseErrorKind {
+    pub const fn kind(&self) -> &SsdpParseErrorKind {
         &self.kind
     }
 
@@ -679,7 +690,7 @@ impl SsdpParseError {
 
 /// SSDP parser error categories.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum SsdpParseErrorKind {
+pub enum SsdpParseErrorKind {
     /// Payload ended before a required parser boundary was complete.
     Truncated {
         /// Stable field context.
