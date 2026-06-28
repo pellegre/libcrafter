@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from tools.appliance.engine.image import requested_appliance_image
+
+from ...appliance import DEFAULT_APPLIANCE_REMOTE_BASE
 from ...appliance import (
     EndpointApplianceDeployPlan,
     render_endpoint_appliance_deploy_plan,
@@ -11,6 +14,7 @@ from ...appliance import (
 )
 from ...assets import AssetSSHInfo, EndpointAsset
 from ...model import EndpointManifest
+from .utils import _path_component
 
 
 HETZNER_APPLIANCE_SUBSTRATE = "ssh-docker"
@@ -18,24 +22,40 @@ HETZNER_WAN_APPLIANCE_PROFILES = ("wan-raw",)
 HETZNER_PRIVATE_APPLIANCE_PROFILES = ("lan-raw",)
 
 
-def hetzner_appliance_metadata(exposure: str) -> dict[str, object]:
+def hetzner_appliance_metadata(
+    exposure: str,
+    *,
+    endpoint_id: str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, object]:
     """Return stable appliance metadata for one Hetzner endpoint exposure."""
 
     supported_profiles = _supported_profiles(exposure)
+    raw_profile = supported_profiles[0] if supported_profiles else None
     metadata: dict[str, object] = {
         "appliance_capable": True,
         "nested_docker": True,
         "docker_execution_supported": True,
         "docker_command": "docker",
         "substrate": HETZNER_APPLIANCE_SUBSTRATE,
+        "remote_base": DEFAULT_APPLIANCE_REMOTE_BASE,
         "supported_profiles": supported_profiles,
+        "image_tag": requested_appliance_image({} if env is None else env),
         "docker_setup": "install-or-verify",
+        "docker_host_readiness": "check-before-use",
     }
-    if exposure == "wan":
-        metadata["raw_profile"] = "wan-raw"
-    elif exposure == "private":
+    if endpoint_id is not None:
+        remote_root = f"{DEFAULT_APPLIANCE_REMOTE_BASE}/{_path_component(endpoint_id)}"
+        metadata["remote_work_root"] = f"{remote_root}/work"
+        metadata["remote_artifact_root"] = f"{remote_root}/artifacts"
+    if raw_profile is not None:
+        metadata["raw_profile"] = raw_profile
+        metadata["profile_hints"] = {
+            "raw_profile": raw_profile,
+            "network_scope": "private-lab" if exposure == "private" else "wan",
+        }
+    if exposure == "private":
         metadata["private_lab"] = True
-        metadata["raw_profile"] = "lan-raw"
     return metadata
 
 
@@ -82,7 +102,9 @@ def hetzner_endpoint_asset(
         else EndpointManifest.from_dict(manifest)
     )
     target = resolve_endpoint_appliance_target(endpoint)
-    appliance_metadata = dict(hetzner_appliance_metadata(endpoint.exposure))
+    appliance_metadata = dict(
+        hetzner_appliance_metadata(endpoint.exposure, endpoint_id=endpoint.endpoint_id)
+    )
     endpoint_appliance = endpoint.metadata.get("appliance")
     if isinstance(endpoint_appliance, Mapping):
         appliance_metadata.update(endpoint_appliance)
