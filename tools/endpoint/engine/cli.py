@@ -9,6 +9,18 @@ from collections.abc import Sequence
 from pathlib import Path
 from posixpath import basename
 
+from tools.appliance.engine.profiles import resolve_profile
+
+from .appliance import (
+    collect_endpoint_appliance_run_artifacts,
+    deploy_endpoint_appliance_target,
+    read_endpoint_appliance_target,
+    render_endpoint_appliance_deploy_plan,
+    render_endpoint_appliance_run_plan,
+    render_endpoint_appliance_sync_plan,
+    run_endpoint_appliance_command,
+    sync_endpoint_appliance_workspace,
+)
 from .model import EndpointManifest, dumps_json, write_json
 from .process import CommandResult, run_command
 from .providers import resolve_provider
@@ -30,6 +42,7 @@ from .state import (
 
 
 COMMANDS = (
+    "appliance",
     "doctor",
     "create",
     "destroy",
@@ -69,12 +82,103 @@ def _add_provider_exposure_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_appliance_common_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("endpoint_id", metavar="ENDPOINT_ID", help="endpoint to use")
+    parser.add_argument("profile", metavar="PROFILE", help="appliance profile to use")
+    parser.add_argument(
+        "--work-dir",
+        metavar="PATH",
+        help="local workspace directory to sync before planning or running",
+    )
+    parser.add_argument(
+        "--artifact-dir",
+        metavar="PATH",
+        help="local artifact directory override",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="render appliance operations without running SSH, SCP, Docker, or tar",
+    )
+    parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+
+
+def _add_appliance_command_argv(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "remote_command",
+        metavar="COMMAND",
+        nargs="*",
+        help="container command and arguments; pass after --",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="endpoint",
         description="Create and operate one provider endpoint at a time.",
     )
     subparsers = parser.add_subparsers(dest="command", metavar="command")
+
+    appliance = subparsers.add_parser(
+        "appliance",
+        help="plan and run appliance operations on one endpoint",
+        description="Plan, deploy, run, and collect endpoint appliance work.",
+    )
+    appliance.set_defaults(command_name="appliance")
+    appliance_subparsers = appliance.add_subparsers(
+        dest="appliance_command",
+        metavar="appliance-command",
+    )
+
+    appliance_plan = appliance_subparsers.add_parser(
+        "plan",
+        usage="endpoint appliance plan [-h] [options] ENDPOINT_ID PROFILE -- COMMAND...",
+        help="render an endpoint appliance run plan",
+        description="Render endpoint appliance deploy, optional sync, and run plans.",
+    )
+    _add_appliance_common_options(appliance_plan)
+    _add_appliance_command_argv(appliance_plan)
+    appliance_plan.set_defaults(command_name="appliance", appliance_command_name="plan")
+
+    appliance_check = appliance_subparsers.add_parser(
+        "check",
+        usage="endpoint appliance check [-h] [options] ENDPOINT_ID PROFILE [-- COMMAND...]",
+        help="render endpoint appliance readiness checks",
+        description="Render endpoint Docker and profile readiness checks.",
+    )
+    _add_appliance_common_options(appliance_check)
+    _add_appliance_command_argv(appliance_check)
+    appliance_check.set_defaults(command_name="appliance", appliance_command_name="check")
+
+    appliance_deploy = appliance_subparsers.add_parser(
+        "deploy",
+        usage="endpoint appliance deploy [-h] [options] ENDPOINT_ID PROFILE [-- COMMAND...]",
+        help="prepare one endpoint for appliance execution",
+        description="Prepare one endpoint to run the selected appliance image.",
+    )
+    _add_appliance_common_options(appliance_deploy)
+    _add_appliance_command_argv(appliance_deploy)
+    appliance_deploy.set_defaults(command_name="appliance", appliance_command_name="deploy")
+
+    appliance_run = appliance_subparsers.add_parser(
+        "run",
+        usage="endpoint appliance run [-h] [options] ENDPOINT_ID PROFILE -- COMMAND...",
+        help="run an appliance command on one endpoint",
+        description="Optionally sync a workspace, then run COMMAND in the appliance.",
+    )
+    _add_appliance_common_options(appliance_run)
+    _add_appliance_command_argv(appliance_run)
+    appliance_run.set_defaults(command_name="appliance", appliance_command_name="run")
+
+    appliance_collect = appliance_subparsers.add_parser(
+        "collect",
+        usage="endpoint appliance collect [-h] [options] ENDPOINT_ID PROFILE [-- COMMAND...]",
+        help="collect remote artifacts for an appliance run",
+        description="Collect remote appliance artifacts for the selected endpoint/profile run.",
+    )
+    _add_appliance_common_options(appliance_collect)
+    _add_appliance_command_argv(appliance_collect)
+    appliance_collect.set_defaults(command_name="appliance", appliance_command_name="collect")
 
     doctor = subparsers.add_parser(
         "doctor",
@@ -573,6 +677,184 @@ def _run_list_endpoints(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_appliance(args: argparse.Namespace) -> int:
+    subcommand = getattr(args, "appliance_command_name", None)
+    if subcommand is None:
+        print("endpoint appliance: missing appliance command", file=sys.stderr)
+        return 2
+    try:
+        if subcommand == "plan":
+            output = _appliance_plan_output(args)
+            return _emit_appliance_output(args, output, default_label="plan")
+        if subcommand == "check":
+            output = _appliance_check_output(args)
+            return _emit_appliance_output(args, output, default_label="check")
+        if subcommand == "deploy":
+            output = _appliance_deploy_output(args)
+            return _emit_appliance_output(args, output, default_label="deploy")
+        if subcommand == "run":
+            output = _appliance_run_output(args)
+            return _emit_appliance_output(args, output, default_label="run")
+        if subcommand == "collect":
+            output = _appliance_collect_output(args)
+            return _emit_appliance_output(args, output, default_label="collect")
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        return _emit_appliance_error(args, str(exc))
+    print(f"endpoint appliance: unsupported appliance command {subcommand!r}", file=sys.stderr)
+    return 2
+
+
+def _appliance_plan_output(args: argparse.Namespace) -> dict[str, object]:
+    target = read_endpoint_appliance_target(args.endpoint_id)
+    profile = resolve_profile(args.profile)
+    command = _appliance_command_parts(args.remote_command)
+    deploy_plan = render_endpoint_appliance_deploy_plan(target, image_tag=profile.image)
+    sync_plan = None
+    if args.work_dir is not None:
+        sync_plan = render_endpoint_appliance_sync_plan(
+            target,
+            source_root=args.work_dir,
+            artifact_dir=args.artifact_dir,
+        )
+    run_plan = render_endpoint_appliance_run_plan(
+        target,
+        profile,
+        command,
+        sync_context=sync_plan,
+        artifact_dir=args.artifact_dir,
+    )
+    return {
+        "kind": "endpoint-appliance-plan",
+        "endpoint_id": target.endpoint_id,
+        "profile": profile.name,
+        "dry_run": True,
+        "executes": False,
+        "deploy": deploy_plan,
+        "sync": sync_plan,
+        "run": run_plan,
+    }
+
+
+def _appliance_check_output(args: argparse.Namespace) -> dict[str, object]:
+    target = read_endpoint_appliance_target(args.endpoint_id)
+    profile = resolve_profile(args.profile)
+    deploy_plan = render_endpoint_appliance_deploy_plan(target, image_tag=profile.image)
+    output: dict[str, object] = {
+        "kind": "endpoint-appliance-check-plan",
+        "endpoint_id": target.endpoint_id,
+        "profile": profile.name,
+        "dry_run": args.dry_run,
+        "executes": False,
+        "docker_check": deploy_plan.commands[0],
+        "profile_checks": profile.checks,
+        "host_requirements": profile.host_requirements,
+    }
+    return output
+
+
+def _appliance_deploy_output(args: argparse.Namespace) -> object:
+    target = read_endpoint_appliance_target(args.endpoint_id)
+    profile = resolve_profile(args.profile)
+    if args.dry_run:
+        return render_endpoint_appliance_deploy_plan(target, image_tag=profile.image)
+    return deploy_endpoint_appliance_target(
+        target,
+        runner=run_command,
+        artifact_dir=args.artifact_dir,
+        image_tag=profile.image,
+    )
+
+
+def _appliance_run_output(args: argparse.Namespace) -> object:
+    target = read_endpoint_appliance_target(args.endpoint_id)
+    profile = resolve_profile(args.profile)
+    command = _appliance_command_parts(args.remote_command)
+    if args.dry_run:
+        return _appliance_plan_output(args)
+
+    sync_context = None
+    if args.work_dir is not None:
+        sync_context = sync_endpoint_appliance_workspace(
+            target,
+            runner=run_command,
+            source_root=args.work_dir,
+            artifact_dir=args.artifact_dir,
+        )
+        if not sync_context.ok:
+            return {
+                "kind": "endpoint-appliance-run",
+                "endpoint_id": target.endpoint_id,
+                "profile": profile.name,
+                "ok": False,
+                "sync": sync_context,
+                "error": "workspace sync failed",
+            }
+    return run_endpoint_appliance_command(
+        target,
+        profile,
+        command,
+        runner=run_command,
+        sync_context=sync_context,
+        artifact_dir=args.artifact_dir,
+    )
+
+
+def _appliance_collect_output(args: argparse.Namespace) -> object:
+    target = read_endpoint_appliance_target(args.endpoint_id)
+    profile = resolve_profile(args.profile)
+    command = _appliance_command_parts(args.remote_command, default=("true",))
+    run_plan = render_endpoint_appliance_run_plan(
+        target,
+        profile,
+        command,
+        artifact_dir=args.artifact_dir,
+    )
+    if args.dry_run:
+        return {
+            "kind": "endpoint-appliance-collect-plan",
+            "endpoint_id": target.endpoint_id,
+            "profile": profile.name,
+            "dry_run": True,
+            "executes": False,
+            "run": run_plan,
+            "remote_artifact_root": run_plan.remote_artifact_root,
+            "artifact_dir": run_plan.local_artifact_dir,
+        }
+    return collect_endpoint_appliance_run_artifacts(
+        run_plan.to_dict(),
+        runner=run_command,
+        artifact_dir=args.artifact_dir,
+    )
+
+
+def _emit_appliance_output(
+    args: argparse.Namespace,
+    output: object,
+    *,
+    default_label: str,
+) -> int:
+    if args.json:
+        sys.stdout.write(dumps_json(output))
+    else:
+        _print_appliance_output(output, default_label=default_label)
+    return _appliance_exit_code(output)
+
+
+def _emit_appliance_error(args: argparse.Namespace, error: str) -> int:
+    output = {
+        "kind": "endpoint-appliance-error",
+        "endpoint_id": getattr(args, "endpoint_id", None),
+        "profile": getattr(args, "profile", None),
+        "ok": False,
+        "error": error,
+    }
+    if getattr(args, "json", False):
+        sys.stdout.write(dumps_json(output))
+    else:
+        print(error, file=sys.stderr)
+    return 1
+
+
 def _print_doctor_report(report: dict[str, object]) -> None:
     status = "ok" if bool(report["ok"]) else "failed"
     print(
@@ -640,12 +922,68 @@ def _print_endpoint_list(output: dict[str, object]) -> None:
         )
 
 
+def _print_appliance_output(output: object, *, default_label: str) -> None:
+    if isinstance(output, dict):
+        endpoint_id = output.get("endpoint_id", "<unknown>")
+        profile = output.get("profile")
+        ok = output.get("ok")
+        status = "" if ok is None else f" ok={str(bool(ok)).lower()}"
+        profile_text = "" if profile is None else f" profile={profile}"
+        print(f"endpoint appliance {default_label}: endpoint_id={endpoint_id}{profile_text}{status}")
+        artifact_dir = output.get("artifact_dir")
+        if isinstance(artifact_dir, str):
+            print(f"artifacts: {artifact_dir}")
+        return
+    data = output.to_dict() if hasattr(output, "to_dict") else {}
+    if isinstance(data, dict):
+        endpoint_id = data.get("endpoint_id", "<unknown>")
+        profile = data.get("profile")
+        ok = data.get("ok")
+        status = "" if ok is None else f" ok={str(bool(ok)).lower()}"
+        profile_text = "" if profile is None else f" profile={profile}"
+        print(f"endpoint appliance {default_label}: endpoint_id={endpoint_id}{profile_text}{status}")
+        artifact_dir = data.get("artifact_dir") or data.get("local_artifact_dir")
+        if isinstance(artifact_dir, str):
+            print(f"artifacts: {artifact_dir}")
+        return
+    print(f"endpoint appliance {default_label}")
+
+
+def _appliance_exit_code(output: object) -> int:
+    if hasattr(output, "to_dict"):
+        data = output.to_dict()
+    else:
+        data = output
+    if not isinstance(data, dict):
+        return 0
+    ok = data.get("ok")
+    if ok is False:
+        exit_code = data.get("exit_code")
+        return int(exit_code) if isinstance(exit_code, int) and exit_code != 0 else 1
+    return 0
+
+
 def _remote_command_parts(remote_command: Sequence[str]) -> list[str]:
     command = list(remote_command)
     if command and command[0] == "--":
         command = command[1:]
     if not command:
         raise ValueError("endpoint exec requires COMMAND after ENDPOINT_ID --")
+    return command
+
+
+def _appliance_command_parts(
+    remote_command: Sequence[str],
+    *,
+    default: Sequence[str] = (),
+) -> list[str]:
+    command = list(remote_command)
+    if command and command[0] == "--":
+        command = command[1:]
+    if not command:
+        command = list(default)
+    if not command:
+        raise ValueError("endpoint appliance command requires COMMAND after PROFILE --")
     return command
 
 
@@ -741,13 +1079,32 @@ def _forward_command_result(result: CommandResult) -> int:
     return result.exit_code
 
 
+def _split_appliance_argv(argv: Sequence[str]) -> tuple[list[str], list[str] | None]:
+    parts = list(argv)
+    if len(parts) < 2 or parts[0] != "appliance":
+        return parts, None
+    if parts[1] not in {"plan", "check", "deploy", "run", "collect"}:
+        return parts, None
+    try:
+        separator = parts.index("--", 2)
+    except ValueError:
+        return parts, None
+    return parts[:separator], parts[separator + 1 :]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the endpoint command-line interface."""
     parser = build_parser()
-    args = parser.parse_args(argv)
+    raw_argv = sys.argv[1:] if argv is None else list(argv)
+    parse_argv, appliance_remote_command = _split_appliance_argv(raw_argv)
+    args = parser.parse_args(parse_argv)
+    if appliance_remote_command is not None:
+        args.remote_command = appliance_remote_command
     if getattr(args, "command", None) is None:
         parser.print_help(sys.stdout)
         return 0
+    if args.command_name == "appliance":
+        return _run_appliance(args)
     if args.command_name == "doctor":
         return _run_doctor(args)
     if args.command_name == "create":
