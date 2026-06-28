@@ -707,3 +707,242 @@ fn network_layer(plan: &ProbePlan) -> NetworkLayer {
 fn ssdp_target_service_json(plan: &ProbePlan) -> Value {
     plan.target_service.clone().unwrap_or_else(|| json!({}))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::base_plan;
+
+    const SSDP_PORT: u16 = 1900;
+
+    fn search_payload() -> &'static [u8] {
+        b"M-SEARCH * HTTP/1.1\r\n\
+          HOST: 239.255.255.250:1900\r\n\
+          MAN: \"ssdp:discover\"\r\n\
+          MX: 1\r\n\
+          ST: ssdp:all\r\n\
+          USER-AGENT: libcrafter-probe/0.1 UPnP/2.0 ssdp-probe/0.1\r\n\
+          \r\n"
+    }
+
+    fn response_payload() -> &'static [u8] {
+        b"HTTP/1.1 200 OK\r\n\
+          CACHE-CONTROL: max-age=1800\r\n\
+          EXT:\r\n\
+          LOCATION: http://198.51.100.130:8000/root.xml\r\n\
+          SERVER: unix/5.10 UPnP/2.0 libcrafter-probe/0.1\r\n\
+          ST: upnp:rootdevice\r\n\
+          USN: uuid:00000000-0000-4000-8000-000000000053::upnp:rootdevice\r\n\
+          BOOTID.UPNP.ORG: 1\r\n\
+          CONFIGID.UPNP.ORG: 1\r\n\
+          \r\n"
+    }
+
+    fn ipv4_search_plan() -> ProbePlan {
+        let mut plan = base_plan("ssdp-ipv4-search-exchange");
+        plan.sequence = 7;
+        plan.expected_response = Some("ssdp_search_response".to_string());
+        plan.source_ipv4 = Some("198.51.100.10".to_string());
+        plan.destination_ipv4 = Some("239.255.255.250".to_string());
+        plan.expected_reply_source_ipv4 = Some("198.51.100.130".to_string());
+        plan.expected_reply_destination_ipv4 = Some("198.51.100.10".to_string());
+        plan.source_port = Some(49152);
+        plan.destination_port = Some(SSDP_PORT);
+        plan.payload_hex = Some(hex_bytes(search_payload()));
+        plan.expected_payload_hex = Some(hex_bytes(response_payload()));
+        plan.protocol = Some("ssdp".to_string());
+        plan.target_service = Some(json!({
+            "required": true,
+            "kind": "ssdp-controlled-responder",
+            "protocol": "udp",
+            "port": SSDP_PORT,
+            "behavior": "search_response",
+        }));
+        plan
+    }
+
+    fn ipv6_search_plan() -> ProbePlan {
+        let mut plan = ipv4_search_plan();
+        plan.case = "ssdp-ipv6-search-exchange".to_string();
+        plan.source_ipv4 = None;
+        plan.destination_ipv4 = None;
+        plan.expected_reply_source_ipv4 = None;
+        plan.expected_reply_destination_ipv4 = None;
+        plan.source_ipv6 = Some("2001:db8::10".to_string());
+        plan.destination_ipv6 = Some("ff02::c".to_string());
+        plan.expected_reply_source_ipv6 = Some("2001:db8::130".to_string());
+        plan.expected_reply_destination_ipv6 = Some("2001:db8::10".to_string());
+        plan.payload_hex = Some(hex_bytes(
+            b"M-SEARCH * HTTP/1.1\r\n\
+              HOST: [ff02::c]:1900\r\n\
+              MAN: \"ssdp:discover\"\r\n\
+              MX: 1\r\n\
+              ST: ssdp:all\r\n\
+              \r\n",
+        ));
+        plan
+    }
+
+    fn stimulus_request(plan: ProbePlan) -> StimulusEndpointRequest {
+        StimulusEndpointRequest {
+            provider: "local-dry-run".to_string(),
+            profile: "ssdp-smoke".to_string(),
+            seed: 1,
+            endpoint_role: "stimulus".to_string(),
+            interface: "lo".to_string(),
+            local_ipv4: "198.51.100.10".to_string(),
+            peer_ipv4: "198.51.100.130".to_string(),
+            timeout_seconds: 1,
+            probe_plans: vec![plan],
+            artifact_paths: json!({}),
+            metadata: json!({}),
+        }
+    }
+
+    #[test]
+    fn json_decodes_ssdp_probe_plan_with_engine_metadata() {
+        let request: StimulusEndpointRequest = serde_json::from_value(json!({
+            "provider": "local-dry-run",
+            "profile": "ssdp-smoke",
+            "seed": 11,
+            "endpoint_role": "stimulus",
+            "interface": "lo",
+            "local_ipv4": "198.51.100.10",
+            "peer_ipv4": "198.51.100.130",
+            "timeout_seconds": 1,
+            "artifact_paths": {},
+            "metadata": {},
+            "probe_plans": [{
+                "schema_version": 1,
+                "case": "ssdp-ipv4-search-exchange",
+                "sequence": 3,
+                "protocol": "ssdp",
+                "source_ipv4": "198.51.100.10",
+                "destination_ipv4": "239.255.255.250",
+                "expected_reply_source_ipv4": "198.51.100.130",
+                "expected_reply_destination_ipv4": "198.51.100.10",
+                "source_port": 49152,
+                "destination_port": SSDP_PORT,
+                "udp_payload_hex": hex_bytes(search_payload()),
+                "expected_payload_hex": hex_bytes(response_payload()),
+                "ssdp": {"message_kind": "m_search"},
+                "expected_ssdp": {"message_kind": "response"},
+                "stimulus_driver": {"adapter_module": "tools/probe/adapters/src/ssdp.rs"},
+                "target_service": {"kind": "ssdp-controlled-responder"}
+            }]
+        }))
+        .unwrap();
+
+        let plan = &request.probe_plans[0];
+        assert_eq!(plan.case, "ssdp-ipv4-search-exchange");
+        assert_eq!(plan.sequence, 3);
+        assert_eq!(plan.protocol.as_deref(), Some("ssdp"));
+        assert_eq!(plan.payload_hex, None);
+        assert_eq!(
+            plan.udp_payload_hex.as_deref(),
+            Some(hex_bytes(search_payload()).as_str())
+        );
+        assert_eq!(
+            plan.target_service.as_ref().unwrap()["kind"],
+            "ssdp-controlled-responder"
+        );
+        assert_eq!(ssdp_payload(plan).unwrap().headers().len(), 5);
+    }
+
+    #[test]
+    fn ssdp_packet_builds_ipv4_udp_ssdp_stack() {
+        let plan = ipv4_search_plan();
+        let packet = ssdp_packet(&plan).unwrap();
+        let bytes = packet.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes).unwrap();
+
+        let ipv4 = decoded.layer::<Ipv4>().expect("ipv4 layer");
+        let udp = decoded.layer::<Udp>().expect("udp layer");
+        let ssdp = decoded.layer::<Ssdp>().expect("ssdp layer");
+        assert_eq!(ipv4.source(), Ipv4Addr::new(198, 51, 100, 10));
+        assert_eq!(ipv4.destination(), Ipv4Addr::new(239, 255, 255, 250));
+        assert_eq!(ipv4.ttl_value(), SSDP_IPV4_MULTICAST_TTL);
+        assert_eq!(udp.source_port_value(), 49152);
+        assert_eq!(udp.destination_port_value(), SSDP_PORT);
+        assert_eq!(ssdp.to_bytes(), search_payload());
+    }
+
+    #[test]
+    fn ssdp_packet_builds_ipv6_link_local_multicast_stack() {
+        let plan = ipv6_search_plan();
+        let packet = ssdp_packet(&plan).unwrap();
+        let bytes = packet.compile().unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, &bytes).unwrap();
+
+        let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+        let udp = decoded.layer::<Udp>().expect("udp layer");
+        assert_eq!(ipv6.source(), "2001:db8::10".parse::<Ipv6Addr>().unwrap());
+        assert_eq!(ipv6.destination(), SSDP_IPV6_LINK_LOCAL_MULTICAST_ADDR);
+        assert_eq!(ipv6.hop_limit_value(), SSDP_IPV6_LINK_LOCAL_HOP_LIMIT);
+        assert_eq!(udp.source_port_value(), 49152);
+        assert_eq!(udp.destination_port_value(), SSDP_PORT);
+        assert!(decoded.layer::<Ssdp>().is_some());
+    }
+
+    #[test]
+    fn dry_run_output_reports_decoded_ssdp_plan() {
+        let plan = ipv4_search_plan();
+        let request = stimulus_request(plan.clone());
+        let outcome = run_ssdp_dry_run(&request, &plan).unwrap();
+
+        assert!(!outcome.sent);
+        assert!(!outcome.received);
+        assert_eq!(outcome.result["status"], "planned");
+        assert_eq!(outcome.result["metadata"]["dry_run"], true);
+        assert_eq!(
+            outcome.result["metadata"]["sent_decoded"]["ssdp"]["start_line"]["method"],
+            "M-SEARCH"
+        );
+        assert_eq!(
+            outcome.result["metadata"]["expected_ssdp"]["start_line"]["status_code"],
+            200
+        );
+        assert_eq!(
+            outcome.result["metadata"]["target_service"]["kind"],
+            "ssdp-controlled-responder"
+        );
+        assert_eq!(
+            outcome.result["metadata"]["capture_filter"],
+            "udp and src host 198.51.100.130 and dst host 198.51.100.10 and src port 1900 and dst port 49152"
+        );
+    }
+
+    #[test]
+    fn malformed_ssdp_plans_fail_before_send_materialization() {
+        let mut missing_port = ipv4_search_plan();
+        missing_port.source_port = None;
+        let err = ssdp_packet(&missing_port).unwrap_err().to_string();
+        assert!(err.contains("source_port"), "{err}");
+
+        let mut malformed_payload = ipv4_search_plan();
+        malformed_payload.payload_hex = Some(hex_bytes(
+            b"M-SEARCH * HTTP/1.1\r\nHOST 239.255.255.250:1900\r\n\r\n",
+        ));
+        let err = ssdp_packet(&malformed_payload).unwrap_err().to_string();
+        assert!(err.contains("invalid SSDP header"), "{err}");
+    }
+
+    #[test]
+    fn optional_fields_support_legacy_payload_and_target_service_shapes() {
+        let mut plan = ipv4_search_plan();
+        let payload_hex = plan.payload_hex.take().unwrap();
+        plan.udp_payload_hex = Some(payload_hex.clone());
+        plan.target_service = None;
+
+        let ssdp = ssdp_payload(&plan).unwrap();
+        assert_eq!(ssdp.to_bytes(), search_payload());
+        assert_eq!(ssdp_target_service_json(&plan), json!({}));
+
+        let mut expected_fallback_plan = ipv4_search_plan();
+        expected_fallback_plan.expected_payload_hex = None;
+        assert_eq!(
+            expected_ssdp_payload(&expected_fallback_plan).unwrap(),
+            search_payload()
+        );
+    }
+}
