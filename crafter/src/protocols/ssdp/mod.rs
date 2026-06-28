@@ -19,9 +19,10 @@ pub use header::{
     SsdpHeaderValue, SsdpHeaders,
 };
 pub use message::{
-    Ssdp, SsdpMessage, SsdpMethod, SsdpMethodParseError, SsdpReasonPhrase, SsdpRequestLine,
-    SsdpRequestTarget, SsdpStartLine, SsdpStartLineField, SsdpStartLineParseError, SsdpStatusCode,
-    SsdpStatusLine, SsdpTarget, SsdpUsn, SsdpVersion,
+    Ssdp, SsdpLocation, SsdpLocationField, SsdpLocationParseError, SsdpMessage, SsdpMethod,
+    SsdpMethodParseError, SsdpReasonPhrase, SsdpRequestLine, SsdpRequestTarget, SsdpStartLine,
+    SsdpStartLineField, SsdpStartLineParseError, SsdpStatusCode, SsdpStatusLine, SsdpTarget,
+    SsdpUsn, SsdpVersion,
 };
 
 #[cfg(test)]
