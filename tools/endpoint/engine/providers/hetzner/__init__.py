@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from .appliance import (
+    hetzner_appliance_metadata,
+    hetzner_endpoint_asset,
+    render_hetzner_appliance_deploy_plan,
+)
 from .create import create_endpoint
 from .destroy import destroy_endpoint
 from .doctor import doctor
@@ -12,4 +17,7 @@ __all__ = [
     "create_endpoint",
     "destroy_endpoint",
     "doctor",
+    "hetzner_appliance_metadata",
+    "hetzner_endpoint_asset",
+    "render_hetzner_appliance_deploy_plan",
 ]
