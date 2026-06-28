@@ -40,6 +40,8 @@ DOCKER_ENDPOINT_TRANSPORT = "docker-localhost-port-forward"
 DEFAULT_APPLIANCE_DEPLOY_ARTIFACT_DIRNAME = "appliance-deploy"
 DEFAULT_APPLIANCE_SYNC_ARTIFACT_DIRNAME = "appliance-sync"
 DEFAULT_APPLIANCE_RUN_ARTIFACT_DIRNAME = "appliance-run"
+DEFAULT_APPLIANCE_REMOTE_ARTIFACT_DIRNAME = "remote-artifacts"
+DEFAULT_APPLIANCE_RUN_MANIFEST_NAME = "appliance-run.json"
 DEFAULT_APPLIANCE_SYNC_ARCHIVE_NAME = "workspace.tar.gz"
 DEFAULT_APPLIANCE_SYNC_RUN_ID = "default"
 DEFAULT_APPLIANCE_RUN_ID = DEFAULT_APPLIANCE_SYNC_RUN_ID
@@ -73,6 +75,7 @@ else
   exit 127
 fi
 """.strip()
+_REMOTE_ARTIFACT_ROOT_UNSET = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1244,6 +1247,87 @@ def run_endpoint_appliance_command(
     return result
 
 
+def collect_endpoint_appliance_run_artifacts(
+    run_result: EndpointApplianceRunResult | Mapping[str, object],
+    *,
+    runner: CommandRunner,
+    artifact_dir: str | Path | None = None,
+    remote_artifact_root: str | None | object = _REMOTE_ARTIFACT_ROOT_UNSET,
+    cleanup_remote: bool = False,
+    connect_timeout: int = DEFAULT_CONNECT_TIMEOUT,
+    timeout: float | None = None,
+) -> JSONObject:
+    """Explicitly collect remote appliance artifacts for one completed run."""
+
+    if runner is None:
+        raise ValueError("runner is required")
+    run_data = _run_collection_data(run_result)
+    local_dir = _collection_artifact_dir(run_data, artifact_dir)
+    local_dir.mkdir(parents=True, exist_ok=True)
+
+    run_stdout_path, run_stderr_path = _preserve_run_output_artifacts(
+        run_result,
+        run_data,
+        local_dir,
+    )
+    manifest_path = local_dir / DEFAULT_APPLIANCE_RUN_MANIFEST_NAME
+    remote_root = _collection_remote_artifact_root(run_data, remote_artifact_root)
+    target = _collection_target(run_result) if remote_root is not None else None
+
+    collection = _initial_collection_state(remote_root, local_dir)
+    cleanup = _initial_cleanup_state(cleanup_remote, remote_root)
+
+    if remote_root is not None and target is not None:
+        collection = _download_appliance_artifacts(
+            target,
+            remote_artifact_root=remote_root,
+            local_artifact_dir=local_dir,
+            connect_timeout=connect_timeout,
+            runner=runner,
+            timeout=timeout,
+        )
+        if cleanup_remote and bool(collection["ok"]):
+            cleanup = _cleanup_remote_appliance_artifacts(
+                target,
+                remote_artifact_root=remote_root,
+                local_artifact_dir=local_dir,
+                connect_timeout=connect_timeout,
+                runner=runner,
+                timeout=timeout,
+            )
+        elif cleanup_remote:
+            cleanup["reason"] = "collection-failed"
+
+    output = json_object(
+        {
+            "kind": "endpoint-appliance-run-artifacts",
+            "endpoint_id": _require_non_empty_string(run_data.get("endpoint_id"), "endpoint_id"),
+            "ok": bool(collection["ok"]) and bool(cleanup["ok"]),
+            "run": _collection_run_summary(run_data),
+            "collection": collection,
+            "cleanup": cleanup,
+            "artifact_dir": str(local_dir),
+            "manifest_path": str(manifest_path),
+            "artifacts": {
+                "manifest": str(manifest_path),
+                "run_stdout": str(run_stdout_path),
+                "run_stderr": str(run_stderr_path),
+                "remote_artifacts": collection.get("local_path"),
+                "download_stdout": collection.get("stdout_path"),
+                "download_stderr": collection.get("stderr_path"),
+                "cleanup_stdout": cleanup.get("stdout_path"),
+                "cleanup_stderr": cleanup.get("stderr_path"),
+            },
+        },
+        "appliance_run_artifacts",
+    )
+    manifest_path.write_text(
+        json.dumps(output, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return output
+
+
 def _appliance_profile(
     value: str | ApplianceProfile | Mapping[str, object],
     *,
@@ -1453,6 +1537,249 @@ def _write_run_metadata(result: EndpointApplianceRunResult) -> None:
     path.write_text(
         json.dumps(result.to_dict(), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
+    )
+
+
+def _run_collection_data(
+    result: EndpointApplianceRunResult | Mapping[str, object],
+) -> Mapping[str, object]:
+    if isinstance(result, EndpointApplianceRunResult):
+        return result.to_dict()
+    return _mapping(result, "run_result")
+
+
+def _collection_artifact_dir(
+    run_data: Mapping[str, object],
+    artifact_dir: str | Path | None,
+) -> Path:
+    if artifact_dir is not None:
+        return Path(_absolute_path(artifact_dir, "artifact_dir")).resolve(strict=False)
+    value = run_data.get("local_artifact_dir", run_data.get("artifact_dir"))
+    return Path(
+        _absolute_path(
+            _require_non_empty_string(value, "run_result.local_artifact_dir"),
+            "run_result.local_artifact_dir",
+        )
+    ).resolve(strict=False)
+
+
+def _collection_remote_artifact_root(
+    run_data: Mapping[str, object],
+    override: str | None | object,
+) -> str | None:
+    if override is _REMOTE_ARTIFACT_ROOT_UNSET:
+        value = run_data.get("remote_artifact_root")
+    else:
+        value = override
+    if value is None:
+        return None
+    return _remote_absolute_path(
+        _require_non_empty_string(value, "remote_artifact_root"),
+        "remote_artifact_root",
+    )
+
+
+def _collection_target(
+    result: EndpointApplianceRunResult | Mapping[str, object],
+) -> SSHDockerHostTarget:
+    if isinstance(result, EndpointApplianceRunResult):
+        return result.plan.target.target
+    data = _mapping(result, "run_result")
+    plan = _mapping(data.get("plan"), "run_result.plan")
+    target = _mapping(plan.get("target"), "run_result.plan.target")
+    ssh_target = _mapping(target.get("target"), "run_result.plan.target.target")
+    return SSHDockerHostTarget.from_dict(ssh_target)
+
+
+def _preserve_run_output_artifacts(
+    result: EndpointApplianceRunResult | Mapping[str, object],
+    run_data: Mapping[str, object],
+    artifact_dir: Path,
+) -> tuple[Path, Path]:
+    stdout_path = artifact_dir / "run.stdout.txt"
+    stderr_path = artifact_dir / "run.stderr.txt"
+    _copy_text_artifact(_optional_path(run_data.get("local_stdout_path")), stdout_path)
+    _copy_text_artifact(_optional_path(run_data.get("local_stderr_path")), stderr_path)
+
+    if isinstance(result, EndpointApplianceRunResult):
+        docker_result = _docker_run_command_result(result)
+        if docker_result is not None:
+            if not stdout_path.exists():
+                _copy_text_artifact(Path(docker_result.stdout_path), stdout_path)
+            if not stderr_path.exists():
+                _copy_text_artifact(Path(docker_result.stderr_path), stderr_path)
+
+    stdout_path.touch(exist_ok=True)
+    stderr_path.touch(exist_ok=True)
+    return stdout_path, stderr_path
+
+
+def _docker_run_command_result(
+    result: EndpointApplianceRunResult,
+) -> EndpointApplianceRunCommandResult | None:
+    for command_result in reversed(result.command_results):
+        if command_result.kind == "ssh-appliance-run-docker":
+            return command_result
+    return result.command_results[-1] if result.command_results else None
+
+
+def _copy_text_artifact(source: Path | None, destination: Path) -> bool:
+    if source is None or not source.is_file():
+        return False
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if source.resolve(strict=False) == destination.resolve(strict=False):
+        return True
+    destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    return True
+
+
+def _optional_path(value: object) -> Path | None:
+    if value is None:
+        return None
+    return Path(_absolute_path(_require_non_empty_string(value, "path"), "path"))
+
+
+def _initial_collection_state(remote_artifact_root: str | None, local_dir: Path) -> JSONObject:
+    local_path = local_dir / DEFAULT_APPLIANCE_REMOTE_ARTIFACT_DIRNAME
+    if remote_artifact_root is None:
+        return {
+            "requested": False,
+            "attempted": False,
+            "collected": False,
+            "ok": True,
+            "reason": "no-remote-artifact-root",
+            "remote_path": None,
+            "local_path": None,
+        }
+    return {
+        "requested": True,
+        "attempted": False,
+        "collected": False,
+        "ok": False,
+        "remote_path": remote_artifact_root,
+        "local_path": str(local_path),
+    }
+
+
+def _initial_cleanup_state(cleanup_remote: bool, remote_artifact_root: str | None) -> JSONObject:
+    if not cleanup_remote:
+        return {
+            "requested": False,
+            "attempted": False,
+            "ok": True,
+            "remote_path": remote_artifact_root,
+        }
+    if remote_artifact_root is None:
+        return {
+            "requested": True,
+            "attempted": False,
+            "ok": True,
+            "reason": "no-remote-artifact-root",
+            "remote_path": None,
+        }
+    return {
+        "requested": True,
+        "attempted": False,
+        "ok": False,
+        "remote_path": remote_artifact_root,
+    }
+
+
+def _download_appliance_artifacts(
+    target: SSHDockerHostTarget,
+    *,
+    remote_artifact_root: str,
+    local_artifact_dir: Path,
+    connect_timeout: int,
+    runner: CommandRunner,
+    timeout: float | None,
+) -> JSONObject:
+    local_path = local_artifact_dir / DEFAULT_APPLIANCE_REMOTE_ARTIFACT_DIRNAME
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    stdout_path = local_artifact_dir / "artifact-download.stdout.txt"
+    stderr_path = local_artifact_dir / "artifact-download.stderr.txt"
+    command_argv = scp_argv(
+        source=f"{remote_host(host=target.host, user=target.user)}:{remote_artifact_root}",
+        destination=str(local_path),
+        identity_file=target.identity_file,
+        known_hosts=target.known_hosts_file,
+        port=target.port,
+        connect_timeout=connect_timeout,
+        recursive=True,
+    )
+    result = runner(command_argv, timeout=timeout)
+    stdout_path.write_text(result.stdout, encoding="utf-8")
+    stderr_path.write_text(result.stderr, encoding="utf-8")
+    return {
+        "requested": True,
+        "attempted": True,
+        "collected": result.ok,
+        "ok": result.ok,
+        "remote_path": remote_artifact_root,
+        "local_path": str(local_path),
+        "exit_code": result.exit_code,
+        "timed_out": result.timed_out,
+        "timeout": result.timeout,
+        "error": result.error,
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+    }
+
+
+def _cleanup_remote_appliance_artifacts(
+    target: SSHDockerHostTarget,
+    *,
+    remote_artifact_root: str,
+    local_artifact_dir: Path,
+    connect_timeout: int,
+    runner: CommandRunner,
+    timeout: float | None,
+) -> JSONObject:
+    stdout_path = local_artifact_dir / "artifact-cleanup.stdout.txt"
+    stderr_path = local_artifact_dir / "artifact-cleanup.stderr.txt"
+    command_argv = ssh_argv(
+        host=target.host,
+        user=target.user,
+        identity_file=target.identity_file,
+        known_hosts=target.known_hosts_file,
+        command=["rm", "-rf", remote_artifact_root],
+        port=target.port,
+        connect_timeout=connect_timeout,
+    )
+    result = runner(command_argv, timeout=timeout)
+    stdout_path.write_text(result.stdout, encoding="utf-8")
+    stderr_path.write_text(result.stderr, encoding="utf-8")
+    return {
+        "requested": True,
+        "attempted": True,
+        "ok": result.ok,
+        "remote_path": remote_artifact_root,
+        "exit_code": result.exit_code,
+        "timed_out": result.timed_out,
+        "timeout": result.timeout,
+        "error": result.error,
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+    }
+
+
+def _collection_run_summary(run_data: Mapping[str, object]) -> JSONObject:
+    return json_object(
+        {
+            "endpoint_id": run_data.get("endpoint_id"),
+            "ok": run_data.get("ok"),
+            "profile": run_data.get("profile"),
+            "image_tag": run_data.get("image_tag"),
+            "command_argv": run_data.get("command_argv"),
+            "exit_code": run_data.get("exit_code"),
+            "remote_work_root": run_data.get("remote_work_root"),
+            "remote_artifact_root": run_data.get("remote_artifact_root"),
+            "local_artifact_dir": run_data.get("local_artifact_dir"),
+            "local_stdout_path": run_data.get("local_stdout_path"),
+            "local_stderr_path": run_data.get("local_stderr_path"),
+            "local_metadata_path": run_data.get("local_metadata_path"),
+        },
+        "run",
     )
 
 
@@ -2042,8 +2369,10 @@ def _deploy_result(
 __all__ = [
     "DEFAULT_APPLIANCE_REMOTE_BASE",
     "DEFAULT_APPLIANCE_DEPLOY_ARTIFACT_DIRNAME",
+    "DEFAULT_APPLIANCE_REMOTE_ARTIFACT_DIRNAME",
     "DEFAULT_APPLIANCE_RUN_ARTIFACT_DIRNAME",
     "DEFAULT_APPLIANCE_RUN_ID",
+    "DEFAULT_APPLIANCE_RUN_MANIFEST_NAME",
     "DEFAULT_APPLIANCE_SYNC_ARCHIVE_EXCLUDES",
     "DEFAULT_APPLIANCE_SYNC_ARCHIVE_NAME",
     "DEFAULT_APPLIANCE_SYNC_ARTIFACT_DIRNAME",
@@ -2061,6 +2390,7 @@ __all__ = [
     "EndpointApplianceSyncResult",
     "EndpointApplianceSyncTransferPlan",
     "EndpointApplianceTarget",
+    "collect_endpoint_appliance_run_artifacts",
     "deploy_endpoint_appliance_target",
     "read_endpoint_appliance_target",
     "render_endpoint_appliance_deploy_plan",
