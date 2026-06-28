@@ -60,6 +60,15 @@ pub(crate) fn parse_ssdp_response(bytes: &[u8]) -> ParseResult<Ssdp> {
     )
 }
 
+/// Parse one SSDP request or response payload, using the start-line shape.
+pub(crate) fn decode_ssdp(bytes: &[u8]) -> ParseResult<Ssdp> {
+    if bytes.starts_with(b"HTTP/") {
+        parse_ssdp_response(bytes)
+    } else {
+        parse_ssdp_request(bytes)
+    }
+}
+
 fn parse_ssdp_message(
     bytes: &[u8],
     parse_start_line: impl FnOnce(&[u8]) -> ParseResult<SsdpMessage>,
@@ -966,6 +975,31 @@ mod tests {
 
     fn expect_response_error(bytes: &[u8]) -> SsdpParseError {
         parse_ssdp_response(bytes).expect_err("response payload is malformed")
+    }
+
+    #[test]
+    fn ssdp_layer_decode_helper_returns_typed_request_and_response() {
+        let request =
+            decode_ssdp(b"X-QUERY /device.xml HTTP/1.0\r\nX-DEVICE.UPNP.ORG: opaque\r\n\r\nbody")
+                .expect("request decodes");
+        let request_line = request_line(&request);
+
+        assert_eq!(
+            request_line.method(),
+            &SsdpMethod::Unknown("X-QUERY".to_string())
+        );
+        assert_eq!(request_line.target().as_str(), "/device.xml");
+        assert_eq!(request_line.version().as_str(), "HTTP/1.0");
+        assert_eq!(request.body(), b"body");
+
+        let response =
+            decode_ssdp(b"HTTP/9.9 777 Odd Status\r\nEXT:\r\n\r\n").expect("response decodes");
+        let response_line = response_line(&response);
+
+        assert_eq!(response_line.version().as_str(), "HTTP/9.9");
+        assert_eq!(response_line.code().code(), 777);
+        assert_eq!(response_line.reason().as_str(), "Odd Status");
+        assert!(response.body().is_empty());
     }
 
     #[test]
