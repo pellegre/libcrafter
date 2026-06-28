@@ -2141,6 +2141,46 @@ mod ssdp_udp_binding {
         assert!(decoded.layer::<Ssdp>().is_none());
         assert!(decoded.layer::<Raw>().is_some());
     }
+
+    #[test]
+    fn ssdp_custom_udp_binding_overrides_builtin_dispatch() {
+        let mut registry = ProtocolRegistry::new();
+        registry.bind_udp_port(SSDP_UDP_PORT, |packet, payload| {
+            Ok(packet.push(Raw::from_bytes(payload)))
+        });
+
+        let payload = search_payload().to_bytes();
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(239, 255, 255, 250))
+            / Udp::new().sport(49_152).dport(SSDP_UDP_PORT)
+            / Raw::from_bytes(&payload);
+        let decoded = Packet::decode_from_l3_with_registry(
+            &registry,
+            NetworkLayer::Ipv4,
+            packet.compile().unwrap().as_bytes(),
+        )
+        .unwrap();
+
+        assert!(decoded.layer::<Ssdp>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), payload);
+    }
+
+    #[test]
+    fn ssdp_custom_udp_binding_unrelated_ssdp_port_payload_remains_raw() {
+        let payload = b"GET / HTTP/1.1\r\nHOST: example.test\r\n\r\n";
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(239, 255, 255, 250))
+            / Udp::new().sport(49_152).dport(SSDP_UDP_PORT)
+            / Raw::from_bytes(payload);
+        let decoded =
+            Packet::decode_from_l3(NetworkLayer::Ipv4, packet.compile().unwrap().as_bytes())
+                .unwrap();
+
+        assert!(decoded.layer::<Ssdp>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), payload);
+    }
 }
 
 #[cfg(test)]
