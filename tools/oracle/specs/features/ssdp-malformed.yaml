@@ -1,0 +1,157 @@
+version: 1
+kind: feature
+name: ssdp_malformed
+summary: >-
+  SSDP malformed-input contract: missing CRLF CRLF delimiters, bare LF line
+  separators, malformed header delimiters, and non-three-digit response status
+  codes surface as structured parse errors rather than byte-comparable packets.
+
+# Deliberately malformed SSDP inputs. These payloads are decode-error fixtures,
+# not comparable packets, so every case carries byte_policy: structured_error
+# and is excluded from offline encode/decode byte equivalence. The cases stay
+# declared coverage; the crate fixture and parser tests assert structured
+# SsdpParseErrorKind values for these shapes.
+
+layers:
+  - udp
+  - ssdp
+directions:
+  - backend_to_libcrafter
+  - libcrafter_to_backend
+strict_bytes: false
+malformed: true
+
+behaviors:
+  - name: missing-delimiter
+    summary: SSDP-like input without the required CRLF CRLF header delimiter.
+    fixture: crafter/tests/fixtures/ssdp/malformed_missing_delimiter.ssdp
+    expected_error:
+      kind: MissingHeaderDelimiter
+      context: ssdp header delimiter
+      required: 4
+    checks:
+      - missing_header_delimiter_is_structured_error
+      - not_byte_compared
+  - name: bare-lf
+    summary: SSDP-like input using LF as a line delimiter instead of CRLF.
+    fixture: crafter/tests/fixtures/ssdp/malformed_bare_lf.ssdp
+    expected_error:
+      kind: BadDelimiter
+      context: ssdp line delimiter
+      reason: bare LF is not a valid SSDP line delimiter
+    checks:
+      - bare_lf_is_structured_error
+      - not_byte_compared
+  - name: bad-header
+    summary: Header field line without a valid colon delimiter.
+    fixture: crafter/tests/fixtures/ssdp/malformed_bad_header.ssdp
+    expected_error:
+      kind: BadHeaderDelimiter
+      context: ssdp header
+    checks:
+      - bad_header_delimiter_is_structured_error
+      - not_byte_compared
+  - name: bad-status
+    summary: Response status line whose status code is not exactly three digits.
+    fixture: crafter/tests/fixtures/ssdp/malformed_bad_status.ssdp
+    expected_error:
+      kind: InvalidResponseStatusCode
+      field: status_code
+    checks:
+      - bad_status_code_is_structured_error
+      - not_byte_compared
+
+coverage_cases:
+  - malformed-ssdp-missing-delimiter
+  - malformed-ssdp-bare-lf
+  - malformed-ssdp-bad-header
+  - malformed-ssdp-bad-status
+
+supported_cases:
+  - name: malformed-ssdp-missing-delimiter
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: structured_error
+  - name: malformed-ssdp-bare-lf
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: structured_error
+  - name: malformed-ssdp-bad-header
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: structured_error
+  - name: malformed-ssdp-bad-status
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: structured_error
+
+case_groups:
+  - name: ssdp-malformed-structured-errors
+    summary: SSDP malformed fixtures are structured errors, not byte-equivalence cases.
+    byte_policy: structured_error
+    cases:
+      - malformed-ssdp-missing-delimiter
+      - malformed-ssdp-bare-lf
+      - malformed-ssdp-bad-header
+      - malformed-ssdp-bad-status
+
+normalized_model:
+  error:
+    - kind
+    - context
+    - field
+    - required
+    - available
+    - reason
+  payload:
+    - fixture
+    - payload_length
+    - not_byte_compared
+
+source_refs:
+  - RFC 9110
+  - RFC 9112
+  - .agents/docs/ssdp-source-manifest.md
+  - .agents/docs/ssdp-wire-grammar.md
+  - crafter/tests/fixtures/ssdp/README.md
+  - crafter/tests/ssdp_malformed.rs
+
+notes:
+  - >-
+    These cases deliberately do not have a valid enclosing SSDP message. Oracle
+    adapters must report structured decode-error coverage and must not require
+    strict byte round trips, semantic packet normalization, or Raw fallback
+    equivalence for them.
+  - >-
+    Unrelated UDP/1900 payloads that fail the SSDP shape gate remain the valid
+    raw-fallback case in ssdp_core; this feature is only for explicit SSDP parse
+    attempts and malformed SSDP-like payload fixtures.
+  - >-
+    Fixture values are local deterministic test inputs and contain no live host
+    identifiers, provider endpoints, credentials, captures from sensitive
+    networks, or local absolute paths.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - Raw
+    notes:
+      - >-
+        Malformed SSDP shapes are not byte-compared. The Scapy backend may carry
+        them as UDP Raw payloads for fixture emission, but they are excluded from
+        offline byte-equivalence sampling by byte_policy: structured_error.
+  libcrafter:
+    status: supported
+    native_layers:
+      - Udp
+      - Ssdp
+    notes:
+      - >-
+        Explicit SSDP parsing returns structured SsdpParseErrorKind values for
+        missing delimiters, bare LF delimiters, bad header delimiters, and
+        invalid response status codes, never a panic or silent truncation.
