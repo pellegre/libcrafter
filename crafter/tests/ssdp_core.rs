@@ -142,3 +142,39 @@ fn ipv6_ssdp_construct_compile_decode_and_inspect() -> crafter::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn overrides_survive_compile_for_malformed_udp_and_ssdp_fields() -> crafter::Result<()> {
+    let ssdp = Ssdp::request(
+        SsdpMethod::Unknown("BAD METHOD".to_string()),
+        SsdpRequestTarget::new("/device.xml").expect("valid explicit target"),
+        SsdpVersion::new("HTTP/1.0").expect("valid explicit version"),
+    )
+    .with_raw_header(SSDP_HEADER_HOST, "example.invalid")
+    .expect("HOST header is valid")
+    .with_body(b"body".to_vec());
+    let packet = Ipv4::new()
+        .src(IPV4_SRC)
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        / Udp::new()
+            .sport(1_901)
+            .dport(1_902)
+            .length(0x1234)
+            .checksum(0xbeef)
+        / ssdp;
+
+    let compiled = packet.compile()?;
+    let bytes = compiled.as_bytes();
+    let payload = &bytes[IPV4_HEADER_LEN + UDP_HEADER_LEN..];
+
+    assert_eq!(u16::from_be_bytes([bytes[20], bytes[21]]), 1_901);
+    assert_eq!(u16::from_be_bytes([bytes[22], bytes[23]]), 1_902);
+    assert_eq!(&bytes[24..26], &0x1234u16.to_be_bytes());
+    assert_eq!(&bytes[26..28], &0xbeefu16.to_be_bytes());
+    assert_eq!(
+        payload,
+        b"BAD METHOD /device.xml HTTP/1.0\r\nHOST: example.invalid\r\n\r\nbody"
+    );
+
+    Ok(())
+}
