@@ -159,6 +159,7 @@ class VirtualBoxCreateEndpointTest(unittest.TestCase):
         self.assertEqual(output["metadata"]["virtualbox"]["ssh_port"], 25222)  # type: ignore[index]
         self.assertIn("vm_guest_artifacts", output["metadata"])  # type: ignore[operator]
         self.assertIn("artifact_paths", output["metadata"])  # type: ignore[operator]
+        _assert_appliance_metadata(self, output, private_lab=False)
 
     def test_dry_run_manifest_has_private_internal_network(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
@@ -192,6 +193,7 @@ class VirtualBoxCreateEndpointTest(unittest.TestCase):
         )
         self.assertTrue(output["metadata"]["virtualbox"]["private_network"]["isolated"])  # type: ignore[index]
         self.assertIsNone(output["metadata"]["virtualbox"]["bridge_interface"])  # type: ignore[index]
+        _assert_appliance_metadata(self, output, private_lab=True)
 
     def test_private_boot_commands_allow_promiscuous_internal_network(self) -> None:
         commands = virtualbox_create._virtualbox_boot_commands(
@@ -426,6 +428,8 @@ class VirtualBoxCreateEndpointTest(unittest.TestCase):
         self.assertEqual(stored["status"], "active")
         self.assertEqual(stored["metadata"]["virtualbox"]["bridge_interface"], "wlan0")
         self.assertIn(root / "wire-state", Path(stored["metadata"]["virtualbox"]["basefolder"]).parents)
+        _assert_appliance_metadata(self, output, private_lab=False)
+        _assert_appliance_metadata(self, stored, private_lab=False)
 
     def test_live_create_writes_failed_manifest_after_partial_vbox_failure(self) -> None:
         endpoint_id = "virtualbox-lan-probe-20260526223400-abcdef"
@@ -660,6 +664,41 @@ def _wire_env(root: Path, extra: Mapping[str, str] | None = None) -> Iterator[No
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+def _assert_appliance_metadata(
+    case: unittest.TestCase,
+    manifest: Mapping[str, object],
+    *,
+    private_lab: bool,
+) -> None:
+    metadata = manifest["metadata"]  # type: ignore[index]
+    appliance = metadata["appliance"]  # type: ignore[index]
+    endpoint_id = str(manifest["endpoint_id"])
+    remote_root = f"/var/lib/libcrafter/appliance/{endpoint_id}"
+    case.assertTrue(appliance["appliance_capable"])  # type: ignore[index]
+    case.assertTrue(appliance["nested_docker"])  # type: ignore[index]
+    case.assertTrue(appliance["docker_execution_supported"])  # type: ignore[index]
+    case.assertEqual(appliance["docker_command"], "docker")  # type: ignore[index]
+    case.assertEqual(appliance["substrate"], "ssh-docker")  # type: ignore[index]
+    case.assertEqual(appliance["docker_setup"], "install-or-verify")  # type: ignore[index]
+    case.assertEqual(appliance["supported_profiles"], ["lan-raw"])  # type: ignore[index]
+    case.assertEqual(appliance["raw_profile"], "lan-raw")  # type: ignore[index]
+    case.assertEqual(appliance["remote_base"], "/var/lib/libcrafter/appliance")  # type: ignore[index]
+    case.assertEqual(appliance["remote_work_root"], f"{remote_root}/work")  # type: ignore[index]
+    case.assertEqual(
+        appliance["remote_artifact_root"],  # type: ignore[index]
+        f"{remote_root}/artifacts",
+    )
+    case.assertEqual(appliance["profile_hints"]["raw_profile"], "lan-raw")  # type: ignore[index]
+    case.assertEqual(
+        appliance["profile_hints"]["network_scope"],  # type: ignore[index]
+        "private-lab" if private_lab else "lan",
+    )
+    if private_lab:
+        case.assertTrue(appliance["private_lab"])  # type: ignore[index]
+    else:
+        case.assertNotIn("private_lab", appliance)
 
 
 def _virtualbox_manifest(root: Path, *, status: str = "active") -> EndpointManifest:

@@ -70,6 +70,10 @@ QEMU_LOG_NAME = "qemu.log"
 QEMU_CONTROL_NETDEV = "control0"
 QEMU_PRIVATE_NETDEV = "private0"
 QEMU_PRIVATE_GUEST_IFACE = "wirepriv0"
+QEMU_APPLIANCE_REMOTE_BASE = "/var/lib/libcrafter/appliance"
+QEMU_APPLIANCE_SUBSTRATE = "ssh-docker"
+QEMU_WAN_APPLIANCE_PROFILES = ("wan-raw",)
+QEMU_PRIVATE_APPLIANCE_PROFILES = ("lan-raw",)
 DownloadRunner = Callable[[str, Path], None]
 
 
@@ -181,6 +185,7 @@ def _planned_endpoint_manifest(
         "dry_run": True,
         "state_dir": str(layout.state_dir),
         "manifest_path": str(layout.manifest_path),
+        "appliance": _appliance_metadata(endpoint_id=endpoint_id, exposure=exposure),
         "qemu": qemu_metadata,
         **artifacts.to_manifest_metadata(),
     }
@@ -399,6 +404,42 @@ def _qemu_metadata(
     return metadata
 
 
+def _appliance_metadata(*, endpoint_id: str, exposure: str) -> dict[str, object]:
+    supported_profiles = _appliance_profiles(exposure)
+    remote_base = QEMU_APPLIANCE_REMOTE_BASE
+    remote_root = f"{remote_base}/{path_component(endpoint_id, fallback='endpoint')}"
+    raw_profile = supported_profiles[0] if supported_profiles else None
+    metadata: dict[str, object] = {
+        "appliance_capable": True,
+        "nested_docker": True,
+        "docker_execution_supported": True,
+        "docker_command": "docker",
+        "substrate": QEMU_APPLIANCE_SUBSTRATE,
+        "remote_base": remote_base,
+        "remote_work_root": f"{remote_root}/work",
+        "remote_artifact_root": f"{remote_root}/artifacts",
+        "supported_profiles": supported_profiles,
+        "docker_setup": "install-or-verify",
+    }
+    if raw_profile is not None:
+        metadata["raw_profile"] = raw_profile
+        metadata["profile_hints"] = {
+            "raw_profile": raw_profile,
+            "network_scope": "wan" if exposure == "wan" else "private-lab",
+        }
+    if exposure == "private":
+        metadata["private_lab"] = True
+    return metadata
+
+
+def _appliance_profiles(exposure: str) -> list[str]:
+    if exposure == "wan":
+        return list(QEMU_WAN_APPLIANCE_PROFILES)
+    if exposure == "private":
+        return list(QEMU_PRIVATE_APPLIANCE_PROFILES)
+    return []
+
+
 def _planned_private_network_id(private_group: str | None) -> str:
     suffix = path_component(private_group) if private_group is not None else "ungrouped"
     return f"qemu-private-group-{suffix}"
@@ -465,6 +506,7 @@ def _create_live_wan_endpoint(
         metadata = _qemu_manifest_metadata(
             created=False,
             dry_run=False,
+            endpoint_id=endpoint_id,
             exposure=exposure,
             layout=layout,
             vm_name=vm_name,
@@ -529,6 +571,7 @@ def _create_live_wan_endpoint(
         metadata = _qemu_manifest_metadata(
             created=True,
             dry_run=False,
+            endpoint_id=endpoint_id,
             exposure=exposure,
             layout=layout,
             vm_name=vm_name,
@@ -780,6 +823,7 @@ def _create_live_private_endpoint(
         metadata = _qemu_manifest_metadata(
             created=False,
             dry_run=False,
+            endpoint_id=endpoint_id,
             exposure=exposure,
             layout=layout,
             vm_name=vm_name,
@@ -852,6 +896,7 @@ def _create_live_private_endpoint(
         metadata = _qemu_manifest_metadata(
             created=True,
             dry_run=False,
+            endpoint_id=endpoint_id,
             exposure=exposure,
             layout=layout,
             vm_name=vm_name,
@@ -1546,6 +1591,7 @@ def _qemu_manifest_metadata(
     *,
     created: bool,
     dry_run: bool,
+    endpoint_id: str,
     exposure: str,
     layout: object,
     vm_name: str,
@@ -1582,6 +1628,7 @@ def _qemu_manifest_metadata(
         "dry_run": dry_run,
         "state_dir": str(getattr(layout, "state_dir")),
         "manifest_path": str(getattr(layout, "manifest_path")),
+        "appliance": _appliance_metadata(endpoint_id=endpoint_id, exposure=exposure),
         "qemu": {
             "command": QEMU_SYSTEM_COMMAND,
             "argv": [str(part) for part in command],
@@ -1693,6 +1740,7 @@ def _write_failed_manifest(
                 **_qemu_manifest_metadata(
                     created=qemu_started,
                     dry_run=False,
+                    endpoint_id=endpoint_id,
                     exposure=exposure,
                     layout=layout,
                     vm_name=vm_name,
