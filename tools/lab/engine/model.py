@@ -171,6 +171,82 @@ class LabRequest(JsonModel):
 
 
 @dataclass(frozen=True, slots=True)
+class LabApplianceRuntime(JsonModel):
+    """Provider-neutral appliance runtime metadata for a lab session or endpoint."""
+
+    profile: str
+    image_tag: str
+    remote_work_root: str
+    remote_artifact_root: str
+    container_policy: JSONObject = field(default_factory=dict)
+    check_metadata: JSONObject = field(default_factory=dict)
+    metadata: JSONObject = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "profile",
+            _path_component(self.profile, "appliance_runtime.profile"),
+        )
+        image_tag = _string(self.image_tag, "appliance_runtime.image_tag")
+        _require_non_empty_string(image_tag, "appliance_runtime.image_tag")
+        object.__setattr__(self, "image_tag", image_tag)
+        object.__setattr__(
+            self,
+            "remote_work_root",
+            _absolute_path(self.remote_work_root, "appliance_runtime.remote_work_root"),
+        )
+        object.__setattr__(
+            self,
+            "remote_artifact_root",
+            _absolute_path(
+                self.remote_artifact_root,
+                "appliance_runtime.remote_artifact_root",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "container_policy",
+            json_object(self.container_policy, "appliance_runtime.container_policy"),
+        )
+        object.__setattr__(
+            self,
+            "check_metadata",
+            json_object(self.check_metadata, "appliance_runtime.check_metadata"),
+        )
+        object.__setattr__(
+            self,
+            "metadata",
+            json_object(self.metadata, "appliance_runtime.metadata"),
+        )
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, object]) -> "LabApplianceRuntime":
+        data = _mapping(value, "lab_appliance_runtime")
+        return cls(
+            profile=_string(data.get("profile"), "appliance_runtime.profile"),
+            image_tag=_string(data.get("image_tag"), "appliance_runtime.image_tag"),
+            remote_work_root=_string(
+                data.get("remote_work_root"),
+                "appliance_runtime.remote_work_root",
+            ),
+            remote_artifact_root=_string(
+                data.get("remote_artifact_root"),
+                "appliance_runtime.remote_artifact_root",
+            ),
+            container_policy=json_object(
+                data.get("container_policy", {}),
+                "appliance_runtime.container_policy",
+            ),
+            check_metadata=json_object(
+                data.get("check_metadata", data.get("checks", {})),
+                "appliance_runtime.check_metadata",
+            ),
+            metadata=json_object(data.get("metadata", {}), "appliance_runtime.metadata"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class LabEndpoint(JsonModel):
     """Normalized endpoint selected for one lab role."""
 
@@ -182,6 +258,7 @@ class LabEndpoint(JsonModel):
     mac: str | None = None
     peer_addresses: JSONObject = field(default_factory=dict)
     wire_manifest: JSONObject = field(default_factory=dict)
+    appliance_runtime: LabApplianceRuntime | None = None
     metadata: JSONObject = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -205,6 +282,14 @@ class LabEndpoint(JsonModel):
             "wire_manifest",
             json_object(self.wire_manifest, "endpoint.wire_manifest"),
         )
+        object.__setattr__(
+            self,
+            "appliance_runtime",
+            _coerce_appliance_runtime(
+                self.appliance_runtime,
+                "endpoint.appliance_runtime",
+            ),
+        )
         object.__setattr__(self, "metadata", json_object(self.metadata, "endpoint.metadata"))
 
     @classmethod
@@ -222,6 +307,10 @@ class LabEndpoint(JsonModel):
                 "endpoint.peer_addresses",
             ),
             wire_manifest=json_object(data.get("wire_manifest", {}), "endpoint.wire_manifest"),
+            appliance_runtime=_coerce_appliance_runtime(
+                data.get("appliance_runtime"),
+                "endpoint.appliance_runtime",
+            ),
             metadata=json_object(data.get("metadata", {}), "endpoint.metadata"),
         )
 
@@ -322,6 +411,7 @@ class LabSession(JsonModel):
     command_records: list[LabCommandPlan] = field(default_factory=list)
     remote_dir: str | None = None
     remote_artifact_root: str | None = None
+    appliance_runtime: LabApplianceRuntime | None = None
     created_endpoint_ids: list[str] = field(default_factory=list)
     dry_run: bool = True
     cleanup_state: JSONObject = field(default_factory=dict)
@@ -382,6 +472,14 @@ class LabSession(JsonModel):
             self,
             "remote_artifact_root",
             _optional_absolute_path(self.remote_artifact_root, "session.remote_artifact_root"),
+        )
+        object.__setattr__(
+            self,
+            "appliance_runtime",
+            _coerce_appliance_runtime(
+                self.appliance_runtime,
+                "session.appliance_runtime",
+            ),
         )
         object.__setattr__(
             self,
@@ -456,6 +554,10 @@ class LabSession(JsonModel):
             remote_artifact_root=_optional_string(
                 data.get("remote_artifact_root"),
                 "session.remote_artifact_root",
+            ),
+            appliance_runtime=_coerce_appliance_runtime(
+                data.get("appliance_runtime"),
+                "session.appliance_runtime",
             ),
             created_endpoint_ids=string_list(
                 data.get("created_endpoint_ids", []),
@@ -594,6 +696,14 @@ def _coerce_endpoints(value: object, name: str) -> list[LabEndpoint]:
         else LabEndpoint.from_dict(_mapping(item, f"{name}[]"))
         for item in _sequence(value, name)
     ]
+
+
+def _coerce_appliance_runtime(value: object, name: str) -> LabApplianceRuntime | None:
+    if value is None:
+        return None
+    if isinstance(value, LabApplianceRuntime):
+        return value
+    return LabApplianceRuntime.from_dict(_mapping(value, name))
 
 
 def _coerce_commands(value: object, name: str) -> list[LabCommandPlan]:
