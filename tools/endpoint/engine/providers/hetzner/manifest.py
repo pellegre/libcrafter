@@ -12,6 +12,7 @@ from ...model import (
     ProviderResources,
 )
 from ...state import endpoint_layout, planned_private_group_record, write_endpoint_manifest
+from .appliance import hetzner_appliance_metadata
 from .constants import PLANNED_CREATED_AT
 from .resources import _private_endpoint_provider_resources, _wan_provider_resources
 from .utils import (
@@ -43,6 +44,7 @@ def _planned_endpoint_manifest(
         "dry_run": True,
         "state_dir": str(layout.state_dir),
         "manifest_path": str(layout.manifest_path),
+        "appliance": hetzner_appliance_metadata(exposure),
     }
     interfaces = [
         NetworkInterface(
@@ -362,6 +364,7 @@ def _wan_manifest_metadata(
         "dry_run": dry_run,
         "state_dir": str(state_dir),
         "manifest_path": str(manifest_path),
+        "appliance": hetzner_appliance_metadata("wan"),
         "cleanup": {
             "server_id": server_id,
             "ssh_key_id": ssh_key_id,
@@ -394,6 +397,7 @@ def _private_manifest_metadata(
         ssh_key_id=ssh_key_id,
         ssh_key_name=ssh_key_name,
     )
+    metadata["appliance"] = hetzner_appliance_metadata("private")
     metadata.update(
         {
             "private_group": private_group,
