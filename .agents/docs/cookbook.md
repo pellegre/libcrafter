@@ -144,6 +144,71 @@ Live MQTT runs must stay opt-in: use `mqtt_session --peer IP:PORT` only against
 an authorized broker, or use a provider-backed probe/lab session that provisions
 the broker, collects artifacts under `target/`, and tears the endpoint down.
 
+## Build SSDP Discovery Packets
+
+SSDP is a UDP/1900 application payload. Generated tools should use
+`crafter::prelude::*`, build `Ssdp` inside the normal packet stack, and prefer
+the public multicast helpers such as `ssdp_ipv4_multicast_packet` when they want
+source-backed defaults. Keep generated defaults offline or dry-run, use
+documentation addresses and synthetic device identifiers, and keep discovery
+workflows outside the crate.
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+fn main() -> crafter::Result<()> {
+    let packet = ssdp_ipv4_multicast_packet(
+        Ipv4Addr::new(192, 0, 2, 10),
+        Ssdp::m_search_all().mx(1),
+    );
+
+    let plan = packet.send_dry_run(
+        SendOptions::new().iface("dry-run0").network_layer(),
+    )?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, plan.bytes())?;
+
+    println!("mode=dry-run");
+    println!("target={:?}", plan.target());
+    println!("{}", decoded.summary());
+    println!("{}", decoded.show());
+    println!("{}", plan.compiled_packet().hexdump());
+    Ok(())
+}
+```
+
+For decode and fixture validation, start from deterministic bytes: parse
+standalone SSDP payloads with `Ssdp::parse`, decode compiled IPv4 or IPv6
+datagrams through `Packet::decode_from_l3`, and read or write only synthetic
+classic pcap fixtures. UDP/1900 dispatch is deliberately conservative:
+structurally valid SSDP messages decode as `Ssdp`, unrelated UDP payloads remain
+`Raw`, and malformed explicit parses should be surfaced as structured errors.
+
+The checked-in SSDP examples are offline or dry-run entrypoints for generated
+tools:
+
+```sh
+cargo run -p crafter --example ssdp_search_plan -- --iface dry-run0
+cargo run -p crafter --example ssdp_notify
+```
+
+Before any protected live SSDP validation, plan the provider-backed work through
+the existing dry-run oracle, probe, or lab flows and keep artifacts under ignored
+`target/` paths:
+
+```sh
+tools/oracle/run live --backend scapy --provider local-dry-run --dry-run --family ssdp --profile smoke --seed 1900 --count 5 --out target/oracle/ssdp-dry-run
+tools/probe/run --provider qemu --dry-run --profile ssdp --seed 1900 --count 5 --out target/probe/ssdp-dry-run
+tools/lab/run plan --provider qemu --dry-run --profile ssdp --seed 1900 --role stimulus --role target --json
+```
+
+Do not build an SSDP scanner, discovery daemon, service cache, retry scheduler,
+UPnP control point, or live multicast default in `crafter` or in generated
+default paths. Real SSDP traffic must be explicitly authorized and routed
+through disposable provider-backed oracle, probe, or lab flows with artifact
+collection and teardown; do not send live multicast from the developer host by
+default.
+
 ## Build IGMP
 
 IGMP is an IPv4 packet layer. Generated tools should build it as `Ipv4 / Igmp`
