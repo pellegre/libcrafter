@@ -173,6 +173,104 @@ Scapy reference-backend roles over that lab network, collect artifacts under
 failure. Keep endpoint IDs, account data, public IPs, live host identifiers, and
 captures in the ignored `target/` artifact tree, not tracked files.
 
+## SSDP Live Exchange Shape
+
+SSDP live validation is a bounded packet-equivalence exchange for UDP-carried
+SSDP discovery payloads. It is not a discovery scan, service cache, UPnP control
+point, retry workflow, or device daemon. The SSDP oracle corpus is selected with
+`--family ssdp`; source-backed packet facts remain owned by the SSDP oracle
+specs and source documents, while live execution remains provider-backed and
+explicitly confirmed.
+
+Start with the local dry-run path. This command generates the SSDP live plan,
+validates backend and provider policy, writes the local report under the default
+oracle target directory, creates no endpoints, and sends no packets:
+
+```sh
+tools/oracle/run live --backend scapy --provider local-dry-run --dry-run --family ssdp --profile smoke --seed 1905 --count 3
+```
+
+Inspect the dry-run report before any protected run. The report should show
+`live_packet_exchange: false`, local-dry-run endpoint metadata, SSDP packet
+plans with UDP/1900 application payloads, selected backend capabilities, skip
+reasons for live-ineligible cases, and artifact paths under `target/oracle/`.
+Do not promote a real run until the report identifies only authorized SSDP
+cases and no local-machine live traffic.
+
+### Guarded SSDP VM/Docker Live Exchange
+
+Run provider matrix planning first for the local providers. The dry-run matrix
+does not create containers or VMs and does not send multicast or unicast SSDP
+traffic:
+
+```sh
+python3 tools/oracle/engine/live_provider_matrix.py \
+  --providers qemu,docker,virtualbox --backend scapy \
+  --family ssdp --profile smoke \
+  --seed 1905 --count 3 \
+  --dry-run \
+  --out target/oracle/ssdp-provider-matrix-dry-run
+```
+
+Keep real local-provider SSDP exchange behind an SSDP-specific environment gate
+and the generic live confirmation flag. The enabled path runs provider doctors,
+skips unavailable providers cleanly, records provider capabilities and endpoint
+metadata, collects artifacts from each role, and tears down created endpoints:
+
+```sh
+if [ "${LIBCRAFTER_RUN_SSDP_VM_LIVE:-0}" = "1" ]; then
+  python3 tools/oracle/engine/live_provider_matrix.py \
+    --providers qemu,docker,virtualbox --backend scapy \
+    --family ssdp --profile smoke \
+    --seed 1905 --count 3 \
+    --real --skip-unavailable --allow-vm-create --confirm-live-run \
+    --out target/oracle/ssdp-vm-live
+else
+  echo "skipping protected SSDP VM/Docker live run; set LIBCRAFTER_RUN_SSDP_VM_LIVE=1 to execute"
+fi
+```
+
+### Guarded SSDP Hetzner Live Exchange
+
+Always plan the cloud-provider path with `--dry-run` before provisioning any
+cloud endpoint. The planning command creates no infrastructure and sends no
+packets:
+
+```sh
+tools/oracle/run live \
+  --backend scapy --provider hetzner --dry-run \
+  --family ssdp --profile smoke \
+  --seed 1906 --count 3 \
+  --out target/oracle/ssdp-hetzner-dry-run
+```
+
+Keep the real Hetzner path behind a separate SSDP-specific environment gate.
+When the gate is set, `--confirm-live-run` is still required and credentials
+must come from `HETZNER_API_TOKEN` or `HCLOUD_TOKEN`:
+
+```sh
+if [ "${LIBCRAFTER_RUN_SSDP_HETZNER_LIVE:-0}" = "1" ]; then
+  tools/oracle/run live \
+    --backend scapy --provider hetzner \
+    --family ssdp --profile smoke \
+    --seed 1906 --count 3 \
+    --confirm-live-run \
+    --out target/oracle/ssdp-hetzner-live
+else
+  echo "skipping protected SSDP Hetzner live run; set LIBCRAFTER_RUN_SSDP_HETZNER_LIVE=1 to execute"
+fi
+```
+
+Before considering a protected SSDP oracle run usable, inspect the provider
+capability report, `metadata.lab_session` fields, endpoint role metadata,
+packet plans, normalized observations, pcaps when present, command logs,
+artifact index, and teardown result. The live report must show the
+`libcrafter` and `reference_backend` roles, the selected provider and wire
+exposure, SSDP-related capability or skip metadata, and teardown attempted on
+success, skip, or failure. Keep endpoint IDs, provider account data, public IPs,
+live host identifiers, and captures under the ignored `target/oracle/ssdp-*`
+artifact roots; never copy them into tracked docs, fixtures, specs, or reports.
+
 ## DHCP Live Exchange Shape
 
 Live DHCP validation is a one-way packet-equivalence exchange, not a DHCP
