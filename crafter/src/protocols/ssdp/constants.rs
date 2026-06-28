@@ -1,12 +1,19 @@
 //! Source-backed SSDP constants.
 
+use core::net::{Ipv4Addr, Ipv6Addr};
+
 pub const SSDP_SERVICE_NAME: &str = "ssdp";
 pub const SSDP_UDP_PORT: u16 = 1_900;
 pub const SSDP_IPV4_MULTICAST: &str = "239.255.255.250";
+pub const SSDP_IPV4_MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
 pub const SSDP_IPV4_MULTICAST_HOST: &str = "239.255.255.250:1900";
 pub const SSDP_IPV6_MULTICAST_PATTERN: &str = "ff0x::c";
 pub const SSDP_IPV6_LINK_LOCAL_MULTICAST: &str = "ff02::c";
+pub const SSDP_IPV6_LINK_LOCAL_MULTICAST_ADDR: Ipv6Addr =
+    Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x000c);
 pub const SSDP_IPV6_SITE_LOCAL_MULTICAST: &str = "ff05::c";
+pub const SSDP_IPV6_SITE_LOCAL_MULTICAST_ADDR: Ipv6Addr =
+    Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 0x000c);
 pub const SSDP_IPV6_LINK_LOCAL_HOST: &str = "[ff02::c]:1900";
 pub const SSDP_IPV6_SITE_LOCAL_HOST: &str = "[ff05::c]:1900";
 
@@ -56,12 +63,37 @@ mod tests {
         assert_eq!(SSDP_SERVICE_NAME, "ssdp");
         assert_eq!(SSDP_UDP_PORT, 1_900);
         assert_eq!(SSDP_IPV4_MULTICAST, "239.255.255.250");
+        assert_eq!(SSDP_IPV4_MULTICAST_ADDR, Ipv4Addr::new(239, 255, 255, 250));
         assert_eq!(SSDP_IPV4_MULTICAST_HOST, "239.255.255.250:1900");
         assert_eq!(SSDP_IPV6_MULTICAST_PATTERN, "ff0x::c");
         assert_eq!(SSDP_IPV6_LINK_LOCAL_MULTICAST, "ff02::c");
+        assert_eq!(
+            SSDP_IPV6_LINK_LOCAL_MULTICAST_ADDR,
+            Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x000c)
+        );
         assert_eq!(SSDP_IPV6_SITE_LOCAL_MULTICAST, "ff05::c");
+        assert_eq!(
+            SSDP_IPV6_SITE_LOCAL_MULTICAST_ADDR,
+            Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 0, 0x000c)
+        );
         assert_eq!(SSDP_IPV6_LINK_LOCAL_HOST, "[ff02::c]:1900");
         assert_eq!(SSDP_IPV6_SITE_LOCAL_HOST, "[ff05::c]:1900");
+    }
+
+    #[test]
+    fn ssdp_multicast_constants_are_typed_data_only_helpers() {
+        assert_eq!(SSDP_IPV4_MULTICAST_ADDR.octets(), [239, 255, 255, 250]);
+        assert!(SSDP_IPV4_MULTICAST_ADDR.is_multicast());
+        assert!(SSDP_IPV6_LINK_LOCAL_MULTICAST_ADDR.is_multicast());
+        assert!(SSDP_IPV6_SITE_LOCAL_MULTICAST_ADDR.is_multicast());
+        assert_eq!(SSDP_IPV6_LINK_LOCAL_MULTICAST_ADDR.segments()[0], 0xff02);
+        assert_eq!(SSDP_IPV6_SITE_LOCAL_MULTICAST_ADDR.segments()[0], 0xff05);
+        assert_eq!(SSDP_IPV6_LINK_LOCAL_MULTICAST_ADDR.segments()[7], 0x000c);
+        assert_eq!(SSDP_IPV6_SITE_LOCAL_MULTICAST_ADDR.segments()[7], 0x000c);
+        assert_ne!(
+            SSDP_IPV6_LINK_LOCAL_MULTICAST_ADDR,
+            Ipv6Addr::new(0xff0e, 0, 0, 0, 0, 0, 0, 0x000c)
+        );
     }
 
     #[test]
