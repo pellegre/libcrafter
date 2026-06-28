@@ -12,11 +12,13 @@ use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::protocols::transport::Udp;
 
 use super::constants::{
-    SSDP_HTTP_VERSION as HTTP_VERSION_1_1, SSDP_METHOD_M_SEARCH as METHOD_M_SEARCH,
-    SSDP_METHOD_NOTIFY as METHOD_NOTIFY, SSDP_REASON_OK as REASON_OK, SSDP_STATUS_OK as STATUS_OK,
+    SSDP_HEADER_HOST, SSDP_HEADER_MAN, SSDP_HEADER_MX, SSDP_HEADER_ST,
+    SSDP_HTTP_VERSION as HTTP_VERSION_1_1, SSDP_IPV4_MULTICAST_HOST, SSDP_MAN_DISCOVER,
+    SSDP_METHOD_M_SEARCH as METHOD_M_SEARCH, SSDP_METHOD_NOTIFY as METHOD_NOTIFY,
+    SSDP_REASON_OK as REASON_OK, SSDP_STATUS_OK as STATUS_OK, SSDP_ST_ALL, SSDP_TARGET_ROOTDEVICE,
     SSDP_UDP_PORT,
 };
-use super::header::{SsdpHeaderNameParseError, SsdpHeaderValue, SsdpHeaders};
+use super::header::{SsdpHeaderNameKind, SsdpHeaderNameParseError, SsdpHeaderValue, SsdpHeaders};
 
 const REQUEST_TARGET_ASTERISK: &str = "*";
 const CRLF: &[u8; 2] = b"\r\n";
@@ -42,6 +44,16 @@ impl Ssdp {
     /// Build a source-backed `M-SEARCH * HTTP/1.1` request.
     pub fn m_search() -> Self {
         Self::new(SsdpMessage::m_search())
+    }
+
+    /// Build a source-backed `M-SEARCH` request for `ssdp:all`.
+    pub fn m_search_all() -> Self {
+        Self::m_search().with_search_defaults_for(SSDP_ST_ALL)
+    }
+
+    /// Build a source-backed `M-SEARCH` request for `upnp:rootdevice`.
+    pub fn m_search_rootdevice() -> Self {
+        Self::m_search().with_search_defaults_for(SSDP_TARGET_ROOTDEVICE)
     }
 
     /// Build a source-backed `NOTIFY * HTTP/1.1` request.
@@ -116,9 +128,65 @@ impl Ssdp {
         Ok(self)
     }
 
+    /// Fill missing source-backed M-SEARCH headers for `ssdp:all`.
+    pub fn with_search_defaults(self) -> Self {
+        self.with_search_defaults_for(SSDP_ST_ALL)
+    }
+
+    /// Append an explicit `HOST` header.
+    pub fn host(self, value: impl Into<SsdpHeaderValue>) -> Self {
+        self.with_source_header(SSDP_HEADER_HOST, value)
+    }
+
+    /// Append an explicit `MAN: "ssdp:discover"` header.
+    pub fn man_discover(self) -> Self {
+        self.with_source_header(SSDP_HEADER_MAN, SSDP_MAN_DISCOVER)
+    }
+
+    /// Append an explicit `MX` header.
+    pub fn mx(self, seconds: u32) -> Self {
+        self.with_source_header(SSDP_HEADER_MX, seconds.to_string())
+    }
+
+    /// Append an explicit `ST` search target header.
+    pub fn search_target(self, value: impl Into<SsdpHeaderValue>) -> Self {
+        self.with_source_header(SSDP_HEADER_ST, value)
+    }
+
     /// Replace the opaque body bytes with caller-supplied bytes.
     pub fn with_body(mut self, body: impl Into<Vec<u8>>) -> Self {
         self.message = self.message.with_body(body);
+        self
+    }
+
+    fn with_search_defaults_for(self, target: impl Into<SsdpHeaderValue>) -> Self {
+        self.with_source_default_header(
+            SsdpHeaderNameKind::Host,
+            SSDP_HEADER_HOST,
+            SSDP_IPV4_MULTICAST_HOST,
+        )
+        .with_source_default_header(SsdpHeaderNameKind::Man, SSDP_HEADER_MAN, SSDP_MAN_DISCOVER)
+        .with_source_default_header(SsdpHeaderNameKind::Mx, SSDP_HEADER_MX, "1")
+        .with_source_default_header(SsdpHeaderNameKind::St, SSDP_HEADER_ST, target)
+    }
+
+    fn with_source_default_header(
+        self,
+        kind: SsdpHeaderNameKind,
+        name: &'static str,
+        value: impl Into<SsdpHeaderValue>,
+    ) -> Self {
+        if self.headers().get_first(kind).is_some() {
+            return self;
+        }
+
+        self.with_source_header(name, value)
+    }
+
+    fn with_source_header(mut self, name: &'static str, value: impl Into<SsdpHeaderValue>) -> Self {
+        self.message
+            .push_raw_header(name, value)
+            .expect("source-backed SSDP header name is valid");
         self
     }
 }
@@ -1374,6 +1442,106 @@ mod tests {
 
         assert_eq!(error.field(), SsdpHeaderField::Name);
         assert_eq!(error.value(), "bad name");
+    }
+
+    #[test]
+    fn ssdp_search_builders_m_search_all_defaults_source_backed_headers() {
+        let message = Ssdp::m_search_all();
+        let request = message
+            .message()
+            .start_line()
+            .as_request()
+            .expect("M-SEARCH request line");
+        let headers = message.headers().iter().collect::<Vec<_>>();
+
+        assert_eq!(request.method(), &SsdpMethod::MSearch);
+        assert_eq!(request.target().as_str(), "*");
+        assert_eq!(request.version().as_str(), HTTP_VERSION_1_1);
+        assert_eq!(headers.len(), 4);
+        assert_eq!(headers[0].name().original(), SSDP_HEADER_HOST);
+        assert_eq!(
+            headers[0].value().as_bytes(),
+            SSDP_IPV4_MULTICAST_HOST.as_bytes()
+        );
+        assert_eq!(headers[1].name().original(), SSDP_HEADER_MAN);
+        assert_eq!(headers[1].value().as_bytes(), SSDP_MAN_DISCOVER.as_bytes());
+        assert_eq!(headers[2].name().original(), SSDP_HEADER_MX);
+        assert_eq!(headers[2].value().as_bytes(), b"1");
+        assert_eq!(headers[3].name().original(), SSDP_HEADER_ST);
+        assert_eq!(headers[3].value().as_bytes(), SSDP_ST_ALL.as_bytes());
+        assert_eq!(
+            message.to_bytes(),
+            b"M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: ssdp:all\r\n\r\n"
+        );
+    }
+
+    #[test]
+    fn ssdp_search_builders_m_search_rootdevice_defaults_source_backed_target() {
+        let message = Ssdp::m_search_rootdevice();
+        let st = message
+            .headers()
+            .get_first(SsdpHeaderNameKind::St)
+            .expect("ST header");
+
+        assert_eq!(st.as_bytes(), SSDP_TARGET_ROOTDEVICE.as_bytes());
+        assert_eq!(
+            message.to_bytes(),
+            b"M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: upnp:rootdevice\r\n\r\n"
+        );
+    }
+
+    #[test]
+    fn ssdp_search_builders_typed_setters_preserve_raw_extension_order() {
+        let message = Ssdp::m_search()
+            .with_raw_header("X-DEVICE.UPNP.ORG", "opaque")
+            .expect("extension header")
+            .host("[ff02::c]:1900")
+            .man_discover()
+            .mx(3)
+            .search_target("urn:schemas-upnp-org:device:MediaServer:1");
+        let headers = message.headers().iter().collect::<Vec<_>>();
+
+        assert_eq!(headers.len(), 5);
+        assert_eq!(headers[0].name().original(), "X-DEVICE.UPNP.ORG");
+        assert_eq!(headers[0].value().as_bytes(), b"opaque");
+        assert_eq!(headers[1].name().original(), SSDP_HEADER_HOST);
+        assert_eq!(headers[1].value().as_bytes(), b"[ff02::c]:1900");
+        assert_eq!(headers[2].name().original(), SSDP_HEADER_MAN);
+        assert_eq!(headers[3].name().original(), SSDP_HEADER_MX);
+        assert_eq!(headers[3].value().as_bytes(), b"3");
+        assert_eq!(headers[4].name().original(), SSDP_HEADER_ST);
+        assert_eq!(
+            headers[4].value().as_bytes(),
+            b"urn:schemas-upnp-org:device:MediaServer:1"
+        );
+    }
+
+    #[test]
+    fn ssdp_search_builders_defaults_preserve_explicit_header_overrides() {
+        let message = Ssdp::m_search()
+            .with_raw_header("host", "[ff05::c]:1900")
+            .expect("explicit HOST header")
+            .with_raw_header("MAN", "\"custom:discover\"")
+            .expect("explicit MAN header")
+            .with_raw_header("MX", "9")
+            .expect("explicit MX header")
+            .with_raw_header("st", "urn:schemas-upnp-org:service:ContentDirectory:1")
+            .expect("explicit ST header")
+            .with_search_defaults();
+        let headers = message.headers().iter().collect::<Vec<_>>();
+
+        assert_eq!(headers.len(), 4);
+        assert_eq!(headers[0].name().original(), "host");
+        assert_eq!(headers[0].value().as_bytes(), b"[ff05::c]:1900");
+        assert_eq!(headers[1].name().original(), "MAN");
+        assert_eq!(headers[1].value().as_bytes(), b"\"custom:discover\"");
+        assert_eq!(headers[2].name().original(), "MX");
+        assert_eq!(headers[2].value().as_bytes(), b"9");
+        assert_eq!(headers[3].name().original(), "st");
+        assert_eq!(
+            headers[3].value().as_bytes(),
+            b"urn:schemas-upnp-org:service:ContentDirectory:1"
+        );
     }
 
     #[test]
