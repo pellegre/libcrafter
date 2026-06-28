@@ -42,3 +42,16 @@ metadata, and RFC Editor errata as classified in the SSDP source notes.
   assert structured error categories rather than display strings.
 - Do not promote provider-backed artifacts, live captures, credentials, public
   endpoint addresses, host identifiers, or local paths into this fixture tree.
+
+## Committed advanced fixtures
+
+- `advanced_extension_headers.hex`: request payload with IPv6 HOST, `OPT`, and
+  namespace-prefixed `01-NLS` headers.
+- `advanced_duplicate_headers.hex`: request payload preserving duplicate `ST`
+  and unknown `X-DUP` header order.
+- `advanced_body_bytes.hex`: response payload preserving opaque body bytes after
+  the CRLF header delimiter.
+- `advanced_multicast_ipv6.hex`: request payload with the source-backed
+  site-local IPv6 SSDP HOST literal.
+- `advanced_unknown_preservation.hex`: structurally valid unknown request
+  method, target, version, and vendor-style header preservation.
