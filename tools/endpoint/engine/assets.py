@@ -48,6 +48,10 @@ class AssetLeaseNotFound(RuntimeError):
     """Raised when a lease ID does not match any stored asset lease."""
 
 
+class AssetLeaseExpired(RuntimeError):
+    """Raised when a matched endpoint asset lease is no longer active."""
+
+
 class AssetLock(Protocol):
     """Context manager for an asset lock."""
 
@@ -324,6 +328,16 @@ class EndpointAsset(JsonModel):
             else EndpointLease.from_dict(_mapping(lease_value, "lease")),
             metadata=json_object(data.get("metadata", {}), "metadata"),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedEndpointAssetLease:
+    """Stored asset and lease metadata resolved from a lease ID."""
+
+    lease_id: str
+    asset: EndpointAsset
+    lease: EndpointLease
+    profile: str
 
 
 def asset_state_dir(asset_id: str, config: WireConfig | None = None) -> Path:
@@ -719,6 +733,56 @@ def release_endpoint_asset_lease(
             "asset_path": str(asset_record_path(released.asset_id, config)),
             "asset": released.to_dict(),
         }
+    raise AssetLeaseNotFound(f"unknown endpoint asset lease: {lease_id}")
+
+
+def resolve_endpoint_asset_lease(
+    lease_id: str,
+    profile_name: str,
+    *,
+    now: datetime | str | None = None,
+    config: WireConfig | None = None,
+) -> ResolvedEndpointAssetLease:
+    """Resolve one active endpoint asset lease for an appliance profile."""
+
+    _require_non_empty_string(lease_id, "lease_id")
+    profile = resolve_profile(profile_name)
+    current = _coerce_utc_datetime(now, "now") if now is not None else _utc_now()
+
+    for asset in list_endpoint_assets(config):
+        lease = asset.lease
+        if lease is None:
+            continue
+        stored_lease_id = lease.metadata.get("lease_id")
+        if lease.holder != lease_id and stored_lease_id != lease_id:
+            continue
+        if asset_lease_expired(lease, now=current):
+            raise AssetLeaseExpired(
+                f"endpoint asset lease {lease_id!r} for asset {asset.asset_id!r} "
+                f"expired at {lease.expires_at}"
+            )
+        if profile.name not in asset.supported_profiles:
+            supported = ", ".join(asset.supported_profiles) or "<none>"
+            raise ValueError(
+                f"endpoint asset {asset.asset_id!r} does not support profile "
+                f"{profile.name!r}; supported profiles: {supported}"
+            )
+        lease_profile = _optional_string(
+            lease.metadata.get("profile"),
+            "lease.metadata.profile",
+        )
+        if lease_profile is not None and lease_profile != profile.name:
+            raise ValueError(
+                f"endpoint asset lease {lease_id!r} was acquired for profile "
+                f"{lease_profile!r}, not requested profile {profile.name!r}"
+            )
+        return ResolvedEndpointAssetLease(
+            lease_id=lease_id,
+            asset=asset,
+            lease=lease,
+            profile=profile.name,
+        )
+
     raise AssetLeaseNotFound(f"unknown endpoint asset lease: {lease_id}")
 
 

@@ -7,13 +7,16 @@ import json
 import shlex
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass
 from json import JSONDecodeError
 from pathlib import Path
 from posixpath import basename
 
+from tools.appliance.engine.profile import ApplianceProfile
 from tools.appliance.engine.profiles import resolve_profile
 
 from .appliance import (
+    EndpointApplianceTarget,
     collect_endpoint_appliance_run_artifacts,
     deploy_endpoint_appliance_target,
     read_endpoint_appliance_target,
@@ -28,14 +31,17 @@ from .assets import (
     AssetSSHInfo,
     EndpointAsset,
     acquire_endpoint_asset_lease_by_profile,
+    asset_lease_artifact_root,
     asset_record_path,
+    asset_ssh_docker_target,
     check_endpoint_asset,
     list_endpoint_assets,
     read_endpoint_asset,
     release_endpoint_asset_lease,
+    resolve_endpoint_asset_lease,
     write_endpoint_asset,
 )
-from .model import EndpointManifest, dumps_json, write_json
+from .model import EndpointManifest, dumps_json, to_jsonable, write_json
 from .model import json_object
 from .process import CommandResult, run_command
 from .providers import resolve_provider
@@ -71,6 +77,16 @@ COMMANDS = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _ApplianceTargetContext:
+    target: EndpointApplianceTarget
+    profile: ApplianceProfile
+    lease_id: str | None = None
+    asset_id: str | None = None
+    lease_artifact_root: Path | None = None
+    release_after_run: dict[str, object] | None = None
+
+
 def _absolute_local_path(value: str) -> str:
     if not Path(value).is_absolute():
         raise argparse.ArgumentTypeError(f"{value!r} must be an absolute local path")
@@ -99,8 +115,24 @@ def _add_provider_exposure_options(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_appliance_common_options(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("endpoint_id", metavar="ENDPOINT_ID", help="endpoint to use")
-    parser.add_argument("profile", metavar="PROFILE", help="appliance profile to use")
+    parser.add_argument(
+        "endpoint_id",
+        metavar="ENDPOINT_ID",
+        nargs="?",
+        help="endpoint to use, or lease:LEASE_ID for a persistent asset lease",
+    )
+    parser.add_argument(
+        "profile",
+        metavar="PROFILE",
+        nargs="?",
+        help="appliance profile to use",
+    )
+    parser.add_argument(
+        "--lease",
+        dest="lease_id",
+        metavar="LEASE_ID",
+        help="persistent endpoint asset lease to use instead of ENDPOINT_ID",
+    )
     parser.add_argument(
         "--work-dir",
         metavar="PATH",
@@ -152,7 +184,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     appliance_plan = appliance_subparsers.add_parser(
         "plan",
-        usage="endpoint appliance plan [-h] [options] ENDPOINT_ID PROFILE -- COMMAND...",
+        usage=(
+            "endpoint appliance plan [-h] [options] "
+            "[ENDPOINT_ID|lease:LEASE_ID] PROFILE -- COMMAND..."
+        ),
         help="render an endpoint appliance run plan",
         description="Render endpoint appliance deploy, optional sync, and run plans.",
     )
@@ -162,7 +197,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     appliance_check = appliance_subparsers.add_parser(
         "check",
-        usage="endpoint appliance check [-h] [options] ENDPOINT_ID PROFILE [-- COMMAND...]",
+        usage=(
+            "endpoint appliance check [-h] [options] "
+            "[ENDPOINT_ID|lease:LEASE_ID] PROFILE [-- COMMAND...]"
+        ),
         help="render endpoint appliance readiness checks",
         description="Render endpoint Docker and profile readiness checks.",
     )
@@ -172,7 +210,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     appliance_deploy = appliance_subparsers.add_parser(
         "deploy",
-        usage="endpoint appliance deploy [-h] [options] ENDPOINT_ID PROFILE [-- COMMAND...]",
+        usage=(
+            "endpoint appliance deploy [-h] [options] "
+            "[ENDPOINT_ID|lease:LEASE_ID] PROFILE [-- COMMAND...]"
+        ),
         help="prepare one endpoint for appliance execution",
         description="Prepare one endpoint to run the selected appliance image.",
     )
@@ -182,7 +223,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     appliance_run = appliance_subparsers.add_parser(
         "run",
-        usage="endpoint appliance run [-h] [options] ENDPOINT_ID PROFILE -- COMMAND...",
+        usage=(
+            "endpoint appliance run [-h] [options] "
+            "[ENDPOINT_ID|lease:LEASE_ID] PROFILE -- COMMAND..."
+        ),
         help="run an appliance command on one endpoint",
         description="Optionally sync a workspace, then run COMMAND in the appliance.",
     )
@@ -192,7 +236,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     appliance_collect = appliance_subparsers.add_parser(
         "collect",
-        usage="endpoint appliance collect [-h] [options] ENDPOINT_ID PROFILE [-- COMMAND...]",
+        usage=(
+            "endpoint appliance collect [-h] [options] "
+            "[ENDPOINT_ID|lease:LEASE_ID] PROFILE [-- COMMAND...]"
+        ),
         help="collect remote artifacts for an appliance run",
         description="Collect remote appliance artifacts for the selected endpoint/profile run.",
     )
@@ -1052,6 +1099,7 @@ def _run_appliance(args: argparse.Namespace) -> int:
         print("endpoint appliance: missing appliance command", file=sys.stderr)
         return 2
     try:
+        _normalize_appliance_target_args(args)
         if subcommand == "plan":
             output = _appliance_plan_output(args)
             return _emit_appliance_output(args, output, default_label="plan")
@@ -1073,9 +1121,195 @@ def _run_appliance(args: argparse.Namespace) -> int:
     return 2
 
 
-def _appliance_plan_output(args: argparse.Namespace) -> dict[str, object]:
-    target = read_endpoint_appliance_target(args.endpoint_id)
+def _normalize_appliance_target_args(args: argparse.Namespace) -> None:
+    endpoint_id = getattr(args, "endpoint_id", None)
+    profile = getattr(args, "profile", None)
+    lease_id = getattr(args, "lease_id", None)
+
+    if lease_id is not None:
+        if profile is None:
+            if endpoint_id is None:
+                raise ValueError(
+                    "endpoint appliance requires PROFILE when --lease is set"
+                )
+            profile = endpoint_id
+            endpoint_id = None
+        elif endpoint_id is not None:
+            raise ValueError(
+                "endpoint appliance --lease does not accept ENDPOINT_ID; "
+                "use --lease LEASE_ID PROFILE"
+            )
+    elif isinstance(endpoint_id, str) and endpoint_id.startswith("lease:"):
+        lease_id = endpoint_id.removeprefix("lease:")
+        if lease_id == "":
+            raise ValueError("endpoint appliance lease positional form requires lease:LEASE_ID")
+        endpoint_id = None
+        if profile is None:
+            raise ValueError(
+                "endpoint appliance lease positional form requires PROFILE after lease:LEASE_ID"
+            )
+    else:
+        if endpoint_id is None or profile is None:
+            raise ValueError(
+                "endpoint appliance requires ENDPOINT_ID PROFILE or --lease LEASE_ID PROFILE"
+            )
+
+    if profile is None:
+        raise ValueError("endpoint appliance requires PROFILE")
+
+    args.endpoint_id = endpoint_id
+    args.lease_id = lease_id
+    args.profile = profile
+
+
+def _appliance_target_context(args: argparse.Namespace) -> _ApplianceTargetContext:
     profile = resolve_profile(args.profile)
+    lease_id = getattr(args, "lease_id", None)
+    if lease_id is None:
+        return _ApplianceTargetContext(
+            target=read_endpoint_appliance_target(args.endpoint_id),
+            profile=profile,
+        )
+
+    resolved = resolve_endpoint_asset_lease(lease_id, profile.name)
+    artifact_root = asset_lease_artifact_root(resolved.asset.asset_id, resolved.lease_id)
+    release_after_run = _lease_release_after_run_guidance(resolved.lease_id)
+    return _ApplianceTargetContext(
+        target=_asset_lease_appliance_target(
+            resolved.asset,
+            lease_id=resolved.lease_id,
+            artifact_root=artifact_root,
+            release_after_run=release_after_run,
+        ),
+        profile=profile,
+        lease_id=resolved.lease_id,
+        asset_id=resolved.asset.asset_id,
+        lease_artifact_root=artifact_root,
+        release_after_run=release_after_run,
+    )
+
+
+def _asset_lease_appliance_target(
+    asset: EndpointAsset,
+    *,
+    lease_id: str,
+    artifact_root: Path,
+    release_after_run: dict[str, object],
+) -> EndpointApplianceTarget:
+    ssh_target = asset_ssh_docker_target(asset)
+    ssh_target_metadata = dict(ssh_target.metadata)
+    ssh_target_metadata.update(
+        {
+            "asset_id": asset.asset_id,
+            "lease_id": lease_id,
+            "release_after_run": release_after_run,
+        }
+    )
+    ssh_target = type(ssh_target).from_dict(
+        {**ssh_target.to_dict(), "metadata": ssh_target_metadata}
+    )
+    if asset.lease is None:
+        raise ValueError(f"endpoint asset {asset.asset_id!r} has no active lease")
+    metadata = {
+        "target_kind": "asset-lease",
+        "endpoint_id": asset.asset_id,
+        "asset_id": asset.asset_id,
+        "asset_status": asset.status,
+        "provider": "asset",
+        "exposure": asset.substrate,
+        "role": "lease",
+        "artifact_dir": str(artifact_root),
+        "asset_path": str(asset_record_path(asset.asset_id)),
+        "supported_profiles": list(asset.supported_profiles),
+        "lease_id": lease_id,
+        "lease": asset.lease.to_dict(),
+        "lease_expires_at": asset.lease.expires_at,
+        "release_after_run": release_after_run,
+        "asset_metadata": asset.metadata,
+        "ssh_metadata": asset.ssh.metadata,
+        "appliance": {
+            "target_kind": "asset-lease",
+            "asset_id": asset.asset_id,
+            "lease_id": lease_id,
+            "substrate": asset.substrate,
+            "supported_profiles": list(asset.supported_profiles),
+            "remote_work_root": ssh_target.remote_work_root,
+            "remote_artifact_root": ssh_target.remote_artifact_root,
+            "appliance_capable": True,
+            "docker_execution_supported": True,
+            "release_after_run": release_after_run,
+        },
+    }
+    return EndpointApplianceTarget(
+        endpoint_id=asset.asset_id,
+        provider="asset",
+        exposure=asset.substrate,
+        role="lease",
+        target=ssh_target,
+        metadata=metadata,
+    )
+
+
+def _lease_release_after_run_guidance(lease_id: str) -> dict[str, object]:
+    command = ["endpoint", "asset", "release", lease_id]
+    command_string = shlex.join(command)
+    return {
+        "message": f"release lease after the appliance run: {command_string}",
+        "command": command,
+        "command_string": command_string,
+    }
+
+
+def _finalize_appliance_output(
+    output: object,
+    context: _ApplianceTargetContext,
+) -> object:
+    if context.lease_id is None:
+        return output
+    data = to_jsonable(output)
+    if not isinstance(data, dict):
+        return output
+    data["lease_id"] = context.lease_id
+    data["asset_id"] = context.asset_id
+    data["lease_artifact_root"] = str(context.lease_artifact_root)
+    if context.release_after_run is not None:
+        data["release_after_run"] = context.release_after_run
+        data["release_guidance"] = context.release_after_run["message"]
+    data.setdefault("artifact_dir", _appliance_output_artifact_dir(data))
+    metadata = data.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    metadata.update(
+        {
+            "lease_id": context.lease_id,
+            "asset_id": context.asset_id,
+            "lease_artifact_root": str(context.lease_artifact_root),
+        }
+    )
+    if context.release_after_run is not None:
+        metadata["release_after_run"] = context.release_after_run
+    data["metadata"] = metadata
+    return data
+
+
+def _appliance_output_artifact_dir(data: dict[str, object]) -> str | None:
+    for key in ("artifact_dir", "local_artifact_dir"):
+        value = data.get(key)
+        if isinstance(value, str):
+            return value
+    run = data.get("run")
+    if isinstance(run, dict):
+        for key in ("artifact_dir", "local_artifact_dir"):
+            value = run.get(key)
+            if isinstance(value, str):
+                return value
+    return None
+
+
+def _appliance_plan_output(args: argparse.Namespace) -> dict[str, object]:
+    context = _appliance_target_context(args)
+    target = context.target
+    profile = context.profile
     command = _appliance_command_parts(args.remote_command)
     deploy_plan = render_endpoint_appliance_deploy_plan(target, image_tag=profile.image)
     sync_plan = None
@@ -1092,7 +1326,7 @@ def _appliance_plan_output(args: argparse.Namespace) -> dict[str, object]:
         sync_context=sync_plan,
         artifact_dir=args.artifact_dir,
     )
-    return {
+    output = {
         "kind": "endpoint-appliance-plan",
         "endpoint_id": target.endpoint_id,
         "profile": profile.name,
@@ -1102,11 +1336,13 @@ def _appliance_plan_output(args: argparse.Namespace) -> dict[str, object]:
         "sync": sync_plan,
         "run": run_plan,
     }
+    return _finalize_appliance_output(output, context)  # type: ignore[return-value]
 
 
 def _appliance_check_output(args: argparse.Namespace) -> dict[str, object]:
-    target = read_endpoint_appliance_target(args.endpoint_id)
-    profile = resolve_profile(args.profile)
+    context = _appliance_target_context(args)
+    target = context.target
+    profile = context.profile
     deploy_plan = render_endpoint_appliance_deploy_plan(target, image_tag=profile.image)
     output: dict[str, object] = {
         "kind": "endpoint-appliance-check-plan",
@@ -1118,25 +1354,29 @@ def _appliance_check_output(args: argparse.Namespace) -> dict[str, object]:
         "profile_checks": profile.checks,
         "host_requirements": profile.host_requirements,
     }
-    return output
+    return _finalize_appliance_output(output, context)  # type: ignore[return-value]
 
 
 def _appliance_deploy_output(args: argparse.Namespace) -> object:
-    target = read_endpoint_appliance_target(args.endpoint_id)
-    profile = resolve_profile(args.profile)
+    context = _appliance_target_context(args)
+    target = context.target
+    profile = context.profile
     if args.dry_run:
-        return render_endpoint_appliance_deploy_plan(target, image_tag=profile.image)
-    return deploy_endpoint_appliance_target(
+        output = render_endpoint_appliance_deploy_plan(target, image_tag=profile.image)
+        return _finalize_appliance_output(output, context)
+    output = deploy_endpoint_appliance_target(
         target,
         runner=run_command,
         artifact_dir=args.artifact_dir,
         image_tag=profile.image,
     )
+    return _finalize_appliance_output(output, context)
 
 
 def _appliance_run_output(args: argparse.Namespace) -> object:
-    target = read_endpoint_appliance_target(args.endpoint_id)
-    profile = resolve_profile(args.profile)
+    context = _appliance_target_context(args)
+    target = context.target
+    profile = context.profile
     command = _appliance_command_parts(args.remote_command)
     if args.dry_run:
         return _appliance_plan_output(args)
@@ -1150,7 +1390,7 @@ def _appliance_run_output(args: argparse.Namespace) -> object:
             artifact_dir=args.artifact_dir,
         )
         if not sync_context.ok:
-            return {
+            output = {
                 "kind": "endpoint-appliance-run",
                 "endpoint_id": target.endpoint_id,
                 "profile": profile.name,
@@ -1158,7 +1398,8 @@ def _appliance_run_output(args: argparse.Namespace) -> object:
                 "sync": sync_context,
                 "error": "workspace sync failed",
             }
-    return run_endpoint_appliance_command(
+            return _finalize_appliance_output(output, context)
+    output = run_endpoint_appliance_command(
         target,
         profile,
         command,
@@ -1166,11 +1407,13 @@ def _appliance_run_output(args: argparse.Namespace) -> object:
         sync_context=sync_context,
         artifact_dir=args.artifact_dir,
     )
+    return _finalize_appliance_output(output, context)
 
 
 def _appliance_collect_output(args: argparse.Namespace) -> object:
-    target = read_endpoint_appliance_target(args.endpoint_id)
-    profile = resolve_profile(args.profile)
+    context = _appliance_target_context(args)
+    target = context.target
+    profile = context.profile
     command = _appliance_command_parts(args.remote_command, default=("true",))
     run_plan = render_endpoint_appliance_run_plan(
         target,
@@ -1179,7 +1422,7 @@ def _appliance_collect_output(args: argparse.Namespace) -> object:
         artifact_dir=args.artifact_dir,
     )
     if args.dry_run:
-        return {
+        output = {
             "kind": "endpoint-appliance-collect-plan",
             "endpoint_id": target.endpoint_id,
             "profile": profile.name,
@@ -1189,11 +1432,13 @@ def _appliance_collect_output(args: argparse.Namespace) -> object:
             "remote_artifact_root": run_plan.remote_artifact_root,
             "artifact_dir": run_plan.local_artifact_dir,
         }
-    return collect_endpoint_appliance_run_artifacts(
+        return _finalize_appliance_output(output, context)
+    output = collect_endpoint_appliance_run_artifacts(
         run_plan.to_dict(),
         runner=run_command,
         artifact_dir=args.artifact_dir,
     )
+    return _finalize_appliance_output(output, context)
 
 
 def _emit_appliance_output(
@@ -1213,6 +1458,7 @@ def _emit_appliance_error(args: argparse.Namespace, error: str) -> int:
     output = {
         "kind": "endpoint-appliance-error",
         "endpoint_id": getattr(args, "endpoint_id", None),
+        "lease_id": getattr(args, "lease_id", None),
         "profile": getattr(args, "profile", None),
         "ok": False,
         "error": error,
@@ -1321,13 +1567,24 @@ def _print_appliance_output(output: object, *, default_label: str) -> None:
     if isinstance(output, dict):
         endpoint_id = output.get("endpoint_id", "<unknown>")
         profile = output.get("profile")
+        lease_id = output.get("lease_id")
+        asset_id = output.get("asset_id")
         ok = output.get("ok")
         status = "" if ok is None else f" ok={str(bool(ok)).lower()}"
         profile_text = "" if profile is None else f" profile={profile}"
-        print(f"endpoint appliance {default_label}: endpoint_id={endpoint_id}{profile_text}{status}")
+        lease_text = ""
+        if isinstance(lease_id, str):
+            lease_text = f" lease_id={lease_id}"
+            if isinstance(asset_id, str):
+                lease_text += f" asset_id={asset_id}"
+        print(
+            f"endpoint appliance {default_label}: "
+            f"endpoint_id={endpoint_id}{profile_text}{lease_text}{status}"
+        )
         artifact_dir = output.get("artifact_dir")
         if isinstance(artifact_dir, str):
             print(f"artifacts: {artifact_dir}")
+        _print_appliance_release_guidance(output)
         return
     data = output.to_dict() if hasattr(output, "to_dict") else {}
     if isinstance(data, dict):
@@ -1340,8 +1597,18 @@ def _print_appliance_output(output: object, *, default_label: str) -> None:
         artifact_dir = data.get("artifact_dir") or data.get("local_artifact_dir")
         if isinstance(artifact_dir, str):
             print(f"artifacts: {artifact_dir}")
+        _print_appliance_release_guidance(data)
         return
     print(f"endpoint appliance {default_label}")
+
+
+def _print_appliance_release_guidance(output: dict[str, object]) -> None:
+    release = output.get("release_after_run")
+    if not isinstance(release, dict):
+        return
+    command = release.get("command_string")
+    if isinstance(command, str):
+        print(f"release: {command}")
 
 
 def _appliance_exit_code(output: object) -> int:
