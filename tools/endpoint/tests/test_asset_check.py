@@ -114,7 +114,17 @@ class EndpointAssetCheckCliTest(unittest.TestCase):
     def test_dot11_rf_checks_remain_dry_run_readiness_plans(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            _write_asset(root, profiles=("dot11-monitor",))
+            _write_asset(
+                root,
+                profiles=("dot11-monitor",),
+                appliance_metadata={
+                    "profile_environments": {
+                        "dot11-monitor": {
+                            "LIBCRAFTER_DOT11_IFACE": "mon-check0",
+                        }
+                    }
+                },
+            )
             runner = _FakeRunner()
 
             exit_code, output = _run_asset_check(
@@ -128,13 +138,63 @@ class EndpointAssetCheckCliTest(unittest.TestCase):
         monitor = _profile_check(output, "dot11-monitor-interface")
         self.assertEqual(exit_code, 0)
         self.assertEqual(len(runner.calls), 1)
+        self.assertEqual(
+            output["profile_environment"],
+            {"LIBCRAFTER_DOT11_IFACE": "mon-check0"},
+        )
+        self.assertEqual(monitor["command_argv"][-2:], ["--iface", "mon-check0"])
+        self.assertEqual(injection["command_argv"][-2:], ["--iface", "mon-check0"])
         self.assertIn("--dry-run", injection["command_argv"])
         self.assertFalse(injection["metadata"]["live_transmit"])
         self.assertTrue(injection["metadata"]["requires_live_gate"])
         self.assertFalse(injection["required"])
         self.assertNotIn("--dry-run", monitor["command_argv"])
+        self.assertTrue(output["profile_metadata"]["host_or_vm_prep"]["owns_monitor_mode"])
+        self.assertEqual(
+            output["profile_metadata"]["live_check_policy"]["missing_interface_policy"],
+            "reject-live-check",
+        )
         self.assertFalse(output["live_transmit"])
         self.assertTrue(output["dry_run"])
+
+    def test_whad_rf_asset_check_uses_fake_serial_device_from_asset_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fake_device = root / "fake-dev" / "ttyACM-check0"
+            _write_asset(
+                root,
+                profiles=("whad-serial",),
+                appliance_metadata={
+                    "profile_environments": {
+                        "whad-serial": {
+                            "LIBCRAFTER_WHAD_DEVICE": str(fake_device),
+                        }
+                    }
+                },
+            )
+            runner = _FakeRunner()
+
+            exit_code, output = _run_asset_check(
+                root,
+                runner,
+                profile="whad-serial",
+                now=datetime(2026, 6, 28, 14, 5, 0, tzinfo=UTC),
+            )
+
+        serial = _profile_check(output, "serial-device-exists")
+        discovery = _profile_check(output, "whad-discovery")
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(len(runner.calls), 1)
+        self.assertEqual(
+            output["profile_environment"],
+            {"LIBCRAFTER_WHAD_DEVICE": str(fake_device)},
+        )
+        self.assertEqual(serial["command_argv"][-2:], ["--device", str(fake_device)])
+        self.assertEqual(discovery["command_argv"][-2:], ["--device", str(fake_device)])
+        self.assertTrue(serial["required"])
+        self.assertFalse(discovery["required"])
+        self.assertFalse(discovery["metadata"]["live_transmit"])
+        self.assertFalse(fake_device.exists())
 
 
 class _FakeRunner:
@@ -196,8 +256,15 @@ def _write_asset(
     *,
     profiles: tuple[str, ...] = ("lan-raw",),
     last_check: str | None = None,
+    appliance_metadata: dict[str, object] | None = None,
 ) -> EndpointAsset:
     state_dir = root / "wire-state" / "assets" / "asset-a"
+    appliance = {
+        "remote_work_root": "/srv/libcrafter/work",
+        "remote_artifact_root": "/srv/libcrafter/artifacts",
+    }
+    if appliance_metadata is not None:
+        appliance.update(appliance_metadata)
     asset = EndpointAsset(
         asset_id="asset-a",
         substrate="qemu",
@@ -217,12 +284,7 @@ def _write_asset(
             memory_mb=8192,
         ),
         last_check=last_check,
-        metadata={
-            "appliance": {
-                "remote_work_root": "/srv/libcrafter/work",
-                "remote_artifact_root": "/srv/libcrafter/artifacts",
-            }
-        },
+        metadata={"appliance": appliance},
     )
     with _endpoint_env(root):
         write_endpoint_asset(asset)

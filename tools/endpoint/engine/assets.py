@@ -419,10 +419,12 @@ def check_endpoint_asset(
         target = asset_ssh_docker_target(asset)
         docker_plan = render_docker_check_plan(target)
         docker_result = runner(docker_plan.command_argv)
+        profile_environment = asset_profile_environment(asset, profile.name)
         profile_checks = render_profile_check_plans(
             profile,
             image_tag=profile.image,
             docker_command=target.docker_command,
+            environment=profile_environment,
         )
         hardware_check = _hardware_visible_check(asset)
         ok = docker_result.ok and bool(hardware_check["ok"])
@@ -440,6 +442,8 @@ def check_endpoint_asset(
         "last_check": updated_asset.last_check,
         "asset": updated_asset.to_dict(),
         "target": target.to_dict(),
+        "profile_environment": profile_environment,
+        "profile_metadata": profile.metadata,
         "docker_check": {
             "name": "ssh-docker-check",
             "kind": docker_plan.kind,
@@ -511,6 +515,42 @@ def asset_ssh_docker_target(asset: EndpointAsset) -> SSHDockerHostTarget:
         docker_command=docker_command,
         metadata={"asset_id": asset.asset_id, "substrate": asset.substrate},
     )
+
+
+def asset_profile_environment(asset: EndpointAsset, profile_name: str) -> dict[str, str]:
+    """Return asset-local profile environment overrides for readiness planning."""
+
+    _require_non_empty_string(profile_name, "profile_name")
+    appliance_metadata = _optional_mapping(asset.metadata.get("appliance"), "metadata.appliance")
+    if appliance_metadata is None:
+        return {}
+
+    output: dict[str, str] = {}
+    shared_environment = _optional_mapping(
+        appliance_metadata.get("environment"),
+        "metadata.appliance.environment",
+    )
+    if shared_environment is not None:
+        output.update(_string_mapping(shared_environment, "metadata.appliance.environment"))
+
+    profile_environments = _optional_mapping(
+        appliance_metadata.get("profile_environments"),
+        "metadata.appliance.profile_environments",
+    )
+    if profile_environments is not None:
+        selected_environment = _optional_mapping(
+            profile_environments.get(profile_name),
+            f"metadata.appliance.profile_environments.{profile_name}",
+        )
+        if selected_environment is not None:
+            output.update(
+                _string_mapping(
+                    selected_environment,
+                    f"metadata.appliance.profile_environments.{profile_name}",
+                )
+            )
+
+    return output
 
 
 def asset_has_provider_lifecycle(asset: EndpointAsset) -> bool:
@@ -992,6 +1032,17 @@ def _string(value: object, name: str) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{name} must be a string")
     return value
+
+
+def _string_mapping(value: Mapping[str, object], name: str) -> dict[str, str]:
+    output: dict[str, str] = {}
+    for key, item in _mapping(value, name).items():
+        if key == "":
+            raise ValueError(f"{name} keys must be non-empty strings")
+        if not isinstance(item, str):
+            raise ValueError(f"{name}.{key} must be a string")
+        output[key] = item
+    return output
 
 
 def _optional_string(value: object, name: str) -> str | None:
