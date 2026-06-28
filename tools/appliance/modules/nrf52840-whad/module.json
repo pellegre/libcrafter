@@ -1,0 +1,74 @@
+{
+  "name": "nrf52840-whad",
+  "description": "nRF52840 WHAD serial dongle support for BLE and IEEE 802.15.4 workflows.",
+  "profiles": [
+    "whad-serial"
+  ],
+  "image_extensions": [],
+  "host_prepare": [
+    {
+      "name": "cdc-acm-passthrough",
+      "description": "Pass an nRF52840 USB CDC-ACM WHAD device through to the local host, QEMU guest, or VirtualBox guest as /dev/ttyACM*.",
+      "kind": "usb-serial",
+      "scope": "host-or-vm",
+      "command": [
+        "sh",
+        "-c",
+        "test -e \"${LIBCRAFTER_WHAD_DEVICE:-/dev/ttyACM0}\""
+      ],
+      "required": true,
+      "metadata": {
+        "device_env": "LIBCRAFTER_WHAD_DEVICE",
+        "device_glob": "/dev/ttyACM*",
+        "placeholder_device": "/dev/ttyACM0"
+      }
+    }
+  ],
+  "checks": [
+    {
+      "name": "serial-device-exists",
+      "description": "Verify that the selected nRF52840 WHAD serial device exists and is readable.",
+      "scope": "host",
+      "command": [],
+      "required": true,
+      "metadata": {
+        "device_env": "LIBCRAFTER_WHAD_DEVICE",
+        "device_glob": "/dev/ttyACM*",
+        "placeholder_device": "/dev/ttyACM0"
+      }
+    },
+    {
+      "name": "whad-discovery",
+      "description": "Inspect WHAD adapter discovery when WHAD tools are installed.",
+      "scope": "container",
+      "command": [],
+      "required": false,
+      "metadata": {
+        "live_transmit": false,
+        "readiness_only": true,
+        "tool": "whad"
+      }
+    }
+  ],
+  "devices": [
+    "/dev/ttyACM*"
+  ],
+  "interfaces": [],
+  "metadata": {
+    "device_env": "LIBCRAFTER_WHAD_DEVICE",
+    "firmware_family": "butterfly",
+    "hardware_family": "nrf52840",
+    "host_device_glob": "/dev/ttyACM*",
+    "local_configuration": "ignored operator configuration owns real device assignment, firmware paths, and USB passthrough",
+    "placeholder_device": "/dev/ttyACM0",
+    "substrates": [
+      "local",
+      "qemu",
+      "virtualbox"
+    ],
+    "whad_domains": [
+      "ble",
+      "dot15d4"
+    ]
+  }
+}
