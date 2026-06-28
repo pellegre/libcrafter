@@ -1,0 +1,150 @@
+{
+  "name": "wifi-monitor",
+  "description": "Generic Wi-Fi monitor-mode support for radiotap capture and gated injection workflows.",
+  "profiles": [
+    "dot11-monitor"
+  ],
+  "image_extensions": [],
+  "host_prepare": [
+    {
+      "name": "monitor-capable-wifi-dongle",
+      "description": "Expose a monitor-capable Wi-Fi adapter to the local host, QEMU guest, VirtualBox guest, or prepared SSH Docker host before the appliance starts.",
+      "kind": "wifi-adapter",
+      "scope": "host-or-vm",
+      "command": [],
+      "required": true,
+      "metadata": {
+        "docker_owns_driver_state": false,
+        "local_configuration": "ignored operator configuration owns concrete adapter assignment and passthrough"
+      }
+    },
+    {
+      "name": "driver-available",
+      "description": "Install and load the host or VM Wi-Fi driver outside the appliance image.",
+      "kind": "kernel-driver",
+      "scope": "host-or-vm",
+      "command": [
+        "sh",
+        "-c",
+        "command -v iw >/dev/null 2>&1"
+      ],
+      "required": true,
+      "metadata": {
+        "docker_owns_driver_state": false,
+        "host_or_vm_prep": true
+      }
+    },
+    {
+      "name": "monitor-interface-prepared",
+      "description": "Create the selected interface in monitor mode on the host or VM before running the appliance.",
+      "kind": "network-interface",
+      "scope": "host-or-vm",
+      "command": [
+        "sh",
+        "-c",
+        "test -n \"${LIBCRAFTER_DOT11_IFACE:-}\""
+      ],
+      "required": true,
+      "metadata": {
+        "interface_env": "LIBCRAFTER_DOT11_IFACE",
+        "monitor_mode": "required-before-container-start"
+      }
+    },
+    {
+      "name": "channel-pinned",
+      "description": "Pin the prepared monitor interface to the intended RF channel outside the appliance before capture or injection.",
+      "kind": "rf-channel",
+      "scope": "host-or-vm",
+      "command": [
+        "sh",
+        "-c",
+        "test -n \"${LIBCRAFTER_DOT11_CHANNEL:-}\""
+      ],
+      "required": true,
+      "metadata": {
+        "channel_env": "LIBCRAFTER_DOT11_CHANNEL",
+        "host_or_vm_prep": true
+      }
+    },
+    {
+      "name": "pcap-permissions",
+      "description": "Grant the appliance userland permission to open pcap on the prepared monitor interface.",
+      "kind": "pcap",
+      "scope": "host-or-vm",
+      "command": [],
+      "required": true,
+      "metadata": {
+        "capture_permission": "required",
+        "interface_env": "LIBCRAFTER_DOT11_IFACE"
+      }
+    }
+  ],
+  "checks": [
+    {
+      "name": "interface-exists",
+      "description": "Verify that the selected Wi-Fi monitor interface exists.",
+      "scope": "host",
+      "command": [],
+      "required": true,
+      "metadata": {
+        "interface_env": "LIBCRAFTER_DOT11_IFACE"
+      }
+    },
+    {
+      "name": "dot11-monitor-interface",
+      "description": "Verify that the selected Wi-Fi interface is already in monitor mode.",
+      "scope": "host",
+      "command": [],
+      "required": true,
+      "metadata": {
+        "interface_env": "LIBCRAFTER_DOT11_IFACE"
+      }
+    },
+    {
+      "name": "pcap-open",
+      "description": "Verify that pcap can open the selected monitor interface.",
+      "scope": "container",
+      "command": [],
+      "required": true,
+      "metadata": {
+        "interface_env": "LIBCRAFTER_DOT11_IFACE"
+      }
+    },
+    {
+      "name": "dot11-injection-smoke",
+      "description": "Plan a dry-run radiotap injection smoke check for the prepared monitor interface.",
+      "scope": "container",
+      "command": [],
+      "required": false,
+      "metadata": {
+        "live_transmit": false,
+        "readiness_only": true,
+        "requires_live_gate": true
+      }
+    }
+  ],
+  "devices": [
+    "monitor-capable-wifi-dongle"
+  ],
+  "interfaces": [
+    "monitor-mode-interface"
+  ],
+  "metadata": {
+    "channel_env": "LIBCRAFTER_DOT11_CHANNEL",
+    "extension_guidance": {
+      "copy_module": "Copy this module into a new module directory for a specific adapter family.",
+      "dockerfile_overlay": "Add image_extensions metadata and a module-local Dockerfile only for adapter-specific userland packages.",
+      "host_prep_script": "Add a host or VM preparation script that installs the operator's driver package, creates monitor mode, pins the channel, and configures pcap access.",
+      "local_overrides": "Keep concrete adapter assignment, interface, channel, driver source, and RF details in ignored operator configuration or endpoint asset state."
+    },
+    "hardware_family": "generic-wifi-monitor",
+    "interface_env": "LIBCRAFTER_DOT11_IFACE",
+    "provider_neutral": true,
+    "substrates": [
+      "local",
+      "qemu",
+      "virtualbox",
+      "generic-ssh"
+    ]
+  }
+}
