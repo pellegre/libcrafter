@@ -6,6 +6,11 @@ import unittest
 
 from tools.oracle.engine.backends.scapy import live
 from tools.oracle.engine.backends.scapy.bootstrap import import_scapy
+from tools.oracle.engine.live import (
+    LiveEndpoint,
+    build_live_endpoint_batch_request,
+    live_endpoint_artifact_paths,
+)
 from tools.oracle.engine.model import EncodedVector, PacketPlan
 
 
@@ -52,6 +57,71 @@ def _l2_ipv4_vector(*, index: int = 0) -> EncodedVector:
         root="l2:ipv4",
         decoder="IP",
     )
+
+
+class LiveEndpointRuntimeMetadataTest(unittest.TestCase):
+    def test_batch_request_carries_appliance_runtime_metadata(self) -> None:
+        runtime = {
+            "profile": "lan-raw",
+            "image_tag": "ghcr.io/libcrafter/appliance:fake",
+            "remote_work_root": "/srv/libcrafter",
+            "remote_artifact_root": "/srv/libcrafter/artifacts",
+            "container_policy": {"execution_mode": "ssh-docker-host"},
+            "check_metadata": {},
+            "metadata": {
+                "provider": "qemu",
+                "source": "endpoint-manifest",
+                "execution_mode": "ssh-docker-host",
+            },
+        }
+        peer_runtime = {
+            **runtime,
+            "metadata": {
+                **runtime["metadata"],
+                "role": "reference_backend",
+            },
+        }
+        endpoint = LiveEndpoint(
+            endpoint_id="qemu-libcrafter",
+            role="libcrafter",
+            interface="eth1",
+            address="10.77.0.10",
+            metadata={
+                "provider": "qemu",
+                "appliance_runtime": runtime,
+                "endpoint_appliance_runtime": runtime,
+            },
+        )
+        peer = LiveEndpoint(
+            endpoint_id="qemu-reference",
+            role="reference_backend",
+            interface="eth1",
+            address="10.77.0.20",
+            metadata={
+                "provider": "qemu",
+                "appliance_runtime": peer_runtime,
+            },
+        )
+
+        request = build_live_endpoint_batch_request(
+            provider="qemu",
+            backend="scapy",
+            seed=11,
+            profile="smoke",
+            packet_plans=[_l2_ipv4_plan(index=0)],
+            direction="libcrafter_to_backend",
+            endpoint=endpoint,
+            peer=peer,
+            artifact_paths=live_endpoint_artifact_paths(
+                output_dir="/tmp/oracle-live",
+                direction="libcrafter_to_backend",
+                endpoint_role="libcrafter",
+            ),
+        )
+
+        self.assertEqual(request.metadata["appliance_runtime"], runtime)
+        self.assertEqual(request.metadata["endpoint_appliance_runtime"], runtime)
+        self.assertEqual(request.metadata["peer_appliance_runtime"], peer_runtime)
 
 
 class ScapyLiveCaptureRootTest(unittest.TestCase):

@@ -33,6 +33,7 @@ from ..live import (
     LiveEndpoint,
     LiveExchangePlan,
     LiveValidationCheck,
+    live_endpoint_appliance_runtime_metadata,
     live_endpoint_from_lab_endpoint,
 )
 from ..model import JSONObject, PacketPlan
@@ -725,6 +726,7 @@ def _oracle_wire_plan_from_lab_plan(plan: JSONObject) -> dict[str, object]:
         **plan,
         "wire_exposure": plan.get("exposure", HETZNER_LAB_PROVIDER_ADAPTER.wire_exposure),
         "command_metadata": plan.get("command_records", []),
+        "endpoint_appliance_runtimes": live_endpoint_appliance_runtime_metadata(endpoints),
         "live_endpoints": endpoints,
     }
 

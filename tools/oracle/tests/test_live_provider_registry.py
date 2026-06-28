@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import patch
 
 from tools.lab.engine.model import (
+    LabApplianceRuntime,
     LabCommandPlan,
     LabEndpoint,
     LabRequest,
@@ -226,6 +227,25 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertEqual(endpoints["libcrafter"].address, QEMU_LIBCRAFTER_PRIVATE_ADDRESS)
         self.assertEqual(endpoints["reference_backend"].address, QEMU_REFERENCE_PRIVATE_ADDRESS)
         self.assertTrue(adapter.validate_provider_workflow(workflow, dry_run=True).passed)
+        workflow_with_runtime_metadata = [
+            replace(
+                command,
+                metadata={
+                    **dict(command.metadata),
+                    "appliance_runtime": _fake_appliance_runtime(
+                        provider="qemu",
+                    ).to_dict(),
+                    "appliance_wrapped": True,
+                },
+            )
+            for command in workflow
+        ]
+        self.assertTrue(
+            adapter.validate_provider_workflow(
+                workflow_with_runtime_metadata,
+                dry_run=True,
+            ).passed
+        )
         self.assertTrue(
             _validate_endpoint_bootstrap(adapter, bootstrap, dry_run=True).passed,
         )
@@ -389,6 +409,12 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertEqual(plan["exposure"], "private")
         self.assertEqual(plan["private_group"], ORACLE_PRIVATE_GROUP)
         self.assertEqual(set(plan["live_endpoints"]), {"libcrafter", "reference_backend"})
+        _assert_wire_plan_runtime(
+            self,
+            plan,
+            provider="hetzner",
+            execution_mode="ssh-docker-host",
+        )
         self.assertEqual(
             [(call["provider"], call["exposure"], call["role"]) for call in client.calls],
             [
@@ -509,6 +535,12 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertEqual(plan["exposure"], "private")
         self.assertEqual(plan["private_group"], QEMU_ORACLE_PRIVATE_GROUP)
         self.assertEqual(set(plan["live_endpoints"]), {"libcrafter", "reference_backend"})
+        _assert_wire_plan_runtime(
+            self,
+            plan,
+            provider="qemu",
+            execution_mode="ssh-docker-host",
+        )
         self.assertEqual(
             [(call["provider"], call["exposure"], call["role"]) for call in client.calls],
             [
@@ -544,6 +576,12 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertEqual(plan["private_group"], DOCKER_ORACLE_PRIVATE_GROUP)
         self.assertEqual(plan["created_endpoint_ids"], [])
         self.assertEqual(set(plan["live_endpoints"]), {"libcrafter", "reference_backend"})
+        _assert_wire_plan_runtime(
+            self,
+            plan,
+            provider="docker",
+            execution_mode="endpoint-container",
+        )
         self.assertEqual(
             [(call["provider"], call["exposure"], call["role"]) for call in client.calls],
             [
@@ -594,6 +632,12 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertEqual(plan["exposure"], "private")
         self.assertEqual(plan["private_group"], VIRTUALBOX_ORACLE_PRIVATE_GROUP)
         self.assertEqual(set(plan["live_endpoints"]), {"libcrafter", "reference_backend"})
+        _assert_wire_plan_runtime(
+            self,
+            plan,
+            provider="virtualbox",
+            execution_mode="ssh-docker-host",
+        )
         self.assertEqual(
             [(call["provider"], call["exposure"], call["role"]) for call in client.calls],
             [
@@ -888,6 +932,31 @@ class LiveProviderRegistryTest(unittest.TestCase):
             self.assertEqual(metadata["planned_infrastructure"]["provider"], "fakecloud")
             self.assertEqual(metadata["wire_endpoint_plan"]["provider"], "fakecloud")
             self.assertEqual(metadata["lab_session"]["provider"], "fakecloud")
+            self.assertEqual(metadata["appliance_runtime"]["profile"], "lan-raw")
+            self.assertEqual(
+                metadata["appliance_runtime"]["metadata"]["source"],
+                "endpoint-runtimes",
+            )
+            self.assertEqual(
+                metadata["endpoint_appliance_runtimes"]["libcrafter"]["metadata"]["source"],
+                "endpoint-manifest",
+            )
+            self.assertEqual(
+                metadata["wire_endpoint_plan"]["appliance_runtime"]["metadata"]["source"],
+                "endpoint-runtimes",
+            )
+            endpoint_requests = [
+                batch["request"]
+                for batch in metadata["endpoint_protocol"]["batches"]
+                if isinstance(batch.get("request"), dict)
+            ]
+            self.assertTrue(endpoint_requests)
+            self.assertTrue(
+                all(
+                    request["metadata"]["appliance_runtime"]["profile"] == "lan-raw"
+                    for request in endpoint_requests
+                )
+            )
             bootstrap_records = _workload_bootstrap_records(metadata["command_records"])
             self.assertEqual(
                 [
@@ -905,6 +974,12 @@ class LiveProviderRegistryTest(unittest.TestCase):
             self.assertEqual(
                 {record["metadata"]["bootstrap"]["provider"] for record in bootstrap_records},
                 {"fakecloud"},
+            )
+            self.assertTrue(
+                all(
+                    record["metadata"]["appliance"]["runtime"]["profile"] == "lan-raw"
+                    for record in bootstrap_records
+                )
             )
             self.assertEqual(metadata["wire_provider"], "fake-wire")
             self.assertEqual(metadata["wire_exposure"], "isolated")
@@ -1358,11 +1433,14 @@ class _FakeEndpointClient:
                 "exposure": exposure,
                 "role": role,
                 "interfaces": [interface],
-                "metadata": (
-                    {"private_group": private_group}
-                    if private_group is not None
-                    else {}
-                ),
+                "metadata": {
+                    **(
+                        {"private_group": private_group}
+                        if private_group is not None
+                        else {}
+                    ),
+                    "appliance": _fake_manifest_appliance(provider),
+                },
             },
         )
 
@@ -1420,6 +1498,27 @@ def _workload_bootstrap_records(command_records) -> list[dict[str, object]]:
         and isinstance(record.get("metadata"), dict)
         and record["metadata"].get("phase") == "workload-bootstrap"
     ]
+
+
+def _assert_wire_plan_runtime(
+    testcase: unittest.TestCase,
+    plan: dict[str, object],
+    *,
+    provider: str,
+    execution_mode: str,
+) -> None:
+    runtimes = plan["endpoint_appliance_runtimes"]
+    testcase.assertIsInstance(runtimes, dict)
+    testcase.assertEqual(set(runtimes), {"libcrafter", "reference_backend"})
+    runtime = runtimes["libcrafter"]
+    testcase.assertIsInstance(runtime, dict)
+    testcase.assertEqual(runtime["profile"], "lan-raw")
+    testcase.assertEqual(runtime["metadata"]["provider"], provider)
+    testcase.assertEqual(runtime["metadata"]["source"], "endpoint-manifest")
+    testcase.assertEqual(runtime["metadata"]["execution_mode"], execution_mode)
+    testcase.assertEqual(runtime["container_policy"]["execution_mode"], execution_mode)
+    live_endpoint = plan["live_endpoints"]["libcrafter"]
+    testcase.assertEqual(live_endpoint.metadata["appliance_runtime"], runtime)
 
 
 def _live_args(provider: str) -> SimpleNamespace:
@@ -1914,6 +2013,56 @@ class _FakeLiveProviderAdapter:
         }
 
 
+def _fake_appliance_runtime(
+    *,
+    provider: str,
+    role: str | None = None,
+    source: str = "endpoint-manifest",
+    scope: str = "endpoint",
+) -> LabApplianceRuntime:
+    metadata: dict[str, object] = {
+        "provider": provider,
+        "wire_provider": "fake-wire",
+        "wire_exposure": "isolated",
+        "source": source,
+        "scope": scope,
+        "substrate": "ssh-docker",
+        "execution_mode": "ssh-docker-host",
+        "nested_docker": True,
+        "docker_execution_supported": True,
+    }
+    if role is not None:
+        metadata["role"] = role
+    return LabApplianceRuntime(
+        profile="lan-raw",
+        image_tag="ghcr.io/libcrafter/appliance:fake",
+        remote_work_root="/srv/fake-appliance/work",
+        remote_artifact_root="/srv/fake-appliance/artifacts",
+        container_policy={
+            "execution_mode": "ssh-docker-host",
+            "nested_docker": True,
+            "docker_execution_supported": True,
+        },
+        check_metadata={"profile": "lan-raw"},
+        metadata=metadata,
+    )
+
+
+def _fake_manifest_appliance(provider: str) -> dict[str, object]:
+    endpoint_container = provider == "docker"
+    return {
+        "profile": "lan-raw",
+        "image_tag": "ghcr.io/libcrafter/appliance:fake",
+        "substrate": "endpoint-container" if endpoint_container else "ssh-docker",
+        "execution_mode": "endpoint-container"
+        if endpoint_container
+        else "ssh-docker-host",
+        "nested_docker": not endpoint_container,
+        "docker_execution_supported": not endpoint_container,
+        "appliance_capable": True,
+    }
+
+
 class _FakeLabProviderAdapter:
     def __init__(self, oracle_adapter: _FakeLiveProviderAdapter) -> None:
         self.oracle_adapter = oracle_adapter
@@ -1970,6 +2119,10 @@ class _FakeLabProviderAdapter:
                         "exposure": self.wire_exposure,
                         "role": role.name,
                     },
+                    appliance_runtime=_fake_appliance_runtime(
+                        provider=self.name,
+                        role=role.name,
+                    ),
                     metadata={
                         "provider": self.name,
                         "wire_provider": self.wire_provider,
@@ -2006,6 +2159,11 @@ class _FakeLabProviderAdapter:
             command_records=command_records,
             remote_dir=remote_dir,
             remote_artifact_root=f"{remote_dir}/artifacts/oracle-live",
+            appliance_runtime=_fake_appliance_runtime(
+                provider=self.name,
+                source="endpoint-runtimes",
+                scope="session",
+            ),
             created_endpoint_ids=created_endpoint_ids,
             dry_run=request.dry_run,
             cleanup_state={

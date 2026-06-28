@@ -10,7 +10,7 @@ import shlex
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-from tools.lab.engine.model import LabEndpoint, LabSession
+from tools.lab.engine.model import LabApplianceRuntime, LabEndpoint, LabSession
 
 from .directions import (
     BACKEND_TO_LIBCRAFTER,
@@ -248,6 +248,12 @@ def lab_session_oracle_report_metadata(
     lab_session = _coerce_lab_session(session)
     endpoints = live_endpoints_from_lab_session(lab_session)
     infrastructure = dict(lab_session.infrastructure_metadata)
+    session_appliance_runtime = _appliance_runtime_metadata(
+        lab_session.appliance_runtime,
+    )
+    endpoint_appliance_runtimes = _lab_endpoint_appliance_runtimes(
+        lab_session.endpoints,
+    )
     provider_workflow = [command.to_dict() for command in lab_session.provider_workflow]
     command_records = [command.to_dict() for command in lab_session.command_records]
     endpoint_dicts = {
@@ -285,6 +291,9 @@ def lab_session_oracle_report_metadata(
         "wire_endpoint_plan": endpoint_plan,
         "endpoint_lifecycle": endpoint_lifecycle,
         "wire_endpoint_lifecycle": endpoint_lifecycle,
+        "appliance_runtime": session_appliance_runtime,
+        "session_appliance_runtime": session_appliance_runtime,
+        "endpoint_appliance_runtimes": endpoint_appliance_runtimes,
         "provider_workflow": provider_workflow,
         "provider_commands": command_records,
         "command_records": command_records,
@@ -325,6 +334,12 @@ def _lab_endpoint_live_metadata(
     session: LabSession | None,
 ) -> JSONObject:
     metadata: JSONObject = dict(endpoint.metadata)
+    endpoint_appliance_runtime = _appliance_runtime_metadata(endpoint.appliance_runtime)
+    session_appliance_runtime = (
+        _appliance_runtime_metadata(session.appliance_runtime)
+        if session is not None
+        else None
+    )
     if session is not None:
         metadata.setdefault("provider", session.provider)
         metadata.setdefault("wire_provider", session.wire_provider)
@@ -335,6 +350,14 @@ def _lab_endpoint_live_metadata(
         metadata["lab_session_provider"] = session.provider
         for key, value in _selected_lab_session_metadata(session.metadata).items():
             metadata.setdefault(key, value)
+
+    if endpoint_appliance_runtime is not None:
+        metadata["appliance_runtime"] = endpoint_appliance_runtime
+        metadata["endpoint_appliance_runtime"] = endpoint_appliance_runtime
+    elif session_appliance_runtime is not None:
+        metadata.setdefault("appliance_runtime", session_appliance_runtime)
+    if session_appliance_runtime is not None:
+        metadata["session_appliance_runtime"] = session_appliance_runtime
 
     if endpoint.mac is not None:
         metadata["mac_address"] = endpoint.mac
@@ -411,6 +434,18 @@ def _lab_session_wire_endpoint_plan(
     plan.setdefault("dry_run", session.dry_run)
     plan.setdefault("endpoint_count", len(endpoints))
     plan.setdefault(
+        "appliance_runtime",
+        _appliance_runtime_metadata(session.appliance_runtime),
+    )
+    plan.setdefault(
+        "session_appliance_runtime",
+        _appliance_runtime_metadata(session.appliance_runtime),
+    )
+    plan.setdefault(
+        "endpoint_appliance_runtimes",
+        live_endpoint_appliance_runtime_metadata(endpoints),
+    )
+    plan.setdefault(
         "endpoints",
         {role: endpoint.to_dict() for role, endpoint in endpoints.items()},
     )
@@ -435,6 +470,54 @@ def _lab_session_wire_endpoint_plan(
         plan["private_network"] = coerce_json_value(session.metadata["private_network"])
     plan["lab_session_id"] = session.session_id
     return plan
+
+
+def live_endpoint_appliance_runtime_metadata(
+    endpoints: Mapping[str, LiveEndpoint],
+) -> JSONObject:
+    """Return endpoint appliance runtimes keyed by live endpoint role."""
+
+    runtimes: JSONObject = {}
+    for role, endpoint in endpoints.items():
+        if not isinstance(role, str):
+            continue
+        runtime = _metadata_object(endpoint.metadata.get("appliance_runtime"))
+        if runtime is not None:
+            runtimes[role] = runtime
+    return runtimes
+
+
+def _lab_endpoint_appliance_runtimes(
+    endpoints: Sequence[LabEndpoint],
+) -> JSONObject:
+    runtimes: JSONObject = {}
+    for endpoint in endpoints:
+        runtime = _appliance_runtime_metadata(endpoint.appliance_runtime)
+        if runtime is not None:
+            runtimes[endpoint.role] = runtime
+    return runtimes
+
+
+def _appliance_runtime_metadata(
+    runtime: LabApplianceRuntime | Mapping[str, object] | None,
+) -> JSONObject | None:
+    if runtime is None:
+        return None
+    if isinstance(runtime, LabApplianceRuntime):
+        return runtime.to_dict()
+    if isinstance(runtime, Mapping):
+        return _metadata_object(runtime)
+    raise TypeError("appliance runtime metadata must be an object")
+
+
+def _metadata_object(value: object) -> JSONObject | None:
+    if not isinstance(value, Mapping):
+        return None
+    return {
+        str(key): coerce_json_value(item)
+        for key, item in value.items()
+        if isinstance(key, str)
+    }
 
 
 def _metadata_bool(
@@ -498,6 +581,11 @@ def build_live_endpoint_batch_request(
     local_addresses = live_endpoint_addresses(endpoint)
     peer_addresses = live_endpoint_addresses(peer)
     request_metadata = dict(metadata or {})
+    _add_endpoint_appliance_runtime_request_metadata(
+        request_metadata,
+        endpoint=endpoint,
+        peer=peer,
+    )
     request_metadata.update(
         _live_endpoint_request_wire_metadata(
             packet_plans,
@@ -523,6 +611,26 @@ def build_live_endpoint_batch_request(
         artifact_paths=artifact_paths,
         metadata=request_metadata,
     )
+
+
+def _add_endpoint_appliance_runtime_request_metadata(
+    metadata: JSONObject,
+    *,
+    endpoint: LiveEndpoint,
+    peer: LiveEndpoint,
+) -> None:
+    for key in (
+        "appliance_runtime",
+        "endpoint_appliance_runtime",
+        "session_appliance_runtime",
+    ):
+        runtime = _metadata_object(endpoint.metadata.get(key))
+        if runtime is not None:
+            metadata.setdefault(key, runtime)
+
+    peer_runtime = _metadata_object(peer.metadata.get("appliance_runtime"))
+    if peer_runtime is not None:
+        metadata.setdefault("peer_appliance_runtime", peer_runtime)
 
 
 def dry_run_live_endpoint_batch_response(

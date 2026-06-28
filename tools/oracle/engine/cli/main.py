@@ -1918,6 +1918,14 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
                 lab_report_metadata["wire_endpoint_lifecycle"],
             ),
             "wire_endpoint_lifecycle": lab_report_metadata["wire_endpoint_lifecycle"],
+            "appliance_runtime": lab_report_metadata.get("appliance_runtime"),
+            "session_appliance_runtime": lab_report_metadata.get(
+                "session_appliance_runtime",
+            ),
+            "endpoint_appliance_runtimes": lab_report_metadata.get(
+                "endpoint_appliance_runtimes",
+                {},
+            ),
             "provider_workflow": [command.to_dict() for command in provider_workflow],
             "lab_provider_workflow": lab_report_metadata["provider_workflow"],
             "provider_commands": lab_report_metadata["provider_commands"],
@@ -3560,6 +3568,14 @@ def _live_provider_execute(
             ),
             "endpoint_lifecycle": endpoint_lifecycle,
             "wire_endpoint_lifecycle": endpoint_lifecycle,
+            "appliance_runtime": lab_report_metadata.get("appliance_runtime"),
+            "session_appliance_runtime": lab_report_metadata.get(
+                "session_appliance_runtime",
+            ),
+            "endpoint_appliance_runtimes": lab_report_metadata.get(
+                "endpoint_appliance_runtimes",
+                {},
+            ),
             "provider_workflow": [command.to_dict() for command in provider_workflow],
             "lab_provider_workflow": lab_report_metadata.get("provider_workflow", []),
             "provider_commands": provider_commands,
