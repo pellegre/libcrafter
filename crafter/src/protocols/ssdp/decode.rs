@@ -1001,6 +1001,160 @@ mod tests {
     }
 
     #[test]
+    fn ssdp_unknown_preservation_request_parse_serialize_round_trip() {
+        let bytes = b"X-QUERY /device.xml?probe=1 HTTP/9.9\r\nX-DEVICE.UPNP.ORG: alpha\r\n01-NLS: boot-17; opaque=\"yes\"\r\nx-device.upnp.org: beta\xfftail\r\nX-EXT.EXAMPLE.COM: value\twith\topaque spaces\r\n\r\n";
+        let ssdp = parse_ssdp_request(bytes).expect("unknown request values parse");
+        let request = request_line(&ssdp);
+        let entries = ssdp.headers().iter().collect::<Vec<_>>();
+
+        assert_eq!(
+            request.method(),
+            &SsdpMethod::Unknown("X-QUERY".to_string())
+        );
+        assert_eq!(request.target().as_str(), "/device.xml?probe=1");
+        assert_eq!(request.version().as_str(), "HTTP/9.9");
+        assert_eq!(entries.len(), 4);
+        assert_eq!(entries[0].name().kind(), SsdpHeaderNameKind::Unknown);
+        assert_eq!(entries[0].name().original(), "X-DEVICE.UPNP.ORG");
+        assert_eq!(entries[0].value().as_bytes(), b"alpha");
+        assert_eq!(entries[1].name().kind(), SsdpHeaderNameKind::NlsPrefixed);
+        assert_eq!(entries[1].name().original(), "01-NLS");
+        assert_eq!(entries[1].name().nls_namespace(), Some("01"));
+        assert_eq!(entries[1].value().as_bytes(), b"boot-17; opaque=\"yes\"");
+        assert_eq!(entries[2].name().kind(), SsdpHeaderNameKind::Unknown);
+        assert_eq!(entries[2].name().original(), "x-device.upnp.org");
+        assert_eq!(entries[2].value().as_bytes(), b"beta\xfftail");
+        assert_eq!(entries[3].value().as_bytes(), b"value\twith\topaque spaces");
+        assert_eq!(ssdp.to_bytes().as_slice(), bytes);
+    }
+
+    #[test]
+    fn ssdp_unknown_preservation_response_parse_serialize_round_trip() {
+        let bytes = b"HTTP/9.9 777 Odd\tStatus / experimental\r\nST: ssdp:all\r\nX-DEVICE.UPNP.ORG: alpha\r\nst: urn:schemas-upnp-org:service:Odd:1\r\nOPT: \"http://example.com/ext/\"; ns=99\r\n99-NLS: opaque\xffnamespace\r\nX-EXT.EXAMPLE.COM: extension value\r\n\r\n";
+        let ssdp = parse_ssdp_response(bytes).expect("unknown response values parse");
+        let response = response_line(&ssdp);
+        let entries = ssdp.headers().iter().collect::<Vec<_>>();
+        let st_values = ssdp
+            .headers()
+            .get_all(SsdpHeaderNameKind::St)
+            .map(SsdpHeaderValue::as_bytes)
+            .collect::<Vec<_>>();
+
+        assert_eq!(response.version().as_str(), "HTTP/9.9");
+        assert_eq!(response.code().code(), 777);
+        assert_eq!(response.reason().as_str(), "Odd\tStatus / experimental");
+        assert_eq!(entries.len(), 6);
+        assert_eq!(
+            st_values,
+            vec![
+                b"ssdp:all".as_slice(),
+                b"urn:schemas-upnp-org:service:Odd:1".as_slice()
+            ]
+        );
+        assert_eq!(entries[1].name().kind(), SsdpHeaderNameKind::Unknown);
+        assert_eq!(entries[1].name().original(), "X-DEVICE.UPNP.ORG");
+        assert_eq!(entries[1].value().as_bytes(), b"alpha");
+        assert_eq!(entries[3].name().kind(), SsdpHeaderNameKind::Opt);
+        assert_eq!(
+            entries[3].value().as_bytes(),
+            b"\"http://example.com/ext/\"; ns=99"
+        );
+        assert_eq!(entries[4].name().kind(), SsdpHeaderNameKind::NlsPrefixed);
+        assert_eq!(entries[4].name().original(), "99-NLS");
+        assert_eq!(entries[4].name().nls_namespace(), Some("99"));
+        assert_eq!(entries[4].value().as_bytes(), b"opaque\xffnamespace");
+        assert_eq!(entries[5].name().kind(), SsdpHeaderNameKind::Unknown);
+        assert_eq!(entries[5].name().original(), "X-EXT.EXAMPLE.COM");
+        assert_eq!(entries[5].value().as_bytes(), b"extension value");
+        assert_eq!(ssdp.to_bytes().as_slice(), bytes);
+    }
+
+    #[test]
+    fn ssdp_unknown_preservation_request_builder_serialize_parse_round_trip() {
+        let request = Ssdp::request(
+            SsdpMethod::try_from("X-QUERY").expect("unknown method"),
+            SsdpRequestTarget::try_from("/device.xml?probe=builder").expect("unknown target"),
+            SsdpVersion::try_from("HTTP/8.8").expect("unknown version"),
+        )
+        .with_raw_header("X-DEVICE.UPNP.ORG", "alpha")
+        .expect("unknown header")
+        .with_raw_header("01-NLS", "boot-18; opaque=\"builder\"")
+        .expect("NLS extension header")
+        .with_raw_header("x-device.upnp.org", b"beta\xffbuilder")
+        .expect("duplicate unknown header")
+        .with_raw_header("X-EXT.EXAMPLE.COM", b"value\tbuilder")
+        .expect("opaque extension value");
+
+        let bytes = request.to_bytes();
+        let parsed = parse_ssdp_request(&bytes).expect("serialized unknown request parses");
+        let parsed_request = request_line(&parsed);
+        let entries = parsed.headers().iter().collect::<Vec<_>>();
+
+        assert_eq!(parsed_request.method().as_str(), "X-QUERY");
+        assert_eq!(
+            parsed_request.target().as_str(),
+            "/device.xml?probe=builder"
+        );
+        assert_eq!(parsed_request.version().as_str(), "HTTP/8.8");
+        assert_eq!(entries[0].name().original(), "X-DEVICE.UPNP.ORG");
+        assert_eq!(entries[1].name().kind(), SsdpHeaderNameKind::NlsPrefixed);
+        assert_eq!(entries[1].name().nls_namespace(), Some("01"));
+        assert_eq!(entries[2].name().original(), "x-device.upnp.org");
+        assert_eq!(entries[2].value().as_bytes(), b"beta\xffbuilder");
+        assert_eq!(entries[3].value().as_bytes(), b"value\tbuilder");
+        assert_eq!(parsed.to_bytes(), bytes);
+    }
+
+    #[test]
+    fn ssdp_unknown_preservation_response_builder_serialize_parse_round_trip() {
+        let response = Ssdp::response(
+            SsdpVersion::try_from("HTTP/8.8").expect("unknown version"),
+            SsdpStatusCode::try_from("777").expect("unknown status"),
+            SsdpReasonPhrase::try_from("Odd\tStatus / builder").expect("unusual reason"),
+        )
+        .with_raw_header("ST", "ssdp:all")
+        .expect("first ST")
+        .with_raw_header("X-DEVICE.UPNP.ORG", "alpha")
+        .expect("unknown header")
+        .with_raw_header("st", "urn:schemas-upnp-org:service:Odd:1")
+        .expect("duplicate ST")
+        .with_raw_header("OPT", "\"http://example.com/ext/\"; ns=99")
+        .expect("OPT extension")
+        .with_raw_header("99-NLS", b"opaque\xffbuilder")
+        .expect("NLS extension")
+        .with_raw_header("X-EXT.EXAMPLE.COM", "extension value")
+        .expect("unknown extension header");
+
+        let bytes = response.to_bytes();
+        let parsed = parse_ssdp_response(&bytes).expect("serialized unknown response parses");
+        let parsed_response = response_line(&parsed);
+        let entries = parsed.headers().iter().collect::<Vec<_>>();
+        let st_values = parsed
+            .headers()
+            .get_all(SsdpHeaderNameKind::St)
+            .map(SsdpHeaderValue::as_bytes)
+            .collect::<Vec<_>>();
+
+        assert_eq!(parsed_response.version().as_str(), "HTTP/8.8");
+        assert_eq!(parsed_response.code().code(), 777);
+        assert_eq!(parsed_response.reason().as_str(), "Odd\tStatus / builder");
+        assert_eq!(
+            st_values,
+            vec![
+                b"ssdp:all".as_slice(),
+                b"urn:schemas-upnp-org:service:Odd:1".as_slice()
+            ]
+        );
+        assert_eq!(entries[1].name().original(), "X-DEVICE.UPNP.ORG");
+        assert_eq!(entries[3].name().kind(), SsdpHeaderNameKind::Opt);
+        assert_eq!(entries[4].name().kind(), SsdpHeaderNameKind::NlsPrefixed);
+        assert_eq!(entries[4].name().nls_namespace(), Some("99"));
+        assert_eq!(entries[4].value().as_bytes(), b"opaque\xffbuilder");
+        assert_eq!(entries[5].name().kind(), SsdpHeaderNameKind::Unknown);
+        assert_eq!(parsed.to_bytes(), bytes);
+    }
+
+    #[test]
     fn ssdp_parse_response_request_shaped_start_line_is_form_error() {
         let err = parse_ssdp_response(b"M-SEARCH * HTTP/1.1\r\nHOST: example\r\n\r\n")
             .expect_err("request-line is not a response");
