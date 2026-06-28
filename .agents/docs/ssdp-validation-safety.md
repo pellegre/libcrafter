@@ -86,8 +86,9 @@ a dry-run or fail closed.
 Live-capable SSDP workflows must collect enough evidence to explain the result:
 compiled packets, decoded summaries, `show()` output, pcap files when
 available, provider role metadata, command arguments, skip reasons, and
-structured errors. Store these artifacts under ignored output paths such as
-`target/`.
+structured errors. Store these artifacts under ignored SSDP output roots such
+as `target/oracle/ssdp-*` and `target/probe/ssdp-*`, and refer to those roots
+only by project-relative path and case label.
 
 After collection, tear down every provider-backed endpoint created for the run.
 The final record must distinguish planned endpoints, created endpoints,
