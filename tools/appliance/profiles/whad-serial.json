@@ -1,0 +1,54 @@
+{
+  "name": "whad-serial",
+  "description": "WHAD serial dongle work from a Docker host with an nRF-style USB CDC-ACM device.",
+  "image": "libcrafter/appliance:latest",
+  "network_mode": "bridge",
+  "cap_add": [],
+  "devices": [
+    {
+      "host_path": "/dev/ttyACM0",
+      "container_path": "/dev/ttyACM0",
+      "permissions": "rw"
+    }
+  ],
+  "env": {
+    "LIBCRAFTER_WHAD_DEVICE": ""
+  },
+  "mounts": [],
+  "checks": [
+    {
+      "name": "docker-daemon",
+      "description": "Verify that the Docker daemon is available."
+    },
+    {
+      "name": "serial-device-exists",
+      "description": "Verify that the selected WHAD serial device exists and is readable."
+    },
+    {
+      "name": "whad-discovery",
+      "description": "Optionally verify that WHAD discovery can inspect the selected adapter.",
+      "required": false,
+      "metadata": {
+        "live_transmit": false,
+        "readiness_only": true
+      }
+    }
+  ],
+  "host_requirements": [
+    "Linux Docker host with the WHAD serial device passed through from the host or VM",
+    "nRF-style WHAD firmware already installed; this profile does not flash firmware",
+    "generated tools enable the crate WHAD feature before live serial use",
+    "authorized RF environment; run dry-run plans before live RF traffic"
+  ],
+  "metadata": {
+    "placement": "serial",
+    "runtime_engine": "docker",
+    "device_env": "LIBCRAFTER_WHAD_DEVICE",
+    "default_device": "/dev/ttyACM0",
+    "host_device_glob": "/dev/ttyACM*",
+    "firmware_flash": false,
+    "live_transmit_default": false,
+    "work_mount": "/work",
+    "artifact_mount": "/artifacts"
+  }
+}

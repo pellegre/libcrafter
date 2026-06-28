@@ -193,7 +193,7 @@ class ApplianceProfile(JsonModel):
     devices: list[ProfileDevice] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     mounts: list[ProfileMount] = field(default_factory=list)
-    checks: list[ProfileCheck] = field(default_factory=list)
+    checks: list[ProfileCheck | JSONObject] = field(default_factory=list)
     host_requirements: list[str] = field(default_factory=list)
     metadata: JSONObject = field(default_factory=dict)
 
@@ -232,9 +232,7 @@ class ApplianceProfile(JsonModel):
             self,
             "checks",
             [
-                item
-                if isinstance(item, ProfileCheck)
-                else ProfileCheck.from_dict(_mapping(item, "checks[]"))
+                item if isinstance(item, ProfileCheck) else _profile_check(item)
                 for item in _sequence(self.checks, "checks")
             ],
         )
@@ -281,7 +279,7 @@ class ApplianceProfile(JsonModel):
                 for item in _sequence(data.get("mounts", []), "mounts")
             ],
             checks=[
-                ProfileCheck.from_dict(_mapping(item, "checks[]"))
+                _profile_check(item)
                 for item in _sequence(data.get("checks", []), "checks")
             ],
             host_requirements=_string_list(
@@ -324,6 +322,30 @@ def _environment(value: object, name: str) -> dict[str, str]:
             raise ValueError(f"{name}.{key} must be a string")
         output[key] = item
     return output
+
+
+def _profile_check(value: object) -> ProfileCheck | JSONObject:
+    data = _mapping(value, "checks[]")
+    simple_keys = {"name", "description", "command"}
+    if set(data) <= simple_keys:
+        return ProfileCheck.from_dict(data)
+    _reject_unknown_keys(
+        data,
+        {
+            "name",
+            "kind",
+            "description",
+            "command",
+            "command_argv",
+            "scope",
+            "required",
+            "parameters",
+            "args",
+            "metadata",
+        },
+        "checks[]",
+    )
+    return json_object(data, "checks[]")
 
 
 def _string_list(value: object, name: str) -> list[str]:
