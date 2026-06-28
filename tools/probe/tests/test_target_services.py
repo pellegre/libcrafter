@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.lab.engine.model import LabEndpoint, LabRole, LabSession
+from tools.lab.engine.model import LabApplianceRuntime, LabEndpoint, LabRole, LabSession
 from tools.probe.engine import cases as probe_cases
 from tools.probe.engine import cli
 from tools.probe.engine import target_services as ts
@@ -25,6 +25,18 @@ class ProbeTargetServicesTest(unittest.TestCase):
         target_ipv4 = str(context["target_ipv4"])
         self.assertEqual(stimulus_ipv4, "10.77.0.10")
         self.assertEqual(target_ipv4, "10.77.0.20")
+        stimulus = context["endpoints"]["stimulus"]
+        target = context["endpoints"]["target"]
+        self.assertEqual(stimulus["appliance_runtime"]["profile"], "lan-raw")
+        self.assertEqual(target["appliance_runtime"]["profile"], "lan-raw")
+        self.assertEqual(
+            stimulus["metadata"]["endpoint_appliance_runtime"],
+            stimulus["appliance_runtime"],
+        )
+        self.assertEqual(
+            target["metadata"]["session_appliance_runtime"]["metadata"]["scope"],
+            "session",
+        )
 
         for original, rewritten in zip(original_plans, rewritten_plans):
             with self.subTest(case=rewritten["case"]):
@@ -70,6 +82,9 @@ class ProbeTargetServicesTest(unittest.TestCase):
         self.assertEqual(tcp_services[0]["source_ipv4"], stimulus_ipv4)
         self.assertEqual(dns_services[0]["bind_ipv4"], target_ipv4)
         self.assertEqual(dns_services[0]["source_ipv4"], stimulus_ipv4)
+        self.assertNotIn("appliance_runtime", setup)
+        for service in setup["services"]:
+            self.assertNotIn("appliance_runtime", service)
 
         self.assertEqual(len(setup["closed_tcp_ports"]), 1)
         self.assertEqual(setup["closed_tcp_ports"][0]["bind_ipv4"], target_ipv4)
@@ -308,6 +323,7 @@ def _fake_session() -> LabSession:
             _endpoint("stimulus", "10.77.0.10", "target", "10.77.0.20"),
             _endpoint("target", "10.77.0.20", "stimulus", "10.77.0.10"),
         ],
+        appliance_runtime=_runtime("session"),
         dry_run=True,
     )
 
@@ -334,6 +350,30 @@ def _endpoint(
             "wire_provider": "qemu",
             "wire_exposure": "private",
         },
+        appliance_runtime=_runtime(role),
+    )
+
+
+def _runtime(scope: str) -> LabApplianceRuntime:
+    root = f"/var/lib/libcrafter/appliance/qemu-{scope}"
+    metadata = {
+        "provider": "qemu",
+        "source": "target-service-test",
+        "scope": scope,
+    }
+    if scope in {"stimulus", "target"}:
+        metadata["role"] = scope
+    return LabApplianceRuntime(
+        profile="lan-raw",
+        image_tag="registry.example.invalid/libcrafter/appliance:qemu",
+        remote_work_root=f"{root}/work",
+        remote_artifact_root=f"{root}/artifacts",
+        container_policy={
+            "execution_mode": "ssh-docker-host",
+            "docker_execution_supported": True,
+        },
+        check_metadata={"profile": "lan-raw"},
+        metadata=metadata,
     )
 
 

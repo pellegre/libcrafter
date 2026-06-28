@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+import tempfile
 import unittest
 
 from tools.probe.engine import cases as probe_cases
@@ -532,6 +534,48 @@ class IgmpProbePlanningTest(unittest.TestCase):
         self.assertEqual(
             capabilities.skip_reason_for_missing_capability(case, "ipv4_multicast"),
             capabilities.SKIP_REQUIRES_IPV4_MULTICAST,
+        )
+
+    def test_igmp_unsupported_provider_skip_survives_appliance_planning(self) -> None:
+        request = _request(
+            provider="hetzner",
+            profile="igmp",
+            count=1,
+            case_names=["igmp-v2-membership-report-emission"],
+        )
+        selected = probe_cases.selected_cases(request.case_names)
+        planned = planning.planned_cases(
+            selected,
+            seed=request.seed,
+            count=request.count,
+        )
+        probe_plans = planning.probe_plans_for_cases(request, planned)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report = cli._dry_run_report(
+                request=request,
+                selected_cases=selected,
+                planned_cases=planned,
+                probe_plans=probe_plans,
+                report_path=Path(temp_dir) / "report.json",
+            )
+
+        self.assertEqual(report.metadata["appliance_runtime"]["profile"], "lan-raw")
+        self.assertEqual(
+            report.metadata["session_appliance_runtime"],
+            report.metadata["appliance_runtime"],
+        )
+        self.assertEqual(
+            report.metadata["skip_counts_by_reason"],
+            {capabilities.SKIP_REQUIRES_IPV4_MULTICAST: 1},
+        )
+        self.assertEqual(report.skips[0].reason, capabilities.SKIP_REQUIRES_IPV4_MULTICAST)
+        self.assertEqual(report.skips[0].capability, "ipv4_multicast")
+        self.assertNotIn("appliance", report.skips[0].reason)
+        command = report.metadata["command_records"][0]
+        self.assertEqual(
+            command["metadata"]["appliance_runtime"]["profile"],
+            "lan-raw",
         )
 
     def test_igmp_link_layer_provider_grants_required_capabilities(self) -> None:
