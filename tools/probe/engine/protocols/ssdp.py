@@ -19,6 +19,7 @@ from ..endpoint_addressing import (
     FAILURE_TIMEOUT,
     FAILURE_WRONG_PAYLOAD,
     FAILURE_WRONG_PEER,
+    _eui64_link_local_ipv6,
 )
 from ..model import JSONObject, JSONValue, ProbeCase
 from ..planning_helpers import deterministic_bytes, deterministic_documentation_ipv6
@@ -875,6 +876,294 @@ def ssdp_failure_reasons(case_name: str) -> list[str] | None:
     return None
 
 
+def ssdp_rewrite_endpoint_addresses(
+    plan: JSONObject,
+    *,
+    source_ipv4: str,
+    target_ipv4: str,
+    source_mac: str | None = None,
+    target_mac: str | None = None,
+    target_interface: str | None = None,
+    rewrite_source: str = "wire_endpoint_plan",
+) -> JSONObject:
+    """Rewrite SSDP live-capable plans onto lab endpoint addresses."""
+
+    updated = dict(plan)
+    case_name = str(updated.get("case", ""))
+    if case_name == "ssdp-ipv4-search-exchange":
+        return _rewrite_ssdp_ipv4_search(
+            updated,
+            source_ipv4=source_ipv4,
+            target_ipv4=target_ipv4,
+            rewrite_source=rewrite_source,
+        )
+    if case_name == "ssdp-notify-capture":
+        return _rewrite_ssdp_ipv4_notify(
+            updated,
+            source_ipv4=source_ipv4,
+            target_ipv4=target_ipv4,
+            rewrite_source=rewrite_source,
+        )
+    if case_name == "ssdp-ipv6-search-exchange":
+        if source_mac and target_mac and target_interface:
+            return _rewrite_ssdp_ipv6_search(
+                updated,
+                source_mac=source_mac,
+                target_mac=target_mac,
+                target_interface=target_interface,
+                rewrite_source=rewrite_source,
+            )
+        return _mark_ssdp_address_rewrite_skipped(
+            updated,
+            source_ipv4=source_ipv4,
+            target_ipv4=target_ipv4,
+            rewrite_source=rewrite_source,
+            reason="requires_ipv6_link_local_scope_metadata",
+            metadata={
+                "multicast_group": SSDP_IPV6_LINK_LOCAL_MULTICAST,
+                "required_metadata": [
+                    "source_mac",
+                    "target_mac",
+                    "target_interface",
+                ],
+            },
+        )
+    return _mark_ssdp_address_rewrite_skipped(
+        updated,
+        source_ipv4=source_ipv4,
+        target_ipv4=target_ipv4,
+        rewrite_source=rewrite_source,
+        reason="offline_only",
+        metadata={"offline_only": True},
+    )
+
+
+def _rewrite_ssdp_ipv4_search(
+    updated: JSONObject,
+    *,
+    source_ipv4: str,
+    target_ipv4: str,
+    rewrite_source: str,
+) -> JSONObject:
+    source_port = int(updated.get("source_port", 0))
+    destination_port = int(updated.get("destination_port", SSDP_UDP_PORT))
+    updated["source_ipv4"] = source_ipv4
+    updated["destination_ipv4"] = SSDP_IPV4_MULTICAST
+    updated["target_ipv4"] = target_ipv4
+    updated["expected_reply_source_ipv4"] = target_ipv4
+    updated["expected_reply_destination_ipv4"] = source_ipv4
+    updated["capture_filter"] = (
+        f"udp and src host {target_ipv4} and dst host {source_ipv4} "
+        f"and src port {destination_port} and dst port {source_port}"
+    )
+    _rewrite_ssdp_validation(
+        updated,
+        source_ipv4=target_ipv4,
+        destination_ipv4=source_ipv4,
+    )
+    _rewrite_ssdp_target_service(
+        updated,
+        bind_ipv4=target_ipv4,
+        source_ipv4=source_ipv4,
+    )
+    _mark_ssdp_address_rewritten(
+        updated,
+        source_ipv4=source_ipv4,
+        target_ipv4=target_ipv4,
+        rewrite_source=rewrite_source,
+        emitted_source_ipv4=source_ipv4,
+    )
+    return updated
+
+
+def _rewrite_ssdp_ipv4_notify(
+    updated: JSONObject,
+    *,
+    source_ipv4: str,
+    target_ipv4: str,
+    rewrite_source: str,
+) -> JSONObject:
+    source_port = int(updated.get("source_port", SSDP_UDP_PORT))
+    destination_port = int(updated.get("destination_port", SSDP_UDP_PORT))
+    updated["source_ipv4"] = target_ipv4
+    updated["destination_ipv4"] = SSDP_IPV4_MULTICAST
+    updated["target_ipv4"] = target_ipv4
+    updated["expected_reply_source_ipv4"] = target_ipv4
+    updated["expected_reply_destination_ipv4"] = source_ipv4
+    updated["capture_filter"] = (
+        f"udp and src host {target_ipv4} and dst host {SSDP_IPV4_MULTICAST} "
+        f"and src port {source_port} and dst port {destination_port}"
+    )
+    _rewrite_ssdp_validation(
+        updated,
+        source_ipv4=target_ipv4,
+        destination_ipv4=SSDP_IPV4_MULTICAST,
+    )
+    _rewrite_ssdp_target_service(
+        updated,
+        bind_ipv4=target_ipv4,
+        source_ipv4=source_ipv4,
+    )
+    _mark_ssdp_address_rewritten(
+        updated,
+        source_ipv4=source_ipv4,
+        target_ipv4=target_ipv4,
+        rewrite_source=rewrite_source,
+        emitted_source_ipv4=target_ipv4,
+    )
+    return updated
+
+
+def _rewrite_ssdp_ipv6_search(
+    updated: JSONObject,
+    *,
+    source_mac: str,
+    target_mac: str,
+    target_interface: str,
+    rewrite_source: str,
+) -> JSONObject:
+    source_ipv6 = _eui64_link_local_ipv6(source_mac)
+    target_ipv6 = _eui64_link_local_ipv6(target_mac)
+    source_port = int(updated.get("source_port", 0))
+    destination_port = int(updated.get("destination_port", SSDP_UDP_PORT))
+    updated["source_ipv6"] = source_ipv6
+    updated["destination_ipv6"] = SSDP_IPV6_LINK_LOCAL_MULTICAST
+    updated["target_ipv6"] = target_ipv6
+    updated["expected_reply_source_ipv6"] = target_ipv6
+    updated["expected_reply_destination_ipv6"] = source_ipv6
+    updated["capture_filter"] = (
+        f"ip6 and udp and src host {target_ipv6} and dst host {source_ipv6} "
+        f"and src port {destination_port} and dst port {source_port}"
+    )
+    validation = dict(
+        updated.get("validation", {})
+        if isinstance(updated.get("validation"), Mapping)
+        else {}
+    )
+    validation["source_ipv6"] = target_ipv6
+    validation["destination_ipv6"] = source_ipv6
+    updated["validation"] = validation
+
+    target_service = dict(
+        updated.get("target_service", {})
+        if isinstance(updated.get("target_service"), Mapping)
+        else {}
+    )
+    if target_service:
+        target_service["bind_ipv6"] = target_ipv6
+        target_service["source_ipv6"] = source_ipv6
+        target_service["interface"] = target_interface
+        updated["target_service"] = target_service
+
+    updated["live_address_rewrite"] = {
+        "source": rewrite_source,
+        "status": "rewritten",
+        "stimulus_ipv6": source_ipv6,
+        "target_ipv6": target_ipv6,
+        "stimulus_mac": source_mac,
+        "target_mac": target_mac,
+        "target_interface": target_interface,
+        "preserved_destination_ipv6": SSDP_IPV6_LINK_LOCAL_MULTICAST,
+    }
+    return updated
+
+
+def _rewrite_ssdp_validation(
+    updated: JSONObject,
+    *,
+    source_ipv4: str,
+    destination_ipv4: str,
+) -> None:
+    validation = dict(
+        updated.get("validation", {})
+        if isinstance(updated.get("validation"), Mapping)
+        else {}
+    )
+    validation["source_ipv4"] = source_ipv4
+    validation["destination_ipv4"] = destination_ipv4
+    updated["validation"] = validation
+
+
+def _rewrite_ssdp_target_service(
+    updated: JSONObject,
+    *,
+    bind_ipv4: str,
+    source_ipv4: str,
+) -> None:
+    target_service = dict(
+        updated.get("target_service", {})
+        if isinstance(updated.get("target_service"), Mapping)
+        else {}
+    )
+    if not target_service:
+        return
+    target_service["bind_ipv4"] = bind_ipv4
+    target_service["source_ipv4"] = source_ipv4
+    updated["target_service"] = target_service
+
+
+def _mark_ssdp_address_rewritten(
+    updated: JSONObject,
+    *,
+    source_ipv4: str,
+    target_ipv4: str,
+    rewrite_source: str,
+    emitted_source_ipv4: str,
+) -> None:
+    updated["live_address_rewrite"] = {
+        "source": rewrite_source,
+        "status": "rewritten",
+        "stimulus_ipv4": source_ipv4,
+        "target_ipv4": target_ipv4,
+        "emitted_source_ipv4": emitted_source_ipv4,
+        "preserved_destination_ipv4": SSDP_IPV4_MULTICAST,
+    }
+
+
+def _mark_ssdp_address_rewrite_skipped(
+    updated: JSONObject,
+    *,
+    source_ipv4: str,
+    target_ipv4: str,
+    rewrite_source: str,
+    reason: str,
+    metadata: JSONObject,
+) -> JSONObject:
+    skip_reasons = dict(
+        updated.get("skip_reasons", {})
+        if isinstance(updated.get("skip_reasons"), Mapping)
+        else {}
+    )
+    address_rewrite = list(
+        skip_reasons.get("address_rewrite", [])
+        if isinstance(skip_reasons.get("address_rewrite"), list)
+        else []
+    )
+    address_rewrite.append(reason)
+    skip_reasons["address_rewrite"] = list(
+        dict.fromkeys(str(item) for item in address_rewrite)
+    )
+    updated["skip_reasons"] = skip_reasons
+
+    wire_requirements = dict(
+        updated.get("wire_requirements", {})
+        if isinstance(updated.get("wire_requirements"), Mapping)
+        else {}
+    )
+    wire_requirements["address_rewrite_skip_reason"] = reason
+    updated["wire_requirements"] = wire_requirements
+
+    updated["live_address_rewrite"] = {
+        "source": rewrite_source,
+        "status": "skipped",
+        "reason": reason,
+        "stimulus_ipv4": source_ipv4,
+        "target_ipv4": target_ipv4,
+        **metadata,
+    }
+    return updated
+
+
 def ssdp_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, object]:
     dry_run = substrate.get("dry_run") is True
     ipv4_unicast = capability(substrate, "ipv4_unicast", "ipv4")
@@ -916,7 +1205,7 @@ register(
         stimulus_endpoint_cases=frozenset(),
         target_service=ssdp_target_service_contribution,
         setup_script=None,
-        rewrite_endpoint_addresses=None,
+        rewrite_endpoint_addresses=ssdp_rewrite_endpoint_addresses,
         failure_reasons=ssdp_failure_reasons,
         lab_capabilities=ssdp_lab_capabilities,
     )
