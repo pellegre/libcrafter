@@ -3,10 +3,10 @@
 
 By default this script prints the planned command sequence without creating
 Docker resources. Pass ``--live`` to create a confirmed docker/lan endpoint,
-upload a small libcrafter ICMP workload, and verify NAT-backed L3 LAN
-reachability. A LAN router target can be supplied through ``--router``,
-``LIBCRAFTER_DOCKER_LAN_ROUTER``, or ``LAN_ROUTER``; otherwise the smoke uses
-the endpoint's Docker bridge gateway. The legacy
+sync a small libcrafter ICMP workload into the endpoint appliance container,
+and verify NAT-backed L3 LAN reachability. A LAN router target can be supplied
+through ``--router``, ``LIBCRAFTER_DOCKER_LAN_ROUTER``, or ``LAN_ROUTER``;
+otherwise the smoke uses the endpoint's Docker bridge gateway. The legacy
 ``--i-understand-isolated-lab`` flag is accepted for older command lines but is
 not required.
 
@@ -27,7 +27,25 @@ from ipaddress import IPv4Address
 from pathlib import Path
 from typing import Any
 
+try:
+    from appliance_support import (
+        endpoint_container_workspace_dir,
+        endpoint_container_runtime_metadata,
+        runtime_plan_lines,
+        sync_endpoint_container_workspace,
+        write_crafter_workload_workspace,
+    )
+except ImportError:  # pragma: no cover - package import path
+    from tools.endpoint.smoke.appliance_support import (
+        endpoint_container_workspace_dir,
+        endpoint_container_runtime_metadata,
+        runtime_plan_lines,
+        sync_endpoint_container_workspace,
+        write_crafter_workload_workspace,
+    )
 
+
+APPLIANCE_PROFILE = "lan-raw"
 DEFAULT_IFACE = "eth0"
 DEFAULT_PAYLOAD = "docker-lan-icmp"
 DEFAULT_REMOTE_ARTIFACT_DIR = "/root/libcrafter-docker-lan-icmp-smoke"
@@ -187,13 +205,29 @@ def main(argv: list[str] | None = None) -> int:
         with tempfile.TemporaryDirectory(prefix="libcrafter-docker-lan-icmp-") as temp_dir:
             workspace = Path(temp_dir)
             _write_workload_project(workspace=workspace, repo_root=repo_root)
+            sync, remote_workspace, remote_artifacts = _sync_workload_workspace(
+                wire=wire,
+                repo_root=repo_root,
+                endpoint_id=endpoint_id,
+                workspace=workspace,
+                artifact_dir=artifact_dir,
+                remote_workspace=endpoint_container_workspace_dir(args.remote_artifact_dir),
+                remote_artifacts=args.remote_artifact_dir,
+                timeout=args.transfer_timeout,
+            )
+            _write_result_artifacts(artifact_dir, "sync_workload", sync)
+            if not sync.ok:
+                raise SmokeError("Docker LAN ICMP workload sync failed", sync.exit_code)
+
             build = _run(
                 [
-                    "cargo",
-                    "build",
-                    "--release",
-                    "--manifest-path",
-                    str(workspace / "Cargo.toml"),
+                    str(wire),
+                    "exec",
+                    endpoint_id,
+                    "--",
+                    "sh",
+                    "-lc",
+                    _remote_build_command(remote_workspace, [WORKLOAD_BIN]),
                 ],
                 cwd=repo_root,
                 timeout=args.build_timeout,
@@ -201,28 +235,7 @@ def main(argv: list[str] | None = None) -> int:
             _write_result_artifacts(artifact_dir, "build_workload", build)
             if not build.ok:
                 raise SmokeError("Docker LAN ICMP workload build failed", build.exit_code)
-
-            binary = workspace / "target" / "release" / WORKLOAD_BIN
-            if not binary.is_file():
-                raise SmokeError(f"Docker LAN ICMP workload binary not found: {binary}")
-
-            upload = _run(
-                [str(wire), "upload", endpoint_id, str(binary), args.remote_bin],
-                cwd=repo_root,
-                timeout=args.transfer_timeout,
-            )
-            _write_result_artifacts(artifact_dir, "upload_workload", upload)
-            if not upload.ok:
-                raise SmokeError("Docker LAN ICMP workload upload failed", upload.exit_code)
-
-        chmod = _run(
-            [str(wire), "exec", endpoint_id, "--", "chmod", "0755", args.remote_bin],
-            cwd=repo_root,
-            timeout=args.exec_timeout,
-        )
-        _write_result_artifacts(artifact_dir, "chmod_workload", chmod)
-        if not chmod.ok:
-            raise SmokeError("Docker LAN ICMP workload chmod failed", chmod.exit_code)
+            remote_bin = f"{remote_workspace}/target/release/{WORKLOAD_BIN}"
 
         run_workload = _run(
             [
@@ -232,7 +245,13 @@ def main(argv: list[str] | None = None) -> int:
                 "--",
                 "sh",
                 "-lc",
-                _remote_workload_command(args=args, lan_iface=lan_iface, router=router_ip),
+                _remote_workload_command(
+                    args=args,
+                    lan_iface=lan_iface,
+                    router=router_ip,
+                    remote_bin=remote_bin,
+                    remote_artifact_dir=remote_artifacts,
+                ),
             ],
             cwd=repo_root,
             timeout=args.packet_timeout,
@@ -243,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
             wire=wire,
             repo_root=repo_root,
             endpoint_id=endpoint_id,
-            remote_artifact_dir=args.remote_artifact_dir,
+            remote_artifact_dir=remote_artifacts,
             timeout=args.transfer_timeout,
         )
         _write_result_artifacts(artifact_dir, "collect_artifacts", collect)
@@ -260,9 +279,14 @@ def main(argv: list[str] | None = None) -> int:
             "router_source": "explicit" if args.router else "docker-bridge-gateway",
             "iface": lan_iface["name"],
             "src": lan_iface["ipv4"],
-            "remote_bin": args.remote_bin,
-            "remote_artifact_dir": args.remote_artifact_dir,
+            "remote_bin": remote_bin,
+            "remote_artifact_dir": remote_artifacts,
             "artifact_dir": str(artifact_dir),
+            "appliance_runtime": endpoint_container_runtime_metadata(
+                profile=APPLIANCE_PROFILE,
+                remote_workspace=remote_workspace,
+                remote_artifacts=remote_artifacts,
+            ),
             "lan_semantics": _lan_semantics(),
         }
         _write_json(artifact_dir / "docker_lan_icmp_smoke.json", summary)
@@ -335,7 +359,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--remote-bin",
         default=DEFAULT_REMOTE_BIN,
-        help="absolute endpoint path for the uploaded workload binary",
+        help="accepted for compatibility; appliance-container runs build in the synced workspace",
     )
     parser.add_argument(
         "--remote-artifact-dir",
@@ -358,17 +382,32 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def _plan_commands(*, repo_root: Path, wire: Path, args: argparse.Namespace) -> str:
     router = args.router or "<DOCKER_BRIDGE_GATEWAY>"
+    remote_workspace = "<endpoint_appliance_workspace>"
+    remote_artifacts = "<endpoint_appliance_artifacts>"
+    remote_bin = f"{remote_workspace}/target/release/{WORKLOAD_BIN}"
+    runtime = endpoint_container_runtime_metadata(
+        profile=APPLIANCE_PROFILE,
+        remote_workspace=remote_workspace,
+        remote_artifacts=remote_artifacts,
+    )
     commands = [
         _create_endpoint_argv(wire=wire, role=args.role),
         [
-            "cargo",
-            "build",
-            "--release",
-            "--manifest-path",
-            "<generated-workload>/Cargo.toml",
+            "endpoint-appliance-sync",
+            "<endpoint_id>",
+            APPLIANCE_PROFILE,
+            "--work-dir",
+            "<generated-workload>",
         ],
-        [str(wire), "upload", "<endpoint_id>", "<workload_binary>", args.remote_bin],
-        [str(wire), "exec", "<endpoint_id>", "--", "chmod", "0755", args.remote_bin],
+        [
+            str(wire),
+            "exec",
+            "<endpoint_id>",
+            "--",
+            "sh",
+            "-lc",
+            _remote_build_command(remote_workspace, [WORKLOAD_BIN]),
+        ],
         [
             str(wire),
             "exec",
@@ -380,6 +419,8 @@ def _plan_commands(*, repo_root: Path, wire: Path, args: argparse.Namespace) -> 
                 args=args,
                 lan_iface={"name": args.iface, "ipv4": "<endpoint_ipv4>"},
                 router=router,
+                remote_bin=remote_bin,
+                remote_artifact_dir=remote_artifacts,
             ),
         ],
         [
@@ -387,7 +428,7 @@ def _plan_commands(*, repo_root: Path, wire: Path, args: argparse.Namespace) -> 
             "collect-artifacts",
             "<endpoint_id>",
             "--remote",
-            args.remote_artifact_dir,
+            remote_artifacts,
         ],
         [str(wire), "destroy", "<endpoint_id>", "--json"],
     ]
@@ -398,6 +439,7 @@ def _plan_commands(*, repo_root: Path, wire: Path, args: argparse.Namespace) -> 
         f"router: {router}",
         "path: NAT-backed L3 LAN reachability through Docker bridge routing",
         "true LAN L2 was not exercised by this smoke",
+        *runtime_plan_lines(runtime),
         "",
     ]
     lines.extend(f"{index}. {shlex.join(command)}" for index, command in enumerate(commands, 1))
@@ -430,29 +472,73 @@ def _create_endpoint_argv(*, wire: Path, role: str) -> list[str]:
 
 
 def _write_workload_project(*, workspace: Path, repo_root: Path) -> None:
-    crate_path = repo_root / "crafter"
-    src_bin = workspace / "src" / "bin"
-    src_bin.mkdir(parents=True, exist_ok=True)
-    (workspace / "Cargo.toml").write_text(
-        "\n".join(
-            [
-                "[package]",
-                'name = "libcrafter-docker-lan-icmp-smoke-workload"',
-                'version = "0.0.0"',
-                'edition = "2021"',
-                "publish = false",
-                "",
-                "[dependencies]",
-                f'crafter = {{ path = "{crate_path.as_posix()}" }}',
-                "",
-            ]
+    write_crafter_workload_workspace(
+        workspace=workspace,
+        repo_root=repo_root,
+        package_name="libcrafter-docker-lan-icmp-smoke-workload",
+        bin_sources={WORKLOAD_BIN: WORKLOAD_SOURCE},
+    )
+
+
+def _sync_workload_workspace(
+    *,
+    wire: Path,
+    repo_root: Path,
+    endpoint_id: str,
+    workspace: Path,
+    artifact_dir: Path,
+    remote_workspace: str,
+    remote_artifacts: str,
+    timeout: float,
+) -> tuple[CommandCapture, str, str]:
+    argv = [
+        str(wire),
+        "endpoint-container-appliance-sync",
+        endpoint_id,
+        APPLIANCE_PROFILE,
+        "--work-dir",
+        str(workspace),
+    ]
+    try:
+        result = sync_endpoint_container_workspace(
+            wire=wire,
+            repo_root=repo_root,
+            endpoint_id=endpoint_id,
+            profile=APPLIANCE_PROFILE,
+            workspace=workspace,
+            remote_workspace=remote_workspace,
+            remote_artifacts=remote_artifacts,
+            runner=_run,
+            timeout=timeout,
+        )
+    except Exception as exc:  # pragma: no cover - live failure path
+        return (
+            CommandCapture(
+                argv=argv,
+                cwd=repo_root,
+                exit_code=1,
+                stdout="",
+                stderr=f"{exc}\n",
+            ),
+            "",
+            "",
+        )
+    return (
+        CommandCapture(
+            argv=argv,
+            cwd=repo_root,
+            exit_code=0 if result.ok else 1,
+            stdout=result.to_json() + "\n",
+            stderr="" if result.ok else "endpoint container appliance sync failed\n",
         ),
-        encoding="utf-8",
+        result.remote_workspace_dir,
+        result.remote_artifact_dir,
     )
-    (src_bin / f"{WORKLOAD_BIN}.rs").write_text(
-        WORKLOAD_SOURCE.strip() + "\n",
-        encoding="utf-8",
-    )
+
+
+def _remote_build_command(remote_workspace: str, bins: list[str]) -> str:
+    bin_args = " ".join(f"--bin {shlex.quote(bin_name)}" for bin_name in bins)
+    return f"set -eu; cd {shlex.quote(remote_workspace)}; cargo build --release {bin_args}"
 
 
 def _remote_workload_command(
@@ -460,10 +546,14 @@ def _remote_workload_command(
     args: argparse.Namespace,
     lan_iface: dict[str, str],
     router: str | None = None,
+    remote_bin: str | None = None,
+    remote_artifact_dir: str | None = None,
 ) -> str:
     router_ip = router or _lan_router(args.router, lan_iface["ipv4"])
-    log = f"{args.remote_artifact_dir}/workload.log"
-    guest_state = f"{args.remote_artifact_dir}/guest_state.txt"
+    workload_bin = remote_bin or args.remote_bin
+    artifact_dir = remote_artifact_dir or args.remote_artifact_dir
+    log = f"{artifact_dir}/workload.log"
+    guest_state = f"{artifact_dir}/guest_state.txt"
     env = _shell_env(
         {
             "IFACE": lan_iface["name"],
@@ -478,14 +568,14 @@ def _remote_workload_command(
     )
     return (
         "set -u; "
-        f"rm -rf {shlex.quote(args.remote_artifact_dir)}; "
-        f"mkdir -p {shlex.quote(args.remote_artifact_dir)}; "
+        f"rm -rf {shlex.quote(artifact_dir)}; "
+        f"mkdir -p {shlex.quote(artifact_dir)}; "
         f"{{ echo '### ip -brief addr'; ip -brief addr; "
         f"echo '### ip route'; ip route; "
         f"echo '### uname -a'; uname -a; "
-        f"echo '### workload'; ls -l {shlex.quote(args.remote_bin)}; }} "
+        f"echo '### workload'; ls -l {shlex.quote(workload_bin)}; }} "
         f"> {shlex.quote(guest_state)} 2>&1; "
-        f"env {env} {shlex.quote(args.remote_bin)} > {shlex.quote(log)} 2>&1; "
+        f"env {env} {shlex.quote(workload_bin)} > {shlex.quote(log)} 2>&1; "
         "rc=$?; "
         f"cat {shlex.quote(guest_state)}; "
         f"cat {shlex.quote(log)}; "

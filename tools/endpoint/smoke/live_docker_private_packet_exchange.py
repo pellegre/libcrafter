@@ -4,10 +4,11 @@
 This script is intentionally outside default test discovery. By default it
 prints the planned command sequence without creating containers. Pass
 ``--live`` to create two confirmed docker/private wire endpoints on one
-isolated bridge, upload small libcrafter sender/receiver workloads, exchange
-one L3 UDP packet and one L2 Ethernet/IPv4/UDP packet, and then destroy both
-endpoints. The legacy ``--i-understand-isolated-lab`` flag is accepted for
-older command lines but is not required.
+isolated bridge, sync small libcrafter sender/receiver workloads into the
+endpoint appliance containers, exchange one L3 UDP packet and one L2
+Ethernet/IPv4/UDP packet, and then destroy both endpoints. The legacy
+``--i-understand-isolated-lab`` flag is accepted for older command lines but is
+not required.
 """
 
 from __future__ import annotations
@@ -23,7 +24,24 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+try:
+    from appliance_support import (
+        endpoint_container_workspace_dir,
+        endpoint_container_runtime_metadata,
+        runtime_plan_lines,
+        sync_endpoint_container_workspace,
+        write_crafter_workload_workspace,
+    )
+except ImportError:  # pragma: no cover - package import path
+    from tools.endpoint.smoke.appliance_support import (
+        endpoint_container_workspace_dir,
+        endpoint_container_runtime_metadata,
+        runtime_plan_lines,
+        sync_endpoint_container_workspace,
+        write_crafter_workload_workspace,
+    )
 
+APPLIANCE_PROFILE = "lan-raw"
 DEFAULT_DESTINATION_PORT = 39001
 DEFAULT_GROUP = "docker-private-smoke"
 DEFAULT_IFACE = "eth0"
@@ -357,66 +375,78 @@ def main(argv: list[str] | None = None) -> int:
         with tempfile.TemporaryDirectory(prefix="libcrafter-docker-private-smoke-") as temp_dir:
             workspace = Path(temp_dir)
             _write_workload_project(workspace=workspace, repo_root=repo_root)
-            build = _run(
+            receiver_sync, receiver_remote_workspace, receiver_remote_artifacts = (
+                _sync_workload_workspace(
+                    wire=wire,
+                    repo_root=repo_root,
+                    endpoint_id=receiver_id,
+                    workspace=workspace,
+                    artifact_dir=receiver_artifact_dir,
+                    remote_workspace=endpoint_container_workspace_dir(
+                        args.remote_artifact_dir
+                    ),
+                    remote_artifacts=args.remote_artifact_dir,
+                    timeout=args.transfer_timeout,
+                )
+            )
+            _write_result_artifacts(receiver_artifact_dir, "sync_receiver", receiver_sync)
+            if not receiver_sync.ok:
+                raise SmokeError("receiver workload sync failed", receiver_sync.exit_code)
+
+            sender_sync, sender_remote_workspace, sender_remote_artifacts = (
+                _sync_workload_workspace(
+                    wire=wire,
+                    repo_root=repo_root,
+                    endpoint_id=sender_id,
+                    workspace=workspace,
+                    artifact_dir=sender_artifact_dir,
+                    remote_workspace=endpoint_container_workspace_dir(
+                        args.remote_artifact_dir
+                    ),
+                    remote_artifacts=args.remote_artifact_dir,
+                    timeout=args.transfer_timeout,
+                )
+            )
+            _write_result_artifacts(sender_artifact_dir, "sync_sender", sender_sync)
+            if not sender_sync.ok:
+                raise SmokeError("sender workload sync failed", sender_sync.exit_code)
+
+            build_receiver = _run(
                 [
-                    "cargo",
-                    "build",
-                    "--release",
-                    "--manifest-path",
-                    str(workspace / "Cargo.toml"),
+                    str(wire),
+                    "exec",
+                    receiver_id,
+                    "--",
+                    "sh",
+                    "-lc",
+                    _remote_build_command(receiver_remote_workspace, [RECEIVER_BIN]),
                 ],
                 cwd=repo_root,
                 timeout=args.build_timeout,
             )
-            for artifact_dir in artifact_dirs:
-                _write_result_artifacts(artifact_dir, "build_workloads", build)
-            if not build.ok:
-                raise SmokeError("Docker private smoke workload build failed", build.exit_code)
+            _write_result_artifacts(receiver_artifact_dir, "build_receiver", build_receiver)
+            if not build_receiver.ok:
+                raise SmokeError("receiver workload build failed", build_receiver.exit_code)
 
-            receiver_bin = workspace / "target" / "release" / RECEIVER_BIN
-            sender_bin = workspace / "target" / "release" / SENDER_BIN
-            _require_file(receiver_bin, "receiver workload")
-            _require_file(sender_bin, "sender workload")
-
-            upload_receiver = _run(
-                [str(wire), "upload", receiver_id, str(receiver_bin), args.remote_receiver],
+            build_sender = _run(
+                [
+                    str(wire),
+                    "exec",
+                    sender_id,
+                    "--",
+                    "sh",
+                    "-lc",
+                    _remote_build_command(sender_remote_workspace, [SENDER_BIN]),
+                ],
                 cwd=repo_root,
-                timeout=args.transfer_timeout,
+                timeout=args.build_timeout,
             )
-            _write_result_artifacts(receiver_artifact_dir, "upload_receiver", upload_receiver)
-            if not upload_receiver.ok:
-                raise SmokeError("receiver workload upload failed", upload_receiver.exit_code)
+            _write_result_artifacts(sender_artifact_dir, "build_sender", build_sender)
+            if not build_sender.ok:
+                raise SmokeError("sender workload build failed", build_sender.exit_code)
 
-            upload_sender = _run(
-                [str(wire), "upload", sender_id, str(sender_bin), args.remote_sender],
-                cwd=repo_root,
-                timeout=args.transfer_timeout,
-            )
-            _write_result_artifacts(sender_artifact_dir, "upload_sender", upload_sender)
-            if not upload_sender.ok:
-                raise SmokeError("sender workload upload failed", upload_sender.exit_code)
-
-        chmod_receiver = _chmod_remote(
-            wire=wire,
-            repo_root=repo_root,
-            endpoint_id=receiver_id,
-            remote_bin=args.remote_receiver,
-            timeout=args.exec_timeout,
-        )
-        _write_result_artifacts(receiver_artifact_dir, "chmod_receiver", chmod_receiver)
-        if not chmod_receiver.ok:
-            raise SmokeError("receiver chmod failed", chmod_receiver.exit_code)
-
-        chmod_sender = _chmod_remote(
-            wire=wire,
-            repo_root=repo_root,
-            endpoint_id=sender_id,
-            remote_bin=args.remote_sender,
-            timeout=args.exec_timeout,
-        )
-        _write_result_artifacts(sender_artifact_dir, "chmod_sender", chmod_sender)
-        if not chmod_sender.ok:
-            raise SmokeError("sender chmod failed", chmod_sender.exit_code)
+            remote_receiver = f"{receiver_remote_workspace}/target/release/{RECEIVER_BIN}"
+            remote_sender = f"{sender_remote_workspace}/target/release/{SENDER_BIN}"
 
         start_receiver = _run(
             [
@@ -426,7 +456,12 @@ def main(argv: list[str] | None = None) -> int:
                 "--",
                 "sh",
                 "-lc",
-                _receiver_start_command(args, sender_iface["ipv4"]),
+                _receiver_start_command(
+                    args,
+                    sender_iface["ipv4"],
+                    remote_receiver=remote_receiver,
+                    remote_artifact_dir=receiver_remote_artifacts,
+                ),
             ],
             cwd=repo_root,
             timeout=args.exec_timeout,
@@ -443,7 +478,7 @@ def main(argv: list[str] | None = None) -> int:
                 "--",
                 "sh",
                 "-lc",
-                _receiver_ready_command(args.remote_artifact_dir, args.ready_attempts),
+                _receiver_ready_command(receiver_remote_artifacts, args.ready_attempts),
             ],
             cwd=repo_root,
             timeout=args.exec_timeout,
@@ -460,7 +495,13 @@ def main(argv: list[str] | None = None) -> int:
                 "--",
                 "sh",
                 "-lc",
-                _sender_run_command(args, sender_iface, receiver_iface),
+                _sender_run_command(
+                    args,
+                    sender_iface,
+                    receiver_iface,
+                    remote_sender=remote_sender,
+                    remote_artifact_dir=sender_remote_artifacts,
+                ),
             ],
             cwd=repo_root,
             timeout=args.packet_timeout,
@@ -477,7 +518,7 @@ def main(argv: list[str] | None = None) -> int:
                 "--",
                 "sh",
                 "-lc",
-                _receiver_done_command(args.remote_artifact_dir, args.done_attempts),
+                _receiver_done_command(receiver_remote_artifacts, args.done_attempts),
             ],
             cwd=repo_root,
             timeout=args.packet_timeout,
@@ -490,7 +531,7 @@ def main(argv: list[str] | None = None) -> int:
             wire=wire,
             repo_root=repo_root,
             endpoint_id=receiver_id,
-            remote_artifact_dir=args.remote_artifact_dir,
+            remote_artifact_dir=receiver_remote_artifacts,
             timeout=args.transfer_timeout,
         )
         _write_result_artifacts(receiver_artifact_dir, "collect_receiver", collect_receiver)
@@ -501,7 +542,7 @@ def main(argv: list[str] | None = None) -> int:
             wire=wire,
             repo_root=repo_root,
             endpoint_id=sender_id,
-            remote_artifact_dir=args.remote_artifact_dir,
+            remote_artifact_dir=sender_remote_artifacts,
             timeout=args.transfer_timeout,
         )
         _write_result_artifacts(sender_artifact_dir, "collect_sender", collect_sender)
@@ -517,6 +558,13 @@ def main(argv: list[str] | None = None) -> int:
                 "ipv4": receiver_iface["ipv4"],
                 "mac": receiver_iface["mac"],
                 "artifact_dir": str(receiver_artifact_dir),
+                "remote_bin": remote_receiver,
+                "remote_artifacts": receiver_remote_artifacts,
+                "appliance_runtime": endpoint_container_runtime_metadata(
+                    profile=APPLIANCE_PROFILE,
+                    remote_workspace=receiver_remote_workspace,
+                    remote_artifacts=receiver_remote_artifacts,
+                ),
             },
             "sender": {
                 "endpoint_id": sender_id,
@@ -524,9 +572,19 @@ def main(argv: list[str] | None = None) -> int:
                 "ipv4": sender_iface["ipv4"],
                 "mac": sender_iface["mac"],
                 "artifact_dir": str(sender_artifact_dir),
+                "remote_bin": remote_sender,
+                "remote_artifacts": sender_remote_artifacts,
+                "appliance_runtime": endpoint_container_runtime_metadata(
+                    profile=APPLIANCE_PROFILE,
+                    remote_workspace=sender_remote_workspace,
+                    remote_artifacts=sender_remote_artifacts,
+                ),
             },
             "payloads": [args.l3_payload, args.l2_payload],
-            "remote_artifact_dir": args.remote_artifact_dir,
+            "remote_artifact_dir": {
+                "receiver": receiver_remote_artifacts,
+                "sender": sender_remote_artifacts,
+            },
         }
         _write_json(receiver_artifact_dir / "docker_private_packet_exchange_smoke.json", summary)
         _write_json(sender_artifact_dir / "docker_private_packet_exchange_smoke.json", summary)
@@ -594,8 +652,16 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--l3-payload", default=DEFAULT_L3_PAYLOAD)
     parser.add_argument("--l2-payload", default=DEFAULT_L2_PAYLOAD)
     parser.add_argument("--timeout-secs", type=_positive_int, default=DEFAULT_TIMEOUT_SECS)
-    parser.add_argument("--remote-sender", default=DEFAULT_REMOTE_SENDER)
-    parser.add_argument("--remote-receiver", default=DEFAULT_REMOTE_RECEIVER)
+    parser.add_argument(
+        "--remote-sender",
+        default=DEFAULT_REMOTE_SENDER,
+        help="accepted for compatibility; sender builds in the synced appliance workspace",
+    )
+    parser.add_argument(
+        "--remote-receiver",
+        default=DEFAULT_REMOTE_RECEIVER,
+        help="accepted for compatibility; receiver builds in the synced appliance workspace",
+    )
     parser.add_argument("--remote-artifact-dir", default=DEFAULT_REMOTE_ARTIFACT_DIR)
     parser.add_argument("--ready-attempts", type=_positive_int, default=50)
     parser.add_argument("--done-attempts", type=_positive_int, default=100)
@@ -609,6 +675,22 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 
 def _plan_commands(*, repo_root: Path, wire: Path, args: argparse.Namespace) -> str:
+    receiver_workspace = "<receiver_endpoint_appliance_workspace>"
+    sender_workspace = "<sender_endpoint_appliance_workspace>"
+    receiver_artifacts = "<receiver_endpoint_appliance_artifacts>"
+    sender_artifacts = "<sender_endpoint_appliance_artifacts>"
+    remote_receiver = f"{receiver_workspace}/target/release/{RECEIVER_BIN}"
+    remote_sender = f"{sender_workspace}/target/release/{SENDER_BIN}"
+    receiver_runtime = endpoint_container_runtime_metadata(
+        profile=APPLIANCE_PROFILE,
+        remote_workspace=receiver_workspace,
+        remote_artifacts=receiver_artifacts,
+    )
+    sender_runtime = endpoint_container_runtime_metadata(
+        profile=APPLIANCE_PROFILE,
+        remote_workspace=sender_workspace,
+        remote_artifacts=sender_artifacts,
+    )
     commands = [
         _create_endpoint_argv(
             wire=wire,
@@ -623,24 +705,18 @@ def _plan_commands(*, repo_root: Path, wire: Path, args: argparse.Namespace) -> 
             private_ip=args.sender_ip,
         ),
         [
-            "cargo",
-            "build",
-            "--release",
-            "--manifest-path",
-            "<generated-workload>/Cargo.toml",
-        ],
-        [str(wire), "upload", "<receiver_endpoint_id>", "<receiver_binary>", args.remote_receiver],
-        [str(wire), "upload", "<sender_endpoint_id>", "<sender_binary>", args.remote_sender],
-        [str(wire), "exec", "<receiver_endpoint_id>", "--", "chmod", "0755", args.remote_receiver],
-        [str(wire), "exec", "<sender_endpoint_id>", "--", "chmod", "0755", args.remote_sender],
-        [
-            str(wire),
-            "exec",
+            "endpoint-appliance-sync",
             "<receiver_endpoint_id>",
-            "--",
-            "sh",
-            "-lc",
-            _receiver_start_command(args, args.sender_ip),
+            APPLIANCE_PROFILE,
+            "--work-dir",
+            "<generated-workload>",
+        ],
+        [
+            "endpoint-appliance-sync",
+            "<sender_endpoint_id>",
+            APPLIANCE_PROFILE,
+            "--work-dir",
+            "<generated-workload>",
         ],
         [
             str(wire),
@@ -649,7 +725,39 @@ def _plan_commands(*, repo_root: Path, wire: Path, args: argparse.Namespace) -> 
             "--",
             "sh",
             "-lc",
-            _receiver_ready_command(args.remote_artifact_dir, args.ready_attempts),
+            _remote_build_command(receiver_workspace, [RECEIVER_BIN]),
+        ],
+        [
+            str(wire),
+            "exec",
+            "<sender_endpoint_id>",
+            "--",
+            "sh",
+            "-lc",
+            _remote_build_command(sender_workspace, [SENDER_BIN]),
+        ],
+        [
+            str(wire),
+            "exec",
+            "<receiver_endpoint_id>",
+            "--",
+            "sh",
+            "-lc",
+            _receiver_start_command(
+                args,
+                args.sender_ip,
+                remote_receiver=remote_receiver,
+                remote_artifact_dir=receiver_artifacts,
+            ),
+        ],
+        [
+            str(wire),
+            "exec",
+            "<receiver_endpoint_id>",
+            "--",
+            "sh",
+            "-lc",
+            _receiver_ready_command(receiver_artifacts, args.ready_attempts),
         ],
         [
             str(wire),
@@ -670,6 +778,8 @@ def _plan_commands(*, repo_root: Path, wire: Path, args: argparse.Namespace) -> 
                     "ipv4": args.receiver_ip,
                     "mac": "<receiver_mac>",
                 },
+                remote_sender=remote_sender,
+                remote_artifact_dir=sender_artifacts,
             ),
         ],
         [
@@ -679,21 +789,21 @@ def _plan_commands(*, repo_root: Path, wire: Path, args: argparse.Namespace) -> 
             "--",
             "sh",
             "-lc",
-            _receiver_done_command(args.remote_artifact_dir, args.done_attempts),
+            _receiver_done_command(receiver_artifacts, args.done_attempts),
         ],
         [
             str(wire),
             "collect-artifacts",
             "<receiver_endpoint_id>",
             "--remote",
-            args.remote_artifact_dir,
+            receiver_artifacts,
         ],
         [
             str(wire),
             "collect-artifacts",
             "<sender_endpoint_id>",
             "--remote",
-            args.remote_artifact_dir,
+            sender_artifacts,
         ],
         [str(wire), "destroy", "<sender_endpoint_id>", "--json"],
         [str(wire), "destroy", "<receiver_endpoint_id>", "--json"],
@@ -705,6 +815,10 @@ def _plan_commands(*, repo_root: Path, wire: Path, args: argparse.Namespace) -> 
         f"private group: {args.private_group}",
         f"sender: {args.sender_ip}",
         f"receiver: {args.receiver_ip}",
+        "receiver appliance runtime:",
+        *runtime_plan_lines(receiver_runtime),
+        "sender appliance runtime:",
+        *runtime_plan_lines(sender_runtime),
         "",
     ]
     lines.extend(f"{index}. {shlex.join(command)}" for index, command in enumerate(commands, 1))
@@ -758,42 +872,76 @@ def _create_endpoint_argv(
 
 
 def _write_workload_project(*, workspace: Path, repo_root: Path) -> None:
-    crate_path = repo_root / "crafter"
-    src_bin = workspace / "src" / "bin"
-    src_bin.mkdir(parents=True, exist_ok=True)
-    (workspace / "Cargo.toml").write_text(
-        "\n".join(
-            [
-                "[package]",
-                'name = "libcrafter-docker-private-smoke-workload"',
-                'version = "0.0.0"',
-                'edition = "2021"',
-                "publish = false",
-                "",
-                "[dependencies]",
-                f'crafter = {{ path = "{crate_path.as_posix()}" }}',
-                "",
-            ]
-        ),
-        encoding="utf-8",
+    write_crafter_workload_workspace(
+        workspace=workspace,
+        repo_root=repo_root,
+        package_name="libcrafter-docker-private-smoke-workload",
+        bin_sources={
+            RECEIVER_BIN: RECEIVER_SOURCE,
+            SENDER_BIN: SENDER_SOURCE,
+        },
     )
-    (src_bin / f"{RECEIVER_BIN}.rs").write_text(RECEIVER_SOURCE.strip() + "\n", encoding="utf-8")
-    (src_bin / f"{SENDER_BIN}.rs").write_text(SENDER_SOURCE.strip() + "\n", encoding="utf-8")
 
 
-def _chmod_remote(
+def _sync_workload_workspace(
     *,
     wire: Path,
     repo_root: Path,
     endpoint_id: str,
-    remote_bin: str,
+    workspace: Path,
+    artifact_dir: Path,
+    remote_workspace: str,
+    remote_artifacts: str,
     timeout: float,
-) -> CommandCapture:
-    return _run(
-        [str(wire), "exec", endpoint_id, "--", "chmod", "0755", remote_bin],
-        cwd=repo_root,
-        timeout=timeout,
+) -> tuple[CommandCapture, str, str]:
+    argv = [
+        str(wire),
+        "endpoint-container-appliance-sync",
+        endpoint_id,
+        APPLIANCE_PROFILE,
+        "--work-dir",
+        str(workspace),
+    ]
+    try:
+        result = sync_endpoint_container_workspace(
+            wire=wire,
+            repo_root=repo_root,
+            endpoint_id=endpoint_id,
+            profile=APPLIANCE_PROFILE,
+            workspace=workspace,
+            remote_workspace=remote_workspace,
+            remote_artifacts=remote_artifacts,
+            runner=_run,
+            timeout=timeout,
+        )
+    except Exception as exc:  # pragma: no cover - live failure path
+        return (
+            CommandCapture(
+                argv=argv,
+                cwd=repo_root,
+                exit_code=1,
+                stdout="",
+                stderr=f"{exc}\n",
+            ),
+            "",
+            "",
+        )
+    return (
+        CommandCapture(
+            argv=argv,
+            cwd=repo_root,
+            exit_code=0 if result.ok else 1,
+            stdout=result.to_json() + "\n",
+            stderr="" if result.ok else "endpoint container appliance sync failed\n",
+        ),
+        result.remote_workspace_dir,
+        result.remote_artifact_dir,
     )
+
+
+def _remote_build_command(remote_workspace: str, bins: list[str]) -> str:
+    bin_args = " ".join(f"--bin {shlex.quote(bin_name)}" for bin_name in bins)
+    return f"set -eu; cd {shlex.quote(remote_workspace)}; cargo build --release {bin_args}"
 
 
 def _collect_artifacts(
@@ -836,9 +984,17 @@ def _destroy_endpoints(
     return results
 
 
-def _receiver_start_command(args: argparse.Namespace, sender_ip: str) -> str:
-    log = f"{args.remote_artifact_dir}/receiver.log"
-    pid = f"{args.remote_artifact_dir}/receiver.pid"
+def _receiver_start_command(
+    args: argparse.Namespace,
+    sender_ip: str,
+    *,
+    remote_receiver: str | None = None,
+    remote_artifact_dir: str | None = None,
+) -> str:
+    receiver_bin = remote_receiver or args.remote_receiver
+    artifact_dir = remote_artifact_dir or args.remote_artifact_dir
+    log = f"{artifact_dir}/receiver.log"
+    pid = f"{artifact_dir}/receiver.pid"
     env = _shell_env(
         {
             "IFACE": args.iface,
@@ -850,9 +1006,9 @@ def _receiver_start_command(args: argparse.Namespace, sender_ip: str) -> str:
     )
     return (
         "set -eu; "
-        f"rm -rf {shlex.quote(args.remote_artifact_dir)}; "
-        f"mkdir -p {shlex.quote(args.remote_artifact_dir)}; "
-        f"nohup env {env} {shlex.quote(args.remote_receiver)} > {shlex.quote(log)} 2>&1 & "
+        f"rm -rf {shlex.quote(artifact_dir)}; "
+        f"mkdir -p {shlex.quote(artifact_dir)}; "
+        f"nohup env {env} {shlex.quote(receiver_bin)} > {shlex.quote(log)} 2>&1 & "
         f"echo $! > {shlex.quote(pid)}"
     )
 
@@ -876,8 +1032,13 @@ def _sender_run_command(
     args: argparse.Namespace,
     sender_iface: dict[str, str],
     receiver_iface: dict[str, str],
+    *,
+    remote_sender: str | None = None,
+    remote_artifact_dir: str | None = None,
 ) -> str:
-    log = f"{args.remote_artifact_dir}/sender.log"
+    sender_bin = remote_sender or args.remote_sender
+    artifact_dir = remote_artifact_dir or args.remote_artifact_dir
+    log = f"{artifact_dir}/sender.log"
     env = _shell_env(
         {
             "IFACE": sender_iface["name"],
@@ -893,9 +1054,9 @@ def _sender_run_command(
     )
     return (
         "set -eu; "
-        f"rm -rf {shlex.quote(args.remote_artifact_dir)}; "
-        f"mkdir -p {shlex.quote(args.remote_artifact_dir)}; "
-        f"env {env} {shlex.quote(args.remote_sender)} > {shlex.quote(log)} 2>&1; "
+        f"rm -rf {shlex.quote(artifact_dir)}; "
+        f"mkdir -p {shlex.quote(artifact_dir)}; "
+        f"env {env} {shlex.quote(sender_bin)} > {shlex.quote(log)} 2>&1; "
         f"cat {shlex.quote(log)}"
     )
 
@@ -1053,11 +1214,6 @@ def _string(value: Any, name: str) -> str:
     if not isinstance(value, str) or value == "":
         raise SmokeError(f"{name} must be a non-empty string")
     return value
-
-
-def _require_file(path: Path, name: str) -> None:
-    if not path.is_file():
-        raise SmokeError(f"{name} not found after build: {path}")
 
 
 def _safe_stem(value: str) -> str:
