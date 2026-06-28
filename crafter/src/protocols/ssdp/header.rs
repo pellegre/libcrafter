@@ -856,4 +856,76 @@ mod tests {
         assert_eq!(headers.len(), 1);
         assert_eq!(headers.to_bytes(), b"HOST: 239.255.255.250:1900\r\n");
     }
+
+    #[test]
+    fn ssdp_header_canonicalization_lookup_handles_lower_upper_mixed_and_canonical_case() {
+        let mut headers = SsdpHeaders::new();
+        headers
+            .push_raw("host", "lower")
+            .expect("lowercase HOST header");
+        headers
+            .push_raw("HOST", "upper")
+            .expect("canonical HOST header");
+        headers
+            .push_raw("HoSt", "mixed")
+            .expect("mixed-case HOST header");
+        headers
+            .push_raw("Host", "title")
+            .expect("title-case HOST header");
+
+        let entries = headers.iter().collect::<Vec<_>>();
+        let values = headers
+            .get_all(SsdpHeaderNameKind::Host)
+            .map(SsdpHeaderValue::as_bytes)
+            .collect::<Vec<_>>();
+
+        assert!(entries
+            .iter()
+            .all(|header| header.name().kind() == SsdpHeaderNameKind::Host));
+        assert!(entries
+            .iter()
+            .all(|header| header.name().canonical_name() == Some("HOST")));
+        assert_eq!(
+            values,
+            vec![
+                b"lower".as_slice(),
+                b"upper".as_slice(),
+                b"mixed".as_slice(),
+                b"title".as_slice()
+            ]
+        );
+        assert_eq!(
+            headers
+                .get_first(SsdpHeaderNameKind::Host)
+                .expect("first HOST")
+                .as_bytes(),
+            b"lower"
+        );
+    }
+
+    #[test]
+    fn ssdp_header_canonicalization_serialization_preserves_original_spelling() {
+        let mut headers = SsdpHeaders::new();
+        headers
+            .push_raw("st", "ssdp:all")
+            .expect("lowercase ST header");
+        headers
+            .push_raw("ST", "upnp:rootdevice")
+            .expect("canonical ST header");
+        headers
+            .push_raw("sT", "urn:schemas-upnp-org:service:ContentDirectory:1")
+            .expect("mixed-case ST header");
+
+        assert_eq!(
+            headers.to_bytes(),
+            b"st: ssdp:all\r\nST: upnp:rootdevice\r\nsT: urn:schemas-upnp-org:service:ContentDirectory:1\r\n"
+        );
+        assert_eq!(
+            headers
+                .iter()
+                .map(|header| header.name().original())
+                .collect::<Vec<_>>(),
+            vec!["st", "ST", "sT"]
+        );
+    }
 }
