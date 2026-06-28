@@ -4,10 +4,12 @@
 //! headers, and opaque body bytes.
 
 use core::fmt;
+use core::net::Ipv4Addr;
 use core::str::FromStr;
 
 use crate::error::Result as CrafterResult;
-use crate::packet::{Layer, LayerContext};
+use crate::packet::{Layer, LayerContext, Packet};
+use crate::protocols::ip::v4::Ipv4;
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::protocols::transport::Udp;
 
@@ -17,8 +19,8 @@ use super::constants::{
     SSDP_HEADER_MX, SSDP_HEADER_NEXTBOOTID, SSDP_HEADER_NLS_SUFFIX, SSDP_HEADER_NT,
     SSDP_HEADER_NTS, SSDP_HEADER_OPT, SSDP_HEADER_SEARCHPORT, SSDP_HEADER_SECURELOCATION,
     SSDP_HEADER_SERVER, SSDP_HEADER_ST, SSDP_HEADER_TCPPORT, SSDP_HEADER_USER_AGENT,
-    SSDP_HEADER_USN, SSDP_HTTP_VERSION as HTTP_VERSION_1_1, SSDP_IPV4_MULTICAST_HOST,
-    SSDP_MAN_DISCOVER, SSDP_METHOD_M_SEARCH as METHOD_M_SEARCH,
+    SSDP_HEADER_USN, SSDP_HTTP_VERSION as HTTP_VERSION_1_1, SSDP_IPV4_MULTICAST_ADDR,
+    SSDP_IPV4_MULTICAST_HOST, SSDP_MAN_DISCOVER, SSDP_METHOD_M_SEARCH as METHOD_M_SEARCH,
     SSDP_METHOD_NOTIFY as METHOD_NOTIFY, SSDP_NTS_ALIVE, SSDP_NTS_BYEBYE, SSDP_NTS_UPDATE,
     SSDP_REASON_OK as REASON_OK, SSDP_STATUS_OK as STATUS_OK, SSDP_ST_ALL, SSDP_TARGET_ROOTDEVICE,
     SSDP_UDP_PORT,
@@ -377,6 +379,22 @@ impl Layer for Ssdp {
 }
 
 impl_layer_div!(Ssdp);
+
+/// Build an offline IPv4/UDP/SSDP multicast packet with source-backed defaults.
+pub fn ssdp_ipv4_multicast_packet(source: Ipv4Addr, message: Ssdp) -> Packet {
+    ssdp_ipv4_multicast_packet_with(source, SSDP_IPV4_MULTICAST_ADDR, 2, Ssdp::udp(), message)
+}
+
+/// Build an offline IPv4/UDP/SSDP packet with explicit multicast helper overrides.
+pub fn ssdp_ipv4_multicast_packet_with(
+    source: Ipv4Addr,
+    destination: Ipv4Addr,
+    ttl: u8,
+    udp: Udp,
+    message: Ssdp,
+) -> Packet {
+    Ipv4::new().src(source).dst(destination).ttl(ttl) / udp / message
+}
 
 /// Complete SSDP message payload model.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1820,6 +1838,50 @@ mod tests {
             decode_ssdp(payload).expect("compiled SSDP payload decodes"),
             ssdp
         );
+    }
+
+    #[test]
+    fn ssdp_ipv4_multicast_helper_builds_typed_offline_packet_with_defaults() {
+        let source = packet_composition_src();
+        let ssdp = Ssdp::m_search_all();
+        let packet = ssdp_ipv4_multicast_packet(source, ssdp.clone());
+        let ipv4 = packet.layer::<Ipv4>().expect("IPv4 layer");
+        let udp = packet.layer::<Udp>().expect("UDP layer");
+
+        assert_eq!(ipv4.source(), source);
+        assert_eq!(ipv4.destination(), SSDP_IPV4_MULTICAST_ADDR);
+        assert_eq!(ipv4.ttl_value(), 2);
+        assert_eq!(udp.source_port_value(), SSDP_UDP_PORT);
+        assert_eq!(udp.destination_port_value(), SSDP_UDP_PORT);
+        assert_eq!(packet.layer::<Ssdp>(), Some(&ssdp));
+
+        let compiled = packet
+            .compile()
+            .expect("offline SSDP multicast packet compiles");
+        assert_eq!(compiled.as_bytes()[9], IPPROTO_UDP);
+    }
+
+    #[test]
+    fn ssdp_ipv4_multicast_helper_preserves_explicit_overrides() {
+        let source = packet_composition_src();
+        let destination = Ipv4Addr::new(239, 255, 255, 251);
+        let ssdp = Ssdp::m_search_rootdevice();
+        let packet = ssdp_ipv4_multicast_packet_with(
+            source,
+            destination,
+            5,
+            Ssdp::udp().sport(49_152).dport(49_153),
+            ssdp.clone(),
+        );
+        let ipv4 = packet.layer::<Ipv4>().expect("IPv4 layer");
+        let udp = packet.layer::<Udp>().expect("UDP layer");
+
+        assert_eq!(ipv4.source(), source);
+        assert_eq!(ipv4.destination(), destination);
+        assert_eq!(ipv4.ttl_value(), 5);
+        assert_eq!(udp.source_port_value(), 49_152);
+        assert_eq!(udp.destination_port_value(), 49_153);
+        assert_eq!(packet.layer::<Ssdp>(), Some(&ssdp));
     }
 
     #[test]
