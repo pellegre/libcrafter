@@ -92,6 +92,7 @@ __pycache__/
 .env.*
 !.env.example
 .scratch/
+!tools/appliance/image/entrypoint.sh
 !tools/reference/legacy-libcrafter.sh
 !tests/live/*.sh
 .libcrafter-live/
