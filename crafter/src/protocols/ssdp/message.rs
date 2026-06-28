@@ -6,6 +6,10 @@
 use core::fmt;
 use core::str::FromStr;
 
+use crate::error::Result as CrafterResult;
+use crate::packet::{Layer, LayerContext};
+use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
+
 use super::header::{SsdpHeaderNameParseError, SsdpHeaderValue, SsdpHeaders};
 
 const METHOD_NOTIFY: &str = "NOTIFY";
@@ -107,6 +111,45 @@ impl Ssdp {
         self
     }
 }
+
+impl Layer for Ssdp {
+    fn name(&self) -> &'static str {
+        "SSDP"
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "SSDP({}=\"{}\", headers={}, body={} bytes)",
+            self.message.start_line().kind_label(),
+            self.message.start_line().display_line(),
+            self.headers().len(),
+            self.body().len()
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("kind", self.message.start_line().kind_label().to_string()),
+            ("start_line", self.message.start_line().display_line()),
+            ("header_count", self.headers().len().to_string()),
+            ("header_names", header_names_summary(self.headers())),
+            ("body_len", self.body().len().to_string()),
+        ]
+    }
+
+    fn encoded_len(&self) -> usize {
+        self.to_bytes().len()
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> CrafterResult<()> {
+        self.serialize(out);
+        Ok(())
+    }
+
+    impl_layer_object!(Ssdp);
+}
+
+impl_layer_div!(Ssdp);
 
 /// Complete SSDP message payload model.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -245,6 +288,24 @@ impl SsdpStartLine {
         match self {
             Self::Request(line) => line.serialize(out),
             Self::Response(line) => line.serialize(out),
+        }
+    }
+
+    fn kind_label(&self) -> &'static str {
+        match self {
+            Self::Request(_) => "request",
+            Self::Response(_) => "response",
+        }
+    }
+
+    fn display_line(&self) -> String {
+        match self {
+            Self::Request(line) => {
+                format!("{} {} {}", line.method(), line.target(), line.version())
+            }
+            Self::Response(line) => {
+                format!("{} {} {}", line.version(), line.code(), line.reason())
+            }
         }
     }
 }
@@ -974,10 +1035,32 @@ fn serialize_status_code(code: SsdpStatusCode, out: &mut Vec<u8>) {
     out.push(b'0' + ((code % 10) as u8));
 }
 
+fn header_names_summary(headers: &SsdpHeaders) -> String {
+    const MAX_NAMES: usize = 8;
+
+    let mut names = headers
+        .iter()
+        .take(MAX_NAMES)
+        .map(|header| header.name().original())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let remaining = headers.len().saturating_sub(MAX_NAMES);
+    if remaining > 0 {
+        if !names.is_empty() {
+            names.push_str(", ");
+        }
+        names.push_str(&format!("+{remaining} more"));
+    }
+
+    names
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::header::{SsdpHeaderField, SsdpHeaderNameKind, SsdpHeaderValue};
     use super::*;
+    use crate::packet::{Layer, Packet};
 
     #[test]
     fn ssdp_message_builders_m_search_and_notify_request_defaults() {
@@ -1183,6 +1266,84 @@ mod tests {
         expected.extend_from_slice(&body);
 
         assert_eq!(message.to_bytes(), expected);
+    }
+
+    #[test]
+    fn ssdp_layer_encoded_len_and_compile_bytes_match_to_bytes() {
+        let message = Ssdp::m_search()
+            .with_raw_header("HOST", "239.255.255.250:1900")
+            .expect("HOST header")
+            .with_raw_header("MAN", "\"ssdp:discover\"")
+            .expect("MAN header")
+            .with_raw_header("ST", "ssdp:all")
+            .expect("ST header")
+            .with_body(b"opaque body".to_vec());
+        let expected = message.to_bytes();
+        let packet = Packet::from_layer(message.clone());
+        let compiled = packet.compile().expect("SSDP compiles");
+
+        assert_eq!(Layer::encoded_len(&message), expected.len());
+        assert_eq!(packet.encoded_len(), expected.len());
+        assert_eq!(compiled.as_bytes(), expected.as_slice());
+    }
+
+    #[test]
+    fn ssdp_layer_packet_typed_access_retrieves_and_clones() {
+        let message = Ssdp::notify()
+            .with_raw_header("NT", "upnp:rootdevice")
+            .expect("NT header")
+            .with_raw_header("USN", "uuid:device-1::upnp:rootdevice")
+            .expect("USN header");
+        let packet = Packet::from_layer(message.clone());
+        let cloned = packet.clone();
+
+        assert_eq!(packet.layer::<Ssdp>(), Some(&message));
+        assert_eq!(cloned.layer::<Ssdp>(), Some(&message));
+    }
+
+    #[test]
+    fn ssdp_layer_summary_and_show_preserve_unknown_start_lines_and_counts() {
+        let request = Ssdp::request(
+            SsdpMethod::try_from("X-QUERY").expect("unknown method"),
+            SsdpRequestTarget::try_from("/device.xml").expect("target"),
+            SsdpVersion::try_from("HTTP/8.8").expect("version"),
+        )
+        .with_raw_header("X-DEVICE.UPNP.ORG", "opaque")
+        .expect("unknown header")
+        .with_raw_header("01-NLS", "17")
+        .expect("NLS header")
+        .with_body(b"abc".to_vec());
+
+        let request_summary = request.summary();
+        assert!(request_summary.contains("X-QUERY /device.xml HTTP/8.8"));
+        assert!(request_summary.contains("headers=2"));
+        assert!(request_summary.contains("body=3 bytes"));
+
+        let request_show = Packet::from_layer(request).show();
+        assert!(request_show.contains("[0] SSDP"));
+        assert!(request_show.contains("kind: request"));
+        assert!(request_show.contains("start_line: X-QUERY /device.xml HTTP/8.8"));
+        assert!(request_show.contains("header_count: 2"));
+        assert!(request_show.contains("header_names: X-DEVICE.UPNP.ORG, 01-NLS"));
+        assert!(request_show.contains("body_len: 3"));
+
+        let response = Ssdp::response(
+            SsdpVersion::try_from("HTTP/9.9").expect("version"),
+            SsdpStatusCode::try_from("777").expect("status"),
+            SsdpReasonPhrase::try_from("Odd Status").expect("reason"),
+        )
+        .with_raw_header("EXT", SsdpHeaderValue::empty())
+        .expect("EXT header");
+
+        let response_summary = response.summary();
+        assert!(response_summary.contains("HTTP/9.9 777 Odd Status"));
+        assert!(response_summary.contains("headers=1"));
+        assert!(response_summary.contains("body=0 bytes"));
+
+        let response_show = Packet::from_layer(response).show();
+        assert!(response_show.contains("kind: response"));
+        assert!(response_show.contains("start_line: HTTP/9.9 777 Odd Status"));
+        assert!(response_show.contains("header_count: 1"));
     }
 
     #[test]
