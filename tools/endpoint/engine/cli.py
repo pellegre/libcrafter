@@ -28,6 +28,7 @@ from .assets import (
     AssetSSHInfo,
     EndpointAsset,
     asset_record_path,
+    check_endpoint_asset,
     list_endpoint_assets,
     read_endpoint_asset,
     write_endpoint_asset,
@@ -285,6 +286,21 @@ def build_parser() -> argparse.ArgumentParser:
     asset_info.add_argument("asset_id", metavar="ASSET_ID", help="asset to inspect")
     _add_asset_json_option(asset_info)
     asset_info.set_defaults(command_name="asset", asset_command_name="info")
+
+    asset_check = asset_subparsers.add_parser(
+        "check",
+        help="run readiness checks for one persistent endpoint asset",
+        description="Lock one asset, verify SSH Docker access, and render profile readiness checks.",
+    )
+    asset_check.add_argument("asset_id", metavar="ASSET_ID", help="asset to check")
+    asset_check.add_argument(
+        "--profile",
+        required=True,
+        metavar="PROFILE",
+        help="supported appliance profile to check",
+    )
+    _add_asset_json_option(asset_check)
+    asset_check.set_defaults(command_name="asset", asset_command_name="check")
 
     doctor = subparsers.add_parser(
         "doctor",
@@ -798,6 +814,9 @@ def _run_asset(args: argparse.Namespace) -> int:
         if subcommand == "info":
             output = _asset_info_output(args.asset_id)
             return _emit_asset_output(args, output, default_label="info")
+        if subcommand == "check":
+            output = _asset_check_output(args)
+            return _emit_asset_output(args, output, default_label="check")
     except (FileNotFoundError, JSONDecodeError, ValueError, RuntimeError) as exc:
         return _emit_asset_error(args, str(exc))
     print(f"endpoint asset: unsupported asset command {subcommand!r}", file=sys.stderr)
@@ -866,6 +885,14 @@ def _asset_info_output(asset_id: str) -> dict[str, object]:
     }
 
 
+def _asset_check_output(args: argparse.Namespace) -> dict[str, object]:
+    return check_endpoint_asset(
+        args.asset_id,
+        args.profile,
+        runner=run_command,
+    )
+
+
 def _asset_list_entry(asset: EndpointAsset) -> dict[str, object]:
     return {
         "asset_id": asset.asset_id,
@@ -907,7 +934,7 @@ def _emit_asset_output(
         sys.stdout.write(dumps_json(output))
     else:
         _print_asset_output(output, default_label=default_label)
-    return 0
+    return _asset_exit_code(output)
 
 
 def _emit_asset_error(args: argparse.Namespace, error: str) -> int:
@@ -922,6 +949,14 @@ def _emit_asset_error(args: argparse.Namespace, error: str) -> int:
     else:
         print(error, file=sys.stderr)
     return 1
+
+
+def _asset_exit_code(output: dict[str, object]) -> int:
+    ok = output.get("ok")
+    if ok is False:
+        exit_code = output.get("exit_code")
+        return int(exit_code) if isinstance(exit_code, int) and exit_code != 0 else 1
+    return 0
 
 
 def _run_appliance(args: argparse.Namespace) -> int:
@@ -1188,7 +1223,9 @@ def _print_asset_output(output: dict[str, object], *, default_label: str) -> Non
         return
     asset_id = output.get("asset_id", "<unknown>")
     asset_path = output.get("asset_path")
-    print(f"endpoint asset {default_label}: asset_id={asset_id}")
+    ok = output.get("ok")
+    status = "" if ok is None else f" ok={str(bool(ok)).lower()}"
+    print(f"endpoint asset {default_label}: asset_id={asset_id}{status}")
     if isinstance(asset_path, str):
         print(f"state: {asset_path}")
 

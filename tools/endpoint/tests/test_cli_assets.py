@@ -199,6 +199,7 @@ class EndpointAssetCliTest(unittest.TestCase):
         self.assertIn("register", output)
         self.assertIn("list", output)
         self.assertIn("info", output)
+        self.assertIn("check", output)
 
 
 def _register_argv(root: Path, *overrides: str) -> list[str]:
