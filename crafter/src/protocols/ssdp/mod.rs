@@ -2,10 +2,9 @@
 //!
 //! SSDP support is source-gated by `.agents/docs/ssdp-source-manifest.md`,
 //! `.agents/docs/ssdp-wire-grammar.md`, `.agents/docs/ssdp-codepoints.md`, and
-//! `.agents/docs/ssdp-api-design.md`. This module starts as a private scaffold;
-//! later steps add typed messages, HTTP-like header handling, conservative
-//! decoding, registry metadata, and packet composition without introducing a
-//! discovery workflow.
+//! `.agents/docs/ssdp-api-design.md`. It provides typed messages, HTTP-like
+//! header handling, conservative decoding, registry metadata, and packet
+//! composition without introducing a discovery workflow.
 
 mod constants;
 mod decode;
