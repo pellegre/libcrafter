@@ -14,6 +14,7 @@ const REQUEST_TARGET_ASTERISK: &str = "*";
 const HTTP_VERSION_1_1: &str = "HTTP/1.1";
 const STATUS_OK: u16 = 200;
 const REASON_OK: &str = "OK";
+const CRLF: &[u8; 2] = b"\r\n";
 
 const EXPECTED_REQUEST_TARGET: &str =
     "non-empty HTTP request-target with visible ASCII bytes and no whitespace";
@@ -71,6 +72,18 @@ impl Ssdp {
     /// Return the opaque body bytes.
     pub fn body(&self) -> &[u8] {
         self.message.body()
+    }
+
+    /// Serialize this SSDP layer as one UDP payload.
+    pub fn serialize(&self, out: &mut Vec<u8>) {
+        self.message.serialize(out);
+    }
+
+    /// Return this SSDP layer serialized as one UDP payload.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        self.serialize(&mut out);
+        out
     }
 
     /// Consume the layer and return the message.
@@ -157,6 +170,14 @@ impl SsdpMessage {
         &self.body
     }
 
+    /// Serialize this message as an SSDP UDP payload.
+    pub fn serialize(&self, out: &mut Vec<u8>) {
+        self.start_line.serialize(out);
+        self.headers.serialize(out);
+        out.extend_from_slice(CRLF);
+        out.extend_from_slice(&self.body);
+    }
+
     /// Consume the message and return its parts.
     pub fn into_parts(self) -> (SsdpStartLine, SsdpHeaders, Vec<u8>) {
         (self.start_line, self.headers, self.body)
@@ -218,6 +239,14 @@ impl SsdpStartLine {
             Self::Response(line) => Some(line),
         }
     }
+
+    /// Serialize this start line and its trailing CRLF.
+    pub fn serialize(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Request(line) => line.serialize(out),
+            Self::Response(line) => line.serialize(out),
+        }
+    }
 }
 
 /// SSDP request-line values.
@@ -270,6 +299,16 @@ impl SsdpRequestLine {
     pub fn version(&self) -> &SsdpVersion {
         &self.version
     }
+
+    /// Serialize this request line and its trailing CRLF.
+    pub fn serialize(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.method.as_str().as_bytes());
+        out.push(b' ');
+        out.extend_from_slice(self.target.as_str().as_bytes());
+        out.push(b' ');
+        out.extend_from_slice(self.version.as_str().as_bytes());
+        out.extend_from_slice(CRLF);
+    }
 }
 
 /// SSDP status-line values.
@@ -312,6 +351,16 @@ impl SsdpStatusLine {
     /// Return the reason phrase.
     pub fn reason(&self) -> &SsdpReasonPhrase {
         &self.reason
+    }
+
+    /// Serialize this status line and its trailing CRLF.
+    pub fn serialize(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.version.as_str().as_bytes());
+        out.push(b' ');
+        serialize_status_code(self.code, out);
+        out.push(b' ');
+        out.extend_from_slice(self.reason.as_str().as_bytes());
+        out.extend_from_slice(CRLF);
     }
 }
 
@@ -918,9 +967,16 @@ fn is_reason_phrase_byte(byte: u8) -> bool {
     matches!(byte, b'\t' | b' ' | 0x21..=0x7e | 0x80..=0xff)
 }
 
+fn serialize_status_code(code: SsdpStatusCode, out: &mut Vec<u8>) {
+    let code = code.code();
+    out.push(b'0' + ((code / 100) as u8));
+    out.push(b'0' + (((code / 10) % 10) as u8));
+    out.push(b'0' + ((code % 10) as u8));
+}
+
 #[cfg(test)]
 mod tests {
-    use super::super::header::{SsdpHeaderField, SsdpHeaderNameKind};
+    use super::super::header::{SsdpHeaderField, SsdpHeaderNameKind, SsdpHeaderValue};
     use super::*;
 
     #[test]
@@ -1042,6 +1098,91 @@ mod tests {
 
         assert_eq!(error.field(), SsdpHeaderField::Name);
         assert_eq!(error.value(), "bad name");
+    }
+
+    #[test]
+    fn ssdp_serialize_m_search_request_with_source_backed_headers() {
+        let message = Ssdp::m_search()
+            .with_raw_header("HOST", "239.255.255.250:1900")
+            .expect("HOST header")
+            .with_raw_header("MAN", "\"ssdp:discover\"")
+            .expect("MAN header")
+            .with_raw_header("MX", "2")
+            .expect("MX header")
+            .with_raw_header("ST", "ssdp:all")
+            .expect("ST header");
+
+        assert_eq!(
+            message.to_bytes(),
+            b"M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: ssdp:all\r\n\r\n"
+        );
+    }
+
+    #[test]
+    fn ssdp_serialize_response_ok_with_empty_ext_header() {
+        let message = Ssdp::response_ok()
+            .with_raw_header("EXT", SsdpHeaderValue::empty())
+            .expect("EXT header");
+
+        assert_eq!(message.to_bytes(), b"HTTP/1.1 200 OK\r\nEXT:\r\n\r\n");
+    }
+
+    #[test]
+    fn ssdp_serialize_unknown_request_start_line_values_are_preserved() {
+        let method = SsdpMethod::try_from("X-SEARCH").expect("unknown method");
+        let target = SsdpRequestTarget::try_from("/device.xml?x=1").expect("unknown target");
+        let version = SsdpVersion::try_from("HTTP/9.9").expect("unknown version");
+        let message = Ssdp::request(method, target, version);
+
+        assert_eq!(
+            message.to_bytes(),
+            b"X-SEARCH /device.xml?x=1 HTTP/9.9\r\n\r\n"
+        );
+    }
+
+    #[test]
+    fn ssdp_serialize_unknown_status_reason_and_empty_reason_are_preserved() {
+        let unknown = Ssdp::response(
+            SsdpVersion::try_from("HTTP/1.0").expect("version"),
+            SsdpStatusCode::try_from("299").expect("status"),
+            SsdpReasonPhrase::try_from("Odd Success").expect("reason"),
+        );
+        let empty_reason = Ssdp::response(
+            SsdpVersion::http_1_1(),
+            SsdpStatusCode::try_from("204").expect("status"),
+            SsdpReasonPhrase::empty(),
+        );
+
+        assert_eq!(unknown.to_bytes(), b"HTTP/1.0 299 Odd Success\r\n\r\n");
+        assert_eq!(empty_reason.to_bytes(), b"HTTP/1.1 204 \r\n\r\n");
+    }
+
+    #[test]
+    fn ssdp_serialize_duplicate_and_unknown_headers_preserve_order_and_spelling() {
+        let message = Ssdp::response_ok()
+            .with_raw_header("X-DEVICE.UPNP.ORG", "first")
+            .expect("unknown header")
+            .with_raw_header("ST", "ssdp:all")
+            .expect("first ST header")
+            .with_raw_header("x-device.upnp.org", "second")
+            .expect("second unknown header")
+            .with_raw_header("ST", "upnp:rootdevice")
+            .expect("second ST header");
+
+        assert_eq!(
+            message.to_bytes(),
+            b"HTTP/1.1 200 OK\r\nX-DEVICE.UPNP.ORG: first\r\nST: ssdp:all\r\nx-device.upnp.org: second\r\nST: upnp:rootdevice\r\n\r\n"
+        );
+    }
+
+    #[test]
+    fn ssdp_serialize_body_bytes_are_appended_exactly_after_delimiter() {
+        let body = vec![0x00, b'\r', b'\n', 0xff, b':', b' '];
+        let message = Ssdp::notify().with_body(body.clone());
+        let mut expected = b"NOTIFY * HTTP/1.1\r\n\r\n".to_vec();
+        expected.extend_from_slice(&body);
+
+        assert_eq!(message.to_bytes(), expected);
     }
 
     #[test]
