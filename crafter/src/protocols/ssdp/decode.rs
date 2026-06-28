@@ -971,7 +971,10 @@ impl std::error::Error for SsdpParseError {}
 #[cfg(test)]
 mod tests {
     use super::super::header::{SsdpHeaderField, SsdpHeaderNameKind};
-    use super::super::message::{SsdpMethod, SsdpStartLineField};
+    use super::super::message::{
+        SsdpMethod, SsdpReasonPhrase, SsdpRequestTarget, SsdpStartLineField, SsdpStatusCode,
+        SsdpVersion,
+    };
     use super::*;
 
     fn request_line(ssdp: &Ssdp) -> &super::super::message::SsdpRequestLine {
@@ -1024,6 +1027,156 @@ mod tests {
 
     fn expect_response_error(bytes: &[u8]) -> SsdpParseError {
         parse_ssdp_response(bytes).expect_err("response payload is malformed")
+    }
+
+    #[test]
+    fn ssdp_roundtrip_request_preserves_duplicates_extensions_and_body_bytes() {
+        let bytes = b"M-SEARCH * HTTP/1.1\r\nST: ssdp:all\r\nst: urn:schemas-upnp-org:device:MediaServer:1\r\n01-NLS: boot-17\r\nX-DEVICE.UPNP.ORG: opaque\r\n\r\n\x00body\xff";
+
+        let request = parse_ssdp_request(bytes).expect("request parses");
+        let st_values = request
+            .headers()
+            .get_all(SsdpHeaderNameKind::St)
+            .map(|value| value.as_bytes())
+            .collect::<Vec<_>>();
+        let nls = request
+            .headers()
+            .iter()
+            .find(|header| header.name().kind() == SsdpHeaderNameKind::NlsPrefixed)
+            .expect("NLS-prefixed extension header is present");
+
+        assert_eq!(request.to_bytes().as_slice(), bytes);
+        assert_eq!(request.body(), b"\x00body\xff");
+        assert_eq!(
+            st_values,
+            vec![
+                b"ssdp:all".as_slice(),
+                b"urn:schemas-upnp-org:device:MediaServer:1".as_slice(),
+            ]
+        );
+        assert_eq!(nls.name().original(), "01-NLS");
+        assert_eq!(nls.name().nls_namespace(), Some("01"));
+    }
+
+    #[test]
+    fn ssdp_roundtrip_response_preserves_empty_ext_and_body_bytes() {
+        let bytes = b"HTTP/1.1 200 OK\r\nEXT:\r\nST: ssdp:all\r\nUSN: uuid:device-1::ssdp:all\r\nBOOTID.UPNP.ORG: 17\r\n\r\nresponse\x00\xff";
+
+        let response = parse_ssdp_response(bytes).expect("response parses");
+        let line = response_line(&response);
+
+        assert_eq!(response.to_bytes().as_slice(), bytes);
+        assert!(line.code().is_ok());
+        assert_eq!(
+            response
+                .headers()
+                .get_first(SsdpHeaderNameKind::Ext)
+                .expect("EXT header")
+                .as_bytes(),
+            b""
+        );
+        assert_eq!(response.body(), b"response\x00\xff");
+    }
+
+    #[test]
+    fn ssdp_roundtrip_builders_preserve_explicit_overrides() {
+        let request = Ssdp::request(
+            SsdpMethod::Unknown("X-SEARCH".to_string()),
+            SsdpRequestTarget::new("/description.xml").expect("valid explicit target"),
+            SsdpVersion::new("HTTP/1.0").expect("valid explicit version"),
+        )
+        .with_raw_header("X-EXPERIMENTAL.UPNP.ORG", b"\xffraw".as_slice())
+        .expect("valid extension header")
+        .with_body(b"\x00\x01opaque".to_vec());
+
+        let request_bytes = request.to_bytes();
+        let parsed_request =
+            parse_ssdp_request(&request_bytes).expect("explicit request round-trips");
+        let request_line = request_line(&parsed_request);
+
+        assert_eq!(parsed_request.to_bytes(), request_bytes);
+        assert_eq!(
+            request_line.method(),
+            &SsdpMethod::Unknown("X-SEARCH".to_string())
+        );
+        assert_eq!(request_line.target().as_str(), "/description.xml");
+        assert_eq!(request_line.version().as_str(), "HTTP/1.0");
+
+        let response = Ssdp::response(
+            SsdpVersion::new("HTTP/9.9").expect("valid explicit version"),
+            SsdpStatusCode::new(299).expect("valid explicit status"),
+            SsdpReasonPhrase::new("Odd Success").expect("valid explicit reason"),
+        )
+        .with_raw_header("ST", "ssdp:all")
+        .expect("valid response header")
+        .with_body(b"body".to_vec());
+
+        let response_bytes = response.to_bytes();
+        let parsed_response =
+            parse_ssdp_response(&response_bytes).expect("explicit response round-trips");
+        let response_line = response_line(&parsed_response);
+
+        assert_eq!(parsed_response.to_bytes(), response_bytes);
+        assert_eq!(response_line.version().as_str(), "HTTP/9.9");
+        assert_eq!(response_line.code().code(), 299);
+        assert_eq!(response_line.reason().as_str(), "Odd Success");
+    }
+
+    #[test]
+    fn ssdp_roundtrip_decode_preserves_unknown_start_lines_and_headers() {
+        let request_bytes = b"X-QUERY /device.xml HTTP/9.9\r\nX-Unknown: one\r\n\r\nbody";
+        let request = decode_ssdp(request_bytes).expect("unknown request decodes");
+        let request_line = request_line(&request);
+
+        assert_eq!(request.to_bytes().as_slice(), request_bytes);
+        assert_eq!(
+            request_line.method(),
+            &SsdpMethod::Unknown("X-QUERY".to_string())
+        );
+        assert_eq!(request_line.target().as_str(), "/device.xml");
+        assert_eq!(request_line.version().as_str(), "HTTP/9.9");
+        assert_eq!(
+            request.headers().iter().next().unwrap().name().original(),
+            "X-Unknown"
+        );
+
+        let response_bytes = b"HTTP/1.0 299 Odd Success\r\nX-Unknown: one\r\n\r\nbody";
+        let response = decode_ssdp(response_bytes).expect("unknown response decodes");
+        let response_line = response_line(&response);
+
+        assert_eq!(response.to_bytes().as_slice(), response_bytes);
+        assert_eq!(response_line.version().as_str(), "HTTP/1.0");
+        assert_eq!(response_line.code().code(), 299);
+        assert_eq!(response_line.reason().as_str(), "Odd Success");
+        assert_eq!(
+            response.headers().iter().next().unwrap().name().original(),
+            "X-Unknown"
+        );
+    }
+
+    #[test]
+    fn ssdp_roundtrip_malformed_inputs_return_structured_errors() {
+        let truncated = expect_request_error(b"");
+        assert!(matches!(
+            truncated.kind(),
+            SsdpParseErrorKind::Truncated {
+                context: "ssdp.payload",
+                required: 1,
+                available: 0
+            }
+        ));
+
+        let bad_delimiter = expect_request_error(b"M-SEARCH * HTTP/1.1\n\n");
+        assert!(matches!(
+            bad_delimiter.kind(),
+            SsdpParseErrorKind::BadDelimiter { .. }
+        ));
+
+        let bad_header = expect_request_error(b"M-SEARCH * HTTP/1.1\r\nHOST value\r\n\r\n");
+        assert!(matches!(
+            bad_header.kind(),
+            SsdpParseErrorKind::BadHeaderDelimiter { .. }
+        ));
     }
 
     #[test]
