@@ -19,6 +19,7 @@ from tools.oracle.engine.corpus import (
     populate_corpus_eligibility,
 )
 from tools.oracle.engine.generator import generate_plans
+from tools.oracle.engine.live import local_dry_run_endpoints
 from tools.oracle.engine.model import PacketPlan
 from tools.oracle.engine.providers.hetzner import (
     HETZNER_UNSUPPORTED_LIVE_CASE_REASON,
@@ -157,6 +158,14 @@ class IcmpL2Ipv4CorpusAccountingTest(unittest.TestCase):
         self.assertEqual(
             summary["wire_provider_skipped_counts"].get("local-dry-run", 0),
             _COUNT,
+        )
+
+    def test_local_dry_run_endpoints_do_not_claim_appliance_runtime(self) -> None:
+        endpoints = local_dry_run_endpoints()
+
+        self.assertEqual(set(endpoints), {"libcrafter", "reference_backend"})
+        self.assertFalse(
+            any("appliance_runtime" in endpoint.metadata for endpoint in endpoints.values())
         )
 
     def test_hetzner_skips_source_quench_with_stable_reason(self) -> None:

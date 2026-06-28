@@ -98,6 +98,14 @@ class LiveRunIsolationTest(unittest.TestCase):
         # land on distinct isolated networks.
         self.assertEqual(infrastructure["network"]["private_group"], OVERRIDE_GROUP)
         self.assertEqual(plan["private_group"], OVERRIDE_GROUP)
+        self.assertEqual(
+            plan["endpoint_appliance_runtimes"]["libcrafter"]["metadata"]["private_group"],
+            OVERRIDE_GROUP,
+        )
+        self.assertEqual(
+            plan["live_endpoints"]["libcrafter"].metadata["appliance_runtime"]["metadata"]["source"],
+            "provider-defaults",
+        )
 
         # Every wire create call (argv-equivalent) uses the override.
         self.assertEqual(
@@ -135,6 +143,10 @@ class LiveRunIsolationTest(unittest.TestCase):
         self.assertEqual(infrastructure["network"]["private_group"], OVERRIDE_GROUP)
         self.assertEqual(plan["private_group"], OVERRIDE_GROUP)
         self.assertEqual(
+            plan["endpoint_appliance_runtimes"]["libcrafter"]["metadata"]["private_group"],
+            OVERRIDE_GROUP,
+        )
+        self.assertEqual(
             [call["private_group"] for call in client.calls],
             [OVERRIDE_GROUP, OVERRIDE_GROUP],
         )
@@ -162,6 +174,13 @@ class LiveRunIsolationTest(unittest.TestCase):
                     provider,
                 )
                 self.assertEqual(plan["private_group"], ORACLE_PRIVATE_GROUP, provider)
+                self.assertEqual(
+                    plan["endpoint_appliance_runtimes"]["libcrafter"]["metadata"][
+                        "private_group"
+                    ],
+                    ORACLE_PRIVATE_GROUP,
+                    provider,
+                )
                 self.assertEqual(
                     [call["private_group"] for call in client.calls],
                     [ORACLE_PRIVATE_GROUP, ORACLE_PRIVATE_GROUP],
