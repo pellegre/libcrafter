@@ -1,53 +1,51 @@
 //! Source-backed SSDP constants.
-//!
-//! Keep these private to the SSDP module until the public API export step.
 
-pub(super) const SSDP_SERVICE_NAME: &str = "ssdp";
-pub(super) const SSDP_UDP_PORT: u16 = 1_900;
-pub(super) const SSDP_IPV4_MULTICAST: &str = "239.255.255.250";
-pub(super) const SSDP_IPV4_MULTICAST_HOST: &str = "239.255.255.250:1900";
-pub(super) const SSDP_IPV6_MULTICAST_PATTERN: &str = "ff0x::c";
-pub(super) const SSDP_IPV6_LINK_LOCAL_MULTICAST: &str = "ff02::c";
-pub(super) const SSDP_IPV6_SITE_LOCAL_MULTICAST: &str = "ff05::c";
-pub(super) const SSDP_IPV6_LINK_LOCAL_HOST: &str = "[ff02::c]:1900";
-pub(super) const SSDP_IPV6_SITE_LOCAL_HOST: &str = "[ff05::c]:1900";
+pub const SSDP_SERVICE_NAME: &str = "ssdp";
+pub const SSDP_UDP_PORT: u16 = 1_900;
+pub const SSDP_IPV4_MULTICAST: &str = "239.255.255.250";
+pub const SSDP_IPV4_MULTICAST_HOST: &str = "239.255.255.250:1900";
+pub const SSDP_IPV6_MULTICAST_PATTERN: &str = "ff0x::c";
+pub const SSDP_IPV6_LINK_LOCAL_MULTICAST: &str = "ff02::c";
+pub const SSDP_IPV6_SITE_LOCAL_MULTICAST: &str = "ff05::c";
+pub const SSDP_IPV6_LINK_LOCAL_HOST: &str = "[ff02::c]:1900";
+pub const SSDP_IPV6_SITE_LOCAL_HOST: &str = "[ff05::c]:1900";
 
-pub(super) const SSDP_METHOD_NOTIFY: &str = "NOTIFY";
-pub(super) const SSDP_METHOD_M_SEARCH: &str = "M-SEARCH";
-pub(super) const SSDP_HTTP_VERSION: &str = "HTTP/1.1";
-pub(super) const SSDP_STATUS_OK: u16 = 200;
-pub(super) const SSDP_REASON_OK: &str = "OK";
+pub const SSDP_METHOD_NOTIFY: &str = "NOTIFY";
+pub const SSDP_METHOD_M_SEARCH: &str = "M-SEARCH";
+pub const SSDP_HTTP_VERSION: &str = "HTTP/1.1";
+pub const SSDP_STATUS_OK: u16 = 200;
+pub const SSDP_REASON_OK: &str = "OK";
 
-pub(super) const SSDP_NTS_ALIVE: &str = "ssdp:alive";
-pub(super) const SSDP_NTS_BYEBYE: &str = "ssdp:byebye";
-pub(super) const SSDP_NTS_UPDATE: &str = "ssdp:update";
-pub(super) const SSDP_MAN_DISCOVER: &str = "\"ssdp:discover\"";
-pub(super) const SSDP_ST_ALL: &str = "ssdp:all";
-pub(super) const SSDP_TARGET_ROOTDEVICE: &str = "upnp:rootdevice";
+pub const SSDP_NTS_ALIVE: &str = "ssdp:alive";
+pub const SSDP_NTS_BYEBYE: &str = "ssdp:byebye";
+pub const SSDP_NTS_UPDATE: &str = "ssdp:update";
+pub const SSDP_MAN_DISCOVER: &str = "\"ssdp:discover\"";
+pub const SSDP_ST_ALL: &str = "ssdp:all";
+pub const SSDP_TARGET_ROOTDEVICE: &str = "upnp:rootdevice";
 
-pub(super) const SSDP_HEADER_HOST: &str = "HOST";
-pub(super) const SSDP_HEADER_CACHE_CONTROL: &str = "CACHE-CONTROL";
-pub(super) const SSDP_HEADER_LOCATION: &str = "LOCATION";
-pub(super) const SSDP_HEADER_NT: &str = "NT";
-pub(super) const SSDP_HEADER_NTS: &str = "NTS";
-pub(super) const SSDP_HEADER_SERVER: &str = "SERVER";
-pub(super) const SSDP_HEADER_USN: &str = "USN";
-pub(super) const SSDP_HEADER_BOOTID: &str = "BOOTID.UPNP.ORG";
-pub(super) const SSDP_HEADER_CONFIGID: &str = "CONFIGID.UPNP.ORG";
-pub(super) const SSDP_HEADER_SEARCHPORT: &str = "SEARCHPORT.UPNP.ORG";
-pub(super) const SSDP_HEADER_NEXTBOOTID: &str = "NEXTBOOTID.UPNP.ORG";
-pub(super) const SSDP_HEADER_SECURELOCATION: &str = "SECURELOCATION.UPNP.ORG";
-pub(super) const SSDP_HEADER_MAN: &str = "MAN";
-pub(super) const SSDP_HEADER_MX: &str = "MX";
-pub(super) const SSDP_HEADER_ST: &str = "ST";
-pub(super) const SSDP_HEADER_USER_AGENT: &str = "USER-AGENT";
-pub(super) const SSDP_HEADER_TCPPORT: &str = "TCPPORT.UPNP.ORG";
-pub(super) const SSDP_HEADER_CPFN: &str = "CPFN.UPNP.ORG";
-pub(super) const SSDP_HEADER_CPUUID: &str = "CPUUID.UPNP.ORG";
-pub(super) const SSDP_HEADER_DATE: &str = "DATE";
-pub(super) const SSDP_HEADER_EXT: &str = "EXT";
-pub(super) const SSDP_HEADER_OPT: &str = "OPT";
-pub(super) const SSDP_HEADER_NLS_SUFFIX: &str = "NLS";
+pub const SSDP_HEADER_HOST: &str = "HOST";
+pub const SSDP_HEADER_CACHE_CONTROL: &str = "CACHE-CONTROL";
+pub const SSDP_HEADER_LOCATION: &str = "LOCATION";
+pub const SSDP_HEADER_NT: &str = "NT";
+pub const SSDP_HEADER_NTS: &str = "NTS";
+pub const SSDP_HEADER_SERVER: &str = "SERVER";
+pub const SSDP_HEADER_USN: &str = "USN";
+pub const SSDP_HEADER_BOOTID: &str = "BOOTID.UPNP.ORG";
+pub const SSDP_HEADER_CONFIGID: &str = "CONFIGID.UPNP.ORG";
+pub const SSDP_HEADER_SEARCHPORT: &str = "SEARCHPORT.UPNP.ORG";
+pub const SSDP_HEADER_NEXTBOOTID: &str = "NEXTBOOTID.UPNP.ORG";
+pub const SSDP_HEADER_SECURELOCATION: &str = "SECURELOCATION.UPNP.ORG";
+pub const SSDP_HEADER_MAN: &str = "MAN";
+pub const SSDP_HEADER_MX: &str = "MX";
+pub const SSDP_HEADER_ST: &str = "ST";
+pub const SSDP_HEADER_USER_AGENT: &str = "USER-AGENT";
+pub const SSDP_HEADER_TCPPORT: &str = "TCPPORT.UPNP.ORG";
+pub const SSDP_HEADER_CPFN: &str = "CPFN.UPNP.ORG";
+pub const SSDP_HEADER_CPUUID: &str = "CPUUID.UPNP.ORG";
+pub const SSDP_HEADER_DATE: &str = "DATE";
+pub const SSDP_HEADER_EXT: &str = "EXT";
+pub const SSDP_HEADER_OPT: &str = "OPT";
+pub const SSDP_HEADER_NLS_SUFFIX: &str = "NLS";
 
 #[cfg(test)]
 mod tests {

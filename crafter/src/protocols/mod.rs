@@ -40,7 +40,7 @@ pub mod ipv6 {
 pub mod exports {
     use super::{
         bgp, dhcp, dns, eapol, icmp, igmp, ip, ipsec, ipv4, ipv6, link, mqtt, ospf, quic, rip, rsn,
-        snmp, transport,
+        snmp, ssdp, transport,
     };
 
     pub use crate::packet::Raw;
@@ -526,6 +526,23 @@ pub mod exports {
         SNMP_SECURITY_MODEL_SNMPV2C, SNMP_SECURITY_MODEL_TSM, SNMP_SECURITY_MODEL_USM,
         SNMP_TRAP_PORT, SNMP_V3_FLAG_AUTH, SNMP_V3_FLAG_KNOWN_MASK, SNMP_V3_FLAG_PRIVACY,
         SNMP_V3_FLAG_REPORTABLE, SNMP_V3_FLAG_RESERVED_MASK,
+    };
+    pub use ssdp::{
+        Ssdp, SsdpHeader, SsdpHeaderField, SsdpHeaderName, SsdpHeaderNameKind,
+        SsdpHeaderNameParseError, SsdpHeaderValue, SsdpHeaders, SsdpMessage, SsdpMethod,
+        SsdpMethodParseError, SsdpReasonPhrase, SsdpRequestLine, SsdpRequestTarget, SsdpStartLine,
+        SsdpStartLineField, SsdpStartLineParseError, SsdpStatusCode, SsdpStatusLine, SsdpVersion,
+        SSDP_HEADER_BOOTID, SSDP_HEADER_CACHE_CONTROL, SSDP_HEADER_CONFIGID, SSDP_HEADER_CPFN,
+        SSDP_HEADER_CPUUID, SSDP_HEADER_DATE, SSDP_HEADER_EXT, SSDP_HEADER_HOST,
+        SSDP_HEADER_LOCATION, SSDP_HEADER_MAN, SSDP_HEADER_MX, SSDP_HEADER_NEXTBOOTID,
+        SSDP_HEADER_NLS_SUFFIX, SSDP_HEADER_NT, SSDP_HEADER_NTS, SSDP_HEADER_OPT,
+        SSDP_HEADER_SEARCHPORT, SSDP_HEADER_SECURELOCATION, SSDP_HEADER_SERVER, SSDP_HEADER_ST,
+        SSDP_HEADER_TCPPORT, SSDP_HEADER_USER_AGENT, SSDP_HEADER_USN, SSDP_HTTP_VERSION,
+        SSDP_IPV4_MULTICAST, SSDP_IPV4_MULTICAST_HOST, SSDP_IPV6_LINK_LOCAL_HOST,
+        SSDP_IPV6_LINK_LOCAL_MULTICAST, SSDP_IPV6_MULTICAST_PATTERN, SSDP_IPV6_SITE_LOCAL_HOST,
+        SSDP_IPV6_SITE_LOCAL_MULTICAST, SSDP_MAN_DISCOVER, SSDP_METHOD_M_SEARCH,
+        SSDP_METHOD_NOTIFY, SSDP_NTS_ALIVE, SSDP_NTS_BYEBYE, SSDP_NTS_UPDATE, SSDP_REASON_OK,
+        SSDP_SERVICE_NAME, SSDP_STATUS_OK, SSDP_ST_ALL, SSDP_TARGET_ROOTDEVICE, SSDP_UDP_PORT,
     };
     pub use transport::{
         tcp_option_kind_class, tcp_option_kind_is_assigned, tcp_option_kind_is_experimental,
