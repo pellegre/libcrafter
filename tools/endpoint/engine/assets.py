@@ -11,8 +11,18 @@ from pathlib import Path
 from types import TracebackType
 from typing import IO, Protocol
 
+from tools.appliance.engine.checks import render_profile_check_plans
+from tools.appliance.engine.profiles import resolve_profile
+from tools.appliance.engine.ssh_docker import (
+    DEFAULT_REMOTE_ARTIFACT_ROOT,
+    DEFAULT_REMOTE_WORK_ROOT,
+    SSHDockerHostTarget,
+    render_docker_check_plan,
+)
+
 from .config import WireConfig, default_config
 from .model import JSONObject, JsonModel, json_object, read_json, string_list, write_json
+from .process import CommandResult
 
 
 ASSETS_DIRNAME = "assets"
@@ -45,6 +55,12 @@ class AssetLockFactory(Protocol):
     """Factory for asset lock context managers."""
 
     def __call__(self, path: Path) -> AssetLock: ...
+
+
+class AssetCheckRunner(Protocol):
+    """Callable used to execute one asset readiness command."""
+
+    def __call__(self, argv: list[str]) -> CommandResult: ...
 
 
 class AssetFileLock:
@@ -353,6 +369,126 @@ def list_endpoint_assets(config: WireConfig | None = None) -> list[EndpointAsset
     return [assets[asset_id] for asset_id in sorted(assets)]
 
 
+def check_endpoint_asset(
+    asset_id: str,
+    profile_name: str,
+    *,
+    runner: AssetCheckRunner,
+    now: datetime | str | None = None,
+    config: WireConfig | None = None,
+    lock_factory: AssetLockFactory = AssetFileLock,
+) -> dict[str, object]:
+    """Run non-mutating readiness checks for one persistent endpoint asset."""
+
+    profile = resolve_profile(profile_name)
+    checked_at = _format_utc(_coerce_utc_datetime(now, "now") if now is not None else _utc_now())
+
+    with lock_factory(asset_lock_path(asset_id, config)):
+        asset = read_endpoint_asset(asset_id, config)
+        if profile.name not in asset.supported_profiles:
+            supported = ", ".join(asset.supported_profiles) or "<none>"
+            raise ValueError(
+                f"endpoint asset {asset.asset_id!r} does not support profile "
+                f"{profile.name!r}; supported profiles: {supported}"
+            )
+
+        target = asset_ssh_docker_target(asset)
+        docker_plan = render_docker_check_plan(target)
+        docker_result = runner(docker_plan.command_argv)
+        profile_checks = render_profile_check_plans(
+            profile,
+            image_tag=profile.image,
+            docker_command=target.docker_command,
+        )
+        hardware_check = _hardware_visible_check(asset)
+        ok = docker_result.ok and bool(hardware_check["ok"])
+        updated_asset = _asset_with_last_check(asset, checked_at)
+        write_endpoint_asset(updated_asset, config)
+
+    return {
+        "kind": "endpoint-asset-check",
+        "asset_id": updated_asset.asset_id,
+        "asset_path": str(asset_record_path(updated_asset.asset_id, config)),
+        "profile": profile.name,
+        "ok": ok,
+        "exit_code": 0 if ok else _failed_check_exit_code(docker_result, hardware_check),
+        "checked_at": checked_at,
+        "last_check": updated_asset.last_check,
+        "asset": updated_asset.to_dict(),
+        "target": target.to_dict(),
+        "docker_check": {
+            "name": "ssh-docker-check",
+            "kind": docker_plan.kind,
+            "ok": docker_result.ok,
+            "plan": docker_plan.to_dict(),
+            "result": _command_result_output(docker_result),
+        },
+        "hardware_check": hardware_check,
+        "profile_checks": [check.to_dict() for check in profile_checks],
+        "host_requirements": list(profile.host_requirements),
+        "checks": [
+            {
+                "name": "ssh-docker-check",
+                "kind": docker_plan.kind,
+                "ok": docker_result.ok,
+                "executed": True,
+            },
+            hardware_check,
+            *[
+                {
+                    "name": check.name,
+                    "kind": check.kind,
+                    "ok": True,
+                    "executed": False,
+                    "planned": True,
+                    "required": check.required,
+                    "metadata": check.metadata,
+                }
+                for check in profile_checks
+            ],
+        ],
+        "live_transmit": False,
+        "dry_run": True,
+    }
+
+
+def asset_ssh_docker_target(asset: EndpointAsset) -> SSHDockerHostTarget:
+    """Convert one endpoint asset record into an SSH Docker host target."""
+
+    appliance_metadata = _optional_mapping(asset.metadata.get("appliance"), "metadata.appliance")
+    remote_work_root = DEFAULT_REMOTE_WORK_ROOT
+    remote_artifact_root = DEFAULT_REMOTE_ARTIFACT_ROOT
+    if appliance_metadata is not None:
+        remote_work_root = _optional_string(
+            appliance_metadata.get("remote_work_root"),
+            "metadata.appliance.remote_work_root",
+        ) or remote_work_root
+        remote_artifact_root = _optional_string(
+            appliance_metadata.get("remote_artifact_root"),
+            "metadata.appliance.remote_artifact_root",
+        ) or remote_artifact_root
+
+    docker_command = _optional_string(asset.docker.get("command"), "docker.command") or "docker"
+    identity_file = asset.ssh.identity_file
+    known_hosts_file = asset.ssh.known_hosts_file
+    if identity_file is None:
+        raise ValueError("ssh.identity_file is required for appliance SSH Docker checks")
+    if known_hosts_file is None:
+        raise ValueError("ssh.known_hosts_file is required for appliance SSH Docker checks")
+
+    return SSHDockerHostTarget(
+        host=asset.ssh.host,
+        user=asset.ssh.user,
+        port=asset.ssh.port,
+        identity_file=identity_file,
+        known_hosts_file=known_hosts_file,
+        remote_work_root=remote_work_root,
+        remote_artifact_root=remote_artifact_root,
+        docker_command=docker_command,
+        metadata={"asset_id": asset.asset_id, "substrate": asset.substrate},
+    )
+
+
 def acquire_endpoint_asset(
     asset_id: str,
     holder: str,
@@ -479,6 +615,64 @@ def _lease_metadata(
     return output
 
 
+def _asset_with_last_check(asset: EndpointAsset, checked_at: str) -> EndpointAsset:
+    return EndpointAsset(
+        asset_id=asset.asset_id,
+        substrate=asset.substrate,
+        status=asset.status,
+        supported_profiles=asset.supported_profiles,
+        ssh=asset.ssh,
+        docker=asset.docker,
+        hardware=asset.hardware,
+        last_check=checked_at,
+        lease=asset.lease,
+        metadata=asset.metadata,
+    )
+
+
+def _hardware_visible_check(asset: EndpointAsset) -> dict[str, object]:
+    hardware = asset.hardware.to_dict()
+    visible = any(value not in (None, {}, []) for value in hardware.values())
+    return {
+        "name": "hardware-visible-state",
+        "kind": "hardware-visible-state",
+        "ok": visible,
+        "executed": False,
+        "readiness_only": True,
+        "hardware": hardware,
+        "message": "hardware metadata is present"
+        if visible
+        else "asset hardware metadata is empty",
+    }
+
+
+def _command_result_output(result: CommandResult) -> dict[str, object]:
+    return {
+        "argv": list(result.argv),
+        "redacted_argv": list(result.redacted_argv),
+        "command": result.command,
+        "cwd": result.cwd,
+        "exit_code": result.exit_code,
+        "ok": result.ok,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "timed_out": result.timed_out,
+        "timeout": result.timeout,
+        "error": result.error,
+    }
+
+
+def _failed_check_exit_code(
+    docker_result: CommandResult,
+    hardware_check: Mapping[str, object],
+) -> int:
+    if not docker_result.ok and docker_result.exit_code != 0:
+        return docker_result.exit_code
+    if not bool(hardware_check.get("ok")):
+        return 1
+    return 1
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC).replace(microsecond=0)
 
@@ -520,6 +714,12 @@ def _mapping(value: object, name: str) -> Mapping[str, object]:
         if not isinstance(key, str):
             raise ValueError(f"{name} keys must be strings")
     return value
+
+
+def _optional_mapping(value: object, name: str) -> Mapping[str, object] | None:
+    if value is None:
+        return None
+    return _mapping(value, name)
 
 
 def _string(value: object, name: str) -> str:
