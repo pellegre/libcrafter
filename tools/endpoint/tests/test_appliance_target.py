@@ -7,11 +7,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tools.appliance.engine.profile import ApplianceProfile
 from tools.appliance.engine.ssh_docker import SSHDockerHostTarget
 from tools.endpoint.engine.appliance import (
     DEFAULT_APPLIANCE_REMOTE_BASE,
     EndpointApplianceTarget,
     read_endpoint_appliance_target,
+    render_endpoint_appliance_run_plan,
     resolve_endpoint_appliance_target,
 )
 from tools.endpoint.engine.config import WireConfig
@@ -205,6 +207,43 @@ class EndpointApplianceTargetTest(unittest.TestCase):
         self.assertTrue(appliance["appliance_capable"])  # type: ignore[index]
         self.assertFalse(appliance["nested_docker"])  # type: ignore[index]
         self.assertFalse(appliance["docker_execution_supported"])  # type: ignore[index]
+
+    def test_docker_endpoint_appliance_container_rejects_nested_run_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            resolved = resolve_endpoint_appliance_target(
+                _docker_manifest(
+                    root,
+                    metadata={
+                        "appliance": {"appliance_capable": True},
+                        "docker": {
+                            "container": {
+                                "type": "docker-container",
+                                "container_name": "appliance-container-a",
+                                "appliance_capable": True,
+                            }
+                        },
+                    },
+                )
+            )
+
+        appliance = resolved.target.metadata["appliance"]
+        self.assertEqual(
+            appliance["target_kind"],  # type: ignore[index]
+            "docker-endpoint-appliance-container",
+        )
+        self.assertFalse(appliance["nested_docker"])  # type: ignore[index]
+        self.assertFalse(appliance["docker_execution_supported"])  # type: ignore[index]
+        with self.assertRaisesRegex(ValueError, "endpoint is already a Docker container"):
+            render_endpoint_appliance_run_plan(
+                resolved,
+                ApplianceProfile(
+                    name="wan-raw",
+                    network_mode="host",
+                    cap_add=["NET_RAW"],
+                ),
+                ["true"],
+            )
 
     def test_missing_ssh_identity_is_rejected_before_target_rendering(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
