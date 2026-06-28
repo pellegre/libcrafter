@@ -8383,8 +8383,9 @@ _SUITE_FEATURE_BY_FAMILY = {
     "ipv6": "ipv6_fragment_routing",
     "quic": "quic_behavior",
     "snmp": ("snmp_basic", "snmp_pdu_matrix", "snmp_v3"),
+    "ssdp": "ssdp_core",
 }
-_LAYER_ONLY_SUITE_FAMILIES = frozenset({"igmp"})
+_LAYER_ONLY_SUITE_FAMILIES = frozenset({"igmp", "ssdp"})
 _SUITE_OFFLINE_DIRECTIONS = (
     "backend_to_libcrafter",
     "libcrafter_to_backend",
