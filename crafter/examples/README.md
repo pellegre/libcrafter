@@ -53,6 +53,7 @@ values use `Ipv4Protocol`.
 | `dhcpv6_relay` | Protocols | Offline | DHCPv6 Relay-forward construction with Interface-Id and nested Relay Message decoding. | `cargo run -p crafter --example dhcpv6_relay` |
 | `icmpv4_error` | Protocols | Offline | ICMPv4 time-exceeded error with a quoted datagram and an RFC 4884/4950 MPLS extension object, compiled and decoded offline. | `cargo run -p crafter --example icmpv4_error` |
 | `icmpv6_echo` | Protocols | Offline by default; dry-run with `--send-recv` | IPv6 ICMPv6 echo construction and optional dry-run send/receive reporting. | `cargo run -p crafter --example icmpv6_echo` |
+| `ssdp_decode` | Protocols | Offline | Tracked SSDP payload fixture decoding with summary and show output. | `cargo run -p crafter --example ssdp_decode` |
 | `ssdp_search_plan` | Protocols | Dry-run | SSDP M-SEARCH construction over IPv4 and IPv6 with network-layer send plan inspection. | `cargo run -p crafter --example ssdp_search_plan` |
 | `ssdp_notify` | Protocols | Offline | SSDP notification construction, compile, decode, summary, show, and hexdump output. | `cargo run -p crafter --example ssdp_notify` |
 | `snmp_get` | Protocols | Offline | SNMPv1 and SNMPv2c GetRequest packet construction, decode, show, and hexdump output. | `cargo run -p crafter --example snmp_get` |
