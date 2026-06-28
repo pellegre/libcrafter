@@ -1,6 +1,7 @@
 use std::fs;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crafter::prelude::*;
 use crafter::wire::backend::pcap::{
@@ -13,6 +14,29 @@ const DOC_SRC: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 10);
 const SSDP_GROUP: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
 const DOC_SRC_MAC: MacAddr = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]);
 const SSDP_IPV4_GROUP_MAC: MacAddr = MacAddr::new([0x01, 0x00, 0x5e, 0x7f, 0xff, 0xfa]);
+static NEXT_TEMP_PCAP: AtomicUsize = AtomicUsize::new(0);
+
+struct TempPcap {
+    path: PathBuf,
+}
+
+impl TempPcap {
+    fn new(name: &str) -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "ssdp-pcap-{name}-{}-{}.pcap",
+            std::process::id(),
+            NEXT_TEMP_PCAP.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = fs::remove_file(&path);
+        Self { path }
+    }
+}
+
+impl Drop for TempPcap {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
 
 fn fixture_path(path: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -111,6 +135,60 @@ fn assert_raw_ssdp_packet(packet: &Packet) {
     assert!(summary.contains("M-SEARCH * HTTP/1.1"), "{summary}");
 }
 
+fn assert_packetwire_roundtrip(
+    name: &str,
+    link_type: LinkType,
+    packet: Packet,
+    expected_bytes: Vec<u8>,
+) {
+    let temp = TempPcap::new(name);
+    let timestamp = PcapTimestamp::micros(64, 1_900).expect("SSDP timestamp should be valid");
+    let record = PacketRecord::new(packet).with_timestamp(timestamp);
+    let mut writer = PacketWire::pcap_recorder(&temp.path, link_type)
+        .open()
+        .expect("SSDP PacketWire pcap writer should open")
+        .writer()
+        .expect("SSDP PacketWire pcap recorder should expose writer");
+
+    let report = writer
+        .write_record(&record)
+        .expect("SSDP PacketWire pcap record should write");
+    assert_eq!(report.backend(), &BackendKind::PcapFile);
+    assert_eq!(report.bytes_requested(), expected_bytes.len());
+    assert_eq!(report.bytes_written(), expected_bytes.len());
+    let target_details = temp.path.display().to_string();
+    assert_eq!(report.target_details(), Some(target_details.as_str()));
+    drop(writer);
+
+    let mut source = PacketWire::pcap_file(&temp.path)
+        .open()
+        .expect("SSDP PacketWire pcap reader should open")
+        .source()
+        .expect("SSDP PacketWire pcap file should expose source");
+    let captured = source
+        .next_record()
+        .expect("SSDP PacketWire pcap source should read")
+        .expect("SSDP PacketWire pcap source should contain one record");
+    assert!(source
+        .next_record()
+        .expect("SSDP PacketWire pcap source should finish")
+        .is_none());
+
+    let metadata = captured.metadata();
+    assert_eq!(metadata.backend(), &BackendKind::PcapFile);
+    assert_eq!(metadata.file(), Some(temp.path.as_path()));
+    assert_eq!(metadata.timestamp(), Some(timestamp));
+    assert_eq!(metadata.original_len(), Some(expected_bytes.len() as u32));
+    assert_eq!(metadata.captured_len(), Some(expected_bytes.len() as u32));
+    assert_eq!(metadata.captured_bytes(), Some(expected_bytes.as_slice()));
+    assert_eq!(metadata.link_type(), Some(link_type));
+    assert_eq!(
+        metadata.pcap_link_type(),
+        Some(PcapLinkType::from(link_type))
+    );
+    assert_raw_ssdp_packet(captured.packet());
+}
+
 #[test]
 fn raw_ssdp_pcap_fixture_reads_decodes_and_summarizes_offline() {
     let fixture =
@@ -182,6 +260,22 @@ fn ethernet_ssdp_pcap_fixture_decodes_link_network_udp_and_ssdp_layers() {
     assert_eq!(ethernet.destination(), Some(SSDP_IPV4_GROUP_MAC));
     assert_eq!(ethernet.ethertype_value(), Some(ETHERTYPE_IPV4));
     assert_raw_ssdp_packet(packet);
+}
+
+#[test]
+fn packetwire_ssdp_pcap_roundtrip_supported_link_types() {
+    assert_packetwire_roundtrip(
+        "raw-ipv4",
+        LinkType::Raw,
+        raw_ipv4_ssdp_packet(),
+        raw_ipv4_ssdp_bytes(),
+    );
+    assert_packetwire_roundtrip(
+        "ethernet-ipv4",
+        LinkType::Ethernet,
+        ethernet_ipv4_ssdp_packet(),
+        ethernet_ipv4_ssdp_bytes(),
+    );
 }
 
 #[test]
