@@ -66,6 +66,23 @@ If live QUIC prerequisites or authorization are missing, record a structured
 skip artifact under `target/lab/quic-live-validation/README.md` rather than
 sending traffic from the developer host.
 
+## SSDP Validation Safety
+
+SSDP validation is a packet-behavior workflow, not a discovery scan. Run SSDP
+oracle, probe, and lab checks through dry-run planning first, and keep all
+artifacts under ignored SSDP roots such as `target/oracle/ssdp-*` and
+`target/probe/ssdp-*`. Tracked records should name only the relative artifact
+root, case label, seed, provider class, role names, skip reason, and teardown
+status.
+
+Before any SSDP artifact is copied into docs, fixtures, oracle specs, or probe
+assets, redact or replace credentials, provider account data, public addresses,
+endpoint IDs, live hostnames, SSH details, local absolute paths, interface names,
+real UUIDs, device descriptions, `LOCATION` URLs, `SERVER` strings, and
+uncontrolled capture payloads. If redaction removes the fact being validated,
+regenerate the case offline with documentation-safe addresses and synthetic
+identifiers instead of promoting the live artifact.
+
 ## Oracle CLI modes
 
 `tools/oracle/run` is the single entrypoint for every oracle mode. Each mode is
