@@ -835,6 +835,36 @@ mod tests {
             .expect("response start line")
     }
 
+    fn assert_request_parse_serialize_body_round_trip(bytes: &[u8], expected_body: &[u8]) {
+        let ssdp = parse_ssdp_request(bytes).expect("request parses");
+
+        assert_eq!(ssdp.body(), expected_body);
+        assert_eq!(ssdp.to_bytes().as_slice(), bytes);
+    }
+
+    fn assert_response_parse_serialize_body_round_trip(bytes: &[u8], expected_body: &[u8]) {
+        let ssdp = parse_ssdp_response(bytes).expect("response parses");
+
+        assert_eq!(ssdp.body(), expected_body);
+        assert_eq!(ssdp.to_bytes().as_slice(), bytes);
+    }
+
+    fn assert_request_builder_serialize_parse_body_round_trip(ssdp: Ssdp, expected_body: &[u8]) {
+        let bytes = ssdp.to_bytes();
+        let parsed = parse_ssdp_request(&bytes).expect("serialized request parses");
+
+        assert_eq!(parsed.body(), expected_body);
+        assert_eq!(parsed.to_bytes(), bytes);
+    }
+
+    fn assert_response_builder_serialize_parse_body_round_trip(ssdp: Ssdp, expected_body: &[u8]) {
+        let bytes = ssdp.to_bytes();
+        let parsed = parse_ssdp_response(&bytes).expect("serialized response parses");
+
+        assert_eq!(parsed.body(), expected_body);
+        assert_eq!(parsed.to_bytes(), bytes);
+    }
+
     #[test]
     fn ssdp_parse_response_200_ok_with_headers_and_no_body() {
         let bytes = b"HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nDATE: Sat, 27 Jun 2026 00:00:00 GMT\r\nEXT:\r\nST: ssdp:all\r\nUSN: uuid:device-1::upnp:rootdevice\r\n\r\n";
@@ -917,6 +947,57 @@ mod tests {
         let ssdp = parse_ssdp_response(&bytes).expect("body response parses");
 
         assert_eq!(ssdp.body(), body);
+    }
+
+    #[test]
+    fn ssdp_body_parse_serialize_round_trip_preserves_empty_request_and_response_bodies() {
+        assert_request_parse_serialize_body_round_trip(b"NOTIFY * HTTP/1.1\r\n\r\n", b"");
+        assert_response_parse_serialize_body_round_trip(b"HTTP/1.1 200 OK\r\n\r\n", b"");
+    }
+
+    #[test]
+    fn ssdp_body_parse_serialize_round_trip_preserves_opaque_request_and_response_bodies() {
+        let request_body = b"\x00\r\nHOST: body-only\r\n\r\n\xffrequest-tail";
+        let mut request_bytes =
+            b"M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\n\r\n".to_vec();
+        request_bytes.extend_from_slice(request_body);
+
+        let response_body = b"\xff\r\nST: body-only\r\n\r\n\x00response-tail";
+        let mut response_bytes = b"HTTP/1.1 200 OK\r\nEXT:\r\n\r\n".to_vec();
+        response_bytes.extend_from_slice(response_body);
+
+        assert_request_parse_serialize_body_round_trip(&request_bytes, request_body);
+        assert_response_parse_serialize_body_round_trip(&response_bytes, response_body);
+    }
+
+    #[test]
+    fn ssdp_body_builder_serialize_parse_round_trip_preserves_empty_request_and_response_bodies() {
+        assert_request_builder_serialize_parse_body_round_trip(
+            Ssdp::notify().with_body(Vec::<u8>::new()),
+            b"",
+        );
+        assert_response_builder_serialize_parse_body_round_trip(
+            Ssdp::response_ok().with_body(Vec::<u8>::new()),
+            b"",
+        );
+    }
+
+    #[test]
+    fn ssdp_body_builder_serialize_parse_round_trip_preserves_opaque_request_and_response_bodies() {
+        let request_body = b"\x00\r\nMAN: body-only\r\n\r\n\xffrequest-tail".to_vec();
+        let request = Ssdp::m_search()
+            .with_raw_header("HOST", "239.255.255.250:1900")
+            .expect("HOST header")
+            .with_body(request_body.clone());
+
+        let response_body = b"\xff\r\nEXT: body-only\r\n\r\n\x00response-tail".to_vec();
+        let response = Ssdp::response_ok()
+            .with_raw_header("EXT", SsdpHeaderValue::empty())
+            .expect("EXT header")
+            .with_body(response_body.clone());
+
+        assert_request_builder_serialize_parse_body_round_trip(request, &request_body);
+        assert_response_builder_serialize_parse_body_round_trip(response, &response_body);
     }
 
     #[test]
