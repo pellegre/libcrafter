@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tools.lab.engine.model import LabRole, LabSession
+from tools.lab.engine.model import LabApplianceRuntime, LabRole, LabSession
 from tools.lab.engine.paths import (
     DEFAULT_ARTIFACT_ROOT,
     DEFAULT_STATE_ROOT,
@@ -141,6 +141,12 @@ class LabSessionStateTest(unittest.TestCase):
                 root / "lab-state" / "sessions" / "lab-smoke-0001" / "session.json",
             )
             self.assertEqual(loaded.to_dict(), first.to_dict())
+            self.assertIsNotNone(loaded.appliance_runtime)
+            self.assertEqual(loaded.appliance_runtime.profile, "lan-raw")
+            self.assertEqual(
+                loaded.appliance_runtime.container_policy["execution_mode"],
+                "ssh-docker-host",
+            )
             self.assertEqual(
                 [session.session_id for session in listed],
                 ["lab-smoke-0001", "lab-smoke-0002"],
@@ -192,7 +198,29 @@ def _session(session_id: str) -> LabSession:
         roles=[LabRole(name="stimulus"), LabRole(name="target")],
         remote_dir=f"/opt/libcrafter-lab/{session_id}",
         remote_artifact_root=f"/opt/libcrafter-lab/{session_id}/artifacts",
+        appliance_runtime=_runtime(session_id),
         dry_run=True,
+    )
+
+
+def _runtime(session_id: str) -> LabApplianceRuntime:
+    return LabApplianceRuntime(
+        profile="lan-raw",
+        image_tag="registry.example.invalid/libcrafter/appliance:session",
+        remote_work_root=f"/opt/libcrafter-lab/{session_id}",
+        remote_artifact_root=f"/opt/libcrafter-lab/{session_id}/artifacts",
+        container_policy={
+            "runtime": "docker",
+            "execution_mode": "ssh-docker-host",
+            "nested_docker": True,
+            "docker_execution_supported": True,
+        },
+        check_metadata={"profile": "lan-raw"},
+        metadata={
+            "source": "endpoint-runtimes",
+            "substrate": "ssh-docker",
+            "execution_mode": "ssh-docker-host",
+        },
     )
 
 

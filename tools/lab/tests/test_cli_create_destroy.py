@@ -78,6 +78,14 @@ class LabCliCreateDestroyTest(unittest.TestCase):
                 session_id = created["session_id"]
                 self.assertEqual(session_id, "lab-qemu-qemu-smoke-seed-1")
                 self.assertFalse(created["dry_run"])
+                _assert_session_runtime(self, created["appliance_runtime"])
+                self.assertEqual(
+                    [
+                        endpoint["appliance_runtime"]["metadata"]["source"]
+                        for endpoint in created["endpoints"]
+                    ],
+                    ["endpoint-manifest", "endpoint-manifest"],
+                )
                 self.assertEqual(
                     created["created_endpoint_ids"],
                     ["endpoint-qemu-private-stimulus", "endpoint-qemu-private-target"],
@@ -97,6 +105,10 @@ class LabCliCreateDestroyTest(unittest.TestCase):
                 self.assertEqual(
                     listed["sessions"][0]["created_endpoint_ids"],
                     created["created_endpoint_ids"],
+                )
+                _assert_session_runtime(
+                    self,
+                    listed["sessions"][0]["appliance_runtime"],
                 )
 
                 info_exit, info_stdout, info_stderr = _run_cli(
@@ -156,6 +168,7 @@ class LabCliCreateDestroyTest(unittest.TestCase):
                 )
                 self.assertEqual(fake.destroy_calls, list(reversed(endpoint_ids)))
                 self.assertEqual(destroyed["cleanup_state"]["status"], "completed")
+                _assert_session_runtime(self, destroyed["appliance_runtime"])
                 self.assertTrue(destroyed["cleanup_state"]["artifact_collection_attempted"])
                 self.assertTrue(destroyed["cleanup_state"]["teardown_attempted"])
                 self.assertEqual(destroyed["cleanup_state"]["errors"], [])
@@ -214,6 +227,21 @@ def _run_cli(*args: str) -> tuple[int, str, str]:
     with redirect_stdout(stdout), redirect_stderr(stderr):
         exit_code = cli.main(list(args))
     return exit_code, stdout.getvalue(), stderr.getvalue()
+
+
+def _assert_session_runtime(case: unittest.TestCase, runtime: dict[str, object]) -> None:
+    case.assertEqual(runtime["profile"], "lan-raw")
+    case.assertEqual(
+        runtime["image_tag"],
+        "registry.example.invalid/libcrafter/appliance:qemu-live",
+    )
+    case.assertEqual(runtime["metadata"]["source"], "endpoint-runtimes")
+    case.assertEqual(runtime["metadata"]["execution_mode"], "ssh-docker-host")
+    case.assertEqual(runtime["metadata"]["substrate"], "ssh-docker")
+    case.assertEqual(runtime["container_policy"]["execution_mode"], "ssh-docker-host")
+    case.assertTrue(runtime["container_policy"]["nested_docker"])
+    case.assertEqual(runtime["remote_work_root"], "/root/libcrafter")
+    case.assertEqual(runtime["remote_artifact_root"], "/root/libcrafter/artifacts")
 
 
 class _temporary_lab_state:
@@ -398,6 +426,7 @@ def _manifest(
     if private_group is not None:
         interface_metadata["private_group"] = private_group
     endpoint_id = f"endpoint-{provider}-{exposure}-{role}"
+    remote_root = f"/var/lib/libcrafter/appliance/{endpoint_id}"
     return EndpointManifest(
         endpoint_id=endpoint_id,
         provider=provider,
@@ -417,7 +446,24 @@ def _manifest(
         ],
         provider_resources=ProviderResources(),
         artifact_dir=f"/tmp/libcrafter-lab-test/{endpoint_id}",
-        metadata={"private_group": private_group} if private_group is not None else {},
+        metadata={
+            "private_group": private_group,
+            "appliance": {
+                "appliance_capable": True,
+                "nested_docker": True,
+                "docker_execution_supported": True,
+                "docker_command": "docker",
+                "substrate": "ssh-docker",
+                "remote_base": "/var/lib/libcrafter/appliance",
+                "remote_work_root": f"{remote_root}/work",
+                "remote_artifact_root": f"{remote_root}/artifacts",
+                "supported_profiles": ["lan-raw"],
+                "raw_profile": "lan-raw",
+                "image_tag": "registry.example.invalid/libcrafter/appliance:qemu-live",
+                "docker_setup": "install-or-verify",
+                "private_lab": True,
+            },
+        },
     )
 
 
