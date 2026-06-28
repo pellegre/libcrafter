@@ -1664,6 +1664,63 @@ mod tests {
     }
 
     #[test]
+    fn ssdp_header_boundaries_reject_malformed_header_and_delimiter_variants() {
+        let cases: &[(&[u8], fn(&SsdpParseErrorKind) -> bool)] = &[
+            (b"M-SEARCH * HTTP/1.1\r\nHOST value\r\n\r\n", |kind| {
+                matches!(kind, SsdpParseErrorKind::BadHeaderDelimiter { .. })
+            }),
+            (b"M-SEARCH * HTTP/1.1\r\nHOST : value\r\n\r\n", |kind| {
+                matches!(kind, SsdpParseErrorKind::WhitespaceBeforeColon { .. })
+            }),
+            (b"M-SEARCH * HTTP/1.1\r\nBA\x01D: value\r\n\r\n", |kind| {
+                matches!(kind, SsdpParseErrorKind::InvalidHeaderName { .. })
+            }),
+            (
+                b"M-SEARCH * HTTP/1.1\r\nHOST: value\r\n\tcontinued\r\n\r\n",
+                |kind| matches!(kind, SsdpParseErrorKind::ObsoleteFoldedHeader { .. }),
+            ),
+            (b"M-SEARCH * HTTP/1.1\nHOST: value\n\n", |kind| {
+                matches!(kind, SsdpParseErrorKind::BadDelimiter { .. })
+            }),
+            (b"M-SEARCH * HTTP/1.1\rHOST: value\r\n\r\n", |kind| {
+                matches!(kind, SsdpParseErrorKind::BadDelimiter { .. })
+            }),
+            (b"M-SEARCH * HTTP/1.1\r\nHOST: value", |kind| {
+                matches!(kind, SsdpParseErrorKind::MissingHeaderDelimiter { .. })
+            }),
+            (b"M-SEARCH * HTTP/1.1\r", |kind| {
+                matches!(kind, SsdpParseErrorKind::Truncated { .. })
+            }),
+        ];
+
+        for (bytes, matches_expected_kind) in cases {
+            let error = expect_request_error(bytes);
+
+            assert!(
+                matches_expected_kind(error.kind()),
+                "unexpected boundary error for {bytes:?}: {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ssdp_header_boundaries_trim_value_ows_without_accepting_name_ows() {
+        let parsed = parse_ssdp_request(b"M-SEARCH * HTTP/1.1\r\nHOST:\t value \t\r\n\r\n")
+            .expect("value OWS is allowed");
+        let host = parsed
+            .headers()
+            .get_first(SsdpHeaderNameKind::Host)
+            .expect("HOST header");
+        let name_ows = expect_request_error(b"M-SEARCH * HTTP/1.1\r\nHOST\t: value\r\n\r\n");
+
+        assert_eq!(host.as_bytes(), b"value");
+        assert!(matches!(
+            name_ows.kind(),
+            SsdpParseErrorKind::WhitespaceBeforeColon { .. }
+        ));
+    }
+
+    #[test]
     fn ssdp_malformed_unrelated_binary_and_text_payloads_are_structured() {
         let unrelated_text_request = expect_request_error(b"hello world\r\n\r\n");
         assert_eq!(
