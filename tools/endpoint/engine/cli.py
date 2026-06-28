@@ -27,10 +27,12 @@ from .assets import (
     AssetHardware,
     AssetSSHInfo,
     EndpointAsset,
+    acquire_endpoint_asset_lease_by_profile,
     asset_record_path,
     check_endpoint_asset,
     list_endpoint_assets,
     read_endpoint_asset,
+    release_endpoint_asset_lease,
     write_endpoint_asset,
 )
 from .model import EndpointManifest, dumps_json, write_json
@@ -301,6 +303,50 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_asset_json_option(asset_check)
     asset_check.set_defaults(command_name="asset", asset_command_name="check")
+
+    asset_acquire = asset_subparsers.add_parser(
+        "acquire",
+        help="lease one persistent endpoint asset by appliance profile",
+        description="Lease one available persistent endpoint asset for a supported profile.",
+    )
+    asset_acquire.add_argument(
+        "--profile",
+        required=True,
+        metavar="PROFILE",
+        help="supported appliance profile to lease",
+    )
+    asset_acquire.add_argument(
+        "--lease-ttl",
+        required=True,
+        metavar="DURATION",
+        help="lease TTL as seconds or with s, m, or h suffix",
+    )
+    asset_acquire.add_argument(
+        "--owner",
+        metavar="OWNER",
+        help="optional owner label stored in lease metadata",
+    )
+    asset_acquire.add_argument(
+        "--metadata-json",
+        metavar="JSON",
+        help="additional lease metadata JSON object",
+    )
+    asset_acquire.add_argument(
+        "--wait",
+        action="store_true",
+        help="plan waiting for a busy asset without blocking indefinitely",
+    )
+    _add_asset_json_option(asset_acquire)
+    asset_acquire.set_defaults(command_name="asset", asset_command_name="acquire")
+
+    asset_release = asset_subparsers.add_parser(
+        "release",
+        help="release one persistent endpoint asset lease",
+        description="Release a persistent endpoint asset by lease ID.",
+    )
+    asset_release.add_argument("lease_id", metavar="LEASE_ID", help="lease ID to release")
+    _add_asset_json_option(asset_release)
+    asset_release.set_defaults(command_name="asset", asset_command_name="release")
 
     doctor = subparsers.add_parser(
         "doctor",
@@ -817,6 +863,12 @@ def _run_asset(args: argparse.Namespace) -> int:
         if subcommand == "check":
             output = _asset_check_output(args)
             return _emit_asset_output(args, output, default_label="check")
+        if subcommand == "acquire":
+            output = _asset_acquire_output(args)
+            return _emit_asset_output(args, output, default_label="acquire")
+        if subcommand == "release":
+            output = _asset_release_output(args)
+            return _emit_asset_output(args, output, default_label="release")
     except (FileNotFoundError, JSONDecodeError, ValueError, RuntimeError) as exc:
         return _emit_asset_error(args, str(exc))
     print(f"endpoint asset: unsupported asset command {subcommand!r}", file=sys.stderr)
@@ -893,6 +945,22 @@ def _asset_check_output(args: argparse.Namespace) -> dict[str, object]:
     )
 
 
+def _asset_acquire_output(args: argparse.Namespace) -> dict[str, object]:
+    ttl_seconds = _parse_duration_seconds(args.lease_ttl, "lease-ttl")
+    metadata = _json_option_object(args.metadata_json, "metadata-json")
+    return acquire_endpoint_asset_lease_by_profile(
+        args.profile,
+        ttl_seconds,
+        owner=args.owner,
+        metadata=metadata,
+        wait=args.wait,
+    )
+
+
+def _asset_release_output(args: argparse.Namespace) -> dict[str, object]:
+    return release_endpoint_asset_lease(args.lease_id)
+
+
 def _asset_list_entry(asset: EndpointAsset) -> dict[str, object]:
     return {
         "asset_id": asset.asset_id,
@@ -924,6 +992,23 @@ def _json_option_object(value: str | None, option_name: str) -> dict[str, object
     return json_object(decoded, option_name)
 
 
+def _parse_duration_seconds(value: str, option_name: str) -> int:
+    if not isinstance(value, str) or value == "":
+        raise ValueError(f"{option_name} must be a duration")
+    unit = value[-1].lower()
+    multiplier = 1
+    digits = value
+    if unit in {"s", "m", "h"}:
+        digits = value[:-1]
+        multiplier = {"s": 1, "m": 60, "h": 3600}[unit]
+    if digits == "" or not digits.isdecimal():
+        raise ValueError(f"{option_name} must be integer seconds or use s, m, or h suffix")
+    seconds = int(digits) * multiplier
+    if seconds <= 0:
+        raise ValueError(f"{option_name} must be positive")
+    return seconds
+
+
 def _emit_asset_output(
     args: argparse.Namespace,
     output: dict[str, object],
@@ -941,6 +1026,8 @@ def _emit_asset_error(args: argparse.Namespace, error: str) -> int:
     output = {
         "kind": "endpoint-asset-error",
         "asset_id": getattr(args, "asset_id", None),
+        "lease_id": getattr(args, "lease_id", None),
+        "profile": getattr(args, "profile", None),
         "ok": False,
         "error": error,
     }
