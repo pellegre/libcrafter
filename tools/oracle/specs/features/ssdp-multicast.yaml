@@ -1,0 +1,343 @@
+version: 1
+kind: feature
+name: ssdp_multicast
+summary: Source-backed SSDP IPv4 and IPv6 multicast packet helper shapes and eligibility.
+
+# SSDP multicast oracle coverage is an offline strict-byte packet-shape
+# contract. The cases describe IP/UDP/SSDP stacks built from source-backed
+# multicast constants and helper defaults; they do not authorize multicast
+# membership management, interface selection, routing policy, retries, or
+# developer-host live sends.
+
+layers:
+  - ipv4
+  - ipv6
+  - udp
+  - ssdp
+directions:
+  - backend_to_libcrafter
+  - libcrafter_to_backend
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: ipv4-m-search-multicast
+    coverage_case: ssdp-ipv4-multicast
+    helper: ssdp_ipv4_multicast_packet
+    root: "l3:ipv4"
+    stack:
+      - ipv4
+      - udp
+      - ssdp
+    ip:
+      version: 4
+      source: "192.0.2.10"
+      destination: "239.255.255.250"
+      destination_kind: ssdp_ipv4_multicast
+      ttl: 2
+      protocol: udp
+    udp:
+      source_port: 1900
+      destination_port: 1900
+    message_kind: m_search
+    start_line: "M-SEARCH * HTTP/1.1"
+    headers:
+      - name: HOST
+        value: "239.255.255.250:1900"
+      - name: MAN
+        value: "\"ssdp:discover\""
+      - name: MX
+        value: "1"
+      - name: ST
+        value: "ssdp:all"
+    eligibility:
+      offline: eligible
+      pcap: eligible
+      live: provider_gated
+      developer_host_live: false
+      default_send: false
+    checks:
+      - ipv4_destination_is_source_backed_ssdp_multicast
+      - ipv4_ttl_helper_default_preserved
+      - udp_service_port_1900
+      - host_header_matches_ipv4_multicast_group
+      - no_multicast_membership_side_effect
+      - strict_byte_roundtrip
+  - name: ipv6-site-scope-m-search-multicast
+    coverage_case: ssdp-ipv6-multicast
+    helper: ssdp_ipv6_multicast_packet
+    root: "l3:ipv6"
+    stack:
+      - ipv6
+      - udp
+      - ssdp
+    ip:
+      version: 6
+      source: "2001:db8::10"
+      destination: "ff05::c"
+      destination_kind: ssdp_ipv6_site_local_multicast
+      hop_limit: 5
+      next_header: udp
+    udp:
+      source_port: 1900
+      destination_port: 1900
+    message_kind: m_search
+    start_line: "M-SEARCH * HTTP/1.1"
+    headers:
+      - name: HOST
+        value: "[ff05::c]:1900"
+      - name: MAN
+        value: "\"ssdp:discover\""
+      - name: MX
+        value: "1"
+      - name: ST
+        value: "ssdp:all"
+      - name: OPT
+        value: "\"http://schemas.upnp.org/upnp/1/0/\"; ns=01"
+      - name: 01-NLS
+        value: "1"
+    eligibility:
+      offline: eligible
+      pcap: eligible
+      live: provider_gated
+      developer_host_live: false
+      default_send: false
+    checks:
+      - ipv6_destination_is_source_backed_site_scope_ssdp_multicast
+      - ipv6_hop_limit_helper_default_preserved
+      - udp_service_port_1900
+      - host_header_matches_ipv6_multicast_group
+      - ipv6_extension_headers_preserved
+      - no_multicast_membership_side_effect
+      - strict_byte_roundtrip
+  - name: ipv6-link-scope-m-search-multicast-override
+    coverage_case: ssdp-ipv6-multicast
+    helper: ssdp_ipv6_multicast_packet_with
+    root: "l3:ipv6"
+    stack:
+      - ipv6
+      - udp
+      - ssdp
+    ip:
+      version: 6
+      source: "2001:db8::10"
+      destination: "ff02::c"
+      destination_kind: ssdp_ipv6_link_local_multicast
+      hop_limit: 1
+      next_header: udp
+    udp:
+      source_port: 49152
+      destination_port: 1900
+    message_kind: m_search
+    start_line: "M-SEARCH * HTTP/1.1"
+    headers:
+      - name: HOST
+        value: "[ff02::c]:1900"
+      - name: MAN
+        value: "\"ssdp:discover\""
+      - name: MX
+        value: "1"
+      - name: ST
+        value: "ssdp:all"
+    eligibility:
+      offline: eligible
+      pcap: eligible
+      live: provider_gated
+      developer_host_live: false
+      default_send: false
+    checks:
+      - ipv6_destination_is_source_backed_link_scope_ssdp_multicast
+      - explicit_hop_limit_preserved
+      - explicit_udp_source_port_preserved
+      - host_header_matches_ipv6_multicast_group
+      - no_interface_scope_inferred
+      - strict_byte_roundtrip
+
+coverage_cases:
+  - ssdp-ipv4-multicast
+  - ssdp-ipv6-multicast
+
+supported_cases:
+  - name: ssdp-ipv4-multicast
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    roots:
+      - "l3:ipv4"
+    byte_policy: strict_bytes
+  - name: ssdp-ipv6-multicast
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    roots:
+      - "l3:ipv6"
+    byte_policy: strict_bytes
+
+case_groups:
+  - name: ssdp-multicast-defaults
+    summary: Source-backed IPv4 and IPv6 multicast helper defaults.
+    byte_policy: strict_bytes
+    cases:
+      - ssdp-ipv4-multicast
+      - ssdp-ipv6-multicast
+  - name: ssdp-multicast-eligibility
+    summary: Multicast packet shapes are offline and pcap eligible, but live exchange is provider-gated.
+    byte_policy: strict_bytes
+    cases:
+      - ssdp-ipv4-multicast
+      - ssdp-ipv6-multicast
+
+multicast_values:
+  - name: ipv4-ssdp
+    address: "239.255.255.250"
+    host_header: "239.255.255.250:1900"
+    udp_port: 1900
+    helper_default: true
+    eligible_packet_shape: true
+  - name: ipv6-link-local-ssdp
+    address: "ff02::c"
+    host_header: "[ff02::c]:1900"
+    udp_port: 1900
+    helper_default: false
+    eligible_packet_shape: true
+  - name: ipv6-site-local-ssdp
+    address: "ff05::c"
+    host_header: "[ff05::c]:1900"
+    udp_port: 1900
+    helper_default: true
+    eligible_packet_shape: true
+  - name: ipv6-global-ssdp
+    address: "ff0e::c"
+    host_header: "[ff0e::c]:1900"
+    udp_port: 1900
+    helper_default: false
+    eligible_packet_shape: false
+    reason: obsolete_or_ambiguous_global_scope
+  - name: upnp-eventing-multicast
+    address: "ff0x::130"
+    host_header: "[ff0x::130]:7900"
+    udp_port: 7900
+    helper_default: false
+    eligible_packet_shape: false
+    reason: eventing_not_ssdp_discovery
+
+eligibility_matrix:
+  - case: ssdp-ipv4-multicast
+    offline: eligible
+    pcap: eligible
+    live: provider_gated
+    provider_required: true
+    protected_confirmation_required: true
+    developer_host_raw_send: false
+  - case: ssdp-ipv6-multicast
+    offline: eligible
+    pcap: eligible
+    live: provider_gated
+    provider_required: true
+    protected_confirmation_required: true
+    developer_host_raw_send: false
+  - case: ssdp-ipv6-global-multicast
+    offline: excluded
+    pcap: excluded
+    live: excluded
+    reason: obsolete_or_ambiguous_global_scope
+  - case: ssdp-multicast-membership-management
+    offline: excluded
+    pcap: excluded
+    live: excluded
+    reason: crate_exposes_packet_shape_only
+
+normalized_model:
+  ipv4:
+    - source
+    - destination
+    - ttl
+    - protocol
+    - checksum
+  ipv6:
+    - source
+    - destination
+    - hop_limit
+    - next_header
+  udp:
+    - source_port
+    - destination_port
+    - length
+    - checksum
+  message:
+    - message_kind
+    - start_line
+    - headers
+    - body_length
+  multicast:
+    - address
+    - scope
+    - host_header
+    - helper_default
+    - eligible_packet_shape
+    - live_eligibility
+
+source_refs:
+  - UPnP Device Architecture 2.0 Discovery
+  - UPnP Device Architecture 2.0 Annex A
+  - UPnP Device Architecture 1.1 Discovery
+  - UPnP Device Architecture 1.1 Annex A
+  - RFC 768
+  - RFC 791
+  - RFC 1112
+  - RFC 2365
+  - RFC 4291
+  - RFC 5771
+  - RFC 8200
+  - IANA Service Name and Transport Protocol Port Number Registry
+  - IANA IPv4 Multicast Address Space Registry
+  - IANA IPv6 Multicast Address Space Registry
+  - .agents/docs/ssdp-source-manifest.md
+  - .agents/docs/ssdp-wire-grammar.md
+  - .agents/docs/ssdp-codepoints.md
+  - .agents/docs/ssdp-validation-safety.md
+
+notes:
+  - >-
+    These cases validate deterministic packet shapes only. Oracle adapters must
+    not join multicast groups, select interfaces, infer scope IDs, open sockets,
+    schedule retries, or send traffic from the developer host from this feature.
+  - >-
+    IPv6 site-scope ff05::c is the default helper destination. IPv6 link-scope
+    ff02::c remains a source-backed explicit helper override and must preserve
+    caller-supplied hop limit, UDP source port, and HOST value.
+  - >-
+    Global-scope ff0e::c and UPnP eventing multicast destinations are recorded
+    as ineligible for SSDP discovery helper generation. Structurally valid
+    packets using explicit IP/UDP values may still exist outside this named
+    multicast feature.
+  - >-
+    Fixture and artifact values use documentation source addresses and
+    synthetic header values only. No provider endpoint identifiers, credentials,
+    local paths, or live captures belong in outputs generated from this spec.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - IP
+      - IPv6
+      - UDP
+      - Raw
+    notes:
+      - >-
+        SSDP multicast materialization is assigned to later backend steps. The
+        Scapy backend can represent these packet shapes as IP or IPv6 over UDP
+        with deterministic Raw SSDP payload bytes once the SSDP adapter exists.
+  libcrafter:
+    status: supported
+    native_layers:
+      - Ipv4
+      - Ipv6
+      - Udp
+      - Ssdp
+    notes:
+      - >-
+        The crate exposes IPv4 and IPv6 SSDP multicast packet helpers that build
+        typed offline Packet stacks, preserve explicit overrides, compile lower
+        layer lengths and checksums, and do not perform live multicast behavior.
