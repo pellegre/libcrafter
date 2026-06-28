@@ -1,0 +1,190 @@
+version: 1
+kind: layer
+name: ssdp
+summary: >-
+  Simple Service Discovery Protocol as one HTTP-like UDP datagram payload,
+  covering UPnP discovery M-SEARCH requests, NOTIFY advertisements, 200 OK
+  search responses, ordered headers, extension headers, duplicate fields,
+  unknown-preserving start-line values, and opaque body bytes. This layer is a
+  packet primitive only; discovery workflows, device caches, retry behavior,
+  multicast membership, interface selection, and live target selection are out
+  of scope.
+
+roots: []
+parents:
+  - udp
+children: []
+
+supported_parents:
+  - layer: udp
+    destination_port: 1900
+    service: ssdp
+  - layer: udp
+    source_port: 1900
+    service: ssdp
+unsupported_parents:
+  - tcp
+  - http
+  - tls
+live_eligibility: provider_gated
+live_gate: confirm_live_run_provider_lab_only
+live_defaults:
+  default_mode: dry_run
+  allowed_without_confirmation: false
+  developer_host_raw_send: false
+  provider_required: true
+
+fields:
+  - name: message_kind
+    type: enum
+    required: true
+    domains:
+      - m_search
+      - notify
+      - response
+      - unknown_request_preserved
+      - unknown_response_preserved
+  - name: method
+    type: token
+    required: false
+    domains:
+      - m_search
+      - notify
+      - unknown_preserved
+      - excluded_search
+  - name: request_target
+    type: string
+    required: false
+    domains:
+      - asterisk
+      - unknown_preserved
+  - name: version
+    type: http_version
+    required: true
+    domains:
+      - http_1_1
+      - explicit_preserved
+  - name: status_code
+    type: uint16
+    required: false
+    domains:
+      - ok
+      - unknown_preserved
+      - excluded_http_error
+  - name: reason_phrase
+    type: bytes
+    required: false
+    domains:
+      - ok
+      - empty
+      - unknown_preserved
+  - name: headers
+    type: ssdp_header_list
+    required: true
+    domains:
+      - search_defaults
+      - notify_alive
+      - notify_byebye
+      - notify_update
+      - response_ok_ext
+      - duplicate_preserved
+      - extension_nls
+      - unknown_preserved
+      - excluded_eventing_preserved
+  - name: body
+    type: bytes
+    required: false
+    domains:
+      - empty
+      - opaque_preserved
+      - binary
+
+normalized_fields:
+  message:
+    - message_kind
+    - start_line
+    - method
+    - request_target
+    - version
+    - status_code
+    - reason_phrase
+    - headers
+    - body
+    - body_length
+  header:
+    - name
+    - original_name
+    - canonical_name
+    - name_kind
+    - value
+    - order
+    - duplicate_index
+    - nls_namespace
+  registry:
+    - method_status
+    - status_code_status
+    - header_name_status
+    - service_port_status
+    - multicast_status
+
+coverage_cases:
+  - ssdp-m-search
+  - ssdp-notify-alive
+  - ssdp-notify-byebye
+  - ssdp-notify-update
+  - ssdp-response-ok
+  - ssdp-search-defaults
+  - ssdp-header-helpers
+  - ssdp-duplicate-headers
+  - ssdp-extension-headers
+  - ssdp-unknown-preservation
+  - ssdp-body-bytes
+  - ssdp-ipv4-multicast
+  - ssdp-ipv6-multicast
+  - ssdp-raw-fallback
+  - ssdp-pcap-raw-ipv4
+  - ssdp-pcap-ethernet-ipv4
+  - malformed-ssdp-missing-delimiter
+  - malformed-ssdp-bare-lf
+  - malformed-ssdp-bad-header
+  - malformed-ssdp-bad-status
+
+notes:
+  - >-
+    Normalized field names are backend-neutral names for the SSDP datagram
+    payload. Backend-specific names such as Scapy Raw payload attributes or
+    libcrafter struct names must be translated before comparison.
+  - >-
+    SSDP auto-detection is gated by UDP port 1900 plus the conservative
+    CRLF-delimited message shape. Unrelated UDP payloads on SSDP-related ports
+    remain raw data.
+  - >-
+    Unknown methods, status codes, reason phrases, header names, header values,
+    duplicate fields, extension headers, and body bytes are preserved when the
+    enclosing SSDP message is structurally valid.
+  - >-
+    Source-backed multicast constants and packet helpers are offline packet
+    shapes only. Live exchange remains provider-gated and outside this layer
+    spec.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - Raw
+    notes:
+      - >-
+        SSDP reference materialization and normalization are assigned to later
+        backend steps. Until then, Scapy support is represented as planned raw
+        UDP payload support rather than a runnable oracle backend.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    pcap_read: true
+    pcap_write: true
+    notes:
+      - >-
+        The Rust crate builds, serializes, decodes, summarizes, shows, and
+        round-trips SSDP request, notification, response, header, multicast
+        helper, malformed parse, raw fallback, and pcap fixture cases offline.
