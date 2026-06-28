@@ -79,21 +79,17 @@ UDP_ECHO_LARGE_PAYLOAD_LENGTH = 1200
 # cases now live in the OSPF plugin module (``protocols/ospf.py``); the merged
 # catalog/profile tables source the OSPF cases from the registry.
 
-
 # NDP's capability constant and the three NDP behavioral cases now live in the
 # NDP plugin module (``protocols/ndp.py``); the merged catalog/profile tables
 # below pick the NDP cases up from the registry.
-
 
 # The BGP smoke case (``bgp-session-smoke``) now lives in the BGP plugin module
 # (``protocols/bgp.py``); the merged catalog/profile tables below pick it up from
 # the registry.
 
-
 # The RIP smoke cases (``rip-update-v2`` / ``ripng-update``) now live in the RIP
 # plugin module (``protocols/rip.py``); the merged catalog/profile tables below
 # pick them up from the registry.
-
 
 # The IGMP behavior cases (``igmp-membership-query-observation`` /
 # ``igmp-v2-membership-report-emission`` / ``igmp-v2-leave-group-emission`` /
@@ -101,18 +97,15 @@ UDP_ECHO_LARGE_PAYLOAD_LENGTH = 1200
 # (``protocols/igmp.py``); the merged catalog/profile tables below pick them up
 # from the registry, and ``IGMP_PROBE_CASES`` is re-imported above for back-compat.
 
-
 # The four IPSec behavioral cases (``esp-transport-echo`` / ``esp-tunnel-echo`` /
 # ``ah-transport-verify`` / ``ikev2-sa-init``) now live in the IPSec plugin module
 # (``protocols/ipsec.py``); the merged catalog/profile tables below pick them up
 # from the registry.
 
-
 # OSPFv2's behavioral cases (RFC 2328) -- the live-capable ``ospf-hello-exchange``
 # and the planned-only ``ospf-dd-exchange`` -- and their ``_OSPF_CAPABILITIES``
 # constant now live in the OSPF plugin module (``protocols/ospf.py``); the merged
 # catalog below contributes them through the registry.
-
 
 # Every probe case is contributed by a per-protocol ``ProtocolPlugin``; the
 # registry is the sole source of the catalog. The case order is the registry's
@@ -206,6 +199,7 @@ SNMP_SMOKE_PROFILE = "snmp-smoke"
 DHCPV6_SMOKE_PROFILE = "dhcpv6-smoke"
 DHCPV6_RELAY_PROFILE = "dhcpv6-relay"
 DHCPV6_ADVANCED_PROFILE = "dhcpv6-advanced"
+SSDP_SMOKE_PROFILE = "ssdp-smoke"
 
 # Legacy default count used by the smoke profile and any profile without an
 # explicit default; preserves the pre-behavior-suite CLI behavior.
@@ -454,6 +448,10 @@ DHCPV6_ADVANCED_PROFILE_CASE_NAMES: tuple[str, ...] = (
     "dhcpv6-active-leasequery-plan",
 )
 
+SSDP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name for case in _registry_cases() if case.metadata.get("protocol") == "ssdp"
+)
+
 
 # Profiles that select an explicit ordered case subset. A profile not listed
 # here selects the full catalog. ``smoke`` is pinned to the historical
@@ -479,6 +477,7 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     DHCPV6_SMOKE_PROFILE: DHCPV6_SMOKE_PROFILE_CASE_NAMES,
     DHCPV6_RELAY_PROFILE: DHCPV6_RELAY_PROFILE_CASE_NAMES,
     DHCPV6_ADVANCED_PROFILE: DHCPV6_ADVANCED_PROFILE_CASE_NAMES,
+    SSDP_SMOKE_PROFILE: SSDP_SMOKE_PROFILE_CASE_NAMES,
 }
 
 # Per-profile default counts used when no explicit ``--count`` is supplied. The
@@ -497,6 +496,7 @@ _PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     DHCPV6_SMOKE_PROFILE: len(DHCPV6_SMOKE_PROFILE_CASE_NAMES),
     DHCPV6_RELAY_PROFILE: len(DHCPV6_RELAY_PROFILE_CASE_NAMES),
     DHCPV6_ADVANCED_PROFILE: len(DHCPV6_ADVANCED_PROFILE_CASE_NAMES),
+    SSDP_SMOKE_PROFILE: len(SSDP_SMOKE_PROFILE_CASE_NAMES),
 }
 
 

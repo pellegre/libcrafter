@@ -40,7 +40,7 @@ tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider virtualbox --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 40
 tools/probe/run --provider qemu --dry-run --profile ipsec --out target/probe/ipsec-dry-run
-tools/probe/run --provider qemu --dry-run --profile ssdp --seed 1904 --count 3
+tools/probe/run --provider qemu --dry-run --profile ssdp-smoke --seed 1904 --count 3
 python3 tools/probe/engine/provider_matrix.py --providers hetzner,qemu,virtualbox,docker --dry-run --profile behavior --seed 1052 --count 40 --out target/probe/provider-matrix
 ```
 
@@ -77,14 +77,14 @@ The IPSec stimulus/response cases are `planned_only` in the plan until the
 crate-side stimulus builders and the cross-crypto parity check land in later
 probe steps.
 
-The `ssdp` profile label is used for SSDP discovery planning. SSDP cases cover
+The `ssdp-smoke` profile label is used for SSDP discovery planning. SSDP cases cover
 IPv4 `M-SEARCH` response planning, IPv6 link-local multicast search planning,
 bounded `NOTIFY` capture planning, unrelated UDP/1900 raw fallback, and
 malformed SSDP-like payload reporting. Start with a dry-run and pin the SSDP
 cases you intend to inspect:
 
 ```sh
-tools/probe/run --provider qemu --dry-run --profile ssdp --seed 1904 --case ssdp-ipv4-search-exchange --case ssdp-ipv6-search-exchange --case ssdp-notify-capture --out target/probe/ssdp-dry-run
+tools/probe/run --provider qemu --dry-run --profile ssdp-smoke --seed 1904 --case ssdp-ipv4-search-exchange --case ssdp-ipv6-search-exchange --case ssdp-notify-capture --out target/probe/ssdp-dry-run
 ```
 
 Before any live SSDP run, inspect the dry-run report under the selected `--out`
@@ -104,9 +104,9 @@ confirmation:
 
 ```sh
 if [ -n "${LIBCRAFTER_PROBE_LIVE_PROVIDER:-}" ] && [ "${LIBCRAFTER_PROBE_LIVE_SSDP_CONFIRM:-}" = "yes" ]; then
-  tools/probe/run --provider "$LIBCRAFTER_PROBE_LIVE_PROVIDER" --confirm-live-run --profile ssdp --seed 1904 --case ssdp-ipv4-search-exchange --case ssdp-notify-capture --out target/probe/ssdp-live
+  tools/probe/run --provider "$LIBCRAFTER_PROBE_LIVE_PROVIDER" --confirm-live-run --profile ssdp-smoke --seed 1904 --case ssdp-ipv4-search-exchange --case ssdp-notify-capture --out target/probe/ssdp-live
 else
-  tools/probe/run --provider qemu --dry-run --profile ssdp --seed 1904 --case ssdp-ipv4-search-exchange --case ssdp-notify-capture --out target/probe/ssdp-dry-run
+  tools/probe/run --provider qemu --dry-run --profile ssdp-smoke --seed 1904 --case ssdp-ipv4-search-exchange --case ssdp-notify-capture --out target/probe/ssdp-dry-run
 fi
 ```
 
