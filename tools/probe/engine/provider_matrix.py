@@ -111,6 +111,8 @@ def build_provider_matrix(
 
     provider_reports: list[JSONObject] = []
     provider_capabilities: JSONObject = {}
+    appliance_runtimes: JSONObject = {}
+    endpoint_appliance_runtimes: JSONObject = {}
     target_service_setup_plans: JSONObject = {}
     stimulus_request_paths: JSONObject = {}
     planned_cases_by_provider: JSONObject = {}
@@ -132,6 +134,10 @@ def build_provider_matrix(
         entry = _provider_matrix_entry(report=report, report_path=report_path)
         provider_reports.append(entry)
         provider_capabilities[provider] = _json_value(entry["provider_capabilities"])
+        appliance_runtimes[provider] = _json_value(entry["appliance_runtime"])
+        endpoint_appliance_runtimes[provider] = _json_value(
+            entry["endpoint_appliance_runtimes"]
+        )
         target_service_setup_plans[provider] = _json_value(entry["target_service_setup"])
         stimulus_request_paths[provider] = _json_value(
             entry["stimulus_request_artifact_path"]
@@ -156,6 +162,8 @@ def build_provider_matrix(
         "planned_count": len(planned_case_names),
         "provider_reports": provider_reports,
         "provider_capabilities": provider_capabilities,
+        "appliance_runtimes_by_provider": appliance_runtimes,
+        "endpoint_appliance_runtimes_by_provider": endpoint_appliance_runtimes,
         "planned_cases_by_provider": planned_cases_by_provider,
         "skipped_cases_by_provider": skipped_cases_by_provider,
         "target_service_setup_plans": target_service_setup_plans,
@@ -239,6 +247,13 @@ def _provider_matrix_entry(
         "artifact_paths": list(report.artifact_paths),
         "provider_capabilities": dict(
             _json_object(metadata.get("provider_capabilities", {}))
+        ),
+        "appliance_runtime": _json_value(metadata.get("appliance_runtime")),
+        "session_appliance_runtime": _json_value(
+            metadata.get("session_appliance_runtime")
+        ),
+        "endpoint_appliance_runtimes": dict(
+            _json_object(metadata.get("endpoint_appliance_runtimes", {}))
         ),
         "planned_cases": planned_cases,
         "planned_count": int(metadata.get("planned_count", len(planned_cases))),

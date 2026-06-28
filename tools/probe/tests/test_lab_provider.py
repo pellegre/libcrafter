@@ -5,7 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import unittest
 
-from tools.lab.engine.model import LabEndpoint, LabRole, LabSession
+from tools.lab.engine.model import (
+    LabApplianceRuntime,
+    LabEndpoint,
+    LabRole,
+    LabSession,
+)
 from tools.lab.engine.providers.docker import DOCKER_LAB_PROVIDER_ADAPTER
 from tools.probe.engine.lab import (
     LOCAL_DRY_RUN_PROVIDER,
@@ -212,6 +217,19 @@ class ProbeLabProviderBoundaryTest(unittest.TestCase):
                     stimulus["metadata"]["wire_endpoint_plan"]["endpoint_id"],
                     f"{case.provider}-stimulus",
                 )
+                self.assertEqual(stimulus["appliance_runtime"]["profile"], "lan-raw")
+                self.assertEqual(
+                    stimulus["metadata"]["endpoint_appliance_runtime"]["metadata"][
+                        "role"
+                    ],
+                    "stimulus",
+                )
+                self.assertEqual(
+                    stimulus["metadata"]["session_appliance_runtime"]["metadata"][
+                        "scope"
+                    ],
+                    "session",
+                )
                 self.assertEqual(target["peer_address"], case.stimulus_ipv4)
 
     def test_address_context_requires_stimulus_and_target(self) -> None:
@@ -293,6 +311,7 @@ def _fake_session(case: _ProviderCase) -> LabSession:
         },
         remote_dir="/root/libcrafter",
         remote_artifact_root=f"/root/libcrafter/artifacts/{case.provider}",
+        appliance_runtime=_runtime(case, scope="session"),
         dry_run=True,
         metadata={
             "provider": case.provider,
@@ -335,6 +354,37 @@ def _endpoint(
             "bridged_lan": case.bridged_lan,
             "address_source": "fake-lab-session",
         },
+        appliance_runtime=_runtime(case, scope="endpoint", role=role),
+    )
+
+
+def _runtime(
+    case: _ProviderCase,
+    *,
+    scope: str,
+    role: str | None = None,
+) -> LabApplianceRuntime:
+    root = f"/var/lib/libcrafter/appliance/{case.provider}-{scope}"
+    if role is not None:
+        root = f"{root}-{role}"
+    metadata = {
+        "source": "test-fixture",
+        "provider": case.provider,
+        "scope": scope,
+    }
+    if role is not None:
+        metadata["role"] = role
+    return LabApplianceRuntime(
+        profile="lan-raw",
+        image_tag=f"registry.example.invalid/libcrafter/appliance:{case.provider}",
+        remote_work_root=f"{root}/work",
+        remote_artifact_root=f"{root}/artifacts",
+        container_policy={
+            "execution_mode": "ssh-docker-host",
+            "docker_execution_supported": True,
+        },
+        check_metadata={"profile": "lan-raw"},
+        metadata=metadata,
     )
 
 

@@ -593,6 +593,14 @@ def lab_endpoint_live_report(
             "mutates_lab": True,
             "live_packet_exchange": status == STATUS_PASSED and executed_count > 0,
             "provider_workflow": lab_report_metadata.get("provider_workflow", []),
+            "appliance_runtime": lab_report_metadata.get("appliance_runtime"),
+            "session_appliance_runtime": lab_report_metadata.get(
+                "session_appliance_runtime"
+            ),
+            "endpoint_appliance_runtimes": lab_report_metadata.get(
+                "endpoint_appliance_runtimes",
+                {},
+            ),
             "endpoint_plan": wire_endpoint_plan,
             "wire_endpoint_plan": wire_endpoint_plan,
             "endpoints": endpoints,

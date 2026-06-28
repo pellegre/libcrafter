@@ -124,6 +124,26 @@ class ProbeProviderDryRunMatrixTest(unittest.TestCase):
                     )
                     self.assertTrue(report["target_service_setup"]["planned"])
                     self.assertTrue(report["target_service_setup"]["services"])
+                    runtime = report["appliance_runtime"]
+                    self.assertEqual(runtime["profile"], "lan-raw")
+                    self.assertEqual(
+                        report["session_appliance_runtime"],
+                        runtime,
+                    )
+                    self.assertEqual(
+                        matrix["appliance_runtimes_by_provider"][provider],
+                        runtime,
+                    )
+                    endpoint_runtimes = report["endpoint_appliance_runtimes"]
+                    self.assertEqual(set(endpoint_runtimes), {"stimulus", "target"})
+                    self.assertEqual(
+                        matrix["endpoint_appliance_runtimes_by_provider"][provider],
+                        endpoint_runtimes,
+                    )
+                    self.assertEqual(
+                        endpoint_runtimes["stimulus"]["profile"],
+                        "lan-raw",
+                    )
 
     def test_dhcpv6_smoke_matrix_records_capability_skips(self) -> None:
         dhcpv6_count = len(cases.DHCPV6_SMOKE_PROFILE_CASE_NAMES)
