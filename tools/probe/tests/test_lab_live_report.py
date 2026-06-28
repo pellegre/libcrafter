@@ -10,7 +10,13 @@ import tempfile
 import unittest
 from unittest import mock
 
-from tools.lab.engine.model import LabCommandPlan, LabEndpoint, LabRole, LabSession
+from tools.lab.engine.model import (
+    LabApplianceRuntime,
+    LabCommandPlan,
+    LabEndpoint,
+    LabRole,
+    LabSession,
+)
 from tools.lab.engine.repo import RepoBootstrapCommand, RepoBootstrapContext
 from tools.probe.engine import cases as probe_cases
 from tools.probe.engine import cli
@@ -100,6 +106,32 @@ class ProbeLabLiveReportTest(unittest.TestCase):
             "cleaned",
         )
         self.assertEqual(report.metadata["lab_session"]["provider"], "qemu")
+        self.assertEqual(report.metadata["appliance_runtime"]["profile"], "lan-raw")
+        self.assertEqual(
+            report.metadata["session_appliance_runtime"],
+            report.metadata["appliance_runtime"],
+        )
+        self.assertEqual(
+            set(report.metadata["endpoint_appliance_runtimes"]),
+            {"stimulus", "target"},
+        )
+        self.assertEqual(
+            report.metadata["endpoint_plan"]["endpoint_appliance_runtimes"],
+            report.metadata["endpoint_appliance_runtimes"],
+        )
+        self.assertEqual(
+            report.metadata["planned_infrastructure"]["appliance_runtime"],
+            report.metadata["appliance_runtime"],
+        )
+        self.assertNotIn("appliance_runtime", report.metadata["target_service_setup"])
+        self.assertTrue(
+            any(
+                command.get("metadata", {}).get("appliance_runtime", {}).get("profile")
+                == "lan-raw"
+                for command in report.metadata["command_records"]
+                if command.get("role") in {"stimulus", "target"}
+            )
+        )
         self.assertTrue(create_session.called)
         self.assertTrue(create_archive.called)
         self.assertTrue(bootstrap_session.called)
@@ -391,6 +423,7 @@ def _fake_session() -> LabSession:
         command_records=[provider_record],
         remote_dir="/root/libcrafter",
         remote_artifact_root="/root/libcrafter/artifacts",
+        appliance_runtime=_runtime("session"),
         created_endpoint_ids=["qemu-stimulus", "qemu-target"],
         dry_run=False,
         cleanup_state={"status": "not_started"},
@@ -431,6 +464,30 @@ def _endpoint(
             "wire_exposure": "private",
             "private_network": True,
         },
+        appliance_runtime=_runtime(role),
+    )
+
+
+def _runtime(scope: str) -> LabApplianceRuntime:
+    root = f"/var/lib/libcrafter/appliance/qemu-{scope}"
+    metadata = {
+        "provider": "qemu",
+        "source": "test-fixture",
+        "scope": scope,
+    }
+    if scope in {"stimulus", "target"}:
+        metadata["role"] = scope
+    return LabApplianceRuntime(
+        profile="lan-raw",
+        image_tag="registry.example.invalid/libcrafter/appliance:qemu",
+        remote_work_root=f"{root}/work",
+        remote_artifact_root=f"{root}/artifacts",
+        container_policy={
+            "execution_mode": "ssh-docker-host",
+            "docker_execution_supported": True,
+        },
+        check_metadata={"profile": "lan-raw"},
+        metadata=metadata,
     )
 
 

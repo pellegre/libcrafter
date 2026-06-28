@@ -148,6 +148,18 @@ class DryRunSkipMetadataTest(unittest.TestCase):
         self.assertEqual(metadata["passed"], 0)
         self.assertEqual(metadata["failed"], 0)
 
+    def test_appliance_runtime_metadata_does_not_replace_skip_policy(self) -> None:
+        qemu = _dry_run_report_for("qemu").metadata
+        hetzner = _dry_run_report_for("hetzner").metadata
+
+        self.assertEqual(qemu["appliance_runtime"]["profile"], "lan-raw")
+        self.assertEqual(hetzner["appliance_runtime"]["profile"], "lan-raw")
+        self.assertEqual(qemu["skipped_count"], 0)
+        self.assertGreater(hetzner["skipped_by_capability"], 0)
+        self.assertFalse(
+            any("appliance" in reason for reason in hetzner["skip_reasons"])
+        )
+
 
 class HetznerSkipsQemuPlansTest(unittest.TestCase):
     def test_hetzner_skips_dhcpv4_arp_and_ndp_for_capability_reasons(self) -> None:

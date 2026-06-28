@@ -58,8 +58,11 @@ from ..lab import (
     STIMULUS_ROLE,
     TARGET_ROLE,
     is_probe_lab_provider,
+    probe_appliance_runtime_metadata,
     probe_address_context_from_lab_session,
     probe_capabilities_from_lab_capabilities,
+    probe_command_record_with_appliance_runtime,
+    probe_endpoint_appliance_runtimes,
     probe_provider_names,
     resolve_probe_lab_provider,
 )
@@ -767,8 +770,21 @@ def _lab_session_probe_report_metadata(
         address_context.get("endpoints", {}),
         "lab_address_context.endpoints",
     )
+    session_appliance_runtime = probe_appliance_runtime_metadata(
+        session.appliance_runtime
+    )
+    endpoint_appliance_runtimes = probe_endpoint_appliance_runtimes(session)
+    if session_appliance_runtime is not None:
+        infrastructure.setdefault("appliance_runtime", session_appliance_runtime)
+        infrastructure.setdefault("session_appliance_runtime", session_appliance_runtime)
     provider_workflow = [command.to_dict() for command in session.provider_workflow]
-    command_records = [command.to_dict() for command in session.command_records]
+    command_records = [
+        probe_command_record_with_appliance_runtime(
+            command.to_dict(),
+            endpoint_appliance_runtimes=endpoint_appliance_runtimes,
+        )
+        for command in session.command_records
+    ]
 
     endpoint_plan = _lab_session_wire_endpoint_plan(
         session,
@@ -802,6 +818,9 @@ def _lab_session_probe_report_metadata(
         "wire_endpoint_plan": endpoint_plan,
         "endpoint_lifecycle": endpoint_lifecycle,
         "wire_endpoint_lifecycle": endpoint_lifecycle,
+        "appliance_runtime": session_appliance_runtime,
+        "session_appliance_runtime": session_appliance_runtime,
+        "endpoint_appliance_runtimes": endpoint_appliance_runtimes,
         "provider_workflow": provider_workflow,
         "provider_commands": command_records,
         "command_records": command_records,
@@ -832,6 +851,13 @@ def _lab_session_wire_endpoint_plan(
     plan.setdefault("wire_exposure", session.wire_exposure)
     plan.setdefault("dry_run", session.dry_run)
     plan.setdefault("endpoint_count", len(session.endpoints))
+    session_appliance_runtime = probe_appliance_runtime_metadata(
+        session.appliance_runtime
+    )
+    endpoint_appliance_runtimes = probe_endpoint_appliance_runtimes(session)
+    plan.setdefault("appliance_runtime", session_appliance_runtime)
+    plan.setdefault("session_appliance_runtime", session_appliance_runtime)
+    plan.setdefault("endpoint_appliance_runtimes", endpoint_appliance_runtimes)
     plan.setdefault("endpoints", dict(endpoints))
     plan.setdefault(
         "endpoint_plans",
@@ -841,10 +867,33 @@ def _lab_session_wire_endpoint_plan(
             if endpoint.wire_manifest
         ],
     )
-    plan.setdefault(
-        "command_metadata",
-        [command.to_dict() for command in session.command_records],
-    )
+    command_records = [
+        probe_command_record_with_appliance_runtime(
+            command.to_dict(),
+            endpoint_appliance_runtimes=endpoint_appliance_runtimes,
+        )
+        for command in session.command_records
+    ]
+    if "command_records" in plan and isinstance(plan["command_records"], list):
+        plan["command_records"] = [
+            probe_command_record_with_appliance_runtime(
+                _json_mapping(record, "lab_session.wire_endpoint_plan.command_records[]"),
+                endpoint_appliance_runtimes=endpoint_appliance_runtimes,
+            )
+            for record in plan["command_records"]
+        ]
+    else:
+        plan.setdefault("command_records", command_records)
+    if "command_metadata" in plan and isinstance(plan["command_metadata"], list):
+        plan["command_metadata"] = [
+            probe_command_record_with_appliance_runtime(
+                _json_mapping(record, "lab_session.wire_endpoint_plan.command_metadata[]"),
+                endpoint_appliance_runtimes=endpoint_appliance_runtimes,
+            )
+            for record in plan["command_metadata"]
+        ]
+    else:
+        plan.setdefault("command_metadata", command_records)
     plan.setdefault("created_endpoint_ids", list(session.created_endpoint_ids))
     if "private_group" not in plan and "private_group" in session.metadata:
         plan["private_group"] = _json_metadata_value(session.metadata["private_group"])
