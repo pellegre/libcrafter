@@ -1058,9 +1058,139 @@ fn header_names_summary(headers: &SsdpHeaders) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::decode::decode_ssdp;
     use super::super::header::{SsdpHeaderField, SsdpHeaderNameKind, SsdpHeaderValue};
     use super::*;
+    use crate::checksum::{ipv4_header_checksum, ipv4_pseudo_header_checksum};
     use crate::packet::{Layer, Packet};
+    use crate::protocols::ip::shared::IPPROTO_UDP;
+    use crate::protocols::ip::v4::Ipv4;
+    use crate::protocols::transport::{Udp, UDP_HEADER_LEN};
+    use core::net::Ipv4Addr;
+
+    fn packet_composition_src() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn packet_composition_dst() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    fn packet_composition_message() -> Ssdp {
+        Ssdp::m_search()
+            .with_raw_header("HOST", "239.255.255.250:1900")
+            .expect("HOST header")
+            .with_raw_header("MAN", "\"ssdp:discover\"")
+            .expect("MAN header")
+            .with_raw_header("MX", "1")
+            .expect("MX header")
+            .with_raw_header("ST", "ssdp:all")
+            .expect("ST header")
+    }
+
+    fn packet_composition_udp_checksum(bytes: &[u8], payload_len: usize) -> u16 {
+        let udp_start = 20;
+        let udp_end = udp_start + UDP_HEADER_LEN + payload_len;
+        let mut udp = bytes[udp_start..udp_end].to_vec();
+        udp[6] = 0;
+        udp[7] = 0;
+        let checksum = ipv4_pseudo_header_checksum(
+            packet_composition_src(),
+            packet_composition_dst(),
+            IPPROTO_UDP,
+            &udp,
+        );
+
+        if checksum == 0 {
+            0xffff
+        } else {
+            checksum
+        }
+    }
+
+    #[test]
+    fn ssdp_packet_composition_udp_div_builds_typed_packet_and_payload() {
+        let ssdp = packet_composition_message();
+        let payload = ssdp.to_bytes();
+        let packet = Udp::new().sport(49_152).dport(1_900) / ssdp.clone();
+
+        assert_eq!(packet.layer::<Ssdp>(), Some(&ssdp));
+        assert!(packet.layer::<Udp>().is_some());
+        assert_eq!(packet.encoded_len(), UDP_HEADER_LEN + payload.len());
+
+        let compiled = packet.compile().expect("udp/ssdp stack compiles");
+        let bytes = compiled.as_bytes();
+
+        assert_eq!(&bytes[0..2], &49_152u16.to_be_bytes());
+        assert_eq!(&bytes[2..4], &1_900u16.to_be_bytes());
+        assert_eq!(
+            &bytes[4..6],
+            &((UDP_HEADER_LEN + payload.len()) as u16).to_be_bytes()
+        );
+        assert_eq!(&bytes[6..8], &0u16.to_be_bytes());
+        assert_eq!(&bytes[UDP_HEADER_LEN..], payload.as_slice());
+    }
+
+    #[test]
+    fn ssdp_packet_composition_ipv4_udp_autofills_lengths_and_checksums() {
+        let ssdp = packet_composition_message();
+        let payload = ssdp.to_bytes();
+        let packet = Ipv4::new()
+            .src(packet_composition_src())
+            .dst(packet_composition_dst())
+            .id(0x5d50)
+            / Udp::new().sport(49_152).dport(1_900)
+            / ssdp.clone();
+
+        assert_eq!(packet.layer::<Ssdp>(), Some(&ssdp));
+        assert!(packet.layer::<Ipv4>().is_some());
+        assert!(packet.layer::<Udp>().is_some());
+
+        let compiled = packet.compile().expect("ipv4/udp/ssdp stack compiles");
+        let bytes = compiled.as_bytes();
+        let expected_total_len = 20 + UDP_HEADER_LEN + payload.len();
+
+        assert_eq!(bytes.len(), expected_total_len);
+        assert_eq!(&bytes[2..4], &(expected_total_len as u16).to_be_bytes());
+        assert_eq!(bytes[9], IPPROTO_UDP);
+
+        let mut ipv4_header = bytes[..20].to_vec();
+        let transmitted_ip_checksum = u16::from_be_bytes([bytes[10], bytes[11]]);
+        ipv4_header[10] = 0;
+        ipv4_header[11] = 0;
+        assert_eq!(transmitted_ip_checksum, ipv4_header_checksum(&ipv4_header));
+        assert_eq!(ipv4_header_checksum(&bytes[..20]), 0);
+
+        assert_eq!(&bytes[20..22], &49_152u16.to_be_bytes());
+        assert_eq!(&bytes[22..24], &1_900u16.to_be_bytes());
+        assert_eq!(
+            &bytes[24..26],
+            &((UDP_HEADER_LEN + payload.len()) as u16).to_be_bytes()
+        );
+        assert_eq!(
+            u16::from_be_bytes([bytes[26], bytes[27]]),
+            packet_composition_udp_checksum(bytes, payload.len())
+        );
+        assert_eq!(&bytes[20 + UDP_HEADER_LEN..], payload.as_slice());
+    }
+
+    #[test]
+    fn ssdp_packet_composition_decode_compiled_udp_payload_explicitly() {
+        let ssdp = packet_composition_message().with_body(b"opaque-body".to_vec());
+        let packet = Ipv4::new()
+            .src(packet_composition_src())
+            .dst(packet_composition_dst())
+            / Udp::new().sport(49_152).dport(1_900)
+            / ssdp.clone();
+        let compiled = packet.compile().expect("ipv4/udp/ssdp stack compiles");
+        let payload = &compiled.as_bytes()[20 + UDP_HEADER_LEN..];
+
+        assert_eq!(payload, ssdp.to_bytes().as_slice());
+        assert_eq!(
+            decode_ssdp(payload).expect("compiled SSDP payload decodes"),
+            ssdp
+        );
+    }
 
     #[test]
     fn ssdp_message_builders_m_search_and_notify_request_defaults() {
