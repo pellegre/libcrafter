@@ -40,6 +40,7 @@ tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider virtualbox --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 40
 tools/probe/run --provider qemu --dry-run --profile ipsec --out target/probe/ipsec-dry-run
+tools/probe/run --provider qemu --dry-run --profile ssdp --seed 1904 --count 3
 python3 tools/probe/engine/provider_matrix.py --providers hetzner,qemu,virtualbox,docker --dry-run --profile behavior --seed 1052 --count 40 --out target/probe/provider-matrix
 ```
 
@@ -75,6 +76,49 @@ there, collect artifacts, and tear it down — never from the developer machine.
 The IPSec stimulus/response cases are `planned_only` in the plan until the
 crate-side stimulus builders and the cross-crypto parity check land in later
 probe steps.
+
+The `ssdp` profile label is used for SSDP discovery planning. SSDP cases cover
+IPv4 `M-SEARCH` response planning, IPv6 link-local multicast search planning,
+bounded `NOTIFY` capture planning, unrelated UDP/1900 raw fallback, and
+malformed SSDP-like payload reporting. Start with a dry-run and pin the SSDP
+cases you intend to inspect:
+
+```sh
+tools/probe/run --provider qemu --dry-run --profile ssdp --seed 1904 --case ssdp-ipv4-search-exchange --case ssdp-ipv6-search-exchange --case ssdp-notify-capture --out target/probe/ssdp-dry-run
+```
+
+Before any live SSDP run, inspect the dry-run report under the selected `--out`
+directory. Confirm that `metadata.provider_capabilities` and
+`metadata.lab_session.provider_capabilities` include the required SSDP
+capabilities for the selected cases: `ssdp_controlled_responder`,
+`ssdp_ipv4_multicast`, `ssdp_ipv6_multicast`, and, for IPv6 link-local search,
+`ssdp_ipv6_link_local_scope`. Also inspect `metadata.probe_plans` for
+`live_address_rewrite`, `target_service`, `capture_filter`, and
+`wire_requirements` so the planned multicast destination, controlled UDP/1900
+responder, and response validation are visible before traffic is allowed.
+
+Live SSDP probing is protected and provider-backed only. Run it from a
+disposable lab provider after the dry-run metadata has been reviewed, and gate
+the command with both an explicit provider selection and a local SSDP
+confirmation:
+
+```sh
+if [ -n "${LIBCRAFTER_PROBE_LIVE_PROVIDER:-}" ] && [ "${LIBCRAFTER_PROBE_LIVE_SSDP_CONFIRM:-}" = "yes" ]; then
+  tools/probe/run --provider "$LIBCRAFTER_PROBE_LIVE_PROVIDER" --confirm-live-run --profile ssdp --seed 1904 --case ssdp-ipv4-search-exchange --case ssdp-notify-capture --out target/probe/ssdp-live
+else
+  tools/probe/run --provider qemu --dry-run --profile ssdp --seed 1904 --case ssdp-ipv4-search-exchange --case ssdp-notify-capture --out target/probe/ssdp-dry-run
+fi
+```
+
+Keep the SSDP artifact set together: `report.json`, request artifacts, provider
+command metadata, target-service logs such as
+`live-artifacts/probe/target-services/ssdp-1900.stdout.txt`, capture summaries,
+and cleanup records. After a live run, verify the report's lab-session cleanup
+metadata shows artifact collection and teardown were attempted. If a manual lab
+session was kept for debugging, collect artifacts first and then destroy it with
+`tools/lab/run destroy SESSION_ID --json`. Do not commit provider endpoint
+addresses, credentials, live interface names, real device UUIDs, or packet
+captures from live SSDP runs.
 
 Provider-backed probe dry-runs use `tools/lab` to plan `stimulus` and `target`
 roles, derive endpoint addresses and interfaces, and include lab session
