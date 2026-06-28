@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import posixpath
-from collections.abc import Mapping
+import shlex
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -27,12 +28,27 @@ from .config import WireConfig
 from .model import EndpointManifest, JSONObject, JsonModel, NetworkInterface, json_object
 from .process import CommandResult
 from .state import read_endpoint_manifest
-from .ssh import DEFAULT_CONNECT_TIMEOUT, ssh_argv
+from .ssh import DEFAULT_CONNECT_TIMEOUT, remote_host, scp_argv, ssh_argv
 
 
 DEFAULT_APPLIANCE_REMOTE_BASE = "/var/lib/libcrafter/appliance"
 DOCKER_ENDPOINT_TRANSPORT = "docker-localhost-port-forward"
 DEFAULT_APPLIANCE_DEPLOY_ARTIFACT_DIRNAME = "appliance-deploy"
+DEFAULT_APPLIANCE_SYNC_ARTIFACT_DIRNAME = "appliance-sync"
+DEFAULT_APPLIANCE_SYNC_ARCHIVE_NAME = "workspace.tar.gz"
+DEFAULT_APPLIANCE_SYNC_RUN_ID = "default"
+DEFAULT_APPLIANCE_SYNC_ARCHIVE_EXCLUDES = (
+    ".git",
+    "target",
+    ".scratch",
+    ".libcrafter-live",
+    "artifacts",
+    "generated",
+    "tools/endpoint/.state",
+    "tools/endpoint/artifacts",
+    "tools/lab/.state",
+    "tools/lab/artifacts",
+)
 DEFAULT_DOCKER_INSTALL_SCRIPT = """
 set -eu
 if command -v docker >/dev/null 2>&1; then
@@ -186,6 +202,196 @@ class EndpointApplianceDeployResult(JsonModel):
                 result
                 if isinstance(result, EndpointApplianceDeployCommandResult)
                 else EndpointApplianceDeployCommandResult(
+                    **dict(_mapping(result, "command_results[]"))
+                )
+                for result in self.command_results
+            ],
+        )
+        object.__setattr__(self, "metadata", json_object(self.metadata, "metadata"))
+
+
+@dataclass(frozen=True, slots=True)
+class EndpointApplianceSyncTransferPlan(JsonModel):
+    """Dry-run SCP upload plan for one endpoint appliance workspace archive."""
+
+    kind: str
+    target: SSHDockerHostTarget
+    local_path: str
+    remote_path: str
+    command_argv: list[str]
+    recursive: bool = False
+    executes: bool = False
+    metadata: JSONObject = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "kind", _require_non_empty_string(self.kind, "kind"))
+        if not isinstance(self.target, SSHDockerHostTarget):
+            object.__setattr__(
+                self,
+                "target",
+                SSHDockerHostTarget.from_dict(_mapping(self.target, "target")),
+            )
+        object.__setattr__(self, "local_path", _absolute_path(self.local_path, "local_path"))
+        object.__setattr__(
+            self,
+            "remote_path",
+            _remote_absolute_path(self.remote_path, "remote_path"),
+        )
+        object.__setattr__(
+            self,
+            "command_argv",
+            _non_empty_string_list(self.command_argv, "command_argv"),
+        )
+        object.__setattr__(self, "recursive", _bool(self.recursive, "recursive"))
+        object.__setattr__(self, "executes", _bool(self.executes, "executes"))
+        object.__setattr__(self, "metadata", json_object(self.metadata, "metadata"))
+
+
+@dataclass(frozen=True, slots=True)
+class EndpointApplianceSyncPlan(JsonModel):
+    """Dry-run plan for syncing a local workspace to one endpoint appliance target."""
+
+    kind: str
+    endpoint_id: str
+    target: EndpointApplianceTarget
+    source_root: str
+    run_id: str
+    local_archive_path: str
+    remote_run_root: str
+    remote_workspace_dir: str
+    remote_artifact_dir: str
+    remote_archive_path: str
+    archive_excludes: list[str]
+    archive_command_argv: list[str]
+    commands: list[SSHCommandPlan | EndpointApplianceSyncTransferPlan]
+    executes: bool = False
+    metadata: JSONObject = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "kind", _require_non_empty_string(self.kind, "kind"))
+        object.__setattr__(
+            self,
+            "endpoint_id",
+            _require_non_empty_string(self.endpoint_id, "endpoint_id"),
+        )
+        if not isinstance(self.target, EndpointApplianceTarget):
+            raise TypeError("target must be an EndpointApplianceTarget")
+        object.__setattr__(self, "source_root", _absolute_path(self.source_root, "source_root"))
+        object.__setattr__(self, "run_id", _remote_component(self.run_id, "run_id"))
+        object.__setattr__(
+            self,
+            "local_archive_path",
+            _absolute_path(self.local_archive_path, "local_archive_path"),
+        )
+        object.__setattr__(
+            self,
+            "remote_run_root",
+            _remote_absolute_path(self.remote_run_root, "remote_run_root"),
+        )
+        object.__setattr__(
+            self,
+            "remote_workspace_dir",
+            _remote_absolute_path(self.remote_workspace_dir, "remote_workspace_dir"),
+        )
+        object.__setattr__(
+            self,
+            "remote_artifact_dir",
+            _remote_absolute_path(self.remote_artifact_dir, "remote_artifact_dir"),
+        )
+        object.__setattr__(
+            self,
+            "remote_archive_path",
+            _remote_absolute_path(self.remote_archive_path, "remote_archive_path"),
+        )
+        object.__setattr__(
+            self,
+            "archive_excludes",
+            _string_list(self.archive_excludes, "archive_excludes"),
+        )
+        object.__setattr__(
+            self,
+            "archive_command_argv",
+            _non_empty_string_list(self.archive_command_argv, "archive_command_argv"),
+        )
+        commands: list[SSHCommandPlan | EndpointApplianceSyncTransferPlan] = []
+        for command in self.commands:
+            if isinstance(command, (SSHCommandPlan, EndpointApplianceSyncTransferPlan)):
+                commands.append(command)
+                continue
+            data = _mapping(command, "commands[]")
+            kind = data.get("kind")
+            if kind == "ssh-appliance-sync-upload":
+                commands.append(EndpointApplianceSyncTransferPlan(**dict(data)))
+            else:
+                commands.append(SSHCommandPlan(**dict(data)))
+        if not commands:
+            raise ValueError("commands must not be empty")
+        object.__setattr__(self, "commands", commands)
+        object.__setattr__(self, "executes", _bool(self.executes, "executes"))
+        object.__setattr__(self, "metadata", json_object(self.metadata, "metadata"))
+
+
+@dataclass(frozen=True, slots=True)
+class EndpointApplianceSyncCommandResult(JsonModel):
+    """Recorded result and stdout/stderr artifact paths for one sync command."""
+
+    name: str
+    kind: str
+    command_argv: list[str]
+    exit_code: int
+    ok: bool
+    stdout_path: str
+    stderr_path: str
+    timed_out: bool = False
+    error: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "name", _require_non_empty_string(self.name, "name"))
+        object.__setattr__(self, "kind", _require_non_empty_string(self.kind, "kind"))
+        object.__setattr__(
+            self,
+            "command_argv",
+            _non_empty_string_list(self.command_argv, "command_argv"),
+        )
+        object.__setattr__(self, "exit_code", _int(self.exit_code, "exit_code"))
+        object.__setattr__(self, "ok", _bool(self.ok, "ok"))
+        object.__setattr__(self, "stdout_path", _absolute_path(self.stdout_path, "stdout_path"))
+        object.__setattr__(self, "stderr_path", _absolute_path(self.stderr_path, "stderr_path"))
+        object.__setattr__(self, "timed_out", _bool(self.timed_out, "timed_out"))
+        if self.error is not None:
+            object.__setattr__(self, "error", _require_non_empty_string(self.error, "error"))
+
+
+@dataclass(frozen=True, slots=True)
+class EndpointApplianceSyncResult(JsonModel):
+    """Live sync outcome for one endpoint appliance target."""
+
+    kind: str
+    endpoint_id: str
+    ok: bool
+    plan: EndpointApplianceSyncPlan
+    artifact_dir: str
+    command_results: list[EndpointApplianceSyncCommandResult] = field(default_factory=list)
+    metadata: JSONObject = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "kind", _require_non_empty_string(self.kind, "kind"))
+        object.__setattr__(
+            self,
+            "endpoint_id",
+            _require_non_empty_string(self.endpoint_id, "endpoint_id"),
+        )
+        object.__setattr__(self, "ok", _bool(self.ok, "ok"))
+        if not isinstance(self.plan, EndpointApplianceSyncPlan):
+            raise TypeError("plan must be an EndpointApplianceSyncPlan")
+        object.__setattr__(self, "artifact_dir", _absolute_path(self.artifact_dir, "artifact_dir"))
+        object.__setattr__(
+            self,
+            "command_results",
+            [
+                result
+                if isinstance(result, EndpointApplianceSyncCommandResult)
+                else EndpointApplianceSyncCommandResult(
                     **dict(_mapping(result, "command_results[]"))
                 )
                 for result in self.command_results
@@ -476,6 +682,176 @@ def deploy_endpoint_appliance_target(
     return _deploy_result(plan, output_dir, command_results, ok=prepare.ok)
 
 
+def render_endpoint_appliance_sync_plan(
+    target: EndpointApplianceTarget,
+    *,
+    source_root: str | Path | None = None,
+    artifact_dir: str | Path | None = None,
+    run_id: str = DEFAULT_APPLIANCE_SYNC_RUN_ID,
+    archive_name: str = DEFAULT_APPLIANCE_SYNC_ARCHIVE_NAME,
+    extra_excludes: Sequence[str] = (),
+    connect_timeout: int = DEFAULT_CONNECT_TIMEOUT,
+) -> EndpointApplianceSyncPlan:
+    """Return a dry-run plan for syncing a local workspace to an endpoint."""
+
+    if not isinstance(target, EndpointApplianceTarget):
+        raise TypeError("target must be an EndpointApplianceTarget")
+    ssh_target = target.target
+    source = _absolute_existing_dir(source_root or _repository_root(), "source_root")
+    run_component = _remote_component(run_id, "run_id")
+    archive_filename = _archive_name(archive_name)
+    output_dir = _sync_artifact_dir(target, artifact_dir, run_component, create=False)
+    local_archive = output_dir / archive_filename
+    excludes = _archive_excludes(
+        source_root=source,
+        archive_path=local_archive,
+        artifact_dir=output_dir,
+        extra_excludes=extra_excludes,
+    )
+    archive_command = [
+        "tar",
+        "-C",
+        str(source),
+        *[f"--exclude={exclude}" for exclude in excludes],
+        "-czf",
+        str(local_archive),
+        ".",
+    ]
+    remote_run_root = _remote_absolute_path(
+        posixpath.join(ssh_target.remote_work_root, "runs", run_component),
+        "remote_run_root",
+    )
+    remote_workspace_dir = posixpath.join(remote_run_root, "workspace")
+    remote_artifact_dir = _remote_absolute_path(
+        posixpath.join(ssh_target.remote_artifact_root, "runs", run_component),
+        "remote_artifact_dir",
+    )
+    remote_archive_path = posixpath.join(remote_run_root, archive_filename)
+    mkdir_plan = _render_ssh_command_plan(
+        ssh_target,
+        kind="ssh-appliance-sync-mkdir",
+        remote_command_argv=[
+            "mkdir",
+            "-p",
+            remote_run_root,
+            remote_workspace_dir,
+            remote_artifact_dir,
+        ],
+        connect_timeout=connect_timeout,
+        metadata={
+            "paths": [remote_run_root, remote_workspace_dir, remote_artifact_dir],
+            "run_id": run_component,
+        },
+    )
+    upload_plan = _render_sync_upload_plan(
+        ssh_target,
+        local_archive=local_archive,
+        remote_archive=remote_archive_path,
+        connect_timeout=connect_timeout,
+        metadata={
+            "run_id": run_component,
+            "archive_name": archive_filename,
+        },
+    )
+    unpack_plan = _render_ssh_command_plan(
+        ssh_target,
+        kind="ssh-appliance-sync-unpack",
+        remote_command_argv=[
+            "sh",
+            "-lc",
+            _sync_unpack_script(
+                remote_archive=remote_archive_path,
+                remote_workspace_dir=remote_workspace_dir,
+                remote_artifact_dir=remote_artifact_dir,
+            ),
+        ],
+        connect_timeout=connect_timeout,
+        metadata={
+            "run_id": run_component,
+            "remote_archive_path": remote_archive_path,
+            "remote_workspace_dir": remote_workspace_dir,
+            "remote_artifact_dir": remote_artifact_dir,
+        },
+    )
+    return EndpointApplianceSyncPlan(
+        kind="endpoint-appliance-sync-plan",
+        endpoint_id=target.endpoint_id,
+        target=target,
+        source_root=str(source),
+        run_id=run_component,
+        local_archive_path=str(local_archive),
+        remote_run_root=remote_run_root,
+        remote_workspace_dir=remote_workspace_dir,
+        remote_artifact_dir=remote_artifact_dir,
+        remote_archive_path=remote_archive_path,
+        archive_excludes=list(excludes),
+        archive_command_argv=archive_command,
+        commands=[mkdir_plan, upload_plan, unpack_plan],
+        metadata={
+            "archive_name": archive_filename,
+            "remote_work_root": ssh_target.remote_work_root,
+            "remote_artifact_root": ssh_target.remote_artifact_root,
+        },
+    )
+
+
+def sync_endpoint_appliance_workspace(
+    target: EndpointApplianceTarget,
+    *,
+    runner: CommandRunner,
+    source_root: str | Path | None = None,
+    artifact_dir: str | Path | None = None,
+    run_id: str = DEFAULT_APPLIANCE_SYNC_RUN_ID,
+    archive_name: str = DEFAULT_APPLIANCE_SYNC_ARCHIVE_NAME,
+    extra_excludes: Sequence[str] = (),
+    connect_timeout: int = DEFAULT_CONNECT_TIMEOUT,
+    timeout: float | None = None,
+) -> EndpointApplianceSyncResult:
+    """Explicitly execute an endpoint appliance workspace sync with an injected runner."""
+
+    if runner is None:
+        raise ValueError("runner is required")
+    plan = render_endpoint_appliance_sync_plan(
+        target,
+        source_root=source_root,
+        artifact_dir=artifact_dir,
+        run_id=run_id,
+        archive_name=archive_name,
+        extra_excludes=extra_excludes,
+        connect_timeout=connect_timeout,
+    )
+    output_dir = Path(plan.local_archive_path).parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+    command_results: list[EndpointApplianceSyncCommandResult] = []
+
+    archive = runner(plan.archive_command_argv, cwd=plan.source_root, timeout=timeout)
+    command_results.append(
+        _record_sync_command_result(
+            name="01-create-archive",
+            kind="local-appliance-sync-archive",
+            command_argv=plan.archive_command_argv,
+            result=archive,
+            artifact_dir=output_dir,
+        )
+    )
+    if not archive.ok:
+        return _sync_result(plan, output_dir, command_results, ok=False)
+
+    for index, command in enumerate(plan.commands, start=2):
+        result = _execute_sync_command(
+            command,
+            name=_sync_command_name(index, command.kind),
+            artifact_dir=output_dir,
+            runner=runner,
+            timeout=timeout,
+        )
+        command_results.append(result)
+        if not result.ok:
+            return _sync_result(plan, output_dir, command_results, ok=False)
+
+    return _sync_result(plan, output_dir, command_results, ok=True)
+
+
 def _manifest(value: EndpointManifest | Mapping[str, object]) -> EndpointManifest:
     if isinstance(value, EndpointManifest):
         return value
@@ -667,6 +1043,107 @@ def _non_empty_string_list(value: object, name: str) -> list[str]:
     return output
 
 
+def _string_list(value: object, name: str) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"{name} must be a list")
+    output: list[str] = []
+    for item in value:
+        output.append(_require_non_empty_string(item, f"{name}[]"))
+    return output
+
+
+def _repository_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _absolute_existing_dir(path: str | Path, name: str) -> Path:
+    output = Path(path).expanduser()
+    if not output.is_absolute():
+        output = Path.cwd() / output
+    output = output.resolve(strict=False)
+    if not output.exists():
+        raise ValueError(f"{name} does not exist: {output}")
+    if not output.is_dir():
+        raise ValueError(f"{name} must be a directory: {output}")
+    return output
+
+
+def _sync_artifact_dir(
+    target: EndpointApplianceTarget,
+    artifact_dir: str | Path | None,
+    run_id: str,
+    *,
+    create: bool,
+) -> Path:
+    if artifact_dir is not None:
+        output = Path(_absolute_path(artifact_dir, "artifact_dir"))
+    else:
+        endpoint_artifact_dir = _optional_string(
+            target.metadata.get("artifact_dir"),
+            "metadata.artifact_dir",
+        )
+        if endpoint_artifact_dir is None:
+            raise ValueError("artifact_dir is required when target metadata has no artifact_dir")
+        output = Path(_absolute_path(endpoint_artifact_dir, "metadata.artifact_dir"))
+        output = output / DEFAULT_APPLIANCE_SYNC_ARTIFACT_DIRNAME / run_id
+    if create:
+        output.mkdir(parents=True, exist_ok=True)
+    return output.resolve(strict=False)
+
+
+def _archive_excludes(
+    *,
+    source_root: Path,
+    archive_path: Path,
+    artifact_dir: Path,
+    extra_excludes: Sequence[str],
+) -> tuple[str, ...]:
+    excludes: list[str] = list(DEFAULT_APPLIANCE_SYNC_ARCHIVE_EXCLUDES)
+    excludes.extend(_safe_exclude_pattern(item) for item in extra_excludes)
+    excludes.extend(_relative_excludes(source_root, archive_path, artifact_dir))
+    return tuple(_dedupe(excludes))
+
+
+def _relative_excludes(source_root: Path, *paths: Path) -> list[str]:
+    output: list[str] = []
+    for path in paths:
+        try:
+            relative = path.resolve(strict=False).relative_to(source_root)
+        except ValueError:
+            continue
+        if str(relative) == ".":
+            continue
+        output.append(relative.as_posix())
+    return output
+
+
+def _safe_exclude_pattern(value: object) -> str:
+    if not isinstance(value, str) or value == "":
+        raise ValueError("archive exclude patterns must be non-empty strings")
+    if "\x00" in value:
+        raise ValueError("archive exclude patterns must not contain NUL bytes")
+    return value
+
+
+def _archive_name(value: object) -> str:
+    if not isinstance(value, str) or value == "":
+        raise ValueError("archive_name must be a non-empty string")
+    if value in {".", ".."} or "/" in value or "\x00" in value:
+        raise ValueError("archive_name must be a single filename")
+    return value
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    output: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        output.append(value)
+    return output
+
+
 def _require_docker_execution_supported(target: EndpointApplianceTarget) -> None:
     appliance = _optional_mapping(target.metadata.get("appliance"), "metadata.appliance")
     if appliance is None:
@@ -759,6 +1236,51 @@ def _render_ssh_command_plan(
     )
 
 
+def _render_sync_upload_plan(
+    target: SSHDockerHostTarget,
+    *,
+    local_archive: Path,
+    remote_archive: str,
+    connect_timeout: int,
+    metadata: Mapping[str, object] | None = None,
+) -> EndpointApplianceSyncTransferPlan:
+    local_path = str(Path(_absolute_path(local_archive, "local_archive")))
+    remote_path = _remote_absolute_path(remote_archive, "remote_archive")
+    destination = f"{remote_host(host=target.host, user=target.user)}:{remote_path}"
+    return EndpointApplianceSyncTransferPlan(
+        kind="ssh-appliance-sync-upload",
+        target=target,
+        local_path=local_path,
+        remote_path=remote_path,
+        command_argv=scp_argv(
+            source=local_path,
+            destination=destination,
+            identity_file=target.identity_file,
+            known_hosts=target.known_hosts_file,
+            port=target.port,
+            connect_timeout=connect_timeout,
+        ),
+        metadata={} if metadata is None else json_object(metadata, "metadata"),
+    )
+
+
+def _sync_unpack_script(
+    *,
+    remote_archive: str,
+    remote_workspace_dir: str,
+    remote_artifact_dir: str,
+) -> str:
+    archive = shlex.quote(_remote_absolute_path(remote_archive, "remote_archive"))
+    workspace = shlex.quote(_remote_absolute_path(remote_workspace_dir, "remote_workspace_dir"))
+    artifacts = shlex.quote(_remote_absolute_path(remote_artifact_dir, "remote_artifact_dir"))
+    return (
+        "set -eu\n"
+        f"rm -rf {workspace}\n"
+        f"mkdir -p {workspace} {artifacts}\n"
+        f"tar -xzf {archive} -C {workspace}"
+    )
+
+
 def _deploy_artifact_dir(
     target: EndpointApplianceTarget,
     artifact_dir: str | Path | None,
@@ -821,6 +1343,80 @@ def _record_deploy_command_result(
     )
 
 
+def _execute_sync_command(
+    plan: SSHCommandPlan | EndpointApplianceSyncTransferPlan,
+    *,
+    name: str,
+    artifact_dir: Path,
+    runner: CommandRunner,
+    timeout: float | None,
+) -> EndpointApplianceSyncCommandResult:
+    result = runner(plan.command_argv, timeout=timeout)
+    return _record_sync_command_result(
+        name=name,
+        kind=plan.kind,
+        command_argv=plan.command_argv,
+        result=result,
+        artifact_dir=artifact_dir,
+    )
+
+
+def _record_sync_command_result(
+    *,
+    name: str,
+    kind: str,
+    command_argv: list[str],
+    result: CommandResult,
+    artifact_dir: Path,
+) -> EndpointApplianceSyncCommandResult:
+    stdout_path = artifact_dir / f"{name}.stdout.txt"
+    stderr_path = artifact_dir / f"{name}.stderr.txt"
+    stdout_path.write_text(result.stdout, encoding="utf-8")
+    stderr_path.write_text(result.stderr, encoding="utf-8")
+    return EndpointApplianceSyncCommandResult(
+        name=name,
+        kind=kind,
+        command_argv=command_argv,
+        exit_code=result.exit_code,
+        ok=result.ok,
+        stdout_path=str(stdout_path),
+        stderr_path=str(stderr_path),
+        timed_out=result.timed_out,
+        error=result.error,
+    )
+
+
+def _sync_command_name(index: int, kind: str) -> str:
+    suffixes = {
+        "ssh-appliance-sync-mkdir": "remote-mkdir",
+        "ssh-appliance-sync-upload": "upload-workspace",
+        "ssh-appliance-sync-unpack": "unpack-workspace",
+    }
+    return f"{index:02d}-{suffixes.get(kind, kind)}"
+
+
+def _sync_result(
+    plan: EndpointApplianceSyncPlan,
+    artifact_dir: Path,
+    command_results: list[EndpointApplianceSyncCommandResult],
+    *,
+    ok: bool,
+) -> EndpointApplianceSyncResult:
+    return EndpointApplianceSyncResult(
+        kind="endpoint-appliance-sync",
+        endpoint_id=plan.endpoint_id,
+        ok=ok,
+        plan=plan,
+        artifact_dir=str(artifact_dir),
+        command_results=command_results,
+        metadata={
+            "commands_executed": len(command_results),
+            "remote_workspace_dir": plan.remote_workspace_dir,
+            "remote_artifact_dir": plan.remote_artifact_dir,
+        },
+    )
+
+
 def _deploy_result(
     plan: EndpointApplianceDeployPlan,
     artifact_dir: Path,
@@ -842,14 +1438,24 @@ def _deploy_result(
 __all__ = [
     "DEFAULT_APPLIANCE_REMOTE_BASE",
     "DEFAULT_APPLIANCE_DEPLOY_ARTIFACT_DIRNAME",
+    "DEFAULT_APPLIANCE_SYNC_ARCHIVE_EXCLUDES",
+    "DEFAULT_APPLIANCE_SYNC_ARCHIVE_NAME",
+    "DEFAULT_APPLIANCE_SYNC_ARTIFACT_DIRNAME",
+    "DEFAULT_APPLIANCE_SYNC_RUN_ID",
     "DEFAULT_DOCKER_INSTALL_SCRIPT",
     "DOCKER_ENDPOINT_TRANSPORT",
     "EndpointApplianceDeployCommandResult",
     "EndpointApplianceDeployPlan",
     "EndpointApplianceDeployResult",
+    "EndpointApplianceSyncCommandResult",
+    "EndpointApplianceSyncPlan",
+    "EndpointApplianceSyncResult",
+    "EndpointApplianceSyncTransferPlan",
     "EndpointApplianceTarget",
     "deploy_endpoint_appliance_target",
     "read_endpoint_appliance_target",
     "render_endpoint_appliance_deploy_plan",
+    "render_endpoint_appliance_sync_plan",
     "resolve_endpoint_appliance_target",
+    "sync_endpoint_appliance_workspace",
 ]
