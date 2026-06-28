@@ -12,13 +12,16 @@ use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::protocols::transport::Udp;
 
 use super::constants::{
-    SSDP_HEADER_CACHE_CONTROL, SSDP_HEADER_EXT, SSDP_HEADER_HOST, SSDP_HEADER_LOCATION,
-    SSDP_HEADER_MAN, SSDP_HEADER_MX, SSDP_HEADER_NT, SSDP_HEADER_NTS, SSDP_HEADER_SECURELOCATION,
-    SSDP_HEADER_SERVER, SSDP_HEADER_ST, SSDP_HEADER_USER_AGENT, SSDP_HEADER_USN,
-    SSDP_HTTP_VERSION as HTTP_VERSION_1_1, SSDP_IPV4_MULTICAST_HOST, SSDP_MAN_DISCOVER,
-    SSDP_METHOD_M_SEARCH as METHOD_M_SEARCH, SSDP_METHOD_NOTIFY as METHOD_NOTIFY, SSDP_NTS_ALIVE,
-    SSDP_NTS_BYEBYE, SSDP_NTS_UPDATE, SSDP_REASON_OK as REASON_OK, SSDP_STATUS_OK as STATUS_OK,
-    SSDP_ST_ALL, SSDP_TARGET_ROOTDEVICE, SSDP_UDP_PORT,
+    SSDP_HEADER_BOOTID, SSDP_HEADER_CACHE_CONTROL, SSDP_HEADER_CONFIGID, SSDP_HEADER_CPFN,
+    SSDP_HEADER_CPUUID, SSDP_HEADER_EXT, SSDP_HEADER_HOST, SSDP_HEADER_LOCATION, SSDP_HEADER_MAN,
+    SSDP_HEADER_MX, SSDP_HEADER_NEXTBOOTID, SSDP_HEADER_NLS_SUFFIX, SSDP_HEADER_NT,
+    SSDP_HEADER_NTS, SSDP_HEADER_OPT, SSDP_HEADER_SEARCHPORT, SSDP_HEADER_SECURELOCATION,
+    SSDP_HEADER_SERVER, SSDP_HEADER_ST, SSDP_HEADER_TCPPORT, SSDP_HEADER_USER_AGENT,
+    SSDP_HEADER_USN, SSDP_HTTP_VERSION as HTTP_VERSION_1_1, SSDP_IPV4_MULTICAST_HOST,
+    SSDP_MAN_DISCOVER, SSDP_METHOD_M_SEARCH as METHOD_M_SEARCH,
+    SSDP_METHOD_NOTIFY as METHOD_NOTIFY, SSDP_NTS_ALIVE, SSDP_NTS_BYEBYE, SSDP_NTS_UPDATE,
+    SSDP_REASON_OK as REASON_OK, SSDP_STATUS_OK as STATUS_OK, SSDP_ST_ALL, SSDP_TARGET_ROOTDEVICE,
+    SSDP_UDP_PORT,
 };
 use super::header::{SsdpHeaderNameKind, SsdpHeaderNameParseError, SsdpHeaderValue, SsdpHeaders};
 
@@ -235,6 +238,58 @@ impl Ssdp {
     /// Append an explicit `USER-AGENT` header.
     pub fn user_agent(self, value: impl Into<SsdpHeaderValue>) -> Self {
         self.with_source_header(SSDP_HEADER_USER_AGENT, value)
+    }
+
+    /// Append a `BOOTID.UPNP.ORG` header.
+    pub fn boot_id(self, value: u32) -> Self {
+        self.with_source_header(SSDP_HEADER_BOOTID, value.to_string())
+    }
+
+    /// Append a `CONFIGID.UPNP.ORG` header.
+    pub fn config_id(self, value: u32) -> Self {
+        self.with_source_header(SSDP_HEADER_CONFIGID, value.to_string())
+    }
+
+    /// Append a `NEXTBOOTID.UPNP.ORG` header.
+    pub fn next_boot_id(self, value: u32) -> Self {
+        self.with_source_header(SSDP_HEADER_NEXTBOOTID, value.to_string())
+    }
+
+    /// Append a `SEARCHPORT.UPNP.ORG` header.
+    pub fn search_port(self, port: u16) -> Self {
+        self.with_source_header(SSDP_HEADER_SEARCHPORT, port.to_string())
+    }
+
+    /// Append a `TCPPORT.UPNP.ORG` header.
+    pub fn tcp_port(self, port: u16) -> Self {
+        self.with_source_header(SSDP_HEADER_TCPPORT, port.to_string())
+    }
+
+    /// Append a `CPFN.UPNP.ORG` header.
+    pub fn cpfn(self, value: impl Into<SsdpHeaderValue>) -> Self {
+        self.with_source_header(SSDP_HEADER_CPFN, value)
+    }
+
+    /// Append a `CPUUID.UPNP.ORG` header.
+    pub fn cpuuid(self, value: impl Into<SsdpHeaderValue>) -> Self {
+        self.with_source_header(SSDP_HEADER_CPUUID, value)
+    }
+
+    /// Append an `OPT` extension declaration header.
+    pub fn opt(self, value: impl Into<SsdpHeaderValue>) -> Self {
+        self.with_source_header(SSDP_HEADER_OPT, value)
+    }
+
+    /// Append a namespace-prefixed `*-NLS` header.
+    pub fn nls(
+        self,
+        namespace: impl AsRef<str>,
+        value: impl Into<SsdpHeaderValue>,
+    ) -> Result<Self, SsdpHeaderNameParseError> {
+        self.with_raw_header(
+            format!("{}-{SSDP_HEADER_NLS_SUFFIX}", namespace.as_ref()),
+            value,
+        )
     }
 
     /// Replace the opaque body bytes with caller-supplied bytes.
@@ -2580,6 +2635,121 @@ mod tests {
                 .get_first(SsdpHeaderNameKind::UserAgent)
                 .is_none());
         }
+    }
+
+    #[test]
+    fn ssdp_extension_headers_source_backed_numeric_and_string_helpers() {
+        let message = Ssdp::notify_alive()
+            .boot_id(17)
+            .config_id(1_024)
+            .next_boot_id(18)
+            .search_port(49_152)
+            .tcp_port(49_153)
+            .cpfn("Living Room Device")
+            .cpuuid("550e8400-e29b-41d4-a716-446655440000");
+
+        assert_eq!(
+            message
+                .headers()
+                .get_first(SsdpHeaderNameKind::BootId)
+                .expect("BOOTID header")
+                .as_bytes(),
+            b"17"
+        );
+        assert_eq!(
+            message
+                .headers()
+                .get_first(SsdpHeaderNameKind::ConfigId)
+                .expect("CONFIGID header")
+                .as_bytes(),
+            b"1024"
+        );
+        assert_eq!(
+            message
+                .headers()
+                .get_first(SsdpHeaderNameKind::NextBootId)
+                .expect("NEXTBOOTID header")
+                .as_bytes(),
+            b"18"
+        );
+        assert_eq!(
+            message
+                .headers()
+                .get_first(SsdpHeaderNameKind::SearchPort)
+                .expect("SEARCHPORT header")
+                .as_bytes(),
+            b"49152"
+        );
+        assert_eq!(
+            message
+                .headers()
+                .get_first(SsdpHeaderNameKind::TcpPort)
+                .expect("TCPPORT header")
+                .as_bytes(),
+            b"49153"
+        );
+        assert_eq!(
+            message
+                .headers()
+                .get_first(SsdpHeaderNameKind::Cpfn)
+                .expect("CPFN header")
+                .as_bytes(),
+            b"Living Room Device"
+        );
+        assert_eq!(
+            message
+                .headers()
+                .get_first(SsdpHeaderNameKind::Cpuuid)
+                .expect("CPUUID header")
+                .as_bytes(),
+            b"550e8400-e29b-41d4-a716-446655440000"
+        );
+    }
+
+    #[test]
+    fn ssdp_extension_headers_opt_and_nls_helpers_preserve_namespace() {
+        let message = Ssdp::notify_alive()
+            .opt("\"http://schemas.upnp.org/upnp/1/0/\"; ns=01")
+            .nls("01", "17")
+            .expect("NLS header should be valid");
+        let entries = message.headers().iter().collect::<Vec<_>>();
+        let nls = entries
+            .iter()
+            .find(|header| header.name().kind() == SsdpHeaderNameKind::NlsPrefixed)
+            .expect("NLS header");
+
+        assert_eq!(
+            message
+                .headers()
+                .get_first(SsdpHeaderNameKind::Opt)
+                .expect("OPT header")
+                .as_bytes(),
+            b"\"http://schemas.upnp.org/upnp/1/0/\"; ns=01"
+        );
+        assert_eq!(nls.name().original(), "01-NLS");
+        assert_eq!(nls.name().nls_namespace(), Some("01"));
+        assert_eq!(nls.value().as_bytes(), b"17");
+    }
+
+    #[test]
+    fn ssdp_extension_headers_unknown_extensions_remain_in_general_collection() {
+        let error = Ssdp::response_ok()
+            .with_raw_header("bad name", "rejected")
+            .expect_err("invalid extension header name should be rejected");
+        let preserved = Ssdp::response_ok()
+            .with_raw_header("X-DEVICE.UPNP.ORG", "opaque")
+            .expect("unknown extension")
+            .with_raw_header("X-DEVICE.UPNP.ORG", "second")
+            .expect("second unknown extension");
+        let unknowns = preserved
+            .headers()
+            .iter()
+            .filter(|header| header.name().kind() == SsdpHeaderNameKind::Unknown)
+            .map(|header| header.value().as_bytes())
+            .collect::<Vec<_>>();
+
+        assert_eq!(error.value(), "bad name");
+        assert_eq!(unknowns, vec![b"opaque".as_slice(), b"second".as_slice()]);
     }
 
     #[test]
