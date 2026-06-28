@@ -14,7 +14,13 @@ from tools.lab.engine.bootstrap import (
     context_export_lines,
     render_workload_bootstrap_script,
 )
-from tools.lab.engine.model import LabCommandPlan, LabEndpoint, LabRole, LabSession
+from tools.lab.engine.model import (
+    LabApplianceRuntime,
+    LabCommandPlan,
+    LabEndpoint,
+    LabRole,
+    LabSession,
+)
 from tools.lab.engine.process import CommandResult
 from tools.lab.engine.repo import (
     RepoBootstrapCommand,
@@ -164,6 +170,155 @@ class LabBootstrapApiTest(unittest.TestCase):
                     client=_FakeEndpointClient(),
                 )
 
+    def test_bootstrap_without_appliance_runtime_preserves_legacy_command(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            archive = root / "repo.tar.gz"
+            archive.write_bytes(b"archive")
+            client = _FakeEndpointClient()
+
+            result = bootstrap_lab_session(
+                _session(),
+                {"stimulus": ["bash", "-lc", "echo legacy-bootstrap"]},
+                remote_dir="/opt/libcrafter-lab/session",
+                archive=archive,
+                output_dir=root / "bootstrap",
+                client=client,
+            )
+
+            self.assertTrue(result.ok)
+            stimulus_calls = [
+                call
+                for call in client.exec_calls
+                if call["endpoint_id"] == "endpoint-stimulus"
+                and call["command"] == ("bash", "-lc", "echo legacy-bootstrap")
+            ]
+            self.assertEqual(len(stimulus_calls), 1)
+            workload = _workload_record(result, "stimulus")
+            self.assertEqual(workload.metadata["bootstrap"], {})
+            self.assertNotIn("appliance", workload.metadata)
+            self.assertNotIn("docker run", " ".join(workload.argv))
+
+    def test_bootstrap_wraps_workload_command_with_endpoint_runtime_preferred(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            archive = root / "repo.tar.gz"
+            archive.write_bytes(b"archive")
+            session_runtime = _appliance_runtime(
+                image_tag="registry.example.invalid/libcrafter/appliance:session",
+            )
+            endpoint_runtime = _appliance_runtime(
+                image_tag="registry.example.invalid/libcrafter/appliance:endpoint",
+                metadata={"scope": "endpoint"},
+            )
+            client = _FakeEndpointClient()
+
+            result = bootstrap_lab_session(
+                _session(
+                    appliance_runtime=session_runtime,
+                    stimulus_appliance_runtime=endpoint_runtime,
+                ),
+                {
+                    "stimulus": RepoBootstrapCommand(
+                        argv=["bash", "-lc", "printf stimulus"],
+                        metadata={"workload": "oracle"},
+                    ),
+                    "target": ["bash", "-lc", "printf target"],
+                },
+                remote_dir="/opt/libcrafter-lab/session",
+                archive=archive,
+                output_dir=root / "bootstrap",
+                client=client,
+            )
+
+            self.assertTrue(result.ok)
+            stimulus = _workload_record(result, "stimulus")
+            target = _workload_record(result, "target")
+            self.assertEqual(stimulus.metadata["bootstrap"], {"workload": "oracle"})
+            self.assertEqual(
+                stimulus.metadata["appliance"]["image_tag"],
+                "registry.example.invalid/libcrafter/appliance:endpoint",
+            )
+            self.assertEqual(
+                target.metadata["appliance"]["image_tag"],
+                "registry.example.invalid/libcrafter/appliance:session",
+            )
+            self.assertEqual(
+                stimulus.metadata["appliance"]["original_argv"],
+                ["bash", "-lc", "printf stimulus"],
+            )
+            self.assertEqual(stimulus.argv[4], "bash")
+            self.assertEqual(stimulus.argv[5], "-lc")
+            self.assertIn("exec docker run", stimulus.argv[6])
+
+    def test_appliance_bootstrap_propagates_env_artifacts_and_avoids_docker_socket(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            archive = root / "repo.tar.gz"
+            archive.write_bytes(b"archive")
+            runtime = _appliance_runtime(
+                container_policy={
+                    "network_mode": "host",
+                    "capabilities": ["NET_RAW", "NET_ADMIN"],
+                    "environment": {"POLICY_ENV": "from-policy"},
+                },
+            )
+
+            result = bootstrap_lab_session(
+                _session(appliance_runtime=runtime),
+                {"stimulus": ["bash", "-lc", "env | sort > /artifacts/env.txt"]},
+                remote_dir="/opt/libcrafter-lab/session",
+                archive=archive,
+                output_dir=root / "bootstrap",
+                client=_FakeEndpointClient(),
+            )
+
+            self.assertTrue(result.ok)
+            appliance = _workload_record(result, "stimulus").metadata["appliance"]
+            self.assertTrue(appliance["wrapped"])
+            self.assertEqual(appliance["work_dir"], "/opt/libcrafter-lab/session")
+            self.assertEqual(
+                appliance["artifact_dir"],
+                "/opt/libcrafter-lab/session/artifacts/bootstrap/stimulus",
+            )
+            self.assertEqual(appliance["container_work_dir"], "/work")
+            self.assertEqual(appliance["container_artifact_dir"], "/artifacts")
+
+            plan = appliance["docker_run_plan"]
+            docker_argv = [str(part) for part in plan["docker_argv"]]
+            mount_args = _option_values(docker_argv, "--mount")
+            self.assertIn(
+                "type=bind,source=/opt/libcrafter-lab/session,target=/work",
+                mount_args,
+            )
+            self.assertIn(
+                "type=bind,source=/opt/libcrafter-lab/session/artifacts/"
+                "bootstrap/stimulus,target=/artifacts",
+                mount_args,
+            )
+            self.assertEqual(plan["work_dir"], "/opt/libcrafter-lab/session")
+            self.assertEqual(
+                plan["artifact_dir"],
+                "/opt/libcrafter-lab/session/artifacts/bootstrap/stimulus",
+            )
+            self.assertEqual(plan["network_mode"], "host")
+            self.assertEqual(plan["cap_add"], ["NET_RAW", "NET_ADMIN"])
+
+            env_args = _option_values(docker_argv, "--env")
+            self.assertIn("LIBCRAFTER_ENDPOINT_ROLE=stimulus", env_args)
+            self.assertIn("LIBCRAFTER_PRIVATE_IPV4=10.77.0.10", env_args)
+            self.assertIn("LIBCRAFTER_PEER_PRIVATE_IPV4=10.77.0.20", env_args)
+            self.assertIn("LIBCRAFTER_PRIVATE_INTERFACE=eth1", env_args)
+            self.assertIn("LIBCRAFTER_BOOTSTRAP_ARTIFACT_DIR=/artifacts", env_args)
+            self.assertIn("LIBCRAFTER_WORK_DIR=/work", env_args)
+            self.assertIn("LIBCRAFTER_IFACE=eth1", env_args)
+            self.assertIn("POLICY_ENV=from-policy", env_args)
+            self.assertNotIn("docker.sock", " ".join(docker_argv))
+
 
 class WorkloadBootstrapScriptHelperTest(unittest.TestCase):
     def test_render_workload_bootstrap_script_uses_unpacked_repo_context(self) -> None:
@@ -290,6 +445,25 @@ class WorkloadBootstrapScriptHelperTest(unittest.TestCase):
         )
 
 
+def _workload_record(result: Any, role: str) -> LabCommandPlan:
+    matches = [
+        record
+        for record in result.command_records
+        if record.role == role and record.metadata["phase"] == "workload-bootstrap"
+    ]
+    if len(matches) != 1:
+        raise AssertionError(f"expected one workload bootstrap record for {role}")
+    return matches[0]
+
+
+def _option_values(argv: Sequence[str], option: str) -> list[str]:
+    return [
+        argv[index + 1]
+        for index, value in enumerate(argv[:-1])
+        if value == option
+    ]
+
+
 class _FakeEndpointClient:
     def __init__(self, *, fail_bootstrap_endpoint: str | None = None) -> None:
         self.fail_bootstrap_endpoint = fail_bootstrap_endpoint
@@ -404,7 +578,29 @@ class _FakeEndpointResponse:
         )
 
 
-def _session(*, dry_run: bool = False) -> LabSession:
+def _appliance_runtime(
+    *,
+    image_tag: str = "registry.example.invalid/libcrafter/appliance:bootstrap",
+    container_policy: dict[str, object] | None = None,
+    metadata: dict[str, object] | None = None,
+) -> LabApplianceRuntime:
+    return LabApplianceRuntime(
+        profile="lan-raw",
+        image_tag=image_tag,
+        remote_work_root="/srv/libcrafter/work",
+        remote_artifact_root="/srv/libcrafter/artifacts",
+        container_policy=container_policy or {"network_mode": "host"},
+        metadata=metadata or {},
+    )
+
+
+def _session(
+    *,
+    dry_run: bool = False,
+    appliance_runtime: LabApplianceRuntime | None = None,
+    stimulus_appliance_runtime: LabApplianceRuntime | None = None,
+    target_appliance_runtime: LabApplianceRuntime | None = None,
+) -> LabSession:
     return LabSession(
         provider="qemu",
         wire_provider="qemu",
@@ -422,6 +618,7 @@ def _session(*, dry_run: bool = False) -> LabSession:
                 ipv4="10.77.0.10",
                 peer_addresses={"target": {"ipv4": "10.77.0.20"}},
                 wire_manifest={"endpoint_id": "endpoint-stimulus"},
+                appliance_runtime=stimulus_appliance_runtime,
             ),
             LabEndpoint(
                 endpoint_id="endpoint-target",
@@ -430,10 +627,12 @@ def _session(*, dry_run: bool = False) -> LabSession:
                 ipv4="10.77.0.20",
                 peer_addresses={"stimulus": {"ipv4": "10.77.0.10"}},
                 wire_manifest={"endpoint_id": "endpoint-target"},
+                appliance_runtime=target_appliance_runtime,
             ),
         ],
         remote_dir="/opt/libcrafter-lab/session",
         remote_artifact_root="/opt/libcrafter-lab/session/artifacts",
+        appliance_runtime=appliance_runtime,
         created_endpoint_ids=["endpoint-stimulus", "endpoint-target"],
         dry_run=dry_run,
     )
