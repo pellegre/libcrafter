@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from ..capability_derivation import capability
+from ..capability_derivation import capability, capability_default_true
 from ..case_helpers import _behavior_case
 from ..endpoint_addressing import (
     FAILURE_DECODE_FAILED,
@@ -54,6 +54,7 @@ _SSDP_IPV4_SEARCH_CAPABILITIES = [
 ]
 _SSDP_IPV6_SEARCH_CAPABILITIES = [
     "ssdp_ipv6_multicast",
+    "ssdp_ipv6_link_local_scope",
     "ssdp_controlled_responder",
 ]
 _SSDP_NOTIFY_CAPABILITIES = [
@@ -807,6 +808,8 @@ def _capability_skip_reasons(case: ProbeCase) -> list[str]:
             "ssdp_ipv6_multicast",
         }:
             reasons.append("requires_multicast")
+        elif capability_name == "ssdp_ipv6_link_local_scope":
+            reasons.append("requires_ipv6_link_local_scope_metadata")
         elif capability_name == "ssdp_controlled_responder":
             reasons.append("requires_controlled_service")
         elif capability_name == "ssdp_offline_plan":
@@ -1165,7 +1168,6 @@ def _mark_ssdp_address_rewrite_skipped(
 
 
 def ssdp_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, object]:
-    dry_run = substrate.get("dry_run") is True
     ipv4_unicast = capability(substrate, "ipv4_unicast", "ipv4")
     ipv6_unicast = capability(substrate, "ipv6_unicast", "ipv6")
     controlled_services = capability(
@@ -1173,16 +1175,52 @@ def ssdp_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, ob
         "controlled_services",
         "controlled_service",
     )
-    ipv4_multicast = capability(substrate, "ipv4_multicast")
-    ipv6_multicast = capability(substrate, "ipv6_multicast", "multicast")
+    controlled_udp_service = controlled_services and capability_default_true(
+        substrate,
+        "ssdp_controlled_responder",
+        "ssdp_responder",
+        "controlled_udp_service",
+    )
+    link_layer_send = capability(substrate, "link_layer_send")
     link_layer_capture = capability(substrate, "link_layer_capture", "packet_capture")
+    provider_mac = capability(substrate, "provider_mac_known", "provider_mac")
+    interface_metadata = capability_default_true(
+        substrate,
+        "target_interface_known",
+        "provider_interface_known",
+    )
+    ipv4_multicast = (
+        ipv4_unicast
+        and link_layer_send
+        and link_layer_capture
+        and capability_default_true(
+            substrate,
+            "ssdp_ipv4_multicast",
+            "ipv4_multicast",
+            "multicast",
+            "multicast_send",
+        )
+    )
+    ipv6_multicast = (
+        ipv6_unicast
+        and link_layer_send
+        and link_layer_capture
+        and capability_default_true(
+            substrate,
+            "ssdp_ipv6_multicast",
+            "ipv6_multicast",
+            "multicast",
+            "multicast_send",
+        )
+    )
     return {
         "ssdp_offline_plan": True,
-        "ssdp_controlled_responder": dry_run or controlled_services,
-        "ssdp_ipv4_multicast": dry_run
-        or (ipv4_unicast and ipv4_multicast and link_layer_capture),
-        "ssdp_ipv6_multicast": dry_run
-        or (ipv6_unicast and ipv6_multicast and link_layer_capture),
+        "ssdp_controlled_responder": controlled_udp_service,
+        "ssdp_ipv4_multicast": ipv4_multicast,
+        "ssdp_ipv6_multicast": ipv6_multicast,
+        "ssdp_ipv6_link_local_scope": (
+            ipv6_multicast and provider_mac and interface_metadata
+        ),
     }
 
 
