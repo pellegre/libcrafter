@@ -1,16 +1,16 @@
 //! SSDP decode scaffold.
 //!
 //! SSDP uses an HTTP-like message envelope carried in one UDP payload. This
-//! parser is intentionally scoped to request lines for the current step:
-//! response status-line parsing is added separately.
+//! parser preserves request and response start lines, ordered headers, and
+//! opaque body bytes after the first header delimiter.
 
 use core::fmt;
 use core::str;
 
 use super::header::{SsdpHeaderNameParseError, SsdpHeaderValue};
 use super::message::{
-    Ssdp, SsdpMessage, SsdpMethod, SsdpMethodParseError, SsdpRequestTarget,
-    SsdpStartLineParseError, SsdpVersion,
+    Ssdp, SsdpMessage, SsdpMethod, SsdpMethodParseError, SsdpReasonPhrase, SsdpRequestTarget,
+    SsdpStartLineParseError, SsdpStatusCode, SsdpVersion,
 };
 
 const HEADER_DELIMITER: &[u8; 4] = b"\r\n\r\n";
@@ -21,6 +21,8 @@ const CONTEXT_LINE_DELIMITER: &str = "ssdp.line-delimiter";
 
 const EXPECTED_REQUEST_LINE: &str =
     "request-line formatted as method SP request-target SP HTTP-version";
+const EXPECTED_RESPONSE_LINE: &str =
+    "status-line formatted as HTTP-version SP status-code SP [reason-phrase]";
 const EXPECTED_CRLF_DELIMITER: &str = "CRLF-delimited header section ending with CRLF CRLF";
 const EXPECTED_HEADER_DELIMITER: &str = "header line delimiter ':' with no whitespace before it";
 
@@ -32,22 +34,46 @@ type ParseResult<T> = core::result::Result<T, SsdpParseError>;
 /// `\r\n\r\n` delimiter. It accepts unknown but structurally valid request
 /// method, target, version, and header names through the SSDP message wrappers.
 pub(crate) fn parse_ssdp_request(bytes: &[u8]) -> ParseResult<Ssdp> {
+    parse_ssdp_message(
+        bytes,
+        |line| {
+            let (method, target, version) = parse_request_start_line(line)?;
+            Ok(SsdpMessage::request(method, target, version))
+        },
+        || SsdpParseError::invalid_request_start_line(0, "", "missing request start line"),
+    )
+}
+
+/// Parse one SSDP response message from a UDP payload.
+///
+/// The parser preserves unknown but structurally valid three-digit status codes,
+/// reason phrases, ordered headers, and body bytes after the first `\r\n\r\n`
+/// delimiter.
+pub(crate) fn parse_ssdp_response(bytes: &[u8]) -> ParseResult<Ssdp> {
+    parse_ssdp_message(
+        bytes,
+        |line| {
+            let (version, code, reason) = parse_response_start_line(line)?;
+            Ok(SsdpMessage::response(version, code, reason))
+        },
+        || SsdpParseError::invalid_response_start_line(0, "", "missing response status line"),
+    )
+}
+
+fn parse_ssdp_message(
+    bytes: &[u8],
+    parse_start_line: impl FnOnce(&[u8]) -> ParseResult<SsdpMessage>,
+    missing_start_line: impl FnOnce() -> SsdpParseError,
+) -> ParseResult<Ssdp> {
     let (header_section, body) = split_header_section(bytes)?;
     let mut lines = HeaderLineIter::new(header_section);
     let Some(start_line) = lines.next() else {
-        return Err(SsdpParseError::invalid_request_start_line(
-            0,
-            "",
-            "missing request start line",
-        ));
+        return Err(missing_start_line());
     };
 
-    let (method, target, version) = parse_request_start_line(start_line)?;
-    let mut message = SsdpMessage::request(method, target, version);
+    let mut message = parse_start_line(start_line)?;
 
-    for (line_number, line) in lines.enumerate() {
-        parse_header_line(&mut message, line_number + 2, line)?;
-    }
+    parse_header_lines(&mut message, lines)?;
 
     Ok(Ssdp::new(message.with_body(body.to_vec())))
 }
@@ -141,6 +167,74 @@ fn parse_request_start_line(
         .map_err(|err| SsdpParseError::invalid_request_version(0, line_text, err))?;
 
     Ok((method, target, version))
+}
+
+fn parse_response_start_line(
+    line: &[u8],
+) -> ParseResult<(SsdpVersion, SsdpStatusCode, SsdpReasonPhrase)> {
+    let line_text = str::from_utf8(line).map_err(|_| {
+        SsdpParseError::invalid_response_start_line(
+            0,
+            lossy(line),
+            "status-line must be UTF-8 text for current SSDP wrappers",
+        )
+    })?;
+
+    if !line_text.starts_with("HTTP/") {
+        return Err(SsdpParseError::invalid_response_start_line(
+            0,
+            line_text,
+            "response status-line must start with HTTP-version",
+        ));
+    }
+
+    let Some(first_sp) = line_text.find(' ') else {
+        return Err(SsdpParseError::invalid_response_start_line(
+            0,
+            line_text,
+            "status-line must contain HTTP-version, status-code, and reason delimiter",
+        ));
+    };
+    let version = &line_text[..first_sp];
+    let remainder = &line_text[first_sp + 1..];
+
+    let Some(second_sp) = remainder.find(' ') else {
+        return Err(SsdpParseError::invalid_response_start_line(
+            0,
+            line_text,
+            "status-line must include SP after status-code",
+        ));
+    };
+    let code = &remainder[..second_sp];
+    let reason = &remainder[second_sp + 1..];
+
+    if version.is_empty() || code.is_empty() {
+        return Err(SsdpParseError::invalid_response_start_line(
+            0,
+            line_text,
+            "status-line version and status-code must not be empty",
+        ));
+    }
+
+    let version = SsdpVersion::try_from(version)
+        .map_err(|err| SsdpParseError::invalid_response_version(0, line_text, err))?;
+    let code = SsdpStatusCode::try_from(code)
+        .map_err(|err| SsdpParseError::invalid_response_status_code(0, line_text, err))?;
+    let reason = SsdpReasonPhrase::try_from(reason)
+        .map_err(|err| SsdpParseError::invalid_response_reason_phrase(0, line_text, err))?;
+
+    Ok((version, code, reason))
+}
+
+fn parse_header_lines<'a>(
+    message: &mut SsdpMessage,
+    lines: impl Iterator<Item = &'a [u8]>,
+) -> ParseResult<()> {
+    for (line_number, line) in lines.enumerate() {
+        parse_header_line(message, line_number + 2, line)?;
+    }
+
+    Ok(())
 }
 
 fn parse_header_line(
@@ -356,6 +450,63 @@ impl SsdpParseError {
         }
     }
 
+    fn invalid_response_start_line(
+        offset: usize,
+        line: impl Into<String>,
+        reason: &'static str,
+    ) -> Self {
+        Self {
+            kind: SsdpParseErrorKind::InvalidResponseStartLine {
+                offset,
+                line: line.into(),
+                reason,
+                expected: EXPECTED_RESPONSE_LINE,
+            },
+        }
+    }
+
+    fn invalid_response_version(
+        offset: usize,
+        line: impl Into<String>,
+        source: SsdpStartLineParseError,
+    ) -> Self {
+        Self {
+            kind: SsdpParseErrorKind::InvalidResponseVersion {
+                offset,
+                line: line.into(),
+                source,
+            },
+        }
+    }
+
+    fn invalid_response_status_code(
+        offset: usize,
+        line: impl Into<String>,
+        source: SsdpStartLineParseError,
+    ) -> Self {
+        Self {
+            kind: SsdpParseErrorKind::InvalidResponseStatusCode {
+                offset,
+                line: line.into(),
+                source,
+            },
+        }
+    }
+
+    fn invalid_response_reason_phrase(
+        offset: usize,
+        line: impl Into<String>,
+        source: SsdpStartLineParseError,
+    ) -> Self {
+        Self {
+            kind: SsdpParseErrorKind::InvalidResponseReasonPhrase {
+                offset,
+                line: line.into(),
+                source,
+            },
+        }
+    }
+
     fn bad_header_delimiter(line_number: usize, line: &[u8]) -> Self {
         Self {
             kind: SsdpParseErrorKind::BadHeaderDelimiter {
@@ -486,6 +637,44 @@ pub(crate) enum SsdpParseErrorKind {
         /// Source start-line parse error.
         source: SsdpStartLineParseError,
     },
+    /// The start line was not a response status-line shape.
+    InvalidResponseStartLine {
+        /// Datagram offset of the start line.
+        offset: usize,
+        /// Rejected start-line text.
+        line: String,
+        /// Stable rejection reason.
+        reason: &'static str,
+        /// Human-readable expectation.
+        expected: &'static str,
+    },
+    /// The response HTTP-version failed wrapper validation.
+    InvalidResponseVersion {
+        /// Datagram offset of the start line.
+        offset: usize,
+        /// Rejected start-line text.
+        line: String,
+        /// Source start-line parse error.
+        source: SsdpStartLineParseError,
+    },
+    /// The response status-code failed three-digit validation.
+    InvalidResponseStatusCode {
+        /// Datagram offset of the start line.
+        offset: usize,
+        /// Rejected start-line text.
+        line: String,
+        /// Source start-line parse error.
+        source: SsdpStartLineParseError,
+    },
+    /// The response reason-phrase failed wrapper validation.
+    InvalidResponseReasonPhrase {
+        /// Datagram offset of the start line.
+        offset: usize,
+        /// Rejected start-line text.
+        line: String,
+        /// Source start-line parse error.
+        source: SsdpStartLineParseError,
+    },
     /// Header line did not contain a valid colon delimiter.
     BadHeaderDelimiter {
         /// One-based message line number.
@@ -579,6 +768,20 @@ impl fmt::Display for SsdpParseError {
             | SsdpParseErrorKind::InvalidRequestVersion { line, source, .. } => {
                 write!(f, "invalid SSDP request-start-line: {line:?}: {source}")
             }
+            SsdpParseErrorKind::InvalidResponseStartLine {
+                line,
+                reason,
+                expected,
+                ..
+            } => write!(
+                f,
+                "invalid SSDP response-start-line: {line:?}: {reason} (expected {expected})"
+            ),
+            SsdpParseErrorKind::InvalidResponseVersion { line, source, .. }
+            | SsdpParseErrorKind::InvalidResponseStatusCode { line, source, .. }
+            | SsdpParseErrorKind::InvalidResponseReasonPhrase { line, source, .. } => {
+                write!(f, "invalid SSDP response-start-line: {line:?}: {source}")
+            }
             SsdpParseErrorKind::BadHeaderDelimiter {
                 line,
                 expected,
@@ -623,6 +826,170 @@ mod tests {
             .start_line()
             .as_request()
             .expect("request start line")
+    }
+
+    fn response_line(ssdp: &Ssdp) -> &super::super::message::SsdpStatusLine {
+        ssdp.message()
+            .start_line()
+            .as_response()
+            .expect("response start line")
+    }
+
+    #[test]
+    fn ssdp_parse_response_200_ok_with_headers_and_no_body() {
+        let bytes = b"HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nDATE: Sat, 27 Jun 2026 00:00:00 GMT\r\nEXT:\r\nST: ssdp:all\r\nUSN: uuid:device-1::upnp:rootdevice\r\n\r\n";
+        let ssdp = parse_ssdp_response(bytes).expect("response parses");
+        let response = response_line(&ssdp);
+
+        assert_eq!(response.version().as_str(), "HTTP/1.1");
+        assert_eq!(response.code().code(), 200);
+        assert_eq!(response.reason().as_str(), "OK");
+        assert_eq!(ssdp.headers().len(), 5);
+        assert_eq!(
+            ssdp.headers()
+                .get_first(SsdpHeaderNameKind::CacheControl)
+                .expect("CACHE-CONTROL")
+                .as_bytes(),
+            b"max-age=1800"
+        );
+        assert!(ssdp
+            .headers()
+            .get_first(SsdpHeaderNameKind::Ext)
+            .expect("EXT")
+            .is_empty());
+        assert!(ssdp.body().is_empty());
+    }
+
+    #[test]
+    fn ssdp_parse_response_unknown_valid_status_code_is_preserved() {
+        let ssdp = parse_ssdp_response(b"HTTP/1.0 299 Odd Success\r\n\r\n")
+            .expect("unknown response status parses");
+        let response = response_line(&ssdp);
+
+        assert_eq!(response.version().as_str(), "HTTP/1.0");
+        assert_eq!(response.code().code(), 299);
+        assert_eq!(response.reason().as_str(), "Odd Success");
+    }
+
+    #[test]
+    fn ssdp_parse_response_empty_and_unusual_valid_reason_phrases_are_preserved() {
+        let empty = parse_ssdp_response(b"HTTP/1.1 204 \r\n\r\n").expect("empty reason parses");
+        let unusual = parse_ssdp_response(b"HTTP/1.1 218 Works\tFine / odd phrase\r\n\r\n")
+            .expect("unusual reason parses");
+
+        assert_eq!(response_line(&empty).reason().as_str(), "");
+        assert_eq!(
+            response_line(&unusual).reason().as_str(),
+            "Works\tFine / odd phrase"
+        );
+    }
+
+    #[test]
+    fn ssdp_parse_response_duplicate_and_unknown_headers_are_preserved() {
+        let bytes = b"HTTP/1.1 200 OK\r\nX-DEVICE.UPNP.ORG: first\r\nST: ssdp:all\r\nx-device.upnp.org: second\r\nST: upnp:rootdevice\r\n\r\n";
+        let ssdp = parse_ssdp_response(bytes).expect("response parses");
+        let entries = ssdp.headers().iter().collect::<Vec<_>>();
+        let st_values = ssdp
+            .headers()
+            .get_all(SsdpHeaderNameKind::St)
+            .map(SsdpHeaderValue::as_bytes)
+            .collect::<Vec<_>>();
+
+        assert_eq!(entries.len(), 4);
+        assert_eq!(entries[0].name().kind(), SsdpHeaderNameKind::Unknown);
+        assert_eq!(entries[0].name().original(), "X-DEVICE.UPNP.ORG");
+        assert_eq!(entries[0].value().as_bytes(), b"first");
+        assert_eq!(entries[2].name().kind(), SsdpHeaderNameKind::Unknown);
+        assert_eq!(entries[2].name().original(), "x-device.upnp.org");
+        assert_eq!(entries[2].value().as_bytes(), b"second");
+        assert_eq!(
+            st_values,
+            vec![b"ssdp:all".as_slice(), b"upnp:rootdevice".as_slice()]
+        );
+    }
+
+    #[test]
+    fn ssdp_parse_response_body_bytes_after_delimiter_are_preserved() {
+        let body = b"\x00\r\nbody: bytes\n\xff";
+        let mut bytes = b"HTTP/1.1 200 OK\r\nST: ssdp:all\r\n\r\n".to_vec();
+        bytes.extend_from_slice(body);
+
+        let ssdp = parse_ssdp_response(&bytes).expect("body response parses");
+
+        assert_eq!(ssdp.body(), body);
+    }
+
+    #[test]
+    fn ssdp_parse_response_request_shaped_start_line_is_form_error() {
+        let err = parse_ssdp_response(b"M-SEARCH * HTTP/1.1\r\nHOST: example\r\n\r\n")
+            .expect_err("request-line is not a response");
+
+        assert!(matches!(
+            err.kind(),
+            SsdpParseErrorKind::InvalidResponseStartLine { .. }
+        ));
+    }
+
+    #[test]
+    fn ssdp_parse_response_bad_status_arity_is_structured_error() {
+        let err = parse_ssdp_response(b"HTTP/1.1 200\r\n\r\n")
+            .expect_err("missing reason delimiter is malformed");
+
+        assert!(matches!(
+            err.kind(),
+            SsdpParseErrorKind::InvalidResponseStartLine { .. }
+        ));
+    }
+
+    #[test]
+    fn ssdp_parse_response_non_three_digit_status_is_structured_error() {
+        let err = parse_ssdp_response(b"HTTP/1.1 20 OK\r\n\r\n").expect_err("bad status code");
+
+        assert!(matches!(
+            err.kind(),
+            SsdpParseErrorKind::InvalidResponseStatusCode { .. }
+        ));
+    }
+
+    #[test]
+    fn ssdp_parse_response_invalid_version_is_structured_error() {
+        let err = parse_ssdp_response(b"HTTP/1 200 OK\r\n\r\n").expect_err("bad HTTP-version");
+
+        assert!(matches!(
+            err.kind(),
+            SsdpParseErrorKind::InvalidResponseVersion { .. }
+        ));
+    }
+
+    #[test]
+    fn ssdp_parse_response_invalid_reason_phrase_is_structured_error() {
+        let err = parse_ssdp_response(b"HTTP/1.1 200 Bad\0Reason\r\n\r\n")
+            .expect_err("bad reason phrase");
+
+        assert!(matches!(
+            err.kind(),
+            SsdpParseErrorKind::InvalidResponseReasonPhrase { .. }
+        ));
+    }
+
+    #[test]
+    fn ssdp_parse_response_invalid_header_name_or_delimiter_is_structured_error() {
+        let bad_name = parse_ssdp_response(b"HTTP/1.1 200 OK\r\nBad Name: value\r\n\r\n")
+            .expect_err("invalid header name");
+        let bare_lf = parse_ssdp_response(b"HTTP/1.1 200 OK\nST: ssdp:all\n\n")
+            .expect_err("bare LF delimiter");
+
+        assert!(matches!(
+            bad_name.kind(),
+            SsdpParseErrorKind::InvalidHeaderName { .. }
+        ));
+        assert!(matches!(
+            bare_lf.kind(),
+            SsdpParseErrorKind::BadDelimiter {
+                field: SsdpParseField::LineDelimiter,
+                ..
+            }
+        ));
     }
 
     #[test]
