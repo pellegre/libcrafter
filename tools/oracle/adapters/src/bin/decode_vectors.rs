@@ -23,6 +23,7 @@ use crafter::protocols::mqtt::{
 use crafter::protocols::quic::Quic;
 use crafter::protocols::rip::ripng::{Ripng, RipngRte};
 use crafter::protocols::rip::{Rip, RipAuth, RipAuthPayload, RipEntry, RIP_AFI_AUTH};
+use crafter::protocols::ssdp::{Ssdp, SsdpHeaderNameKind, SsdpMethod, SsdpStartLine};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -481,6 +482,8 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "dhcpv4"
     } else if layer.as_any().is::<Dhcpv6>() {
         "dhcpv6"
+    } else if layer.as_any().is::<Ssdp>() {
+        "ssdp"
     } else if layer.as_any().is::<Snmp>() {
         "snmp"
     } else if layer.as_any().is::<Eapol>() {
@@ -627,6 +630,9 @@ fn normalized_layer_fields(
     if let Some(layer) = layer.as_any().downcast_ref::<Dhcpv6>() {
         return dhcpv6_fields(layer);
     }
+    if let Some(layer) = layer.as_any().downcast_ref::<Ssdp>() {
+        return ssdp_fields(layer);
+    }
     if let Some(layer) = layer.as_any().downcast_ref::<Snmp>() {
         return snmp_fields(layer);
     }
@@ -714,6 +720,155 @@ fn snmp_fields(layer: &Snmp) -> BTreeMap<String, Value> {
         );
     }
     fields
+}
+
+fn ssdp_fields(layer: &Ssdp) -> BTreeMap<String, Value> {
+    let message = layer.message();
+    let mut fields = BTreeMap::new();
+    match message.start_line() {
+        SsdpStartLine::Request(line) => {
+            fields.insert(
+                "message_kind".to_string(),
+                json!(ssdp_request_message_kind(line.method())),
+            );
+            fields.insert(
+                "start_line".to_string(),
+                json!(format!(
+                    "{} {} {}",
+                    line.method(),
+                    line.target(),
+                    line.version()
+                )),
+            );
+            fields.insert("method".to_string(), json!(line.method().as_str()));
+            fields.insert(
+                "method_status".to_string(),
+                json!(ssdp_method_status(line.method())),
+            );
+            fields.insert("request_target".to_string(), json!(line.target().as_str()));
+            fields.insert("version".to_string(), json!(line.version().as_str()));
+        }
+        SsdpStartLine::Response(line) => {
+            fields.insert("message_kind".to_string(), json!("response"));
+            fields.insert(
+                "start_line".to_string(),
+                json!(format!(
+                    "{} {} {}",
+                    line.version(),
+                    line.code(),
+                    line.reason()
+                )),
+            );
+            fields.insert("version".to_string(), json!(line.version().as_str()));
+            fields.insert("status_code".to_string(), json!(line.code().code()));
+            fields.insert("reason_phrase".to_string(), json!(line.reason().as_str()));
+            fields.insert(
+                "status_code_status".to_string(),
+                json!(if line.code().is_ok() {
+                    "source_backed"
+                } else {
+                    "unknown_preserved"
+                }),
+            );
+        }
+    }
+
+    let mut seen = BTreeMap::<String, usize>::new();
+    let headers = layer
+        .headers()
+        .iter()
+        .enumerate()
+        .map(|(order, header)| {
+            let name = header.name();
+            let value = String::from_utf8_lossy(header.value().as_bytes()).into_owned();
+            let wire_value = if value.is_empty() {
+                String::new()
+            } else {
+                format!(" {value}")
+            };
+            let duplicate_key = name
+                .canonical_name()
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| name.original().to_ascii_lowercase());
+            let duplicate_index = *seen.get(&duplicate_key).unwrap_or(&0);
+            seen.insert(duplicate_key, duplicate_index + 1);
+
+            let mut fields = BTreeMap::new();
+            fields.insert("name".to_string(), json!(name.original()));
+            fields.insert("original_name".to_string(), json!(name.original()));
+            fields.insert("value".to_string(), json!(value));
+            fields.insert("wire_value".to_string(), json!(wire_value));
+            fields.insert("order".to_string(), json!(order));
+            fields.insert("duplicate_index".to_string(), json!(duplicate_index));
+            fields.insert(
+                "name_kind".to_string(),
+                json!(ssdp_header_name_kind(name.kind())),
+            );
+            fields.insert(
+                "header_name_status".to_string(),
+                json!(if name.canonical_name().is_some() {
+                    "source_backed"
+                } else {
+                    "unknown_preserved"
+                }),
+            );
+            if let Some(canonical_name) = name.canonical_name() {
+                fields.insert("canonical_name".to_string(), json!(canonical_name));
+            }
+            if let Some(namespace) = name.nls_namespace() {
+                fields.insert("nls_namespace".to_string(), json!(namespace));
+            }
+            json!(fields)
+        })
+        .collect::<Vec<_>>();
+    fields.insert("headers".to_string(), Value::Array(headers));
+    fields.insert("body".to_string(), json!({"hex": hex_bytes(layer.body())}));
+    fields.insert("body_length".to_string(), json!(layer.body().len()));
+    fields
+}
+
+fn ssdp_request_message_kind(method: &SsdpMethod) -> &'static str {
+    match method {
+        SsdpMethod::MSearch => "m_search",
+        SsdpMethod::Notify => "notify",
+        SsdpMethod::Unknown(_) => "unknown_request_preserved",
+    }
+}
+
+fn ssdp_method_status(method: &SsdpMethod) -> &'static str {
+    match method {
+        SsdpMethod::MSearch | SsdpMethod::Notify => "source_backed",
+        SsdpMethod::Unknown(_) => "unknown_preserved",
+    }
+}
+
+fn ssdp_header_name_kind(kind: SsdpHeaderNameKind) -> &'static str {
+    match kind {
+        SsdpHeaderNameKind::Host => "host",
+        SsdpHeaderNameKind::CacheControl => "cache_control",
+        SsdpHeaderNameKind::Location => "location",
+        SsdpHeaderNameKind::Nt => "nt",
+        SsdpHeaderNameKind::Nts => "nts",
+        SsdpHeaderNameKind::Server => "server",
+        SsdpHeaderNameKind::Usn => "usn",
+        SsdpHeaderNameKind::BootId => "boot_id",
+        SsdpHeaderNameKind::ConfigId => "config_id",
+        SsdpHeaderNameKind::SearchPort => "search_port",
+        SsdpHeaderNameKind::NextBootId => "next_boot_id",
+        SsdpHeaderNameKind::SecureLocation => "secure_location",
+        SsdpHeaderNameKind::Man => "man",
+        SsdpHeaderNameKind::Mx => "mx",
+        SsdpHeaderNameKind::St => "st",
+        SsdpHeaderNameKind::UserAgent => "user_agent",
+        SsdpHeaderNameKind::TcpPort => "tcp_port",
+        SsdpHeaderNameKind::Cpfn => "cpfn",
+        SsdpHeaderNameKind::Cpuuid => "cpuuid",
+        SsdpHeaderNameKind::Date => "date",
+        SsdpHeaderNameKind::Ext => "ext",
+        SsdpHeaderNameKind::Opt => "opt",
+        SsdpHeaderNameKind::NlsPrefixed => "nls_prefixed",
+        SsdpHeaderNameKind::Unknown => "unknown",
+    }
 }
 
 /// Normalize a decoded BLE LE Link-Layer radio pseudo-header into the
