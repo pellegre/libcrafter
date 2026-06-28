@@ -169,14 +169,15 @@ notes:
 
 backend_support:
   scapy:
-    status: planned
+    status: supported
+    encode: true
+    decode: true
     native_layers:
       - Raw
     notes:
       - >-
-        SSDP reference materialization and normalization are assigned to later
-        backend steps. Until then, Scapy support is represented as planned raw
-        UDP payload support rather than a runnable oracle backend.
+        SSDP reference materialization and normalization use deterministic Raw
+        UDP payload bytes because Scapy does not ship a native SSDP layer.
   libcrafter:
     status: supported
     encode: true

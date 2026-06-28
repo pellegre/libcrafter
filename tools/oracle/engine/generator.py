@@ -207,6 +207,7 @@ _SCAPY_MATERIALIZED_LAYERS = {
     "payload",
     "radiotap",
     "rsn",
+    "ssdp",
     "tcp",
     "udp",
     "vlan",
@@ -2500,6 +2501,8 @@ def _stack_families(layers: Sequence[str], root_families: Sequence[str]) -> list
         families.append("icmp")
     if "quic" in layer_set:
         families.append("quic")
+    if "ssdp" in layer_set:
+        families.append("ssdp")
     if "link" in root_families and layer_set.intersection(
         {"ethernet", "vlan", "payload", "linux_cooked", "null_loopback"}
     ):

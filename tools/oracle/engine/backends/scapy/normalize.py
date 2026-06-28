@@ -53,6 +53,7 @@ from .protocols.dhcpv4 import (
 )
 from .protocols.dhcpv6 import _DHCPV6_OPTION_REGION_KEY
 from .protocols.quic import canonicalize_quic_payload
+from .protocols.ssdp import canonicalize_ssdp_payload
 
 
 BACKEND_NAME = "scapy"
@@ -401,6 +402,7 @@ def normalize_packet(
     _canonicalize_dot15d4_zigbee(normalized_layers, normalized_fields)
     _canonicalize_mqtt(packet, normalized_layers, normalized_fields)
     canonicalize_quic_payload(packet, normalized_layers, normalized_fields)
+    canonicalize_ssdp_payload(packet, normalized_layers, normalized_fields)
     if source_hex is not None:
         _canonicalize_bgp_from_wire(source_hex, normalized_fields)
 
