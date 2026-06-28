@@ -80,6 +80,9 @@ Live, provider-backed, and manual testing workflows.
 
 - [Tools overview](operations/tools.md) — the endpoint/lab/oracle/probe stack,
   when to reach for each tool, and safe dry-run examples.
+- [Appliance operations](operations/appliance.md) — the standard Docker
+  appliance, profiles, modules, substrates, persistent assets, leases, checks,
+  artifacts, dry-run defaults, and live gates.
 - [Oracle validation](operations/validation.md) — corpus, offline, pcap, and
   provider-backed reference validation.
 - [Probe validation](operations/probe.md) — kernel and service behavior probes.
