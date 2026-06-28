@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
-from typing import IO, Protocol
+from typing import IO, Callable, Protocol
 
 from tools.appliance.engine.checks import render_profile_check_plans
 from tools.appliance.engine.profiles import resolve_profile
@@ -36,6 +37,14 @@ class AssetLockBlocked(RuntimeError):
 
 class AssetLeaseConflict(RuntimeError):
     """Raised when an active endpoint asset lease belongs to another holder."""
+
+
+class AssetLeaseUnavailable(RuntimeError):
+    """Raised when no asset can currently satisfy a lease request."""
+
+
+class AssetLeaseNotFound(RuntimeError):
+    """Raised when a lease ID does not match any stored asset lease."""
 
 
 class AssetLock(Protocol):
@@ -540,6 +549,89 @@ def acquire_endpoint_asset(
         return leased
 
 
+def acquire_endpoint_asset_lease_by_profile(
+    profile_name: str,
+    ttl_seconds: int,
+    *,
+    owner: str | None = None,
+    metadata: Mapping[str, object] | None = None,
+    wait: bool = False,
+    now: datetime | str | None = None,
+    config: WireConfig | None = None,
+    lock_factory: AssetLockFactory = AssetFileLock,
+    lease_id_factory: Callable[[], str] | None = None,
+) -> dict[str, object]:
+    """Acquire one available endpoint asset lease for a supported profile."""
+
+    profile = resolve_profile(profile_name)
+    ttl = _int(ttl_seconds, "ttl_seconds")
+    if ttl <= 0:
+        raise ValueError("ttl_seconds must be a positive integer")
+    current = _coerce_utc_datetime(now, "now") if now is not None else _utc_now()
+    lease_id = _new_lease_id(lease_id_factory)
+    lease_metadata = json_object({} if metadata is None else metadata, "lease.metadata")
+    lease_metadata["lease_id"] = lease_id
+    lease_metadata["profile"] = profile.name
+
+    matching_assets = [
+        asset
+        for asset in list_endpoint_assets(config)
+        if profile.name in asset.supported_profiles and asset.status == "available"
+    ]
+    if not matching_assets:
+        raise AssetLeaseUnavailable(
+            f"no available endpoint assets support profile {profile.name!r}"
+        )
+
+    busy_assets: list[EndpointAsset] = []
+    blocked_assets: list[str] = []
+    for asset in matching_assets:
+        if asset.lease is not None and not asset_lease_expired(asset.lease, now=current):
+            busy_assets.append(asset)
+            continue
+        try:
+            leased = acquire_endpoint_asset(
+                asset.asset_id,
+                lease_id,
+                ttl,
+                owner=owner,
+                metadata=lease_metadata,
+                now=current,
+                config=config,
+                lock_factory=lock_factory,
+            )
+        except AssetLeaseConflict:
+            busy_assets.append(read_endpoint_asset(asset.asset_id, config))
+            continue
+        except AssetLockBlocked as exc:
+            blocked_assets.append(str(exc))
+            continue
+        return _asset_acquire_result(
+            leased,
+            lease_id=lease_id,
+            profile=profile.name,
+            ttl_seconds=ttl,
+            config=config,
+            wait=wait,
+        )
+
+    busy_ids = ", ".join(asset.asset_id for asset in busy_assets)
+    if busy_ids:
+        message = (
+            f"endpoint assets supporting profile {profile.name!r} are already leased: "
+            f"{busy_ids}"
+        )
+    else:
+        message = (
+            f"endpoint assets supporting profile {profile.name!r} are locked"
+            if blocked_assets
+            else f"no available endpoint asset could be leased for profile {profile.name!r}"
+        )
+    if wait:
+        message = f"{message}; --wait is accepted but does not block indefinitely"
+    raise AssetLeaseUnavailable(message)
+
+
 def release_endpoint_asset(
     asset_id: str,
     holder: str,
@@ -583,6 +675,46 @@ def release_endpoint_asset(
         return released
 
 
+def release_endpoint_asset_lease(
+    lease_id: str,
+    *,
+    now: datetime | str | None = None,
+    config: WireConfig | None = None,
+    lock_factory: AssetLockFactory = AssetFileLock,
+) -> dict[str, object]:
+    """Release a stored endpoint asset lease by lease ID."""
+
+    _require_non_empty_string(lease_id, "lease_id")
+    release_at = _coerce_utc_datetime(now, "now") if now is not None else _utc_now()
+    for asset in list_endpoint_assets(config):
+        lease = asset.lease
+        if lease is None:
+            continue
+        stored_lease_id = lease.metadata.get("lease_id")
+        if lease.holder != lease_id and stored_lease_id != lease_id:
+            continue
+        released = release_endpoint_asset(
+            asset.asset_id,
+            lease.holder,
+            now=release_at,
+            config=config,
+            lock_factory=lock_factory,
+        )
+        return {
+            "kind": "endpoint-asset-release",
+            "ok": True,
+            "released": released.lease is None,
+            "lease_id": lease_id,
+            "asset_id": released.asset_id,
+            "profile": lease.metadata.get("profile"),
+            "released_at": _format_utc(release_at),
+            "previous_lease": lease.to_dict(),
+            "asset_path": str(asset_record_path(released.asset_id, config)),
+            "asset": released.to_dict(),
+        }
+    raise AssetLeaseNotFound(f"unknown endpoint asset lease: {lease_id}")
+
+
 def asset_lease_expired(
     lease: EndpointLease,
     *,
@@ -603,6 +735,62 @@ def asset_component(asset_id: str) -> str:
     if path.is_absolute() or len(path.parts) != 1 or asset_id in {".", ".."}:
         raise ValueError(f"asset_id must be a single path component: {asset_id!r}")
     return asset_id
+
+
+def asset_lease_artifact_root(
+    asset_id: str,
+    lease_id: str,
+    config: WireConfig | None = None,
+) -> Path:
+    """Return the local artifact root for one asset lease."""
+
+    return _config(config).artifact_root / ASSETS_DIRNAME / asset_component(asset_id) / lease_id
+
+
+def _asset_acquire_result(
+    asset: EndpointAsset,
+    *,
+    lease_id: str,
+    profile: str,
+    ttl_seconds: int,
+    config: WireConfig | None,
+    wait: bool,
+) -> dict[str, object]:
+    if asset.lease is None:
+        raise ValueError("acquired asset has no lease")
+    target = asset_ssh_docker_target(asset)
+    artifact_root = asset_lease_artifact_root(asset.asset_id, lease_id, config)
+    target_data = target.to_dict()
+    return {
+        "kind": "endpoint-asset-acquire",
+        "ok": True,
+        "lease_id": lease_id,
+        "asset_id": asset.asset_id,
+        "profile": profile,
+        "supported_profile": profile,
+        "supported_profiles": list(asset.supported_profiles),
+        "expires_at": asset.lease.expires_at,
+        "ttl_seconds": ttl_seconds,
+        "leased_at": asset.lease.leased_at,
+        "lease": asset.lease.to_dict(),
+        "asset_path": str(asset_record_path(asset.asset_id, config)),
+        "asset": asset.to_dict(),
+        "ssh_target": target_data,
+        "target": target_data,
+        "remote_artifact_root": target.remote_artifact_root,
+        "artifact_root": str(artifact_root),
+        "wait_requested": wait,
+        "wait": {
+            "requested": wait,
+            "blocking": False,
+        },
+    }
+
+
+def _new_lease_id(factory: Callable[[], str] | None) -> str:
+    value = f"lease-{uuid.uuid4().hex}" if factory is None else factory()
+    _require_non_empty_string(value, "lease_id")
+    return value
 
 
 def _lease_metadata(
