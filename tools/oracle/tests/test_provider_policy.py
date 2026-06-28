@@ -409,6 +409,24 @@ class Dhcpv6LiveEligibilityPolicyTest(unittest.TestCase):
         self.assertNotIn(SKIP_REQUIRES_IPV6, packet.wire.skip_reasons)
         self.assertEqual(packet.wire.skip_reasons, [SKIP_REQUIRES_MULTICAST])
 
+    def test_appliance_runtime_metadata_does_not_replace_capability_gaps(self) -> None:
+        capabilities = qemu_default_provider_capabilities(dry_run=True)
+        capabilities["appliance_runtime"] = _appliance_runtime("qemu")
+
+        [packet] = populate_corpus_eligibility(
+            backend="scapy",
+            packets=[CorpusPacket.from_plan(_ipv6_dhcpv6_plan())],
+            provider_capabilities=capabilities,
+            wire_provider="qemu",
+        )
+
+        self.assertEqual(packet.wire.metadata["provider"], "qemu")
+        self.assertFalse(packet.wire.eligible)
+        self.assertEqual(packet.wire.skip_reasons, [SKIP_REQUIRES_IPV6])
+        self.assertFalse(
+            any("appliance" in reason for reason in packet.wire.skip_reasons)
+        )
+
     def _assert_private_provider_skips_on_ipv6(
         self,
         capabilities: dict[str, object],
@@ -523,6 +541,22 @@ def _l2_ipv4_icmp_plan() -> PacketPlan:
         case="ipv4-icmp",
         metadata={"root": "l2:ipv4"},
     )
+
+
+def _appliance_runtime(provider: str) -> dict[str, object]:
+    return {
+        "profile": "lan-raw",
+        "image_tag": "ghcr.io/libcrafter/appliance:fake",
+        "remote_work_root": "/tmp/libcrafter",
+        "remote_artifact_root": "/tmp/libcrafter/artifacts",
+        "container_policy": {"execution_mode": "ssh-docker-host"},
+        "check_metadata": {},
+        "metadata": {
+            "provider": provider,
+            "source": "endpoint-runtimes",
+            "execution_mode": "ssh-docker-host",
+        },
+    }
 
 
 if __name__ == "__main__":

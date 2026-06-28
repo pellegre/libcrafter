@@ -60,6 +60,19 @@ class LiveProviderMatrixTest(unittest.TestCase):
         self.assertEqual(summary["lab_session"]["provider"], "virtualbox")
         self.assertEqual(summary["lab_session"]["roles"], ["libcrafter", "reference_backend"])
         self.assertEqual(summary["lab_session"]["validation_count"], 2)
+        self.assertEqual(summary["appliance_runtime"]["profile"], "lan-raw")
+        self.assertEqual(
+            set(summary["endpoint_appliance_runtimes"]),
+            {"libcrafter", "reference_backend"},
+        )
+        self.assertEqual(
+            summary["command_record_appliance_runtime_roles"],
+            ["libcrafter", "reference_backend"],
+        )
+        self.assertEqual(
+            summary["lab_session"]["endpoint_appliance_runtime_roles"],
+            ["libcrafter", "reference_backend"],
+        )
 
     def test_validate_live_report_preserves_ip_fragment_workload_plan(self) -> None:
         adapter = resolve_live_provider("qemu")
@@ -149,6 +162,14 @@ class LiveProviderMatrixTest(unittest.TestCase):
         self.assertEqual(summary["lab_session"]["wire_exposure"], "private")
         self.assertEqual(summary["lab_session"]["roles"], ["libcrafter", "reference_backend"])
         self.assertEqual(summary["lab_session"]["validation_count"], 2)
+        self.assertEqual(
+            summary["appliance_runtime"]["metadata"]["execution_mode"],
+            "endpoint-container",
+        )
+        self.assertEqual(
+            set(summary["endpoint_appliance_runtimes"]),
+            {"libcrafter", "reference_backend"},
+        )
 
     def test_validate_live_report_accepts_no_wire_eligible_dry_run_skip(self) -> None:
         adapter = resolve_live_provider("hetzner")
@@ -230,6 +251,11 @@ class LiveProviderMatrixTest(unittest.TestCase):
         self.assertEqual(
             summary["lab_session"]["remote_artifact_root"],
             "/tmp/libcrafter/live-artifacts/oracle-live/exchange",
+        )
+        self.assertEqual(summary["appliance_runtime"]["profile"], "lan-raw")
+        self.assertEqual(
+            summary["command_record_appliance_runtime_roles"],
+            ["libcrafter", "reference_backend"],
         )
         self.assertTrue(summary["doctor"]["ok"])
 
@@ -670,6 +696,43 @@ def _ip_fragment_workload_plan() -> dict[str, object]:
     }
 
 
+def _appliance_runtime(
+    *,
+    provider: str,
+    source: str,
+    scope: str,
+    role: str | None = None,
+) -> dict[str, object]:
+    endpoint_container = provider == "docker"
+    execution_mode = "endpoint-container" if endpoint_container else "ssh-docker-host"
+    metadata: dict[str, object] = {
+        "provider": provider,
+        "wire_provider": provider,
+        "wire_exposure": "private",
+        "source": source,
+        "scope": scope,
+        "substrate": "endpoint-container" if endpoint_container else "ssh-docker",
+        "execution_mode": execution_mode,
+        "nested_docker": not endpoint_container,
+        "docker_execution_supported": not endpoint_container,
+    }
+    if role is not None:
+        metadata["role"] = role
+    return {
+        "profile": "lan-raw",
+        "image_tag": "ghcr.io/libcrafter/appliance:fake",
+        "remote_work_root": "/tmp/libcrafter",
+        "remote_artifact_root": "/tmp/libcrafter/artifacts",
+        "container_policy": {
+            "execution_mode": execution_mode,
+            "nested_docker": not endpoint_container,
+            "docker_execution_supported": not endpoint_container,
+        },
+        "check_metadata": {"profile": "lan-raw"},
+        "metadata": metadata,
+    }
+
+
 def _live_report(
     *,
     provider: str,
@@ -697,12 +760,30 @@ def _live_report(
         "keep_wire_endpoints": False,
         "cleanup_state": cleanup_state,
     }
+    appliance_runtime = _appliance_runtime(
+        provider=provider,
+        source="endpoint-runtimes",
+        scope="session",
+    )
+    endpoint_appliance_runtimes = {
+        role: _appliance_runtime(
+            provider=provider,
+            role=role,
+            source="endpoint-manifest",
+            scope="endpoint",
+        )
+        for role in endpoint_roles
+    }
     provider_commands = [
         {
             "label": f"02-create-{role}",
             "operation": "endpoint.create",
             "role": role,
             "exit_code": 0,
+            "metadata": {
+                "appliance_runtime": endpoint_appliance_runtimes[role],
+                "endpoint_appliance_runtime": endpoint_appliance_runtimes[role],
+            },
         }
         for role in endpoint_roles
     ]
@@ -730,6 +811,7 @@ def _live_report(
                 "role": role,
                 "interface": "lab0",
                 "address": "192.0.2.10",
+                "appliance_runtime": endpoint_appliance_runtimes[role],
             }
             for role in endpoint_roles
         ],
@@ -741,11 +823,14 @@ def _live_report(
             "dry_run": dry_run,
             "creates_infrastructure": not dry_run,
             "would_create_infrastructure": dry_run,
+            "appliance_runtime": appliance_runtime,
+            "session_appliance_runtime": appliance_runtime,
         },
         "provider_workflow": lab_provider_workflow,
         "command_records": provider_commands,
         "remote_dir": "/tmp/libcrafter",
         "remote_artifact_root": "/tmp/libcrafter/live-artifacts/oracle-live/exchange",
+        "appliance_runtime": appliance_runtime,
         "created_endpoint_ids": endpoint_ids,
         "dry_run": dry_run,
         "cleanup_state": cleanup_state,
@@ -798,10 +883,14 @@ def _live_report(
                 "exposure": wire_exposure,
                 "dry_run": dry_run,
                 "endpoint_count": len(endpoint_roles),
+                "appliance_runtime": appliance_runtime,
+                "session_appliance_runtime": appliance_runtime,
+                "endpoint_appliance_runtimes": endpoint_appliance_runtimes,
                 "endpoints": {
                     role: {
                         "endpoint_id": f"{provider}-oracle-{role}",
                         "role": role,
+                        "appliance_runtime": endpoint_appliance_runtimes[role],
                     }
                     for role in endpoint_roles
                 },
@@ -823,10 +912,14 @@ def _live_report(
                 "exposure": wire_exposure,
                 "dry_run": dry_run,
                 "endpoint_count": len(endpoint_roles),
+                "appliance_runtime": appliance_runtime,
+                "session_appliance_runtime": appliance_runtime,
+                "endpoint_appliance_runtimes": endpoint_appliance_runtimes,
                 "endpoints": {
                     role: {
                         "endpoint_id": f"{provider}-oracle-{role}",
                         "role": role,
+                        "appliance_runtime": endpoint_appliance_runtimes[role],
                     }
                     for role in endpoint_roles
                 },
@@ -853,6 +946,9 @@ def _live_report(
             "teardown": {"always_attempt": True},
             "endpoint_lifecycle": lifecycle,
             "wire_endpoint_lifecycle": lifecycle,
+            "appliance_runtime": appliance_runtime,
+            "session_appliance_runtime": appliance_runtime,
+            "endpoint_appliance_runtimes": endpoint_appliance_runtimes,
             "provider_commands": provider_commands,
             "command_records": provider_commands,
             "lab_session": lab_session,
