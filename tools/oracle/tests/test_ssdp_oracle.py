@@ -365,7 +365,7 @@ class SsdpFeatureBehaviorTest(unittest.TestCase):
         self.assertEqual(malformed_fields["ssdp"]["message_kind"], "malformed")
         self.assertEqual(
             malformed_fields["ssdp"]["fixture"],
-            "crafter/tests/fixtures/ssdp/malformed_bad_status.ssdp",
+            "crafter/tests/fixtures/ssdp/malformed-bad-status.ssdp",
         )
         self.assertEqual(
             malformed_fields["ssdp"]["expected_error"],

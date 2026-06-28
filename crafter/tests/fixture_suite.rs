@@ -7320,6 +7320,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
         "dot15d4" => strip_allowed_suffix(file_name, &[".hex"]),
         "malformed" => strip_allowed_suffix(file_name, &[".bin", ".hex"]),
         "pcaps" => strip_allowed_suffix(file_name, &[".pcap", ".pcapng"]),
+        "ssdp" => strip_allowed_suffix(file_name, &[".hex", ".pcap", ".ssdp"]),
         "summaries" => strip_allowed_suffix(file_name, &[".summary.txt", ".summary.json"]),
         _ => panic!("fixture path {relative_str} uses unknown category {category}"),
     };

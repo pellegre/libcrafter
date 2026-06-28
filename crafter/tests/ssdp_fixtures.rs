@@ -34,17 +34,17 @@ fn valid_ssdp_fixtures_parse_and_roundtrip() -> crafter::Result<()> {
     let cases = [
         FixtureCase {
             name: "m-search",
-            bytes: include_bytes!("fixtures/ssdp/valid_m_search.ssdp"),
+            bytes: include_bytes!("fixtures/ssdp/valid-m-search.ssdp"),
             expected: ExpectedFixture::MSearch,
         },
         FixtureCase {
             name: "notify",
-            bytes: include_bytes!("fixtures/ssdp/valid_notify.ssdp"),
+            bytes: include_bytes!("fixtures/ssdp/valid-notify.ssdp"),
             expected: ExpectedFixture::Notify,
         },
         FixtureCase {
             name: "response",
-            bytes: include_bytes!("fixtures/ssdp/valid_response.ssdp"),
+            bytes: include_bytes!("fixtures/ssdp/valid-response.ssdp"),
             expected: ExpectedFixture::Response,
         },
     ];
@@ -101,27 +101,27 @@ fn advanced_ssdp_fixtures_parse_roundtrip_and_preserve_structure() -> crafter::R
     let cases = [
         AdvancedFixtureCase {
             name: "extension-headers",
-            hex: include_str!("fixtures/ssdp/advanced_extension_headers.hex"),
+            hex: include_str!("fixtures/ssdp/advanced-extension-headers.hex"),
             expected: AdvancedFixture::ExtensionHeaders,
         },
         AdvancedFixtureCase {
             name: "duplicate-headers",
-            hex: include_str!("fixtures/ssdp/advanced_duplicate_headers.hex"),
+            hex: include_str!("fixtures/ssdp/advanced-duplicate-headers.hex"),
             expected: AdvancedFixture::DuplicateHeaders,
         },
         AdvancedFixtureCase {
             name: "body-bytes",
-            hex: include_str!("fixtures/ssdp/advanced_body_bytes.hex"),
+            hex: include_str!("fixtures/ssdp/advanced-body-bytes.hex"),
             expected: AdvancedFixture::BodyBytes,
         },
         AdvancedFixtureCase {
             name: "multicast-ipv6",
-            hex: include_str!("fixtures/ssdp/advanced_multicast_ipv6.hex"),
+            hex: include_str!("fixtures/ssdp/advanced-multicast-ipv6.hex"),
             expected: AdvancedFixture::MulticastHost,
         },
         AdvancedFixtureCase {
             name: "unknown-preservation",
-            hex: include_str!("fixtures/ssdp/advanced_unknown_preservation.hex"),
+            hex: include_str!("fixtures/ssdp/advanced-unknown-preservation.hex"),
             expected: AdvancedFixture::UnknownPreservation,
         },
     ];
