@@ -11,11 +11,9 @@ from ...process import run_command
 from ...registry import ProviderExposureError
 from .constants import (
     DOCKER_COMMAND_ENV,
-    DOCKER_DEFAULT_IMAGE,
     DOCKER_DEFAULT_LAN_NETWORK,
     DOCKER_DEFAULT_PRIVATE_CIDR,
     DOCKER_DEFAULT_WAN_NETWORK,
-    DOCKER_IMAGE_ENV,
     DOCKER_LAN_NETWORK_ENV,
     DOCKER_PRIVATE_CIDR_ENV,
     DOCKER_WAN_NETWORK_ENV,
@@ -28,7 +26,14 @@ from .constants import (
     SUPPORTED_EXPOSURES,
     DockerRunner,
 )
-from .resources import docker_argv, parse_private_cidr, private_gateway_ipv4, requested_docker_command
+from .resources import (
+    docker_argv,
+    docker_image_metadata,
+    parse_private_cidr,
+    private_gateway_ipv4,
+    requested_docker_command,
+    requested_docker_image,
+)
 
 
 _DAEMON_TIMEOUT_SECONDS = 30
@@ -178,16 +183,12 @@ def _daemon_report(
 
 
 def _configuration_report(exposure: str, env: Mapping[str, str]) -> dict[str, object]:
-    image = _env_value(env, DOCKER_IMAGE_ENV, DOCKER_DEFAULT_IMAGE)
+    image = requested_docker_image(env)
     lan_network = _env_value(env, DOCKER_LAN_NETWORK_ENV, DOCKER_DEFAULT_LAN_NETWORK)
     wan_network = _env_value(env, DOCKER_WAN_NETWORK_ENV, DOCKER_DEFAULT_WAN_NETWORK)
     private_cidr_raw = _env_value(env, DOCKER_PRIVATE_CIDR_ENV, DOCKER_DEFAULT_PRIVATE_CIDR)
     configuration: dict[str, object] = {
-        "image": {
-            "env": DOCKER_IMAGE_ENV,
-            "tag": image,
-            "default": DOCKER_DEFAULT_IMAGE,
-        },
+        "image": docker_image_metadata(env),
         "networks": {
             EXPOSURE_PRIVATE: {
                 "env": DOCKER_PRIVATE_CIDR_ENV,
