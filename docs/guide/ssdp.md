@@ -233,7 +233,7 @@ lab workflows. Start with dry-run commands and keep all generated artifacts
 under ignored `target/` paths:
 
 ```sh
-tools/oracle/run live --backend scapy --provider local-dry-run --dry-run --family ssdp --profile smoke --seed 1905 --count 3 --out target/oracle/ssdp-live-local-dry-run
+tools/oracle/run live --backend <reference-backend> --provider local-dry-run --dry-run --family ssdp --profile smoke --seed 1905 --count 3 --out target/oracle/ssdp-live-local-dry-run
 
 python3 tools/probe/engine/run.py --protocol ssdp --provider local-dry-run --dry-run --case ssdp-live-ipv4-search-exchange --out target/probe/ssdp-dry-run
 ```

@@ -197,7 +197,7 @@ the existing dry-run oracle, probe, or lab flows and keep artifacts under ignore
 `target/` paths:
 
 ```sh
-tools/oracle/run live --backend scapy --provider local-dry-run --dry-run --family ssdp --profile smoke --seed 1900 --count 5 --out target/oracle/ssdp-dry-run
+tools/oracle/run live --backend <reference-backend> --provider local-dry-run --dry-run --family ssdp --profile smoke --seed 1900 --count 5 --out target/oracle/ssdp-dry-run
 tools/probe/run --provider qemu --dry-run --profile ssdp --seed 1900 --count 5 --out target/probe/ssdp-dry-run
 tools/lab/run plan --provider qemu --dry-run --profile ssdp --seed 1900 --role stimulus --role target --json
 ```
