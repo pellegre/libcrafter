@@ -29,6 +29,7 @@ from .process import CommandResult
 ASSETS_DIRNAME = "assets"
 ASSET_RECORD_FILENAME = "asset.json"
 ASSET_LOCK_FILENAME = "asset.lock"
+GENERIC_SSH_SUBSTRATES = frozenset({"ssh-docker", "generic-ssh"})
 
 
 class AssetLockBlocked(RuntimeError):
@@ -498,6 +499,12 @@ def asset_ssh_docker_target(asset: EndpointAsset) -> SSHDockerHostTarget:
     )
 
 
+def asset_has_provider_lifecycle(asset: EndpointAsset) -> bool:
+    """Return whether an asset substrate is expected to have provider lifecycle hooks."""
+
+    return asset.substrate not in GENERIC_SSH_SUBSTRATES
+
+
 def acquire_endpoint_asset(
     asset_id: str,
     holder: str,
@@ -821,16 +828,23 @@ def _asset_with_last_check(asset: EndpointAsset, checked_at: str) -> EndpointAss
 def _hardware_visible_check(asset: EndpointAsset) -> dict[str, object]:
     hardware = asset.hardware.to_dict()
     visible = any(value not in (None, {}, []) for value in hardware.values())
+    required = asset_has_provider_lifecycle(asset)
+    ok = visible or not required
     return {
         "name": "hardware-visible-state",
         "kind": "hardware-visible-state",
-        "ok": visible,
+        "ok": ok,
         "executed": False,
         "readiness_only": True,
+        "required": required,
         "hardware": hardware,
         "message": "hardware metadata is present"
         if visible
-        else "asset hardware metadata is empty",
+        else (
+            "asset hardware metadata is empty"
+            if required
+            else "asset hardware metadata is optional for generic SSH Docker assets"
+        ),
     }
 
 
