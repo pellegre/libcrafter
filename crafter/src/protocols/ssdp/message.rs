@@ -11,15 +11,14 @@ use crate::packet::{Layer, LayerContext};
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::protocols::transport::Udp;
 
-use super::constants::SSDP_UDP_PORT;
+use super::constants::{
+    SSDP_HTTP_VERSION as HTTP_VERSION_1_1, SSDP_METHOD_M_SEARCH as METHOD_M_SEARCH,
+    SSDP_METHOD_NOTIFY as METHOD_NOTIFY, SSDP_REASON_OK as REASON_OK, SSDP_STATUS_OK as STATUS_OK,
+    SSDP_UDP_PORT,
+};
 use super::header::{SsdpHeaderNameParseError, SsdpHeaderValue, SsdpHeaders};
 
-const METHOD_NOTIFY: &str = "NOTIFY";
-const METHOD_M_SEARCH: &str = "M-SEARCH";
 const REQUEST_TARGET_ASTERISK: &str = "*";
-const HTTP_VERSION_1_1: &str = "HTTP/1.1";
-const STATUS_OK: u16 = 200;
-const REASON_OK: &str = "OK";
 const CRLF: &[u8; 2] = b"\r\n";
 
 const EXPECTED_REQUEST_TARGET: &str =
