@@ -54,6 +54,7 @@ values use `Ipv4Protocol`.
 | `icmpv4_error` | Protocols | Offline | ICMPv4 time-exceeded error with a quoted datagram and an RFC 4884/4950 MPLS extension object, compiled and decoded offline. | `cargo run -p crafter --example icmpv4_error` |
 | `icmpv6_echo` | Protocols | Offline by default; dry-run with `--send-recv` | IPv6 ICMPv6 echo construction and optional dry-run send/receive reporting. | `cargo run -p crafter --example icmpv6_echo` |
 | `ssdp_search_plan` | Protocols | Dry-run | SSDP M-SEARCH construction over IPv4 and IPv6 with network-layer send plan inspection. | `cargo run -p crafter --example ssdp_search_plan` |
+| `ssdp_notify` | Protocols | Offline | SSDP notification construction, compile, decode, summary, show, and hexdump output. | `cargo run -p crafter --example ssdp_notify` |
 | `snmp_get` | Protocols | Offline | SNMPv1 and SNMPv2c GetRequest packet construction, decode, show, and hexdump output. | `cargo run -p crafter --example snmp_get` |
 | `snmp_trap` | Protocols | Offline | SNMPv1 Trap and SNMPv2c SNMPv2-Trap packet construction, decode, show, and hexdump output. | `cargo run -p crafter --example snmp_trap` |
 | `snmpv3_message` | Protocols | Offline | Synthetic SNMPv3 USM Report packet construction, decode, show, and hexdump output without credential storage. | `cargo run -p crafter --example snmpv3_message` |
