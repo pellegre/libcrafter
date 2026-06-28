@@ -68,7 +68,7 @@ Ethernet pcap records generated from documentation-safe packets.
 
 - `tools/oracle/docs/adding-a-protocol.md` is the recipe for a data-driven
   oracle protocol: layer specs, feature specs, optional stack/profile fragments,
-  generator plugin, Scapy backend, and optional Wireshark normalizer.
+  generator plugin, reference backend, and optional external normalizer.
 - `tools/oracle/specs/README.md` defines oracle modes: `offline`, `pcap`, and
   provider-backed `live`, with artifacts under `target/oracle/`.
 - `tools/oracle/specs/layers/` holds layer specs such as `dns.yaml`,
@@ -76,9 +76,8 @@ Ethernet pcap records generated from documentation-safe packets.
 - `tools/oracle/specs/features/` holds behavior slices, malformed cases,
   pcap cases, and live-plan contracts.
 - `tools/oracle/engine/protocols/` holds generator plugins.
-- `tools/oracle/engine/backends/scapy/protocols/` and
-  `tools/oracle/engine/backends/wireshark/protocols/` hold backend encoders and
-  normalizers.
+- `tools/oracle/engine/backends/<reference>/protocols/` and
+  backend-specific normalizer paths hold backend encoders and normalizers.
 
 SSDP oracle work should start with layer and feature specs, then add generator
 and backend support. Reference-backend gaps must be recorded as unsupported or
