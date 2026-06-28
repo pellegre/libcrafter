@@ -1,0 +1,18 @@
+{
+  "name": "base",
+  "description": "Shared libcrafter appliance userland and default image behavior.",
+  "profiles": [
+    "wan-raw",
+    "lan-raw"
+  ],
+  "image_extensions": [],
+  "host_prepare": [],
+  "checks": [],
+  "devices": [],
+  "interfaces": [],
+  "metadata": {
+    "dockerfile": "tools/appliance/Dockerfile",
+    "image": "libcrafter/appliance:latest",
+    "role": "base-userland"
+  }
+}
