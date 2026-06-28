@@ -89,6 +89,15 @@ PROBE_CAPABILITY_NAMES = (
     # endpoint. Dry-runs render the exchange and target-service setup without
     # sending traffic; live runs require provider-backed controlled services.
     "snmp_peer",
+    # SSDP live-capable probe cases need a provider-backed controlled UDP/1900
+    # responder, multicast delivery/capture on the relevant address family, and
+    # for IPv6 link-local multicast, provider MAC metadata so live address
+    # rewrite can derive scoped link-local endpoint addresses.
+    "ssdp_offline_plan",
+    "ssdp_controlled_responder",
+    "ssdp_ipv4_multicast",
+    "ssdp_ipv6_multicast",
+    "ssdp_ipv6_link_local_scope",
 )
 
 
@@ -375,6 +384,29 @@ def probe_capabilities_from_lab_capabilities(
                 "ospf_peer",
             ],
             "snmp_peer": ["ipv4_unicast", "controlled_services", "snmp_peer"],
+            "ssdp_offline_plan": ["offline_plan"],
+            "ssdp_controlled_responder": [
+                "controlled_services",
+                "controlled_udp_service",
+            ],
+            "ssdp_ipv4_multicast": [
+                "ipv4_unicast",
+                "link_layer_send",
+                "link_layer_capture",
+                "multicast",
+            ],
+            "ssdp_ipv6_multicast": [
+                "ipv6_unicast",
+                "link_layer_send",
+                "link_layer_capture",
+                "multicast",
+            ],
+            "ssdp_ipv6_link_local_scope": [
+                "ssdp_ipv6_multicast",
+                "provider_mac_known",
+                "target_interface_known",
+                "provider_interface_known",
+            ],
         },
         "lab_capabilities": substrate,
     }

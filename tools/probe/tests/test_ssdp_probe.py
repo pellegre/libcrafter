@@ -5,8 +5,10 @@ from __future__ import annotations
 import ipaddress
 import unittest
 
+from tools.probe.engine import capabilities
 from tools.probe.engine import cases as probe_cases
 from tools.probe.engine import planning
+from tools.probe.engine.lab import probe_capabilities_from_lab_capabilities
 from tools.probe.engine.model import ProbeRunRequest
 from tools.probe.engine.protocols import PROTOCOL_REGISTRY
 from tools.probe.engine.protocols import ssdp as ssdp_protocol
@@ -76,6 +78,7 @@ class SsdpProbeRegistrationTest(unittest.TestCase):
             ],
             "ssdp-ipv6-search-exchange": [
                 "ssdp_ipv6_multicast",
+                "ssdp_ipv6_link_local_scope",
                 "ssdp_controlled_responder",
             ],
             "ssdp-notify-capture": [
@@ -242,13 +245,28 @@ class SsdpProbePlanDispatchTest(unittest.TestCase):
 
 class SsdpProbeSkipReasonTest(unittest.TestCase):
     def test_live_capable_cases_record_stable_skip_reasons(self) -> None:
+        expected_reasons = {
+            "ssdp-ipv4-search-exchange": [
+                "requires_multicast",
+                "requires_controlled_service",
+            ],
+            "ssdp-ipv6-search-exchange": [
+                "requires_multicast",
+                "requires_ipv6_link_local_scope_metadata",
+                "requires_controlled_service",
+            ],
+            "ssdp-notify-capture": [
+                "requires_multicast",
+                "requires_controlled_service",
+            ],
+        }
         for case_name in SSDP_LIVE_CASES:
             with self.subTest(case=case_name):
                 plan = _ssdp_plan(case_name)
 
                 self.assertEqual(
                     plan["skip_reasons"]["capability"],
-                    ["requires_multicast", "requires_controlled_service"],
+                    expected_reasons[case_name],
                 )
                 self.assertEqual(
                     plan["skip_reasons"]["failure"],
@@ -280,6 +298,40 @@ class SsdpProbeSkipReasonTest(unittest.TestCase):
                     expected_failures[case_name],
                 )
                 self.assertFalse(plan["live_capable"])
+
+    def test_ipv6_link_local_case_requires_provider_mac_scope_metadata(self) -> None:
+        substrate = {
+            "provider": "ipv6-multicast-no-mac",
+            "ipv4_unicast": True,
+            "ipv6_unicast": True,
+            "controlled_services": True,
+            "link_layer_send": True,
+            "link_layer_capture": True,
+            "broadcast": True,
+            "multicast": True,
+            "provider_mac_known": False,
+            "live_packet_exchange": True,
+        }
+        derived = probe_capabilities_from_lab_capabilities(
+            "ipv6-multicast-no-mac",
+            substrate,
+            dry_run=True,
+        )
+        case = probe_cases.PROBE_CASE_BY_NAME["ssdp-ipv6-search-exchange"]
+
+        self.assertIs(derived["ssdp_ipv6_multicast"], True)
+        self.assertIs(derived["ssdp_ipv6_link_local_scope"], False)
+        self.assertEqual(
+            capabilities.missing_capabilities(case, derived),
+            ["ssdp_ipv6_link_local_scope"],
+        )
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(
+                case,
+                "ssdp_ipv6_link_local_scope",
+            ),
+            capabilities.SKIP_REQUIRES_IPV6_LINK_LOCAL_SCOPE_METADATA,
+        )
 
 
 class SsdpProbeAddressRewriteTest(unittest.TestCase):

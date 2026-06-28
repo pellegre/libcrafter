@@ -77,6 +77,11 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "ikev2",
             "ospf_neighbor_peer",
             "snmp_peer",
+            "ssdp_offline_plan",
+            "ssdp_controlled_responder",
+            "ssdp_ipv4_multicast",
+            "ssdp_ipv6_multicast",
+            "ssdp_ipv6_link_local_scope",
         ):
             self.assertIn(name, PROBE_CAPABILITY_NAMES)
 
@@ -113,6 +118,12 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "ospf_neighbor_peer",
             # An SNMP peer rides the same controlled IPv4 service substrate.
             "snmp_peer",
+            # SSDP needs controlled UDP/1900 behavior plus multicast capture.
+            "ssdp_offline_plan",
+            "ssdp_controlled_responder",
+            "ssdp_ipv4_multicast",
+            "ssdp_ipv6_multicast",
+            "ssdp_ipv6_link_local_scope",
         ):
             self.assertIs(derived[name], True, name)
 
@@ -145,6 +156,10 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "ospf_neighbor_peer",
             # SNMP also rides IPv4 unicast + a controlled service, not L2.
             "snmp_peer",
+            # SSDP offline plans and controlled responder setup remain
+            # available, but multicast live cases need an L2/capture substrate.
+            "ssdp_offline_plan",
+            "ssdp_controlled_responder",
         ):
             self.assertIs(derived[granted], True, granted)
 
@@ -159,6 +174,9 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "broadcast",
             "ipv4_multicast",
             "igmp_peer",
+            "ssdp_ipv4_multicast",
+            "ssdp_ipv6_multicast",
+            "ssdp_ipv6_link_local_scope",
         ):
             self.assertIs(derived[denied], False, denied)
 
@@ -174,6 +192,33 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
         self.assertIs(derived["arp_resolution"], True)
         self.assertIs(derived["link_layer_arp"], False)
         self.assertIs(derived["provider_mac"], False)
+        self.assertIs(derived["ssdp_ipv6_multicast"], True)
+        self.assertIs(derived["ssdp_ipv6_link_local_scope"], False)
+
+    def test_ssdp_controlled_responder_can_be_denied_independently(self) -> None:
+        substrate = dict(_LINK_LAYER_SUBSTRATE)
+        substrate["ssdp_controlled_responder"] = False
+        derived = probe_capabilities_from_lab_capabilities(
+            "qemu",
+            substrate,
+            dry_run=True,
+        )
+
+        self.assertIs(derived["ssdp_controlled_responder"], False)
+        self.assertIs(derived["ssdp_ipv4_multicast"], True)
+        self.assertIs(derived["ssdp_ipv6_multicast"], True)
+
+    def test_ssdp_ipv6_scope_requires_interface_metadata_when_denied(self) -> None:
+        substrate = dict(_LINK_LAYER_SUBSTRATE)
+        substrate["target_interface_known"] = False
+        derived = probe_capabilities_from_lab_capabilities(
+            "qemu",
+            substrate,
+            dry_run=True,
+        )
+
+        self.assertIs(derived["ssdp_ipv6_multicast"], True)
+        self.assertIs(derived["ssdp_ipv6_link_local_scope"], False)
 
     def test_advertised_small_udp_payload_limit_disables_large_echo(self) -> None:
         substrate = dict(_LINK_LAYER_SUBSTRATE)
@@ -591,6 +636,41 @@ class ProbeSkipReasonTest(unittest.TestCase):
         self.assertEqual(
             capabilities.skip_reason_for_missing_capability(case, "snmp_peer"),
             capabilities.SKIP_REQUIRES_SNMP_PEER,
+        )
+
+    def test_ssdp_capabilities_map_to_stable_reasons(self) -> None:
+        ipv4_case = cases.PROBE_CASE_BY_NAME["ssdp-ipv4-search-exchange"]
+        ipv6_case = cases.PROBE_CASE_BY_NAME["ssdp-ipv6-search-exchange"]
+        offline_case = cases.PROBE_CASE_BY_NAME["ssdp-raw-fallback"]
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(
+                ipv4_case, "ssdp_ipv4_multicast"
+            ),
+            capabilities.SKIP_REQUIRES_MULTICAST,
+        )
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(
+                ipv6_case, "ssdp_ipv6_multicast"
+            ),
+            capabilities.SKIP_REQUIRES_MULTICAST,
+        )
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(
+                ipv6_case, "ssdp_ipv6_link_local_scope"
+            ),
+            capabilities.SKIP_REQUIRES_IPV6_LINK_LOCAL_SCOPE_METADATA,
+        )
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(
+                ipv4_case, "ssdp_controlled_responder"
+            ),
+            capabilities.SKIP_REQUIRES_CONTROLLED_SERVICE,
+        )
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(
+                offline_case, "ssdp_offline_plan"
+            ),
+            capabilities.SKIP_OFFLINE_PLAN_UNAVAILABLE,
         )
 
     def test_dhcpv6_service_maps_to_stable_reason(self) -> None:

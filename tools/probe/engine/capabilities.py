@@ -44,6 +44,11 @@ SKIP_REQUIRES_RIP_PEER = "requires_rip_peer"
 SKIP_REQUIRES_MQTT_BROKER = "requires_mqtt_broker"
 SKIP_REQUIRES_DHCPV6_SERVICE = "requires_dhcpv6_service"
 SKIP_REQUIRES_DHCPV6_RELAY_TOPOLOGY = "requires_dhcpv6_relay_topology"
+SKIP_REQUIRES_MULTICAST = "requires_multicast"
+SKIP_OFFLINE_PLAN_UNAVAILABLE = "offline_plan_unavailable"
+SKIP_REQUIRES_IPV6_LINK_LOCAL_SCOPE_METADATA = (
+    "requires_ipv6_link_local_scope_metadata"
+)
 SKIP_REQUIRES_IPV4_MULTICAST = "requires_ipv4_multicast"
 SKIP_REQUIRES_IGMP_PEER = "requires_igmp_peer"
 # IPSec ESP/AH cases need a peer that holds the matching Security Association
@@ -89,6 +94,11 @@ _CAPABILITY_SKIP_REASONS = {
     "mqtt_broker": SKIP_REQUIRES_MQTT_BROKER,
     "dhcpv6_service": SKIP_REQUIRES_DHCPV6_SERVICE,
     "dhcpv6_relay_topology": SKIP_REQUIRES_DHCPV6_RELAY_TOPOLOGY,
+    "ssdp_ipv4_multicast": SKIP_REQUIRES_MULTICAST,
+    "ssdp_ipv6_multicast": SKIP_REQUIRES_MULTICAST,
+    "ssdp_ipv6_link_local_scope": SKIP_REQUIRES_IPV6_LINK_LOCAL_SCOPE_METADATA,
+    "ssdp_controlled_responder": SKIP_REQUIRES_CONTROLLED_SERVICE,
+    "ssdp_offline_plan": SKIP_OFFLINE_PLAN_UNAVAILABLE,
     "ipv4_multicast": SKIP_REQUIRES_IPV4_MULTICAST,
     "igmp_peer": SKIP_REQUIRES_IGMP_PEER,
     # An IPSec-capable peer is missing: ESP/AH need the matching SA, IKEv2 needs
@@ -269,8 +279,11 @@ __all__ = [
     "SKIP_REQUIRES_IGMP_PEER",
     "SKIP_REQUIRES_IPSEC_PEER",
     "SKIP_REQUIRES_IPV4_MULTICAST",
+    "SKIP_REQUIRES_IPV6_LINK_LOCAL_SCOPE_METADATA",
     "SKIP_REQUIRES_LINK_LAYER",
     "SKIP_REQUIRES_MQTT_BROKER",
+    "SKIP_REQUIRES_MULTICAST",
+    "SKIP_OFFLINE_PLAN_UNAVAILABLE",
     "SKIP_REQUIRES_PRIVILEGED_PORT",
     "SKIP_REQUIRES_PROVIDER_MAC",
     "SKIP_REQUIRES_RIP_PEER",
