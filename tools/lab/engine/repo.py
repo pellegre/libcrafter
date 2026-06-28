@@ -9,8 +9,17 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TypeAlias
 
+from tools.appliance.engine.profiles import resolve_profile
+from tools.appliance.engine.runtime import (
+    CONTAINER_ARTIFACT_DIR,
+    CONTAINER_WORK_DIR,
+    DockerRunPlan,
+    render_docker_run_plan,
+)
+
 from .model import (
     JSONObject,
+    LabApplianceRuntime,
     LabCommandPlan,
     LabEndpoint,
     LabRole,
@@ -39,6 +48,7 @@ DEFAULT_ARCHIVE_EXCLUDES = (
 DEFAULT_BOOTSTRAP_TIMEOUT_SECONDS = 1800.0
 DEFAULT_REMOTE_COMMAND_TIMEOUT_SECONDS = 900.0
 WIRE_ENTRYPOINT = "tools/endpoint/run"
+BOOTSTRAP_ARTIFACT_DIR_ENV = "LIBCRAFTER_BOOTSTRAP_ARTIFACT_DIR"
 
 
 class RepoArchiveError(RuntimeError):
@@ -94,6 +104,14 @@ class RepoBootstrapCommand:
             "metadata",
             json_object(self.metadata, "bootstrap.metadata"),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _BootstrapExecutionCommand:
+    """Endpoint command and metadata for one workload bootstrap invocation."""
+
+    argv: list[str]
+    metadata: JSONObject = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -412,10 +430,21 @@ def push_repository_to_session(
 
         bootstrap = _bootstrap_command_for(hooks, context)
         if bootstrap is not None:
+            execution = _bootstrap_execution_command(context, bootstrap)
+            metadata = {
+                "endpoint_id": endpoint.endpoint_id,
+                "remote_archive": remote_archive,
+                "remote_dir": target_dir,
+                "remote_artifact_root": target_artifact_root,
+                "phase": "workload-bootstrap",
+                "bootstrap": bootstrap.metadata,
+                "context": context.to_dict(),
+            }
+            metadata.update(execution.metadata)
             _run_endpoint_step(
                 endpoint_cli.exec,
                 endpoint.endpoint_id,
-                bootstrap.argv,
+                execution.argv,
                 purpose="run workload bootstrap",
                 role=endpoint.role,
                 operation="endpoint.exec",
@@ -424,18 +453,10 @@ def push_repository_to_session(
                     "exec",
                     endpoint.endpoint_id,
                     "--",
-                    *bootstrap.argv,
+                    *execution.argv,
                 ],
                 timeout=bootstrap.timeout,
-                metadata={
-                    "endpoint_id": endpoint.endpoint_id,
-                    "remote_archive": remote_archive,
-                    "remote_dir": target_dir,
-                    "remote_artifact_root": target_artifact_root,
-                    "phase": "workload-bootstrap",
-                    "bootstrap": bootstrap.metadata,
-                    "context": context.to_dict(),
-                },
+                metadata=metadata,
                 command_records=command_records,
                 endpoint_commands=endpoint_commands,
                 endpoint_errors=endpoint_errors,
@@ -725,6 +746,166 @@ def _bootstrap_command_for(
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return RepoBootstrapCommand(argv=[str(part) for part in value])
     raise ValueError(f"bootstrap command for role {context.role.name!r} is invalid")
+
+
+def _bootstrap_execution_command(
+    context: RepoBootstrapContext,
+    bootstrap: RepoBootstrapCommand,
+) -> _BootstrapExecutionCommand:
+    runtime = _appliance_runtime_for(context)
+    if runtime is None:
+        return _BootstrapExecutionCommand(argv=list(bootstrap.argv))
+
+    artifact_dir = _appliance_role_artifact_dir(context)
+    env = _appliance_bootstrap_env(context)
+    run_plan = _appliance_bootstrap_run_plan(
+        runtime,
+        context=context,
+        artifact_dir=artifact_dir,
+        bootstrap=bootstrap,
+        env=env,
+    )
+    command = _mkdir_then_docker_run_command(artifact_dir, run_plan)
+    return _BootstrapExecutionCommand(
+        argv=command,
+        metadata={
+            "appliance": {
+                "wrapped": True,
+                "runtime": runtime.to_dict(),
+                "profile": run_plan.profile,
+                "image_tag": run_plan.image_tag,
+                "original_argv": list(bootstrap.argv),
+                "work_dir": context.remote_dir,
+                "artifact_dir": artifact_dir,
+                "container_work_dir": CONTAINER_WORK_DIR,
+                "container_artifact_dir": CONTAINER_ARTIFACT_DIR,
+                "environment": env,
+                "docker_run_plan": run_plan.to_dict(),
+            }
+        },
+    )
+
+
+def _appliance_runtime_for(context: RepoBootstrapContext) -> LabApplianceRuntime | None:
+    return context.endpoint.appliance_runtime or context.session.appliance_runtime
+
+
+def _appliance_role_artifact_dir(context: RepoBootstrapContext) -> str:
+    return posixpath.join(context.remote_artifact_root, "bootstrap", context.role.name)
+
+
+def _appliance_bootstrap_env(context: RepoBootstrapContext) -> dict[str, str]:
+    peer_ipv4 = context.peer_endpoints[0].ipv4 if context.peer_endpoints else ""
+    return {
+        "LIBCRAFTER_ENDPOINT_ROLE": context.role.name,
+        "LIBCRAFTER_PRIVATE_IPV4": context.endpoint.ipv4,
+        "LIBCRAFTER_PEER_PRIVATE_IPV4": peer_ipv4,
+        "LIBCRAFTER_PRIVATE_INTERFACE": context.endpoint.interface,
+        "LIBCRAFTER_IFACE": context.endpoint.interface,
+        "LIBCRAFTER_WORK_DIR": CONTAINER_WORK_DIR,
+        BOOTSTRAP_ARTIFACT_DIR_ENV: CONTAINER_ARTIFACT_DIR,
+    }
+
+
+def _appliance_bootstrap_run_plan(
+    runtime: LabApplianceRuntime,
+    *,
+    context: RepoBootstrapContext,
+    artifact_dir: str,
+    bootstrap: RepoBootstrapCommand,
+    env: Mapping[str, str],
+) -> DockerRunPlan:
+    policy = runtime.container_policy
+    policy_env = _policy_environment(policy, "environment")
+    policy_env.update(_policy_environment(policy, "env"))
+    profile = resolve_profile(runtime.profile)
+    return render_docker_run_plan(
+        profile,
+        image_tag=runtime.image_tag,
+        work_dir=context.remote_dir,
+        artifact_dir=artifact_dir,
+        command_argv=bootstrap.argv,
+        environment=policy_env,
+        env=env,
+        network_mode=_optional_policy_string(policy, "network_mode"),
+        cap_add=_policy_string_list(policy, "cap_add"),
+        capabilities=_policy_string_list(policy, "capabilities"),
+        devices=_policy_object_list(policy, "devices"),
+        mounts=_policy_object_list(policy, "mounts"),
+        docker_command=_optional_policy_string(policy, "docker_command") or "docker",
+    )
+
+
+def _mkdir_then_docker_run_command(
+    artifact_dir: str,
+    run_plan: DockerRunPlan,
+) -> list[str]:
+    script = (
+        f"mkdir -p {shlex.quote(artifact_dir)} && "
+        f"exec {render_argv(run_plan.docker_argv)}"
+    )
+    return ["bash", "-lc", script]
+
+
+def _optional_policy_string(policy: Mapping[str, object], key: str) -> str | None:
+    value = policy.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or value == "":
+        raise ValueError(f"appliance_runtime.container_policy.{key} must be a string")
+    return value
+
+
+def _policy_string_list(policy: Mapping[str, object], key: str) -> list[str]:
+    value = policy.get(key, [])
+    if value is None:
+        return []
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        raise ValueError(f"appliance_runtime.container_policy.{key} must be a list")
+    output: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"appliance_runtime.container_policy.{key}[{index}] must be a string"
+            )
+        output.append(item)
+    return output
+
+
+def _policy_object_list(policy: Mapping[str, object], key: str) -> list[Mapping[str, object]]:
+    value = policy.get(key, [])
+    if value is None:
+        return []
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        raise ValueError(f"appliance_runtime.container_policy.{key} must be a list")
+    output: list[Mapping[str, object]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, Mapping):
+            raise ValueError(
+                f"appliance_runtime.container_policy.{key}[{index}] must be an object"
+            )
+        output.append(item)
+    return output
+
+
+def _policy_environment(policy: Mapping[str, object], key: str) -> dict[str, str]:
+    value = policy.get(key, {})
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError(f"appliance_runtime.container_policy.{key} must be an object")
+    output: dict[str, str] = {}
+    for env_key, env_value in value.items():
+        if not isinstance(env_key, str) or env_key == "":
+            raise ValueError(
+                f"appliance_runtime.container_policy.{key} keys must be strings"
+            )
+        if not isinstance(env_value, str):
+            raise ValueError(
+                f"appliance_runtime.container_policy.{key}.{env_key} must be a string"
+            )
+        output[env_key] = env_value
+    return output
 
 
 def _run_upload_step(
