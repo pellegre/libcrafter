@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import errno
+import fcntl
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import TracebackType
+from typing import IO, Protocol
 
 from .config import WireConfig, default_config
 from .model import JSONObject, JsonModel, json_object, read_json, string_list, write_json
@@ -12,6 +17,67 @@ from .model import JSONObject, JsonModel, json_object, read_json, string_list, w
 
 ASSETS_DIRNAME = "assets"
 ASSET_RECORD_FILENAME = "asset.json"
+ASSET_LOCK_FILENAME = "asset.lock"
+
+
+class AssetLockBlocked(RuntimeError):
+    """Raised when an endpoint asset lock is already held."""
+
+
+class AssetLeaseConflict(RuntimeError):
+    """Raised when an active endpoint asset lease belongs to another holder."""
+
+
+class AssetLock(Protocol):
+    """Context manager for an asset lock."""
+
+    def __enter__(self) -> object: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None: ...
+
+
+class AssetLockFactory(Protocol):
+    """Factory for asset lock context managers."""
+
+    def __call__(self, path: Path) -> AssetLock: ...
+
+
+class AssetFileLock:
+    """Nonblocking advisory file lock for one endpoint asset record."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._handle: IO[str] | None = None
+
+    def __enter__(self) -> "AssetFileLock":
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        handle = self.path.open("a+", encoding="utf-8")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            handle.close()
+            if error.errno in {errno.EACCES, errno.EAGAIN}:
+                raise AssetLockBlocked(f"endpoint asset lock is held: {self.path}") from error
+            raise
+        self._handle = handle
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        if self._handle is not None:
+            handle = self._handle
+            self._handle = None
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,12 +212,19 @@ class EndpointLease(JsonModel):
         )
         object.__setattr__(self, "metadata", json_object(self.metadata, "lease.metadata"))
 
+    @property
+    def expires_at(self) -> str:
+        """Return the lease expiry timestamp using the newer API wording."""
+
+        return self.leased_until
+
     @classmethod
     def from_dict(cls, value: Mapping[str, object]) -> "EndpointLease":
         data = _mapping(value, "lease")
+        leased_until = data.get("leased_until", data.get("expires_at"))
         return cls(
             holder=_string(data.get("holder"), "lease.holder"),
-            leased_until=_string(data.get("leased_until"), "lease.leased_until"),
+            leased_until=_string(leased_until, "lease.leased_until"),
             ttl_seconds=_int(data.get("ttl_seconds"), "lease.ttl_seconds"),
             leased_at=_optional_string(data.get("leased_at"), "lease.leased_at"),
             metadata=json_object(data.get("metadata", {}), "lease.metadata"),
@@ -239,6 +312,12 @@ def asset_record_path(asset_id: str, config: WireConfig | None = None) -> Path:
     return asset_state_dir(asset_id, config) / ASSET_RECORD_FILENAME
 
 
+def asset_lock_path(asset_id: str, config: WireConfig | None = None) -> Path:
+    """Return the advisory lock path for one endpoint asset record."""
+
+    return asset_state_dir(asset_id, config) / ASSET_LOCK_FILENAME
+
+
 def write_endpoint_asset(asset: EndpointAsset, config: WireConfig | None = None) -> Path:
     """Persist one endpoint asset record and return its absolute JSON path."""
 
@@ -274,6 +353,111 @@ def list_endpoint_assets(config: WireConfig | None = None) -> list[EndpointAsset
     return [assets[asset_id] for asset_id in sorted(assets)]
 
 
+def acquire_endpoint_asset(
+    asset_id: str,
+    holder: str,
+    ttl_seconds: int,
+    *,
+    owner: str | None = None,
+    metadata: Mapping[str, object] | None = None,
+    now: datetime | str | None = None,
+    config: WireConfig | None = None,
+    lock_factory: AssetLockFactory = AssetFileLock,
+) -> EndpointAsset:
+    """Acquire or refresh a lease for one endpoint asset under its file lock."""
+
+    _require_non_empty_string(holder, "holder")
+    ttl = _int(ttl_seconds, "ttl_seconds")
+    if ttl <= 0:
+        raise ValueError("ttl_seconds must be a positive integer")
+    leased_at = _coerce_utc_datetime(now, "now") if now is not None else _utc_now()
+    expires_at = leased_at + timedelta(seconds=ttl)
+    lease_metadata = _lease_metadata(holder, owner, metadata)
+
+    with lock_factory(asset_lock_path(asset_id, config)):
+        asset = read_endpoint_asset(asset_id, config)
+        if asset.lease is not None and not asset_lease_expired(asset.lease, now=leased_at):
+            if asset.lease.holder != holder:
+                raise AssetLeaseConflict(
+                    f"endpoint asset {asset.asset_id!r} is leased by "
+                    f"{asset.lease.holder!r} until {asset.lease.expires_at}"
+                )
+        leased = EndpointAsset(
+            asset_id=asset.asset_id,
+            substrate=asset.substrate,
+            status=asset.status,
+            supported_profiles=asset.supported_profiles,
+            ssh=asset.ssh,
+            docker=asset.docker,
+            hardware=asset.hardware,
+            last_check=asset.last_check,
+            lease=EndpointLease(
+                holder=holder,
+                leased_at=_format_utc(leased_at),
+                leased_until=_format_utc(expires_at),
+                ttl_seconds=ttl,
+                metadata=lease_metadata,
+            ),
+            metadata=asset.metadata,
+        )
+        write_endpoint_asset(leased, config)
+        return leased
+
+
+def release_endpoint_asset(
+    asset_id: str,
+    holder: str,
+    *,
+    now: datetime | str | None = None,
+    force: bool = False,
+    config: WireConfig | None = None,
+    lock_factory: AssetLockFactory = AssetFileLock,
+) -> EndpointAsset:
+    """Release a lease for one endpoint asset under its file lock."""
+
+    _require_non_empty_string(holder, "holder")
+    release_at = _coerce_utc_datetime(now, "now") if now is not None else _utc_now()
+
+    with lock_factory(asset_lock_path(asset_id, config)):
+        asset = read_endpoint_asset(asset_id, config)
+        if asset.lease is None:
+            return asset
+        if (
+            not force
+            and asset.lease.holder != holder
+            and not asset_lease_expired(asset.lease, now=release_at)
+        ):
+            raise AssetLeaseConflict(
+                f"endpoint asset {asset.asset_id!r} is leased by "
+                f"{asset.lease.holder!r} until {asset.lease.expires_at}"
+            )
+        released = EndpointAsset(
+            asset_id=asset.asset_id,
+            substrate=asset.substrate,
+            status=asset.status,
+            supported_profiles=asset.supported_profiles,
+            ssh=asset.ssh,
+            docker=asset.docker,
+            hardware=asset.hardware,
+            last_check=asset.last_check,
+            lease=None,
+            metadata=asset.metadata,
+        )
+        write_endpoint_asset(released, config)
+        return released
+
+
+def asset_lease_expired(
+    lease: EndpointLease,
+    *,
+    now: datetime | str | None = None,
+) -> bool:
+    """Return whether a lease has expired at the given UTC instant."""
+
+    current = _coerce_utc_datetime(now, "now") if now is not None else _utc_now()
+    return _coerce_utc_datetime(lease.expires_at, "lease.expires_at") <= current
+
+
 def asset_component(asset_id: str) -> str:
     """Validate and return an asset ID usable as one local path component."""
 
@@ -283,6 +467,42 @@ def asset_component(asset_id: str) -> str:
     if path.is_absolute() or len(path.parts) != 1 or asset_id in {".", ".."}:
         raise ValueError(f"asset_id must be a single path component: {asset_id!r}")
     return asset_id
+
+
+def _lease_metadata(
+    holder: str,
+    owner: str | None,
+    metadata: Mapping[str, object] | None,
+) -> JSONObject:
+    output = json_object({} if metadata is None else metadata, "lease.metadata")
+    output.setdefault("owner", holder if owner is None else owner)
+    return output
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC).replace(microsecond=0)
+
+
+def _coerce_utc_datetime(value: datetime | str, name: str) -> datetime:
+    if isinstance(value, datetime):
+        output = value
+    elif isinstance(value, str):
+        raw = value
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            output = datetime.fromisoformat(raw)
+        except ValueError as error:
+            raise ValueError(f"{name} must be an ISO 8601 timestamp") from error
+    else:
+        raise ValueError(f"{name} must be an ISO 8601 timestamp")
+    if output.tzinfo is None:
+        output = output.replace(tzinfo=UTC)
+    return output.astimezone(UTC).replace(microsecond=0)
+
+
+def _format_utc(value: datetime) -> str:
+    return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _config(config: WireConfig | None) -> WireConfig:
