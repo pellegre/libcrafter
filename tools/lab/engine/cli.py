@@ -402,6 +402,22 @@ def _provider_metadata(provider: object) -> JSONObject:
         "credentials_available": provider.credentials_available(),
         "missing_credential_reason": provider.missing_credential_reason,
         "capabilities": provider.default_provider_capabilities(dry_run=True),
+        "appliance_runtime": _provider_appliance_runtime_metadata(provider),
+    }
+
+
+def _provider_appliance_runtime_metadata(provider: object) -> JSONObject:
+    endpoint_container = provider.name == "docker"
+    return {
+        "provider": provider.name,
+        "wire_provider": provider.wire_provider,
+        "wire_exposure": provider.wire_exposure,
+        "profile": "lan-raw",
+        "source": "provider-defaults",
+        "substrate": "endpoint-container" if endpoint_container else "ssh-docker",
+        "execution_mode": "endpoint-container" if endpoint_container else "ssh-docker-host",
+        "nested_docker": not endpoint_container,
+        "docker_execution_supported": not endpoint_container,
     }
 
 
@@ -417,6 +433,11 @@ def _session_summary(session: LabSession) -> JSONObject:
         "dry_run": session.dry_run,
         "remote_dir": session.remote_dir,
         "remote_artifact_root": session.remote_artifact_root,
+        "appliance_runtime": (
+            session.appliance_runtime.to_dict()
+            if session.appliance_runtime is not None
+            else None
+        ),
         "cleanup_state": dict(session.cleanup_state),
     }
 

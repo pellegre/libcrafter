@@ -40,6 +40,7 @@ class LabCliProviderListTest(unittest.TestCase):
             self.assertIn("credentials_available", provider)
             self.assertEqual(provider["capabilities"]["provider"], provider["name"])
             self.assertTrue(provider["capabilities"]["dry_run"])
+            _assert_provider_runtime(self, provider["appliance_runtime"], provider["name"])
 
 
 class LabCliDoctorTest(unittest.TestCase):
@@ -66,6 +67,11 @@ class LabCliDoctorTest(unittest.TestCase):
             [{"provider": "virtualbox", "exposure": "private", "dry_run": True}],
         )
         self.assertEqual(payload["wire_doctor"]["provider"], "virtualbox")
+        _assert_provider_runtime(
+            self,
+            payload["metadata"]["appliance_runtime"],
+            "virtualbox",
+        )
         self.assertEqual(payload["command_records"][0]["operation"], "endpoint.doctor")
         self.assertFalse(payload["command_records"][0]["live_mutation"])
         self.assertEqual(fake.create_calls, [])
@@ -126,6 +132,21 @@ class LabCliPlanTest(unittest.TestCase):
                 self.assertTrue(session["dry_run"])
                 self.assertEqual([role["name"] for role in session["roles"]], ["stimulus", "target"])
                 self.assertEqual([endpoint["role"] for endpoint in session["endpoints"]], ["stimulus", "target"])
+                _assert_session_runtime(self, session["appliance_runtime"], provider)
+                self.assertEqual(
+                    [
+                        endpoint["appliance_runtime"]["profile"]
+                        for endpoint in session["endpoints"]
+                    ],
+                    ["lan-raw", "lan-raw"],
+                )
+                self.assertEqual(
+                    [
+                        endpoint["appliance_runtime"]["metadata"]["execution_mode"]
+                        for endpoint in session["endpoints"]
+                    ],
+                    [_expected_execution_mode(provider), _expected_execution_mode(provider)],
+                )
                 self.assertEqual(session["created_endpoint_ids"], [])
                 self.assertEqual(len(session["command_records"]), 2)
                 self.assertTrue(
@@ -229,6 +250,11 @@ class LabCliCreateDryRunTest(unittest.TestCase):
         session = json.loads(stdout)
         self.assertTrue(session["dry_run"])
         self.assertEqual([role["name"] for role in session["roles"]], ["stimulus", "target"])
+        _assert_session_runtime(self, session["appliance_runtime"], "docker")
+        self.assertEqual(
+            session["endpoints"][0]["appliance_runtime"]["metadata"]["source"],
+            "provider-defaults",
+        )
         self.assertEqual(session["created_endpoint_ids"], [])
         self.assertEqual([call["role"] for call in fake.create_calls], ["stimulus", "target"])
         self.assertTrue(all(call["dry_run"] for call in fake.create_calls))
@@ -242,6 +268,43 @@ def _run_cli(*args: str) -> tuple[int, str, str]:
     with redirect_stdout(stdout), redirect_stderr(stderr):
         exit_code = cli.main(list(args))
     return exit_code, stdout.getvalue(), stderr.getvalue()
+
+
+def _assert_provider_runtime(
+    case: unittest.TestCase,
+    runtime: dict[str, object],
+    provider: str,
+) -> None:
+    case.assertEqual(runtime["profile"], "lan-raw")
+    case.assertEqual(runtime["source"], "provider-defaults")
+    case.assertEqual(runtime["execution_mode"], _expected_execution_mode(provider))
+    case.assertEqual(runtime["substrate"], _expected_substrate(provider))
+    case.assertEqual(runtime["nested_docker"], provider != "docker")
+    case.assertEqual(runtime["docker_execution_supported"], provider != "docker")
+
+
+def _assert_session_runtime(
+    case: unittest.TestCase,
+    runtime: dict[str, object],
+    provider: str,
+) -> None:
+    case.assertEqual(runtime["profile"], "lan-raw")
+    case.assertEqual(runtime["metadata"]["source"], "endpoint-runtimes")
+    case.assertEqual(runtime["metadata"]["execution_mode"], _expected_execution_mode(provider))
+    case.assertEqual(runtime["metadata"]["substrate"], _expected_substrate(provider))
+    case.assertEqual(
+        runtime["container_policy"]["execution_mode"],
+        _expected_execution_mode(provider),
+    )
+    case.assertEqual(runtime["container_policy"]["nested_docker"], provider != "docker")
+
+
+def _expected_execution_mode(provider: str) -> str:
+    return "endpoint-container" if provider == "docker" else "ssh-docker-host"
+
+
+def _expected_substrate(provider: str) -> str:
+    return "endpoint-container" if provider == "docker" else "ssh-docker"
 
 
 class _FakeEndpointClient:
@@ -384,8 +447,13 @@ def _manifest(
         interface_metadata["private_group"] = private_group
     if provider == "virtualbox":
         interface_metadata["bridge_interface"] = "auto"
+    endpoint_id = f"planned-{provider}-{exposure}-{role}"
+    metadata: dict[str, object] = (
+        {"private_group": private_group} if private_group is not None else {}
+    )
+    metadata.update(_appliance_metadata(provider, endpoint_id))
     return EndpointManifest(
-        endpoint_id=f"planned-{provider}-{exposure}-{role}",
+        endpoint_id=endpoint_id,
         provider=provider,
         exposure=exposure,
         status="planned",
@@ -403,8 +471,43 @@ def _manifest(
         ],
         provider_resources=ProviderResources(),
         artifact_dir=f"/tmp/libcrafter-lab-test/{provider}-{exposure}-{role}",
-        metadata={"private_group": private_group} if private_group is not None else {},
+        metadata=metadata,
     )
+
+
+def _appliance_metadata(provider: str, endpoint_id: str) -> dict[str, object]:
+    image_tag = f"registry.example.invalid/libcrafter/appliance:{provider}"
+    if provider == "docker":
+        return {
+            "docker": {
+                "container": {
+                    "type": "docker-container",
+                    "image": image_tag,
+                    "is_appliance": True,
+                    "appliance_capable": True,
+                },
+                "image": {"tag": image_tag},
+            },
+            "docker_image": {"tag": image_tag},
+        }
+    remote_root = f"/var/lib/libcrafter/appliance/{endpoint_id}"
+    return {
+        "appliance": {
+            "appliance_capable": True,
+            "nested_docker": True,
+            "docker_execution_supported": True,
+            "docker_command": "docker",
+            "substrate": "ssh-docker",
+            "remote_base": "/var/lib/libcrafter/appliance",
+            "remote_work_root": f"{remote_root}/work",
+            "remote_artifact_root": f"{remote_root}/artifacts",
+            "supported_profiles": ["lan-raw"],
+            "raw_profile": "lan-raw",
+            "image_tag": image_tag,
+            "docker_setup": "install-or-verify",
+            "private_lab": True,
+        }
+    }
 
 
 if __name__ == "__main__":

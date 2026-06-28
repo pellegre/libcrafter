@@ -47,6 +47,14 @@ class EndpointClientCreateTest(unittest.TestCase):
 
             self.assertEqual(response.manifest.endpoint_id, "endpoint-stimulus")
             self.assertEqual(response.manifest.interfaces[0].ipv4, "192.0.2.10")
+            self.assertEqual(
+                response.manifest.metadata["appliance"]["raw_profile"],  # type: ignore[index]
+                "lan-raw",
+            )
+            self.assertEqual(
+                response.manifest.metadata["appliance"]["substrate"],  # type: ignore[index]
+                "ssh-docker",
+            )
             self.assertTrue(response.ok)
             self.assertEqual(response.record.operation, "create")
             self.assertEqual(response.record.endpoint_command, "create")
@@ -98,6 +106,10 @@ class EndpointClientCreateTest(unittest.TestCase):
 
             self.assertEqual(response.manifest.endpoint_id, "endpoint-stimulus")
             self.assertEqual(response.manifest.provider, "qemu")
+            self.assertEqual(
+                response.manifest.metadata["appliance"]["image_tag"],  # type: ignore[index]
+                "registry.example.invalid/libcrafter/appliance:endpoint-client",
+            )
 
     def test_create_failure_raises_with_endpoint_error(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -311,7 +323,28 @@ def _manifest(root: Path) -> dict[str, object]:
             "metadata": {},
         },
         "artifact_dir": str(root / "artifacts" / "endpoint-stimulus"),
-        "metadata": {"private_group": "lab-smoke"},
+        "metadata": {
+            "private_group": "lab-smoke",
+            "appliance": {
+                "appliance_capable": True,
+                "nested_docker": True,
+                "docker_execution_supported": True,
+                "docker_command": "docker",
+                "substrate": "ssh-docker",
+                "remote_base": "/var/lib/libcrafter/appliance",
+                "remote_work_root": "/var/lib/libcrafter/appliance/endpoint-stimulus/work",
+                "remote_artifact_root": (
+                    "/var/lib/libcrafter/appliance/endpoint-stimulus/artifacts"
+                ),
+                "supported_profiles": ["lan-raw"],
+                "raw_profile": "lan-raw",
+                "image_tag": (
+                    "registry.example.invalid/libcrafter/appliance:endpoint-client"
+                ),
+                "docker_setup": "install-or-verify",
+                "private_lab": True,
+            },
+        },
     }
 
 
