@@ -12,12 +12,12 @@ use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::protocols::transport::Udp;
 
 use super::constants::{
-    SSDP_HEADER_EXT, SSDP_HEADER_HOST, SSDP_HEADER_MAN, SSDP_HEADER_MX, SSDP_HEADER_NT,
-    SSDP_HEADER_NTS, SSDP_HEADER_ST, SSDP_HEADER_USN, SSDP_HTTP_VERSION as HTTP_VERSION_1_1,
-    SSDP_IPV4_MULTICAST_HOST, SSDP_MAN_DISCOVER, SSDP_METHOD_M_SEARCH as METHOD_M_SEARCH,
-    SSDP_METHOD_NOTIFY as METHOD_NOTIFY, SSDP_NTS_ALIVE, SSDP_NTS_BYEBYE, SSDP_NTS_UPDATE,
-    SSDP_REASON_OK as REASON_OK, SSDP_STATUS_OK as STATUS_OK, SSDP_ST_ALL, SSDP_TARGET_ROOTDEVICE,
-    SSDP_UDP_PORT,
+    SSDP_HEADER_EXT, SSDP_HEADER_HOST, SSDP_HEADER_LOCATION, SSDP_HEADER_MAN, SSDP_HEADER_MX,
+    SSDP_HEADER_NT, SSDP_HEADER_NTS, SSDP_HEADER_SECURELOCATION, SSDP_HEADER_ST, SSDP_HEADER_USN,
+    SSDP_HTTP_VERSION as HTTP_VERSION_1_1, SSDP_IPV4_MULTICAST_HOST, SSDP_MAN_DISCOVER,
+    SSDP_METHOD_M_SEARCH as METHOD_M_SEARCH, SSDP_METHOD_NOTIFY as METHOD_NOTIFY, SSDP_NTS_ALIVE,
+    SSDP_NTS_BYEBYE, SSDP_NTS_UPDATE, SSDP_REASON_OK as REASON_OK, SSDP_STATUS_OK as STATUS_OK,
+    SSDP_ST_ALL, SSDP_TARGET_ROOTDEVICE, SSDP_UDP_PORT,
 };
 use super::header::{SsdpHeaderNameKind, SsdpHeaderNameParseError, SsdpHeaderValue, SsdpHeaders};
 
@@ -199,6 +199,16 @@ impl Ssdp {
     /// Append an explicit `USN` unique service name header.
     pub fn unique_service_name(self, value: impl Into<SsdpHeaderValue>) -> Self {
         self.with_source_header(SSDP_HEADER_USN, value)
+    }
+
+    /// Append an explicit `LOCATION` header.
+    pub fn location(self, value: impl Into<SsdpHeaderValue>) -> Self {
+        self.with_source_header(SSDP_HEADER_LOCATION, value)
+    }
+
+    /// Append an explicit `SECURELOCATION.UPNP.ORG` header.
+    pub fn secure_location(self, value: impl Into<SsdpHeaderValue>) -> Self {
+        self.with_source_header(SSDP_HEADER_SECURELOCATION, value)
     }
 
     /// Replace the opaque body bytes with caller-supplied bytes.
@@ -1150,6 +1160,130 @@ impl From<SsdpUsn> for SsdpHeaderValue {
     }
 }
 
+/// URI-bearing SSDP location value.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SsdpLocation(String);
+
+impl SsdpLocation {
+    /// Build a location value after checking the source-backed absolute-URI shape.
+    pub fn new(value: impl Into<String>) -> Result<Self, SsdpLocationParseError> {
+        let value = value.into();
+        validate_location_uri(&value)?;
+        Ok(Self(value))
+    }
+
+    /// Preserve a caller-supplied location value without URI validation.
+    pub fn raw(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// Return the preserved location bytes as UTF-8 text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Consume the wrapper and return the preserved location string.
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl fmt::Display for SsdpLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl TryFrom<String> for SsdpLocation {
+    type Error = SsdpLocationParseError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl TryFrom<&str> for SsdpLocation {
+    type Error = SsdpLocationParseError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<SsdpLocation> for String {
+    fn from(location: SsdpLocation) -> Self {
+        location.0
+    }
+}
+
+impl From<SsdpLocation> for SsdpHeaderValue {
+    fn from(location: SsdpLocation) -> Self {
+        Self::from(location.0)
+    }
+}
+
+/// Field rejected by SSDP location URI validation.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum SsdpLocationField {
+    /// Absolute URI value.
+    Uri,
+}
+
+impl SsdpLocationField {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Uri => "URI",
+        }
+    }
+}
+
+/// Error returned when a checked SSDP location is not an absolute URI value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SsdpLocationParseError {
+    field: SsdpLocationField,
+    value: String,
+    expected: &'static str,
+}
+
+impl SsdpLocationParseError {
+    fn new(value: impl Into<String>) -> Self {
+        Self {
+            field: SsdpLocationField::Uri,
+            value: value.into(),
+            expected: "absolute URI with visible ASCII bytes and a scheme",
+        }
+    }
+
+    /// The location field that failed validation.
+    pub const fn field(&self) -> SsdpLocationField {
+        self.field
+    }
+
+    /// The rejected value.
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+
+    /// Human-readable syntax expectation for the rejected field.
+    pub const fn expected(&self) -> &'static str {
+        self.expected
+    }
+}
+
+impl fmt::Display for SsdpLocationParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "invalid SSDP location {}: {:?} (expected {})",
+            self.field.label(),
+            self.value,
+            self.expected
+        )
+    }
+}
+
+impl std::error::Error for SsdpLocationParseError {}
+
 fn source_target(
     domain: impl Into<String>,
     kind: &'static str,
@@ -1161,6 +1295,32 @@ fn source_target(
         domain.into(),
         type_name.into()
     ))
+}
+
+fn validate_location_uri(value: &str) -> Result<(), SsdpLocationParseError> {
+    let Some(colon) = value.find(':') else {
+        return Err(SsdpLocationParseError::new(value));
+    };
+
+    let scheme = &value[..colon];
+    if scheme.is_empty()
+        || !scheme.as_bytes()[0].is_ascii_alphabetic()
+        || !scheme.bytes().all(is_uri_scheme_byte)
+        || value[colon + 1..].is_empty()
+        || !value.bytes().all(is_visible_uri_byte)
+    {
+        return Err(SsdpLocationParseError::new(value));
+    }
+
+    Ok(())
+}
+
+fn is_uri_scheme_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.')
+}
+
+fn is_visible_uri_byte(byte: u8) -> bool {
+    matches!(byte, 0x21..=0x7e)
 }
 
 /// Start-line field rejected by SSDP syntax validation.
@@ -2051,6 +2211,75 @@ mod tests {
                 .as_bytes(),
             usn.as_str().as_bytes()
         );
+    }
+
+    #[test]
+    fn ssdp_location_headers_checked_locations_set_location_fields() {
+        let location =
+            SsdpLocation::new("http://192.0.2.10:8000/rootDesc.xml").expect("valid location URI");
+        let secure = SsdpLocation::try_from("https://example.com/rootDesc.xml")
+            .expect("valid secure location URI");
+        let message = Ssdp::response_ok_with_ext()
+            .location(location.clone())
+            .secure_location(secure.clone());
+
+        assert_eq!(location.as_str(), "http://192.0.2.10:8000/rootDesc.xml");
+        assert_eq!(location.to_string(), location.as_str());
+        assert_eq!(
+            message
+                .headers()
+                .get_first(SsdpHeaderNameKind::Location)
+                .expect("LOCATION header")
+                .as_bytes(),
+            location.as_str().as_bytes()
+        );
+        assert_eq!(
+            message
+                .headers()
+                .get_first(SsdpHeaderNameKind::SecureLocation)
+                .expect("SECURELOCATION header")
+                .as_bytes(),
+            secure.as_str().as_bytes()
+        );
+    }
+
+    #[test]
+    fn ssdp_location_headers_raw_location_values_roundtrip_without_validation() {
+        let location = SsdpLocation::raw("opaque location with spaces");
+        let message = Ssdp::response_ok()
+            .location(location.clone())
+            .with_raw_header("X-DEVICE.UPNP.ORG", "opaque")
+            .expect("extension header");
+        let decoded = decode_ssdp(&message.to_bytes()).expect("raw location should decode");
+
+        assert_eq!(String::from(location.clone()), location.as_str());
+        assert_eq!(decoded, message);
+        assert_eq!(
+            decoded
+                .headers()
+                .get_first(SsdpHeaderNameKind::Location)
+                .expect("LOCATION header")
+                .as_bytes(),
+            b"opaque location with spaces"
+        );
+    }
+
+    #[test]
+    fn ssdp_location_headers_checked_location_rejects_invalid_uri_shape() {
+        for invalid in [
+            "",
+            "/rootDesc.xml",
+            "1http://example.com/rootDesc.xml",
+            "http:",
+            "http://example.com/root desc.xml",
+            "http://example.com/\trootDesc.xml",
+        ] {
+            let error = SsdpLocation::new(invalid).expect_err("invalid location URI");
+
+            assert_eq!(error.field(), SsdpLocationField::Uri);
+            assert_eq!(error.value(), invalid);
+            assert!(error.expected().contains("absolute URI"));
+        }
     }
 
     #[test]
