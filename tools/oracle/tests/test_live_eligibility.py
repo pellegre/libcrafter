@@ -26,6 +26,7 @@ from tools.oracle.engine.corpus import (
 )
 from tools.oracle.engine.generator import case_byte_policy_index
 from tools.oracle.engine.model import PacketPlan
+from tools.oracle.engine.providers.qemu import qemu_default_provider_capabilities
 
 
 # A representative case per policy class. Values mirror the spec, but the tests
@@ -99,6 +100,36 @@ class WireEligibilityBytePolicyTest(unittest.TestCase):
                 case_byte_policies=_CASE_BYTE_POLICIES,
             )
             self.assertTrue(packet.wire.eligible, direction)
+
+    def test_appliance_runtime_metadata_does_not_mask_byte_policy_skip(self) -> None:
+        capabilities = qemu_default_provider_capabilities(dry_run=True)
+        capabilities["appliance_runtime"] = {
+            "profile": "lan-raw",
+            "image_tag": "ghcr.io/libcrafter/appliance:fake",
+            "remote_work_root": "/tmp/libcrafter",
+            "remote_artifact_root": "/tmp/libcrafter/artifacts",
+            "container_policy": {"execution_mode": "ssh-docker-host"},
+            "check_metadata": {},
+            "metadata": {
+                "provider": "qemu",
+                "source": "endpoint-runtimes",
+                "execution_mode": "ssh-docker-host",
+            },
+        }
+        [packet] = populate_corpus_eligibility(
+            backend="scapy",
+            packets=[CorpusPacket.from_plan(_dns_plan("dns-compressed-names"))],
+            provider_capabilities=capabilities,
+            case_byte_policies=_CASE_BYTE_POLICIES,
+            wire_provider="qemu",
+        )
+
+        self.assertFalse(packet.wire.eligible)
+        self.assertEqual(packet.wire.metadata["byte_policy"], "normalized")
+        self.assertIn(SKIP_WIRE_NORMALIZED_ONLY, packet.wire.skip_reasons)
+        self.assertFalse(
+            any("appliance" in reason for reason in packet.wire.skip_reasons)
+        )
 
 
 def _eligibility_for(case: str) -> CorpusPacket:

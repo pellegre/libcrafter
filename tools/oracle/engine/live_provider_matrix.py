@@ -105,6 +105,31 @@ def validate_live_report(
         "metadata.lab_session",
         errors,
     )
+    appliance_runtime = _object_or_error(
+        metadata.get("appliance_runtime"),
+        "metadata.appliance_runtime",
+        errors,
+    )
+    session_appliance_runtime = _object_or_error(
+        metadata.get("session_appliance_runtime"),
+        "metadata.session_appliance_runtime",
+        errors,
+    )
+    endpoint_appliance_runtimes = _object_or_error(
+        metadata.get("endpoint_appliance_runtimes"),
+        "metadata.endpoint_appliance_runtimes",
+        errors,
+    )
+    plan_endpoint_appliance_runtimes = _object_or_error(
+        endpoint_plan.get("endpoint_appliance_runtimes"),
+        "metadata.endpoint_plan.endpoint_appliance_runtimes",
+        errors,
+    )
+    lab_appliance_runtime = _object_or_error(
+        lab_session.get("appliance_runtime"),
+        "metadata.lab_session.appliance_runtime",
+        errors,
+    )
     lab_cleanup_state = _object_or_error(
         lab_session.get("cleanup_state"),
         "metadata.lab_session.cleanup_state",
@@ -130,6 +155,10 @@ def validate_live_report(
     lab_role_names = _role_names_from_roles(lab_session.get("roles", []))
     lab_endpoint_roles = _role_names_from_endpoints(lab_session.get("endpoints", []))
     plan_endpoint_roles = _role_names_from_plan(endpoint_plan)
+    lab_endpoint_runtime_roles = _runtime_roles_from_lab_endpoints(
+        lab_session.get("endpoints", []),
+    )
+    command_record_runtime_roles = _runtime_roles_from_commands(command_records)
     lifecycle_endpoint_ids = _string_values(endpoint_lifecycle.get("created_endpoint_ids", []))
     lab_endpoint_ids = _string_values(lab_session.get("created_endpoint_ids", []))
     plan_endpoint_ids = _string_values(endpoint_plan.get("created_endpoint_ids", []))
@@ -239,6 +268,11 @@ def validate_live_report(
         errors,
     )
     _expect(
+        planned_infrastructure.get("appliance_runtime") == appliance_runtime,
+        "metadata.planned_infrastructure.appliance_runtime mismatch",
+        errors,
+    )
+    _expect(
         endpoint_plan.get("provider") == provider,
         "metadata.endpoint_plan.provider mismatch",
         errors,
@@ -280,6 +314,27 @@ def validate_live_report(
         errors,
     )
     _expect(
+        plan_endpoint_appliance_runtimes == endpoint_appliance_runtimes,
+        "metadata.endpoint_plan.endpoint_appliance_runtimes must match report metadata",
+        errors,
+    )
+    _expect(
+        appliance_runtime == session_appliance_runtime == lab_appliance_runtime,
+        "session appliance runtime metadata must match lab_session",
+        errors,
+    )
+    _expect(
+        isinstance(appliance_runtime.get("profile"), str)
+        and bool(appliance_runtime["profile"]),
+        "metadata.appliance_runtime.profile must be present",
+        errors,
+    )
+    _expect(
+        _same_role_set(endpoint_appliance_runtimes.keys(), expected_roles),
+        "metadata.endpoint_appliance_runtimes must cover endpoint roles",
+        errors,
+    )
+    _expect(
         lab_session.get("provider") == provider,
         "metadata.lab_session.provider mismatch",
         errors,
@@ -312,6 +367,11 @@ def validate_live_report(
     _expect(
         _same_role_set(lab_endpoint_roles, expected_roles),
         "metadata.lab_session.endpoints must match endpoint roles",
+        errors,
+    )
+    _expect(
+        _same_role_set(lab_endpoint_runtime_roles, expected_roles),
+        "metadata.lab_session.endpoints must include appliance runtimes",
         errors,
     )
     _expect(
@@ -353,6 +413,11 @@ def validate_live_report(
     _expect(
         len(command_records) == len(lab_session_commands),
         "metadata.command_records must mirror lab_session.command_records",
+        errors,
+    )
+    _expect(
+        _same_role_set(command_record_runtime_roles, expected_roles),
+        "metadata.command_records must include appliance runtimes for endpoint roles",
         errors,
     )
     _expect(
@@ -453,6 +518,9 @@ def validate_live_report(
         "no_live_packets_sent": dry_run,
         "live_packet_exchange": bool(metadata.get("live_packet_exchange", False)),
         "artifact_paths": artifact_paths,
+        "appliance_runtime": appliance_runtime,
+        "endpoint_appliance_runtimes": endpoint_appliance_runtimes,
+        "command_record_appliance_runtime_roles": command_record_runtime_roles,
         "lifecycle": {
             "provider_workflow_count": len(provider_workflow),
             "lab_provider_workflow_count": len(lab_provider_workflow),
@@ -482,6 +550,8 @@ def validate_live_report(
             "failed_validation_count": len(failed_lab_validations),
             "provider_workflow_count": len(lab_provider_workflow),
             "command_record_count": len(command_records),
+            "appliance_runtime": lab_appliance_runtime,
+            "endpoint_appliance_runtime_roles": lab_endpoint_runtime_roles,
         },
         "provider_workflow": provider_workflow,
         "provider_commands": provider_commands,
@@ -1343,6 +1413,32 @@ def _role_names_from_endpoints(value: Any) -> list[str]:
         for item in value
         if isinstance(item, dict) and isinstance(item.get("role"), str)
     ]
+
+
+def _runtime_roles_from_lab_endpoints(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        item["role"]
+        for item in value
+        if isinstance(item, dict)
+        and isinstance(item.get("role"), str)
+        and isinstance(item.get("appliance_runtime"), dict)
+    ]
+
+
+def _runtime_roles_from_commands(value: Sequence[Mapping[str, Any]]) -> list[str]:
+    roles: list[str] = []
+    for item in value:
+        role = item.get("role")
+        metadata = item.get("metadata")
+        if (
+            isinstance(role, str)
+            and isinstance(metadata, dict)
+            and isinstance(metadata.get("appliance_runtime"), dict)
+        ):
+            roles.append(role)
+    return list(dict.fromkeys(roles))
 
 
 def _role_names_from_plan(plan: Mapping[str, Any]) -> list[str]:

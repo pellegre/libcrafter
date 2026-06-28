@@ -254,8 +254,17 @@ def lab_session_oracle_report_metadata(
     endpoint_appliance_runtimes = _lab_endpoint_appliance_runtimes(
         lab_session.endpoints,
     )
+    if session_appliance_runtime is not None:
+        infrastructure.setdefault("appliance_runtime", session_appliance_runtime)
+        infrastructure.setdefault("session_appliance_runtime", session_appliance_runtime)
     provider_workflow = [command.to_dict() for command in lab_session.provider_workflow]
-    command_records = [command.to_dict() for command in lab_session.command_records]
+    command_records = [
+        _command_record_with_appliance_runtime(
+            command.to_dict(),
+            endpoint_appliance_runtimes=endpoint_appliance_runtimes,
+        )
+        for command in lab_session.command_records
+    ]
     endpoint_dicts = {
         role: endpoint.to_dict()
         for role, endpoint in endpoints.items()
@@ -496,6 +505,29 @@ def _lab_endpoint_appliance_runtimes(
         if runtime is not None:
             runtimes[endpoint.role] = runtime
     return runtimes
+
+
+def _command_record_with_appliance_runtime(
+    record: JSONObject,
+    *,
+    endpoint_appliance_runtimes: Mapping[str, object],
+) -> JSONObject:
+    role = record.get("role")
+    if not isinstance(role, str):
+        return record
+    runtime = _metadata_object(endpoint_appliance_runtimes.get(role))
+    if runtime is None:
+        return record
+
+    metadata = record.get("metadata")
+    command_metadata: JSONObject = (
+        dict(metadata)
+        if isinstance(metadata, Mapping)
+        else {}
+    )
+    command_metadata.setdefault("appliance_runtime", runtime)
+    command_metadata.setdefault("endpoint_appliance_runtime", runtime)
+    return {**record, "metadata": command_metadata}
 
 
 def _appliance_runtime_metadata(
