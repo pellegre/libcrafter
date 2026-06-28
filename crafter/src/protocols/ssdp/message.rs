@@ -85,7 +85,7 @@ impl Ssdp {
 
     /// Build a source-backed `HTTP/1.1 200 OK` response with an empty `EXT`.
     pub fn response_ok_with_ext() -> Self {
-        Self::response_ok().with_source_header(SSDP_HEADER_EXT, SsdpHeaderValue::empty())
+        Self::response_ok().ext_empty()
     }
 
     /// Build a response using a caller-supplied three-digit status and reason.
@@ -220,6 +220,11 @@ impl Ssdp {
     /// Append a source-backed `CACHE-CONTROL: max-age=<seconds>` header.
     pub fn max_age(self, seconds: u32) -> Self {
         self.cache_control(SsdpCacheControl::max_age(seconds))
+    }
+
+    /// Append an empty source-backed `EXT` header.
+    pub fn ext_empty(self) -> Self {
+        self.with_source_header(SSDP_HEADER_EXT, SsdpHeaderValue::empty())
     }
 
     /// Replace the opaque body bytes with caller-supplied bytes.
@@ -2425,6 +2430,79 @@ mod tests {
             let cache = SsdpCacheControl::raw(raw);
 
             assert_eq!(cache.max_age_seconds(), expected, "{raw}");
+        }
+    }
+
+    #[test]
+    fn ssdp_man_ext_mx_source_backed_helpers_set_expected_values() {
+        let search = Ssdp::m_search().man_discover().mx(5);
+        let response = Ssdp::response_ok().ext_empty();
+
+        assert_eq!(
+            search
+                .headers()
+                .get_first(SsdpHeaderNameKind::Man)
+                .expect("MAN header")
+                .as_bytes(),
+            SSDP_MAN_DISCOVER.as_bytes()
+        );
+        assert_eq!(
+            search
+                .headers()
+                .get_first(SsdpHeaderNameKind::Mx)
+                .expect("MX header")
+                .as_bytes(),
+            b"5"
+        );
+        assert!(response
+            .headers()
+            .get_first(SsdpHeaderNameKind::Ext)
+            .expect("EXT header")
+            .is_empty());
+        assert_eq!(response.to_bytes(), b"HTTP/1.1 200 OK\r\nEXT:\r\n\r\n");
+    }
+
+    #[test]
+    fn ssdp_man_ext_mx_helpers_append_duplicates_without_replacing() {
+        let search = Ssdp::m_search().man_discover().man_discover().mx(1).mx(2);
+        let response = Ssdp::response_ok().ext_empty().ext_empty();
+        let man_values = search
+            .headers()
+            .get_all(SsdpHeaderNameKind::Man)
+            .map(SsdpHeaderValue::as_bytes)
+            .collect::<Vec<_>>();
+        let mx_values = search
+            .headers()
+            .get_all(SsdpHeaderNameKind::Mx)
+            .map(SsdpHeaderValue::as_bytes)
+            .collect::<Vec<_>>();
+        let ext_values = response
+            .headers()
+            .get_all(SsdpHeaderNameKind::Ext)
+            .map(SsdpHeaderValue::as_bytes)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            man_values,
+            vec![SSDP_MAN_DISCOVER.as_bytes(), SSDP_MAN_DISCOVER.as_bytes()]
+        );
+        assert_eq!(mx_values, vec![b"1".as_slice(), b"2".as_slice()]);
+        assert_eq!(ext_values, vec![b"".as_slice(), b"".as_slice()]);
+    }
+
+    #[test]
+    fn ssdp_man_ext_mx_mx_helper_preserves_numeric_boundaries() {
+        for (seconds, expected) in [(0, "0"), (5, "5"), (u32::MAX, "4294967295")] {
+            let message = Ssdp::m_search().mx(seconds);
+
+            assert_eq!(
+                message
+                    .headers()
+                    .get_first(SsdpHeaderNameKind::Mx)
+                    .expect("MX header")
+                    .as_bytes(),
+                expected.as_bytes()
+            );
         }
     }
 
