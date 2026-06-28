@@ -7,10 +7,10 @@
 use core::fmt;
 use core::str;
 
-use super::header::{SsdpHeaderNameParseError, SsdpHeaderValue};
+use super::header::{SsdpHeaderNameKind, SsdpHeaderNameParseError, SsdpHeaderValue};
 use super::message::{
-    Ssdp, SsdpMessage, SsdpMethod, SsdpMethodParseError, SsdpReasonPhrase, SsdpRequestTarget,
-    SsdpStartLineParseError, SsdpStatusCode, SsdpVersion,
+    Ssdp, SsdpMessage, SsdpMethod, SsdpMethodParseError, SsdpReasonPhrase, SsdpRequestLine,
+    SsdpRequestTarget, SsdpStartLineParseError, SsdpStatusCode, SsdpStatusLine, SsdpVersion,
 };
 
 const HEADER_DELIMITER: &[u8; 4] = b"\r\n\r\n";
@@ -67,6 +67,55 @@ pub(crate) fn decode_ssdp(bytes: &[u8]) -> ParseResult<Ssdp> {
     } else {
         parse_ssdp_request(bytes)
     }
+}
+
+/// Return true when a UDP payload has enough SSDP structure for dispatch.
+///
+/// This is intentionally narrower than explicit parsing: unknown-but-valid
+/// start lines remain parse-preservable, but UDP auto-detection requires an
+/// SSDP request family or a 200 response with SSDP-specific header evidence.
+pub(crate) fn looks_like_ssdp_payload(bytes: &[u8]) -> bool {
+    let Ok(ssdp) = decode_ssdp(bytes) else {
+        return false;
+    };
+
+    if let Some(request) = ssdp.message().start_line().as_request() {
+        return looks_like_ssdp_request_start_line(request);
+    }
+
+    ssdp.message()
+        .start_line()
+        .as_response()
+        .is_some_and(|response| looks_like_ssdp_response(response, &ssdp))
+}
+
+fn looks_like_ssdp_request_start_line(line: &SsdpRequestLine) -> bool {
+    matches!(line.method(), SsdpMethod::Notify | SsdpMethod::MSearch)
+        && line.target().is_asterisk()
+        && line.version().is_http_1_1()
+}
+
+fn looks_like_ssdp_response(line: &SsdpStatusLine, ssdp: &Ssdp) -> bool {
+    line.code().is_ok()
+        && ssdp
+            .headers()
+            .iter()
+            .any(|header| is_ssdp_response_evidence_header(header.name().kind()))
+}
+
+fn is_ssdp_response_evidence_header(kind: SsdpHeaderNameKind) -> bool {
+    matches!(
+        kind,
+        SsdpHeaderNameKind::St
+            | SsdpHeaderNameKind::Usn
+            | SsdpHeaderNameKind::Ext
+            | SsdpHeaderNameKind::BootId
+            | SsdpHeaderNameKind::ConfigId
+            | SsdpHeaderNameKind::SearchPort
+            | SsdpHeaderNameKind::SecureLocation
+            | SsdpHeaderNameKind::Opt
+            | SsdpHeaderNameKind::NlsPrefixed
+    )
 }
 
 fn parse_ssdp_message(
@@ -1000,6 +1049,111 @@ mod tests {
         assert_eq!(response_line.code().code(), 777);
         assert_eq!(response_line.reason().as_str(), "Odd Status");
         assert!(response.body().is_empty());
+    }
+
+    #[test]
+    fn ssdp_payload_detection_accepts_known_request_families_with_complete_delimiter() {
+        let cases: &[&[u8]] = &[
+            b"M-SEARCH * HTTP/1.1\r\n\r\n",
+            b"M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: ssdp:all\r\n\r\nopaque-body",
+            b"NOTIFY * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nNT: upnp:rootdevice\r\nNTS: ssdp:alive\r\nUSN: uuid:device-1::upnp:rootdevice\r\n\r\n\x00body",
+        ];
+
+        for bytes in cases {
+            assert!(looks_like_ssdp_payload(bytes), "{bytes:02x?}");
+        }
+    }
+
+    #[test]
+    fn ssdp_payload_detection_accepts_200_responses_with_ssdp_header_evidence() {
+        let cases: &[&[u8]] = &[
+            b"HTTP/1.1 200 OK\r\nEXT:\r\nST: ssdp:all\r\nUSN: uuid:device-1::upnp:rootdevice\r\n\r\n",
+            b"HTTP/1.0 200 Odd Reason\r\nST: urn:schemas-upnp-org:service:SwitchPower:1\r\n\r\nopaque-body",
+            b"HTTP/9.9 200 Experimental\r\n99-NLS: boot-17\r\n\r\n\xffbody",
+        ];
+
+        for bytes in cases {
+            assert!(looks_like_ssdp_payload(bytes), "{bytes:02x?}");
+        }
+    }
+
+    #[test]
+    fn ssdp_payload_detection_rejects_malformed_text_binary_and_truncated_payloads() {
+        let cases: &[(&str, &[u8])] = &[
+            ("empty", b""),
+            ("unrelated_text", b"hello world\r\n\r\n"),
+            ("binary", b"\x00\xff\r\n\r\n"),
+            (
+                "missing_header_delimiter",
+                b"M-SEARCH * HTTP/1.1\r\nHOST: example\r\n",
+            ),
+            ("truncated_cr", b"M-SEARCH * HTTP/1.1\r"),
+            ("bare_lf", b"M-SEARCH * HTTP/1.1\nHOST: example\n\n"),
+            ("bad_header", b"M-SEARCH * HTTP/1.1\r\nHOST value\r\n\r\n"),
+        ];
+
+        for (name, bytes) in cases {
+            assert!(
+                !looks_like_ssdp_payload(bytes),
+                "{name} should not be claimed as SSDP"
+            );
+        }
+    }
+
+    #[test]
+    fn ssdp_payload_detection_rejects_non_ssdp_http_like_payloads() {
+        let cases: &[(&str, &[u8])] = &[
+            ("http_get", b"GET / HTTP/1.1\r\nHOST: example.test\r\n\r\n"),
+            (
+                "http_post",
+                b"POST /notify HTTP/1.1\r\nNTS: ssdp:alive\r\n\r\n",
+            ),
+            (
+                "generic_200_no_ssdp_headers",
+                b"HTTP/1.1 200 OK\r\nSERVER: example\r\nDATE: Sat, 27 Jun 2026 00:00:00 GMT\r\nCACHE-CONTROL: max-age=60\r\n\r\n",
+            ),
+            ("bare_200", b"HTTP/1.1 200 OK\r\n\r\n"),
+            (
+                "http_error_status",
+                b"HTTP/1.1 404 Not Found\r\nST: ssdp:all\r\n\r\n",
+            ),
+        ];
+
+        for (name, bytes) in cases {
+            assert!(
+                !looks_like_ssdp_payload(bytes),
+                "{name} should not be claimed as SSDP"
+            );
+        }
+    }
+
+    #[test]
+    fn ssdp_payload_detection_rejects_parse_preservable_unknown_start_lines() {
+        let cases: &[(&str, &[u8])] = &[
+            (
+                "unknown_method",
+                b"X-SEARCH * HTTP/1.1\r\nST: ssdp:all\r\n\r\n",
+            ),
+            (
+                "known_method_wrong_target",
+                b"M-SEARCH /device.xml HTTP/1.1\r\nST: ssdp:all\r\n\r\n",
+            ),
+            (
+                "known_method_wrong_version",
+                b"M-SEARCH * HTTP/1.0\r\nST: ssdp:all\r\n\r\n",
+            ),
+            (
+                "unknown_status",
+                b"HTTP/1.1 299 Odd Success\r\nST: ssdp:all\r\n\r\n",
+            ),
+        ];
+
+        for (name, bytes) in cases {
+            assert!(
+                !looks_like_ssdp_payload(bytes),
+                "{name} should not be claimed as SSDP"
+            );
+        }
     }
 
     #[test]
