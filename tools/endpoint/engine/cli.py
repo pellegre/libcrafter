@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shlex
 import sys
 from collections.abc import Sequence
+from json import JSONDecodeError
 from pathlib import Path
 from posixpath import basename
 
@@ -21,7 +23,17 @@ from .appliance import (
     run_endpoint_appliance_command,
     sync_endpoint_appliance_workspace,
 )
+from .assets import (
+    AssetHardware,
+    AssetSSHInfo,
+    EndpointAsset,
+    asset_record_path,
+    list_endpoint_assets,
+    read_endpoint_asset,
+    write_endpoint_asset,
+)
 from .model import EndpointManifest, dumps_json, write_json
+from .model import json_object
 from .process import CommandResult, run_command
 from .providers import resolve_provider
 from .registry import ProviderExposureError
@@ -43,6 +55,7 @@ from .state import (
 
 COMMANDS = (
     "appliance",
+    "asset",
     "doctor",
     "create",
     "destroy",
@@ -112,6 +125,10 @@ def _add_appliance_command_argv(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_asset_json_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="endpoint",
@@ -179,6 +196,95 @@ def build_parser() -> argparse.ArgumentParser:
     _add_appliance_common_options(appliance_collect)
     _add_appliance_command_argv(appliance_collect)
     appliance_collect.set_defaults(command_name="appliance", appliance_command_name="collect")
+
+    asset = subparsers.add_parser(
+        "asset",
+        help="register and inspect persistent endpoint assets",
+        description="Register, list, and inspect prepared reusable endpoint assets.",
+    )
+    asset.set_defaults(command_name="asset")
+    asset_subparsers = asset.add_subparsers(dest="asset_command", metavar="asset-command")
+
+    asset_register = asset_subparsers.add_parser(
+        "register",
+        help="register one persistent endpoint asset",
+        description="Persist one prepared endpoint asset under the endpoint state root.",
+    )
+    asset_register.add_argument("asset_id", metavar="ASSET_ID", help="asset ID or name")
+    asset_register.add_argument(
+        "--substrate",
+        required=True,
+        metavar="NAME",
+        help="asset substrate",
+    )
+    asset_register.add_argument(
+        "--profile",
+        action="append",
+        dest="profiles",
+        required=True,
+        metavar="PROFILE",
+        help="supported appliance profile; may be passed more than once",
+    )
+    asset_register.add_argument("--ssh-host", required=True, metavar="HOST", help="SSH host")
+    asset_register.add_argument("--ssh-user", required=True, metavar="USER", help="SSH user")
+    asset_register.add_argument(
+        "--ssh-port",
+        type=int,
+        default=22,
+        metavar="PORT",
+        help="SSH port",
+    )
+    asset_register.add_argument(
+        "--identity-file",
+        type=_absolute_local_path,
+        metavar="PATH",
+        help="absolute SSH identity file path",
+    )
+    asset_register.add_argument(
+        "--known-hosts-file",
+        type=_absolute_local_path,
+        metavar="PATH",
+        help="absolute SSH known_hosts file path",
+    )
+    asset_register.add_argument(
+        "--docker-command",
+        metavar="COMMAND",
+        help="Docker command available on the asset",
+    )
+    asset_register.add_argument(
+        "--metadata-json",
+        metavar="JSON",
+        help="asset metadata JSON object",
+    )
+    asset_register.add_argument(
+        "--provider-metadata-json",
+        metavar="JSON",
+        help="provider metadata JSON object stored under metadata.provider",
+    )
+    asset_register.add_argument(
+        "--hardware-json",
+        metavar="JSON",
+        help="hardware metadata JSON object",
+    )
+    _add_asset_json_option(asset_register)
+    asset_register.set_defaults(command_name="asset", asset_command_name="register")
+
+    asset_list = asset_subparsers.add_parser(
+        "list",
+        help="list persistent endpoint assets",
+        description="List registered persistent endpoint assets.",
+    )
+    _add_asset_json_option(asset_list)
+    asset_list.set_defaults(command_name="asset", asset_command_name="list")
+
+    asset_info = asset_subparsers.add_parser(
+        "info",
+        help="inspect one persistent endpoint asset",
+        description="Print one registered persistent endpoint asset record.",
+    )
+    asset_info.add_argument("asset_id", metavar="ASSET_ID", help="asset to inspect")
+    _add_asset_json_option(asset_info)
+    asset_info.set_defaults(command_name="asset", asset_command_name="info")
 
     doctor = subparsers.add_parser(
         "doctor",
@@ -677,6 +783,147 @@ def _run_list_endpoints(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_asset(args: argparse.Namespace) -> int:
+    subcommand = getattr(args, "asset_command_name", None)
+    if subcommand is None:
+        print("endpoint asset: missing asset command", file=sys.stderr)
+        return 2
+    try:
+        if subcommand == "register":
+            output = _asset_register_output(args)
+            return _emit_asset_output(args, output, default_label="register")
+        if subcommand == "list":
+            output = _asset_list_output()
+            return _emit_asset_output(args, output, default_label="list")
+        if subcommand == "info":
+            output = _asset_info_output(args.asset_id)
+            return _emit_asset_output(args, output, default_label="info")
+    except (FileNotFoundError, JSONDecodeError, ValueError, RuntimeError) as exc:
+        return _emit_asset_error(args, str(exc))
+    print(f"endpoint asset: unsupported asset command {subcommand!r}", file=sys.stderr)
+    return 2
+
+
+def _asset_register_output(args: argparse.Namespace) -> dict[str, object]:
+    record_path = asset_record_path(args.asset_id)
+    if record_path.exists():
+        raise ValueError(f"endpoint asset already registered: {args.asset_id}")
+
+    profiles = _validated_asset_profiles(args.profiles)
+    metadata = _json_option_object(args.metadata_json, "metadata-json")
+    provider_metadata = _json_option_object(
+        args.provider_metadata_json,
+        "provider-metadata-json",
+    )
+    if provider_metadata:
+        metadata["provider"] = provider_metadata
+    docker: dict[str, object] = {}
+    if args.docker_command is not None:
+        docker["command"] = args.docker_command
+    hardware = AssetHardware.from_dict(
+        _json_option_object(args.hardware_json, "hardware-json")
+    )
+    asset = EndpointAsset(
+        asset_id=args.asset_id,
+        substrate=args.substrate,
+        status="available",
+        supported_profiles=profiles,
+        ssh=AssetSSHInfo(
+            host=args.ssh_host,
+            user=args.ssh_user,
+            port=args.ssh_port,
+            identity_file=args.identity_file,
+            known_hosts_file=args.known_hosts_file,
+        ),
+        docker=docker,
+        hardware=hardware,
+        metadata=metadata,
+    )
+    written_path = write_endpoint_asset(asset)
+    return {
+        "kind": "endpoint-asset-register",
+        "registered": True,
+        "asset_id": asset.asset_id,
+        "asset_path": str(written_path),
+        "asset": asset.to_dict(),
+    }
+
+
+def _asset_list_output() -> dict[str, object]:
+    return {
+        "kind": "endpoint-asset-list",
+        "assets": [_asset_list_entry(asset) for asset in list_endpoint_assets()],
+    }
+
+
+def _asset_info_output(asset_id: str) -> dict[str, object]:
+    asset = read_endpoint_asset(asset_id)
+    return {
+        "kind": "endpoint-asset-info",
+        "asset_id": asset.asset_id,
+        "asset_path": str(asset_record_path(asset.asset_id)),
+        "asset": asset.to_dict(),
+    }
+
+
+def _asset_list_entry(asset: EndpointAsset) -> dict[str, object]:
+    return {
+        "asset_id": asset.asset_id,
+        "substrate": asset.substrate,
+        "status": asset.status,
+        "supported_profiles": asset.supported_profiles,
+        "lease_state": "leased" if asset.lease is not None else "unleased",
+        "lease": None if asset.lease is None else asset.lease.to_dict(),
+        "last_check_state": "unchecked" if asset.last_check is None else "checked",
+        "last_check": asset.last_check,
+    }
+
+
+def _validated_asset_profiles(values: Sequence[str]) -> list[str]:
+    profiles: list[str] = []
+    for value in values:
+        resolve_profile(value)
+        profiles.append(value)
+    return profiles
+
+
+def _json_option_object(value: str | None, option_name: str) -> dict[str, object]:
+    if value is None:
+        return {}
+    try:
+        decoded = json.loads(value)
+    except JSONDecodeError as exc:
+        raise ValueError(f"{option_name} must be a JSON object: {exc.msg}") from exc
+    return json_object(decoded, option_name)
+
+
+def _emit_asset_output(
+    args: argparse.Namespace,
+    output: dict[str, object],
+    *,
+    default_label: str,
+) -> int:
+    if args.json:
+        sys.stdout.write(dumps_json(output))
+    else:
+        _print_asset_output(output, default_label=default_label)
+    return 0
+
+
+def _emit_asset_error(args: argparse.Namespace, error: str) -> int:
+    output = {
+        "kind": "endpoint-asset-error",
+        "asset_id": getattr(args, "asset_id", None),
+        "ok": False,
+        "error": error,
+    }
+    if getattr(args, "json", False):
+        sys.stdout.write(dumps_json(output))
+    else:
+        print(error, file=sys.stderr)
+    return 1
+
+
 def _run_appliance(args: argparse.Namespace) -> int:
     subcommand = getattr(args, "appliance_command_name", None)
     if subcommand is None:
@@ -922,6 +1169,30 @@ def _print_endpoint_list(output: dict[str, object]) -> None:
         )
 
 
+def _print_asset_output(output: dict[str, object], *, default_label: str) -> None:
+    if default_label == "list":
+        assets = output["assets"]
+        if not isinstance(assets, list) or not assets:
+            print("endpoint asset list: no assets")
+            return
+        for asset in assets:
+            if not isinstance(asset, dict):
+                continue
+            print(
+                f"{asset.get('asset_id')}\t"
+                f"{asset.get('substrate')}\t"
+                f"{asset.get('status')}\t"
+                f"{asset.get('lease_state')}\t"
+                f"{asset.get('last_check_state')}"
+            )
+        return
+    asset_id = output.get("asset_id", "<unknown>")
+    asset_path = output.get("asset_path")
+    print(f"endpoint asset {default_label}: asset_id={asset_id}")
+    if isinstance(asset_path, str):
+        print(f"state: {asset_path}")
+
+
 def _print_appliance_output(output: object, *, default_label: str) -> None:
     if isinstance(output, dict):
         endpoint_id = output.get("endpoint_id", "<unknown>")
@@ -1105,6 +1376,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command_name == "appliance":
         return _run_appliance(args)
+    if args.command_name == "asset":
+        return _run_asset(args)
     if args.command_name == "doctor":
         return _run_doctor(args)
     if args.command_name == "create":
