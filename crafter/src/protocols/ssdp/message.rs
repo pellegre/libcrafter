@@ -9,7 +9,9 @@ use core::str::FromStr;
 use crate::error::Result as CrafterResult;
 use crate::packet::{Layer, LayerContext};
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
+use crate::protocols::transport::Udp;
 
+use super::constants::SSDP_UDP_PORT;
 use super::header::{SsdpHeaderNameParseError, SsdpHeaderValue, SsdpHeaders};
 
 const METHOD_NOTIFY: &str = "NOTIFY";
@@ -51,6 +53,16 @@ impl Ssdp {
     /// Build a source-backed `HTTP/1.1 200 OK` response.
     pub fn response_ok() -> Self {
         Self::new(SsdpMessage::response_ok())
+    }
+
+    /// Build a UDP header for SSDP's source-backed `ssdp/udp` service port.
+    ///
+    /// The source and destination ports start at `1900`; callers can still
+    /// override either value with `sport` or `dport` before composing a packet.
+    pub fn udp() -> Udp {
+        Udp::new()
+            .source_port(SSDP_UDP_PORT)
+            .destination_port(SSDP_UDP_PORT)
     }
 
     /// Build a request message from explicit start-line values.
@@ -1190,6 +1202,58 @@ mod tests {
             decode_ssdp(payload).expect("compiled SSDP payload decodes"),
             ssdp
         );
+    }
+
+    #[test]
+    fn ssdp_udp_helpers_default_to_source_backed_service_port() {
+        let udp = Ssdp::udp();
+
+        assert_eq!(udp.source_port_value(), SSDP_UDP_PORT);
+        assert_eq!(udp.destination_port_value(), SSDP_UDP_PORT);
+
+        let ssdp = packet_composition_message();
+        let packet = Ipv4::new()
+            .src(packet_composition_src())
+            .dst(packet_composition_dst())
+            / Ssdp::udp()
+            / ssdp.clone();
+
+        assert_eq!(packet.layer::<Ssdp>(), Some(&ssdp));
+        let packet_udp = packet.layer::<Udp>().expect("UDP layer");
+        assert_eq!(packet_udp.source_port_value(), SSDP_UDP_PORT);
+        assert_eq!(packet_udp.destination_port_value(), SSDP_UDP_PORT);
+
+        let compiled = packet.compile().expect("ipv4/udp/ssdp stack compiles");
+        let bytes = compiled.as_bytes();
+        assert_eq!(&bytes[20..22], &SSDP_UDP_PORT.to_be_bytes());
+        assert_eq!(&bytes[22..24], &SSDP_UDP_PORT.to_be_bytes());
+    }
+
+    #[test]
+    fn ssdp_udp_helpers_preserve_explicit_source_and_destination_port_overrides() {
+        let source_port = 49_153;
+        let destination_port = 49_154;
+        let udp = Ssdp::udp().sport(source_port).dport(destination_port);
+
+        assert_eq!(udp.source_port_value(), source_port);
+        assert_eq!(udp.destination_port_value(), destination_port);
+
+        let ssdp = packet_composition_message();
+        let packet = Ipv4::new()
+            .src(packet_composition_src())
+            .dst(packet_composition_dst())
+            / udp
+            / ssdp.clone();
+
+        assert_eq!(packet.layer::<Ssdp>(), Some(&ssdp));
+        let packet_udp = packet.layer::<Udp>().expect("UDP layer");
+        assert_eq!(packet_udp.source_port_value(), source_port);
+        assert_eq!(packet_udp.destination_port_value(), destination_port);
+
+        let compiled = packet.compile().expect("ipv4/udp/ssdp stack compiles");
+        let bytes = compiled.as_bytes();
+        assert_eq!(&bytes[20..22], &source_port.to_be_bytes());
+        assert_eq!(&bytes[22..24], &destination_port.to_be_bytes());
     }
 
     #[test]
