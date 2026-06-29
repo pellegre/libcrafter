@@ -24,6 +24,7 @@ from tools.endpoint.engine.model import (
 from tools.endpoint.engine.process import CommandResult
 from tools.endpoint.engine.providers import resolve_provider, virtualbox
 from tools.endpoint.engine.providers.virtualbox.constants import VBOX_BRIDGE_IFACE_ENV
+from tools.endpoint.engine.providers.virtualbox.groups import default_group_metadata
 from tools.endpoint.engine.providers.vm import (
     CLOUD_LOCALDS_COMMAND,
     LINUX_INTERFACE_DISCOVERY_COMMAND,
@@ -157,6 +158,12 @@ class VirtualBoxCreateEndpointTest(unittest.TestCase):
         self.assertEqual(interfaces["lan"]["metadata"]["bridge_interface"], "wlan0")
         self.assertEqual(output["metadata"]["virtualbox"]["bridge_interface"], "wlan0")  # type: ignore[index]
         self.assertEqual(output["metadata"]["virtualbox"]["ssh_port"], 25222)  # type: ignore[index]
+        self.assertEqual(
+            output["metadata"]["virtualbox"]["groups"],  # type: ignore[index]
+            default_group_metadata(),
+        )
+        resources = output["provider_resources"]["resources"]  # type: ignore[index]
+        self.assertEqual(resources[0]["metadata"]["groups"], default_group_metadata())
         self.assertIn("vm_guest_artifacts", output["metadata"])  # type: ignore[operator]
         self.assertIn("artifact_paths", output["metadata"])  # type: ignore[operator]
         _assert_appliance_metadata(self, output, private_lab=False)
@@ -308,6 +315,7 @@ class VirtualBoxCreateEndpointTest(unittest.TestCase):
         vm_name = str(metadata["vm_name"])
         disk_path = str(output["metadata"]["vm_guest_artifacts"]["disk_path"])  # type: ignore[index]
         seed_iso_path = str(output["metadata"]["vm_guest_artifacts"]["seed_iso_path"])  # type: ignore[index]
+        group_arg = ",".join(default_group_metadata())
         self.assertEqual(
             fake.vbox_calls,
             [
@@ -330,6 +338,7 @@ class VirtualBoxCreateEndpointTest(unittest.TestCase):
                     "Ubuntu_64",
                     "--register",
                 ),
+                ("VBoxManage", "modifyvm", vm_name, "--groups", group_arg),
                 (
                     "VBoxManage",
                     "modifyvm",
@@ -424,9 +433,19 @@ class VirtualBoxCreateEndpointTest(unittest.TestCase):
         self.assertEqual(output["ssh"]["host"], "127.0.0.1")  # type: ignore[index]
         self.assertEqual(output["ssh"]["port"], 25222)  # type: ignore[index]
         self.assertTrue(command_log_exists)
+        self.assertEqual(metadata["groups"], default_group_metadata())
+        self.assertEqual(
+            output["provider_resources"]["resources"][0]["metadata"]["groups"],  # type: ignore[index]
+            default_group_metadata(),
+        )
 
         self.assertEqual(stored["status"], "active")
         self.assertEqual(stored["metadata"]["virtualbox"]["bridge_interface"], "wlan0")
+        self.assertEqual(stored["metadata"]["virtualbox"]["groups"], default_group_metadata())
+        self.assertEqual(
+            stored["provider_resources"]["resources"][0]["metadata"]["groups"],
+            default_group_metadata(),
+        )
         self.assertIn(root / "wire-state", Path(stored["metadata"]["virtualbox"]["basefolder"]).parents)
         _assert_appliance_metadata(self, output, private_lab=False)
         _assert_appliance_metadata(self, stored, private_lab=False)
@@ -472,10 +491,12 @@ class VirtualBoxCreateEndpointTest(unittest.TestCase):
         self.assertEqual(manifest["status"], "failed")
         self.assertTrue(manifest["metadata"]["created"])
         self.assertTrue(manifest["metadata"]["virtualbox"]["vm_registered"])
+        self.assertEqual(manifest["metadata"]["virtualbox"]["groups"], default_group_metadata())
         self.assertIn("VirtualBox command failed", manifest["metadata"]["error"])
         resources = manifest["provider_resources"]["resources"]
         self.assertEqual(resources[0]["kind"], "virtualbox-vm")
         self.assertEqual(resources[0]["metadata"]["registered"], True)
+        self.assertEqual(resources[0]["metadata"]["groups"], default_group_metadata())
 
 
 class VirtualBoxDestroyEndpointTest(unittest.TestCase):

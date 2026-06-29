@@ -58,6 +58,7 @@ from .constants import (
     VBOX_PRIVATE_CIDR_ENV,
 )
 from .constants import VirtualBoxRunner
+from .groups import default_group_metadata, modifyvm_groups_command
 
 
 VBOX_OSTYPE = "Ubuntu_64"
@@ -202,6 +203,7 @@ def _planned_endpoint_manifest(
                         "planned": True,
                         "provider": provider,
                         "exposure": exposure,
+                        "groups": default_group_metadata(),
                     },
                 ),
                 *artifacts.file_resources(include_cache=True),
@@ -225,6 +227,7 @@ def _planned_endpoint_manifest(
             "virtualbox": {
                 "command": VBOXMANAGE_COMMAND,
                 "vm_name": vm_name,
+                "groups": default_group_metadata(),
                 "nat_adapter": 1,
                 "lan_adapter": 2,
                 "private_adapter": VBOX_PRIVATE_ADAPTER,
@@ -455,6 +458,7 @@ def _create_live_endpoint(
             runner=recorder,
         )
         vm_registered = True
+        _run_vbox(modifyvm_groups_command(vm_name), runner=recorder)
         resources = _virtualbox_provider_resources(
             vm_name=vm_name,
             artifacts=artifacts,
@@ -1055,6 +1059,7 @@ def _virtualbox_provider_resources(
                 metadata={
                     "provider": "virtualbox",
                     "registered": vm_registered,
+                    "groups": default_group_metadata(),
                     "bridge_interface": bridge.get("name"),
                     "private_network": private_network,
                 },
@@ -1100,6 +1105,7 @@ def _virtualbox_manifest_metadata(
         "command": VBOXMANAGE_COMMAND,
         "vm_name": vm_name,
         "vm_registered": vm_registered,
+        "groups": default_group_metadata(),
         "basefolder": str(vbox_basefolder),
         "nat_adapter": VBOX_NAT_ADAPTER,
         "lan_adapter": VBOX_LAN_ADAPTER,
