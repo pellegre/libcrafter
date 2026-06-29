@@ -1,10 +1,43 @@
 //! DNS wire-level constants and codepoints.
 
+use core::net::{Ipv4Addr, Ipv6Addr};
+
+use crate::MacAddr;
+
 /// DNS header length in bytes.
 pub const DNS_HEADER_LEN: usize = 12;
 
 /// DNS port.
 pub const DNS_PORT: u16 = 53;
+
+/// Multicast DNS UDP port (RFC 6762).
+pub const MDNS_PORT: u16 = 5353;
+/// Multicast DNS IPv4 link-local multicast destination (RFC 6762).
+pub const MDNS_IPV4_MULTICAST: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
+/// Multicast DNS IPv6 link-local multicast destination (RFC 6762).
+pub const MDNS_IPV6_MULTICAST: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x00fb);
+/// Alias that makes the IPv6 link-local scope explicit.
+pub const MDNS_IPV6_LINK_LOCAL_MULTICAST: Ipv6Addr = MDNS_IPV6_MULTICAST;
+/// Ethernet multicast destination derived from [`MDNS_IPV4_MULTICAST`].
+pub const MDNS_IPV4_ETHERNET_MULTICAST: MacAddr =
+    MacAddr::new([0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb]);
+/// Ethernet multicast destination derived from [`MDNS_IPV6_MULTICAST`].
+pub const MDNS_IPV6_ETHERNET_MULTICAST: MacAddr =
+    MacAddr::new([0x33, 0x33, 0x00, 0x00, 0x00, 0xfb]);
+/// Source-backed response IP TTL / IPv6 hop-limit default for mDNS.
+pub const MDNS_RESPONSE_TTL: u8 = 255;
+/// Source-backed response IPv6 hop-limit / IP TTL default for mDNS.
+pub const MDNS_RESPONSE_HOP_LIMIT: u8 = MDNS_RESPONSE_TTL;
+/// mDNS top-bit mask for the QU question bit and RR cache-flush bit.
+pub const MDNS_CLASS_BIT: u16 = 0x8000;
+/// mDNS mask for the DNS class bits after removing [`MDNS_CLASS_BIT`].
+pub const MDNS_CLASS_MASK: u16 = 0x7fff;
+/// mDNS goodbye records carry TTL zero (RFC 6762).
+pub const MDNS_GOODBYE_TTL: u32 = 0;
+/// Default DNS-SD browsing domain used with mDNS (RFC 6762/RFC 6763).
+pub const DNS_SD_DEFAULT_DOMAIN: &str = "local.";
+/// DNS-SD service type enumeration name for the default mDNS domain.
+pub const DNS_SD_SERVICE_ENUMERATION_NAME: &str = "_services._dns-sd._udp.local.";
 
 /// Standard Internet class (IN), IANA DNS CLASSes.
 pub const DNS_CLASS_IN: u16 = 1;
@@ -166,3 +199,80 @@ pub const DNS_FLAG_RECURSION_AVAILABLE: u16 = 0x0080;
 pub const DNS_FLAG_AUTHENTIC_DATA: u16 = 0x0020;
 /// DNS checking-disabled flag bit.
 pub const DNS_FLAG_CHECKING_DISABLED: u16 = 0x0010;
+
+#[cfg(test)]
+mod mdns_constants_tests {
+    use super::*;
+
+    mod prelude_mdns_constants {
+        use core::net::{Ipv4Addr, Ipv6Addr};
+
+        use crate::prelude::*;
+
+        pub(super) const PORT: u16 = MDNS_PORT;
+        pub(super) const IPV4_MULTICAST: Ipv4Addr = MDNS_IPV4_MULTICAST;
+        pub(super) const IPV6_MULTICAST: Ipv6Addr = MDNS_IPV6_MULTICAST;
+        pub(super) const CLASS_BIT: u16 = MDNS_CLASS_BIT;
+        pub(super) const SERVICE_ENUMERATION_NAME: &str = DNS_SD_SERVICE_ENUMERATION_NAME;
+    }
+
+    #[test]
+    fn mdns_constants_match_source_backed_transport_and_multicast_values() {
+        assert_eq!(MDNS_PORT, 5353);
+        assert_eq!(MDNS_IPV4_MULTICAST, Ipv4Addr::new(224, 0, 0, 251));
+        assert_eq!(
+            MDNS_IPV6_MULTICAST,
+            Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x00fb)
+        );
+        assert_eq!(MDNS_IPV6_LINK_LOCAL_MULTICAST, MDNS_IPV6_MULTICAST);
+        assert!(MDNS_IPV4_MULTICAST.is_multicast());
+        assert!(MDNS_IPV6_MULTICAST.is_multicast());
+        assert_eq!(
+            MDNS_IPV4_ETHERNET_MULTICAST,
+            MacAddr::new([0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb])
+        );
+        assert_eq!(
+            MDNS_IPV6_ETHERNET_MULTICAST,
+            MacAddr::new([0x33, 0x33, 0x00, 0x00, 0x00, 0xfb])
+        );
+        assert!(MDNS_IPV4_ETHERNET_MULTICAST.is_multicast());
+        assert!(MDNS_IPV6_ETHERNET_MULTICAST.is_multicast());
+    }
+
+    #[test]
+    fn mdns_constants_match_source_backed_class_ttl_and_dns_sd_values() {
+        assert_eq!(MDNS_RESPONSE_TTL, 255);
+        assert_eq!(MDNS_RESPONSE_HOP_LIMIT, 255);
+        assert_eq!(MDNS_CLASS_BIT, 0x8000);
+        assert_eq!(MDNS_CLASS_MASK, 0x7fff);
+        assert_eq!(MDNS_CLASS_BIT | DNS_CLASS_IN, 0x8001);
+        assert_eq!(
+            (MDNS_CLASS_BIT | DNS_CLASS_IN) & MDNS_CLASS_MASK,
+            DNS_CLASS_IN
+        );
+        assert_eq!(MDNS_GOODBYE_TTL, 0);
+        assert_eq!(DNS_SD_DEFAULT_DOMAIN, "local.");
+        assert_eq!(
+            DNS_SD_SERVICE_ENUMERATION_NAME,
+            "_services._dns-sd._udp.local."
+        );
+    }
+
+    #[test]
+    fn mdns_constants_are_exported_through_prelude() {
+        assert_eq!(prelude_mdns_constants::PORT, 5353);
+        assert_eq!(
+            prelude_mdns_constants::IPV4_MULTICAST,
+            Ipv4Addr::new(224, 0, 0, 251)
+        );
+        assert_eq!(
+            prelude_mdns_constants::IPV6_MULTICAST,
+            Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x00fb)
+        );
+        assert_eq!(prelude_mdns_constants::CLASS_BIT, 0x8000);
+        assert_eq!(
+            prelude_mdns_constants::SERVICE_ENUMERATION_NAME,
+            "_services._dns-sd._udp.local."
+        );
+    }
+}
