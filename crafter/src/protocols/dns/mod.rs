@@ -104,6 +104,30 @@ pub mod mdns {
         Dns::mdns_response_with_answers(records)
     }
 
+    /// Create an mDNS known-answer query packet shape.
+    pub fn known_answer_query(
+        question: DnsQuestion,
+        known_answers: impl IntoIterator<Item = DnsRecord>,
+    ) -> Dns {
+        Dns::mdns_known_answer_query(question, known_answers)
+    }
+
+    /// Create an mDNS known-answer query packet shape with TC set.
+    pub fn continued_known_answer_query(
+        question: DnsQuestion,
+        known_answers: impl IntoIterator<Item = DnsRecord>,
+    ) -> Dns {
+        Dns::mdns_continued_known_answer_query(question, known_answers)
+    }
+
+    /// Create an mDNS response packet shape with answer and additional records.
+    pub fn response_with_additionals(
+        answers: impl IntoIterator<Item = DnsRecord>,
+        additionals: impl IntoIterator<Item = DnsRecord>,
+    ) -> Dns {
+        Dns::mdns_response_with_additionals(answers, additionals)
+    }
+
     /// Create an mDNS unique-record probe for `name` using QTYPE ANY and QU.
     pub fn probe(name: impl Into<DnsName>) -> Dns {
         Dns::mdns_probe(name)
@@ -455,6 +479,38 @@ impl Dns {
             .fold(Self::mdns_response(), |dns, record| dns.answer(record))
     }
 
+    /// Create an mDNS known-answer query packet shape.
+    ///
+    /// Known answers are ordinary resource records in the answer section of an
+    /// mDNS query; this helper only builds that wire shape and does not add a
+    /// cache or suppression policy.
+    pub fn mdns_known_answer_query(
+        question: DnsQuestion,
+        known_answers: impl IntoIterator<Item = DnsRecord>,
+    ) -> Self {
+        Self::mdns_query(question).mdns_known_answers(known_answers)
+    }
+
+    /// Create an mDNS known-answer query packet shape with TC set.
+    ///
+    /// The records are still ordinary answer-section records. The TC flag lets
+    /// callers model a continued known-answer list without adding persistent
+    /// cache state to the crate.
+    pub fn mdns_continued_known_answer_query(
+        question: DnsQuestion,
+        known_answers: impl IntoIterator<Item = DnsRecord>,
+    ) -> Self {
+        Self::mdns_known_answer_query(question, known_answers).flags(DNS_FLAG_TRUNCATED)
+    }
+
+    /// Create an mDNS response packet shape with answer and additional records.
+    pub fn mdns_response_with_additionals(
+        answers: impl IntoIterator<Item = DnsRecord>,
+        additionals: impl IntoIterator<Item = DnsRecord>,
+    ) -> Self {
+        Self::mdns_response_with_answers(answers).mdns_additional_records(additionals)
+    }
+
     /// Create an mDNS unique-record probe for `name` using QTYPE ANY and QU.
     pub fn mdns_probe(name: impl Into<DnsName>) -> Self {
         Self::mdns_probe_for(name, DNS_QTYPE_ANY)
@@ -549,6 +605,21 @@ impl Dns {
         self
     }
 
+    /// Append one mDNS known-answer record to this query packet shape.
+    ///
+    /// Known answers are placed in the answer section and retain their raw TTL,
+    /// class, and mDNS cache-flush bit.
+    pub fn mdns_known_answer(self, known_answer: DnsRecord) -> Self {
+        self.answer(known_answer)
+    }
+
+    /// Append mDNS known-answer records to this query packet shape.
+    pub fn mdns_known_answers(self, known_answers: impl IntoIterator<Item = DnsRecord>) -> Self {
+        known_answers
+            .into_iter()
+            .fold(self, |dns, record| dns.mdns_known_answer(record))
+    }
+
     /// Append one DNS authority record.
     pub fn authority(mut self, authority: DnsRecord) -> Self {
         self.authorities.push(authority);
@@ -559,6 +630,21 @@ impl Dns {
     pub fn additional(mut self, additional: DnsRecord) -> Self {
         self.additionals.push(additional);
         self
+    }
+
+    /// Append one mDNS additional record to this response packet shape.
+    ///
+    /// The record is placed in the DNS additional section and retains its raw
+    /// TTL, class, and mDNS cache-flush bit.
+    pub fn mdns_additional_record(self, additional: DnsRecord) -> Self {
+        self.additional(additional)
+    }
+
+    /// Append mDNS additional records to this response packet shape.
+    pub fn mdns_additional_records(self, additionals: impl IntoIterator<Item = DnsRecord>) -> Self {
+        additionals
+            .into_iter()
+            .fold(self, |dns, record| dns.mdns_additional_record(record))
     }
 
     /// DNS transaction ID.
@@ -1017,6 +1103,119 @@ mod mdns_message_builders_tests {
         let response_override = mdns::response().flags(DNS_FLAG_RECURSION_DESIRED);
         assert_eq!(response_override.flags_value(), DNS_FLAG_RECURSION_DESIRED);
         assert!(!response_override.is_response());
+    }
+}
+
+#[cfg(test)]
+mod mdns_known_answer_helpers_tests {
+    use core::net::Ipv4Addr;
+
+    use crate::Packet;
+
+    use super::{
+        decode_dns, mdns, Dns, DnsQuestion, DnsRecord, DNS_CLASS_IN, DNS_FLAG_AUTHORITATIVE,
+        DNS_FLAG_QR_RESPONSE, DNS_FLAG_TRUNCATED, MDNS_CLASS_BIT,
+    };
+
+    fn round_trip_dns(dns: Dns) -> crate::Result<(Dns, Vec<u8>, Vec<u8>)> {
+        let compiled = Packet::from_layer(dns).compile()?;
+        let decoded = decode_dns(compiled.as_bytes())?;
+        let recompiled = Packet::from_layer(decoded.clone()).compile()?;
+        Ok((
+            decoded,
+            compiled.as_bytes().to_vec(),
+            recompiled.as_bytes().to_vec(),
+        ))
+    }
+
+    #[test]
+    fn mdns_known_answer_query_helpers_keep_records_in_answer_section() -> crate::Result<()> {
+        let question = DnsQuestion::a("printer.local.").mdns_qu(true);
+        let known_answer = DnsRecord::a("printer.local.", Ipv4Addr::new(192, 0, 2, 10), 119)
+            .mdns_cache_flush(true);
+
+        let dns = mdns::known_answer_query(question.clone(), [known_answer.clone()])
+            .mdns_known_answer(
+                DnsRecord::a("printer.local.", Ipv4Addr::new(192, 0, 2, 11), 42)
+                    .mdns_cache_flush(false),
+            );
+
+        assert_eq!(dns.id_value(), 0);
+        assert_eq!(dns.flags_value(), 0);
+        assert_eq!(dns.questions(), &[question]);
+        assert_eq!(dns.answers().len(), 2);
+        assert!(dns.authorities().is_empty());
+        assert!(dns.additionals().is_empty());
+
+        let (decoded, original, recompiled) = round_trip_dns(dns)?;
+        assert_eq!(original, recompiled);
+        assert_eq!(
+            decoded.questions()[0].question_class(),
+            MDNS_CLASS_BIT | DNS_CLASS_IN
+        );
+        assert_eq!(decoded.answers()[0], known_answer);
+        assert_eq!(decoded.answers()[0].ttl(), 119);
+        assert_eq!(decoded.answers()[0].class(), MDNS_CLASS_BIT | DNS_CLASS_IN);
+        assert!(decoded.answers()[0].mdns_cache_flush_value());
+        assert_eq!(decoded.answers()[1].ttl(), 42);
+        assert_eq!(decoded.answers()[1].class(), DNS_CLASS_IN);
+        assert!(!decoded.answers()[1].mdns_cache_flush_value());
+        assert!(decoded.additionals().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn mdns_known_answer_continued_query_sets_tc_without_moving_answers() -> crate::Result<()> {
+        let known_answer = DnsRecord::a("printer.local.", Ipv4Addr::new(192, 0, 2, 12), 120)
+            .mdns_cache_flush(true);
+        let dns = mdns::continued_known_answer_query(
+            DnsQuestion::a("printer.local."),
+            [known_answer.clone()],
+        );
+
+        let (decoded, original, recompiled) = round_trip_dns(dns)?;
+        assert_eq!(original, recompiled);
+        assert_eq!(decoded.flags_value(), DNS_FLAG_TRUNCATED);
+        assert_eq!(decoded.answers(), &[known_answer]);
+        assert!(decoded.authorities().is_empty());
+        assert!(decoded.additionals().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn mdns_known_answer_additional_helpers_keep_section() -> crate::Result<()> {
+        let answer = DnsRecord::a("printer.local.", Ipv4Addr::new(192, 0, 2, 20), 120)
+            .mdns_cache_flush(true);
+        let additional = DnsRecord::a("printer.local.", Ipv4Addr::new(192, 0, 2, 21), 121)
+            .mdns_cache_flush(true);
+        let chained_additional = DnsRecord::a("printer.local.", Ipv4Addr::new(192, 0, 2, 22), 122)
+            .mdns_cache_flush(false);
+        let dns = mdns::response_with_additionals([answer.clone()], [additional.clone()])
+            .mdns_additional_record(chained_additional.clone());
+
+        let (decoded, original, recompiled) = round_trip_dns(dns)?;
+        assert_eq!(original, recompiled);
+        assert_eq!(
+            decoded.flags_value(),
+            DNS_FLAG_QR_RESPONSE | DNS_FLAG_AUTHORITATIVE
+        );
+        assert!(decoded.questions().is_empty());
+        assert_eq!(decoded.answers(), &[answer]);
+        assert!(decoded.authorities().is_empty());
+        assert_eq!(
+            decoded.additionals(),
+            &[additional.clone(), chained_additional.clone()]
+        );
+        assert_eq!(decoded.additionals()[0].ttl(), 121);
+        assert_eq!(
+            decoded.additionals()[0].class(),
+            MDNS_CLASS_BIT | DNS_CLASS_IN
+        );
+        assert!(decoded.additionals()[0].mdns_cache_flush_value());
+        assert_eq!(decoded.additionals()[1].ttl(), 122);
+        assert_eq!(decoded.additionals()[1].class(), DNS_CLASS_IN);
+        assert!(!decoded.additionals()[1].mdns_cache_flush_value());
+        Ok(())
     }
 }
 
