@@ -50,18 +50,59 @@ pub use constants::{
 
 /// Multicast DNS constants and helpers.
 pub mod mdns {
+    use super::{Dns, DnsName, DnsQuestion, DnsRecord};
+
     pub use super::{
         DNS_SD_DEFAULT_DOMAIN, DNS_SD_SERVICE_ENUMERATION_NAME, MDNS_CLASS_BIT, MDNS_CLASS_MASK,
         MDNS_GOODBYE_TTL, MDNS_IPV4_ETHERNET_MULTICAST, MDNS_IPV4_MULTICAST,
         MDNS_IPV6_ETHERNET_MULTICAST, MDNS_IPV6_LINK_LOCAL_MULTICAST, MDNS_IPV6_MULTICAST,
         MDNS_PORT, MDNS_RESPONSE_HOP_LIMIT, MDNS_RESPONSE_TTL,
     };
+
+    /// Create an mDNS query with ID zero and no recursion-desired flag.
+    pub fn query(question: DnsQuestion) -> Dns {
+        Dns::mdns_query(question)
+    }
+
+    /// Create an mDNS query for one name and type.
+    pub fn query_for(name: impl Into<DnsName>, question_type: u16) -> Dns {
+        Dns::mdns_query_for(name, question_type)
+    }
+
+    /// Create an mDNS response with QR and authoritative-answer set.
+    pub fn response() -> Dns {
+        Dns::mdns_response()
+    }
+
+    /// Create an mDNS response containing the supplied answer records.
+    pub fn response_with_answers(records: impl IntoIterator<Item = DnsRecord>) -> Dns {
+        Dns::mdns_response_with_answers(records)
+    }
+
+    /// Create an mDNS unique-record probe for `name` using QTYPE ANY and QU.
+    pub fn probe(name: impl Into<DnsName>) -> Dns {
+        Dns::mdns_probe(name)
+    }
+
+    /// Create an mDNS unique-record probe for one name and question type.
+    pub fn probe_for(name: impl Into<DnsName>, question_type: u16) -> Dns {
+        Dns::mdns_probe_for(name, question_type)
+    }
+
+    /// Create an mDNS unique-record probe with proposed tiebreak records.
+    pub fn probe_with_authorities(
+        question: DnsQuestion,
+        proposed: impl IntoIterator<Item = DnsRecord>,
+    ) -> Dns {
+        Dns::mdns_probe_with_authorities(question, proposed)
+    }
 }
 
 const DNS_NAME_POINTER_MASK: u8 = 0xc0;
 const DNS_NAME_POINTER_TAG: u8 = 0xc0;
 const DNS_MAX_LABEL_LEN: usize = 63;
 const DNS_MAX_NAME_WIRE_LEN: usize = 255;
+const DNS_QTYPE_ANY: u16 = 255;
 
 /// Mask for the four-bit OPCODE field within the DNS flags word (bits 11-14).
 const DNS_OPCODE_MASK: u16 = 0x7800;
@@ -138,6 +179,17 @@ impl Dns {
         }
     }
 
+    fn mdns_message(flags: u16) -> Self {
+        Self {
+            id: Field::defaulted(0),
+            flags: Field::defaulted(flags),
+            questions: Vec::new(),
+            answers: Vec::new(),
+            authorities: Vec::new(),
+            additionals: Vec::new(),
+        }
+    }
+
     /// Create a DNS query for a single name and type.
     pub fn query(name: impl Into<DnsName>, question_type: u16) -> Self {
         Self::new().question(DnsQuestion::new(name, question_type))
@@ -151,6 +203,52 @@ impl Dns {
     /// Create an AAAA query.
     pub fn aaaa_query(name: impl Into<DnsName>) -> Self {
         Self::query(name, DNS_TYPE_AAAA)
+    }
+
+    /// Create an mDNS query with ID zero and no recursion-desired flag.
+    pub fn mdns_query(question: DnsQuestion) -> Self {
+        Self::mdns_message(0).question(question)
+    }
+
+    /// Create an mDNS query for one name and type.
+    pub fn mdns_query_for(name: impl Into<DnsName>, question_type: u16) -> Self {
+        Self::mdns_query(DnsQuestion::new(name, question_type))
+    }
+
+    /// Create an mDNS response with QR and authoritative-answer set.
+    pub fn mdns_response() -> Self {
+        Self::mdns_message(DNS_FLAG_QR_RESPONSE | DNS_FLAG_AUTHORITATIVE)
+    }
+
+    /// Create an mDNS response containing the supplied answer records.
+    pub fn mdns_response_with_answers(records: impl IntoIterator<Item = DnsRecord>) -> Self {
+        records
+            .into_iter()
+            .fold(Self::mdns_response(), |dns, record| dns.answer(record))
+    }
+
+    /// Create an mDNS unique-record probe for `name` using QTYPE ANY and QU.
+    pub fn mdns_probe(name: impl Into<DnsName>) -> Self {
+        Self::mdns_probe_for(name, DNS_QTYPE_ANY)
+    }
+
+    /// Create an mDNS unique-record probe for one name and question type.
+    pub fn mdns_probe_for(name: impl Into<DnsName>, question_type: u16) -> Self {
+        Self::mdns_probe_with_authorities(
+            DnsQuestion::new(name, question_type).mdns_qu(true),
+            core::iter::empty(),
+        )
+    }
+
+    /// Create an mDNS unique-record probe with proposed tiebreak records.
+    pub fn mdns_probe_with_authorities(
+        question: DnsQuestion,
+        proposed: impl IntoIterator<Item = DnsRecord>,
+    ) -> Self {
+        proposed.into_iter().fold(
+            Self::mdns_message(0).question(question.mdns_qu(true)),
+            |dns, record| dns.authority(record),
+        )
     }
 
     /// Set the DNS transaction ID.
@@ -579,6 +677,119 @@ pub fn dns_type_name(record_type: u16) -> Option<&'static str> {
         DNS_TYPE_HTTPS => "HTTPS",
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod mdns_message_builders_tests {
+    use core::net::Ipv4Addr;
+
+    use crate::Udp;
+
+    use super::{
+        decode_dns, mdns, Dns, DnsQuestion, DnsRecord, DNS_CLASS_IN, DNS_FLAG_AUTHORITATIVE,
+        DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_QTYPE_ANY, DNS_TYPE_A, DNS_TYPE_AAAA,
+        MDNS_CLASS_BIT, MDNS_PORT,
+    };
+
+    #[test]
+    fn mdns_message_builders_query_defaults_are_nonrecursive_and_compile() {
+        let question = DnsQuestion::new("printer.local.", DNS_TYPE_A).mdns_qu(true);
+        let dns = mdns::query(question.clone());
+
+        assert_eq!(dns.id_value(), 0);
+        assert_eq!(dns.flags_value(), 0);
+        assert!(!dns.is_response());
+        assert_eq!(dns.questions(), &[question]);
+        assert!(dns.answers().is_empty());
+        assert!(dns.authorities().is_empty());
+        assert!(dns.additionals().is_empty());
+
+        let compiled = (Udp::new().sport(MDNS_PORT).dport(MDNS_PORT) / dns)
+            .compile()
+            .unwrap();
+        let bytes = compiled.as_bytes();
+        assert_eq!(&bytes[8..10], &0u16.to_be_bytes());
+        assert_eq!(&bytes[10..12], &0u16.to_be_bytes());
+        assert_eq!(&bytes[12..14], &1u16.to_be_bytes());
+        assert_eq!(&bytes[14..16], &0u16.to_be_bytes());
+    }
+
+    #[test]
+    fn mdns_message_builders_response_defaults_are_authoritative() {
+        let answer = DnsRecord::a("printer.local.", Ipv4Addr::new(192, 0, 2, 10), 120)
+            .mdns_cache_flush(true);
+        let dns = mdns::response_with_answers(core::iter::once(answer.clone()));
+
+        assert_eq!(dns.id_value(), 0);
+        assert_eq!(
+            dns.flags_value(),
+            DNS_FLAG_QR_RESPONSE | DNS_FLAG_AUTHORITATIVE
+        );
+        assert!(dns.is_response());
+        assert!(dns.questions().is_empty());
+        assert_eq!(dns.answers(), &[answer]);
+        assert!(dns.authorities().is_empty());
+
+        let compiled = (Udp::new().sport(MDNS_PORT).dport(MDNS_PORT) / dns)
+            .compile()
+            .unwrap();
+        let decoded = decode_dns(&compiled.as_bytes()[8..]).unwrap();
+        assert_eq!(
+            decoded.flags_value(),
+            DNS_FLAG_QR_RESPONSE | DNS_FLAG_AUTHORITATIVE
+        );
+        assert_eq!(decoded.answers().len(), 1);
+        assert!(decoded.answers()[0].mdns_cache_flush_value());
+    }
+
+    #[test]
+    fn mdns_message_builders_probe_uses_qu_and_authority_records() {
+        let any_probe = Dns::mdns_probe("printer.local.");
+        assert_eq!(any_probe.flags_value(), 0);
+        assert_eq!(any_probe.questions()[0].question_type(), DNS_QTYPE_ANY);
+        assert_eq!(
+            any_probe.questions()[0].question_class(),
+            MDNS_CLASS_BIT | DNS_CLASS_IN
+        );
+        assert!(any_probe.questions()[0].mdns_unicast_response_preferred_value());
+
+        let proposed = DnsRecord::a("printer.local.", Ipv4Addr::new(192, 0, 2, 11), 120)
+            .mdns_cache_flush(true);
+        let typed_probe = mdns::probe_with_authorities(
+            DnsQuestion::new("printer.local.", DNS_TYPE_AAAA).qclass(DNS_CLASS_IN),
+            core::iter::once(proposed.clone()),
+        );
+
+        assert_eq!(typed_probe.questions()[0].question_type(), DNS_TYPE_AAAA);
+        assert_eq!(
+            typed_probe.questions()[0].question_class(),
+            MDNS_CLASS_BIT | DNS_CLASS_IN
+        );
+        assert!(typed_probe.answers().is_empty());
+        assert_eq!(typed_probe.authorities(), &[proposed]);
+        assert!(typed_probe.additionals().is_empty());
+    }
+
+    #[test]
+    fn mdns_message_builders_raw_id_and_flags_overrides_are_preserved() {
+        let dns = Dns::mdns_query_for("raw.local.", DNS_TYPE_A)
+            .id(0x4567)
+            .flags(0xabcd);
+
+        assert_eq!(dns.id_value(), 0x4567);
+        assert_eq!(dns.flags_value(), 0xabcd);
+
+        let compiled = (Udp::new().sport(MDNS_PORT).dport(MDNS_PORT) / dns)
+            .compile()
+            .unwrap();
+        let decoded = decode_dns(&compiled.as_bytes()[8..]).unwrap();
+        assert_eq!(decoded.id_value(), 0x4567);
+        assert_eq!(decoded.flags_value(), 0xabcd);
+
+        let response_override = mdns::response().flags(DNS_FLAG_RECURSION_DESIRED);
+        assert_eq!(response_override.flags_value(), DNS_FLAG_RECURSION_DESIRED);
+        assert!(!response_override.is_response());
+    }
 }
 
 #[cfg(test)]
