@@ -27,6 +27,15 @@ in `tools/endpoint`.
 - Endpoint: one runnable machine with SSH access, a manifest, local identity
   files, local state, artifacts, and enough provider metadata to destroy it
   after partial failures.
+- Appliance profile: a coarse runtime shape such as `wan-raw`, `lan-raw`,
+  `whad-serial`, or `dot11-monitor` used to run one workload in the standard
+  libcrafter Docker appliance.
+- Persistent asset: a prepared endpoint target that already has SSH and Docker,
+  such as a generic SSH Docker host, a QEMU VM, or a VirtualBox VM with local
+  hardware passthrough configured outside the repository.
+- Lease: a time-limited claim on one persistent asset for one appliance
+  profile, used so two sessions do not use the same prepared VM or dongle host
+  concurrently.
 - Artifact: local diagnostic output produced while creating, using, or
   destroying an endpoint, such as logs, manifests, request files, response
   files, and collected remote files.
@@ -222,6 +231,115 @@ artifacts are written below the endpoint artifact directory as
 provider-owned private networks only when the private group is safe to delete.
 Local manifests, keys, known-hosts files, and artifacts are preserved after
 cleanup for debugging.
+
+## Appliance Execution And Persistent Assets
+
+Use disposable endpoints when the provider should create and destroy the
+machine for one run. Use persistent assets when a prepared target should be
+reused across sessions, such as a QEMU or VirtualBox VM with USB passthrough, a
+monitor-mode interface, or a generic SSH Docker host maintained outside
+`tools/endpoint`. Use direct `exec`, `upload`, and `download` only for manual
+debugging of one endpoint; oracle, probe, lab, and generated tools should keep
+their workload semantics outside the endpoint layer.
+
+Endpoint appliance commands operate on an endpoint manifest or an acquired
+asset lease. They render or perform the mechanical steps only: check Docker and
+profile readiness, deploy remote roots, sync a workspace, run the container,
+and collect artifacts. They do not waive any live-packet or RF confirmation in
+the workload inside the appliance.
+
+Plan appliance work first:
+
+```sh
+tools/endpoint/run appliance check --dry-run --json ENDPOINT_ID wan-raw
+tools/endpoint/run appliance plan --dry-run --json ENDPOINT_ID wan-raw -- \
+  sh -lc 'printf "endpoint appliance dry-run for 192.0.2.10\n" > /artifacts/summary.txt'
+tools/endpoint/run appliance deploy --dry-run --json ENDPOINT_ID wan-raw
+tools/endpoint/run appliance run --dry-run --json ENDPOINT_ID wan-raw -- \
+  sh -lc 'printf "appliance run dry-run\n" > /artifacts/summary.txt'
+tools/endpoint/run appliance collect --dry-run --json ENDPOINT_ID wan-raw
+```
+
+Removing `--dry-run` from `deploy`, `run`, or `collect` performs SSH, SCP,
+Docker, tar, and artifact download operations against the selected endpoint or
+lease. The container command should still default to a workload dry-run or plan
+mode unless an authorized operator has opted into live traffic.
+
+Register prepared generic SSH Docker hosts and persistent VM assets under the
+ignored endpoint state root. Do not put real hostnames, public addresses,
+private keys, hardware serials, SSIDs, or account data in tracked files or
+examples.
+
+Generic SSH asset for WAN raw work:
+
+```sh
+tools/endpoint/run asset register doc-ssh-wan \
+  --substrate generic-ssh \
+  --profile wan-raw \
+  --ssh-host 192.0.2.40 \
+  --ssh-user appliance \
+  --identity-file /home/operator/.ssh/libcrafter_doc_key \
+  --known-hosts-file /home/operator/.ssh/libcrafter_doc_known_hosts \
+  --json
+```
+
+QEMU persistent asset for a WHAD serial dongle:
+
+```sh
+tools/endpoint/run asset register doc-qemu-whad \
+  --substrate qemu \
+  --profile whad-serial \
+  --ssh-host 192.0.2.41 \
+  --ssh-user appliance \
+  --identity-file /home/operator/.ssh/libcrafter_doc_key \
+  --known-hosts-file /home/operator/.ssh/libcrafter_doc_known_hosts \
+  --metadata-json '{"appliance":{"profile_environments":{"whad-serial":{"LIBCRAFTER_WHAD_DEVICE":"/dev/ttyACM0"}}}}' \
+  --json
+```
+
+VirtualBox persistent asset for a prepared monitor-mode interface:
+
+```sh
+tools/endpoint/run asset register doc-vbox-dot11 \
+  --substrate virtualbox \
+  --profile dot11-monitor \
+  --ssh-host 192.0.2.42 \
+  --ssh-user appliance \
+  --identity-file /home/operator/.ssh/libcrafter_doc_key \
+  --known-hosts-file /home/operator/.ssh/libcrafter_doc_known_hosts \
+  --metadata-json '{"appliance":{"profile_environments":{"dot11-monitor":{"LIBCRAFTER_DOT11_IFACE":"dot11mon-doc"}}}}' \
+  --json
+```
+
+Check, lease, use, and release an asset:
+
+```sh
+tools/endpoint/run asset check doc-qemu-whad --profile whad-serial --json
+tools/endpoint/run asset acquire --profile whad-serial --lease-ttl 2h --owner doc-operator --json
+tools/endpoint/run appliance plan --dry-run --json --lease LEASE_ID whad-serial -- \
+  sh -lc 'printf "leased asset plan only\n" > /artifacts/summary.txt'
+tools/endpoint/run asset release LEASE_ID --json
+```
+
+Asset checks may contact the prepared host over SSH to verify Docker access and
+render profile checks. Leases use per-asset locks and TTLs; release them when
+the appliance run is finished so later sessions can acquire the asset.
+
+Hetzner remains a disposable provider path. Credentials are read from
+`HETZNER_API_TOKEN` or `HCLOUD_TOKEN` and must stay in the process environment,
+not in repo files or command examples. Plan the endpoint and appliance deploy
+before creating live infrastructure:
+
+```sh
+tools/endpoint/run create --provider hetzner --exposure wan --dry-run --write-manifest --json
+tools/endpoint/run appliance deploy --dry-run --json ENDPOINT_ID wan-raw
+```
+
+When a real Hetzner endpoint has been intentionally created with
+`--confirm-live-run`, the same `tools/endpoint/run appliance deploy`,
+`tools/endpoint/run appliance run`, and `tools/endpoint/run appliance collect`
+commands can operate on that endpoint ID. Start with `--dry-run` to inspect the
+deploy, sync, and Docker command plan before executing remote operations.
 
 ## VirtualBox LAN Smoke
 
