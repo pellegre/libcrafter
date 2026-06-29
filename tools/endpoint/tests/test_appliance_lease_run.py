@@ -183,6 +183,39 @@ class EndpointApplianceLeaseRunTest(unittest.TestCase):
         self.assertEqual(output["run"]["local_stdout_path"], str(run_root / "run.stdout.txt"))
         self.assertEqual(output["run"]["local_stderr_path"], str(run_root / "run.stderr.txt"))
 
+    def test_lease_run_plan_uses_asset_profile_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with _endpoint_env(root):
+                write_endpoint_asset(
+                    _leased_asset(
+                        root,
+                        profile="lan-raw",
+                        profile_environment={"LIBCRAFTER_IFACE": "lan-test0"},
+                    )
+                )
+
+            exit_code, output = _run_json(
+                root,
+                [
+                    "appliance",
+                    "run",
+                    "--lease",
+                    "lease-a",
+                    "lan-raw",
+                    "--dry-run",
+                    "--json",
+                    "--",
+                    "true",
+                ],
+            )
+
+        docker_run = output["run"]["docker_run"]  # type: ignore[index]
+        docker_argv = docker_run["docker_argv"]  # type: ignore[index]
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(docker_run["env"]["LIBCRAFTER_IFACE"], "lan-test0")  # type: ignore[index]
+        self.assertIn("LIBCRAFTER_IFACE=lan-test0", docker_argv)
+
 
 class _ApplianceRunner:
     def __init__(self) -> None:
@@ -226,8 +259,15 @@ def _leased_asset(
     *,
     profile: str,
     leased_until: str = "2999-01-01T00:00:00Z",
+    profile_environment: dict[str, str] | None = None,
 ) -> EndpointAsset:
     asset_id = "asset-a"
+    appliance_metadata: dict[str, object] = {
+        "remote_work_root": "/srv/libcrafter/work",
+        "remote_artifact_root": "/srv/libcrafter/artifacts",
+    }
+    if profile_environment is not None:
+        appliance_metadata["profile_environments"] = {profile: profile_environment}
     return EndpointAsset(
         asset_id=asset_id,
         substrate="ssh-docker",
@@ -248,12 +288,7 @@ def _leased_asset(
             ttl_seconds=3600,
             metadata={"lease_id": "lease-a", "profile": profile},
         ),
-        metadata={
-            "appliance": {
-                "remote_work_root": "/srv/libcrafter/work",
-                "remote_artifact_root": "/srv/libcrafter/artifacts",
-            }
-        },
+        metadata={"appliance": appliance_metadata},
     )
 
 

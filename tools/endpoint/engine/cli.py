@@ -32,6 +32,7 @@ from .assets import (
     EndpointAsset,
     acquire_endpoint_asset_lease_by_profile,
     asset_lease_artifact_root,
+    asset_profile_environment,
     asset_record_path,
     asset_ssh_docker_target,
     check_endpoint_asset,
@@ -85,6 +86,7 @@ class _ApplianceTargetContext:
     asset_id: str | None = None
     lease_artifact_root: Path | None = None
     release_after_run: dict[str, object] | None = None
+    profile_environment: dict[str, str] | None = None
 
 
 def _absolute_local_path(value: str) -> str:
@@ -1186,6 +1188,7 @@ def _appliance_target_context(args: argparse.Namespace) -> _ApplianceTargetConte
         asset_id=resolved.asset.asset_id,
         lease_artifact_root=artifact_root,
         release_after_run=release_after_run,
+        profile_environment=asset_profile_environment(resolved.asset, profile.name),
     )
 
 
@@ -1311,7 +1314,11 @@ def _appliance_plan_output(args: argparse.Namespace) -> dict[str, object]:
     target = context.target
     profile = context.profile
     command = _appliance_command_parts(args.remote_command)
-    deploy_plan = render_endpoint_appliance_deploy_plan(target, image_tag=profile.image)
+    deploy_plan = render_endpoint_appliance_deploy_plan(
+        target,
+        env=context.profile_environment,
+        image_tag=profile.image,
+    )
     sync_plan = None
     if args.work_dir is not None:
         sync_plan = render_endpoint_appliance_sync_plan(
@@ -1325,6 +1332,7 @@ def _appliance_plan_output(args: argparse.Namespace) -> dict[str, object]:
         command,
         sync_context=sync_plan,
         artifact_dir=args.artifact_dir,
+        env=context.profile_environment,
     )
     output = {
         "kind": "endpoint-appliance-plan",
@@ -1343,7 +1351,11 @@ def _appliance_check_output(args: argparse.Namespace) -> dict[str, object]:
     context = _appliance_target_context(args)
     target = context.target
     profile = context.profile
-    deploy_plan = render_endpoint_appliance_deploy_plan(target, image_tag=profile.image)
+    deploy_plan = render_endpoint_appliance_deploy_plan(
+        target,
+        env=context.profile_environment,
+        image_tag=profile.image,
+    )
     output: dict[str, object] = {
         "kind": "endpoint-appliance-check-plan",
         "endpoint_id": target.endpoint_id,
@@ -1362,12 +1374,17 @@ def _appliance_deploy_output(args: argparse.Namespace) -> object:
     target = context.target
     profile = context.profile
     if args.dry_run:
-        output = render_endpoint_appliance_deploy_plan(target, image_tag=profile.image)
+        output = render_endpoint_appliance_deploy_plan(
+            target,
+            env=context.profile_environment,
+            image_tag=profile.image,
+        )
         return _finalize_appliance_output(output, context)
     output = deploy_endpoint_appliance_target(
         target,
         runner=run_command,
         artifact_dir=args.artifact_dir,
+        env=context.profile_environment,
         image_tag=profile.image,
     )
     return _finalize_appliance_output(output, context)
@@ -1406,6 +1423,7 @@ def _appliance_run_output(args: argparse.Namespace) -> object:
         runner=run_command,
         sync_context=sync_context,
         artifact_dir=args.artifact_dir,
+        env=context.profile_environment,
     )
     return _finalize_appliance_output(output, context)
 
@@ -1420,6 +1438,7 @@ def _appliance_collect_output(args: argparse.Namespace) -> object:
         profile,
         command,
         artifact_dir=args.artifact_dir,
+        env=context.profile_environment,
     )
     if args.dry_run:
         output = {
