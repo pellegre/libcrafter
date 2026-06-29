@@ -1,7 +1,8 @@
 # Endpoint Provider Guide
 
-`tools/endpoint` defines the provider contract for one disposable endpoint:
-provision, command execution, upload, download, artifact collection, SSH access,
+`tools/endpoint` defines the provider contract for one endpoint target:
+disposable provider provisioning, command execution, upload, download,
+artifact collection, SSH access, appliance execution, persistent asset leases,
 and destroy. It is the lower-level endpoint primitive used by `tools/lab`.
 
 Use `tools/lab` for coordinated multi-endpoint provider sessions. Oracle and
@@ -148,6 +149,130 @@ providers.
 Use the same `--profile`, `--seed`, `--count`, and reported `--index` to
 reproduce a single failed oracle packet plan. For probe, preserve the reported
 sequence number, case name, seed, and profile.
+
+## Endpoint Appliance Runs
+
+Endpoint appliance commands run the standard libcrafter Docker appliance on one
+endpoint manifest or one acquired asset lease. They are mechanical transport
+operations: check the selected profile, prepare remote roots, sync a workspace,
+run a container, and collect artifacts. They do not decide packet semantics and
+do not replace the live confirmation required by oracle, probe, RF tools, or a
+generated workload.
+
+Start with dry-run plans:
+
+```sh
+tools/endpoint/run appliance check --dry-run --json ENDPOINT_ID wan-raw
+tools/endpoint/run appliance plan --dry-run --json ENDPOINT_ID wan-raw -- \
+  sh -lc 'printf "endpoint appliance plan for 192.0.2.10\n" > /artifacts/summary.txt'
+tools/endpoint/run appliance deploy --dry-run --json ENDPOINT_ID wan-raw
+tools/endpoint/run appliance run --dry-run --json ENDPOINT_ID wan-raw -- \
+  sh -lc 'printf "appliance run dry-run\n" > /artifacts/summary.txt'
+tools/endpoint/run appliance collect --dry-run --json ENDPOINT_ID wan-raw
+```
+
+`plan` renders the deploy, optional sync, and run records without SSH, SCP,
+Docker, or tar. `check` renders Docker and profile readiness checks, including
+profile-specific requirements for `whad-serial` and `dot11-monitor`. `deploy`
+prepares one endpoint for the appliance image. `run` executes the selected
+container command when `--dry-run` is omitted. `collect` downloads the remote
+artifact directory when `--dry-run` is omitted.
+
+Use `wan-raw` for public or NAT-backed raw packet work, `lan-raw` for a
+prepared LAN-visible VM or host, `whad-serial` for WHAD serial dongle work, and
+`dot11-monitor` for a host or VM that already owns monitor-mode Wi-Fi setup.
+Docker gives the appliance userland; the host or VM still owns kernel modules,
+USB passthrough, interface state, monitor mode, RF channel configuration, and
+any local live-transmit acknowledgement.
+
+## Persistent Assets And Leases
+
+Persistent assets are prepared reusable endpoint targets stored below the
+ignored endpoint state root. Use them for a generic SSH Docker host, a QEMU VM,
+a VirtualBox VM, or a local hardware-backed target that should not be recreated
+for every agent session. Asset records contain SSH coordinates, supported
+profiles, Docker command metadata, hardware readiness summaries, and optional
+profile environment overrides. Keep real host identifiers, public addresses,
+hardware serials, SSIDs, private keys, and credentials out of tracked files.
+
+Register a generic SSH Docker host:
+
+```sh
+tools/endpoint/run asset register doc-ssh-host \
+  --substrate generic-ssh \
+  --profile wan-raw \
+  --ssh-host 192.0.2.50 \
+  --ssh-user appliance \
+  --identity-file /home/operator/.ssh/libcrafter_doc_key \
+  --known-hosts-file /home/operator/.ssh/libcrafter_doc_known_hosts \
+  --json
+```
+
+Register a QEMU persistent asset with a WHAD serial profile:
+
+```sh
+tools/endpoint/run asset register doc-qemu-whad \
+  --substrate qemu \
+  --profile whad-serial \
+  --ssh-host 192.0.2.51 \
+  --ssh-user appliance \
+  --identity-file /home/operator/.ssh/libcrafter_doc_key \
+  --known-hosts-file /home/operator/.ssh/libcrafter_doc_known_hosts \
+  --metadata-json '{"appliance":{"profile_environments":{"whad-serial":{"LIBCRAFTER_WHAD_DEVICE":"/dev/ttyACM0"}}}}' \
+  --json
+```
+
+Register a VirtualBox persistent asset with a prepared monitor interface:
+
+```sh
+tools/endpoint/run asset register doc-vbox-dot11 \
+  --substrate virtualbox \
+  --profile dot11-monitor \
+  --ssh-host 192.0.2.52 \
+  --ssh-user appliance \
+  --identity-file /home/operator/.ssh/libcrafter_doc_key \
+  --known-hosts-file /home/operator/.ssh/libcrafter_doc_known_hosts \
+  --metadata-json '{"appliance":{"profile_environments":{"dot11-monitor":{"LIBCRAFTER_DOT11_IFACE":"dot11mon-doc"}}}}' \
+  --json
+```
+
+Check, lease, run a dry plan through the lease, and release:
+
+```sh
+tools/endpoint/run asset check doc-qemu-whad --profile whad-serial --json
+tools/endpoint/run asset acquire --profile whad-serial --lease-ttl 2h --owner doc-operator --json
+tools/endpoint/run appliance plan --dry-run --json --lease LEASE_ID whad-serial -- \
+  sh -lc 'printf "leased WHAD plan only\n" > /artifacts/summary.txt'
+tools/endpoint/run asset release LEASE_ID --json
+```
+
+`asset check` locks one asset, verifies SSH Docker access, and renders the
+selected profile readiness checks. `asset acquire` creates a TTL lease for one
+available asset that supports the requested profile. `asset release` frees the
+lease. Release leases as soon as the run is complete so later sessions do not
+block on stale ownership; expired leases can be recovered by later acquire
+operations.
+
+## Hetzner Appliance Deploy
+
+Hetzner appliance runs are for disposable WAN or private endpoints. The
+provider still reads `HETZNER_API_TOKEN` or `HCLOUD_TOKEN` from the process
+environment only, and live creation still requires `--confirm-live-run`.
+Plan both the provider endpoint and the appliance deploy before creating
+infrastructure:
+
+```sh
+tools/endpoint/run create --provider hetzner --exposure wan --dry-run --write-manifest --json
+tools/endpoint/run appliance deploy --dry-run --json ENDPOINT_ID wan-raw
+tools/endpoint/run appliance plan --dry-run --json ENDPOINT_ID wan-raw -- \
+  sh -lc 'printf "hetzner appliance deploy plan only\n" > /artifacts/summary.txt'
+```
+
+After an operator intentionally creates a live disposable endpoint, use the
+reported endpoint ID with `tools/endpoint/run appliance deploy`,
+`tools/endpoint/run appliance run`, and `tools/endpoint/run appliance collect`.
+Keep workload commands in dry-run or plan mode until their own live gate is
+explicitly confirmed.
 
 ## Direct Endpoint Operations
 
