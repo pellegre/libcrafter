@@ -37,6 +37,20 @@ class EndpointCliSurfaceTest(unittest.TestCase):
         self.assertIn("acquire", result.stdout)
         self.assertIn("release", result.stdout)
 
+    def test_endpoint_virtualbox_help_exposes_group_normalization(self) -> None:
+        result = _run_endpoint("virtualbox", "--help")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("usage: endpoint virtualbox", result.stdout)
+        self.assertIn("normalize-groups", result.stdout)
+
+        normalize = _run_endpoint("virtualbox", "normalize-groups", "--help")
+
+        self.assertEqual(normalize.returncode, 0, normalize.stderr)
+        self.assertIn("usage: endpoint virtualbox normalize-groups", normalize.stdout)
+        self.assertIn("--dry-run", normalize.stdout)
+        self.assertIn("--confirm-live-run", normalize.stdout)
+
 
 def _run_endpoint(*args: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()

@@ -69,6 +69,7 @@ COMMANDS = (
     "doctor",
     "create",
     "destroy",
+    "virtualbox",
     "exec",
     "upload",
     "download",
@@ -461,6 +462,40 @@ def build_parser() -> argparse.ArgumentParser:
     destroy_endpoint.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     destroy_endpoint.set_defaults(command_name="destroy")
 
+    virtualbox = subparsers.add_parser(
+        "virtualbox",
+        help="run VirtualBox provider maintenance operations",
+        description="Run bounded VirtualBox provider maintenance operations.",
+    )
+    virtualbox.set_defaults(command_name="virtualbox")
+    virtualbox_subparsers = virtualbox.add_subparsers(
+        dest="virtualbox_command",
+        metavar="virtualbox-command",
+    )
+    normalize_groups = virtualbox_subparsers.add_parser(
+        "normalize-groups",
+        help="normalize tracked VirtualBox VMs into the libcrafter appliance group",
+        description=(
+            "Inspect tracked VirtualBox endpoint manifests and endpoint assets, "
+            "then plan or apply the libcrafter appliance group."
+        ),
+    )
+    normalize_groups.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report planned group changes without mutating VirtualBox",
+    )
+    normalize_groups.add_argument(
+        "--confirm-live-run",
+        action="store_true",
+        help="confirm protected VirtualBox group mutation",
+    )
+    normalize_groups.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    normalize_groups.set_defaults(
+        command_name="virtualbox",
+        virtualbox_command_name="normalize-groups",
+    )
+
     exec_endpoint = subparsers.add_parser(
         "exec",
         usage="endpoint exec [-h] ENDPOINT_ID -- COMMAND...",
@@ -663,6 +698,44 @@ def _run_destroy_endpoint(args: argparse.Namespace) -> int:
     else:
         _print_destroy_endpoint_report(output)
     return 0
+
+
+def _run_virtualbox(args: argparse.Namespace) -> int:
+    subcommand = getattr(args, "virtualbox_command_name", None)
+    if subcommand is None:
+        print("endpoint virtualbox: missing virtualbox command", file=sys.stderr)
+        return 2
+    if subcommand != "normalize-groups":
+        print(f"endpoint virtualbox: unsupported command {subcommand!r}", file=sys.stderr)
+        return 2
+
+    from .providers.virtualbox.groups import normalize_tracked_vm_groups
+
+    try:
+        output = normalize_tracked_vm_groups(
+            dry_run=args.dry_run,
+            confirm_live_run=args.confirm_live_run,
+            command_runner=run_command,
+        )
+    except (PermissionError, RuntimeError, ValueError) as exc:
+        output = {
+            "kind": "virtualbox-normalize-groups",
+            "ok": False,
+            "dry_run": args.dry_run,
+            "confirmed": args.confirm_live_run,
+            "error": str(exc),
+        }
+        if args.json:
+            sys.stdout.write(dumps_json(output))
+        else:
+            print(str(exc), file=sys.stderr)
+        return 2
+
+    if args.json:
+        sys.stdout.write(dumps_json(output))
+    else:
+        _print_virtualbox_normalize_groups_report(output)
+    return 0 if output.get("ok") is not False else 1
 
 
 def _provider_cli_output_manifest(
@@ -1529,6 +1602,19 @@ def _print_destroy_endpoint_report(output: dict[str, object]) -> None:
         print(f"artifacts: {output['artifact_dir']}")
 
 
+def _print_virtualbox_normalize_groups_report(output: dict[str, object]) -> None:
+    print(
+        "endpoint virtualbox normalize-groups: "
+        f"dry_run={str(bool(output.get('dry_run'))).lower()} "
+        f"candidates={output.get('candidate_count', 0)} "
+        f"planned={output.get('planned_count', 0)} "
+        f"changed={output.get('changed_count', 0)} "
+        f"already_grouped={output.get('already_grouped_count', 0)} "
+        f"missing={output.get('missing_count', 0)} "
+        f"failed={output.get('failed_count', 0)}"
+    )
+
+
 def _print_ssh_info(output: dict[str, object]) -> None:
     print(
         "endpoint ssh-info: "
@@ -1794,6 +1880,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_create_endpoint(args)
     if args.command_name == "destroy":
         return _run_destroy_endpoint(args)
+    if args.command_name == "virtualbox":
+        return _run_virtualbox(args)
     if args.command_name == "exec":
         return _run_exec_endpoint(args)
     if args.command_name == "upload":
