@@ -104,7 +104,7 @@ pub mod exports {
         DHCPV4_VSS_TYPE_NVT_ASCII, DHCPV4_VSS_TYPE_VPN_ID,
     };
     pub use dns::{
-        decode_dns_name, decode_dns_name_typed, dns_type_name, edns_option_code_name,
+        decode_dns_name, decode_dns_name_typed, dns_type_name, edns_option_code_name, mdns,
         svcb_param_key_name, Dns, DnsName, DnsQuestion, DnsRecord, DnsRecordData, DnsTypeBitmaps,
         EdnsOption, SvcParam, SvcParams, DNS_CLASS_ANY, DNS_CLASS_CH, DNS_CLASS_HS, DNS_CLASS_IN,
         DNS_CLASS_NONE, DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_FLAG_DO,
