@@ -11,10 +11,20 @@ use super::rdata::DnsRecordData;
 use super::svcb::SvcParams;
 use super::{
     DNS_CLASS_IN, DNS_EDNS_EXTENDED_RCODE_SHIFT, DNS_EDNS_FLAGS_MASK, DNS_EDNS_FLAG_DO,
+    MDNS_CLASS_BIT, MDNS_CLASS_MASK,
     DNS_EDNS_VERSION_SHIFT, DNS_TYPE_A, DNS_TYPE_AAAA, DNS_TYPE_CNAME, DNS_TYPE_DNSKEY,
     DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NSEC, DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_RRSIG,
     DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB,
 };
+
+const fn with_mdns_class_bit(raw_class: u16, enabled: bool) -> u16 {
+    let base_class = raw_class & MDNS_CLASS_MASK;
+    if enabled {
+        base_class | MDNS_CLASS_BIT
+    } else {
+        base_class
+    }
+}
 
 /// Parsed or constructible DNS question.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -62,6 +72,20 @@ impl DnsQuestion {
         self
     }
 
+    /// Set or clear the mDNS unicast-response-preferred (QU) question bit.
+    ///
+    /// The lower 15 bits remain the base DNS question class. The raw value stays
+    /// available through [`DnsQuestion::question_class`].
+    pub fn mdns_unicast_response_preferred(mut self, enabled: bool) -> Self {
+        self.question_class = with_mdns_class_bit(self.question_class, enabled);
+        self
+    }
+
+    /// Short alias for [`DnsQuestion::mdns_unicast_response_preferred`].
+    pub fn mdns_qu(self, enabled: bool) -> Self {
+        self.mdns_unicast_response_preferred(enabled)
+    }
+
     /// Question name in canonical trailing-dot presentation form.
     ///
     /// Non-text labels are rendered with `\DDD` escapes; use
@@ -89,6 +113,16 @@ impl DnsQuestion {
     /// Question class value.
     pub const fn question_class(&self) -> u16 {
         self.question_class
+    }
+
+    /// Base DNS question class with the mDNS QU bit masked out.
+    pub const fn mdns_base_question_class(&self) -> u16 {
+        self.question_class & MDNS_CLASS_MASK
+    }
+
+    /// True when the mDNS unicast-response-preferred (QU) question bit is set.
+    pub const fn mdns_unicast_response_preferred_value(&self) -> bool {
+        (self.question_class & MDNS_CLASS_BIT) != 0
     }
 
     pub(super) fn encoded_len(&self) -> usize {
@@ -466,6 +500,27 @@ impl DnsRecord {
         self.class
     }
 
+    /// Set or clear the mDNS cache-flush bit in the resource-record class.
+    ///
+    /// The lower 15 bits remain the base DNS class. The raw value stays
+    /// available through [`DnsRecord::class`]. For EDNS(0) OPT pseudo-records,
+    /// the CLASS field still carries the UDP payload size; this helper only
+    /// edits the raw field and does not reinterpret OPT records as mDNS RRs.
+    pub fn mdns_cache_flush(mut self, enabled: bool) -> Self {
+        self.class = with_mdns_class_bit(self.class, enabled);
+        self
+    }
+
+    /// Base DNS resource-record class with the mDNS cache-flush bit masked out.
+    pub const fn mdns_base_class(&self) -> u16 {
+        self.class & MDNS_CLASS_MASK
+    }
+
+    /// True when the mDNS cache-flush resource-record bit is set.
+    pub const fn mdns_cache_flush_value(&self) -> bool {
+        (self.class & MDNS_CLASS_BIT) != 0
+    }
+
     /// Record TTL.
     pub const fn ttl(&self) -> u32 {
         self.ttl
@@ -542,5 +597,148 @@ impl DnsRecord {
         out.extend_from_slice(&rdlength.to_be_bytes());
         out.extend_from_slice(&rdata);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod mdns_class_bits_tests {
+    use core::net::Ipv4Addr;
+
+    use crate::{Ipv4, NetworkLayer, Packet, Udp};
+
+    use super::super::{Dns, DNS_CLASS_ANY, DNS_TYPE_A};
+    use super::*;
+
+    const UNKNOWN_CLASS: u16 = 0x1234;
+    const EXPLICIT_HIGH_CLASS: u16 = 0xf234;
+
+    #[test]
+    fn mdns_class_bits_question_helpers_set_clear_and_inspect_base_classes() {
+        let question = DnsQuestion::a("printer.local.")
+            .qclass(DNS_CLASS_IN)
+            .mdns_unicast_response_preferred(true);
+        assert_eq!(question.question_class(), MDNS_CLASS_BIT | DNS_CLASS_IN);
+        assert_eq!(question.mdns_base_question_class(), DNS_CLASS_IN);
+        assert!(question.mdns_unicast_response_preferred_value());
+
+        let cleared = question.mdns_unicast_response_preferred(false);
+        assert_eq!(cleared.question_class(), DNS_CLASS_IN);
+        assert_eq!(cleared.mdns_base_question_class(), DNS_CLASS_IN);
+        assert!(!cleared.mdns_unicast_response_preferred_value());
+
+        let any = DnsQuestion::a("services.local.")
+            .qclass(DNS_CLASS_ANY)
+            .mdns_qu(true);
+        assert_eq!(any.question_class(), MDNS_CLASS_BIT | DNS_CLASS_ANY);
+        assert_eq!(any.mdns_base_question_class(), DNS_CLASS_ANY);
+        assert!(any.mdns_unicast_response_preferred_value());
+
+        let unknown = DnsQuestion::a("unknown.local.")
+            .qclass(UNKNOWN_CLASS)
+            .mdns_qu(true);
+        assert_eq!(unknown.question_class(), MDNS_CLASS_BIT | UNKNOWN_CLASS);
+        assert_eq!(unknown.mdns_base_question_class(), UNKNOWN_CLASS);
+        assert!(unknown.mdns_unicast_response_preferred_value());
+
+        let explicit_high = DnsQuestion::a("raw.local.").qclass(EXPLICIT_HIGH_CLASS);
+        assert_eq!(explicit_high.question_class(), EXPLICIT_HIGH_CLASS);
+        assert_eq!(
+            explicit_high.mdns_base_question_class(),
+            EXPLICIT_HIGH_CLASS & MDNS_CLASS_MASK
+        );
+        assert!(explicit_high.mdns_unicast_response_preferred_value());
+        assert_eq!(
+            explicit_high.mdns_qu(false).question_class(),
+            EXPLICIT_HIGH_CLASS & MDNS_CLASS_MASK
+        );
+    }
+
+    #[test]
+    fn mdns_class_bits_record_helpers_set_clear_and_inspect_base_classes() {
+        let record = DnsRecord::a("printer.local.", Ipv4Addr::new(192, 0, 2, 10), 120)
+            .mdns_cache_flush(true);
+        assert_eq!(record.class(), MDNS_CLASS_BIT | DNS_CLASS_IN);
+        assert_eq!(record.mdns_base_class(), DNS_CLASS_IN);
+        assert!(record.mdns_cache_flush_value());
+
+        let cleared = record.mdns_cache_flush(false);
+        assert_eq!(cleared.class(), DNS_CLASS_IN);
+        assert_eq!(cleared.mdns_base_class(), DNS_CLASS_IN);
+        assert!(!cleared.mdns_cache_flush_value());
+
+        let any = DnsRecord::new(
+            "any.local.",
+            DNS_TYPE_A,
+            DNS_CLASS_ANY,
+            120,
+            DnsRecordData::A(Ipv4Addr::new(192, 0, 2, 11)),
+        )
+        .mdns_cache_flush(true);
+        assert_eq!(any.class(), MDNS_CLASS_BIT | DNS_CLASS_ANY);
+        assert_eq!(any.mdns_base_class(), DNS_CLASS_ANY);
+        assert!(any.mdns_cache_flush_value());
+
+        let unknown = DnsRecord::new(
+            "unknown.local.",
+            DNS_TYPE_A,
+            UNKNOWN_CLASS,
+            120,
+            DnsRecordData::A(Ipv4Addr::new(192, 0, 2, 12)),
+        )
+        .mdns_cache_flush(true);
+        assert_eq!(unknown.class(), MDNS_CLASS_BIT | UNKNOWN_CLASS);
+        assert_eq!(unknown.mdns_base_class(), UNKNOWN_CLASS);
+        assert!(unknown.mdns_cache_flush_value());
+
+        let explicit_high = DnsRecord::new(
+            "raw.local.",
+            DNS_TYPE_A,
+            EXPLICIT_HIGH_CLASS,
+            120,
+            DnsRecordData::A(Ipv4Addr::new(192, 0, 2, 13)),
+        );
+        assert_eq!(explicit_high.class(), EXPLICIT_HIGH_CLASS);
+        assert_eq!(
+            explicit_high.mdns_base_class(),
+            EXPLICIT_HIGH_CLASS & MDNS_CLASS_MASK
+        );
+        assert!(explicit_high.mdns_cache_flush_value());
+        assert_eq!(
+            explicit_high.mdns_cache_flush(false).class(),
+            EXPLICIT_HIGH_CLASS & MDNS_CLASS_MASK
+        );
+    }
+
+    #[test]
+    fn mdns_class_bits_round_trip_decode_preserves_question_and_record_bits() {
+        let original = Dns::new()
+            .id(0)
+            .rd(false)
+            .question(DnsQuestion::a("printer.local.").mdns_qu(true))
+            .answer(
+                DnsRecord::a("printer.local.", Ipv4Addr::new(192, 0, 2, 20), 120)
+                    .mdns_cache_flush(true),
+            );
+
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 10))
+            / Udp::new().sport(5353).dport(53)
+            / original)
+            .compile()
+            .unwrap();
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let dns = decoded.layer::<Dns>().unwrap();
+
+        let question = &dns.questions()[0];
+        assert_eq!(question.question_class(), MDNS_CLASS_BIT | DNS_CLASS_IN);
+        assert_eq!(question.mdns_base_question_class(), DNS_CLASS_IN);
+        assert!(question.mdns_unicast_response_preferred_value());
+
+        let answer = &dns.answers()[0];
+        assert_eq!(answer.class(), MDNS_CLASS_BIT | DNS_CLASS_IN);
+        assert_eq!(answer.mdns_base_class(), DNS_CLASS_IN);
+        assert!(answer.mdns_cache_flush_value());
+        assert_eq!(decoded.compile().unwrap(), bytes);
     }
 }
