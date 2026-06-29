@@ -50,6 +50,15 @@ pub use constants::{
 
 /// Multicast DNS constants and helpers.
 pub mod mdns {
+    use core::net::{Ipv4Addr, Ipv6Addr};
+
+    use crate::mac::MacAddr;
+    use crate::packet::Packet;
+    use crate::protocols::ip::v4::Ipv4;
+    use crate::protocols::ip::v6::Ipv6;
+    use crate::protocols::link::{Ethernet, ETHERTYPE_IPV4, ETHERTYPE_IPV6};
+    use crate::protocols::transport::Udp;
+
     use super::{Dns, DnsName, DnsQuestion, DnsRecord};
 
     pub use super::{
@@ -95,6 +104,127 @@ pub mod mdns {
         proposed: impl IntoIterator<Item = DnsRecord>,
     ) -> Dns {
         Dns::mdns_probe_with_authorities(question, proposed)
+    }
+
+    /// Create an mDNS UDP datagram layer using UDP/5353 for source and destination.
+    pub fn mdns_udp() -> Udp {
+        Udp::new()
+            .source_port(MDNS_PORT)
+            .destination_port(MDNS_PORT)
+    }
+
+    /// Create an mDNS UDP datagram layer.
+    pub fn udp() -> Udp {
+        mdns_udp()
+    }
+
+    /// Create a UDP layer for an mDNS unicast reply with caller-selected ports.
+    pub fn udp_unicast_reply(source_port: u16, destination_port: u16) -> Udp {
+        Udp::new()
+            .source_port(source_port)
+            .destination_port(destination_port)
+    }
+
+    /// Create an IPv4 layer for mDNS multicast traffic.
+    pub fn mdns_ipv4(source: Ipv4Addr) -> Ipv4 {
+        Ipv4::new()
+            .src(source)
+            .dst(MDNS_IPV4_MULTICAST)
+            .ttl(MDNS_RESPONSE_TTL)
+    }
+
+    /// Create an IPv4 layer for mDNS multicast traffic.
+    pub fn ipv4_multicast(source: Ipv4Addr) -> Ipv4 {
+        mdns_ipv4(source)
+    }
+
+    /// Create an IPv4 layer for an mDNS response.
+    pub fn ipv4_response(source: Ipv4Addr) -> Ipv4 {
+        mdns_ipv4(source)
+    }
+
+    /// Create an IPv6 layer for mDNS link-local multicast traffic.
+    pub fn mdns_ipv6(source: Ipv6Addr) -> Ipv6 {
+        Ipv6::new()
+            .src(source)
+            .dst(MDNS_IPV6_LINK_LOCAL_MULTICAST)
+            .hop_limit(MDNS_RESPONSE_HOP_LIMIT)
+    }
+
+    /// Create an IPv6 layer for mDNS link-local multicast traffic.
+    pub fn ipv6_multicast(source: Ipv6Addr) -> Ipv6 {
+        mdns_ipv6(source)
+    }
+
+    /// Create an IPv6 layer for an mDNS response.
+    pub fn ipv6_response(source: Ipv6Addr) -> Ipv6 {
+        mdns_ipv6(source)
+    }
+
+    /// Create an Ethernet layer for IPv4 mDNS multicast.
+    pub fn mdns_ethernet_ipv4(source: MacAddr) -> Ethernet {
+        Ethernet::new()
+            .src(source)
+            .dst(MDNS_IPV4_ETHERNET_MULTICAST)
+            .ethertype(ETHERTYPE_IPV4)
+    }
+
+    /// Create an Ethernet layer for IPv4 mDNS multicast.
+    pub fn ethernet_ipv4_multicast(source: MacAddr) -> Ethernet {
+        mdns_ethernet_ipv4(source)
+    }
+
+    /// Create an Ethernet layer for IPv6 mDNS multicast.
+    pub fn mdns_ethernet_ipv6(source: MacAddr) -> Ethernet {
+        Ethernet::new()
+            .src(source)
+            .dst(MDNS_IPV6_ETHERNET_MULTICAST)
+            .ethertype(ETHERTYPE_IPV6)
+    }
+
+    /// Create an Ethernet layer for IPv6 mDNS multicast.
+    pub fn ethernet_ipv6_multicast(source: MacAddr) -> Ethernet {
+        mdns_ethernet_ipv6(source)
+    }
+
+    /// Build an IPv4 UDP/5353 mDNS packet stack.
+    pub fn mdns_ipv4_packet(source: Ipv4Addr, dns: Dns) -> Packet {
+        mdns_ipv4(source) / mdns_udp() / dns
+    }
+
+    /// Build an IPv4 UDP/5353 mDNS packet stack.
+    pub fn ipv4_packet(source: Ipv4Addr, dns: Dns) -> Packet {
+        mdns_ipv4_packet(source, dns)
+    }
+
+    /// Build an IPv6 UDP/5353 mDNS packet stack.
+    pub fn mdns_ipv6_packet(source: Ipv6Addr, dns: Dns) -> Packet {
+        mdns_ipv6(source) / mdns_udp() / dns
+    }
+
+    /// Build an IPv6 UDP/5353 mDNS packet stack.
+    pub fn ipv6_packet(source: Ipv6Addr, dns: Dns) -> Packet {
+        mdns_ipv6_packet(source, dns)
+    }
+
+    /// Build an Ethernet/IPv4 UDP/5353 mDNS packet stack.
+    pub fn mdns_ethernet_ipv4_packet(source_mac: MacAddr, source_ip: Ipv4Addr, dns: Dns) -> Packet {
+        mdns_ethernet_ipv4(source_mac) / mdns_ipv4_packet(source_ip, dns)
+    }
+
+    /// Build an Ethernet/IPv4 UDP/5353 mDNS packet stack.
+    pub fn ethernet_ipv4_packet(source_mac: MacAddr, source_ip: Ipv4Addr, dns: Dns) -> Packet {
+        mdns_ethernet_ipv4_packet(source_mac, source_ip, dns)
+    }
+
+    /// Build an Ethernet/IPv6 UDP/5353 mDNS packet stack.
+    pub fn mdns_ethernet_ipv6_packet(source_mac: MacAddr, source_ip: Ipv6Addr, dns: Dns) -> Packet {
+        mdns_ethernet_ipv6(source_mac) / mdns_ipv6_packet(source_ip, dns)
+    }
+
+    /// Build an Ethernet/IPv6 UDP/5353 mDNS packet stack.
+    pub fn ethernet_ipv6_packet(source_mac: MacAddr, source_ip: Ipv6Addr, dns: Dns) -> Packet {
+        mdns_ethernet_ipv6_packet(source_mac, source_ip, dns)
     }
 }
 
@@ -789,6 +919,151 @@ mod mdns_message_builders_tests {
         let response_override = mdns::response().flags(DNS_FLAG_RECURSION_DESIRED);
         assert_eq!(response_override.flags_value(), DNS_FLAG_RECURSION_DESIRED);
         assert!(!response_override.is_response());
+    }
+}
+
+#[cfg(test)]
+mod mdns_transport_builders_tests {
+    use core::net::{Ipv4Addr, Ipv6Addr};
+
+    use crate::{
+        Ethernet, Ipv4, Ipv6, LinkType, MacAddr, NetworkLayer, Packet, ProtocolRegistry, Udp,
+    };
+
+    use super::{
+        append_dns_packet, mdns, Dns, DNS_TYPE_A, DNS_TYPE_AAAA, MDNS_IPV4_ETHERNET_MULTICAST,
+        MDNS_IPV4_MULTICAST, MDNS_IPV6_ETHERNET_MULTICAST, MDNS_IPV6_LINK_LOCAL_MULTICAST,
+        MDNS_PORT, MDNS_RESPONSE_HOP_LIMIT, MDNS_RESPONSE_TTL,
+    };
+
+    fn mdns_registry() -> ProtocolRegistry {
+        let mut registry = ProtocolRegistry::new();
+        registry.bind_udp_port(MDNS_PORT, |packet, payload| {
+            append_dns_packet(packet, payload)
+        });
+        registry
+    }
+
+    #[test]
+    fn mdns_transport_builders_ipv4_packet_compiles_and_decodes() -> crate::Result<()> {
+        let source = Ipv4Addr::new(192, 0, 2, 10);
+        let dns = mdns::query_for("printer.local.", DNS_TYPE_A);
+        let packet = mdns::mdns_ipv4_packet(source, dns.clone());
+
+        let ipv4 = packet.layer::<Ipv4>().unwrap();
+        assert_eq!(ipv4.source(), source);
+        assert_eq!(ipv4.destination(), MDNS_IPV4_MULTICAST);
+        assert_eq!(ipv4.ttl_value(), MDNS_RESPONSE_TTL);
+        let udp = packet.layer::<Udp>().unwrap();
+        assert_eq!(udp.source_port_value(), MDNS_PORT);
+        assert_eq!(udp.destination_port_value(), MDNS_PORT);
+
+        let compiled = packet.compile()?;
+        let decoded = Packet::decode_from_l3_with_registry(
+            &mdns_registry(),
+            NetworkLayer::Ipv4,
+            compiled.as_bytes(),
+        )?;
+
+        let decoded_ipv4 = decoded.layer::<Ipv4>().unwrap();
+        assert_eq!(decoded_ipv4.source(), source);
+        assert_eq!(decoded_ipv4.destination(), MDNS_IPV4_MULTICAST);
+        assert_eq!(decoded_ipv4.ttl_value(), MDNS_RESPONSE_TTL);
+        let decoded_udp = decoded.layer::<Udp>().unwrap();
+        assert_eq!(decoded_udp.source_port_value(), MDNS_PORT);
+        assert_eq!(decoded_udp.destination_port_value(), MDNS_PORT);
+        let decoded_dns = decoded.layer::<Dns>().unwrap();
+        assert_eq!(decoded_dns.id_value(), dns.id_value());
+        assert_eq!(decoded_dns.flags_value(), dns.flags_value());
+        assert_eq!(decoded_dns.questions(), dns.questions());
+        Ok(())
+    }
+
+    #[test]
+    fn mdns_transport_builders_ipv6_ethernet_packet_compiles_and_decodes() -> crate::Result<()> {
+        let source_mac = MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x08]);
+        let source_ip = Ipv6Addr::new(0xfe80, 0, 0, 0, 0x0200, 0x5eff, 0xfe10, 0x0008);
+        let dns = mdns::query_for("printer.local.", DNS_TYPE_AAAA);
+        let packet = mdns::mdns_ethernet_ipv6_packet(source_mac, source_ip, dns.clone());
+
+        let ethernet = packet.layer::<Ethernet>().unwrap();
+        assert_eq!(ethernet.source(), Some(source_mac));
+        assert_eq!(ethernet.destination(), Some(MDNS_IPV6_ETHERNET_MULTICAST));
+        let ipv6 = packet.layer::<Ipv6>().unwrap();
+        assert_eq!(ipv6.source(), source_ip);
+        assert_eq!(ipv6.destination(), MDNS_IPV6_LINK_LOCAL_MULTICAST);
+        assert_eq!(ipv6.hop_limit_value(), MDNS_RESPONSE_HOP_LIMIT);
+
+        let compiled = packet.compile()?;
+        let decoded = Packet::decode_from_link_with_registry(
+            &mdns_registry(),
+            LinkType::Ethernet,
+            compiled.as_bytes(),
+        )?;
+
+        let decoded_ethernet = decoded.layer::<Ethernet>().unwrap();
+        assert_eq!(decoded_ethernet.source(), Some(source_mac));
+        assert_eq!(
+            decoded_ethernet.destination(),
+            Some(MDNS_IPV6_ETHERNET_MULTICAST)
+        );
+        let decoded_ipv6 = decoded.layer::<Ipv6>().unwrap();
+        assert_eq!(decoded_ipv6.source(), source_ip);
+        assert_eq!(decoded_ipv6.destination(), MDNS_IPV6_LINK_LOCAL_MULTICAST);
+        assert_eq!(decoded_ipv6.hop_limit_value(), MDNS_RESPONSE_HOP_LIMIT);
+        let decoded_udp = decoded.layer::<Udp>().unwrap();
+        assert_eq!(decoded_udp.source_port_value(), MDNS_PORT);
+        assert_eq!(decoded_udp.destination_port_value(), MDNS_PORT);
+        let decoded_dns = decoded.layer::<Dns>().unwrap();
+        assert_eq!(decoded_dns.id_value(), dns.id_value());
+        assert_eq!(decoded_dns.flags_value(), dns.flags_value());
+        assert_eq!(decoded_dns.questions(), dns.questions());
+        Ok(())
+    }
+
+    #[test]
+    fn mdns_transport_builders_preserve_caller_overrides() {
+        let udp = mdns::mdns_udp().sport(53000).dport(53001);
+        assert_eq!(udp.source_port_value(), 53000);
+        assert_eq!(udp.destination_port_value(), 53001);
+
+        let ipv4 = mdns::mdns_ipv4(Ipv4Addr::new(192, 0, 2, 10))
+            .src(Ipv4Addr::new(192, 0, 2, 11))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            .ttl(42);
+        assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 11));
+        assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, 20));
+        assert_eq!(ipv4.ttl_value(), 42);
+
+        let ipv6 = mdns::mdns_ipv6(Ipv6Addr::LOCALHOST)
+            .src(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1))
+            .dst(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 2))
+            .hop_limit(43);
+        assert_eq!(
+            ipv6.source(),
+            Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)
+        );
+        assert_eq!(
+            ipv6.destination(),
+            Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 2)
+        );
+        assert_eq!(ipv6.hop_limit_value(), 43);
+
+        let source_mac = MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x01]);
+        let override_source = MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x02]);
+        let override_destination = MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x03]);
+        let ethernet = mdns::mdns_ethernet_ipv4(source_mac)
+            .src(override_source)
+            .dst(override_destination);
+        assert_eq!(ethernet.source(), Some(override_source));
+        assert_eq!(ethernet.destination(), Some(override_destination));
+
+        let default_ethernet = mdns::mdns_ethernet_ipv4(source_mac);
+        assert_eq!(default_ethernet.source(), Some(source_mac));
+        assert_eq!(
+            default_ethernet.destination(),
+            Some(MDNS_IPV4_ETHERNET_MULTICAST)
+        );
     }
 }
 
