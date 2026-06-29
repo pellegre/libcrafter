@@ -66,7 +66,10 @@ pub mod mdns {
     use crate::protocols::link::{Ethernet, ETHERTYPE_IPV4, ETHERTYPE_IPV6};
     use crate::protocols::transport::Udp;
 
-    use super::{Dns, DnsName, DnsQuestion, DnsRecord};
+    use super::{
+        Dns, DnsName, DnsQuestion, DnsRecord, DnsRecordData, DNS_CLASS_IN, DNS_TYPE_PTR,
+        DNS_TYPE_TXT,
+    };
 
     pub use super::{
         dns_sd_instance_name, dns_sd_instance_name_from_labels, dns_sd_service_enumeration_name,
@@ -117,6 +120,88 @@ pub mod mdns {
         proposed: impl IntoIterator<Item = DnsRecord>,
     ) -> Dns {
         Dns::mdns_probe_with_authorities(question, proposed)
+    }
+
+    /// Build a DNS-SD service-type PTR answer pointing at a service instance.
+    pub fn service_ptr(
+        service_type: impl Into<DnsName>,
+        service_instance: impl Into<DnsName>,
+        ttl: u32,
+    ) -> DnsRecord {
+        DnsRecord::new(
+            service_type,
+            DNS_TYPE_PTR,
+            DNS_CLASS_IN,
+            ttl,
+            DnsRecordData::name(service_instance),
+        )
+    }
+
+    /// Build a DNS-SD subtype PTR answer pointing at a service instance.
+    pub fn subtype_ptr(
+        subtype_name: impl Into<DnsName>,
+        service_instance: impl Into<DnsName>,
+        ttl: u32,
+    ) -> DnsRecord {
+        DnsRecord::new(
+            subtype_name,
+            DNS_TYPE_PTR,
+            DNS_CLASS_IN,
+            ttl,
+            DnsRecordData::name(service_instance),
+        )
+    }
+
+    /// Build a DNS-SD service-instance SRV answer with priority and weight zero.
+    pub fn srv(
+        service_instance: impl Into<DnsName>,
+        target: impl Into<DnsName>,
+        port: u16,
+        ttl: u32,
+    ) -> DnsRecord {
+        srv_with_priority(service_instance, target, 0, 0, port, ttl)
+    }
+
+    /// Build a DNS-SD service-instance SRV answer.
+    pub fn srv_with_priority(
+        service_instance: impl Into<DnsName>,
+        target: impl Into<DnsName>,
+        priority: u16,
+        weight: u16,
+        port: u16,
+        ttl: u32,
+    ) -> DnsRecord {
+        DnsRecord::srv(service_instance, ttl, priority, weight, port, target)
+    }
+
+    /// Build a DNS-SD service-instance TXT answer from DNS character-strings.
+    pub fn txt(
+        service_instance: impl Into<DnsName>,
+        strings: impl IntoIterator<Item = impl AsRef<[u8]>>,
+        ttl: u32,
+    ) -> DnsRecord {
+        DnsRecord::new(
+            service_instance,
+            DNS_TYPE_TXT,
+            DNS_CLASS_IN,
+            ttl,
+            DnsRecordData::Txt(
+                strings
+                    .into_iter()
+                    .map(|string| string.as_ref().to_vec())
+                    .collect(),
+            ),
+        )
+    }
+
+    /// Build a host A additional record for a DNS-SD service target.
+    pub fn a(host: impl Into<DnsName>, address: Ipv4Addr, ttl: u32) -> DnsRecord {
+        DnsRecord::a(host, address, ttl)
+    }
+
+    /// Build a host AAAA additional record for a DNS-SD service target.
+    pub fn aaaa(host: impl Into<DnsName>, address: Ipv6Addr, ttl: u32) -> DnsRecord {
+        DnsRecord::aaaa(host, address, ttl)
     }
 
     /// Create an mDNS UDP datagram layer using UDP/5353 for source and destination.
@@ -1077,6 +1162,102 @@ mod mdns_transport_builders_tests {
             default_ethernet.destination(),
             Some(MDNS_IPV4_ETHERNET_MULTICAST)
         );
+    }
+}
+
+#[cfg(test)]
+mod bonjour_record_builders_tests {
+    use core::net::{Ipv4Addr, Ipv6Addr};
+
+    use crate::{NetworkLayer, Packet, ProtocolRegistry};
+
+    use super::{
+        append_dns_packet, mdns, Dns, DnsRecordData, DNS_SD_DEFAULT_DOMAIN, DNS_TYPE_A,
+        DNS_TYPE_AAAA, DNS_TYPE_PTR, DNS_TYPE_SRV, DNS_TYPE_TXT, MDNS_PORT,
+    };
+
+    fn mdns_registry() -> ProtocolRegistry {
+        let mut registry = ProtocolRegistry::new();
+        registry.bind_udp_port(MDNS_PORT, |packet, payload| {
+            append_dns_packet(packet, payload)
+        });
+        registry
+    }
+
+    #[test]
+    fn bonjour_record_builders_complete_service_answer_set_round_trips() -> crate::Result<()> {
+        let service_type = mdns::dns_sd_tcp_service_name("ipp", DNS_SD_DEFAULT_DOMAIN)?;
+        let service_instance =
+            mdns::dns_sd_tcp_instance_name("Office\\032Printer", "ipp", DNS_SD_DEFAULT_DOMAIN)?;
+        let subtype =
+            mdns::dns_sd_subtype_name("printer", "ipp", "tcp", DNS_SD_DEFAULT_DOMAIN)?;
+        let host = "office-printer.local.";
+        let txt_strings = vec![
+            b"txtvers=1".to_vec(),
+            b"rp=printers/office".to_vec(),
+            vec![b'k', b'=', 0x00, 0xff],
+        ];
+
+        let service_ptr = mdns::service_ptr(service_type.clone(), service_instance.clone(), 4500);
+        let subtype_ptr = mdns::subtype_ptr(subtype.clone(), service_instance.clone(), 4501);
+        let srv = mdns::srv_with_priority(service_instance.clone(), host, 0, 10, 631, 120)
+            .mdns_cache_flush(true);
+        let txt = mdns::txt(service_instance.clone(), txt_strings.clone(), 121)
+            .mdns_cache_flush(true);
+        let ipv4 = mdns::a(host, Ipv4Addr::new(192, 0, 2, 55), 122).mdns_cache_flush(true);
+        let ipv6 = mdns::aaaa(
+            host,
+            Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x55),
+            123,
+        )
+        .mdns_cache_flush(true);
+
+        let dns = mdns::response_with_answers([
+            service_ptr.clone(),
+            subtype_ptr.clone(),
+            srv.clone(),
+            txt.clone(),
+        ])
+        .additional(ipv4.clone())
+        .additional(ipv6.clone());
+
+        let bytes = mdns::mdns_ipv4_packet(Ipv4Addr::new(192, 0, 2, 10), dns).compile()?;
+        let decoded = Packet::decode_from_l3_with_registry(
+            &mdns_registry(),
+            NetworkLayer::Ipv4,
+            bytes.as_bytes(),
+        )?;
+        let decoded_dns = decoded.layer::<Dns>().unwrap();
+
+        assert_eq!(
+            decoded_dns.answers(),
+            &[service_ptr, subtype_ptr, srv, txt]
+        );
+        assert_eq!(decoded_dns.additionals(), &[ipv4, ipv6]);
+        assert_eq!(decoded_dns.answers()[0].record_type(), DNS_TYPE_PTR);
+        assert_eq!(decoded_dns.answers()[0].ttl(), 4500);
+        assert!(!decoded_dns.answers()[0].mdns_cache_flush_value());
+        assert_eq!(decoded_dns.answers()[1].record_type(), DNS_TYPE_PTR);
+        assert_eq!(decoded_dns.answers()[1].ttl(), 4501);
+        assert!(!decoded_dns.answers()[1].mdns_cache_flush_value());
+        assert_eq!(decoded_dns.answers()[2].record_type(), DNS_TYPE_SRV);
+        assert_eq!(decoded_dns.answers()[2].ttl(), 120);
+        assert!(decoded_dns.answers()[2].mdns_cache_flush_value());
+        assert_eq!(decoded_dns.answers()[3].record_type(), DNS_TYPE_TXT);
+        assert_eq!(decoded_dns.answers()[3].ttl(), 121);
+        assert!(decoded_dns.answers()[3].mdns_cache_flush_value());
+        assert_eq!(
+            decoded_dns.answers()[3].data(),
+            &DnsRecordData::Txt(txt_strings)
+        );
+        assert_eq!(decoded_dns.additionals()[0].record_type(), DNS_TYPE_A);
+        assert_eq!(decoded_dns.additionals()[0].ttl(), 122);
+        assert!(decoded_dns.additionals()[0].mdns_cache_flush_value());
+        assert_eq!(decoded_dns.additionals()[1].record_type(), DNS_TYPE_AAAA);
+        assert_eq!(decoded_dns.additionals()[1].ttl(), 123);
+        assert!(decoded_dns.additionals()[1].mdns_cache_flush_value());
+        assert_eq!(decoded.compile()?, bytes);
+        Ok(())
     }
 }
 
