@@ -65,6 +65,61 @@ cross-check discovery with the reference client before running libcrafter live
 traffic. Keep firmware names, local serial paths, and observations in local
 notes unless they are synthetic and intentionally sanitized.
 
+## Appliance Asset Workflow
+
+For repeated manual BLE work, keep the dongle attached to a prepared VM and run
+generated tools through the `whad-serial` appliance profile. The VM still owns
+USB passthrough, firmware state, serial permissions, and any local hardware
+setup; the appliance provides repeatable userland and lease coordination.
+
+Register the prepared VM as an ignored endpoint asset with documentation-safe
+metadata:
+
+```sh
+tools/endpoint/run asset register doc-ble-whad-vm \
+  --substrate qemu \
+  --profile whad-serial \
+  --ssh-host 192.0.2.61 \
+  --ssh-user appliance \
+  --identity-file /home/operator/.ssh/libcrafter_doc_key \
+  --known-hosts-file /home/operator/.ssh/libcrafter_doc_known_hosts \
+  --metadata-json '{"appliance":{"profile_environments":{"whad-serial":{"LIBCRAFTER_WHAD_DEVICE":"/dev/ttyACM0"}}}}' \
+  --json
+```
+
+Check the profile, acquire a lease, and run the generated tool through the
+appliance in dry-run mode first:
+
+```sh
+tools/endpoint/run asset check doc-ble-whad-vm --profile whad-serial --json
+tools/endpoint/run asset acquire --profile whad-serial --lease-ttl 2h --owner doc-ble-operator --json
+tools/endpoint/run appliance run --dry-run --json --lease LEASE_ID whad-serial -- \
+  cargo run --features whad --bin generated_ble_whad_tool -- \
+    --dry-run --channel 37
+```
+
+Only after the dry-run output, selected channel, dongle assignment, and RF
+environment are checked should an operator run the appliance command without
+endpoint `--dry-run`. The generated tool must still require its own explicit
+live gate, for example:
+
+```sh
+tools/endpoint/run appliance run --json --lease LEASE_ID whad-serial -- \
+  cargo run --features whad --bin generated_ble_whad_tool -- \
+    --channel 37 --live --i-understand-isolated-lab
+```
+
+Release the lease after the final dry-run or live appliance run:
+
+```sh
+tools/endpoint/run asset release LEASE_ID --json
+```
+
+Do not place real serial numbers, dongle identifiers, firmware paths, captures,
+or observations from real BLE devices in the asset record, generated tool, or
+tracked documentation. Release the lease even after a failed run so later
+sessions do not inherit stale ownership.
+
 ## Dry-Run First
 
 Opening a WHAD serial target is dry-run by default:

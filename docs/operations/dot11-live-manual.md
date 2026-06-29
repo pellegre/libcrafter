@@ -91,6 +91,63 @@ any backend flag from dry-run to live. Keep the synthetic payload recognizable
 and non-sensitive so captures, when intentionally taken, are easy to identify
 and discard.
 
+## Appliance Asset Workflow
+
+For repeated manual dot11 work, keep the Wi-Fi dongle and monitor-mode
+interface inside a prepared VM and run generated tools through the
+`dot11-monitor` appliance profile. The VM still owns USB passthrough, driver
+state, regulatory setup, monitor-mode creation, channel pinning, and local
+hardware preparation; the appliance provides repeatable userland and lease
+coordination.
+
+Register the prepared VM as an ignored endpoint asset with documentation-safe
+metadata:
+
+```sh
+tools/endpoint/run asset register doc-dot11-vm \
+  --substrate virtualbox \
+  --profile dot11-monitor \
+  --ssh-host 192.0.2.63 \
+  --ssh-user appliance \
+  --identity-file /home/operator/.ssh/libcrafter_doc_key \
+  --known-hosts-file /home/operator/.ssh/libcrafter_doc_known_hosts \
+  --metadata-json '{"appliance":{"profile_environments":{"dot11-monitor":{"LIBCRAFTER_DOT11_IFACE":"dot11mon-doc","LIBCRAFTER_DOT11_CHANNEL":"6"}}}}' \
+  --json
+```
+
+Check the profile, acquire a lease, and run the generated tool through the
+appliance in dry-run mode first:
+
+```sh
+tools/endpoint/run asset check doc-dot11-vm --profile dot11-monitor --json
+tools/endpoint/run asset acquire --profile dot11-monitor --lease-ttl 2h --owner doc-dot11-operator --json
+tools/endpoint/run appliance run --dry-run --json --lease LEASE_ID dot11-monitor -- \
+  cargo run --bin generated_dot11_tool -- \
+    --dry-run --iface dot11mon-doc
+```
+
+Only after the dry-run output, interface state, channel, and RF environment are
+checked should an operator run the appliance command without endpoint
+`--dry-run`. The generated tool must still require its own explicit live gates,
+for example:
+
+```sh
+tools/endpoint/run appliance run --json --lease LEASE_ID dot11-monitor -- \
+  env LIBCRAFTER_ENDPOINT=1 cargo run --bin generated_dot11_tool -- \
+    --iface dot11mon-doc --live --i-understand-isolated-lab
+```
+
+Release the lease after the final dry-run or live appliance run:
+
+```sh
+tools/endpoint/run asset release LEASE_ID --json
+```
+
+Do not place real SSIDs, BSSIDs, MAC addresses, dongle identifiers, firmware
+paths, captures, credentials, or observations from real networks in the asset
+record, generated tool, or tracked documentation. Release the lease even after
+a failed run so later sessions do not inherit stale ownership.
+
 ## Monitor-Mode Capture
 
 Capture uses the wire pcap backend, not the raw socket sender. Create the
