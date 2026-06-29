@@ -785,6 +785,8 @@ def _lab_session_probe_report_metadata(
         )
         for command in session.command_records
     ]
+    lab_session = session.to_dict()
+    lab_session["command_records"] = command_records
 
     endpoint_plan = _lab_session_wire_endpoint_plan(
         session,
@@ -826,7 +828,7 @@ def _lab_session_probe_report_metadata(
         "command_records": command_records,
         "endpoints": endpoint_context,
         "lab_address_context": address_context,
-        "lab_session": session.to_dict(),
+        "lab_session": lab_session,
         "provider_capabilities": dict(provider_capabilities),
     }
     metadata.update(_selected_lab_session_metadata(session.metadata))
