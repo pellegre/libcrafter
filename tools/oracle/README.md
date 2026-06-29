@@ -87,6 +87,14 @@ tools/oracle/run live --backend scapy --provider qemu --dry-run --profile smoke 
 tools/oracle/run live --backend scapy --provider virtualbox --dry-run --profile smoke --seed 12345 --count 10
 ```
 
+Provider-backed oracle dry-runs include the lab session's appliance runtime
+metadata in the report and command records. Inspect those fields to see the
+execution substrate (`endpoint-container` for Docker private, `ssh-docker-host`
+for VM/cloud Docker hosts), selected appliance profile, image tag, remote work
+root, artifact root, and planned checks. The appliance profile is runtime
+placement metadata only; oracle packet families, cases, byte policy, backend
+selection, and live eligibility still come from oracle specs and flags.
+
 The provider matrix runner generates one corpus, runs offline and pcap
 baselines, then reuses the corpus through the same live dry-run command shape
 for every selected provider:
@@ -393,6 +401,15 @@ generation, endpoint protocol comparison, report assembly, and provider
 execution flow. `tools/lab` owns multi-endpoint session creation, repository
 push/bootstrap, artifact collection, and cleanup; `tools/endpoint` owns one
 endpoint and transport operations.
+
+Lab sessions run oracle workloads through appliance-backed endpoints when the
+provider supplies runtime metadata. Docker private is a special constrained
+case: the endpoint container is already the appliance, so reports show
+`execution_mode=endpoint-container` and nested Docker stays disabled. QEMU,
+VirtualBox, Hetzner, and generic SSH Docker hosts use `ssh-docker-host` runtime
+metadata, where lab connects over SSH and runs the standard appliance image on
+the remote Docker host. This changes where the workload executes, not the
+oracle validation contract.
 
 The Rust-side libcrafter adapters live in `tools/oracle/adapters/` as an
 internal workspace package. They depend on the public `crafter` crate API and

@@ -24,6 +24,14 @@ link-layer segment. ARP uses target kernel behavior on a link-layer-capable
 segment with setup for aliases, cache flushes, padding, provider MAC checks,
 and filtered captures.
 
+Lab, oracle, and probe reports may also include appliance runtime metadata from
+the provider substrate. That metadata describes where the workload would run:
+for example Docker private `endpoint-container` execution or VM/cloud
+`ssh-docker-host` execution with an appliance image, remote workspace, artifact
+root, and readiness checks. Appliance runtime profiles are placement labels,
+not packet behavior selectors; oracle specs and probe cases remain the
+validation authority.
+
 Run probe behavior validation through the dry-run path first:
 
 ```sh
@@ -418,6 +426,14 @@ and the generic provider execution flow remain in the oracle runner.
 `tools/endpoint` owns one endpoint and artifact transport; see
 [docs/operations/endpoint.md](endpoint.md) for endpoint provider credentials, lifecycle
 commands, artifacts, and cleanup.
+
+Dry-run live reports surface appliance runtime metadata for inspection before a
+provider is contacted. Docker private reports an endpoint-container appliance
+runtime because the constrained endpoint container is the runtime and nested
+Docker stays disabled. QEMU, VirtualBox, Hetzner, and generic SSH Docker hosts
+report an SSH Docker-host appliance runtime, where lab runs the standard image
+on the remote host after endpoint creation. This runtime choice does not alter
+oracle packet selection, byte policy, or probe case selection.
 
 Docker is available as a lab-backed oracle provider through the constrained
 `docker/private` lab adapter. The Docker adapter owns only the private
