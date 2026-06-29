@@ -1,8 +1,8 @@
 # Tools Overview
 
-The `tools/` directory holds the four Python/Rust modules that take `crafter`
+The `tools/` directory holds the Python/Rust modules that take `crafter`
 off the developer machine and onto disposable, provider-backed infrastructure
-for live validation. They form a layered stack: the lower two manage where
+for live validation. They form a layered stack: the lower layers manage where
 packets run, and the upper two decide what to validate.
 
 ```text
@@ -12,12 +12,22 @@ packets run, and the upper two decide what to validate.
               lab                     <- multi-endpoint role sessions
                |
             endpoint                  <- one disposable endpoint
+               |
+            appliance                 <- Docker image, runtime profiles, checks
 ```
 
-Read the stack bottom-up: `endpoint` owns one disposable machine, `lab`
+Read the stack bottom-up: `appliance` owns the standard Docker userland and
+coarse runtime profiles, `endpoint` owns one disposable machine or asset, `lab`
 composes endpoints into a role session, and `oracle` and `probe` are the two
 validators you actually invoke. Most workflows enter through `oracle` or
-`probe`; they reach down through `lab` to `endpoint` for you.
+`probe`; they reach down through `lab` to `endpoint` and the appliance runtime
+for you.
+
+Appliance profiles describe runtime placement, privileges, devices, and host
+checks, not packet behavior. Dry-run reports include appliance runtime metadata
+so operators can see whether a role would run as a Docker private endpoint
+container or as the standard appliance image on an SSH Docker host. Oracle and
+probe still own validation semantics.
 
 ## endpoint
 
@@ -43,10 +53,11 @@ tools/endpoint/run list
 
 `lab` composes endpoints into a multi-endpoint, role-based session (for example
 a `stimulus` endpoint and a `target` endpoint) and owns session planning,
-provider capability metadata, repository push/bootstrap, artifact collection,
-and cleanup. It is protocol-agnostic: it passes caller-supplied profile, role,
-and workload fields through without inferring behavior from them. You rarely run
-`lab` directly — it is the provider-neutral substrate that `oracle` live runs
+provider capability metadata, appliance runtime metadata, repository
+push/bootstrap, artifact collection, and cleanup. It is protocol-agnostic: it
+passes caller-supplied profile, role, and workload fields through without
+inferring behavior from them. You rarely run `lab` directly — it is the
+provider-neutral substrate that `oracle` live runs
 and `probe` runs sit on. Use it on its own mainly to plan or inspect a session
 shape. See the [lab sessions guide](lab.md) and
 [`tools/lab/README.md`](../../tools/lab/README.md).

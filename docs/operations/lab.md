@@ -18,7 +18,7 @@ provider lifecycle.
 | Tool | Owns |
 | --- | --- |
 | `tools/endpoint` | One disposable endpoint: doctor, create, exec, upload, download, collect artifacts, destroy; run it through `tools/endpoint/run`. |
-| `tools/lab` | Multi-endpoint sessions: roles, provider capabilities, endpoint topology, repository archive transfer, remote unpack, bootstrap context, session manifests, artifacts, cleanup records. |
+| `tools/lab` | Multi-endpoint sessions: roles, provider capabilities, endpoint topology, appliance runtime metadata, repository archive transfer, remote unpack, bootstrap context, session manifests, artifacts, cleanup records. |
 | `tools/oracle` | Reference packet corpus, offline/pcap/live packet comparison, `libcrafter` and `reference_backend` workload setup, backend policy, oracle reports. |
 | `tools/probe` | Kernel/service probe cases, `stimulus` and `target` workload setup, target service setup, RST guards, stimulus execution, probe reports. |
 
@@ -60,6 +60,30 @@ Oracle owns the `libcrafter` and `reference_backend` workload setup. Probe owns
 the `stimulus` and `target` workload setup. Docker does not change that
 boundary: the Docker lab adapter owns only the constrained private endpoint
 substrate, while oracle and probe still own role-specific bootstrap commands.
+
+## Appliance Runtime Metadata
+
+Lab composes endpoint-backed appliance runtimes into role sessions. Provider
+list output, lab dry-run plans, oracle live dry-run reports, and probe dry-run
+reports surface appliance runtime metadata such as `profile`, `image_tag`,
+`execution_mode`, `substrate`, `docker_execution_supported`, `nested_docker`,
+remote work roots, artifact roots, and check metadata. Those fields are
+inspection data for the execution substrate; they do not select oracle packet
+families, probe cases, target services, or backend comparison policy.
+
+Appliance profile names describe runtime placement. `lan-raw` means the
+workload is planned for a LAN-capable raw-packet appliance runtime, while
+`wan-raw`, `whad-serial`, and `dot11-monitor` describe other placement and
+host-preparation requirements. The caller's validation `--profile` remains
+oracle- or probe-owned.
+
+Docker private sessions differ from VM and cloud appliance runs. For
+`docker/private`, lab treats each constrained endpoint container as the
+appliance (`execution_mode=endpoint-container`) and does not mount the Docker
+socket or run nested Docker. QEMU, VirtualBox, Hetzner, and generic SSH Docker
+hosts plan `execution_mode=ssh-docker-host`: lab connects to the endpoint over
+SSH, uses Docker on that host to run the standard appliance image, and records
+the resulting work and artifact roots.
 
 ## Docker Private Capability Model
 
@@ -196,8 +220,8 @@ session is considered complete.
 Lab-backed reports include:
 
 - `lab_session`: provider, endpoint provider/exposure, roles, endpoints,
-  capabilities, validation checks, remote paths, command records, and cleanup
-  state.
+  capabilities, appliance runtime summaries, validation checks, remote paths,
+  command records, and cleanup state.
 - `planned_infrastructure`: dry-run-safe provider topology metadata.
 - `wire_endpoint_plan`: normalized endpoint plan and lab session id.
 - provider workflow and command records.

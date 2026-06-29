@@ -29,6 +29,17 @@ provider maps to `docker/private`: an isolated provider-owned bridge for
 private multi-endpoint sessions. Docker `lan` and `wan` stay direct wire smoke
 modes, not lab-backed multi-endpoint modes.
 
+Provider listings and dry-run plans include `appliance_runtime` metadata so a
+caller can inspect where workload commands would run before anything is
+created. The runtime profile there (`wan-raw`, `lan-raw`, `whad-serial`, or
+`dot11-monitor`) describes appliance placement and host requirements only; lab
+does not derive packet behavior, oracle cases, or probe cases from that name.
+Docker private sessions report `execution_mode=endpoint-container` because the
+endpoint container is the appliance and nested Docker is disabled. QEMU,
+VirtualBox, Hetzner, and generic SSH-style hosts report `ssh-docker-host` when
+the provider plans to run the standard appliance image over SSH on a Docker
+host.
+
 ```sh
 tools/lab/run providers --json
 tools/lab/run plan --provider hetzner --dry-run --profile smoke --seed 1 --role stimulus --role target --json

@@ -125,6 +125,20 @@ roles, derive endpoint addresses and interfaces, and include lab session
 metadata in the report. Probe still owns target service setup, TCP RST guards,
 stimulus execution, response parsing, and result assembly.
 
+Those dry-run reports also surface appliance runtime metadata for each
+lab-backed role: execution mode, appliance profile, image tag, remote workspace,
+artifact root, and planned readiness checks. The appliance profile describes
+where the role runs (`lan-raw`, `wan-raw`, `whad-serial`, or `dot11-monitor`);
+it does not choose probe cases or packet behavior. Probe `--profile` and
+`--case` still select validation semantics.
+
+Docker private differs from VM and cloud appliance runs: the constrained
+endpoint container is the appliance runtime and nested Docker is disabled.
+QEMU, VirtualBox, Hetzner, and generic SSH Docker hosts run the standard
+appliance image on the remote host through SSH. In both cases, provider-backed
+live work still requires `--confirm-live-run`; the runtime metadata is
+inspectable planning data, not a live-traffic approval.
+
 Provider capability checks decide whether a case can run. DNS and UDP need IPv4
 unicast plus controlled services. DHCPv4 needs a private link-layer segment with
 broadcast and controlled services. ARP needs link-layer send/capture and

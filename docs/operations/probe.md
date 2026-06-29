@@ -21,6 +21,14 @@ plan the `stimulus` and `target` roles and rewrite probe plans with lab
 endpoint addresses. Dry-run remains the default safety boundary; live provider
 runs require `--confirm-live-run`.
 
+Provider-backed dry-run reports include appliance runtime metadata from lab for
+each role. Inspect it to confirm whether the role would run as a Docker private
+endpoint container or on an SSH Docker host, which appliance profile was
+selected, which image tag would be used, and where remote work and artifacts
+would live. Appliance profile names are runtime placement labels; probe
+`--profile` and `--case` remain the source of packet behavior and validation
+semantics.
+
 ## Profiles and cases
 
 `tools/probe/run` selects cases through `--profile`; `--count` bounds how many
@@ -85,6 +93,13 @@ constrained private endpoint substrate while probe still owns `stimulus` and
 modes for NAT-backed L3 reachability, not probe lab-backed multi-endpoint
 modes. See [docs/operations/endpoint.md](endpoint.md) for endpoint provider lifecycle and
 artifact handling.
+
+Docker private does not behave like VM or cloud Docker-host appliance runs. In
+Docker private sessions the constrained endpoint container is already the
+appliance (`execution_mode=endpoint-container`), so lab does not mount the
+Docker socket or start nested containers. QEMU, VirtualBox, Hetzner, and
+generic SSH Docker hosts use `execution_mode=ssh-docker-host`, where lab reaches
+the endpoint over SSH and runs the standard appliance image there.
 
 ## Cases
 
