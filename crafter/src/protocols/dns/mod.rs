@@ -9,6 +9,7 @@ use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 mod constants;
+mod dns_sd;
 mod dnssec;
 mod edns;
 mod name;
@@ -18,6 +19,12 @@ mod svcb;
 
 use rdata::decode_record_data;
 
+pub use dns_sd::{
+    dns_sd_instance_name, dns_sd_instance_name_from_labels, dns_sd_service_enumeration_name,
+    dns_sd_service_name, dns_sd_service_name_from_labels, dns_sd_subtype_name,
+    dns_sd_subtype_name_from_labels, dns_sd_tcp_instance_name, dns_sd_tcp_service_name,
+    dns_sd_udp_instance_name, dns_sd_udp_service_name,
+};
 pub use dnssec::DnsTypeBitmaps;
 pub use edns::{edns_option_code_name, EdnsOption};
 pub use name::{decode_dns_name, decode_dns_name_typed, DnsName};
@@ -61,6 +68,12 @@ pub mod mdns {
 
     use super::{Dns, DnsName, DnsQuestion, DnsRecord};
 
+    pub use super::{
+        dns_sd_instance_name, dns_sd_instance_name_from_labels, dns_sd_service_enumeration_name,
+        dns_sd_service_name, dns_sd_service_name_from_labels, dns_sd_subtype_name,
+        dns_sd_subtype_name_from_labels, dns_sd_tcp_instance_name, dns_sd_tcp_service_name,
+        dns_sd_udp_instance_name, dns_sd_udp_service_name,
+    };
     pub use super::{
         DNS_SD_DEFAULT_DOMAIN, DNS_SD_SERVICE_ENUMERATION_NAME, MDNS_CLASS_BIT, MDNS_CLASS_MASK,
         MDNS_GOODBYE_TTL, MDNS_IPV4_ETHERNET_MULTICAST, MDNS_IPV4_MULTICAST,
