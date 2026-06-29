@@ -1825,6 +1825,45 @@ println!("bytes_sent={}", report.bytes_sent());
 
 Always destroy provider resources after the run.
 
+## Appliance-Backed Provider Work
+
+When a generated tool needs provider-backed execution, request a coarse
+appliance profile instead of inventing protocol-specific endpoint capabilities.
+Use `wan-raw` for WAN-capable raw packet work, `lan-raw` for prepared LAN or
+private lab work, `whad-serial` for WHAD serial dongle workflows, and
+`dot11-monitor` for a prepared monitor-mode Wi-Fi interface. The profile only
+describes placement and host requirements; the generated tool, oracle, or probe
+still owns packet semantics and live gates.
+
+Start with dry-run plans and inspect the reported `appliance_runtime` metadata:
+
+```sh
+tools/endpoint/run appliance check --dry-run --json ENDPOINT_ID lan-raw
+tools/endpoint/run appliance plan --dry-run --json ENDPOINT_ID lan-raw -- \
+  sh -lc 'printf "agent dry-run\n" > /artifacts/summary.txt'
+tools/lab/run plan --provider qemu --dry-run --profile smoke --seed 1 --role stimulus --role target --json
+tools/oracle/run live --provider qemu --dry-run --profile smoke --seed 1 --count 10
+tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10
+```
+
+For prepared dongle VMs or other reusable hardware-backed hosts, acquire a
+persistent asset lease by profile and run the appliance through the lease. Do
+not put real USB serials, interface names, SSIDs, BSSIDs, MACs, firmware paths,
+public addresses, credentials, or captures in tracked files:
+
+```sh
+tools/endpoint/run asset check PREPARED_ASSET_ID --profile whad-serial --json
+tools/endpoint/run asset acquire --profile whad-serial --lease-ttl 2h --owner agent-session --json
+tools/endpoint/run appliance plan --dry-run --json --lease LEASE_ID whad-serial -- \
+  sh -lc 'printf "leased WHAD dry-run\n" > /artifacts/summary.txt'
+tools/endpoint/run asset release LEASE_ID --json
+```
+
+Use the same lease pattern for `dot11-monitor` assets. Release leases after the
+appliance run, collect artifacts under ignored output roots, and keep real live
+traffic behind the same explicit confirmation required by the endpoint,
+lab-session, oracle, probe, and RF manuals.
+
 ## Choose Docker Provider Modes
 
 Use Docker through the wire, lab, oracle, or probe provider commands, not
