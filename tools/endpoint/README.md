@@ -94,6 +94,8 @@ VirtualBox LAN additionally requires `VBoxManage` on `PATH` and at least one
 usable bridged interface reported by `VBoxManage list bridgedifs`. The created
 guest uses two NICs: a NAT control NIC with SSH forwarded to `127.0.0.1`, and a
 bridged LAN NIC for packet work on the local network.
+Libcrafter-created VirtualBox endpoint VMs are placed in the
+`/libcrafter/appliances` VirtualBox UI group.
 
 QEMU additionally requires `qemu-system-x86_64`. QEMU defaults to TCG so it can
 run without host root or KVM access. KVM is opt-in and only works on Linux hosts
@@ -185,6 +187,29 @@ used by the other providers. `docker/private` containers receive `NET_RAW` and
 `NET_ADMIN`; Docker LAN and WAN containers receive `NET_RAW` only. All Docker
 modes publish SSH on `127.0.0.1` and must keep the Docker socket outside the
 container.
+
+VirtualBox endpoints and appliance VMs created by libcrafter are assigned to
+the fixed VirtualBox UI group `/libcrafter/appliances`. The group is only a UI
+organization marker; endpoint creation, networking, power state, and destroy
+metadata keep their normal behavior.
+
+Normalize existing tracked VirtualBox VMs with a dry-run first:
+
+```sh
+tools/endpoint/run virtualbox normalize-groups --dry-run --json
+```
+
+Apply the planned group updates only with the explicit live confirmation:
+
+```sh
+tools/endpoint/run virtualbox normalize-groups --confirm-live-run --json
+```
+
+Normalization reads only libcrafter endpoint manifests and endpoint asset
+records that name a VirtualBox VM. It does not enumerate VirtualBox VMs, infer
+ownership from VM names, or inspect manually created VMs that are not recorded
+by libcrafter. The confirmed command only applies VirtualBox group metadata; it
+does not delete, recreate, stop, start, rename, or change networking for VMs.
 
 Unsupported QEMU LAN and Wi-Fi requests fail before provider side effects:
 
@@ -307,9 +332,12 @@ tools/endpoint/run asset register doc-vbox-dot11 \
   --ssh-user appliance \
   --identity-file /home/operator/.ssh/libcrafter_doc_key \
   --known-hosts-file /home/operator/.ssh/libcrafter_doc_known_hosts \
-  --metadata-json '{"appliance":{"profile_environments":{"dot11-monitor":{"LIBCRAFTER_DOT11_IFACE":"dot11mon-doc"}}}}' \
+  --metadata-json '{"virtualbox":{"vm_name":"doc-vbox-dot11"},"appliance":{"profile_environments":{"dot11-monitor":{"LIBCRAFTER_DOT11_IFACE":"dot11mon-doc"}}}}' \
   --json
 ```
+
+VirtualBox persistent assets need `metadata.virtualbox.vm_name` to participate
+in group normalization.
 
 Check, lease, use, and release an asset:
 
