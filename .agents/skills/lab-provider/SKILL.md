@@ -28,11 +28,20 @@ registry. Keep these contracts provider-neutral:
 - endpoint planning/creation
 - endpoint normalization
 - request/session validation
+- appliance runtime metadata for endpoint-backed execution
 
 Capability names should describe substrate behavior, such as IPv4 unicast,
 controlled services, provider MAC knowledge, broadcast support, and controlled
 router support. Workload-specific capability derivation belongs in oracle or
 probe boundary modules.
+
+Provider adapters should report coarse appliance runtime profiles rather than
+protocol-specific execution promises. Use `wan-raw`, `lan-raw`, `whad-serial`,
+or `dot11-monitor` when the provider can place that role, and keep host or VM
+preparation details such as Docker readiness, USB passthrough, serial access,
+monitor-mode interfaces, and artifact roots in provider or endpoint metadata.
+Prepared dongle VMs should be exposed through persistent asset leases so
+multiple agent sessions do not use the same hardware concurrently.
 
 ## Validation
 

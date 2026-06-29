@@ -21,6 +21,7 @@ or changing provider adapters, use `lab-provider`.
    - `tools/probe/run --provider <provider> --dry-run --profile smoke --seed 1 --count 10`
 2. Inspect the lab session metadata before any live work:
    - provider, endpoint provider, and exposure
+   - appliance runtime execution mode, profile, image, checks, and artifact roots
    - endpoint roles and planned addresses
    - provider capabilities
    - provider workflow and command records
@@ -39,6 +40,17 @@ Supported lab providers are registered in `tools/lab/engine/providers/`.
 Use provider names from the lab registry instead of hard-coded provider lists.
 Provider-backed oracle and probe runs should go through lab sessions so packet
 exchange behavior is independent of the substrate where the agent is running.
+
+Lab-backed appliance execution uses coarse runtime profiles. Use `lan-raw` for
+private VM or lab roles, `wan-raw` for WAN-capable roles, `whad-serial` for
+prepared WHAD serial dongle roles, and `dot11-monitor` for prepared
+monitor-mode Wi-Fi roles. Do not request per-protocol endpoint capabilities
+when an appliance profile describes the placement requirement.
+
+For reusable hardware-backed roles, acquire a persistent endpoint asset lease
+by appliance profile before the run, and release it after artifacts are
+collected. Real hardware identifiers, SSIDs, MACs, public addresses,
+credentials, and sensitive captures stay in ignored local state.
 
 Do not store credentials, provider account identifiers, public IPs, live host
 IDs, or packet captures from sensitive networks in tracked files. If credentials

@@ -28,6 +28,7 @@ provider targets for provider-backed execution.
 2. Run provider dry-runs before creating endpoints:
    - `tools/endpoint/run doctor --provider hetzner --exposure wan --dry-run`
    - `tools/endpoint/run doctor --provider hetzner --exposure private --dry-run`
+   - `tools/endpoint/run appliance check --dry-run --json ENDPOINT_ID wan-raw`
    - use `lab-session` dry-runs for multi-endpoint oracle/probe workflows
    - `tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 1 --count 10`
    - `tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10`
@@ -71,6 +72,27 @@ Endpoint providers should expose the same high-level workflow:
 Endpoint provider targets are the lower-level single-endpoint primitive.
 Multi-endpoint provider-backed validation should use lab-session so
 provider-specific endpoint mechanics do not leak into oracle or probe.
+
+## Appliance Profiles And Assets
+
+Endpoint appliance work uses coarse placement profiles, not protocol-specific
+capability lists. Request `wan-raw` for WAN-capable raw packet work, `lan-raw`
+for prepared LAN or private lab work, `whad-serial` for WHAD serial dongle
+workflows, and `dot11-monitor` for prepared monitor-mode Wi-Fi workflows.
+Always run `tools/endpoint/run appliance check --dry-run` or `plan --dry-run`
+before deploy, run, or collect.
+
+Use persistent asset leases for prepared dongle VMs or other reusable
+hardware-backed Docker hosts. Acquire by profile, run through
+`tools/endpoint/run appliance plan --dry-run --lease LEASE_ID PROFILE -- ...`
+before any live `tools/endpoint/run appliance run --lease LEASE_ID PROFILE -- ...`,
+collect artifacts, and release the lease after the run. Keep real serials,
+interface names, SSIDs, MACs, firmware paths, credentials, public IPs, and
+captures in ignored local state only.
+
+Oracle and probe workflows should use lab-backed appliance execution through
+`lab-session`; use this skill only for one-endpoint appliance runs, debugging,
+artifact collection, or teardown.
 
 ## Endpoint Provider Rules
 
