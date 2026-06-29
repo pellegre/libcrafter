@@ -48,8 +48,10 @@ VM provider prerequisites are documented in `tools/endpoint/README.md`. In short
 QEMU needs `qemu-system-x86_64`, `qemu-img`, `cloud-localds`, and SSH tooling.
 VirtualBox needs `VBoxManage`, `qemu-img`, `cloud-localds`, SSH tooling, and a
 usable bridged interface. Set `LIBCRAFTER_VBOX_BRIDGE_IFACE` to request a
-specific bridge. Docker needs the Docker CLI, a reachable daemon, SSH tooling,
-and permission for the user running `tools/endpoint` to use Docker.
+specific bridge. Libcrafter-created VirtualBox endpoint and appliance VMs are
+assigned to the `/libcrafter/appliances` VirtualBox UI group. Docker needs the
+Docker CLI, a reachable daemon, SSH tooling, and permission for the user
+running `tools/endpoint` to use Docker.
 
 Treat Docker daemon and Docker socket access as host-root equivalent. The
 Docker provider should be invoked from the host through the narrow endpoint
@@ -92,6 +94,33 @@ share one isolated bridge; `--private-ip` is optional and must be inside
 `LIBCRAFTER_DOCKER_PRIVATE_CIDR`. Docker LAN and WAN do not accept private
 group or private IP options because they attach to configured Docker networks
 and discover the container IPv4.
+
+## VirtualBox Grouping
+
+VirtualBox endpoints and appliance VMs created by libcrafter are assigned to the
+fixed VirtualBox UI group `/libcrafter/appliances`. This is only a UI grouping
+operation; it does not change endpoint networking, VM names, power state, or the
+destroy lifecycle metadata.
+
+Existing tracked VirtualBox VMs can be inspected for group normalization without
+mutating VirtualBox state:
+
+```sh
+tools/endpoint/run virtualbox normalize-groups --dry-run --json
+```
+
+Apply the planned group changes only after reviewing the dry-run report:
+
+```sh
+tools/endpoint/run virtualbox normalize-groups --confirm-live-run --json
+```
+
+Normalization uses only libcrafter endpoint manifests and endpoint asset records
+that record `metadata.virtualbox.vm_name`. It does not enumerate all VirtualBox
+VMs, infer ownership from name patterns, or inspect manually created VMs that
+are not recorded by libcrafter. The confirmed command only updates VirtualBox
+group metadata; it does not delete, recreate, stop, start, rename, or change
+networking for VMs.
 
 ## Hetzner Setup
 
@@ -232,9 +261,12 @@ tools/endpoint/run asset register doc-vbox-dot11 \
   --ssh-user appliance \
   --identity-file /home/operator/.ssh/libcrafter_doc_key \
   --known-hosts-file /home/operator/.ssh/libcrafter_doc_known_hosts \
-  --metadata-json '{"appliance":{"profile_environments":{"dot11-monitor":{"LIBCRAFTER_DOT11_IFACE":"dot11mon-doc"}}}}' \
+  --metadata-json '{"virtualbox":{"vm_name":"doc-vbox-dot11"},"appliance":{"profile_environments":{"dot11-monitor":{"LIBCRAFTER_DOT11_IFACE":"dot11mon-doc"}}}}' \
   --json
 ```
+
+VirtualBox persistent assets need `metadata.virtualbox.vm_name` to participate
+in group normalization.
 
 Check, lease, run a dry plan through the lease, and release:
 
