@@ -19,7 +19,10 @@ from collections.abc import Sequence
 from .model import JSONObject, ProbeCase
 
 
-_CASE_NAME_ALIASES = {"mdns-ipv4-browse": "mdns-ipv4-multicast-browse"}
+_CASE_NAME_ALIASES = {
+    "mdns-ipv4-browse": "mdns-ipv4-multicast-browse",
+    "mdns-ipv6-browse": "mdns-ipv6-multicast-browse",
+}
 
 
 def canonical_case_name(name: str) -> str:
