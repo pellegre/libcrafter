@@ -1,0 +1,238 @@
+version: 1
+kind: layer
+name: mdns
+summary: >-
+  Multicast DNS as DNS packet-layer messages over UDP/5353, including
+  multicast query/response packet shapes, mDNS class-bit interpretation,
+  DNS-SD/Bonjour record sets, compression-aware normalization, raw unknown
+  record preservation, and structured malformed-input errors.
+
+roots: []
+parents:
+  - udp
+children: []
+
+supported_parents:
+  - layer: udp
+    source_port: 5353
+    service: mdns
+  - layer: udp
+    destination_port: 5353
+    service: mdns
+unsupported_parents:
+  - tcp
+  - dns_over_tcp
+  - resolver_cache
+live_eligibility: provider_gated
+live_gate: confirm_live_run_provider_lab_only
+live_defaults:
+  default_mode: dry_run
+  allowed_without_confirmation: false
+  developer_host_raw_send: false
+  provider_required: true
+
+fields:
+  - name: transport
+    type: udp_service
+    required: true
+    domains:
+      - udp_5353
+      - unicast_reply_override
+  - name: message_kind
+    type: enum
+    required: true
+    domains:
+      - multicast_query
+      - multicast_response
+      - known_answer_query
+      - probe
+      - announcement
+      - goodbye
+      - dns_sd_browse
+      - dns_sd_resolve
+  - name: transaction_id
+    type: uint16
+    required: true
+    domains:
+      - zero
+      - explicit_override
+  - name: is_response
+    type: bool
+    required: true
+    domains:
+      - false
+      - true
+  - name: questions
+    type: dns_question_list
+    required: true
+    domains:
+      - ptr_local
+      - a_local
+      - aaaa_local
+      - any_probe
+      - qu_question
+      - dns_sd_browse
+      - dns_sd_resolve
+      - dns_sd_subtype
+  - name: answers
+    type: dns_record_list
+    required: false
+    domains:
+      - known_answer
+      - ptr
+      - srv
+      - txt
+      - a
+      - aaaa
+      - cache_flush
+      - goodbye_zero_ttl
+      - raw_unknown
+      - compressed_owner
+  - name: authority
+    type: dns_record_list
+    required: false
+    domains:
+      - probe_tiebreak
+  - name: additional
+    type: dns_record_list
+    required: false
+    domains:
+      - dns_sd_additionals
+      - address_records
+      - raw_unknown
+  - name: class_bits
+    type: flags
+    required: false
+    domains:
+      - base_class
+      - qu
+      - cache_flush
+      - explicit_high_bit_preserved
+  - name: name_encoding
+    type: enum
+    required: false
+    domains:
+      - uncompressed
+      - compressed_normalized
+
+normalized_fields:
+  transport:
+    - udp_source_port
+    - udp_destination_port
+    - service_port
+    - unicast_reply
+  message:
+    header:
+      - transaction_id
+      - is_response
+      - authoritative
+      - opcode
+      - response_code
+      - question_count
+      - answer_count
+      - authority_count
+      - additional_count
+    sections:
+      - questions
+      - answers
+      - authority
+      - additional
+    mdns:
+      - message_kind
+      - udp_5353
+      - multicast_destination
+      - dns_sd_shape
+  question:
+    - name
+    - record_type
+    - raw_question_class
+    - base_question_class
+    - unicast_response_preferred
+  record:
+    - name
+    - record_type
+    - raw_class
+    - base_class
+    - cache_flush
+    - ttl
+    - rdata
+  dns_sd:
+    - service_name
+    - instance_name
+    - subtype_name
+    - target_host
+    - txt_strings
+    - additional_addresses
+  error:
+    - kind
+    - context
+    - required
+    - available
+
+coverage_cases:
+  - mdns-query-udp-5353
+  - mdns-response-udp-5353
+  - mdns-qu-question
+  - mdns-cache-flush-record
+  - mdns-known-answer-query
+  - mdns-goodbye-ttl-zero
+  - mdns-probe-authority
+  - mdns-announcement
+  - mdns-compressed-names
+  - mdns-unknown-record-preservation
+  - mdns-dns-sd-browse
+  - mdns-dns-sd-resolve
+  - mdns-dns-sd-subtype
+  - mdns-bonjour-txt
+  - mdns-bonjour-ptr-srv-txt-addresses
+  - mdns-ipv4-multicast
+  - mdns-ipv6-multicast
+  - mdns-pcap-raw-ipv4
+  - mdns-pcap-ethernet-ipv4
+  - mdns-pcap-ethernet-ipv6
+  - malformed-mdns-truncated-question-fields
+  - malformed-mdns-cache-flush-rdata-overrun
+  - malformed-mdns-compression-loop-record-name
+  - malformed-mdns-ipv6-label-length-overrun
+
+notes:
+  - >-
+    This oracle layer is mDNS context around the existing DNS message model.
+    libcrafter materialization must keep using the public Dns layer inside the
+    Packet abstraction rather than creating a resolver, responder, service
+    registry, or cache.
+  - >-
+    Compressed mDNS names compare by the normalized DNS/mDNS model because
+    libcrafter re-encodes names uncompressed. Strict byte equality is required
+    only for uncompressed deterministic packet shapes.
+  - >-
+    Live exchange remains provider-gated and is not authorized by these specs.
+    Offline and pcap paths use documentation addresses and synthetic local
+    names only.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - DNS
+      - DNSQR
+      - DNSRR
+    notes:
+      - >-
+        Scapy backend materialization is assigned to later steps. These cases
+        are DNS messages carried over UDP/5353 with mDNS-specific normalized
+        metadata.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    pcap_read: true
+    pcap_write: true
+    native_layers:
+      - Dns
+      - Udp
+    notes:
+      - >-
+        The crate already builds, serializes, decodes, summarizes, shows, and
+        round-trips mDNS packet shapes through the existing Dns layer and
+        UDP/5353 dispatch.

@@ -1,0 +1,328 @@
+version: 1
+kind: feature
+name: mdns_core
+summary: >-
+  Core mDNS UDP/5353 query and response packet behavior, including QU,
+  cache-flush, known answers, goodbye TTL zero, probing, announcements,
+  compressed-name normalization, and raw unknown-record preservation.
+
+layers:
+  - udp
+  - mdns
+directions:
+  - backend_to_libcrafter
+  - libcrafter_to_backend
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: query-udp-5353
+    coverage_case: mdns-query-udp-5353
+    message_kind: multicast_query
+    udp:
+      source_port: 5353
+      destination_port: 5353
+    dns:
+      transaction_id: 0
+      is_response: false
+      opcode: query
+      response_code: no_error
+      questions:
+        - name: printer.local.
+          type: A
+          class: IN
+    checks:
+      - udp_service_port_5353
+      - decoded_as_mdns_dns_message
+      - query_id_zero_default_preserved
+  - name: response-udp-5353
+    coverage_case: mdns-response-udp-5353
+    message_kind: multicast_response
+    udp:
+      source_port: 5353
+      destination_port: 5353
+    dns:
+      transaction_id: 0
+      is_response: true
+      authoritative: true
+      answers:
+        - name: printer.local.
+          type: A
+          class: IN
+          ttl: 120
+          address: 192.0.2.55
+    checks:
+      - response_id_zero_preserved
+      - authoritative_response_preserved
+      - response_record_roundtrips
+  - name: qu-question
+    coverage_case: mdns-qu-question
+    message_kind: multicast_query
+    question:
+      name: printer.local.
+      type: A
+      raw_class: 0x8001
+      base_class: IN
+      unicast_response_preferred: true
+    checks:
+      - qu_bit_preserved_in_raw_question_class
+      - base_question_class_masks_high_bit
+  - name: cache-flush-record
+    coverage_case: mdns-cache-flush-record
+    message_kind: multicast_response
+    answer:
+      name: printer.local.
+      type: A
+      raw_class: 0x8001
+      base_class: IN
+      cache_flush: true
+      ttl: 120
+      address: 192.0.2.55
+    checks:
+      - cache_flush_bit_preserved_in_raw_class
+      - base_record_class_masks_high_bit
+  - name: known-answer-query
+    coverage_case: mdns-known-answer-query
+    message_kind: known_answer_query
+    questions:
+      - name: printer.local.
+        type: A
+        class: IN
+    answers:
+      - name: printer.local.
+        type: A
+        class: IN
+        ttl: 120
+        address: 192.0.2.55
+    checks:
+      - query_answer_section_preserved
+      - known_answer_has_no_cache_flush_by_default
+  - name: goodbye-ttl-zero
+    coverage_case: mdns-goodbye-ttl-zero
+    message_kind: goodbye
+    answers:
+      - name: printer.local.
+        type: A
+        class: IN
+        cache_flush: true
+        ttl: 0
+        address: 192.0.2.55
+    checks:
+      - ttl_zero_preserved
+      - goodbye_is_packet_shape_only
+  - name: probe-authority
+    coverage_case: mdns-probe-authority
+    message_kind: probe
+    questions:
+      - name: printer.local.
+        type: ANY
+        raw_class: 0x8001
+    authority:
+      - name: printer.local.
+        type: A
+        class: IN
+        ttl: 120
+        address: 192.0.2.55
+    checks:
+      - probe_question_qu_bit_preserved
+      - probe_tiebreak_records_stay_in_authority_section
+  - name: announcement
+    coverage_case: mdns-announcement
+    message_kind: announcement
+    answers:
+      - name: printer.local.
+        type: A
+        raw_class: 0x8001
+        ttl: 120
+        address: 192.0.2.55
+    checks:
+      - unsolicited_response_shape_preserved
+      - cache_flush_unique_record_preserved
+  - name: compressed-names
+    coverage_case: mdns-compressed-names
+    raw_dns: true
+    comparison:
+      - normalized_names
+    fixture: crafter/tests/fixtures/bytes/ipv4-udp-mdns-compressed-names.hex
+    checks:
+      - compressed_owner_names_decode
+      - reencode_may_be_uncompressed
+      - normalized_dns_message_agrees
+  - name: unknown-record-preservation
+    coverage_case: mdns-unknown-record-preservation
+    message_kind: multicast_response
+    answers:
+      - name: opaque.local.
+        type: 65280
+        class: IN
+        ttl: 120
+        rdata:
+          encoding: hex
+          value: "00010203ff"
+    checks:
+      - unknown_record_type_decodes_as_raw
+      - raw_rdata_bytes_preserved
+
+coverage_cases:
+  - mdns-query-udp-5353
+  - mdns-response-udp-5353
+  - mdns-qu-question
+  - mdns-cache-flush-record
+  - mdns-known-answer-query
+  - mdns-goodbye-ttl-zero
+  - mdns-probe-authority
+  - mdns-announcement
+  - mdns-compressed-names
+  - mdns-unknown-record-preservation
+
+supported_cases:
+  - name: mdns-query-udp-5353
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: mdns-response-udp-5353
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: mdns-qu-question
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: mdns-cache-flush-record
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: mdns-known-answer-query
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: mdns-goodbye-ttl-zero
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: mdns-probe-authority
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: mdns-announcement
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: mdns-compressed-names
+    directions:
+      - backend_to_libcrafter
+    byte_policy: normalized
+  - name: mdns-unknown-record-preservation
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+
+case_groups:
+  - name: mdns-udp-5353-core
+    summary: mDNS DNS messages carried on UDP/5353.
+    byte_policy: strict_bytes
+    cases:
+      - mdns-query-udp-5353
+      - mdns-response-udp-5353
+  - name: mdns-class-bits
+    summary: QU on questions and cache-flush on records preserve raw class bits and masked base classes.
+    byte_policy: strict_bytes
+    cases:
+      - mdns-qu-question
+      - mdns-cache-flush-record
+  - name: mdns-message-shapes
+    summary: Known-answer queries, goodbye TTL zero, probes, and announcements stay packet-level DNS shapes.
+    byte_policy: strict_bytes
+    cases:
+      - mdns-known-answer-query
+      - mdns-goodbye-ttl-zero
+      - mdns-probe-authority
+      - mdns-announcement
+  - name: mdns-compression
+    summary: Compressed mDNS names decode to the same normalized DNS message but may re-encode uncompressed.
+    byte_policy: normalized
+    normalized_note: libcrafter emits uncompressed DNS names on re-encode, so compressed source bytes compare through the normalized mDNS/DNS model.
+    cases:
+      - mdns-compressed-names
+  - name: mdns-raw-preservation
+    summary: Unknown mDNS record types preserve opaque RDATA bytes.
+    byte_policy: strict_bytes
+    cases:
+      - mdns-unknown-record-preservation
+
+normalized_model:
+  udp:
+    - source_port
+    - destination_port
+    - length
+    - checksum
+  message:
+    - transaction_id
+    - is_response
+    - authoritative
+    - questions
+    - answers
+    - authority
+    - additional
+  question:
+    - name
+    - record_type
+    - raw_question_class
+    - base_question_class
+    - unicast_response_preferred
+  record:
+    - name
+    - record_type
+    - raw_class
+    - base_class
+    - cache_flush
+    - ttl
+    - rdata
+  raw_record:
+    - record_type
+    - rdata
+
+source_refs:
+  - RFC 6762
+  - RFC 1035
+  - IANA Service Name and Transport Protocol Port Number Registry
+  - IANA DNS Parameters
+  - .agents/context/mdns-protocol-manifest.md
+  - .agents/context/mdns-public-api.md
+
+notes:
+  - >-
+    These cases are offline packet-shape contracts. Known-answer suppression,
+    probing conflict resolution, announcement scheduling, goodbye cache expiry,
+    and resolver/responder state machines are intentionally out of scope.
+  - >-
+    Query TTL/hop-limit defaults are not asserted here. Response packet helpers
+    may use source-backed TTL/hop-limit 255 in the multicast feature.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - DNS
+      - DNSQR
+      - DNSRR
+    notes:
+      - Scapy mDNS materialization and compression fixtures are added in later steps.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    native_layers:
+      - Dns
+      - Udp
+    notes:
+      - libcrafter uses Dns and UDP/5353 dispatch for mDNS packet construction and decode.

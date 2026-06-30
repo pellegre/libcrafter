@@ -1,0 +1,193 @@
+version: 1
+kind: feature
+name: mdns_pcap
+summary: Classic pcap eligibility for raw IPv4 and Ethernet-framed mDNS UDP/5353 fixtures.
+
+layers:
+  - ethernet
+  - ipv4
+  - ipv6
+  - udp
+  - mdns
+directions:
+  - backend_to_libcrafter
+  - libcrafter_to_backend
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: raw-ipv4-fixture
+    coverage_case: mdns-pcap-raw-ipv4
+    fixture: crafter/tests/fixtures/pcaps/raw-ipv4-udp-mdns-query.pcap
+    file_format: pcap
+    root: "l3:ipv4"
+    link_type: raw
+    expected_stack:
+      - ipv4
+      - udp
+      - mdns
+    checks:
+      - pcap_link_type_raw_preserved
+      - udp_5353_decodes_as_mdns
+      - packet_bytes_preserved
+  - name: ethernet-ipv4-fixture
+    coverage_case: mdns-pcap-ethernet-ipv4
+    fixture: crafter/tests/fixtures/pcaps/ethernet-ipv4-udp-mdns-query.pcap
+    file_format: pcap
+    root: "link:ethernet"
+    link_type: ethernet
+    expected_stack:
+      - ethernet
+      - ipv4
+      - udp
+      - mdns
+    checks:
+      - pcap_link_type_ethernet_preserved
+      - ipv4_multicast_destination_preserved
+      - udp_5353_decodes_as_mdns
+  - name: ethernet-ipv6-fixture
+    coverage_case: mdns-pcap-ethernet-ipv6
+    fixture: crafter/tests/fixtures/pcaps/ethernet-ipv6-udp-mdns-query.pcap
+    file_format: pcap
+    root: "link:ethernet"
+    link_type: ethernet
+    expected_stack:
+      - ethernet
+      - ipv6
+      - udp
+      - mdns
+    checks:
+      - pcap_link_type_ethernet_preserved
+      - ipv6_link_local_multicast_destination_preserved
+      - udp_5353_decodes_as_mdns
+
+coverage_cases:
+  - mdns-pcap-raw-ipv4
+  - mdns-pcap-ethernet-ipv4
+  - mdns-pcap-ethernet-ipv6
+
+supported_cases:
+  - name: mdns-pcap-raw-ipv4
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    file_format: pcap
+    roots:
+      - "l3:ipv4"
+      - "link:raw"
+    byte_policy: strict_bytes
+  - name: mdns-pcap-ethernet-ipv4
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    file_format: pcap
+    roots:
+      - "link:ethernet"
+    byte_policy: strict_bytes
+  - name: mdns-pcap-ethernet-ipv6
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    file_format: pcap
+    roots:
+      - "link:ethernet"
+    byte_policy: strict_bytes
+
+case_groups:
+  - name: mdns-classic-pcap
+    summary: mDNS pcaps are eligible only for strict-byte packet shapes.
+    byte_policy: strict_bytes
+    cases:
+      - mdns-pcap-raw-ipv4
+      - mdns-pcap-ethernet-ipv4
+      - mdns-pcap-ethernet-ipv6
+
+eligibility_matrix:
+  - case: mdns-pcap-raw-ipv4
+    offline: eligible
+    pcap: eligible
+    live: excluded
+    reason: pcap fixture coverage is offline file IO
+  - case: mdns-pcap-ethernet-ipv4
+    offline: eligible
+    pcap: eligible
+    live: excluded
+    reason: pcap fixture coverage is offline file IO
+  - case: mdns-pcap-ethernet-ipv6
+    offline: eligible
+    pcap: eligible
+    live: excluded
+    reason: pcap fixture coverage is offline file IO
+  - case: mdns-compressed-names
+    offline: eligible
+    pcap: excluded
+    live: excluded
+    reason: byte_policy_normalized_not_strict_bytes
+  - case: malformed-mdns-truncated-question-fields
+    offline: excluded
+    pcap: excluded
+    live: excluded
+    reason: byte_policy_structured_error
+
+normalized_model:
+  pcap:
+    - file_format
+    - link_type
+    - packet_count
+    - packet_bytes
+    - timestamp_policy
+  stack:
+    - root
+    - layers
+  mdns:
+    - udp_5353
+    - decoded_model
+    - fixture
+
+source_refs:
+  - RFC 6762
+  - crafter/tests/fixtures/pcaps/raw-ipv4-udp-mdns-query.pcap
+  - crafter/tests/fixtures/pcaps/ethernet-ipv4-udp-mdns-query.pcap
+  - crafter/tests/fixtures/pcaps/ethernet-ipv6-udp-mdns-query.pcap
+
+notes:
+  - >-
+    Pcap eligibility is declared only for strict-byte mDNS packet shapes.
+    Compressed-name normalized-only cases and malformed structured-error cases
+    remain pcap-ineligible by byte policy.
+  - >-
+    The fixtures contain documentation addresses and synthetic names only.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - Ether
+      - IP
+      - IPv6
+      - UDP
+      - DNS
+      - PcapReader
+      - PcapWriter
+    notes:
+      - Scapy pcap mDNS execution is assigned to later backend steps.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    pcap_read: true
+    pcap_write: true
+    native_layers:
+      - Ethernet
+      - Ipv4
+      - Ipv6
+      - Udp
+      - Dns
+      - PcapReader
+      - PcapWriter
+    notes:
+      - libcrafter reads and writes classic pcap mDNS fixtures offline.

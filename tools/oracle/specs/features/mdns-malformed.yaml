@@ -1,0 +1,143 @@
+version: 1
+kind: feature
+name: mdns_malformed
+summary: >-
+  mDNS malformed-input contract for UDP/5353 DNS payloads: truncated question
+  fields, RDATA overruns, compression loops, and label-length overruns surface
+  as structured decode errors rather than byte-comparable packets.
+
+layers:
+  - udp
+  - mdns
+directions:
+  - backend_to_libcrafter
+  - libcrafter_to_backend
+strict_bytes: false
+malformed: true
+
+behaviors:
+  - name: truncated-question-fields
+    coverage_case: malformed-mdns-truncated-question-fields
+    fixture: crafter/tests/fixtures/malformed/mdns-corpus.hex
+    expected_error:
+      context: dns question
+      required: 4
+    checks:
+      - truncated_question_fields_are_structured_error
+      - not_byte_compared
+  - name: cache-flush-rdata-overrun
+    coverage_case: malformed-mdns-cache-flush-rdata-overrun
+    fixture: crafter/tests/fixtures/malformed/mdns-corpus.hex
+    expected_error:
+      context: dns record rdata
+      required: rdlength
+    checks:
+      - rdata_overrun_is_structured_error
+      - cache_flush_high_bit_does_not_mask_truncation
+      - not_byte_compared
+  - name: compression-loop-record-name
+    coverage_case: malformed-mdns-compression-loop-record-name
+    fixture: crafter/tests/fixtures/malformed/mdns-corpus.hex
+    expected_error:
+      context: dns name compression
+      reason: compression pointer loop
+    checks:
+      - compression_loop_is_structured_error
+      - not_byte_compared
+  - name: ipv6-label-length-overrun
+    coverage_case: malformed-mdns-ipv6-label-length-overrun
+    fixture: crafter/tests/fixtures/malformed/mdns-corpus.hex
+    expected_error:
+      context: dns name label
+      required: label_length
+    checks:
+      - label_length_overrun_is_structured_error
+      - ipv6_udp_5353_context_preserved
+      - not_byte_compared
+
+coverage_cases:
+  - malformed-mdns-truncated-question-fields
+  - malformed-mdns-cache-flush-rdata-overrun
+  - malformed-mdns-compression-loop-record-name
+  - malformed-mdns-ipv6-label-length-overrun
+
+supported_cases:
+  - name: malformed-mdns-truncated-question-fields
+    directions:
+      - backend_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-mdns-cache-flush-rdata-overrun
+    directions:
+      - backend_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-mdns-compression-loop-record-name
+    directions:
+      - backend_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-mdns-ipv6-label-length-overrun
+    directions:
+      - backend_to_libcrafter
+    byte_policy: structured_error
+
+case_groups:
+  - name: mdns-malformed-structured-errors
+    summary: Malformed mDNS fixtures are structured errors, not byte-equivalence cases.
+    byte_policy: structured_error
+    cases:
+      - malformed-mdns-truncated-question-fields
+      - malformed-mdns-cache-flush-rdata-overrun
+      - malformed-mdns-compression-loop-record-name
+      - malformed-mdns-ipv6-label-length-overrun
+
+normalized_model:
+  error:
+    - kind
+    - context
+    - field
+    - required
+    - available
+    - reason
+  transport:
+    - udp_source_port
+    - udp_destination_port
+    - mdns_context
+  payload:
+    - fixture
+    - payload_length
+    - not_byte_compared
+
+source_refs:
+  - RFC 6762
+  - RFC 1035
+  - crafter/tests/fixtures/malformed/mdns-corpus.hex
+  - crafter/tests/resilience.rs
+
+notes:
+  - >-
+    These cases deliberately do not have valid byte-comparable mDNS messages.
+    Oracle adapters must report structured decode-error coverage and must not
+    require strict byte round trips or semantic packet normalization.
+  - >-
+    Unknown but structurally valid mDNS records are covered by
+    mdns-unknown-record-preservation in mdns_core, not by this malformed
+    feature.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - UDP
+      - Raw
+    notes:
+      - >-
+        Malformed mDNS payloads may be carried as UDP Raw bytes for fixture
+        emission, but they are excluded from byte-equivalence sampling by
+        byte_policy: structured_error.
+  libcrafter:
+    status: supported
+    decode: true
+    native_layers:
+      - Udp
+      - Dns
+    notes:
+      - libcrafter returns structured DNS decode errors for malformed UDP/5353 payloads.
