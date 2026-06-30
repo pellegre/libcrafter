@@ -7,6 +7,7 @@ use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
+use crate::protocols::transport::Udp;
 
 mod constants;
 mod dns_sd;
@@ -441,7 +442,7 @@ macro_rules! impl_layer_div {
 }
 
 /// DNS message layer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Dns {
     id: Field<u16>,
     flags: Field<u16>,
@@ -449,7 +450,21 @@ pub struct Dns {
     answers: Vec<DnsRecord>,
     authorities: Vec<DnsRecord>,
     additionals: Vec<DnsRecord>,
+    multicast_dns: bool,
 }
+
+impl PartialEq for Dns {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.flags == other.flags
+            && self.questions == other.questions
+            && self.answers == other.answers
+            && self.authorities == other.authorities
+            && self.additionals == other.additionals
+    }
+}
+
+impl Eq for Dns {}
 
 impl Dns {
     /// Create an empty DNS query with recursion desired enabled.
@@ -461,6 +476,7 @@ impl Dns {
             answers: Vec::new(),
             authorities: Vec::new(),
             additionals: Vec::new(),
+            multicast_dns: false,
         }
     }
 
@@ -472,6 +488,7 @@ impl Dns {
             answers: Vec::new(),
             authorities: Vec::new(),
             additionals: Vec::new(),
+            multicast_dns: true,
         }
     }
 
@@ -775,6 +792,78 @@ impl Dns {
         self
     }
 
+    fn with_mdns_context(mut self) -> Self {
+        self.multicast_dns = true;
+        self
+    }
+
+    fn has_mdns_class_bits(&self) -> bool {
+        self.questions
+            .iter()
+            .any(DnsQuestion::mdns_unicast_response_preferred_value)
+            || dns_records(self).any(DnsRecord::mdns_cache_flush_value)
+    }
+
+    fn should_show_mdns(&self) -> bool {
+        self.multicast_dns || self.has_mdns_class_bits()
+    }
+
+    fn mdns_summary(&self) -> String {
+        let direction = if self.is_response() {
+            "response"
+        } else {
+            "query"
+        };
+        let question = self.questions.first();
+        let record = if self.is_response() {
+            first_dns_record(self)
+        } else {
+            None
+        };
+        let focus = record
+            .map(|record| format!(" {}", record_summary(record)))
+            .or_else(|| question.map(|question| format!(" {}", question_summary(question))))
+            .unwrap_or_default();
+
+        let mut details = format!(
+            "mDNS(id=0x{:04x}, flags=0x{:04x}, {direction}{focus}",
+            self.id_value(),
+            self.flags_value()
+        );
+        if let Some(question) = question {
+            details.push_str(&format!(
+                ", unicast_response={}",
+                question.mdns_unicast_response_preferred_value()
+            ));
+        }
+        if let Some(record) = record {
+            details.push_str(&format!(
+                ", cache_flush={}",
+                record.mdns_cache_flush_value()
+            ));
+        }
+        if !self.questions.is_empty() {
+            details.push_str(&format!(
+                ", unicast_response_questions={}",
+                mdns_unicast_response_question_count(self)
+            ));
+        }
+        if dns_records(self).next().is_some() {
+            details.push_str(&format!(
+                ", cache_flush_records={}",
+                mdns_cache_flush_record_count(self)
+            ));
+        }
+        details.push_str(&format!(
+            ", questions={}, answers={}, authorities={}, additionals={})",
+            self.questions.len(),
+            self.answers.len(),
+            self.authorities.len(),
+            self.additionals.len()
+        ));
+        details
+    }
+
     fn encoded_message_len(&self) -> usize {
         DNS_HEADER_LEN
             + self
@@ -840,6 +929,10 @@ impl Layer for Dns {
     }
 
     fn summary(&self) -> String {
+        if self.should_show_mdns() {
+            return self.mdns_summary();
+        }
+
         let direction = if self.is_response() {
             "response"
         } else {
@@ -865,14 +958,48 @@ impl Layer for Dns {
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
-        vec![
+        let mut fields = vec![
             ("id", format!("0x{:04x}", self.id_value())),
             ("flags", format!("0x{:04x}", self.flags_value())),
             ("qdcount", self.questions.len().to_string()),
             ("ancount", self.answers.len().to_string()),
             ("nscount", self.authorities.len().to_string()),
             ("arcount", self.additionals.len().to_string()),
-        ]
+        ];
+
+        if self.should_show_mdns() {
+            fields.push(("mDNS", "true".to_string()));
+            fields.push((
+                "mDNS_shape",
+                if self.is_response() {
+                    "response".to_string()
+                } else {
+                    "query".to_string()
+                },
+            ));
+            if let Some(question) = self.questions.first() {
+                fields.push(("first_question", question_inspection_summary(question)));
+            }
+            if let Some(answer) = self.answers.first() {
+                fields.push(("first_answer", record_inspection_summary(answer)));
+            } else if let Some(record) = first_dns_record(self) {
+                fields.push(("first_record", record_inspection_summary(record)));
+            }
+            fields.push((
+                "unicast_response_questions",
+                mdns_unicast_response_question_count(self).to_string(),
+            ));
+            fields.push((
+                "cache_flush_records",
+                mdns_cache_flush_record_count(self).to_string(),
+            ));
+            let dns_sd_names = dns_sd_names_summary(self);
+            if !dns_sd_names.is_empty() {
+                fields.push(("dns_sd_names", dns_sd_names));
+            }
+        }
+
+        fields
     }
 
     fn encoded_len(&self) -> usize {
@@ -890,7 +1017,13 @@ impl_layer_div!(Dns);
 
 /// Append a decoded DNS message to an existing packet stack.
 pub(crate) fn append_dns_packet(packet: Packet, bytes: &[u8]) -> Result<Packet> {
-    Ok(packet.push(decode_dns(bytes)?))
+    let dns = decode_dns(bytes)?;
+    let dns = if packet_has_mdns_transport(&packet) {
+        dns.with_mdns_context()
+    } else {
+        dns
+    };
+    Ok(packet.push(dns))
 }
 
 fn decode_dns(bytes: &[u8]) -> Result<Dns> {
@@ -948,6 +1081,7 @@ fn decode_dns(bytes: &[u8]) -> Result<Dns> {
         answers,
         authorities,
         additionals,
+        multicast_dns: false,
     })
 }
 
@@ -1031,6 +1165,122 @@ fn record_type_summary(record_type: u16) -> String {
     }
 }
 
+fn packet_has_mdns_transport(packet: &Packet) -> bool {
+    packet.layer::<Udp>().is_some_and(|udp| {
+        udp.source_port_value() == MDNS_PORT || udp.destination_port_value() == MDNS_PORT
+    })
+}
+
+fn dns_records(dns: &Dns) -> impl Iterator<Item = &DnsRecord> {
+    dns.answers
+        .iter()
+        .chain(dns.authorities.iter())
+        .chain(dns.additionals.iter())
+}
+
+fn first_dns_record(dns: &Dns) -> Option<&DnsRecord> {
+    dns_records(dns).next()
+}
+
+fn mdns_unicast_response_question_count(dns: &Dns) -> usize {
+    dns.questions
+        .iter()
+        .filter(|question| question.mdns_unicast_response_preferred_value())
+        .count()
+}
+
+fn mdns_cache_flush_record_count(dns: &Dns) -> usize {
+    dns_records(dns)
+        .filter(|record| record.mdns_cache_flush_value())
+        .count()
+}
+
+fn question_summary(question: &DnsQuestion) -> String {
+    format!(
+        "{} {}",
+        question.name(),
+        record_type_summary(question.question_type())
+    )
+}
+
+fn question_inspection_summary(question: &DnsQuestion) -> String {
+    format!(
+        "{} class=0x{:04x} base_class=0x{:04x} unicast_response={}",
+        question_summary(question),
+        question.question_class(),
+        question.mdns_base_question_class(),
+        question.mdns_unicast_response_preferred_value()
+    )
+}
+
+fn record_summary(record: &DnsRecord) -> String {
+    format!(
+        "{} {}{}",
+        record.name(),
+        record_type_summary(record.record_type()),
+        record_data_summary(record.data())
+    )
+}
+
+fn record_inspection_summary(record: &DnsRecord) -> String {
+    format!(
+        "{} class=0x{:04x} base_class=0x{:04x} ttl={} cache_flush={}",
+        record_summary(record),
+        record.class(),
+        record.mdns_base_class(),
+        record.ttl(),
+        record.mdns_cache_flush_value()
+    )
+}
+
+fn record_data_summary(data: &DnsRecordData) -> String {
+    match data {
+        DnsRecordData::A(address) => format!(" -> {address}"),
+        DnsRecordData::Aaaa(address) => format!(" -> {address}"),
+        DnsRecordData::Name(name) => format!(" -> {}", name.presentation()),
+        DnsRecordData::Srv { target, port, .. } => {
+            format!(" -> {}:{port}", target.presentation())
+        }
+        DnsRecordData::Txt(strings) => format!(" strings={}", strings.len()),
+        DnsRecordData::Raw(bytes) => format!(" raw_len={}", bytes.len()),
+        _ => String::new(),
+    }
+}
+
+fn dns_sd_names_summary(dns: &Dns) -> String {
+    let mut names = Vec::new();
+    for question in &dns.questions {
+        push_dns_sd_name(&mut names, question.dns_name());
+    }
+    for record in dns_records(dns) {
+        push_record_dns_sd_names(&mut names, record);
+    }
+    names.join(", ")
+}
+
+fn push_record_dns_sd_names(names: &mut Vec<String>, record: &DnsRecord) {
+    push_dns_sd_name(names, record.dns_name());
+    match record.data() {
+        DnsRecordData::Name(name) => push_dns_sd_name(names, name),
+        DnsRecordData::Srv { target, .. } => push_dns_sd_name(names, target),
+        _ => {}
+    }
+}
+
+fn push_dns_sd_name(names: &mut Vec<String>, name: &DnsName) {
+    let presentation = name.presentation();
+    if !is_dns_sd_service_name(presentation) {
+        return;
+    }
+    if !names.iter().any(|existing| existing == presentation) {
+        names.push(presentation.to_string());
+    }
+}
+
+fn is_dns_sd_service_name(name: &str) -> bool {
+    name.starts_with('_') || name.contains("._")
+}
+
 /// Return the IANA registry mnemonic for a source-backed DNS RR TYPE, or
 /// `None` when the value is unknown to this crate so callers can fall back to
 /// a numeric `TYPE<n>` form.
@@ -1057,6 +1307,96 @@ pub fn dns_type_name(record_type: u16) -> Option<&'static str> {
         DNS_TYPE_HTTPS => "HTTPS",
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod mdns_summary_show_tests {
+    use core::net::Ipv4Addr;
+
+    use crate::{NetworkLayer, Packet};
+
+    use super::{mdns, Dns, DnsQuestion, DNS_SD_DEFAULT_DOMAIN, DNS_TYPE_A, DNS_TYPE_PTR};
+
+    #[test]
+    fn mdns_summary_show_query_exposes_shape_and_unicast_response() -> crate::Result<()> {
+        let service_type = mdns::dns_sd_tcp_service_name("ipp", DNS_SD_DEFAULT_DOMAIN)?;
+        let dns = mdns::query(DnsQuestion::new(service_type.clone(), DNS_TYPE_PTR).mdns_qu(true));
+        let packet = mdns::mdns_ipv4_packet(Ipv4Addr::new(192, 0, 2, 10), dns);
+
+        let summary = packet.summary();
+        assert!(summary.contains("mDNS(id=0x0000, flags=0x0000, query _ipp._tcp.local. PTR"));
+        assert!(summary.contains("unicast_response=true"));
+        assert!(summary.contains("answers=0"));
+
+        let show = packet.show();
+        assert!(show.contains("id: 0x0000"));
+        assert!(show.contains("flags: 0x0000"));
+        assert!(show.contains("mDNS: true"));
+        assert!(show.contains("mDNS_shape: query"));
+        assert!(show.contains(
+            "first_question: _ipp._tcp.local. PTR class=0x8001 base_class=0x0001 unicast_response=true"
+        ));
+        assert!(show.contains("dns_sd_names: _ipp._tcp.local."));
+        Ok(())
+    }
+
+    #[test]
+    fn mdns_summary_show_response_exposes_cache_flush_and_service_names() -> crate::Result<()> {
+        let service_type = mdns::dns_sd_tcp_service_name("ipp", DNS_SD_DEFAULT_DOMAIN)?;
+        let service_instance =
+            mdns::dns_sd_tcp_instance_name("Office\\032Printer", "ipp", DNS_SD_DEFAULT_DOMAIN)?;
+        let answer =
+            mdns::service_ptr(service_type, service_instance.clone(), 4500).mdns_cache_flush(true);
+        let dns = mdns::response_with_answers([answer]);
+        let packet = mdns::mdns_ipv4_packet(Ipv4Addr::new(192, 0, 2, 20), dns);
+
+        let summary = packet.summary();
+        assert!(summary.contains("mDNS(id=0x0000, flags=0x8400, response _ipp._tcp.local. PTR"));
+        assert!(summary.contains("Office\\032Printer._ipp._tcp.local."));
+        assert!(summary.contains("cache_flush=true"));
+        assert!(summary.contains("answers=1"));
+
+        let show = packet.show();
+        assert!(show.contains("mDNS_shape: response"));
+        assert!(show.contains("first_answer: _ipp._tcp.local. PTR"));
+        assert!(show.contains("cache_flush=true"));
+        assert!(show.contains("cache_flush_records: 1"));
+        assert!(
+            show.contains("dns_sd_names: _ipp._tcp.local., Office\\032Printer._ipp._tcp.local.")
+        );
+        assert!(show.contains("flags: 0x8400"));
+        assert_eq!(
+            service_instance.presentation(),
+            "Office\\032Printer._ipp._tcp.local."
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn mdns_summary_show_decoded_udp_5353_keeps_context() -> crate::Result<()> {
+        let packet = mdns::mdns_ipv4_packet(
+            Ipv4Addr::new(192, 0, 2, 30),
+            mdns::query_for("printer.local.", DNS_TYPE_A),
+        );
+        let bytes = packet.compile()?;
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+
+        assert_eq!(decoded.compile()?, bytes);
+        assert!(decoded.summary().contains("mDNS(id=0x0000"));
+        assert!(decoded.show().contains("mDNS: true"));
+        assert!(decoded.show().contains("mDNS_shape: query"));
+        Ok(())
+    }
+
+    #[test]
+    fn mdns_summary_show_standard_dns_summary_stays_dns() {
+        let packet = Dns::a_query("example.com.").id(0x1234);
+
+        assert_eq!(
+            Packet::from_layer(packet).summary(),
+            "Dns(id=0x1234, query example.com. A, answers=0)"
+        );
+    }
 }
 
 #[cfg(test)]
