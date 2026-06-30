@@ -1364,6 +1364,8 @@ def mdns_failure_reasons(case_name: str) -> list[str] | None:
 
 
 def mdns_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, object]:
+    dry_run = substrate.get("dry_run") is True
+    offline_plan = dry_run and capability(substrate, "mdns_offline_plan")
     ipv4_unicast = capability(substrate, "ipv4_unicast", "ipv4")
     ipv6_unicast = capability(substrate, "ipv6_unicast", "ipv6")
     controlled_services = capability(
@@ -1385,7 +1387,7 @@ def mdns_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, ob
         "target_interface_known",
         "provider_interface_known",
     )
-    ipv4_multicast = (
+    ipv4_multicast = offline_plan or (
         ipv4_unicast
         and link_layer_send
         and link_layer_capture
@@ -1397,7 +1399,7 @@ def mdns_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, ob
             "multicast_send",
         )
     )
-    ipv6_multicast = (
+    ipv6_multicast = offline_plan or (
         ipv6_unicast
         and link_layer_send
         and link_layer_capture
@@ -1410,15 +1412,18 @@ def mdns_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, ob
         )
     )
     return {
-        "mdns_controlled_responder": controlled_responder,
+        "mdns_controlled_responder": offline_plan or controlled_responder,
         "mdns_unicast_response": (
-            ipv4_unicast
-            and controlled_responder
-            and capability_default_true(substrate, "mdns_unicast_response")
+            offline_plan
+            or (
+                ipv4_unicast
+                and controlled_responder
+                and capability_default_true(substrate, "mdns_unicast_response")
+            )
         ),
         "mdns_ipv4_multicast": ipv4_multicast,
         "mdns_ipv6_multicast": ipv6_multicast,
-        "mdns_ipv6_link_local_scope": (
+        "mdns_ipv6_link_local_scope": offline_plan or (
             ipv6_multicast and provider_mac and interface_metadata
         ),
     }
