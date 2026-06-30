@@ -240,6 +240,7 @@ _SUPPORTED_FEATURES = {
     "mdns_core",
     "mdns_dns_sd",
     "mdns_malformed",
+    "mdns_multicast",
     "mdns_pcap",
     "quic_behavior",
     "mqtt_connect",

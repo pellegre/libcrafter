@@ -33,6 +33,7 @@ from .providers.policy import (
 CORPUS_SCHEMA_VERSION = 1
 CORPUS_MODE = "corpus"
 SKIP_BACKEND_UNSUPPORTED = "backend_unsupported"
+SKIP_OFFLINE_PCAP_FILE_FIXTURE = "offline_pcap_file_fixture"
 SKIP_PCAP_LINK_TYPE_UNAVAILABLE = "pcap_link_type_unavailable"
 SKIP_PCAP_NORMALIZED_ONLY = "pcap_normalized_only"
 SKIP_PCAP_STRUCTURED_ERROR = "pcap_structured_error"
@@ -527,6 +528,9 @@ def _offline_eligibility(plan: PacketPlan, backend: str) -> CorpusEligibility:
     required = ("encode", "decode")
     missing = _missing_backend_capabilities(backend, required)
     reasons = [SKIP_BACKEND_UNSUPPORTED] if missing else []
+    file_format = _plan_file_format(plan)
+    if file_format == "pcap":
+        reasons.append(SKIP_OFFLINE_PCAP_FILE_FIXTURE)
     return CorpusEligibility(
         eligible=not reasons,
         reason=_first_reason(reasons),
@@ -540,8 +544,18 @@ def _offline_eligibility(plan: PacketPlan, backend: str) -> CorpusEligibility:
             "family": plan.family,
             "case": plan.case,
             "feature_tags": list(plan.feature_tags),
+            "file_format": file_format,
         },
     )
+
+
+def _plan_file_format(plan: PacketPlan) -> str | None:
+    for fields in plan.fields.values():
+        if isinstance(fields, Mapping):
+            value = fields.get("file_format")
+            if isinstance(value, str):
+                return value
+    return None
 
 
 def _pcap_eligibility(
