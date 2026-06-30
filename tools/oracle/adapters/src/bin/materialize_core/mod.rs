@@ -16,6 +16,7 @@ use crafter::protocols::bgp::{
     CAP_ENHANCED_ROUTE_REFRESH, CAP_FOUR_OCTET_AS, CAP_GRACEFUL_RESTART, CAP_MULTIPROTOCOL,
     CAP_ROUTE_REFRESH, CAP_ROUTE_REFRESH_OLD, SAFI_MULTICAST, SAFI_UNICAST,
 };
+use crafter::protocols::dns::mdns;
 use crafter::protocols::igmp::{IgmpExtension, IGMP_ALL_ROUTERS_GROUP, IGMP_ALL_SYSTEMS_GROUP};
 use crafter::protocols::link::{RadiotapChannel, RadiotapFlags, RadiotapRxFlags, RadiotapTxFlags};
 use crafter::protocols::mqtt::{
@@ -34,8 +35,8 @@ use std::env;
 use std::error::Error;
 use std::fs;
 use std::io::{self, Read};
-use std::net::{Ipv4Addr, Ipv6Addr};
-use std::path::PathBuf;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::path::{Component, PathBuf};
 use std::str::FromStr;
 
 pub type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
@@ -191,6 +192,7 @@ pub fn build_packet(plan: &Value) -> ExampleResult<Packet> {
     let mut saw_udp_options_layer = false;
 
     let canonical_stack: Vec<String> = stack.iter().map(|layer| canonical_layer(layer)).collect();
+    let has_mdns = canonical_stack.iter().any(|layer| layer == "mdns");
     for (index, layer) in canonical_stack.iter().enumerate() {
         let layer = layer.as_str();
         if layer == "rsn" {
@@ -214,6 +216,14 @@ pub fn build_packet(plan: &Value) -> ExampleResult<Packet> {
         } else if layer == "ipv6" && matches!(next_layer, Some("esp" | "ah")) {
             let proto = ipsec_protocol_for_next(next_layer);
             Box::new(ipv6_layer(plan)?.nh(proto))
+        } else if has_mdns && layer == "ethernet" {
+            Box::new(mdns_ethernet_layer(plan, &canonical_stack)?)
+        } else if has_mdns && layer == "ipv4" {
+            Box::new(mdns_ipv4_layer(plan)?)
+        } else if has_mdns && layer == "ipv6" {
+            Box::new(mdns_ipv6_layer(plan)?)
+        } else if layer == "udp" && matches!(next_layer, Some("mdns")) {
+            Box::new(mdns_udp_layer(plan)?)
         } else if layer == "tcp" {
             Box::new(tcp_layer(plan, next_layer)?)
         } else {
@@ -262,6 +272,7 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "igmp_report" => Ok(Box::new(igmp_report_layer(plan)?)),
         "igmp_extension" => Ok(Box::new(igmp_extension_layer(plan)?)),
         "dns" => Ok(Box::new(dns_layer(plan)?)),
+        "mdns" => mdns_payload_layer(plan),
         "dhcpv4" => Ok(Box::new(dhcpv4_layer(plan)?)),
         "dhcpv6" => Ok(Box::new(dhcpv6_layer(plan)?)),
         "snmp" => Ok(Box::new(snmp_layer(plan)?)),
@@ -1415,6 +1426,162 @@ fn udp_layer(plan: &Value) -> ExampleResult<Udp> {
         layer = layer.len(u16_value(value)?);
     }
     Ok(layer)
+}
+
+fn mdns_default_ipv4_source() -> Ipv4Addr {
+    Ipv4Addr::new(192, 0, 2, 10)
+}
+
+fn mdns_default_ipv6_source() -> Ipv6Addr {
+    Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0010)
+}
+
+fn mdns_default_source_mac() -> MacAddr {
+    MacAddr::from([0x00, 0x00, 0x5e, 0x00, 0x53, 0x01])
+}
+
+fn mdns_ethernet_layer(plan: &Value, stack: &[String]) -> ExampleResult<Ethernet> {
+    let fields = optional_layer_fields_any(plan, "ethernet", &[])?;
+    let mdns_ipv6 = stack.iter().any(|layer| layer == "ipv6");
+    let source = fields
+        .and_then(|fields| optional(fields, &["src"]))
+        .map(mac_addr_value)
+        .transpose()?
+        .unwrap_or_else(mdns_default_source_mac);
+    let mut layer = if mdns_ipv6 {
+        mdns::ethernet_ipv6_multicast(source)
+    } else {
+        mdns::ethernet_ipv4_multicast(source)
+    };
+
+    if let Some(fields) = fields {
+        if let Some(value) = optional(fields, &["dst"]) {
+            layer = layer.dst(mac_addr_value(value)?);
+        }
+        if let Some(value) = optional(fields, &["ethertype", "type"]) {
+            layer = layer.ethertype(ethertype_value(value)?);
+        }
+    }
+    Ok(layer)
+}
+
+fn mdns_ipv4_layer(plan: &Value) -> ExampleResult<Ipv4> {
+    let fields = optional_layer_fields_any(plan, "ipv4", &["ip"])?;
+    let source = fields
+        .and_then(|fields| optional(fields, &["src"]))
+        .map(ipv4_text)
+        .transpose()?
+        .unwrap_or_else(mdns_default_ipv4_source);
+    let mut layer = mdns::ipv4_multicast(source)
+        .id(0)
+        .flags(0)
+        .protocol(IPPROTO_UDP);
+
+    if let Some(fields) = fields {
+        if let Some(value) = optional(fields, &["dst"]) {
+            layer = layer.dst(ipv4_text(value)?);
+        }
+        if let Some(value) = optional(fields, &["identification", "id"]) {
+            layer = layer.id(u16_value(value)?);
+        }
+        if let Some(value) = optional(fields, &["ttl"]) {
+            layer = layer.ttl(u8_value(value)?);
+        }
+        if let Some(value) = optional(fields, &["flags"]) {
+            layer = layer.flags(ipv4_flags(value)?);
+        }
+        if let Some(value) = optional(fields, &["protocol", "proto"]) {
+            layer = layer.protocol(ip_protocol(value)?);
+        }
+        if let Some(value) = optional(fields, &["ds_field", "tos"]) {
+            layer = layer.tos(u8_value(value)?);
+        }
+        if let Some(value) = optional(fields, &["fragment_offset", "frag"]) {
+            layer = layer.frag(u16_value(value)?);
+        }
+        if let Some(value) = optional(fields, &["length", "len", "total_length"]) {
+            layer = layer.len(u16_value(value)?);
+        }
+        if let Some(value) = optional(fields, &["checksum", "chksum"]) {
+            layer = layer.chksum(u16_value(value)?);
+        }
+        if let Some(value) = optional(fields, &["options"]) {
+            layer = layer.options(option_bytes(value)?);
+        }
+    }
+    Ok(layer)
+}
+
+fn mdns_ipv6_layer(plan: &Value) -> ExampleResult<Ipv6> {
+    let fields = optional_layer_fields_any(plan, "ipv6", &[])?;
+    let source = fields
+        .and_then(|fields| optional(fields, &["src"]))
+        .map(ipv6_text)
+        .transpose()?
+        .unwrap_or_else(mdns_default_ipv6_source);
+    let mut layer = mdns::ipv6_multicast(source).nh(IPPROTO_UDP);
+
+    if let Some(fields) = fields {
+        if let Some(value) = optional(fields, &["dst"]) {
+            layer = layer.dst(ipv6_text(value)?);
+        }
+        if let Some(value) = optional(fields, &["hop_limit", "hlim"]) {
+            layer = layer.hlim(u8_value(value)?);
+        }
+        if let Some(value) = optional(fields, &["next_header", "nh"]) {
+            layer = layer.nh(ipv6_next_header(value)?);
+        }
+        if let Some(value) = optional(fields, &["traffic_class", "tc"]) {
+            layer = layer.tc(u8_value(value)?);
+        }
+        if let Some(value) = optional(fields, &["flow_label", "fl"]) {
+            layer = layer.fl(u32_value(value)?);
+        }
+        if let Some(value) = optional(fields, &["payload_length", "plen"]) {
+            layer = layer.plen(u16_value(value)?);
+        }
+    }
+    Ok(layer)
+}
+
+fn mdns_udp_layer(plan: &Value) -> ExampleResult<Udp> {
+    let udp_fields = optional_layer_fields_any(plan, "udp", &[])?;
+    let mdns_fields = optional_layer_fields_any(plan, "mdns", &[])?;
+    let mut layer = mdns::udp();
+
+    if let Some(value) = udp_fields
+        .and_then(|fields| optional(fields, &["src_port", "sport"]))
+        .or_else(|| mdns_transport_field(mdns_fields, &["udp_source_port", "source_port"]))
+    {
+        layer = layer.sport(u16_value(value)?);
+    }
+    if let Some(value) = udp_fields
+        .and_then(|fields| optional(fields, &["dst_port", "dport"]))
+        .or_else(|| {
+            mdns_transport_field(mdns_fields, &["udp_destination_port", "destination_port"])
+        })
+    {
+        layer = layer.dport(u16_value(value)?);
+    }
+    if let Some(fields) = udp_fields {
+        if let Some(value) = optional(fields, &["checksum", "chksum"]) {
+            layer = layer.chksum(u16_value(value)?);
+        }
+        if let Some(value) = optional(fields, &["length", "len"]) {
+            layer = layer.len(u16_value(value)?);
+        }
+    }
+    Ok(layer)
+}
+
+fn mdns_transport_field<'a>(
+    fields: Option<&'a Map<String, Value>>,
+    names: &[&str],
+) -> Option<&'a Value> {
+    fields
+        .and_then(|fields| optional(fields, &["transport"]))
+        .and_then(Value::as_object)
+        .and_then(|transport| optional(transport, names))
 }
 
 fn udp_options_layer(plan: &Value) -> ExampleResult<UdpOptions> {
@@ -3348,6 +3515,850 @@ fn igmp_bytes_value(value: &Value) -> ExampleResult<Vec<u8>> {
     option_bytes(value)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MdnsQuestionRole {
+    Ordinary,
+    Probe,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MdnsRecordRole {
+    Ordinary,
+    Announcement,
+    Goodbye,
+}
+
+struct MdnsQuestionPlan {
+    question: DnsQuestion,
+    explicit_raw_class: bool,
+    explicit_qu: bool,
+}
+
+struct MdnsRecordPlan {
+    record: DnsRecord,
+    explicit_raw_class: bool,
+    explicit_cache_flush: bool,
+    explicit_ttl: bool,
+}
+
+fn mdns_payload_layer(plan: &Value) -> ExampleResult<Box<dyn Layer>> {
+    let fields = layer_fields(plan, "mdns")?;
+    if let Some(payload) = mdns_raw_payload(plan, fields)? {
+        return Ok(Box::new(Raw::from_bytes(payload)));
+    }
+    Ok(Box::new(mdns_dns_layer(fields)?))
+}
+
+fn mdns_dns_layer(fields: &Map<String, Value>) -> ExampleResult<Dns> {
+    let message_kind = text_optional(fields, &["message_kind"]).unwrap_or("multicast_query");
+    let default_response = optional(fields, &["is_response"])
+        .map(bool_value)
+        .transpose()?
+        .unwrap_or_else(|| {
+            matches!(
+                message_kind,
+                "multicast_response" | "announcement" | "goodbye"
+            )
+        });
+    let question_role = if message_kind == "probe" {
+        MdnsQuestionRole::Probe
+    } else {
+        MdnsQuestionRole::Ordinary
+    };
+    let answer_role = match message_kind {
+        "announcement" => MdnsRecordRole::Announcement,
+        "goodbye" => MdnsRecordRole::Goodbye,
+        _ => MdnsRecordRole::Ordinary,
+    };
+    let additional_role = if message_kind == "announcement" {
+        MdnsRecordRole::Announcement
+    } else {
+        MdnsRecordRole::Ordinary
+    };
+
+    let questions = mdns_questions(optional(fields, &["questions"]), question_role)?;
+    let answers = mdns_records(optional(fields, &["answers"]), answer_role)?;
+    let authorities = mdns_records(
+        optional(fields, &["authority", "authorities"]),
+        MdnsRecordRole::Ordinary,
+    )?;
+    let additionals = mdns_records(
+        optional(fields, &["additional", "additionals"]),
+        additional_role,
+    )?;
+
+    let mut layer;
+    let mut first_question_consumed = false;
+    if default_response {
+        layer = mdns::response();
+    } else if let Some(first) = questions.first() {
+        layer = mdns::query(first.question.clone());
+        first_question_consumed = true;
+    } else {
+        layer = Dns::new().id(0).flags(0);
+    }
+
+    let first_question_index = if first_question_consumed { 1 } else { 0 };
+    for question in questions.iter().skip(first_question_index) {
+        layer = layer.question(question.question.clone());
+    }
+    for answer in answers {
+        layer = if message_kind == "known_answer_query" {
+            layer.mdns_known_answer(answer.record)
+        } else {
+            layer.answer(answer.record)
+        };
+    }
+    for authority in authorities {
+        layer = layer.authority(authority.record);
+    }
+    for additional in additionals {
+        layer = layer.mdns_additional_record(additional.record);
+    }
+
+    apply_mdns_header_fields(layer, fields, default_response)
+}
+
+fn apply_mdns_header_fields(
+    mut layer: Dns,
+    fields: &Map<String, Value>,
+    default_response: bool,
+) -> ExampleResult<Dns> {
+    let transaction_id = optional(fields, &["transaction_id", "id"])
+        .map(u16_value)
+        .transpose()?
+        .unwrap_or(0);
+    layer = layer.id(transaction_id);
+
+    if let Some(flags) = optional(fields, &["flags"]) {
+        if mdns_flags_are_raw(flags) {
+            return Ok(layer.flags(u16_value(flags)?));
+        }
+        layer = layer.flags(mdns_flags_word(fields, default_response)?);
+    } else {
+        if let Some(value) = optional(fields, &["is_response"]) {
+            layer = layer.response(bool_value(value)?);
+        }
+        if let Some(value) = optional(fields, &["authoritative"]) {
+            layer = layer.authoritative(bool_value(value)?);
+        }
+    }
+
+    if let Some(value) = optional(fields, &["opcode"]) {
+        layer = layer.opcode(dns_opcode(value)?);
+    }
+    if let Some(value) = optional(fields, &["response_code"]) {
+        layer = layer.rcode(dns_response_code(value)?);
+    }
+    Ok(layer)
+}
+
+fn mdns_questions(
+    value: Option<&Value>,
+    role: MdnsQuestionRole,
+) -> ExampleResult<Vec<MdnsQuestionPlan>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let mut questions = Vec::new();
+    for question in array_values(value)? {
+        questions.push(mdns_question(question, role)?);
+    }
+    Ok(questions)
+}
+
+fn mdns_question(question: &Value, role: MdnsQuestionRole) -> ExampleResult<MdnsQuestionPlan> {
+    let Some(object) = question.as_object() else {
+        let dns_question = dns_question(question)?;
+        return Ok(MdnsQuestionPlan {
+            question: if role == MdnsQuestionRole::Probe {
+                dns_question.mdns_qu(true)
+            } else {
+                dns_question
+            },
+            explicit_raw_class: false,
+            explicit_qu: false,
+        });
+    };
+
+    let qname = text_optional(object, &["qname", "name"]).unwrap_or(".");
+    let qtype = optional(object, &["qtype", "type"])
+        .map(dns_record_type)
+        .transpose()?
+        .unwrap_or(DNS_TYPE_A);
+    let explicit_raw_class = optional(object, &["raw_class", "raw_question_class"]).is_some();
+    let explicit_qu = optional(object, &["unicast_response_preferred", "qu"]).is_some();
+    let mut dns_question = DnsQuestion::new(DnsName::parse(qname)?, qtype);
+
+    if let Some(value) = optional(object, &["raw_class", "raw_question_class"]) {
+        dns_question = dns_question.class(dns_class(value)?);
+    } else {
+        let class = optional(object, &["base_class", "qclass", "class", "record_class"])
+            .map(dns_class)
+            .transpose()?
+            .unwrap_or(DNS_CLASS_IN);
+        dns_question = dns_question.class(class);
+        if let Some(value) = optional(object, &["unicast_response_preferred", "qu"]) {
+            dns_question = dns_question.mdns_qu(bool_value(value)?);
+        } else if role == MdnsQuestionRole::Probe {
+            dns_question = dns_question.mdns_qu(true);
+        }
+    }
+
+    Ok(MdnsQuestionPlan {
+        question: dns_question,
+        explicit_raw_class,
+        explicit_qu,
+    })
+}
+
+fn mdns_records(value: Option<&Value>, role: MdnsRecordRole) -> ExampleResult<Vec<MdnsRecordPlan>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let mut records = Vec::new();
+    for record in array_values(value)? {
+        if let Some(object) = record.as_object() {
+            records.push(mdns_record(object, role)?);
+        }
+    }
+    Ok(records)
+}
+
+fn mdns_record(object: &Map<String, Value>, role: MdnsRecordRole) -> ExampleResult<MdnsRecordPlan> {
+    let explicit_raw_class = optional(object, &["raw_class"]).is_some();
+    let explicit_cache_flush = optional(object, &["cache_flush"]).is_some();
+    let explicit_ttl = optional(object, &["ttl"]).is_some();
+    let class = mdns_record_class(object)?;
+    let mut normalized = object.clone();
+    normalized.insert("record_class".to_string(), json!(class));
+    let mut record = dns_record(&normalized)?;
+
+    if role == MdnsRecordRole::Announcement && !explicit_raw_class && !explicit_cache_flush {
+        record = mdns::cache_flush(record);
+    }
+    if role == MdnsRecordRole::Goodbye && !explicit_ttl {
+        record = mdns::goodbye(record);
+    }
+
+    Ok(MdnsRecordPlan {
+        record,
+        explicit_raw_class,
+        explicit_cache_flush,
+        explicit_ttl,
+    })
+}
+
+fn mdns_record_class(object: &Map<String, Value>) -> ExampleResult<u16> {
+    if let Some(value) = optional(object, &["raw_class"]) {
+        return dns_class(value);
+    }
+    let mut class = optional(object, &["base_class", "record_class", "rclass", "class"])
+        .map(dns_class)
+        .transpose()?
+        .unwrap_or(DNS_CLASS_IN);
+    if let Some(value) = optional(object, &["cache_flush"]) {
+        let enabled = bool_value(value)?;
+        class &= MDNS_CLASS_MASK;
+        if enabled {
+            class |= MDNS_CLASS_BIT;
+        }
+    }
+    Ok(class)
+}
+
+fn mdns_raw_payload(plan: &Value, fields: &Map<String, Value>) -> ExampleResult<Option<Vec<u8>>> {
+    if let Some(fixture) = text_optional(fields, &["fixture"]) {
+        let raw = mdns_fixture_packet_bytes(fixture, plan.get("case").and_then(Value::as_str))?;
+        return Ok(Some(udp_payload_from_packet_bytes(&raw)));
+    }
+    if let Some(raw_dns) = optional(fields, &["raw_dns"]).and_then(Value::as_object) {
+        return Ok(Some(raw_dns_message_bytes(raw_dns)?));
+    }
+    Ok(None)
+}
+
+fn mdns_flags_are_raw(value: &Value) -> bool {
+    value.as_u64().is_some()
+        || value.as_i64().is_some()
+        || value
+            .as_str()
+            .map(|text| {
+                let text = text.trim();
+                text.starts_with("0x")
+                    || text.starts_with("0X")
+                    || text.chars().all(|ch| ch.is_ascii_digit())
+            })
+            .unwrap_or(false)
+}
+
+fn mdns_flags_word(fields: &Map<String, Value>, default_response: bool) -> ExampleResult<u16> {
+    let mut flags = 0u16;
+    if mdns_flag_enabled(fields, "authoritative", &["authoritative", "aa"])? {
+        flags |= DNS_FLAG_AUTHORITATIVE;
+    }
+    if mdns_flag_enabled(fields, "truncated", &["truncated", "tc"])? {
+        flags |= DNS_FLAG_TRUNCATED;
+    }
+    if mdns_flag_enabled(fields, "recursion_desired", &["recursion_desired", "rd"])? {
+        flags |= DNS_FLAG_RECURSION_DESIRED;
+    }
+    if mdns_flag_enabled(
+        fields,
+        "recursion_available",
+        &["recursion_available", "ra"],
+    )? {
+        flags |= DNS_FLAG_RECURSION_AVAILABLE;
+    }
+    if mdns_flag_enabled(
+        fields,
+        "authentic_data",
+        &["authentic_data", "authenticated_data", "ad"],
+    )? {
+        flags |= DNS_FLAG_AUTHENTIC_DATA;
+    }
+    if mdns_flag_enabled(fields, "checking_disabled", &["checking_disabled", "cd"])? {
+        flags |= DNS_FLAG_CHECKING_DISABLED;
+    }
+    if mdns_flag_enabled(fields, "reserved_z", &["reserved_z", "raw", "z"])? {
+        flags |= 0x0040;
+    }
+    let response = optional(fields, &["is_response"])
+        .map(bool_value)
+        .transpose()?
+        .unwrap_or(default_response);
+    if response {
+        flags |= DNS_FLAG_QR_RESPONSE;
+    }
+    if let Some(value) = optional(fields, &["response_code"]) {
+        flags |= dns_response_code(value)? as u16;
+    }
+    if let Some(value) = optional(fields, &["opcode"]) {
+        flags |= ((dns_opcode(value)? as u16) << 11) & 0x7800;
+    }
+    Ok(flags)
+}
+
+fn mdns_flag_enabled(
+    fields: &Map<String, Value>,
+    canonical: &str,
+    aliases: &[&str],
+) -> ExampleResult<bool> {
+    let Some(flags) = optional(fields, &["flags"]) else {
+        return Ok(false);
+    };
+    if let Some(items) = flags.as_array() {
+        return Ok(items.iter().filter_map(Value::as_str).any(|item| {
+            let normalized = item.to_ascii_lowercase().replace('-', "_");
+            aliases.iter().any(|alias| normalized == *alias)
+        }));
+    }
+    if let Some(object) = flags.as_object() {
+        for alias in aliases.iter().copied().chain(std::iter::once(canonical)) {
+            if let Some(value) = object.get(alias) {
+                return bool_value(value);
+            }
+        }
+    }
+    if let Some(text) = flags.as_str() {
+        let normalized = text.to_ascii_lowercase().replace('-', "_");
+        return Ok(aliases.iter().any(|alias| normalized == *alias));
+    }
+    Ok(false)
+}
+
+fn mdns_fixture_packet_bytes(path_text: &str, case_name: Option<&str>) -> ExampleResult<Vec<u8>> {
+    let path = PathBuf::from(path_text);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err("mDNS fixture path must be project-relative".into());
+    }
+    if path.extension().and_then(|ext| ext.to_str()) == Some("pcap") {
+        return Err("mDNS pcap fixtures must be materialized through the pcap adapter".into());
+    }
+    let resolved = if path.exists() {
+        path.clone()
+    } else {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .join(&path)
+    };
+    if !resolved.exists() {
+        return Err(format!("mDNS fixture does not exist: {path_text}").into());
+    }
+    if resolved.extension().and_then(|ext| ext.to_str()) == Some("bin") {
+        return Ok(fs::read(resolved)?);
+    }
+
+    let text = fs::read_to_string(&resolved)?;
+    let lines: Vec<&str> = text.lines().collect();
+    if mdns_fixture_is_corpus(&lines) {
+        let case_name = case_name.unwrap_or("");
+        let wanted = case_name.strip_prefix("malformed-").unwrap_or(case_name);
+        for line in lines {
+            let stripped = line.trim();
+            if stripped.is_empty() || stripped.starts_with('#') {
+                continue;
+            }
+            let parts: Vec<&str> = stripped.split('|').collect();
+            if parts.len() >= 5 && (parts[0] == case_name || parts[0] == wanted) {
+                return decode_hex(parts[parts.len() - 1].trim());
+            }
+        }
+        return Err(format!("mDNS fixture corpus {path_text} has no case {case_name:?}").into());
+    }
+
+    let hex = lines
+        .iter()
+        .filter_map(|line| {
+            let stripped = line.split('#').next().unwrap_or("").trim();
+            (!stripped.is_empty()).then_some(stripped)
+        })
+        .collect::<String>();
+    decode_hex(&hex)
+}
+
+fn mdns_fixture_is_corpus(lines: &[&str]) -> bool {
+    lines.iter().any(|line| {
+        let stripped = line.trim();
+        !stripped.is_empty() && !stripped.starts_with('#') && stripped.contains('|')
+    })
+}
+
+fn udp_payload_from_packet_bytes(raw: &[u8]) -> Vec<u8> {
+    if let Some(payload) = udp_payload_from_ipv4_bytes(raw) {
+        return payload;
+    }
+    if let Some(payload) = udp_payload_from_ipv6_bytes(raw) {
+        return payload;
+    }
+    if let Some(payload) = udp_payload_from_ethernet_bytes(raw) {
+        return payload;
+    }
+    raw.to_vec()
+}
+
+fn udp_payload_from_ethernet_bytes(raw: &[u8]) -> Option<Vec<u8>> {
+    if raw.len() < 14 {
+        return None;
+    }
+    match u16::from_be_bytes([raw[12], raw[13]]) {
+        ETHERTYPE_IPV4 => udp_payload_from_ipv4_bytes(&raw[14..]),
+        ETHERTYPE_IPV6 => udp_payload_from_ipv6_bytes(&raw[14..]),
+        _ => None,
+    }
+}
+
+fn udp_payload_from_ipv4_bytes(raw: &[u8]) -> Option<Vec<u8>> {
+    if raw.len() < 28 || raw[0] >> 4 != 4 {
+        return None;
+    }
+    let ihl = usize::from(raw[0] & 0x0f) * 4;
+    if ihl < 20 || raw.len() < ihl + 8 || raw[9] != IPPROTO_UDP {
+        return None;
+    }
+    let total_len = usize::from(u16::from_be_bytes([raw[2], raw[3]]));
+    let packet_end = if total_len >= ihl + 8 {
+        total_len.min(raw.len())
+    } else {
+        raw.len()
+    };
+    let udp_len = usize::from(u16::from_be_bytes([raw[ihl + 4], raw[ihl + 5]]));
+    let payload_end = if udp_len >= 8 {
+        (ihl + udp_len).min(packet_end)
+    } else {
+        packet_end
+    };
+    Some(raw[ihl + 8..payload_end].to_vec())
+}
+
+fn udp_payload_from_ipv6_bytes(raw: &[u8]) -> Option<Vec<u8>> {
+    if raw.len() < 48 || raw[0] >> 4 != 6 || raw[6] != IPPROTO_UDP {
+        return None;
+    }
+    let payload_len = usize::from(u16::from_be_bytes([raw[4], raw[5]]));
+    let packet_end = if payload_len >= 8 {
+        (40 + payload_len).min(raw.len())
+    } else {
+        raw.len()
+    };
+    let udp_len = usize::from(u16::from_be_bytes([raw[44], raw[45]]));
+    let payload_end = if udp_len >= 8 {
+        (40 + udp_len).min(packet_end)
+    } else {
+        packet_end
+    };
+    Some(raw[48..payload_end].to_vec())
+}
+
+fn raw_dns_message_bytes(spec: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    let questions = raw_dns_mapping_list(optional(spec, &["questions"]))?;
+    let answers = raw_dns_mapping_list(optional(spec, &["answers"]))?;
+    let authorities = raw_dns_mapping_list(optional(spec, &["authority", "authorities"]))?;
+    let additionals = raw_dns_mapping_list(optional(spec, &["additional", "additionals"]))?;
+
+    let mut body = Vec::new();
+    for question in &questions {
+        let base_offset = 12 + body.len();
+        body.extend_from_slice(&raw_dns_question_bytes(question, base_offset)?);
+    }
+    for record in answers
+        .iter()
+        .chain(authorities.iter())
+        .chain(additionals.iter())
+    {
+        let base_offset = 12 + body.len();
+        body.extend_from_slice(&raw_dns_record_bytes(record, base_offset)?);
+    }
+
+    let counts = raw_dns_section_counts(
+        spec,
+        questions.len(),
+        answers.len(),
+        authorities.len(),
+        additionals.len(),
+    )?;
+    let mut message = Vec::with_capacity(12 + body.len());
+    message.extend_from_slice(
+        &raw_dns_int(optional(spec, &["transaction_id", "id"]), 0)?.to_be_bytes(),
+    );
+    message.extend_from_slice(&raw_dns_flags_word(spec)?.to_be_bytes());
+    for count in counts {
+        message.extend_from_slice(&count.to_be_bytes());
+    }
+    message.extend_from_slice(&body);
+    if let Some(trailing) = optional(spec, &["trailing_bytes"]) {
+        message.extend_from_slice(&raw_dns_blob(Some(trailing))?);
+    }
+    Ok(message)
+}
+
+fn raw_dns_mapping_list(value: Option<&Value>) -> ExampleResult<Vec<&Map<String, Value>>> {
+    let Some(Value::Array(items)) = value else {
+        return Ok(Vec::new());
+    };
+    Ok(items.iter().filter_map(Value::as_object).collect())
+}
+
+fn raw_dns_question_bytes(
+    question: &Map<String, Value>,
+    base_offset: usize,
+) -> ExampleResult<Vec<u8>> {
+    let mut bytes = raw_dns_question_name_bytes(question, base_offset)?;
+    bytes.extend_from_slice(
+        &raw_dns_type_code(optional(question, &["type", "qtype"]))?.to_be_bytes(),
+    );
+    bytes.extend_from_slice(
+        &raw_dns_class_code(optional(question, &["class", "qclass"]))?.to_be_bytes(),
+    );
+    Ok(bytes)
+}
+
+fn raw_dns_record_bytes(record: &Map<String, Value>, base_offset: usize) -> ExampleResult<Vec<u8>> {
+    let name = raw_dns_record_name_bytes(record, base_offset)?;
+    let rdata = raw_dns_rdata_bytes(record, base_offset + name.len() + 10)?;
+    let rdlength = optional(record, &["rdlength_override"])
+        .map(|value| raw_dns_int(Some(value), rdata.len() as u16))
+        .transpose()?
+        .unwrap_or(rdata.len() as u16);
+    let mut bytes = name;
+    bytes.extend_from_slice(
+        &raw_dns_type_code(optional(record, &["type", "record_type"]))?.to_be_bytes(),
+    );
+    bytes.extend_from_slice(
+        &raw_dns_class_code(optional(record, &["class", "record_class"]))?.to_be_bytes(),
+    );
+    bytes.extend_from_slice(&raw_dns_u32(optional(record, &["ttl"]), 60)?.to_be_bytes());
+    bytes.extend_from_slice(&rdlength.to_be_bytes());
+    bytes.extend_from_slice(&rdata);
+    Ok(bytes)
+}
+
+fn raw_dns_question_name_bytes(
+    question: &Map<String, Value>,
+    _base_offset: usize,
+) -> ExampleResult<Vec<u8>> {
+    if let Some(pointer) = optional(question, &["name_with_pointer"]).and_then(Value::as_object) {
+        return raw_dns_partial_name_with_pointer(pointer);
+    }
+    if let Some(raw_name) = optional(question, &["raw_name"]) {
+        return raw_dns_blob(Some(raw_name));
+    }
+    raw_dns_name_bytes(optional(question, &["name", "qname"]))
+}
+
+fn raw_dns_record_name_bytes(
+    record: &Map<String, Value>,
+    _base_offset: usize,
+) -> ExampleResult<Vec<u8>> {
+    if let Some(pointer) = optional(record, &["name_with_pointer"]).and_then(Value::as_object) {
+        return raw_dns_partial_name_with_pointer(pointer);
+    }
+    if let Some(raw_name) = optional(record, &["raw_name"]) {
+        return raw_dns_blob(Some(raw_name));
+    }
+    raw_dns_name_bytes(optional(record, &["name", "rrname"]))
+}
+
+fn raw_dns_rdata_bytes(record: &Map<String, Value>, _base_offset: usize) -> ExampleResult<Vec<u8>> {
+    if let Some(value) = optional(record, &["rdata", "data"]) {
+        return raw_dns_blob(Some(value));
+    }
+    if let Some(address) = optional(record, &["address"]) {
+        return Ok(match IpAddr::from_str(text_value(address)?)? {
+            IpAddr::V4(address) => address.octets().to_vec(),
+            IpAddr::V6(address) => address.octets().to_vec(),
+        });
+    }
+    if let Some(pointer) = optional(record, &["target_with_pointer"]).and_then(Value::as_object) {
+        return raw_dns_partial_name_with_pointer(pointer);
+    }
+    if let Some(structured) = optional(record, &["rdata_with_pointer"]).and_then(Value::as_object) {
+        return raw_dns_rdata_with_pointer_bytes(structured);
+    }
+    if let Some(target) = optional(record, &["target", "name_target"]) {
+        return raw_dns_name_bytes(Some(target));
+    }
+    Ok(Vec::new())
+}
+
+fn raw_dns_rdata_with_pointer_bytes(spec: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    let mut bytes = Vec::new();
+    if let Some(prefix) = optional(spec, &["prefix_hex", "prefix"]) {
+        bytes.extend_from_slice(&raw_dns_blob(Some(prefix))?);
+    }
+    if let Some(Value::Array(pointers)) = optional(spec, &["pointers"]) {
+        for pointer in pointers.iter().filter_map(Value::as_object) {
+            bytes.extend_from_slice(&raw_dns_partial_name_with_pointer(pointer)?);
+        }
+    }
+    if let Some(suffix) = optional(spec, &["suffix_hex", "suffix"]) {
+        bytes.extend_from_slice(&raw_dns_blob(Some(suffix))?);
+    }
+    Ok(bytes)
+}
+
+fn raw_dns_partial_name_with_pointer(pointer: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    let mut bytes = Vec::new();
+    if let Some(prefix) = optional(pointer, &["prefix"]) {
+        if !matches!(prefix.as_str(), None | Some("") | Some(".")) {
+            bytes.extend_from_slice(&raw_dns_label_sequence_bytes(prefix)?);
+        }
+    }
+    let offset = raw_dns_int(optional(pointer, &["pointer_offset"]), 12)?;
+    if offset > 0x3fff {
+        return Err(format!("compression pointer offset out of range: {offset}").into());
+    }
+    bytes.extend_from_slice(&((0xc000 | offset) as u16).to_be_bytes());
+    Ok(bytes)
+}
+
+fn raw_dns_name_bytes(value: Option<&Value>) -> ExampleResult<Vec<u8>> {
+    let mut bytes = match value {
+        Some(value) => raw_dns_label_sequence_bytes(value)?,
+        None => Vec::new(),
+    };
+    bytes.push(0);
+    Ok(bytes)
+}
+
+fn raw_dns_label_sequence_bytes(value: &Value) -> ExampleResult<Vec<u8>> {
+    let name = value.as_str().unwrap_or(".");
+    if name.is_empty() || name == "." {
+        return Ok(Vec::new());
+    }
+    let trimmed = name.strip_suffix('.').unwrap_or(name);
+    let chars: Vec<char> = trimmed.chars().collect();
+    let mut labels: Vec<Vec<u8>> = Vec::new();
+    let mut current = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch == '\\' {
+            index += 1;
+            if index >= chars.len() {
+                return Err(format!("dangling escape in dns name: {name:?}").into());
+            }
+            if chars[index].is_ascii_digit() {
+                if index + 3 > chars.len()
+                    || !chars[index..index + 3].iter().all(|ch| ch.is_ascii_digit())
+                {
+                    return Err(format!("invalid decimal escape in dns name: {name:?}").into());
+                }
+                let digits: String = chars[index..index + 3].iter().collect();
+                current.push(u8::try_from(digits.parse::<u16>()?)?);
+                index += 3;
+                continue;
+            }
+            push_dns_name_char(&mut current, chars[index]);
+            index += 1;
+            continue;
+        }
+        if ch == '.' {
+            labels.push(std::mem::take(&mut current));
+            index += 1;
+            continue;
+        }
+        push_dns_name_char(&mut current, ch);
+        index += 1;
+    }
+    labels.push(current);
+
+    let mut bytes = Vec::new();
+    for label in labels {
+        if label.len() > 63 {
+            return Err(format!("raw dns label exceeds 63 octets: {label:?}").into());
+        }
+        bytes.push(u8::try_from(label.len())?);
+        bytes.extend_from_slice(&label);
+    }
+    Ok(bytes)
+}
+
+fn push_dns_name_char(output: &mut Vec<u8>, ch: char) {
+    let mut buffer = [0u8; 4];
+    output.extend_from_slice(ch.encode_utf8(&mut buffer).as_bytes());
+}
+
+fn raw_dns_section_counts(
+    spec: &Map<String, Value>,
+    qd: usize,
+    an: usize,
+    ns: usize,
+    ar: usize,
+) -> ExampleResult<[u16; 4]> {
+    if let Some(counts) = optional(spec, &["counts"]).and_then(Value::as_object) {
+        return Ok([
+            raw_dns_int(optional(counts, &["qd", "qdcount"]), qd as u16)?,
+            raw_dns_int(optional(counts, &["an", "ancount"]), an as u16)?,
+            raw_dns_int(optional(counts, &["ns", "nscount"]), ns as u16)?,
+            raw_dns_int(optional(counts, &["ar", "arcount"]), ar as u16)?,
+        ]);
+    }
+    Ok([
+        u16::try_from(qd)?,
+        u16::try_from(an)?,
+        u16::try_from(ns)?,
+        u16::try_from(ar)?,
+    ])
+}
+
+fn raw_dns_flags_word(spec: &Map<String, Value>) -> ExampleResult<u16> {
+    if let Some(flags) = optional(spec, &["flags"]) {
+        if mdns_flags_are_raw(flags) {
+            return u16_value(flags);
+        }
+    }
+    let mut flags = 0u16;
+    if raw_dns_bool(optional(spec, &["is_response"])) {
+        flags |= DNS_FLAG_QR_RESPONSE;
+    }
+    if raw_dns_flag_name(spec, &["authoritative", "aa"])? {
+        flags |= DNS_FLAG_AUTHORITATIVE;
+    }
+    if raw_dns_flag_name(spec, &["truncated", "tc"])? {
+        flags |= DNS_FLAG_TRUNCATED;
+    }
+    if raw_dns_flag_name(spec, &["recursion_desired", "rd"])? {
+        flags |= DNS_FLAG_RECURSION_DESIRED;
+    }
+    if raw_dns_flag_name(spec, &["recursion_available", "ra"])? {
+        flags |= DNS_FLAG_RECURSION_AVAILABLE;
+    }
+    if raw_dns_flag_name(spec, &["reserved_z", "z"])? {
+        flags |= 0x0040;
+    }
+    if raw_dns_flag_name(spec, &["authentic_data", "ad"])? {
+        flags |= DNS_FLAG_AUTHENTIC_DATA;
+    }
+    if raw_dns_flag_name(spec, &["checking_disabled", "cd"])? {
+        flags |= DNS_FLAG_CHECKING_DISABLED;
+    }
+    if let Some(value) = optional(spec, &["opcode"]) {
+        flags |= ((dns_opcode(value)? as u16) << 11) & 0x7800;
+    }
+    if let Some(value) = optional(spec, &["response_code", "rcode"]) {
+        flags |= dns_response_code(value)? as u16;
+    }
+    Ok(flags)
+}
+
+fn raw_dns_flag_name(spec: &Map<String, Value>, aliases: &[&str]) -> ExampleResult<bool> {
+    let Some(flags) = optional(spec, &["flags"]) else {
+        return Ok(false);
+    };
+    if let Some(items) = flags.as_array() {
+        return Ok(items.iter().filter_map(Value::as_str).any(|item| {
+            let normalized = item.to_ascii_lowercase().replace('-', "_");
+            aliases.iter().any(|alias| normalized == *alias)
+        }));
+    }
+    if let Some(object) = flags.as_object() {
+        for alias in aliases {
+            if let Some(value) = object.get(*alias) {
+                return Ok(raw_dns_bool(Some(value)));
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn raw_dns_type_code(value: Option<&Value>) -> ExampleResult<u16> {
+    match value {
+        None | Some(Value::Null) => Ok(DNS_TYPE_A),
+        Some(value) => dns_record_type(value),
+    }
+}
+
+fn raw_dns_class_code(value: Option<&Value>) -> ExampleResult<u16> {
+    match value {
+        None | Some(Value::Null) => Ok(DNS_CLASS_IN),
+        Some(value) => dns_class(value),
+    }
+}
+
+fn raw_dns_blob(value: Option<&Value>) -> ExampleResult<Vec<u8>> {
+    match value {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(u8_value)
+            .collect::<ExampleResult<Vec<_>>>(),
+        Some(value) => dns_blob(Some(value)),
+    }
+}
+
+fn raw_dns_bool(value: Option<&Value>) -> bool {
+    match value {
+        Some(Value::Bool(value)) => *value,
+        Some(Value::Number(value)) => value.as_u64().unwrap_or(0) != 0,
+        Some(Value::String(value)) => matches!(
+            value.to_ascii_lowercase().as_str(),
+            "true" | "yes" | "1" | "response"
+        ),
+        _ => false,
+    }
+}
+
+fn raw_dns_int(value: Option<&Value>, default: u16) -> ExampleResult<u16> {
+    match value {
+        None | Some(Value::Null) => Ok(default),
+        Some(Value::Bool(value)) => Ok(u16::from(*value)),
+        Some(value) => u16_value(value),
+    }
+}
+
+fn raw_dns_u32(value: Option<&Value>, default: u32) -> ExampleResult<u32> {
+    match value {
+        None | Some(Value::Null) => Ok(default),
+        Some(Value::Bool(value)) => Ok(u32::from(*value)),
+        Some(value) => u32_value(value),
+    }
+}
+
 fn dns_layer(plan: &Value) -> ExampleResult<Dns> {
     let fields = layer_fields(plan, "dns")?;
     let transaction_id = optional(fields, &["transaction_id", "id"])
@@ -5062,6 +6073,16 @@ fn dns_blob(value: Option<&Value>) -> ExampleResult<Vec<u8>> {
                 if let Some(hex) = object.get("hex").and_then(Value::as_str) {
                     return decode_hex(hex);
                 }
+                if object.get("encoding").and_then(Value::as_str) == Some("hex") {
+                    if let Some(text) = object.get("value").and_then(Value::as_str) {
+                        return decode_hex(text);
+                    }
+                }
+                if object.get("encoding").and_then(Value::as_str) == Some("utf8") {
+                    if let Some(text) = object.get("value").and_then(Value::as_str) {
+                        return Ok(text.as_bytes().to_vec());
+                    }
+                }
                 return Err(format!("dns blob object requires hex, got {value:?}").into());
             }
             Err(format!("expected blob-compatible dns value, got {value:?}").into())
@@ -5582,6 +6603,26 @@ fn optional_layer_fields<'a>(
             value
                 .as_object()
                 .ok_or_else(|| format!("{layer} fields must be an object").into())
+        })
+        .transpose()
+}
+
+fn optional_layer_fields_any<'a>(
+    plan: &'a Value,
+    layer: &str,
+    aliases: &[&str],
+) -> ExampleResult<Option<&'a Map<String, Value>>> {
+    let Some(fields) = plan.get("fields").and_then(Value::as_object) else {
+        return Ok(None);
+    };
+    std::iter::once(layer)
+        .chain(aliases.iter().copied())
+        .find_map(|name| {
+            fields.get(name).map(|value| {
+                value
+                    .as_object()
+                    .ok_or_else(|| format!("{name} fields must be an object").into())
+            })
         })
         .transpose()
 }
@@ -6163,6 +7204,246 @@ mod bgp_materializer_tests {
         decoded
             .layer::<Bgp>()
             .expect("decoded packet must expose BGP through TCP/179");
+    }
+}
+
+#[cfg(test)]
+mod mdns_materialization {
+    use super::{
+        decode_hex, materialize_plan, mdns_fixture_packet_bytes, udp_payload_from_packet_bytes,
+    };
+    use crafter::prelude::*;
+    use serde_json::{json, Value};
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    const DNS_QTYPE_ANY: u16 = 255;
+
+    fn raw_bytes(vector: &Value) -> Vec<u8> {
+        let raw_hex = vector
+            .get("raw_hex")
+            .and_then(Value::as_str)
+            .expect("vector must carry raw_hex bytes");
+        decode_hex(raw_hex).expect("raw_hex must decode")
+    }
+
+    #[test]
+    fn mdns_query_plan_uses_udp_5353_and_multicast_defaults() {
+        let plan = json!({
+            "case": "mdns-query-udp-5353",
+            "stack": ["ipv4", "udp", "mdns"],
+            "metadata": {"root_decoder": "l3:ipv4", "root": "l3:ipv4"},
+            "feature_tags": ["ipv4", "udp", "mdns"],
+            "fields": {
+                "mdns": {
+                    "message_kind": "multicast_query",
+                    "questions": [
+                        {"name": "printer.local.", "type": "A", "class": "IN"}
+                    ]
+                }
+            }
+        });
+
+        let vector = materialize_plan(&plan).expect("mDNS query plan must materialize");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw_bytes(&vector))
+            .expect("materialized mDNS IPv4 packet must decode");
+
+        let ipv4 = decoded.layer::<Ipv4>().expect("IPv4 layer");
+        assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 10));
+        assert_eq!(ipv4.destination(), MDNS_IPV4_MULTICAST);
+        assert_eq!(ipv4.ttl_value(), MDNS_RESPONSE_TTL);
+        assert_eq!(ipv4.protocol_value(), IPPROTO_UDP);
+
+        let udp = decoded.layer::<Udp>().expect("UDP layer");
+        assert_eq!(udp.source_port_value(), MDNS_PORT);
+        assert_eq!(udp.destination_port_value(), MDNS_PORT);
+
+        let dns = decoded.layer::<Dns>().expect("mDNS DNS layer");
+        assert_eq!(dns.id_value(), 0);
+        assert_eq!(dns.flags_value(), 0);
+        assert_eq!(dns.questions().len(), 1);
+        assert_eq!(dns.questions()[0].name(), "printer.local.");
+        assert_eq!(dns.questions()[0].question_type(), DNS_TYPE_A);
+        assert_eq!(dns.questions()[0].question_class(), DNS_CLASS_IN);
+    }
+
+    #[test]
+    fn mdns_dns_sd_announcement_materializes_cache_flush_records_and_link_defaults() {
+        let plan = json!({
+            "case": "mdns-announcement",
+            "stack": ["ethernet", "ipv4", "udp", "mdns"],
+            "metadata": {"root_decoder": "link:ethernet", "root": "link:ethernet"},
+            "feature_tags": ["ethernet", "ipv4", "udp", "mdns", "dns-sd"],
+            "fields": {
+                "mdns": {
+                    "message_kind": "announcement",
+                    "answers": [
+                        {
+                            "name": "Office\\032Printer._ipp._tcp.local.",
+                            "type": "SRV",
+                            "class": "IN",
+                            "ttl": 120,
+                            "priority": 0,
+                            "weight": 0,
+                            "port": 631,
+                            "target": "office-printer.local."
+                        },
+                        {
+                            "name": "Office\\032Printer._ipp._tcp.local.",
+                            "type": "TXT",
+                            "class": "IN",
+                            "ttl": 120,
+                            "strings": ["txtvers=1", "rp=printers/office"]
+                        }
+                    ],
+                    "additional": [
+                        {
+                            "name": "office-printer.local.",
+                            "type": "A",
+                            "class": "IN",
+                            "ttl": 120,
+                            "address": "192.0.2.55"
+                        }
+                    ]
+                }
+            }
+        });
+
+        let vector = materialize_plan(&plan).expect("mDNS DNS-SD announcement must materialize");
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, raw_bytes(&vector))
+            .expect("materialized Ethernet mDNS packet must decode");
+
+        let ethernet = decoded.layer::<Ethernet>().expect("Ethernet layer");
+        assert_eq!(ethernet.destination(), Some(MDNS_IPV4_ETHERNET_MULTICAST));
+        assert_eq!(ethernet.ethertype_value(), Some(ETHERTYPE_IPV4));
+
+        let dns = decoded.layer::<Dns>().expect("mDNS DNS layer");
+        assert_eq!(
+            dns.flags_value() & (DNS_FLAG_QR_RESPONSE | DNS_FLAG_AUTHORITATIVE),
+            DNS_FLAG_QR_RESPONSE | DNS_FLAG_AUTHORITATIVE
+        );
+        assert_eq!(dns.answers().len(), 2);
+        assert_eq!(dns.answers()[0].record_type(), DNS_TYPE_SRV);
+        assert!(dns.answers()[0].mdns_cache_flush_value());
+        assert_eq!(dns.answers()[1].record_type(), DNS_TYPE_TXT);
+        assert!(dns.answers()[1].mdns_cache_flush_value());
+        assert_eq!(
+            dns.answers()[1].data(),
+            &DnsRecordData::Txt(vec![b"txtvers=1".to_vec(), b"rp=printers/office".to_vec()])
+        );
+        assert_eq!(dns.additionals().len(), 1);
+        assert_eq!(dns.additionals()[0].record_type(), DNS_TYPE_A);
+        assert!(dns.additionals()[0].mdns_cache_flush_value());
+    }
+
+    #[test]
+    fn mdns_probe_and_goodbye_preserve_raw_overrides_and_defaults() {
+        let probe = json!({
+            "case": "mdns-probe-authority",
+            "stack": ["ipv6", "udp", "mdns"],
+            "metadata": {"root_decoder": "l3:ipv6", "root": "l3:ipv6"},
+            "feature_tags": ["ipv6", "udp", "mdns"],
+            "fields": {
+                "mdns": {
+                    "message_kind": "probe",
+                    "transaction_id": 0xbeef,
+                    "flags": 0x1234,
+                    "questions": [
+                        {
+                            "name": "printer.local.",
+                            "type": "ANY",
+                            "raw_class": 1,
+                            "unicast_response_preferred": true
+                        }
+                    ],
+                    "authority": [
+                        {
+                            "name": "printer.local.",
+                            "type": "A",
+                            "raw_class": 0x8001,
+                            "ttl": 77,
+                            "address": "192.0.2.55"
+                        }
+                    ]
+                }
+            }
+        });
+
+        let vector = materialize_plan(&probe).expect("mDNS probe must materialize");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, &raw_bytes(&vector))
+            .expect("materialized IPv6 mDNS probe must decode");
+        let ipv6 = decoded.layer::<Ipv6>().expect("IPv6 layer");
+        assert_eq!(
+            ipv6.source(),
+            Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0010)
+        );
+        assert_eq!(ipv6.destination(), MDNS_IPV6_LINK_LOCAL_MULTICAST);
+        assert_eq!(ipv6.hop_limit_value(), MDNS_RESPONSE_HOP_LIMIT);
+        assert_eq!(ipv6.next_header_value(), IPPROTO_UDP);
+
+        let dns = decoded.layer::<Dns>().expect("mDNS DNS layer");
+        assert_eq!(dns.id_value(), 0xbeef);
+        assert_eq!(dns.flags_value(), 0x1234);
+        assert_eq!(dns.questions()[0].question_type(), DNS_QTYPE_ANY);
+        assert_eq!(dns.questions()[0].question_class(), DNS_CLASS_IN);
+        assert!(!dns.questions()[0].mdns_unicast_response_preferred_value());
+        assert_eq!(dns.authorities()[0].class(), MDNS_CLASS_BIT | DNS_CLASS_IN);
+        assert_eq!(dns.authorities()[0].ttl(), 77);
+
+        let goodbye = json!({
+            "case": "mdns-goodbye-ttl-zero",
+            "stack": ["ipv4", "udp", "mdns"],
+            "metadata": {"root_decoder": "l3:ipv4", "root": "l3:ipv4"},
+            "feature_tags": ["ipv4", "udp", "mdns"],
+            "fields": {
+                "mdns": {
+                    "message_kind": "goodbye",
+                    "answers": [
+                        {
+                            "name": "printer.local.",
+                            "type": "A",
+                            "cache_flush": true,
+                            "address": "192.0.2.55"
+                        }
+                    ]
+                }
+            }
+        });
+        let vector = materialize_plan(&goodbye).expect("mDNS goodbye must materialize");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw_bytes(&vector))
+            .expect("materialized mDNS goodbye must decode");
+        let dns = decoded.layer::<Dns>().expect("mDNS DNS layer");
+        assert_eq!(dns.answers()[0].ttl(), MDNS_GOODBYE_TTL);
+        assert!(dns.answers()[0].mdns_cache_flush_value());
+    }
+
+    #[test]
+    fn mdns_fixture_payload_preserves_raw_dns_bytes_inside_udp() {
+        let fixture = "crafter/tests/fixtures/bytes/ipv4-udp-mdns-compressed-names.hex";
+        let plan = json!({
+            "case": "mdns-compressed-names",
+            "stack": ["ipv4", "udp", "mdns"],
+            "metadata": {"root_decoder": "l3:ipv4", "root": "l3:ipv4"},
+            "feature_tags": ["ipv4", "udp", "mdns"],
+            "fields": {
+                "mdns": {
+                    "message_kind": "multicast_response",
+                    "fixture": fixture,
+                    "raw_dns": true
+                }
+            }
+        });
+
+        let expected_packet = mdns_fixture_packet_bytes(fixture, Some("mdns-compressed-names"))
+            .expect("fixture must read");
+        let expected_payload = udp_payload_from_packet_bytes(&expected_packet);
+        let vector = materialize_plan(&plan).expect("mDNS raw fixture must materialize");
+        let bytes = raw_bytes(&vector);
+
+        assert_eq!(&bytes[28..], expected_payload.as_slice());
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes)
+            .expect("materialized compressed mDNS fixture must decode");
+        let dns = decoded.layer::<Dns>().expect("mDNS DNS layer");
+        assert_eq!(dns.answers().len(), 2);
     }
 }
 
