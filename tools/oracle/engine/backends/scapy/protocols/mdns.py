@@ -238,6 +238,9 @@ def _fixture_packet_bytes(path_text: str, case_name: str) -> bytes:
     if not path.exists():
         raise ValueError(f"mDNS fixture does not exist: {path_text}")
 
+    if path.suffix == ".pcap":
+        return _first_pcap_packet(path.read_bytes(), path_text)
+
     if path.suffix == ".bin":
         return path.read_bytes()
 
@@ -257,6 +260,24 @@ def _fixture_packet_bytes(path_text: str, case_name: str) -> bytes:
         line.split("#", 1)[0].strip() for line in lines if line.split("#", 1)[0].strip()
     )
     return bytes.fromhex(hex_text)
+
+
+def _first_pcap_packet(raw: bytes, path_text: str) -> bytes:
+    if len(raw) < 40:
+        raise ValueError(f"mDNS pcap fixture is too short: {path_text}")
+    magic = raw[:4]
+    if magic in {b"\xd4\xc3\xb2\xa1", b"\x4d\x3c\xb2\xa1"}:
+        byteorder = "little"
+    elif magic in {b"\xa1\xb2\xc3\xd4", b"\xa1\xb2\x3c\x4d"}:
+        byteorder = "big"
+    else:
+        raise ValueError(f"mDNS fixture is not a classic pcap: {path_text}")
+    incl_len = int.from_bytes(raw[32:36], byteorder)
+    packet_start = 40
+    packet_end = packet_start + incl_len
+    if incl_len == 0 or packet_end > len(raw):
+        raise ValueError(f"mDNS pcap fixture first record is truncated: {path_text}")
+    return raw[packet_start:packet_end]
 
 
 def _is_corpus(lines: Sequence[str]) -> bool:
