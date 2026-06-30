@@ -164,7 +164,11 @@ notes:
 
 backend_support:
   scapy:
-    status: planned
+    status: supported
+    encode: true
+    decode: true
+    pcap_read: true
+    pcap_write: true
     native_layers:
       - Ether
       - IP
@@ -174,7 +178,7 @@ backend_support:
       - PcapReader
       - PcapWriter
     notes:
-      - Scapy pcap mDNS execution is assigned to later backend steps.
+      - Scapy reads and writes classic pcap mDNS fixtures through its packet and pcap primitives.
   libcrafter:
     status: supported
     encode: true

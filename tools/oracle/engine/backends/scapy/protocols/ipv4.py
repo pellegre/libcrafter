@@ -42,6 +42,10 @@ from ..encode_helpers import (
 from .base import ScapyProtocol, register
 
 
+_MDNS_IPV4_SRC = "192.0.2.10"
+_MDNS_IPV4_DST = "224.0.0.251"
+
+
 # Encode-side field allowlist for ``_validate_layer_fields`` — the canonical
 # field names plus every Scapy/oracle alias the IPv4 builder accepts. Mirrors the
 # former ``packets._SUPPORTED_FIELDS_BY_LAYER["ipv4"]`` entry exactly.
@@ -108,14 +112,19 @@ def _build(
     scapy_all: Any,
 ) -> Any:
     ipv4_fields = _layer_fields(fields, "ipv4")
+    mdns = "mdns" in stack
     kwargs: dict[str, Any] = {
-        "src": _text(_required_field(ipv4_fields, "ipv4", "src"), ""),
-        "dst": _text(_required_field(ipv4_fields, "ipv4", "dst"), ""),
-        "id": _int(_required_field(ipv4_fields, "ipv4", "identification", "id"), 0),
-        "ttl": _int(_required_field(ipv4_fields, "ipv4", "ttl"), 0),
-        "flags": _ipv4_flags(_required_field(ipv4_fields, "ipv4", "flags")),
+        "src": _text(_field_or_default(ipv4_fields, "ipv4", _MDNS_IPV4_SRC if mdns else None, "src"), ""),
+        "dst": _text(_field_or_default(ipv4_fields, "ipv4", _MDNS_IPV4_DST if mdns else None, "dst"), ""),
+        "id": _int(
+            _field_or_default(ipv4_fields, "ipv4", 0 if mdns else None, "identification", "id"),
+            0,
+        ),
+        "ttl": _int(_field_or_default(ipv4_fields, "ipv4", 255 if mdns else None, "ttl"), 0),
+        "flags": _ipv4_flags(_field_or_default(ipv4_fields, "ipv4", "none" if mdns else None, "flags")),
         "proto": _protocol_value(
-            _required_field(ipv4_fields, "ipv4", "protocol", "proto"), _IP_PROTOCOLS
+            _field_or_default(ipv4_fields, "ipv4", "udp" if mdns else None, "protocol", "proto"),
+            _IP_PROTOCOLS,
         ),
     }
     if "tos" in ipv4_fields:
@@ -127,6 +136,20 @@ def _build(
     if "options" in ipv4_fields:
         kwargs["options"] = _ipv4_options(ipv4_fields["options"], scapy_all)
     return scapy_all.IP(**kwargs)
+
+
+def _field_or_default(
+    fields: Mapping[str, object],
+    layer: str,
+    default: object | None,
+    *names: str,
+) -> object:
+    value = _optional_field(fields, *names)
+    if value is not None:
+        return value
+    if default is not None:
+        return default
+    return _required_field(fields, layer, *names)
 
 
 def _ipv4_options(value: object, scapy_all: Any) -> object:

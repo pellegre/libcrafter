@@ -34,6 +34,11 @@ from ..encode_helpers import (
 from .base import ScapyProtocol, register
 
 
+_MDNS_ETHERNET_SRC = "00:00:5e:00:53:01"
+_MDNS_ETHERNET_IPV4_DST = "01:00:5e:00:00:fb"
+_MDNS_ETHERNET_IPV6_DST = "33:33:00:00:00:fb"
+
+
 # Encode-side field allowlists for ``_validate_layer_fields`` — the canonical
 # field names plus every Scapy/oracle alias the builders accept. Mirror the former
 # ``packets._SUPPORTED_FIELDS_BY_LAYER["ethernet"]`` / ``["vlan"]`` entries exactly.
@@ -81,14 +86,49 @@ def _build_ethernet(
     scapy_all: Any,
 ) -> Any:
     eth_fields = _layer_fields(plan.fields, "ethernet")
+    mdns = "mdns" in stack
+    mdns_ipv6 = mdns and "ipv6" in stack
     kwargs: dict[str, Any] = {
-        "src": _text(_required_field(eth_fields, "ethernet", "src"), ""),
-        "dst": _text(_required_field(eth_fields, "ethernet", "dst"), ""),
+        "src": _text(
+            _field_or_default(eth_fields, "ethernet", _MDNS_ETHERNET_SRC if mdns else None, "src"),
+            "",
+        ),
+        "dst": _text(
+            _field_or_default(
+                eth_fields,
+                "ethernet",
+                (_MDNS_ETHERNET_IPV6_DST if mdns_ipv6 else _MDNS_ETHERNET_IPV4_DST)
+                if mdns
+                else None,
+                "dst",
+            ),
+            "",
+        ),
         "type": _ethertype_value(
-            _required_field(eth_fields, "ethernet", "ethertype", "type")
+            _field_or_default(
+                eth_fields,
+                "ethernet",
+                ("ipv6" if mdns_ipv6 else "ipv4") if mdns else None,
+                "ethertype",
+                "type",
+            )
         ),
     }
     return scapy_all.Ether(**kwargs)
+
+
+def _field_or_default(
+    fields: dict[str, object],
+    layer: str,
+    default: object | None,
+    *names: str,
+) -> object:
+    value = _optional_field(fields, *names)
+    if value is not None:
+        return value
+    if default is not None:
+        return default
+    return _required_field(fields, layer, *names)
 
 
 def _build_vlan(

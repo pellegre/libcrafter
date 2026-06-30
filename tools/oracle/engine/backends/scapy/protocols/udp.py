@@ -41,6 +41,9 @@ from ..encode_helpers import (
 from .base import ScapyProtocol, register
 
 
+_MDNS_PORT = 5353
+
+
 # Encode-side field allowlist for ``_validate_layer_fields`` — the canonical field
 # names plus every Scapy/oracle alias the UDP builder accepts. Mirrors the former
 # ``packets._SUPPORTED_FIELDS_BY_LAYER["udp"]`` entry exactly.
@@ -99,15 +102,25 @@ def _build(
     scapy_all: Any,
 ) -> Any:
     udp_fields = _layer_fields(fields, "udp")
+    mdns_default = _MDNS_PORT if "mdns" in stack else None
     kwargs: dict[str, Any] = {
-        "sport": _int(_required_field(udp_fields, "udp", "src_port", "sport"), 0),
-        "dport": _int(_required_field(udp_fields, "udp", "dst_port", "dport"), 0),
+        "sport": _int(_port_value(udp_fields, mdns_default, "src_port", "sport"), 0),
+        "dport": _int(_port_value(udp_fields, mdns_default, "dst_port", "dport"), 0),
     }
     if "checksum" in udp_fields or "chksum" in udp_fields:
         kwargs["chksum"] = _int(_optional_field(udp_fields, "checksum", "chksum"), 0)
     if "length" in udp_fields or "len" in udp_fields:
         kwargs["len"] = _int(_optional_field(udp_fields, "length", "len"), 0)
     return scapy_all.UDP(**kwargs)
+
+
+def _port_value(fields: Mapping[str, object], default: int | None, *names: str) -> object:
+    value = _optional_field(fields, *names)
+    if value is not None:
+        return value
+    if default is not None:
+        return default
+    return _required_field(fields, "udp", *names)
 
 
 # ---------------------------------------------------------------------------

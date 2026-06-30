@@ -102,7 +102,7 @@ constraints:
 
 backend_support:
   scapy:
-    status: planned
+    status: supported
     native_layers:
       - Ether
       - IP
@@ -110,7 +110,7 @@ backend_support:
       - UDP
       - DNS
     notes:
-      - mDNS stack materialization is planned as DNS over UDP/5353 in later backend steps.
+      - mDNS stacks materialize as DNS over UDP/5353 with multicast-safe defaults.
   libcrafter:
     status: supported
     native_layers:

@@ -7,8 +7,14 @@ import unittest
 from pathlib import Path
 
 from tools.oracle.engine.backends.scapy import normalize, packets, pcap
+from tools.oracle.engine.backends.scapy.protocols import SCAPY_REGISTRY
+from tools.oracle.engine.backends.scapy.protocols import ethernet as ethernet_scapy
+from tools.oracle.engine.backends.scapy.protocols import ipv4 as ipv4_scapy
+from tools.oracle.engine.backends.scapy.protocols import ipv6 as ipv6_scapy
+from tools.oracle.engine.backends.scapy.protocols import mdns as mdns_scapy
 from tools.oracle.engine.backends.scapy.protocols import rip as rip_scapy
 from tools.oracle.engine.backends.scapy.protocols import ripng as ripng_scapy
+from tools.oracle.engine.backends.scapy.protocols import udp as udp_scapy
 from tools.oracle.engine.generator import generate_plans
 from tools.oracle.engine.model import PacketPlan
 
@@ -129,6 +135,122 @@ class ScapyL2Ipv4EncodeDecodeTest(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual(packets._ipv4_flags(value), expected)
         self.assertEqual(packets._ipv4_flags(["reserved", "mf"]), 0b101)
+
+
+class _MdnsFakeScapy:
+    def Ether(self, **kwargs):
+        return kwargs
+
+    def IP(self, **kwargs):
+        return kwargs
+
+    def IPv6(self, **kwargs):
+        return kwargs
+
+    def UDP(self, **kwargs):
+        return kwargs
+
+
+class _MdnsFakePlan:
+    def __init__(self, fields: dict | None = None) -> None:
+        self.fields = fields or {}
+
+
+class ScapyMdnsBackendTest(unittest.TestCase):
+    def test_mdns_protocol_plugin_is_registered(self) -> None:
+        plugin = SCAPY_REGISTRY.require("mdns")
+
+        self.assertEqual(plugin.layer, "mdns")
+        self.assertEqual(plugin.scapy_class, "DNS")
+        self.assertIn("questions", plugin.supported_fields)
+        self.assertIn("fixture", plugin.supported_fields)
+        self.assertIn("raw_dns", plugin.supported_fields)
+
+    def test_mdns_stack_defaults_to_udp_5353_and_multicast_addresses(self) -> None:
+        scapy = _MdnsFakeScapy()
+
+        udp = udp_scapy._build(None, {}, ["ipv4", "udp", "mdns"], 1, scapy)
+        ipv4 = ipv4_scapy._build(None, {}, ["ipv4", "udp", "mdns"], 0, scapy)
+        ipv6 = ipv6_scapy._build(None, {}, ["ipv6", "udp", "mdns"], 0, scapy)
+        ethernet4 = ethernet_scapy._build_ethernet(
+            _MdnsFakePlan(),
+            {},
+            ["ethernet", "ipv4", "udp", "mdns"],
+            0,
+            scapy,
+        )
+        ethernet6 = ethernet_scapy._build_ethernet(
+            _MdnsFakePlan(),
+            {},
+            ["ethernet", "ipv6", "udp", "mdns"],
+            0,
+            scapy,
+        )
+
+        self.assertEqual(udp["sport"], 5353)
+        self.assertEqual(udp["dport"], 5353)
+        self.assertEqual(ipv4["src"], "192.0.2.10")
+        self.assertEqual(ipv4["dst"], "224.0.0.251")
+        self.assertEqual(ipv4["ttl"], 255)
+        self.assertEqual(ipv4["proto"], 17)
+        self.assertEqual(ipv6["src"], "2001:db8::10")
+        self.assertEqual(ipv6["dst"], "ff02::fb")
+        self.assertEqual(ipv6["hlim"], 255)
+        self.assertEqual(ipv6["nh"], 17)
+        self.assertEqual(ethernet4["dst"], "01:00:5e:00:00:fb")
+        self.assertEqual(ethernet4["type"], 0x0800)
+        self.assertEqual(ethernet6["dst"], "33:33:00:00:00:fb")
+        self.assertEqual(ethernet6["type"], 0x86DD)
+
+    def test_mdns_udp_default_honors_explicit_port_override(self) -> None:
+        scapy = _MdnsFakeScapy()
+
+        udp = udp_scapy._build(
+            None,
+            {"udp": {"src_port": 5354}},
+            ["ipv4", "udp", "mdns"],
+            1,
+            scapy,
+        )
+
+        self.assertEqual(udp["sport"], 5354)
+        self.assertEqual(udp["dport"], 5353)
+
+    def test_mdns_class_bits_are_preserved_in_dns_fields(self) -> None:
+        query = mdns_scapy._dns_fields(
+            {
+                "questions": [
+                    {"name": "printer.local.", "type": "A", "unicast_response_preferred": True}
+                ]
+            }
+        )
+        response = mdns_scapy._dns_fields(
+            {
+                "is_response": True,
+                "answers": [
+                    {"name": "printer.local.", "type": "A", "class": "IN", "cache_flush": True}
+                ],
+            }
+        )
+
+        self.assertEqual(query["questions"][0]["qclass"], 0x8001)
+        self.assertEqual(response["answers"][0]["record_class"], 0x8001)
+        self.assertEqual(response["flags"], ["authoritative"])
+
+    def test_mdns_fixture_payloads_extract_udp_dns_bytes(self) -> None:
+        compressed = mdns_scapy._raw_fixture_payload(
+            {"fixture": "crafter/tests/fixtures/bytes/ipv4-udp-mdns-compressed-names.hex"},
+            case="mdns-compressed-names",
+        )
+        malformed = mdns_scapy._raw_fixture_payload(
+            {"fixture": "crafter/tests/fixtures/malformed/mdns-corpus.hex"},
+            case="malformed-mdns-truncated-question-fields",
+        )
+
+        self.assertEqual(len(compressed or b""), 100)
+        self.assertEqual((compressed or b"")[:12], bytes.fromhex("000084000001000200000000"))
+        self.assertEqual(len(malformed or b""), 30)
+        self.assertEqual((malformed or b"")[:12], bytes.fromhex("000000000001000000000000"))
 
 
 def _dot11_plan(
