@@ -33,8 +33,10 @@ use crafter::core::{
     IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_ROUTE,
     IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS,
     IPV4_FLAG_RESERVED, IPV6_ROUTING_TYPE_MOBILE, IPV6_ROUTING_TYPE_SEGMENT, MDNS_CLASS_BIT,
-    MDNS_GOODBYE_TTL, MDNS_PORT, QUIC_VERSION_1, QUIC_VERSION_2, SNMP_PORT, TCP_FLAG_ACK,
-    TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
+    MDNS_GOODBYE_TTL, MDNS_IPV4_ETHERNET_MULTICAST, MDNS_IPV4_MULTICAST,
+    MDNS_IPV6_ETHERNET_MULTICAST, MDNS_IPV6_LINK_LOCAL_MULTICAST, MDNS_PORT, QUIC_VERSION_1,
+    QUIC_VERSION_2, SNMP_PORT, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN,
+    UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
 use crafter::protocols::dhcp::{
     Dhcpv6, Dhcpv6IaAddr, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6Option, Dhcpv6StatusCode,
@@ -2222,6 +2224,48 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
             seconds: 62,
             fractional: 162,
             fixture_name: "ipv4-udp-snmp-response",
+        }],
+    },
+    PcapFixtureCase {
+        name: "raw-ipv4-udp-mdns-query",
+        path: "pcaps/raw-ipv4-udp-mdns-query.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv4-udp-mdns-query.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv4,
+        records: &[PcapFixtureRecord {
+            seconds: 67,
+            fractional: 531,
+            fixture_name: "ipv4-udp-mdns-query",
+        }],
+    },
+    PcapFixtureCase {
+        name: "ethernet-ipv4-udp-mdns-query",
+        path: "pcaps/ethernet-ipv4-udp-mdns-query.pcap",
+        contents: fixture_bytes!("pcaps/ethernet-ipv4-udp-mdns-query.pcap"),
+        pcap_link_type: PcapLinkType::Ethernet,
+        link_type: LinkType::Ethernet,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::Ethernet,
+        records: &[PcapFixtureRecord {
+            seconds: 67,
+            fractional: 532,
+            fixture_name: MDNS_PCAP_ETHERNET_IPV4_RECORD_FIXTURE_NAME,
+        }],
+    },
+    PcapFixtureCase {
+        name: "ethernet-ipv6-udp-mdns-query",
+        path: "pcaps/ethernet-ipv6-udp-mdns-query.pcap",
+        contents: fixture_bytes!("pcaps/ethernet-ipv6-udp-mdns-query.pcap"),
+        pcap_link_type: PcapLinkType::Ethernet,
+        link_type: LinkType::Ethernet,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::Ethernet,
+        records: &[PcapFixtureRecord {
+            seconds: 67,
+            fractional: 533,
+            fixture_name: MDNS_PCAP_ETHERNET_IPV6_RECORD_FIXTURE_NAME,
         }],
     },
     PcapFixtureCase {
@@ -9191,6 +9235,8 @@ const DOT15D4_WITHFCS_PCAP_RECORD_FIXTURE_NAME: &str = "dot15d4-withfcs-record";
 const QUIC_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME: &str = "quic-pcap-raw-ipv4-record";
 const QUIC_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME: &str = "quic-pcap-raw-ipv6-record";
 const QUIC_PCAP_ETHERNET_RECORD_FIXTURE_NAME: &str = "quic-pcap-ethernet-record";
+const MDNS_PCAP_ETHERNET_IPV4_RECORD_FIXTURE_NAME: &str = "mdns-pcap-ethernet-ipv4-record";
+const MDNS_PCAP_ETHERNET_IPV6_RECORD_FIXTURE_NAME: &str = "mdns-pcap-ethernet-ipv6-record";
 
 fn pcap_record_expected_bytes(fixture_name: &str) -> Vec<u8> {
     match fixture_name {
@@ -9200,6 +9246,8 @@ fn pcap_record_expected_bytes(fixture_name: &str) -> Vec<u8> {
         QUIC_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME => quic_pcap_raw_ipv4_record_bytes(),
         QUIC_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME => quic_pcap_raw_ipv6_record_bytes(),
         QUIC_PCAP_ETHERNET_RECORD_FIXTURE_NAME => quic_pcap_ethernet_record_bytes(),
+        MDNS_PCAP_ETHERNET_IPV4_RECORD_FIXTURE_NAME => mdns_pcap_ethernet_ipv4_record_bytes(),
+        MDNS_PCAP_ETHERNET_IPV6_RECORD_FIXTURE_NAME => mdns_pcap_ethernet_ipv6_record_bytes(),
         _ => fixture_bytes_for_case(valid_fixture_case(fixture_name)),
     }
 }
@@ -9211,8 +9259,176 @@ fn pcap_record_valid_fixture(fixture_name: &str) -> Option<&'static ValidFixture
         | DOT15D4_WITHFCS_PCAP_RECORD_FIXTURE_NAME
         | QUIC_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME
         | QUIC_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME
-        | QUIC_PCAP_ETHERNET_RECORD_FIXTURE_NAME => None,
+        | QUIC_PCAP_ETHERNET_RECORD_FIXTURE_NAME
+        | MDNS_PCAP_ETHERNET_IPV4_RECORD_FIXTURE_NAME
+        | MDNS_PCAP_ETHERNET_IPV6_RECORD_FIXTURE_NAME => None,
         _ => Some(valid_fixture_case(fixture_name)),
+    }
+}
+
+fn mdns_pcap_source_mac() -> MacAddr {
+    MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0xfb])
+}
+
+fn mdns_fixture_packet(name: &str) -> Packet {
+    let case = valid_fixture_case(name);
+    let bytes = fixture_bytes_for_case(case);
+    decode_packet(packet_target_for_case(case), &bytes)
+        .unwrap_or_else(|err| panic!("mDNS fixture {} should decode: {err}", case.path))
+}
+
+fn mdns_pcap_raw_ipv4_packet() -> Packet {
+    mdns_fixture_packet("ipv4-udp-mdns-query")
+}
+
+fn mdns_pcap_ethernet_ipv4_packet() -> Packet {
+    Ethernet::new()
+        .src(mdns_pcap_source_mac())
+        .dst(MDNS_IPV4_ETHERNET_MULTICAST)
+        .ethertype(ETHERTYPE_IPV4)
+        / mdns_pcap_raw_ipv4_packet()
+}
+
+fn mdns_pcap_ethernet_ipv6_packet() -> Packet {
+    Ethernet::new()
+        .src(mdns_pcap_source_mac())
+        .dst(MDNS_IPV6_ETHERNET_MULTICAST)
+        .ethertype(ETHERTYPE_IPV6)
+        / mdns_fixture_packet("ipv6-udp-mdns-query")
+}
+
+fn mdns_pcap_ethernet_ipv4_record_bytes() -> Vec<u8> {
+    mdns_pcap_ethernet_ipv4_packet()
+        .compile()
+        .expect("mDNS Ethernet IPv4 pcap fixture packet should compile")
+        .as_bytes()
+        .to_vec()
+}
+
+fn mdns_pcap_ethernet_ipv6_record_bytes() -> Vec<u8> {
+    mdns_pcap_ethernet_ipv6_packet()
+        .compile()
+        .expect("mDNS Ethernet IPv6 pcap fixture packet should compile")
+        .as_bytes()
+        .to_vec()
+}
+
+fn mdns_pcap_timestamp(case_name: &str) -> PcapTimestamp {
+    match case_name {
+        "raw-ipv4-udp-mdns-query" => PcapTimestamp::micros(67, 531),
+        "ethernet-ipv4-udp-mdns-query" => PcapTimestamp::micros(67, 532),
+        "ethernet-ipv6-udp-mdns-query" => PcapTimestamp::micros(67, 533),
+        other => panic!("unknown mDNS pcap fixture {other}"),
+    }
+    .expect("mDNS pcap timestamp should be valid")
+}
+
+fn mdns_pcap_bytes(
+    pcap_link_type: PcapLinkType,
+    packet: &Packet,
+    timestamp: PcapTimestamp,
+) -> Vec<u8> {
+    let mut pcap = Vec::new();
+    {
+        let options =
+            PcapWriterOptions::new(pcap_link_type).precision(TimestampPrecision::Microseconds);
+        let mut writer = PcapWriter::from_writer_with_options(&mut pcap, options)
+            .expect("mDNS pcap writer should initialize");
+        writer
+            .write_packet_with_timestamp(packet, timestamp)
+            .expect("mDNS pcap packet should write");
+        writer.flush().expect("mDNS pcap should flush");
+    }
+    pcap
+}
+
+fn mdns_pcap_raw_ipv4_bytes() -> Vec<u8> {
+    mdns_pcap_bytes(
+        PcapLinkType::RawIp,
+        &mdns_pcap_raw_ipv4_packet(),
+        mdns_pcap_timestamp("raw-ipv4-udp-mdns-query"),
+    )
+}
+
+fn mdns_pcap_ethernet_ipv4_bytes() -> Vec<u8> {
+    mdns_pcap_bytes(
+        PcapLinkType::Ethernet,
+        &mdns_pcap_ethernet_ipv4_packet(),
+        mdns_pcap_timestamp("ethernet-ipv4-udp-mdns-query"),
+    )
+}
+
+fn mdns_pcap_ethernet_ipv6_bytes() -> Vec<u8> {
+    mdns_pcap_bytes(
+        PcapLinkType::Ethernet,
+        &mdns_pcap_ethernet_ipv6_packet(),
+        mdns_pcap_timestamp("ethernet-ipv6-udp-mdns-query"),
+    )
+}
+
+fn mdns_pcap_expected_bytes(case_name: &str) -> Vec<u8> {
+    match case_name {
+        "raw-ipv4-udp-mdns-query" => mdns_pcap_raw_ipv4_bytes(),
+        "ethernet-ipv4-udp-mdns-query" => mdns_pcap_ethernet_ipv4_bytes(),
+        "ethernet-ipv6-udp-mdns-query" => mdns_pcap_ethernet_ipv6_bytes(),
+        other => panic!("unknown mDNS pcap fixture {other}"),
+    }
+}
+
+fn assert_mdns_pcap_packet_surface(label: &str, packet: &Packet) {
+    let udp = packet.layer::<Udp>().expect("mDNS pcap packet has UDP");
+    assert_eq!(udp.source_port_value(), MDNS_PORT);
+    assert_eq!(udp.destination_port_value(), MDNS_PORT);
+
+    let dns = packet.layer::<Dns>().expect("mDNS pcap packet has DNS");
+    assert!(!dns.is_response());
+    assert_eq!(dns.questions().len(), 1);
+    assert!(dns.summary().starts_with("mDNS("), "{}", dns.summary());
+    assert!(packet.show().contains("mDNS: true"), "{}", packet.show());
+
+    match label {
+        "raw-ipv4-udp-mdns-query"
+        | "ethernet-ipv4-udp-mdns-query"
+        | MDNS_PCAP_ETHERNET_IPV4_RECORD_FIXTURE_NAME => {
+            let ipv4 = packet.layer::<Ipv4>().expect("mDNS IPv4 pcap has IPv4");
+            assert_eq!(ipv4.destination(), MDNS_IPV4_MULTICAST);
+            assert_eq!(ipv4.ttl_value(), 255);
+            assert_eq!(dns.questions()[0].name(), "_ipp._tcp.local.");
+            assert_eq!(dns.questions()[0].question_type(), DNS_TYPE_PTR);
+            assert_eq!(
+                dns.questions()[0].question_class(),
+                MDNS_CLASS_BIT | DNS_CLASS_IN
+            );
+            assert!(dns.questions()[0].mdns_unicast_response_preferred_value());
+
+            if label == "raw-ipv4-udp-mdns-query" {
+                assert!(packet.layer::<Ethernet>().is_none());
+            } else {
+                let ethernet = packet
+                    .layer::<Ethernet>()
+                    .expect("mDNS IPv4 pcap has Ethernet");
+                assert_eq!(ethernet.source(), Some(mdns_pcap_source_mac()));
+                assert_eq!(ethernet.destination(), Some(MDNS_IPV4_ETHERNET_MULTICAST));
+                assert_eq!(ethernet.ethertype_value(), Some(ETHERTYPE_IPV4));
+            }
+        }
+        "ethernet-ipv6-udp-mdns-query" | MDNS_PCAP_ETHERNET_IPV6_RECORD_FIXTURE_NAME => {
+            let ipv6 = packet.layer::<Ipv6>().expect("mDNS IPv6 pcap has IPv6");
+            assert_eq!(ipv6.destination(), MDNS_IPV6_LINK_LOCAL_MULTICAST);
+            assert_eq!(ipv6.hop_limit_value(), 255);
+            assert_eq!(dns.questions()[0].name(), "printer.local.");
+            assert_eq!(dns.questions()[0].question_type(), DNS_TYPE_AAAA);
+            assert_eq!(dns.questions()[0].question_class(), DNS_CLASS_IN);
+            assert!(!dns.questions()[0].mdns_unicast_response_preferred_value());
+
+            let ethernet = packet
+                .layer::<Ethernet>()
+                .expect("mDNS IPv6 pcap has Ethernet");
+            assert_eq!(ethernet.source(), Some(mdns_pcap_source_mac()));
+            assert_eq!(ethernet.destination(), Some(MDNS_IPV6_ETHERNET_MULTICAST));
+            assert_eq!(ethernet.ethertype_value(), Some(ETHERTYPE_IPV6));
+        }
+        other => panic!("unknown mDNS pcap fixture {other}"),
     }
 }
 
@@ -10440,6 +10656,10 @@ fn pcap_fixture_corpus_decodes_supported_link_types() {
                     | QUIC_PCAP_ETHERNET_RECORD_FIXTURE_NAME => {
                         assert_quic_pcap_packet_surface(expected.fixture_name, packet.packet())
                     }
+                    MDNS_PCAP_ETHERNET_IPV4_RECORD_FIXTURE_NAME
+                    | MDNS_PCAP_ETHERNET_IPV6_RECORD_FIXTURE_NAME => {
+                        assert_mdns_pcap_packet_surface(expected.fixture_name, packet.packet())
+                    }
                     other => panic!("pcap sentinel record {other} has no surface assertion"),
                 }
                 assert_eq!(
@@ -10682,6 +10902,130 @@ fn quic_pcap_write_fixtures() {
         quic_pcap_ethernet_bytes(),
     )
     .expect("QUIC Ethernet pcap fixture should write");
+}
+
+#[test]
+fn mdns_pcap_fixtures_decode_dns_and_roundtrip() {
+    for case_name in [
+        "raw-ipv4-udp-mdns-query",
+        "ethernet-ipv4-udp-mdns-query",
+        "ethernet-ipv6-udp-mdns-query",
+    ] {
+        let case = pcap_fixture_case(case_name);
+        let expected_pcap = mdns_pcap_expected_bytes(case_name);
+        assert_eq!(case.records.len(), 1);
+        assert_eq!(case.contents, expected_pcap.as_slice());
+
+        let expected = case.records[0];
+        let expected_record_bytes = pcap_record_expected_bytes(expected.fixture_name);
+        let expected_timestamp = mdns_pcap_timestamp(case_name);
+
+        let reader = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| panic!("pcap fixture {} should parse: {err}", case.path));
+        assert_eq!(reader.pcap_link_type(), case.pcap_link_type);
+        assert_eq!(reader.link_type(), case.link_type);
+        assert_eq!(reader.header().precision(), case.timestamp_precision);
+
+        let records = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} should parse header for records: {err}",
+                    case.path
+                )
+            })
+            .collect_records()
+            .unwrap_or_else(|err| panic!("pcap fixture {} should read records: {err}", case.path));
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.timestamp(), expected_timestamp);
+        assert_eq!(record.pcap_link_type(), case.pcap_link_type);
+        assert_eq!(record.link_type(), case.link_type);
+        assert_eq!(record.captured_len(), expected_record_bytes.len() as u32);
+        assert_eq!(record.original_len(), expected_record_bytes.len() as u32);
+        assert_eq!(record.data(), expected_record_bytes.as_slice());
+
+        let packets = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} should parse header for packets: {err}",
+                    case.path
+                )
+            })
+            .collect_packets()
+            .unwrap_or_else(|err| {
+                panic!("pcap fixture {} should decode packets: {err}", case.path)
+            });
+        assert_eq!(packets.len(), 1);
+        let packet = &packets[0];
+        assert_eq!(packet.timestamp(), expected_timestamp);
+        assert_eq!(packet.original_len(), expected_record_bytes.len() as u32);
+        assert_eq!(packet.pcap_link_type(), case.pcap_link_type);
+        assert_eq!(packet.link_type(), case.link_type);
+        assert_eq!(packet.data(), expected_record_bytes.as_slice());
+        assert_mdns_pcap_packet_surface(case.name, packet.packet());
+
+        let mut rewritten_packet = Vec::new();
+        {
+            let options =
+                PcapWriterOptions::new(case.pcap_link_type).precision(case.timestamp_precision);
+            let mut writer = PcapWriter::from_writer_with_options(&mut rewritten_packet, options)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "pcap fixture {} packet writer should initialize: {err}",
+                        case.path
+                    )
+                });
+            writer
+                .write_packet_with_timestamp(packet.packet(), expected_timestamp)
+                .unwrap_or_else(|err| {
+                    panic!("pcap fixture {} packet should write: {err}", case.path)
+                });
+            writer.flush().unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} packet writer should flush: {err}",
+                    case.path
+                )
+            });
+        }
+        assert_eq!(rewritten_packet, case.contents);
+
+        let mut rewritten_record = Vec::new();
+        {
+            let options =
+                PcapWriterOptions::new(case.pcap_link_type).precision(case.timestamp_precision);
+            let mut writer = PcapWriter::from_writer_with_options(&mut rewritten_record, options)
+                .unwrap_or_else(|err| {
+                    panic!("pcap fixture {} writer should initialize: {err}", case.path)
+                });
+            writer.write_record(record).unwrap_or_else(|err| {
+                panic!("pcap fixture {} record should write: {err}", case.path)
+            });
+            writer.flush().unwrap_or_else(|err| {
+                panic!("pcap fixture {} writer should flush: {err}", case.path)
+            });
+        }
+        assert_eq!(rewritten_record, case.contents);
+    }
+}
+
+#[test]
+#[ignore = "regenerates committed mDNS pcap fixtures"]
+fn mdns_pcap_write_fixtures() {
+    fs::write(
+        fixture_path("pcaps/raw-ipv4-udp-mdns-query.pcap"),
+        mdns_pcap_raw_ipv4_bytes(),
+    )
+    .expect("mDNS RawIp IPv4 pcap fixture should write");
+    fs::write(
+        fixture_path("pcaps/ethernet-ipv4-udp-mdns-query.pcap"),
+        mdns_pcap_ethernet_ipv4_bytes(),
+    )
+    .expect("mDNS Ethernet IPv4 pcap fixture should write");
+    fs::write(
+        fixture_path("pcaps/ethernet-ipv6-udp-mdns-query.pcap"),
+        mdns_pcap_ethernet_ipv6_bytes(),
+    )
+    .expect("mDNS Ethernet IPv6 pcap fixture should write");
 }
 
 #[test]
