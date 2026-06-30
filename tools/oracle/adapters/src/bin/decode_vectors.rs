@@ -254,7 +254,7 @@ fn normalize_packet(
 
     for layer in &packet_layers {
         let layer = *layer;
-        let layer_name = normalized_layer_name(layer);
+        let layer_name = normalized_layer_name_with_context(layer, udp_layout.as_ref());
         let layer_fields =
             normalized_layer_fields(layer, udp_layout.as_ref(), source_bytes.as_deref());
         if let Some(udp) = layer.as_any().downcast_ref::<Udp>() {
@@ -414,6 +414,13 @@ fn field_key(existing: &BTreeMap<String, BTreeMap<String, Value>>, layer_name: &
         }
         index += 1;
     }
+}
+
+fn normalized_layer_name_with_context(layer: &dyn Layer, udp_layout: Option<&UdpLayout>) -> String {
+    if layer.as_any().is::<Dns>() && is_mdns_udp_layout(udp_layout) {
+        return "mdns".to_string();
+    }
+    normalized_layer_name(layer)
 }
 
 fn normalized_layer_name(layer: &dyn Layer) -> String {
@@ -622,6 +629,9 @@ fn normalized_layer_fields(
         return igmp_extension_fields(layer);
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Dns>() {
+        if let Some(layout) = udp_layout.filter(|layout| is_mdns_udp_layout(Some(*layout))) {
+            return mdns_fields(layer, layout);
+        }
         return dns_fields(layer);
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Dhcpv4>() {
@@ -2684,6 +2694,192 @@ fn dns_fields(layer: &Dns) -> BTreeMap<String, Value> {
     ])
 }
 
+fn mdns_fields(layer: &Dns, layout: &UdpLayout) -> BTreeMap<String, Value> {
+    let mut fields = dns_fields(layer);
+    fields.insert(
+        "transport".to_string(),
+        json!({
+            "udp_source_port": layout.udp_source_port,
+            "udp_destination_port": layout.udp_destination_port,
+            "service_port": MDNS_PORT,
+            "unicast_reply": layout.udp_source_port != MDNS_PORT
+                || layout.udp_destination_port != MDNS_PORT,
+        }),
+    );
+    fields.insert("udp_5353".to_string(), json!(true));
+    fields.insert("message_kind".to_string(), json!(mdns_message_kind(layer)));
+    fields.insert("dns_sd".to_string(), mdns_dns_sd_fields(layer));
+    fields
+}
+
+fn mdns_message_kind(layer: &Dns) -> &'static str {
+    if !dns_flag(layer, DNS_FLAG_QR_RESPONSE) {
+        if !layer.answers().is_empty() {
+            return "known_answer_query";
+        }
+        if !layer.authorities().is_empty() {
+            return "probe";
+        }
+        if let Some(kind) = mdns_dns_sd_query_kind(layer) {
+            return kind;
+        }
+        return "multicast_query";
+    }
+    if layer.answers().iter().any(|record| record.ttl() == 0) {
+        "goodbye"
+    } else {
+        "multicast_response"
+    }
+}
+
+fn mdns_dns_sd_query_kind(layer: &Dns) -> Option<&'static str> {
+    if layer.questions().is_empty() {
+        return None;
+    }
+    let names = layer
+        .questions()
+        .iter()
+        .map(mdns_dns_sd_question_name)
+        .collect::<Vec<_>>();
+    let question_types = layer
+        .questions()
+        .iter()
+        .map(|question| question.question_type())
+        .collect::<Vec<_>>();
+    if names
+        .iter()
+        .any(|name| name.contains("._sub.") || mdns_is_service_name(name))
+    {
+        return Some("dns_sd_browse");
+    }
+    if question_types
+        .iter()
+        .all(|qtype| matches!(*qtype, DNS_TYPE_SRV | DNS_TYPE_TXT))
+        && names.iter().any(|name| mdns_is_instance_name(name))
+    {
+        return Some("dns_sd_resolve");
+    }
+    None
+}
+
+fn mdns_dns_sd_fields(layer: &Dns) -> Value {
+    let mut names = Vec::new();
+    for question in layer.questions() {
+        names.push(mdns_dns_sd_question_name(question));
+    }
+    for record in layer
+        .answers()
+        .iter()
+        .chain(layer.authorities())
+        .chain(layer.additionals())
+    {
+        names.push(mdns_dns_sd_record_name(record));
+    }
+
+    let records = layer
+        .answers()
+        .iter()
+        .chain(layer.authorities())
+        .chain(layer.additionals());
+    let txt_strings = records
+        .filter(|record| record.record_type() == DNS_TYPE_TXT)
+        .filter_map(|record| match record.data() {
+            DnsRecordData::Txt(strings) => Some(python_string_list_repr(
+                strings
+                    .iter()
+                    .map(|item| python_bytes_repr(item))
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+            )),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    json!({
+        "service_names": names.iter().filter(|name| mdns_is_service_name(name)).cloned().collect::<Vec<_>>(),
+        "instance_names": names.iter().filter(|name| mdns_is_instance_name(name)).cloned().collect::<Vec<_>>(),
+        "subtype_names": names.iter().filter(|name| name.contains("._sub.")).cloned().collect::<Vec<_>>(),
+        "browse_names": names
+            .iter()
+            .filter(|name| mdns_is_service_name(name) || name.contains("._sub."))
+            .cloned()
+            .collect::<Vec<_>>(),
+        "txt_strings": txt_strings,
+    })
+}
+
+fn mdns_dns_sd_question_name(question: &DnsQuestion) -> String {
+    mdns_dns_sd_name_from_labels(question.name_labels())
+}
+
+fn mdns_dns_sd_record_name(record: &DnsRecord) -> String {
+    mdns_dns_sd_name_from_labels(record.name_labels())
+}
+
+fn mdns_dns_sd_name_from_labels(labels: &[Vec<u8>]) -> String {
+    if labels.is_empty() {
+        return ".".to_string();
+    }
+    let mut output = labels
+        .iter()
+        .map(|label| String::from_utf8_lossy(label).into_owned())
+        .collect::<Vec<_>>()
+        .join(".");
+    output.push('.');
+    output
+}
+
+fn mdns_is_service_name(name: &str) -> bool {
+    let labels = name.trim_end_matches('.').split('.').collect::<Vec<_>>();
+    labels.len() >= 3 && labels[0].starts_with('_') && labels[1].starts_with('_')
+}
+
+fn mdns_is_instance_name(name: &str) -> bool {
+    let labels = name.trim_end_matches('.').split('.').collect::<Vec<_>>();
+    labels.len() >= 4 && !labels[0].starts_with('_') && labels[1].starts_with('_')
+}
+
+fn python_string_list_repr(items: &[String]) -> String {
+    let rendered = items
+        .iter()
+        .map(|item| format!("\"{}\"", python_string_escape(item)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{rendered}]")
+}
+
+fn python_bytes_repr(bytes: &[u8]) -> String {
+    let mut output = String::from("b'");
+    for &byte in bytes {
+        match byte {
+            b'\'' => output.push_str("\\'"),
+            b'\\' => output.push_str("\\\\"),
+            b'\n' => output.push_str("\\n"),
+            b'\r' => output.push_str("\\r"),
+            b'\t' => output.push_str("\\t"),
+            0x20..=0x7e => output.push(char::from(byte)),
+            _ => output.push_str(&format!("\\x{byte:02x}")),
+        }
+    }
+    output.push('\'');
+    output
+}
+
+fn python_string_escape(value: &str) -> String {
+    let mut output = String::new();
+    for ch in value.chars() {
+        match ch {
+            '\\' => output.push_str("\\\\"),
+            '"' => output.push_str("\\\""),
+            '\n' => output.push_str("\\n"),
+            '\r' => output.push_str("\\r"),
+            '\t' => output.push_str("\\t"),
+            _ => output.push(ch),
+        }
+    }
+    output
+}
+
 fn dhcpv4_fields(layer: &Dhcpv4) -> BTreeMap<String, Value> {
     let mut fields = map([
         ("opcode", json!(layer.op_value())),
@@ -3008,6 +3204,8 @@ fn tcp_flags(flags: u16) -> String {
 #[derive(Clone, Copy)]
 struct UdpLayout {
     l3_start: usize,
+    udp_source_port: u16,
+    udp_destination_port: u16,
     udp_length: usize,
     udp_payload_start: usize,
     udp_payload_end: usize,
@@ -3098,6 +3296,8 @@ fn udp_layout_from_offsets(
     if raw.len() < udp_start + 8 || raw.len() < ip_end {
         return None;
     }
+    let udp_source_port = u16_at(raw, udp_start)?;
+    let udp_destination_port = u16_at(raw, udp_start + 2)?;
     let udp_length = usize::from(u16_at(raw, udp_start + 4)?);
     if udp_length < 8 {
         return None;
@@ -3109,12 +3309,23 @@ fn udp_layout_from_offsets(
     }
     Some(UdpLayout {
         l3_start,
+        udp_source_port,
+        udp_destination_port,
         udp_length,
         udp_payload_start,
         udp_payload_end,
         surplus_start: udp_payload_end,
         ip_end,
     })
+}
+
+fn is_mdns_udp_layout(layout: Option<&UdpLayout>) -> bool {
+    match layout {
+        Some(layout) => {
+            layout.udp_source_port == MDNS_PORT || layout.udp_destination_port == MDNS_PORT
+        }
+        None => false,
+    }
 }
 
 fn udp_checksum_status_label(status: UdpChecksumStatus) -> &'static str {

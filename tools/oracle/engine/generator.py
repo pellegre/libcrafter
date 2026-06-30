@@ -1148,6 +1148,8 @@ class PacketGenerator:
         ):
             if family == "udp" and feature_name != "udp_options":
                 continue
+            if family == "mdns" and not feature_name.startswith("mdns_"):
+                continue
             categories = _string_list(feature_spec.get("categories", []), "feature.categories")
             for feature_case in self._compatible_feature_cases(
                 stack=stack_layers,

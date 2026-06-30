@@ -11,6 +11,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 import unittest
 
+from tools.oracle.engine.corpus import (
+    SKIP_OFFLINE_PCAP_FILE_FIXTURE,
+    CorpusPacket,
+    populate_corpus_eligibility,
+)
 from tools.oracle.engine.backends.scapy.protocols import SCAPY_REGISTRY
 from tools.oracle.engine.backends.wireshark.protocols import WIRESHARK_REGISTRY
 from tools.oracle.engine.generator import (
@@ -333,6 +338,22 @@ class MdnsGeneratorTest(unittest.TestCase):
             )
         )
 
+    def test_mdns_family_generation_does_not_cross_sample_unrelated_features(self) -> None:
+        plans = generate_plans(
+            seed=6762,
+            profile="ci",
+            backend="scapy",
+            count=50,
+            family="mdns",
+            direction="backend_to_libcrafter",
+        )
+        self.assertTrue(plans)
+        for plan in plans:
+            with self.subTest(index=plan.index, case=plan.case):
+                self.assertEqual(plan.family, "mdns")
+                self.assertIn("mdns", plan.stack)
+                self.assertTrue(str(plan.metadata["feature"]).startswith("mdns_"))
+
 
 class MdnsLibcrafterMaterializerPlanTest(unittest.TestCase):
     def test_packet_materializer_safe_cases_emit_compatible_plan_fields(self) -> None:
@@ -382,6 +403,14 @@ class MdnsLibcrafterMaterializerPlanTest(unittest.TestCase):
         self.assertEqual(mdns["file_format"], "pcap")
         self.assertTrue(str(mdns["fixture"]).endswith(".pcap"))
         self.assertIn("roundtrip", self._supported_case_directions("mdns_pcap", "mdns-pcap-ethernet-ipv4"))
+
+        [packet] = populate_corpus_eligibility(
+            backend="scapy",
+            packets=[CorpusPacket.from_plan(plan)],
+        )
+        self.assertFalse(packet.offline.eligible)
+        self.assertEqual(packet.offline.reason, SKIP_OFFLINE_PCAP_FILE_FIXTURE)
+        self.assertTrue(packet.pcap.eligible)
 
     def _assert_transport_fields(self, mdns: Mapping[str, object]) -> None:
         transport = _mapping(mdns["transport"], "transport")
