@@ -9,7 +9,7 @@
   dispatches DNS on UDP/53 only.
 - `crafter/src/protocols/transport/udp/datagram.rs` identifies DNS as a UDP
   application layer for UDP payload sizing and surplus handling.
-- `tools/oracle` has the DNS layer and feature specs, Scapy/Wireshark DNS
+- `tools/oracle` has the DNS layer and feature specs, packet/parser reference
   backends, raw DNS byte helpers, and the Rust materializer.
 - `tools/probe` has DNS behavior planning, a controlled UDP DNS responder, lab
   capability derivation, and a Rust stimulus adapter for DNS over IPv4 unicast.
@@ -123,17 +123,18 @@ UDP with header fields, questions, all four sections, typed records, EDNS,
 DNSSEC, SVCB/HTTPS, raw records, and normalized names. The DNS feature spec
 (`tools/oracle/specs/features/dns-behavior.yaml`) covers ordinary DNS record
 behavior, compressed-name normalization, raw fallback, malformed inputs, and
-section placement. DNS cases are listed in the IPv4 DNS stack and Scapy coverage
-matrix. The Scapy DNS backend and `dns_raw.py` can materialize typed DNS and
-raw byte cases; the Wireshark DNS backend is parser-only normalization; the Rust
-materializer builds `Dns` packets from oracle plans.
+section placement. DNS cases are listed in the IPv4 DNS stack and reference
+backend coverage matrix. The packet reference DNS backend and `dns_raw.py` can
+materialize typed DNS and raw byte cases; the parser reference backend is
+parser-only normalization; the Rust materializer builds `Dns` packets from
+oracle plans.
 
 There is no mDNS oracle layer, feature, stack, profile, fixture list, generator
-behavior, Scapy mDNS defaulting, Wireshark mDNS normalization, or Rust
-materializer path for mDNS plan fields. The first oracle changes should be new
-or extended specs that define UDP/5353, multicast transport metadata, mDNS class
-bits, DNS-SD packet shapes, and malformed mDNS cases. Backend code should follow
-the specs, not precede them.
+behavior, packet-backend mDNS defaulting, parser-backend mDNS normalization, or
+Rust materializer path for mDNS plan fields. The first oracle changes should be
+new or extended specs that define UDP/5353, multicast transport metadata, mDNS
+class bits, DNS-SD packet shapes, and malformed mDNS cases. Backend code should
+follow the specs, not precede them.
 
 ## Probe and lab coverage
 
