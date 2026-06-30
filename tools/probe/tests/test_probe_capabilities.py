@@ -82,6 +82,11 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "ssdp_ipv4_multicast",
             "ssdp_ipv6_multicast",
             "ssdp_ipv6_link_local_scope",
+            "mdns_controlled_responder",
+            "mdns_unicast_response",
+            "mdns_ipv4_multicast",
+            "mdns_ipv6_multicast",
+            "mdns_ipv6_link_local_scope",
         ):
             self.assertIn(name, PROBE_CAPABILITY_NAMES)
 
@@ -124,6 +129,11 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "ssdp_ipv4_multicast",
             "ssdp_ipv6_multicast",
             "ssdp_ipv6_link_local_scope",
+            "mdns_controlled_responder",
+            "mdns_unicast_response",
+            "mdns_ipv4_multicast",
+            "mdns_ipv6_multicast",
+            "mdns_ipv6_link_local_scope",
         ):
             self.assertIs(derived[name], True, name)
 
@@ -160,6 +170,8 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             # available, but multicast live cases need an L2/capture substrate.
             "ssdp_offline_plan",
             "ssdp_controlled_responder",
+            "mdns_controlled_responder",
+            "mdns_unicast_response",
         ):
             self.assertIs(derived[granted], True, granted)
 
@@ -177,6 +189,9 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "ssdp_ipv4_multicast",
             "ssdp_ipv6_multicast",
             "ssdp_ipv6_link_local_scope",
+            "mdns_ipv4_multicast",
+            "mdns_ipv6_multicast",
+            "mdns_ipv6_link_local_scope",
         ):
             self.assertIs(derived[denied], False, denied)
 
@@ -194,6 +209,8 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
         self.assertIs(derived["provider_mac"], False)
         self.assertIs(derived["ssdp_ipv6_multicast"], True)
         self.assertIs(derived["ssdp_ipv6_link_local_scope"], False)
+        self.assertIs(derived["mdns_ipv6_multicast"], True)
+        self.assertIs(derived["mdns_ipv6_link_local_scope"], False)
 
     def test_ssdp_controlled_responder_can_be_denied_independently(self) -> None:
         substrate = dict(_LINK_LAYER_SUBSTRATE)
@@ -207,6 +224,32 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
         self.assertIs(derived["ssdp_controlled_responder"], False)
         self.assertIs(derived["ssdp_ipv4_multicast"], True)
         self.assertIs(derived["ssdp_ipv6_multicast"], True)
+
+    def test_mdns_controlled_responder_can_be_denied_independently(self) -> None:
+        substrate = dict(_LINK_LAYER_SUBSTRATE)
+        substrate["mdns_controlled_responder"] = False
+        derived = probe_capabilities_from_lab_capabilities(
+            "qemu",
+            substrate,
+            dry_run=True,
+        )
+
+        self.assertIs(derived["mdns_controlled_responder"], False)
+        self.assertIs(derived["mdns_unicast_response"], False)
+        self.assertIs(derived["mdns_ipv4_multicast"], True)
+        self.assertIs(derived["mdns_ipv6_multicast"], True)
+
+    def test_mdns_unicast_response_can_be_denied_independently(self) -> None:
+        substrate = dict(_LINK_LAYER_SUBSTRATE)
+        substrate["mdns_unicast_response"] = False
+        derived = probe_capabilities_from_lab_capabilities(
+            "qemu",
+            substrate,
+            dry_run=True,
+        )
+
+        self.assertIs(derived["mdns_controlled_responder"], True)
+        self.assertIs(derived["mdns_unicast_response"], False)
 
     def test_ssdp_ipv6_scope_requires_interface_metadata_when_denied(self) -> None:
         substrate = dict(_LINK_LAYER_SUBSTRATE)

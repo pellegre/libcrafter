@@ -99,6 +99,11 @@ _CAPABILITY_SKIP_REASONS = {
     "ssdp_ipv6_link_local_scope": SKIP_REQUIRES_IPV6_LINK_LOCAL_SCOPE_METADATA,
     "ssdp_controlled_responder": SKIP_REQUIRES_CONTROLLED_SERVICE,
     "ssdp_offline_plan": SKIP_OFFLINE_PLAN_UNAVAILABLE,
+    "mdns_ipv4_multicast": SKIP_REQUIRES_MULTICAST,
+    "mdns_ipv6_multicast": SKIP_REQUIRES_MULTICAST,
+    "mdns_ipv6_link_local_scope": SKIP_REQUIRES_IPV6_LINK_LOCAL_SCOPE_METADATA,
+    "mdns_controlled_responder": SKIP_REQUIRES_CONTROLLED_SERVICE,
+    "mdns_unicast_response": SKIP_REQUIRES_CONTROLLED_SERVICE,
     "ipv4_multicast": SKIP_REQUIRES_IPV4_MULTICAST,
     "igmp_peer": SKIP_REQUIRES_IGMP_PEER,
     # An IPSec-capable peer is missing: ESP/AH need the matching SA, IKEv2 needs

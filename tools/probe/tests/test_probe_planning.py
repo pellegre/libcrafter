@@ -445,6 +445,21 @@ class ProbePlanningRegistryTest(unittest.TestCase):
                         name,
                     )
                     self.assertEqual(plan["validation"]["planned_only"], True, name)
+                elif case.metadata.get("protocol") == "mdns":
+                    self.assertEqual(plan["protocol"], "mdns", name)
+                    self.assertEqual(plan["destination_port"], 5353, name)
+                    self.assertIn("mdns", plan, name)
+                    self.assertIn("expected_mdns", plan, name)
+                    self.assertEqual(
+                        plan["stimulus_driver"]["name"],
+                        "mdns_probe",
+                        name,
+                    )
+                    self.assertIn(
+                        plan["validation"]["expected_decode"],
+                        {"mdns", "no_mdns_response"},
+                        name,
+                    )
                 else:
                     self.fail(f"unhandled planned-only registered case {name}")
             else:

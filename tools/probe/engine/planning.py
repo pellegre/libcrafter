@@ -215,6 +215,13 @@ from .protocols.snmp import (  # noqa: F401  (re-exported for identity/back-comp
 from .protocols.ssdp import (  # noqa: F401  (re-exported for identity)
     _ssdp_probe_plan,
 )
+# The mDNS planning surface (the planned-only multicast / DNS-SD behavior cases'
+# shared ``_mdns_probe_plan`` builder) lives in the mDNS plugin module. Re-import
+# the moved builder so ``planning._mdns_probe_plan`` resolves to the same function
+# object the plugin registered and the merged ``PLAN_BUILDERS`` exposes.
+from .protocols.mdns import (  # noqa: F401  (re-exported for identity)
+    _mdns_probe_plan,
+)
 # The IGMP planning surface (the four IGMP cases' shared ``_igmp_probe_plan``
 # builder, the ``_igmp_target_service`` plan-building helper, and the
 # ``deterministic_igmp_group`` / ``deterministic_igmp_source_list`` helpers) lives

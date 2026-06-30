@@ -103,6 +103,9 @@ PROBE_CAPABILITY_NAMES = (
     "ssdp_ipv4_multicast",
     "ssdp_ipv6_multicast",
     "ssdp_ipv6_link_local_scope",
+    "mdns_controlled_responder", "mdns_unicast_response",
+    "mdns_ipv4_multicast", "mdns_ipv6_multicast",
+    "mdns_ipv6_link_local_scope",
 )
 
 
@@ -408,6 +411,26 @@ def probe_capabilities_from_lab_capabilities(
             ],
             "ssdp_ipv6_link_local_scope": [
                 "ssdp_ipv6_multicast",
+                "provider_mac_known",
+                "target_interface_known",
+                "provider_interface_known",
+            ],
+            "mdns_controlled_responder": ["controlled_services", "controlled_udp_service"],
+            "mdns_unicast_response": ["ipv4_unicast", "mdns_controlled_responder"],
+            "mdns_ipv4_multicast": [
+                "ipv4_unicast",
+                "link_layer_send",
+                "link_layer_capture",
+                "multicast",
+            ],
+            "mdns_ipv6_multicast": [
+                "ipv6_unicast",
+                "link_layer_send",
+                "link_layer_capture",
+                "multicast",
+            ],
+            "mdns_ipv6_link_local_scope": [
+                "mdns_ipv6_multicast",
                 "provider_mac_known",
                 "target_interface_known",
                 "provider_interface_known",
