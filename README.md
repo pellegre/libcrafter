@@ -226,6 +226,7 @@ preserved as `Raw` payloads when the enclosing header is valid.
 | UDP | UDP with options (RFC 9868) and checksum status | [udp](docs/guide/udp.md) |
 | QUIC | UDP-carried QUIC datagrams, long/short headers, Version Negotiation, Retry, Initial/Handshake/0-RTT packets, frames, transport parameters, protected-payload preservation, and probe dry-run/lab planning; not a QUIC endpoint stack | [quic](docs/guide/quic.md) |
 | DNS | EDNS(0), SVCB/HTTPS, DNSSEC record types | [dns](docs/guide/dns.md) |
+| mDNS / DNS-SD | UDP/5353 DNS message construction and decode, multicast constants and stack builders, QU/cache-flush class-bit helpers, DNS-SD service names, PTR/SRV/TXT/A/AAAA packet shapes, known answers, probes, announcements, and goodbyes; not a resolver, responder, cache, scanner, or service registry | [mdns](docs/guide/mdns.md) |
 | DHCPv4 | BOOTP/DHCPv4 packet construction and decode, option overload, RFC 3396 long options, relay agent option 82, client identifiers, authentication, and leasequery packet fields; not a client, server, or lease engine | [dhcpv4](docs/guide/dhcpv4.md) |
 | DHCPv6 | DHCPv6 client/server and relay packet construction and decode, DUIDs, status codes, IA_NA, IA_PD, IA Address, IA Prefix, relay message encapsulation, leasequery families, and unknown option preservation; not a client, server, relay daemon, or lease engine | [dhcpv6](docs/guide/dhcpv6.md) |
 | BGP | OPEN, UPDATE, KEEPALIVE, NOTIFICATION, ROUTE-REFRESH, path attributes, capabilities | [bgp](docs/guide/bgp.md) |
@@ -279,9 +280,9 @@ The full annotated table, with safety modes and commands, is in
 
 - [docs/README.md](docs/README.md) is the documentation index.
 - [docs/guide/](docs/guide/) — per-protocol wire coverage for everyday packet
-  work (IPv4, IGMP, IPv6, TCP, UDP, ARP, ICMPv6, DHCPv6, DNS, BGP, MQTT, SNMP,
-  OSPF, 802.11, IPsec); UDP, ARP, ICMPv6, IGMP, DHCPv6, SNMP, and OSPF now
-  have their own guides.
+  work (IPv4, IGMP, IPv6, TCP, UDP, ARP, ICMPv6, DHCPv6, DNS, mDNS/DNS-SD,
+  BGP, MQTT, SNMP, OSPF, 802.11, IPsec); UDP, ARP, ICMPv6, IGMP, DHCPv6, DNS,
+  mDNS, SNMP, and OSPF now have their own guides.
 - [docs/reference/](docs/reference/) — the public API
   ([api.md](docs/reference/api.md)), the wire I/O layer
   ([wire.md](docs/reference/wire.md)), and the example catalog

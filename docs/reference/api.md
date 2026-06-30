@@ -62,6 +62,37 @@ them, then add `Igmp` and typed IGMP body layers with `/`. The crate exposes
 IGMP packet construction and decode; it is not a multicast router
 implementation, snooper, proxy, scanner, or state machine.
 
+## mDNS And DNS-SD Packets
+
+mDNS support stays inside the existing DNS layer. Use `Dns`, `DnsQuestion`,
+`DnsRecord`, `DnsName`, and `crafter::protocols::dns::mdns` helpers to build
+UDP/5353 packet shapes, DNS-SD service names, QU questions, cache-flush
+records, known answers, probes, announcements, and goodbyes. The crate does
+not implement a resolver, responder daemon, cache, scanner, or service
+registry.
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+fn main() -> crafter::Result<()> {
+    let service = mdns::dns_sd_tcp_service_name("ipp", DNS_SD_DEFAULT_DOMAIN)?;
+    let question = DnsQuestion::new(service, DNS_TYPE_PTR).mdns_qu(true);
+    let dns = mdns::query(question);
+    let packet = mdns::mdns_ipv4_packet(Ipv4Addr::new(192, 0, 2, 10), dns);
+
+    let bytes = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+    println!("{}", decoded.summary());
+    Ok(())
+}
+```
+
+Explicit fields remain explicit: callers can override IDs, flags, ports,
+classes, TTLs, and record data for fixed vectors or malformed-packet work. See
+[mDNS and DNS-SD wire coverage](../guide/mdns.md) for the packet-level helper
+catalog.
+
 ## Builder Conventions
 
 | Pattern | Meaning |
@@ -573,6 +604,7 @@ let targets = Ipv4Range::parse("192.0.2.1-20")?;
 | ICMPv6 | `Icmpv6`, `Icmpv6Body` |
 | ICMPv6 Neighbor Discovery options | `NdpOptions`, `NdpOption` |
 | DNS | `Dns` |
+| mDNS / DNS-SD | `Dns`, `DnsQuestion`, `DnsRecord`, and `crafter::protocols::dns::mdns` helpers |
 | DHCPv4 | `Dhcpv4` |
 | DHCPv6 | `Dhcpv6`, `Dhcpv6Option`, `Dhcpv6Duid`, `Dhcpv6IaNa`, `Dhcpv6IaPd` |
 | 802.1Q VLAN | `Vlan` |
