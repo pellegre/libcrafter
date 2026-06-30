@@ -38,9 +38,19 @@ class ProbeCatalogTest(unittest.TestCase):
             cases.case_by_name("mdns-ipv4-browse"),
             cases.PROBE_CASE_BY_NAME["mdns-ipv4-multicast-browse"],
         )
+        self.assertNotIn("mdns-ipv6-browse", cases.known_case_names())
+        self.assertIs(
+            cases.case_by_name("mdns-ipv6-browse"),
+            cases.PROBE_CASE_BY_NAME["mdns-ipv6-multicast-browse"],
+        )
         self.assertEqual(
-            [case.name for case in cases.selected_cases(["mdns-ipv4-browse"])],
-            ["mdns-ipv4-multicast-browse"],
+            [
+                case.name
+                for case in cases.selected_cases(
+                    ["mdns-ipv4-browse", "mdns-ipv6-browse"]
+                )
+            ],
+            ["mdns-ipv4-multicast-browse", "mdns-ipv6-multicast-browse"],
         )
 
     def test_case_by_name_unknown_lists_available_cases(self) -> None:

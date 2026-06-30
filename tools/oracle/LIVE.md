@@ -286,6 +286,7 @@ command records, artifact roots, and wire eligibility:
 ```sh
 tools/oracle/run live --backend scapy --provider local-dry-run --dry-run --family mdns --profile ci --seed 6766 --count 20 --direction live_exchange --out target/oracle/mdns-ipv4-local-dry-run
 tools/oracle/run live --backend scapy --provider qemu --dry-run --family mdns --profile ci --seed 6766 --count 20 --direction live_exchange --out target/oracle/mdns-ipv4-qemu-dry-run
+tools/oracle/run live --backend scapy --provider qemu --dry-run --family mdns --profile ci --seed 6767 --count 20 --direction live_exchange --out target/oracle/mdns-ipv6-qemu-dry-run
 ```
 
 Inspect the reports before any protected run. The provider-backed report should
@@ -297,8 +298,15 @@ root. For IPv4-only acceptance, IPv6-required corpus entries may skip; supported
 IPv4 entries must not be hidden as skips if packet build, decode, or comparison
 fails.
 
-Keep real IPv4 mDNS exchange behind an mDNS-specific environment gate and the
-generic live confirmation flag:
+IPv6 mDNS rides the link-local multicast destination `ff02::fb`. Before a
+protected IPv6 run, the provider-backed report must make
+`mdns_ipv6_multicast` / `mdns_ipv6_link_local_scope` eligibility explicit and
+show whether a skip came from missing link-local scope metadata rather than from
+a packet failure. Preserve the report and any wire-eligible corpus artifact
+under an ignored `target/oracle/mdns-ipv6-*` root for review.
+
+Keep real mDNS exchange behind mDNS-specific environment gates and the generic
+live confirmation flag:
 
 ```sh
 if [ "${LIBCRAFTER_RUN_MDNS_IPV4_LIVE:-0}" = "1" ]; then
@@ -307,8 +315,14 @@ if [ "${LIBCRAFTER_RUN_MDNS_IPV4_LIVE:-0}" = "1" ]; then
     --profile ci --seed 6766 --count 20 \
     --direction live_exchange --confirm-live-run \
     --out target/oracle/mdns-ipv4-live
+elif [ "${LIBCRAFTER_RUN_MDNS_IPV6_LIVE:-0}" = "1" ]; then
+  tools/oracle/run live \
+    --backend scapy --provider qemu --family mdns \
+    --profile ci --seed 6767 --count 20 \
+    --direction live_exchange --confirm-live-run \
+    --out target/oracle/mdns-ipv6-live
 else
-  echo "skipping protected mDNS IPv4 live run"
+  echo "skipping protected mDNS live run"
 fi
 ```
 

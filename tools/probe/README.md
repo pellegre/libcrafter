@@ -128,6 +128,7 @@ live traffic:
 
 ```sh
 tools/probe/run --provider qemu --dry-run --profile mdns-smoke --seed 6766 --case mdns-ipv4-browse --out target/probe/mdns-ipv4-live-dry-run
+tools/probe/run --provider qemu --dry-run --profile mdns-smoke --seed 6767 --case mdns-ipv6-browse --out target/probe/mdns-ipv6-live-dry-run
 ```
 
 Before a live IPv4 mDNS run, confirm that the dry-run report shows
@@ -144,14 +145,29 @@ as `requires_multicast`, `requires_controlled_service`, or
 `--confirm-live-run` must skip with confirmation-required metadata rather than
 sending packets.
 
+IPv6 mDNS uses the link-local multicast group `ff02::fb`, so a live-capable
+provider must expose both `mdns_ipv6_multicast` and
+`mdns_ipv6_link_local_scope`. The dry-run report for `mdns-ipv6-browse` should
+show `address_family=ipv6`, `destination_ipv6=ff02::fb`, `multicast_group`,
+`capture_filter`, `required_capabilities`, `wire_requirements`, and artifact
+paths even when the provider skips the case. A qemu private-network dry-run may
+legitimately skip with `requires_multicast` when IPv6 multicast is unavailable.
+A provider that grants IPv6 multicast but lacks provider MAC or scoped
+link-local metadata should skip with
+`requires_ipv6_link_local_scope_metadata`; either skip is a capability result,
+not a packet failure.
+
 Keep protected mDNS live runs behind an mDNS-specific operator gate in addition
 to the generic confirmation flag:
 
 ```sh
 if [ -n "${LIBCRAFTER_PROBE_LIVE_PROVIDER:-}" ] && [ "${LIBCRAFTER_PROBE_LIVE_MDNS_IPV4_CONFIRM:-}" = "yes" ]; then
   tools/probe/run --provider "$LIBCRAFTER_PROBE_LIVE_PROVIDER" --confirm-live-run --profile mdns-smoke --seed 6766 --case mdns-ipv4-browse --case mdns-qu-unicast-response --out target/probe/mdns-ipv4-live
+elif [ -n "${LIBCRAFTER_PROBE_LIVE_PROVIDER:-}" ] && [ "${LIBCRAFTER_PROBE_LIVE_MDNS_IPV6_CONFIRM:-}" = "yes" ]; then
+  tools/probe/run --provider "$LIBCRAFTER_PROBE_LIVE_PROVIDER" --confirm-live-run --profile mdns-smoke --seed 6767 --case mdns-ipv6-browse --out target/probe/mdns-ipv6-live
 else
   tools/probe/run --provider qemu --dry-run --profile mdns-smoke --seed 6766 --case mdns-ipv4-browse --out target/probe/mdns-ipv4-live-dry-run
+  tools/probe/run --provider qemu --dry-run --profile mdns-smoke --seed 6767 --case mdns-ipv6-browse --out target/probe/mdns-ipv6-live-dry-run
 fi
 ```
 
