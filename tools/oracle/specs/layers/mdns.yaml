@@ -225,6 +225,17 @@ backend_support:
       - >-
         Scapy materializes mDNS as DNS messages carried over UDP/5353 and
         normalizes mDNS-specific class-bit metadata for comparisons.
+  wireshark:
+    status: supported
+    decode: true
+    pcap_read: true
+    native_layers:
+      - dns
+      - mdns
+    notes:
+      - >-
+        Wireshark is parser-only for mDNS pcap validation. Its normalizer
+        promotes UDP/5353 DNS parser output to the backend-neutral mDNS layer.
   libcrafter:
     status: supported
     encode: true

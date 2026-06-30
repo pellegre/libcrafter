@@ -36,6 +36,7 @@ from .protocols.ipv6 import (
     _normalize_ipv6_options_header,
     _normalize_ipv6_routing,
 )
+from .protocols.mdns import canonicalize_mdns_payload
 from .protocols.quic import canonicalize_quic_payload
 
 
@@ -81,6 +82,7 @@ _PROTOCOL_LAYER_ALIASES: dict[str, str | None] = {
     "ipv6.hopopts": "ipv6_hop_by_hop",
     "ipv6.routing": "ipv6_routing",
     "llc": "llc_snap",
+    "mdns": "mdns",
     "null": "null_loopback",
     "quic": "quic",
     "radiotap": "radiotap",
@@ -218,6 +220,12 @@ def normalize_packet_json(
         normalized_layers.append(layer_name)
 
     canonicalize_quic_payload(
+        normalized_layers,
+        fields,
+        layers_object,
+        source_hex=source_hex,
+    )
+    canonicalize_mdns_payload(
         normalized_layers,
         fields,
         layers_object,
