@@ -81,9 +81,9 @@ profiles:
 
 backend_support:
   scapy:
-    status: planned
+    status: supported
     notes:
-      - Profiles affect mDNS generator sampling after the Scapy backend adapter lands.
+      - Profiles sample offline mDNS Scapy packet shapes and fixture-backed malformed payloads.
   libcrafter:
     status: supported
     notes:

@@ -52,6 +52,11 @@ from .protocols.dhcpv4 import (
     _decode_dhcpv4_option_tlvs,
 )
 from .protocols.dhcpv6 import _DHCPV6_OPTION_REGION_KEY
+from .protocols.mdns import (
+    canonicalize_mdns_payload,
+    mdns_dns_packet,
+    mdns_metadata,
+)
 from .protocols.quic import canonicalize_quic_payload
 from .protocols.ssdp import canonicalize_ssdp_payload
 
@@ -403,6 +408,7 @@ def normalize_packet(
     _canonicalize_mqtt(packet, normalized_layers, normalized_fields)
     canonicalize_quic_payload(packet, normalized_layers, normalized_fields)
     canonicalize_ssdp_payload(packet, normalized_layers, normalized_fields)
+    canonicalize_mdns_payload(packet, normalized_layers, normalized_fields)
     if source_hex is not None:
         _canonicalize_bgp_from_wire(source_hex, normalized_fields)
 
@@ -436,8 +442,13 @@ def normalize_packet(
     # libcrafter uncompressed re-encode agree on this normalized model even when
     # the wire bytes differ (see specs/features/dns-behavior.yaml).
     dns_message = _normalize_dns_message(packet)
+    mdns_dns = mdns_dns_packet(packet)
+    if dns_message is None and mdns_dns is not None:
+        dns_message = _normalize_dns_message(mdns_dns)
     if dns_message is not None:
         metadata["dns_message"] = dns_message
+        if "mdns" in normalized_layers:
+            metadata["mdns"] = mdns_metadata(dns_message, packet)
 
     return DecodedModel(
         backend=BACKEND_NAME,
@@ -3368,7 +3379,7 @@ def _normalize_udp_user_payload(
 
 
 def _has_udp_typed_application_layer(layers: Sequence[str]) -> bool:
-    return any(layer in {"dns", "dhcpv4"} for layer in layers)
+    return any(layer in {"dns", "dhcpv4", "mdns"} for layer in layers)
 
 
 def _base_layer_name(layer_name: str) -> str:
@@ -3719,7 +3730,7 @@ def _expected_stack(plan: PacketPlan) -> list[str]:
 
 
 def _udp_options_expected_insert_after(layers: Sequence[str]) -> str:
-    for layer in ("payload", "dns", "dhcpv4", "udp"):
+    for layer in ("payload", "mdns", "dns", "dhcpv4", "udp"):
         if layer in layers:
             return layer
     return "udp"

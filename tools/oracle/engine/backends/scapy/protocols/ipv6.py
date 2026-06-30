@@ -60,6 +60,10 @@ from ..encode_helpers import (
 from .base import ScapyProtocol, register
 
 
+_MDNS_IPV6_SRC = "2001:db8::10"
+_MDNS_IPV6_DST = "ff02::fb"
+
+
 # Encode-side field allowlist for ``_validate_layer_fields`` — the canonical field
 # names plus every Scapy/oracle alias the IPv6 builder accepts. Mirrors the former
 # ``packets._SUPPORTED_FIELDS_BY_LAYER["ipv6"]`` entry exactly.
@@ -125,12 +129,16 @@ def _build(
     scapy_all: Any,
 ) -> Any:
     ipv6_fields = _layer_fields(fields, "ipv6")
+    mdns = "mdns" in stack
     kwargs: dict[str, Any] = {
-        "src": _text(_required_field(ipv6_fields, "ipv6", "src"), ""),
-        "dst": _text(_required_field(ipv6_fields, "ipv6", "dst"), ""),
-        "hlim": _int(_required_field(ipv6_fields, "ipv6", "hop_limit", "hlim"), 0),
+        "src": _text(_field_or_default(ipv6_fields, "ipv6", _MDNS_IPV6_SRC if mdns else None, "src"), ""),
+        "dst": _text(_field_or_default(ipv6_fields, "ipv6", _MDNS_IPV6_DST if mdns else None, "dst"), ""),
+        "hlim": _int(
+            _field_or_default(ipv6_fields, "ipv6", 255 if mdns else None, "hop_limit", "hlim"),
+            0,
+        ),
         "nh": _protocol_value(
-            _required_field(ipv6_fields, "ipv6", "next_header", "nh"),
+            _field_or_default(ipv6_fields, "ipv6", "udp" if mdns else None, "next_header", "nh"),
             _IPV6_NEXT_HEADERS,
         ),
     }
@@ -139,6 +147,20 @@ def _build(
     if "flow_label" in ipv6_fields or "fl" in ipv6_fields:
         kwargs["fl"] = _int(_optional_field(ipv6_fields, "flow_label", "fl"), 0)
     return scapy_all.IPv6(**kwargs)
+
+
+def _field_or_default(
+    fields: Mapping[str, object],
+    layer: str,
+    default: object | None,
+    *names: str,
+) -> object:
+    value = _optional_field(fields, *names)
+    if value is not None:
+        return value
+    if default is not None:
+        return default
+    return _required_field(fields, layer, *names)
 
 
 # ---------------------------------------------------------------------------

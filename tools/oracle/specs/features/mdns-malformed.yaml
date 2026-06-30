@@ -124,14 +124,16 @@ notes:
 
 backend_support:
   scapy:
-    status: planned
+    status: supported
+    encode: true
+    decode: true
     native_layers:
       - UDP
       - Raw
     notes:
       - >-
-        Malformed mDNS payloads may be carried as UDP Raw bytes for fixture
-        emission, but they are excluded from byte-equivalence sampling by
+        Malformed mDNS payloads are carried as UDP Raw bytes for fixture
+        emission and remain excluded from byte-equivalence sampling by
         byte_policy: structured_error.
   libcrafter:
     status: supported

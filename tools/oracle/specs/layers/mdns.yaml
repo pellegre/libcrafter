@@ -212,16 +212,19 @@ notes:
 
 backend_support:
   scapy:
-    status: planned
+    status: supported
+    encode: true
+    decode: true
+    pcap_read: true
+    pcap_write: true
     native_layers:
       - DNS
       - DNSQR
       - DNSRR
     notes:
       - >-
-        Scapy backend materialization is assigned to later steps. These cases
-        are DNS messages carried over UDP/5353 with mDNS-specific normalized
-        metadata.
+        Scapy materializes mDNS as DNS messages carried over UDP/5353 and
+        normalizes mDNS-specific class-bit metadata for comparisons.
   libcrafter:
     status: supported
     encode: true

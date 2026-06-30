@@ -199,13 +199,15 @@ notes:
 
 backend_support:
   scapy:
-    status: planned
+    status: supported
+    encode: true
+    decode: true
     native_layers:
       - DNS
       - DNSQR
       - DNSRR
     notes:
-      - DNS-SD materialization over Scapy DNS is assigned to later backend steps.
+      - Scapy materializes DNS-SD records over mDNS using DNS/DNSQR/DNSRR primitives.
   libcrafter:
     status: supported
     encode: true
