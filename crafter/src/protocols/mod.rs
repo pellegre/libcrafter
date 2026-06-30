@@ -16,6 +16,7 @@ pub mod rip;
 pub mod rsn;
 pub mod snmp;
 pub mod ssdp;
+pub mod tls;
 pub mod transport;
 
 /// Compatibility re-exports for the IPv4 protocol implementation.
