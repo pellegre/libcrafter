@@ -171,7 +171,13 @@ class ProbeLabProviderBoundaryTest(unittest.TestCase):
         self.assertTrue(capabilities["tcp_open_port"])
         self.assertTrue(capabilities["tcp_closed_port"])
         self.assertTrue(capabilities["dns_service"])
+        self.assertTrue(capabilities["mdns_controlled_responder"])
+        self.assertTrue(capabilities["mdns_unicast_response"])
+        self.assertTrue(capabilities["mdns_ipv4_multicast"])
+        self.assertTrue(capabilities["mdns_ipv6_multicast"])
+        self.assertTrue(capabilities["mdns_ipv6_link_local_scope"])
         self.assertFalse(capabilities["controlled_router"])
+        self.assertIs(capabilities["lab_capabilities"]["mdns_offline_plan"], True)
         self.assertEqual(
             capabilities,
             probe_capabilities_from_lab_capabilities(

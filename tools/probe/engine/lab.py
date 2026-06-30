@@ -182,6 +182,7 @@ def local_dry_run_probe_capabilities() -> JSONObject:
         "provider_mac_known": False,
         "controlled_services": True,
         "controlled_router": False,
+        "mdns_offline_plan": True,
     }
     return probe_capabilities_from_lab_capabilities(
         LOCAL_DRY_RUN_PROVIDER,
@@ -415,25 +416,23 @@ def probe_capabilities_from_lab_capabilities(
                 "target_interface_known",
                 "provider_interface_known",
             ],
-            "mdns_controlled_responder": ["controlled_services", "controlled_udp_service"],
-            "mdns_unicast_response": ["ipv4_unicast", "mdns_controlled_responder"],
+            "mdns_controlled_responder": [
+                "controlled_services", "controlled_udp_service", "mdns_offline_plan",
+            ],
+            "mdns_unicast_response": [
+                "ipv4_unicast", "mdns_controlled_responder", "mdns_offline_plan",
+            ],
             "mdns_ipv4_multicast": [
-                "ipv4_unicast",
-                "link_layer_send",
-                "link_layer_capture",
-                "multicast",
+                "mdns_offline_plan", "ipv4_unicast", "link_layer_send",
+                "link_layer_capture", "multicast",
             ],
             "mdns_ipv6_multicast": [
-                "ipv6_unicast",
-                "link_layer_send",
-                "link_layer_capture",
-                "multicast",
+                "mdns_offline_plan", "ipv6_unicast", "link_layer_send",
+                "link_layer_capture", "multicast",
             ],
             "mdns_ipv6_link_local_scope": [
-                "mdns_ipv6_multicast",
-                "provider_mac_known",
-                "target_interface_known",
-                "provider_interface_known",
+                "mdns_offline_plan", "mdns_ipv6_multicast", "provider_mac_known",
+                "target_interface_known", "provider_interface_known",
             ],
         },
         "lab_capabilities": substrate,

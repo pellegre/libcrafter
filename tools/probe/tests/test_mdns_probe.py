@@ -8,7 +8,11 @@ import unittest
 from tools.probe.engine import capabilities
 from tools.probe.engine import cases as probe_cases
 from tools.probe.engine import planning
-from tools.probe.engine.lab import probe_capabilities_from_lab_capabilities
+from tools.probe.engine.lab import (
+    LOCAL_DRY_RUN_PROVIDER,
+    probe_capabilities_for_provider,
+    probe_capabilities_from_lab_capabilities,
+)
 from tools.probe.engine.model import ProbeRunRequest
 from tools.probe.engine.protocols import PROTOCOL_REGISTRY
 from tools.probe.engine.protocols import mdns as mdns_protocol
@@ -241,6 +245,55 @@ class MdnsProbeCapabilityTest(unittest.TestCase):
         ):
             with self.subTest(capability=capability_name):
                 self.assertIs(derived[capability_name], True)
+
+    def test_local_dry_run_grants_mdns_offline_planning_only(self) -> None:
+        derived = probe_capabilities_for_provider(
+            LOCAL_DRY_RUN_PROVIDER,
+            dry_run=True,
+        )
+
+        self.assertFalse(derived["live_packet_exchange"])
+        self.assertIs(derived["lab_capabilities"]["mdns_offline_plan"], True)
+        for capability_name in (
+            "mdns_controlled_responder",
+            "mdns_unicast_response",
+            "mdns_ipv4_multicast",
+            "mdns_ipv6_multicast",
+            "mdns_ipv6_link_local_scope",
+        ):
+            with self.subTest(capability=capability_name):
+                self.assertIs(derived[capability_name], True)
+
+        for case in mdns_protocol.MDNS_PROBE_CASES:
+            with self.subTest(case=case.name):
+                self.assertEqual(capabilities.missing_capabilities(case, derived), [])
+
+    def test_mdns_offline_plan_is_dry_run_only(self) -> None:
+        substrate = {
+            "provider": "local-shape-live",
+            "dry_run": False,
+            "ipv4_unicast": True,
+            "ipv6_unicast": False,
+            "controlled_services": True,
+            "link_layer_send": False,
+            "link_layer_capture": False,
+            "multicast": False,
+            "provider_mac_known": False,
+            "live_packet_exchange": False,
+            "mdns_offline_plan": True,
+        }
+
+        derived = probe_capabilities_from_lab_capabilities(
+            "local-shape-live",
+            substrate,
+            dry_run=False,
+        )
+
+        self.assertIs(derived["mdns_controlled_responder"], True)
+        self.assertIs(derived["mdns_unicast_response"], True)
+        self.assertIs(derived["mdns_ipv4_multicast"], False)
+        self.assertIs(derived["mdns_ipv6_multicast"], False)
+        self.assertIs(derived["mdns_ipv6_link_local_scope"], False)
 
     def test_ipv6_scope_skip_reason_is_stable(self) -> None:
         substrate = {
