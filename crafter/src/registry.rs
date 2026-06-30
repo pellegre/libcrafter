@@ -10,7 +10,7 @@ use crate::protocols::dhcp::{
     append_dhcpv4_packet, append_dhcpv6_packet, is_dhcpv4_port_pair, looks_like_dhcpv4_payload,
     looks_like_dhcpv6_payload,
 };
-use crate::protocols::dns::{append_dns_packet, DNS_PORT};
+use crate::protocols::dns::{append_dns_packet, DNS_PORT, MDNS_PORT};
 use crate::protocols::eapol::append_eapol_packet;
 use crate::protocols::icmp::{
     append_icmp_packet, append_icmp_packet_with_checksum_validation, append_icmpv6_packet,
@@ -321,6 +321,12 @@ impl ProtocolRegistry {
         });
 
         registry.bind_udp_port_with_registry(DNS_PORT, |_registry, packet, payload| {
+            append_dns_packet(packet, payload)
+        });
+        // mDNS uses ordinary DNS messages over UDP/5353 (RFC 6762). The
+        // registry claims either source or destination port, matching the DNS/53
+        // dispatch shape while keeping the packet typed as `Dns`.
+        registry.bind_udp_port_with_registry(MDNS_PORT, |_registry, packet, payload| {
             append_dns_packet(packet, payload)
         });
         // IKEv2 over UDP/500 (RFC 7296 §2). The UDP application dispatch passes the
@@ -910,7 +916,11 @@ impl ProtocolRegistry {
                 return append_ikev2_packet_with_registry(self, packet, payload);
             }
 
-            if source_port == DNS_PORT || destination_port == DNS_PORT {
+            if source_port == DNS_PORT
+                || destination_port == DNS_PORT
+                || source_port == MDNS_PORT
+                || destination_port == MDNS_PORT
+            {
                 return append_dns_packet(packet, payload);
             }
 
@@ -1386,6 +1396,148 @@ mod protocol_registry {
 }
 
 #[cfg(test)]
+mod mdns_udp_5353_decode {
+    use core::net::{Ipv4Addr, Ipv6Addr};
+
+    use super::ProtocolRegistry;
+    use crate::{
+        CrafterError, Dns, Ipv4, Ipv6, NetworkLayer, Packet, Raw, Udp, DNS_PORT, DNS_TYPE_A,
+        MDNS_IPV4_MULTICAST, MDNS_IPV6_LINK_LOCAL_MULTICAST, MDNS_PORT,
+    };
+
+    fn query() -> Dns {
+        Dns::mdns_query_for("printer.local.", DNS_TYPE_A).id(0x1234)
+    }
+
+    fn dns_payload(dns: Dns) -> Vec<u8> {
+        Packet::from_layer(dns).compile().unwrap().into_bytes()
+    }
+
+    #[test]
+    fn ipv4_destination_port_decodes_as_dns() {
+        let dns = query();
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(MDNS_IPV4_MULTICAST)
+            / Udp::new().sport(49_152).dport(MDNS_PORT)
+            / dns.clone())
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let decoded_dns = decoded.layer::<Dns>().expect("mDNS DNS layer");
+
+        assert_eq!(decoded_dns.id_value(), 0x1234);
+        assert_eq!(decoded_dns.questions(), dns.questions());
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+    }
+
+    #[test]
+    fn ipv6_source_port_decodes_as_dns() {
+        let dns = query();
+        let bytes = (Ipv6::new()
+            .src(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 10))
+            .dst(MDNS_IPV6_LINK_LOCAL_MULTICAST)
+            / Udp::new().sport(MDNS_PORT).dport(49_153)
+            / dns.clone())
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
+        let decoded_dns = decoded.layer::<Dns>().expect("mDNS DNS layer");
+
+        assert_eq!(decoded_dns.id_value(), 0x1234);
+        assert_eq!(decoded_dns.questions(), dns.questions());
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+    }
+
+    #[test]
+    fn udp_53_dns_regression_still_decodes() {
+        let dns = Dns::a_query("example.com.").id(0xbeef);
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 10))
+            / Udp::new().sport(49_152).dport(DNS_PORT)
+            / dns.clone())
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let decoded_dns = decoded.layer::<Dns>().expect("DNS layer");
+
+        assert_eq!(decoded_dns.id_value(), 0xbeef);
+        assert_eq!(decoded_dns.questions(), dns.questions());
+        assert!(decoded.layer::<Raw>().is_none());
+    }
+
+    #[test]
+    fn disabled_application_decoding_preserves_mdns_payload_as_raw() {
+        let dns = query();
+        let payload = dns_payload(dns.clone());
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(MDNS_IPV4_MULTICAST)
+            / Udp::new().sport(49_152).dport(MDNS_PORT)
+            / dns)
+            .compile()
+            .unwrap();
+        let registry = ProtocolRegistry::new().application_decoding(false);
+
+        let decoded =
+            Packet::decode_from_l3_with_registry(&registry, NetworkLayer::Ipv4, bytes.as_bytes())
+                .unwrap();
+
+        assert!(decoded.layer::<Udp>().is_some());
+        assert!(decoded.layer::<Dns>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), payload);
+    }
+
+    #[test]
+    fn malformed_port_5353_payload_reports_structured_dns_error() {
+        let payload = [0xde, 0xad, 0xbe, 0xef];
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(MDNS_IPV4_MULTICAST)
+            / Udp::new().sport(MDNS_PORT).dport(49_152)
+            / Raw::from_bytes(payload))
+        .compile()
+        .unwrap();
+
+        match Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()) {
+            Err(CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            }) => {
+                assert_eq!(context, "dns header");
+                assert_eq!(required, 12);
+                assert_eq!(available, payload.len());
+            }
+            other => panic!("expected structured DNS header error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unrelated_udp_ports_preserve_non_dns_payload_as_raw() {
+        let payload = [0xde, 0xad, 0xbe, 0xef];
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 10))
+            / Udp::new().sport(49_152).dport(49_153)
+            / Raw::from_bytes(payload))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+
+        assert!(decoded.layer::<Dns>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), payload);
+    }
+}
+
+#[cfg(test)]
 mod decode_dispatch {
     use super::ProtocolRegistry;
     use crate::{Ethernet, Ipv4, Ipv4Protocol, LinkType, NetworkLayer, Packet, Raw, Udp};
@@ -1820,7 +1972,9 @@ mod ah_protocol_binding {
 #[cfg(test)]
 mod dns_udp_binding {
     use super::ProtocolRegistry;
-    use crate::{Dns, DnsQuestion, Ipv4, NetworkLayer, Packet, Raw, Udp, DNS_PORT, DNS_TYPE_AAAA};
+    use crate::{
+        Dns, DnsQuestion, Ipv4, NetworkLayer, Packet, Raw, Udp, DNS_PORT, DNS_TYPE_AAAA, MDNS_PORT,
+    };
 
     #[test]
     fn default_registry_decodes_dns_on_udp_53() {
@@ -1840,12 +1994,12 @@ mod dns_udp_binding {
     #[test]
     fn custom_udp_port_binding_decodes_application_payload() {
         let mut registry = ProtocolRegistry::new();
-        registry.bind_udp_port(5353, |packet, payload| {
+        registry.bind_udp_port(MDNS_PORT, |packet, payload| {
             Ok(packet.push(Raw::from_bytes(payload)))
         });
 
         let bytes =
-            (Ipv4::new() / Udp::new().sport(5353).dport(50000) / Raw::from("custom-dns-like"))
+            (Ipv4::new() / Udp::new().sport(MDNS_PORT).dport(50000) / Raw::from("custom-dns-like"))
                 .compile()
                 .unwrap();
 
