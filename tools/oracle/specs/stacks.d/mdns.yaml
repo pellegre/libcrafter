@@ -1,0 +1,123 @@
+version: 1
+kind: stack_grammar
+name: mdns_stacks
+
+families:
+  - name: mdns
+    default_stack:
+      - ipv4
+      - udp
+      - mdns
+    feature_tags:
+      - ipv4
+      - ipv6
+      - ethernet
+      - udp
+      - dns
+      - mdns
+      - dns-sd
+
+stacks:
+  - name: ipv4_udp_mdns
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - udp
+      - mdns
+    coverage_cases:
+      - mdns-query-udp-5353
+      - mdns-response-udp-5353
+      - mdns-qu-question
+      - mdns-cache-flush-record
+      - mdns-known-answer-query
+      - mdns-goodbye-ttl-zero
+      - mdns-probe-authority
+      - mdns-announcement
+      - mdns-compressed-names
+      - mdns-unknown-record-preservation
+      - mdns-dns-sd-browse
+      - mdns-dns-sd-resolve
+      - mdns-dns-sd-subtype
+      - mdns-bonjour-txt
+      - mdns-bonjour-ptr-srv-txt-addresses
+      - mdns-ipv4-multicast
+      - mdns-pcap-raw-ipv4
+      - malformed-mdns-truncated-question-fields
+      - malformed-mdns-cache-flush-rdata-overrun
+      - malformed-mdns-compression-loop-record-name
+  - name: ipv6_udp_mdns
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - udp
+      - mdns
+    coverage_cases:
+      - mdns-query-udp-5353
+      - mdns-response-udp-5353
+      - mdns-qu-question
+      - mdns-known-answer-query
+      - mdns-dns-sd-browse
+      - mdns-dns-sd-resolve
+      - mdns-ipv6-multicast
+      - malformed-mdns-ipv6-label-length-overrun
+  - name: ethernet_ipv4_udp_mdns
+    root: "link:ethernet"
+    layers:
+      - ethernet
+      - ipv4
+      - udp
+      - mdns
+    coverage_cases:
+      - mdns-query-udp-5353
+      - mdns-response-udp-5353
+      - mdns-known-answer-query
+      - mdns-goodbye-ttl-zero
+      - mdns-announcement
+      - mdns-dns-sd-browse
+      - mdns-bonjour-ptr-srv-txt-addresses
+      - mdns-ipv4-multicast
+      - mdns-pcap-ethernet-ipv4
+      - malformed-mdns-truncated-question-fields
+      - malformed-mdns-cache-flush-rdata-overrun
+  - name: ethernet_ipv6_udp_mdns
+    root: "link:ethernet"
+    layers:
+      - ethernet
+      - ipv6
+      - udp
+      - mdns
+    coverage_cases:
+      - mdns-query-udp-5353
+      - mdns-response-udp-5353
+      - mdns-dns-sd-browse
+      - mdns-ipv6-multicast
+      - mdns-pcap-ethernet-ipv6
+      - malformed-mdns-ipv6-label-length-overrun
+
+constraints:
+  - name: mdns_udp_children
+    parent: udp
+    children:
+      - mdns
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - Ether
+      - IP
+      - IPv6
+      - UDP
+      - DNS
+    notes:
+      - mDNS stack materialization is planned as DNS over UDP/5353 in later backend steps.
+  libcrafter:
+    status: supported
+    native_layers:
+      - Ethernet
+      - Ipv4
+      - Ipv6
+      - Udp
+      - Dns
+    notes:
+      - libcrafter keeps mDNS inside the existing Dns layer while exposing mDNS packet context.

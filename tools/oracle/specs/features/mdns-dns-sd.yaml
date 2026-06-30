@@ -1,0 +1,217 @@
+version: 1
+kind: feature
+name: mdns_dns_sd
+summary: >-
+  DNS-SD and Bonjour packet shapes over mDNS, including browse PTR queries,
+  resolve SRV/TXT responses, subtype PTR records, Bonjour TXT strings, and
+  PTR/SRV/TXT/A/AAAA additional record sets.
+
+layers:
+  - udp
+  - mdns
+directions:
+  - backend_to_libcrafter
+  - libcrafter_to_backend
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: dns-sd-browse
+    coverage_case: mdns-dns-sd-browse
+    message_kind: dns_sd_browse
+    udp:
+      source_port: 5353
+      destination_port: 5353
+    questions:
+      - name: _ipp._tcp.local.
+        type: PTR
+        class: IN
+    checks:
+      - dns_sd_browse_name_preserved
+      - ptr_question_uses_udp_5353
+  - name: dns-sd-resolve
+    coverage_case: mdns-dns-sd-resolve
+    message_kind: dns_sd_resolve
+    questions:
+      - name: Office\032Printer._ipp._tcp.local.
+        type: SRV
+        class: IN
+      - name: Office\032Printer._ipp._tcp.local.
+        type: TXT
+        class: IN
+    checks:
+      - instance_service_name_preserved
+      - srv_and_txt_questions_preserved
+  - name: dns-sd-subtype
+    coverage_case: mdns-dns-sd-subtype
+    message_kind: dns_sd_browse
+    questions:
+      - name: _printer._sub._ipp._tcp.local.
+        type: PTR
+        class: IN
+    checks:
+      - subtype_name_labels_preserved
+      - subtype_browse_is_ptr_shape
+  - name: bonjour-txt
+    coverage_case: mdns-bonjour-txt
+    message_kind: multicast_response
+    answers:
+      - name: Office\032Printer._ipp._tcp.local.
+        type: TXT
+        class: IN
+        cache_flush: true
+        ttl: 4500
+        strings:
+          - txtvers=1
+          - qtotal=1
+          - rp=printers/office
+          - note=Office Printer
+    checks:
+      - bonjour_txt_character_strings_preserved
+      - cache_flush_txt_unique_record_preserved
+  - name: bonjour-ptr-srv-txt-addresses
+    coverage_case: mdns-bonjour-ptr-srv-txt-addresses
+    fixture: crafter/tests/fixtures/bytes/ipv4-udp-mdns-bonjour-browse-response.hex
+    message_kind: multicast_response
+    answers:
+      - name: _ipp._tcp.local.
+        type: PTR
+        class: IN
+        ttl: 4500
+        target: Office\032Printer._ipp._tcp.local.
+      - name: _printer._sub._ipp._tcp.local.
+        type: PTR
+        class: IN
+        ttl: 4500
+        target: Office\032Printer._ipp._tcp.local.
+      - name: Office\032Printer._ipp._tcp.local.
+        type: SRV
+        class: IN
+        cache_flush: true
+        ttl: 120
+        priority: 0
+        weight: 0
+        port: 631
+        target: office-printer.local.
+      - name: Office\032Printer._ipp._tcp.local.
+        type: TXT
+        class: IN
+        cache_flush: true
+        ttl: 120
+    additional:
+      - name: office-printer.local.
+        type: A
+        class: IN
+        cache_flush: true
+        ttl: 120
+        address: 192.0.2.55
+      - name: office-printer.local.
+        type: AAAA
+        class: IN
+        cache_flush: true
+        ttl: 120
+        address: 2001:db8::55
+    checks:
+      - browse_ptr_records_preserved
+      - srv_txt_and_address_additionals_preserved
+      - bonjour_packet_shape_without_service_registry
+
+coverage_cases:
+  - mdns-dns-sd-browse
+  - mdns-dns-sd-resolve
+  - mdns-dns-sd-subtype
+  - mdns-bonjour-txt
+  - mdns-bonjour-ptr-srv-txt-addresses
+
+supported_cases:
+  - name: mdns-dns-sd-browse
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: mdns-dns-sd-resolve
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: mdns-dns-sd-subtype
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: mdns-bonjour-txt
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+  - name: mdns-bonjour-ptr-srv-txt-addresses
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: strict_bytes
+
+case_groups:
+  - name: mdns-dns-sd-queries
+    summary: DNS-SD browse, resolve, and subtype query names are mDNS DNS names.
+    byte_policy: strict_bytes
+    cases:
+      - mdns-dns-sd-browse
+      - mdns-dns-sd-resolve
+      - mdns-dns-sd-subtype
+  - name: mdns-bonjour-record-sets
+    summary: Bonjour-style PTR/SRV/TXT/A/AAAA packet shapes without registry behavior.
+    byte_policy: strict_bytes
+    cases:
+      - mdns-bonjour-txt
+      - mdns-bonjour-ptr-srv-txt-addresses
+
+normalized_model:
+  dns_sd:
+    - service_name
+    - instance_name
+    - subtype_name
+    - browse_name
+    - resolve_name
+  record_set:
+    - ptr_records
+    - srv_records
+    - txt_records
+    - address_additionals
+  txt:
+    - strings
+    - raw_character_strings
+
+source_refs:
+  - RFC 6763
+  - RFC 6762
+  - RFC 2782
+  - IANA DNS Parameters
+  - .agents/context/mdns-protocol-manifest.md
+  - docs/guide/mdns.md
+
+notes:
+  - >-
+    Bonjour coverage is limited to RFC 6763 DNS-SD packet shapes. Apple-specific
+    Bonjour implementation behavior is not asserted by this feature.
+  - >-
+    These specs do not create a service registry, resolver workflow, responder
+    daemon, cache, or scanner. They describe DNS wire messages only.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - DNS
+      - DNSQR
+      - DNSRR
+    notes:
+      - DNS-SD materialization over Scapy DNS is assigned to later backend steps.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    native_layers:
+      - Dns
+      - Udp
+    notes:
+      - libcrafter exposes DNS-SD and Bonjour-style helpers that return Dns records/messages.

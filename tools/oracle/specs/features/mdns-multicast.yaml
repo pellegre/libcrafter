@@ -1,0 +1,236 @@
+version: 1
+kind: feature
+name: mdns_multicast
+summary: Source-backed mDNS IPv4 and IPv6 multicast packet helper shapes and live-safety eligibility.
+
+layers:
+  - ethernet
+  - ipv4
+  - ipv6
+  - udp
+  - mdns
+directions:
+  - backend_to_libcrafter
+  - libcrafter_to_backend
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: ipv4-multicast-query
+    coverage_case: mdns-ipv4-multicast
+    helper: mdns_ipv4_packet
+    root: "l3:ipv4"
+    stack:
+      - ipv4
+      - udp
+      - mdns
+    ip:
+      version: 4
+      source: 192.0.2.10
+      destination: 224.0.0.251
+      destination_kind: mdns_ipv4_multicast
+      ttl: 255
+      protocol: udp
+    udp:
+      source_port: 5353
+      destination_port: 5353
+    dns:
+      message_kind: multicast_query
+      question:
+        name: printer.local.
+        type: A
+        class: IN
+    eligibility:
+      offline: eligible
+      pcap: eligible
+      live: provider_gated
+      developer_host_live: false
+      default_send: false
+    checks:
+      - ipv4_destination_is_mdns_multicast
+      - udp_service_port_5353
+      - response_ttl_default_preserved_when_helper_sets_it
+      - no_multicast_membership_side_effect
+  - name: ipv6-link-local-multicast-query
+    coverage_case: mdns-ipv6-multicast
+    helper: mdns_ipv6_packet
+    root: "l3:ipv6"
+    stack:
+      - ipv6
+      - udp
+      - mdns
+    ip:
+      version: 6
+      source: 2001:db8::10
+      destination: ff02::fb
+      destination_kind: mdns_ipv6_link_local_multicast
+      hop_limit: 255
+      next_header: udp
+    udp:
+      source_port: 5353
+      destination_port: 5353
+    dns:
+      message_kind: multicast_query
+      question:
+        name: printer.local.
+        type: AAAA
+        class: IN
+    eligibility:
+      offline: eligible
+      pcap: eligible
+      live: provider_gated
+      developer_host_live: false
+      default_send: false
+    checks:
+      - ipv6_destination_is_mdns_link_local_multicast
+      - udp_service_port_5353
+      - response_hop_limit_default_preserved_when_helper_sets_it
+      - no_interface_scope_inferred
+      - no_multicast_membership_side_effect
+
+coverage_cases:
+  - mdns-ipv4-multicast
+  - mdns-ipv6-multicast
+
+supported_cases:
+  - name: mdns-ipv4-multicast
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    roots:
+      - "l3:ipv4"
+      - "link:ethernet"
+    byte_policy: strict_bytes
+  - name: mdns-ipv6-multicast
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    roots:
+      - "l3:ipv6"
+      - "link:ethernet"
+    byte_policy: strict_bytes
+
+case_groups:
+  - name: mdns-multicast-defaults
+    summary: IPv4 224.0.0.251 and IPv6 ff02::fb mDNS multicast packet shapes.
+    byte_policy: strict_bytes
+    cases:
+      - mdns-ipv4-multicast
+      - mdns-ipv6-multicast
+  - name: mdns-multicast-eligibility
+    summary: Multicast packet shapes are offline and pcap eligible; live exchange is provider-gated.
+    byte_policy: strict_bytes
+    cases:
+      - mdns-ipv4-multicast
+      - mdns-ipv6-multicast
+
+multicast_values:
+  - name: ipv4-mdns
+    address: 224.0.0.251
+    ethernet_destination: 01:00:5e:00:00:fb
+    udp_port: 5353
+    helper_default: true
+    eligible_packet_shape: true
+  - name: ipv6-link-local-mdns
+    address: ff02::fb
+    ethernet_destination: 33:33:00:00:00:fb
+    udp_port: 5353
+    helper_default: true
+    eligible_packet_shape: true
+  - name: wider-scope-ipv6-mdns
+    address: ff0x::fb
+    udp_port: 5353
+    helper_default: false
+    eligible_packet_shape: false
+    reason: mDNS helper default is link-local scope only
+
+eligibility_matrix:
+  - case: mdns-ipv4-multicast
+    offline: eligible
+    pcap: eligible
+    live: provider_gated
+    provider_required: true
+    protected_confirmation_required: true
+    developer_host_raw_send: false
+  - case: mdns-ipv6-multicast
+    offline: eligible
+    pcap: eligible
+    live: provider_gated
+    provider_required: true
+    protected_confirmation_required: true
+    developer_host_raw_send: false
+  - case: mdns-multicast-membership-management
+    offline: excluded
+    pcap: excluded
+    live: excluded
+    reason: crate_exposes_packet_shape_only
+
+normalized_model:
+  ethernet:
+    - source
+    - destination
+    - ethertype
+  ipv4:
+    - source
+    - destination
+    - ttl
+    - protocol
+  ipv6:
+    - source
+    - destination
+    - hop_limit
+    - next_header
+  udp:
+    - source_port
+    - destination_port
+  mdns:
+    - multicast_destination
+    - message_kind
+    - questions
+    - answers
+    - live_eligibility
+
+source_refs:
+  - RFC 6762
+  - RFC 1112
+  - RFC 2464
+  - RFC 8200
+  - IANA IPv4 Multicast Address Space Registry
+  - IANA IPv6 Multicast Address Space Registry
+  - .agents/context/mdns-protocol-manifest.md
+
+notes:
+  - >-
+    The TTL/hop-limit 255 values here describe source-backed mDNS response and
+    helper packet shapes. Query TTL/hop-limit defaults are not asserted as a
+    general source-backed rule.
+  - >-
+    Oracle adapters must not join multicast groups, select interfaces, infer
+    IPv6 scope IDs, schedule retries, or send traffic from the developer host
+    from this feature.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - Ether
+      - IP
+      - IPv6
+      - UDP
+      - DNS
+    notes:
+      - Scapy mDNS multicast materialization is assigned to later backend steps.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    pcap_read: true
+    pcap_write: true
+    native_layers:
+      - Ethernet
+      - Ipv4
+      - Ipv6
+      - Udp
+      - Dns
+    notes:
+      - libcrafter builds typed IPv4, IPv6, and Ethernet mDNS packet stacks offline.
