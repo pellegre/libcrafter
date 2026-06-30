@@ -271,6 +271,54 @@ success, skip, or failure. Keep endpoint IDs, provider account data, public IPs,
 live host identifiers, and captures under the ignored `target/oracle/ssdp-*`
 artifact roots; never copy them into tracked docs, fixtures, specs, or reports.
 
+## mDNS IPv4 Live Exchange Shape
+
+mDNS live validation is a bounded multicast DNS and DNS-SD packet exchange for
+UDP/5353. It is not a LAN discovery scan, service browser, cache daemon, or
+Bonjour-compatible responder. The mDNS oracle corpus is selected with
+`--family mdns`; source-backed packet facts remain owned by the mDNS oracle
+specs, while live execution remains provider-backed and explicitly confirmed.
+
+Start with dry-runs. The local dry-run sends no packets, and the provider
+dry-run adds lab session metadata, provider capabilities, endpoint roles,
+command records, artifact roots, and wire eligibility:
+
+```sh
+tools/oracle/run live --backend scapy --provider local-dry-run --dry-run --family mdns --profile ci --seed 6766 --count 20 --direction live_exchange --out target/oracle/mdns-ipv4-local-dry-run
+tools/oracle/run live --backend scapy --provider qemu --dry-run --family mdns --profile ci --seed 6766 --count 20 --direction live_exchange --out target/oracle/mdns-ipv4-qemu-dry-run
+```
+
+Inspect the reports before any protected run. The provider-backed report should
+show `metadata.live_packet_exchange`, `metadata.provider_capabilities`,
+`metadata.lab_session`, endpoint role metadata, skip reasons such as
+`requires_multicast`, `requires_l2`, `requires_provider_mac`, or
+`requires_ipv6`, and artifact paths under the selected `target/oracle/mdns-*`
+root. For IPv4-only acceptance, IPv6-required corpus entries may skip; supported
+IPv4 entries must not be hidden as skips if packet build, decode, or comparison
+fails.
+
+Keep real IPv4 mDNS exchange behind an mDNS-specific environment gate and the
+generic live confirmation flag:
+
+```sh
+if [ "${LIBCRAFTER_RUN_MDNS_IPV4_LIVE:-0}" = "1" ]; then
+  tools/oracle/run live \
+    --backend scapy --provider qemu --family mdns \
+    --profile ci --seed 6766 --count 20 \
+    --direction live_exchange --confirm-live-run \
+    --out target/oracle/mdns-ipv4-live
+else
+  echo "skipping protected mDNS IPv4 live run"
+fi
+```
+
+When enabled, the live runner still refuses provider packet exchange without
+`--confirm-live-run`. Confirmed runs must use disposable provider-backed
+endpoints, collect artifacts from both roles, and tear endpoints down on
+success, skip, or failure. Keep endpoint IDs, account data, public IPs, real
+hostnames, live interface names, and packet captures in ignored `target/`
+artifact paths only.
+
 ## DHCP Live Exchange Shape
 
 Live DHCP validation is a one-way packet-equivalence exchange, not a DHCP

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from .case_helpers import _behavior_case, case_name_filters
+from .case_helpers import _behavior_case, canonical_case_name, case_name_filters
 from .model import EndpointRole, ProbeCase
 # Importing from the ``protocols`` package runs its auto-discovery so every
 # per-protocol module self-registers into ``PROTOCOL_REGISTRY`` before the case
@@ -156,7 +156,7 @@ def case_by_name(name: str) -> ProbeCase:
     """
 
     try:
-        return PROBE_CASE_BY_NAME[name]
+        return PROBE_CASE_BY_NAME[canonical_case_name(name)]
     except KeyError:
         available = ", ".join(known_case_names())
         raise ValueError(
@@ -173,13 +173,13 @@ def selected_cases(case_names: Sequence[str]) -> list[ProbeCase]:
 
     if not case_names:
         return list(PROBE_CASES)
-    unknown = [name for name in case_names if name not in PROBE_CASE_BY_NAME]
+    unknown = [name for name in case_names if canonical_case_name(name) not in PROBE_CASE_BY_NAME]
     if unknown:
         available = ", ".join(known_case_names())
         raise ValueError(
             f"unknown probe case {unknown[0]!r}; available cases: {available}"
         )
-    return [PROBE_CASE_BY_NAME[name] for name in case_names]
+    return [PROBE_CASE_BY_NAME[canonical_case_name(name)] for name in case_names]
 
 
 # Default profile. It samples the legacy ICMP/TCP/DNS/TTL/ARP catalog and keeps

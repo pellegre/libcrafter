@@ -120,6 +120,50 @@ session was kept for debugging, collect artifacts first and then destroy it with
 addresses, credentials, live interface names, real device UUIDs, or packet
 captures from live SSDP runs.
 
+The `mdns-smoke` profile label is used for multicast DNS and DNS-SD behavior
+planning. For IPv4 live preparation, `mdns-ipv4-browse` is accepted as a
+focused shorthand for the canonical `mdns-ipv4-multicast-browse` case. Always
+start with a provider-backed dry-run and inspect the artifact root before any
+live traffic:
+
+```sh
+tools/probe/run --provider qemu --dry-run --profile mdns-smoke --seed 6766 --case mdns-ipv4-browse --out target/probe/mdns-ipv4-live-dry-run
+```
+
+Before a live IPv4 mDNS run, confirm that the dry-run report shows
+`metadata.provider_capabilities.mdns_ipv4_multicast`,
+`metadata.provider_capabilities.mdns_controlled_responder`, and, for QU
+response cases, `metadata.provider_capabilities.mdns_unicast_response`. Inspect
+`metadata.probe_plans` for `target_service`, `capture_filter`,
+`wire_requirements`, `expected_mdns`, and `live_address_rewrite` so the
+multicast destination (`224.0.0.251:5353`), controlled UDP/5353 responder,
+expected response path, and provider interface are visible before traffic is
+allowed. Unsupported providers should skip with stable capability reasons such
+as `requires_multicast`, `requires_controlled_service`, or
+`requires_ipv6_link_local_scope_metadata`; a non-dry-run request without
+`--confirm-live-run` must skip with confirmation-required metadata rather than
+sending packets.
+
+Keep protected mDNS live runs behind an mDNS-specific operator gate in addition
+to the generic confirmation flag:
+
+```sh
+if [ -n "${LIBCRAFTER_PROBE_LIVE_PROVIDER:-}" ] && [ "${LIBCRAFTER_PROBE_LIVE_MDNS_IPV4_CONFIRM:-}" = "yes" ]; then
+  tools/probe/run --provider "$LIBCRAFTER_PROBE_LIVE_PROVIDER" --confirm-live-run --profile mdns-smoke --seed 6766 --case mdns-ipv4-browse --case mdns-qu-unicast-response --out target/probe/mdns-ipv4-live
+else
+  tools/probe/run --provider qemu --dry-run --profile mdns-smoke --seed 6766 --case mdns-ipv4-browse --out target/probe/mdns-ipv4-live-dry-run
+fi
+```
+
+Keep the mDNS artifact set together under the selected ignored `target/` root:
+`report.json`, `artifacts/stimulus-endpoint/stimulus.request.json`, provider
+command metadata, target-service logs such as
+`live-artifacts/probe/target-services/mdns-5353.stdout.txt`, capture summaries,
+and cleanup records. After a live run, verify artifact collection and endpoint
+teardown metadata before deleting the disposable lab session. Do not commit
+provider endpoint IDs, public addresses, interface names from real networks,
+hostnames discovered from real mDNS traffic, or live packet captures.
+
 Provider-backed probe dry-runs use `tools/lab` to plan `stimulus` and `target`
 roles, derive endpoint addresses and interfaces, and include lab session
 metadata in the report. Probe still owns target service setup, TCP RST guards,

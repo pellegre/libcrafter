@@ -19,6 +19,15 @@ from collections.abc import Sequence
 from .model import JSONObject, ProbeCase
 
 
+_CASE_NAME_ALIASES = {"mdns-ipv4-browse": "mdns-ipv4-multicast-browse"}
+
+
+def canonical_case_name(name: str) -> str:
+    """Return the canonical probe case name for a supported shorthand."""
+
+    return _CASE_NAME_ALIASES.get(name, name)
+
+
 def _behavior_case(
     *,
     name: str,

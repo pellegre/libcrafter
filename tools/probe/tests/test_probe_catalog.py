@@ -32,6 +32,17 @@ class ProbeCatalogTest(unittest.TestCase):
         self.assertEqual(case.name, "dns-query")
         self.assertIs(case, cases.PROBE_CASE_BY_NAME["dns-query"])
 
+    def test_case_name_aliases_resolve_to_canonical_entries(self) -> None:
+        self.assertNotIn("mdns-ipv4-browse", cases.known_case_names())
+        self.assertIs(
+            cases.case_by_name("mdns-ipv4-browse"),
+            cases.PROBE_CASE_BY_NAME["mdns-ipv4-multicast-browse"],
+        )
+        self.assertEqual(
+            [case.name for case in cases.selected_cases(["mdns-ipv4-browse"])],
+            ["mdns-ipv4-multicast-browse"],
+        )
+
     def test_case_by_name_unknown_lists_available_cases(self) -> None:
         with self.assertRaises(ValueError) as ctx:
             cases.case_by_name("not-a-case")
