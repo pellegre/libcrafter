@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import posixpath
+import shlex
 from collections.abc import Mapping, Sequence
 
 from ..capability_derivation import capability, capability_default_true
@@ -20,6 +23,7 @@ from ..planning_helpers import (
     dns_label,
 )
 from ..target_service_helpers import (
+    dedupe_ints,
     plans_by_destination_port,
     target_service_address_fields,
 )
@@ -915,7 +919,9 @@ def _validation_contract(
     if expected_mdns.get("goodbye") is True:
         validation["ttl"] = 0
     if isinstance(expected_mdns.get("bonjour_txt_keys"), list):
-        validation["bonjour_txt_keys"] = list(expected_mdns["bonjour_txt_keys"])  # type: ignore[index]
+        validation["bonjour_txt_keys"] = list(
+            expected_mdns["bonjour_txt_keys"]  # type: ignore[index]
+        )
     return validation
 
 
@@ -1043,7 +1049,21 @@ def mdns_target_service_contribution(
                 for item in service_plans
                 if int(item.get("destination_port", 0)) == port
             ),
+            "cases": [
+                str(item.get("case"))
+                for item in service_plans
+                if int(item.get("destination_port", 0)) == port
+            ],
+            "supports": {
+                "bonjour_records": True,
+                "qu_unicast_response": True,
+                "known_answer_suppression": True,
+                "goodbye": True,
+                "a_records": True,
+                "aaaa_records": True,
+            },
             **target_service_address_fields(plan),
+            **_mdns_target_service_ipv6_fields(service_plans),
             "log_paths": [
                 f"live-artifacts/probe/target-services/mdns-{port}.stdout.txt",
                 f"live-artifacts/probe/target-services/mdns-{port}.stderr.txt",
@@ -1055,6 +1075,280 @@ def mdns_target_service_contribution(
         "services": services,
         "starts_services": not dry_run and bool(services),
     }
+
+
+def _mdns_target_service_ipv6_fields(probe_plans: Sequence[JSONObject]) -> JSONObject:
+    for plan in probe_plans:
+        service = plan.get("target_service")
+        if not isinstance(service, Mapping):
+            continue
+        bind_ipv6 = service.get("bind_ipv6")
+        source_ipv6 = service.get("source_ipv6")
+        if isinstance(bind_ipv6, str) and bind_ipv6:
+            fields: JSONObject = {"bind_ipv6": bind_ipv6}
+            if isinstance(source_ipv6, str) and source_ipv6:
+                fields["source_ipv6"] = source_ipv6
+            return fields
+    return {}
+
+
+def mdns_port_check_lines(mdns_plans: Sequence[JSONObject]) -> list[str]:
+    ports = dedupe_ints(
+        int(plan["destination_port"])
+        for plan in mdns_plans
+        if isinstance(plan.get("destination_port"), int)
+    )
+    lines: list[str] = []
+    for port in ports:
+        lines.append(f"check_udp_port_free \"$mdns_bind_ipv4\" {port}")
+        lines.append(
+            f"if [ -n \"$mdns_bind_ipv6\" ]; then "
+            f"check_udp6_port_free \"$mdns_bind_ipv6\" {port}; fi"
+        )
+    return lines
+
+
+def mdns_responder_setup_lines(
+    *,
+    artifact_root: str,
+    mdns_plans: Sequence[JSONObject],
+) -> list[str]:
+    ports = dedupe_ints(
+        int(plan["destination_port"])
+        for plan in mdns_plans
+        if isinstance(plan.get("destination_port"), int)
+    )
+    if not ports:
+        return []
+
+    plan_path = posixpath.join(artifact_root, "mdns-plan.json")
+    service_path = posixpath.join(artifact_root, "mdns-responder.py")
+    lines = [
+        f"cat > {shlex.quote(plan_path)} <<'JSON'",
+        json.dumps(list(mdns_plans), sort_keys=True),
+        "JSON",
+        f"cat > {shlex.quote(service_path)} <<'PY'",
+        *(_mdns_responder_python_lines()),
+        "PY",
+    ]
+    for port in ports:
+        stdout_path = posixpath.join(artifact_root, f"mdns-{port}.stdout.txt")
+        stderr_path = posixpath.join(artifact_root, f"mdns-{port}.stderr.txt")
+        pid_path = posixpath.join(artifact_root, f"mdns-{port}.pid")
+        lines.extend(
+            [
+                (
+                    f"python3 {shlex.quote(service_path)} "
+                    f"\"$mdns_bind_ipv4\" \"$mdns_bind_ipv6\" "
+                    f"\"$target_interface\" {port} {shlex.quote(plan_path)} "
+                    f">{shlex.quote(stdout_path)} 2>{shlex.quote(stderr_path)} &"
+                ),
+                "pid=$!",
+                f"echo \"$pid\" > {shlex.quote(pid_path)}",
+                "printf '%s\\n' \"kill $pid 2>/dev/null || true\" >> \"$cleanup\"",
+                f"printf '%s\\n' \"rm -f {shlex.quote(pid_path)}\" >> \"$cleanup\"",
+                "sleep 0.5",
+                "if ! kill -0 \"$pid\" 2>/dev/null; then",
+                f"  cat {shlex.quote(stderr_path)} >&2 || true",
+                f"  echo mdns_responder_{port}=failed >&2",
+                "  exit 73",
+                "fi",
+                f"echo mdns_responder_{port}=running",
+            ]
+        )
+    return lines
+
+
+def _mdns_responder_python_lines() -> list[str]:
+    return [
+        "import json",
+        "import select",
+        "import signal",
+        "import socket",
+        "import struct",
+        "import sys",
+        "import time",
+        "",
+        "MDNS_IPV4_MULTICAST = '224.0.0.251'",
+        "MDNS_IPV6_MULTICAST = 'ff02::fb'",
+        "TYPE_CODES = {'A': 1, 'PTR': 12, 'TXT': 16, 'AAAA': 28, 'SRV': 33}",
+        "stop = False",
+        "",
+        "def handle_stop(_signum, _frame):",
+        "    global stop",
+        "    stop = True",
+        "",
+        "signal.signal(signal.SIGTERM, handle_stop)",
+        "signal.signal(signal.SIGINT, handle_stop)",
+        "",
+        "bind_ipv4, bind_ipv6, interface, port_text, plan_path = sys.argv[1:6]",
+        "port = int(port_text)",
+        "plans = json.load(open(plan_path, encoding='utf-8'))",
+        "",
+        "def log(event, **fields):",
+        "    print(json.dumps({'event': event, **fields}, sort_keys=True), flush=True)",
+        "",
+        "def encode_name(name):",
+        "    out = bytearray()",
+        "    for label in str(name).rstrip('.').split('.'):",
+        "        raw = label.encode('utf-8')",
+        "        out.append(len(raw))",
+        "        out.extend(raw)",
+        "    out.append(0)",
+        "    return bytes(out)",
+        "",
+        "def rr(record):",
+        "    rtype = TYPE_CODES[str(record['record_type'])]",
+        "    rclass = 1 | (0x8000 if record.get('cache_flush') else 0)",
+        "    ttl = int(record.get('ttl', 120))",
+        "    data = rdata(record, rtype)",
+        "    return (",
+        "        encode_name(record['name'])",
+        "        + struct.pack('!HHIH', rtype, rclass, ttl, len(data))",
+        "        + data",
+        "    )",
+        "",
+        "def rdata(record, rtype):",
+        "    if rtype == 1:",
+        "        return socket.inet_aton(str(record['address']))",
+        "    if rtype == 28:",
+        "        return socket.inet_pton(socket.AF_INET6, str(record['address']))",
+        "    if rtype == 12:",
+        "        return encode_name(record['target'])",
+        "    if rtype == 16:",
+        "        chunks = []",
+        "        for value in record.get('strings', []):",
+        "            raw = str(value).encode('utf-8')",
+        "            chunks.append(bytes([len(raw)]) + raw)",
+        "        return b''.join(chunks)",
+        "    if rtype == 33:",
+        "        return struct.pack(",
+        "            '!HHH',",
+        "            int(record.get('priority', 0)),",
+        "            int(record.get('weight', 0)),",
+        "            int(record['port']),",
+        "        ) + encode_name(record['target'])",
+        "    return b''",
+        "",
+        "def response_bytes(plan):",
+        "    message = plan.get('expected_mdns') or {}",
+        "    answers = message.get('answers') or []",
+        "    body = b''.join(rr(answer) for answer in answers)",
+        "    return struct.pack('!HHHHHH', 0, 0x8400, 0, len(answers), 0, 0) + body",
+        "",
+        "def read_name(message, offset):",
+        "    labels = []",
+        "    while offset < len(message):",
+        "        length = message[offset]",
+        "        offset += 1",
+        "        if length == 0:",
+        "            break",
+        "        if length & 0xC0:",
+        "            offset += 1",
+        "            break",
+        "        labels.append(message[offset:offset + length].decode('utf-8', 'replace'))",
+        "        offset += length",
+        "    return '.'.join(labels) + '.', offset",
+        "",
+        "def query_shape(data):",
+        "    if len(data) < 12:",
+        "        return [], 0",
+        "    qdcount = struct.unpack('!H', data[4:6])[0]",
+        "    ancount = struct.unpack('!H', data[6:8])[0]",
+        "    offset = 12",
+        "    names = []",
+        "    for _ in range(qdcount):",
+        "        name, offset = read_name(data, offset)",
+        "        names.append(name.lower())",
+        "        offset += 4",
+        "    return names, ancount",
+        "",
+        "def choose_plan(data):",
+        "    names, ancount = query_shape(data)",
+        "    if ancount:",
+        "        for plan in plans:",
+        "            if plan.get('case') == 'mdns-known-answer-suppression':",
+        "                return plan",
+        "    for plan in plans:",
+        "        questions = ((plan.get('mdns') or {}).get('questions') or [])",
+        "        wanted = {str(item.get('name', '')).lower() for item in questions}",
+        "        if wanted and wanted.intersection(names):",
+        "            return plan",
+        "    for plan in plans:",
+        "        if (plan.get('validation') or {}).get('expected_packet_count', 1):",
+        "            return plan",
+        "    return None",
+        "",
+        "def make_ipv4_socket():",
+        "    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
+        "    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)",
+        "    sock.bind(('', port))",
+        "    sock.settimeout(1.0)",
+        "    try:",
+        "        mreq = socket.inet_aton(MDNS_IPV4_MULTICAST) + socket.inet_aton(bind_ipv4)",
+        "        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)",
+        "    except OSError as exc:",
+        "        log('multicast_join_failed', family='ipv4', error=str(exc))",
+        "    return sock",
+        "",
+        "def make_ipv6_socket():",
+        "    if not bind_ipv6:",
+        "        return None",
+        "    sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)",
+        "    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)",
+        "    sock.bind(('::', port))",
+        "    sock.settimeout(1.0)",
+        "    try:",
+        "        ifindex = socket.if_nametoindex(interface) if interface else 0",
+        "        group = socket.inet_pton(socket.AF_INET6, MDNS_IPV6_MULTICAST)",
+        (
+            "        sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_JOIN_GROUP, "
+            "group + struct.pack('@I', ifindex))"
+        ),
+        "    except OSError as exc:",
+        "        log('multicast_join_failed', family='ipv6', error=str(exc))",
+        "    return sock",
+        "",
+        "sock4 = make_ipv4_socket()",
+        "sock6 = make_ipv6_socket()",
+        "sockets = [sock for sock in (sock4, sock6) if sock is not None]",
+        (
+            "log('listening', protocol='mdns', bonjour=True, port=port, "
+            "bind_ipv4=bind_ipv4, bind_ipv6=bind_ipv6)"
+        ),
+        "for plan in plans:",
+        "    if plan.get('case') in ('mdns-announcement', 'mdns-goodbye'):",
+        "        payload = response_bytes(plan)",
+        "        sock4.sendto(payload, (MDNS_IPV4_MULTICAST, port))",
+        (
+            "        log('emitted', case=plan.get('case'), bytes=len(payload), "
+            "destination=MDNS_IPV4_MULTICAST)"
+        ),
+        "while not stop:",
+        "    readable, _, _ = select.select(sockets, [], [], 1.0)",
+        "    for sock in readable:",
+        "        data, addr = sock.recvfrom(65535)",
+        "        plan = choose_plan(data)",
+        "        if not plan:",
+        "            log('ignored', client=str(addr), bytes=len(data))",
+        "            continue",
+        "        if (plan.get('validation') or {}).get('expected_packet_count') == 0:",
+        "            log('suppressed', case=plan.get('case'), client=str(addr))",
+        "            continue",
+        "        payload = response_bytes(plan)",
+        (
+            "        destination = addr if plan.get('case') == "
+            "'mdns-qu-unicast-response' else (MDNS_IPV4_MULTICAST, port)"
+        ),
+        "        sock.sendto(payload, destination)",
+        (
+            "        log('responded', case=plan.get('case'), client=str(addr), "
+            "bytes=len(payload), destination=str(destination))"
+        ),
+        "for sock in sockets:",
+        "    sock.close()",
+        "log('stopped', ts=time.time())",
+    ]
 
 
 def mdns_failure_reasons(case_name: str) -> list[str] | None:

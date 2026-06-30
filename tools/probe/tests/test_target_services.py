@@ -14,6 +14,7 @@ from tools.probe.engine.lab import probe_address_context_from_lab_session
 from tools.probe.engine.model import ProbeRunRequest
 
 IGMP_TARGET_SERVICE_DIR = Path("tools/probe/target_services/igmp")
+MDNS_TARGET_SERVICE_DIR = Path("tools/probe/target_services/mdns")
 MQTT_TARGET_SERVICE_DIR = Path("tools/probe/target_services/mqtt")
 
 
@@ -149,6 +150,96 @@ class IgmpProbeTargetServiceTest(unittest.TestCase):
         self.assertIn("requires_controlled_router", router)
         self.assertIn("requires_multicast", router)
         self.assertIn("233.252.0.42", combined)
+
+
+class MdnsProbeTargetServiceTest(unittest.TestCase):
+    def test_mdns_target_service_asset_documents_lab_only_responder(self) -> None:
+        readme = (MDNS_TARGET_SERVICE_DIR / "README.md").read_text()
+
+        self.assertIn("lab-only", readme)
+        self.assertIn("UDP/5353", readme)
+        self.assertIn("Bonjour-style", readme)
+        self.assertIn("known-answer suppression", readme)
+
+    def test_dry_run_plan_includes_mdns_responder_service(self) -> None:
+        plans = [
+            _mdns_plan("mdns-ipv4-multicast-browse"),
+            _mdns_plan("mdns-ipv6-multicast-browse", sequence=1),
+            _mdns_plan("mdns-qu-unicast-response", sequence=2),
+        ]
+
+        setup = ts.target_service_setup_plan(probe_plans=plans, dry_run=True)
+
+        self.assertFalse(setup["starts_services"])
+        self.assertFalse(setup["dry_run_starts_services"])
+        services = [
+            service
+            for service in setup["services"]
+            if service["name"] == "mdns-controlled-responder"
+        ]
+        self.assertEqual(len(services), 1)
+        service = services[0]
+        self.assertEqual(service["protocol"], "udp")
+        self.assertEqual(service["port"], 5353)
+        self.assertEqual(service["runtime"], "probe-mdns-reference")
+        self.assertTrue(service["planned_only"])
+        self.assertTrue(service["supports"]["bonjour_records"])
+        self.assertTrue(service["supports"]["qu_unicast_response"])
+        self.assertTrue(service["supports"]["known_answer_suppression"])
+        self.assertTrue(service["supports"]["aaaa_records"])
+        self.assertIn("bind_ipv4", service)
+        self.assertIn("bind_ipv6", service)
+        self.assertIn("mdns-qu-unicast-response", service["cases"])
+
+    def test_setup_script_generates_mdns_responder(self) -> None:
+        plans = [
+            _mdns_plan("mdns-qu-unicast-response"),
+            _mdns_plan("mdns-known-answer-suppression", sequence=1),
+            _mdns_plan("mdns-goodbye", sequence=2),
+        ]
+
+        script = ts.target_service_setup_script(
+            artifact_root="/tmp/probe-target",
+            bind_ipv4="10.77.0.20",
+            bind_ipv6="2001:db8::20",
+            open_ports=[],
+            closed_ports=[],
+            dns_plans=[],
+            mdns_plans=plans,
+            target_interface="eth1",
+        )
+
+        self.assertIn("mdns_bind_ipv4=10.77.0.20", script)
+        self.assertIn("mdns_bind_ipv6=2001:db8::20", script)
+        self.assertIn("check_udp_port_free \"$mdns_bind_ipv4\" 5353", script)
+        self.assertIn("check_udp6_port_free \"$mdns_bind_ipv6\" 5353", script)
+        self.assertIn("mdns-plan.json", script)
+        self.assertIn("mdns-responder.py", script)
+        self.assertIn("MDNS_IPV4_MULTICAST = '224.0.0.251'", script)
+        self.assertIn("MDNS_IPV6_MULTICAST = 'ff02::fb'", script)
+        self.assertIn("bonjour=True", script)
+        self.assertIn("mdns-known-answer-suppression", script)
+        self.assertIn("mdns_responder_5353=running", script)
+
+    def test_prepare_wire_probe_target_starts_mdns_setup(self) -> None:
+        target_endpoint = _fake_session().endpoints[1].to_dict()
+        fake_wire = _FakeWire()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            setup = cli._prepare_wire_probe_target(
+                wire=fake_wire,
+                target_endpoint=target_endpoint,
+                artifact_root="/root/libcrafter/artifacts/probe/target-services",
+                probe_plans=[_mdns_plan("mdns-ipv4-multicast-browse")],
+                output_dir=output_dir,
+            )
+
+        self.assertIsNotNone(setup)
+        self.assertEqual(setup["exit_code"], 0)
+        setup_script = fake_wire.exec_calls[0]["command"][2]
+        self.assertIn("mdns-responder.py", setup_script)
+        self.assertIn("mdns_bind_ipv4=10.77.0.20", setup_script)
 
 
 class MqttProbeTargetServiceTest(unittest.TestCase):
@@ -307,6 +398,19 @@ def _mqtt_plan(*, case: str) -> dict[str, object]:
             "source_ipv4": "10.77.0.10",
         },
     }
+
+
+def _mdns_plan(case_name: str, *, sequence: int = 0) -> dict[str, object]:
+    request = ProbeRunRequest(
+        provider="qemu",
+        profile="mdns-smoke",
+        seed=5353,
+        count=1,
+        case_names=[],
+        dry_run=True,
+    )
+    case = probe_cases.PROBE_CASE_BY_NAME[case_name]
+    return cli._probe_plan_for_case(request=request, case=case, sequence=sequence)
 
 
 def _fake_session() -> LabSession:
