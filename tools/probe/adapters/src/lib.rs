@@ -9,8 +9,8 @@
 //! contracts, dry-run/live dispatch, response and artifact helpers) and one
 //! module per protocol family: [`icmp`], [`tcp`], [`dns`], [`udp`], [`dhcpv4`],
 //! [`dhcpv6`], [`arp`], [`ndp`] (IPv6 Neighbor Discovery), [`rip`] (Routing Information
-//! Protocol), [`igmp`], [`mqtt`], [`quic`], [`snmp`], and [`ssdp`]. The binary
-//! is a thin wrapper that calls [`common::run`].
+//! Protocol), [`igmp`], [`mqtt`], [`quic`], [`snmp`], [`ssdp`], and [`mdns`].
+//! The binary is a thin wrapper that calls [`common::run`].
 
 // The `plan_json` builder serializes the full probe-plan contract through a
 // single `json!` literal; the field count pushes the macro past serde_json's
@@ -24,6 +24,7 @@ pub mod dhcpv6;
 pub mod dns;
 pub mod icmp;
 pub mod igmp;
+pub mod mdns;
 pub mod mqtt;
 pub mod ndp;
 pub mod ospf;
@@ -78,6 +79,7 @@ pub(crate) mod test_support {
             sequence_markers: None,
             source_ipv4: None,
             destination_ipv4: None,
+            target_ipv4: None,
             expected_reply_source_ipv4: None,
             expected_reply_destination_ipv4: None,
             source_port: None,
@@ -157,6 +159,12 @@ pub(crate) mod test_support {
             dhcpv6: None,
             dhcpv6_sends: None,
             protocol: None,
+            address_family: None,
+            service_port: None,
+            multicast_group: None,
+            mdns: None,
+            expected_mdns: None,
+            capture_filter: None,
             planned_only: None,
             planned_only_reason: None,
             target_service: None,
