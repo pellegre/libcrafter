@@ -2,7 +2,7 @@
 //! stimulus endpoint.
 //!
 //! Case-specific packet construction, capture, and validation live in the
-//! per-protocol modules (`icmp`, `tcp`, `dns`, `udp`, `dhcpv4`, `arp`). This
+//! per-protocol modules (`icmp`, `tcp`, `dns`, `mdns`, `udp`, `dhcpv4`, `arp`). This
 //! module owns everything those cases share: argument parsing, the JSON
 //! request/plan contracts, the dry-run/live dispatch in [`run_endpoint`], and
 //! the response/artifact helpers.
@@ -17,7 +17,9 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::{arp, dhcpv4, dhcpv6, dns, icmp, mqtt, ndp, ospf, quic, rip, snmp, ssdp, tcp, udp};
+use crate::{
+    arp, dhcpv4, dhcpv6, dns, icmp, mdns, mqtt, ndp, ospf, quic, rip, snmp, ssdp, tcp, udp,
+};
 
 pub type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -149,6 +151,8 @@ pub struct ProbePlan {
     pub source_ipv4: Option<String>,
     #[serde(default)]
     pub destination_ipv4: Option<String>,
+    #[serde(default)]
+    pub target_ipv4: Option<String>,
     #[serde(default)]
     pub expected_reply_source_ipv4: Option<String>,
     #[serde(default)]
@@ -363,6 +367,18 @@ pub struct ProbePlan {
     pub dhcpv6_sends: Option<Value>,
     #[serde(default)]
     pub protocol: Option<String>,
+    #[serde(default)]
+    pub address_family: Option<String>,
+    #[serde(default)]
+    pub service_port: Option<u16>,
+    #[serde(default)]
+    pub multicast_group: Option<String>,
+    #[serde(default)]
+    pub mdns: Option<Value>,
+    #[serde(default)]
+    pub expected_mdns: Option<Value>,
+    #[serde(default)]
+    pub capture_filter: Option<String>,
     #[serde(default)]
     pub planned_only: Option<bool>,
     #[serde(default)]
@@ -1211,6 +1227,32 @@ fn dispatch_case(
         ) => ssdp::run_ssdp_live(request, plan),
         (
             RunMode::DryRun,
+            "mdns-ipv4-multicast-browse"
+            | "mdns-ipv6-multicast-browse"
+            | "mdns-qu-unicast-response"
+            | "mdns-service-resolve"
+            | "mdns-announcement"
+            | "mdns-goodbye"
+            | "mdns-known-answer-suppression"
+            | "mdns-cache-flush-response"
+            | "mdns-subtype-browse"
+            | "mdns-bonjour-txt",
+        ) => mdns::run_mdns_dry_run(request, plan),
+        (
+            RunMode::Live,
+            "mdns-ipv4-multicast-browse"
+            | "mdns-ipv6-multicast-browse"
+            | "mdns-qu-unicast-response"
+            | "mdns-service-resolve"
+            | "mdns-announcement"
+            | "mdns-goodbye"
+            | "mdns-known-answer-suppression"
+            | "mdns-cache-flush-response"
+            | "mdns-subtype-browse"
+            | "mdns-bonjour-txt",
+        ) => mdns::run_mdns_live(request, plan),
+        (
+            RunMode::DryRun,
             "udp-echo-empty"
             | "udp-echo-short"
             | "udp-echo-binary"
@@ -1348,6 +1390,7 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "sequence_markers": plan.sequence_markers,
         "source_ipv4": plan.source_ipv4,
         "destination_ipv4": plan.destination_ipv4,
+        "target_ipv4": plan.target_ipv4,
         "expected_reply_source_ipv4": plan.expected_reply_source_ipv4,
         "expected_reply_destination_ipv4": plan.expected_reply_destination_ipv4,
         "expected_response": plan.expected_response,
@@ -1403,6 +1446,11 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "dhcpv6": plan.dhcpv6,
         "dhcpv6_sends": plan.dhcpv6_sends,
         "protocol": plan.protocol,
+        "address_family": plan.address_family,
+        "service_port": plan.service_port,
+        "multicast_group": plan.multicast_group,
+        "mdns": plan.mdns,
+        "expected_mdns": plan.expected_mdns,
         "planned_only": plan.planned_only,
         "planned_only_reason": plan.planned_only_reason,
         "udp_sends": udp::sends_json(plan.udp_sends.as_deref()),
@@ -1706,6 +1754,16 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         | "dhcpv6-active-leasequery-plan"
         | "dhcpv6-unknown-option-preservation"
         | "dhcpv6-repeated-transaction-id" => dhcpv6::capture_filter(plan),
+        "mdns-ipv4-multicast-browse"
+        | "mdns-ipv6-multicast-browse"
+        | "mdns-qu-unicast-response"
+        | "mdns-service-resolve"
+        | "mdns-announcement"
+        | "mdns-goodbye"
+        | "mdns-known-answer-suppression"
+        | "mdns-cache-flush-response"
+        | "mdns-subtype-browse"
+        | "mdns-bonjour-txt" => mdns::capture_filter(plan),
         "udp-echo-empty"
         | "udp-echo-short"
         | "udp-echo-binary"
@@ -1784,6 +1842,16 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             | "dns-srv-answer"
             | "dns-edns-opt"
             | "dns-repeat-transaction" => "dns_response",
+            "mdns-ipv4-multicast-browse"
+            | "mdns-ipv6-multicast-browse"
+            | "mdns-qu-unicast-response"
+            | "mdns-service-resolve"
+            | "mdns-announcement"
+            | "mdns-goodbye"
+            | "mdns-cache-flush-response"
+            | "mdns-subtype-browse"
+            | "mdns-bonjour-txt" => "mdns_response",
+            "mdns-known-answer-suppression" => "no_mdns_response",
             "ttl-expired" => "icmp_ttl_expired",
             "dhcpv4-discover-offer" => "dhcpv4_offer",
             "dhcpv4-request-ack" => "dhcpv4_ack",
@@ -1965,6 +2033,24 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
                 "query_name": plan.query_name,
                 "sends": dns::repeat_sends_json(plan.sends.as_deref()),
             },
+        }),
+        "mdns-ipv4-multicast-browse"
+        | "mdns-ipv6-multicast-browse"
+        | "mdns-qu-unicast-response"
+        | "mdns-service-resolve"
+        | "mdns-announcement"
+        | "mdns-goodbye"
+        | "mdns-known-answer-suppression"
+        | "mdns-cache-flush-response"
+        | "mdns-subtype-browse"
+        | "mdns-bonjour-txt" => plan.target_service.clone().unwrap_or_else(|| {
+            json!({
+                "required": true,
+                "kind": "mdns-controlled-responder",
+                "protocol": "udp",
+                "port": plan.destination_port,
+                "planned_only": plan.planned_only,
+            })
         }),
         "snmp-get-response"
         | "snmp-getbulk-response"
@@ -2508,6 +2594,16 @@ pub fn validation_json(plan: &ProbePlan) -> Value {
             "destination_port": plan.source_port,
             "expected_snmp_response": plan.expected_snmp_response,
         }),
+        "mdns-ipv4-multicast-browse"
+        | "mdns-ipv6-multicast-browse"
+        | "mdns-qu-unicast-response"
+        | "mdns-service-resolve"
+        | "mdns-announcement"
+        | "mdns-goodbye"
+        | "mdns-known-answer-suppression"
+        | "mdns-cache-flush-response"
+        | "mdns-subtype-browse"
+        | "mdns-bonjour-txt" => mdns::validation_json(plan),
         "ndp-neighbor-solicitation"
         | "ndp-router-solicitation"
         | "ndp-duplicate-address-detection" => {
