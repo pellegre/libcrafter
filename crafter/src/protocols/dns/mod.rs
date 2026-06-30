@@ -1473,6 +1473,14 @@ mod mdns_message_builders_tests {
         );
         assert!(any_probe.questions()[0].mdns_unicast_response_preferred_value());
 
+        let a_probe = mdns::probe_for("printer.local.", DNS_TYPE_A);
+        assert_eq!(a_probe.questions()[0].question_type(), DNS_TYPE_A);
+        assert_eq!(
+            a_probe.questions()[0].question_class(),
+            MDNS_CLASS_BIT | DNS_CLASS_IN
+        );
+        assert!(a_probe.questions()[0].mdns_unicast_response_preferred_value());
+
         let proposed = DnsRecord::a("printer.local.", Ipv4Addr::new(192, 0, 2, 11), 120)
             .mdns_cache_flush(true);
         let typed_probe = mdns::probe_with_authorities(
@@ -1654,6 +1662,11 @@ mod mdns_goodbye_probe_announce_tests {
     #[test]
     fn mdns_goodbye_probe_announce_default_helpers_build_expected_shapes() -> crate::Result<()> {
         let host = "printer.local.";
+
+        let flushed = mdns::cache_flush(DnsRecord::a(host, Ipv4Addr::new(192, 0, 2, 29), 119));
+        assert_eq!(flushed.ttl(), 119);
+        assert_eq!(flushed.class(), MDNS_CLASS_BIT | DNS_CLASS_IN);
+        assert!(flushed.mdns_cache_flush_value());
 
         let goodbye = mdns::goodbye(
             DnsRecord::a(host, Ipv4Addr::new(192, 0, 2, 30), 120).mdns_cache_flush(true),
@@ -1940,6 +1953,69 @@ mod mdns_transport_builders_tests {
             default_ethernet.destination(),
             Some(MDNS_IPV4_ETHERNET_MULTICAST)
         );
+    }
+
+    #[test]
+    fn mdns_transport_alias_builders_match_primary_defaults() {
+        let source_ipv4 = Ipv4Addr::new(192, 0, 2, 60);
+        let source_ipv6 = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x60);
+        let source_mac = MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x60]);
+
+        let udp = mdns::udp();
+        assert_eq!(udp.source_port_value(), MDNS_PORT);
+        assert_eq!(udp.destination_port_value(), MDNS_PORT);
+
+        let unicast_reply = mdns::udp_unicast_reply(MDNS_PORT, 62000);
+        assert_eq!(unicast_reply.source_port_value(), MDNS_PORT);
+        assert_eq!(unicast_reply.destination_port_value(), 62000);
+
+        let ipv4_multicast = mdns::ipv4_multicast(source_ipv4);
+        assert_eq!(ipv4_multicast.source(), source_ipv4);
+        assert_eq!(ipv4_multicast.destination(), MDNS_IPV4_MULTICAST);
+        assert_eq!(ipv4_multicast.ttl_value(), MDNS_RESPONSE_TTL);
+
+        let ipv4_response = mdns::ipv4_response(source_ipv4);
+        assert_eq!(ipv4_response.destination(), MDNS_IPV4_MULTICAST);
+        assert_eq!(ipv4_response.ttl_value(), MDNS_RESPONSE_TTL);
+
+        let ipv6_multicast = mdns::ipv6_multicast(source_ipv6);
+        assert_eq!(ipv6_multicast.source(), source_ipv6);
+        assert_eq!(ipv6_multicast.destination(), MDNS_IPV6_LINK_LOCAL_MULTICAST);
+        assert_eq!(ipv6_multicast.hop_limit_value(), MDNS_RESPONSE_HOP_LIMIT);
+
+        let ipv6_response = mdns::ipv6_response(source_ipv6);
+        assert_eq!(ipv6_response.destination(), MDNS_IPV6_LINK_LOCAL_MULTICAST);
+        assert_eq!(ipv6_response.hop_limit_value(), MDNS_RESPONSE_HOP_LIMIT);
+
+        let ethernet_ipv4 = mdns::ethernet_ipv4_multicast(source_mac);
+        assert_eq!(ethernet_ipv4.source(), Some(source_mac));
+        assert_eq!(
+            ethernet_ipv4.destination(),
+            Some(MDNS_IPV4_ETHERNET_MULTICAST)
+        );
+
+        let ethernet_ipv6 = mdns::ethernet_ipv6_multicast(source_mac);
+        assert_eq!(ethernet_ipv6.source(), Some(source_mac));
+        assert_eq!(
+            ethernet_ipv6.destination(),
+            Some(MDNS_IPV6_ETHERNET_MULTICAST)
+        );
+
+        let dns = mdns::query_for("printer.local.", DNS_TYPE_A);
+        assert!(mdns::ipv4_packet(source_ipv4, dns.clone())
+            .layer::<Ipv4>()
+            .is_some());
+        assert!(mdns::ipv6_packet(source_ipv6, dns.clone())
+            .layer::<Ipv6>()
+            .is_some());
+        assert!(
+            mdns::ethernet_ipv4_packet(source_mac, source_ipv4, dns.clone())
+                .layer::<Ethernet>()
+                .is_some()
+        );
+        assert!(mdns::ethernet_ipv6_packet(source_mac, source_ipv6, dns)
+            .layer::<Ethernet>()
+            .is_some());
     }
 }
 

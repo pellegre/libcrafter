@@ -288,6 +288,54 @@ mod dns_sd_name_helpers_tests {
     }
 
     #[test]
+    fn dns_sd_name_helpers_raw_label_variants_preserve_case_and_utf8_bytes() {
+        let service =
+            dns_sd_service_name_from_labels(b"AirPrint", b"TCP", DNS_SD_DEFAULT_DOMAIN).unwrap();
+        assert_eq!(service.presentation(), "_AirPrint._TCP.local.");
+        assert_eq!(
+            service.labels(),
+            &[b"_AirPrint".to_vec(), b"_TCP".to_vec(), b"local".to_vec()]
+        );
+
+        let instance = dns_sd_instance_name_from_labels(
+            b"Caf\xc3\xa9 Printer",
+            b"_ipp",
+            b"_tcp",
+            DNS_SD_DEFAULT_DOMAIN,
+        )
+        .unwrap();
+        assert_eq!(
+            instance.presentation(),
+            "Caf\\195\\169\\032Printer._ipp._tcp.local."
+        );
+        assert_eq!(instance.labels()[0], b"Caf\xc3\xa9 Printer".to_vec());
+        assert_eq!(instance.labels()[1], b"_ipp".to_vec());
+        assert_eq!(instance.labels()[2], b"_tcp".to_vec());
+
+        let udp_instance =
+            dns_sd_udp_instance_name("Office Printer", "_scanner", DNS_SD_DEFAULT_DOMAIN).unwrap();
+        assert_eq!(
+            udp_instance.presentation(),
+            "Office\\032Printer._scanner._udp.local."
+        );
+
+        let subtype =
+            dns_sd_subtype_name_from_labels(b"Color", b"_ipp", b"_tcp", DNS_SD_DEFAULT_DOMAIN)
+                .unwrap();
+        assert_eq!(subtype.presentation(), "_Color._sub._ipp._tcp.local.");
+        assert_eq!(
+            subtype.labels(),
+            &[
+                b"_Color".to_vec(),
+                b"_sub".to_vec(),
+                b"_ipp".to_vec(),
+                b"_tcp".to_vec(),
+                b"local".to_vec()
+            ]
+        );
+    }
+
+    #[test]
     fn dns_sd_name_helpers_return_dns_name_length_errors() {
         let max_service = "a".repeat(63);
         assert!(dns_sd_tcp_service_name(&max_service, DNS_SD_DEFAULT_DOMAIN).is_err());
