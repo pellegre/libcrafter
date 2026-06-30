@@ -11,10 +11,9 @@ use super::rdata::DnsRecordData;
 use super::svcb::SvcParams;
 use super::{
     DNS_CLASS_IN, DNS_EDNS_EXTENDED_RCODE_SHIFT, DNS_EDNS_FLAGS_MASK, DNS_EDNS_FLAG_DO,
-    MDNS_CLASS_BIT, MDNS_CLASS_MASK,
     DNS_EDNS_VERSION_SHIFT, DNS_TYPE_A, DNS_TYPE_AAAA, DNS_TYPE_CNAME, DNS_TYPE_DNSKEY,
     DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NSEC, DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_RRSIG,
-    DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB,
+    DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB, MDNS_CLASS_BIT, MDNS_CLASS_MASK, MDNS_GOODBYE_TTL,
 };
 
 const fn with_mdns_class_bit(raw_class: u16, enabled: bool) -> u16 {
@@ -519,6 +518,15 @@ impl DnsRecord {
     /// True when the mDNS cache-flush resource-record bit is set.
     pub const fn mdns_cache_flush_value(&self) -> bool {
         (self.class & MDNS_CLASS_BIT) != 0
+    }
+
+    /// Return this resource record as an mDNS goodbye record.
+    ///
+    /// The owner name, type, class, mDNS cache-flush bit, and RDATA are left
+    /// unchanged. Only the TTL is set to the mDNS goodbye value of zero.
+    pub fn mdns_goodbye(mut self) -> Self {
+        self.ttl = MDNS_GOODBYE_TTL;
+        self
     }
 
     /// Record TTL.

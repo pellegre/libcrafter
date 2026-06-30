@@ -128,6 +128,24 @@ pub mod mdns {
         Dns::mdns_response_with_additionals(answers, additionals)
     }
 
+    /// Create an unsolicited mDNS announcement response with cache-flush answers.
+    pub fn announcement(records: impl IntoIterator<Item = DnsRecord>) -> Dns {
+        Dns::mdns_announcement(records)
+    }
+
+    /// Create an mDNS announcement response with cache-flush answer and additional records.
+    pub fn announce_response(
+        records: impl IntoIterator<Item = DnsRecord>,
+        additionals: impl IntoIterator<Item = DnsRecord>,
+    ) -> Dns {
+        Dns::mdns_announce_response(records, additionals)
+    }
+
+    /// Create an unsolicited mDNS goodbye response with TTL-zero answers.
+    pub fn goodbye_response(records: impl IntoIterator<Item = DnsRecord>) -> Dns {
+        Dns::mdns_goodbye_response(records)
+    }
+
     /// Create an mDNS unique-record probe for `name` using QTYPE ANY and QU.
     pub fn probe(name: impl Into<DnsName>) -> Dns {
         Dns::mdns_probe(name)
@@ -144,6 +162,21 @@ pub mod mdns {
         proposed: impl IntoIterator<Item = DnsRecord>,
     ) -> Dns {
         Dns::mdns_probe_with_authorities(question, proposed)
+    }
+
+    /// Set the mDNS cache-flush bit on a resource record.
+    pub fn cache_flush(record: DnsRecord) -> DnsRecord {
+        record.mdns_cache_flush(true)
+    }
+
+    /// Clear the mDNS cache-flush bit on a shared resource record.
+    pub fn shared_record(record: DnsRecord) -> DnsRecord {
+        record.mdns_cache_flush(false)
+    }
+
+    /// Return a TTL-zero mDNS goodbye resource record.
+    pub fn goodbye(record: DnsRecord) -> DnsRecord {
+        record.mdns_goodbye()
     }
 
     /// Build a DNS-SD service-type PTR answer pointing at a service instance.
@@ -509,6 +542,39 @@ impl Dns {
         additionals: impl IntoIterator<Item = DnsRecord>,
     ) -> Self {
         Self::mdns_response_with_answers(answers).mdns_additional_records(additionals)
+    }
+
+    /// Create an unsolicited mDNS announcement response with cache-flush answers.
+    ///
+    /// The records keep their owner names, types, base classes, TTLs, and RDATA.
+    /// Only the mDNS cache-flush bit is set.
+    pub fn mdns_announcement(records: impl IntoIterator<Item = DnsRecord>) -> Self {
+        records
+            .into_iter()
+            .fold(Self::mdns_response(), |dns, record| {
+                dns.answer(record.mdns_cache_flush(true))
+            })
+    }
+
+    /// Create an mDNS announcement response with cache-flush answer and additional records.
+    pub fn mdns_announce_response(
+        records: impl IntoIterator<Item = DnsRecord>,
+        additionals: impl IntoIterator<Item = DnsRecord>,
+    ) -> Self {
+        additionals
+            .into_iter()
+            .fold(Self::mdns_announcement(records), |dns, record| {
+                dns.additional(record.mdns_cache_flush(true))
+            })
+    }
+
+    /// Create an unsolicited mDNS goodbye response with TTL-zero answers.
+    pub fn mdns_goodbye_response(records: impl IntoIterator<Item = DnsRecord>) -> Self {
+        records
+            .into_iter()
+            .fold(Self::mdns_response(), |dns, record| {
+                dns.answer(record.mdns_goodbye())
+            })
     }
 
     /// Create an mDNS unique-record probe for `name` using QTYPE ANY and QU.
@@ -1220,6 +1286,179 @@ mod mdns_known_answer_helpers_tests {
 }
 
 #[cfg(test)]
+mod mdns_goodbye_probe_announce_tests {
+    use core::net::{Ipv4Addr, Ipv6Addr};
+
+    use crate::Packet;
+
+    use super::{
+        decode_dns, mdns, Dns, DnsQuestion, DnsRecord, DnsRecordData, DNS_CLASS_IN,
+        DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_QTYPE_ANY, DNS_TYPE_A, DNS_TYPE_AAAA,
+        MDNS_CLASS_BIT, MDNS_GOODBYE_TTL,
+    };
+
+    const ODD_CLASS: u16 = 0x1234;
+    const HIGH_CLASS: u16 = 0xf234;
+
+    fn round_trip_dns(dns: Dns) -> crate::Result<(Dns, Vec<u8>, Vec<u8>)> {
+        let compiled = Packet::from_layer(dns).compile()?;
+        let decoded = decode_dns(compiled.as_bytes())?;
+        let recompiled = Packet::from_layer(decoded.clone()).compile()?;
+        Ok((
+            decoded,
+            compiled.as_bytes().to_vec(),
+            recompiled.as_bytes().to_vec(),
+        ))
+    }
+
+    #[test]
+    fn mdns_goodbye_probe_announce_default_helpers_build_expected_shapes() -> crate::Result<()> {
+        let host = "printer.local.";
+
+        let goodbye = mdns::goodbye(
+            DnsRecord::a(host, Ipv4Addr::new(192, 0, 2, 30), 120).mdns_cache_flush(true),
+        );
+        assert_eq!(goodbye.ttl(), MDNS_GOODBYE_TTL);
+        assert_eq!(goodbye.class(), MDNS_CLASS_BIT | DNS_CLASS_IN);
+        assert!(goodbye.mdns_cache_flush_value());
+
+        let goodbye_dns = mdns::goodbye_response([DnsRecord::aaaa(
+            host,
+            Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x30),
+            4500,
+        )
+        .mdns_cache_flush(true)]);
+        assert_eq!(
+            goodbye_dns.flags_value(),
+            DNS_FLAG_QR_RESPONSE | DNS_FLAG_AUTHORITATIVE
+        );
+        assert!(goodbye_dns.questions().is_empty());
+        assert_eq!(goodbye_dns.answers().len(), 1);
+        assert_eq!(goodbye_dns.answers()[0].ttl(), MDNS_GOODBYE_TTL);
+        assert!(goodbye_dns.answers()[0].mdns_cache_flush_value());
+
+        let probe = mdns::probe(host);
+        assert_eq!(probe.flags_value(), 0);
+        assert_eq!(probe.questions().len(), 1);
+        assert_eq!(probe.questions()[0].question_type(), DNS_QTYPE_ANY);
+        assert_eq!(
+            probe.questions()[0].question_class(),
+            MDNS_CLASS_BIT | DNS_CLASS_IN
+        );
+        assert!(probe.questions()[0].mdns_unicast_response_preferred_value());
+        assert!(probe.answers().is_empty());
+        assert!(probe.authorities().is_empty());
+        assert!(probe.additionals().is_empty());
+
+        let announcement =
+            mdns::announcement([DnsRecord::a(host, Ipv4Addr::new(192, 0, 2, 31), 120)]);
+        assert_eq!(
+            announcement.flags_value(),
+            DNS_FLAG_QR_RESPONSE | DNS_FLAG_AUTHORITATIVE
+        );
+        assert_eq!(announcement.answers()[0].ttl(), 120);
+        assert_eq!(
+            announcement.answers()[0].class(),
+            MDNS_CLASS_BIT | DNS_CLASS_IN
+        );
+        assert!(announcement.answers()[0].mdns_cache_flush_value());
+
+        let announce_response = mdns::announce_response(
+            [DnsRecord::a(host, Ipv4Addr::new(192, 0, 2, 32), 121)],
+            [DnsRecord::aaaa(
+                host,
+                Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x32),
+                122,
+            )],
+        );
+        assert!(announce_response.questions().is_empty());
+        assert_eq!(announce_response.answers()[0].ttl(), 121);
+        assert!(announce_response.answers()[0].mdns_cache_flush_value());
+        assert_eq!(announce_response.additionals()[0].ttl(), 122);
+        assert!(announce_response.additionals()[0].mdns_cache_flush_value());
+
+        let (decoded, original, recompiled) = round_trip_dns(announce_response)?;
+        assert_eq!(original, recompiled);
+        assert!(decoded.answers()[0].mdns_cache_flush_value());
+        assert!(decoded.additionals()[0].mdns_cache_flush_value());
+        Ok(())
+    }
+
+    #[test]
+    fn mdns_goodbye_probe_announce_unusual_overrides_preserve_raw_values() -> crate::Result<()> {
+        let proposed = DnsRecord::new(
+            "odd.local.",
+            DNS_TYPE_A,
+            HIGH_CLASS,
+            0x0102_0304,
+            DnsRecordData::A(Ipv4Addr::new(192, 0, 2, 40)),
+        );
+        let probe = mdns::probe_with_authorities(
+            DnsQuestion::new("odd.local.", DNS_TYPE_AAAA).qclass(ODD_CLASS),
+            [proposed.clone()],
+        )
+        .id(0xbeef)
+        .flags(0x1234);
+        assert_eq!(probe.id_value(), 0xbeef);
+        assert_eq!(probe.flags_value(), 0x1234);
+        assert_eq!(
+            probe.questions()[0].question_class(),
+            MDNS_CLASS_BIT | ODD_CLASS
+        );
+        assert_eq!(probe.questions()[0].mdns_base_question_class(), ODD_CLASS);
+        assert_eq!(probe.authorities(), &[proposed.clone()]);
+        assert_eq!(probe.authorities()[0].class(), HIGH_CLASS);
+        assert_eq!(probe.authorities()[0].ttl(), 0x0102_0304);
+
+        let announcement_record = DnsRecord::new(
+            "odd.local.",
+            DNS_TYPE_A,
+            ODD_CLASS,
+            0xaabb_ccdd,
+            DnsRecordData::A(Ipv4Addr::new(192, 0, 2, 41)),
+        );
+        let announcement = mdns::announcement([announcement_record]);
+        assert_eq!(announcement.answers()[0].ttl(), 0xaabb_ccdd);
+        assert_eq!(
+            announcement.answers()[0].class(),
+            MDNS_CLASS_BIT | ODD_CLASS
+        );
+        assert_eq!(announcement.answers()[0].mdns_base_class(), ODD_CLASS);
+
+        let goodbye_source = DnsRecord::new(
+            "odd.local.",
+            DNS_TYPE_A,
+            HIGH_CLASS,
+            0xffff_ffff,
+            DnsRecordData::A(Ipv4Addr::new(192, 0, 2, 42)),
+        );
+        let goodbye = mdns::goodbye(goodbye_source);
+        assert_eq!(goodbye.ttl(), MDNS_GOODBYE_TTL);
+        assert_eq!(goodbye.class(), HIGH_CLASS);
+        assert!(goodbye.mdns_cache_flush_value());
+
+        let shared = mdns::shared_record(DnsRecord::new(
+            "odd.local.",
+            DNS_TYPE_A,
+            HIGH_CLASS,
+            77,
+            DnsRecordData::A(Ipv4Addr::new(192, 0, 2, 43)),
+        ));
+        assert_eq!(shared.class(), HIGH_CLASS & !MDNS_CLASS_BIT);
+        assert_eq!(shared.ttl(), 77);
+        assert!(!shared.mdns_cache_flush_value());
+
+        let (decoded_probe, original_probe, recompiled_probe) = round_trip_dns(probe)?;
+        assert_eq!(original_probe, recompiled_probe);
+        assert_eq!(decoded_probe.id_value(), 0xbeef);
+        assert_eq!(decoded_probe.flags_value(), 0x1234);
+        assert_eq!(decoded_probe.authorities()[0].ttl(), 0x0102_0304);
+        assert_eq!(decoded_probe.authorities()[0].class(), HIGH_CLASS);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod mdns_transport_builders_tests {
     use core::net::{Ipv4Addr, Ipv6Addr};
 
@@ -1388,8 +1627,7 @@ mod bonjour_record_builders_tests {
         let service_type = mdns::dns_sd_tcp_service_name("ipp", DNS_SD_DEFAULT_DOMAIN)?;
         let service_instance =
             mdns::dns_sd_tcp_instance_name("Office\\032Printer", "ipp", DNS_SD_DEFAULT_DOMAIN)?;
-        let subtype =
-            mdns::dns_sd_subtype_name("printer", "ipp", "tcp", DNS_SD_DEFAULT_DOMAIN)?;
+        let subtype = mdns::dns_sd_subtype_name("printer", "ipp", "tcp", DNS_SD_DEFAULT_DOMAIN)?;
         let host = "office-printer.local.";
         let txt_strings = vec![
             b"txtvers=1".to_vec(),
@@ -1401,15 +1639,11 @@ mod bonjour_record_builders_tests {
         let subtype_ptr = mdns::subtype_ptr(subtype.clone(), service_instance.clone(), 4501);
         let srv = mdns::srv_with_priority(service_instance.clone(), host, 0, 10, 631, 120)
             .mdns_cache_flush(true);
-        let txt = mdns::txt(service_instance.clone(), txt_strings.clone(), 121)
-            .mdns_cache_flush(true);
+        let txt =
+            mdns::txt(service_instance.clone(), txt_strings.clone(), 121).mdns_cache_flush(true);
         let ipv4 = mdns::a(host, Ipv4Addr::new(192, 0, 2, 55), 122).mdns_cache_flush(true);
-        let ipv6 = mdns::aaaa(
-            host,
-            Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x55),
-            123,
-        )
-        .mdns_cache_flush(true);
+        let ipv6 = mdns::aaaa(host, Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x55), 123)
+            .mdns_cache_flush(true);
 
         let dns = mdns::response_with_answers([
             service_ptr.clone(),
@@ -1428,10 +1662,7 @@ mod bonjour_record_builders_tests {
         )?;
         let decoded_dns = decoded.layer::<Dns>().unwrap();
 
-        assert_eq!(
-            decoded_dns.answers(),
-            &[service_ptr, subtype_ptr, srv, txt]
-        );
+        assert_eq!(decoded_dns.answers(), &[service_ptr, subtype_ptr, srv, txt]);
         assert_eq!(decoded_dns.additionals(), &[ipv4, ipv6]);
         assert_eq!(decoded_dns.answers()[0].record_type(), DNS_TYPE_PTR);
         assert_eq!(decoded_dns.answers()[0].ttl(), 4500);
