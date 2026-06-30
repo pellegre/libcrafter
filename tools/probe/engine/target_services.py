@@ -190,6 +190,11 @@ from .protocols.mqtt import (  # noqa: F401  (re-exported for resolvability)
     mqtt_broker_service_plans,
     probe_plan_requires_mqtt_broker,
 )
+from .protocols.mdns import (
+    mdns_port_check_lines,
+    mdns_probe_plans,
+    mdns_responder_setup_lines,
+)
 from .target_service_helpers import (
     KernelStateDescriptor,
     TargetServiceDescriptor,
@@ -572,6 +577,7 @@ def prepare_wire_probe_target(
     dns_plans = dns_probe_plans(probe_plans)
     dhcpv4_plans = dhcpv4_probe_plans(probe_plans)
     dhcpv6_plans = dhcpv6_probe_plans(probe_plans)
+    mdns_plans = mdns_probe_plans(probe_plans)
     arp_plans = arp_probe_plans(probe_plans)
     ndp_plans = ndp_probe_plans(probe_plans)
     udp_plans = [*udp_probe_plans(probe_plans), *quic_udp_probe_plans(probe_plans)]
@@ -581,6 +587,7 @@ def prepare_wire_probe_target(
         and not dns_plans
         and not dhcpv4_plans
         and not dhcpv6_plans
+        and not mdns_plans
         and not arp_plans
         and not ndp_plans
         and not udp_plans
@@ -613,6 +620,7 @@ def prepare_wire_probe_target(
         dns_plans=dns_plans,
         dhcpv4_plans=dhcpv4_plans,
         dhcpv6_plans=dhcpv6_plans,
+        mdns_plans=mdns_plans,
         arp_plans=arp_plans,
         ndp_plans=ndp_plans,
         udp_plans=udp_plans,
@@ -667,6 +675,7 @@ def target_service_setup_script(
     bind_ipv6: str = "",
     dhcpv4_plans: Sequence[JSONObject] = (),
     dhcpv6_plans: Sequence[JSONObject] = (),
+    mdns_plans: Sequence[JSONObject] = (),
     arp_plans: Sequence[JSONObject] = (),
     ndp_plans: Sequence[JSONObject] = (),
     udp_plans: Sequence[JSONObject] = (),
@@ -687,6 +696,8 @@ def target_service_setup_script(
         f"dns_bind_ipv4={shlex.quote(bind_ipv4)}",
         f"dhcpv4_bind_ipv4={shlex.quote(bind_ipv4)}",
         f"dhcpv6_bind_ipv6={shlex.quote(bind_ipv6)}",
+        f"mdns_bind_ipv4={shlex.quote(bind_ipv4)}",
+        f"mdns_bind_ipv6={shlex.quote(bind_ipv6)}",
         f"udp_bind_ipv4={shlex.quote(bind_ipv4)}",
         f"target_interface={shlex.quote(target_interface)}",
         'mkdir -p "$artifact_root"',
@@ -752,6 +763,8 @@ def target_service_setup_script(
     # DHCPv6 renders its per-port UDP/IPv6 free checks with the materialized
     # plans; the live caller supplies the target endpoint's IPv6 address.
     lines.extend(dhcpv6_port_check_lines(dhcpv6_plans))
+    # mDNS renders UDP/5353 free checks for the controlled Bonjour responder.
+    lines.extend(mdns_port_check_lines(mdns_plans))
     # The closed-TCP-port free-check moved to
     # ``protocols.tcp.tcp_closed_port_check_lines``; render it here so the script
     # bytes stay byte-identical to the legacy inline ``for port in closed_ports:``
@@ -779,6 +792,14 @@ def target_service_setup_script(
         dns_responder_setup_lines(
             artifact_root=artifact_root,
             dns_plans=dns_plans,
+        )
+    )
+    # mDNS renders a generated Bonjour-style responder that consumes the
+    # materialized mDNS plans and logs every emitted/suppressed response.
+    lines.extend(
+        mdns_responder_setup_lines(
+            artifact_root=artifact_root,
+            mdns_plans=mdns_plans,
         )
     )
     # DHCPv4 renders its responder heredoc and launch block with the materialized
@@ -888,6 +909,9 @@ __all__ = [
     "mqtt_broker_descriptor",
     "mqtt_broker_probe_plans",
     "mqtt_broker_service_plans",
+    "mdns_probe_plans",
+    "mdns_port_check_lines",
+    "mdns_responder_setup_lines",
     "MQTT_CONFIG_TEMPLATE",
     "MQTT_PROVISION_SCRIPT",
     "MQTT_RUNTIME",
