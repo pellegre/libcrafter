@@ -228,8 +228,15 @@ fn decode_malformed_packet_case(case: &MalformedCase) -> crafter::core::Result<P
 }
 
 fn malformed_cases() -> Vec<MalformedCase> {
-    fixture_str!("malformed/core-decode-corpus.hex")
-        .lines()
+    malformed_cases_from(fixture_str!("malformed/core-decode-corpus.hex"))
+}
+
+fn malformed_mdns_cases() -> Vec<MalformedCase> {
+    malformed_cases_from(fixture_str!("malformed/mdns-corpus.hex"))
+}
+
+fn malformed_cases_from(text: &'static str) -> Vec<MalformedCase> {
+    text.lines()
         .enumerate()
         .filter_map(|(line_index, line)| {
             let line_number = line_index + 1;
@@ -1955,6 +1962,50 @@ fn malformed_corpus_decoder_paths_do_not_panic() {
             "malformed corpus case name must be stable"
         );
         let _ = decode_malformed_case(case);
+    }
+}
+
+#[test]
+fn malformed_mdns_fixture_corpus_reports_structured_errors() {
+    let cases = malformed_mdns_cases();
+    assert!(!cases.is_empty(), "malformed mDNS corpus must not be empty");
+
+    for expected in [DecodeTarget::Ipv4, DecodeTarget::Ipv6] {
+        assert!(
+            cases.iter().any(|case| case.target == expected),
+            "malformed mDNS corpus missing {expected:?} coverage"
+        );
+    }
+
+    let required = [
+        "mdns-truncated-question-fields",
+        "mdns-cache-flush-rdata-overrun",
+        "mdns-compression-loop-record-name",
+        "mdns-ipv6-label-length-overrun",
+    ];
+    let covered = cases
+        .iter()
+        .map(|case| case.name)
+        .collect::<std::collections::HashSet<_>>();
+    for required_name in required {
+        assert!(
+            covered.contains(required_name),
+            "malformed mDNS corpus missing required coverage for {required_name}"
+        );
+    }
+
+    for case in &cases {
+        assert!(
+            case.name.starts_with("mdns-"),
+            "malformed mDNS case names must be stable and prefixed"
+        );
+        match decode_malformed_case(case) {
+            Err(error) => assert_error_matches(case, error),
+            Ok(()) => panic!(
+                "malformed mDNS corpus case {} unexpectedly decoded successfully",
+                case.name
+            ),
+        }
     }
 }
 
