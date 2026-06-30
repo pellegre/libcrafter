@@ -412,6 +412,18 @@ class MdnsLibcrafterMaterializerPlanTest(unittest.TestCase):
         self.assertEqual(packet.offline.reason, SKIP_OFFLINE_PCAP_FILE_FIXTURE)
         self.assertTrue(packet.pcap.eligible)
 
+    def test_scapy_mdns_pcap_fixture_loader_extracts_dns_payload(self) -> None:
+        from tools.oracle.engine.backends.scapy.protocols import mdns as scapy_mdns
+
+        payload = scapy_mdns._raw_fixture_payload(
+            {"fixture": "crafter/tests/fixtures/pcaps/raw-ipv4-udp-mdns-query.pcap"},
+            case="mdns-pcap-raw-ipv4",
+        )
+        assert payload is not None
+        self.assertGreaterEqual(len(payload), 12)
+        self.assertEqual(payload[:2], b"\x00\x00")
+        self.assertEqual(payload[4:6], b"\x00\x01")
+
     def _assert_transport_fields(self, mdns: Mapping[str, object]) -> None:
         transport = _mapping(mdns["transport"], "transport")
         self.assertLessEqual(set(transport), _LIBCRAFTER_TRANSPORT_FIELDS)

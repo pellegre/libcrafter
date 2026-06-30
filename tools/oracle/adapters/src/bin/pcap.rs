@@ -299,7 +299,16 @@ fn record_json(index: usize, record: &PcapRecord) -> Value {
 
     match record.decode() {
         Ok(packet) => {
-            let layers = packet.iter().map(normalized_layer_name).collect::<Vec<_>>();
+            let is_mdns = packet.iter().any(|layer| {
+                layer.as_any().downcast_ref::<Udp>().is_some_and(|udp| {
+                    udp.source_port_value() == MDNS_PORT
+                        || udp.destination_port_value() == MDNS_PORT
+                })
+            });
+            let layers = packet
+                .iter()
+                .map(|layer| normalized_layer_name_with_context(layer, is_mdns))
+                .collect::<Vec<_>>();
             record_json["layers"] = json!(layers);
             record_json["summary"] = json!(packet.summary());
         }
@@ -402,6 +411,13 @@ fn precision_name(precision: TimestampPrecision) -> &'static str {
         TimestampPrecision::Microseconds => "microseconds",
         TimestampPrecision::Nanoseconds => "nanoseconds",
     }
+}
+
+fn normalized_layer_name_with_context(layer: &dyn Layer, is_mdns: bool) -> String {
+    if is_mdns && layer.as_any().is::<Dns>() {
+        return "mdns".to_string();
+    }
+    normalized_layer_name(layer)
 }
 
 fn normalized_layer_name(layer: &dyn Layer) -> String {
