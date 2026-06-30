@@ -27,6 +27,9 @@ from .dns import (
 
 
 MDNS_PORT = 5353
+_DNS_TYPE_PTR = 12
+_DNS_TYPE_TXT = 16
+_DNS_TYPE_SRV = 33
 
 _CLASS_CODES = dict(dns_raw._CLASS_CODES)
 _RESPONSE_KINDS = frozenset({"multicast_response", "announcement", "goodbye"})
@@ -372,16 +375,40 @@ def mdns_dns_packet(packet: Any) -> Any | None:
 
 def mdns_metadata(message: JSONObject, packet: Any) -> JSONObject:
     udp = _scapy_layer(packet, "UDP")
+    dns = mdns_dns_packet(packet)
+    if dns is not None:
+        questions = [
+            _mdns_question_metadata(_dns_question_metadata(item))
+            for item in _dns_section_records(dns, "qd")
+        ]
+        answers = [
+            _mdns_record_metadata(_dns_record_metadata(item))
+            for item in _dns_section_records(dns, "an")
+        ]
+        authorities = [
+            _mdns_record_metadata(_dns_record_metadata(item))
+            for item in _dns_section_records(dns, "ns")
+        ]
+        additionals = [
+            _mdns_record_metadata(_dns_record_metadata(item))
+            for item in _dns_section_records(dns, "ar")
+        ]
+    else:
+        questions = [_mdns_question_metadata(item) for item in _section(message, "questions")]
+        answers = [_mdns_record_metadata(item) for item in _section(message, "answers")]
+        authorities = [_mdns_record_metadata(item) for item in _section(message, "authorities")]
+        additionals = [_mdns_record_metadata(item) for item in _section(message, "additionals")]
     output: JSONObject = {
         "udp_5353": udp is not None and _is_mdns_udp(udp),
         "message_kind": _message_kind(message),
     }
     if udp is not None:
         output["transport"] = _transport_fields(udp)
-    output["questions"] = [_mdns_question_metadata(item) for item in _section(message, "questions")]
-    output["answers"] = [_mdns_record_metadata(item) for item in _section(message, "answers")]
-    output["authorities"] = [_mdns_record_metadata(item) for item in _section(message, "authorities")]
-    output["additionals"] = [_mdns_record_metadata(item) for item in _section(message, "additionals")]
+    output["questions"] = questions
+    output["answers"] = answers
+    output["authorities"] = authorities
+    output["additionals"] = additionals
+    output["dns_sd"] = _dns_sd_fields(questions, answers + authorities + additionals)
     return output
 
 
@@ -390,6 +417,14 @@ def _mdns_fields_from_dns(dns: Any, udp: Any) -> JSONObject:
     header["transport"] = _transport_fields(udp)
     header["udp_5353"] = True
     header["message_kind"] = _message_kind_from_dns(dns)
+    header["dns_sd"] = _dns_sd_fields(
+        [_mdns_question_metadata(_dns_question_metadata(item)) for item in _dns_section_records(dns, "qd")],
+        [
+            _mdns_record_metadata(_dns_record_metadata(item))
+            for section in ("an", "ns", "ar")
+            for item in _dns_section_records(dns, section)
+        ],
+    )
     return header
 
 
@@ -451,11 +486,15 @@ def _message_kind(message: JSONObject) -> str:
     header = message.get("header")
     if not isinstance(header, Mapping):
         return "malformed"
+    questions = [_mdns_question_metadata(item) for item in _section(message, "questions")]
     if not bool(header.get("is_response")):
         if _section(message, "answers"):
             return "known_answer_query"
         if _section(message, "authorities"):
             return "probe"
+        dns_sd_kind = _dns_sd_query_kind(questions)
+        if dns_sd_kind is not None:
+            return dns_sd_kind
         return "multicast_query"
     answers = _section(message, "answers")
     if any(_dns_int(record.get("ttl")) == 0 for record in answers):
@@ -466,15 +505,46 @@ def _message_kind(message: JSONObject) -> str:
 
 
 def _message_kind_from_dns(dns: Any) -> str:
+    questions = [
+        _mdns_question_metadata(_dns_question_metadata(question))
+        for question in _dns_section_records(dns, "qd")
+    ]
     if not bool(_dns_int(getattr(dns, "qr", 0))):
         if _dns_section_records(dns, "an"):
             return "known_answer_query"
         if _dns_section_records(dns, "ns"):
             return "probe"
+        dns_sd_kind = _dns_sd_query_kind(questions)
+        if dns_sd_kind is not None:
+            return dns_sd_kind
         return "multicast_query"
     if any(_dns_int(getattr(record, "ttl", 0)) == 0 for record in _dns_section_records(dns, "an")):
         return "goodbye"
     return "multicast_response"
+
+
+def _dns_question_metadata(question: Any) -> JSONObject:
+    record_class = _dns_int(getattr(question, "qclass", 0))
+    if _dns_int(getattr(question, "unicastresponse", 0)):
+        record_class |= 0x8000
+    return {
+        "name": _dns_name_value(getattr(question, "qname", b"")),
+        "record_type": _dns_int(getattr(question, "qtype", 0)),
+        "record_class": record_class,
+    }
+
+
+def _dns_record_metadata(record: Any) -> JSONObject:
+    record_class = _dns_int(getattr(record, "rclass", 0))
+    if _dns_int(getattr(record, "cacheflush", 0)):
+        record_class |= 0x8000
+    return {
+        "name": _dns_name_value(getattr(record, "rrname", b"")),
+        "record_type": _dns_int(getattr(record, "type", 0)),
+        "record_class": record_class,
+        "ttl": _dns_int(getattr(record, "ttl", 0)),
+        "rdata": _json_value(getattr(record, "rdata", None)),
+    }
 
 
 def _mdns_question_metadata(question: JSONObject) -> JSONObject:
@@ -498,6 +568,72 @@ def _mdns_record_metadata(record: JSONObject) -> JSONObject:
         "cache_flush": bool(raw_class & 0x8000),
         "ttl": record.get("ttl"),
         "rdata": record.get("rdata"),
+    }
+
+
+def _dns_sd_fields(questions: Sequence[Mapping[str, object]], records: Sequence[Mapping[str, object]]) -> JSONObject:
+    names = [
+        name
+        for section in (questions, records)
+        for item in section
+        for name in [_presentation_name(item.get("name"))]
+        if name is not None
+    ]
+    return {
+        "service_names": [name for name in names if _is_service_name(name)],
+        "instance_names": [name for name in names if _is_instance_name(name)],
+        "subtype_names": [name for name in names if "._sub." in name],
+        "browse_names": [name for name in names if _is_service_name(name) or "._sub." in name],
+        "txt_strings": [
+            str(item.get("rdata"))
+            for item in records
+            if item.get("record_type") == _DNS_TYPE_TXT and item.get("rdata") is not None
+        ],
+    }
+
+
+def _dns_sd_query_kind(questions: Sequence[Mapping[str, object]]) -> str | None:
+    if not questions:
+        return None
+    names = [_presentation_name(item.get("name")) for item in questions]
+    qtypes = {_dns_int(item.get("record_type")) for item in questions}
+    if any(name is not None and "._sub." in name for name in names):
+        return "dns_sd_browse"
+    if any(name is not None and _is_service_name(name) for name in names):
+        return "dns_sd_browse"
+    if qtypes <= {_DNS_TYPE_SRV, _DNS_TYPE_TXT} and any(
+        name is not None and _is_instance_name(name) for name in names
+    ):
+        return "dns_sd_resolve"
+    return None
+
+
+def _is_service_name(name: str) -> bool:
+    labels = name.rstrip(".").split(".")
+    return len(labels) >= 3 and labels[0].startswith("_") and labels[1].startswith("_")
+
+
+def _is_instance_name(name: str) -> bool:
+    labels = name.rstrip(".").split(".")
+    return len(labels) >= 4 and not labels[0].startswith("_") and labels[1].startswith("_")
+
+
+def _presentation_name(value: object) -> str | None:
+    if isinstance(value, Mapping):
+        presentation = value.get("presentation")
+        return str(presentation) if presentation is not None else None
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).decode("utf-8", "surrogateescape")
+    if value is None:
+        return None
+    return str(value)
+
+
+def _dns_name_value(value: object) -> JSONObject:
+    presentation = _presentation_name(value) or "."
+    return {
+        "presentation": presentation,
+        "is_root": presentation == ".",
     }
 
 

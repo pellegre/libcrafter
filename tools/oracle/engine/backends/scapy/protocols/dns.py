@@ -307,12 +307,14 @@ def _dns_questions(dns_fields: Mapping[str, object], scapy_all: Any) -> object |
         if isinstance(question, Mapping):
             qname = _dns_normalized_name(question.get("qname", question.get("name")))
             qtype = _dns_qtype(question.get("qtype", question.get("type")))
-            qclass = _dns_qclass(question.get("qclass", question.get("record_class")))
+            qclass_fields = _dns_question_class_fields(
+                question.get("qclass", question.get("record_class"))
+            )
         else:
             qname = _dns_normalized_name(question)
             qtype = "A"
-            qclass = "IN"
-        entry = scapy_all.DNSQR(qname=qname, qtype=qtype, qclass=qclass)
+            qclass_fields = {"qclass": "IN"}
+        entry = scapy_all.DNSQR(qname=qname, qtype=qtype, **qclass_fields)
         chain = entry if chain is None else chain / entry
     return chain
 
@@ -362,11 +364,31 @@ def _dns_record_class(value: object) -> object:
     return text.upper()
 
 
+def _dns_question_class_fields(value: object) -> dict[str, object]:
+    qclass = _dns_qclass(value)
+    if isinstance(qclass, int):
+        fields: dict[str, object] = {"qclass": qclass & 0x7FFF}
+        if qclass & 0x8000:
+            fields["unicastresponse"] = 1
+        return fields
+    return {"qclass": qclass}
+
+
+def _dns_record_class_fields(value: object) -> dict[str, object]:
+    rclass = _dns_record_class(value)
+    if isinstance(rclass, int):
+        fields: dict[str, object] = {"rclass": rclass & 0x7FFF}
+        if rclass & 0x8000:
+            fields["cacheflush"] = 1
+        return fields
+    return {"rclass": rclass}
+
+
 def _dns_rr_common(record: Mapping[str, object], *, name: str, ttl: int) -> dict[str, Any]:
     return {
         "rrname": name,
         "ttl": ttl,
-        "rclass": _dns_record_class(record.get("record_class", record.get("rclass"))),
+        **_dns_record_class_fields(record.get("record_class", record.get("rclass"))),
     }
 
 
