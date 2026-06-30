@@ -44,6 +44,34 @@ cargo run -p crafter --example dhcpv6_solicit
 cargo run -p crafter --example dhcpv6_relay
 ```
 
+## mDNS Packet Snippet
+
+mDNS currently appears as packet-level snippets and guide coverage rather than
+a live example binary. Build DNS-SD browse, resolve, announce, known-answer,
+probe, and goodbye shapes with the existing `Dns` layer and the `mdns` helper
+module, then compile or decode them offline.
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+fn main() -> crafter::Result<()> {
+    let service = mdns::dns_sd_tcp_service_name("ipp", DNS_SD_DEFAULT_DOMAIN)?;
+    let dns = mdns::query(DnsQuestion::new(service, DNS_TYPE_PTR).mdns_qu(true));
+    let packet = mdns::mdns_ipv4_packet(Ipv4Addr::new(192, 0, 2, 10), dns);
+
+    let bytes = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+    println!("{}", decoded.summary());
+    Ok(())
+}
+```
+
+Use [mDNS and DNS-SD wire coverage](../guide/mdns.md) for the full helper
+catalog. Live mDNS traffic is not part of default examples; use dry-run plans
+or provider-backed lab/probe workflows when real multicast behavior is
+authorized.
+
 ## DHCPv4 And DHCPv6 Examples
 
 The DHCP examples are packet-primitive smoke tests. `dhcpv4_discover` defaults

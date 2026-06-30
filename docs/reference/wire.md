@@ -83,6 +83,28 @@ The pcap file constructor accepts an optional libpcap BPF filter. The source
 decodes each record into a `PacketRecord` and preserves pcap timestamp, lengths,
 captured bytes, and link metadata.
 
+UDP/5353 records decode as `Dns` layers with mDNS context when the enclosing
+IP/UDP headers are valid, so pcap workflows still use the normal packet stream
+shape:
+
+```rust
+use crafter::prelude::*;
+
+let source = PacketWire::pcap_file(
+    "crafter/tests/fixtures/pcaps/ethernet-ipv4-udp-mdns-query.pcap",
+)
+    .filter("udp port 5353")
+    .open()?
+    .source()?;
+
+for record in Sniffer::new(source).collect_records()? {
+    if let Some(dns) = record.packet().layer::<Dns>() {
+        println!("{}", dns.summary());
+    }
+}
+# Ok::<(), crafter::CrafterError>(())
+```
+
 ## Offline Writing
 
 Use a pcap recorder when the output should be deterministic and inspectable.
