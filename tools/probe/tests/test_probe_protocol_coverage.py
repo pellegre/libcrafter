@@ -11,11 +11,11 @@ with the full case set in :data:`tools.probe.engine.cases.PROBE_CASE_BY_NAME`.
 
 Three guarantees are asserted:
 
-* Full registry coverage -- every one of the 17 known probe protocols
+* Full registry coverage -- every one of the 18 known probe protocols
   (``arp``, ``dns``, ``dhcpv4``, ``dhcpv6``, ``udp``, ``ndp``, ``icmp``,
   ``tcp``, ``bgp``, ``rip``, ``ospf``, ``igmp``, ``ipsec``, ``mqtt``,
-  ``quic``, ``snmp``, ``ssdp``) has a registered plugin, and no registered
-  plugin names a non-protocol.
+  ``quic``, ``snmp``, ``ssdp``, ``mdns``) has a registered plugin, and no
+  registered plugin names a non-protocol.
 * Exactly-one ownership -- every case in ``PROBE_CASE_BY_NAME`` is owned by
   exactly one plugin (by case *name* via ``plugin.cases``), and no plugin owns a
   phantom case absent from ``PROBE_CASE_BY_NAME``.
@@ -68,6 +68,7 @@ ALL_PROTOCOLS: frozenset[str] = frozenset(
         "quic",
         "snmp",
         "ssdp",
+        "mdns",
     }
 )
 
@@ -88,7 +89,7 @@ class ProbeProtocolFullCoverageTest(unittest.TestCase):
     """Every known protocol is registered and every plugin is a real protocol."""
 
     def test_every_known_protocol_is_registered(self) -> None:
-        """Each of the 17 known protocols has a registered plugin."""
+        """Each of the 18 known protocols has a registered plugin."""
 
         registered = set(PROTOCOL_REGISTRY.names())
         missing = ALL_PROTOCOLS - registered
@@ -112,7 +113,7 @@ class ProbeProtocolFullCoverageTest(unittest.TestCase):
         )
 
     def test_registry_exactly_matches_known_protocols(self) -> None:
-        """The registry is exactly the 17 known protocols -- nothing more, nothing less."""
+        """The registry is exactly the 18 known protocols -- nothing more, nothing less."""
 
         self.assertEqual(set(PROTOCOL_REGISTRY.names()), ALL_PROTOCOLS)
 
@@ -219,6 +220,7 @@ class ProbeNoLegacyDispatcherTest(unittest.TestCase):
         "OSPF",
         "IGMP",
         "IPSEC",
+        "MDNS",
     )
 
     # Per-protocol live-path rewrite/failure branch helpers that the plugin

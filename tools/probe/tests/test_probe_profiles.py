@@ -36,6 +36,7 @@ _BGP_CASE_COUNT = len(cases.BGP_SESSION_PROFILE_CASE_NAMES)
 _DHCPV6_ADVANCED_CASE_COUNT = len(cases.DHCPV6_ADVANCED_PROFILE_CASE_NAMES)
 _DHCPV6_RELAY_CASE_COUNT = len(cases.DHCPV6_RELAY_PROFILE_CASE_NAMES)
 _DHCPV6_SMOKE_CASE_COUNT = len(cases.DHCPV6_SMOKE_PROFILE_CASE_NAMES)
+_MDNS_SMOKE_CASE_COUNT = len(cases.MDNS_SMOKE_PROFILE_CASE_NAMES)
 _MQTT_SMOKE_CASE_COUNT = len(cases.MQTT_SMOKE_PROFILE_CASE_NAMES)
 _OSPF_SMOKE_CASE_COUNT = len(cases.OSPF_SMOKE_PROFILE_CASE_NAMES)
 _QUIC_SMOKE_CASE_COUNT = len(cases.QUIC_SMOKE_PROFILE_CASE_NAMES)
@@ -142,6 +143,7 @@ class ProbeProfileMembershipTest(unittest.TestCase):
                 "dhcpv6-smoke",
                 "igmp",
                 "ipsec",
+                "mdns-smoke",
                 "mqtt-smoke",
                 "ospf-smoke",
                 "quic-smoke",
@@ -233,6 +235,35 @@ class ProbeProfileMembershipTest(unittest.TestCase):
             "dhcpv6-information-request-reply",
             cases.BEHAVIOR_PROFILE_CASE_NAMES,
         )
+
+    def test_mdns_smoke_profile_selects_planned_only_cases(self) -> None:
+        names = cases.profile_case_names("mdns-smoke")
+
+        self.assertEqual(
+            names,
+            (
+                "mdns-ipv4-multicast-browse",
+                "mdns-ipv6-multicast-browse",
+                "mdns-qu-unicast-response",
+                "mdns-service-resolve",
+                "mdns-announcement",
+                "mdns-goodbye",
+                "mdns-known-answer-suppression",
+                "mdns-cache-flush-response",
+                "mdns-subtype-browse",
+                "mdns-bonjour-txt",
+            ),
+        )
+        selected = cases.profile_selected_cases("mdns-smoke", [])
+        self.assertEqual([case.name for case in selected], list(names))
+        self.assertEqual(cases.profile_default_count("mdns-smoke"), _MDNS_SMOKE_CASE_COUNT)
+        for case in selected:
+            with self.subTest(case=case.name):
+                self.assertEqual(case.metadata["protocol"], "mdns")
+                self.assertEqual(case.metadata["service"], "mdns-controlled-responder")
+                self.assertEqual(case.metadata["udp_port"], 5353)
+                self.assertIs(case.metadata["planned_only"], True)
+        self.assertNotIn("mdns-ipv4-multicast-browse", cases.BEHAVIOR_PROFILE_CASE_NAMES)
 
     def test_dhcpv6_relay_profile_selects_relay_case(self) -> None:
         names = cases.profile_case_names("dhcpv6-relay")
