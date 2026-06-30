@@ -25,15 +25,16 @@ use crafter::core::{
     DNS_EDNS_OPTION_NSID, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED,
     DNS_SVCB_KEY_ALPN, DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A,
     DNS_TYPE_AAAA, DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NS,
-    DNS_TYPE_NSEC, DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV,
-    DNS_TYPE_SVCB, ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_VLAN,
-    ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST,
-    IGMP_FIXED_HEADER_LEN, IGMP_QUERY_CODE_V1, IGMP_TYPE_UNASSIGNED_FIRST, IPPROTO_ICMP,
-    IPPROTO_ICMPV6, IPPROTO_IGMP, IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1,
-    IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_ROUTE, IPPROTO_TCP, IPPROTO_UDP,
-    IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED,
-    IPV6_ROUTING_TYPE_MOBILE, IPV6_ROUTING_TYPE_SEGMENT, QUIC_VERSION_1, QUIC_VERSION_2, SNMP_PORT,
-    TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
+    DNS_TYPE_NSEC, DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_PTR, DNS_TYPE_RRSIG, DNS_TYPE_SOA,
+    DNS_TYPE_SRV, DNS_TYPE_SVCB, DNS_TYPE_TXT, ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4,
+    ETHERTYPE_IPV6, ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED,
+    ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IGMP_FIXED_HEADER_LEN, IGMP_QUERY_CODE_V1,
+    IGMP_TYPE_UNASSIGNED_FIRST, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IGMP, IPPROTO_IPV6_DSTOPTS,
+    IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_ROUTE,
+    IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS,
+    IPV4_FLAG_RESERVED, IPV6_ROUTING_TYPE_MOBILE, IPV6_ROUTING_TYPE_SEGMENT, MDNS_CLASS_BIT,
+    MDNS_GOODBYE_TTL, MDNS_PORT, QUIC_VERSION_1, QUIC_VERSION_2, SNMP_PORT, TCP_FLAG_ACK,
+    TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
 use crafter::protocols::dhcp::{
     Dhcpv6, Dhcpv6IaAddr, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6Option, Dhcpv6StatusCode,
@@ -154,6 +155,7 @@ enum CoverageFamily {
     Ipv4UdpDnsEdnsOpt,
     Ipv4UdpDnsRawUnknown,
     Ipv4UdpDnsSectionPlacement,
+    Ipv4UdpMdns,
     Ipv4UdpDhcpv4,
     Ipv4UdpSnmp,
     Ipv4Ospf,
@@ -162,6 +164,7 @@ enum CoverageFamily {
     Ipv6IcmpEcho,
     Ipv6IcmpError,
     Ipv6Udp,
+    Ipv6UdpMdns,
     Ipv6UdpDhcpv6,
     Ipv6UdpOptions,
     Ipv6Tcp,
@@ -1454,6 +1457,84 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: Some("summaries/ipv4-udp-dns-section-placement-response.summary.txt"),
     },
     ValidFixtureCase {
+        name: "ipv4-udp-mdns-query",
+        path: "bytes/ipv4-udp-mdns-query.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-mdns-query.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dns],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv6-udp-mdns-query",
+        path: "bytes/ipv6-udp-mdns-query.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-udp-mdns-query.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[ExpectedLayer::Ipv6, ExpectedLayer::Udp, ExpectedLayer::Dns],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-udp-mdns-bonjour-browse-response",
+        path: "bytes/ipv4-udp-mdns-bonjour-browse-response.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ipv4-udp-mdns-bonjour-browse-response.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dns],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-udp-mdns-service-resolve-response",
+        path: "bytes/ipv4-udp-mdns-service-resolve-response.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ipv4-udp-mdns-service-resolve-response.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dns],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-udp-mdns-known-answer-query",
+        path: "bytes/ipv4-udp-mdns-known-answer-query.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-mdns-known-answer-query.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dns],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-udp-mdns-cache-flush-response",
+        path: "bytes/ipv4-udp-mdns-cache-flush-response.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ipv4-udp-mdns-cache-flush-response.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dns],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-udp-mdns-goodbye",
+        path: "bytes/ipv4-udp-mdns-goodbye.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-mdns-goodbye.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dns],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-udp-mdns-compressed-names",
+        path: "bytes/ipv4-udp-mdns-compressed-names.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-mdns-compressed-names.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dns],
+        preserve_exact_bytes: false,
+        summary_path: None,
+    },
+    ValidFixtureCase {
         name: "ipv4-udp-dhcpv4-discover",
         path: "bytes/ipv4-udp-dhcpv4-discover.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-dhcpv4-discover.hex")),
@@ -2558,6 +2639,24 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
     },
 ];
 
+const MDNS_VALID_FIXTURE_NAMES: &[&str] = &[
+    "ipv4-udp-mdns-query",
+    "ipv6-udp-mdns-query",
+    "ipv4-udp-mdns-bonjour-browse-response",
+    "ipv4-udp-mdns-service-resolve-response",
+    "ipv4-udp-mdns-known-answer-query",
+    "ipv4-udp-mdns-cache-flush-response",
+    "ipv4-udp-mdns-goodbye",
+    "ipv4-udp-mdns-compressed-names",
+];
+
+const REQUIRED_MDNS_MALFORMED_ROWS: &[&str] = &[
+    "mdns-truncated-question-fields",
+    "mdns-cache-flush-rdata-overrun",
+    "mdns-compression-loop-record-name",
+    "mdns-ipv6-label-length-overrun",
+];
+
 const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
     (CoverageFamily::RawPayload, "raw payload decode"),
     (
@@ -2821,6 +2920,13 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv4-udp-dns-edns-opt-query" => &[CoverageFamily::Ipv4UdpDnsEdnsOpt],
         "ipv4-udp-dns-raw-unknown-records-response" => &[CoverageFamily::Ipv4UdpDnsRawUnknown],
         "ipv4-udp-dns-section-placement-response" => &[CoverageFamily::Ipv4UdpDnsSectionPlacement],
+        "ipv4-udp-mdns-query"
+        | "ipv4-udp-mdns-bonjour-browse-response"
+        | "ipv4-udp-mdns-service-resolve-response"
+        | "ipv4-udp-mdns-known-answer-query"
+        | "ipv4-udp-mdns-cache-flush-response"
+        | "ipv4-udp-mdns-goodbye"
+        | "ipv4-udp-mdns-compressed-names" => &[CoverageFamily::Ipv4UdpMdns],
         "ipv4-udp-dhcpv4-discover" => &[CoverageFamily::Ipv4UdpDhcpv4],
         "ethernet-ipv4-udp-snmp-get-request" | "ipv4-udp-snmp-response" => {
             &[CoverageFamily::Ipv4UdpSnmp]
@@ -2847,6 +2953,7 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv6-icmp-echo-request" => &[CoverageFamily::Ipv6IcmpEcho],
         "ipv6-icmpv6-time-exceeded" => &[CoverageFamily::Ipv6IcmpError],
         "ipv6-udp-raw" | "ipv6-base-traffic-flow-udp-raw" => &[CoverageFamily::Ipv6Udp],
+        "ipv6-udp-mdns-query" => &[CoverageFamily::Ipv6UdpMdns],
         "ipv6-udp-dhcpv6-solicit"
         | "ethernet-ipv6-udp-dhcpv6-solicit"
         | "ipv6-udp-dhcpv6-advertise"
@@ -3020,6 +3127,11 @@ fn assert_compile_decode_compile(
     packet: &Packet,
     fixture_bytes: &[u8],
 ) {
+    if case.name == "ipv4-udp-mdns-compressed-names" {
+        assert_mdns_compressed_compile_decode_compile(case, target, packet, fixture_bytes);
+        return;
+    }
+
     let compiled = packet
         .compile()
         .unwrap_or_else(|err| panic!("fixture {} should compile: {err}", case.path));
@@ -3049,6 +3161,90 @@ fn assert_compile_decode_compile(
         "fixture {} compile/decode/compile bytes changed",
         case.path
     );
+}
+
+fn assert_mdns_compressed_compile_decode_compile(
+    case: &ValidFixtureCase,
+    target: PacketDecodeTarget,
+    packet: &Packet,
+    fixture_bytes: &[u8],
+) {
+    let normalized = normalized_mdns_packet(packet)
+        .compile()
+        .unwrap_or_else(|err| {
+            panic!(
+                "fixture {} should compile normalized mDNS: {err}",
+                case.path
+            )
+        });
+    assert_ne!(
+        normalized.as_bytes(),
+        fixture_bytes,
+        "fixture {} should normalize compressed names to an uncompressed DNS encoding",
+        case.path
+    );
+
+    let dns_payload = &normalized.as_bytes()[UDP_HEADER_LEN + 20..];
+    assert!(
+        !dns_payload.iter().any(|&byte| byte & 0xc0 == 0xc0),
+        "fixture {} normalized DNS payload should not retain compression pointers",
+        case.path
+    );
+
+    let decoded_again = decode_packet(target, normalized.as_bytes()).unwrap_or_else(|err| {
+        panic!(
+            "fixture {} normalized mDNS packet should decode after recompile: {err}",
+            case.path
+        )
+    });
+    let original_dns = packet
+        .layer::<Dns>()
+        .unwrap_or_else(|| panic!("fixture {} should carry DNS", case.path));
+    let decoded_dns = decoded_again
+        .layer::<Dns>()
+        .unwrap_or_else(|| panic!("fixture {} normalized packet should carry DNS", case.path));
+    assert_eq!(
+        decoded_dns, original_dns,
+        "fixture {} normalized DNS model changed",
+        case.path
+    );
+
+    let recompiled = normalized_mdns_packet(&decoded_again)
+        .compile()
+        .unwrap_or_else(|err| {
+            panic!(
+                "fixture {} should recompile normalized mDNS: {err}",
+                case.path
+            )
+        });
+    assert_eq!(
+        recompiled.as_bytes(),
+        normalized.as_bytes(),
+        "fixture {} normalized compile/decode/compile bytes changed",
+        case.path
+    );
+}
+
+fn normalized_mdns_packet(packet: &Packet) -> Packet {
+    let ipv4 = packet
+        .layer::<Ipv4>()
+        .expect("mDNS compressed fixture should carry IPv4");
+    let udp = packet
+        .layer::<Udp>()
+        .expect("mDNS compressed fixture should carry UDP");
+    let dns = packet
+        .layer::<Dns>()
+        .expect("mDNS compressed fixture should carry DNS")
+        .clone();
+
+    Ipv4::new()
+        .src(ipv4.source())
+        .dst(ipv4.destination())
+        .ttl(ipv4.ttl_value())
+        / Udp::new()
+            .sport(udp.source_port_value())
+            .dport(udp.destination_port_value())
+        / dns
 }
 
 fn assert_quic_datagram_compile_decode_compile(
@@ -4078,6 +4274,138 @@ fn assert_igmp_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     }
 }
 
+fn assert_mdns_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
+    assert_exact_layer_stack(case, packet);
+
+    let udp = expect_layer::<Udp>(case, packet);
+    assert_eq!(udp.source_port_value(), MDNS_PORT);
+    assert_eq!(udp.destination_port_value(), MDNS_PORT);
+
+    let dns = expect_layer::<Dns>(case, packet);
+    assert!(
+        dns.summary().starts_with("mDNS("),
+        "fixture {} should summarize as mDNS: {}",
+        case.path,
+        dns.summary()
+    );
+
+    match case.name {
+        "ipv4-udp-mdns-query" => {
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 10));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 251));
+            assert_eq!(ipv4.ttl_value(), 255);
+            assert!(!dns.is_response());
+            assert_eq!(dns.questions().len(), 1);
+            assert_eq!(dns.questions()[0].name(), "_ipp._tcp.local.");
+            assert_eq!(dns.questions()[0].question_type(), DNS_TYPE_PTR);
+            assert_eq!(
+                dns.questions()[0].question_class(),
+                MDNS_CLASS_BIT | DNS_CLASS_IN
+            );
+            assert!(dns.questions()[0].mdns_unicast_response_preferred_value());
+        }
+        "ipv6-udp-mdns-query" => {
+            let ipv6 = expect_layer::<Ipv6>(case, packet);
+            assert_eq!(
+                ipv6.source(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x10)
+            );
+            assert_eq!(
+                ipv6.destination(),
+                Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x00fb)
+            );
+            assert_eq!(ipv6.hop_limit_value(), 255);
+            assert!(!dns.is_response());
+            assert_eq!(dns.questions().len(), 1);
+            assert_eq!(dns.questions()[0].name(), "printer.local.");
+            assert_eq!(dns.questions()[0].question_type(), DNS_TYPE_AAAA);
+            assert_eq!(dns.questions()[0].question_class(), DNS_CLASS_IN);
+            assert!(!dns.questions()[0].mdns_unicast_response_preferred_value());
+        }
+        "ipv4-udp-mdns-bonjour-browse-response" => {
+            assert!(dns.is_response());
+            assert_eq!(dns.answers().len(), 1);
+            let answer = &dns.answers()[0];
+            assert_eq!(answer.name(), "_ipp._tcp.local.");
+            assert_eq!(answer.record_type(), DNS_TYPE_PTR);
+            assert_eq!(answer.class(), DNS_CLASS_IN);
+            assert_eq!(answer.ttl(), 4500);
+            assert!(!answer.mdns_cache_flush_value());
+            assert_eq!(
+                answer.data(),
+                &DnsRecordData::Name(
+                    DnsName::parse("Office\\032Printer._ipp._tcp.local.").unwrap()
+                )
+            );
+        }
+        "ipv4-udp-mdns-service-resolve-response" => {
+            assert!(dns.is_response());
+            assert_eq!(dns.answers().len(), 2);
+            assert_eq!(dns.additionals().len(), 2);
+            assert_eq!(dns.answers()[0].record_type(), DNS_TYPE_SRV);
+            assert_eq!(dns.answers()[1].record_type(), DNS_TYPE_TXT);
+            assert_eq!(dns.additionals()[0].record_type(), DNS_TYPE_A);
+            assert_eq!(dns.additionals()[1].record_type(), DNS_TYPE_AAAA);
+            assert!(dns
+                .answers()
+                .iter()
+                .chain(dns.additionals())
+                .all(DnsRecord::mdns_cache_flush_value));
+            match dns.answers()[0].data() {
+                DnsRecordData::Srv { port, target, .. } => {
+                    assert_eq!(*port, 631);
+                    assert_eq!(target.presentation(), "printer.local.");
+                }
+                other => panic!("service resolve SRV decoded as {other:?}"),
+            }
+            match dns.answers()[1].data() {
+                DnsRecordData::Txt(strings) => assert_eq!(strings.len(), 3),
+                other => panic!("service resolve TXT decoded as {other:?}"),
+            }
+        }
+        "ipv4-udp-mdns-known-answer-query" => {
+            assert!(!dns.is_response());
+            assert_eq!(dns.questions().len(), 1);
+            assert_eq!(dns.answers().len(), 1);
+            assert_eq!(dns.questions()[0].name(), "_ipp._tcp.local.");
+            assert_eq!(dns.answers()[0].record_type(), DNS_TYPE_PTR);
+            assert_eq!(dns.answers()[0].ttl(), 4500);
+            assert!(!dns.answers()[0].mdns_cache_flush_value());
+        }
+        "ipv4-udp-mdns-cache-flush-response" => {
+            assert!(dns.is_response());
+            assert_eq!(dns.answers().len(), 1);
+            assert_eq!(dns.answers()[0].name(), "printer.local.");
+            assert_eq!(dns.answers()[0].record_type(), DNS_TYPE_A);
+            assert_eq!(dns.answers()[0].ttl(), 120);
+            assert_eq!(dns.answers()[0].class(), MDNS_CLASS_BIT | DNS_CLASS_IN);
+            assert!(dns.answers()[0].mdns_cache_flush_value());
+        }
+        "ipv4-udp-mdns-goodbye" => {
+            assert!(dns.is_response());
+            assert_eq!(dns.answers().len(), 1);
+            assert_eq!(dns.answers()[0].name(), "printer.local.");
+            assert_eq!(dns.answers()[0].ttl(), MDNS_GOODBYE_TTL);
+            assert!(dns.answers()[0].mdns_cache_flush_value());
+        }
+        "ipv4-udp-mdns-compressed-names" => {
+            assert!(dns.is_response());
+            assert_eq!(dns.questions().len(), 1);
+            assert_eq!(dns.answers().len(), 2);
+            assert_eq!(dns.answers()[0].name(), "_ipp._tcp.local.");
+            assert_eq!(dns.answers()[0].record_type(), DNS_TYPE_PTR);
+            assert_eq!(
+                dns.answers()[1].name(),
+                "Office\\032Printer._ipp._tcp.local."
+            );
+            assert_eq!(dns.answers()[1].record_type(), DNS_TYPE_TXT);
+            assert!(dns.answers()[1].mdns_cache_flush_value());
+        }
+        other => panic!("mDNS fixture {other} is missing typed field assertions"),
+    }
+}
+
 fn assert_quic_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     let fixture_bytes = fixture_bytes_for_case(case);
     let quic = expect_layer::<Quic>(case, packet);
@@ -4190,6 +4518,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_ipv6_oracle_reference_fixture_fields(case, packet)
         }
         name if name.starts_with("ipv4-igmp-") => assert_igmp_fixture_fields(case, packet),
+        name if name.contains("-mdns-") => assert_mdns_fixture_fields(case, packet),
         name if name.starts_with("ipv6-udp-dhcpv6-")
             || name == "ethernet-ipv6-udp-dhcpv6-solicit" =>
         {
@@ -6972,8 +7301,11 @@ fn read_summary_fixture(path: &str) -> String {
 }
 
 fn parse_malformed_rows(path: &str) -> Vec<MalformedFixtureRow> {
-    fixture_str!("malformed/core-decode-corpus.hex")
-        .lines()
+    parse_malformed_rows_from(path, fixture_str!("malformed/core-decode-corpus.hex"))
+}
+
+fn parse_malformed_rows_from(path: &str, text: &str) -> Vec<MalformedFixtureRow> {
+    text.lines()
         .filter_map(|line| parse_malformed_row(path, line))
         .collect()
 }
@@ -8086,6 +8418,35 @@ fn valid_byte_fixtures_decode_compile_and_summarize() {
                 assert_fixture_fields(case, &packet);
                 assert_quic_datagram_compile_decode_compile(case, &packet, &bytes);
             }
+        }
+    }
+}
+
+#[test]
+fn mdns_fixture_suite_decodes_inspects_and_recompiles() {
+    for name in MDNS_VALID_FIXTURE_NAMES {
+        let case = valid_fixture_case(name);
+        ensure_fixture_exists(case.path);
+        let bytes = fixture_bytes_for_case(case);
+        let target = packet_target_for_case(case);
+        let packet = decode_packet(target, &bytes)
+            .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+
+        assert_packet_surface(case, &packet);
+        assert_fixture_fields(case, &packet);
+        assert!(packet.summary().contains("mDNS("), "{}", packet.summary());
+        assert!(packet.show().contains("mDNS: true"), "{}", packet.show());
+        assert_compile_decode_compile(case, target, &packet, &bytes);
+
+        if *name == "ipv4-udp-mdns-compressed-names" {
+            let compiled = packet
+                .compile()
+                .expect("compressed mDNS fixture should compile after decode");
+            assert_ne!(
+                compiled.as_bytes(),
+                bytes.as_slice(),
+                "compressed names fixture should decode to a deterministic uncompressed encoding"
+            );
         }
     }
 }
@@ -10809,6 +11170,111 @@ fn malformed_corpus_rows_are_well_formed() {
         if let Some(expected_kind) = &row.expected_kind {
             assert_lower_dash_name(expected_kind, &row.name);
         }
+    }
+}
+
+#[test]
+fn mdns_malformed_fixture_suite_reports_structured_errors() {
+    let rows = parse_malformed_rows_from(
+        "malformed/mdns-corpus.hex",
+        fixture_str!("malformed/mdns-corpus.hex"),
+    );
+    assert!(!rows.is_empty(), "mDNS malformed corpus must not be empty");
+
+    let mut covered_rows = HashSet::new();
+    for row in rows {
+        assert_lower_dash_name(&row.name, &row.name);
+        assert!(
+            matches!(row.target.as_str(), "ipv4" | "ipv6"),
+            "mDNS malformed fixture {} has unknown target {}",
+            row.name,
+            row.target
+        );
+        assert!(
+            row.name.starts_with("mdns-"),
+            "mDNS malformed fixture {} should be prefixed",
+            row.name
+        );
+        assert!(
+            !row.bytes.is_empty(),
+            "mDNS malformed fixture {} should carry input bytes",
+            row.name
+        );
+        assert_mdns_malformed_row(&row);
+        covered_rows.insert(row.name);
+    }
+
+    for required in REQUIRED_MDNS_MALFORMED_ROWS {
+        assert!(
+            covered_rows.contains(*required),
+            "mDNS malformed corpus is missing required case {required}"
+        );
+    }
+}
+
+fn assert_mdns_malformed_row(row: &MalformedFixtureRow) {
+    let result = match row.target.as_str() {
+        "ipv4" => Packet::decode_from_l3(NetworkLayer::Ipv4, row.bytes.as_slice()),
+        "ipv6" => Packet::decode_from_l3(NetworkLayer::Ipv6, row.bytes.as_slice()),
+        other => panic!(
+            "mDNS malformed fixture {} has unknown target {other}",
+            row.name
+        ),
+    };
+    let err = match result {
+        Ok(packet) => panic!(
+            "mDNS malformed fixture {} unexpectedly decoded as {}",
+            row.name,
+            packet.summary()
+        ),
+        Err(err) => err,
+    };
+
+    let expected_kind = row.expected_kind.as_deref().unwrap_or_else(|| {
+        panic!(
+            "mDNS malformed fixture {} must name an error kind",
+            row.name
+        )
+    });
+    let expected_context_or_field = row.expected_context_or_field.as_deref().unwrap_or_else(|| {
+        panic!(
+            "mDNS malformed fixture {} must name an error context or field",
+            row.name
+        )
+    });
+
+    match (expected_kind, err) {
+        (
+            "buffer-too-short",
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            },
+        ) => {
+            assert_eq!(
+                context, expected_context_or_field,
+                "case {} context",
+                row.name
+            );
+            assert!(
+                required > available,
+                "case {} should report required > available",
+                row.name
+            );
+        }
+        ("invalid-field-value", CrafterError::InvalidFieldValue { field, reason }) => {
+            assert_eq!(field, expected_context_or_field, "case {} field", row.name);
+            assert!(
+                !reason.is_empty(),
+                "case {} should report an invalid-field reason",
+                row.name
+            );
+        }
+        (kind, other) => panic!(
+            "mDNS malformed fixture {} expected {kind} for {}, got {other:?}",
+            row.name, expected_context_or_field
+        ),
     }
 }
 
