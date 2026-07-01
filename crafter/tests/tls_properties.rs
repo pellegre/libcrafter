@@ -42,6 +42,42 @@ fn raw_extensions(
     prop::collection::vec((any::<u16>(), bytes(max_body_len)), 0..=max_count)
 }
 
+#[derive(Debug, Clone)]
+struct TlsRecordCase {
+    raw_content_type: u8,
+    fragment: Vec<u8>,
+}
+
+fn record_cases(max_count: usize) -> impl Strategy<Value = Vec<TlsRecordCase>> {
+    prop::collection::vec(
+        prop_oneof![
+            bytes(48).prop_map(|fragment| TlsRecordCase {
+                raw_content_type: TlsContentType::application_data().raw(),
+                fragment,
+            }),
+            (any::<u8>(), any::<u8>()).prop_map(|(level, description)| TlsRecordCase {
+                raw_content_type: TlsContentType::alert().raw(),
+                fragment: TlsAlert::from_raw(level, description).encode_to_vec(),
+            }),
+            bytes(48).prop_map(|fragment| TlsRecordCase {
+                raw_content_type: 0xfe,
+                fragment,
+            }),
+        ],
+        0..=max_count,
+    )
+}
+
+fn record_from_case(case: &TlsRecordCase) -> TlsRecord {
+    match case.raw_content_type {
+        raw if raw == TlsContentType::application_data().raw() => {
+            TlsRecord::application_data(case.fragment.clone())
+        }
+        raw if raw == TlsContentType::alert().raw() => TlsRecord::alert(case.fragment.clone()),
+        raw => TlsRecord::from_fragment(TlsContentType::from_u8(raw), case.fragment.clone()),
+    }
+}
+
 fn assert_vector_roundtrip(
     bounds: TlsVectorBounds,
     expected_prefix: TlsVectorLengthPrefix,
@@ -121,6 +157,113 @@ proptest! {
         prop_assert_eq!(decoded.raw_handshake_type(), 0xfe);
         prop_assert_eq!(decoded.body_bytes(), body.as_slice());
         prop_assert_eq!(prop_result(decoded.encode_to_vec())?, encoded);
+    }
+
+    #[test]
+    fn tls_property_handshake_unknown_types_roundtrip(
+        raw_handshake_type in 0x80u8..=0xff,
+        body in bytes(128),
+    ) {
+        let message = TlsHandshake::from_body(TlsHandshakeType::from_u8(raw_handshake_type), body.clone());
+        let encoded = prop_result(message.encode_to_vec())?;
+        let decoded = prop_result(TlsHandshake::decode(&encoded))?;
+
+        prop_assert_eq!(decoded.raw_handshake_type(), raw_handshake_type);
+        prop_assert_eq!(decoded.body_bytes(), body.as_slice());
+        prop_assert_eq!(prop_result(decoded.encode_to_vec())?, encoded);
+    }
+
+    #[test]
+    fn tls_property_handshake_records_roundtrip(
+        messages in prop::collection::vec((0x80u8..=0xff, bytes(48)), 0..=6),
+    ) {
+        let messages = messages
+            .into_iter()
+            .map(|(raw_handshake_type, body)| {
+                TlsHandshake::from_body(TlsHandshakeType::from_u8(raw_handshake_type), body)
+            })
+            .collect::<Vec<_>>();
+        let record = prop_result(TlsRecord::handshake_messages(messages.clone()))?;
+        let encoded = prop_result(record.encode_to_vec())?;
+        let decoded = prop_result(TlsRecord::decode(&encoded))?;
+        let decoded_messages = decoded
+            .body()
+            .handshake_messages()
+            .expect("generated handshake record should decode as handshake");
+
+        prop_assert_eq!(decoded.raw_content_type(), TlsContentType::handshake().raw());
+        prop_assert_eq!(decoded_messages.len(), messages.len());
+        for (decoded_message, expected_message) in decoded_messages.iter().zip(&messages) {
+            prop_assert_eq!(
+                decoded_message.raw_handshake_type(),
+                expected_message.raw_handshake_type()
+            );
+            prop_assert_eq!(decoded_message.body_bytes(), expected_message.body_bytes());
+        }
+        prop_assert_eq!(decoded.fragment(), record.fragment());
+        prop_assert_eq!(prop_result(decoded.encode_to_vec())?, encoded);
+    }
+
+    #[test]
+    fn tls_property_records_unknown_content_types_roundtrip(
+        raw_content_type in 0x80u8..=0xff,
+        fragment in bytes(128),
+    ) {
+        let record = TlsRecord::from_fragment(TlsContentType::from_u8(raw_content_type), fragment.clone());
+        let encoded = prop_result(record.encode_to_vec())?;
+        let decoded = prop_result(TlsRecord::decode(&encoded))?;
+
+        prop_assert_eq!(decoded.raw_content_type(), raw_content_type);
+        prop_assert_eq!(decoded.fragment(), fragment.as_slice());
+        prop_assert!(decoded.body().is_opaque());
+        prop_assert_eq!(prop_result(decoded.encode_to_vec())?, encoded);
+    }
+
+    #[test]
+    fn tls_property_alert_records_roundtrip(level in any::<u8>(), description in any::<u8>()) {
+        let alert = TlsAlert::from_raw(level, description);
+        let alert_bytes = alert.encode_to_vec();
+        let record = TlsRecord::alert(alert_bytes.clone());
+        let encoded = prop_result(record.encode_to_vec())?;
+        let decoded = prop_result(TlsRecord::decode(&encoded))?;
+
+        prop_assert_eq!(decoded.raw_content_type(), TlsContentType::alert().raw());
+        prop_assert_eq!(decoded.fragment(), alert_bytes.as_slice());
+        prop_assert_eq!(prop_result(TlsAlert::decode(decoded.fragment()))?, alert);
+        prop_assert_eq!(prop_result(decoded.encode_to_vec())?, encoded);
+    }
+
+    #[test]
+    fn tls_property_application_data_records_roundtrip(fragment in bytes(128)) {
+        let record = TlsRecord::application_data(fragment.clone());
+        let encoded = prop_result(record.encode_to_vec())?;
+        let decoded = prop_result(TlsRecord::decode(&encoded))?;
+
+        prop_assert_eq!(decoded.raw_content_type(), TlsContentType::application_data().raw());
+        prop_assert_eq!(decoded.fragment(), fragment.as_slice());
+        prop_assert_eq!(
+            decoded.application_data_body().expect("application_data body").bytes(),
+            fragment.as_slice()
+        );
+        prop_assert_eq!(prop_result(decoded.encode_to_vec())?, encoded);
+    }
+
+    #[test]
+    fn tls_property_stacked_record_sequences_roundtrip(cases in record_cases(8)) {
+        let records = cases.iter().map(record_from_case).collect::<Vec<_>>();
+        let mut encoded = Vec::new();
+        for record in &records {
+            prop_result(record.encode(&mut encoded))?;
+        }
+
+        let mut remaining = encoded.as_slice();
+        for case in &cases {
+            let (decoded, tail) = prop_result(TlsRecord::decode_prefix(remaining))?;
+            prop_assert_eq!(decoded.raw_content_type(), case.raw_content_type);
+            prop_assert_eq!(decoded.fragment(), case.fragment.as_slice());
+            remaining = tail;
+        }
+        prop_assert!(remaining.is_empty());
     }
 
     #[test]
