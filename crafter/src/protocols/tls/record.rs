@@ -1708,7 +1708,7 @@ mod tests {
         assert_eq!(record.encode_to_vec()?, encoded);
         assert_eq!(
             record.summary(),
-            "record content_type=change_cipher_spec legacy_record_version=TLS 1.2 declared_length=auto fragment_bytes=1 body=change_cipher_spec"
+            "record content_type=change_cipher_spec legacy_record_version=TLS 1.2 declared_length=auto fragment_bytes=1 body=change_cipher_spec value=change_cipher_spec raw=0x01"
         );
 
         let decoded = TlsRecord::decode(&encoded)?;
@@ -1835,7 +1835,8 @@ mod tests {
         assert_eq!(
             record.summary(),
             format!(
-                "record content_type=application_data legacy_record_version=TLS 1.2 declared_length=auto fragment_bytes={} body=application_data",
+                "record content_type=application_data legacy_record_version=TLS 1.2 declared_length=auto fragment_bytes={} body=application_data bytes={}",
+                payload.len(),
                 payload.len()
             )
         );
@@ -1896,8 +1897,9 @@ mod tests {
         assert_eq!(
             record.summary(),
             format!(
-                "record content_type=heartbeat legacy_record_version=TLS 1.2 declared_length=auto fragment_bytes={} body=heartbeat",
-                fragment.len()
+                "record content_type=heartbeat legacy_record_version=TLS 1.2 declared_length=auto fragment_bytes={} body=heartbeat type=heartbeat_request declared_payload_length=auto payload_bytes=2 padding_bytes={}",
+                fragment.len(),
+                TLS_HEARTBEAT_MIN_PADDING_LEN
             )
         );
 
@@ -2031,7 +2033,7 @@ mod tests {
         assert_eq!(record.fragment(), &[]);
         assert_eq!(
             record.summary(),
-            "record content_type=handshake legacy_record_version=TLS 1.2 declared_length=0 fragment_bytes=0 body=handshake"
+            "record content_type=handshake legacy_record_version=TLS 1.2 declared_length=0 fragment_bytes=0 body=handshake messages=0 raw_tail_bytes=0 fragment_bytes=0 types=[] details=[]"
         );
 
         Ok(())
