@@ -1,0 +1,11 @@
+# TLS extension malformed input corpus.
+# Format: name|target|expected-kind|context-or-field|required|available|reason|hex
+short-extension-header|raw-extension|buffer-too-short|tls.extension|4|3|-|000000
+extension-body-overrun|raw-extension|buffer-too-short|tls.extension.body|6|5|-|beef0002aa
+extension-list-body-overrun|extension-list-client|buffer-too-short|tls.client_hello.extensions|6|3|-|0004be
+sni-list-overrun|sni|buffer-too-short|tls.server_name_list|6|4|-|00040000
+alpn-name-overrun|alpn|buffer-too-short|tls.alpn.protocol_name|4|2|-|00020368
+supported-versions-odd-length|supported-versions-client|invalid-field-value|tls.supported_versions.client.length|-|-|length must be a multiple of two bytes|0103
+key-share-vector-overrun|key-share-client|buffer-too-short|tls.key_share.client.key_exchange|6|5|-|0005001d0002aa
+psk-binder-overrun|pre-shared-key-client|buffer-too-short|tls.pre_shared_key.client.binder|34|33|-|00070001aa00000000002121 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+certificate-authorities-overrun|certificate-authorities|buffer-too-short|tls.distinguished_name|5|4|-|00040003aabb
