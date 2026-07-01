@@ -144,6 +144,115 @@ Live MQTT runs must stay opt-in: use `mqtt_session --peer IP:PORT` only against
 an authorized broker, or use a provider-backed probe/lab session that provisions
 the broker, collects artifacts under `target/`, and tears the endpoint down.
 
+## Build TLS Packet Primitives
+
+TLS is a packet primitive over TCP, not a TLS endpoint, certificate validator,
+scanner, decryptor, or TCP stream reassembler. Generated tools should build and
+inspect records, handshakes, extensions, alerts, and opaque application data
+through `crafter::prelude::*`, then keep the first run offline or dry-run.
+Always use documentation addresses such as `192.0.2.10` and `198.51.100.20` in
+defaults.
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+fn main() -> crafter::Result<()> {
+    let hello = TlsClientHello::new()
+        .with_random([0x54; TLS_CLIENT_HELLO_RANDOM_LEN])
+        .with_session_id([0x54, 0x4c, 0x53, 0x01])
+        .with_raw_cipher_suites([
+            TLS_CIPHER_SUITE_AES_128_GCM_SHA256,
+            TLS_CIPHER_SUITE_CHACHA20_POLY1305_SHA256,
+        ])
+        .with_extensions(vec![
+            TlsRawExtension::server_name(TlsServerNameList::from_host_name(
+                "tls.agent.example.test",
+            )?)?,
+            TlsRawExtension::alpn(TlsAlpnProtocols::h2_then_http_1_1())?,
+            TlsRawExtension::supported_versions_client(vec![
+                TlsVersion::tls_1_3(),
+                TlsVersion::tls_1_2(),
+            ])?,
+            TlsRawExtension::key_share_client(vec![
+                TlsKeyShareEntry::x25519([0x54; 32]),
+            ])?,
+        ]);
+    let record = TlsRecord::handshake_messages([
+        TlsHandshake::from_client_hello(hello)?,
+    ])?;
+
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        .ipv4_protocol(Ipv4Protocol::Tcp)
+        / Tcp::new().sport(49_171).dport(TLS_PORT_HTTPS).syn()
+        / Tls::from_record(record);
+
+    let plan = packet.send_dry_run(
+        SendOptions::new().iface("dry-run0").network_layer(),
+    )?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, plan.bytes())?;
+
+    println!("mode=dry-run");
+    println!("target={:?}", plan.target());
+    println!("{}", decoded.summary());
+    println!("{}", decoded.show());
+    println!("{}", plan.compiled_packet().hexdump());
+    Ok(())
+}
+```
+
+For pcap input, read deterministic fixtures through `PacketWire` and a TCP BPF
+filter. Do not start from live capture:
+
+```rust
+use crafter::prelude::*;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let source = PacketWire::pcap_file(
+        "crafter/tests/fixtures/pcaps/raw-ipv4-tcp-tls-client-hello.pcap",
+    )
+        .filter("tcp port 443")
+        .open()?
+        .source()?;
+
+    for record in Sniffer::new(source).no_timeout().collect_records()? {
+        let tls = record.packet().layer::<Tls>().expect("TLS layer");
+        println!("{}", record.packet().summary());
+        for tls_record in tls.records() {
+            println!("{}", tls_record.summary());
+        }
+    }
+
+    Ok(())
+}
+```
+
+Encrypted TLS payloads are opaque packet bytes. Use
+`TlsRecord::application_data(...)` for encrypted application data and raw
+extensions or raw handshake bodies when a generated tool needs unknown,
+reserved, GREASE, private-use, or future codepoints. Preserve those bytes and
+surface `summary()` / `show()` output instead of guessing keys, certificates,
+ALPN policy, SNI meaning, or handshake state.
+
+Keep validation offline first:
+
+```sh
+cargo run -p crafter --example tls_client_hello
+cargo run -p crafter --example tls_pcap_read
+cargo test -p crafter --test tls_pcap
+tools/lab/run plan --provider qemu --dry-run --profile tls-smoke --seed 1 --role stimulus --role target --json
+tools/probe/run --provider local-dry-run --dry-run --profile tls-smoke --seed 1
+```
+
+Live TLS work belongs behind provider-backed gates. Provision a disposable
+endpoint or lab, review the dry-run bytes and pcap artifacts under `target/`,
+require an explicit live confirmation flag in the generated tool, and destroy
+the provider resources after the run. Never send crafted TLS traffic from the
+developer host by default and never embed real credentials, public hostnames,
+private certificates, or sensitive captures in tracked files.
+
 ## Build SSDP Discovery Packets
 
 SSDP is a UDP/1900 application payload. Generated tools should use
