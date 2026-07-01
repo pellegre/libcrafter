@@ -41,7 +41,7 @@ pub mod ipv6 {
 pub mod exports {
     use super::{
         bgp, dhcp, dns, eapol, icmp, igmp, ip, ipsec, ipv4, ipv6, link, mqtt, ospf, quic, rip, rsn,
-        snmp, ssdp, transport,
+        snmp, ssdp, tls, transport,
     };
 
     pub use crate::packet::Raw;
@@ -554,6 +554,60 @@ pub mod exports {
         SSDP_METHOD_NOTIFY, SSDP_NTS_ALIVE, SSDP_NTS_BYEBYE, SSDP_NTS_UPDATE, SSDP_REASON_OK,
         SSDP_SERVICE_NAME, SSDP_STATUS_OK, SSDP_ST_ALL, SSDP_TARGET_ROOTDEVICE, SSDP_UDP_PORT,
     };
+    pub use tls::alert::*;
+    pub use tls::cipher_suite::*;
+    pub use tls::constants::*;
+    pub use tls::content_type::*;
+    pub use tls::extension::{
+        TlsAlpnProtocol, TlsAlpnProtocols, TlsCertificateAuthorities, TlsCertificateStatusType,
+        TlsCookie, TlsDistinguishedName, TlsEcPointFormat, TlsEcPointFormats,
+        TlsExtensionListContext, TlsExtensionType, TlsExtensions, TlsKeyShare, TlsKeyShareContext,
+        TlsKeyShareEntry, TlsOcspResponderId, TlsOcspResponderIds, TlsOcspStatusRequest,
+        TlsOidFilter, TlsOidFilters, TlsPadding, TlsPreSharedKey, TlsPreSharedKeyContext,
+        TlsPskBinderEntry, TlsPskBinders, TlsPskIdentities, TlsPskIdentity, TlsPskKeyExchangeMode,
+        TlsPskKeyExchangeModes, TlsRawExtension, TlsRecordSizeLimit, TlsServerName,
+        TlsServerNameList, TlsServerNameType, TlsSignatureAlgorithms, TlsSignatureAlgorithmsCert,
+        TlsStatusRequest, TlsStatusRequestBody, TlsStatusRequestV2, TlsStatusRequestV2Item,
+        TlsSupportedGroups, TlsSupportedVersions, TlsSupportedVersionsContext,
+        TLS_ALPN_PROTOCOL_NAME_LENGTH_LEN, TLS_ALPN_PROTOCOL_NAME_LIST_LENGTH_LEN,
+        TLS_CERTIFICATE_AUTHORITIES_LENGTH_LEN, TLS_CERTIFICATE_AUTHORITIES_MAX_LEN,
+        TLS_CERTIFICATE_AUTHORITIES_MIN_LEN, TLS_CERTIFICATE_STATUS_TYPE_LEN,
+        TLS_COOKIE_LENGTH_LEN, TLS_COOKIE_MAX_LEN, TLS_COOKIE_MIN_LEN,
+        TLS_DISTINGUISHED_NAME_LENGTH_LEN, TLS_DISTINGUISHED_NAME_MAX_LEN,
+        TLS_DISTINGUISHED_NAME_MIN_LEN, TLS_EC_POINT_FORMATS_LENGTH_LEN,
+        TLS_EC_POINT_FORMAT_ANSIX962_COMPRESSED_CHAR2,
+        TLS_EC_POINT_FORMAT_ANSIX962_COMPRESSED_PRIME, TLS_EC_POINT_FORMAT_LEN,
+        TLS_EC_POINT_FORMAT_UNCOMPRESSED, TLS_EXTENSION_HEADER_LEN, TLS_EXTENSION_LENGTH_LEN,
+        TLS_EXTENSION_LIST_LENGTH_LEN, TLS_EXTENSION_TYPE_LEN,
+        TLS_KEY_SHARE_CLIENT_SHARES_LENGTH_LEN, TLS_KEY_SHARE_ENTRY_HEADER_LEN,
+        TLS_KEY_SHARE_GROUP_LEN, TLS_KEY_SHARE_KEY_EXCHANGE_LENGTH_LEN,
+        TLS_OCSP_REQUEST_EXTENSIONS_LENGTH_LEN, TLS_OCSP_RESPONDER_ID_LENGTH_LEN,
+        TLS_OCSP_RESPONDER_ID_LIST_LENGTH_LEN, TLS_OCSP_RESPONDER_ID_MAX_LEN,
+        TLS_OCSP_RESPONDER_ID_MIN_LEN, TLS_OID_FILTERS_LENGTH_LEN, TLS_OID_FILTERS_MAX_LEN,
+        TLS_OID_FILTER_MIN_LEN, TLS_OID_FILTER_OID_LENGTH_LEN, TLS_OID_FILTER_OID_MAX_LEN,
+        TLS_OID_FILTER_OID_MIN_LEN, TLS_OID_FILTER_VALUES_LENGTH_LEN,
+        TLS_OID_FILTER_VALUES_MAX_LEN, TLS_PRE_SHARED_KEY_SELECTED_IDENTITY_LEN,
+        TLS_PSK_BINDERS_LENGTH_LEN, TLS_PSK_BINDER_LENGTH_LEN, TLS_PSK_IDENTITIES_LENGTH_LEN,
+        TLS_PSK_IDENTITY_HEADER_LEN, TLS_PSK_IDENTITY_LENGTH_LEN,
+        TLS_PSK_IDENTITY_OBFUSCATED_TICKET_AGE_LEN, TLS_PSK_KEY_EXCHANGE_MODES_LENGTH_LEN,
+        TLS_PSK_KEY_EXCHANGE_MODE_LEN, TLS_PSK_KEY_EXCHANGE_MODE_PSK_DHE_KE,
+        TLS_PSK_KEY_EXCHANGE_MODE_PSK_KE, TLS_RECORD_SIZE_LIMIT_LEN, TLS_RECORD_SIZE_LIMIT_MIN,
+        TLS_RECORD_SIZE_LIMIT_TLS12_MAX, TLS_RECORD_SIZE_LIMIT_TLS13_MAX,
+        TLS_SERVER_NAME_HEADER_LEN, TLS_SERVER_NAME_LENGTH_LEN, TLS_SERVER_NAME_LIST_LENGTH_LEN,
+        TLS_SERVER_NAME_TYPE_HOST_NAME, TLS_SERVER_NAME_TYPE_LEN,
+        TLS_SIGNATURE_ALGORITHMS_LIST_LENGTH_LEN, TLS_SIGNATURE_ALGORITHM_LEN,
+        TLS_STATUS_REQUEST_V2_ITEM_HEADER_LEN, TLS_STATUS_REQUEST_V2_ITEM_REQUEST_LENGTH_LEN,
+        TLS_STATUS_REQUEST_V2_LIST_LENGTH_LEN, TLS_SUPPORTED_GROUPS_LIST_LENGTH_LEN,
+        TLS_SUPPORTED_GROUP_LEN, TLS_SUPPORTED_VERSIONS_CLIENT_LENGTH_LEN,
+        TLS_SUPPORTED_VERSION_LEN,
+    };
+    pub use tls::handshake::*;
+    pub use tls::heartbeat::*;
+    pub use tls::layer::Tls;
+    pub use tls::named_group::*;
+    pub use tls::record::*;
+    pub use tls::signature_scheme::*;
+    pub use tls::version::*;
     pub use transport::{
         tcp_option_kind_class, tcp_option_kind_is_assigned, tcp_option_kind_is_experimental,
         udp_option_kind_class, udp_option_kind_is_unsafe, udp_option_kind_is_unsupported, Tcp,
