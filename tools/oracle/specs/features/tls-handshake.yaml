@@ -8,7 +8,6 @@ summary: >-
   unknown handshakes, and structured-error malformed length exclusions.
 
 layers:
-  - tcp
   - tls
 directions:
   - backend_to_libcrafter
