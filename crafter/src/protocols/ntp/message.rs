@@ -7,7 +7,107 @@
 use core::fmt;
 
 use super::constants::*;
-use super::registry::{ntp_mode_meta, NtpRegistryMeta};
+use super::registry::{ntp_leap_indicator_meta, ntp_mode_meta, NtpRegistryMeta};
+
+/// Source-backed NTP leap-indicator field value.
+///
+/// The leap indicator is the high two bits of the first NTP fixed-header
+/// octet. RFC 5905 defines every two-bit value; `AlarmUnsynchronized` is a
+/// valid packet state, not a malformed value. `Unknown` preserves
+/// caller-supplied values outside the extracted two-bit field space for
+/// boundary-packet construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum NtpLeapIndicator {
+    /// No leap warning.
+    NoWarning,
+    /// Last minute of the day has 61 seconds.
+    LastMinute61Seconds,
+    /// Last minute of the day has 59 seconds.
+    LastMinute59Seconds,
+    /// Alarm condition / clock unsynchronized.
+    AlarmUnsynchronized,
+    /// Caller-supplied value outside the source-backed two-bit LI space.
+    Unknown(u8),
+}
+
+impl NtpLeapIndicator {
+    /// Build a leap indicator from an already-extracted wire integer.
+    pub const fn from_wire(value: u8) -> Self {
+        match value {
+            NTP_LI_NO_WARNING => Self::NoWarning,
+            NTP_LI_LAST_MINUTE_61_SECONDS => Self::LastMinute61Seconds,
+            NTP_LI_LAST_MINUTE_59_SECONDS => Self::LastMinute59Seconds,
+            NTP_LI_ALARM_UNSYNCHRONIZED => Self::AlarmUnsynchronized,
+            value => Self::Unknown(value),
+        }
+    }
+
+    /// Raw leap-indicator value.
+    pub const fn value(self) -> u8 {
+        match self {
+            Self::NoWarning => NTP_LI_NO_WARNING,
+            Self::LastMinute61Seconds => NTP_LI_LAST_MINUTE_61_SECONDS,
+            Self::LastMinute59Seconds => NTP_LI_LAST_MINUTE_59_SECONDS,
+            Self::AlarmUnsynchronized => NTP_LI_ALARM_UNSYNCHRONIZED,
+            Self::Unknown(value) => value,
+        }
+    }
+
+    /// Raw leap-indicator value for serialization.
+    pub const fn wire_value(self) -> u8 {
+        self.value()
+    }
+
+    /// Value masked to the two leap-indicator bits used in the first NTP octet.
+    pub const fn first_octet_bits(self) -> u8 {
+        self.value() & NTP_LI_VALUE_MASK
+    }
+
+    /// Source-backed registry metadata for this leap-indicator value.
+    pub fn registry_meta(self) -> NtpRegistryMeta {
+        ntp_leap_indicator_meta(self.value())
+    }
+
+    /// Stable summary and inspection label.
+    pub fn label(self) -> String {
+        self.registry_meta().label
+    }
+
+    /// Stable summary-safe label.
+    pub fn summary_label(self) -> String {
+        self.label()
+    }
+
+    /// Return true for the alarm condition / clock unsynchronized state.
+    pub const fn is_alarm_unsynchronized(self) -> bool {
+        matches!(self, Self::AlarmUnsynchronized)
+    }
+}
+
+impl Default for NtpLeapIndicator {
+    fn default() -> Self {
+        Self::NoWarning
+    }
+}
+
+impl From<u8> for NtpLeapIndicator {
+    fn from(value: u8) -> Self {
+        Self::from_wire(value)
+    }
+}
+
+impl From<NtpLeapIndicator> for u8 {
+    fn from(value: NtpLeapIndicator) -> Self {
+        value.wire_value()
+    }
+}
+
+impl fmt::Display for NtpLeapIndicator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.label())
+    }
+}
 
 /// Source-backed NTP version field value.
 ///
@@ -202,6 +302,73 @@ impl fmt::Display for NtpMode {
 mod tests {
     use super::*;
     use crate::protocols::ntp::NtpRegistryStatus;
+
+    #[test]
+    fn ntp_leap_indicator_values_and_labels_match_source_backed_codepoints() {
+        let cases = [
+            (
+                NtpLeapIndicator::NoWarning,
+                0,
+                "no-warning",
+                NtpRegistryStatus::Assigned,
+            ),
+            (
+                NtpLeapIndicator::LastMinute61Seconds,
+                1,
+                "last-minute-61-seconds",
+                NtpRegistryStatus::Assigned,
+            ),
+            (
+                NtpLeapIndicator::LastMinute59Seconds,
+                2,
+                "last-minute-59-seconds",
+                NtpRegistryStatus::Assigned,
+            ),
+            (
+                NtpLeapIndicator::AlarmUnsynchronized,
+                3,
+                "alarm-unsynchronized",
+                NtpRegistryStatus::Assigned,
+            ),
+        ];
+
+        for (leap_indicator, value, label, status) in cases {
+            assert_eq!(NtpLeapIndicator::from_wire(value), leap_indicator);
+            assert_eq!(leap_indicator.value(), value);
+            assert_eq!(leap_indicator.wire_value(), value);
+            assert_eq!(leap_indicator.first_octet_bits(), value);
+            assert_eq!(u8::from(leap_indicator), value);
+            assert_eq!(leap_indicator.label(), label);
+            assert_eq!(leap_indicator.summary_label(), label);
+            assert_eq!(leap_indicator.to_string(), label);
+
+            let meta = leap_indicator.registry_meta();
+            assert_eq!(meta.value, u32::from(value));
+            assert_eq!(meta.label, label);
+            assert_eq!(meta.status, status);
+        }
+
+        assert_eq!(NtpLeapIndicator::default(), NtpLeapIndicator::NoWarning);
+        assert!(NtpLeapIndicator::AlarmUnsynchronized.is_alarm_unsynchronized());
+        assert!(!NtpLeapIndicator::NoWarning.is_alarm_unsynchronized());
+    }
+
+    #[test]
+    fn ntp_leap_indicator_unknown_caller_values_are_summary_safe() {
+        let caller_value = NtpLeapIndicator::Unknown(0x2a);
+
+        assert_eq!(caller_value.value(), 0x2a);
+        assert_eq!(caller_value.wire_value(), 0x2a);
+        assert_eq!(caller_value.first_octet_bits(), 0x2a & NTP_LI_VALUE_MASK);
+        assert_eq!(u8::from(caller_value), 0x2a);
+        assert_eq!(caller_value.label(), "leap-indicator-42");
+        assert_eq!(caller_value.summary_label(), "leap-indicator-42");
+        assert!(!caller_value.to_string().chars().any(char::is_whitespace));
+
+        let meta = caller_value.registry_meta();
+        assert_eq!(meta.value, 0x2a);
+        assert_eq!(meta.status, NtpRegistryStatus::Unknown);
+    }
 
     #[test]
     fn ntp_version_mode_version_values_and_labels_preserve_wire_values() {
