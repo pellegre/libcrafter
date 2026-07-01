@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from ..capability_derivation import capability
 from ..case_helpers import _behavior_case
 from ..model import JSONObject, JSONValue, ProbeCase
 from ..planning_helpers import deterministic_bytes, deterministic_ipv4_pair
+from ..target_service_helpers import (
+    plans_by_destination_port,
+    target_service_address_fields,
+)
 from .base import ProtocolPlugin, register
 
 
@@ -267,6 +271,70 @@ def _tls_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, ob
     }
 
 
+def tls_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    return [plan for plan in probe_plans if plan.get("case") in _TLS_PLANNED_ONLY_CASES]
+
+
+def tls_target_service_contribution(
+    probe_plans: Sequence[JSONObject],
+    *,
+    dry_run: bool,
+) -> JSONObject:
+    tls_plans = tls_probe_plans(probe_plans)
+    tls_plans_by_port = plans_by_destination_port(tls_plans)
+    services = []
+    for port, plan in tls_plans_by_port.items():
+        matching_plans = [
+            item for item in tls_plans if int(item.get("destination_port", 0)) == port
+        ]
+        expected_records = []
+        for item in matching_plans:
+            records = item.get("expected_records")
+            if isinstance(records, Sequence) and not isinstance(records, (str, bytes)):
+                expected_records.extend(records)
+        capture = plan.get("capture") if isinstance(plan.get("capture"), Mapping) else {}
+        capture_filter = str(capture.get("filter", f"tcp and port {port}"))
+        services.append(
+            {
+                "name": TLS_SERVICE_KIND,
+                "protocol": "tcp",
+                "port": port,
+                "purpose": "tls-record-observer",
+                "runtime": TLS_RUNTIME,
+                "deterministic": True,
+                "planned_only": True,
+                "case_count": len(matching_plans),
+                "capture_filter": capture_filter,
+                "expected_records": expected_records,
+                "setup": {
+                    "listener": "scripted TLS byte observer",
+                    "bind": "target endpoint IPv4",
+                    "accepts": "single TCP connection per planned case",
+                    "writes": [
+                        "tls-listener.log",
+                        "tls-capture.pcap",
+                        "tls-observed-records.json",
+                    ],
+                },
+                "cleanup": {
+                    "terminate": "tls-controlled-service process",
+                    "collect_artifacts": True,
+                    "remove_temporary_state": True,
+                },
+                "artifacts": [
+                    "live-artifacts/probe/target-services/tls-listener.log",
+                    "live-artifacts/probe/target-services/tls-capture.pcap",
+                    "live-artifacts/probe/target-services/tls-observed-records.json",
+                ],
+                **target_service_address_fields(plan),
+            }
+        )
+    return {
+        "services": services,
+        "starts_services": not dry_run and bool(services),
+    }
+
+
 _TLS_PLAN_BUILDERS: dict[str, object] = {
     case.name: _tls_probe_plan for case in TLS_PROBE_CASES
 }
@@ -280,6 +348,7 @@ register(
         plan_builders=_TLS_PLAN_BUILDERS,
         planned_only_cases=_TLS_PLANNED_ONLY_CASES,
         profile_counts={TLS_SMOKE_PROFILE: {case.name: 1 for case in TLS_PROBE_CASES}},
+        target_service=tls_target_service_contribution,
         failure_reasons=_tls_failure_reasons,
         lab_capabilities=_tls_lab_capabilities,
     )
