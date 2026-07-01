@@ -302,12 +302,15 @@ backend_support:
       - Decode normalization promotes Raw TLS bytes on supported TCP ports and
         raw:tls roots into a compact tls model for offline comparison.
   wireshark:
-    status: planned
+    status: partial
     native_layers:
       - tls
       - data
+    decode: true
     notes:
-      - Planned parser-only support should normalize tshark TLS fields when available and fall back to data payload bytes for encrypted or unknown records.
+      - Parser-only support normalizes TLS record bytes from tshark/source
+        packets into the compact oracle tls model and falls back to data payload
+        bytes for encrypted or unsupported native dissector details.
   libcrafter:
     status: supported
     encode: true

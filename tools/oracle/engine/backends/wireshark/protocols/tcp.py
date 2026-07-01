@@ -64,8 +64,76 @@ def _normalize_tcp(layers: JSONObject, *, source_hex: str | None = None) -> JSON
     data_offset = output.get("data_offset")
     if isinstance(data_offset, int) and data_offset >= 20 and data_offset % 4 == 0:
         output["data_offset"] = data_offset // 4
+    reserved = _tcp_reserved_from_source(source_hex)
+    if reserved is not None:
+        output["reserved"] = reserved
     output["flags"] = _tcp_flags(layer)
     return output
+
+
+def _tcp_reserved_from_source(source_hex: str | None) -> int | None:
+    if not source_hex:
+        return None
+    try:
+        raw = bytes.fromhex(source_hex)
+    except ValueError:
+        return None
+    for offset in _l3_offsets(raw):
+        value = _tcp_reserved_at_l3(raw, offset)
+        if value is not None:
+            return value
+    return None
+
+
+def _l3_offsets(raw: bytes) -> tuple[int, ...]:
+    offsets: list[int] = []
+    if raw:
+        offsets.append(0)
+    if len(raw) >= 14:
+        ether_type = int.from_bytes(raw[12:14], "big")
+        if ether_type in {0x0800, 0x86DD}:
+            offsets.append(14)
+    return tuple(dict.fromkeys(offsets))
+
+
+def _tcp_reserved_at_l3(raw: bytes, offset: int) -> int | None:
+    if offset >= len(raw):
+        return None
+    version = raw[offset] >> 4
+    if version == 4:
+        return _tcp_reserved_ipv4(raw, offset)
+    if version == 6:
+        return _tcp_reserved_ipv6(raw, offset)
+    return None
+
+
+def _tcp_reserved_ipv4(raw: bytes, offset: int) -> int | None:
+    if offset + 20 > len(raw):
+        return None
+    ihl = (raw[offset] & 0x0F) * 4
+    if ihl < 20 or offset + ihl > len(raw) or raw[offset + 9] != 6:
+        return None
+    total_length = int.from_bytes(raw[offset + 2 : offset + 4], "big")
+    end = min(len(raw), offset + total_length) if total_length else len(raw)
+    return _tcp_reserved_at_offset(raw, offset + ihl, end)
+
+
+def _tcp_reserved_ipv6(raw: bytes, offset: int) -> int | None:
+    if offset + 40 > len(raw) or raw[offset + 6] != 6:
+        return None
+    payload_length = int.from_bytes(raw[offset + 4 : offset + 6], "big")
+    end = min(len(raw), offset + 40 + payload_length)
+    return _tcp_reserved_at_offset(raw, offset + 40, end)
+
+
+def _tcp_reserved_at_offset(raw: bytes, tcp_offset: int, end: int) -> int | None:
+    if tcp_offset + 14 > end:
+        return None
+    data_offset_words = raw[tcp_offset + 12] >> 4
+    header_length = data_offset_words * 4
+    if data_offset_words < 5 or tcp_offset + header_length > end:
+        return None
+    return (raw[tcp_offset + 12] & 0x0E) >> 1
 
 
 def _tcp_flags(layer: JSONObject) -> str:
