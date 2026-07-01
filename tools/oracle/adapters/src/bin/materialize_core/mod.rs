@@ -278,6 +278,7 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "snmp" => Ok(Box::new(snmp_layer(plan)?)),
         "rip" => Ok(Box::new(rip_layer(plan)?)),
         "ripng" => Ok(Box::new(ripng_layer(plan)?)),
+        "tls" => Ok(Box::new(tls_layer(plan)?)),
         "quic" => Ok(Box::new(quic_layer(plan)?)),
         "bgp" => Ok(Box::new(bgp_layer(plan)?)),
         "mqtt" => Ok(Box::new(mqtt_layer(plan)?)),
@@ -6533,6 +6534,864 @@ fn router_address_bytes(value: &Value) -> ExampleResult<Vec<u8>> {
         bytes.extend_from_slice(&preference.to_be_bytes());
     }
     Ok(bytes)
+}
+
+fn tls_layer(plan: &Value) -> ExampleResult<Tls> {
+    let fields = layer_fields(plan, "tls")?;
+    let mut records = Vec::new();
+    if let Some(value) = optional(fields, &["records"]) {
+        if let Some(items) = value.as_array() {
+            for item in items {
+                let record = item
+                    .as_object()
+                    .ok_or_else(|| format!("tls record entry must be an object, got {item:?}"))?;
+                records.push(tls_record(record, fields)?);
+            }
+        } else {
+            records.push(tls_record(fields, fields)?);
+        }
+    } else {
+        records.push(tls_record(fields, fields)?);
+    }
+    Ok(Tls::from_records(records))
+}
+
+fn tls_record(
+    record: &Map<String, Value>,
+    tls_fields: &Map<String, Value>,
+) -> ExampleResult<TlsRecord> {
+    let content_type = tls_content_type_value(
+        tls_first_present(record, tls_fields, &["content_type", "record_content_type"]),
+        22,
+    )?;
+    let fragment = tls_record_body_bytes(content_type, record, tls_fields)?;
+    let legacy_version = tls_int_value(
+        tls_first_present(
+            record,
+            tls_fields,
+            &["legacy_record_version", "record_legacy_version"],
+        ),
+        0x0303,
+    )?;
+    let declared_length = tls_declared_length(
+        tls_first_present(record, tls_fields, &["declared_length", "record_length"]),
+        fragment.len(),
+    )?;
+    let mut record = TlsRecord::from_fragment(TlsContentType::from_u8(content_type), fragment)
+        .with_raw_legacy_record_version(u16::try_from(legacy_version & 0xffff)?);
+    if let Some(length) = declared_length {
+        record = record.with_declared_length(length);
+    }
+    Ok(record)
+}
+
+fn tls_record_body_bytes(
+    content_type: u8,
+    record: &Map<String, Value>,
+    tls_fields: &Map<String, Value>,
+) -> ExampleResult<Vec<u8>> {
+    match content_type {
+        22 => {
+            if let Some(messages) = tls_first_present(record, tls_fields, &["handshake_messages"])
+                .and_then(Value::as_array)
+            {
+                let mut body = Vec::new();
+                for item in messages {
+                    let message = item.as_object().ok_or_else(|| {
+                        format!("tls handshake message must be an object, got {item:?}")
+                    })?;
+                    body.extend_from_slice(&tls_handshake_bytes(message)?);
+                }
+                return Ok(body);
+            }
+            tls_bytes_value(
+                tls_first_present(record, tls_fields, &["fragment_hex", "record_fragment_hex"]),
+                &[],
+                None,
+            )
+        }
+        21 => {
+            if let Some(raw) =
+                tls_first_present(record, tls_fields, &["fragment_hex", "record_fragment_hex"])
+            {
+                return tls_bytes_value(Some(raw), &[], None);
+            }
+            let alert = optional(record, &["alert"]).and_then(Value::as_object);
+            let level = tls_alert_level(
+                alert
+                    .and_then(|fields| optional(fields, &["level", "alert_level"]))
+                    .or_else(|| tls_first_present(record, tls_fields, &["level", "alert_level"])),
+            )?;
+            let description = tls_alert_description(
+                alert
+                    .and_then(|fields| optional(fields, &["description", "alert_description"]))
+                    .or_else(|| {
+                        tls_first_present(record, tls_fields, &["description", "alert_description"])
+                    }),
+            )?;
+            Ok(vec![level, description])
+        }
+        20 => {
+            if let Some(raw) =
+                tls_first_present(record, tls_fields, &["fragment_hex", "record_fragment_hex"])
+            {
+                return tls_bytes_value(Some(raw), &[], None);
+            }
+            Ok(vec![u8::try_from(tls_int_value(
+                tls_first_present(record, tls_fields, &["value", "change_cipher_spec"]),
+                1,
+            )?)?])
+        }
+        23 => tls_bytes_value(
+            tls_first_present(
+                record,
+                tls_fields,
+                &[
+                    "fragment_hex",
+                    "application_data_hex",
+                    "record_fragment_hex",
+                ],
+            ),
+            &[],
+            None,
+        ),
+        _ => tls_bytes_value(
+            tls_first_present(
+                record,
+                tls_fields,
+                &[
+                    "raw_fragment_hex",
+                    "fragment_hex",
+                    "raw_preservation",
+                    "record_fragment_hex",
+                ],
+            ),
+            &[],
+            None,
+        ),
+    }
+}
+
+fn tls_handshake_bytes(message: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    let handshake_type = tls_handshake_type_value(message)?;
+    let body = tls_handshake_body_bytes(handshake_type, message)?;
+    let declared_length = tls_declared_u24(
+        optional(message, &["declared_length", "handshake_length"]),
+        body.len(),
+    )?;
+    let mut out = Vec::with_capacity(4 + body.len());
+    out.push(handshake_type);
+    tls_push_u24(&mut out, declared_length);
+    out.extend_from_slice(&body);
+    Ok(out)
+}
+
+fn tls_handshake_body_bytes(
+    handshake_type: u8,
+    message: &Map<String, Value>,
+) -> ExampleResult<Vec<u8>> {
+    if let Some(raw) = optional(message, &["body_hex"]) {
+        return tls_bytes_value(Some(raw), &[], None);
+    }
+    match handshake_type {
+        1 => tls_client_hello_body(message),
+        2 => tls_server_hello_body(message),
+        8 => tls_extension_vector(message),
+        11 => tls_certificate_body(message),
+        13 => tls_certificate_request_body(message),
+        15 => {
+            let signature = tls_bytes_value(optional(message, &["signature_hex"]), &[], None)?;
+            let mut body = Vec::new();
+            tls_push_u16(
+                &mut body,
+                u16::try_from(tls_int_value(
+                    optional(message, &["signature_scheme"]),
+                    0x0804,
+                )?)?,
+            );
+            tls_push_u16_vector(&mut body, &signature)?;
+            Ok(body)
+        }
+        20 => tls_bytes_value(optional(message, &["verify_data_hex"]), &[], None),
+        4 => tls_new_session_ticket_body(message),
+        24 => Ok(vec![tls_key_update_value(optional(
+            message,
+            &["request_update"],
+        ))?]),
+        5 => Ok(Vec::new()),
+        _ => tls_bytes_value(optional(message, &["body_hex"]), &[], None),
+    }
+}
+
+fn tls_client_hello_body(message: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    let session_id = tls_bytes_value(
+        optional(message, &["session_id_hex", "session_id"]),
+        &[],
+        None,
+    )?;
+    let cipher_suites = tls_u16_list(optional(message, &["cipher_suites"]), &[])?;
+    let compression = tls_bytes_value(
+        optional(message, &["compression_methods_hex", "compression_methods"]),
+        &[0],
+        None,
+    )?;
+    let random = tls_bytes_value(optional(message, &["random_hex"]), &[0; 32], Some(32))?;
+    let mut body = Vec::new();
+    tls_push_u16(
+        &mut body,
+        u16::try_from(tls_int_value(
+            optional(message, &["legacy_version"]),
+            0x0303,
+        )?)?,
+    );
+    body.extend_from_slice(&random[..32]);
+    tls_push_u8_vector(&mut body, &session_id)?;
+    tls_push_u16_vector(&mut body, &cipher_suites)?;
+    tls_push_u8_vector(&mut body, &compression)?;
+    body.extend_from_slice(&tls_extension_vector(message)?);
+    Ok(body)
+}
+
+fn tls_server_hello_body(message: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    let session_id = tls_bytes_value(
+        optional(message, &["session_id_echo_hex", "session_id_hex"]),
+        &[],
+        None,
+    )?;
+    let random = tls_bytes_value(optional(message, &["random_hex"]), &[0; 32], Some(32))?;
+    let mut body = Vec::new();
+    tls_push_u16(
+        &mut body,
+        u16::try_from(tls_int_value(
+            optional(message, &["legacy_version"]),
+            0x0303,
+        )?)?,
+    );
+    body.extend_from_slice(&random[..32]);
+    tls_push_u8_vector(&mut body, &session_id)?;
+    tls_push_u16(
+        &mut body,
+        u16::try_from(tls_int_value(optional(message, &["cipher_suite"]), 0x1301)?)?,
+    );
+    body.push(u8::try_from(tls_int_value(
+        optional(message, &["compression_method"]),
+        0,
+    )?)?);
+    body.extend_from_slice(&tls_extension_vector(message)?);
+    Ok(body)
+}
+
+fn tls_extension_vector(owner: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    let mut body = Vec::new();
+    if let Some(extensions) = optional(owner, &["extensions"]).and_then(Value::as_array) {
+        for item in extensions {
+            let extension = item
+                .as_object()
+                .ok_or_else(|| format!("tls extension must be an object, got {item:?}"))?;
+            body.extend_from_slice(&tls_extension_bytes(extension, owner)?);
+        }
+    }
+    let mut out = Vec::new();
+    tls_push_u16_vector(&mut out, &body)?;
+    Ok(out)
+}
+
+fn tls_extension_bytes(
+    extension: &Map<String, Value>,
+    message: &Map<String, Value>,
+) -> ExampleResult<Vec<u8>> {
+    let extension_type = tls_extension_type_value(extension)?;
+    let body = tls_extension_body(extension_type, extension, message)?;
+    let mut out = Vec::with_capacity(4 + body.len());
+    tls_push_u16(&mut out, extension_type);
+    tls_push_u16_vector(&mut out, &body)?;
+    Ok(out)
+}
+
+fn tls_extension_body(
+    extension_type: u16,
+    extension: &Map<String, Value>,
+    message: &Map<String, Value>,
+) -> ExampleResult<Vec<u8>> {
+    if let Some(raw) = optional(extension, &["body_hex"]) {
+        return tls_bytes_value(Some(raw), &[], None);
+    }
+    match extension_type {
+        0 => tls_server_name_body(extension),
+        16 => tls_alpn_body(extension),
+        43 => {
+            if text_optional(extension, &["context"]) == Some("server_hello")
+                || optional(extension, &["selected_version"]).is_some()
+            {
+                let mut body = Vec::new();
+                tls_push_u16(
+                    &mut body,
+                    u16::try_from(tls_int_value(
+                        optional(extension, &["selected_version"]),
+                        0x0304,
+                    )?)?,
+                );
+                Ok(body)
+            } else {
+                let versions = tls_u16_list(optional(extension, &["versions"]), &[0x0304, 0x0303])?;
+                let mut body = Vec::new();
+                tls_push_u8_vector(&mut body, &versions)?;
+                Ok(body)
+            }
+        }
+        10 => {
+            let groups = tls_u16_list(optional(extension, &["named_groups"]), &[])?;
+            let mut body = Vec::new();
+            tls_push_u16_vector(&mut body, &groups)?;
+            Ok(body)
+        }
+        13 => {
+            let schemes = tls_u16_list(optional(extension, &["signature_schemes"]), &[])?;
+            let mut body = Vec::new();
+            tls_push_u16_vector(&mut body, &schemes)?;
+            Ok(body)
+        }
+        51 => tls_key_share_body(extension),
+        45 => {
+            let mut modes = Vec::new();
+            if let Some(items) = optional(extension, &["modes"]).and_then(Value::as_array) {
+                for item in items {
+                    modes.push(tls_psk_mode_value(Some(item))?);
+                }
+            }
+            let mut body = Vec::new();
+            tls_push_u8_vector(&mut body, &modes)?;
+            Ok(body)
+        }
+        41 => tls_pre_shared_key_body(extension),
+        44 => {
+            let cookie = tls_bytes_value(optional(extension, &["cookie_hex"]), &[], None)?;
+            let mut body = Vec::new();
+            tls_push_u16_vector(&mut body, &cookie)?;
+            Ok(body)
+        }
+        21 => tls_bytes_value(optional(extension, &["padding_hex"]), &[], None),
+        28 => {
+            let mut body = Vec::new();
+            tls_push_u16(
+                &mut body,
+                u16::try_from(tls_int_value(optional(extension, &["limit"]), 64)?)?,
+            );
+            Ok(body)
+        }
+        5 => tls_status_request_body(extension),
+        47 => tls_distinguished_names_vector(optional(extension, &["distinguished_names_hex"])),
+        _ => {
+            let _ = message;
+            Ok(Vec::new())
+        }
+    }
+}
+
+fn tls_server_name_body(extension: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    let mut entries = Vec::new();
+    if let Some(names) = optional(extension, &["host_names"]).and_then(Value::as_array) {
+        for name in names {
+            entries.push(0);
+            tls_push_u16_vector(&mut entries, tls_text_value(name, "")?.as_bytes())?;
+        }
+    }
+    let mut body = Vec::new();
+    tls_push_u16_vector(&mut body, &entries)?;
+    Ok(body)
+}
+
+fn tls_alpn_body(extension: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    let mut entries = Vec::new();
+    if let Some(protocols) = optional(extension, &["protocols"]).and_then(Value::as_array) {
+        for protocol in protocols {
+            tls_push_u8_vector(&mut entries, tls_text_value(protocol, "")?.as_bytes())?;
+        }
+    }
+    let mut body = Vec::new();
+    tls_push_u16_vector(&mut body, &entries)?;
+    Ok(body)
+}
+
+fn tls_key_share_body(extension: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    match text_optional(extension, &["context"]) {
+        Some("hello_retry_request") => {
+            let mut body = Vec::new();
+            tls_push_u16(
+                &mut body,
+                u16::try_from(tls_int_value(
+                    optional(extension, &["selected_group"]),
+                    0x001d,
+                )?)?,
+            );
+            Ok(body)
+        }
+        Some("server_hello") => {
+            let key_exchange =
+                tls_bytes_value(optional(extension, &["key_exchange_hex"]), &[], None)?;
+            let mut body = Vec::new();
+            tls_push_u16(
+                &mut body,
+                u16::try_from(tls_int_value(optional(extension, &["group"]), 0x001d)?)?,
+            );
+            tls_push_u16_vector(&mut body, &key_exchange)?;
+            Ok(body)
+        }
+        _ => {
+            let mut shares_body = Vec::new();
+            if let Some(shares) = optional(extension, &["shares"]).and_then(Value::as_array) {
+                for item in shares {
+                    let share = item.as_object().ok_or_else(|| {
+                        format!("tls key_share entry must be an object, got {item:?}")
+                    })?;
+                    let key_exchange =
+                        tls_bytes_value(optional(share, &["key_exchange_hex"]), &[], None)?;
+                    tls_push_u16(
+                        &mut shares_body,
+                        u16::try_from(tls_int_value(optional(share, &["group"]), 0x001d)?)?,
+                    );
+                    tls_push_u16_vector(&mut shares_body, &key_exchange)?;
+                }
+            }
+            let mut body = Vec::new();
+            tls_push_u16_vector(&mut body, &shares_body)?;
+            Ok(body)
+        }
+    }
+}
+
+fn tls_pre_shared_key_body(extension: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    if text_optional(extension, &["context"]) == Some("server_hello")
+        || optional(extension, &["selected_identity"]).is_some()
+    {
+        let mut body = Vec::new();
+        tls_push_u16(
+            &mut body,
+            u16::try_from(tls_int_value(
+                optional(extension, &["selected_identity"]),
+                0,
+            )?)?,
+        );
+        return Ok(body);
+    }
+    let mut identities = Vec::new();
+    if let Some(items) = optional(extension, &["identities"]).and_then(Value::as_array) {
+        for item in items {
+            let identity = item
+                .as_object()
+                .ok_or_else(|| format!("tls psk identity must be an object, got {item:?}"))?;
+            let identity_bytes = tls_bytes_value(optional(identity, &["identity_hex"]), &[], None)?;
+            tls_push_u16_vector(&mut identities, &identity_bytes)?;
+            tls_push_u32(
+                &mut identities,
+                u32::try_from(tls_int_value(
+                    optional(identity, &["obfuscated_ticket_age"]),
+                    0,
+                )?)?,
+            );
+        }
+    }
+    let mut binders = Vec::new();
+    if let Some(items) = optional(extension, &["binders"]).and_then(Value::as_array) {
+        for item in items {
+            let binder = item
+                .as_object()
+                .ok_or_else(|| format!("tls psk binder must be an object, got {item:?}"))?;
+            let binder_bytes = tls_bytes_value(optional(binder, &["binder_hex"]), &[], None)?;
+            tls_push_u8_vector(&mut binders, &binder_bytes)?;
+        }
+    }
+    let mut body = Vec::new();
+    tls_push_u16_vector(&mut body, &identities)?;
+    tls_push_u16_vector(&mut body, &binders)?;
+    Ok(body)
+}
+
+fn tls_status_request_body(extension: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    let status_type = match text_optional(extension, &["status_type"]) {
+        Some("ocsp") | None => 1,
+        Some(_) => u8::try_from(tls_int_value(optional(extension, &["status_type"]), 1)?)?,
+    };
+    let responders = tls_distinguished_names_vector(optional(extension, &["responder_ids"]))?;
+    let request_extensions =
+        tls_bytes_value(optional(extension, &["request_extensions_hex"]), &[], None)?;
+    let mut body = Vec::new();
+    body.push(status_type);
+    body.extend_from_slice(&responders);
+    tls_push_u16_vector(&mut body, &request_extensions)?;
+    Ok(body)
+}
+
+fn tls_certificate_body(message: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    let entries = tls_certificate_entries(message)?;
+    if text_optional(message, &["form"]) == Some("tls13") {
+        let context = tls_bytes_value(optional(message, &["request_context_hex"]), &[], None)?;
+        let mut body = Vec::new();
+        tls_push_u8_vector(&mut body, &context)?;
+        tls_push_u24_vector(&mut body, &entries)?;
+        Ok(body)
+    } else {
+        let mut body = Vec::new();
+        tls_push_u24_vector(&mut body, &entries)?;
+        Ok(body)
+    }
+}
+
+fn tls_certificate_entries(message: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    let mut entries = Vec::new();
+    if let Some(items) = optional(message, &["certificates"]).and_then(Value::as_array) {
+        for item in items {
+            let cert = item
+                .as_object()
+                .ok_or_else(|| format!("tls certificate entry must be an object, got {item:?}"))?;
+            let cert_bytes = tls_bytes_value(optional(cert, &["hex"]), &[], None)?;
+            tls_push_u24_vector(&mut entries, &cert_bytes)?;
+            if text_optional(message, &["form"]) == Some("tls13") {
+                entries.extend_from_slice(&tls_extension_vector(cert)?);
+            }
+        }
+    }
+    Ok(entries)
+}
+
+fn tls_certificate_request_body(message: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    if text_optional(message, &["form"]) == Some("tls13") {
+        let context = tls_bytes_value(optional(message, &["request_context_hex"]), &[], None)?;
+        let mut body = Vec::new();
+        tls_push_u8_vector(&mut body, &context)?;
+        body.extend_from_slice(&tls_extension_vector(message)?);
+        return Ok(body);
+    }
+    let mut certificate_types = Vec::new();
+    if let Some(items) = optional(message, &["certificate_types"]).and_then(Value::as_array) {
+        for item in items {
+            certificate_types.push(tls_certificate_type_value(Some(item))?);
+        }
+    }
+    let signatures = tls_u16_list(optional(message, &["signature_algorithms"]), &[])?;
+    let authorities =
+        tls_distinguished_names_vector(optional(message, &["certificate_authorities_hex"]))?;
+    let mut body = Vec::new();
+    tls_push_u8_vector(&mut body, &certificate_types)?;
+    tls_push_u16_vector(&mut body, &signatures)?;
+    body.extend_from_slice(&authorities);
+    Ok(body)
+}
+
+fn tls_new_session_ticket_body(message: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    if text_optional(message, &["form"]) == Some("tls13") {
+        let nonce = tls_bytes_value(optional(message, &["ticket_nonce_hex"]), &[], None)?;
+        let ticket = tls_bytes_value(optional(message, &["ticket_hex"]), &[], None)?;
+        let mut body = Vec::new();
+        tls_push_u32(
+            &mut body,
+            u32::try_from(tls_int_value(optional(message, &["ticket_lifetime"]), 0)?)?,
+        );
+        tls_push_u32(
+            &mut body,
+            u32::try_from(tls_int_value(optional(message, &["ticket_age_add"]), 0)?)?,
+        );
+        tls_push_u8_vector(&mut body, &nonce)?;
+        tls_push_u16_vector(&mut body, &ticket)?;
+        body.extend_from_slice(&tls_extension_vector(message)?);
+        Ok(body)
+    } else {
+        let ticket = tls_bytes_value(optional(message, &["ticket_hex"]), &[], None)?;
+        let mut body = Vec::new();
+        tls_push_u32(
+            &mut body,
+            u32::try_from(tls_int_value(optional(message, &["lifetime_hint"]), 0)?)?,
+        );
+        tls_push_u16_vector(&mut body, &ticket)?;
+        Ok(body)
+    }
+}
+
+fn tls_distinguished_names_vector(value: Option<&Value>) -> ExampleResult<Vec<u8>> {
+    let mut names = Vec::new();
+    if let Some(items) = value.and_then(Value::as_array) {
+        for item in items {
+            let name = tls_bytes_value(Some(item), &[], None)?;
+            tls_push_u16_vector(&mut names, &name)?;
+        }
+    }
+    let mut body = Vec::new();
+    tls_push_u16_vector(&mut body, &names)?;
+    Ok(body)
+}
+
+fn tls_first_present<'a>(
+    primary: &'a Map<String, Value>,
+    fallback: &'a Map<String, Value>,
+    names: &[&str],
+) -> Option<&'a Value> {
+    for source in [primary, fallback] {
+        for name in names {
+            if let Some(value) = source.get(*name) {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+fn tls_content_type_value(value: Option<&Value>, default: u8) -> ExampleResult<u8> {
+    if let Some(Value::Object(object)) = value {
+        return tls_content_type_value(optional(object, &["raw", "value"]), default);
+    }
+    if let Some(text) = value.and_then(Value::as_str) {
+        return match text {
+            "change_cipher_spec" => Ok(20),
+            "alert" => Ok(21),
+            "handshake" => Ok(22),
+            "application_data" => Ok(23),
+            "heartbeat" => Ok(24),
+            _ => u8_text(text),
+        };
+    }
+    value.map(u8_value).unwrap_or(Ok(default))
+}
+
+fn tls_handshake_type_value(message: &Map<String, Value>) -> ExampleResult<u8> {
+    if let Some(value) = optional(message, &["type_raw"]) {
+        return Ok(u8::try_from(tls_int_value(Some(value), 0)?)?);
+    }
+    if let Some(text) = optional(message, &["type", "handshake_type"]).and_then(Value::as_str) {
+        return match text {
+            "client_hello" => Ok(1),
+            "server_hello" => Ok(2),
+            "new_session_ticket" => Ok(4),
+            "end_of_early_data" => Ok(5),
+            "encrypted_extensions" => Ok(8),
+            "certificate" => Ok(11),
+            "certificate_request" => Ok(13),
+            "certificate_verify" => Ok(15),
+            "finished" => Ok(20),
+            "key_update" => Ok(24),
+            _ => u8_text(text),
+        };
+    }
+    optional(message, &["type", "handshake_type"])
+        .map(|value| Ok(u8::try_from(tls_int_value(Some(value), 1)?)?))
+        .unwrap_or(Ok(1))
+}
+
+fn tls_extension_type_value(extension: &Map<String, Value>) -> ExampleResult<u16> {
+    if let Some(value) = optional(extension, &["type_raw"]) {
+        return Ok(u16::try_from(tls_int_value(Some(value), 0)?)?);
+    }
+    if let Some(text) = optional(extension, &["type", "extension_type"]).and_then(Value::as_str) {
+        return match text {
+            "server_name" | "sni" => Ok(0),
+            "status_request" => Ok(5),
+            "supported_groups" => Ok(10),
+            "signature_algorithms" => Ok(13),
+            "application_layer_protocol_negotiation" | "alpn" => Ok(16),
+            "padding" => Ok(21),
+            "record_size_limit" => Ok(28),
+            "pre_shared_key" => Ok(41),
+            "supported_versions" => Ok(43),
+            "cookie" => Ok(44),
+            "psk_key_exchange_modes" => Ok(45),
+            "certificate_authorities" => Ok(47),
+            "key_share" => Ok(51),
+            _ => u16_text(text),
+        };
+    }
+    optional(extension, &["type", "extension_type"])
+        .map(|value| Ok(u16::try_from(tls_int_value(Some(value), 0)?)?))
+        .unwrap_or(Ok(0))
+}
+
+fn tls_alert_level(value: Option<&Value>) -> ExampleResult<u8> {
+    if matches!(value, Some(Value::Object(_))) {
+        return Ok(u8::try_from(tls_int_value(value, 1)?)?);
+    }
+    if let Some(text) = value.and_then(Value::as_str) {
+        return match text {
+            "warning" => Ok(1),
+            "fatal" => Ok(2),
+            _ => u8_text(text),
+        };
+    }
+    value.map(u8_value).unwrap_or(Ok(1))
+}
+
+fn tls_alert_description(value: Option<&Value>) -> ExampleResult<u8> {
+    if matches!(value, Some(Value::Object(_))) {
+        return Ok(u8::try_from(tls_int_value(value, 0)?)?);
+    }
+    if let Some(text) = value.and_then(Value::as_str) {
+        return match text {
+            "close_notify" => Ok(0),
+            "handshake_failure" => Ok(40),
+            "decode_error" => Ok(50),
+            "protocol_version" => Ok(70),
+            _ => u8_text(text),
+        };
+    }
+    value.map(u8_value).unwrap_or(Ok(0))
+}
+
+fn tls_psk_mode_value(value: Option<&Value>) -> ExampleResult<u8> {
+    if matches!(value, Some(Value::Object(_))) {
+        return Ok(u8::try_from(tls_int_value(value, 0)?)?);
+    }
+    if let Some(text) = value.and_then(Value::as_str) {
+        return match text {
+            "psk_ke" => Ok(0),
+            "psk_dhe_ke" => Ok(1),
+            _ => u8_text(text),
+        };
+    }
+    value.map(u8_value).unwrap_or(Ok(0))
+}
+
+fn tls_certificate_type_value(value: Option<&Value>) -> ExampleResult<u8> {
+    if matches!(value, Some(Value::Object(_))) {
+        return Ok(u8::try_from(tls_int_value(value, 1)?)?);
+    }
+    if let Some(text) = value.and_then(Value::as_str) {
+        return match text {
+            "rsa_sign" => Ok(1),
+            "dss_sign" => Ok(2),
+            "rsa_fixed_dh" => Ok(3),
+            "dss_fixed_dh" => Ok(4),
+            "ecdsa_sign" => Ok(64),
+            "rsa_fixed_ecdh" => Ok(65),
+            "ecdsa_fixed_ecdh" => Ok(66),
+            _ => u8_text(text),
+        };
+    }
+    value.map(u8_value).unwrap_or(Ok(1))
+}
+
+fn tls_key_update_value(value: Option<&Value>) -> ExampleResult<u8> {
+    if matches!(value, Some(Value::Object(_))) {
+        return Ok(u8::try_from(tls_int_value(value, 0)?)?);
+    }
+    if let Some(text) = value.and_then(Value::as_str) {
+        return match text {
+            "update_not_requested" => Ok(0),
+            "update_requested" => Ok(1),
+            _ => u8_text(text),
+        };
+    }
+    value.map(u8_value).unwrap_or(Ok(0))
+}
+
+fn tls_int_value(value: Option<&Value>, default: u64) -> ExampleResult<u64> {
+    match value {
+        None => Ok(default),
+        Some(Value::String(text)) if text == "derived" => Ok(default),
+        Some(Value::Object(object)) => tls_int_value(optional(object, &["raw", "value"]), default),
+        Some(value) => u64_value(value),
+    }
+}
+
+fn tls_declared_length(value: Option<&Value>, actual: usize) -> ExampleResult<Option<u16>> {
+    match value {
+        None => Ok(None),
+        Some(Value::String(text)) if text == "derived" => Ok(None),
+        Some(value) => Ok(Some(u16::try_from(tls_int_value(
+            Some(value),
+            actual as u64,
+        )?)?)),
+    }
+}
+
+fn tls_declared_u24(value: Option<&Value>, actual: usize) -> ExampleResult<u32> {
+    match value {
+        None => Ok(u32::try_from(actual)?),
+        Some(Value::String(text)) if text == "derived" => Ok(u32::try_from(actual)?),
+        Some(value) => Ok(u32::try_from(tls_int_value(Some(value), actual as u64)?)?),
+    }
+}
+
+fn tls_bytes_value(
+    value: Option<&Value>,
+    default: &[u8],
+    pad_to: Option<usize>,
+) -> ExampleResult<Vec<u8>> {
+    let mut bytes = match value {
+        None => default.to_vec(),
+        Some(Value::String(text)) => decode_hex(&text.replace([':', '-'], ""))?,
+        Some(Value::Object(object)) => {
+            if let Some(hex) = object.get("hex").and_then(Value::as_str) {
+                decode_hex(&hex.replace([':', '-'], ""))?
+            } else if let Some(inner) = optional(object, &["value", "bytes"]) {
+                tls_bytes_value(Some(inner), default, None)?
+            } else {
+                return Err(format!("unsupported TLS bytes object: {object:?}").into());
+            }
+        }
+        Some(Value::Array(items)) => {
+            let mut bytes = Vec::with_capacity(items.len());
+            for item in items {
+                bytes.push(u8_value(item)?);
+            }
+            bytes
+        }
+        Some(value) => return Err(format!("unsupported TLS bytes value: {value:?}").into()),
+    };
+    if let Some(len) = pad_to {
+        if bytes.len() < len {
+            bytes.resize(len, 0);
+        }
+    }
+    Ok(bytes)
+}
+
+fn tls_u16_list(value: Option<&Value>, default: &[u16]) -> ExampleResult<Vec<u8>> {
+    let mut values = Vec::new();
+    if let Some(items) = value.and_then(Value::as_array) {
+        for item in items {
+            values.push(u16::try_from(tls_int_value(Some(item), 0)?)?);
+        }
+    } else {
+        values.extend_from_slice(default);
+    }
+    let mut bytes = Vec::with_capacity(values.len() * 2);
+    for value in values {
+        tls_push_u16(&mut bytes, value);
+    }
+    Ok(bytes)
+}
+
+fn tls_text_value<'a>(value: &'a Value, default: &'a str) -> ExampleResult<&'a str> {
+    Ok(value.as_str().unwrap_or(default))
+}
+
+fn tls_push_u8_vector(out: &mut Vec<u8>, body: &[u8]) -> ExampleResult<()> {
+    out.push(u8::try_from(body.len())?);
+    out.extend_from_slice(body);
+    Ok(())
+}
+
+fn tls_push_u16_vector(out: &mut Vec<u8>, body: &[u8]) -> ExampleResult<()> {
+    out.extend_from_slice(&u16::try_from(body.len())?.to_be_bytes());
+    out.extend_from_slice(body);
+    Ok(())
+}
+
+fn tls_push_u24_vector(out: &mut Vec<u8>, body: &[u8]) -> ExampleResult<()> {
+    tls_push_u24(out, u32::try_from(body.len())?);
+    out.extend_from_slice(body);
+    Ok(())
+}
+
+fn tls_push_u16(out: &mut Vec<u8>, value: u16) {
+    out.extend_from_slice(&value.to_be_bytes());
+}
+
+fn tls_push_u24(out: &mut Vec<u8>, value: u32) {
+    out.push(((value >> 16) & 0xff) as u8);
+    out.push(((value >> 8) & 0xff) as u8);
+    out.push((value & 0xff) as u8);
+}
+
+fn tls_push_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_be_bytes());
 }
 
 fn layer_fields<'a>(plan: &'a Value, layer: &str) -> ExampleResult<&'a Map<String, Value>> {
