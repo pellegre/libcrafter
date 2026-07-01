@@ -1,0 +1,118 @@
+version: 1
+kind: stack_grammar
+name: tls_stacks
+
+roots:
+  - name: "raw:tls"
+    layers:
+      - tls
+    families:
+      - tls
+
+families:
+  - name: tls
+    default_stack:
+      - ipv4
+      - tcp
+      - tls
+    feature_tags:
+      - ipv4
+      - ipv6
+      - tcp
+      - tls
+      - tls_records
+      - tls_handshake
+      - tls_extensions
+
+stacks:
+  - name: ipv4_tcp_tls
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - tcp
+      - tls
+    coverage_cases:
+      - tls-record-client-hello
+      - tls-record-alert
+      - tls-record-change-cipher-spec
+      - tls-record-application-data-opaque
+      - tls-record-unknown-content-type
+      - tls-stacked-records
+      - tls-handshake-client-hello-tls13
+      - tls-handshake-server-hello-tls13
+      - tls-handshake-hello-retry-request
+      - tls-handshake-encrypted-extensions-unknown
+      - tls-handshake-certificate-tls13
+      - tls-handshake-finished
+      - tls-handshake-new-session-ticket-tls13
+      - tls-extension-sni
+      - tls-extension-alpn
+      - tls-extension-supported-versions-client
+      - tls-extension-supported-versions-server
+      - tls-extension-key-share-client
+      - tls-extension-key-share-server
+      - tls-extension-unknown-preservation
+  - name: ipv6_tcp_tls
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - tcp
+      - tls
+    coverage_cases:
+      - tls-record-client-hello
+      - tls-record-alert
+      - tls-record-application-data-opaque
+      - tls-handshake-client-hello-tls13
+      - tls-handshake-server-hello-tls13
+      - tls-handshake-encrypted-extensions-empty
+      - tls-handshake-finished
+      - tls-extension-sni
+      - tls-extension-supported-versions-client
+      - tls-extension-key-share-client
+      - tls-extension-unknown-preservation
+  - name: raw_tls_records
+    root: "raw:tls"
+    layers:
+      - tls
+    coverage_cases:
+      - tls-record-client-hello
+      - tls-record-alert
+      - tls-record-change-cipher-spec
+      - tls-record-application-data-opaque
+      - tls-record-unknown-content-type
+      - tls-stacked-records
+      - tls-handshake-client-hello-tls12
+      - tls-handshake-client-hello-tls13
+      - tls-handshake-server-hello-tls12
+      - tls-handshake-server-hello-tls13
+      - tls-handshake-hello-retry-request
+      - tls-extension-sni
+      - tls-extension-alpn
+      - tls-extension-duplicate-preservation
+
+constraints:
+  - name: tls_tcp_children
+    parent: tcp
+    children:
+      - tls
+      - payload
+
+backend_support:
+  scapy:
+    status: planned
+    notes:
+      - >-
+        TLS stacks become executable after the Scapy TLS backend adapter can
+        materialize exact TLS payload bytes over TCP/443.
+  wireshark:
+    status: planned
+    notes:
+      - >-
+        Wireshark TLS stack support is parser-only and used for pcap/read-side
+        normalization after fixtures are materialized.
+  libcrafter:
+    status: supported
+    notes:
+      - >-
+        libcrafter builds, decodes, and round-trips IPv4/TCP/TLS, IPv6/TCP/TLS,
+        and raw TLS record payloads offline.

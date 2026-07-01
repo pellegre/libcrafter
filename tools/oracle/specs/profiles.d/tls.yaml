@@ -1,0 +1,64 @@
+version: 1
+kind: profiles
+name: tls_profiles
+
+profiles:
+  - name: tls
+    purpose: focused deterministic TLS record, handshake, and extension coverage over TCP with documentation address space
+    default_count: 20
+    family_weights:
+      - name: tls
+        weight: 1
+    payload_length:
+      min: 0
+      max: 128
+    feature_weights:
+      baseline: 10
+      boundary: 4
+      malformed: 0
+      pcap: 1
+      live: 0
+  - name: tls-smoke
+    purpose: small deterministic TLS smoke coverage for record, handshake, and extension strict-byte cases
+    default_count: 20
+    family_weights:
+      - name: tls
+        weight: 1
+    payload_length:
+      min: 0
+      max: 96
+    feature_weights:
+      baseline: 10
+      boundary: 4
+      malformed: 0
+      pcap: 0
+      live: 0
+  - name: tls-ci
+    purpose: deterministic TLS pull-request coverage for well-formed strict-byte oracle cases
+    default_count: 160
+    family_weights:
+      - name: tls
+        weight: 1
+    payload_length:
+      min: 0
+      max: 256
+    feature_weights:
+      baseline: 10
+      boundary: 6
+      malformed: 0
+      pcap: 1
+      live: 0
+
+backend_support:
+  scapy:
+    status: planned
+    notes:
+      - Profiles sample TLS stacks after the Scapy TLS backend adapter lands.
+  wireshark:
+    status: planned
+    notes:
+      - Parser-only TLS profiles are used by pcap/read-side validation after fixtures are available.
+  libcrafter:
+    status: supported
+    notes:
+      - Profiles remain offline or dry-run and use synthetic TLS records, documentation addresses, and opaque key bytes.
