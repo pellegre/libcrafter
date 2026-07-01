@@ -21,6 +21,145 @@ pub const TLS_RECORD_LENGTH_LEN: usize = 2;
 /// TLS record header width in bytes.
 pub const TLS_RECORD_HEADER_LEN: usize =
     TLS_RECORD_CONTENT_TYPE_LEN + TLS_RECORD_VERSION_LEN + TLS_RECORD_LENGTH_LEN;
+/// TLS ChangeCipherSpec fragment length in bytes.
+pub const TLS_CHANGE_CIPHER_SPEC_LEN: usize = 1;
+/// TLS ChangeCipherSpec standard wire value.
+pub const TLS_CHANGE_CIPHER_SPEC_VALUE: u8 = 1;
+
+/// TLS `change_cipher_spec` record fragment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TlsChangeCipherSpec {
+    value: u8,
+}
+
+impl TlsChangeCipherSpec {
+    /// TLS standard ChangeCipherSpec value.
+    pub const STANDARD: Self = Self::new(TLS_CHANGE_CIPHER_SPEC_VALUE);
+
+    /// Preserve a caller-supplied one-octet ChangeCipherSpec value.
+    pub const fn new(value: u8) -> Self {
+        Self { value }
+    }
+
+    /// Construct the standard ChangeCipherSpec value.
+    pub const fn standard() -> Self {
+        Self::STANDARD
+    }
+
+    /// Preserve a caller-supplied one-octet ChangeCipherSpec value.
+    pub const fn from_raw_value(value: u8) -> Self {
+        Self::new(value)
+    }
+
+    /// Return the preserved one-octet value.
+    pub const fn value(self) -> u8 {
+        self.value
+    }
+
+    /// Return the preserved one-octet value.
+    pub const fn raw_value(self) -> u8 {
+        self.value
+    }
+
+    /// Return true when this is the standard ChangeCipherSpec value.
+    pub const fn is_standard(self) -> bool {
+        self.value == TLS_CHANGE_CIPHER_SPEC_VALUE
+    }
+
+    /// Human-readable value label preserving unknown values numerically.
+    pub fn value_label(self) -> String {
+        if self.is_standard() {
+            "change_cipher_spec".to_string()
+        } else {
+            format!("unknown change_cipher_spec 0x{:02x}", self.value)
+        }
+    }
+
+    /// Number of bytes occupied by the fragment.
+    pub const fn encoded_len(self) -> usize {
+        TLS_CHANGE_CIPHER_SPEC_LEN
+    }
+
+    /// Return the one-byte wire encoding.
+    pub const fn to_byte(self) -> u8 {
+        self.value
+    }
+
+    /// Append the ChangeCipherSpec fragment bytes.
+    pub fn encode(self, out: &mut Vec<u8>) {
+        out.push(self.to_byte());
+    }
+
+    /// Return the ChangeCipherSpec fragment bytes.
+    pub fn encode_to_vec(self) -> Vec<u8> {
+        vec![self.to_byte()]
+    }
+
+    /// Compatibility alias for returning the ChangeCipherSpec fragment bytes.
+    pub fn compile(self) -> Vec<u8> {
+        self.encode_to_vec()
+    }
+
+    /// Decode one complete ChangeCipherSpec fragment.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (change_cipher_spec, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.change_cipher_spec.length",
+                "trailing bytes after value",
+            ));
+        }
+        Ok(change_cipher_spec)
+    }
+
+    /// Decode one ChangeCipherSpec value from the front of `bytes`.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_CHANGE_CIPHER_SPEC_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.change_cipher_spec",
+                TLS_CHANGE_CIPHER_SPEC_LEN,
+                bytes.len(),
+            ));
+        }
+        Ok((Self::new(bytes[0]), &bytes[TLS_CHANGE_CIPHER_SPEC_LEN..]))
+    }
+
+    /// Stable one-line summary preserving unknown values.
+    pub fn summary(self) -> String {
+        format!(
+            "change_cipher_spec value={} raw=0x{:02x}",
+            self.value_label(),
+            self.value
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(self) -> Vec<(&'static str, String)> {
+        vec![
+            ("value", self.value_label()),
+            ("value_raw", format!("0x{:02x}", self.value)),
+            ("standard", self.is_standard().to_string()),
+        ]
+    }
+}
+
+impl Default for TlsChangeCipherSpec {
+    fn default() -> Self {
+        Self::standard()
+    }
+}
+
+impl From<u8> for TlsChangeCipherSpec {
+    fn from(value: u8) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<TlsChangeCipherSpec> for u8 {
+    fn from(value: TlsChangeCipherSpec) -> Self {
+        value.raw_value()
+    }
+}
 
 /// Parsed body for a TLS record with content type `handshake`.
 ///
@@ -123,6 +262,71 @@ impl TlsHandshakeRecordBody {
     }
 }
 
+/// ChangeCipherSpec record body bytes plus an optional decoded view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsChangeCipherSpecRecordBody {
+    fragment: Vec<u8>,
+    change_cipher_spec: Option<TlsChangeCipherSpec>,
+}
+
+impl TlsChangeCipherSpecRecordBody {
+    /// Preserve ChangeCipherSpec fragment bytes without parsing them.
+    pub fn raw(fragment: impl Into<Vec<u8>>) -> Self {
+        Self {
+            fragment: fragment.into(),
+            change_cipher_spec: None,
+        }
+    }
+
+    /// Build ChangeCipherSpec fragment bytes from a typed value.
+    pub fn from_change_cipher_spec(change_cipher_spec: TlsChangeCipherSpec) -> Self {
+        Self {
+            fragment: change_cipher_spec.encode_to_vec(),
+            change_cipher_spec: Some(change_cipher_spec),
+        }
+    }
+
+    /// Decode and preserve exact ChangeCipherSpec fragment bytes.
+    pub fn from_decoded_fragment(fragment: impl Into<Vec<u8>>) -> Result<Self> {
+        let fragment = fragment.into();
+        let change_cipher_spec = TlsChangeCipherSpec::decode(&fragment)?;
+        Ok(Self {
+            fragment,
+            change_cipher_spec: Some(change_cipher_spec),
+        })
+    }
+
+    /// Borrow the exact fragment bytes.
+    pub fn fragment(&self) -> &[u8] {
+        &self.fragment
+    }
+
+    /// Consume the body and return exact fragment bytes.
+    pub fn into_fragment(self) -> Vec<u8> {
+        self.fragment
+    }
+
+    /// Borrow the decoded ChangeCipherSpec value when available.
+    pub const fn change_cipher_spec(&self) -> Option<&TlsChangeCipherSpec> {
+        self.change_cipher_spec.as_ref()
+    }
+
+    /// Return true when this body carries decoded typed fields.
+    pub const fn is_typed(&self) -> bool {
+        self.change_cipher_spec.is_some()
+    }
+
+    /// Number of exact fragment bytes.
+    pub fn fragment_len(&self) -> usize {
+        self.fragment.len()
+    }
+
+    /// Append the exact fragment bytes.
+    pub fn encode(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.fragment);
+    }
+}
+
 /// TLS record body hook.
 ///
 /// Handshake records carry ordered generic handshake messages when the fragment
@@ -130,6 +334,8 @@ impl TlsHandshakeRecordBody {
 /// records, and unsupported content types stay opaque.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TlsRecordBody {
+    /// Typed ChangeCipherSpec fragment plus exact bytes.
+    ChangeCipherSpec(TlsChangeCipherSpecRecordBody),
     /// Generic typed handshake messages plus any trailing raw fragment bytes.
     Handshake(TlsHandshakeRecordBody),
     /// Opaque TLS record fragment bytes.
@@ -137,6 +343,18 @@ pub enum TlsRecordBody {
 }
 
 impl TlsRecordBody {
+    /// Construct a raw-preserving ChangeCipherSpec body.
+    pub fn change_cipher_spec(fragment: impl Into<Vec<u8>>) -> Self {
+        Self::ChangeCipherSpec(TlsChangeCipherSpecRecordBody::raw(fragment))
+    }
+
+    /// Construct a typed ChangeCipherSpec body.
+    pub fn from_change_cipher_spec(change_cipher_spec: TlsChangeCipherSpec) -> Self {
+        Self::ChangeCipherSpec(TlsChangeCipherSpecRecordBody::from_change_cipher_spec(
+            change_cipher_spec,
+        ))
+    }
+
     /// Construct a typed handshake body from complete messages and no raw tail.
     pub fn handshake<I, M>(messages: I) -> Result<Self>
     where
@@ -169,10 +387,12 @@ impl TlsRecordBody {
         fragment: impl Into<Vec<u8>>,
     ) -> Result<Self> {
         let fragment = fragment.into();
-        if content_type == TlsContentType::HANDSHAKE {
-            Self::decode_handshake_fragment(fragment)
-        } else {
-            Ok(Self::opaque(fragment))
+        match content_type {
+            TlsContentType::CHANGE_CIPHER_SPEC => Ok(Self::ChangeCipherSpec(
+                TlsChangeCipherSpecRecordBody::from_decoded_fragment(fragment)?,
+            )),
+            TlsContentType::HANDSHAKE => Self::decode_handshake_fragment(fragment),
+            _ => Ok(Self::opaque(fragment)),
         }
     }
 
@@ -220,6 +440,7 @@ impl TlsRecordBody {
     /// Borrow the bytes that will be emitted after the record header.
     pub fn fragment(&self) -> &[u8] {
         match self {
+            Self::ChangeCipherSpec(change_cipher_spec) => change_cipher_spec.fragment(),
             Self::Handshake(handshake) => handshake.fragment(),
             Self::Opaque(fragment) => fragment,
         }
@@ -228,6 +449,7 @@ impl TlsRecordBody {
     /// Consume the body hook and return the preserved fragment bytes.
     pub fn into_fragment(self) -> Vec<u8> {
         match self {
+            Self::ChangeCipherSpec(change_cipher_spec) => change_cipher_spec.into_fragment(),
             Self::Handshake(handshake) => handshake.into_fragment(),
             Self::Opaque(fragment) => fragment,
         }
@@ -243,14 +465,36 @@ impl TlsRecordBody {
         matches!(self, Self::Opaque(_))
     }
 
+    /// Return true when the body carries decoded ChangeCipherSpec fields.
+    pub const fn is_change_cipher_spec(&self) -> bool {
+        matches!(self, Self::ChangeCipherSpec(_))
+    }
+
     /// Return true when the body carries decoded generic handshake messages.
     pub const fn is_handshake(&self) -> bool {
         matches!(self, Self::Handshake(_))
     }
 
+    /// Borrow the typed ChangeCipherSpec record body when present.
+    pub const fn change_cipher_spec_record_body(&self) -> Option<&TlsChangeCipherSpecRecordBody> {
+        match self {
+            Self::ChangeCipherSpec(change_cipher_spec) => Some(change_cipher_spec),
+            _ => None,
+        }
+    }
+
+    /// Borrow the decoded ChangeCipherSpec value when present.
+    pub const fn change_cipher_spec_body(&self) -> Option<&TlsChangeCipherSpec> {
+        match self {
+            Self::ChangeCipherSpec(change_cipher_spec) => change_cipher_spec.change_cipher_spec(),
+            _ => None,
+        }
+    }
+
     /// Borrow the typed handshake record body when present.
     pub const fn handshake_body(&self) -> Option<&TlsHandshakeRecordBody> {
         match self {
+            Self::ChangeCipherSpec(_) => None,
             Self::Handshake(handshake) => Some(handshake),
             Self::Opaque(_) => None,
         }
@@ -269,6 +513,7 @@ impl TlsRecordBody {
     /// Append the body fragment bytes to `out`.
     pub fn encode(&self, out: &mut Vec<u8>) {
         match self {
+            Self::ChangeCipherSpec(change_cipher_spec) => change_cipher_spec.encode(out),
             Self::Handshake(handshake) => handshake.encode(out),
             Self::Opaque(fragment) => out.extend_from_slice(fragment),
         }
@@ -281,6 +526,7 @@ impl TlsRecordBody {
 
     fn label(&self) -> &'static str {
         match self {
+            Self::ChangeCipherSpec(_) => "change_cipher_spec",
             Self::Handshake(_) => "handshake",
             Self::Opaque(_) => "opaque",
         }
@@ -290,6 +536,18 @@ impl TlsRecordBody {
 impl From<TlsHandshakeRecordBody> for TlsRecordBody {
     fn from(body: TlsHandshakeRecordBody) -> Self {
         Self::Handshake(body)
+    }
+}
+
+impl From<TlsChangeCipherSpecRecordBody> for TlsRecordBody {
+    fn from(body: TlsChangeCipherSpecRecordBody) -> Self {
+        Self::ChangeCipherSpec(body)
+    }
+}
+
+impl From<TlsChangeCipherSpec> for TlsRecordBody {
+    fn from(change_cipher_spec: TlsChangeCipherSpec) -> Self {
+        Self::from_change_cipher_spec(change_cipher_spec)
     }
 }
 
@@ -343,6 +601,19 @@ impl TlsRecord {
     /// Construct a `change_cipher_spec` TLS record.
     pub fn change_cipher_spec(fragment: impl Into<Vec<u8>>) -> Self {
         Self::from_header_and_fragment(TlsRecordHeader::change_cipher_spec(), fragment)
+    }
+
+    /// Construct a `change_cipher_spec` TLS record from a typed body.
+    pub fn from_change_cipher_spec(change_cipher_spec: TlsChangeCipherSpec) -> Self {
+        Self::from_header_and_body(
+            TlsRecordHeader::change_cipher_spec(),
+            TlsRecordBody::from_change_cipher_spec(change_cipher_spec),
+        )
+    }
+
+    /// Construct a standard `change_cipher_spec` TLS record.
+    pub fn standard_change_cipher_spec() -> Self {
+        Self::from_change_cipher_spec(TlsChangeCipherSpec::standard())
     }
 
     /// Construct an `alert` TLS record.
@@ -461,6 +732,11 @@ impl TlsRecord {
     /// Borrow the preserved record body hook.
     pub const fn body(&self) -> &TlsRecordBody {
         &self.body
+    }
+
+    /// Borrow decoded ChangeCipherSpec fields when this record carries them.
+    pub const fn change_cipher_spec_body(&self) -> Option<&TlsChangeCipherSpec> {
+        self.body.change_cipher_spec_body()
     }
 
     /// Borrow the opaque fragment bytes.
@@ -1046,6 +1322,121 @@ mod tests {
         );
         assert_eq!(TlsRecord::decode(bytes)?.fragment(), &[0x01, 0x00]);
         Ok(())
+    }
+
+    #[test]
+    fn tls_change_cipher_spec_standard_value_round_trips_as_typed_record() -> Result<()> {
+        let change_cipher_spec = TlsChangeCipherSpec::standard();
+
+        assert_eq!(change_cipher_spec.value(), TLS_CHANGE_CIPHER_SPEC_VALUE);
+        assert_eq!(change_cipher_spec.raw_value(), 1);
+        assert!(change_cipher_spec.is_standard());
+        assert_eq!(change_cipher_spec.encoded_len(), TLS_CHANGE_CIPHER_SPEC_LEN);
+        assert_eq!(change_cipher_spec.encode_to_vec(), vec![0x01]);
+        assert_eq!(change_cipher_spec.compile(), vec![0x01]);
+        assert_eq!(
+            change_cipher_spec.summary(),
+            "change_cipher_spec value=change_cipher_spec raw=0x01"
+        );
+        assert_eq!(
+            change_cipher_spec.inspection_fields(),
+            vec![
+                ("value", "change_cipher_spec".to_string()),
+                ("value_raw", "0x01".to_string()),
+                ("standard", "true".to_string()),
+            ]
+        );
+
+        let record = TlsRecord::from_change_cipher_spec(change_cipher_spec);
+        let encoded = vec![0x14, 0x03, 0x03, 0x00, 0x01, 0x01];
+        assert_eq!(record.content_type(), TlsContentType::CHANGE_CIPHER_SPEC);
+        assert_eq!(record.fragment(), &[0x01]);
+        assert!(record.body().is_change_cipher_spec());
+        assert_eq!(record.change_cipher_spec_body(), Some(&change_cipher_spec));
+        assert_eq!(record.encode_to_vec()?, encoded);
+        assert_eq!(
+            record.summary(),
+            "record content_type=change_cipher_spec legacy_record_version=TLS 1.2 declared_length=auto fragment_bytes=1 body=change_cipher_spec"
+        );
+
+        let decoded = TlsRecord::decode(&encoded)?;
+        assert!(decoded.body().is_change_cipher_spec());
+        assert_eq!(decoded.change_cipher_spec_body(), Some(&change_cipher_spec));
+        assert_eq!(decoded.fragment(), &[0x01]);
+        assert_eq!(decoded.encode_to_vec()?, encoded);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_change_cipher_spec_unknown_one_byte_value_is_preserved() -> Result<()> {
+        let change_cipher_spec = TlsChangeCipherSpec::from_raw_value(0x7f);
+        let encoded = vec![0x14, 0x03, 0x03, 0x00, 0x01, 0x7f];
+
+        assert!(!change_cipher_spec.is_standard());
+        assert_eq!(
+            change_cipher_spec.value_label(),
+            "unknown change_cipher_spec 0x7f"
+        );
+        assert_eq!(
+            change_cipher_spec.summary(),
+            "change_cipher_spec value=unknown change_cipher_spec 0x7f raw=0x7f"
+        );
+        assert_eq!(TlsChangeCipherSpec::decode([0x7f])?, change_cipher_spec);
+
+        let decoded = TlsRecord::decode(&encoded)?;
+        assert_eq!(decoded.change_cipher_spec_body(), Some(&change_cipher_spec));
+        assert_eq!(decoded.fragment(), &[0x7f]);
+        assert_eq!(decoded.encode_to_vec()?, encoded);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_change_cipher_spec_raw_builders_preserve_empty_and_oversized_fragments() -> Result<()> {
+        let empty = TlsRecord::change_cipher_spec([]);
+        assert_eq!(empty.content_type(), TlsContentType::CHANGE_CIPHER_SPEC);
+        assert!(empty.body().is_opaque());
+        assert_eq!(empty.change_cipher_spec_body(), None);
+        assert_eq!(empty.fragment(), &[]);
+        assert_eq!(empty.encode_to_vec()?, vec![0x14, 0x03, 0x03, 0x00, 0x00]);
+
+        let oversized = TlsRecord::change_cipher_spec([0x01, 0x02]);
+        assert!(oversized.body().is_opaque());
+        assert_eq!(oversized.change_cipher_spec_body(), None);
+        assert_eq!(oversized.fragment(), &[0x01, 0x02]);
+        assert_eq!(
+            oversized.encode_to_vec()?,
+            vec![0x14, 0x03, 0x03, 0x00, 0x02, 0x01, 0x02]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_change_cipher_spec_decode_reports_empty_and_oversized_fragments() {
+        assert_eq!(
+            TlsChangeCipherSpec::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.change_cipher_spec", TLS_CHANGE_CIPHER_SPEC_LEN, 0)
+        );
+        assert_eq!(
+            TlsChangeCipherSpec::decode([0x01, 0x02]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.change_cipher_spec.length",
+                "trailing bytes after value"
+            )
+        );
+        assert_eq!(
+            TlsRecord::decode([0x14, 0x03, 0x03, 0x00, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.change_cipher_spec", TLS_CHANGE_CIPHER_SPEC_LEN, 0)
+        );
+        assert_eq!(
+            TlsRecord::decode([0x14, 0x03, 0x03, 0x00, 0x02, 0x01, 0x02]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.change_cipher_spec.length",
+                "trailing bytes after value"
+            )
+        );
     }
 
     #[test]

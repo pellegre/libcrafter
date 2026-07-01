@@ -91,8 +91,10 @@ pub use handshake::{
 pub use layer::Tls;
 pub use named_group::{TlsNamedGroup, TlsNamedGroupList};
 pub use record::{
-    TlsHandshakeRecordBody, TlsRecord, TlsRecordBody, TlsRecordHeader, TLS_RECORD_CONTENT_TYPE_LEN,
-    TLS_RECORD_HEADER_LEN, TLS_RECORD_LENGTH_LEN, TLS_RECORD_VERSION_LEN,
+    TlsChangeCipherSpec, TlsChangeCipherSpecRecordBody, TlsHandshakeRecordBody, TlsRecord,
+    TlsRecordBody, TlsRecordHeader, TLS_CHANGE_CIPHER_SPEC_LEN, TLS_CHANGE_CIPHER_SPEC_VALUE,
+    TLS_RECORD_CONTENT_TYPE_LEN, TLS_RECORD_HEADER_LEN, TLS_RECORD_LENGTH_LEN,
+    TLS_RECORD_VERSION_LEN,
 };
 pub use signature_scheme::{TlsSignatureScheme, TlsSignatureSchemeList};
 pub use version::{TlsVersion, TlsVersionField};
