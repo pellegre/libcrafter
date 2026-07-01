@@ -9212,6 +9212,18 @@ impl TlsExtensionListContext {
         )
     }
 
+    /// CertificateRequest `tls.certificate_request.extensions.*` context.
+    pub const fn certificate_request() -> Self {
+        Self::new(
+            "tls.certificate_request.extensions",
+            "tls.certificate_request.extensions.length",
+            "tls.certificate_request.extension",
+            "tls.certificate_request.extension.type",
+            "tls.certificate_request.extension.length",
+            "tls.certificate_request.extension.body",
+        )
+    }
+
     /// Certificate `tls.certificate.extensions.*` context.
     pub const fn certificate() -> Self {
         Self::new(
