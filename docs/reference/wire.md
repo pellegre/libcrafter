@@ -105,6 +105,31 @@ for record in Sniffer::new(source).collect_records()? {
 # Ok::<(), crafter::CrafterError>(())
 ```
 
+TLS records use the same pcap source path. Apply a TCP BPF filter to keep the
+offline fixture bounded, then inspect the decoded `Tls` layer through the normal
+packet APIs:
+
+```rust
+use crafter::prelude::*;
+
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let source = PacketWire::pcap_file(
+    "crafter/tests/fixtures/pcaps/raw-ipv4-tcp-tls-client-hello.pcap",
+)
+    .filter("tcp port 443")
+    .open()?
+    .source()?;
+
+for record in Sniffer::new(source).no_timeout().collect_records()? {
+    if let Some(tls) = record.packet().layer::<Tls>() {
+        println!("{}", tls.summary());
+        println!("{:?}", record.metadata().timestamp());
+    }
+}
+# Ok(())
+# }
+```
+
 ## Offline Writing
 
 Use a pcap recorder when the output should be deterministic and inspectable.

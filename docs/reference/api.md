@@ -62,6 +62,48 @@ them, then add `Igmp` and typed IGMP body layers with `/`. The crate exposes
 IGMP packet construction and decode; it is not a multicast router
 implementation, snooper, proxy, scanner, or state machine.
 
+## TLS Packets
+
+TLS support is exported through `crafter::prelude::*` as typed packet
+primitives such as `Tls`, `TlsRecord`, `TlsHandshake`, `TlsClientHello`,
+`TlsServerHello`, `TlsRawExtension`, `TlsVersion`, `TlsContentType`, and common
+TLS codepoint constants. Build TLS like any other layer, under TCP:
+
+```rust
+use crafter::prelude::*;
+
+fn main() -> crafter::Result<()> {
+    let hello = TlsClientHello::new()
+        .with_random([0x44; TLS_CLIENT_HELLO_RANDOM_LEN])
+        .with_raw_cipher_suites([TLS_CIPHER_SUITE_AES_128_GCM_SHA256])
+        .with_extensions(vec![TlsRawExtension::alpn(
+            TlsAlpnProtocols::h2_then_http_1_1(),
+        )?]);
+    let record = TlsRecord::handshake_messages([
+        TlsHandshake::from_client_hello(hello)?,
+    ])?;
+
+    let packet = Ipv4::new()
+        .src("192.0.2.10")?
+        .dst("198.51.100.20")?
+        .ipv4_protocol(Ipv4Protocol::Tcp)
+        / Tcp::new().sport(49_171).dport(TLS_PORT_HTTPS)
+        / Tls::from_record(record);
+
+    let bytes = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+    println!("{}", decoded.summary());
+    Ok(())
+}
+```
+
+`compile()` fills TLS record and handshake lengths, TLS vector lengths, and the
+enclosing TCP/IP dependent fields unless the caller set an explicit override.
+Decode preserves unknown codepoints and encrypted payloads as typed opaque
+bytes or `Raw` where appropriate. TLS is a packet primitive, not a TLS session
+stack or decryption engine; see [TLS wire coverage](../guide/tls.md) for the
+full boundary.
+
 ## mDNS And DNS-SD Packets
 
 mDNS support stays inside the existing DNS layer. Use `Dns`, `DnsQuestion`,
@@ -190,6 +232,9 @@ let reports = tx.send(packet)?;
 Low-level pcap codec details are owned by the packet wire backend. User code
 should enter through `PacketWire`, `Sniffer`, and `Transmitter` so reads yield
 packet records with pcap metadata and writes consume packets or packet records.
+TLS pcap workflows use the same path, usually with a BPF filter such as
+`tcp port 443`; decoded records expose IPv4/IPv6, TCP, and `Tls` layers when
+the TCP payload contains complete TLS records.
 
 ## Wire Packet I/O
 
