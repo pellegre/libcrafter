@@ -7,6 +7,14 @@ live-gated capture, send planning, send/receive reports, batch workflows,
 interface helpers, IPv4 ranges, reply matching, and representative protocol
 layers.
 
+TLS examples stay offline by default. `tls_client_hello` builds an
+IPv4/TCP/TLS ClientHello, decodes it, prints `summary()` / `show()` / hexdump
+output, and ends with a dry-run plan. `tls_pcap_read` opens the checked-in TLS
+pcap fixture through `PacketWire`, applies `tcp port 443`, iterates with
+`Sniffer`, and prints `Tls` record summaries. See
+[TLS wire coverage](../guide/tls.md) for supported records, handshakes,
+extensions, and boundaries.
+
 IPv6-specific examples, including DHCPv6, stay offline or dry-run by default
 and use documentation address space. See [IPv6 wire coverage](../guide/ipv6.md)
 and [DHCPv6 wire coverage](../guide/dhcpv6.md) for guides, fixtures, and
@@ -40,6 +48,8 @@ cargo run -p crafter --example snmp_trap
 cargo run -p crafter --example snmpv3_message
 cargo run -p crafter --example ipv4_enrichment
 cargo run -p crafter --example tcp_options
+cargo run -p crafter --example tls_client_hello
+cargo run -p crafter --example tls_pcap_read
 cargo run -p crafter --example dhcpv6_solicit
 cargo run -p crafter --example dhcpv6_relay
 ```
@@ -71,6 +81,23 @@ Use [mDNS and DNS-SD wire coverage](../guide/mdns.md) for the full helper
 catalog. Live mDNS traffic is not part of default examples; use dry-run plans
 or provider-backed lab/probe workflows when real multicast behavior is
 authorized.
+
+## TLS Examples
+
+The TLS examples exercise packet construction and pcap decode without live
+traffic:
+
+```sh
+cargo run -p crafter --example tls_client_hello
+cargo run -p crafter --example tls_pcap_read
+```
+
+`tls_client_hello` composes `Ipv4 / Tcp / Tls`, uses `TlsClientHello`,
+`TlsHandshake`, `TlsRecord`, and typed extensions, then compiles and decodes the
+packet. `tls_pcap_read` reads the deterministic RawIp TLS pcap fixture with a
+TCP BPF filter and prints TLS summaries through `PacketWire` and `Sniffer`.
+Both examples use documentation address space or checked-in fixture bytes and
+remain dry-run/offline.
 
 ## DHCPv4 And DHCPv6 Examples
 
