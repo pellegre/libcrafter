@@ -9224,6 +9224,18 @@ impl TlsExtensionListContext {
         )
     }
 
+    /// NewSessionTicket `tls.new_session_ticket.extensions.*` context.
+    pub const fn new_session_ticket() -> Self {
+        Self::new(
+            "tls.new_session_ticket.extensions",
+            "tls.new_session_ticket.extensions.length",
+            "tls.new_session_ticket.extension",
+            "tls.new_session_ticket.extension.type",
+            "tls.new_session_ticket.extension.length",
+            "tls.new_session_ticket.extension.body",
+        )
+    }
+
     /// Certificate `tls.certificate.extensions.*` context.
     pub const fn certificate() -> Self {
         Self::new(
