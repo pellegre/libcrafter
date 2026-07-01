@@ -19,6 +19,16 @@ pub const TLS_EXTENSION_LENGTH_LEN: usize = 2;
 pub const TLS_EXTENSION_HEADER_LEN: usize = TLS_EXTENSION_TYPE_LEN + TLS_EXTENSION_LENGTH_LEN;
 /// TLS extension-list aggregate length field width in bytes.
 pub const TLS_EXTENSION_LIST_LENGTH_LEN: usize = 2;
+/// TLS ServerName `NameType` field width in bytes.
+pub const TLS_SERVER_NAME_TYPE_LEN: usize = 1;
+/// TLS ServerName selected-name length field width in bytes.
+pub const TLS_SERVER_NAME_LENGTH_LEN: usize = 2;
+/// TLS ServerName entry header width in bytes.
+pub const TLS_SERVER_NAME_HEADER_LEN: usize = TLS_SERVER_NAME_TYPE_LEN + TLS_SERVER_NAME_LENGTH_LEN;
+/// TLS ServerNameList aggregate length field width in bytes.
+pub const TLS_SERVER_NAME_LIST_LENGTH_LEN: usize = 2;
+/// TLS ServerName `host_name` NameType value from RFC 6066.
+pub const TLS_SERVER_NAME_TYPE_HOST_NAME: u8 = 0;
 
 /// A raw-preserving TLS `ExtensionType` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -398,6 +408,576 @@ impl TlsRawExtension {
             ("extension_body_bytes", self.body.len().to_string()),
         ]
     }
+}
+
+/// Raw-preserving TLS ServerName `NameType`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TlsServerNameType {
+    raw: u8,
+}
+
+impl TlsServerNameType {
+    /// RFC 6066 `host_name` server name type.
+    pub const HOST_NAME: Self = Self::new(TLS_SERVER_NAME_TYPE_HOST_NAME);
+
+    /// Preserve a caller-supplied one-octet server name type.
+    pub const fn new(raw: u8) -> Self {
+        Self { raw }
+    }
+
+    /// Preserve a caller-supplied one-octet server name type.
+    pub const fn from_u8(raw: u8) -> Self {
+        Self::new(raw)
+    }
+
+    /// RFC 6066 `host_name` constructor.
+    pub const fn host_name() -> Self {
+        Self::HOST_NAME
+    }
+
+    /// Return the preserved raw one-octet wire value.
+    pub const fn raw(self) -> u8 {
+        self.raw
+    }
+
+    /// Return the preserved raw one-octet wire value.
+    pub const fn as_u8(self) -> u8 {
+        self.raw
+    }
+
+    /// Return the source-backed server-name type name, when selected.
+    pub const fn name(self) -> Option<&'static str> {
+        match self.raw {
+            TLS_SERVER_NAME_TYPE_HOST_NAME => Some("host_name"),
+            _ => None,
+        }
+    }
+
+    /// Return true when this server-name type is `host_name`.
+    pub const fn is_host_name(self) -> bool {
+        self.raw == TLS_SERVER_NAME_TYPE_HOST_NAME
+    }
+
+    /// Human-readable label preserving unknown values numerically.
+    pub fn label(self) -> String {
+        self.name()
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("unknown server name type 0x{:02x}", self.raw))
+    }
+
+    /// Stable one-line summary preserving the raw value.
+    pub fn summary(self) -> String {
+        format!("{} raw=0x{:02x}", self.label(), self.raw)
+    }
+}
+
+impl From<u8> for TlsServerNameType {
+    fn from(value: u8) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<TlsServerNameType> for u8 {
+    fn from(value: TlsServerNameType) -> Self {
+        value.raw()
+    }
+}
+
+impl fmt::Display for TlsServerNameType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.label())
+    }
+}
+
+/// One TLS ServerName entry from a `server_name` extension body.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TlsServerName {
+    /// RFC 6066 `host_name` bytes.
+    HostName(Vec<u8>),
+    /// Unknown or future name type with its selected-name body preserved.
+    Unknown {
+        /// Preserved server-name type.
+        name_type: TlsServerNameType,
+        /// Preserved selected-name body bytes after the uint16 length field.
+        body: Vec<u8>,
+    },
+}
+
+impl TlsServerName {
+    /// Build an RFC 6066 `host_name` entry from a DNS hostname string.
+    pub fn host_name(name: impl Into<String>) -> Self {
+        Self::HostName(name.into().into_bytes())
+    }
+
+    /// Build an RFC 6066 `host_name` entry from caller-supplied bytes.
+    pub fn host_name_bytes(name: impl Into<Vec<u8>>) -> Self {
+        Self::HostName(name.into())
+    }
+
+    /// Build an unknown or future server-name entry, preserving type and body bytes.
+    pub fn unknown(name_type: impl Into<TlsServerNameType>, body: impl Into<Vec<u8>>) -> Self {
+        Self::Unknown {
+            name_type: name_type.into(),
+            body: body.into(),
+        }
+    }
+
+    /// Return the selected server-name type.
+    pub const fn name_type(&self) -> TlsServerNameType {
+        match self {
+            Self::HostName(_) => TlsServerNameType::HOST_NAME,
+            Self::Unknown { name_type, .. } => *name_type,
+        }
+    }
+
+    /// Borrow the selected-name body bytes.
+    pub fn body(&self) -> &[u8] {
+        match self {
+            Self::HostName(name) | Self::Unknown { body: name, .. } => name,
+        }
+    }
+
+    /// Borrow the `host_name` bytes when this entry is a host name.
+    pub fn host_name_bytes_value(&self) -> Option<&[u8]> {
+        match self {
+            Self::HostName(name) => Some(name),
+            Self::Unknown { .. } => None,
+        }
+    }
+
+    /// Borrow the `host_name` as UTF-8 when this entry is a host name.
+    pub fn host_name_value(&self) -> Option<&str> {
+        self.host_name_bytes_value()
+            .and_then(|name| core::str::from_utf8(name).ok())
+    }
+
+    /// Number of bytes occupied by the complete encoded ServerName entry.
+    pub fn encoded_len(&self) -> Result<usize> {
+        TLS_SERVER_NAME_HEADER_LEN
+            .checked_add(self.body().len())
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.server_name.length", "length overflow")
+            })
+    }
+
+    /// Append this ServerName entry to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        validate_server_name_entry(self)?;
+        out.push(self.name_type().raw());
+        let body_len = u16::try_from(self.body().len()).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "tls.server_name.name.length",
+                "length must fit in two bytes",
+            )
+        })?;
+        out.extend_from_slice(&body_len.to_be_bytes());
+        out.extend_from_slice(self.body());
+        Ok(())
+    }
+
+    /// Return the encoded ServerName entry.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Decode one ServerName entry from `bytes`.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (server_name, _) = Self::decode_prefix(bytes.as_ref())?;
+        Ok(server_name)
+    }
+
+    /// Decode one ServerName entry from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_SERVER_NAME_TYPE_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.server_name.name_type",
+                TLS_SERVER_NAME_TYPE_LEN,
+                bytes.len(),
+            ));
+        }
+        if bytes.len() < TLS_SERVER_NAME_HEADER_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.server_name.name.length",
+                TLS_SERVER_NAME_HEADER_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let name_type = TlsServerNameType::from_u8(bytes[0]);
+        let body_len = u16::from_be_bytes([bytes[1], bytes[2]]) as usize;
+        let required = TLS_SERVER_NAME_HEADER_LEN
+            .checked_add(body_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.server_name.name.length", "length overflow")
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "tls.server_name.name",
+                required,
+                bytes.len(),
+            ));
+        }
+
+        let body = bytes[TLS_SERVER_NAME_HEADER_LEN..required].to_vec();
+        let server_name = if name_type.is_host_name() {
+            let server_name = Self::HostName(body);
+            validate_server_name_entry(&server_name)?;
+            server_name
+        } else {
+            Self::Unknown { name_type, body }
+        };
+
+        Ok((server_name, &bytes[required..]))
+    }
+
+    /// Stable one-line summary preserving type and visible synthetic host names.
+    pub fn summary(&self) -> String {
+        match self {
+            Self::HostName(name) => format!(
+                "server_name type=host_name host_name={} bytes={}",
+                String::from_utf8_lossy(name),
+                name.len()
+            ),
+            Self::Unknown { name_type, body } => format!(
+                "server_name type={} raw=0x{:02x} body_bytes={}",
+                name_type.label(),
+                name_type.raw(),
+                body.len()
+            ),
+        }
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            ("server_name_type", self.name_type().label()),
+            (
+                "server_name_type_raw",
+                format!("0x{:02x}", self.name_type().raw()),
+            ),
+            ("server_name_body_bytes", self.body().len().to_string()),
+        ];
+        if let Some(host_name) = self.host_name_value() {
+            fields.push(("server_name_host_name", host_name.to_string()));
+        }
+        fields
+    }
+}
+
+/// TLS `server_name` extension body as an RFC 6066 ServerNameList.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct TlsServerNameList {
+    names: Vec<TlsServerName>,
+}
+
+impl TlsServerNameList {
+    /// Create an ordered ServerNameList.
+    pub fn new(names: impl Into<Vec<TlsServerName>>) -> Self {
+        Self {
+            names: names.into(),
+        }
+    }
+
+    /// Create a one-entry ServerNameList containing `host_name`.
+    pub fn from_host_name(name: impl Into<String>) -> Self {
+        Self::new(vec![TlsServerName::host_name(name)])
+    }
+
+    /// Borrow the ordered server-name entries.
+    pub fn names(&self) -> &[TlsServerName] {
+        &self.names
+    }
+
+    /// Compatibility alias for borrowing the ordered server-name entries.
+    pub fn as_slice(&self) -> &[TlsServerName] {
+        self.names()
+    }
+
+    /// Consume the list and return the ordered server-name entries.
+    pub fn into_vec(self) -> Vec<TlsServerName> {
+        self.names
+    }
+
+    /// Append one server-name entry.
+    pub fn push(&mut self, name: TlsServerName) {
+        self.names.push(name);
+    }
+
+    /// Number of server-name entries.
+    pub fn len(&self) -> usize {
+        self.names.len()
+    }
+
+    /// Return true when the list carries no server-name entries.
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty()
+    }
+
+    /// Return host_name values in wire order, excluding unknown name types.
+    pub fn host_names(&self) -> Vec<&str> {
+        self.names
+            .iter()
+            .filter_map(TlsServerName::host_name_value)
+            .collect()
+    }
+
+    /// Number of bytes occupied by server-name entries, excluding the list length prefix.
+    pub fn byte_len(&self) -> Result<usize> {
+        validate_server_name_list_entries(&self.names)?;
+        let mut len = 0usize;
+        for name in &self.names {
+            len = len.checked_add(name.encoded_len()?).ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.server_name_list.length", "length overflow")
+            })?;
+        }
+        validate_server_name_list_len(len)?;
+        Ok(len)
+    }
+
+    /// Number of bytes occupied by the complete encoded ServerNameList.
+    pub fn encoded_len(&self) -> Result<usize> {
+        TLS_SERVER_NAME_LIST_LENGTH_LEN
+            .checked_add(self.byte_len()?)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.server_name_list.length", "length overflow")
+            })
+    }
+
+    /// Append the uint16 length-prefixed ServerNameList.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let body_len = self.byte_len()?;
+        let body_len = u16::try_from(body_len).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "tls.server_name_list.length",
+                "length must fit in two bytes",
+            )
+        })?;
+
+        out.extend_from_slice(&body_len.to_be_bytes());
+        for name in &self.names {
+            name.encode(out)?;
+        }
+        Ok(())
+    }
+
+    /// Return the uint16 length-prefixed ServerNameList encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Convert this ServerNameList into a raw `server_name` extension.
+    pub fn to_raw_extension(&self) -> Result<TlsRawExtension> {
+        Ok(TlsRawExtension::new(
+            TlsExtensionType::SERVER_NAME,
+            self.encode_to_vec()?,
+        ))
+    }
+
+    /// Decode a uint16 length-prefixed ServerNameList.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (names, _) = Self::decode_prefix(bytes.as_ref())?;
+        Ok(names)
+    }
+
+    /// Decode a uint16 length-prefixed ServerNameList from the front of `bytes`.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_SERVER_NAME_LIST_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.server_name_list.length",
+                TLS_SERVER_NAME_LIST_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let byte_len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+        validate_server_name_list_len(byte_len)?;
+        let required = TLS_SERVER_NAME_LIST_LENGTH_LEN
+            .checked_add(byte_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.server_name_list.length", "length overflow")
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "tls.server_name_list",
+                required,
+                bytes.len(),
+            ));
+        }
+
+        let mut cursor = TLS_SERVER_NAME_LIST_LENGTH_LEN;
+        let body_end = required;
+        let mut names = Vec::new();
+        while cursor < body_end {
+            let (name, tail) = TlsServerName::decode_prefix(&bytes[cursor..body_end])?;
+            cursor = body_end - tail.len();
+            names.push(name);
+        }
+
+        validate_server_name_list_entries(&names)?;
+        Ok((Self::new(names), &bytes[required..]))
+    }
+
+    /// Decode a raw `server_name` extension body.
+    pub fn from_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        if extension.extension_type() != TlsExtensionType::SERVER_NAME {
+            return Err(CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be server_name",
+            ));
+        }
+        Self::decode(extension.body())
+    }
+
+    /// Stable one-line summary preserving order and visible synthetic host names.
+    pub fn summary(&self) -> String {
+        let values = self
+            .names
+            .iter()
+            .map(|name| match name {
+                TlsServerName::HostName(host_name) => {
+                    format!("host_name:{}", String::from_utf8_lossy(host_name))
+                }
+                TlsServerName::Unknown { name_type, body } => {
+                    format!("{}:{} bytes", name_type.label(), body.len())
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "server_name list count={} bytes={} values={}",
+            self.len(),
+            self.names
+                .iter()
+                .map(|name| name.encoded_len().unwrap_or(0))
+                .sum::<usize>(),
+            values
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("server_name_count", self.len().to_string()),
+            ("server_name_host_names", self.host_names().join(",")),
+            (
+                "server_name_bytes",
+                self.names
+                    .iter()
+                    .map(|name| name.encoded_len().unwrap_or(0))
+                    .sum::<usize>()
+                    .to_string(),
+            ),
+        ]
+    }
+}
+
+impl From<Vec<TlsServerName>> for TlsServerNameList {
+    fn from(names: Vec<TlsServerName>) -> Self {
+        Self::new(names)
+    }
+}
+
+impl<const N: usize> From<[TlsServerName; N]> for TlsServerNameList {
+    fn from(names: [TlsServerName; N]) -> Self {
+        Self::new(Vec::from(names))
+    }
+}
+
+impl TryFrom<&TlsRawExtension> for TlsServerNameList {
+    type Error = CrafterError;
+
+    fn try_from(value: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension(value)
+    }
+}
+
+impl TryFrom<TlsServerNameList> for TlsRawExtension {
+    type Error = CrafterError;
+
+    fn try_from(value: TlsServerNameList) -> Result<Self> {
+        value.to_raw_extension()
+    }
+}
+
+impl TlsRawExtension {
+    /// Create a raw `server_name` extension from a typed ServerNameList.
+    pub fn server_name(names: impl Into<TlsServerNameList>) -> Result<Self> {
+        names.into().to_raw_extension()
+    }
+
+    /// Decode this raw extension as a typed ServerNameList.
+    pub fn as_server_name_list(&self) -> Result<TlsServerNameList> {
+        TlsServerNameList::from_raw_extension(self)
+    }
+}
+
+fn validate_server_name_entry(name: &TlsServerName) -> Result<()> {
+    let body_len = name.body().len();
+    if body_len > u16::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            "tls.server_name.name.length",
+            "length must fit in two bytes",
+        ));
+    }
+
+    if let TlsServerName::HostName(host_name) = name {
+        if host_name.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.server_name.host_name.length",
+                "length must be at least one byte",
+            ));
+        }
+        if !host_name.is_ascii() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.server_name.host_name",
+                "host_name must be ASCII",
+            ));
+        }
+        if host_name.last() == Some(&b'.') {
+            return Err(CrafterError::invalid_field_value(
+                "tls.server_name.host_name",
+                "host_name must not include trailing dot",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_server_name_list_entries(names: &[TlsServerName]) -> Result<()> {
+    let mut seen = [false; 256];
+    for name in names {
+        validate_server_name_entry(name)?;
+        let name_type = name.name_type().raw() as usize;
+        if seen[name_type] {
+            return Err(CrafterError::invalid_field_value(
+                "tls.server_name.name_type",
+                "duplicate name_type in server_name list",
+            ));
+        }
+        seen[name_type] = true;
+    }
+    Ok(())
+}
+
+fn validate_server_name_list_len(len: usize) -> Result<()> {
+    if len == 0 {
+        return Err(CrafterError::invalid_field_value(
+            "tls.server_name_list.length",
+            "length must be at least one byte",
+        ));
+    }
+    if len > u16::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            "tls.server_name_list.length",
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
 }
 
 /// Error contexts used while encoding or decoding an extension list.
@@ -1003,6 +1583,245 @@ mod tests {
             extension.encode_to_vec().unwrap_err(),
             CrafterError::invalid_field_value(
                 "tls.extension.length",
+                "length must fit in two bytes"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_sni_host_name_builder_encodes_rfc6066_vector() {
+        let name = TlsServerName::host_name("example.com");
+        assert_eq!(name.name_type(), TlsServerNameType::HOST_NAME);
+        assert_eq!(name.host_name_value(), Some("example.com"));
+        assert_eq!(name.body(), b"example.com");
+        assert_eq!(
+            name.encode_to_vec().unwrap(),
+            [0x00, 0x00, 0x0b, b'e', b'x', b'a', b'm', b'p', b'l', b'e', b'.', b'c', b'o', b'm',]
+        );
+        assert_eq!(
+            name.summary(),
+            "server_name type=host_name host_name=example.com bytes=11"
+        );
+        assert!(name
+            .inspection_fields()
+            .contains(&("server_name_host_name", "example.com".to_string())));
+
+        let names = TlsServerNameList::from_host_name("example.com");
+        assert_eq!(names.len(), 1);
+        assert!(!names.is_empty());
+        assert_eq!(names.host_names(), vec!["example.com"]);
+        assert_eq!(names.byte_len().unwrap(), 14);
+        assert_eq!(names.encoded_len().unwrap(), 16);
+        assert_eq!(
+            names.encode_to_vec().unwrap(),
+            [
+                0x00, 0x0e, 0x00, 0x00, 0x0b, b'e', b'x', b'a', b'm', b'p', b'l', b'e', b'.', b'c',
+                b'o', b'm',
+            ]
+        );
+
+        let encoded_with_tail = [names.encode_to_vec().unwrap(), vec![0xaa]].concat();
+        let (decoded, tail) = TlsServerNameList::decode_prefix(&encoded_with_tail).unwrap();
+        assert_eq!(tail, &[0xaa]);
+        assert_eq!(decoded, names);
+        assert_eq!(decoded.as_slice(), decoded.names());
+        assert_eq!(
+            decoded.summary(),
+            "server_name list count=1 bytes=14 values=host_name:example.com"
+        );
+        assert!(decoded
+            .inspection_fields()
+            .contains(&("server_name_host_names", "example.com".to_string())));
+        assert_eq!(
+            decoded.clone().into_vec(),
+            vec![TlsServerName::host_name("example.com")]
+        );
+    }
+
+    #[test]
+    fn tls_extension_sni_preserves_unknown_name_types() {
+        let name_type = TlsServerNameType::from_u8(0x7b);
+        assert_eq!(name_type.raw(), 0x7b);
+        assert_eq!(name_type.as_u8(), 0x7b);
+        assert_eq!(name_type.name(), None);
+        assert_eq!(name_type.label(), "unknown server name type 0x7b");
+        assert_eq!(
+            name_type.summary(),
+            "unknown server name type 0x7b raw=0x7b"
+        );
+        assert_eq!(u8::from(name_type), 0x7b);
+        assert_eq!(TlsServerNameType::from(0x7b).to_string(), name_type.label());
+
+        let name = TlsServerName::unknown(name_type, [0xde, 0xad]);
+        assert_eq!(name.name_type(), name_type);
+        assert_eq!(name.body(), &[0xde, 0xad]);
+        assert_eq!(name.host_name_value(), None);
+        assert_eq!(
+            name.encode_to_vec().unwrap(),
+            [0x7b, 0x00, 0x02, 0xde, 0xad]
+        );
+
+        let list = TlsServerNameList::new(vec![name.clone()]);
+        assert_eq!(
+            list.encode_to_vec().unwrap(),
+            [0x00, 0x05, 0x7b, 0x00, 0x02, 0xde, 0xad]
+        );
+        assert_eq!(
+            TlsServerNameList::decode(list.encode_to_vec().unwrap()).unwrap(),
+            list
+        );
+        assert_eq!(
+            name.summary(),
+            "server_name type=unknown server name type 0x7b raw=0x7b body_bytes=2"
+        );
+    }
+
+    #[test]
+    fn tls_extension_sni_converts_to_and_from_raw_extension() {
+        let names = TlsServerNameList::from_host_name("www.example.test");
+        let raw = names.to_raw_extension().unwrap();
+        assert_eq!(raw.extension_type(), TlsExtensionType::SERVER_NAME);
+        assert_eq!(raw.raw_type(), constants::TLS_EXTENSION_SERVER_NAME);
+        assert_eq!(
+            raw.encode_to_vec().unwrap(),
+            [
+                0x00, 0x00, 0x00, 0x15, 0x00, 0x13, 0x00, 0x00, 0x10, b'w', b'w', b'w', b'.', b'e',
+                b'x', b'a', b'm', b'p', b'l', b'e', b'.', b't', b'e', b's', b't',
+            ]
+        );
+
+        assert_eq!(raw.as_server_name_list().unwrap(), names);
+        assert_eq!(TlsServerNameList::try_from(&raw).unwrap(), names);
+        assert_eq!(TlsRawExtension::try_from(names.clone()).unwrap(), raw);
+        assert_eq!(TlsRawExtension::server_name(names.clone()).unwrap(), raw);
+
+        assert_eq!(
+            TlsServerNameList::from_raw_extension(&TlsRawExtension::from_raw(0xbeef, []))
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be server_name"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_sni_reports_structured_decode_errors() {
+        assert_eq!(
+            TlsServerName::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.server_name.name_type",
+                TLS_SERVER_NAME_TYPE_LEN,
+                0
+            )
+        );
+        assert_eq!(
+            TlsServerName::decode([0x00]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.server_name.name.length",
+                TLS_SERVER_NAME_HEADER_LEN,
+                1
+            )
+        );
+        assert_eq!(
+            TlsServerName::decode([0x00, 0x00, 0x02, b'e']).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.server_name.name",
+                TLS_SERVER_NAME_HEADER_LEN + 2,
+                4
+            )
+        );
+        assert_eq!(
+            TlsServerName::decode([0x00, 0x00, 0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.server_name.host_name.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsServerName::host_name_bytes([0xff])
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.server_name.host_name",
+                "host_name must be ASCII"
+            )
+        );
+        assert_eq!(
+            TlsServerName::host_name("example.com.")
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.server_name.host_name",
+                "host_name must not include trailing dot"
+            )
+        );
+        assert_eq!(
+            TlsServerName::host_name_bytes(vec![b'a'; u16::MAX as usize + 1])
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.server_name.name.length",
+                "length must fit in two bytes"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_sni_reports_structured_list_errors() {
+        assert_eq!(
+            TlsServerNameList::decode([0x00]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.server_name_list.length",
+                TLS_SERVER_NAME_LIST_LENGTH_LEN,
+                1
+            )
+        );
+        assert_eq!(
+            TlsServerNameList::decode([0x00, 0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.server_name_list.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsServerNameList::decode([0x00, 0x04, 0x00, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.server_name_list", 6, 4)
+        );
+
+        let duplicate = TlsServerNameList::new(vec![
+            TlsServerName::host_name("example.com"),
+            TlsServerName::host_name("www.example.test"),
+        ]);
+        assert_eq!(
+            duplicate.encode_to_vec().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.server_name.name_type",
+                "duplicate name_type in server_name list"
+            )
+        );
+
+        let duplicate_bytes = [
+            0x00, 0x21, 0x00, 0x00, 0x0b, b'e', b'x', b'a', b'm', b'p', b'l', b'e', b'.', b'c',
+            b'o', b'm', 0x00, 0x00, 0x10, b'w', b'w', b'w', b'.', b'e', b'x', b'a', b'm', b'p',
+            b'l', b'e', b'.', b't', b'e', b's', b't',
+        ];
+        assert_eq!(
+            TlsServerNameList::decode(duplicate_bytes).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.server_name.name_type",
+                "duplicate name_type in server_name list"
+            )
+        );
+
+        let oversized = TlsServerNameList::new(vec![
+            TlsServerName::unknown(0x01, vec![0; u16::MAX as usize]),
+            TlsServerName::unknown(0x02, [0x00]),
+        ]);
+        assert_eq!(
+            oversized.encode_to_vec().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.server_name_list.length",
                 "length must fit in two bytes"
             )
         );
