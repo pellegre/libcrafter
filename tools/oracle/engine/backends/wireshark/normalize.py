@@ -38,6 +38,7 @@ from .protocols.ipv6 import (
 )
 from .protocols.mdns import canonicalize_mdns_payload
 from .protocols.quic import canonicalize_quic_payload
+from .protocols.tls import canonicalize_tls_payload, decoded_model_from_raw_tls
 
 
 BACKEND_NAME = "wireshark"
@@ -49,6 +50,7 @@ _DLT_BY_ROOT: dict[str, int] = {
     "IPv6": 101,
     "RadioTap": 127,
     "Raw": 101,
+    "raw:tls": 101,
     "link:ethernet": 1,
     "link:dot11": 105,
     "link:ieee80211": 105,
@@ -97,6 +99,7 @@ _PROTOCOL_LAYER_ALIASES: dict[str, str | None] = {
     "wlan_mgt.rsn": "rsn",
     "wlan_rsna_eapol": None,
     "tcp": "tcp",
+    "tls": "tls",
     "udp": "udp",
     "vlan": "vlan",
 }
@@ -148,6 +151,13 @@ def decode_bytes(
 
     if not raw:
         raise WiresharkNormalizationUnsupported("tshark cannot decode an empty packet")
+    if root == "raw:tls":
+        return decoded_model_from_raw_tls(
+            raw,
+            root=root,
+            source_hex=source_hex or raw.hex(),
+            feature_tags=feature_tags,
+        )
     datalink = _datalink_for_root(root, raw)
     with tempfile.TemporaryDirectory(prefix="oracle-wireshark.") as temp_dir:
         pcap_path = Path(temp_dir) / "packet.pcap"
@@ -220,6 +230,12 @@ def normalize_packet_json(
         normalized_layers.append(layer_name)
 
     canonicalize_quic_payload(
+        normalized_layers,
+        fields,
+        layers_object,
+        source_hex=source_hex,
+    )
+    canonicalize_tls_payload(
         normalized_layers,
         fields,
         layers_object,

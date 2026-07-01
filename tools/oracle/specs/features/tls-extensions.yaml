@@ -458,14 +458,16 @@ backend_support:
         record bytes and compares their enclosing record/handshake framing;
         extension-specific semantic expansion remains intentionally compact.
   wireshark:
-    status: planned
+    status: partial
     native_layers:
       - tls
       - data
+    decode: true
     notes:
       - >-
-        Wireshark support is parser-only and should normalize extension fields
-        while retaining opaque bodies for unknown or unsupported extensions.
+        Wireshark support is parser-only and compares extension coverage through
+        normalized enclosing record/handshake bytes while retaining opaque bodies
+        for unknown or unsupported extension details.
   libcrafter:
     status: supported
     encode: true

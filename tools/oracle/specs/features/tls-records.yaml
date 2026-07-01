@@ -345,14 +345,16 @@ backend_support:
         supported record payloads for offline comparison; malformed first-record
         inputs remain structured-error fixtures outside strict-byte materialization.
   wireshark:
-    status: planned
+    status: partial
     native_layers:
       - tls
       - data
+    decode: true
     notes:
       - >-
-        Wireshark support is parser-only and should normalize TLS record fields
-        while preserving opaque bytes for encrypted or unknown records.
+        Wireshark support is parser-only and normalizes TLS record framing from
+        tshark/source bytes while preserving opaque bytes for encrypted or
+        unknown records.
   libcrafter:
     status: supported
     encode: true

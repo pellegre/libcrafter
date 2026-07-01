@@ -313,10 +313,11 @@ def _build_corpus_report_from_generation(
     from ..corpus import build_corpus_report
     from ..generator import generate_plans
 
+    materialization_backend = _offline_materialization_backend(args.backend, direction)
     plans = generate_plans(
         seed=args.seed,
         profile=args.profile,
-        backend=args.backend,
+        backend=materialization_backend,
         count=args.count,
         root=args.root,
         family=args.family,
@@ -337,6 +338,7 @@ def _build_corpus_report_from_generation(
         metadata={
             "requested_count": args.count,
             "generated_count": len(plans),
+            "materialization_backend": materialization_backend,
             "filters": {
                 "root": args.root,
                 "family": args.family,
@@ -508,6 +510,8 @@ def _offline_required_capabilities(
     if args.dry_plan:
         return ()
     if direction == "backend_to_libcrafter":
+        if args.backend == "wireshark":
+            return ("decode",)
         return ("encode", "decode")
     if direction == "libcrafter_to_backend":
         return ("decode",)
@@ -517,7 +521,7 @@ def _offline_required_capabilities(
 def _offline_corpus_plans(
     args: argparse.Namespace,
 ) -> tuple[list[PacketPlan], list[str], JSONObject]:
-    from ..corpus import CorpusFormatError, load_corpus_report
+    from ..corpus import CorpusFormatError, load_corpus_report, populate_corpus_eligibility
 
     corpus_path: Path | None = None
     corpus_source = "generated"
@@ -536,6 +540,12 @@ def _offline_corpus_plans(
             )
 
     packets = list(corpus_report.packets)
+    materialization_backend = _offline_materialization_backend(args.backend, args.direction)
+    if materialization_backend != corpus_report.backend:
+        packets = populate_corpus_eligibility(
+            backend=materialization_backend,
+            packets=packets,
+        )
     if args.index is not None:
         packets = [packet for packet in packets if packet.plan.index == args.index]
 
@@ -568,6 +578,7 @@ def _offline_corpus_plans(
         "corpus_source": corpus_source,
         "corpus_path": str(corpus_path) if corpus_path is not None else None,
         "corpus_backend": corpus_report.backend,
+        "materialization_backend": materialization_backend,
         "corpus_profile": corpus_report.profile,
         "corpus_seed": corpus_report.seed,
         "corpus_count": corpus_report.count,
@@ -598,6 +609,12 @@ def _live_case_byte_policies() -> dict[str, str]:
         return case_byte_policy_index()
     except Exception:
         return {}
+
+
+def _offline_materialization_backend(backend: str, direction: str) -> str:
+    if backend == "wireshark" and normalize_direction(direction) == "backend_to_libcrafter":
+        return "scapy"
+    return backend
 
 
 def _live_corpus_plans(

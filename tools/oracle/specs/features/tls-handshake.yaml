@@ -557,14 +557,16 @@ backend_support:
         and generic handshake headers; detailed native TLS helper output remains
         backend metadata rather than a required comparison surface.
   wireshark:
-    status: planned
+    status: partial
     native_layers:
       - tls
       - data
+    decode: true
     notes:
       - >-
-        Wireshark support is parser-only and should normalize handshake fields
-        while preserving opaque bytes for unknown or encrypted shapes.
+        Wireshark support is parser-only and normalizes record and generic
+        handshake headers from tshark/source bytes while preserving opaque bytes
+        for unknown or encrypted shapes.
   libcrafter:
     status: supported
     encode: true
