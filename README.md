@@ -223,6 +223,7 @@ preserved as `Raw` payloads when the enclosing header is valid.
 | IPv6 | Base header plus hop-by-hop, destination, fragment, routing, mobile-routing, and segment-routing extension headers | [ipv6](docs/guide/ipv6.md) |
 | ICMPv4 / ICMPv6 | ICMPv4 (with `Icmp` deprecated alias) and ICMP extensions (RFC 4884); ICMPv6 echo/errors, Neighbor Discovery (RFC 4861), MLD v1/v2, Extended Echo, experimental Node Information | [icmpv6](docs/guide/icmpv6.md) |
 | TCP | Segment construction, typed options, checksums | [tcp](docs/guide/tcp.md) |
+| TLS | TLS-over-TCP record layer with typed records, handshakes, extensions, alerts, ChangeCipherSpec, heartbeat, opaque application data, and unknown preservation; not a TLS endpoint, scanner, certificate validator, or TCP stream reassembler | [tls](docs/guide/tls.md) |
 | UDP | UDP with options (RFC 9868) and checksum status | [udp](docs/guide/udp.md) |
 | QUIC | UDP-carried QUIC datagrams, long/short headers, Version Negotiation, Retry, Initial/Handshake/0-RTT packets, frames, transport parameters, protected-payload preservation, and probe dry-run/lab planning; not a QUIC endpoint stack | [quic](docs/guide/quic.md) |
 | DNS | EDNS(0), SVCB/HTTPS, DNSSEC record types | [dns](docs/guide/dns.md) |
