@@ -595,11 +595,11 @@ impl TlsRecordBody {
 
     fn decode_handshake_fragment(fragment: Vec<u8>) -> Result<Self> {
         if fragment.is_empty() {
-            return Err(CrafterError::buffer_too_short(
-                "tls.handshake.header",
-                TLS_HANDSHAKE_HEADER_LEN,
-                0,
-            ));
+            return Ok(Self::Handshake(TlsHandshakeRecordBody::from_decoded_parts(
+                Vec::new(),
+                Vec::new(),
+                fragment,
+            )));
         }
 
         let mut remaining = fragment.as_slice();
@@ -623,7 +623,13 @@ impl TlsRecordBody {
                         messages, raw_tail, fragment,
                     )));
                 }
-                Err(err) => return Err(err),
+                Err(_err) => {
+                    return Ok(Self::Handshake(TlsHandshakeRecordBody::from_decoded_parts(
+                        Vec::new(),
+                        fragment.clone(),
+                        fragment,
+                    )));
+                }
             }
         }
 
@@ -1931,26 +1937,52 @@ mod tests {
     }
 
     #[test]
-    fn tls_handshake_record_decode_errors_when_first_message_is_partial() {
+    fn tls_fragmented_handshake_preserves_first_partial_message_as_raw_tail() -> Result<()> {
+        let short_header = [0x16, 0x03, 0x03, 0x00, 0x01, 0x01];
+        let record = TlsRecord::decode(short_header)?;
+        let body = record
+            .body()
+            .handshake_body()
+            .expect("partial handshake body");
+        assert!(record.body().is_handshake());
+        assert_eq!(body.messages(), &[]);
+        assert_eq!(body.raw_tail(), &[0x01]);
+        assert_eq!(record.fragment(), &[0x01]);
+        assert_eq!(record.encode_to_vec()?, short_header);
+
+        let partial_body = [0x16, 0x03, 0x03, 0x00, 0x05, 0x01, 0x00, 0x00, 0x04, 0xaa];
+        let record = TlsRecord::decode(partial_body)?;
+        let body = record
+            .body()
+            .handshake_body()
+            .expect("partial handshake body");
+        assert_eq!(body.messages(), &[]);
+        assert_eq!(body.raw_tail(), &[0x01, 0x00, 0x00, 0x04, 0xaa]);
+        assert!(body.has_raw_tail());
+        assert_eq!(record.fragment(), &[0x01, 0x00, 0x00, 0x04, 0xaa]);
+        assert_eq!(record.encode_to_vec()?, partial_body);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_fragmented_handshake_empty_record_fragment_is_preserved() -> Result<()> {
+        let record = TlsRecord::decode([0x16, 0x03, 0x03, 0x00, 0x00])?;
+        let body = record
+            .body()
+            .handshake_body()
+            .expect("empty handshake body");
+
+        assert_eq!(body.messages(), &[]);
+        assert_eq!(body.raw_tail(), &[]);
+        assert!(!body.has_raw_tail());
+        assert_eq!(record.fragment(), &[]);
         assert_eq!(
-            TlsRecord::decode([0x16, 0x03, 0x03, 0x00, 0x01, 0x01]).unwrap_err(),
-            CrafterError::buffer_too_short("tls.handshake.header", TLS_HANDSHAKE_HEADER_LEN, 1)
+            record.summary(),
+            "record content_type=handshake legacy_record_version=TLS 1.2 declared_length=0 fragment_bytes=0 body=handshake"
         );
 
-        assert_eq!(
-            TlsRecord::decode([0x16, 0x03, 0x03, 0x00, 0x05, 0x01, 0x00, 0x00, 0x04, 0xaa])
-                .unwrap_err(),
-            CrafterError::buffer_too_short(
-                "tls.handshake.body",
-                TLS_HANDSHAKE_HEADER_LEN + 4,
-                TLS_HANDSHAKE_HEADER_LEN + 1
-            )
-        );
-
-        assert_eq!(
-            TlsRecord::decode([0x16, 0x03, 0x03, 0x00, 0x00]).unwrap_err(),
-            CrafterError::buffer_too_short("tls.handshake.header", TLS_HANDSHAKE_HEADER_LEN, 0)
-        );
+        Ok(())
     }
 
     #[test]
