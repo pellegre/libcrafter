@@ -9200,6 +9200,18 @@ impl TlsExtensionListContext {
         )
     }
 
+    /// EncryptedExtensions `tls.encrypted_extensions.extensions.*` context.
+    pub const fn encrypted_extensions() -> Self {
+        Self::new(
+            "tls.encrypted_extensions.extensions",
+            "tls.encrypted_extensions.extensions.length",
+            "tls.encrypted_extensions.extension",
+            "tls.encrypted_extensions.extension.type",
+            "tls.encrypted_extensions.extension.length",
+            "tls.encrypted_extensions.extension.body",
+        )
+    }
+
     /// Certificate `tls.certificate.extensions.*` context.
     pub const fn certificate() -> Self {
         Self::new(

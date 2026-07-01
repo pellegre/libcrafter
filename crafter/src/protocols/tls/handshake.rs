@@ -1,8 +1,8 @@
 //! TLS handshake message helpers.
 //!
 //! A TLS handshake message starts with a one-octet `HandshakeType` followed by
-//! a three-octet big-endian body length. Unknown, unsupported, encrypted, or
-//! intentionally raw message bodies stay opaque so callers can preserve bytes.
+//! a three-octet big-endian body length. Unknown, unsupported, or intentionally
+//! raw message bodies stay opaque so callers can preserve bytes.
 
 use core::fmt;
 
@@ -599,8 +599,8 @@ pub enum TlsHandshakeBody {
     NewSessionTicket(Vec<u8>),
     /// Opaque `end_of_early_data` body bytes.
     EndOfEarlyData(Vec<u8>),
-    /// Opaque `encrypted_extensions` body bytes.
-    EncryptedExtensions(Vec<u8>),
+    /// `encrypted_extensions` body bytes plus a typed view when available.
+    EncryptedExtensions(TlsEncryptedExtensionsBody),
     /// Opaque `certificate` body bytes.
     Certificate(Vec<u8>),
     /// Opaque `certificate_request` body bytes.
@@ -654,7 +654,14 @@ impl TlsHandshakeBody {
 
     /// Create an opaque body for a known `encrypted_extensions` hook.
     pub fn encrypted_extensions(body: impl Into<Vec<u8>>) -> Self {
-        Self::EncryptedExtensions(body.into())
+        Self::EncryptedExtensions(TlsEncryptedExtensionsBody::raw(body))
+    }
+
+    /// Create a typed body for a known `encrypted_extensions` hook.
+    pub fn from_encrypted_extensions(encrypted_extensions: TlsEncryptedExtensions) -> Result<Self> {
+        Ok(Self::EncryptedExtensions(
+            TlsEncryptedExtensionsBody::from_encrypted_extensions(encrypted_extensions)?,
+        ))
     }
 
     /// Create an opaque body for a known `certificate` hook.
@@ -703,7 +710,9 @@ impl TlsHandshakeBody {
             TlsHandshakeType::SERVER_HELLO => Self::ServerHello(TlsServerHelloBody::raw(body)),
             TlsHandshakeType::NEW_SESSION_TICKET => Self::NewSessionTicket(body),
             TlsHandshakeType::END_OF_EARLY_DATA => Self::EndOfEarlyData(body),
-            TlsHandshakeType::ENCRYPTED_EXTENSIONS => Self::EncryptedExtensions(body),
+            TlsHandshakeType::ENCRYPTED_EXTENSIONS => {
+                Self::EncryptedExtensions(TlsEncryptedExtensionsBody::raw(body))
+            }
             TlsHandshakeType::CERTIFICATE => Self::Certificate(body),
             TlsHandshakeType::CERTIFICATE_REQUEST => Self::CertificateRequest(body),
             TlsHandshakeType::CERTIFICATE_VERIFY => Self::CertificateVerify(body),
@@ -729,7 +738,9 @@ impl TlsHandshakeBody {
             )),
             TlsHandshakeType::NEW_SESSION_TICKET => Ok(Self::NewSessionTicket(body)),
             TlsHandshakeType::END_OF_EARLY_DATA => Ok(Self::EndOfEarlyData(body)),
-            TlsHandshakeType::ENCRYPTED_EXTENSIONS => Ok(Self::EncryptedExtensions(body)),
+            TlsHandshakeType::ENCRYPTED_EXTENSIONS => Ok(Self::EncryptedExtensions(
+                TlsEncryptedExtensionsBody::from_decoded_body(body)?,
+            )),
             TlsHandshakeType::CERTIFICATE => Ok(Self::Certificate(body)),
             TlsHandshakeType::CERTIFICATE_REQUEST => Ok(Self::CertificateRequest(body)),
             TlsHandshakeType::CERTIFICATE_VERIFY => Ok(Self::CertificateVerify(body)),
@@ -763,9 +774,9 @@ impl TlsHandshakeBody {
         match self {
             Self::ClientHello(body) => body.body(),
             Self::ServerHello(body) => body.body(),
+            Self::EncryptedExtensions(body) => body.body(),
             Self::NewSessionTicket(body)
             | Self::EndOfEarlyData(body)
-            | Self::EncryptedExtensions(body)
             | Self::Certificate(body)
             | Self::CertificateRequest(body)
             | Self::CertificateVerify(body)
@@ -781,9 +792,9 @@ impl TlsHandshakeBody {
         match self {
             Self::ClientHello(body) => body.into_body(),
             Self::ServerHello(body) => body.into_body(),
+            Self::EncryptedExtensions(body) => body.into_body(),
             Self::NewSessionTicket(body)
             | Self::EndOfEarlyData(body)
-            | Self::EncryptedExtensions(body)
             | Self::Certificate(body)
             | Self::CertificateRequest(body)
             | Self::CertificateVerify(body)
@@ -825,6 +836,14 @@ impl TlsHandshakeBody {
         }
     }
 
+    /// Borrow the decoded EncryptedExtensions fields when this body carries them.
+    pub const fn as_encrypted_extensions(&self) -> Option<&TlsEncryptedExtensions> {
+        match self {
+            Self::EncryptedExtensions(body) => body.encrypted_extensions(),
+            _ => None,
+        }
+    }
+
     /// Return true when this body is a decoded or typed ClientHello.
     pub const fn is_typed_client_hello(&self) -> bool {
         match self {
@@ -837,6 +856,14 @@ impl TlsHandshakeBody {
     pub const fn is_typed_server_hello(&self) -> bool {
         match self {
             Self::ServerHello(body) => body.is_typed(),
+            _ => false,
+        }
+    }
+
+    /// Return true when this body is a decoded or typed EncryptedExtensions.
+    pub const fn is_typed_encrypted_extensions(&self) -> bool {
+        match self {
+            Self::EncryptedExtensions(body) => body.is_typed(),
             _ => false,
         }
     }
@@ -981,6 +1008,14 @@ impl TlsHandshake {
         )
     }
 
+    /// Construct an `encrypted_extensions` handshake message from typed fields.
+    pub fn from_encrypted_extensions(encrypted_extensions: TlsEncryptedExtensions) -> Result<Self> {
+        Ok(Self::from_header_and_body(
+            TlsHandshakeHeader::encrypted_extensions(),
+            TlsHandshakeBody::from_encrypted_extensions(encrypted_extensions)?,
+        ))
+    }
+
     /// Construct a `certificate` handshake message with opaque body bytes.
     pub fn certificate(body: impl Into<Vec<u8>>) -> Self {
         Self::from_header_and_body(
@@ -1092,6 +1127,11 @@ impl TlsHandshake {
     /// Borrow decoded ServerHello fields when this message carries them.
     pub fn server_hello_body(&self) -> Option<&TlsServerHello> {
         self.body.as_server_hello()
+    }
+
+    /// Borrow decoded EncryptedExtensions fields when this message carries them.
+    pub fn encrypted_extensions_body(&self) -> Option<&TlsEncryptedExtensions> {
+        self.body.as_encrypted_extensions()
     }
 
     /// Consume the message and return its header plus body hook.
@@ -2038,6 +2078,177 @@ impl Default for TlsServerHello {
     }
 }
 
+/// TLS 1.3 EncryptedExtensions body fields.
+///
+/// RFC 8446 section 4.3.1 defines EncryptedExtensions as a single
+/// uint16-length-prefixed extension list. The extensions stay raw so unknown
+/// and future extension bodies remain byte-exact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsEncryptedExtensions {
+    extensions: TlsExtensions,
+}
+
+impl TlsEncryptedExtensions {
+    /// Construct an empty EncryptedExtensions body.
+    pub fn new() -> Self {
+        Self::empty()
+    }
+
+    /// Construct an empty EncryptedExtensions body.
+    pub fn empty() -> Self {
+        Self {
+            extensions: TlsExtensions::empty(),
+        }
+    }
+
+    /// Construct EncryptedExtensions from an ordered extension list.
+    pub fn from_extensions(extensions: impl Into<TlsExtensions>) -> Self {
+        Self {
+            extensions: extensions.into(),
+        }
+    }
+
+    /// Construct EncryptedExtensions from ordered raw extension entries.
+    pub fn from_raw_extensions(extensions: impl Into<Vec<TlsRawExtension>>) -> Self {
+        Self {
+            extensions: TlsExtensions::new(extensions),
+        }
+    }
+
+    /// Replace the ordered extension list.
+    pub fn with_extensions(mut self, extensions: impl Into<TlsExtensions>) -> Self {
+        self.extensions = extensions.into();
+        self
+    }
+
+    /// Append one raw extension.
+    pub fn with_extension(mut self, extension: TlsRawExtension) -> Self {
+        self.extensions.push(extension);
+        self
+    }
+
+    /// Append one raw extension from an extension type and body bytes.
+    pub fn with_raw_extension(self, extension_type: u16, body: impl Into<Vec<u8>>) -> Self {
+        self.with_extension(TlsRawExtension::from_raw(extension_type, body))
+    }
+
+    /// Borrow the ordered extension list.
+    pub const fn extensions(&self) -> &TlsExtensions {
+        &self.extensions
+    }
+
+    /// Borrow the ordered raw extension entries.
+    pub fn raw_extensions(&self) -> &[TlsRawExtension] {
+        self.extensions.extensions()
+    }
+
+    /// Number of extension entries.
+    pub fn len(&self) -> usize {
+        self.extensions.len()
+    }
+
+    /// Return true when the body carries no extension entries.
+    pub fn is_empty(&self) -> bool {
+        self.extensions.is_empty()
+    }
+
+    /// Number of bytes occupied by the EncryptedExtensions body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        self.extensions
+            .encoded_len_with_context(TlsExtensionListContext::encrypted_extensions())
+    }
+
+    /// Append the EncryptedExtensions body bytes.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.extensions
+            .encode_with_context(TlsExtensionListContext::encrypted_extensions(), out)
+    }
+
+    /// Return the encoded EncryptedExtensions body bytes.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        self.extensions
+            .encode_to_vec_with_context(TlsExtensionListContext::encrypted_extensions())
+    }
+
+    /// Compile the EncryptedExtensions body bytes.
+    pub fn compile(&self) -> Result<Vec<u8>> {
+        self.encode_to_vec()
+    }
+
+    /// Decode one complete EncryptedExtensions body.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (encrypted_extensions, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.encrypted_extensions.length",
+                "trailing bytes after extensions",
+            ));
+        }
+
+        Ok(encrypted_extensions)
+    }
+
+    /// Decode one EncryptedExtensions body from the front of `bytes`.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let (extensions, tail) = TlsExtensions::decode_prefix_with_context(
+            TlsExtensionListContext::encrypted_extensions(),
+            bytes,
+        )?;
+        Ok((Self { extensions }, tail))
+    }
+
+    /// Stable one-line summary preserving extension order and count.
+    pub fn summary(&self) -> String {
+        format!(
+            "encrypted_extensions extensions={} extension_bytes={} values={}",
+            self.extensions.len(),
+            self.extensions
+                .byte_len_with_context(TlsExtensionListContext::encrypted_extensions())
+                .unwrap_or(0),
+            self.extensions.labels().join(",")
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("extensions_count", self.extensions.len().to_string()),
+            (
+                "extensions_bytes",
+                self.extensions
+                    .byte_len_with_context(TlsExtensionListContext::encrypted_extensions())
+                    .unwrap_or(0)
+                    .to_string(),
+            ),
+            ("extensions", self.extensions.labels().join(",")),
+        ]
+    }
+}
+
+impl Default for TlsEncryptedExtensions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl From<TlsExtensions> for TlsEncryptedExtensions {
+    fn from(extensions: TlsExtensions) -> Self {
+        Self::from_extensions(extensions)
+    }
+}
+
+impl From<Vec<TlsRawExtension>> for TlsEncryptedExtensions {
+    fn from(extensions: Vec<TlsRawExtension>) -> Self {
+        Self::from_raw_extensions(extensions)
+    }
+}
+
+impl<const N: usize> From<[TlsRawExtension; N]> for TlsEncryptedExtensions {
+    fn from(extensions: [TlsRawExtension; N]) -> Self {
+        Self::from_raw_extensions(Vec::from(extensions))
+    }
+}
+
 /// ServerHello handshake body bytes plus an optional decoded view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsServerHelloBody {
@@ -2091,6 +2302,67 @@ impl TlsServerHelloBody {
     /// Return true when the body carries decoded ServerHello fields.
     pub const fn is_typed(&self) -> bool {
         self.server_hello.is_some()
+    }
+
+    /// Number of preserved body bytes.
+    pub fn body_len(&self) -> usize {
+        self.body.len()
+    }
+}
+
+/// EncryptedExtensions handshake body bytes plus an optional decoded view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsEncryptedExtensionsBody {
+    body: Vec<u8>,
+    encrypted_extensions: Option<TlsEncryptedExtensions>,
+}
+
+impl TlsEncryptedExtensionsBody {
+    /// Preserve EncryptedExtensions body bytes without parsing them.
+    pub fn raw(body: impl Into<Vec<u8>>) -> Self {
+        Self {
+            body: body.into(),
+            encrypted_extensions: None,
+        }
+    }
+
+    /// Build EncryptedExtensions body bytes from typed fields.
+    pub fn from_encrypted_extensions(encrypted_extensions: TlsEncryptedExtensions) -> Result<Self> {
+        let body = encrypted_extensions.encode_to_vec()?;
+        Ok(Self {
+            body,
+            encrypted_extensions: Some(encrypted_extensions),
+        })
+    }
+
+    /// Decode and preserve exact EncryptedExtensions body bytes.
+    pub fn from_decoded_body(body: impl Into<Vec<u8>>) -> Result<Self> {
+        let body = body.into();
+        let encrypted_extensions = TlsEncryptedExtensions::decode(&body)?;
+        Ok(Self {
+            body,
+            encrypted_extensions: Some(encrypted_extensions),
+        })
+    }
+
+    /// Borrow the preserved body bytes.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// Consume the wrapper and return the preserved body bytes.
+    pub fn into_body(self) -> Vec<u8> {
+        self.body
+    }
+
+    /// Borrow the decoded EncryptedExtensions fields when available.
+    pub const fn encrypted_extensions(&self) -> Option<&TlsEncryptedExtensions> {
+        self.encrypted_extensions.as_ref()
+    }
+
+    /// Return true when the body carries decoded EncryptedExtensions fields.
+    pub const fn is_typed(&self) -> bool {
+        self.encrypted_extensions.is_some()
     }
 
     /// Number of preserved body bytes.
@@ -2714,6 +2986,135 @@ mod tests {
         assert_eq!(
             raw.encode_to_vec()?,
             vec![0x02, 0x00, 0x00, 0x02, 0xca, 0xfe]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_encrypted_extensions_empty_list_encodes_decodes_through_handshake() -> Result<()> {
+        let encrypted_extensions = TlsEncryptedExtensions::new();
+        let encoded = encrypted_extensions.encode_to_vec()?;
+
+        assert!(encrypted_extensions.is_empty());
+        assert_eq!(encrypted_extensions.len(), 0);
+        assert_eq!(encoded, vec![0x00, 0x00]);
+        assert_eq!(encrypted_extensions.encoded_len()?, 2);
+        assert_eq!(
+            encrypted_extensions.summary(),
+            "encrypted_extensions extensions=0 extension_bytes=0 values="
+        );
+
+        let fields = encrypted_extensions.inspection_fields();
+        assert!(fields.contains(&("extensions_count", "0".to_string())));
+        assert!(fields.contains(&("extensions_bytes", "0".to_string())));
+        assert!(fields.contains(&("extensions", String::new())));
+
+        let handshake = TlsHandshake::from_encrypted_extensions(encrypted_extensions.clone())?;
+        let bytes = tls_handshake_fixture(TlsHandshakeType::ENCRYPTED_EXTENSIONS.raw(), &encoded);
+
+        assert_eq!(handshake.body_bytes(), encoded.as_slice());
+        assert_eq!(handshake.effective_length()?, encoded.len() as u32);
+        assert_eq!(
+            handshake.body().handshake_type_hint(),
+            Some(TlsHandshakeType::ENCRYPTED_EXTENSIONS)
+        );
+        assert!(handshake.body().is_typed_encrypted_extensions());
+        assert_eq!(
+            handshake.encrypted_extensions_body(),
+            Some(&encrypted_extensions)
+        );
+        assert_eq!(handshake.encode_to_vec()?, bytes);
+
+        let decoded = TlsHandshake::decode(&bytes)?;
+        assert!(matches!(
+            decoded.body(),
+            TlsHandshakeBody::EncryptedExtensions(_)
+        ));
+        assert!(decoded.body().is_typed_encrypted_extensions());
+        assert_eq!(
+            decoded.encrypted_extensions_body(),
+            Some(&encrypted_extensions)
+        );
+        assert_eq!(decoded.encode_to_vec()?, bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_encrypted_extensions_populated_list_preserves_unknown_extensions() -> Result<()> {
+        let encrypted_extensions = TlsEncryptedExtensions::new()
+            .with_raw_extension(0x0010, [0x00, 0x03, 0x02, b'h', b'2'])
+            .with_extension(TlsRawExtension::from_raw(0xbeef, [0xde, 0xad]));
+        let encoded = encrypted_extensions.encode_to_vec()?;
+
+        assert_eq!(
+            encoded,
+            vec![
+                0x00, 0x0f, // extension list length
+                0x00, 0x10, 0x00, 0x05, 0x00, 0x03, 0x02, b'h', b'2', 0xbe, 0xef, 0x00, 0x02, 0xde,
+                0xad,
+            ]
+        );
+        assert_eq!(encrypted_extensions.len(), 2);
+        assert_eq!(encrypted_extensions.raw_extensions()[0].raw_type(), 0x0010);
+        assert_eq!(
+            encrypted_extensions.raw_extensions()[0].body(),
+            &[0x00, 0x03, 0x02, b'h', b'2']
+        );
+        assert_eq!(encrypted_extensions.raw_extensions()[1].raw_type(), 0xbeef);
+        assert_eq!(
+            encrypted_extensions.raw_extensions()[1].body(),
+            &[0xde, 0xad]
+        );
+        assert_eq!(
+            encrypted_extensions.summary(),
+            "encrypted_extensions extensions=2 extension_bytes=15 values=application_layer_protocol_negotiation,unknown extension 0xbeef"
+        );
+
+        let decoded = TlsEncryptedExtensions::decode(&encoded)?;
+        assert_eq!(decoded, encrypted_extensions);
+        assert_eq!(decoded.raw_extensions()[1].raw_type(), 0xbeef);
+        assert_eq!(decoded.raw_extensions()[1].body(), &[0xde, 0xad]);
+        assert_eq!(decoded.encode_to_vec()?, encoded);
+        assert_eq!(decoded.compile()?, encoded);
+
+        let with_tail = [encoded.as_slice(), &[0xaa, 0xbb][..]].concat();
+        let (decoded_prefix, tail) = TlsEncryptedExtensions::decode_prefix(&with_tail)?;
+        assert_eq!(decoded_prefix, encrypted_extensions);
+        assert_eq!(tail, &[0xaa, 0xbb]);
+
+        let handshake = TlsHandshake::from_encrypted_extensions(encrypted_extensions.clone())?;
+        let handshake_bytes =
+            tls_handshake_fixture(TlsHandshakeType::ENCRYPTED_EXTENSIONS.raw(), &encoded);
+        let decoded_handshake = TlsHandshake::decode(&handshake_bytes)?;
+        assert_eq!(
+            decoded_handshake.encrypted_extensions_body(),
+            Some(&encrypted_extensions)
+        );
+        assert_eq!(handshake.encode_to_vec()?, handshake_bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_encrypted_extensions_raw_body_remains_available() -> Result<()> {
+        let raw = TlsHandshake::encrypted_extensions([0xca, 0xfe]);
+
+        assert_eq!(raw.body_bytes(), &[0xca, 0xfe]);
+        assert!(matches!(
+            raw.body(),
+            TlsHandshakeBody::EncryptedExtensions(_)
+        ));
+        assert!(raw.encrypted_extensions_body().is_none());
+        assert!(!raw.body().is_typed_encrypted_extensions());
+        assert_eq!(
+            raw.encode_to_vec()?,
+            vec![0x08, 0x00, 0x00, 0x02, 0xca, 0xfe]
+        );
+        assert_eq!(
+            TlsEncryptedExtensions::decode([0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.encrypted_extensions.extensions.length", 2, 1)
         );
 
         Ok(())
