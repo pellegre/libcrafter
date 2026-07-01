@@ -9320,6 +9320,22 @@ impl TlsExtensions {
             .collect()
     }
 
+    /// Return every extension with this raw type in wire order, preserving duplicates.
+    pub fn all_by_raw_type(&self, raw_type: u16) -> Vec<&TlsRawExtension> {
+        self.extensions
+            .iter()
+            .filter(|extension| extension.raw_type() == raw_type)
+            .collect()
+    }
+
+    /// Return every extension with this type in wire order, preserving duplicates.
+    pub fn all_by_type(
+        &self,
+        extension_type: impl Into<TlsExtensionType>,
+    ) -> Vec<&TlsRawExtension> {
+        self.all_by_raw_type(extension_type.into().raw())
+    }
+
     /// Consume the list and return the ordered raw extension entries.
     pub fn into_vec(self) -> Vec<TlsRawExtension> {
         self.extensions
@@ -13429,6 +13445,61 @@ mod tests {
         assert_eq!(decoded.extensions()[2].body(), &[0xfa, 0xce, 0x00]);
         assert_eq!(decoded.as_slice(), decoded.extensions());
         assert_eq!(decoded.clone().into_vec(), extensions.into_vec());
+    }
+
+    #[test]
+    fn tls_unknown_extensions_preserve_order_duplicates_labels_and_query_all() {
+        let extensions = TlsExtensions::from_raws([
+            (0xbeef, vec![0xde, 0xad]),
+            (
+                constants::TLS_EXTENSION_SUPPORTED_VERSIONS,
+                vec![0x03, 0x04],
+            ),
+            (0xbeef, vec![0xfa, 0xce, 0x00]),
+            (0xff10, vec![0x7a]),
+        ]);
+
+        let encoded = extensions.encode_to_vec().unwrap();
+        let decoded = TlsExtensions::decode(encoded).unwrap();
+        assert_eq!(
+            decoded.raw_types(),
+            vec![
+                0xbeef,
+                constants::TLS_EXTENSION_SUPPORTED_VERSIONS,
+                0xbeef,
+                0xff10
+            ]
+        );
+        assert_eq!(
+            decoded.labels(),
+            vec![
+                "unknown extension 0xbeef".to_string(),
+                "supported_versions".to_string(),
+                "unknown extension 0xbeef".to_string(),
+                "private-use extension 0xff10".to_string(),
+            ]
+        );
+        assert_eq!(
+            decoded.summary(),
+            "extensions count=4 bytes=24 values=unknown extension 0xbeef,supported_versions,unknown extension 0xbeef,private-use extension 0xff10"
+        );
+
+        let unknowns = decoded.all_by_raw_type(0xbeef);
+        assert_eq!(unknowns.len(), 2);
+        assert_eq!(unknowns[0].body(), &[0xde, 0xad]);
+        assert_eq!(unknowns[1].body(), &[0xfa, 0xce, 0x00]);
+        assert_eq!(
+            decoded
+                .all_by_type(TlsExtensionType::supported_versions())
+                .into_iter()
+                .map(TlsRawExtension::body)
+                .collect::<Vec<_>>(),
+            vec![&[0x03, 0x04][..]]
+        );
+        assert!(decoded.all_by_raw_type(0x1234).is_empty());
+        assert!(decoded
+            .inspection_fields()
+            .contains(&("extensions", decoded.labels().join(","))));
     }
 
     #[test]
