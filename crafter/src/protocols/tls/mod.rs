@@ -10,6 +10,7 @@ pub mod content_type;
 pub(crate) mod decode;
 pub mod extension;
 pub mod handshake;
+pub mod layer;
 pub mod named_group;
 pub mod record;
 pub mod signature_scheme;
@@ -24,6 +25,7 @@ pub use extension::{
     TlsExtensionType, TlsRawExtension, TLS_EXTENSION_HEADER_LEN, TLS_EXTENSION_LENGTH_LEN,
     TLS_EXTENSION_TYPE_LEN,
 };
+pub use layer::Tls;
 pub use named_group::{TlsNamedGroup, TlsNamedGroupList};
 pub use record::{
     TlsRecord, TlsRecordBody, TlsRecordHeader, TLS_RECORD_CONTENT_TYPE_LEN, TLS_RECORD_HEADER_LEN,
