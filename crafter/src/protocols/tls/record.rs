@@ -10,6 +10,7 @@ use super::content_type::TlsContentType;
 use super::handshake::{TlsHandshake, TLS_HANDSHAKE_HEADER_LEN};
 use super::version::{TlsVersion, TlsVersionField};
 use crate::field::{Field, FieldState};
+use crate::protocols::transport::common::hex_bytes;
 use crate::{CrafterError, Result};
 
 /// TLS record content type field width in bytes.
@@ -327,6 +328,103 @@ impl TlsChangeCipherSpecRecordBody {
     }
 }
 
+/// TLS `application_data` record fragment bytes.
+///
+/// Application data is encrypted or application-defined. This type preserves
+/// the bytes for packet construction and inspection without interpreting HTTP,
+/// MQTT, DNS-over-TLS, or any other application protocol inside the fragment.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TlsApplicationData {
+    bytes: Vec<u8>,
+}
+
+impl TlsApplicationData {
+    /// Preserve caller-supplied application data bytes.
+    pub fn new(bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            bytes: bytes.into(),
+        }
+    }
+
+    /// Preserve caller-supplied application data bytes.
+    pub fn opaque(bytes: impl Into<Vec<u8>>) -> Self {
+        Self::new(bytes)
+    }
+
+    /// Preserve caller-supplied application data bytes.
+    pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> Self {
+        Self::new(bytes)
+    }
+
+    /// Decode application data by preserving all fragment bytes.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        Ok(Self::new(bytes.as_ref().to_vec()))
+    }
+
+    /// Borrow the preserved bytes.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Borrow the preserved bytes.
+    pub fn fragment(&self) -> &[u8] {
+        self.bytes()
+    }
+
+    /// Borrow the preserved bytes.
+    pub fn data(&self) -> &[u8] {
+        self.bytes()
+    }
+
+    /// Consume and return the preserved bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    /// Number of preserved bytes.
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Return true when no bytes are carried.
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// Number of bytes occupied by the fragment.
+    pub fn encoded_len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Append the preserved bytes.
+    pub fn encode(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.bytes);
+    }
+
+    /// Return the preserved bytes.
+    pub fn encode_to_vec(&self) -> Vec<u8> {
+        self.bytes.clone()
+    }
+
+    /// Compatibility alias for returning the preserved bytes.
+    pub fn compile(&self) -> Vec<u8> {
+        self.encode_to_vec()
+    }
+
+    /// Stable one-line summary preserving only byte count.
+    pub fn summary(&self) -> String {
+        format!("application_data bytes={}", self.bytes.len())
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("bytes", self.bytes.len().to_string()),
+            ("data", hex_bytes(&self.bytes)),
+        ]
+    }
+}
+
 /// TLS record body hook.
 ///
 /// Handshake records carry ordered generic handshake messages when the fragment
@@ -336,6 +434,8 @@ impl TlsChangeCipherSpecRecordBody {
 pub enum TlsRecordBody {
     /// Typed ChangeCipherSpec fragment plus exact bytes.
     ChangeCipherSpec(TlsChangeCipherSpecRecordBody),
+    /// Opaque application data bytes with no inner protocol decoding.
+    ApplicationData(TlsApplicationData),
     /// Generic typed handshake messages plus any trailing raw fragment bytes.
     Handshake(TlsHandshakeRecordBody),
     /// Opaque TLS record fragment bytes.
@@ -353,6 +453,16 @@ impl TlsRecordBody {
         Self::ChangeCipherSpec(TlsChangeCipherSpecRecordBody::from_change_cipher_spec(
             change_cipher_spec,
         ))
+    }
+
+    /// Construct an opaque typed application_data body.
+    pub fn application_data(fragment: impl Into<Vec<u8>>) -> Self {
+        Self::ApplicationData(TlsApplicationData::new(fragment))
+    }
+
+    /// Construct an application_data body from a typed byte wrapper.
+    pub fn from_application_data(application_data: TlsApplicationData) -> Self {
+        Self::ApplicationData(application_data)
     }
 
     /// Construct a typed handshake body from complete messages and no raw tail.
@@ -391,6 +501,9 @@ impl TlsRecordBody {
             TlsContentType::CHANGE_CIPHER_SPEC => Ok(Self::ChangeCipherSpec(
                 TlsChangeCipherSpecRecordBody::from_decoded_fragment(fragment)?,
             )),
+            TlsContentType::APPLICATION_DATA => {
+                Ok(Self::ApplicationData(TlsApplicationData::decode(fragment)?))
+            }
             TlsContentType::HANDSHAKE => Self::decode_handshake_fragment(fragment),
             _ => Ok(Self::opaque(fragment)),
         }
@@ -441,6 +554,7 @@ impl TlsRecordBody {
     pub fn fragment(&self) -> &[u8] {
         match self {
             Self::ChangeCipherSpec(change_cipher_spec) => change_cipher_spec.fragment(),
+            Self::ApplicationData(application_data) => application_data.bytes(),
             Self::Handshake(handshake) => handshake.fragment(),
             Self::Opaque(fragment) => fragment,
         }
@@ -450,6 +564,7 @@ impl TlsRecordBody {
     pub fn into_fragment(self) -> Vec<u8> {
         match self {
             Self::ChangeCipherSpec(change_cipher_spec) => change_cipher_spec.into_fragment(),
+            Self::ApplicationData(application_data) => application_data.into_bytes(),
             Self::Handshake(handshake) => handshake.into_fragment(),
             Self::Opaque(fragment) => fragment,
         }
@@ -468,6 +583,11 @@ impl TlsRecordBody {
     /// Return true when the body carries decoded ChangeCipherSpec fields.
     pub const fn is_change_cipher_spec(&self) -> bool {
         matches!(self, Self::ChangeCipherSpec(_))
+    }
+
+    /// Return true when the body carries application data bytes.
+    pub const fn is_application_data(&self) -> bool {
+        matches!(self, Self::ApplicationData(_))
     }
 
     /// Return true when the body carries decoded generic handshake messages.
@@ -491,10 +611,19 @@ impl TlsRecordBody {
         }
     }
 
+    /// Borrow the application data bytes when present.
+    pub const fn application_data_body(&self) -> Option<&TlsApplicationData> {
+        match self {
+            Self::ApplicationData(application_data) => Some(application_data),
+            _ => None,
+        }
+    }
+
     /// Borrow the typed handshake record body when present.
     pub const fn handshake_body(&self) -> Option<&TlsHandshakeRecordBody> {
         match self {
             Self::ChangeCipherSpec(_) => None,
+            Self::ApplicationData(_) => None,
             Self::Handshake(handshake) => Some(handshake),
             Self::Opaque(_) => None,
         }
@@ -514,6 +643,7 @@ impl TlsRecordBody {
     pub fn encode(&self, out: &mut Vec<u8>) {
         match self {
             Self::ChangeCipherSpec(change_cipher_spec) => change_cipher_spec.encode(out),
+            Self::ApplicationData(application_data) => application_data.encode(out),
             Self::Handshake(handshake) => handshake.encode(out),
             Self::Opaque(fragment) => out.extend_from_slice(fragment),
         }
@@ -527,6 +657,7 @@ impl TlsRecordBody {
     fn label(&self) -> &'static str {
         match self {
             Self::ChangeCipherSpec(_) => "change_cipher_spec",
+            Self::ApplicationData(_) => "application_data",
             Self::Handshake(_) => "handshake",
             Self::Opaque(_) => "opaque",
         }
@@ -548,6 +679,12 @@ impl From<TlsChangeCipherSpecRecordBody> for TlsRecordBody {
 impl From<TlsChangeCipherSpec> for TlsRecordBody {
     fn from(change_cipher_spec: TlsChangeCipherSpec) -> Self {
         Self::from_change_cipher_spec(change_cipher_spec)
+    }
+}
+
+impl From<TlsApplicationData> for TlsRecordBody {
+    fn from(application_data: TlsApplicationData) -> Self {
+        Self::from_application_data(application_data)
     }
 }
 
@@ -655,7 +792,18 @@ impl TlsRecord {
 
     /// Construct an `application_data` TLS record.
     pub fn application_data(fragment: impl Into<Vec<u8>>) -> Self {
-        Self::from_header_and_fragment(TlsRecordHeader::application_data(), fragment)
+        Self::from_header_and_body(
+            TlsRecordHeader::application_data(),
+            TlsRecordBody::application_data(fragment),
+        )
+    }
+
+    /// Construct an `application_data` TLS record from a typed opaque body.
+    pub fn from_application_data(application_data: TlsApplicationData) -> Self {
+        Self::from_header_and_body(
+            TlsRecordHeader::application_data(),
+            TlsRecordBody::from_application_data(application_data),
+        )
     }
 
     /// Replace the complete record header.
@@ -737,6 +885,11 @@ impl TlsRecord {
     /// Borrow decoded ChangeCipherSpec fields when this record carries them.
     pub const fn change_cipher_spec_body(&self) -> Option<&TlsChangeCipherSpec> {
         self.body.change_cipher_spec_body()
+    }
+
+    /// Borrow application data bytes when this record carries them.
+    pub const fn application_data_body(&self) -> Option<&TlsApplicationData> {
+        self.body.application_data_body()
     }
 
     /// Borrow the opaque fragment bytes.
@@ -1440,6 +1593,89 @@ mod tests {
     }
 
     #[test]
+    fn tls_application_data_preserves_opaque_bytes_without_inner_decoding() -> Result<()> {
+        let payload = b"GET / HTTP/1.1\r\nhost: example.test\r\n\r\n".to_vec();
+        let application_data = TlsApplicationData::new(payload.clone());
+
+        assert_eq!(application_data.bytes(), payload.as_slice());
+        assert_eq!(application_data.fragment(), payload.as_slice());
+        assert_eq!(application_data.data(), payload.as_slice());
+        assert_eq!(application_data.len(), payload.len());
+        assert!(!application_data.is_empty());
+        assert_eq!(application_data.encoded_len(), payload.len());
+        assert_eq!(application_data.encode_to_vec(), payload);
+        assert_eq!(application_data.compile(), payload);
+        assert_eq!(
+            application_data.summary(),
+            format!("application_data bytes={}", payload.len())
+        );
+        assert_eq!(
+            application_data.inspection_fields(),
+            vec![
+                ("bytes", payload.len().to_string()),
+                ("data", hex_bytes(&payload)),
+            ]
+        );
+
+        let record = TlsRecord::application_data(payload.clone());
+        let mut encoded = vec![
+            0x17,
+            0x03,
+            0x03,
+            ((payload.len() >> 8) & 0xff) as u8,
+            (payload.len() & 0xff) as u8,
+        ];
+        encoded.extend_from_slice(&payload);
+
+        assert_eq!(record.content_type(), TlsContentType::APPLICATION_DATA);
+        assert!(record.body().is_application_data());
+        assert!(!record.body().is_opaque());
+        assert_eq!(record.application_data_body(), Some(&application_data));
+        assert_eq!(record.fragment(), payload.as_slice());
+        assert_eq!(record.encode_to_vec()?, encoded);
+        assert_eq!(
+            record.summary(),
+            format!(
+                "record content_type=application_data legacy_record_version=TLS 1.2 declared_length=auto fragment_bytes={} body=application_data",
+                payload.len()
+            )
+        );
+
+        let decoded = TlsRecord::decode(&encoded)?;
+        assert!(decoded.body().is_application_data());
+        assert_eq!(decoded.application_data_body(), Some(&application_data));
+        assert_eq!(decoded.encode_to_vec()?, encoded);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_application_data_empty_and_arbitrary_bytes_round_trip() -> Result<()> {
+        let empty_body = TlsApplicationData::default();
+        let empty = TlsRecord::from_application_data(empty_body.clone());
+        let empty_encoded = vec![0x17, 0x03, 0x03, 0x00, 0x00];
+        assert_eq!(empty.application_data_body(), Some(&empty_body));
+        assert_eq!(empty.encode_to_vec()?, empty_encoded);
+
+        let decoded_empty = TlsRecord::decode(&empty_encoded)?;
+        let decoded_empty_body = decoded_empty
+            .application_data_body()
+            .expect("application_data body");
+        assert!(decoded_empty_body.is_empty());
+        assert_eq!(decoded_empty.encode_to_vec()?, empty_encoded);
+
+        let arbitrary = TlsApplicationData::from_bytes([0x00, 0xff, 0x16, 0x03, 0x03]);
+        let record = TlsRecord::from_application_data(arbitrary.clone());
+        assert_eq!(record.application_data_body(), Some(&arbitrary));
+        assert_eq!(
+            record.encode_to_vec()?,
+            vec![0x17, 0x03, 0x03, 0x00, 0x05, 0x00, 0xff, 0x16, 0x03, 0x03]
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn tls_handshake_record_decode_parses_messages_and_preserves_partial_tail() -> Result<()> {
         let (first, first_body) = record_test_client_hello_message();
         let second = [0x14, 0x00, 0x00, 0x01, 0x00];
@@ -1530,12 +1766,12 @@ mod tests {
 
     #[test]
     fn tls_handshake_record_non_handshake_records_remain_opaque() -> Result<()> {
-        let bytes = [0x17, 0x03, 0x03, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00];
+        let bytes = [0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00];
         let record = TlsRecord::decode(bytes)?;
 
-        assert_eq!(record.content_type(), TlsContentType::application_data());
+        assert_eq!(record.content_type(), TlsContentType::alert());
         assert!(record.body().is_opaque());
-        assert_eq!(record.fragment(), &[0x01, 0x00, 0x00, 0x00]);
+        assert_eq!(record.fragment(), &[0x01, 0x00]);
         assert_eq!(record.encode_to_vec()?, bytes);
 
         Ok(())
