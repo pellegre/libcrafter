@@ -10,6 +10,7 @@ pub mod ip;
 pub mod ipsec;
 pub mod link;
 pub mod mqtt;
+pub mod ntp;
 pub mod ospf;
 pub mod quic;
 pub mod rip;
