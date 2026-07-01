@@ -9,6 +9,9 @@
 use core::fmt;
 
 use super::constants::{self, TlsCodepointStatus};
+use super::named_group::{
+    TlsNamedGroup, TlsNamedGroupList, TLS_NAMED_GROUP_LEN, TLS_NAMED_GROUP_LIST_PREFIX_LEN,
+};
 use super::version::TlsVersion;
 use crate::{CrafterError, Result};
 
@@ -38,6 +41,10 @@ pub const TLS_ALPN_PROTOCOL_NAME_LIST_LENGTH_LEN: usize = 2;
 pub const TLS_SUPPORTED_VERSIONS_CLIENT_LENGTH_LEN: usize = 1;
 /// TLS supported_versions ProtocolVersion width in bytes.
 pub const TLS_SUPPORTED_VERSION_LEN: usize = 2;
+/// TLS supported_groups NamedGroupList length field width in bytes.
+pub const TLS_SUPPORTED_GROUPS_LIST_LENGTH_LEN: usize = TLS_NAMED_GROUP_LIST_PREFIX_LEN;
+/// TLS supported_groups NamedGroup width in bytes.
+pub const TLS_SUPPORTED_GROUP_LEN: usize = TLS_NAMED_GROUP_LEN;
 
 /// A raw-preserving TLS `ExtensionType` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -923,6 +930,16 @@ impl TlsRawExtension {
         TlsServerNameList::from_raw_extension(self)
     }
 
+    /// Create a raw `supported_groups` extension from a typed group list.
+    pub fn supported_groups(groups: impl Into<TlsSupportedGroups>) -> Result<Self> {
+        groups.into().to_raw_extension()
+    }
+
+    /// Decode this raw extension as a typed supported_groups NamedGroupList.
+    pub fn as_supported_groups(&self) -> Result<TlsSupportedGroups> {
+        TlsSupportedGroups::from_raw_extension(self)
+    }
+
     /// Create a raw `application_layer_protocol_negotiation` extension.
     pub fn application_layer_protocol_negotiation(
         protocols: impl Into<TlsAlpnProtocols>,
@@ -967,6 +984,263 @@ impl TlsRawExtension {
     ) -> Result<TlsSupportedVersions> {
         TlsSupportedVersions::from_raw_extension_with_context(context, self)
     }
+}
+
+/// TLS `supported_groups` extension body as an RFC 8446 NamedGroupList.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct TlsSupportedGroups {
+    groups: TlsNamedGroupList,
+}
+
+impl TlsSupportedGroups {
+    /// Create an ordered supported_groups extension body.
+    pub fn new(groups: impl Into<TlsNamedGroupList>) -> Self {
+        Self {
+            groups: groups.into(),
+        }
+    }
+
+    /// Create an ordered supported_groups extension body from named group values.
+    pub fn from_groups(groups: impl Into<Vec<TlsNamedGroup>>) -> Self {
+        Self::new(TlsNamedGroupList::new(groups))
+    }
+
+    /// Create an ordered supported_groups extension body from raw two-octet values.
+    pub fn from_raws(raws: impl IntoIterator<Item = u16>) -> Self {
+        Self::new(TlsNamedGroupList::from_raws(raws))
+    }
+
+    /// Borrow the ordered named group list.
+    pub const fn named_group_list(&self) -> &TlsNamedGroupList {
+        &self.groups
+    }
+
+    /// Borrow the ordered named group list.
+    pub const fn as_named_group_list(&self) -> &TlsNamedGroupList {
+        self.named_group_list()
+    }
+
+    /// Borrow the ordered named group values.
+    pub fn groups(&self) -> &[TlsNamedGroup] {
+        self.groups.groups()
+    }
+
+    /// Return the ordered raw named group values.
+    pub fn raw_values(&self) -> Vec<u16> {
+        self.groups.raw_values()
+    }
+
+    /// Return group labels in wire order.
+    pub fn labels(&self) -> Vec<String> {
+        self.groups.labels()
+    }
+
+    /// Consume the extension body and return its named group list.
+    pub fn into_named_group_list(self) -> TlsNamedGroupList {
+        self.groups
+    }
+
+    /// Consume the extension body and return the ordered named group values.
+    pub fn into_vec(self) -> Vec<TlsNamedGroup> {
+        self.groups.into_vec()
+    }
+
+    /// Append one named group to the ordered list.
+    pub fn push(&mut self, group: TlsNamedGroup) {
+        self.groups.push(group);
+    }
+
+    /// Number of named groups.
+    pub fn len(&self) -> usize {
+        self.groups.len()
+    }
+
+    /// Return true when the body carries no named group values.
+    pub fn is_empty(&self) -> bool {
+        self.groups.is_empty()
+    }
+
+    /// Number of bytes occupied by the NamedGroup vector body, excluding the length prefix.
+    pub fn byte_len(&self) -> Result<usize> {
+        let byte_len = self.groups.byte_len()?;
+        validate_supported_groups_list_len(byte_len)?;
+        Ok(byte_len)
+    }
+
+    /// Number of bytes occupied by the complete encoded NamedGroupList.
+    pub fn encoded_len(&self) -> Result<usize> {
+        TLS_SUPPORTED_GROUPS_LIST_LENGTH_LEN
+            .checked_add(self.byte_len()?)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.supported_groups.length", "length overflow")
+            })
+    }
+
+    /// Append the supported_groups extension body to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        validate_supported_groups(self)?;
+        self.groups.encode(out)
+    }
+
+    /// Return this supported_groups extension body encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Convert this supported_groups body into a raw extension.
+    pub fn to_raw_extension(&self) -> Result<TlsRawExtension> {
+        Ok(TlsRawExtension::new(
+            TlsExtensionType::SUPPORTED_GROUPS,
+            self.encode_to_vec()?,
+        ))
+    }
+
+    /// Decode a supported_groups extension body.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (groups, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.supported_groups.length",
+                "length must match extension body",
+            ));
+        }
+        Ok(groups)
+    }
+
+    /// Decode a supported_groups body from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_SUPPORTED_GROUPS_LIST_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.supported_groups.length",
+                TLS_SUPPORTED_GROUPS_LIST_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let byte_len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+        validate_supported_groups_list_len(byte_len)?;
+        let required = TLS_SUPPORTED_GROUPS_LIST_LENGTH_LEN
+            .checked_add(byte_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.supported_groups.length", "length overflow")
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "tls.supported_groups",
+                required,
+                bytes.len(),
+            ));
+        }
+
+        let (groups, tail) = TlsNamedGroupList::decode_prefix(&bytes[..required])?;
+        debug_assert!(tail.is_empty());
+        Ok((Self::new(groups), &bytes[required..]))
+    }
+
+    /// Decode a raw supported_groups extension body.
+    pub fn from_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        if extension.extension_type() != TlsExtensionType::SUPPORTED_GROUPS {
+            return Err(CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be supported_groups",
+            ));
+        }
+        Self::decode(extension.body())
+    }
+
+    /// Stable one-line summary preserving group order.
+    pub fn summary(&self) -> String {
+        format!(
+            "supported_groups count={} bytes={} values={}",
+            self.len(),
+            self.len() * TLS_SUPPORTED_GROUP_LEN,
+            self.labels().join(",")
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("supported_groups_count", self.len().to_string()),
+            (
+                "supported_groups_bytes",
+                (self.len() * TLS_SUPPORTED_GROUP_LEN).to_string(),
+            ),
+            ("supported_groups", self.labels().join(",")),
+            (
+                "supported_groups_raw",
+                self.groups
+                    .groups()
+                    .iter()
+                    .map(|group| format!("0x{:04x}", group.raw()))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+        ]
+    }
+}
+
+impl From<TlsNamedGroupList> for TlsSupportedGroups {
+    fn from(groups: TlsNamedGroupList) -> Self {
+        Self::new(groups)
+    }
+}
+
+impl From<Vec<TlsNamedGroup>> for TlsSupportedGroups {
+    fn from(groups: Vec<TlsNamedGroup>) -> Self {
+        Self::from_groups(groups)
+    }
+}
+
+impl<const N: usize> From<[TlsNamedGroup; N]> for TlsSupportedGroups {
+    fn from(groups: [TlsNamedGroup; N]) -> Self {
+        Self::from_groups(Vec::from(groups))
+    }
+}
+
+impl TryFrom<&TlsRawExtension> for TlsSupportedGroups {
+    type Error = CrafterError;
+
+    fn try_from(value: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension(value)
+    }
+}
+
+impl TryFrom<TlsSupportedGroups> for TlsRawExtension {
+    type Error = CrafterError;
+
+    fn try_from(value: TlsSupportedGroups) -> Result<Self> {
+        value.to_raw_extension()
+    }
+}
+
+fn validate_supported_groups(groups: &TlsSupportedGroups) -> Result<()> {
+    let byte_len = groups.groups.byte_len()?;
+    validate_supported_groups_list_len(byte_len)
+}
+
+fn validate_supported_groups_list_len(len: usize) -> Result<()> {
+    if len < TLS_SUPPORTED_GROUP_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tls.supported_groups.length",
+            "length must be at least two bytes",
+        ));
+    }
+    if len % TLS_SUPPORTED_GROUP_LEN != 0 {
+        return Err(CrafterError::invalid_field_value(
+            "tls.supported_groups.length",
+            "length must be a multiple of two bytes",
+        ));
+    }
+    if len > u16::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            "tls.supported_groups.length",
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
 }
 
 /// Context that selects the TLS `supported_versions` extension body shape.
@@ -2974,6 +3248,206 @@ mod tests {
             oversized.encode_to_vec().unwrap_err(),
             CrafterError::invalid_field_value(
                 "tls.alpn.protocol_name_list.length",
+                "length must fit in two bytes"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_supported_groups_builders_encode_rfc8446_vector() {
+        // RFC 8446 Section 4.2.7 defines NamedGroupList as NamedGroup<2..2^16-1>.
+        let groups = TlsSupportedGroups::from_groups(vec![
+            TlsNamedGroup::X25519,
+            TlsNamedGroup::SECP256R1,
+            TlsNamedGroup::FFDHE2048,
+        ]);
+        assert_eq!(groups.len(), 3);
+        assert!(!groups.is_empty());
+        assert_eq!(
+            groups.groups(),
+            &[
+                TlsNamedGroup::X25519,
+                TlsNamedGroup::SECP256R1,
+                TlsNamedGroup::FFDHE2048,
+            ]
+        );
+        assert_eq!(groups.raw_values(), vec![0x001d, 0x0017, 0x0100]);
+        assert_eq!(groups.byte_len().unwrap(), 6);
+        assert_eq!(groups.encoded_len().unwrap(), 8);
+        assert_eq!(
+            groups.encode_to_vec().unwrap(),
+            [0x00, 0x06, 0x00, 0x1d, 0x00, 0x17, 0x01, 0x00]
+        );
+
+        let encoded_with_tail = [groups.encode_to_vec().unwrap(), vec![0xaa]].concat();
+        let (decoded, tail) = TlsSupportedGroups::decode_prefix(&encoded_with_tail).unwrap();
+        assert_eq!(tail, &[0xaa]);
+        assert_eq!(decoded, groups);
+        assert_eq!(decoded.as_named_group_list(), decoded.named_group_list());
+        assert_eq!(
+            decoded.summary(),
+            "supported_groups count=3 bytes=6 values=x25519,secp256r1,ffdhe2048"
+        );
+        assert!(decoded
+            .inspection_fields()
+            .contains(&("supported_groups_raw", "0x001d,0x0017,0x0100".to_string())));
+        assert_eq!(
+            decoded.clone().into_vec(),
+            vec![
+                TlsNamedGroup::X25519,
+                TlsNamedGroup::SECP256R1,
+                TlsNamedGroup::FFDHE2048,
+            ]
+        );
+        assert_eq!(
+            decoded.into_named_group_list(),
+            groups.named_group_list().clone()
+        );
+
+        let mut pushed = TlsSupportedGroups::from_groups(vec![TlsNamedGroup::X25519]);
+        pushed.push(TlsNamedGroup::SECP256R1);
+        assert_eq!(pushed.raw_values(), vec![0x001d, 0x0017]);
+        assert_eq!(
+            TlsSupportedGroups::from_raws([0x001d, 0xbeef]).raw_values(),
+            vec![0x001d, 0xbeef]
+        );
+        assert_eq!(
+            TlsSupportedGroups::from([TlsNamedGroup::X25519]).raw_values(),
+            vec![0x001d]
+        );
+        assert_eq!(
+            TlsSupportedGroups::new(TlsNamedGroupList::from_raws([0x001d])).raw_values(),
+            vec![0x001d]
+        );
+    }
+
+    #[test]
+    fn tls_extension_supported_groups_converts_to_and_from_raw_extension() {
+        let groups =
+            TlsSupportedGroups::from_groups(vec![TlsNamedGroup::X25519, TlsNamedGroup::SECP256R1]);
+        let raw = groups.to_raw_extension().unwrap();
+        assert_eq!(raw.extension_type(), TlsExtensionType::SUPPORTED_GROUPS);
+        assert_eq!(raw.raw_type(), constants::TLS_EXTENSION_SUPPORTED_GROUPS);
+        assert_eq!(
+            raw.encode_to_vec().unwrap(),
+            [0x00, 0x0a, 0x00, 0x06, 0x00, 0x04, 0x00, 0x1d, 0x00, 0x17]
+        );
+
+        assert_eq!(raw.as_supported_groups().unwrap(), groups);
+        assert_eq!(TlsSupportedGroups::try_from(&raw).unwrap(), groups);
+        assert_eq!(TlsRawExtension::try_from(groups.clone()).unwrap(), raw);
+        assert_eq!(
+            TlsRawExtension::supported_groups(groups.clone()).unwrap(),
+            raw
+        );
+
+        assert_eq!(
+            TlsSupportedGroups::from_raw_extension(&TlsRawExtension::from_raw(0xbeef, []))
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be supported_groups"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_supported_groups_preserves_unknown_raw_groups() {
+        let groups = TlsSupportedGroups::from_raws([0x0a0a, 0xfe00, 0xbeef]);
+        assert_eq!(
+            groups.encode_to_vec().unwrap(),
+            [0x00, 0x06, 0x0a, 0x0a, 0xfe, 0x00, 0xbe, 0xef]
+        );
+
+        let decoded =
+            TlsSupportedGroups::decode([0x00, 0x06, 0x0a, 0x0a, 0xfe, 0x00, 0xbe, 0xef]).unwrap();
+        assert_eq!(decoded, groups);
+        assert_eq!(decoded.raw_values(), vec![0x0a0a, 0xfe00, 0xbeef]);
+        assert_eq!(
+            decoded.labels(),
+            vec![
+                "reserved grease named group 0x0a0a".to_string(),
+                "private-use named group 0xfe00".to_string(),
+                "unknown named group 0xbeef".to_string(),
+            ]
+        );
+        assert!(decoded
+            .inspection_fields()
+            .contains(&("supported_groups_raw", "0x0a0a,0xfe00,0xbeef".to_string())));
+    }
+
+    #[test]
+    fn tls_extension_supported_groups_reports_structured_decode_errors() {
+        assert_eq!(
+            TlsSupportedGroups::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.supported_groups.length",
+                TLS_SUPPORTED_GROUPS_LIST_LENGTH_LEN,
+                0
+            )
+        );
+        assert_eq!(
+            TlsSupportedGroups::decode([0x00]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.supported_groups.length",
+                TLS_SUPPORTED_GROUPS_LIST_LENGTH_LEN,
+                1
+            )
+        );
+        assert_eq!(
+            TlsSupportedGroups::decode([0x00, 0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.supported_groups.length",
+                "length must be at least two bytes"
+            )
+        );
+        assert_eq!(
+            TlsSupportedGroups::decode([0x00, 0x03, 0x00, 0x1d, 0xaa]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.supported_groups.length",
+                "length must be a multiple of two bytes"
+            )
+        );
+        assert_eq!(
+            TlsSupportedGroups::decode([0x00, 0x04, 0x00, 0x1d]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.supported_groups", 6, 4)
+        );
+        assert_eq!(
+            TlsSupportedGroups::decode([0x00, 0x02, 0x00, 0x1d, 0xaa]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.supported_groups.length",
+                "length must match extension body"
+            )
+        );
+        assert_eq!(
+            TlsSupportedGroups::from_raw_extension(&TlsRawExtension::new(
+                TlsExtensionType::SUPPORTED_GROUPS,
+                Vec::<u8>::new(),
+            ))
+            .unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.supported_groups.length",
+                TLS_SUPPORTED_GROUPS_LIST_LENGTH_LEN,
+                0
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_supported_groups_reports_structured_encode_errors() {
+        assert_eq!(
+            TlsSupportedGroups::default().encode_to_vec().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.supported_groups.length",
+                "length must be at least two bytes"
+            )
+        );
+
+        let oversized = TlsSupportedGroups::from_groups(vec![TlsNamedGroup::X25519; 32768]);
+        assert_eq!(
+            oversized.encode_to_vec().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.supported_groups.length",
                 "length must fit in two bytes"
             )
         );
