@@ -41,6 +41,7 @@ _MQTT_SMOKE_CASE_COUNT = len(cases.MQTT_SMOKE_PROFILE_CASE_NAMES)
 _OSPF_SMOKE_CASE_COUNT = len(cases.OSPF_SMOKE_PROFILE_CASE_NAMES)
 _QUIC_SMOKE_CASE_COUNT = len(cases.QUIC_SMOKE_PROFILE_CASE_NAMES)
 _SNMP_CASE_COUNT = len(cases.SNMP_SMOKE_PROFILE_CASE_NAMES)
+_TLS_SMOKE_CASE_COUNT = len(cases.TLS_SMOKE_PROFILE_CASE_NAMES)
 _BEHAVIOR_PROTOCOL_COMPOSITION = {
     "dns": 10,
     "dhcpv4": 10,
@@ -152,6 +153,7 @@ class ProbeProfileMembershipTest(unittest.TestCase):
                 "snmp-smoke",
                 "ssdp-smoke",
                 "tcp-smoke",
+                "tls-smoke",
             ),
         )
 
