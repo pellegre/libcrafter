@@ -37,6 +37,11 @@ pub const TLS_CLIENT_HELLO_FIXED_LEN: usize =
 pub const TLS_SERVER_HELLO_LEGACY_VERSION_LEN: usize = 2;
 /// TLS ServerHello random field width in bytes.
 pub const TLS_SERVER_HELLO_RANDOM_LEN: usize = 32;
+/// RFC 8446 HelloRetryRequest random marker inside a ServerHello body.
+pub const TLS_HELLO_RETRY_REQUEST_RANDOM: [u8; TLS_SERVER_HELLO_RANDOM_LEN] = [
+    0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11, 0xbe, 0x1d, 0x8c, 0x02, 0x1e, 0x65, 0xb8, 0x91,
+    0xc2, 0xa2, 0x11, 0x16, 0x7a, 0xbb, 0x8c, 0x5e, 0x07, 0x9e, 0x09, 0xe2, 0xc8, 0xa8, 0x33, 0x9c,
+];
 /// TLS ServerHello fixed field width before vectors.
 pub const TLS_SERVER_HELLO_FIXED_LEN: usize =
     TLS_SERVER_HELLO_LEGACY_VERSION_LEN + TLS_SERVER_HELLO_RANDOM_LEN;
@@ -2069,6 +2074,11 @@ impl TlsServerHello {
         Self::new().with_random(random)
     }
 
+    /// Construct a TLS 1.3 HelloRetryRequest encoded in the ServerHello shape.
+    pub fn hello_retry_request() -> Self {
+        Self::new().with_hello_retry_request_random()
+    }
+
     /// Construct a ServerHello from all decoded or caller-supplied fields.
     pub fn from_fields(
         legacy_version: impl Into<TlsVersion>,
@@ -2108,6 +2118,11 @@ impl TlsServerHello {
     /// Replace the 32-byte ServerHello random field with fixed bytes.
     pub fn with_fixed_random(self, random: [u8; TLS_SERVER_HELLO_RANDOM_LEN]) -> Self {
         self.with_random(random)
+    }
+
+    /// Replace the random field with the RFC 8446 HelloRetryRequest marker.
+    pub fn with_hello_retry_request_random(self) -> Self {
+        self.with_random(TLS_HELLO_RETRY_REQUEST_RANDOM)
     }
 
     /// Replace the legacy session ID echo vector body bytes.
@@ -2188,6 +2203,20 @@ impl TlsServerHello {
     /// Borrow the preserved 32-byte random field.
     pub const fn random(&self) -> &[u8; TLS_SERVER_HELLO_RANDOM_LEN] {
         &self.random
+    }
+
+    /// Return true when this ServerHello carries the RFC 8446 HelloRetryRequest marker.
+    pub fn is_hello_retry_request(&self) -> bool {
+        self.random == TLS_HELLO_RETRY_REQUEST_RANDOM
+    }
+
+    /// Stable form label for summary and inspection output.
+    pub fn form_label(&self) -> &'static str {
+        if self.is_hello_retry_request() {
+            "hello_retry_request"
+        } else {
+            "server_hello"
+        }
     }
 
     /// Borrow the preserved legacy session ID echo bytes.
@@ -2347,7 +2376,8 @@ impl TlsServerHello {
     /// Stable one-line summary preserving vector sizes.
     pub fn summary(&self) -> String {
         format!(
-            "server_hello legacy_version={} session_id_echo_bytes={} cipher_suite={} compression_method=0x{:02x} extensions={}",
+            "server_hello form={} legacy_version={} session_id_echo_bytes={} cipher_suite={} compression_method=0x{:02x} extensions={}",
+            self.form_label(),
             self.legacy_version.label(),
             self.session_id_echo.len(),
             self.cipher_suite.label(),
@@ -2359,6 +2389,11 @@ impl TlsServerHello {
     /// Stable field/value pairs for packet inspection output.
     pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
         vec![
+            ("form", self.form_label().to_string()),
+            (
+                "hello_retry_request",
+                self.is_hello_retry_request().to_string(),
+            ),
             ("legacy_version", self.legacy_version.label()),
             (
                 "legacy_version_raw",
@@ -5588,10 +5623,12 @@ mod tests {
         assert_eq!(hello.compression_method(), TLS_COMPRESSION_METHOD_NULL);
         assert_eq!(
             hello.summary(),
-            "server_hello legacy_version=TLS 1.2 session_id_echo_bytes=2 cipher_suite=TLS_AES_128_GCM_SHA256 compression_method=0x00 extensions=0"
+            "server_hello form=server_hello legacy_version=TLS 1.2 session_id_echo_bytes=2 cipher_suite=TLS_AES_128_GCM_SHA256 compression_method=0x00 extensions=0"
         );
 
         let fields = hello.inspection_fields();
+        assert!(fields.contains(&("form", "server_hello".to_string())));
+        assert!(fields.contains(&("hello_retry_request", "false".to_string())));
         assert!(fields.contains(&("random", hex_bytes(&random))));
         assert!(fields.contains(&("random_bytes", "32".to_string())));
         assert!(fields.contains(&("session_id_echo", "aa bb".to_string())));
@@ -5720,7 +5757,7 @@ mod tests {
         assert_eq!(hello.raw_cipher_suite(), 0x0a0a);
         assert_eq!(
             hello.summary(),
-            "server_hello legacy_version=reserved grease protocol version 0x7a7a session_id_echo_bytes=3 cipher_suite=reserved grease cipher suite 0x0a0a compression_method=0xff extensions=1"
+            "server_hello form=server_hello legacy_version=reserved grease protocol version 0x7a7a session_id_echo_bytes=3 cipher_suite=reserved grease cipher suite 0x0a0a compression_method=0xff extensions=1"
         );
 
         let handshake = TlsHandshake::from_server_hello(hello.clone())?;
@@ -5731,6 +5768,65 @@ mod tests {
             handshake.encode_to_vec()?,
             tls_handshake_fixture(TlsHandshakeType::SERVER_HELLO.raw(), &encoded)
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_hello_retry_request_detects_and_round_trips_as_server_hello() -> Result<()> {
+        let hello = TlsServerHello::hello_retry_request()
+            .with_session_id_echo([0xaa, 0xbb])
+            .with_raw_cipher_suite(0x1301)
+            .with_null_compression()
+            .with_extension(TlsRawExtension::from_raw(0x0033, [0x00, 0x1d]));
+        let encoded = hello.encode_to_vec()?;
+
+        assert!(hello.is_hello_retry_request());
+        assert_eq!(hello.form_label(), "hello_retry_request");
+        assert_eq!(hello.random(), &TLS_HELLO_RETRY_REQUEST_RANDOM);
+        assert_eq!(
+            hello.summary(),
+            "server_hello form=hello_retry_request legacy_version=TLS 1.2 session_id_echo_bytes=2 cipher_suite=TLS_AES_128_GCM_SHA256 compression_method=0x00 extensions=1"
+        );
+        assert!(hello
+            .inspection_fields()
+            .contains(&("hello_retry_request", "true".to_string())));
+        assert_eq!(
+            &encoded[2..TLS_SERVER_HELLO_FIXED_LEN],
+            TLS_HELLO_RETRY_REQUEST_RANDOM.as_slice()
+        );
+
+        let decoded = TlsServerHello::decode(&encoded)?;
+        assert!(decoded.is_hello_retry_request());
+        assert_eq!(decoded, hello);
+        assert_eq!(decoded.encode_to_vec()?, encoded);
+
+        let handshake = TlsHandshake::from_server_hello(hello.clone())?;
+        let handshake_bytes = tls_handshake_fixture(TlsHandshakeType::SERVER_HELLO.raw(), &encoded);
+        assert_eq!(handshake.server_hello_body(), Some(&hello));
+        assert_eq!(handshake.encode_to_vec()?, handshake_bytes);
+
+        let decoded_handshake = TlsHandshake::decode(&handshake_bytes)?;
+        assert_eq!(decoded_handshake.server_hello_body(), Some(&hello));
+        assert_eq!(decoded_handshake.encode_to_vec()?, handshake_bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_hello_retry_request_allows_explicit_random_override() -> Result<()> {
+        let random = [0x55; TLS_SERVER_HELLO_RANDOM_LEN];
+        let hello = TlsServerHello::hello_retry_request().with_fixed_random(random);
+        let encoded = hello.encode_to_vec()?;
+
+        assert!(!hello.is_hello_retry_request());
+        assert_eq!(hello.form_label(), "server_hello");
+        assert_eq!(hello.random(), &random);
+        assert_eq!(&encoded[2..TLS_SERVER_HELLO_FIXED_LEN], random.as_slice());
+
+        let decoded = TlsServerHello::decode(&encoded)?;
+        assert!(!decoded.is_hello_retry_request());
+        assert_eq!(decoded.random(), &random);
 
         Ok(())
     }
