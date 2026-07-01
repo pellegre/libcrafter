@@ -1,5 +1,14 @@
-use crate::protocols::tls::*;
-use crate::CrafterError;
+//! TLS malformed input coverage.
+//!
+//! These tests stay offline and exercise the public TLS packet-layer primitives.
+
+use crafter::protocols::tls::{
+    TlsAlert, TlsAlpnProtocols, TlsCertificate, TlsKeyShare, TlsRawExtension, TlsRecord,
+    TlsRecordHeader, TlsServerNameList, TlsSignatureAlgorithms, TLS_ALERT_LEN,
+    TLS_CERTIFICATE_LIST_LENGTH_LEN, TLS_EXTENSION_HEADER_LEN, TLS_HANDSHAKE_HEADER_LEN,
+    TLS_RECORD_HEADER_LEN,
+};
+use crafter::{CrafterError, Result};
 
 fn assert_buffer_too_short(
     err: CrafterError,
@@ -14,7 +23,7 @@ fn assert_buffer_too_short(
 }
 
 #[test]
-fn tls_malformed_public_decoders_report_structured_contexts() {
+fn tls_malformed_structured_truncation_contexts_are_public() {
     assert_buffer_too_short(
         TlsRecordHeader::decode([0x16, 0x03, 0x03, 0x00]).unwrap_err(),
         "tls.record.header",
@@ -28,7 +37,7 @@ fn tls_malformed_public_decoders_report_structured_contexts() {
         6,
     );
     assert_buffer_too_short(
-        TlsHandshakeHeader::decode([0x01, 0x00, 0x00]).unwrap_err(),
+        crafter::protocols::tls::TlsHandshakeHeader::decode([0x01, 0x00, 0x00]).unwrap_err(),
         "tls.handshake.header",
         TLS_HANDSHAKE_HEADER_LEN,
         3,
@@ -78,29 +87,21 @@ fn tls_malformed_public_decoders_report_structured_contexts() {
 }
 
 #[test]
-fn tls_malformed_first_record_errors_and_trailing_partial_after_anchor_is_raw_tail() {
-    let first_short_header = [0x16, 0x03, 0x03, 0x00];
+fn tls_malformed_record_sequence_preserves_partial_tail_only_after_valid_anchor() -> Result<()> {
+    let first_partial = [0x16, 0x03, 0x03, 0x00, 0x04, 0xaa];
     assert_buffer_too_short(
-        TlsRecord::decode(first_short_header).unwrap_err(),
-        "tls.record.header",
-        TLS_RECORD_HEADER_LEN,
-        first_short_header.len(),
-    );
-
-    let first_short_fragment = [0x16, 0x03, 0x03, 0x00, 0x04, 0xaa];
-    assert_buffer_too_short(
-        TlsRecord::decode(first_short_fragment).unwrap_err(),
+        TlsRecord::decode(first_partial).unwrap_err(),
         "tls.record.fragment",
         TLS_RECORD_HEADER_LEN + 4,
-        first_short_fragment.len(),
+        first_partial.len(),
     );
 
-    let anchored_then_partial = [
+    let payload = [
         0x17, 0x03, 0x03, 0x00, 0x03, b'a', b'b', b'c', 0x16, 0x03, 0x03, 0x00, 0x04, 0xde,
     ];
-    let (first, tail) = TlsRecord::decode_prefix(&anchored_then_partial).unwrap();
+    let (record, tail) = TlsRecord::decode_prefix(&payload)?;
 
-    assert_eq!(first.fragment(), b"abc");
+    assert_eq!(record.fragment(), b"abc");
     assert_eq!(tail, &[0x16, 0x03, 0x03, 0x00, 0x04, 0xde]);
     assert_buffer_too_short(
         TlsRecord::decode(tail).unwrap_err(),
@@ -108,4 +109,6 @@ fn tls_malformed_first_record_errors_and_trailing_partial_after_anchor_is_raw_ta
         TLS_RECORD_HEADER_LEN + 4,
         tail.len(),
     );
+
+    Ok(())
 }
