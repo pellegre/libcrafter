@@ -230,7 +230,7 @@ CertificateRequest, `NST` NewSessionTicket, and `HRR` HelloRetryRequest.
 | `1` | `0x0001` | `max_fragment_length` | CH, EE | N | IANA, RFC 6066, RFC 8449 | Superseded by record_size_limit guidance. | preserve-only |
 | `5` | `0x0005` | `status_request` | CH, CR, CT | Y | IANA, RFC 6066 | Certificate status request. | default-eligible |
 | `10` | `0x000A` | `supported_groups` | CH, EE | Y | IANA, RFC 8422, RFC 7919 | Formerly `elliptic_curves`. | default-eligible |
-| `11` | `0x000B` | `ec_point_formats` | - | Y | IANA, RFC 8422 | TLS 1.2 legacy EC extension. | label-eligible |
+| `11` | `0x000B` | `ec_point_formats` | - | Y | IANA, RFC 8422 | TLS 1.2 and earlier legacy EC extension; no TLS 1.3 context. | label-eligible |
 | `13` | `0x000D` | `signature_algorithms` | CH, CR | Y | IANA, RFC 8446 | Carries SignatureScheme list. | default-eligible |
 | `15` | `0x000F` | `heartbeat` | CH, EE | Y | IANA, RFC 6520 | Candidate only; heartbeat safety step must select it. | deferred |
 | `16` | `0x0010` | `application_layer_protocol_negotiation` | CH, EE | Y | IANA, RFC 7301 | ALPN vector grammar. | default-eligible |

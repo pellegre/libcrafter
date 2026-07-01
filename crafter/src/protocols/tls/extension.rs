@@ -100,6 +100,16 @@ pub const TLS_RECORD_SIZE_LIMIT_MIN: u16 = 64;
 pub const TLS_RECORD_SIZE_LIMIT_TLS12_MAX: u16 = 1 << 14;
 /// RFC 8449 TLS 1.3 protocol-defined maximum TLSInnerPlaintext size.
 pub const TLS_RECORD_SIZE_LIMIT_TLS13_MAX: u16 = (1 << 14) + 1;
+/// TLS ec_point_formats vector length field width in bytes.
+pub const TLS_EC_POINT_FORMATS_LENGTH_LEN: usize = 1;
+/// TLS ECPointFormat wire value width in bytes.
+pub const TLS_EC_POINT_FORMAT_LEN: usize = 1;
+/// RFC 8422 ECPointFormat `uncompressed`.
+pub const TLS_EC_POINT_FORMAT_UNCOMPRESSED: u8 = 0;
+/// RFC 8422 ECPointFormat `ansiX962_compressed_prime`, deprecated by RFC 8422.
+pub const TLS_EC_POINT_FORMAT_ANSIX962_COMPRESSED_PRIME: u8 = 1;
+/// RFC 8422 ECPointFormat `ansiX962_compressed_char2`, deprecated by RFC 8422.
+pub const TLS_EC_POINT_FORMAT_ANSIX962_COMPRESSED_CHAR2: u8 = 2;
 
 /// A raw-preserving TLS `ExtensionType` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -192,6 +202,11 @@ impl TlsExtensionType {
     /// TLS ExtensionType `supported_groups` constructor.
     pub const fn supported_groups() -> Self {
         Self::SUPPORTED_GROUPS
+    }
+
+    /// TLS ExtensionType `ec_point_formats` constructor.
+    pub const fn ec_point_formats() -> Self {
+        Self::EC_POINT_FORMATS
     }
 
     /// TLS ExtensionType `signature_algorithms` constructor.
@@ -1569,6 +1584,21 @@ impl TlsRawExtension {
         TlsSupportedGroups::from_raw_extension(self)
     }
 
+    /// Create a raw `ec_point_formats` extension from a typed ECPointFormatList.
+    pub fn ec_point_formats(formats: impl Into<TlsEcPointFormats>) -> Result<Self> {
+        formats.into().to_raw_extension()
+    }
+
+    /// Create a raw `ec_point_formats` extension containing only `uncompressed`.
+    pub fn ec_point_formats_uncompressed_only() -> Result<Self> {
+        TlsEcPointFormats::uncompressed_only().to_raw_extension()
+    }
+
+    /// Decode this raw extension as a typed ECPointFormatList.
+    pub fn as_ec_point_formats(&self) -> Result<TlsEcPointFormats> {
+        TlsEcPointFormats::from_raw_extension(self)
+    }
+
     /// Create a raw `signature_algorithms` extension from a typed signature scheme list.
     pub fn signature_algorithms(schemes: impl Into<TlsSignatureAlgorithms>) -> Result<Self> {
         schemes.into().to_raw_extension()
@@ -2000,6 +2030,462 @@ fn validate_supported_groups_list_len(len: usize) -> Result<()> {
         return Err(CrafterError::invalid_field_value(
             "tls.supported_groups.length",
             "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
+/// A raw-preserving TLS legacy `ECPointFormat` value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TlsEcPointFormat {
+    raw: u8,
+}
+
+impl TlsEcPointFormat {
+    /// RFC 8422 `uncompressed` point format.
+    pub const UNCOMPRESSED: Self = Self::new(TLS_EC_POINT_FORMAT_UNCOMPRESSED);
+    /// RFC 8422 `ansiX962_compressed_prime` point format, deprecated by RFC 8422.
+    pub const ANSIX962_COMPRESSED_PRIME: Self =
+        Self::new(TLS_EC_POINT_FORMAT_ANSIX962_COMPRESSED_PRIME);
+    /// RFC 8422 `ansiX962_compressed_char2` point format, deprecated by RFC 8422.
+    pub const ANSIX962_COMPRESSED_CHAR2: Self =
+        Self::new(TLS_EC_POINT_FORMAT_ANSIX962_COMPRESSED_CHAR2);
+
+    /// Preserve a caller-supplied one-octet EC point format value.
+    pub const fn new(raw: u8) -> Self {
+        Self { raw }
+    }
+
+    /// Preserve a caller-supplied one-octet EC point format value.
+    pub const fn from_u8(raw: u8) -> Self {
+        Self::new(raw)
+    }
+
+    /// Decode a TLS EC point format from exactly one byte.
+    pub const fn from_be_bytes(bytes: [u8; TLS_EC_POINT_FORMAT_LEN]) -> Self {
+        Self::new(bytes[0])
+    }
+
+    /// RFC 8422 `uncompressed` constructor.
+    pub const fn uncompressed() -> Self {
+        Self::UNCOMPRESSED
+    }
+
+    /// RFC 8422 `ansiX962_compressed_prime` constructor.
+    pub const fn ansi_x962_compressed_prime() -> Self {
+        Self::ANSIX962_COMPRESSED_PRIME
+    }
+
+    /// RFC 8422 `ansiX962_compressed_char2` constructor.
+    pub const fn ansi_x962_compressed_char2() -> Self {
+        Self::ANSIX962_COMPRESSED_CHAR2
+    }
+
+    /// Return the preserved raw one-octet wire value.
+    pub const fn raw(self) -> u8 {
+        self.raw
+    }
+
+    /// Return the preserved raw one-octet wire value.
+    pub const fn as_u8(self) -> u8 {
+        self.raw
+    }
+
+    /// Return the one-byte wire encoding.
+    pub const fn to_be_bytes(self) -> [u8; TLS_EC_POINT_FORMAT_LEN] {
+        [self.raw]
+    }
+
+    /// Append the one-byte wire encoding to `out`.
+    pub fn encode(self, out: &mut Vec<u8>) {
+        out.push(self.raw);
+    }
+
+    /// Return the one-byte wire encoding as a vector.
+    pub fn encode_to_vec(self) -> Vec<u8> {
+        self.to_be_bytes().to_vec()
+    }
+
+    /// Decode a TLS EC point format from the first byte of `bytes`.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (format, _) = Self::decode_prefix(bytes.as_ref())?;
+        Ok(format)
+    }
+
+    /// Decode a TLS EC point format from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_EC_POINT_FORMAT_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.ec_point_format",
+                TLS_EC_POINT_FORMAT_LEN,
+                bytes.len(),
+            ));
+        }
+
+        Ok((Self::from_be_bytes([bytes[0]]), &bytes[1..]))
+    }
+
+    /// Return the source-backed EC point format name, when selected.
+    pub const fn name(self) -> Option<&'static str> {
+        match self.raw {
+            TLS_EC_POINT_FORMAT_UNCOMPRESSED => Some("uncompressed"),
+            TLS_EC_POINT_FORMAT_ANSIX962_COMPRESSED_PRIME => Some("ansiX962_compressed_prime"),
+            TLS_EC_POINT_FORMAT_ANSIX962_COMPRESSED_CHAR2 => Some("ansiX962_compressed_char2"),
+            _ => None,
+        }
+    }
+
+    /// Return the source-backed assignment status.
+    pub const fn status(self) -> TlsCodepointStatus {
+        match self.raw {
+            TLS_EC_POINT_FORMAT_UNCOMPRESSED => TlsCodepointStatus::DefaultEligible,
+            TLS_EC_POINT_FORMAT_ANSIX962_COMPRESSED_PRIME
+            | TLS_EC_POINT_FORMAT_ANSIX962_COMPRESSED_CHAR2 => TlsCodepointStatus::PreserveOnly,
+            3..=247 => TlsCodepointStatus::Unassigned,
+            248..=255 => TlsCodepointStatus::PrivateUse,
+        }
+    }
+
+    /// Return true when this is the RFC 8422 uncompressed point format.
+    pub const fn is_uncompressed(self) -> bool {
+        self.raw == TLS_EC_POINT_FORMAT_UNCOMPRESSED
+    }
+
+    /// Return true for RFC 8422's deprecated compressed point formats.
+    pub const fn is_deprecated_compressed(self) -> bool {
+        matches!(
+            self.raw,
+            TLS_EC_POINT_FORMAT_ANSIX962_COMPRESSED_PRIME
+                | TLS_EC_POINT_FORMAT_ANSIX962_COMPRESSED_CHAR2
+        )
+    }
+
+    /// Return true for IANA private-use EC point format values.
+    pub const fn is_private_use(self) -> bool {
+        matches!(self.status(), TlsCodepointStatus::PrivateUse)
+    }
+
+    /// Return true for the point format selected for the convenience builder.
+    pub const fn is_default_eligible(self) -> bool {
+        matches!(self.status(), TlsCodepointStatus::DefaultEligible)
+    }
+
+    /// Human-readable label preserving unknown values numerically.
+    pub fn label(self) -> String {
+        if let Some(name) = self.name() {
+            return name.to_string();
+        }
+
+        match self.status() {
+            TlsCodepointStatus::PrivateUse => {
+                format!("private-use ec point format 0x{:02x}", self.raw)
+            }
+            TlsCodepointStatus::Unassigned => {
+                format!("unassigned ec point format 0x{:02x}", self.raw)
+            }
+            _ => format!("unknown ec point format 0x{:02x}", self.raw),
+        }
+    }
+
+    /// Stable one-line summary preserving raw value and source-backed status.
+    pub fn summary(self) -> String {
+        format!(
+            "{} raw=0x{:02x} status={}",
+            self.label(),
+            self.raw,
+            self.status().label()
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(self) -> Vec<(&'static str, String)> {
+        vec![
+            ("ec_point_format", self.label()),
+            ("ec_point_format_raw", format!("0x{:02x}", self.raw)),
+            ("ec_point_format_status", self.status().label().to_string()),
+            (
+                "ec_point_format_deprecated_compressed",
+                self.is_deprecated_compressed().to_string(),
+            ),
+            ("private_use", self.is_private_use().to_string()),
+        ]
+    }
+}
+
+impl From<u8> for TlsEcPointFormat {
+    fn from(value: u8) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<TlsEcPointFormat> for u8 {
+    fn from(value: TlsEcPointFormat) -> Self {
+        value.raw()
+    }
+}
+
+impl fmt::Display for TlsEcPointFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.label())
+    }
+}
+
+/// TLS legacy `ec_point_formats` extension body as an RFC 8422 ECPointFormatList.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct TlsEcPointFormats {
+    formats: Vec<TlsEcPointFormat>,
+}
+
+impl TlsEcPointFormats {
+    /// Create an ordered ec_point_formats extension body.
+    pub fn new(formats: impl Into<Vec<TlsEcPointFormat>>) -> Self {
+        Self {
+            formats: formats.into(),
+        }
+    }
+
+    /// Create an ordered ec_point_formats extension body from point format values.
+    pub fn from_formats(formats: impl Into<Vec<TlsEcPointFormat>>) -> Self {
+        Self::new(formats)
+    }
+
+    /// Create an ordered ec_point_formats extension body from raw one-octet values.
+    pub fn from_raws(raws: impl IntoIterator<Item = u8>) -> Self {
+        Self::new(
+            raws.into_iter()
+                .map(TlsEcPointFormat::from_u8)
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    /// Create the RFC 8422 compatibility form containing only `uncompressed`.
+    pub fn uncompressed_only() -> Self {
+        Self::new(vec![TlsEcPointFormat::UNCOMPRESSED])
+    }
+
+    /// Borrow the ordered EC point format values.
+    pub fn formats(&self) -> &[TlsEcPointFormat] {
+        &self.formats
+    }
+
+    /// Return the ordered raw EC point format values.
+    pub fn raw_values(&self) -> Vec<u8> {
+        self.formats.iter().map(|format| format.raw()).collect()
+    }
+
+    /// Return EC point format labels in wire order.
+    pub fn labels(&self) -> Vec<String> {
+        self.formats.iter().map(|format| format.label()).collect()
+    }
+
+    /// Consume the extension body and return the ordered EC point format values.
+    pub fn into_vec(self) -> Vec<TlsEcPointFormat> {
+        self.formats
+    }
+
+    /// Append one EC point format to the ordered list.
+    pub fn push(&mut self, format: TlsEcPointFormat) {
+        self.formats.push(format);
+    }
+
+    /// Number of EC point format values.
+    pub fn len(&self) -> usize {
+        self.formats.len()
+    }
+
+    /// Return true when the body carries no EC point format values.
+    pub fn is_empty(&self) -> bool {
+        self.formats.is_empty()
+    }
+
+    /// Return true when the body is exactly the RFC 8422 uncompressed-only form.
+    pub fn is_uncompressed_only(&self) -> bool {
+        self.formats == [TlsEcPointFormat::UNCOMPRESSED]
+    }
+
+    /// Number of bytes occupied by the point-format vector body, excluding the length prefix.
+    pub fn byte_len(&self) -> Result<usize> {
+        let byte_len = self
+            .formats
+            .len()
+            .checked_mul(TLS_EC_POINT_FORMAT_LEN)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.ec_point_formats.length", "length overflow")
+            })?;
+        validate_ec_point_formats_len(byte_len)?;
+        Ok(byte_len)
+    }
+
+    /// Number of bytes occupied by the complete encoded ECPointFormatList body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        TLS_EC_POINT_FORMATS_LENGTH_LEN
+            .checked_add(self.byte_len()?)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.ec_point_formats.length", "length overflow")
+            })
+    }
+
+    /// Append the ec_point_formats extension body to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let byte_len = self.byte_len()?;
+        let byte_len = u8::try_from(byte_len).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "tls.ec_point_formats.length",
+                "length must fit in one byte",
+            )
+        })?;
+        out.push(byte_len);
+        for format in &self.formats {
+            format.encode(out);
+        }
+        Ok(())
+    }
+
+    /// Return this ec_point_formats extension body encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Convert this ec_point_formats body into a raw extension.
+    pub fn to_raw_extension(&self) -> Result<TlsRawExtension> {
+        Ok(TlsRawExtension::new(
+            TlsExtensionType::EC_POINT_FORMATS,
+            self.encode_to_vec()?,
+        ))
+    }
+
+    /// Decode an ec_point_formats extension body.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (formats, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.ec_point_formats.length",
+                "length must match extension body",
+            ));
+        }
+        Ok(formats)
+    }
+
+    /// Decode an ec_point_formats body from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_EC_POINT_FORMATS_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.ec_point_formats.length",
+                TLS_EC_POINT_FORMATS_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let byte_len = bytes[0] as usize;
+        validate_ec_point_formats_len(byte_len)?;
+        let required = TLS_EC_POINT_FORMATS_LENGTH_LEN
+            .checked_add(byte_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.ec_point_formats.length", "length overflow")
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "tls.ec_point_formats",
+                required,
+                bytes.len(),
+            ));
+        }
+
+        let formats = bytes[TLS_EC_POINT_FORMATS_LENGTH_LEN..required]
+            .iter()
+            .copied()
+            .map(TlsEcPointFormat::from_u8)
+            .collect::<Vec<_>>();
+        Ok((Self::new(formats), &bytes[required..]))
+    }
+
+    /// Decode a raw ec_point_formats extension body.
+    pub fn from_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        if extension.extension_type() != TlsExtensionType::EC_POINT_FORMATS {
+            return Err(CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be ec_point_formats",
+            ));
+        }
+        Self::decode(extension.body())
+    }
+
+    /// Stable one-line summary preserving point-format order.
+    pub fn summary(&self) -> String {
+        format!(
+            "ec_point_formats count={} bytes={} values={}",
+            self.len(),
+            self.len() * TLS_EC_POINT_FORMAT_LEN,
+            self.labels().join(",")
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("ec_point_formats_count", self.len().to_string()),
+            (
+                "ec_point_formats_bytes",
+                (self.len() * TLS_EC_POINT_FORMAT_LEN).to_string(),
+            ),
+            ("ec_point_formats", self.labels().join(",")),
+            (
+                "ec_point_formats_raw",
+                self.formats
+                    .iter()
+                    .map(|format| format!("0x{:02x}", format.raw()))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            (
+                "ec_point_formats_uncompressed_only",
+                self.is_uncompressed_only().to_string(),
+            ),
+        ]
+    }
+}
+
+impl From<Vec<TlsEcPointFormat>> for TlsEcPointFormats {
+    fn from(formats: Vec<TlsEcPointFormat>) -> Self {
+        Self::new(formats)
+    }
+}
+
+impl<const N: usize> From<[TlsEcPointFormat; N]> for TlsEcPointFormats {
+    fn from(formats: [TlsEcPointFormat; N]) -> Self {
+        Self::new(Vec::from(formats))
+    }
+}
+
+impl TryFrom<&TlsRawExtension> for TlsEcPointFormats {
+    type Error = CrafterError;
+
+    fn try_from(value: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension(value)
+    }
+}
+
+impl TryFrom<TlsEcPointFormats> for TlsRawExtension {
+    type Error = CrafterError;
+
+    fn try_from(value: TlsEcPointFormats) -> Result<Self> {
+        value.to_raw_extension()
+    }
+}
+
+fn validate_ec_point_formats_len(len: usize) -> Result<()> {
+    if len < TLS_EC_POINT_FORMAT_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tls.ec_point_formats.length",
+            "length must be at least one byte",
+        ));
+    }
+    if len > u8::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            "tls.ec_point_formats.length",
+            "length must fit in one byte",
         ));
     }
     Ok(())
@@ -6632,6 +7118,199 @@ mod tests {
             CrafterError::invalid_field_value(
                 "tls.extension.length",
                 "length must fit in two bytes"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_ec_point_formats_builders_encode_and_inspect() {
+        assert_eq!(
+            TlsExtensionType::ec_point_formats(),
+            TlsExtensionType::EC_POINT_FORMATS
+        );
+
+        let uncompressed = TlsEcPointFormat::uncompressed();
+        assert_eq!(uncompressed.raw(), TLS_EC_POINT_FORMAT_UNCOMPRESSED);
+        assert_eq!(uncompressed.as_u8(), TLS_EC_POINT_FORMAT_UNCOMPRESSED);
+        assert_eq!(uncompressed.to_be_bytes(), [0x00]);
+        assert_eq!(uncompressed.encode_to_vec(), [0x00]);
+        assert_eq!(TlsEcPointFormat::decode([0x00]).unwrap(), uncompressed);
+        assert_eq!(uncompressed.name(), Some("uncompressed"));
+        assert_eq!(uncompressed.status(), TlsCodepointStatus::DefaultEligible);
+        assert!(uncompressed.is_uncompressed());
+        assert!(uncompressed.is_default_eligible());
+        assert_eq!(
+            uncompressed.summary(),
+            "uncompressed raw=0x00 status=default-eligible"
+        );
+        assert!(uncompressed
+            .inspection_fields()
+            .contains(&("ec_point_format", "uncompressed".to_string())));
+        assert_eq!(uncompressed.to_string(), "uncompressed");
+        assert_eq!(u8::from(uncompressed), 0);
+
+        let compressed_prime = TlsEcPointFormat::ansi_x962_compressed_prime();
+        assert_eq!(
+            compressed_prime.raw(),
+            TLS_EC_POINT_FORMAT_ANSIX962_COMPRESSED_PRIME
+        );
+        assert_eq!(compressed_prime.name(), Some("ansiX962_compressed_prime"));
+        assert_eq!(compressed_prime.status(), TlsCodepointStatus::PreserveOnly);
+        assert!(compressed_prime.is_deprecated_compressed());
+        assert_eq!(
+            TlsEcPointFormat::ansi_x962_compressed_char2().raw(),
+            TLS_EC_POINT_FORMAT_ANSIX962_COMPRESSED_CHAR2
+        );
+
+        let formats = TlsEcPointFormats::uncompressed_only();
+        assert_eq!(formats.len(), 1);
+        assert!(!formats.is_empty());
+        assert!(formats.is_uncompressed_only());
+        assert_eq!(formats.formats(), &[TlsEcPointFormat::UNCOMPRESSED]);
+        assert_eq!(formats.raw_values(), vec![0x00]);
+        assert_eq!(formats.labels(), vec!["uncompressed".to_string()]);
+        assert_eq!(formats.byte_len().unwrap(), 1);
+        assert_eq!(formats.encoded_len().unwrap(), 2);
+        assert_eq!(formats.encode_to_vec().unwrap(), [0x01, 0x00]);
+        assert_eq!(TlsEcPointFormats::decode([0x01, 0x00]).unwrap(), formats);
+        assert_eq!(
+            formats.summary(),
+            "ec_point_formats count=1 bytes=1 values=uncompressed"
+        );
+        assert!(formats
+            .inspection_fields()
+            .contains(&("ec_point_formats_raw", "0x00".to_string())));
+        assert!(formats
+            .inspection_fields()
+            .contains(&("ec_point_formats_uncompressed_only", "true".to_string())));
+
+        let raw = formats.to_raw_extension().unwrap();
+        assert_eq!(raw.extension_type(), TlsExtensionType::EC_POINT_FORMATS);
+        assert_eq!(raw.raw_type(), constants::TLS_EXTENSION_EC_POINT_FORMATS);
+        assert_eq!(
+            raw.encode_to_vec().unwrap(),
+            [0x00, 0x0b, 0x00, 0x02, 0x01, 0x00]
+        );
+        assert_eq!(raw.as_ec_point_formats().unwrap(), formats);
+        assert_eq!(TlsEcPointFormats::try_from(&raw).unwrap(), formats);
+        assert_eq!(TlsRawExtension::try_from(formats.clone()).unwrap(), raw);
+        assert_eq!(
+            TlsRawExtension::ec_point_formats([TlsEcPointFormat::UNCOMPRESSED]).unwrap(),
+            raw
+        );
+        assert_eq!(
+            TlsRawExtension::ec_point_formats_uncompressed_only().unwrap(),
+            raw
+        );
+    }
+
+    #[test]
+    fn tls_extension_ec_point_formats_preserves_unknown_and_explicit_values() {
+        let decoded = TlsEcPointFormats::decode([0x04, 0x00, 0x01, 0x7a, 0xf8]).unwrap();
+        assert_eq!(decoded.raw_values(), vec![0x00, 0x01, 0x7a, 0xf8]);
+        assert_eq!(
+            decoded.labels(),
+            vec![
+                "uncompressed".to_string(),
+                "ansiX962_compressed_prime".to_string(),
+                "unassigned ec point format 0x7a".to_string(),
+                "private-use ec point format 0xf8".to_string(),
+            ]
+        );
+        assert_eq!(
+            decoded.encode_to_vec().unwrap(),
+            [0x04, 0x00, 0x01, 0x7a, 0xf8]
+        );
+        assert_eq!(
+            TlsEcPointFormats::from_raws([0x00, 0x01, 0x7a, 0xf8]),
+            decoded
+        );
+
+        let mut built = TlsEcPointFormats::new([TlsEcPointFormat::UNCOMPRESSED]);
+        built.push(TlsEcPointFormat::from_u8(0x7a));
+        assert_eq!(built.raw_values(), vec![0x00, 0x7a]);
+        assert_eq!(
+            built.clone().into_vec(),
+            vec![
+                TlsEcPointFormat::UNCOMPRESSED,
+                TlsEcPointFormat::from_u8(0x7a)
+            ]
+        );
+
+        let unassigned = TlsEcPointFormat::from_u8(0x7a);
+        assert_eq!(unassigned.status(), TlsCodepointStatus::Unassigned);
+        assert_eq!(unassigned.label(), "unassigned ec point format 0x7a");
+        assert_eq!(
+            unassigned.summary(),
+            "unassigned ec point format 0x7a raw=0x7a status=unassigned"
+        );
+
+        let private = TlsEcPointFormat::from_u8(0xf8);
+        assert_eq!(private.status(), TlsCodepointStatus::PrivateUse);
+        assert!(private.is_private_use());
+        assert_eq!(private.label(), "private-use ec point format 0xf8");
+        assert_eq!(
+            TlsEcPointFormat::decode_prefix(&[0xf8, 0xaa]).unwrap(),
+            (private, &[0xaa][..])
+        );
+    }
+
+    #[test]
+    fn tls_extension_ec_point_formats_reports_structured_errors() {
+        assert_eq!(
+            TlsEcPointFormat::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.ec_point_format", TLS_EC_POINT_FORMAT_LEN, 0)
+        );
+        assert_eq!(
+            TlsEcPointFormats::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.ec_point_formats.length",
+                TLS_EC_POINT_FORMATS_LENGTH_LEN,
+                0
+            )
+        );
+        assert_eq!(
+            TlsEcPointFormats::decode([0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.ec_point_formats.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsEcPointFormats::decode([0x02, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.ec_point_formats", 3, 2)
+        );
+        assert_eq!(
+            TlsEcPointFormats::decode([0x01, 0x00, 0xbb]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.ec_point_formats.length",
+                "length must match extension body"
+            )
+        );
+        assert_eq!(
+            TlsEcPointFormats::new(Vec::<TlsEcPointFormat>::new())
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.ec_point_formats.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsEcPointFormats::new(vec![TlsEcPointFormat::UNCOMPRESSED; u8::MAX as usize + 1])
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.ec_point_formats.length",
+                "length must fit in one byte"
+            )
+        );
+        assert_eq!(
+            TlsEcPointFormats::from_raw_extension(&TlsRawExtension::from_raw(0xbeef, []))
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be ec_point_formats"
             )
         );
     }
