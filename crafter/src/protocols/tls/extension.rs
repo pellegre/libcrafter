@@ -1,10 +1,10 @@
 //! TLS extension type helpers.
 //!
 //! TLS extensions are length-prefixed entries keyed by a raw two-octet
-//! `ExtensionType`. This module models the codepoint and a single raw
-//! extension entry so unknown or deferred extension bodies stay round-trippable.
-//! Full extension-list parsing and typed bodies are added in later
-//! source-backed steps.
+//! `ExtensionType`. This module models the codepoint, a single raw extension
+//! entry, and the ordered extension-list framing shared by hello and
+//! certificate contexts so unknown or deferred extension bodies stay
+//! round-trippable.
 
 use core::fmt;
 
@@ -17,6 +17,8 @@ pub const TLS_EXTENSION_TYPE_LEN: usize = 2;
 pub const TLS_EXTENSION_LENGTH_LEN: usize = 2;
 /// TLS extension entry header width in bytes.
 pub const TLS_EXTENSION_HEADER_LEN: usize = TLS_EXTENSION_TYPE_LEN + TLS_EXTENSION_LENGTH_LEN;
+/// TLS extension-list aggregate length field width in bytes.
+pub const TLS_EXTENSION_LIST_LENGTH_LEN: usize = 2;
 
 /// A raw-preserving TLS `ExtensionType` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -398,6 +400,413 @@ impl TlsRawExtension {
     }
 }
 
+/// Error contexts used while encoding or decoding an extension list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TlsExtensionListContext {
+    list: &'static str,
+    list_length: &'static str,
+    extension: &'static str,
+    extension_type: &'static str,
+    extension_length: &'static str,
+    extension_body: &'static str,
+}
+
+impl TlsExtensionListContext {
+    /// Create explicit labels for one extension-list context.
+    pub const fn new(
+        list: &'static str,
+        list_length: &'static str,
+        extension: &'static str,
+        extension_type: &'static str,
+        extension_length: &'static str,
+        extension_body: &'static str,
+    ) -> Self {
+        Self {
+            list,
+            list_length,
+            extension,
+            extension_type,
+            extension_length,
+            extension_body,
+        }
+    }
+
+    /// Generic `tls.extensions.*` context.
+    pub const fn generic() -> Self {
+        Self::new(
+            "tls.extensions",
+            "tls.extensions.length",
+            "tls.extension",
+            "tls.extension.type",
+            "tls.extension.length",
+            "tls.extension.body",
+        )
+    }
+
+    /// ClientHello `tls.client_hello.extensions.*` context.
+    pub const fn client_hello() -> Self {
+        Self::new(
+            "tls.client_hello.extensions",
+            "tls.client_hello.extensions.length",
+            "tls.client_hello.extension",
+            "tls.client_hello.extension.type",
+            "tls.client_hello.extension.length",
+            "tls.client_hello.extension.body",
+        )
+    }
+
+    /// ServerHello `tls.server_hello.extensions.*` context.
+    pub const fn server_hello() -> Self {
+        Self::new(
+            "tls.server_hello.extensions",
+            "tls.server_hello.extensions.length",
+            "tls.server_hello.extension",
+            "tls.server_hello.extension.type",
+            "tls.server_hello.extension.length",
+            "tls.server_hello.extension.body",
+        )
+    }
+
+    /// Certificate `tls.certificate.extensions.*` context.
+    pub const fn certificate() -> Self {
+        Self::new(
+            "tls.certificate.extensions",
+            "tls.certificate.extensions.length",
+            "tls.certificate.extension",
+            "tls.certificate.extension.type",
+            "tls.certificate.extension.length",
+            "tls.certificate.extension.body",
+        )
+    }
+
+    /// CertificateEntry `tls.certificate_entry.extensions.*` context.
+    pub const fn certificate_entry() -> Self {
+        Self::new(
+            "tls.certificate_entry.extensions",
+            "tls.certificate_entry.extensions.length",
+            "tls.certificate_entry.extension",
+            "tls.certificate_entry.extension.type",
+            "tls.certificate_entry.extension.length",
+            "tls.certificate_entry.extension.body",
+        )
+    }
+
+    /// Context for the aggregate extension-list body.
+    pub const fn list(self) -> &'static str {
+        self.list
+    }
+
+    /// Context for the aggregate extension-list length.
+    pub const fn list_length(self) -> &'static str {
+        self.list_length
+    }
+
+    /// Context for one complete extension entry.
+    pub const fn extension(self) -> &'static str {
+        self.extension
+    }
+
+    /// Context for one extension type field.
+    pub const fn extension_type(self) -> &'static str {
+        self.extension_type
+    }
+
+    /// Context for one extension body length field.
+    pub const fn extension_length(self) -> &'static str {
+        self.extension_length
+    }
+
+    /// Context for one extension body.
+    pub const fn extension_body(self) -> &'static str {
+        self.extension_body
+    }
+}
+
+impl Default for TlsExtensionListContext {
+    fn default() -> Self {
+        Self::generic()
+    }
+}
+
+/// Ordered TLS extension list with duplicate entries preserved visibly.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct TlsExtensions {
+    extensions: Vec<TlsRawExtension>,
+}
+
+impl TlsExtensions {
+    /// Create an ordered extension list.
+    pub fn new(extensions: impl Into<Vec<TlsRawExtension>>) -> Self {
+        Self {
+            extensions: extensions.into(),
+        }
+    }
+
+    /// Create an empty ordered extension list.
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Create an ordered extension list from raw type/body pairs.
+    pub fn from_raws<I, B>(extensions: I) -> Self
+    where
+        I: IntoIterator<Item = (u16, B)>,
+        B: Into<Vec<u8>>,
+    {
+        Self::new(
+            extensions
+                .into_iter()
+                .map(|(extension_type, body)| TlsRawExtension::from_raw(extension_type, body))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    /// Borrow the ordered raw extension entries.
+    pub fn extensions(&self) -> &[TlsRawExtension] {
+        &self.extensions
+    }
+
+    /// Compatibility alias for borrowing the ordered raw extension entries.
+    pub fn as_slice(&self) -> &[TlsRawExtension] {
+        self.extensions()
+    }
+
+    /// Return the ordered raw extension type values.
+    pub fn raw_types(&self) -> Vec<u16> {
+        self.extensions
+            .iter()
+            .map(TlsRawExtension::raw_type)
+            .collect()
+    }
+
+    /// Return labels in wire order.
+    pub fn labels(&self) -> Vec<String> {
+        self.extensions
+            .iter()
+            .map(|extension| extension.extension_type().label())
+            .collect()
+    }
+
+    /// Consume the list and return the ordered raw extension entries.
+    pub fn into_vec(self) -> Vec<TlsRawExtension> {
+        self.extensions
+    }
+
+    /// Append one raw extension entry to the ordered list.
+    pub fn push(&mut self, extension: TlsRawExtension) {
+        self.extensions.push(extension);
+    }
+
+    /// Number of extension entries in the list.
+    pub fn len(&self) -> usize {
+        self.extensions.len()
+    }
+
+    /// Return true when the list carries no extension entries.
+    pub fn is_empty(&self) -> bool {
+        self.extensions.is_empty()
+    }
+
+    /// Number of bytes occupied by extension entries, excluding the list length prefix.
+    pub fn byte_len(&self) -> Result<usize> {
+        self.byte_len_with_context(TlsExtensionListContext::generic())
+    }
+
+    /// Number of bytes occupied by extension entries using context-specific labels.
+    pub fn byte_len_with_context(&self, context: TlsExtensionListContext) -> Result<usize> {
+        let mut len = 0usize;
+        for extension in &self.extensions {
+            len = len.checked_add(extension.encoded_len()?).ok_or_else(|| {
+                CrafterError::invalid_field_value(context.list_length(), "length overflow")
+            })?;
+        }
+
+        if len > u16::MAX as usize {
+            return Err(CrafterError::invalid_field_value(
+                context.list_length(),
+                "length must fit in two bytes",
+            ));
+        }
+
+        Ok(len)
+    }
+
+    /// Number of bytes occupied by the complete encoded extension list.
+    pub fn encoded_len(&self) -> Result<usize> {
+        self.encoded_len_with_context(TlsExtensionListContext::generic())
+    }
+
+    /// Number of bytes occupied by the complete encoded list using context-specific labels.
+    pub fn encoded_len_with_context(&self, context: TlsExtensionListContext) -> Result<usize> {
+        TLS_EXTENSION_LIST_LENGTH_LEN
+            .checked_add(self.byte_len_with_context(context)?)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(context.list_length(), "length overflow")
+            })
+    }
+
+    /// Append the uint16 length-prefixed extension list.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.encode_with_context(TlsExtensionListContext::generic(), out)
+    }
+
+    /// Append the uint16 length-prefixed extension list with context-specific labels.
+    pub fn encode_with_context(
+        &self,
+        context: TlsExtensionListContext,
+        out: &mut Vec<u8>,
+    ) -> Result<()> {
+        let body_len = self.byte_len_with_context(context)?;
+        let body_len = u16::try_from(body_len).map_err(|_| {
+            CrafterError::invalid_field_value(context.list_length(), "length must fit in two bytes")
+        })?;
+
+        out.extend_from_slice(&body_len.to_be_bytes());
+        for extension in &self.extensions {
+            extension.encode(out)?;
+        }
+        Ok(())
+    }
+
+    /// Return the uint16 length-prefixed extension list encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        self.encode_to_vec_with_context(TlsExtensionListContext::generic())
+    }
+
+    /// Return the uint16 length-prefixed extension list encoding with context-specific labels.
+    pub fn encode_to_vec_with_context(&self, context: TlsExtensionListContext) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len_with_context(context)?);
+        self.encode_with_context(context, &mut out)?;
+        Ok(out)
+    }
+
+    /// Decode a uint16 length-prefixed extension list.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (extensions, _) = Self::decode_prefix(bytes.as_ref())?;
+        Ok(extensions)
+    }
+
+    /// Decode a uint16 length-prefixed extension list using context-specific labels.
+    pub fn decode_with_context(
+        context: TlsExtensionListContext,
+        bytes: impl AsRef<[u8]>,
+    ) -> Result<Self> {
+        let (extensions, _) = Self::decode_prefix_with_context(context, bytes.as_ref())?;
+        Ok(extensions)
+    }
+
+    /// Decode a uint16 length-prefixed extension list from the front of `bytes`.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        Self::decode_prefix_with_context(TlsExtensionListContext::generic(), bytes)
+    }
+
+    /// Decode a uint16 length-prefixed extension list from the front of `bytes`
+    /// using context-specific labels.
+    pub fn decode_prefix_with_context(
+        context: TlsExtensionListContext,
+        bytes: &[u8],
+    ) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_EXTENSION_LIST_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                context.list_length(),
+                TLS_EXTENSION_LIST_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let byte_len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+        let required = TLS_EXTENSION_LIST_LENGTH_LEN
+            .checked_add(byte_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(context.list_length(), "length overflow")
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                context.list(),
+                required,
+                bytes.len(),
+            ));
+        }
+
+        let mut cursor = TLS_EXTENSION_LIST_LENGTH_LEN;
+        let body_end = required;
+        let mut extensions = Vec::new();
+
+        while cursor < body_end {
+            let remaining = body_end - cursor;
+            if remaining < TLS_EXTENSION_HEADER_LEN {
+                return Err(CrafterError::buffer_too_short(
+                    context.extension(),
+                    TLS_EXTENSION_HEADER_LEN,
+                    remaining,
+                ));
+            }
+
+            let extension_type =
+                TlsExtensionType::from_be_bytes([bytes[cursor], bytes[cursor + 1]]);
+            cursor += TLS_EXTENSION_TYPE_LEN;
+
+            let body_len = u16::from_be_bytes([bytes[cursor], bytes[cursor + 1]]) as usize;
+            cursor += TLS_EXTENSION_LENGTH_LEN;
+
+            if body_end - cursor < body_len {
+                return Err(CrafterError::buffer_too_short(
+                    context.extension_body(),
+                    TLS_EXTENSION_HEADER_LEN + body_len,
+                    remaining,
+                ));
+            }
+
+            let extension_body = bytes[cursor..cursor + body_len].to_vec();
+            cursor += body_len;
+            extensions.push(TlsRawExtension::new(extension_type, extension_body));
+        }
+
+        Ok((Self::new(extensions), &bytes[required..]))
+    }
+
+    /// Stable one-line summary preserving order and duplicate entries.
+    pub fn summary(&self) -> String {
+        format!(
+            "extensions count={} bytes={} values={}",
+            self.len(),
+            self.extensions
+                .iter()
+                .map(|extension| extension.encoded_len().unwrap_or(0))
+                .sum::<usize>(),
+            self.labels().join(",")
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("extensions_count", self.len().to_string()),
+            (
+                "extensions_bytes",
+                self.extensions
+                    .iter()
+                    .map(|extension| extension.encoded_len().unwrap_or(0))
+                    .sum::<usize>()
+                    .to_string(),
+            ),
+            ("extensions", self.labels().join(",")),
+        ]
+    }
+}
+
+impl From<Vec<TlsRawExtension>> for TlsExtensions {
+    fn from(extensions: Vec<TlsRawExtension>) -> Self {
+        Self::new(extensions)
+    }
+}
+
+impl<const N: usize> From<[TlsRawExtension; N]> for TlsExtensions {
+    fn from(extensions: [TlsRawExtension; N]) -> Self {
+        Self::new(Vec::from(extensions))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -594,6 +1003,103 @@ mod tests {
             extension.encode_to_vec().unwrap_err(),
             CrafterError::invalid_field_value(
                 "tls.extension.length",
+                "length must fit in two bytes"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extensions_ordered_round_trip_preserves_duplicates_and_unknown_bodies() {
+        let extensions = TlsExtensions::new(vec![
+            TlsRawExtension::from_raw(0xbeef, [0xde, 0xad]),
+            TlsRawExtension::from_raw(0x002b, [0x03, 0x04]),
+            TlsRawExtension::from_raw(0xbeef, [0xfa, 0xce, 0x00]),
+        ]);
+
+        let encoded = extensions.encode_to_vec().unwrap();
+        assert_eq!(
+            encoded,
+            [
+                0x00, 0x13, 0xbe, 0xef, 0x00, 0x02, 0xde, 0xad, 0x00, 0x2b, 0x00, 0x02, 0x03, 0x04,
+                0xbe, 0xef, 0x00, 0x03, 0xfa, 0xce, 0x00,
+            ]
+        );
+
+        let encoded_with_tail = [encoded.as_slice(), &[0xaa, 0xbb][..]].concat();
+        let (decoded, tail) = TlsExtensions::decode_prefix(&encoded_with_tail).unwrap();
+        assert_eq!(tail, &[0xaa, 0xbb]);
+        assert_eq!(decoded, extensions);
+        assert_eq!(decoded.raw_types(), vec![0xbeef, 0x002b, 0xbeef]);
+        assert_eq!(decoded.extensions()[0].body(), &[0xde, 0xad]);
+        assert_eq!(decoded.extensions()[2].body(), &[0xfa, 0xce, 0x00]);
+        assert_eq!(decoded.as_slice(), decoded.extensions());
+        assert_eq!(decoded.clone().into_vec(), extensions.into_vec());
+    }
+
+    #[test]
+    fn tls_extensions_empty_list_is_visible_and_round_trips() {
+        let extensions = TlsExtensions::empty();
+
+        assert!(extensions.is_empty());
+        assert_eq!(extensions.len(), 0);
+        assert_eq!(extensions.byte_len().unwrap(), 0);
+        assert_eq!(extensions.encoded_len().unwrap(), 2);
+        assert_eq!(extensions.encode_to_vec().unwrap(), [0x00, 0x00]);
+        assert_eq!(
+            TlsExtensions::decode([0x00, 0x00]).unwrap(),
+            TlsExtensions::empty()
+        );
+    }
+
+    #[test]
+    fn tls_extensions_decode_reports_structured_short_list_header_and_body_errors() {
+        assert_eq!(
+            TlsExtensions::decode_with_context(TlsExtensionListContext::client_hello(), [0x00])
+                .unwrap_err(),
+            CrafterError::buffer_too_short("tls.client_hello.extensions.length", 2, 1)
+        );
+        assert_eq!(
+            TlsExtensions::decode_with_context(
+                TlsExtensionListContext::client_hello(),
+                [0x00, 0x04, 0xbe]
+            )
+            .unwrap_err(),
+            CrafterError::buffer_too_short("tls.client_hello.extensions", 6, 3)
+        );
+        assert_eq!(
+            TlsExtensions::decode_with_context(
+                TlsExtensionListContext::server_hello(),
+                [0x00, 0x03, 0xbe, 0xef, 0x00]
+            )
+            .unwrap_err(),
+            CrafterError::buffer_too_short("tls.server_hello.extension", 4, 3)
+        );
+        assert_eq!(
+            TlsExtensions::decode_with_context(
+                TlsExtensionListContext::certificate_entry(),
+                [0x00, 0x05, 0xbe, 0xef, 0x00, 0x02, 0xaa]
+            )
+            .unwrap_err(),
+            CrafterError::buffer_too_short("tls.certificate_entry.extension.body", 6, 5)
+        );
+    }
+
+    #[test]
+    fn tls_extensions_encode_rejects_oversized_aggregate_with_context() {
+        let extensions = TlsExtensions::new(vec![
+            TlsRawExtension::from_raw(
+                0x0000,
+                vec![0; u16::MAX as usize - TLS_EXTENSION_HEADER_LEN],
+            ),
+            TlsRawExtension::from_raw(0x0001, []),
+        ]);
+
+        assert_eq!(
+            extensions
+                .encode_to_vec_with_context(TlsExtensionListContext::server_hello())
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.server_hello.extensions.length",
                 "length must fit in two bytes"
             )
         );
