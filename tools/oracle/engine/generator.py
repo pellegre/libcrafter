@@ -2507,6 +2507,8 @@ def _stack_families(layers: Sequence[str], root_families: Sequence[str]) -> list
         families.append("ssdp")
     if "mdns" in layer_set:
         families.append("mdns")
+    if "tls" in layer_set:
+        families.append("tls")
     if "link" in root_families and layer_set.intersection(
         {"ethernet", "vlan", "payload", "linux_cooked", "null_loopback"}
     ):
