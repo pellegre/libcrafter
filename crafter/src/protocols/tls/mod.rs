@@ -22,11 +22,12 @@ pub use alert::{TlsAlert, TlsAlertDescription, TlsAlertLevel, TLS_ALERT_LEN};
 pub use cipher_suite::{TlsCipherSuite, TlsCipherSuiteList};
 pub use content_type::TlsContentType;
 pub use extension::{
-    TlsExtensionListContext, TlsExtensionType, TlsExtensions, TlsRawExtension, TlsServerName,
-    TlsServerNameList, TlsServerNameType, TLS_EXTENSION_HEADER_LEN, TLS_EXTENSION_LENGTH_LEN,
-    TLS_EXTENSION_LIST_LENGTH_LEN, TLS_EXTENSION_TYPE_LEN, TLS_SERVER_NAME_HEADER_LEN,
-    TLS_SERVER_NAME_LENGTH_LEN, TLS_SERVER_NAME_LIST_LENGTH_LEN, TLS_SERVER_NAME_TYPE_HOST_NAME,
-    TLS_SERVER_NAME_TYPE_LEN,
+    TlsAlpnProtocol, TlsAlpnProtocols, TlsExtensionListContext, TlsExtensionType, TlsExtensions,
+    TlsRawExtension, TlsServerName, TlsServerNameList, TlsServerNameType,
+    TLS_ALPN_PROTOCOL_NAME_LENGTH_LEN, TLS_ALPN_PROTOCOL_NAME_LIST_LENGTH_LEN,
+    TLS_EXTENSION_HEADER_LEN, TLS_EXTENSION_LENGTH_LEN, TLS_EXTENSION_LIST_LENGTH_LEN,
+    TLS_EXTENSION_TYPE_LEN, TLS_SERVER_NAME_HEADER_LEN, TLS_SERVER_NAME_LENGTH_LEN,
+    TLS_SERVER_NAME_LIST_LENGTH_LEN, TLS_SERVER_NAME_TYPE_HOST_NAME, TLS_SERVER_NAME_TYPE_LEN,
 };
 pub use handshake::{
     TlsClientHello, TlsClientHelloBody, TlsHandshake, TlsHandshakeBody, TlsHandshakeHeader,
