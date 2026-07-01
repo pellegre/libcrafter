@@ -10,13 +10,17 @@ pub mod content_type;
 pub(crate) mod decode;
 pub mod extension;
 pub mod handshake;
+pub mod named_group;
 pub mod record;
+pub mod signature_scheme;
 pub mod vectors;
 pub mod version;
 
 pub use alert::{TlsAlert, TlsAlertDescription, TlsAlertLevel, TLS_ALERT_LEN};
 pub use cipher_suite::{TlsCipherSuite, TlsCipherSuiteList};
 pub use content_type::TlsContentType;
+pub use named_group::{TlsNamedGroup, TlsNamedGroupList};
+pub use signature_scheme::{TlsSignatureScheme, TlsSignatureSchemeList};
 pub use version::{TlsVersion, TlsVersionField};
 
 #[cfg(test)]
