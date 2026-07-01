@@ -11,6 +11,7 @@ use super::constants::{self, TlsCodepointStatus};
 use super::extension::{TlsRawExtension, TLS_EXTENSION_HEADER_LEN};
 use super::version::TlsVersion;
 use crate::field::{Field, FieldState};
+use crate::protocols::transport::common::hex_bytes;
 use crate::{CrafterError, Result};
 
 /// TLS handshake type field width in bytes.
@@ -35,6 +36,8 @@ pub const TLS_SERVER_HELLO_RANDOM_LEN: usize = 32;
 /// TLS ServerHello fixed field width before vectors.
 pub const TLS_SERVER_HELLO_FIXED_LEN: usize =
     TLS_SERVER_HELLO_LEGACY_VERSION_LEN + TLS_SERVER_HELLO_RANDOM_LEN;
+/// TLS legacy null compression method byte.
+pub const TLS_COMPRESSION_METHOD_NULL: u8 = 0x00;
 
 /// A raw-preserving TLS `HandshakeType` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1313,6 +1316,11 @@ impl TlsClientHello {
         }
     }
 
+    /// Construct a ClientHello with a caller-supplied fixed 32-byte random field.
+    pub fn fixed_random(random: [u8; TLS_CLIENT_HELLO_RANDOM_LEN]) -> Self {
+        Self::new().with_random(random)
+    }
+
     /// Construct a ClientHello from all decoded or caller-supplied fields.
     pub fn from_fields(
         legacy_version: impl Into<TlsVersion>,
@@ -1350,10 +1358,25 @@ impl TlsClientHello {
         self
     }
 
+    /// Replace the 32-byte ClientHello random field with fixed bytes.
+    pub fn with_fixed_random(self, random: [u8; TLS_CLIENT_HELLO_RANDOM_LEN]) -> Self {
+        self.with_random(random)
+    }
+
     /// Replace the legacy session ID vector body bytes.
     pub fn with_session_id(mut self, session_id: impl Into<Vec<u8>>) -> Self {
         self.session_id = session_id.into();
         self
+    }
+
+    /// Encode an empty legacy session ID vector.
+    pub fn with_empty_session_id(self) -> Self {
+        self.with_session_id(Vec::new())
+    }
+
+    /// Replace the legacy session ID vector with explicit caller-supplied bytes.
+    pub fn with_explicit_session_id(self, session_id: impl Into<Vec<u8>>) -> Self {
+        self.with_session_id(session_id)
     }
 
     /// Replace the ordered cipher suite vector.
@@ -1382,10 +1405,25 @@ impl TlsClientHello {
         self
     }
 
+    /// Replace the legacy compression-method vector with the null method.
+    pub fn with_null_compression(self) -> Self {
+        self.with_compression_methods([TLS_COMPRESSION_METHOD_NULL])
+    }
+
+    /// Replace the legacy compression-method vector with raw method bytes.
+    pub fn with_raw_compression_methods(self, compression_methods: impl Into<Vec<u8>>) -> Self {
+        self.with_compression_methods(compression_methods)
+    }
+
     /// Append one legacy compression method byte.
     pub fn with_compression_method(mut self, compression_method: u8) -> Self {
         self.compression_methods.push(compression_method);
         self
+    }
+
+    /// Append one raw legacy compression method byte.
+    pub fn with_raw_compression_method(self, compression_method: u8) -> Self {
+        self.with_compression_method(compression_method)
     }
 
     /// Replace the raw extension list and mark the extensions vector present.
@@ -1617,9 +1655,12 @@ impl TlsClientHello {
                 "legacy_version_raw",
                 format!("0x{:04x}", self.legacy_version.raw()),
             ),
+            ("random", hex_bytes(&self.random)),
             ("random_bytes", self.random.len().to_string()),
+            ("session_id", hex_bytes(&self.session_id)),
             ("session_id_bytes", self.session_id.len().to_string()),
             ("cipher_suites_count", self.cipher_suites.len().to_string()),
+            ("compression_methods", hex_bytes(&self.compression_methods)),
             (
                 "compression_methods_count",
                 self.compression_methods.len().to_string(),
@@ -1686,6 +1727,11 @@ impl TlsServerHello {
         }
     }
 
+    /// Construct a ServerHello with a caller-supplied fixed 32-byte random field.
+    pub fn fixed_random(random: [u8; TLS_SERVER_HELLO_RANDOM_LEN]) -> Self {
+        Self::new().with_random(random)
+    }
+
     /// Construct a ServerHello from all decoded or caller-supplied fields.
     pub fn from_fields(
         legacy_version: impl Into<TlsVersion>,
@@ -1722,10 +1768,30 @@ impl TlsServerHello {
         self
     }
 
+    /// Replace the 32-byte ServerHello random field with fixed bytes.
+    pub fn with_fixed_random(self, random: [u8; TLS_SERVER_HELLO_RANDOM_LEN]) -> Self {
+        self.with_random(random)
+    }
+
     /// Replace the legacy session ID echo vector body bytes.
     pub fn with_session_id_echo(mut self, session_id_echo: impl Into<Vec<u8>>) -> Self {
         self.session_id_echo = session_id_echo.into();
         self
+    }
+
+    /// Encode an empty legacy session ID echo vector.
+    pub fn with_empty_session_id_echo(self) -> Self {
+        self.with_session_id_echo(Vec::new())
+    }
+
+    /// Replace the legacy session ID echo with explicit caller-supplied bytes.
+    pub fn with_explicit_session_id_echo(self, session_id_echo: impl Into<Vec<u8>>) -> Self {
+        self.with_session_id_echo(session_id_echo)
+    }
+
+    /// Echo the session ID bytes from a ClientHello.
+    pub fn with_session_id_echo_from_client(self, client_hello: &TlsClientHello) -> Self {
+        self.with_session_id_echo(client_hello.session_id())
     }
 
     /// Compatibility alias for replacing the legacy session ID echo bytes.
@@ -1748,6 +1814,16 @@ impl TlsServerHello {
     pub fn with_compression_method(mut self, compression_method: u8) -> Self {
         self.compression_method = compression_method;
         self
+    }
+
+    /// Replace the legacy compression method with the null method.
+    pub fn with_null_compression(self) -> Self {
+        self.with_compression_method(TLS_COMPRESSION_METHOD_NULL)
+    }
+
+    /// Replace the legacy compression method with a raw method byte.
+    pub fn with_raw_compression_method(self, compression_method: u8) -> Self {
+        self.with_compression_method(compression_method)
     }
 
     /// Replace the raw extension list.
@@ -1959,7 +2035,9 @@ impl TlsServerHello {
                 "legacy_version_raw",
                 format!("0x{:04x}", self.legacy_version.raw()),
             ),
+            ("random", hex_bytes(&self.random)),
             ("random_bytes", self.random.len().to_string()),
+            ("session_id_echo", hex_bytes(&self.session_id_echo)),
             (
                 "session_id_echo_bytes",
                 self.session_id_echo.len().to_string(),
@@ -2486,6 +2564,130 @@ mod tests {
         assert_eq!(decoded.encode_to_vec()?, encoded);
 
         Ok(())
+    }
+
+    #[test]
+    fn tls_hello_fields_client_random_session_and_compression_helpers() -> Result<()> {
+        let random = [0xab; TLS_CLIENT_HELLO_RANDOM_LEN];
+        let hello = TlsClientHello::fixed_random(random)
+            .with_empty_session_id()
+            .with_raw_cipher_suites([0x1301])
+            .with_null_compression()
+            .without_extensions();
+
+        assert_eq!(hello.random(), &random);
+        assert_eq!(hello.random().len(), TLS_CLIENT_HELLO_RANDOM_LEN);
+        assert!(hello.session_id().is_empty());
+        assert_eq!(hello.compression_methods(), &[TLS_COMPRESSION_METHOD_NULL]);
+        assert_eq!(
+            hello.summary(),
+            "client_hello legacy_version=TLS 1.2 session_id_bytes=0 cipher_suites=1 compression_methods=1 extensions=0 extensions_present=false"
+        );
+
+        let fields = hello.inspection_fields();
+        assert!(fields.contains(&("random", hex_bytes(&random))));
+        assert!(fields.contains(&("random_bytes", "32".to_string())));
+        assert!(fields.contains(&("session_id", String::new())));
+        assert!(fields.contains(&("session_id_bytes", "0".to_string())));
+        assert!(fields.contains(&("compression_methods", "00".to_string())));
+        assert!(fields.contains(&("compression_methods_count", "1".to_string())));
+
+        let encoded = hello.encode_to_vec()?;
+        assert_eq!(&encoded[2..TLS_CLIENT_HELLO_FIXED_LEN], random.as_slice());
+        assert_eq!(
+            &encoded[TLS_CLIENT_HELLO_FIXED_LEN..],
+            &[0x00, 0x00, 0x02, 0x13, 0x01, 0x01, 0x00][..]
+        );
+
+        let explicit = TlsClientHello::new()
+            .with_fixed_random(random)
+            .with_explicit_session_id([0x01, 0x02, 0x03])
+            .with_raw_cipher_suites([0x1301])
+            .with_raw_compression_methods([0x00, 0xff]);
+        assert_eq!(explicit.random(), &random);
+        assert_eq!(explicit.session_id(), &[0x01, 0x02, 0x03]);
+        assert_eq!(explicit.compression_methods(), &[0x00, 0xff]);
+
+        let appended = TlsClientHello::new()
+            .with_null_compression()
+            .with_raw_compression_method(0xff);
+        assert_eq!(appended.compression_methods(), &[0x00, 0xff]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_hello_fields_server_random_session_echo_and_compression_helpers() -> Result<()> {
+        let client = TlsClientHello::new().with_explicit_session_id([0xaa, 0xbb]);
+        let random = [0xcd; TLS_SERVER_HELLO_RANDOM_LEN];
+        let hello = TlsServerHello::fixed_random(random)
+            .with_session_id_echo_from_client(&client)
+            .with_raw_cipher_suite(0x1301)
+            .with_null_compression();
+
+        assert_eq!(hello.random(), &random);
+        assert_eq!(hello.random().len(), TLS_SERVER_HELLO_RANDOM_LEN);
+        assert_eq!(hello.session_id_echo(), &[0xaa, 0xbb]);
+        assert_eq!(hello.session_id(), &[0xaa, 0xbb]);
+        assert_eq!(hello.compression_method(), TLS_COMPRESSION_METHOD_NULL);
+        assert_eq!(
+            hello.summary(),
+            "server_hello legacy_version=TLS 1.2 session_id_echo_bytes=2 cipher_suite=TLS_AES_128_GCM_SHA256 compression_method=0x00 extensions=0"
+        );
+
+        let fields = hello.inspection_fields();
+        assert!(fields.contains(&("random", hex_bytes(&random))));
+        assert!(fields.contains(&("random_bytes", "32".to_string())));
+        assert!(fields.contains(&("session_id_echo", "aa bb".to_string())));
+        assert!(fields.contains(&("session_id_echo_bytes", "2".to_string())));
+        assert!(fields.contains(&("compression_method", "0x00".to_string())));
+
+        let explicit = TlsServerHello::new()
+            .with_fixed_random(random)
+            .with_empty_session_id_echo()
+            .with_explicit_session_id_echo([0x01, 0x02, 0x03])
+            .with_raw_compression_method(0xff);
+        assert_eq!(explicit.random(), &random);
+        assert_eq!(explicit.session_id_echo(), &[0x01, 0x02, 0x03]);
+        assert_eq!(explicit.compression_method(), 0xff);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_hello_fields_oversized_u8_vectors_are_rejected_late() {
+        let oversized = vec![0xaa; u8::MAX as usize + 1];
+
+        assert_eq!(
+            TlsClientHello::new()
+                .with_explicit_session_id(oversized.clone())
+                .encoded_len()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.client_hello.session_id.length",
+                "length must fit in one byte",
+            )
+        );
+        assert_eq!(
+            TlsClientHello::new()
+                .with_raw_compression_methods(oversized.clone())
+                .encoded_len()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.client_hello.compression_methods.length",
+                "length must fit in one byte",
+            )
+        );
+        assert_eq!(
+            TlsServerHello::new()
+                .with_explicit_session_id_echo(oversized)
+                .encoded_len()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.server_hello.session_id_echo.length",
+                "length must fit in one byte",
+            )
+        );
     }
 
     #[test]
