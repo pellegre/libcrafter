@@ -4,7 +4,7 @@
 //! fragments remain opaque here; later source-backed steps can add typed body
 //! parsing without changing the packet-layer container.
 
-use super::{TlsAlert, TlsContentType, TlsRecord, TLS_RECORD_HEADER_LEN};
+use super::{TlsAlert, TlsChangeCipherSpec, TlsContentType, TlsRecord, TLS_RECORD_HEADER_LEN};
 use crate::packet::{Layer, LayerContext};
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::Result;
@@ -89,6 +89,11 @@ impl Tls {
     /// Construct a TLS `change_cipher_spec` record with an opaque fragment.
     pub fn change_cipher_spec(fragment: impl Into<Vec<u8>>) -> Self {
         Self::from_record(TlsRecord::change_cipher_spec(fragment))
+    }
+
+    /// Construct a TLS `change_cipher_spec` record from the typed helper.
+    pub fn change_cipher_spec_message(change_cipher_spec: TlsChangeCipherSpec) -> Self {
+        Self::from_record(TlsRecord::from_change_cipher_spec(change_cipher_spec))
     }
 
     /// Append a complete record and return the updated TLS layer.
