@@ -242,10 +242,9 @@ impl TlsVectorBounds {
     /// Return the encoded byte count for a body of `body_len` bytes.
     pub fn encoded_len_for_body_len(self, body_len: usize) -> Result<usize> {
         self.validate_len(body_len)?;
-        self.prefix
-            .width()
-            .checked_add(body_len)
-            .ok_or_else(|| CrafterError::invalid_field_value(self.length_context, "length overflow"))
+        self.prefix.width().checked_add(body_len).ok_or_else(|| {
+            CrafterError::invalid_field_value(self.length_context, "length overflow")
+        })
     }
 
     /// Return the encoded byte count for `body`.
@@ -273,8 +272,7 @@ impl TlsVectorBounds {
     pub fn decode_prefix<'a>(self, bytes: &'a [u8]) -> Result<(TlsVector<'a>, &'a [u8])> {
         self.validate()?;
 
-        let (declared_len, body_and_tail) =
-            self.prefix.decode_len(bytes, self.length_context)?;
+        let (declared_len, body_and_tail) = self.prefix.decode_len(bytes, self.length_context)?;
         self.validate_len(declared_len)?;
 
         if body_and_tail.len() < declared_len {
@@ -304,9 +302,9 @@ impl TlsVectorBounds {
         })?;
 
         let (vector, _) = self.decode_prefix(remaining)?;
-        *cursor = start
-            .checked_add(vector.encoded_len())
-            .ok_or_else(|| CrafterError::invalid_field_value(self.length_context, "cursor overflow"))?;
+        *cursor = start.checked_add(vector.encoded_len()).ok_or_else(|| {
+            CrafterError::invalid_field_value(self.length_context, "cursor overflow")
+        })?;
         Ok(vector)
     }
 }
@@ -396,7 +394,10 @@ mod tests {
         let encoded = U16_BOUNDS.encode_to_vec(&body).unwrap();
 
         assert_eq!(&encoded[..2], &[0xff, 0xff]);
-        assert_eq!(encoded.len(), TLS_VECTOR_U16_PREFIX_LEN + TLS_VECTOR_U16_MAX_LEN);
+        assert_eq!(
+            encoded.len(),
+            TLS_VECTOR_U16_PREFIX_LEN + TLS_VECTOR_U16_MAX_LEN
+        );
 
         let (decoded, tail) = U16_BOUNDS.decode_prefix(&encoded).unwrap();
         assert!(tail.is_empty());
@@ -481,7 +482,8 @@ mod tests {
             )
         );
         assert_eq!(
-            bounded.decode_prefix(&[0x04, 0xaa, 0xbb, 0xcc, 0xdd])
+            bounded
+                .decode_prefix(&[0x04, 0xaa, 0xbb, 0xcc, 0xdd])
                 .unwrap_err(),
             CrafterError::invalid_field_value(
                 "tls.test.bounded_vector.length",
