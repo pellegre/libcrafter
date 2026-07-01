@@ -8,8 +8,14 @@
 //! verification, scanning, or live traffic workflows.
 
 pub mod constants;
+pub mod registry;
 
 pub use self::constants::*;
+pub use self::registry::{
+    ntp_extension_field_type_meta, ntp_kiss_o_death_code_meta, ntp_leap_indicator_meta,
+    ntp_mode_meta, ntp_nts_extension_field_type_meta, ntp_reference_id_meta, ntp_stratum_meta,
+    NtpReferenceCodeMeta, NtpRegistryMeta, NtpRegistryStatus,
+};
 
 #[cfg(test)]
 mod tests {
