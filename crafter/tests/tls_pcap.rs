@@ -30,6 +30,17 @@ const DOC_CLIENT_PORT: u16 = 49_168;
 const DOC_CLIENT_MAC: MacAddr = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x54, 0x68]);
 const DOC_SERVER_MAC: MacAddr = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x54, 0x69]);
 
+#[derive(Debug, Clone, Copy)]
+struct Ipv4TlsPacketSpec {
+    src: Ipv4Addr,
+    dst: Ipv4Addr,
+    sport: u16,
+    dport: u16,
+    id: u16,
+    seq: u32,
+    ack: u32,
+}
+
 fn fixture_path(path: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
@@ -103,22 +114,13 @@ fn tls_application_data_record() -> TlsRecord {
     TlsRecord::application_data([0xde, 0xad, 0xbe, 0xef, 0x68, 0x00, 0x01])
 }
 
-fn raw_ipv4_tls_packet(
-    src: Ipv4Addr,
-    dst: Ipv4Addr,
-    sport: u16,
-    dport: u16,
-    id: u16,
-    seq: u32,
-    ack: u32,
-    record: TlsRecord,
-) -> Packet {
-    Ipv4::new().src(src).dst(dst).id(id).ttl(64)
+fn raw_ipv4_tls_packet(spec: Ipv4TlsPacketSpec, record: TlsRecord) -> Packet {
+    Ipv4::new().src(spec.src).dst(spec.dst).id(spec.id).ttl(64)
         / Tcp::new()
-            .sport(sport)
-            .dport(dport)
-            .seq(seq)
-            .ack(ack)
+            .sport(spec.sport)
+            .dport(spec.dport)
+            .seq(spec.seq)
+            .ack(spec.ack)
             .ack_segment()
         / Tls::from_record(record)
 }
@@ -126,22 +128,16 @@ fn raw_ipv4_tls_packet(
 fn ethernet_ipv4_tls_packet(
     src_mac: MacAddr,
     dst_mac: MacAddr,
-    src: Ipv4Addr,
-    dst: Ipv4Addr,
-    sport: u16,
-    dport: u16,
-    id: u16,
-    seq: u32,
-    ack: u32,
+    spec: Ipv4TlsPacketSpec,
     record: TlsRecord,
 ) -> Packet {
     Ethernet::with_addresses(src_mac, dst_mac)
-        / Ipv4::new().src(src).dst(dst).id(id).ttl(64)
+        / Ipv4::new().src(spec.src).dst(spec.dst).id(spec.id).ttl(64)
         / Tcp::new()
-            .sport(sport)
-            .dport(dport)
-            .seq(seq)
-            .ack(ack)
+            .sport(spec.sport)
+            .dport(spec.dport)
+            .seq(spec.seq)
+            .ack(spec.ack)
             .ack_segment()
         / Tls::from_record(record)
 }
@@ -165,39 +161,45 @@ fn raw_ip_tls_packets() -> crafter::Result<Vec<(Packet, PcapTimestamp)>> {
     Ok(vec![
         (
             raw_ipv4_tls_packet(
-                DOC_CLIENT,
-                DOC_SERVER,
-                DOC_CLIENT_PORT,
-                TLS_PORT_HTTPS,
-                0x6801,
-                0x6801_0001,
-                0x6802_0001,
+                Ipv4TlsPacketSpec {
+                    src: DOC_CLIENT,
+                    dst: DOC_SERVER,
+                    sport: DOC_CLIENT_PORT,
+                    dport: TLS_PORT_HTTPS,
+                    id: 0x6801,
+                    seq: 0x6801_0001,
+                    ack: 0x6802_0001,
+                },
                 tls_client_hello_record()?,
             ),
             PcapTimestamp::micros(68, 1).expect("TLS pcap timestamp should be valid"),
         ),
         (
             raw_ipv4_tls_packet(
-                DOC_SERVER,
-                DOC_CLIENT,
-                TLS_PORT_HTTPS,
-                DOC_CLIENT_PORT,
-                0x6802,
-                0x6802_0001,
-                0x6801_00a0,
+                Ipv4TlsPacketSpec {
+                    src: DOC_SERVER,
+                    dst: DOC_CLIENT,
+                    sport: TLS_PORT_HTTPS,
+                    dport: DOC_CLIENT_PORT,
+                    id: 0x6802,
+                    seq: 0x6802_0001,
+                    ack: 0x6801_00a0,
+                },
                 tls_alert_record(),
             ),
             PcapTimestamp::micros(68, 2).expect("TLS pcap timestamp should be valid"),
         ),
         (
             raw_ipv4_tls_packet(
-                DOC_CLIENT,
-                DOC_SERVER,
-                DOC_CLIENT_PORT,
-                TLS_PORT_HTTPS,
-                0x6803,
-                0x6801_00a0,
-                0x6802_0008,
+                Ipv4TlsPacketSpec {
+                    src: DOC_CLIENT,
+                    dst: DOC_SERVER,
+                    sport: DOC_CLIENT_PORT,
+                    dport: TLS_PORT_HTTPS,
+                    id: 0x6803,
+                    seq: 0x6801_00a0,
+                    ack: 0x6802_0008,
+                },
                 tls_application_data_record(),
             ),
             PcapTimestamp::micros(68, 3).expect("TLS pcap timestamp should be valid"),
@@ -211,13 +213,15 @@ fn ethernet_tls_packets() -> crafter::Result<Vec<(Packet, PcapTimestamp)>> {
             ethernet_ipv4_tls_packet(
                 DOC_CLIENT_MAC,
                 DOC_SERVER_MAC,
-                DOC_CLIENT,
-                DOC_SERVER,
-                DOC_CLIENT_PORT,
-                TLS_PORT_HTTPS,
-                0x6811,
-                0x6811_0001,
-                0x6812_0001,
+                Ipv4TlsPacketSpec {
+                    src: DOC_CLIENT,
+                    dst: DOC_SERVER,
+                    sport: DOC_CLIENT_PORT,
+                    dport: TLS_PORT_HTTPS,
+                    id: 0x6811,
+                    seq: 0x6811_0001,
+                    ack: 0x6812_0001,
+                },
                 tls_client_hello_record()?,
             ),
             PcapTimestamp::micros(68, 11).expect("TLS pcap timestamp should be valid"),
@@ -226,13 +230,15 @@ fn ethernet_tls_packets() -> crafter::Result<Vec<(Packet, PcapTimestamp)>> {
             ethernet_ipv4_tls_packet(
                 DOC_SERVER_MAC,
                 DOC_CLIENT_MAC,
-                DOC_SERVER,
-                DOC_CLIENT,
-                TLS_PORT_HTTPS,
-                DOC_CLIENT_PORT,
-                0x6812,
-                0x6812_0001,
-                0x6811_00a0,
+                Ipv4TlsPacketSpec {
+                    src: DOC_SERVER,
+                    dst: DOC_CLIENT,
+                    sport: TLS_PORT_HTTPS,
+                    dport: DOC_CLIENT_PORT,
+                    id: 0x6812,
+                    seq: 0x6812_0001,
+                    ack: 0x6811_00a0,
+                },
                 tls_alert_record(),
             ),
             PcapTimestamp::micros(68, 12).expect("TLS pcap timestamp should be valid"),
@@ -241,13 +247,15 @@ fn ethernet_tls_packets() -> crafter::Result<Vec<(Packet, PcapTimestamp)>> {
             ethernet_ipv4_tls_packet(
                 DOC_CLIENT_MAC,
                 DOC_SERVER_MAC,
-                DOC_CLIENT,
-                DOC_SERVER,
-                DOC_CLIENT_PORT,
-                TLS_PORT_HTTPS,
-                0x6813,
-                0x6811_00a0,
-                0x6812_0008,
+                Ipv4TlsPacketSpec {
+                    src: DOC_CLIENT,
+                    dst: DOC_SERVER,
+                    sport: DOC_CLIENT_PORT,
+                    dport: TLS_PORT_HTTPS,
+                    id: 0x6813,
+                    seq: 0x6811_00a0,
+                    ack: 0x6812_0008,
+                },
                 tls_application_data_record(),
             ),
             PcapTimestamp::micros(68, 13).expect("TLS pcap timestamp should be valid"),
