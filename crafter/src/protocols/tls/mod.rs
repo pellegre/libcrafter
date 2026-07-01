@@ -66,8 +66,9 @@ pub use handshake::{
     TlsCertificate, TlsCertificateBody, TlsCertificateEntry, TlsCertificateForm,
     TlsCertificateRequest, TlsCertificateRequestBody, TlsCertificateRequestForm,
     TlsCertificateVerify, TlsCertificateVerifyBody, TlsClientCertificateType, TlsClientHello,
-    TlsClientHelloBody, TlsEncryptedExtensions, TlsEncryptedExtensionsBody, TlsFinished,
-    TlsFinishedBody, TlsHandshake, TlsHandshakeBody, TlsHandshakeHeader, TlsHandshakeType,
+    TlsClientHelloBody, TlsEncryptedExtensions, TlsEncryptedExtensionsBody, TlsEndOfEarlyData,
+    TlsEndOfEarlyDataBody, TlsFinished, TlsFinishedBody, TlsHandshake, TlsHandshakeBody,
+    TlsHandshakeHeader, TlsHandshakeType, TlsKeyUpdate, TlsKeyUpdateBody, TlsKeyUpdateRequest,
     TlsNewSessionTicket, TlsNewSessionTicketBody, TlsNewSessionTicketForm, TlsServerHello,
     TlsServerHelloBody, TLS_CERTIFICATE_ENTRY_LENGTH_LEN, TLS_CERTIFICATE_LIST_LENGTH_LEN,
     TLS_CERTIFICATE_REQUEST_CONTEXT_LENGTH_LEN, TLS_CERTIFICATE_REQUEST_TYPES_LENGTH_LEN,
@@ -81,10 +82,11 @@ pub use handshake::{
     TLS_CLIENT_CERTIFICATE_TYPE_RSA_SIGN, TLS_CLIENT_HELLO_FIXED_LEN,
     TLS_CLIENT_HELLO_LEGACY_VERSION_LEN, TLS_CLIENT_HELLO_RANDOM_LEN, TLS_COMPRESSION_METHOD_NULL,
     TLS_HANDSHAKE_HEADER_LEN, TLS_HANDSHAKE_LENGTH_LEN, TLS_HANDSHAKE_MAX_LENGTH,
-    TLS_HANDSHAKE_TYPE_LEN, TLS_NEW_SESSION_TICKET_AGE_ADD_LEN,
-    TLS_NEW_SESSION_TICKET_LIFETIME_LEN, TLS_NEW_SESSION_TICKET_NONCE_LENGTH_LEN,
-    TLS_NEW_SESSION_TICKET_TICKET_LENGTH_LEN, TLS_SERVER_HELLO_FIXED_LEN,
-    TLS_SERVER_HELLO_LEGACY_VERSION_LEN, TLS_SERVER_HELLO_RANDOM_LEN,
+    TLS_HANDSHAKE_TYPE_LEN, TLS_KEY_UPDATE_REQUEST_LEN,
+    TLS_KEY_UPDATE_REQUEST_UPDATE_NOT_REQUESTED, TLS_KEY_UPDATE_REQUEST_UPDATE_REQUESTED,
+    TLS_NEW_SESSION_TICKET_AGE_ADD_LEN, TLS_NEW_SESSION_TICKET_LIFETIME_LEN,
+    TLS_NEW_SESSION_TICKET_NONCE_LENGTH_LEN, TLS_NEW_SESSION_TICKET_TICKET_LENGTH_LEN,
+    TLS_SERVER_HELLO_FIXED_LEN, TLS_SERVER_HELLO_LEGACY_VERSION_LEN, TLS_SERVER_HELLO_RANDOM_LEN,
 };
 pub use layer::Tls;
 pub use named_group::{TlsNamedGroup, TlsNamedGroupList};
