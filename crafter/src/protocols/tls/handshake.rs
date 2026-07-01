@@ -641,8 +641,8 @@ pub enum TlsHandshakeBody {
     CertificateRequest(TlsCertificateRequestBody),
     /// `certificate_verify` body bytes plus a typed view when available.
     CertificateVerify(TlsCertificateVerifyBody),
-    /// Opaque `finished` body bytes.
-    Finished(Vec<u8>),
+    /// `finished` body bytes plus a typed view when available.
+    Finished(TlsFinishedBody),
     /// Opaque `key_update` body bytes.
     KeyUpdate(Vec<u8>),
     /// Opaque `compressed_certificate` body bytes.
@@ -736,7 +736,12 @@ impl TlsHandshakeBody {
 
     /// Create an opaque body for a known `finished` hook.
     pub fn finished(body: impl Into<Vec<u8>>) -> Self {
-        Self::Finished(body.into())
+        Self::Finished(TlsFinishedBody::raw(body))
+    }
+
+    /// Create a typed body for a known `finished` hook.
+    pub fn from_finished(finished: TlsFinished) -> Result<Self> {
+        Ok(Self::Finished(TlsFinishedBody::from_finished(finished)?))
     }
 
     /// Create an opaque body for a known `key_update` hook.
@@ -775,7 +780,7 @@ impl TlsHandshakeBody {
             TlsHandshakeType::CERTIFICATE_VERIFY => {
                 Self::CertificateVerify(TlsCertificateVerifyBody::raw(body))
             }
-            TlsHandshakeType::FINISHED => Self::Finished(body),
+            TlsHandshakeType::FINISHED => Self::Finished(TlsFinishedBody::raw(body)),
             TlsHandshakeType::KEY_UPDATE => Self::KeyUpdate(body),
             TlsHandshakeType::COMPRESSED_CERTIFICATE => Self::CompressedCertificate(body),
             _ => Self::Opaque(body),
@@ -809,7 +814,9 @@ impl TlsHandshakeBody {
             TlsHandshakeType::CERTIFICATE_VERIFY => Ok(Self::CertificateVerify(
                 TlsCertificateVerifyBody::from_decoded_body(body)?,
             )),
-            TlsHandshakeType::FINISHED => Ok(Self::Finished(body)),
+            TlsHandshakeType::FINISHED => {
+                Ok(Self::Finished(TlsFinishedBody::from_decoded_body(body)?))
+            }
             TlsHandshakeType::KEY_UPDATE => Ok(Self::KeyUpdate(body)),
             TlsHandshakeType::COMPRESSED_CERTIFICATE => Ok(Self::CompressedCertificate(body)),
             _ => Ok(Self::Opaque(body)),
@@ -843,9 +850,9 @@ impl TlsHandshakeBody {
             Self::Certificate(body) => body.body(),
             Self::CertificateRequest(body) => body.body(),
             Self::CertificateVerify(body) => body.body(),
+            Self::Finished(body) => body.body(),
             Self::NewSessionTicket(body)
             | Self::EndOfEarlyData(body)
-            | Self::Finished(body)
             | Self::KeyUpdate(body)
             | Self::CompressedCertificate(body)
             | Self::Opaque(body) => body,
@@ -861,9 +868,9 @@ impl TlsHandshakeBody {
             Self::Certificate(body) => body.into_body(),
             Self::CertificateRequest(body) => body.into_body(),
             Self::CertificateVerify(body) => body.into_body(),
+            Self::Finished(body) => body.into_body(),
             Self::NewSessionTicket(body)
             | Self::EndOfEarlyData(body)
-            | Self::Finished(body)
             | Self::KeyUpdate(body)
             | Self::CompressedCertificate(body)
             | Self::Opaque(body) => body,
@@ -933,6 +940,14 @@ impl TlsHandshakeBody {
         }
     }
 
+    /// Borrow the decoded Finished fields when this body carries them.
+    pub const fn as_finished(&self) -> Option<&TlsFinished> {
+        match self {
+            Self::Finished(body) => body.finished(),
+            _ => None,
+        }
+    }
+
     /// Return true when this body is a decoded or typed ClientHello.
     pub const fn is_typed_client_hello(&self) -> bool {
         match self {
@@ -977,6 +992,14 @@ impl TlsHandshakeBody {
     pub const fn is_typed_certificate_verify(&self) -> bool {
         match self {
             Self::CertificateVerify(body) => body.is_typed(),
+            _ => false,
+        }
+    }
+
+    /// Return true when this body is a decoded or typed Finished.
+    pub const fn is_typed_finished(&self) -> bool {
+        match self {
+            Self::Finished(body) => body.is_typed(),
             _ => false,
         }
     }
@@ -1185,6 +1208,14 @@ impl TlsHandshake {
         )
     }
 
+    /// Construct a `finished` handshake message from typed fields.
+    pub fn from_finished(finished: TlsFinished) -> Result<Self> {
+        Ok(Self::from_header_and_body(
+            TlsHandshakeHeader::finished(),
+            TlsHandshakeBody::from_finished(finished)?,
+        ))
+    }
+
     /// Construct a `key_update` handshake message with opaque body bytes.
     pub fn key_update(body: impl Into<Vec<u8>>) -> Self {
         Self::from_header_and_body(
@@ -1284,6 +1315,11 @@ impl TlsHandshake {
     /// Borrow decoded CertificateVerify fields when this message carries them.
     pub fn certificate_verify_body(&self) -> Option<&TlsCertificateVerify> {
         self.body.as_certificate_verify()
+    }
+
+    /// Borrow decoded Finished fields when this message carries them.
+    pub fn finished_body(&self) -> Option<&TlsFinished> {
+        self.body.as_finished()
     }
 
     /// Consume the message and return its header plus body hook.
@@ -3664,6 +3700,94 @@ impl TlsCertificateVerify {
     }
 }
 
+/// TLS Finished handshake body fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsFinished {
+    verify_data: Vec<u8>,
+}
+
+impl TlsFinished {
+    /// Construct a Finished body from opaque verify_data bytes.
+    pub fn new(verify_data: impl Into<Vec<u8>>) -> Self {
+        Self {
+            verify_data: verify_data.into(),
+        }
+    }
+
+    /// Construct an empty Finished body.
+    pub fn empty() -> Self {
+        Self::new(Vec::new())
+    }
+
+    /// Replace the opaque verify_data bytes.
+    pub fn with_verify_data(mut self, verify_data: impl Into<Vec<u8>>) -> Self {
+        self.verify_data = verify_data.into();
+        self
+    }
+
+    /// Borrow the opaque verify_data bytes.
+    pub fn verify_data(&self) -> &[u8] {
+        &self.verify_data
+    }
+
+    /// Number of opaque verify_data bytes.
+    pub fn len(&self) -> usize {
+        self.verify_data.len()
+    }
+
+    /// Return true when verify_data is empty.
+    pub fn is_empty(&self) -> bool {
+        self.verify_data.is_empty()
+    }
+
+    /// Number of bytes occupied by the Finished body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        Ok(self.verify_data.len())
+    }
+
+    /// Append the Finished body bytes.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        out.extend_from_slice(&self.verify_data);
+        Ok(())
+    }
+
+    /// Return the encoded Finished body bytes.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Compile the Finished body bytes.
+    pub fn compile(&self) -> Result<Vec<u8>> {
+        self.encode_to_vec()
+    }
+
+    /// Decode one complete Finished body.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        Ok(Self::new(bytes.as_ref().to_vec()))
+    }
+
+    /// Stable one-line summary preserving opaque verify_data size.
+    pub fn summary(&self) -> String {
+        format!("finished verify_data_bytes={}", self.verify_data.len())
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("verify_data", hex_bytes(&self.verify_data)),
+            ("verify_data_bytes", self.verify_data.len().to_string()),
+        ]
+    }
+}
+
+impl Default for TlsFinished {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
 /// ServerHello handshake body bytes plus an optional decoded view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsServerHelloBody {
@@ -3961,6 +4085,67 @@ impl TlsCertificateVerifyBody {
     /// Return true when the body carries decoded CertificateVerify fields.
     pub const fn is_typed(&self) -> bool {
         self.certificate_verify.is_some()
+    }
+
+    /// Number of preserved body bytes.
+    pub fn body_len(&self) -> usize {
+        self.body.len()
+    }
+}
+
+/// Finished handshake body bytes plus an optional decoded view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsFinishedBody {
+    body: Vec<u8>,
+    finished: Option<TlsFinished>,
+}
+
+impl TlsFinishedBody {
+    /// Preserve Finished body bytes without parsing them.
+    pub fn raw(body: impl Into<Vec<u8>>) -> Self {
+        Self {
+            body: body.into(),
+            finished: None,
+        }
+    }
+
+    /// Build Finished body bytes from typed fields.
+    pub fn from_finished(finished: TlsFinished) -> Result<Self> {
+        let body = finished.encode_to_vec()?;
+        Ok(Self {
+            body,
+            finished: Some(finished),
+        })
+    }
+
+    /// Decode and preserve exact Finished body bytes.
+    pub fn from_decoded_body(body: impl Into<Vec<u8>>) -> Result<Self> {
+        let body = body.into();
+        let finished = TlsFinished::decode(&body)?;
+        Ok(Self {
+            body,
+            finished: Some(finished),
+        })
+    }
+
+    /// Borrow the preserved body bytes.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// Consume the wrapper and return the preserved body bytes.
+    pub fn into_body(self) -> Vec<u8> {
+        self.body
+    }
+
+    /// Borrow the decoded Finished fields when available.
+    pub const fn finished(&self) -> Option<&TlsFinished> {
+        self.finished.as_ref()
+    }
+
+    /// Return true when the body carries decoded Finished fields.
+    pub const fn is_typed(&self) -> bool {
+        self.finished.is_some()
     }
 
     /// Number of preserved body bytes.
@@ -5197,6 +5382,75 @@ mod tests {
             TlsCertificateVerify::decode([0x08, 0x07, 0x00, 0x02, 0xaa]).unwrap_err(),
             CrafterError::buffer_too_short("tls.certificate_verify.signature", 6, 5)
         );
+    }
+
+    #[test]
+    fn tls_finished_empty_verify_data_encodes_decodes() -> Result<()> {
+        let finished = TlsFinished::empty();
+        let encoded = finished.encode_to_vec()?;
+
+        assert!(finished.is_empty());
+        assert_eq!(finished.len(), 0);
+        assert_eq!(finished.verify_data(), &[]);
+        assert_eq!(finished.encoded_len()?, 0);
+        assert_eq!(encoded, Vec::<u8>::new());
+        assert_eq!(finished.summary(), "finished verify_data_bytes=0");
+        assert_eq!(
+            finished.inspection_fields(),
+            vec![
+                ("verify_data", String::new()),
+                ("verify_data_bytes", "0".to_string()),
+            ]
+        );
+        assert_eq!(TlsFinished::decode(&encoded)?, finished);
+
+        let handshake = TlsHandshake::from_finished(finished.clone())?;
+        let handshake_bytes = tls_handshake_fixture(TlsHandshakeType::FINISHED.raw(), &encoded);
+        assert!(handshake.body().is_typed_finished());
+        assert_eq!(handshake.finished_body(), Some(&finished));
+        assert_eq!(handshake.encode_to_vec()?, handshake_bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_finished_non_empty_verify_data_round_trips_through_handshake() -> Result<()> {
+        let finished = TlsFinished::new([0xde, 0xad, 0xbe, 0xef]);
+        let encoded = finished.encode_to_vec()?;
+
+        assert_eq!(encoded, vec![0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(finished.compile()?, encoded);
+
+        let decoded = TlsFinished::decode(&encoded)?;
+        assert_eq!(decoded, finished);
+
+        let handshake = TlsHandshake::from_finished(finished.clone())?;
+        let handshake_bytes = tls_handshake_fixture(TlsHandshakeType::FINISHED.raw(), &encoded);
+        assert_eq!(handshake.body_bytes(), encoded.as_slice());
+        assert_eq!(handshake.finished_body(), Some(&finished));
+        assert_eq!(handshake.encode_to_vec()?, handshake_bytes);
+
+        let decoded_handshake = TlsHandshake::decode(&handshake_bytes)?;
+        assert_eq!(decoded_handshake.finished_body(), Some(&finished));
+        assert_eq!(decoded_handshake.encode_to_vec()?, handshake_bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_finished_raw_body_remains_available() -> Result<()> {
+        let raw = TlsHandshake::finished([0xca, 0xfe]);
+
+        assert_eq!(raw.body_bytes(), &[0xca, 0xfe]);
+        assert!(matches!(raw.body(), TlsHandshakeBody::Finished(_)));
+        assert!(raw.finished_body().is_none());
+        assert!(!raw.body().is_typed_finished());
+        assert_eq!(
+            raw.encode_to_vec()?,
+            vec![0x14, 0x00, 0x00, 0x02, 0xca, 0xfe]
+        );
+
+        Ok(())
     }
 
     #[test]
