@@ -82,6 +82,9 @@ EXPECTED_DIGESTS = {
     "tcp-header": "e62e918200aacb46fdfcd5cde318bf412739f1c64bfbfae5b35034bbde69380c",
     "tcp-options": "c4a438c51f9ba728dffc3ffa1dd0ab15479d8fd80dfef6fadf5f3b42a8f31487",
     "tcp-smoke": "10ece5bd042f42c31f2a14f66afc10b8ffa4f287ee559dcf50d9e146c58bff46",
+    "tls": "cf646c38cce4b0b82f4cccf25a616e00f57e0839d99db73dcb24b64ffeddc0e8",
+    "tls-ci": "6128bac2de55f1ee677113be4a8a83196af8f92c77980d8fc2cae237e0c45602",
+    "tls-smoke": "805b66cdd8920822479b48d102d44c70c0fab3e638c90a7f07105db32786b712",
     "wild": "cf7366998528de74b2a0cf845223e445e74ec3b165e2a56e3d7bc5696ec23036",
 }
 
