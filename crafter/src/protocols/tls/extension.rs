@@ -110,6 +110,33 @@ pub const TLS_EC_POINT_FORMAT_UNCOMPRESSED: u8 = 0;
 pub const TLS_EC_POINT_FORMAT_ANSIX962_COMPRESSED_PRIME: u8 = 1;
 /// RFC 8422 ECPointFormat `ansiX962_compressed_char2`, deprecated by RFC 8422.
 pub const TLS_EC_POINT_FORMAT_ANSIX962_COMPRESSED_CHAR2: u8 = 2;
+/// TLS CertificateStatusType field width in bytes.
+pub const TLS_CERTIFICATE_STATUS_TYPE_LEN: usize = 1;
+/// Reserved CertificateStatusType zero value.
+pub const TLS_CERTIFICATE_STATUS_TYPE_RESERVED: u8 =
+    constants::TLS_CERTIFICATE_STATUS_TYPE_RESERVED;
+/// RFC 6066 CertificateStatusType `ocsp`.
+pub const TLS_CERTIFICATE_STATUS_TYPE_OCSP: u8 = constants::TLS_CERTIFICATE_STATUS_TYPE_OCSP;
+/// RFC 6961 CertificateStatusType `ocsp_multi`, now registry-reserved for TLS 1.3.
+pub const TLS_CERTIFICATE_STATUS_TYPE_OCSP_MULTI_RESERVED: u8 =
+    constants::TLS_CERTIFICATE_STATUS_TYPE_OCSP_MULTI_RESERVED;
+/// TLS OCSP ResponderID opaque vector length field width in bytes.
+pub const TLS_OCSP_RESPONDER_ID_LENGTH_LEN: usize = 2;
+/// RFC 6066 minimum ResponderID length.
+pub const TLS_OCSP_RESPONDER_ID_MIN_LEN: usize = 1;
+/// RFC 6066 maximum ResponderID length.
+pub const TLS_OCSP_RESPONDER_ID_MAX_LEN: usize = u16::MAX as usize;
+/// TLS OCSP responder_id_list aggregate length field width in bytes.
+pub const TLS_OCSP_RESPONDER_ID_LIST_LENGTH_LEN: usize = 2;
+/// TLS OCSP request_extensions opaque vector length field width in bytes.
+pub const TLS_OCSP_REQUEST_EXTENSIONS_LENGTH_LEN: usize = 2;
+/// RFC 6961 status_request_v2 request list length field width in bytes.
+pub const TLS_STATUS_REQUEST_V2_LIST_LENGTH_LEN: usize = 2;
+/// RFC 6961 status_request_v2 item request_length field width in bytes.
+pub const TLS_STATUS_REQUEST_V2_ITEM_REQUEST_LENGTH_LEN: usize = 2;
+/// RFC 6961 status_request_v2 item fixed header width in bytes.
+pub const TLS_STATUS_REQUEST_V2_ITEM_HEADER_LEN: usize =
+    TLS_CERTIFICATE_STATUS_TYPE_LEN + TLS_STATUS_REQUEST_V2_ITEM_REQUEST_LENGTH_LEN;
 
 /// A raw-preserving TLS `ExtensionType` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -135,6 +162,8 @@ impl TlsExtensionType {
     /// TLS ExtensionType `application_layer_protocol_negotiation`.
     pub const APPLICATION_LAYER_PROTOCOL_NEGOTIATION: Self =
         Self::new(constants::TLS_EXTENSION_APPLICATION_LAYER_PROTOCOL_NEGOTIATION);
+    /// TLS ExtensionType `status_request_v2`.
+    pub const STATUS_REQUEST_V2: Self = Self::new(constants::TLS_EXTENSION_STATUS_REQUEST_V2);
     /// TLS ExtensionType `padding`.
     pub const PADDING: Self = Self::new(constants::TLS_EXTENSION_PADDING);
     /// TLS ExtensionType `compress_certificate`.
@@ -197,6 +226,16 @@ impl TlsExtensionType {
     /// TLS ExtensionType `server_name` constructor.
     pub const fn server_name() -> Self {
         Self::SERVER_NAME
+    }
+
+    /// TLS ExtensionType `status_request` constructor.
+    pub const fn status_request() -> Self {
+        Self::STATUS_REQUEST
+    }
+
+    /// TLS ExtensionType `status_request_v2` constructor.
+    pub const fn status_request_v2() -> Self {
+        Self::STATUS_REQUEST_V2
     }
 
     /// TLS ExtensionType `supported_groups` constructor.
@@ -519,6 +558,1555 @@ impl TlsRawExtension {
             ("extension_body_bytes", self.body.len().to_string()),
         ]
     }
+}
+
+/// Raw-preserving TLS CertificateStatusType value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TlsCertificateStatusType {
+    raw: u8,
+}
+
+impl TlsCertificateStatusType {
+    /// Reserved CertificateStatusType zero value.
+    pub const RESERVED: Self = Self::new(TLS_CERTIFICATE_STATUS_TYPE_RESERVED);
+    /// RFC 6066 `ocsp` status type.
+    pub const OCSP: Self = Self::new(TLS_CERTIFICATE_STATUS_TYPE_OCSP);
+    /// RFC 6961 `ocsp_multi`, now registry-reserved for TLS 1.3.
+    pub const OCSP_MULTI_RESERVED: Self =
+        Self::new(TLS_CERTIFICATE_STATUS_TYPE_OCSP_MULTI_RESERVED);
+
+    /// Preserve a caller-supplied one-octet certificate status type value.
+    pub const fn new(raw: u8) -> Self {
+        Self { raw }
+    }
+
+    /// Preserve a caller-supplied one-octet certificate status type value.
+    pub const fn from_u8(raw: u8) -> Self {
+        Self::new(raw)
+    }
+
+    /// Decode a TLS certificate status type from exactly one byte.
+    pub const fn from_be_bytes(bytes: [u8; TLS_CERTIFICATE_STATUS_TYPE_LEN]) -> Self {
+        Self::new(bytes[0])
+    }
+
+    /// Reserved CertificateStatusType zero constructor.
+    pub const fn reserved() -> Self {
+        Self::RESERVED
+    }
+
+    /// RFC 6066 `ocsp` constructor.
+    pub const fn ocsp() -> Self {
+        Self::OCSP
+    }
+
+    /// RFC 6961 `ocsp_multi` constructor for legacy status_request_v2 bodies.
+    pub const fn ocsp_multi_reserved() -> Self {
+        Self::OCSP_MULTI_RESERVED
+    }
+
+    /// Return the preserved raw one-octet wire value.
+    pub const fn raw(self) -> u8 {
+        self.raw
+    }
+
+    /// Return the preserved raw one-octet wire value.
+    pub const fn as_u8(self) -> u8 {
+        self.raw
+    }
+
+    /// Return the one-byte wire encoding.
+    pub const fn to_be_bytes(self) -> [u8; TLS_CERTIFICATE_STATUS_TYPE_LEN] {
+        [self.raw]
+    }
+
+    /// Append the one-byte wire encoding to `out`.
+    pub fn encode(self, out: &mut Vec<u8>) {
+        out.push(self.raw);
+    }
+
+    /// Return the one-byte wire encoding as a vector.
+    pub fn encode_to_vec(self) -> Vec<u8> {
+        self.to_be_bytes().to_vec()
+    }
+
+    /// Decode a TLS certificate status type from the first byte of `bytes`.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (status_type, _) = Self::decode_prefix(bytes.as_ref())?;
+        Ok(status_type)
+    }
+
+    /// Decode a TLS certificate status type from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_CERTIFICATE_STATUS_TYPE_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.certificate_status_type",
+                TLS_CERTIFICATE_STATUS_TYPE_LEN,
+                bytes.len(),
+            ));
+        }
+
+        Ok((Self::from_be_bytes([bytes[0]]), &bytes[1..]))
+    }
+
+    /// Return the source-backed certificate status type name, when selected.
+    pub const fn name(self) -> Option<&'static str> {
+        constants::tls_certificate_status_type_name(self.raw)
+    }
+
+    /// Return the source-backed assignment status.
+    pub const fn status(self) -> TlsCodepointStatus {
+        constants::tls_certificate_status_type_status(self.raw)
+    }
+
+    /// Return true for RFC 6066 `ocsp`.
+    pub const fn is_ocsp(self) -> bool {
+        self.raw == TLS_CERTIFICATE_STATUS_TYPE_OCSP
+    }
+
+    /// Return true for RFC 6961 `ocsp_multi`, now registry-reserved for TLS 1.3.
+    pub const fn is_ocsp_multi_reserved(self) -> bool {
+        self.raw == TLS_CERTIFICATE_STATUS_TYPE_OCSP_MULTI_RESERVED
+    }
+
+    /// Return true for status types with the RFC 6066/RFC 6961 OCSP request grammar.
+    pub const fn uses_ocsp_status_request(self) -> bool {
+        self.is_ocsp() || self.is_ocsp_multi_reserved()
+    }
+
+    /// Return true when this is the reserved zero value.
+    pub const fn is_reserved(self) -> bool {
+        matches!(self.status(), TlsCodepointStatus::Reserved)
+    }
+
+    /// Return true when this value is unassigned in the IANA registry.
+    pub const fn is_unassigned(self) -> bool {
+        matches!(self.status(), TlsCodepointStatus::Unassigned)
+    }
+
+    /// Human-readable label preserving unknown values numerically.
+    pub fn label(self) -> String {
+        constants::tls_certificate_status_type_label(self.raw)
+    }
+
+    /// Stable one-line summary preserving raw value and source-backed status.
+    pub fn summary(self) -> String {
+        format!(
+            "{} raw=0x{:02x} status={}",
+            self.label(),
+            self.raw,
+            self.status().label()
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(self) -> Vec<(&'static str, String)> {
+        vec![
+            ("certificate_status_type", self.label()),
+            ("certificate_status_type_raw", format!("0x{:02x}", self.raw)),
+            (
+                "certificate_status_type_status",
+                self.status().label().to_string(),
+            ),
+        ]
+    }
+}
+
+impl From<u8> for TlsCertificateStatusType {
+    fn from(value: u8) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<TlsCertificateStatusType> for u8 {
+    fn from(value: TlsCertificateStatusType) -> Self {
+        value.raw()
+    }
+}
+
+impl fmt::Display for TlsCertificateStatusType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.label())
+    }
+}
+
+/// RFC 6066/RFC 6961 opaque OCSP ResponderID vector entry.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TlsOcspResponderId {
+    bytes: Vec<u8>,
+}
+
+impl TlsOcspResponderId {
+    /// Create a ResponderID from caller-provided DER bytes.
+    pub fn new(bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            bytes: bytes.into(),
+        }
+    }
+
+    /// Create a ResponderID from caller-provided DER bytes.
+    pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> Self {
+        Self::new(bytes)
+    }
+
+    /// Borrow the preserved opaque ResponderID bytes.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Consume the ResponderID and return its bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    /// Number of opaque ResponderID bytes.
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Return true when no opaque bytes are present.
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// Number of bytes occupied by this length-prefixed ResponderID.
+    pub fn encoded_len(&self) -> Result<usize> {
+        validate_ocsp_responder_id_len(self.bytes.len())?;
+        TLS_OCSP_RESPONDER_ID_LENGTH_LEN
+            .checked_add(self.bytes.len())
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.status_request.ocsp.responder_id.length",
+                    "length overflow",
+                )
+            })
+    }
+
+    /// Append this length-prefixed ResponderID to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        validate_ocsp_responder_id_len(self.bytes.len())?;
+        let len = u16::try_from(self.bytes.len()).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "tls.status_request.ocsp.responder_id.length",
+                "length must fit in two bytes",
+            )
+        })?;
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(&self.bytes);
+        Ok(())
+    }
+
+    /// Return this length-prefixed ResponderID encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Decode one length-prefixed ResponderID.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (responder_id, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.status_request.ocsp.responder_id.length",
+                "length must match buffer",
+            ));
+        }
+        Ok(responder_id)
+    }
+
+    /// Decode one length-prefixed ResponderID from the front of `bytes`.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_OCSP_RESPONDER_ID_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.status_request.ocsp.responder_id.length",
+                TLS_OCSP_RESPONDER_ID_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+        validate_ocsp_responder_id_len(len)?;
+        let required = TLS_OCSP_RESPONDER_ID_LENGTH_LEN
+            .checked_add(len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.status_request.ocsp.responder_id.length",
+                    "length overflow",
+                )
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "tls.status_request.ocsp.responder_id",
+                required,
+                bytes.len(),
+            ));
+        }
+
+        Ok((
+            Self::new(bytes[TLS_OCSP_RESPONDER_ID_LENGTH_LEN..required].to_vec()),
+            &bytes[required..],
+        ))
+    }
+
+    /// Stable one-line summary preserving opaque ResponderID size.
+    pub fn summary(&self) -> String {
+        format!("ocsp_responder_id bytes={}", self.bytes.len())
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("ocsp_responder_id_bytes", self.bytes.len().to_string()),
+            ("ocsp_responder_id", hex_bytes(&self.bytes)),
+        ]
+    }
+}
+
+impl From<Vec<u8>> for TlsOcspResponderId {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::new(bytes)
+    }
+}
+
+impl From<&[u8]> for TlsOcspResponderId {
+    fn from(bytes: &[u8]) -> Self {
+        Self::new(bytes.to_vec())
+    }
+}
+
+impl<const N: usize> From<[u8; N]> for TlsOcspResponderId {
+    fn from(bytes: [u8; N]) -> Self {
+        Self::new(Vec::from(bytes))
+    }
+}
+
+/// Ordered RFC 6066/RFC 6961 responder_id_list vector.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct TlsOcspResponderIds {
+    responder_ids: Vec<TlsOcspResponderId>,
+}
+
+impl TlsOcspResponderIds {
+    /// Create an ordered responder_id_list.
+    pub fn new(responder_ids: impl Into<Vec<TlsOcspResponderId>>) -> Self {
+        Self {
+            responder_ids: responder_ids.into(),
+        }
+    }
+
+    /// Create an ordered responder_id_list from opaque ResponderID byte vectors.
+    pub fn from_bytes_iter<I, B>(responder_ids: I) -> Self
+    where
+        I: IntoIterator<Item = B>,
+        B: Into<TlsOcspResponderId>,
+    {
+        Self::new(
+            responder_ids
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    /// Borrow the ordered ResponderID values.
+    pub fn responder_ids(&self) -> &[TlsOcspResponderId] {
+        &self.responder_ids
+    }
+
+    /// Return the ordered ResponderID byte lengths.
+    pub fn byte_lengths(&self) -> Vec<usize> {
+        self.responder_ids.iter().map(|id| id.len()).collect()
+    }
+
+    /// Consume the list and return the ordered ResponderID values.
+    pub fn into_vec(self) -> Vec<TlsOcspResponderId> {
+        self.responder_ids
+    }
+
+    /// Append one ResponderID.
+    pub fn push(&mut self, responder_id: impl Into<TlsOcspResponderId>) {
+        self.responder_ids.push(responder_id.into());
+    }
+
+    /// Number of ResponderID values.
+    pub fn len(&self) -> usize {
+        self.responder_ids.len()
+    }
+
+    /// Return true when the responder_id_list is empty.
+    pub fn is_empty(&self) -> bool {
+        self.responder_ids.is_empty()
+    }
+
+    /// Number of bytes occupied by responder_id_list entries, excluding the list prefix.
+    pub fn byte_len(&self) -> Result<usize> {
+        let mut byte_len = 0usize;
+        for responder_id in &self.responder_ids {
+            byte_len = byte_len
+                .checked_add(responder_id.encoded_len()?)
+                .ok_or_else(|| {
+                    CrafterError::invalid_field_value(
+                        "tls.status_request.ocsp.responder_id_list.length",
+                        "length overflow",
+                    )
+                })?;
+        }
+        validate_ocsp_responder_id_list_len(byte_len)?;
+        Ok(byte_len)
+    }
+
+    /// Number of bytes occupied by the complete responder_id_list.
+    pub fn encoded_len(&self) -> Result<usize> {
+        TLS_OCSP_RESPONDER_ID_LIST_LENGTH_LEN
+            .checked_add(self.byte_len()?)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.status_request.ocsp.responder_id_list.length",
+                    "length overflow",
+                )
+            })
+    }
+
+    /// Append the responder_id_list to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let byte_len = self.byte_len()?;
+        let byte_len = u16::try_from(byte_len).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "tls.status_request.ocsp.responder_id_list.length",
+                "length must fit in two bytes",
+            )
+        })?;
+        out.extend_from_slice(&byte_len.to_be_bytes());
+        for responder_id in &self.responder_ids {
+            responder_id.encode(out)?;
+        }
+        Ok(())
+    }
+
+    /// Return the responder_id_list encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Decode a responder_id_list.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (responder_ids, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.status_request.ocsp.responder_id_list.length",
+                "length must match buffer",
+            ));
+        }
+        Ok(responder_ids)
+    }
+
+    /// Decode a responder_id_list from the front of `bytes`.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_OCSP_RESPONDER_ID_LIST_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.status_request.ocsp.responder_id_list.length",
+                TLS_OCSP_RESPONDER_ID_LIST_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let byte_len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+        validate_ocsp_responder_id_list_len(byte_len)?;
+        let required = TLS_OCSP_RESPONDER_ID_LIST_LENGTH_LEN
+            .checked_add(byte_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.status_request.ocsp.responder_id_list.length",
+                    "length overflow",
+                )
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "tls.status_request.ocsp.responder_id_list",
+                required,
+                bytes.len(),
+            ));
+        }
+
+        let mut entries = Vec::new();
+        let mut cursor = &bytes[TLS_OCSP_RESPONDER_ID_LIST_LENGTH_LEN..required];
+        while !cursor.is_empty() {
+            let (responder_id, tail) = TlsOcspResponderId::decode_prefix(cursor)?;
+            entries.push(responder_id);
+            cursor = tail;
+        }
+
+        Ok((Self::new(entries), &bytes[required..]))
+    }
+
+    /// Stable one-line summary preserving responder count and byte sizes.
+    pub fn summary(&self) -> String {
+        format!(
+            "ocsp_responder_ids count={} bytes={} responder_lengths={}",
+            self.len(),
+            self.byte_lengths().iter().sum::<usize>(),
+            self.byte_lengths()
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("ocsp_responder_ids_count", self.len().to_string()),
+            (
+                "ocsp_responder_ids_bytes",
+                self.byte_lengths().iter().sum::<usize>().to_string(),
+            ),
+            (
+                "ocsp_responder_id_lengths",
+                self.byte_lengths()
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            (
+                "ocsp_responder_ids",
+                self.responder_ids
+                    .iter()
+                    .map(|id| hex_bytes(id.bytes()))
+                    .collect::<Vec<_>>()
+                    .join("|"),
+            ),
+        ]
+    }
+}
+
+impl From<Vec<TlsOcspResponderId>> for TlsOcspResponderIds {
+    fn from(responder_ids: Vec<TlsOcspResponderId>) -> Self {
+        Self::new(responder_ids)
+    }
+}
+
+impl<const N: usize> From<[TlsOcspResponderId; N]> for TlsOcspResponderIds {
+    fn from(responder_ids: [TlsOcspResponderId; N]) -> Self {
+        Self::new(Vec::from(responder_ids))
+    }
+}
+
+impl From<TlsOcspResponderId> for TlsOcspResponderIds {
+    fn from(responder_id: TlsOcspResponderId) -> Self {
+        Self::new(vec![responder_id])
+    }
+}
+
+/// RFC 6066/RFC 6961 OCSPStatusRequest with opaque DER fields preserved.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct TlsOcspStatusRequest {
+    responder_ids: TlsOcspResponderIds,
+    request_extensions: Vec<u8>,
+}
+
+impl TlsOcspStatusRequest {
+    /// Create an OCSPStatusRequest from responder IDs and request-extension bytes.
+    pub fn new(
+        responder_ids: impl Into<TlsOcspResponderIds>,
+        request_extensions: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self {
+            responder_ids: responder_ids.into(),
+            request_extensions: request_extensions.into(),
+        }
+    }
+
+    /// Create an OCSPStatusRequest with empty responder_id_list and request_extensions.
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Create an OCSPStatusRequest from opaque ResponderID byte vectors.
+    pub fn from_responder_bytes<I, B>(
+        responder_ids: I,
+        request_extensions: impl Into<Vec<u8>>,
+    ) -> Self
+    where
+        I: IntoIterator<Item = B>,
+        B: Into<TlsOcspResponderId>,
+    {
+        Self::new(
+            TlsOcspResponderIds::from_bytes_iter(responder_ids),
+            request_extensions,
+        )
+    }
+
+    /// Borrow the ordered ResponderID list.
+    pub const fn responder_id_list(&self) -> &TlsOcspResponderIds {
+        &self.responder_ids
+    }
+
+    /// Borrow the ordered ResponderID values.
+    pub fn responder_ids(&self) -> &[TlsOcspResponderId] {
+        self.responder_ids.responder_ids()
+    }
+
+    /// Borrow the preserved opaque request_extensions bytes.
+    pub fn request_extensions(&self) -> &[u8] {
+        &self.request_extensions
+    }
+
+    /// Consume the body and return its ResponderIDs and request_extensions.
+    pub fn into_parts(self) -> (TlsOcspResponderIds, Vec<u8>) {
+        (self.responder_ids, self.request_extensions)
+    }
+
+    /// Number of ResponderID values.
+    pub fn responder_id_count(&self) -> usize {
+        self.responder_ids.len()
+    }
+
+    /// Return true when the responder_id_list is empty.
+    pub fn responder_id_list_is_empty(&self) -> bool {
+        self.responder_ids.is_empty()
+    }
+
+    /// Number of request_extensions bytes.
+    pub fn request_extensions_len(&self) -> usize {
+        self.request_extensions.len()
+    }
+
+    /// Number of bytes occupied by this OCSPStatusRequest.
+    pub fn encoded_len(&self) -> Result<usize> {
+        validate_ocsp_request_extensions_len(self.request_extensions.len())?;
+        let len = self
+            .responder_ids
+            .encoded_len()?
+            .checked_add(TLS_OCSP_REQUEST_EXTENSIONS_LENGTH_LEN)
+            .and_then(|len| len.checked_add(self.request_extensions.len()))
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.status_request.ocsp.length",
+                    "length overflow",
+                )
+            })?;
+        validate_ocsp_status_request_len(len)?;
+        Ok(len)
+    }
+
+    /// Append this OCSPStatusRequest to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let start_len = out.len();
+        validate_ocsp_request_extensions_len(self.request_extensions.len())?;
+        self.responder_ids.encode(out)?;
+        let request_extensions_len =
+            u16::try_from(self.request_extensions.len()).map_err(|_| {
+                CrafterError::invalid_field_value(
+                    "tls.status_request.ocsp.request_extensions.length",
+                    "length must fit in two bytes",
+                )
+            })?;
+        out.extend_from_slice(&request_extensions_len.to_be_bytes());
+        out.extend_from_slice(&self.request_extensions);
+        validate_ocsp_status_request_len(out.len() - start_len)?;
+        Ok(())
+    }
+
+    /// Return this OCSPStatusRequest encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Decode an OCSPStatusRequest body.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (request, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.status_request.ocsp.length",
+                "length must match buffer",
+            ));
+        }
+        Ok(request)
+    }
+
+    /// Decode an OCSPStatusRequest body from the front of `bytes`.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let (responder_ids, tail) = TlsOcspResponderIds::decode_prefix(bytes)?;
+        if tail.len() < TLS_OCSP_REQUEST_EXTENSIONS_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.status_request.ocsp.request_extensions.length",
+                TLS_OCSP_REQUEST_EXTENSIONS_LENGTH_LEN,
+                tail.len(),
+            ));
+        }
+
+        let extensions_len = u16::from_be_bytes([tail[0], tail[1]]) as usize;
+        validate_ocsp_request_extensions_len(extensions_len)?;
+        let required = TLS_OCSP_REQUEST_EXTENSIONS_LENGTH_LEN
+            .checked_add(extensions_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.status_request.ocsp.request_extensions.length",
+                    "length overflow",
+                )
+            })?;
+        if tail.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "tls.status_request.ocsp.request_extensions",
+                required,
+                tail.len(),
+            ));
+        }
+
+        let request = Self::new(
+            responder_ids,
+            tail[TLS_OCSP_REQUEST_EXTENSIONS_LENGTH_LEN..required].to_vec(),
+        );
+        validate_ocsp_status_request_len(request.encoded_len()?)?;
+        Ok((request, &tail[required..]))
+    }
+
+    /// Stable one-line summary preserving opaque vector sizes.
+    pub fn summary(&self) -> String {
+        format!(
+            "ocsp_status_request responders={} responder_bytes={} request_extensions_bytes={}",
+            self.responder_id_count(),
+            self.responder_ids.byte_lengths().iter().sum::<usize>(),
+            self.request_extensions.len()
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = self.responder_ids.inspection_fields();
+        fields.extend([
+            (
+                "ocsp_request_extensions_bytes",
+                self.request_extensions.len().to_string(),
+            ),
+            (
+                "ocsp_request_extensions",
+                hex_bytes(&self.request_extensions),
+            ),
+        ]);
+        fields
+    }
+}
+
+impl From<(TlsOcspResponderIds, Vec<u8>)> for TlsOcspStatusRequest {
+    fn from(value: (TlsOcspResponderIds, Vec<u8>)) -> Self {
+        Self::new(value.0, value.1)
+    }
+}
+
+/// Raw-preserving body for a status request selected by CertificateStatusType.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TlsStatusRequestBody {
+    /// RFC 6066/RFC 6961 OCSPStatusRequest.
+    Ocsp(TlsOcspStatusRequest),
+    /// Unknown status-type request bytes, preserved exactly.
+    Opaque(Vec<u8>),
+}
+
+impl TlsStatusRequestBody {
+    /// Create an OCSPStatusRequest body.
+    pub fn ocsp(request: impl Into<TlsOcspStatusRequest>) -> Self {
+        Self::Ocsp(request.into())
+    }
+
+    /// Preserve unknown request bytes.
+    pub fn opaque(bytes: impl Into<Vec<u8>>) -> Self {
+        Self::Opaque(bytes.into())
+    }
+
+    /// Return true when this body is an OCSPStatusRequest.
+    pub const fn is_ocsp(&self) -> bool {
+        matches!(self, Self::Ocsp(_))
+    }
+
+    /// Borrow the OCSPStatusRequest when available.
+    pub const fn as_ocsp(&self) -> Option<&TlsOcspStatusRequest> {
+        match self {
+            Self::Ocsp(request) => Some(request),
+            Self::Opaque(_) => None,
+        }
+    }
+
+    /// Borrow opaque unknown request bytes when available.
+    pub fn opaque_bytes(&self) -> Option<&[u8]> {
+        match self {
+            Self::Opaque(bytes) => Some(bytes),
+            Self::Ocsp(_) => None,
+        }
+    }
+
+    /// Number of bytes occupied by this request body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        match self {
+            Self::Ocsp(request) => request.encoded_len(),
+            Self::Opaque(bytes) => {
+                validate_status_request_opaque_len(bytes.len())?;
+                Ok(bytes.len())
+            }
+        }
+    }
+
+    /// Append this request body to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        match self {
+            Self::Ocsp(request) => request.encode(out),
+            Self::Opaque(bytes) => {
+                validate_status_request_opaque_len(bytes.len())?;
+                out.extend_from_slice(bytes);
+                Ok(())
+            }
+        }
+    }
+
+    /// Return this request body encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    fn summary_kind(&self) -> &'static str {
+        match self {
+            Self::Ocsp(_) => "ocsp",
+            Self::Opaque(_) => "opaque",
+        }
+    }
+}
+
+impl From<TlsOcspStatusRequest> for TlsStatusRequestBody {
+    fn from(request: TlsOcspStatusRequest) -> Self {
+        Self::Ocsp(request)
+    }
+}
+
+impl From<Vec<u8>> for TlsStatusRequestBody {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::Opaque(bytes)
+    }
+}
+
+impl From<&[u8]> for TlsStatusRequestBody {
+    fn from(bytes: &[u8]) -> Self {
+        Self::Opaque(bytes.to_vec())
+    }
+}
+
+impl<const N: usize> From<[u8; N]> for TlsStatusRequestBody {
+    fn from(bytes: [u8; N]) -> Self {
+        Self::Opaque(Vec::from(bytes))
+    }
+}
+
+/// RFC 6066 `status_request` CertificateStatusRequest extension body.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TlsStatusRequest {
+    status_type: TlsCertificateStatusType,
+    request: TlsStatusRequestBody,
+}
+
+impl TlsStatusRequest {
+    /// Create a status_request body, preserving the status type and request bytes.
+    pub fn new(
+        status_type: impl Into<TlsCertificateStatusType>,
+        request: impl Into<TlsStatusRequestBody>,
+    ) -> Self {
+        Self {
+            status_type: status_type.into(),
+            request: request.into(),
+        }
+    }
+
+    /// Create a status_request body with RFC 6066 `ocsp` grammar.
+    pub fn ocsp(request: impl Into<TlsOcspStatusRequest>) -> Self {
+        Self::new(TlsCertificateStatusType::OCSP, request.into())
+    }
+
+    /// Create a status_request body for an unknown status type, preserving request bytes.
+    pub fn unknown(
+        status_type: impl Into<TlsCertificateStatusType>,
+        request: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self::new(status_type, TlsStatusRequestBody::opaque(request))
+    }
+
+    /// Return the preserved certificate status type.
+    pub const fn status_type(&self) -> TlsCertificateStatusType {
+        self.status_type
+    }
+
+    /// Borrow the selected request body.
+    pub const fn request(&self) -> &TlsStatusRequestBody {
+        &self.request
+    }
+
+    /// Borrow the OCSPStatusRequest when this body carries one.
+    pub const fn ocsp_request(&self) -> Option<&TlsOcspStatusRequest> {
+        self.request.as_ocsp()
+    }
+
+    /// Number of bytes occupied by this status_request extension body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        let len = TLS_CERTIFICATE_STATUS_TYPE_LEN
+            .checked_add(self.request.encoded_len()?)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.status_request.length", "length overflow")
+            })?;
+        validate_status_request_len(len)?;
+        Ok(len)
+    }
+
+    /// Append this status_request extension body to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let start_len = out.len();
+        self.status_type.encode(out);
+        self.request.encode(out)?;
+        validate_status_request_len(out.len() - start_len)?;
+        Ok(())
+    }
+
+    /// Return this status_request extension body encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Convert this body into a raw `status_request` extension.
+    pub fn to_raw_extension(&self) -> Result<TlsRawExtension> {
+        Ok(TlsRawExtension::new(
+            TlsExtensionType::STATUS_REQUEST,
+            self.encode_to_vec()?,
+        ))
+    }
+
+    /// Decode a status_request extension body.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (request, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.status_request.length",
+                "length must match extension body",
+            ));
+        }
+        Ok(request)
+    }
+
+    /// Decode a status_request body from the front of `bytes`.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_CERTIFICATE_STATUS_TYPE_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.status_request.status_type",
+                TLS_CERTIFICATE_STATUS_TYPE_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let status_type = TlsCertificateStatusType::from_be_bytes([bytes[0]]);
+        let request_bytes = &bytes[TLS_CERTIFICATE_STATUS_TYPE_LEN..];
+        if status_type.is_ocsp() {
+            let (request, tail) = TlsOcspStatusRequest::decode_prefix(request_bytes)?;
+            return Ok((Self::ocsp(request), tail));
+        }
+
+        Ok((Self::unknown(status_type, request_bytes.to_vec()), &[]))
+    }
+
+    /// Decode a raw `status_request` extension body.
+    pub fn from_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        if extension.extension_type() != TlsExtensionType::STATUS_REQUEST {
+            return Err(CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be status_request",
+            ));
+        }
+        Self::decode(extension.body())
+    }
+
+    /// Stable one-line summary preserving status type and opaque sizes.
+    pub fn summary(&self) -> String {
+        format!(
+            "status_request status_type={} raw=0x{:02x} request={} request_bytes={}",
+            self.status_type.label(),
+            self.status_type.raw(),
+            self.request.summary_kind(),
+            self.request.encoded_len().unwrap_or(0)
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            ("status_request_status_type", self.status_type.label()),
+            (
+                "status_request_status_type_raw",
+                format!("0x{:02x}", self.status_type.raw()),
+            ),
+            (
+                "status_request_status_type_status",
+                self.status_type.status().label().to_string(),
+            ),
+            (
+                "status_request_body_kind",
+                self.request.summary_kind().to_string(),
+            ),
+            (
+                "status_request_body_bytes",
+                self.request.encoded_len().unwrap_or(0).to_string(),
+            ),
+        ];
+        match &self.request {
+            TlsStatusRequestBody::Ocsp(request) => fields.extend(request.inspection_fields()),
+            TlsStatusRequestBody::Opaque(bytes) => {
+                fields.push(("status_request_opaque", hex_bytes(bytes)));
+            }
+        }
+        fields
+    }
+}
+
+impl From<TlsOcspStatusRequest> for TlsStatusRequest {
+    fn from(request: TlsOcspStatusRequest) -> Self {
+        Self::ocsp(request)
+    }
+}
+
+impl TryFrom<&TlsRawExtension> for TlsStatusRequest {
+    type Error = CrafterError;
+
+    fn try_from(value: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension(value)
+    }
+}
+
+impl TryFrom<TlsStatusRequest> for TlsRawExtension {
+    type Error = CrafterError;
+
+    fn try_from(value: TlsStatusRequest) -> Result<Self> {
+        value.to_raw_extension()
+    }
+}
+
+/// RFC 6961 status_request_v2 item.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TlsStatusRequestV2Item {
+    status_type: TlsCertificateStatusType,
+    request: TlsStatusRequestBody,
+}
+
+impl TlsStatusRequestV2Item {
+    /// Create a status_request_v2 item, preserving the status type and request bytes.
+    pub fn new(
+        status_type: impl Into<TlsCertificateStatusType>,
+        request: impl Into<TlsStatusRequestBody>,
+    ) -> Self {
+        Self {
+            status_type: status_type.into(),
+            request: request.into(),
+        }
+    }
+
+    /// Create an RFC 6961 `ocsp` item.
+    pub fn ocsp(request: impl Into<TlsOcspStatusRequest>) -> Self {
+        Self::new(TlsCertificateStatusType::OCSP, request.into())
+    }
+
+    /// Create an RFC 6961 legacy `ocsp_multi` item, preserving the current registry status.
+    pub fn ocsp_multi(request: impl Into<TlsOcspStatusRequest>) -> Self {
+        Self::new(
+            TlsCertificateStatusType::OCSP_MULTI_RESERVED,
+            request.into(),
+        )
+    }
+
+    /// Create an item for an unknown status type, preserving request bytes.
+    pub fn unknown(
+        status_type: impl Into<TlsCertificateStatusType>,
+        request: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self::new(status_type, TlsStatusRequestBody::opaque(request))
+    }
+
+    /// Return the preserved certificate status type.
+    pub const fn status_type(&self) -> TlsCertificateStatusType {
+        self.status_type
+    }
+
+    /// Borrow the selected request body.
+    pub const fn request(&self) -> &TlsStatusRequestBody {
+        &self.request
+    }
+
+    /// Borrow the OCSPStatusRequest when this item carries one.
+    pub const fn ocsp_request(&self) -> Option<&TlsOcspStatusRequest> {
+        self.request.as_ocsp()
+    }
+
+    /// Number of request bytes.
+    pub fn request_len(&self) -> Result<usize> {
+        self.request.encoded_len()
+    }
+
+    /// Number of bytes occupied by this status_request_v2 item.
+    pub fn encoded_len(&self) -> Result<usize> {
+        let request_len = self.request_len()?;
+        validate_status_request_v2_item_request_len(request_len)?;
+        TLS_STATUS_REQUEST_V2_ITEM_HEADER_LEN
+            .checked_add(request_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.status_request_v2.item.length",
+                    "length overflow",
+                )
+            })
+    }
+
+    /// Append this status_request_v2 item to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let request = self.request.encode_to_vec()?;
+        validate_status_request_v2_item_request_len(request.len())?;
+        self.status_type.encode(out);
+        let request_len = u16::try_from(request.len()).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "tls.status_request_v2.item.request.length",
+                "length must fit in two bytes",
+            )
+        })?;
+        out.extend_from_slice(&request_len.to_be_bytes());
+        out.extend_from_slice(&request);
+        Ok(())
+    }
+
+    /// Return this status_request_v2 item encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Decode one status_request_v2 item.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (item, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.status_request_v2.item.length",
+                "length must match buffer",
+            ));
+        }
+        Ok(item)
+    }
+
+    /// Decode one status_request_v2 item from the front of `bytes`.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_STATUS_REQUEST_V2_ITEM_HEADER_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.status_request_v2.item",
+                TLS_STATUS_REQUEST_V2_ITEM_HEADER_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let status_type = TlsCertificateStatusType::from_be_bytes([bytes[0]]);
+        let request_len = u16::from_be_bytes([bytes[1], bytes[2]]) as usize;
+        validate_status_request_v2_item_request_len(request_len)?;
+        let required = TLS_STATUS_REQUEST_V2_ITEM_HEADER_LEN
+            .checked_add(request_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.status_request_v2.item.request.length",
+                    "length overflow",
+                )
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "tls.status_request_v2.item.request",
+                required,
+                bytes.len(),
+            ));
+        }
+
+        let request_bytes = &bytes[TLS_STATUS_REQUEST_V2_ITEM_HEADER_LEN..required];
+        let request = if status_type.uses_ocsp_status_request() {
+            TlsStatusRequestBody::ocsp(TlsOcspStatusRequest::decode(request_bytes)?)
+        } else {
+            TlsStatusRequestBody::opaque(request_bytes.to_vec())
+        };
+
+        Ok((Self::new(status_type, request), &bytes[required..]))
+    }
+
+    /// Stable one-line summary preserving status type and request size.
+    pub fn summary(&self) -> String {
+        format!(
+            "status_request_v2_item status_type={} raw=0x{:02x} request={} request_bytes={}",
+            self.status_type.label(),
+            self.status_type.raw(),
+            self.request.summary_kind(),
+            self.request_len().unwrap_or(0)
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            (
+                "status_request_v2_item_status_type",
+                self.status_type.label(),
+            ),
+            (
+                "status_request_v2_item_status_type_raw",
+                format!("0x{:02x}", self.status_type.raw()),
+            ),
+            (
+                "status_request_v2_item_status_type_status",
+                self.status_type.status().label().to_string(),
+            ),
+            (
+                "status_request_v2_item_request_kind",
+                self.request.summary_kind().to_string(),
+            ),
+            (
+                "status_request_v2_item_request_bytes",
+                self.request_len().unwrap_or(0).to_string(),
+            ),
+        ];
+        match &self.request {
+            TlsStatusRequestBody::Ocsp(request) => fields.extend(request.inspection_fields()),
+            TlsStatusRequestBody::Opaque(bytes) => {
+                fields.push(("status_request_v2_item_opaque", hex_bytes(bytes)));
+            }
+        }
+        fields
+    }
+}
+
+/// RFC 6961 `status_request_v2` CertificateStatusRequestListV2 extension body.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct TlsStatusRequestV2 {
+    items: Vec<TlsStatusRequestV2Item>,
+}
+
+impl TlsStatusRequestV2 {
+    /// Create an ordered status_request_v2 item list.
+    pub fn new(items: impl Into<Vec<TlsStatusRequestV2Item>>) -> Self {
+        Self {
+            items: items.into(),
+        }
+    }
+
+    /// Create an ordered status_request_v2 item list.
+    pub fn from_items(items: impl Into<Vec<TlsStatusRequestV2Item>>) -> Self {
+        Self::new(items)
+    }
+
+    /// Borrow the ordered status_request_v2 items.
+    pub fn items(&self) -> &[TlsStatusRequestV2Item] {
+        &self.items
+    }
+
+    /// Consume the body and return the ordered status_request_v2 items.
+    pub fn into_vec(self) -> Vec<TlsStatusRequestV2Item> {
+        self.items
+    }
+
+    /// Append one status_request_v2 item.
+    pub fn push(&mut self, item: TlsStatusRequestV2Item) {
+        self.items.push(item);
+    }
+
+    /// Number of status_request_v2 items.
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    /// Return true when there are no status_request_v2 items.
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// Number of bytes occupied by list items, excluding the list prefix.
+    pub fn byte_len(&self) -> Result<usize> {
+        let mut byte_len = 0usize;
+        for item in &self.items {
+            byte_len = byte_len.checked_add(item.encoded_len()?).ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.status_request_v2.length", "length overflow")
+            })?;
+        }
+        validate_status_request_v2_list_len(byte_len)?;
+        Ok(byte_len)
+    }
+
+    /// Number of bytes occupied by the complete status_request_v2 body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        TLS_STATUS_REQUEST_V2_LIST_LENGTH_LEN
+            .checked_add(self.byte_len()?)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.status_request_v2.length", "length overflow")
+            })
+    }
+
+    /// Append this status_request_v2 extension body to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let byte_len = self.byte_len()?;
+        let byte_len = u16::try_from(byte_len).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "tls.status_request_v2.length",
+                "length must fit in two bytes",
+            )
+        })?;
+        out.extend_from_slice(&byte_len.to_be_bytes());
+        for item in &self.items {
+            item.encode(out)?;
+        }
+        Ok(())
+    }
+
+    /// Return this status_request_v2 extension body encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Convert this body into a raw `status_request_v2` extension.
+    pub fn to_raw_extension(&self) -> Result<TlsRawExtension> {
+        Ok(TlsRawExtension::new(
+            TlsExtensionType::STATUS_REQUEST_V2,
+            self.encode_to_vec()?,
+        ))
+    }
+
+    /// Decode a status_request_v2 extension body.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (request, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.status_request_v2.length",
+                "length must match extension body",
+            ));
+        }
+        Ok(request)
+    }
+
+    /// Decode a status_request_v2 body from the front of `bytes`.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_STATUS_REQUEST_V2_LIST_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.status_request_v2.length",
+                TLS_STATUS_REQUEST_V2_LIST_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let byte_len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+        validate_status_request_v2_list_len(byte_len)?;
+        let required = TLS_STATUS_REQUEST_V2_LIST_LENGTH_LEN
+            .checked_add(byte_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.status_request_v2.length", "length overflow")
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "tls.status_request_v2",
+                required,
+                bytes.len(),
+            ));
+        }
+
+        let mut items = Vec::new();
+        let mut cursor = &bytes[TLS_STATUS_REQUEST_V2_LIST_LENGTH_LEN..required];
+        while !cursor.is_empty() {
+            let (item, tail) = TlsStatusRequestV2Item::decode_prefix(cursor)?;
+            items.push(item);
+            cursor = tail;
+        }
+
+        Ok((Self::new(items), &bytes[required..]))
+    }
+
+    /// Decode a raw `status_request_v2` extension body.
+    pub fn from_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        if extension.extension_type() != TlsExtensionType::STATUS_REQUEST_V2 {
+            return Err(CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be status_request_v2",
+            ));
+        }
+        Self::decode(extension.body())
+    }
+
+    /// Stable one-line summary preserving item count and status types.
+    pub fn summary(&self) -> String {
+        format!(
+            "status_request_v2 items={} bytes={} status_types={}",
+            self.len(),
+            self.byte_len().unwrap_or(0),
+            self.items
+                .iter()
+                .map(|item| item.status_type.label())
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("status_request_v2_items", self.len().to_string()),
+            (
+                "status_request_v2_bytes",
+                self.byte_len().unwrap_or(0).to_string(),
+            ),
+            (
+                "status_request_v2_status_types",
+                self.items
+                    .iter()
+                    .map(|item| item.status_type.label())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            (
+                "status_request_v2_status_type_raws",
+                self.items
+                    .iter()
+                    .map(|item| format!("0x{:02x}", item.status_type.raw()))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+        ]
+    }
+}
+
+impl From<Vec<TlsStatusRequestV2Item>> for TlsStatusRequestV2 {
+    fn from(items: Vec<TlsStatusRequestV2Item>) -> Self {
+        Self::new(items)
+    }
+}
+
+impl<const N: usize> From<[TlsStatusRequestV2Item; N]> for TlsStatusRequestV2 {
+    fn from(items: [TlsStatusRequestV2Item; N]) -> Self {
+        Self::new(Vec::from(items))
+    }
+}
+
+impl From<TlsStatusRequestV2Item> for TlsStatusRequestV2 {
+    fn from(item: TlsStatusRequestV2Item) -> Self {
+        Self::new(vec![item])
+    }
+}
+
+impl TryFrom<&TlsRawExtension> for TlsStatusRequestV2 {
+    type Error = CrafterError;
+
+    fn try_from(value: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension(value)
+    }
+}
+
+impl TryFrom<TlsStatusRequestV2> for TlsRawExtension {
+    type Error = CrafterError;
+
+    fn try_from(value: TlsStatusRequestV2) -> Result<Self> {
+        value.to_raw_extension()
+    }
+}
+
+fn validate_ocsp_responder_id_len(len: usize) -> Result<()> {
+    if len < TLS_OCSP_RESPONDER_ID_MIN_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tls.status_request.ocsp.responder_id.length",
+            "length must be at least one byte",
+        ));
+    }
+    if len > TLS_OCSP_RESPONDER_ID_MAX_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tls.status_request.ocsp.responder_id.length",
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_ocsp_responder_id_list_len(len: usize) -> Result<()> {
+    if len > u16::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            "tls.status_request.ocsp.responder_id_list.length",
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_ocsp_request_extensions_len(len: usize) -> Result<()> {
+    if len > u16::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            "tls.status_request.ocsp.request_extensions.length",
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_ocsp_status_request_len(len: usize) -> Result<()> {
+    if len > u16::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            "tls.status_request.ocsp.length",
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_status_request_opaque_len(len: usize) -> Result<()> {
+    if len > u16::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            "tls.status_request.opaque.length",
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_status_request_len(len: usize) -> Result<()> {
+    if len > u16::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            "tls.status_request.length",
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_status_request_v2_item_request_len(len: usize) -> Result<()> {
+    if len > u16::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            "tls.status_request_v2.item.request.length",
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_status_request_v2_list_len(len: usize) -> Result<()> {
+    if len < TLS_STATUS_REQUEST_V2_ITEM_HEADER_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tls.status_request_v2.length",
+            "length must be at least three bytes",
+        ));
+    }
+    if len > u16::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            "tls.status_request_v2.length",
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
 }
 
 /// TLS 1.3 `cookie` extension body with opaque cookie bytes preserved.
@@ -1572,6 +3160,31 @@ impl TlsRawExtension {
     /// Decode this raw extension as a typed ServerNameList.
     pub fn as_server_name_list(&self) -> Result<TlsServerNameList> {
         TlsServerNameList::from_raw_extension(self)
+    }
+
+    /// Create a raw `status_request` extension from a typed CertificateStatusRequest.
+    pub fn status_request(request: impl Into<TlsStatusRequest>) -> Result<Self> {
+        request.into().to_raw_extension()
+    }
+
+    /// Create a raw `status_request` extension carrying an OCSPStatusRequest.
+    pub fn status_request_ocsp(request: impl Into<TlsOcspStatusRequest>) -> Result<Self> {
+        TlsStatusRequest::ocsp(request).to_raw_extension()
+    }
+
+    /// Decode this raw extension as a typed `status_request` body.
+    pub fn as_status_request(&self) -> Result<TlsStatusRequest> {
+        TlsStatusRequest::from_raw_extension(self)
+    }
+
+    /// Create a raw `status_request_v2` extension from a typed request list.
+    pub fn status_request_v2(request: impl Into<TlsStatusRequestV2>) -> Result<Self> {
+        request.into().to_raw_extension()
+    }
+
+    /// Decode this raw extension as a typed `status_request_v2` body.
+    pub fn as_status_request_v2(&self) -> Result<TlsStatusRequestV2> {
+        TlsStatusRequestV2::from_raw_extension(self)
     }
 
     /// Create a raw `supported_groups` extension from a typed group list.
@@ -6928,6 +8541,14 @@ mod tests {
             constants::TLS_EXTENSION_SERVER_NAME
         );
         assert_eq!(
+            TlsExtensionType::status_request().raw(),
+            constants::TLS_EXTENSION_STATUS_REQUEST
+        );
+        assert_eq!(
+            TlsExtensionType::status_request_v2().raw(),
+            constants::TLS_EXTENSION_STATUS_REQUEST_V2
+        );
+        assert_eq!(
             TlsExtensionType::supported_groups().raw(),
             constants::TLS_EXTENSION_SUPPORTED_GROUPS
         );
@@ -6965,6 +8586,7 @@ mod tests {
     fn tls_extension_type_labels_statuses_and_ranges_reuse_constants() {
         let sni = TlsExtensionType::SERVER_NAME;
         let legacy = TlsExtensionType::MAX_FRAGMENT_LENGTH;
+        let status_request_v2 = TlsExtensionType::STATUS_REQUEST_V2;
         let deferred = TlsExtensionType::HEARTBEAT;
         let reserved = TlsExtensionType::RESERVED_46;
         let grease = TlsExtensionType::from_u16(0x0a0a);
@@ -6983,6 +8605,13 @@ mod tests {
         assert_eq!(legacy.status(), TlsCodepointStatus::PreserveOnly);
         assert_eq!(legacy.label(), "max_fragment_length");
         assert!(!legacy.is_default_eligible());
+
+        assert_eq!(
+            status_request_v2.status(),
+            TlsCodepointStatus::LabelEligible
+        );
+        assert_eq!(status_request_v2.label(), "status_request_v2");
+        assert!(!status_request_v2.is_default_eligible());
 
         assert_eq!(deferred.status(), TlsCodepointStatus::Deferred);
         assert_eq!(deferred.label(), "heartbeat");
@@ -7118,6 +8747,368 @@ mod tests {
             CrafterError::invalid_field_value(
                 "tls.extension.length",
                 "length must fit in two bytes"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_status_request_builders_encode_and_inspect() {
+        // RFC 6066 Section 8 defines CertificateStatusRequest with the OCSPStatusRequest body.
+        assert_eq!(
+            TlsExtensionType::status_request(),
+            TlsExtensionType::STATUS_REQUEST
+        );
+        assert_eq!(
+            TlsExtensionType::status_request_v2(),
+            TlsExtensionType::STATUS_REQUEST_V2
+        );
+
+        let status_type = TlsCertificateStatusType::ocsp();
+        assert_eq!(
+            TlsCertificateStatusType::reserved().raw(),
+            TLS_CERTIFICATE_STATUS_TYPE_RESERVED
+        );
+        assert!(TlsCertificateStatusType::reserved().is_reserved());
+        assert_eq!(status_type.raw(), TLS_CERTIFICATE_STATUS_TYPE_OCSP);
+        assert_eq!(status_type.as_u8(), TLS_CERTIFICATE_STATUS_TYPE_OCSP);
+        assert_eq!(status_type.to_be_bytes(), [0x01]);
+        assert_eq!(
+            TlsCertificateStatusType::decode([0x01]).unwrap(),
+            status_type
+        );
+        assert_eq!(status_type.name(), Some("ocsp"));
+        assert_eq!(status_type.status(), TlsCodepointStatus::DefaultEligible);
+        assert!(status_type.is_ocsp());
+        assert!(status_type.uses_ocsp_status_request());
+        assert_eq!(
+            status_type.summary(),
+            "ocsp raw=0x01 status=default-eligible"
+        );
+        assert!(status_type
+            .inspection_fields()
+            .contains(&("certificate_status_type", "ocsp".to_string())));
+        assert_eq!(status_type.to_string(), "ocsp");
+        assert_eq!(u8::from(status_type), 1);
+
+        let responder_id = TlsOcspResponderId::new([0xaa, 0xbb]);
+        assert_eq!(responder_id.len(), 2);
+        assert_eq!(responder_id.bytes(), &[0xaa, 0xbb]);
+        assert_eq!(
+            responder_id.encode_to_vec().unwrap(),
+            [0x00, 0x02, 0xaa, 0xbb]
+        );
+        assert_eq!(
+            TlsOcspResponderId::decode_prefix(&[0x00, 0x02, 0xaa, 0xbb, 0xcc]).unwrap(),
+            (responder_id.clone(), &[0xcc][..])
+        );
+        assert_eq!(responder_id.summary(), "ocsp_responder_id bytes=2");
+
+        let responder_ids = TlsOcspResponderIds::new([responder_id.clone()]);
+        assert_eq!(responder_ids.len(), 1);
+        assert!(!responder_ids.is_empty());
+        assert_eq!(responder_ids.byte_lengths(), vec![2]);
+        assert_eq!(
+            responder_ids.encode_to_vec().unwrap(),
+            [0x00, 0x04, 0x00, 0x02, 0xaa, 0xbb]
+        );
+        assert_eq!(
+            responder_ids.summary(),
+            "ocsp_responder_ids count=1 bytes=2 responder_lengths=2"
+        );
+
+        let ocsp = TlsOcspStatusRequest::new(responder_ids.clone(), [0x30, 0x00]);
+        assert_eq!(ocsp.responder_id_count(), 1);
+        assert_eq!(ocsp.responder_ids(), &[responder_id]);
+        assert_eq!(ocsp.request_extensions(), &[0x30, 0x00]);
+        assert_eq!(ocsp.request_extensions_len(), 2);
+        assert_eq!(ocsp.encoded_len().unwrap(), 10);
+        assert_eq!(
+            ocsp.encode_to_vec().unwrap(),
+            [0x00, 0x04, 0x00, 0x02, 0xaa, 0xbb, 0x00, 0x02, 0x30, 0x00]
+        );
+        assert_eq!(
+            TlsOcspStatusRequest::decode(ocsp.encode_to_vec().unwrap()).unwrap(),
+            ocsp
+        );
+        assert_eq!(
+            ocsp.summary(),
+            "ocsp_status_request responders=1 responder_bytes=2 request_extensions_bytes=2"
+        );
+        assert!(ocsp
+            .inspection_fields()
+            .contains(&("ocsp_request_extensions", "30 00".to_string())));
+
+        let request = TlsStatusRequest::ocsp(ocsp.clone());
+        assert_eq!(request.status_type(), TlsCertificateStatusType::OCSP);
+        assert!(request.ocsp_request().is_some());
+        assert_eq!(
+            request.encode_to_vec().unwrap(),
+            [0x01, 0x00, 0x04, 0x00, 0x02, 0xaa, 0xbb, 0x00, 0x02, 0x30, 0x00]
+        );
+        assert_eq!(
+            TlsStatusRequest::decode(request.encode_to_vec().unwrap()).unwrap(),
+            request
+        );
+        assert_eq!(
+            request.summary(),
+            "status_request status_type=ocsp raw=0x01 request=ocsp request_bytes=10"
+        );
+        assert!(request
+            .inspection_fields()
+            .contains(&("status_request_status_type", "ocsp".to_string())));
+
+        let raw = request.to_raw_extension().unwrap();
+        assert_eq!(raw.extension_type(), TlsExtensionType::STATUS_REQUEST);
+        assert_eq!(raw.raw_type(), constants::TLS_EXTENSION_STATUS_REQUEST);
+        let mut expected_raw = vec![0x00, 0x05, 0x00, 0x0b];
+        expected_raw.extend_from_slice(&request.encode_to_vec().unwrap());
+        assert_eq!(raw.encode_to_vec().unwrap(), expected_raw);
+        assert_eq!(raw.as_status_request().unwrap(), request);
+        assert_eq!(TlsStatusRequest::from_raw_extension(&raw).unwrap(), request);
+        assert_eq!(TlsRawExtension::try_from(request.clone()).unwrap(), raw);
+        assert_eq!(
+            TlsRawExtension::status_request(request.clone()).unwrap(),
+            raw
+        );
+        assert_eq!(
+            TlsRawExtension::status_request_ocsp(ocsp.clone()).unwrap(),
+            raw
+        );
+
+        // RFC 6961 Section 2.2 wraps one or more status request items in a vector.
+        let item = TlsStatusRequestV2Item::ocsp(ocsp);
+        assert_eq!(item.status_type(), TlsCertificateStatusType::OCSP);
+        assert_eq!(item.request_len().unwrap(), 10);
+        assert_eq!(
+            item.encode_to_vec().unwrap(),
+            [0x01, 0x00, 0x0a, 0x00, 0x04, 0x00, 0x02, 0xaa, 0xbb, 0x00, 0x02, 0x30, 0x00]
+        );
+        assert_eq!(
+            item.summary(),
+            "status_request_v2_item status_type=ocsp raw=0x01 request=ocsp request_bytes=10"
+        );
+        assert!(item
+            .inspection_fields()
+            .contains(&("status_request_v2_item_request_bytes", "10".to_string())));
+
+        let request_v2 = TlsStatusRequestV2::new([item]);
+        assert_eq!(request_v2.len(), 1);
+        assert_eq!(request_v2.byte_len().unwrap(), 13);
+        assert_eq!(
+            request_v2.encode_to_vec().unwrap(),
+            [
+                0x00, 0x0d, 0x01, 0x00, 0x0a, 0x00, 0x04, 0x00, 0x02, 0xaa, 0xbb, 0x00, 0x02, 0x30,
+                0x00
+            ]
+        );
+        assert_eq!(
+            TlsStatusRequestV2::decode(request_v2.encode_to_vec().unwrap()).unwrap(),
+            request_v2
+        );
+        assert_eq!(
+            request_v2.summary(),
+            "status_request_v2 items=1 bytes=13 status_types=ocsp"
+        );
+
+        let raw_v2 = request_v2.to_raw_extension().unwrap();
+        assert_eq!(raw_v2.extension_type(), TlsExtensionType::STATUS_REQUEST_V2);
+        assert_eq!(
+            raw_v2.raw_type(),
+            constants::TLS_EXTENSION_STATUS_REQUEST_V2
+        );
+        let mut expected_raw_v2 = vec![0x00, 0x11, 0x00, 0x0f];
+        expected_raw_v2.extend_from_slice(&request_v2.encode_to_vec().unwrap());
+        assert_eq!(raw_v2.encode_to_vec().unwrap(), expected_raw_v2);
+        assert_eq!(raw_v2.as_status_request_v2().unwrap(), request_v2);
+        assert_eq!(
+            TlsStatusRequestV2::from_raw_extension(&raw_v2).unwrap(),
+            request_v2
+        );
+        assert_eq!(
+            TlsRawExtension::try_from(request_v2.clone()).unwrap(),
+            raw_v2
+        );
+        assert_eq!(
+            TlsRawExtension::status_request_v2(request_v2).unwrap(),
+            raw_v2
+        );
+    }
+
+    #[test]
+    fn tls_extension_status_request_preserves_unknown_and_explicit_values() {
+        let unknown_type = TlsCertificateStatusType::from_u8(0x7a);
+        assert_eq!(unknown_type.status(), TlsCodepointStatus::Unassigned);
+        assert!(unknown_type.is_unassigned());
+        assert_eq!(
+            unknown_type.label(),
+            "unassigned certificate status type 0x7a"
+        );
+        assert_eq!(
+            TlsCertificateStatusType::decode_prefix(&[0x7a, 0xaa]).unwrap(),
+            (unknown_type, &[0xaa][..])
+        );
+
+        let request = TlsStatusRequest::decode([0x7a, 0xde, 0xad]).unwrap();
+        assert_eq!(request.status_type(), unknown_type);
+        assert_eq!(request.request().opaque_bytes(), Some(&[0xde, 0xad][..]));
+        assert_eq!(request.encode_to_vec().unwrap(), [0x7a, 0xde, 0xad]);
+        assert_eq!(
+            request.summary(),
+            "status_request status_type=unassigned certificate status type 0x7a raw=0x7a request=opaque request_bytes=2"
+        );
+        assert!(request
+            .inspection_fields()
+            .contains(&("status_request_opaque", "de ad".to_string())));
+
+        let request_v2 =
+            TlsStatusRequestV2::decode([0x00, 0x05, 0x7a, 0x00, 0x02, 0xde, 0xad]).unwrap();
+        assert_eq!(request_v2.items()[0].status_type(), unknown_type);
+        assert_eq!(
+            request_v2.items()[0].request().opaque_bytes(),
+            Some(&[0xde, 0xad][..])
+        );
+        assert_eq!(
+            request_v2.encode_to_vec().unwrap(),
+            [0x00, 0x05, 0x7a, 0x00, 0x02, 0xde, 0xad]
+        );
+
+        let ocsp_multi = TlsCertificateStatusType::ocsp_multi_reserved();
+        assert_eq!(
+            ocsp_multi.raw(),
+            TLS_CERTIFICATE_STATUS_TYPE_OCSP_MULTI_RESERVED
+        );
+        assert_eq!(ocsp_multi.status(), TlsCodepointStatus::PreserveOnly);
+        assert!(ocsp_multi.is_ocsp_multi_reserved());
+        assert!(ocsp_multi.uses_ocsp_status_request());
+        assert_eq!(ocsp_multi.label(), "ocsp_multi_RESERVED");
+
+        let item = TlsStatusRequestV2Item::ocsp_multi(TlsOcspStatusRequest::empty());
+        assert_eq!(item.status_type(), ocsp_multi);
+        assert!(item.ocsp_request().is_some());
+        assert_eq!(
+            item.encode_to_vec().unwrap(),
+            [0x02, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00]
+        );
+        assert_eq!(
+            TlsStatusRequestV2Item::decode(item.encode_to_vec().unwrap()).unwrap(),
+            item
+        );
+    }
+
+    #[test]
+    fn tls_extension_status_request_reports_structured_errors() {
+        assert_eq!(
+            TlsCertificateStatusType::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.certificate_status_type",
+                TLS_CERTIFICATE_STATUS_TYPE_LEN,
+                0
+            )
+        );
+        assert_eq!(
+            TlsStatusRequest::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.status_request.status_type",
+                TLS_CERTIFICATE_STATUS_TYPE_LEN,
+                0
+            )
+        );
+        assert_eq!(
+            TlsOcspResponderId::decode([0x00, 0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.status_request.ocsp.responder_id.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsOcspResponderId::decode([0x00]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.status_request.ocsp.responder_id.length",
+                TLS_OCSP_RESPONDER_ID_LENGTH_LEN,
+                1
+            )
+        );
+        assert_eq!(
+            TlsOcspResponderIds::decode([0x00, 0x03, 0x00, 0x02, 0xaa]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.status_request.ocsp.responder_id", 4, 3)
+        );
+        assert_eq!(
+            TlsOcspStatusRequest::decode([0x00, 0x00, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.status_request.ocsp.request_extensions.length",
+                TLS_OCSP_REQUEST_EXTENSIONS_LENGTH_LEN,
+                1
+            )
+        );
+        assert_eq!(
+            TlsOcspStatusRequest::decode([0x00, 0x00, 0x00, 0x02, 0xaa]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.status_request.ocsp.request_extensions", 4, 3)
+        );
+        assert_eq!(
+            TlsStatusRequest::decode([0x01, 0x00, 0x00, 0x00, 0x00, 0xaa]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.status_request.length",
+                "length must match extension body"
+            )
+        );
+        assert_eq!(
+            TlsStatusRequest::from_raw_extension(&TlsRawExtension::from_raw(0xbeef, []))
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be status_request"
+            )
+        );
+        assert_eq!(
+            TlsOcspResponderId::new(Vec::<u8>::new())
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.status_request.ocsp.responder_id.length",
+                "length must be at least one byte"
+            )
+        );
+
+        assert_eq!(
+            TlsStatusRequestV2::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.status_request_v2.length",
+                TLS_STATUS_REQUEST_V2_LIST_LENGTH_LEN,
+                0
+            )
+        );
+        assert_eq!(
+            TlsStatusRequestV2::decode([0x00, 0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.status_request_v2.length",
+                "length must be at least three bytes"
+            )
+        );
+        assert_eq!(
+            TlsStatusRequestV2::decode([0x00, 0x03, 0x01, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.status_request_v2", 5, 4)
+        );
+        assert_eq!(
+            TlsStatusRequestV2::decode([0x00, 0x03, 0x01, 0x00, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.status_request.ocsp.responder_id_list.length",
+                TLS_OCSP_RESPONDER_ID_LIST_LENGTH_LEN,
+                0
+            )
+        );
+        assert_eq!(
+            TlsStatusRequestV2::from_raw_extension(&TlsRawExtension::from_raw(0xbeef, []))
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be status_request_v2"
+            )
+        );
+        assert_eq!(
+            TlsStatusRequestV2::default().encode_to_vec().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.status_request_v2.length",
+                "length must be at least three bytes"
             )
         );
     }
