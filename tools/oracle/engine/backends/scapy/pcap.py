@@ -289,6 +289,7 @@ def _decode_packet_for_write(root: str | None, raw: bytes, scapy_all: Any) -> An
         "link:bluetooth_le_ll_with_phdr",
         "Raw",
         "link:raw",
+        "raw:tls",
         "l3:ipv4",
         "l3:ipv6",
         "IP",

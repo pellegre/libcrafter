@@ -59,6 +59,7 @@ from .protocols.mdns import (
 )
 from .protocols.quic import canonicalize_quic_payload
 from .protocols.ssdp import canonicalize_ssdp_payload
+from .protocols.tls import canonicalize_tls_payload
 
 
 BACKEND_NAME = "scapy"
@@ -152,6 +153,7 @@ _ROOT_ALIASES: dict[str, str] = {
     "Loopback": "link:null-loopback",
     "RadioTap": "link:radiotap",
     "Raw": "link:raw",
+    "raw:tls": "raw:tls",
     "link:bluetooth_le_ll_with_phdr": "link:bluetooth-le-ll-with-phdr",
     "l2:ipv4": "l3:ipv4",
     "link:ieee80211": "link:dot11",
@@ -275,6 +277,7 @@ def decode_root(
         "link:null-loopback": "Loopback",
         "link:radiotap": "RadioTap",
         "link:raw": "Raw",
+        "raw:tls": "Raw",
         "l2:ipv4": "IP",
         "l3:ipv4": "IP",
         "l3:ipv6": "IPv6",
@@ -407,6 +410,12 @@ def normalize_packet(
     _canonicalize_dot15d4_zigbee(normalized_layers, normalized_fields)
     _canonicalize_mqtt(packet, normalized_layers, normalized_fields)
     canonicalize_quic_payload(packet, normalized_layers, normalized_fields)
+    canonicalize_tls_payload(
+        packet,
+        normalized_layers,
+        normalized_fields,
+        root=_normalize_root_name(root),
+    )
     canonicalize_ssdp_payload(packet, normalized_layers, normalized_fields)
     canonicalize_mdns_payload(packet, normalized_layers, normalized_fields)
     if source_hex is not None:

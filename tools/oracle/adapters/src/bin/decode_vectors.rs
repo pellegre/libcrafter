@@ -24,6 +24,7 @@ use crafter::protocols::quic::Quic;
 use crafter::protocols::rip::ripng::{Ripng, RipngRte};
 use crafter::protocols::rip::{Rip, RipAuth, RipAuthPayload, RipEntry, RIP_AFI_AUTH};
 use crafter::protocols::ssdp::{Ssdp, SsdpHeaderNameKind, SsdpMethod, SsdpStartLine};
+use crafter::protocols::tls::{Tls, TlsRecord};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -217,6 +218,7 @@ fn decode_for_root(root: &str, bytes: &[u8]) -> ExampleResult<Packet> {
             Packet::decode_from_link(LinkType::NullLoopback, bytes)
         }
         "Raw" | "link:raw" => Packet::decode_from_link(LinkType::Raw, bytes),
+        "raw:tls" => decode_raw_tls(bytes),
         "Dot11" | "link:dot11" | "link:ieee80211" => {
             Packet::decode_from_link(LinkType::Ieee80211, bytes)
         }
@@ -508,6 +510,8 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "ble_radio"
     } else if layer.as_any().is::<BleLlAdv>() {
         "ble_adv"
+    } else if layer.as_any().is::<Tls>() {
+        "tls"
     } else if layer.as_any().is::<Raw>() {
         "payload"
     } else {
@@ -526,6 +530,7 @@ fn normalize_root_name(root: &str) -> &str {
         "Loopback" => "link:null-loopback",
         "RadioTap" => "link:radiotap",
         "Raw" => "link:raw",
+        "raw:tls" => "raw:tls",
         _ => root,
     }
 }
@@ -664,10 +669,149 @@ fn normalized_layer_fields(
     if let Some(layer) = layer.as_any().downcast_ref::<BleLlAdv>() {
         return ble_adv_fields(layer, source_bytes);
     }
+    if let Some(layer) = layer.as_any().downcast_ref::<Tls>() {
+        return tls_fields(layer);
+    }
     if let Some(layer) = layer.as_any().downcast_ref::<Raw>() {
         return payload_fields(layer);
     }
     BTreeMap::new()
+}
+
+fn decode_raw_tls(bytes: &[u8]) -> crafter::Result<Packet> {
+    let mut remaining = bytes;
+    let mut records = Vec::new();
+    while !remaining.is_empty() {
+        match TlsRecord::decode_with_consumed(remaining) {
+            Ok((record, consumed)) if consumed > 0 => {
+                records.push(record);
+                remaining = &remaining[consumed..];
+            }
+            Ok((_record, _consumed)) => break,
+            Err(_) if !records.is_empty() => break,
+            Err(err) => return Err(err),
+        }
+    }
+    let mut packet = Packet::from_layer(Tls::from_records(records));
+    if !remaining.is_empty() {
+        packet = packet / Raw::from_bytes(remaining);
+    }
+    Ok(packet)
+}
+
+fn tls_fields(layer: &Tls) -> BTreeMap<String, Value> {
+    let records = layer
+        .records()
+        .iter()
+        .map(tls_record_fields)
+        .collect::<Vec<_>>();
+    map([
+        ("record_count", json!(layer.records().len())),
+        (
+            "record_content_types",
+            json!(layer
+                .records()
+                .iter()
+                .map(|record| record.content_type().label())
+                .collect::<Vec<_>>()),
+        ),
+        ("records", Value::Array(records)),
+    ])
+}
+
+fn tls_record_fields(record: &TlsRecord) -> Value {
+    let fragment = record.fragment();
+    let mut fields = BTreeMap::new();
+    fields.insert(
+        "content_type".to_string(),
+        json!(record.content_type().label()),
+    );
+    fields.insert(
+        "content_type_raw".to_string(),
+        json!(record.raw_content_type()),
+    );
+    fields.insert(
+        "legacy_record_version".to_string(),
+        json!(record.raw_legacy_record_version()),
+    );
+    fields.insert(
+        "record_length".to_string(),
+        json!(record.declared_length().unwrap_or(fragment.len() as u16)),
+    );
+    fields.insert("fragment_hex".to_string(), json!(hex_bytes(fragment)));
+    fields.insert("record_hex".to_string(), json!(tls_record_hex(record)));
+    fields.insert(
+        "body_kind".to_string(),
+        json!(tls_record_body_kind(record.raw_content_type())),
+    );
+    if let Some(messages) = record.body().handshake_messages() {
+        fields.insert(
+            "handshake_messages".to_string(),
+            Value::Array(
+                messages
+                    .iter()
+                    .map(|message| {
+                        json!({
+                            "handshake_type": message.handshake_type().label(),
+                            "handshake_type_raw": message.raw_handshake_type(),
+                            "handshake_length": message.declared_length().unwrap_or(message.body_bytes().len() as u32),
+                            "body_hex": hex_bytes(message.body_bytes()),
+                        })
+                    })
+                    .collect(),
+            ),
+        );
+    }
+    if record.raw_content_type() == 21 && fragment.len() >= 2 {
+        fields.insert(
+            "alert_level".to_string(),
+            json!(match fragment[0] {
+                1 => "warning",
+                2 => "fatal",
+                _ => "unknown",
+            }),
+        );
+        fields.insert(
+            "alert_description".to_string(),
+            json!(tls_alert_description_label(fragment[1])),
+        );
+    } else if record.raw_content_type() == 20 && !fragment.is_empty() {
+        fields.insert("change_cipher_spec".to_string(), json!(fragment[0]));
+    } else if record.raw_content_type() == 23 {
+        fields.insert(
+            "application_data_hex".to_string(),
+            json!(hex_bytes(fragment)),
+        );
+    }
+    Value::Object(fields.into_iter().collect())
+}
+
+fn tls_record_hex(record: &TlsRecord) -> String {
+    record
+        .encode_to_vec()
+        .map(|bytes| hex_bytes(&bytes))
+        .unwrap_or_default()
+}
+
+fn tls_record_body_kind(content_type: u8) -> &'static str {
+    match content_type {
+        20 => "change_cipher_spec",
+        21 => "alert",
+        22 => "handshake",
+        23 => "application_data",
+        24 => "heartbeat",
+        _ => "opaque_raw",
+    }
+}
+
+fn tls_alert_description_label(value: u8) -> &'static str {
+    match value {
+        0 => "close_notify",
+        40 => "handshake_failure",
+        50 => "decode_error",
+        70 => "protocol_version",
+        _ => "unknown",
+    }
 }
 
 /// Normalize a decoded ESP header into the backend-neutral oracle shape.

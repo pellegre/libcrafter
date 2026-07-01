@@ -444,17 +444,19 @@ notes:
 
 backend_support:
   scapy:
-    status: planned
+    status: partial
     native_layers:
       - Raw
       - TLS_Ext_ServerName
       - TLS_Ext_ALPN
       - TLS_Ext_Unknown
+    encode: true
+    decode: true
     notes:
       - >-
-        The planned Scapy adapter will use native TLS extension helpers only
-        where they preserve byte-for-byte output; otherwise it will materialize
-        exact extension bytes under Raw TLS payloads.
+        The Scapy adapter materializes selected TLS extension bodies as exact
+        record bytes and compares their enclosing record/handshake framing;
+        extension-specific semantic expansion remains intentionally compact.
   wireshark:
     status: planned
     native_layers:
