@@ -12,6 +12,7 @@ use super::extension::{
     TlsCertificateAuthorities, TlsExtensionListContext, TlsExtensions, TlsRawExtension,
     TlsSignatureAlgorithms,
 };
+use super::signature_scheme::{TlsSignatureScheme, TLS_SIGNATURE_SCHEME_LEN};
 use super::version::TlsVersion;
 use crate::field::{Field, FieldState};
 use crate::protocols::transport::common::hex_bytes;
@@ -49,6 +50,8 @@ pub const TLS_CERTIFICATE_REQUEST_CONTEXT_LENGTH_LEN: usize = 1;
 pub const TLS_CERTIFICATE_LIST_LENGTH_LEN: usize = 3;
 /// TLS CertificateEntry certificate-data length field width in bytes.
 pub const TLS_CERTIFICATE_ENTRY_LENGTH_LEN: usize = 3;
+/// TLS CertificateVerify signature length field width in bytes.
+pub const TLS_CERTIFICATE_VERIFY_SIGNATURE_LENGTH_LEN: usize = 2;
 /// TLS ClientCertificateType `rsa_sign`.
 pub const TLS_CLIENT_CERTIFICATE_TYPE_RSA_SIGN: u8 = 1;
 /// TLS ClientCertificateType `dss_sign`.
@@ -636,8 +639,8 @@ pub enum TlsHandshakeBody {
     Certificate(TlsCertificateBody),
     /// `certificate_request` body bytes plus a typed view when available.
     CertificateRequest(TlsCertificateRequestBody),
-    /// Opaque `certificate_verify` body bytes.
-    CertificateVerify(Vec<u8>),
+    /// `certificate_verify` body bytes plus a typed view when available.
+    CertificateVerify(TlsCertificateVerifyBody),
     /// Opaque `finished` body bytes.
     Finished(Vec<u8>),
     /// Opaque `key_update` body bytes.
@@ -721,7 +724,14 @@ impl TlsHandshakeBody {
 
     /// Create an opaque body for a known `certificate_verify` hook.
     pub fn certificate_verify(body: impl Into<Vec<u8>>) -> Self {
-        Self::CertificateVerify(body.into())
+        Self::CertificateVerify(TlsCertificateVerifyBody::raw(body))
+    }
+
+    /// Create a typed body for a known `certificate_verify` hook.
+    pub fn from_certificate_verify(certificate_verify: TlsCertificateVerify) -> Result<Self> {
+        Ok(Self::CertificateVerify(
+            TlsCertificateVerifyBody::from_certificate_verify(certificate_verify)?,
+        ))
     }
 
     /// Create an opaque body for a known `finished` hook.
@@ -762,7 +772,9 @@ impl TlsHandshakeBody {
             TlsHandshakeType::CERTIFICATE_REQUEST => {
                 Self::CertificateRequest(TlsCertificateRequestBody::raw(body))
             }
-            TlsHandshakeType::CERTIFICATE_VERIFY => Self::CertificateVerify(body),
+            TlsHandshakeType::CERTIFICATE_VERIFY => {
+                Self::CertificateVerify(TlsCertificateVerifyBody::raw(body))
+            }
             TlsHandshakeType::FINISHED => Self::Finished(body),
             TlsHandshakeType::KEY_UPDATE => Self::KeyUpdate(body),
             TlsHandshakeType::COMPRESSED_CERTIFICATE => Self::CompressedCertificate(body),
@@ -794,7 +806,9 @@ impl TlsHandshakeBody {
             TlsHandshakeType::CERTIFICATE_REQUEST => Ok(Self::CertificateRequest(
                 TlsCertificateRequestBody::from_decoded_body(body)?,
             )),
-            TlsHandshakeType::CERTIFICATE_VERIFY => Ok(Self::CertificateVerify(body)),
+            TlsHandshakeType::CERTIFICATE_VERIFY => Ok(Self::CertificateVerify(
+                TlsCertificateVerifyBody::from_decoded_body(body)?,
+            )),
             TlsHandshakeType::FINISHED => Ok(Self::Finished(body)),
             TlsHandshakeType::KEY_UPDATE => Ok(Self::KeyUpdate(body)),
             TlsHandshakeType::COMPRESSED_CERTIFICATE => Ok(Self::CompressedCertificate(body)),
@@ -828,9 +842,9 @@ impl TlsHandshakeBody {
             Self::EncryptedExtensions(body) => body.body(),
             Self::Certificate(body) => body.body(),
             Self::CertificateRequest(body) => body.body(),
+            Self::CertificateVerify(body) => body.body(),
             Self::NewSessionTicket(body)
             | Self::EndOfEarlyData(body)
-            | Self::CertificateVerify(body)
             | Self::Finished(body)
             | Self::KeyUpdate(body)
             | Self::CompressedCertificate(body)
@@ -846,9 +860,9 @@ impl TlsHandshakeBody {
             Self::EncryptedExtensions(body) => body.into_body(),
             Self::Certificate(body) => body.into_body(),
             Self::CertificateRequest(body) => body.into_body(),
+            Self::CertificateVerify(body) => body.into_body(),
             Self::NewSessionTicket(body)
             | Self::EndOfEarlyData(body)
-            | Self::CertificateVerify(body)
             | Self::Finished(body)
             | Self::KeyUpdate(body)
             | Self::CompressedCertificate(body)
@@ -911,6 +925,14 @@ impl TlsHandshakeBody {
         }
     }
 
+    /// Borrow the decoded CertificateVerify fields when this body carries them.
+    pub const fn as_certificate_verify(&self) -> Option<&TlsCertificateVerify> {
+        match self {
+            Self::CertificateVerify(body) => body.certificate_verify(),
+            _ => None,
+        }
+    }
+
     /// Return true when this body is a decoded or typed ClientHello.
     pub const fn is_typed_client_hello(&self) -> bool {
         match self {
@@ -947,6 +969,14 @@ impl TlsHandshakeBody {
     pub const fn is_typed_certificate_request(&self) -> bool {
         match self {
             Self::CertificateRequest(body) => body.is_typed(),
+            _ => false,
+        }
+    }
+
+    /// Return true when this body is a decoded or typed CertificateVerify.
+    pub const fn is_typed_certificate_verify(&self) -> bool {
+        match self {
+            Self::CertificateVerify(body) => body.is_typed(),
             _ => false,
         }
     }
@@ -1139,6 +1169,14 @@ impl TlsHandshake {
         )
     }
 
+    /// Construct a `certificate_verify` handshake message from typed fields.
+    pub fn from_certificate_verify(certificate_verify: TlsCertificateVerify) -> Result<Self> {
+        Ok(Self::from_header_and_body(
+            TlsHandshakeHeader::certificate_verify(),
+            TlsHandshakeBody::from_certificate_verify(certificate_verify)?,
+        ))
+    }
+
     /// Construct a `finished` handshake message with opaque body bytes.
     pub fn finished(body: impl Into<Vec<u8>>) -> Self {
         Self::from_header_and_body(
@@ -1241,6 +1279,11 @@ impl TlsHandshake {
     /// Borrow decoded CertificateRequest fields when this message carries them.
     pub fn certificate_request_body(&self) -> Option<&TlsCertificateRequest> {
         self.body.as_certificate_request()
+    }
+
+    /// Borrow decoded CertificateVerify fields when this message carries them.
+    pub fn certificate_verify_body(&self) -> Option<&TlsCertificateVerify> {
+        self.body.as_certificate_verify()
     }
 
     /// Consume the message and return its header plus body hook.
@@ -3451,6 +3494,176 @@ impl Default for TlsCertificateRequest {
     }
 }
 
+/// TLS CertificateVerify handshake body fields.
+///
+/// The signature bytes stay opaque; this type models packet framing only and
+/// does not verify signatures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsCertificateVerify {
+    signature_scheme: TlsSignatureScheme,
+    signature: Vec<u8>,
+}
+
+impl TlsCertificateVerify {
+    /// Construct a CertificateVerify body from a signature scheme and opaque signature bytes.
+    pub fn new(
+        signature_scheme: impl Into<TlsSignatureScheme>,
+        signature: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self {
+            signature_scheme: signature_scheme.into(),
+            signature: signature.into(),
+        }
+    }
+
+    /// Construct a CertificateVerify body from a raw signature scheme value.
+    pub fn from_raw_signature_scheme(
+        raw_signature_scheme: u16,
+        signature: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self::new(
+            TlsSignatureScheme::from_u16(raw_signature_scheme),
+            signature,
+        )
+    }
+
+    /// Replace the signature scheme.
+    pub fn with_signature_scheme(
+        mut self,
+        signature_scheme: impl Into<TlsSignatureScheme>,
+    ) -> Self {
+        self.signature_scheme = signature_scheme.into();
+        self
+    }
+
+    /// Replace the signature scheme from a raw two-octet value.
+    pub fn with_raw_signature_scheme(self, signature_scheme: u16) -> Self {
+        self.with_signature_scheme(TlsSignatureScheme::from_u16(signature_scheme))
+    }
+
+    /// Replace the opaque signature bytes.
+    pub fn with_signature(mut self, signature: impl Into<Vec<u8>>) -> Self {
+        self.signature = signature.into();
+        self
+    }
+
+    /// Return the preserved signature scheme.
+    pub const fn signature_scheme(&self) -> TlsSignatureScheme {
+        self.signature_scheme
+    }
+
+    /// Borrow the opaque signature bytes.
+    pub fn signature(&self) -> &[u8] {
+        &self.signature
+    }
+
+    /// Number of opaque signature bytes.
+    pub fn signature_len(&self) -> usize {
+        self.signature.len()
+    }
+
+    /// Number of bytes occupied by the CertificateVerify body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        let mut len = TLS_SIGNATURE_SCHEME_LEN;
+        len = checked_add_len(
+            len,
+            TLS_CERTIFICATE_VERIFY_SIGNATURE_LENGTH_LEN,
+            "tls.certificate_verify.length",
+        )?;
+        len = checked_add_len(
+            len,
+            validate_u16_vector_len(
+                self.signature.len(),
+                "tls.certificate_verify.signature.length",
+            )?,
+            "tls.certificate_verify.length",
+        )?;
+        Ok(len)
+    }
+
+    /// Append the CertificateVerify body bytes.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.encoded_len()?;
+        self.signature_scheme.encode(out);
+        encode_u16_vector(
+            &self.signature,
+            "tls.certificate_verify.signature.length",
+            out,
+        )
+    }
+
+    /// Return the encoded CertificateVerify body bytes.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Compile the CertificateVerify body bytes.
+    pub fn compile(&self) -> Result<Vec<u8>> {
+        self.encode_to_vec()
+    }
+
+    /// Decode one complete CertificateVerify body.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (certificate_verify, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.certificate_verify.length",
+                "trailing bytes after signature",
+            ));
+        }
+        Ok(certificate_verify)
+    }
+
+    /// Decode one CertificateVerify body from the front of `bytes`.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let mut cursor = 0;
+        let scheme = take_bytes(
+            bytes,
+            &mut cursor,
+            TLS_SIGNATURE_SCHEME_LEN,
+            "tls.certificate_verify.signature_scheme",
+        )?;
+        let signature_scheme = TlsSignatureScheme::from_be_bytes([scheme[0], scheme[1]]);
+        let signature = decode_u16_vector(
+            bytes,
+            &mut cursor,
+            "tls.certificate_verify.signature",
+            "tls.certificate_verify.signature.length",
+        )?;
+        Ok((
+            Self {
+                signature_scheme,
+                signature,
+            },
+            &bytes[cursor..],
+        ))
+    }
+
+    /// Stable one-line summary preserving the signature scheme and opaque size.
+    pub fn summary(&self) -> String {
+        format!(
+            "certificate_verify signature_scheme={} signature_bytes={}",
+            self.signature_scheme.label(),
+            self.signature.len()
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("signature_scheme", self.signature_scheme.label()),
+            (
+                "signature_scheme_raw",
+                format!("0x{:04x}", self.signature_scheme.raw()),
+            ),
+            ("signature", hex_bytes(&self.signature)),
+            ("signature_bytes", self.signature.len().to_string()),
+        ]
+    }
+}
+
 /// ServerHello handshake body bytes plus an optional decoded view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsServerHelloBody {
@@ -3695,6 +3908,67 @@ impl TlsCertificateRequestBody {
     }
 }
 
+/// CertificateVerify handshake body bytes plus an optional decoded view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsCertificateVerifyBody {
+    body: Vec<u8>,
+    certificate_verify: Option<TlsCertificateVerify>,
+}
+
+impl TlsCertificateVerifyBody {
+    /// Preserve CertificateVerify body bytes without parsing them.
+    pub fn raw(body: impl Into<Vec<u8>>) -> Self {
+        Self {
+            body: body.into(),
+            certificate_verify: None,
+        }
+    }
+
+    /// Build CertificateVerify body bytes from typed fields.
+    pub fn from_certificate_verify(certificate_verify: TlsCertificateVerify) -> Result<Self> {
+        let body = certificate_verify.encode_to_vec()?;
+        Ok(Self {
+            body,
+            certificate_verify: Some(certificate_verify),
+        })
+    }
+
+    /// Decode and preserve exact CertificateVerify body bytes.
+    pub fn from_decoded_body(body: impl Into<Vec<u8>>) -> Result<Self> {
+        let body = body.into();
+        let certificate_verify = TlsCertificateVerify::decode(&body)?;
+        Ok(Self {
+            body,
+            certificate_verify: Some(certificate_verify),
+        })
+    }
+
+    /// Borrow the preserved body bytes.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// Consume the wrapper and return the preserved body bytes.
+    pub fn into_body(self) -> Vec<u8> {
+        self.body
+    }
+
+    /// Borrow the decoded CertificateVerify fields when available.
+    pub const fn certificate_verify(&self) -> Option<&TlsCertificateVerify> {
+        self.certificate_verify.as_ref()
+    }
+
+    /// Return true when the body carries decoded CertificateVerify fields.
+    pub const fn is_typed(&self) -> bool {
+        self.certificate_verify.is_some()
+    }
+
+    /// Number of preserved body bytes.
+    pub fn body_len(&self) -> usize {
+        self.body.len()
+    }
+}
+
 /// ClientHello handshake body bytes plus an optional decoded view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsClientHelloBody {
@@ -3772,6 +4046,17 @@ fn validate_u8_vector_len(len: usize, field: &'static str) -> Result<usize> {
     Ok(len)
 }
 
+fn validate_u16_vector_len(len: usize, field: &'static str) -> Result<usize> {
+    if len > u16::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "length must fit in two bytes",
+        ));
+    }
+
+    Ok(len)
+}
+
 fn validate_u24_vector_len(len: usize, field: &'static str) -> Result<usize> {
     if len > TLS_HANDSHAKE_MAX_LENGTH as usize {
         return Err(CrafterError::invalid_field_value(
@@ -3786,6 +4071,13 @@ fn validate_u24_vector_len(len: usize, field: &'static str) -> Result<usize> {
 fn encode_u8_vector(body: &[u8], length_context: &'static str, out: &mut Vec<u8>) -> Result<()> {
     let len = validate_u8_vector_len(body.len(), length_context)?;
     out.push(len as u8);
+    out.extend_from_slice(body);
+    Ok(())
+}
+
+fn encode_u16_vector(body: &[u8], length_context: &'static str, out: &mut Vec<u8>) -> Result<()> {
+    let len = validate_u16_vector_len(body.len(), length_context)? as u16;
+    out.extend_from_slice(&len.to_be_bytes());
     out.extend_from_slice(body);
     Ok(())
 }
@@ -3827,6 +4119,17 @@ fn decode_u8_vector(
     length_context: &'static str,
 ) -> Result<Vec<u8>> {
     let declared_len = take_bytes(bytes, cursor, 1, length_context)?[0] as usize;
+    Ok(take_bytes(bytes, cursor, declared_len, vector_context)?.to_vec())
+}
+
+fn decode_u16_vector(
+    bytes: &[u8],
+    cursor: &mut usize,
+    vector_context: &'static str,
+    length_context: &'static str,
+) -> Result<Vec<u8>> {
+    let length = take_bytes(bytes, cursor, 2, length_context)?;
+    let declared_len = u16::from_be_bytes([length[0], length[1]]) as usize;
     Ok(take_bytes(bytes, cursor, declared_len, vector_context)?.to_vec())
 }
 
@@ -4800,6 +5103,99 @@ mod tests {
         assert_eq!(
             TlsCertificateRequest::decode_tls13(truncated_tls13_extension).unwrap_err(),
             CrafterError::buffer_too_short("tls.certificate_request.extension.body", 6, 5)
+        );
+    }
+
+    #[test]
+    fn tls_certificate_verify_unknown_scheme_encodes_decodes_through_handshake() -> Result<()> {
+        let certificate_verify =
+            TlsCertificateVerify::from_raw_signature_scheme(0xbeef, [0xde, 0xad, 0xfa]);
+        let encoded = certificate_verify.encode_to_vec()?;
+
+        assert_eq!(encoded, vec![0xbe, 0xef, 0x00, 0x03, 0xde, 0xad, 0xfa]);
+        assert_eq!(
+            certificate_verify.signature_scheme(),
+            TlsSignatureScheme::from_u16(0xbeef)
+        );
+        assert_eq!(certificate_verify.signature(), &[0xde, 0xad, 0xfa]);
+        assert_eq!(certificate_verify.signature_len(), 3);
+        assert_eq!(
+            certificate_verify.summary(),
+            "certificate_verify signature_scheme=unknown signature scheme 0xbeef signature_bytes=3"
+        );
+        assert_eq!(
+            certificate_verify.inspection_fields(),
+            vec![
+                (
+                    "signature_scheme",
+                    "unknown signature scheme 0xbeef".to_string()
+                ),
+                ("signature_scheme_raw", "0xbeef".to_string()),
+                ("signature", "de ad fa".to_string()),
+                ("signature_bytes", "3".to_string()),
+            ]
+        );
+
+        let decoded = TlsCertificateVerify::decode(&encoded)?;
+        assert_eq!(decoded, certificate_verify);
+        assert_eq!(decoded.encode_to_vec()?, encoded);
+        assert_eq!(decoded.compile()?, encoded);
+
+        let with_tail = [encoded.as_slice(), &[0xaa, 0xbb][..]].concat();
+        let (decoded_prefix, tail) = TlsCertificateVerify::decode_prefix(&with_tail)?;
+        assert_eq!(decoded_prefix, certificate_verify);
+        assert_eq!(tail, &[0xaa, 0xbb]);
+
+        let handshake = TlsHandshake::from_certificate_verify(certificate_verify.clone())?;
+        let handshake_bytes =
+            tls_handshake_fixture(TlsHandshakeType::CERTIFICATE_VERIFY.raw(), &encoded);
+        assert_eq!(handshake.body_bytes(), encoded.as_slice());
+        assert!(handshake.body().is_typed_certificate_verify());
+        assert_eq!(
+            handshake.certificate_verify_body(),
+            Some(&certificate_verify)
+        );
+        assert_eq!(handshake.encode_to_vec()?, handshake_bytes);
+
+        let decoded_handshake = TlsHandshake::decode(&handshake_bytes)?;
+        assert_eq!(
+            decoded_handshake.certificate_verify_body(),
+            Some(&certificate_verify)
+        );
+        assert_eq!(decoded_handshake.encode_to_vec()?, handshake_bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_certificate_verify_raw_body_remains_available() -> Result<()> {
+        let raw = TlsHandshake::certificate_verify([0xca, 0xfe]);
+
+        assert_eq!(raw.body_bytes(), &[0xca, 0xfe]);
+        assert!(matches!(raw.body(), TlsHandshakeBody::CertificateVerify(_)));
+        assert!(raw.certificate_verify_body().is_none());
+        assert!(!raw.body().is_typed_certificate_verify());
+        assert_eq!(
+            raw.encode_to_vec()?,
+            vec![0x0f, 0x00, 0x00, 0x02, 0xca, 0xfe]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_certificate_verify_decode_reports_structured_signature_errors() {
+        assert_eq!(
+            TlsCertificateVerify::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.certificate_verify.signature_scheme", 2, 0)
+        );
+        assert_eq!(
+            TlsCertificateVerify::decode([0x08, 0x07, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.certificate_verify.signature.length", 4, 3)
+        );
+        assert_eq!(
+            TlsCertificateVerify::decode([0x08, 0x07, 0x00, 0x02, 0xaa]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.certificate_verify.signature", 6, 5)
         );
     }
 
