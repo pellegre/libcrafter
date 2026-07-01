@@ -287,16 +287,20 @@ backend_support:
   scapy:
     status: partial
     native_layers:
+      - Raw
       - TLS
       - TLSClientHello
       - TLSServerHello
       - TLS_Ext_Unknown
+    encode: true
+    decode: true
     notes:
-      - Generator planning can emit deterministic TLS record, handshake, and
-        extension fields before the Scapy backend adapter is complete. Actual
-        Scapy byte materialization remains adapter-gated and should preserve
-        encrypted or unknown payload bytes when native TLS helpers are
-        unavailable.
+      - The Scapy backend materializes generated TLS records as deterministic
+        Raw TCP payload bytes so declared lengths, unknown codepoints, encrypted
+        application data, and synthetic extension bodies stay byte-for-byte
+        stable even when native Scapy TLS helpers are unavailable.
+      - Decode normalization promotes Raw TLS bytes on supported TCP ports and
+        raw:tls roots into a compact tls model for offline comparison.
   wireshark:
     status: planned
     native_layers:

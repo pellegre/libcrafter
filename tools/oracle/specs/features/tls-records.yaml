@@ -332,15 +332,18 @@ notes:
 
 backend_support:
   scapy:
-    status: planned
+    status: partial
     native_layers:
       - Raw
       - TLS
       - TLSClientHello
+    encode: true
+    decode: true
     notes:
       - >-
-        The planned Scapy adapter will prefer exact TLS payload bytes and use
-        native TLS helpers only where they preserve the declared record bytes.
+        The Scapy adapter emits exact TLS record bytes under Raw and normalizes
+        supported record payloads for offline comparison; malformed first-record
+        inputs remain structured-error fixtures outside strict-byte materialization.
   wireshark:
     status: planned
     native_layers:

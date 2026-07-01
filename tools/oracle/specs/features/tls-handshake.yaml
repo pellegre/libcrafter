@@ -543,16 +543,19 @@ notes:
 
 backend_support:
   scapy:
-    status: planned
+    status: partial
     native_layers:
       - Raw
       - TLS
       - TLSClientHello
       - TLSServerHello
+    encode: true
+    decode: true
     notes:
       - >-
-        The planned Scapy adapter will emit exact TLS handshake bytes where
-        native TLS helpers cannot preserve the declared synthetic fields.
+        The Scapy adapter emits exact TLS handshake bytes and normalizes record
+        and generic handshake headers; detailed native TLS helper output remains
+        backend metadata rather than a required comparison surface.
   wireshark:
     status: planned
     native_layers:
