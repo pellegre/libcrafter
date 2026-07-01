@@ -94,6 +94,13 @@ tails must be preserved as `Raw` or reported through structured errors according
 to the local decode path; they must never be silently dropped or used to imply a
 TCP stream state machine.
 
+Handshake messages may also be fragmented across TLS records. A complete
+handshake record whose fragment starts with an incomplete handshake message is
+preserved as a TLS handshake body with zero decoded messages and the available
+bytes in `raw_tail`. If complete messages are followed by a partial handshake
+message, the complete messages are decoded and the partial suffix remains in
+`raw_tail`. The crate does not join those bytes with later records.
+
 `crafter` does not reassemble TLS records across TCP segments. Any workflow that
 needs ordered stream reconstruction, retransmission handling, duplicate segment
 suppression, or flow state belongs in a generated tool or future explicit TCP
