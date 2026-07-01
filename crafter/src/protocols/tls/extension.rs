@@ -9,6 +9,7 @@
 use core::fmt;
 
 use super::constants::{self, TlsCodepointStatus};
+use super::version::TlsVersion;
 use crate::{CrafterError, Result};
 
 /// TLS ExtensionType codepoint width in bytes.
@@ -33,6 +34,10 @@ pub const TLS_SERVER_NAME_TYPE_HOST_NAME: u8 = 0;
 pub const TLS_ALPN_PROTOCOL_NAME_LENGTH_LEN: usize = 1;
 /// TLS ALPN ProtocolNameList aggregate length field width in bytes.
 pub const TLS_ALPN_PROTOCOL_NAME_LIST_LENGTH_LEN: usize = 2;
+/// TLS supported_versions ClientHello vector length field width in bytes.
+pub const TLS_SUPPORTED_VERSIONS_CLIENT_LENGTH_LEN: usize = 1;
+/// TLS supported_versions ProtocolVersion width in bytes.
+pub const TLS_SUPPORTED_VERSION_LEN: usize = 2;
 
 /// A raw-preserving TLS `ExtensionType` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -934,6 +939,459 @@ impl TlsRawExtension {
     pub fn as_alpn_protocols(&self) -> Result<TlsAlpnProtocols> {
         TlsAlpnProtocols::from_raw_extension(self)
     }
+
+    /// Create a raw ClientHello `supported_versions` extension.
+    pub fn supported_versions_client(versions: impl Into<Vec<TlsVersion>>) -> Result<Self> {
+        TlsSupportedVersions::client(versions).to_raw_extension()
+    }
+
+    /// Create a raw ServerHello or HelloRetryRequest `supported_versions` extension.
+    pub fn supported_versions_server(selected_version: impl Into<TlsVersion>) -> Result<Self> {
+        TlsSupportedVersions::server(selected_version).to_raw_extension()
+    }
+
+    /// Decode this raw extension as a ClientHello `supported_versions` body.
+    pub fn as_supported_versions_client(&self) -> Result<TlsSupportedVersions> {
+        TlsSupportedVersions::from_client_hello_raw_extension(self)
+    }
+
+    /// Decode this raw extension as a ServerHello `supported_versions` body.
+    pub fn as_supported_versions_server(&self) -> Result<TlsSupportedVersions> {
+        TlsSupportedVersions::from_server_hello_raw_extension(self)
+    }
+
+    /// Decode this raw extension as a context-selected `supported_versions` body.
+    pub fn as_supported_versions_with_context(
+        &self,
+        context: TlsSupportedVersionsContext,
+    ) -> Result<TlsSupportedVersions> {
+        TlsSupportedVersions::from_raw_extension_with_context(context, self)
+    }
+}
+
+/// Context that selects the TLS `supported_versions` extension body shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TlsSupportedVersionsContext {
+    /// ClientHello carries a uint8 length-prefixed ProtocolVersion list.
+    ClientHello,
+    /// ServerHello carries one selected ProtocolVersion.
+    ServerHello,
+    /// HelloRetryRequest uses the ServerHello extension body shape.
+    HelloRetryRequest,
+}
+
+impl TlsSupportedVersionsContext {
+    /// ClientHello context constructor.
+    pub const fn client_hello() -> Self {
+        Self::ClientHello
+    }
+
+    /// ServerHello context constructor.
+    pub const fn server_hello() -> Self {
+        Self::ServerHello
+    }
+
+    /// HelloRetryRequest context constructor.
+    pub const fn hello_retry_request() -> Self {
+        Self::HelloRetryRequest
+    }
+
+    const fn is_client_list(self) -> bool {
+        matches!(self, Self::ClientHello)
+    }
+
+    const fn length_field(self) -> &'static str {
+        match self {
+            Self::ClientHello => "tls.supported_versions.client.length",
+            Self::ServerHello => "tls.supported_versions.server.length",
+            Self::HelloRetryRequest => "tls.supported_versions.hello_retry_request.length",
+        }
+    }
+
+    const fn version_field(self) -> &'static str {
+        match self {
+            Self::ClientHello => "tls.supported_versions.client.version",
+            Self::ServerHello => "tls.supported_versions.server.version",
+            Self::HelloRetryRequest => "tls.supported_versions.hello_retry_request.version",
+        }
+    }
+}
+
+impl Default for TlsSupportedVersionsContext {
+    fn default() -> Self {
+        Self::ClientHello
+    }
+}
+
+/// TLS `supported_versions` extension body.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TlsSupportedVersions {
+    /// ClientHello uint8 length-prefixed ProtocolVersion list.
+    Client { versions: Vec<TlsVersion> },
+    /// ServerHello or HelloRetryRequest selected ProtocolVersion.
+    Server { selected_version: TlsVersion },
+}
+
+impl TlsSupportedVersions {
+    /// Create a ClientHello supported-version list.
+    pub fn client(versions: impl Into<Vec<TlsVersion>>) -> Self {
+        Self::Client {
+            versions: versions.into(),
+        }
+    }
+
+    /// Create a ClientHello list advertising only TLS 1.2.
+    pub fn client_tls_1_2() -> Self {
+        Self::client(vec![TlsVersion::tls_1_2()])
+    }
+
+    /// Create a ClientHello list advertising only TLS 1.3.
+    pub fn client_tls_1_3() -> Self {
+        Self::client(vec![TlsVersion::tls_1_3()])
+    }
+
+    /// Create a ClientHello list advertising TLS 1.3, then TLS 1.2.
+    pub fn client_tls_1_3_then_tls_1_2() -> Self {
+        Self::client(vec![TlsVersion::tls_1_3(), TlsVersion::tls_1_2()])
+    }
+
+    /// Create a ServerHello or HelloRetryRequest selected version.
+    pub fn server(selected_version: impl Into<TlsVersion>) -> Self {
+        Self::Server {
+            selected_version: selected_version.into(),
+        }
+    }
+
+    /// Create a ServerHello selected TLS 1.2 version.
+    pub fn server_tls_1_2() -> Self {
+        Self::server(TlsVersion::tls_1_2())
+    }
+
+    /// Create a ServerHello or HelloRetryRequest selected TLS 1.3 version.
+    pub fn server_tls_1_3() -> Self {
+        Self::server(TlsVersion::tls_1_3())
+    }
+
+    /// Return true when this is a ClientHello list form.
+    pub const fn is_client(&self) -> bool {
+        matches!(self, Self::Client { .. })
+    }
+
+    /// Return true when this is a ServerHello or HelloRetryRequest selected form.
+    pub const fn is_server(&self) -> bool {
+        matches!(self, Self::Server { .. })
+    }
+
+    /// Borrow ClientHello supported versions, if this is the client-list form.
+    pub fn versions(&self) -> Option<&[TlsVersion]> {
+        match self {
+            Self::Client { versions } => Some(versions),
+            Self::Server { .. } => None,
+        }
+    }
+
+    /// Borrow the selected ServerHello or HelloRetryRequest version, if present.
+    pub const fn selected_version(&self) -> Option<TlsVersion> {
+        match self {
+            Self::Client { .. } => None,
+            Self::Server { selected_version } => Some(*selected_version),
+        }
+    }
+
+    /// Number of bytes occupied by this extension body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        match self {
+            Self::Client { versions } => {
+                validate_supported_versions_client(versions)?;
+                TLS_SUPPORTED_VERSIONS_CLIENT_LENGTH_LEN
+                    .checked_add(versions.len() * TLS_SUPPORTED_VERSION_LEN)
+                    .ok_or_else(|| {
+                        CrafterError::invalid_field_value(
+                            "tls.supported_versions.client.length",
+                            "length overflow",
+                        )
+                    })
+            }
+            Self::Server { .. } => Ok(TLS_SUPPORTED_VERSION_LEN),
+        }
+    }
+
+    /// Append this supported_versions body to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        match self {
+            Self::Client { versions } => {
+                validate_supported_versions_client(versions)?;
+                let byte_len = versions.len() * TLS_SUPPORTED_VERSION_LEN;
+                let byte_len = u8::try_from(byte_len).map_err(|_| {
+                    CrafterError::invalid_field_value(
+                        "tls.supported_versions.client.length",
+                        "length must fit in one byte",
+                    )
+                })?;
+                out.push(byte_len);
+                for version in versions {
+                    out.extend_from_slice(&version.to_be_bytes());
+                }
+            }
+            Self::Server { selected_version } => {
+                out.extend_from_slice(&selected_version.to_be_bytes());
+            }
+        }
+        Ok(())
+    }
+
+    /// Return this supported_versions body encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Convert this supported_versions body into a raw extension.
+    pub fn to_raw_extension(&self) -> Result<TlsRawExtension> {
+        Ok(TlsRawExtension::new(
+            TlsExtensionType::SUPPORTED_VERSIONS,
+            self.encode_to_vec()?,
+        ))
+    }
+
+    /// Decode a context-selected supported_versions body.
+    pub fn decode_with_context(
+        context: TlsSupportedVersionsContext,
+        bytes: impl AsRef<[u8]>,
+    ) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        if context.is_client_list() {
+            Self::decode_client(bytes)
+        } else {
+            Self::decode_server_like(context, bytes)
+        }
+    }
+
+    /// Decode a ClientHello supported_versions body.
+    pub fn decode_client(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        if bytes.len() < TLS_SUPPORTED_VERSIONS_CLIENT_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.supported_versions.client.length",
+                TLS_SUPPORTED_VERSIONS_CLIENT_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let list_len = bytes[0] as usize;
+        validate_supported_versions_client_list_len(list_len)?;
+        let required = TLS_SUPPORTED_VERSIONS_CLIENT_LENGTH_LEN
+            .checked_add(list_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.supported_versions.client.length",
+                    "length overflow",
+                )
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "tls.supported_versions.client",
+                required,
+                bytes.len(),
+            ));
+        }
+        if bytes.len() != required {
+            return Err(CrafterError::invalid_field_value(
+                "tls.supported_versions.client.length",
+                "length must match extension body",
+            ));
+        }
+
+        let mut versions = Vec::with_capacity(list_len / TLS_SUPPORTED_VERSION_LEN);
+        let mut cursor = TLS_SUPPORTED_VERSIONS_CLIENT_LENGTH_LEN;
+        while cursor < required {
+            versions.push(TlsVersion::from_be_bytes([
+                bytes[cursor],
+                bytes[cursor + 1],
+            ]));
+            cursor += TLS_SUPPORTED_VERSION_LEN;
+        }
+        validate_supported_versions_client(&versions)?;
+        Ok(Self::client(versions))
+    }
+
+    /// Decode a ServerHello supported_versions body.
+    pub fn decode_server(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        Self::decode_server_like(TlsSupportedVersionsContext::ServerHello, bytes.as_ref())
+    }
+
+    /// Decode a HelloRetryRequest supported_versions body.
+    pub fn decode_hello_retry_request(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        Self::decode_server_like(
+            TlsSupportedVersionsContext::HelloRetryRequest,
+            bytes.as_ref(),
+        )
+    }
+
+    fn decode_server_like(context: TlsSupportedVersionsContext, bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < TLS_SUPPORTED_VERSION_LEN {
+            return Err(CrafterError::buffer_too_short(
+                context.version_field(),
+                TLS_SUPPORTED_VERSION_LEN,
+                bytes.len(),
+            ));
+        }
+        if bytes.len() != TLS_SUPPORTED_VERSION_LEN {
+            return Err(CrafterError::invalid_field_value(
+                context.length_field(),
+                "length must be exactly two bytes",
+            ));
+        }
+
+        Ok(Self::server(TlsVersion::from_be_bytes([
+            bytes[0], bytes[1],
+        ])))
+    }
+
+    /// Decode a raw supported_versions extension body using a context.
+    pub fn from_raw_extension_with_context(
+        context: TlsSupportedVersionsContext,
+        extension: &TlsRawExtension,
+    ) -> Result<Self> {
+        if extension.extension_type() != TlsExtensionType::SUPPORTED_VERSIONS {
+            return Err(CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be supported_versions",
+            ));
+        }
+        Self::decode_with_context(context, extension.body())
+    }
+
+    /// Decode a raw ClientHello supported_versions extension body.
+    pub fn from_client_hello_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension_with_context(TlsSupportedVersionsContext::ClientHello, extension)
+    }
+
+    /// Decode a raw ServerHello supported_versions extension body.
+    pub fn from_server_hello_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension_with_context(TlsSupportedVersionsContext::ServerHello, extension)
+    }
+
+    /// Decode a raw HelloRetryRequest supported_versions extension body.
+    pub fn from_hello_retry_request_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension_with_context(
+            TlsSupportedVersionsContext::HelloRetryRequest,
+            extension,
+        )
+    }
+
+    /// Stable one-line summary preserving body shape and raw versions.
+    pub fn summary(&self) -> String {
+        match self {
+            Self::Client { versions } => {
+                let values = versions
+                    .iter()
+                    .map(|version| format!("{}:0x{:04x}", version.label(), version.raw()))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    "supported_versions context=client count={} values={}",
+                    versions.len(),
+                    values
+                )
+            }
+            Self::Server { selected_version } => format!(
+                "supported_versions context=server selected={}:0x{:04x}",
+                selected_version.label(),
+                selected_version.raw()
+            ),
+        }
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            Self::Client { versions } => vec![
+                ("supported_versions_context", "client".to_string()),
+                ("supported_versions_count", versions.len().to_string()),
+                (
+                    "supported_versions",
+                    versions
+                        .iter()
+                        .map(|version| version.label())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ),
+                (
+                    "supported_versions_raw",
+                    versions
+                        .iter()
+                        .map(|version| format!("0x{:04x}", version.raw()))
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ),
+            ],
+            Self::Server { selected_version } => vec![
+                ("supported_versions_context", "server".to_string()),
+                ("supported_versions_selected", selected_version.label()),
+                (
+                    "supported_versions_selected_raw",
+                    format!("0x{:04x}", selected_version.raw()),
+                ),
+            ],
+        }
+    }
+}
+
+impl From<Vec<TlsVersion>> for TlsSupportedVersions {
+    fn from(versions: Vec<TlsVersion>) -> Self {
+        Self::client(versions)
+    }
+}
+
+impl<const N: usize> From<[TlsVersion; N]> for TlsSupportedVersions {
+    fn from(versions: [TlsVersion; N]) -> Self {
+        Self::client(Vec::from(versions))
+    }
+}
+
+impl TryFrom<TlsSupportedVersions> for TlsRawExtension {
+    type Error = CrafterError;
+
+    fn try_from(value: TlsSupportedVersions) -> Result<Self> {
+        value.to_raw_extension()
+    }
+}
+
+fn validate_supported_versions_client(versions: &[TlsVersion]) -> Result<()> {
+    let byte_len = versions
+        .len()
+        .checked_mul(TLS_SUPPORTED_VERSION_LEN)
+        .ok_or_else(|| {
+            CrafterError::invalid_field_value(
+                "tls.supported_versions.client.length",
+                "length overflow",
+            )
+        })?;
+    validate_supported_versions_client_list_len(byte_len)
+}
+
+fn validate_supported_versions_client_list_len(len: usize) -> Result<()> {
+    if len == 0 {
+        return Err(CrafterError::invalid_field_value(
+            "tls.supported_versions.client.length",
+            "length must be at least two bytes",
+        ));
+    }
+    if len % TLS_SUPPORTED_VERSION_LEN != 0 {
+        return Err(CrafterError::invalid_field_value(
+            "tls.supported_versions.client.length",
+            "length must be a multiple of two bytes",
+        ));
+    }
+    if len > u8::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            "tls.supported_versions.client.length",
+            "length must fit in one byte",
+        ));
+    }
+    Ok(())
 }
 
 /// One opaque RFC 7301 ALPN `ProtocolName`.
@@ -2517,6 +2975,286 @@ mod tests {
             CrafterError::invalid_field_value(
                 "tls.alpn.protocol_name_list.length",
                 "length must fit in two bytes"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_supported_versions_builders_encode_client_and_server_forms() {
+        let client = TlsSupportedVersions::client_tls_1_3_then_tls_1_2();
+        assert!(client.is_client());
+        assert!(!client.is_server());
+        assert_eq!(
+            client.versions().unwrap(),
+            &[TlsVersion::tls_1_3(), TlsVersion::tls_1_2()]
+        );
+        assert_eq!(client.selected_version(), None);
+        assert_eq!(client.encoded_len().unwrap(), 5);
+        assert_eq!(
+            client.encode_to_vec().unwrap(),
+            [0x04, 0x03, 0x04, 0x03, 0x03]
+        );
+
+        let client_tls_1_2 = TlsSupportedVersions::client_tls_1_2();
+        assert_eq!(client_tls_1_2.encode_to_vec().unwrap(), [0x02, 0x03, 0x03]);
+        let client_tls_1_3 = TlsSupportedVersions::client_tls_1_3();
+        assert_eq!(client_tls_1_3.encode_to_vec().unwrap(), [0x02, 0x03, 0x04]);
+
+        let decoded = TlsSupportedVersions::decode_with_context(
+            TlsSupportedVersionsContext::client_hello(),
+            [0x04, 0x03, 0x04, 0x03, 0x03],
+        )
+        .unwrap();
+        assert_eq!(decoded, client);
+        assert_eq!(
+            decoded.summary(),
+            "supported_versions context=client count=2 values=TLS 1.3:0x0304,TLS 1.2:0x0303"
+        );
+        assert!(decoded
+            .inspection_fields()
+            .contains(&("supported_versions_raw", "0x0304,0x0303".to_string())));
+
+        let server = TlsSupportedVersions::server_tls_1_3();
+        assert!(!server.is_client());
+        assert!(server.is_server());
+        assert_eq!(server.versions(), None);
+        assert_eq!(server.selected_version(), Some(TlsVersion::tls_1_3()));
+        assert_eq!(server.encoded_len().unwrap(), 2);
+        assert_eq!(server.encode_to_vec().unwrap(), [0x03, 0x04]);
+        assert_eq!(
+            TlsSupportedVersions::server_tls_1_2()
+                .encode_to_vec()
+                .unwrap(),
+            [0x03, 0x03]
+        );
+        assert_eq!(
+            TlsSupportedVersions::decode_with_context(
+                TlsSupportedVersionsContext::server_hello(),
+                [0x03, 0x04],
+            )
+            .unwrap(),
+            server
+        );
+        assert_eq!(
+            TlsSupportedVersions::decode_hello_retry_request([0x03, 0x04]).unwrap(),
+            server
+        );
+        assert_eq!(
+            server.summary(),
+            "supported_versions context=server selected=TLS 1.3:0x0304"
+        );
+        assert!(server
+            .inspection_fields()
+            .contains(&("supported_versions_selected_raw", "0x0304".to_string())));
+    }
+
+    #[test]
+    fn tls_extension_supported_versions_converts_to_and_from_raw_extension_with_context() {
+        let client = TlsSupportedVersions::client_tls_1_3_then_tls_1_2();
+        let raw = client.to_raw_extension().unwrap();
+        assert_eq!(raw.extension_type(), TlsExtensionType::SUPPORTED_VERSIONS);
+        assert_eq!(raw.raw_type(), constants::TLS_EXTENSION_SUPPORTED_VERSIONS);
+        assert_eq!(
+            raw.encode_to_vec().unwrap(),
+            [0x00, 0x2b, 0x00, 0x05, 0x04, 0x03, 0x04, 0x03, 0x03]
+        );
+        assert_eq!(raw.as_supported_versions_client().unwrap(), client);
+        assert_eq!(
+            raw.as_supported_versions_with_context(TlsSupportedVersionsContext::ClientHello)
+                .unwrap(),
+            client
+        );
+        assert_eq!(
+            TlsSupportedVersions::from_client_hello_raw_extension(&raw).unwrap(),
+            client
+        );
+        assert_eq!(TlsRawExtension::try_from(client.clone()).unwrap(), raw);
+        assert_eq!(
+            TlsRawExtension::supported_versions_client(vec![
+                TlsVersion::tls_1_3(),
+                TlsVersion::tls_1_2()
+            ])
+            .unwrap(),
+            raw
+        );
+
+        let server = TlsSupportedVersions::server_tls_1_3();
+        let raw = server.to_raw_extension().unwrap();
+        assert_eq!(
+            raw.encode_to_vec().unwrap(),
+            [0x00, 0x2b, 0x00, 0x02, 0x03, 0x04]
+        );
+        assert_eq!(raw.as_supported_versions_server().unwrap(), server);
+        assert_eq!(
+            TlsSupportedVersions::from_server_hello_raw_extension(&raw).unwrap(),
+            server
+        );
+        assert_eq!(
+            TlsSupportedVersions::from_hello_retry_request_raw_extension(&raw).unwrap(),
+            server
+        );
+        assert_eq!(
+            TlsRawExtension::supported_versions_server(TlsVersion::tls_1_3()).unwrap(),
+            raw
+        );
+
+        assert_eq!(
+            TlsSupportedVersions::from_client_hello_raw_extension(&TlsRawExtension::from_raw(
+                0xbeef,
+                []
+            ))
+            .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be supported_versions"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_supported_versions_preserves_unknown_raw_versions() {
+        let unknown = TlsVersion::from_u16(0x7a7a);
+        let client = TlsSupportedVersions::client(vec![unknown, TlsVersion::tls_1_3()]);
+        assert_eq!(
+            client.encode_to_vec().unwrap(),
+            [0x04, 0x7a, 0x7a, 0x03, 0x04]
+        );
+        let decoded = TlsSupportedVersions::decode_client([0x04, 0x7a, 0x7a, 0x03, 0x04]).unwrap();
+        assert_eq!(decoded, client);
+        assert_eq!(decoded.versions().unwrap()[0].raw(), 0x7a7a);
+        assert!(decoded
+            .inspection_fields()
+            .contains(&("supported_versions_raw", "0x7a7a,0x0304".to_string())));
+
+        let server = TlsSupportedVersions::decode_server([0x7a, 0x7a]).unwrap();
+        assert_eq!(server.selected_version(), Some(unknown));
+        assert_eq!(server.encode_to_vec().unwrap(), [0x7a, 0x7a]);
+    }
+
+    #[test]
+    fn tls_extension_supported_versions_context_selects_client_or_server_body_shape() {
+        let client_body = [0x02, 0x03, 0x04];
+        assert_eq!(
+            TlsSupportedVersions::decode_with_context(
+                TlsSupportedVersionsContext::client_hello(),
+                client_body,
+            )
+            .unwrap(),
+            TlsSupportedVersions::client_tls_1_3()
+        );
+        assert_eq!(
+            TlsSupportedVersions::decode_with_context(
+                TlsSupportedVersionsContext::server_hello(),
+                client_body,
+            )
+            .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.supported_versions.server.length",
+                "length must be exactly two bytes"
+            )
+        );
+
+        let server_body = [0x03, 0x04];
+        assert_eq!(
+            TlsSupportedVersions::decode_with_context(
+                TlsSupportedVersionsContext::server_hello(),
+                server_body,
+            )
+            .unwrap(),
+            TlsSupportedVersions::server_tls_1_3()
+        );
+        assert_eq!(
+            TlsSupportedVersions::decode_with_context(
+                TlsSupportedVersionsContext::client_hello(),
+                server_body,
+            )
+            .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.supported_versions.client.length",
+                "length must be a multiple of two bytes"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_supported_versions_reports_structured_client_decode_errors() {
+        assert_eq!(
+            TlsSupportedVersions::decode_client([]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.supported_versions.client.length",
+                TLS_SUPPORTED_VERSIONS_CLIENT_LENGTH_LEN,
+                0
+            )
+        );
+        assert_eq!(
+            TlsSupportedVersions::decode_client([0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.supported_versions.client.length",
+                "length must be at least two bytes"
+            )
+        );
+        assert_eq!(
+            TlsSupportedVersions::decode_client([0x01, 0x03]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.supported_versions.client.length",
+                "length must be a multiple of two bytes"
+            )
+        );
+        assert_eq!(
+            TlsSupportedVersions::decode_client([0x04, 0x03, 0x04]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.supported_versions.client", 5, 3)
+        );
+        assert_eq!(
+            TlsSupportedVersions::decode_client([0x02, 0x03, 0x04, 0xaa]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.supported_versions.client.length",
+                "length must match extension body"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_supported_versions_reports_structured_encode_and_server_decode_errors() {
+        assert_eq!(
+            TlsSupportedVersions::client(Vec::<TlsVersion>::new())
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.supported_versions.client.length",
+                "length must be at least two bytes"
+            )
+        );
+
+        let oversized = TlsSupportedVersions::client(vec![TlsVersion::tls_1_3(); 128]);
+        assert_eq!(
+            oversized.encode_to_vec().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.supported_versions.client.length",
+                "length must fit in one byte"
+            )
+        );
+
+        assert_eq!(
+            TlsSupportedVersions::decode_server([0x03]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.supported_versions.server.version",
+                TLS_SUPPORTED_VERSION_LEN,
+                1
+            )
+        );
+        assert_eq!(
+            TlsSupportedVersions::decode_server([0x03, 0x04, 0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.supported_versions.server.length",
+                "length must be exactly two bytes"
+            )
+        );
+        assert_eq!(
+            TlsSupportedVersions::decode_hello_retry_request([0x03]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.supported_versions.hello_retry_request.version",
+                TLS_SUPPORTED_VERSION_LEN,
+                1
             )
         );
     }
