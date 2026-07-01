@@ -1,0 +1,477 @@
+version: 1
+kind: feature
+name: tls_extensions
+summary: >-
+  TLS extension coverage for SNI, ALPN, supported_versions, supported_groups,
+  signature_algorithms, key_share, PSK modes, pre_shared_key, cookie, padding,
+  record_size_limit, status_request, certificate_authorities, and unknown or
+  duplicate extension preservation.
+
+layers:
+  - tcp
+  - tls
+directions:
+  - backend_to_libcrafter
+  - libcrafter_to_backend
+  - roundtrip
+strict_bytes: true
+malformed: false
+categories:
+  - baseline
+  - boundary
+  - malformed
+
+behaviors:
+  - name: client-core-extensions
+    source_refs:
+      - RFC 6066
+      - RFC 7301
+      - RFC 8446
+    checks:
+      - sni_host_name_list_preserved
+      - alpn_protocol_list_preserved
+      - supported_versions_client_vector_preserved
+      - supported_groups_and_signature_algorithms_vectors_preserved
+  - name: key-share
+    source_refs:
+      - RFC 8446
+    checks:
+      - client_key_share_vector_preserved
+      - server_key_share_entry_preserved
+      - hello_retry_request_selected_group_preserved
+  - name: psk
+    source_refs:
+      - RFC 8446
+    checks:
+      - psk_key_exchange_modes_preserved
+      - client_psk_identity_and_binder_vectors_preserved
+      - server_selected_identity_preserved
+  - name: stateful-and-status-extensions
+    checks:
+      - cookie_bytes_preserved
+      - padding_bytes_preserved
+      - record_size_limit_preserved
+      - ocsp_status_request_preserved
+      - certificate_authorities_preserved
+  - name: unknown-and-duplicate-preservation
+    checks:
+      - unknown_extension_type_and_body_preserved
+      - duplicate_extension_entries_remain_ordered
+      - recompile_matches_input_bytes
+  - name: malformed-extension-exclusions
+    checks:
+      - short_extension_header_reports_structured_error
+      - short_extension_body_reports_structured_error
+      - malformed_cases_are_excluded_from_strict_byte_suite
+
+coverage_cases:
+  - tls-extension-sni
+  - tls-extension-alpn
+  - tls-extension-supported-versions-client
+  - tls-extension-supported-versions-server
+  - tls-extension-supported-groups
+  - tls-extension-signature-algorithms
+  - tls-extension-key-share-client
+  - tls-extension-key-share-server
+  - tls-extension-key-share-hello-retry-request
+  - tls-extension-psk-key-exchange-modes
+  - tls-extension-pre-shared-key-client
+  - tls-extension-pre-shared-key-server
+  - tls-extension-cookie
+  - tls-extension-padding
+  - tls-extension-record-size-limit
+  - tls-extension-status-request
+  - tls-extension-certificate-authorities
+  - tls-extension-unknown-preservation
+  - tls-extension-duplicate-preservation
+  - tls-malformed-extension-length
+
+supported_cases:
+  - name: tls-extension-sni
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        extension_type: server_name
+        host_names:
+          - example.com
+    expected:
+      extension_hex: "00000010000e00000b6578616d706c652e636f6d"
+  - name: tls-extension-alpn
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        extension_type: application_layer_protocol_negotiation
+        protocols:
+          - h2
+          - http/1.1
+    expected:
+      extension_hex: "0010000e000c02683208687474702f312e31"
+  - name: tls-extension-supported-versions-client
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        extension_type: supported_versions
+        context: client_hello
+        versions:
+          - 0x0304
+          - 0x0303
+    expected:
+      extension_hex: "002b00050403040303"
+  - name: tls-extension-supported-versions-server
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        extension_type: supported_versions
+        context: server_hello
+        selected_version: 0x0304
+    expected:
+      extension_hex: "002b00020304"
+  - name: tls-extension-supported-groups
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        extension_type: supported_groups
+        named_groups:
+          - 0x001d
+          - 0x0017
+    expected:
+      extension_hex: "000a00060004001d0017"
+  - name: tls-extension-signature-algorithms
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        extension_type: signature_algorithms
+        signature_schemes:
+          - 0x0807
+          - 0x0804
+          - 0x0403
+    expected:
+      extension_hex: "000d00080006080708040403"
+  - name: tls-extension-key-share-client
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        extension_type: key_share
+        context: client_hello
+        shares:
+          - group: 0x001d
+            key_exchange_hex: "aabbcc"
+    expected:
+      extension_hex: "003300090007001d0003aabbcc"
+  - name: tls-extension-key-share-server
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        extension_type: key_share
+        context: server_hello
+        group: 0x001d
+        key_exchange_hex: "bbcc"
+    expected:
+      extension_hex: "00330006001d0002bbcc"
+  - name: tls-extension-key-share-hello-retry-request
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        extension_type: key_share
+        context: hello_retry_request
+        selected_group: 0x0017
+    expected:
+      extension_hex: "003300020017"
+  - name: tls-extension-psk-key-exchange-modes
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        extension_type: psk_key_exchange_modes
+        modes:
+          - psk_ke
+          - psk_dhe_ke
+    expected:
+      extension_hex: "002d0003020001"
+  - name: tls-extension-pre-shared-key-client
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        extension_type: pre_shared_key
+        context: client_hello
+        identities:
+          - identity_hex: "deadbeef"
+            obfuscated_ticket_age: 0x01020304
+        binders:
+          - binder_hex: "1111111111111111111111111111111111111111111111111111111111111111"
+    expected:
+      extension_hex: "0029002f000a0004deadbeef010203040021201111111111111111111111111111111111111111111111111111111111111111"
+  - name: tls-extension-pre-shared-key-server
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        extension_type: pre_shared_key
+        context: server_hello
+        selected_identity: 2
+    expected:
+      extension_hex: "002900020002"
+  - name: tls-extension-cookie
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        extension_type: cookie
+        cookie_hex: "00ff7a"
+    expected:
+      extension_hex: "002c0005000300ff7a"
+  - name: tls-extension-padding
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        extension_type: padding
+        padding_hex: "aa00bb"
+    expected:
+      extension_hex: "00150003aa00bb"
+  - name: tls-extension-record-size-limit
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        extension_type: record_size_limit
+        limit: 512
+    expected:
+      extension_hex: "001c00020200"
+  - name: tls-extension-status-request
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        extension_type: status_request
+        status_type: ocsp
+        responder_ids:
+          - "aabb"
+        request_extensions_hex: "3000"
+    expected:
+      extension_hex: "0005000b0100040002aabb00023000"
+  - name: tls-extension-certificate-authorities
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        extension_type: certificate_authorities
+        distinguished_names_hex:
+          - "300331"
+          - "aabb"
+    expected:
+      extension_hex: "002f000b000900033003310002aabb"
+  - name: tls-extension-unknown-preservation
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        extension_type_raw: 0xbeef
+        body_hex: "deadface"
+    expected:
+      extension_hex: "beef0004deadface"
+      body_kind: opaque_raw
+  - name: tls-extension-duplicate-preservation
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        extensions:
+          - type_raw: 0xbeef
+            body_hex: "dead"
+          - type: supported_versions
+            body_hex: "0304"
+          - type_raw: 0xbeef
+            body_hex: "face00"
+    expected:
+      extensions_hex: "0013beef0002dead002b00020304beef0003face00"
+      raw_types:
+        - 0xbeef
+        - 0x002b
+        - 0xbeef
+  - name: tls-malformed-extension-length
+    directions:
+      - backend_to_libcrafter
+    byte_policy: structured_error
+    fields:
+      tls:
+        extension_hex: "00000003aa"
+    expected_error:
+      context: tls.extension.body
+      required: 7
+      available: 5
+
+case_groups:
+  - name: tls-extension-client-core
+    summary: SNI, ALPN, supported versions, groups, signatures, and key-share ClientHello extensions.
+    byte_policy: strict_bytes
+    cases:
+      - tls-extension-sni
+      - tls-extension-alpn
+      - tls-extension-supported-versions-client
+      - tls-extension-supported-groups
+      - tls-extension-signature-algorithms
+      - tls-extension-key-share-client
+  - name: tls-extension-server-core
+    summary: ServerHello and HelloRetryRequest selected-version, key-share, and PSK extensions.
+    byte_policy: strict_bytes
+    cases:
+      - tls-extension-supported-versions-server
+      - tls-extension-key-share-server
+      - tls-extension-key-share-hello-retry-request
+      - tls-extension-pre-shared-key-server
+  - name: tls-extension-psk-and-stateful
+    summary: PSK, cookie, padding, record size, OCSP status, and certificate-authorities extensions.
+    byte_policy: strict_bytes
+    cases:
+      - tls-extension-psk-key-exchange-modes
+      - tls-extension-pre-shared-key-client
+      - tls-extension-cookie
+      - tls-extension-padding
+      - tls-extension-record-size-limit
+      - tls-extension-status-request
+      - tls-extension-certificate-authorities
+  - name: tls-extension-preservation
+    summary: Unknown, duplicate, and malformed extension preservation and structured-error cases.
+    byte_policy: mixed
+    cases:
+      - tls-extension-unknown-preservation
+      - tls-extension-duplicate-preservation
+      - tls-malformed-extension-length
+
+normalized_model:
+  extension:
+    - extension_type
+    - extension_type_raw
+    - declared_length
+    - body_hex
+    - context
+  list:
+    - extension_count
+    - raw_types
+    - extensions_hex
+  psk:
+    - identities
+    - binders
+    - selected_identity
+  key_share:
+    - groups
+    - selected_group
+    - key_exchange_lengths
+
+source_refs:
+  - RFC 6066
+  - RFC 7301
+  - RFC 8446
+  - RFC 8449
+  - crafter/tests/tls_extensions.rs
+  - crafter/tests/tls_unknown.rs
+  - crafter/src/protocols/tls/extension.rs
+
+notes:
+  - >-
+    PSK binders and ticket identities are synthetic byte vectors. The oracle
+    asserts TLS extension framing, not binder verification or session resumption.
+  - >-
+    Unknown and duplicate extensions must remain byte-exact because generated
+    tools often need future or intentionally unusual codepoints.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - Raw
+      - TLS_Ext_ServerName
+      - TLS_Ext_ALPN
+      - TLS_Ext_Unknown
+    notes:
+      - >-
+        The planned Scapy adapter will use native TLS extension helpers only
+        where they preserve byte-for-byte output; otherwise it will materialize
+        exact extension bytes under Raw TLS payloads.
+  wireshark:
+    status: planned
+    native_layers:
+      - tls
+      - data
+    notes:
+      - >-
+        Wireshark support is parser-only and should normalize extension fields
+        while retaining opaque bodies for unknown or unsupported extensions.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    pcap_read: true
+    pcap_write: true
+    notes:
+      - >-
+        libcrafter builds, decodes, summarizes, shows, and recompiles these
+        typed and raw TLS extension shapes byte-for-byte.

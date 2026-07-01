@@ -1,0 +1,575 @@
+version: 1
+kind: feature
+name: tls_handshake
+summary: >-
+  TLS handshake message coverage for ClientHello, ServerHello,
+  HelloRetryRequest, EncryptedExtensions, Certificate, CertificateRequest,
+  CertificateVerify, Finished, NewSessionTicket, KeyUpdate, EndOfEarlyData,
+  unknown handshakes, and structured-error malformed length exclusions.
+
+layers:
+  - tcp
+  - tls
+directions:
+  - backend_to_libcrafter
+  - libcrafter_to_backend
+  - roundtrip
+strict_bytes: true
+malformed: false
+categories:
+  - baseline
+  - boundary
+  - malformed
+
+behaviors:
+  - name: client-hello
+    source_refs:
+      - RFC 5246
+      - RFC 8446
+      - RFC 6066
+      - RFC 7301
+    checks:
+      - client_legacy_version_is_tls12_compatibility_value
+      - random_session_id_cipher_suites_and_compression_preserved
+      - sni_alpn_supported_versions_groups_signatures_and_key_share_preserved
+      - handshake_length_derived_from_body
+  - name: server-hello
+    source_refs:
+      - RFC 5246
+      - RFC 8446
+    checks:
+      - server_random_session_id_echo_cipher_suite_preserved
+      - tls13_supported_versions_and_key_share_preserved
+      - hello_retry_request_form_detected_by_random_sentinel
+  - name: encrypted-extensions
+    source_refs:
+      - RFC 8446
+    checks:
+      - extension_list_length_derived
+      - unknown_extensions_preserved
+      - raw_body_remains_available_when_extension_list_is_malformed
+  - name: certificate
+    source_refs:
+      - RFC 5246
+      - RFC 8446
+    checks:
+      - tls12_certificate_list_length_preserved
+      - tls13_certificate_request_context_preserved
+      - certificate_entry_extensions_preserved
+      - opaque_certificate_bytes_not_x509_validated
+  - name: certificate-request
+    source_refs:
+      - RFC 5246
+      - RFC 8446
+    checks:
+      - tls12_certificate_types_preserved
+      - tls12_signature_algorithms_and_authorities_preserved
+      - tls13_request_context_and_extensions_preserved
+  - name: certificate-verify
+    source_refs:
+      - RFC 8446
+    checks:
+      - signature_scheme_preserved
+      - opaque_signature_bytes_preserved
+  - name: finished
+    source_refs:
+      - RFC 8446
+    checks:
+      - verify_data_bytes_preserved
+      - verify_data_is_not_cryptographically_validated
+  - name: new-session-ticket
+    source_refs:
+      - RFC 5077
+      - RFC 8446
+    checks:
+      - tls12_ticket_lifetime_and_ticket_bytes_preserved
+      - tls13_ticket_lifetime_age_add_nonce_ticket_and_extensions_preserved
+  - name: key-update
+    source_refs:
+      - RFC 8446
+    checks:
+      - update_requested_value_preserved
+  - name: end-of-early-data
+    source_refs:
+      - RFC 8446
+    checks:
+      - zero_length_body_preserved
+  - name: unknown-handshake-preservation
+    checks:
+      - unknown_handshake_type_label_stable
+      - raw_body_bytes_roundtrip_exactly
+  - name: malformed-handshake-exclusions
+    checks:
+      - short_handshake_header_reports_structured_error
+      - short_declared_body_reports_structured_error
+      - malformed_cases_are_excluded_from_strict_byte_suite
+
+coverage_cases:
+  - tls-handshake-client-hello-tls12
+  - tls-handshake-client-hello-tls13
+  - tls-handshake-server-hello-tls12
+  - tls-handshake-server-hello-tls13
+  - tls-handshake-hello-retry-request
+  - tls-handshake-encrypted-extensions-empty
+  - tls-handshake-encrypted-extensions-unknown
+  - tls-handshake-certificate-tls12
+  - tls-handshake-certificate-tls13
+  - tls-handshake-certificate-request-tls12
+  - tls-handshake-certificate-request-tls13
+  - tls-handshake-certificate-verify
+  - tls-handshake-finished
+  - tls-handshake-new-session-ticket-tls12
+  - tls-handshake-new-session-ticket-tls13
+  - tls-handshake-key-update
+  - tls-handshake-end-of-early-data
+  - tls-handshake-unknown-preservation
+  - tls-malformed-handshake-length
+
+supported_cases:
+  - name: tls-handshake-client-hello-tls12
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fixtures:
+      record_hex_file: crafter/tests/fixtures/bytes/tls-client-hello-tls12-compatible.hex
+    fields:
+      tls:
+        handshake_type: client_hello
+        legacy_version: 0x0303
+        random_hex: "1212121212121212121212121212121212121212121212121212121212121212"
+        session_id_hex: "12131415"
+        cipher_suites:
+          - 0xc02b
+          - 0xc02f
+        extensions:
+          - server_name
+          - alpn
+          - supported_groups
+          - signature_algorithms
+    expected:
+      form: tls12_compatible_client_hello
+      extension_types:
+        - server_name
+        - application_layer_protocol_negotiation
+        - supported_groups
+        - signature_algorithms
+  - name: tls-handshake-client-hello-tls13
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fixtures:
+      record_hex_file: crafter/tests/fixtures/bytes/tls-client-hello-tls13.hex
+    fields:
+      tls:
+        handshake_type: client_hello
+        legacy_version: 0x0303
+        random_hex: "1313131313131313131313131313131313131313131313131313131313131313"
+        session_id_length: 12
+        cipher_suites:
+          - 0x1301
+          - 0x1303
+        extensions:
+          - server_name
+          - alpn
+          - supported_versions
+          - supported_groups
+          - signature_algorithms
+          - key_share
+    expected:
+      form: tls13_client_hello_compatibility_record
+      supported_versions:
+        - 0x0304
+        - 0x0303
+      key_share_groups:
+        - 0x001d
+  - name: tls-handshake-server-hello-tls12
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fixtures:
+      record_hex_file: crafter/tests/fixtures/bytes/tls-server-hello-tls12.hex
+    fields:
+      tls:
+        handshake_type: server_hello
+        legacy_version: 0x0303
+        random_hex: "2222222222222222222222222222222222222222222222222222222222222222"
+        session_id_echo_hex: "12131415"
+        cipher_suite: 0xc02f
+        extensions: []
+    expected:
+      form: server_hello
+      cipher_suite: TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+  - name: tls-handshake-server-hello-tls13
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fixtures:
+      record_hex_file: crafter/tests/fixtures/bytes/tls-server-hello-tls13.hex
+    fields:
+      tls:
+        handshake_type: server_hello
+        legacy_version: 0x0303
+        random_hex: "2323232323232323232323232323232323232323232323232323232323232323"
+        session_id_echo_length: 12
+        cipher_suite: 0x1301
+        extensions:
+          - supported_versions
+          - key_share
+    expected:
+      form: server_hello
+      selected_version: 0x0304
+      key_share_groups:
+        - 0x001d
+  - name: tls-handshake-hello-retry-request
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fixtures:
+      record_hex_file: crafter/tests/fixtures/bytes/tls-hello-retry-request.hex
+    fields:
+      tls:
+        handshake_type: server_hello
+        form: hello_retry_request
+        legacy_version: 0x0303
+        cipher_suite: 0x1301
+        extensions:
+          - supported_versions
+          - key_share
+    expected:
+      form: hello_retry_request
+      selected_version: 0x0304
+      selected_group: 0x0017
+  - name: tls-handshake-encrypted-extensions-empty
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        handshake_type: encrypted_extensions
+        extensions: []
+    expected:
+      handshake_hex: "080000020000"
+      extensions_length: 0
+      extensions: []
+  - name: tls-handshake-encrypted-extensions-unknown
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        handshake_type: encrypted_extensions
+        extensions:
+          - type: alpn
+            body_hex: "0003026832"
+          - type_raw: 0xbeef
+            body_hex: "dead"
+    expected:
+      handshake_hex: "08000011000f001000050003026832beef0002dead"
+      extension_types:
+        - application_layer_protocol_negotiation
+        - unknown extension 0xbeef
+  - name: tls-handshake-certificate-tls12
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        handshake_type: certificate
+        form: tls12
+        certificates:
+          - hex: "300301"
+          - hex: "3001"
+    expected:
+      handshake_hex: "0b00000e00000b0000033003010000023001"
+      certificate_count: 2
+  - name: tls-handshake-certificate-tls13
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        handshake_type: certificate
+        form: tls13
+        request_context_hex: "0102"
+        certificates:
+          - hex: "3082"
+            extensions:
+              - type_raw: 0xbeef
+                body_hex: "aa"
+          - hex: "04"
+    expected:
+      handshake_hex: "0b00001602010200001200000230820005beef0001aa000001040000"
+      certificate_count: 2
+      entry_extensions: 1
+  - name: tls-handshake-certificate-request-tls12
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        handshake_type: certificate_request
+        form: tls12
+        certificate_types:
+          - rsa_sign
+          - ecdsa_sign
+          - 0xfe
+        signature_algorithms:
+          - 0x0401
+          - 0x0807
+        certificate_authorities_hex:
+          - "300331"
+          - "aa"
+    expected:
+      handshake_hex: "0d000018030140fe000404010807000800033003310001aa"
+  - name: tls-handshake-certificate-request-tls13
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        handshake_type: certificate_request
+        form: tls13
+        request_context_hex: "10"
+        extensions:
+          - signature_algorithms
+          - certificate_authorities
+          - unknown
+    expected:
+      handshake_hex: "0d00001b01100018000d000400020807002f000600040002deadbeef0002cafe"
+      extension_count: 3
+  - name: tls-handshake-certificate-verify
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        handshake_type: certificate_verify
+        signature_scheme: 0xbeef
+        signature_hex: "deadfa"
+    expected:
+      handshake_hex: "0f000007beef0003deadfa"
+  - name: tls-handshake-finished
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        handshake_type: finished
+        verify_data_hex: "deadbeef"
+    expected:
+      handshake_hex: "14000004deadbeef"
+  - name: tls-handshake-new-session-ticket-tls12
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        handshake_type: new_session_ticket
+        form: tls12
+        lifetime_hint: 0x01020304
+        ticket_hex: "aabb"
+    expected:
+      handshake_hex: "04000008010203040002aabb"
+  - name: tls-handshake-new-session-ticket-tls13
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        handshake_type: new_session_ticket
+        form: tls13
+        ticket_lifetime: 7
+        ticket_age_add: 0x01020304
+        ticket_nonce_hex: "09"
+        ticket_hex: "aabbcc"
+        extensions:
+          - type_raw: 0xbeef
+            body_hex: "de"
+    expected:
+      handshake_hex: "04000013000000070102030401090003aabbcc0005beef0001de"
+  - name: tls-handshake-key-update
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        handshake_type: key_update
+        request_update: update_requested
+    expected:
+      handshake_hex: "1800000101"
+  - name: tls-handshake-end-of-early-data
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        handshake_type: end_of_early_data
+    expected:
+      handshake_hex: "05000000"
+  - name: tls-handshake-unknown-preservation
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tls:
+        handshake_type_raw: 0xfa
+        body_hex: "cafe00"
+    expected:
+      handshake_hex: "fa000003cafe00"
+      body_kind: opaque_raw
+  - name: tls-malformed-handshake-length
+    directions:
+      - backend_to_libcrafter
+    byte_policy: structured_error
+    fields:
+      tls:
+        handshake_hex: "01000004aa"
+    expected_error:
+      context: tls.handshake.body
+      required: 8
+      available: 5
+
+case_groups:
+  - name: tls-handshake-hello
+    summary: TLS ClientHello, ServerHello, and HelloRetryRequest handshake messages.
+    byte_policy: strict_bytes
+    cases:
+      - tls-handshake-client-hello-tls12
+      - tls-handshake-client-hello-tls13
+      - tls-handshake-server-hello-tls12
+      - tls-handshake-server-hello-tls13
+      - tls-handshake-hello-retry-request
+  - name: tls-handshake-late
+    summary: TLS 1.2 and TLS 1.3 certificate, ticket, finished, and key update handshakes.
+    byte_policy: strict_bytes
+    cases:
+      - tls-handshake-encrypted-extensions-empty
+      - tls-handshake-encrypted-extensions-unknown
+      - tls-handshake-certificate-tls12
+      - tls-handshake-certificate-tls13
+      - tls-handshake-certificate-request-tls12
+      - tls-handshake-certificate-request-tls13
+      - tls-handshake-certificate-verify
+      - tls-handshake-finished
+      - tls-handshake-new-session-ticket-tls12
+      - tls-handshake-new-session-ticket-tls13
+      - tls-handshake-key-update
+      - tls-handshake-end-of-early-data
+  - name: tls-handshake-preservation
+    summary: Unknown handshake bytes and malformed-length structured-error coverage.
+    byte_policy: mixed
+    cases:
+      - tls-handshake-unknown-preservation
+      - tls-malformed-handshake-length
+
+normalized_model:
+  handshake:
+    - handshake_type
+    - handshake_type_raw
+    - declared_length
+    - body_kind
+    - body_hex
+  hello:
+    - legacy_version
+    - random_hex
+    - session_id_hex
+    - cipher_suites
+    - compression_methods
+    - extensions
+    - form
+  certificate:
+    - form
+    - request_context_hex
+    - certificate_count
+    - entry_extensions
+  ticket:
+    - form
+    - lifetime
+    - ticket_age_add
+    - ticket_nonce_hex
+    - ticket_hex
+
+source_refs:
+  - RFC 5246
+  - RFC 6066
+  - RFC 7301
+  - RFC 8446
+  - crafter/tests/tls_golden.rs
+  - crafter/tests/tls_handshake_messages.rs
+  - crafter/src/protocols/tls/handshake.rs
+
+notes:
+  - >-
+    Certificate bytes are synthetic opaque vectors. The oracle asserts TLS
+    framing and byte preservation, not X.509 parsing or certificate validation.
+  - >-
+    Finished, CertificateVerify, PSK binder, and ticket bytes are not
+    cryptographically validated by this packet-layer feature.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - Raw
+      - TLS
+      - TLSClientHello
+      - TLSServerHello
+    notes:
+      - >-
+        The planned Scapy adapter will emit exact TLS handshake bytes where
+        native TLS helpers cannot preserve the declared synthetic fields.
+  wireshark:
+    status: planned
+    native_layers:
+      - tls
+      - data
+    notes:
+      - >-
+        Wireshark support is parser-only and should normalize handshake fields
+        while preserving opaque bytes for unknown or encrypted shapes.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    pcap_read: true
+    pcap_write: true
+    notes:
+      - >-
+        libcrafter builds, decodes, summarizes, shows, and recompiles these
+        handshake message shapes with explicit unknown preservation.
