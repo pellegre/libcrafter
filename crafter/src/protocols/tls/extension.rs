@@ -17,6 +17,7 @@ use super::signature_scheme::{
     TLS_SIGNATURE_SCHEME_LIST_PREFIX_LEN,
 };
 use super::version::TlsVersion;
+use crate::protocols::transport::common::hex_bytes;
 use crate::{CrafterError, Result};
 
 /// TLS ExtensionType codepoint width in bytes.
@@ -53,6 +54,15 @@ pub const TLS_SUPPORTED_GROUP_LEN: usize = TLS_NAMED_GROUP_LEN;
 pub const TLS_SIGNATURE_ALGORITHMS_LIST_LENGTH_LEN: usize = TLS_SIGNATURE_SCHEME_LIST_PREFIX_LEN;
 /// TLS signature_algorithms SignatureScheme width in bytes.
 pub const TLS_SIGNATURE_ALGORITHM_LEN: usize = TLS_SIGNATURE_SCHEME_LEN;
+/// TLS key_share ClientHello client_shares vector length field width in bytes.
+pub const TLS_KEY_SHARE_CLIENT_SHARES_LENGTH_LEN: usize = 2;
+/// TLS key_share NamedGroup field width in bytes.
+pub const TLS_KEY_SHARE_GROUP_LEN: usize = TLS_NAMED_GROUP_LEN;
+/// TLS key_share opaque key_exchange length field width in bytes.
+pub const TLS_KEY_SHARE_KEY_EXCHANGE_LENGTH_LEN: usize = 2;
+/// TLS key_share KeyShareEntry fixed header width in bytes.
+pub const TLS_KEY_SHARE_ENTRY_HEADER_LEN: usize =
+    TLS_KEY_SHARE_GROUP_LEN + TLS_KEY_SHARE_KEY_EXCHANGE_LENGTH_LEN;
 
 /// A raw-preserving TLS `ExtensionType` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1018,6 +1028,41 @@ impl TlsRawExtension {
         context: TlsSupportedVersionsContext,
     ) -> Result<TlsSupportedVersions> {
         TlsSupportedVersions::from_raw_extension_with_context(context, self)
+    }
+
+    /// Create a raw ClientHello `key_share` extension.
+    pub fn key_share_client(entries: impl Into<Vec<TlsKeyShareEntry>>) -> Result<Self> {
+        TlsKeyShare::client(entries).to_raw_extension()
+    }
+
+    /// Create a raw ServerHello `key_share` extension.
+    pub fn key_share_server(selected: impl Into<TlsKeyShareEntry>) -> Result<Self> {
+        TlsKeyShare::server(selected).to_raw_extension()
+    }
+
+    /// Create a raw HelloRetryRequest `key_share` extension.
+    pub fn key_share_hello_retry_request(selected_group: impl Into<TlsNamedGroup>) -> Result<Self> {
+        TlsKeyShare::hello_retry_request(selected_group).to_raw_extension()
+    }
+
+    /// Decode this raw extension as a ClientHello `key_share` body.
+    pub fn as_key_share_client(&self) -> Result<TlsKeyShare> {
+        TlsKeyShare::from_client_hello_raw_extension(self)
+    }
+
+    /// Decode this raw extension as a ServerHello `key_share` body.
+    pub fn as_key_share_server(&self) -> Result<TlsKeyShare> {
+        TlsKeyShare::from_server_hello_raw_extension(self)
+    }
+
+    /// Decode this raw extension as a HelloRetryRequest `key_share` body.
+    pub fn as_key_share_hello_retry_request(&self) -> Result<TlsKeyShare> {
+        TlsKeyShare::from_hello_retry_request_raw_extension(self)
+    }
+
+    /// Decode this raw extension as a context-selected `key_share` body.
+    pub fn as_key_share_with_context(&self, context: TlsKeyShareContext) -> Result<TlsKeyShare> {
+        TlsKeyShare::from_raw_extension_with_context(context, self)
     }
 }
 
@@ -2199,6 +2244,802 @@ fn validate_supported_versions_client_list_len(len: usize) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct TlsKeyShareEntryContext {
+    group: &'static str,
+    key_exchange_length: &'static str,
+    key_exchange: &'static str,
+}
+
+impl TlsKeyShareEntryContext {
+    const fn generic() -> Self {
+        Self {
+            group: "tls.key_share.entry.group",
+            key_exchange_length: "tls.key_share.entry.key_exchange.length",
+            key_exchange: "tls.key_share.entry.key_exchange",
+        }
+    }
+
+    const fn client_hello() -> Self {
+        Self {
+            group: "tls.key_share.client.group",
+            key_exchange_length: "tls.key_share.client.key_exchange.length",
+            key_exchange: "tls.key_share.client.key_exchange",
+        }
+    }
+
+    const fn server_hello() -> Self {
+        Self {
+            group: "tls.key_share.server.group",
+            key_exchange_length: "tls.key_share.server.key_exchange.length",
+            key_exchange: "tls.key_share.server.key_exchange",
+        }
+    }
+}
+
+/// Context that selects the TLS 1.3 `key_share` extension body shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TlsKeyShareContext {
+    /// ClientHello carries a uint16 length-prefixed KeyShareEntry list.
+    ClientHello,
+    /// ServerHello carries one selected KeyShareEntry.
+    ServerHello,
+    /// HelloRetryRequest carries one selected NamedGroup and no key_exchange bytes.
+    HelloRetryRequest,
+}
+
+impl TlsKeyShareContext {
+    /// ClientHello context constructor.
+    pub const fn client_hello() -> Self {
+        Self::ClientHello
+    }
+
+    /// ServerHello context constructor.
+    pub const fn server_hello() -> Self {
+        Self::ServerHello
+    }
+
+    /// HelloRetryRequest context constructor.
+    pub const fn hello_retry_request() -> Self {
+        Self::HelloRetryRequest
+    }
+
+    const fn is_client_list(self) -> bool {
+        matches!(self, Self::ClientHello)
+    }
+
+    const fn is_server_entry(self) -> bool {
+        matches!(self, Self::ServerHello)
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::ClientHello => "client",
+            Self::ServerHello => "server",
+            Self::HelloRetryRequest => "hello_retry_request",
+        }
+    }
+
+    const fn length_field(self) -> &'static str {
+        match self {
+            Self::ClientHello => "tls.key_share.client.length",
+            Self::ServerHello => "tls.key_share.server.length",
+            Self::HelloRetryRequest => "tls.key_share.hello_retry_request.length",
+        }
+    }
+
+    const fn selected_group_field(self) -> &'static str {
+        match self {
+            Self::ClientHello => "tls.key_share.client.group",
+            Self::ServerHello => "tls.key_share.server.group",
+            Self::HelloRetryRequest => "tls.key_share.hello_retry_request.selected_group",
+        }
+    }
+
+    const fn entry_context(self) -> TlsKeyShareEntryContext {
+        match self {
+            Self::ClientHello => TlsKeyShareEntryContext::client_hello(),
+            Self::ServerHello => TlsKeyShareEntryContext::server_hello(),
+            Self::HelloRetryRequest => TlsKeyShareEntryContext::generic(),
+        }
+    }
+}
+
+impl Default for TlsKeyShareContext {
+    fn default() -> Self {
+        Self::ClientHello
+    }
+}
+
+/// One TLS 1.3 KeyShareEntry with opaque key_exchange bytes preserved.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TlsKeyShareEntry {
+    group: TlsNamedGroup,
+    key_exchange: Vec<u8>,
+}
+
+impl TlsKeyShareEntry {
+    /// Create a KeyShareEntry from a NamedGroup and opaque key_exchange bytes.
+    pub fn new(group: impl Into<TlsNamedGroup>, key_exchange: impl Into<Vec<u8>>) -> Self {
+        Self {
+            group: group.into(),
+            key_exchange: key_exchange.into(),
+        }
+    }
+
+    /// Create a KeyShareEntry from a raw NamedGroup codepoint.
+    pub fn from_raw_group(raw_group: u16, key_exchange: impl Into<Vec<u8>>) -> Self {
+        Self::new(TlsNamedGroup::from_u16(raw_group), key_exchange)
+    }
+
+    /// Create an X25519 KeyShareEntry with caller-supplied opaque key_exchange bytes.
+    pub fn x25519(key_exchange: impl Into<Vec<u8>>) -> Self {
+        Self::new(TlsNamedGroup::X25519, key_exchange)
+    }
+
+    /// Create a secp256r1 KeyShareEntry with caller-supplied opaque key_exchange bytes.
+    pub fn secp256r1(key_exchange: impl Into<Vec<u8>>) -> Self {
+        Self::new(TlsNamedGroup::SECP256R1, key_exchange)
+    }
+
+    /// Return the selected NamedGroup.
+    pub const fn group(&self) -> TlsNamedGroup {
+        self.group
+    }
+
+    /// Return the preserved raw NamedGroup codepoint.
+    pub const fn raw_group(&self) -> u16 {
+        self.group.raw()
+    }
+
+    /// Borrow the preserved opaque key_exchange bytes.
+    pub fn key_exchange(&self) -> &[u8] {
+        &self.key_exchange
+    }
+
+    /// Consume the entry and return the opaque key_exchange bytes.
+    pub fn into_key_exchange(self) -> Vec<u8> {
+        self.key_exchange
+    }
+
+    /// Number of bytes occupied by the complete encoded KeyShareEntry.
+    pub fn encoded_len(&self) -> Result<usize> {
+        self.encoded_len_with_context(TlsKeyShareEntryContext::generic())
+    }
+
+    fn encoded_len_with_context(&self, context: TlsKeyShareEntryContext) -> Result<usize> {
+        validate_key_share_entry(context, self)?;
+        TLS_KEY_SHARE_ENTRY_HEADER_LEN
+            .checked_add(self.key_exchange.len())
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(context.key_exchange_length, "length overflow")
+            })
+    }
+
+    /// Append this KeyShareEntry to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.encode_with_context(TlsKeyShareEntryContext::generic(), out)
+    }
+
+    fn encode_with_context(
+        &self,
+        context: TlsKeyShareEntryContext,
+        out: &mut Vec<u8>,
+    ) -> Result<()> {
+        validate_key_share_entry(context, self)?;
+        self.group.encode(out);
+        let key_exchange_len = u16::try_from(self.key_exchange.len()).map_err(|_| {
+            CrafterError::invalid_field_value(
+                context.key_exchange_length,
+                "length must fit in two bytes",
+            )
+        })?;
+        out.extend_from_slice(&key_exchange_len.to_be_bytes());
+        out.extend_from_slice(&self.key_exchange);
+        Ok(())
+    }
+
+    /// Return this KeyShareEntry encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Decode one KeyShareEntry from `bytes`.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (entry, _) = Self::decode_prefix(bytes.as_ref())?;
+        Ok(entry)
+    }
+
+    /// Decode one KeyShareEntry from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        Self::decode_prefix_with_context(TlsKeyShareEntryContext::generic(), bytes)
+    }
+
+    fn decode_prefix_with_context(
+        context: TlsKeyShareEntryContext,
+        bytes: &[u8],
+    ) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_KEY_SHARE_GROUP_LEN {
+            return Err(CrafterError::buffer_too_short(
+                context.group,
+                TLS_KEY_SHARE_GROUP_LEN,
+                bytes.len(),
+            ));
+        }
+        if bytes.len() < TLS_KEY_SHARE_ENTRY_HEADER_LEN {
+            return Err(CrafterError::buffer_too_short(
+                context.key_exchange_length,
+                TLS_KEY_SHARE_ENTRY_HEADER_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let group = TlsNamedGroup::from_be_bytes([bytes[0], bytes[1]]);
+        let key_exchange_len = u16::from_be_bytes([bytes[2], bytes[3]]) as usize;
+        validate_key_share_key_exchange_len(context.key_exchange_length, key_exchange_len)?;
+        let required = TLS_KEY_SHARE_ENTRY_HEADER_LEN
+            .checked_add(key_exchange_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(context.key_exchange_length, "length overflow")
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                context.key_exchange,
+                required,
+                bytes.len(),
+            ));
+        }
+
+        Ok((
+            Self::new(
+                group,
+                bytes[TLS_KEY_SHARE_ENTRY_HEADER_LEN..required].to_vec(),
+            ),
+            &bytes[required..],
+        ))
+    }
+
+    /// Stable one-line summary preserving group and key_exchange size.
+    pub fn summary(&self) -> String {
+        format!(
+            "key_share_entry group={}:0x{:04x} key_exchange_bytes={}",
+            self.group.label(),
+            self.group.raw(),
+            self.key_exchange.len()
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("key_share_group", self.group.label()),
+            ("key_share_group_raw", format!("0x{:04x}", self.group.raw())),
+            (
+                "key_share_group_status",
+                self.group.status().label().to_string(),
+            ),
+            (
+                "key_share_key_exchange_bytes",
+                self.key_exchange.len().to_string(),
+            ),
+            ("key_share_key_exchange", hex_bytes(&self.key_exchange)),
+        ]
+    }
+}
+
+impl<G, B> From<(G, B)> for TlsKeyShareEntry
+where
+    G: Into<TlsNamedGroup>,
+    B: Into<Vec<u8>>,
+{
+    fn from(value: (G, B)) -> Self {
+        Self::new(value.0, value.1)
+    }
+}
+
+/// TLS 1.3 `key_share` extension body.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TlsKeyShare {
+    /// ClientHello uint16 length-prefixed KeyShareEntry list.
+    Client { entries: Vec<TlsKeyShareEntry> },
+    /// ServerHello selected KeyShareEntry.
+    Server { selected: TlsKeyShareEntry },
+    /// HelloRetryRequest selected NamedGroup with no key_exchange bytes.
+    HelloRetryRequest { selected_group: TlsNamedGroup },
+}
+
+impl TlsKeyShare {
+    /// Create a ClientHello key_share entry list.
+    pub fn client(entries: impl Into<Vec<TlsKeyShareEntry>>) -> Self {
+        Self::Client {
+            entries: entries.into(),
+        }
+    }
+
+    /// Create an empty ClientHello key_share list.
+    pub fn client_empty() -> Self {
+        Self::client(Vec::new())
+    }
+
+    /// Create a ServerHello selected key_share entry.
+    pub fn server(selected: impl Into<TlsKeyShareEntry>) -> Self {
+        Self::Server {
+            selected: selected.into(),
+        }
+    }
+
+    /// Create a HelloRetryRequest selected-group key_share body.
+    pub fn hello_retry_request(selected_group: impl Into<TlsNamedGroup>) -> Self {
+        Self::HelloRetryRequest {
+            selected_group: selected_group.into(),
+        }
+    }
+
+    /// Return true when this is the ClientHello list form.
+    pub const fn is_client(&self) -> bool {
+        matches!(self, Self::Client { .. })
+    }
+
+    /// Return true when this is the ServerHello selected-entry form.
+    pub const fn is_server(&self) -> bool {
+        matches!(self, Self::Server { .. })
+    }
+
+    /// Return true when this is the HelloRetryRequest selected-group form.
+    pub const fn is_hello_retry_request(&self) -> bool {
+        matches!(self, Self::HelloRetryRequest { .. })
+    }
+
+    /// Borrow ClientHello entries, if this is the client-list form.
+    pub fn entries(&self) -> Option<&[TlsKeyShareEntry]> {
+        match self {
+            Self::Client { entries } => Some(entries),
+            Self::Server { .. } | Self::HelloRetryRequest { .. } => None,
+        }
+    }
+
+    /// Borrow the selected ServerHello entry, if present.
+    pub const fn selected_entry(&self) -> Option<&TlsKeyShareEntry> {
+        match self {
+            Self::Client { .. } | Self::HelloRetryRequest { .. } => None,
+            Self::Server { selected } => Some(selected),
+        }
+    }
+
+    /// Return the selected ServerHello or HelloRetryRequest group, if present.
+    pub const fn selected_group(&self) -> Option<TlsNamedGroup> {
+        match self {
+            Self::Client { .. } => None,
+            Self::Server { selected } => Some(selected.group()),
+            Self::HelloRetryRequest { selected_group } => Some(*selected_group),
+        }
+    }
+
+    /// Return all NamedGroup values carried by this body.
+    pub fn groups(&self) -> Vec<TlsNamedGroup> {
+        match self {
+            Self::Client { entries } => entries.iter().map(TlsKeyShareEntry::group).collect(),
+            Self::Server { selected } => vec![selected.group()],
+            Self::HelloRetryRequest { selected_group } => vec![*selected_group],
+        }
+    }
+
+    /// Return raw NamedGroup codepoints carried by this body.
+    pub fn raw_groups(&self) -> Vec<u16> {
+        self.groups().iter().map(|group| group.raw()).collect()
+    }
+
+    /// Return NamedGroup labels in wire order.
+    pub fn labels(&self) -> Vec<String> {
+        self.groups().iter().map(|group| group.label()).collect()
+    }
+
+    /// Return key_exchange byte lengths in wire order.
+    pub fn key_exchange_lengths(&self) -> Vec<usize> {
+        match self {
+            Self::Client { entries } => entries
+                .iter()
+                .map(|entry| entry.key_exchange().len())
+                .collect(),
+            Self::Server { selected } => vec![selected.key_exchange().len()],
+            Self::HelloRetryRequest { .. } => Vec::new(),
+        }
+    }
+
+    /// Number of bytes occupied by this extension body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        match self {
+            Self::Client { entries } => {
+                let byte_len = key_share_client_entries_byte_len(entries)?;
+                TLS_KEY_SHARE_CLIENT_SHARES_LENGTH_LEN
+                    .checked_add(byte_len)
+                    .ok_or_else(|| {
+                        CrafterError::invalid_field_value(
+                            TlsKeyShareContext::ClientHello.length_field(),
+                            "length overflow",
+                        )
+                    })
+            }
+            Self::Server { selected } => {
+                selected.encoded_len_with_context(TlsKeyShareContext::ServerHello.entry_context())
+            }
+            Self::HelloRetryRequest { .. } => Ok(TLS_KEY_SHARE_GROUP_LEN),
+        }
+    }
+
+    /// Append this key_share body to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        match self {
+            Self::Client { entries } => {
+                let byte_len = key_share_client_entries_byte_len(entries)?;
+                let byte_len = u16::try_from(byte_len).map_err(|_| {
+                    CrafterError::invalid_field_value(
+                        TlsKeyShareContext::ClientHello.length_field(),
+                        "length must fit in two bytes",
+                    )
+                })?;
+                out.extend_from_slice(&byte_len.to_be_bytes());
+                for entry in entries {
+                    entry.encode_with_context(
+                        TlsKeyShareContext::ClientHello.entry_context(),
+                        out,
+                    )?;
+                }
+            }
+            Self::Server { selected } => {
+                selected
+                    .encode_with_context(TlsKeyShareContext::ServerHello.entry_context(), out)?;
+            }
+            Self::HelloRetryRequest { selected_group } => {
+                selected_group.encode(out);
+            }
+        }
+        Ok(())
+    }
+
+    /// Return this key_share body encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Convert this key_share body into a raw extension.
+    pub fn to_raw_extension(&self) -> Result<TlsRawExtension> {
+        Ok(TlsRawExtension::new(
+            TlsExtensionType::KEY_SHARE,
+            self.encode_to_vec()?,
+        ))
+    }
+
+    /// Decode a context-selected key_share body.
+    pub fn decode_with_context(
+        context: TlsKeyShareContext,
+        bytes: impl AsRef<[u8]>,
+    ) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        if context.is_client_list() {
+            Self::decode_client(bytes)
+        } else if context.is_server_entry() {
+            Self::decode_server(bytes)
+        } else {
+            Self::decode_hello_retry_request(bytes)
+        }
+    }
+
+    /// Decode a ClientHello key_share body.
+    pub fn decode_client(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let context = TlsKeyShareContext::ClientHello;
+        if bytes.len() < TLS_KEY_SHARE_CLIENT_SHARES_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                context.length_field(),
+                TLS_KEY_SHARE_CLIENT_SHARES_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let byte_len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+        validate_key_share_client_list_len(byte_len)?;
+        let required = TLS_KEY_SHARE_CLIENT_SHARES_LENGTH_LEN
+            .checked_add(byte_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(context.length_field(), "length overflow")
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "tls.key_share.client",
+                required,
+                bytes.len(),
+            ));
+        }
+        if bytes.len() != required {
+            return Err(CrafterError::invalid_field_value(
+                context.length_field(),
+                "length must match extension body",
+            ));
+        }
+
+        let mut entries = Vec::new();
+        let mut cursor = TLS_KEY_SHARE_CLIENT_SHARES_LENGTH_LEN;
+        let body_end = required;
+        while cursor < body_end {
+            let (entry, tail) = TlsKeyShareEntry::decode_prefix_with_context(
+                context.entry_context(),
+                &bytes[cursor..body_end],
+            )?;
+            cursor = body_end - tail.len();
+            entries.push(entry);
+        }
+
+        Ok(Self::client(entries))
+    }
+
+    /// Decode a ServerHello key_share body.
+    pub fn decode_server(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let context = TlsKeyShareContext::ServerHello;
+        let (selected, tail) =
+            TlsKeyShareEntry::decode_prefix_with_context(context.entry_context(), bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                context.length_field(),
+                "length must match extension body",
+            ));
+        }
+        Ok(Self::server(selected))
+    }
+
+    /// Decode a HelloRetryRequest key_share body.
+    pub fn decode_hello_retry_request(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let context = TlsKeyShareContext::HelloRetryRequest;
+        if bytes.len() < TLS_KEY_SHARE_GROUP_LEN {
+            return Err(CrafterError::buffer_too_short(
+                context.selected_group_field(),
+                TLS_KEY_SHARE_GROUP_LEN,
+                bytes.len(),
+            ));
+        }
+        if bytes.len() != TLS_KEY_SHARE_GROUP_LEN {
+            return Err(CrafterError::invalid_field_value(
+                context.length_field(),
+                "length must be exactly two bytes",
+            ));
+        }
+
+        Ok(Self::hello_retry_request(TlsNamedGroup::from_be_bytes([
+            bytes[0], bytes[1],
+        ])))
+    }
+
+    /// Decode a raw key_share extension body using a context.
+    pub fn from_raw_extension_with_context(
+        context: TlsKeyShareContext,
+        extension: &TlsRawExtension,
+    ) -> Result<Self> {
+        if extension.extension_type() != TlsExtensionType::KEY_SHARE {
+            return Err(CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be key_share",
+            ));
+        }
+        Self::decode_with_context(context, extension.body())
+    }
+
+    /// Decode a raw ClientHello key_share extension body.
+    pub fn from_client_hello_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension_with_context(TlsKeyShareContext::ClientHello, extension)
+    }
+
+    /// Decode a raw ServerHello key_share extension body.
+    pub fn from_server_hello_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension_with_context(TlsKeyShareContext::ServerHello, extension)
+    }
+
+    /// Decode a raw HelloRetryRequest key_share extension body.
+    pub fn from_hello_retry_request_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension_with_context(TlsKeyShareContext::HelloRetryRequest, extension)
+    }
+
+    /// Stable one-line summary preserving body shape and group order.
+    pub fn summary(&self) -> String {
+        match self {
+            Self::Client { entries } => format!(
+                "key_share context=client count={} bytes={} entries={}",
+                entries.len(),
+                key_share_client_entries_byte_len(entries).unwrap_or(0),
+                format_key_share_entries(entries)
+            ),
+            Self::Server { selected } => format!(
+                "key_share context=server selected={}:0x{:04x} key_exchange_bytes={}",
+                selected.group().label(),
+                selected.raw_group(),
+                selected.key_exchange().len()
+            ),
+            Self::HelloRetryRequest { selected_group } => format!(
+                "key_share context=hello_retry_request selected_group={}:0x{:04x}",
+                selected_group.label(),
+                selected_group.raw()
+            ),
+        }
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            Self::Client { entries } => vec![
+                (
+                    "key_share_context",
+                    TlsKeyShareContext::ClientHello.label().to_string(),
+                ),
+                ("key_share_count", entries.len().to_string()),
+                (
+                    "key_share_bytes",
+                    key_share_client_entries_byte_len(entries)
+                        .unwrap_or(0)
+                        .to_string(),
+                ),
+                ("key_share_groups", format_key_share_group_labels(entries)),
+                ("key_share_groups_raw", format_key_share_raw_groups(entries)),
+                (
+                    "key_share_key_exchange_bytes",
+                    format_key_share_key_exchange_lengths(entries),
+                ),
+                (
+                    "key_share_key_exchanges",
+                    format_key_share_key_exchanges(entries),
+                ),
+            ],
+            Self::Server { selected } => vec![
+                (
+                    "key_share_context",
+                    TlsKeyShareContext::ServerHello.label().to_string(),
+                ),
+                ("key_share_selected_group", selected.group().label()),
+                (
+                    "key_share_selected_group_raw",
+                    format!("0x{:04x}", selected.raw_group()),
+                ),
+                (
+                    "key_share_key_exchange_bytes",
+                    selected.key_exchange().len().to_string(),
+                ),
+                ("key_share_key_exchange", hex_bytes(selected.key_exchange())),
+            ],
+            Self::HelloRetryRequest { selected_group } => vec![
+                (
+                    "key_share_context",
+                    TlsKeyShareContext::HelloRetryRequest.label().to_string(),
+                ),
+                ("key_share_selected_group", selected_group.label()),
+                (
+                    "key_share_selected_group_raw",
+                    format!("0x{:04x}", selected_group.raw()),
+                ),
+            ],
+        }
+    }
+}
+
+impl From<Vec<TlsKeyShareEntry>> for TlsKeyShare {
+    fn from(entries: Vec<TlsKeyShareEntry>) -> Self {
+        Self::client(entries)
+    }
+}
+
+impl<const N: usize> From<[TlsKeyShareEntry; N]> for TlsKeyShare {
+    fn from(entries: [TlsKeyShareEntry; N]) -> Self {
+        Self::client(Vec::from(entries))
+    }
+}
+
+impl TryFrom<TlsKeyShare> for TlsRawExtension {
+    type Error = CrafterError;
+
+    fn try_from(value: TlsKeyShare) -> Result<Self> {
+        value.to_raw_extension()
+    }
+}
+
+fn validate_key_share_entry(
+    context: TlsKeyShareEntryContext,
+    entry: &TlsKeyShareEntry,
+) -> Result<()> {
+    validate_key_share_key_exchange_len(context.key_exchange_length, entry.key_exchange().len())
+}
+
+fn validate_key_share_key_exchange_len(field: &'static str, len: usize) -> Result<()> {
+    if len == 0 {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "length must be at least one byte",
+        ));
+    }
+    if len > u16::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn key_share_client_entries_byte_len(entries: &[TlsKeyShareEntry]) -> Result<usize> {
+    let mut len = 0usize;
+    for entry in entries {
+        len = len
+            .checked_add(
+                entry.encoded_len_with_context(TlsKeyShareContext::ClientHello.entry_context())?,
+            )
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    TlsKeyShareContext::ClientHello.length_field(),
+                    "length overflow",
+                )
+            })?;
+    }
+    validate_key_share_client_list_len(len)?;
+    Ok(len)
+}
+
+fn validate_key_share_client_list_len(len: usize) -> Result<()> {
+    if len > u16::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            "tls.key_share.client.length",
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn format_key_share_entries(entries: &[TlsKeyShareEntry]) -> String {
+    entries
+        .iter()
+        .map(|entry| {
+            format!(
+                "{}:{} bytes",
+                entry.group().label(),
+                entry.key_exchange().len()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn format_key_share_group_labels(entries: &[TlsKeyShareEntry]) -> String {
+    entries
+        .iter()
+        .map(|entry| entry.group().label())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn format_key_share_raw_groups(entries: &[TlsKeyShareEntry]) -> String {
+    entries
+        .iter()
+        .map(|entry| format!("0x{:04x}", entry.raw_group()))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn format_key_share_key_exchange_lengths(entries: &[TlsKeyShareEntry]) -> String {
+    entries
+        .iter()
+        .map(|entry| entry.key_exchange().len().to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn format_key_share_key_exchanges(entries: &[TlsKeyShareEntry]) -> String {
+    entries
+        .iter()
+        .map(|entry| hex_bytes(entry.key_exchange()))
+        .collect::<Vec<_>>()
+        .join("|")
 }
 
 /// One opaque RFC 7301 ALPN `ProtocolName`.
@@ -4639,6 +5480,408 @@ mod tests {
                 "tls.supported_versions.hello_retry_request.version",
                 TLS_SUPPORTED_VERSION_LEN,
                 1
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_key_share_client_builders_encode_empty_single_and_multiple_lists() {
+        let empty = TlsKeyShare::client_empty();
+        assert!(empty.is_client());
+        assert!(!empty.is_server());
+        assert!(!empty.is_hello_retry_request());
+        assert_eq!(empty.entries().unwrap(), &[]);
+        assert_eq!(empty.encoded_len().unwrap(), 2);
+        assert_eq!(empty.encode_to_vec().unwrap(), [0x00, 0x00]);
+        assert_eq!(TlsKeyShare::decode_client([0x00, 0x00]).unwrap(), empty);
+        assert_eq!(
+            empty.summary(),
+            "key_share context=client count=0 bytes=0 entries="
+        );
+
+        let entry = TlsKeyShareEntry::x25519([0xaa, 0xbb, 0xcc]);
+        assert_eq!(entry.group(), TlsNamedGroup::X25519);
+        assert_eq!(entry.raw_group(), 0x001d);
+        assert_eq!(entry.key_exchange(), &[0xaa, 0xbb, 0xcc]);
+        assert_eq!(entry.encoded_len().unwrap(), 7);
+        assert_eq!(
+            entry.encode_to_vec().unwrap(),
+            [0x00, 0x1d, 0x00, 0x03, 0xaa, 0xbb, 0xcc]
+        );
+        assert_eq!(
+            TlsKeyShareEntry::decode_prefix(&[0x00, 0x1d, 0x00, 0x03, 0xaa, 0xbb, 0xcc, 0xee,])
+                .unwrap(),
+            (entry.clone(), &[0xee][..])
+        );
+        assert_eq!(
+            entry.summary(),
+            "key_share_entry group=x25519:0x001d key_exchange_bytes=3"
+        );
+        assert!(entry
+            .inspection_fields()
+            .contains(&("key_share_key_exchange", "aa bb cc".to_string())));
+
+        let secp256r1 = TlsKeyShareEntry::secp256r1([0x01, 0x02]);
+        let client = TlsKeyShare::client(vec![entry.clone(), secp256r1.clone()]);
+        assert_eq!(
+            client.entries().unwrap(),
+            &[entry.clone(), secp256r1.clone()]
+        );
+        assert_eq!(
+            client.groups(),
+            vec![TlsNamedGroup::X25519, TlsNamedGroup::SECP256R1]
+        );
+        assert_eq!(client.raw_groups(), vec![0x001d, 0x0017]);
+        assert_eq!(
+            client.labels(),
+            vec!["x25519".to_string(), "secp256r1".to_string()]
+        );
+        assert_eq!(client.key_exchange_lengths(), vec![3, 2]);
+        assert_eq!(client.encoded_len().unwrap(), 15);
+        assert_eq!(
+            client.encode_to_vec().unwrap(),
+            [
+                0x00, 0x0d, 0x00, 0x1d, 0x00, 0x03, 0xaa, 0xbb, 0xcc, 0x00, 0x17, 0x00, 0x02, 0x01,
+                0x02,
+            ]
+        );
+
+        let decoded = TlsKeyShare::decode_client(client.encode_to_vec().unwrap()).unwrap();
+        assert_eq!(decoded, client);
+        assert_eq!(
+            decoded.summary(),
+            "key_share context=client count=2 bytes=13 entries=x25519:3 bytes,secp256r1:2 bytes"
+        );
+        assert!(decoded
+            .inspection_fields()
+            .contains(&("key_share_groups_raw", "0x001d,0x0017".to_string())));
+        assert!(decoded
+            .inspection_fields()
+            .contains(&("key_share_key_exchange_bytes", "3,2".to_string())));
+        assert!(decoded
+            .inspection_fields()
+            .contains(&("key_share_key_exchanges", "aa bb cc|01 02".to_string())));
+        assert_eq!(
+            decoded.entries().unwrap()[0].clone().into_key_exchange(),
+            vec![0xaa, 0xbb, 0xcc]
+        );
+    }
+
+    #[test]
+    fn tls_extension_key_share_server_and_hrr_context_forms_encode_and_decode() {
+        let server_entry = TlsKeyShareEntry::new(TlsNamedGroup::X25519, [0x11, 0x22]);
+        let server = TlsKeyShare::server(server_entry.clone());
+        assert!(!server.is_client());
+        assert!(server.is_server());
+        assert!(!server.is_hello_retry_request());
+        assert_eq!(server.entries(), None);
+        assert_eq!(server.selected_entry(), Some(&server_entry));
+        assert_eq!(server.selected_group(), Some(TlsNamedGroup::X25519));
+        assert_eq!(server.key_exchange_lengths(), vec![2]);
+        assert_eq!(
+            server.encode_to_vec().unwrap(),
+            [0x00, 0x1d, 0x00, 0x02, 0x11, 0x22]
+        );
+        assert_eq!(
+            TlsKeyShare::decode_with_context(
+                TlsKeyShareContext::server_hello(),
+                [0x00, 0x1d, 0x00, 0x02, 0x11, 0x22],
+            )
+            .unwrap(),
+            server
+        );
+        assert_eq!(
+            server.summary(),
+            "key_share context=server selected=x25519:0x001d key_exchange_bytes=2"
+        );
+        assert!(server
+            .inspection_fields()
+            .contains(&("key_share_key_exchange", "11 22".to_string())));
+
+        let hrr = TlsKeyShare::hello_retry_request(TlsNamedGroup::SECP384R1);
+        assert!(!hrr.is_client());
+        assert!(!hrr.is_server());
+        assert!(hrr.is_hello_retry_request());
+        assert_eq!(hrr.selected_entry(), None);
+        assert_eq!(hrr.selected_group(), Some(TlsNamedGroup::SECP384R1));
+        assert_eq!(hrr.key_exchange_lengths(), Vec::<usize>::new());
+        assert_eq!(hrr.encoded_len().unwrap(), 2);
+        assert_eq!(hrr.encode_to_vec().unwrap(), [0x00, 0x18]);
+        assert_eq!(
+            TlsKeyShare::decode_hello_retry_request([0x00, 0x18]).unwrap(),
+            hrr
+        );
+        assert_eq!(
+            TlsKeyShare::decode_with_context(
+                TlsKeyShareContext::hello_retry_request(),
+                [0x00, 0x18],
+            )
+            .unwrap(),
+            hrr
+        );
+        assert_eq!(
+            hrr.summary(),
+            "key_share context=hello_retry_request selected_group=secp384r1:0x0018"
+        );
+        assert!(hrr
+            .inspection_fields()
+            .contains(&("key_share_selected_group_raw", "0x0018".to_string())));
+    }
+
+    #[test]
+    fn tls_extension_key_share_converts_to_and_from_raw_extension_with_context() {
+        let entry = TlsKeyShareEntry::x25519([0xaa]);
+        let client = TlsKeyShare::client(vec![entry.clone()]);
+        let raw = client.to_raw_extension().unwrap();
+        assert_eq!(raw.extension_type(), TlsExtensionType::KEY_SHARE);
+        assert_eq!(raw.raw_type(), constants::TLS_EXTENSION_KEY_SHARE);
+        assert_eq!(
+            raw.encode_to_vec().unwrap(),
+            [0x00, 0x33, 0x00, 0x07, 0x00, 0x05, 0x00, 0x1d, 0x00, 0x01, 0xaa]
+        );
+        assert_eq!(raw.as_key_share_client().unwrap(), client);
+        assert_eq!(
+            raw.as_key_share_with_context(TlsKeyShareContext::client_hello())
+                .unwrap(),
+            client
+        );
+        assert_eq!(
+            TlsKeyShare::from_client_hello_raw_extension(&raw).unwrap(),
+            client
+        );
+        assert_eq!(TlsRawExtension::try_from(client.clone()).unwrap(), raw);
+        assert_eq!(TlsRawExtension::key_share_client(vec![entry]).unwrap(), raw);
+
+        let server = TlsKeyShare::server((TlsNamedGroup::X25519, vec![0xbb, 0xcc]));
+        let raw = server.to_raw_extension().unwrap();
+        assert_eq!(
+            raw.encode_to_vec().unwrap(),
+            [0x00, 0x33, 0x00, 0x06, 0x00, 0x1d, 0x00, 0x02, 0xbb, 0xcc]
+        );
+        assert_eq!(raw.as_key_share_server().unwrap(), server);
+        assert_eq!(
+            TlsKeyShare::from_server_hello_raw_extension(&raw).unwrap(),
+            server
+        );
+        assert_eq!(
+            TlsRawExtension::key_share_server((TlsNamedGroup::X25519, vec![0xbb, 0xcc])).unwrap(),
+            raw
+        );
+
+        let hrr = TlsKeyShare::hello_retry_request(TlsNamedGroup::SECP256R1);
+        let raw = hrr.to_raw_extension().unwrap();
+        assert_eq!(
+            raw.encode_to_vec().unwrap(),
+            [0x00, 0x33, 0x00, 0x02, 0x00, 0x17]
+        );
+        assert_eq!(raw.as_key_share_hello_retry_request().unwrap(), hrr);
+        assert_eq!(
+            TlsKeyShare::from_hello_retry_request_raw_extension(&raw).unwrap(),
+            hrr
+        );
+        assert_eq!(
+            TlsRawExtension::key_share_hello_retry_request(TlsNamedGroup::SECP256R1).unwrap(),
+            raw
+        );
+
+        assert_eq!(
+            TlsKeyShare::from_client_hello_raw_extension(&TlsRawExtension::from_raw(0xbeef, []))
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be key_share"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_key_share_preserves_unknown_groups_and_opaque_key_exchange() {
+        let entry = TlsKeyShareEntry::from_raw_group(0xbeef, vec![0x00, 0xff, 0x00, 0x42]);
+        let client = TlsKeyShare::client(vec![entry.clone()]);
+        let encoded = client.encode_to_vec().unwrap();
+        assert_eq!(
+            encoded,
+            [0x00, 0x08, 0xbe, 0xef, 0x00, 0x04, 0x00, 0xff, 0x00, 0x42]
+        );
+
+        let decoded = TlsKeyShare::decode_client(encoded).unwrap();
+        assert_eq!(decoded, client);
+        assert_eq!(decoded.raw_groups(), vec![0xbeef]);
+        assert_eq!(
+            decoded.labels(),
+            vec!["unknown named group 0xbeef".to_string()]
+        );
+        assert_eq!(
+            decoded.entries().unwrap()[0].key_exchange(),
+            &[0x00, 0xff, 0x00, 0x42]
+        );
+        assert!(decoded
+            .inspection_fields()
+            .contains(&("key_share_groups_raw", "0xbeef".to_string())));
+        assert!(decoded
+            .inspection_fields()
+            .contains(&("key_share_key_exchanges", "00 ff 00 42".to_string())));
+        assert!(entry
+            .inspection_fields()
+            .contains(&("key_share_group", "unknown named group 0xbeef".to_string())));
+
+        let hrr = TlsKeyShare::decode_hello_retry_request([0xbe, 0xef]).unwrap();
+        assert_eq!(hrr.selected_group(), Some(TlsNamedGroup::from_u16(0xbeef)));
+        assert_eq!(hrr.encode_to_vec().unwrap(), [0xbe, 0xef]);
+    }
+
+    #[test]
+    fn tls_extension_key_share_reports_structured_client_decode_errors() {
+        assert_eq!(
+            TlsKeyShare::decode_client([]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.key_share.client.length",
+                TLS_KEY_SHARE_CLIENT_SHARES_LENGTH_LEN,
+                0
+            )
+        );
+        assert_eq!(
+            TlsKeyShare::decode_client([0x00]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.key_share.client.length",
+                TLS_KEY_SHARE_CLIENT_SHARES_LENGTH_LEN,
+                1
+            )
+        );
+        assert_eq!(
+            TlsKeyShare::decode_client([0x00, 0x04, 0x00, 0x1d]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.key_share.client", 6, 4)
+        );
+        assert_eq!(
+            TlsKeyShare::decode_client([0x00, 0x01, 0xaa]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.key_share.client.group", 2, 1)
+        );
+        assert_eq!(
+            TlsKeyShare::decode_client([0x00, 0x04, 0x00, 0x1d, 0x00, 0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.key_share.client.key_exchange.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsKeyShare::decode_client([0x00, 0x05, 0x00, 0x1d, 0x00, 0x02, 0xaa]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.key_share.client.key_exchange", 6, 5)
+        );
+        assert_eq!(
+            TlsKeyShare::decode_client([0x00, 0x05, 0x00, 0x1d, 0x00, 0x01, 0xaa, 0xbb,])
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.key_share.client.length",
+                "length must match extension body"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_key_share_reports_structured_server_and_hrr_decode_errors() {
+        assert_eq!(
+            TlsKeyShare::decode_server([]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.key_share.server.group", 2, 0)
+        );
+        assert_eq!(
+            TlsKeyShare::decode_server([0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.key_share.server.group", 2, 1)
+        );
+        assert_eq!(
+            TlsKeyShare::decode_server([0x00, 0x1d, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.key_share.server.key_exchange.length", 4, 3)
+        );
+        assert_eq!(
+            TlsKeyShare::decode_server([0x00, 0x1d, 0x00, 0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.key_share.server.key_exchange.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsKeyShare::decode_server([0x00, 0x1d, 0x00, 0x02, 0xaa]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.key_share.server.key_exchange", 6, 5)
+        );
+        assert_eq!(
+            TlsKeyShare::decode_server([0x00, 0x1d, 0x00, 0x01, 0xaa, 0xbb]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.key_share.server.length",
+                "length must match extension body"
+            )
+        );
+
+        assert_eq!(
+            TlsKeyShare::decode_hello_retry_request([]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.key_share.hello_retry_request.selected_group",
+                2,
+                0
+            )
+        );
+        assert_eq!(
+            TlsKeyShare::decode_hello_retry_request([0x00]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.key_share.hello_retry_request.selected_group",
+                2,
+                1
+            )
+        );
+        assert_eq!(
+            TlsKeyShare::decode_hello_retry_request([0x00, 0x1d, 0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.key_share.hello_retry_request.length",
+                "length must be exactly two bytes"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_key_share_reports_structured_encode_errors() {
+        assert_eq!(
+            TlsKeyShareEntry::x25519(Vec::<u8>::new())
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.key_share.entry.key_exchange.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsKeyShare::client(vec![TlsKeyShareEntry::x25519(Vec::<u8>::new())])
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.key_share.client.key_exchange.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsKeyShare::server(TlsKeyShareEntry::x25519(Vec::<u8>::new()))
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.key_share.server.key_exchange.length",
+                "length must be at least one byte"
+            )
+        );
+
+        let oversized_key_exchange =
+            TlsKeyShare::server(TlsKeyShareEntry::x25519(vec![0; u16::MAX as usize + 1]));
+        assert_eq!(
+            oversized_key_exchange.encode_to_vec().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.key_share.server.key_exchange.length",
+                "length must fit in two bytes"
+            )
+        );
+
+        let oversized_list =
+            TlsKeyShare::client(vec![TlsKeyShareEntry::x25519(vec![0xaa]); 13_108]);
+        assert_eq!(
+            oversized_list.encode_to_vec().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.key_share.client.length",
+                "length must fit in two bytes"
             )
         );
     }
