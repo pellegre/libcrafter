@@ -8,7 +8,6 @@ summary: >-
   duplicate extension preservation.
 
 layers:
-  - tcp
   - tls
 directions:
   - backend_to_libcrafter

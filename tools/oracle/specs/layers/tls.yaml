@@ -285,14 +285,18 @@ coverage_cases:
 
 backend_support:
   scapy:
-    status: planned
+    status: partial
     native_layers:
       - TLS
       - TLSClientHello
       - TLSServerHello
       - TLS_Ext_Unknown
     notes:
-      - Planned Scapy backend support should materialize TLS records and preserve encrypted or unknown payload bytes when native TLS helpers are unavailable.
+      - Generator planning can emit deterministic TLS record, handshake, and
+        extension fields before the Scapy backend adapter is complete. Actual
+        Scapy byte materialization remains adapter-gated and should preserve
+        encrypted or unknown payload bytes when native TLS helpers are
+        unavailable.
   wireshark:
     status: planned
     native_layers:

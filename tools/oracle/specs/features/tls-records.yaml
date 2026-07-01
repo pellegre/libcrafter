@@ -8,7 +8,6 @@ summary: >-
   exclusions.
 
 layers:
-  - tcp
   - tls
 directions:
   - backend_to_libcrafter
