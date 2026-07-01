@@ -201,6 +201,7 @@ DHCPV6_RELAY_PROFILE = "dhcpv6-relay"
 DHCPV6_ADVANCED_PROFILE = "dhcpv6-advanced"
 SSDP_SMOKE_PROFILE = "ssdp-smoke"
 MDNS_SMOKE_PROFILE = "mdns-smoke"
+TLS_SMOKE_PROFILE = "tls-smoke"
 
 # Legacy default count used by the smoke profile and any profile without an
 # explicit default; preserves the pre-behavior-suite CLI behavior.
@@ -455,6 +456,9 @@ SSDP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
 MDNS_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     case.name for case in _registry_cases() if case.metadata.get("protocol") == "mdns"
 )
+TLS_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name for case in _registry_cases() if case.metadata.get("protocol") == "tls"
+)
 
 # Profiles that select an explicit ordered case subset. A profile not listed
 # here selects the full catalog. ``smoke`` is pinned to the historical
@@ -482,6 +486,7 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     DHCPV6_ADVANCED_PROFILE: DHCPV6_ADVANCED_PROFILE_CASE_NAMES,
     SSDP_SMOKE_PROFILE: SSDP_SMOKE_PROFILE_CASE_NAMES,
     MDNS_SMOKE_PROFILE: MDNS_SMOKE_PROFILE_CASE_NAMES,
+    TLS_SMOKE_PROFILE: TLS_SMOKE_PROFILE_CASE_NAMES,
 }
 
 # Per-profile default counts used when no explicit ``--count`` is supplied. The
@@ -502,6 +507,7 @@ _PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     DHCPV6_ADVANCED_PROFILE: len(DHCPV6_ADVANCED_PROFILE_CASE_NAMES),
     SSDP_SMOKE_PROFILE: len(SSDP_SMOKE_PROFILE_CASE_NAMES),
     MDNS_SMOKE_PROFILE: len(MDNS_SMOKE_PROFILE_CASE_NAMES),
+    TLS_SMOKE_PROFILE: len(TLS_SMOKE_PROFILE_CASE_NAMES),
 }
 
 
