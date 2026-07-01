@@ -10,7 +10,78 @@ use crate::packet::{Packet, Raw};
 use crate::registry::ProtocolRegistry;
 use crate::{CrafterError, Result};
 
-use super::{Tls, TlsRecord};
+use super::constants::{
+    TLS_CONTENT_TYPE_ALERT, TLS_CONTENT_TYPE_APPLICATION_DATA, TLS_CONTENT_TYPE_CHANGE_CIPHER_SPEC,
+    TLS_CONTENT_TYPE_HANDSHAKE, TLS_CONTENT_TYPE_HEARTBEAT, TLS_VERSION_1_0, TLS_VERSION_1_1,
+    TLS_VERSION_1_2, TLS_VERSION_SSL_3_0,
+};
+use super::{Tls, TlsRecord, TLS_RECORD_HEADER_LEN};
+
+/// Return true when a TCP payload is plausible TLS-over-TCP record data.
+///
+/// The gate is deliberately narrower than the raw-preserving TLS record model:
+/// it recognizes selected TLS-over-TCP record content types, SSLv3/TLS legacy
+/// record-version values, and at least one complete record that this crate can
+/// decode. After that valid anchor, a trailing partial record header or
+/// fragment is allowed so segmented streams can still route to TLS with a raw
+/// tail.
+pub(crate) fn looks_like_tls_payload(payload: &[u8]) -> bool {
+    let mut remaining = payload;
+    let mut complete_records = 0usize;
+
+    while !remaining.is_empty() {
+        if remaining.len() < TLS_RECORD_HEADER_LEN {
+            return complete_records > 0;
+        }
+
+        if !looks_like_tls_record_header(remaining) {
+            return false;
+        }
+
+        let fragment_len = u16::from_be_bytes([remaining[3], remaining[4]]) as usize;
+        let required = TLS_RECORD_HEADER_LEN + fragment_len;
+        if remaining.len() < required {
+            return complete_records > 0;
+        }
+
+        match TlsRecord::decode_with_consumed(remaining) {
+            Ok((_record, consumed)) if consumed == required => {
+                complete_records += 1;
+                remaining = &remaining[consumed..];
+            }
+            _ => return false,
+        }
+    }
+
+    complete_records > 0
+}
+
+fn looks_like_tls_record_header(bytes: &[u8]) -> bool {
+    if bytes.len() < TLS_RECORD_HEADER_LEN {
+        return false;
+    }
+
+    looks_like_tls_record_content_type(bytes[0])
+        && looks_like_tls_legacy_record_version(u16::from_be_bytes([bytes[1], bytes[2]]))
+}
+
+fn looks_like_tls_record_content_type(content_type: u8) -> bool {
+    matches!(
+        content_type,
+        TLS_CONTENT_TYPE_CHANGE_CIPHER_SPEC
+            | TLS_CONTENT_TYPE_ALERT
+            | TLS_CONTENT_TYPE_HANDSHAKE
+            | TLS_CONTENT_TYPE_APPLICATION_DATA
+            | TLS_CONTENT_TYPE_HEARTBEAT
+    )
+}
+
+fn looks_like_tls_legacy_record_version(version: u16) -> bool {
+    matches!(
+        version,
+        TLS_VERSION_SSL_3_0 | TLS_VERSION_1_0 | TLS_VERSION_1_1 | TLS_VERSION_1_2
+    )
+}
 
 /// Decode one or more complete TLS records from a TCP payload into `packet`.
 ///
@@ -70,10 +141,92 @@ fn decode_tls_payload_from(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
 mod tests {
     use super::*;
     use crate::packet::{Packet, Raw};
+    use crate::protocols::tls::constants::TLS_COMMON_TCP_PORTS;
     use crate::protocols::tls::{
-        TlsClientHello, TlsContentType, TlsHandshake, TlsHandshakeType, TlsRecordBody, TlsVersion,
-        TLS_RECORD_HEADER_LEN,
+        TlsClientHello, TlsContentType, TlsHandshake, TlsHandshakeType, TlsHeartbeat,
+        TlsRecordBody, TlsVersion, TLS_HEARTBEAT_MIN_PADDING_LEN, TLS_RECORD_HEADER_LEN,
     };
+
+    fn tls_registry_gate_client_hello_payload() -> Result<Vec<u8>> {
+        let client_hello = TlsClientHello::new()
+            .with_raw_cipher_suites([0x1301])
+            .without_extensions();
+        let client_hello_message =
+            TlsHandshake::from_client_hello(client_hello)?.encode_to_vec()?;
+        let record = TlsRecord::handshake(client_hello_message);
+        record.encode_to_vec()
+    }
+
+    #[test]
+    fn tls_registry_gate_accepts_complete_tls_records() -> Result<()> {
+        assert!(looks_like_tls_payload(
+            &tls_registry_gate_client_hello_payload()?
+        ));
+        assert!(looks_like_tls_payload(
+            &TlsRecord::alert([0x01, 0x00]).encode_to_vec()?
+        ));
+        assert!(looks_like_tls_payload(
+            &TlsRecord::change_cipher_spec([0x01]).encode_to_vec()?
+        ));
+        assert!(looks_like_tls_payload(
+            &TlsRecord::application_data(b"abc").encode_to_vec()?
+        ));
+
+        let heartbeat = TlsHeartbeat::request([0xaa, 0xbb], [0x55; TLS_HEARTBEAT_MIN_PADDING_LEN]);
+        assert!(looks_like_tls_payload(
+            &TlsRecord::from_heartbeat(heartbeat)?.encode_to_vec()?
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_registry_gate_accepts_partial_tail_only_after_complete_anchor() -> Result<()> {
+        let mut payload = TlsRecord::application_data(b"abc").encode_to_vec()?;
+        payload.extend_from_slice(&[0x16, 0x03, 0x03, 0x00, 0x04, 0xde]);
+        assert!(looks_like_tls_payload(&payload));
+
+        let mut payload = TlsRecord::application_data(b"abc").encode_to_vec()?;
+        payload.extend_from_slice(&[0x16, 0x03]);
+        assert!(looks_like_tls_payload(&payload));
+
+        assert!(!looks_like_tls_payload(&[0x16, 0x03, 0x03, 0x00]));
+        assert!(!looks_like_tls_payload(&[
+            0x16, 0x03, 0x03, 0x00, 0x04, 0xde
+        ]));
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_registry_gate_rejects_non_tls_headers_and_malformed_first_records() {
+        assert!(!looks_like_tls_payload(b""));
+        assert!(!looks_like_tls_payload(b"GET / HTTP/1.1\r\n"));
+        assert!(!looks_like_tls_payload(&[
+            0xfe, 0x03, 0x03, 0x00, 0x02, 0xde, 0xad
+        ]));
+        assert!(!looks_like_tls_payload(&[0x16, 0xfe, 0xfd, 0x00, 0x00]));
+        assert!(!looks_like_tls_payload(&[0x14, 0x03, 0x03, 0x00, 0x00]));
+    }
+
+    #[test]
+    fn tls_registry_gate_rejects_non_tls_payloads_on_tls_ports() {
+        let non_tls_payloads: &[&[u8]] = &[
+            b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n",
+            b"SSH-2.0-OpenSSH_9.6\r\n",
+            &[0x10, 0x10, 0x00, 0x04, b'M', b'Q', b'T', b'T'],
+            &[0x16, 0xfe, 0xfd, 0x00, 0x00],
+        ];
+
+        for port in TLS_COMMON_TCP_PORTS {
+            for payload in non_tls_payloads {
+                assert!(
+                    !looks_like_tls_payload(payload),
+                    "payload on TCP/{port} should not pass TLS gate: {payload:02x?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn tls_multi_record_decode_appends_ordered_tls_layers() -> Result<()> {
