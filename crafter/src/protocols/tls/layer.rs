@@ -167,6 +167,16 @@ impl Tls {
             .join(", ");
         format!("[{labels}]")
     }
+
+    fn record_summary(&self) -> String {
+        let records = self
+            .records
+            .iter()
+            .map(TlsRecord::summary)
+            .collect::<Vec<_>>()
+            .join("; ");
+        format!("[{records}]")
+    }
 }
 
 impl From<TlsRecord> for Tls {
@@ -192,10 +202,11 @@ impl Layer for Tls {
             .map(|len| len.to_string())
             .unwrap_or_else(|| "overflow".to_string());
         format!(
-            "TLS records={} bytes={} types={}",
+            "TLS records={} bytes={} types={} details={}",
             self.records.len(),
             bytes,
-            self.content_type_summary()
+            self.content_type_summary(),
+            self.record_summary()
         )
     }
 
@@ -209,6 +220,7 @@ impl Layer for Tls {
                     .unwrap_or_else(|| "overflow".to_string()),
             ),
             ("content_types", self.content_type_summary()),
+            ("details", self.record_summary()),
         ];
 
         for record in &self.records {
@@ -253,7 +265,10 @@ mod tests {
             &[0x16, 0x03, 0x03, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00]
         );
         assert_eq!(tls.encoded_len(), 9);
-        assert_eq!(tls.summary(), "TLS records=1 bytes=9 types=[handshake]");
+        assert_eq!(
+            tls.summary(),
+            "TLS records=1 bytes=9 types=[handshake] details=[record content_type=handshake legacy_record_version=TLS 1.2 declared_length=auto fragment_bytes=4 body=opaque bytes=4]"
+        );
         assert_eq!(packet.layer::<Tls>().unwrap().record_count(), 1);
         Ok(())
     }
