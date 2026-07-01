@@ -1110,6 +1110,64 @@ impl TlsHandshakeBody {
         self.body().to_vec()
     }
 
+    /// Stable one-line summary for the selected handshake body hook.
+    pub fn summary(&self) -> String {
+        match self {
+            Self::ClientHello(body) => body
+                .client_hello()
+                .map(TlsClientHello::summary)
+                .unwrap_or_else(|| format!("client_hello raw_body_bytes={}", body.body_len())),
+            Self::ServerHello(body) => body
+                .server_hello()
+                .map(TlsServerHello::summary)
+                .unwrap_or_else(|| format!("server_hello raw_body_bytes={}", body.body_len())),
+            Self::NewSessionTicket(body) => body
+                .new_session_ticket()
+                .map(TlsNewSessionTicket::summary)
+                .unwrap_or_else(|| {
+                    format!("new_session_ticket raw_body_bytes={}", body.body_len())
+                }),
+            Self::EndOfEarlyData(body) => body
+                .end_of_early_data()
+                .map(TlsEndOfEarlyData::summary)
+                .unwrap_or_else(|| format!("end_of_early_data raw_body_bytes={}", body.body_len())),
+            Self::EncryptedExtensions(body) => body
+                .encrypted_extensions()
+                .map(TlsEncryptedExtensions::summary)
+                .unwrap_or_else(|| {
+                    format!("encrypted_extensions raw_body_bytes={}", body.body_len())
+                }),
+            Self::Certificate(body) => body
+                .certificate()
+                .map(TlsCertificate::summary)
+                .unwrap_or_else(|| format!("certificate raw_body_bytes={}", body.body_len())),
+            Self::CertificateRequest(body) => body
+                .certificate_request()
+                .map(TlsCertificateRequest::summary)
+                .unwrap_or_else(|| {
+                    format!("certificate_request raw_body_bytes={}", body.body_len())
+                }),
+            Self::CertificateVerify(body) => body
+                .certificate_verify()
+                .map(TlsCertificateVerify::summary)
+                .unwrap_or_else(|| {
+                    format!("certificate_verify raw_body_bytes={}", body.body_len())
+                }),
+            Self::Finished(body) => body
+                .finished()
+                .map(TlsFinished::summary)
+                .unwrap_or_else(|| format!("finished raw_body_bytes={}", body.body_len())),
+            Self::KeyUpdate(body) => body
+                .key_update()
+                .map(TlsKeyUpdate::summary)
+                .unwrap_or_else(|| format!("key_update raw_body_bytes={}", body.body_len())),
+            Self::CompressedCertificate(body) => {
+                format!("compressed_certificate raw_body_bytes={}", body.len())
+            }
+            Self::Opaque(body) => format!("opaque raw_body_bytes={}", body.len()),
+        }
+    }
+
     fn label(&self) -> &'static str {
         match self {
             Self::ClientHello(_) => "client_hello",
@@ -1583,7 +1641,7 @@ impl TlsHandshake {
             self.handshake_type().label(),
             self.header.length_label(),
             self.body_len(),
-            self.body.label()
+            self.body.summary()
         )
     }
 
@@ -1591,6 +1649,7 @@ impl TlsHandshake {
     pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
         let mut fields = self.header.inspection_fields();
         fields.push(("body", self.body.label().to_string()));
+        fields.push(("body_summary", self.body.summary()));
         fields.push(("body_bytes", self.body_len().to_string()));
         fields.push((
             "message_bytes",
@@ -5412,7 +5471,7 @@ mod tests {
         );
         assert_eq!(
             message.summary(),
-            "handshake handshake_type=unassigned handshake type 0x12 declared_length=3 body_bytes=3 body=opaque"
+            "handshake handshake_type=unassigned handshake type 0x12 declared_length=3 body_bytes=3 body=opaque raw_body_bytes=3"
         );
 
         let fields = message.inspection_fields();
@@ -5455,7 +5514,7 @@ mod tests {
         );
         assert_eq!(
             built.summary(),
-            "handshake handshake_type=client_hello declared_length=auto body_bytes=2 body=client_hello"
+            "handshake handshake_type=client_hello declared_length=auto body_bytes=2 body=client_hello raw_body_bytes=2"
         );
 
         Ok(())

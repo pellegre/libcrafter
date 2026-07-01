@@ -262,6 +262,31 @@ impl TlsHandshakeRecordBody {
     pub fn encode(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.fragment);
     }
+
+    /// Stable one-line summary of complete messages and any trailing partial bytes.
+    pub fn summary(&self) -> String {
+        let types = self
+            .messages
+            .iter()
+            .map(|message| message.handshake_type().label())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let message_summaries = self
+            .messages
+            .iter()
+            .map(TlsHandshake::summary)
+            .collect::<Vec<_>>()
+            .join("; ");
+
+        format!(
+            "handshake messages={} raw_tail_bytes={} fragment_bytes={} types=[{}] details=[{}]",
+            self.messages.len(),
+            self.raw_tail.len(),
+            self.fragment.len(),
+            types,
+            message_summaries
+        )
+    }
 }
 
 /// ChangeCipherSpec record body bytes plus an optional decoded view.
@@ -326,6 +351,13 @@ impl TlsChangeCipherSpecRecordBody {
     /// Append the exact fragment bytes.
     pub fn encode(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.fragment);
+    }
+
+    /// Stable one-line summary of the ChangeCipherSpec body.
+    pub fn summary(&self) -> String {
+        self.change_cipher_spec
+            .map(TlsChangeCipherSpec::summary)
+            .unwrap_or_else(|| format!("change_cipher_spec raw_bytes={}", self.fragment.len()))
     }
 }
 
@@ -489,6 +521,14 @@ impl TlsHeartbeatRecordBody {
     /// Append the exact fragment bytes.
     pub fn encode(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.fragment);
+    }
+
+    /// Stable one-line summary of the heartbeat body.
+    pub fn summary(&self) -> String {
+        self.heartbeat
+            .as_ref()
+            .map(TlsHeartbeat::summary)
+            .unwrap_or_else(|| format!("heartbeat raw_bytes={}", self.fragment.len()))
     }
 }
 
@@ -767,6 +807,17 @@ impl TlsRecordBody {
     /// Return the preserved fragment bytes as a new vector.
     pub fn encode_to_vec(&self) -> Vec<u8> {
         self.fragment().to_vec()
+    }
+
+    /// Stable one-line summary of the selected record body.
+    pub fn summary(&self) -> String {
+        match self {
+            Self::ChangeCipherSpec(change_cipher_spec) => change_cipher_spec.summary(),
+            Self::ApplicationData(application_data) => application_data.summary(),
+            Self::Heartbeat(heartbeat) => heartbeat.summary(),
+            Self::Handshake(handshake) => handshake.summary(),
+            Self::Opaque(fragment) => format!("opaque bytes={}", fragment.len()),
+        }
     }
 
     fn label(&self) -> &'static str {
@@ -1184,7 +1235,7 @@ impl TlsRecord {
             self.legacy_record_version().label(),
             self.header.length_label(),
             self.fragment_len(),
-            self.body.label()
+            self.body.summary()
         )
     }
 
@@ -1192,6 +1243,7 @@ impl TlsRecord {
     pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
         let mut fields = self.header.inspection_fields();
         fields.push(("body", self.body.label().to_string()));
+        fields.push(("body_summary", self.body.summary()));
         fields.push(("fragment_bytes", self.fragment_len().to_string()));
         fields.push((
             "record_bytes",
@@ -2037,7 +2089,7 @@ mod tests {
         );
         assert_eq!(
             record.summary(),
-            "record content_type=unassigned content type 0xfe legacy_record_version=unknown protocol version 0x4242 declared_length=2 fragment_bytes=2 body=opaque"
+            "record content_type=unassigned content type 0xfe legacy_record_version=unknown protocol version 0x4242 declared_length=2 fragment_bytes=2 body=opaque bytes=2"
         );
 
         let fields = record.inspection_fields();
