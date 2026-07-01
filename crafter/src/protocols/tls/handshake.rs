@@ -8,7 +8,7 @@ use core::fmt;
 
 use super::cipher_suite::{TlsCipherSuite, TlsCipherSuiteList, TLS_CIPHER_SUITE_LEN};
 use super::constants::{self, TlsCodepointStatus};
-use super::extension::{TlsRawExtension, TLS_EXTENSION_HEADER_LEN};
+use super::extension::{TlsExtensionListContext, TlsExtensions, TlsRawExtension};
 use super::version::TlsVersion;
 use crate::field::{Field, FieldState};
 use crate::protocols::transport::common::hex_bytes;
@@ -1533,17 +1533,8 @@ impl TlsClientHello {
         )?;
 
         if self.extensions_present {
-            let body_len = self.extensions_body_len()?;
-            let body_len = u16::try_from(body_len).map_err(|_| {
-                CrafterError::invalid_field_value(
-                    "tls.client_hello.extensions.length",
-                    "length must fit in two bytes",
-                )
-            })?;
-            out.extend_from_slice(&body_len.to_be_bytes());
-            for extension in &self.extensions {
-                extension.encode(out)?;
-            }
+            TlsExtensions::new(self.extensions.clone())
+                .encode_with_context(TlsExtensionListContext::client_hello(), out)?;
         }
 
         Ok(())
@@ -1617,7 +1608,10 @@ impl TlsClientHello {
         let (extensions, extensions_present) = if cursor == bytes.len() {
             (Vec::new(), false)
         } else {
-            (decode_extension_list(bytes, &mut cursor)?, true)
+            (
+                decode_extension_list(bytes, &mut cursor, TlsExtensionListContext::client_hello())?,
+                true,
+            )
         };
 
         Ok((
@@ -1671,23 +1665,8 @@ impl TlsClientHello {
     }
 
     fn extensions_body_len(&self) -> Result<usize> {
-        let mut len = 0usize;
-        for extension in &self.extensions {
-            len = checked_add_len(
-                len,
-                extension.encoded_len()?,
-                "tls.client_hello.extensions.length",
-            )?;
-        }
-
-        if len > u16::MAX as usize {
-            return Err(CrafterError::invalid_field_value(
-                "tls.client_hello.extensions.length",
-                "length must fit in two bytes",
-            ));
-        }
-
-        Ok(len)
+        TlsExtensions::new(self.extensions.clone())
+            .byte_len_with_context(TlsExtensionListContext::client_hello())
     }
 }
 
@@ -1915,17 +1894,8 @@ impl TlsServerHello {
         self.cipher_suite.encode(out);
         out.push(self.compression_method);
 
-        let body_len = self.extensions_body_len()?;
-        let body_len = u16::try_from(body_len).map_err(|_| {
-            CrafterError::invalid_field_value(
-                "tls.server_hello.extensions.length",
-                "length must fit in two bytes",
-            )
-        })?;
-        out.extend_from_slice(&body_len.to_be_bytes());
-        for extension in &self.extensions {
-            extension.encode(out)?;
-        }
+        TlsExtensions::new(self.extensions.clone())
+            .encode_with_context(TlsExtensionListContext::server_hello(), out)?;
 
         Ok(())
     }
@@ -2000,7 +1970,8 @@ impl TlsServerHello {
 
         let compression_method =
             take_bytes(bytes, &mut cursor, 1, "tls.server_hello.compression_method")?[0];
-        let extensions = decode_server_hello_extension_list(bytes, &mut cursor)?;
+        let extensions =
+            decode_extension_list(bytes, &mut cursor, TlsExtensionListContext::server_hello())?;
 
         Ok((
             Self {
@@ -2056,23 +2027,8 @@ impl TlsServerHello {
     }
 
     fn extensions_body_len(&self) -> Result<usize> {
-        let mut len = 0usize;
-        for extension in &self.extensions {
-            len = checked_add_len(
-                len,
-                extension.encoded_len()?,
-                "tls.server_hello.extensions.length",
-            )?;
-        }
-
-        if len > u16::MAX as usize {
-            return Err(CrafterError::invalid_field_value(
-                "tls.server_hello.extensions.length",
-                "length must fit in two bytes",
-            ));
-        }
-
-        Ok(len)
+        TlsExtensions::new(self.extensions.clone())
+            .byte_len_with_context(TlsExtensionListContext::server_hello())
     }
 }
 
@@ -2280,84 +2236,22 @@ fn decode_cipher_suite_list(bytes: &[u8], cursor: &mut usize) -> Result<TlsCiphe
     Ok(TlsCipherSuiteList::new(suites))
 }
 
-fn decode_extension_list(bytes: &[u8], cursor: &mut usize) -> Result<Vec<TlsRawExtension>> {
-    let length = take_bytes(bytes, cursor, 2, "tls.client_hello.extensions.length")?;
-    let byte_len = u16::from_be_bytes([length[0], length[1]]) as usize;
-    let body = take_bytes(bytes, cursor, byte_len, "tls.client_hello.extensions")?;
-    let mut remaining = body;
-    let mut extensions = Vec::new();
-
-    while !remaining.is_empty() {
-        if remaining.len() < TLS_EXTENSION_HEADER_LEN {
-            return Err(CrafterError::buffer_too_short(
-                "tls.client_hello.extension",
-                TLS_EXTENSION_HEADER_LEN,
-                remaining.len(),
-            ));
-        }
-
-        let (extension, tail) = TlsRawExtension::decode_prefix(remaining)?;
-        if tail.len() == remaining.len() {
-            return Err(CrafterError::invalid_field_value(
-                "tls.client_hello.extension",
-                "decoded extension consumed no bytes",
-            ));
-        }
-        extensions.push(extension);
-        remaining = tail;
-    }
-
-    Ok(extensions)
-}
-
-fn decode_server_hello_extension_list(
+fn decode_extension_list(
     bytes: &[u8],
     cursor: &mut usize,
+    context: TlsExtensionListContext,
 ) -> Result<Vec<TlsRawExtension>> {
-    let length = take_bytes(bytes, cursor, 2, "tls.server_hello.extensions.length")?;
-    let byte_len = u16::from_be_bytes([length[0], length[1]]) as usize;
-    let body = take_bytes(bytes, cursor, byte_len, "tls.server_hello.extensions")?;
-    let mut extension_cursor = 0usize;
-    let mut extensions = Vec::new();
-
-    while extension_cursor < body.len() {
-        let remaining = body.len() - extension_cursor;
-        if remaining < TLS_EXTENSION_HEADER_LEN {
-            return Err(CrafterError::buffer_too_short(
-                "tls.server_hello.extension",
-                TLS_EXTENSION_HEADER_LEN,
-                remaining,
-            ));
-        }
-
-        let extension_type = {
-            let raw_type = take_bytes(
-                body,
-                &mut extension_cursor,
-                2,
-                "tls.server_hello.extension.type",
-            )?;
-            u16::from_be_bytes([raw_type[0], raw_type[1]])
-        };
-        let body_len = {
-            let raw_len = take_bytes(
-                body,
-                &mut extension_cursor,
-                2,
-                "tls.server_hello.extension.length",
-            )?;
-            u16::from_be_bytes([raw_len[0], raw_len[1]]) as usize
-        };
-        let extension_body = take_bytes(
-            body,
-            &mut extension_cursor,
-            body_len,
-            "tls.server_hello.extension.body",
-        )?;
-        extensions.push(TlsRawExtension::from_raw(extension_type, extension_body));
-    }
-
-    Ok(extensions)
+    let start = *cursor;
+    let remaining = bytes
+        .get(start..)
+        .ok_or_else(|| CrafterError::buffer_too_short(context.list(), start, bytes.len()))?;
+    let (extensions, _) = TlsExtensions::decode_prefix_with_context(context, remaining)?;
+    *cursor = start
+        .checked_add(extensions.encoded_len_with_context(context)?)
+        .ok_or_else(|| {
+            CrafterError::invalid_field_value(context.list_length(), "cursor overflow")
+        })?;
+    Ok(extensions.into_vec())
 }
 
 #[cfg(test)]
@@ -2734,11 +2628,7 @@ mod tests {
         ]);
         assert_eq!(
             TlsClientHello::decode(&truncated_extensions_len).unwrap_err(),
-            CrafterError::buffer_too_short(
-                "tls.client_hello.extensions.length",
-                truncated_extensions_len.len() + 1,
-                truncated_extensions_len.len()
-            )
+            CrafterError::buffer_too_short("tls.client_hello.extensions.length", 2, 1)
         );
     }
 
@@ -2862,11 +2752,7 @@ mod tests {
         ]);
         assert_eq!(
             TlsServerHello::decode(&missing_extensions_len).unwrap_err(),
-            CrafterError::buffer_too_short(
-                "tls.server_hello.extensions.length",
-                missing_extensions_len.len() + 2,
-                missing_extensions_len.len()
-            )
+            CrafterError::buffer_too_short("tls.server_hello.extensions.length", 2, 0)
         );
 
         let mut truncated_extension = missing_extensions_len;
@@ -2880,6 +2766,48 @@ mod tests {
             TlsServerHello::decode(&truncated_extension).unwrap_err(),
             CrafterError::buffer_too_short("tls.server_hello.extension.body", 6, 5)
         );
+    }
+
+    #[test]
+    fn tls_extensions_client_and_server_hello_decode_use_reusable_raw_list_codec() -> Result<()> {
+        let client = TlsClientHello::new()
+            .with_random([0x31; TLS_CLIENT_HELLO_RANDOM_LEN])
+            .with_raw_cipher_suites([0x1301])
+            .with_null_compression()
+            .with_extensions(vec![
+                TlsRawExtension::from_raw(0xbeef, [0xde, 0xad]),
+                TlsRawExtension::from_raw(0xbeef, [0xfa, 0xce]),
+            ]);
+        let client_encoded = client.encode_to_vec()?;
+        let client_decoded = TlsClientHello::decode(&client_encoded)?;
+
+        assert!(client_decoded.extensions_present());
+        assert_eq!(client_decoded.extensions().len(), 2);
+        assert_eq!(client_decoded.extensions()[0].raw_type(), 0xbeef);
+        assert_eq!(client_decoded.extensions()[0].body(), &[0xde, 0xad]);
+        assert_eq!(client_decoded.extensions()[1].raw_type(), 0xbeef);
+        assert_eq!(client_decoded.extensions()[1].body(), &[0xfa, 0xce]);
+        assert_eq!(client_decoded.encode_to_vec()?, client_encoded);
+
+        let server = TlsServerHello::new()
+            .with_random([0x41; TLS_SERVER_HELLO_RANDOM_LEN])
+            .with_raw_cipher_suite(0x1301)
+            .with_null_compression()
+            .with_extensions(vec![
+                TlsRawExtension::from_raw(0x002b, [0x03, 0x04]),
+                TlsRawExtension::from_raw(0xbeef, [0xaa]),
+            ]);
+        let server_encoded = server.encode_to_vec()?;
+        let server_decoded = TlsServerHello::decode(&server_encoded)?;
+
+        assert_eq!(server_decoded.extensions().len(), 2);
+        assert_eq!(server_decoded.extensions()[0].raw_type(), 0x002b);
+        assert_eq!(server_decoded.extensions()[0].body(), &[0x03, 0x04]);
+        assert_eq!(server_decoded.extensions()[1].raw_type(), 0xbeef);
+        assert_eq!(server_decoded.extensions()[1].body(), &[0xaa]);
+        assert_eq!(server_decoded.encode_to_vec()?, server_encoded);
+
+        Ok(())
     }
 
     #[test]

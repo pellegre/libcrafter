@@ -22,7 +22,8 @@ pub use alert::{TlsAlert, TlsAlertDescription, TlsAlertLevel, TLS_ALERT_LEN};
 pub use cipher_suite::{TlsCipherSuite, TlsCipherSuiteList};
 pub use content_type::TlsContentType;
 pub use extension::{
-    TlsExtensionType, TlsRawExtension, TLS_EXTENSION_HEADER_LEN, TLS_EXTENSION_LENGTH_LEN,
+    TlsExtensionListContext, TlsExtensionType, TlsExtensions, TlsRawExtension,
+    TLS_EXTENSION_HEADER_LEN, TLS_EXTENSION_LENGTH_LEN, TLS_EXTENSION_LIST_LENGTH_LEN,
     TLS_EXTENSION_TYPE_LEN,
 };
 pub use handshake::{
