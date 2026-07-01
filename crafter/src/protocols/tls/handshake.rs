@@ -8,7 +8,10 @@ use core::fmt;
 
 use super::cipher_suite::{TlsCipherSuite, TlsCipherSuiteList, TLS_CIPHER_SUITE_LEN};
 use super::constants::{self, TlsCodepointStatus};
-use super::extension::{TlsExtensionListContext, TlsExtensions, TlsRawExtension};
+use super::extension::{
+    TlsCertificateAuthorities, TlsExtensionListContext, TlsExtensions, TlsRawExtension,
+    TlsSignatureAlgorithms,
+};
 use super::version::TlsVersion;
 use crate::field::{Field, FieldState};
 use crate::protocols::transport::common::hex_bytes;
@@ -38,12 +41,34 @@ pub const TLS_SERVER_HELLO_FIXED_LEN: usize =
     TLS_SERVER_HELLO_LEGACY_VERSION_LEN + TLS_SERVER_HELLO_RANDOM_LEN;
 /// TLS legacy null compression method byte.
 pub const TLS_COMPRESSION_METHOD_NULL: u8 = 0x00;
+/// TLS 1.2 CertificateRequest ClientCertificateType vector length field width in bytes.
+pub const TLS_CERTIFICATE_REQUEST_TYPES_LENGTH_LEN: usize = 1;
 /// TLS Certificate request-context length field width in bytes.
 pub const TLS_CERTIFICATE_REQUEST_CONTEXT_LENGTH_LEN: usize = 1;
 /// TLS Certificate certificate-list length field width in bytes.
 pub const TLS_CERTIFICATE_LIST_LENGTH_LEN: usize = 3;
 /// TLS CertificateEntry certificate-data length field width in bytes.
 pub const TLS_CERTIFICATE_ENTRY_LENGTH_LEN: usize = 3;
+/// TLS ClientCertificateType `rsa_sign`.
+pub const TLS_CLIENT_CERTIFICATE_TYPE_RSA_SIGN: u8 = 1;
+/// TLS ClientCertificateType `dss_sign`.
+pub const TLS_CLIENT_CERTIFICATE_TYPE_DSS_SIGN: u8 = 2;
+/// TLS ClientCertificateType `rsa_fixed_dh`.
+pub const TLS_CLIENT_CERTIFICATE_TYPE_RSA_FIXED_DH: u8 = 3;
+/// TLS ClientCertificateType `dss_fixed_dh`.
+pub const TLS_CLIENT_CERTIFICATE_TYPE_DSS_FIXED_DH: u8 = 4;
+/// TLS ClientCertificateType `rsa_ephemeral_dh_RESERVED`.
+pub const TLS_CLIENT_CERTIFICATE_TYPE_RSA_EPHEMERAL_DH_RESERVED: u8 = 5;
+/// TLS ClientCertificateType `dss_ephemeral_dh_RESERVED`.
+pub const TLS_CLIENT_CERTIFICATE_TYPE_DSS_EPHEMERAL_DH_RESERVED: u8 = 6;
+/// TLS ClientCertificateType `fortezza_dms_RESERVED`.
+pub const TLS_CLIENT_CERTIFICATE_TYPE_FORTEZZA_DMS_RESERVED: u8 = 20;
+/// TLS ClientCertificateType `ecdsa_sign`.
+pub const TLS_CLIENT_CERTIFICATE_TYPE_ECDSA_SIGN: u8 = 64;
+/// TLS ClientCertificateType `rsa_fixed_ecdh`.
+pub const TLS_CLIENT_CERTIFICATE_TYPE_RSA_FIXED_ECDH: u8 = 65;
+/// TLS ClientCertificateType `ecdsa_fixed_ecdh`.
+pub const TLS_CLIENT_CERTIFICATE_TYPE_ECDSA_FIXED_ECDH: u8 = 66;
 
 /// A raw-preserving TLS `HandshakeType` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -609,8 +634,8 @@ pub enum TlsHandshakeBody {
     EncryptedExtensions(TlsEncryptedExtensionsBody),
     /// `certificate` body bytes plus a typed view when available.
     Certificate(TlsCertificateBody),
-    /// Opaque `certificate_request` body bytes.
-    CertificateRequest(Vec<u8>),
+    /// `certificate_request` body bytes plus a typed view when available.
+    CertificateRequest(TlsCertificateRequestBody),
     /// Opaque `certificate_verify` body bytes.
     CertificateVerify(Vec<u8>),
     /// Opaque `finished` body bytes.
@@ -684,7 +709,14 @@ impl TlsHandshakeBody {
 
     /// Create an opaque body for a known `certificate_request` hook.
     pub fn certificate_request(body: impl Into<Vec<u8>>) -> Self {
-        Self::CertificateRequest(body.into())
+        Self::CertificateRequest(TlsCertificateRequestBody::raw(body))
+    }
+
+    /// Create a typed body for a known `certificate_request` hook.
+    pub fn from_certificate_request(certificate_request: TlsCertificateRequest) -> Result<Self> {
+        Ok(Self::CertificateRequest(
+            TlsCertificateRequestBody::from_certificate_request(certificate_request)?,
+        ))
     }
 
     /// Create an opaque body for a known `certificate_verify` hook.
@@ -727,7 +759,9 @@ impl TlsHandshakeBody {
                 Self::EncryptedExtensions(TlsEncryptedExtensionsBody::raw(body))
             }
             TlsHandshakeType::CERTIFICATE => Self::Certificate(TlsCertificateBody::raw(body)),
-            TlsHandshakeType::CERTIFICATE_REQUEST => Self::CertificateRequest(body),
+            TlsHandshakeType::CERTIFICATE_REQUEST => {
+                Self::CertificateRequest(TlsCertificateRequestBody::raw(body))
+            }
             TlsHandshakeType::CERTIFICATE_VERIFY => Self::CertificateVerify(body),
             TlsHandshakeType::FINISHED => Self::Finished(body),
             TlsHandshakeType::KEY_UPDATE => Self::KeyUpdate(body),
@@ -757,7 +791,9 @@ impl TlsHandshakeBody {
             TlsHandshakeType::CERTIFICATE => Ok(Self::Certificate(
                 TlsCertificateBody::from_decoded_body(body)?,
             )),
-            TlsHandshakeType::CERTIFICATE_REQUEST => Ok(Self::CertificateRequest(body)),
+            TlsHandshakeType::CERTIFICATE_REQUEST => Ok(Self::CertificateRequest(
+                TlsCertificateRequestBody::from_decoded_body(body)?,
+            )),
             TlsHandshakeType::CERTIFICATE_VERIFY => Ok(Self::CertificateVerify(body)),
             TlsHandshakeType::FINISHED => Ok(Self::Finished(body)),
             TlsHandshakeType::KEY_UPDATE => Ok(Self::KeyUpdate(body)),
@@ -791,9 +827,9 @@ impl TlsHandshakeBody {
             Self::ServerHello(body) => body.body(),
             Self::EncryptedExtensions(body) => body.body(),
             Self::Certificate(body) => body.body(),
+            Self::CertificateRequest(body) => body.body(),
             Self::NewSessionTicket(body)
             | Self::EndOfEarlyData(body)
-            | Self::CertificateRequest(body)
             | Self::CertificateVerify(body)
             | Self::Finished(body)
             | Self::KeyUpdate(body)
@@ -809,9 +845,9 @@ impl TlsHandshakeBody {
             Self::ServerHello(body) => body.into_body(),
             Self::EncryptedExtensions(body) => body.into_body(),
             Self::Certificate(body) => body.into_body(),
+            Self::CertificateRequest(body) => body.into_body(),
             Self::NewSessionTicket(body)
             | Self::EndOfEarlyData(body)
-            | Self::CertificateRequest(body)
             | Self::CertificateVerify(body)
             | Self::Finished(body)
             | Self::KeyUpdate(body)
@@ -867,6 +903,14 @@ impl TlsHandshakeBody {
         }
     }
 
+    /// Borrow the decoded CertificateRequest fields when this body carries them.
+    pub const fn as_certificate_request(&self) -> Option<&TlsCertificateRequest> {
+        match self {
+            Self::CertificateRequest(body) => body.certificate_request(),
+            _ => None,
+        }
+    }
+
     /// Return true when this body is a decoded or typed ClientHello.
     pub const fn is_typed_client_hello(&self) -> bool {
         match self {
@@ -895,6 +939,14 @@ impl TlsHandshakeBody {
     pub const fn is_typed_certificate(&self) -> bool {
         match self {
             Self::Certificate(body) => body.is_typed(),
+            _ => false,
+        }
+    }
+
+    /// Return true when this body is a decoded or typed CertificateRequest.
+    pub const fn is_typed_certificate_request(&self) -> bool {
+        match self {
+            Self::CertificateRequest(body) => body.is_typed(),
             _ => false,
         }
     }
@@ -1071,6 +1123,14 @@ impl TlsHandshake {
         )
     }
 
+    /// Construct a `certificate_request` handshake message from typed fields.
+    pub fn from_certificate_request(certificate_request: TlsCertificateRequest) -> Result<Self> {
+        Ok(Self::from_header_and_body(
+            TlsHandshakeHeader::certificate_request(),
+            TlsHandshakeBody::from_certificate_request(certificate_request)?,
+        ))
+    }
+
     /// Construct a `certificate_verify` handshake message with opaque body bytes.
     pub fn certificate_verify(body: impl Into<Vec<u8>>) -> Self {
         Self::from_header_and_body(
@@ -1176,6 +1236,11 @@ impl TlsHandshake {
     /// Borrow decoded Certificate fields when this message carries them.
     pub fn certificate_body(&self) -> Option<&TlsCertificate> {
         self.body.as_certificate()
+    }
+
+    /// Borrow decoded CertificateRequest fields when this message carries them.
+    pub fn certificate_request_body(&self) -> Option<&TlsCertificateRequest> {
+        self.body.as_certificate_request()
     }
 
     /// Consume the message and return its header plus body hook.
@@ -2824,6 +2889,568 @@ impl Default for TlsCertificate {
     }
 }
 
+/// A raw-preserving TLS 1.2 `ClientCertificateType` value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TlsClientCertificateType {
+    raw: u8,
+}
+
+impl TlsClientCertificateType {
+    /// TLS ClientCertificateType `rsa_sign`.
+    pub const RSA_SIGN: Self = Self::new(TLS_CLIENT_CERTIFICATE_TYPE_RSA_SIGN);
+    /// TLS ClientCertificateType `dss_sign`.
+    pub const DSS_SIGN: Self = Self::new(TLS_CLIENT_CERTIFICATE_TYPE_DSS_SIGN);
+    /// TLS ClientCertificateType `rsa_fixed_dh`.
+    pub const RSA_FIXED_DH: Self = Self::new(TLS_CLIENT_CERTIFICATE_TYPE_RSA_FIXED_DH);
+    /// TLS ClientCertificateType `dss_fixed_dh`.
+    pub const DSS_FIXED_DH: Self = Self::new(TLS_CLIENT_CERTIFICATE_TYPE_DSS_FIXED_DH);
+    /// TLS ClientCertificateType `rsa_ephemeral_dh_RESERVED`.
+    pub const RSA_EPHEMERAL_DH_RESERVED: Self =
+        Self::new(TLS_CLIENT_CERTIFICATE_TYPE_RSA_EPHEMERAL_DH_RESERVED);
+    /// TLS ClientCertificateType `dss_ephemeral_dh_RESERVED`.
+    pub const DSS_EPHEMERAL_DH_RESERVED: Self =
+        Self::new(TLS_CLIENT_CERTIFICATE_TYPE_DSS_EPHEMERAL_DH_RESERVED);
+    /// TLS ClientCertificateType `fortezza_dms_RESERVED`.
+    pub const FORTEZZA_DMS_RESERVED: Self =
+        Self::new(TLS_CLIENT_CERTIFICATE_TYPE_FORTEZZA_DMS_RESERVED);
+    /// TLS ClientCertificateType `ecdsa_sign`.
+    pub const ECDSA_SIGN: Self = Self::new(TLS_CLIENT_CERTIFICATE_TYPE_ECDSA_SIGN);
+    /// TLS ClientCertificateType `rsa_fixed_ecdh`.
+    pub const RSA_FIXED_ECDH: Self = Self::new(TLS_CLIENT_CERTIFICATE_TYPE_RSA_FIXED_ECDH);
+    /// TLS ClientCertificateType `ecdsa_fixed_ecdh`.
+    pub const ECDSA_FIXED_ECDH: Self = Self::new(TLS_CLIENT_CERTIFICATE_TYPE_ECDSA_FIXED_ECDH);
+
+    /// Preserve a caller-supplied raw one-octet client certificate type.
+    pub const fn new(raw: u8) -> Self {
+        Self { raw }
+    }
+
+    /// Preserve a caller-supplied raw one-octet client certificate type.
+    pub const fn from_u8(raw: u8) -> Self {
+        Self::new(raw)
+    }
+
+    /// TLS ClientCertificateType `rsa_sign` constructor.
+    pub const fn rsa_sign() -> Self {
+        Self::RSA_SIGN
+    }
+
+    /// TLS ClientCertificateType `ecdsa_sign` constructor.
+    pub const fn ecdsa_sign() -> Self {
+        Self::ECDSA_SIGN
+    }
+
+    /// Return the preserved raw one-octet value.
+    pub const fn raw(self) -> u8 {
+        self.raw
+    }
+
+    /// Return the source-backed label, preserving unknown values numerically.
+    pub fn label(self) -> String {
+        match self.raw {
+            TLS_CLIENT_CERTIFICATE_TYPE_RSA_SIGN => "rsa_sign".to_string(),
+            TLS_CLIENT_CERTIFICATE_TYPE_DSS_SIGN => "dss_sign".to_string(),
+            TLS_CLIENT_CERTIFICATE_TYPE_RSA_FIXED_DH => "rsa_fixed_dh".to_string(),
+            TLS_CLIENT_CERTIFICATE_TYPE_DSS_FIXED_DH => "dss_fixed_dh".to_string(),
+            TLS_CLIENT_CERTIFICATE_TYPE_RSA_EPHEMERAL_DH_RESERVED => {
+                "rsa_ephemeral_dh_RESERVED".to_string()
+            }
+            TLS_CLIENT_CERTIFICATE_TYPE_DSS_EPHEMERAL_DH_RESERVED => {
+                "dss_ephemeral_dh_RESERVED".to_string()
+            }
+            TLS_CLIENT_CERTIFICATE_TYPE_FORTEZZA_DMS_RESERVED => {
+                "fortezza_dms_RESERVED".to_string()
+            }
+            TLS_CLIENT_CERTIFICATE_TYPE_ECDSA_SIGN => "ecdsa_sign".to_string(),
+            TLS_CLIENT_CERTIFICATE_TYPE_RSA_FIXED_ECDH => "rsa_fixed_ecdh".to_string(),
+            TLS_CLIENT_CERTIFICATE_TYPE_ECDSA_FIXED_ECDH => "ecdsa_fixed_ecdh".to_string(),
+            raw => format!("unknown client certificate type 0x{raw:02x}"),
+        }
+    }
+}
+
+impl From<u8> for TlsClientCertificateType {
+    fn from(value: u8) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<TlsClientCertificateType> for u8 {
+    fn from(value: TlsClientCertificateType) -> Self {
+        value.raw()
+    }
+}
+
+impl fmt::Display for TlsClientCertificateType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.label())
+    }
+}
+
+/// TLS CertificateRequest message wire form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TlsCertificateRequestForm {
+    /// TLS 1.2 form with certificate types, signature schemes, and authorities.
+    Tls12,
+    /// TLS 1.3 form with request context and extensions.
+    Tls13,
+}
+
+impl TlsCertificateRequestForm {
+    /// Stable lowercase label for summaries and inspection output.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Tls12 => "tls12",
+            Self::Tls13 => "tls13",
+        }
+    }
+}
+
+/// TLS CertificateRequest handshake body fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsCertificateRequest {
+    form: TlsCertificateRequestForm,
+    certificate_types: Vec<TlsClientCertificateType>,
+    signature_algorithms: TlsSignatureAlgorithms,
+    certificate_authorities: TlsCertificateAuthorities,
+    request_context: Vec<u8>,
+    extensions: Vec<TlsRawExtension>,
+}
+
+impl TlsCertificateRequest {
+    /// Construct an empty TLS 1.3 CertificateRequest body.
+    pub fn new() -> Self {
+        Self::tls13(Vec::new(), Vec::new())
+    }
+
+    /// Construct a TLS 1.2 CertificateRequest body.
+    pub fn tls12(
+        certificate_types: impl Into<Vec<TlsClientCertificateType>>,
+        signature_algorithms: impl Into<TlsSignatureAlgorithms>,
+        certificate_authorities: impl Into<TlsCertificateAuthorities>,
+    ) -> Self {
+        Self {
+            form: TlsCertificateRequestForm::Tls12,
+            certificate_types: certificate_types.into(),
+            signature_algorithms: signature_algorithms.into(),
+            certificate_authorities: certificate_authorities.into(),
+            request_context: Vec::new(),
+            extensions: Vec::new(),
+        }
+    }
+
+    /// Construct a TLS 1.3 CertificateRequest body.
+    pub fn tls13(
+        request_context: impl Into<Vec<u8>>,
+        extensions: impl Into<Vec<TlsRawExtension>>,
+    ) -> Self {
+        Self {
+            form: TlsCertificateRequestForm::Tls13,
+            certificate_types: Vec::new(),
+            signature_algorithms: TlsSignatureAlgorithms::default(),
+            certificate_authorities: TlsCertificateAuthorities::default(),
+            request_context: request_context.into(),
+            extensions: extensions.into(),
+        }
+    }
+
+    /// Replace the message with TLS 1.2 wire form.
+    pub fn with_tls12_form(mut self) -> Self {
+        self.form = TlsCertificateRequestForm::Tls12;
+        self.request_context.clear();
+        self.extensions.clear();
+        self
+    }
+
+    /// Replace the message with TLS 1.3 wire form.
+    pub fn with_tls13_form(mut self) -> Self {
+        self.form = TlsCertificateRequestForm::Tls13;
+        self
+    }
+
+    /// Replace the TLS 1.2 certificate type vector.
+    pub fn with_certificate_types(
+        mut self,
+        certificate_types: impl Into<Vec<TlsClientCertificateType>>,
+    ) -> Self {
+        self.form = TlsCertificateRequestForm::Tls12;
+        self.certificate_types = certificate_types.into();
+        self
+    }
+
+    /// Append one TLS 1.2 certificate type.
+    pub fn with_certificate_type(
+        mut self,
+        certificate_type: impl Into<TlsClientCertificateType>,
+    ) -> Self {
+        self.form = TlsCertificateRequestForm::Tls12;
+        self.certificate_types.push(certificate_type.into());
+        self
+    }
+
+    /// Append one raw TLS 1.2 certificate type.
+    pub fn with_raw_certificate_type(self, certificate_type: u8) -> Self {
+        self.with_certificate_type(TlsClientCertificateType::from_u8(certificate_type))
+    }
+
+    /// Replace the TLS 1.2 supported signature schemes.
+    pub fn with_signature_algorithms(
+        mut self,
+        signature_algorithms: impl Into<TlsSignatureAlgorithms>,
+    ) -> Self {
+        self.form = TlsCertificateRequestForm::Tls12;
+        self.signature_algorithms = signature_algorithms.into();
+        self
+    }
+
+    /// Replace the TLS 1.2 supported signature schemes from raw values.
+    pub fn with_raw_signature_algorithms(self, raws: impl IntoIterator<Item = u16>) -> Self {
+        self.with_signature_algorithms(TlsSignatureAlgorithms::from_raws(raws))
+    }
+
+    /// Replace the TLS 1.2 certificate authorities.
+    pub fn with_certificate_authorities(
+        mut self,
+        certificate_authorities: impl Into<TlsCertificateAuthorities>,
+    ) -> Self {
+        self.form = TlsCertificateRequestForm::Tls12;
+        self.certificate_authorities = certificate_authorities.into();
+        self
+    }
+
+    /// Replace the TLS 1.3 certificate_request_context and select TLS 1.3 form.
+    pub fn with_request_context(mut self, request_context: impl Into<Vec<u8>>) -> Self {
+        self.form = TlsCertificateRequestForm::Tls13;
+        self.request_context = request_context.into();
+        self
+    }
+
+    /// Replace the TLS 1.3 extension list and select TLS 1.3 form.
+    pub fn with_extensions(mut self, extensions: impl Into<Vec<TlsRawExtension>>) -> Self {
+        self.form = TlsCertificateRequestForm::Tls13;
+        self.extensions = extensions.into();
+        self
+    }
+
+    /// Append one TLS 1.3 extension and select TLS 1.3 form.
+    pub fn with_extension(mut self, extension: TlsRawExtension) -> Self {
+        self.form = TlsCertificateRequestForm::Tls13;
+        self.extensions.push(extension);
+        self
+    }
+
+    /// Append one raw TLS 1.3 extension and select TLS 1.3 form.
+    pub fn with_raw_extension(self, extension_type: u16, body: impl Into<Vec<u8>>) -> Self {
+        self.with_extension(TlsRawExtension::from_raw(extension_type, body))
+    }
+
+    /// Append a typed TLS 1.3 `signature_algorithms` extension.
+    pub fn with_tls13_signature_algorithms(
+        self,
+        signature_algorithms: impl Into<TlsSignatureAlgorithms>,
+    ) -> Result<Self> {
+        Ok(self.with_extension(TlsRawExtension::signature_algorithms(
+            signature_algorithms.into(),
+        )?))
+    }
+
+    /// Append a typed TLS 1.3 `certificate_authorities` extension.
+    pub fn with_tls13_certificate_authorities(
+        self,
+        certificate_authorities: impl Into<TlsCertificateAuthorities>,
+    ) -> Result<Self> {
+        Ok(
+            self.with_extension(TlsRawExtension::certificate_authorities(
+                certificate_authorities.into(),
+            )?),
+        )
+    }
+
+    /// Return the selected CertificateRequest wire form.
+    pub const fn form(&self) -> TlsCertificateRequestForm {
+        self.form
+    }
+
+    /// Return true when this body uses the TLS 1.2 form.
+    pub const fn is_tls12(&self) -> bool {
+        matches!(self.form, TlsCertificateRequestForm::Tls12)
+    }
+
+    /// Return true when this body uses the TLS 1.3 form.
+    pub const fn is_tls13(&self) -> bool {
+        matches!(self.form, TlsCertificateRequestForm::Tls13)
+    }
+
+    /// Borrow the TLS 1.2 certificate type vector.
+    pub fn certificate_types(&self) -> &[TlsClientCertificateType] {
+        &self.certificate_types
+    }
+
+    /// Return the TLS 1.2 certificate type labels in wire order.
+    pub fn certificate_type_labels(&self) -> Vec<String> {
+        self.certificate_types
+            .iter()
+            .map(|certificate_type| certificate_type.label())
+            .collect()
+    }
+
+    /// Borrow the TLS 1.2 supported signature schemes.
+    pub const fn signature_algorithms(&self) -> &TlsSignatureAlgorithms {
+        &self.signature_algorithms
+    }
+
+    /// Borrow the TLS 1.2 certificate authorities.
+    pub const fn certificate_authorities(&self) -> &TlsCertificateAuthorities {
+        &self.certificate_authorities
+    }
+
+    /// Borrow the TLS 1.3 certificate_request_context bytes.
+    pub fn request_context(&self) -> &[u8] {
+        &self.request_context
+    }
+
+    /// Borrow the TLS 1.3 extension list.
+    pub fn extensions(&self) -> &[TlsRawExtension] {
+        &self.extensions
+    }
+
+    /// Number of bytes occupied by the CertificateRequest body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        match self.form {
+            TlsCertificateRequestForm::Tls12 => {
+                let mut len = TLS_CERTIFICATE_REQUEST_TYPES_LENGTH_LEN;
+                len = checked_add_len(
+                    len,
+                    validate_u8_vector_len(
+                        self.certificate_types.len(),
+                        "tls.certificate_request.certificate_types.length",
+                    )?,
+                    "tls.certificate_request.length",
+                )?;
+                len = checked_add_len(
+                    len,
+                    self.signature_algorithms.encoded_len()?,
+                    "tls.certificate_request.length",
+                )?;
+                len = checked_add_len(
+                    len,
+                    self.certificate_authorities.encoded_len()?,
+                    "tls.certificate_request.length",
+                )?;
+                Ok(len)
+            }
+            TlsCertificateRequestForm::Tls13 => {
+                validate_u8_vector_len(
+                    self.request_context.len(),
+                    "tls.certificate_request.request_context.length",
+                )?;
+                let mut len = TLS_CERTIFICATE_REQUEST_CONTEXT_LENGTH_LEN;
+                len = checked_add_len(
+                    len,
+                    self.request_context.len(),
+                    "tls.certificate_request.length",
+                )?;
+                len = checked_add_len(
+                    len,
+                    TlsExtensions::new(self.extensions.clone())
+                        .encoded_len_with_context(TlsExtensionListContext::certificate_request())?,
+                    "tls.certificate_request.length",
+                )?;
+                Ok(len)
+            }
+        }
+    }
+
+    /// Append the CertificateRequest body bytes.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.encoded_len()?;
+        match self.form {
+            TlsCertificateRequestForm::Tls12 => {
+                out.push(self.certificate_types.len() as u8);
+                for certificate_type in &self.certificate_types {
+                    out.push(certificate_type.raw());
+                }
+                self.signature_algorithms.encode(out)?;
+                self.certificate_authorities.encode(out)?;
+            }
+            TlsCertificateRequestForm::Tls13 => {
+                encode_u8_vector(
+                    &self.request_context,
+                    "tls.certificate_request.request_context.length",
+                    out,
+                )?;
+                TlsExtensions::new(self.extensions.clone())
+                    .encode_with_context(TlsExtensionListContext::certificate_request(), out)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Return the encoded CertificateRequest body bytes.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Compile the CertificateRequest body bytes.
+    pub fn compile(&self) -> Result<Vec<u8>> {
+        self.encode_to_vec()
+    }
+
+    /// Decode one complete CertificateRequest body, trying TLS 1.3 and then TLS 1.2.
+    ///
+    /// Use the version-specific decoders when session context already identifies
+    /// the negotiated TLS version.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        match Self::decode_tls13(bytes) {
+            Ok(request) => Ok(request),
+            Err(tls13_error) => match Self::decode_tls12(bytes) {
+                Ok(request) => Ok(request),
+                Err(_) => Err(tls13_error),
+            },
+        }
+    }
+
+    /// Decode one complete TLS 1.2 CertificateRequest body.
+    pub fn decode_tls12(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (request, tail) = Self::decode_prefix_tls12(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.certificate_request.length",
+                "trailing bytes after certificate authorities",
+            ));
+        }
+        Ok(request)
+    }
+
+    /// Decode one complete TLS 1.3 CertificateRequest body.
+    pub fn decode_tls13(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (request, tail) = Self::decode_prefix_tls13(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.certificate_request.length",
+                "trailing bytes after extensions",
+            ));
+        }
+        Ok(request)
+    }
+
+    /// Decode one CertificateRequest body from the front of `bytes`.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        match Self::decode_prefix_tls13(bytes) {
+            Ok(result) => Ok(result),
+            Err(tls13_error) => match Self::decode_prefix_tls12(bytes) {
+                Ok(result) => Ok(result),
+                Err(_) => Err(tls13_error),
+            },
+        }
+    }
+
+    /// Decode one TLS 1.2 CertificateRequest body from the front of `bytes`.
+    pub fn decode_prefix_tls12(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let mut cursor = 0;
+        let certificate_type_len = take_bytes(
+            bytes,
+            &mut cursor,
+            TLS_CERTIFICATE_REQUEST_TYPES_LENGTH_LEN,
+            "tls.certificate_request.certificate_types.length",
+        )?[0] as usize;
+        let certificate_type_bytes = take_bytes(
+            bytes,
+            &mut cursor,
+            certificate_type_len,
+            "tls.certificate_request.certificate_types",
+        )?;
+        let certificate_types = certificate_type_bytes
+            .iter()
+            .copied()
+            .map(TlsClientCertificateType::from_u8)
+            .collect::<Vec<_>>();
+
+        let (signature_algorithms, tail) = TlsSignatureAlgorithms::decode_prefix(&bytes[cursor..])?;
+        cursor = bytes.len() - tail.len();
+        let (certificate_authorities, tail) =
+            TlsCertificateAuthorities::decode_prefix(&bytes[cursor..])?;
+        cursor = bytes.len() - tail.len();
+
+        Ok((
+            Self::tls12(
+                certificate_types,
+                signature_algorithms,
+                certificate_authorities,
+            ),
+            &bytes[cursor..],
+        ))
+    }
+
+    /// Decode one TLS 1.3 CertificateRequest body from the front of `bytes`.
+    pub fn decode_prefix_tls13(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let mut cursor = 0;
+        let request_context = decode_u8_vector(
+            bytes,
+            &mut cursor,
+            "tls.certificate_request.request_context",
+            "tls.certificate_request.request_context.length",
+        )?;
+        let extensions = decode_extension_list(
+            bytes,
+            &mut cursor,
+            TlsExtensionListContext::certificate_request(),
+        )?;
+        Ok((Self::tls13(request_context, extensions), &bytes[cursor..]))
+    }
+
+    /// Stable one-line summary preserving form, vector sizes, and counts.
+    pub fn summary(&self) -> String {
+        format!(
+            "certificate_request form={} certificate_types={} signature_algorithms={} certificate_authorities={} request_context_bytes={} extensions={}",
+            self.form.label(),
+            self.certificate_types.len(),
+            self.signature_algorithms.len(),
+            self.certificate_authorities.len(),
+            self.request_context.len(),
+            self.extensions.len()
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("form", self.form.label().to_string()),
+            (
+                "certificate_types_count",
+                self.certificate_types.len().to_string(),
+            ),
+            (
+                "certificate_types",
+                self.certificate_type_labels().join(","),
+            ),
+            (
+                "signature_algorithms_count",
+                self.signature_algorithms.len().to_string(),
+            ),
+            (
+                "certificate_authorities_count",
+                self.certificate_authorities.len().to_string(),
+            ),
+            ("request_context", hex_bytes(&self.request_context)),
+            (
+                "request_context_bytes",
+                self.request_context.len().to_string(),
+            ),
+            ("extensions_count", self.extensions.len().to_string()),
+        ]
+    }
+}
+
+impl Default for TlsCertificateRequest {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// ServerHello handshake body bytes plus an optional decoded view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsServerHelloBody {
@@ -2999,6 +3626,67 @@ impl TlsCertificateBody {
     /// Return true when the body carries decoded Certificate fields.
     pub const fn is_typed(&self) -> bool {
         self.certificate.is_some()
+    }
+
+    /// Number of preserved body bytes.
+    pub fn body_len(&self) -> usize {
+        self.body.len()
+    }
+}
+
+/// CertificateRequest handshake body bytes plus an optional decoded view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsCertificateRequestBody {
+    body: Vec<u8>,
+    certificate_request: Option<TlsCertificateRequest>,
+}
+
+impl TlsCertificateRequestBody {
+    /// Preserve CertificateRequest body bytes without parsing them.
+    pub fn raw(body: impl Into<Vec<u8>>) -> Self {
+        Self {
+            body: body.into(),
+            certificate_request: None,
+        }
+    }
+
+    /// Build CertificateRequest body bytes from typed fields.
+    pub fn from_certificate_request(certificate_request: TlsCertificateRequest) -> Result<Self> {
+        let body = certificate_request.encode_to_vec()?;
+        Ok(Self {
+            body,
+            certificate_request: Some(certificate_request),
+        })
+    }
+
+    /// Decode and preserve exact CertificateRequest body bytes.
+    pub fn from_decoded_body(body: impl Into<Vec<u8>>) -> Result<Self> {
+        let body = body.into();
+        let certificate_request = TlsCertificateRequest::decode(&body)?;
+        Ok(Self {
+            body,
+            certificate_request: Some(certificate_request),
+        })
+    }
+
+    /// Borrow the preserved body bytes.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// Consume the wrapper and return the preserved body bytes.
+    pub fn into_body(self) -> Vec<u8> {
+        self.body
+    }
+
+    /// Borrow the decoded CertificateRequest fields when available.
+    pub const fn certificate_request(&self) -> Option<&TlsCertificateRequest> {
+        self.certificate_request.as_ref()
+    }
+
+    /// Return true when the body carries decoded CertificateRequest fields.
+    pub const fn is_typed(&self) -> bool {
+        self.certificate_request.is_some()
     }
 
     /// Number of preserved body bytes.
@@ -3943,6 +4631,175 @@ mod tests {
         assert_eq!(
             TlsCertificate::decode_tls13(truncated_tls13_entry_extensions).unwrap_err(),
             CrafterError::buffer_too_short("tls.certificate_entry.extensions.length", 2, 0)
+        );
+    }
+
+    #[test]
+    fn tls_certificate_request_tls12_vectors_encode_decode_through_handshake() -> Result<()> {
+        let authorities =
+            TlsCertificateAuthorities::from_raws([&[0x30, 0x03, 0x31][..], &[0xaa][..]]);
+        let request = TlsCertificateRequest::tls12(
+            vec![
+                TlsClientCertificateType::rsa_sign(),
+                TlsClientCertificateType::ecdsa_sign(),
+                TlsClientCertificateType::from_u8(0xfe),
+            ],
+            TlsSignatureAlgorithms::from_raws([0x0401, 0x0807]),
+            authorities.clone(),
+        );
+        let encoded = request.encode_to_vec()?;
+
+        assert_eq!(
+            encoded,
+            vec![
+                0x03, 0x01, 0x40, 0xfe, // certificate_types
+                0x00, 0x04, 0x04, 0x01, 0x08, 0x07, // signature_algorithms
+                0x00, 0x08, 0x00, 0x03, 0x30, 0x03, 0x31, 0x00, 0x01,
+                0xaa, // certificate_authorities
+            ]
+        );
+        assert!(request.is_tls12());
+        assert_eq!(request.form(), TlsCertificateRequestForm::Tls12);
+        assert_eq!(
+            request.certificate_type_labels(),
+            vec![
+                "rsa_sign".to_string(),
+                "ecdsa_sign".to_string(),
+                "unknown client certificate type 0xfe".to_string(),
+            ]
+        );
+        assert_eq!(
+            request.signature_algorithms().raw_values(),
+            vec![0x0401, 0x0807]
+        );
+        assert_eq!(request.certificate_authorities(), &authorities);
+        assert_eq!(
+            request.summary(),
+            "certificate_request form=tls12 certificate_types=3 signature_algorithms=2 certificate_authorities=2 request_context_bytes=0 extensions=0"
+        );
+
+        let decoded = TlsCertificateRequest::decode_tls12(&encoded)?;
+        assert_eq!(decoded, request);
+        assert_eq!(TlsCertificateRequest::decode(&encoded)?, request);
+
+        let handshake = TlsHandshake::from_certificate_request(request.clone())?;
+        let handshake_bytes =
+            tls_handshake_fixture(TlsHandshakeType::CERTIFICATE_REQUEST.raw(), &encoded);
+        assert_eq!(handshake.body_bytes(), encoded.as_slice());
+        assert!(handshake.body().is_typed_certificate_request());
+        assert_eq!(handshake.certificate_request_body(), Some(&request));
+        assert_eq!(handshake.encode_to_vec()?, handshake_bytes);
+
+        let decoded_handshake = TlsHandshake::decode(&handshake_bytes)?;
+        assert_eq!(decoded_handshake.certificate_request_body(), Some(&request));
+        assert_eq!(decoded_handshake.encode_to_vec()?, handshake_bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_certificate_request_tls13_extensions_preserve_typed_helpers() -> Result<()> {
+        let authorities = TlsCertificateAuthorities::from_raws([&[0xde, 0xad][..]]);
+        let request = TlsCertificateRequest::new()
+            .with_request_context([0x10])
+            .with_tls13_signature_algorithms(TlsSignatureAlgorithms::from_raws([0x0807]))?
+            .with_tls13_certificate_authorities(authorities.clone())?
+            .with_raw_extension(0xbeef, [0xca, 0xfe]);
+        let encoded = request.encode_to_vec()?;
+
+        assert_eq!(
+            encoded,
+            vec![
+                0x01, 0x10, // certificate_request_context
+                0x00, 0x18, // extensions length
+                0x00, 0x0d, 0x00, 0x04, 0x00, 0x02, 0x08, 0x07, // signature_algorithms
+                0x00, 0x2f, 0x00, 0x06, 0x00, 0x04, 0x00, 0x02, 0xde,
+                0xad, // certificate_authorities
+                0xbe, 0xef, 0x00, 0x02, 0xca, 0xfe, // unknown extension
+            ]
+        );
+        assert!(request.is_tls13());
+        assert_eq!(request.request_context(), &[0x10]);
+        assert_eq!(request.extensions().len(), 3);
+        assert_eq!(
+            request.extensions()[0].as_signature_algorithms()?,
+            TlsSignatureAlgorithms::from_raws([0x0807])
+        );
+        assert_eq!(
+            request.extensions()[1].as_certificate_authorities()?,
+            authorities
+        );
+        assert_eq!(request.extensions()[2].raw_type(), 0xbeef);
+        assert_eq!(
+            request.inspection_fields(),
+            vec![
+                ("form", "tls13".to_string()),
+                ("certificate_types_count", "0".to_string()),
+                ("certificate_types", String::new()),
+                ("signature_algorithms_count", "0".to_string()),
+                ("certificate_authorities_count", "0".to_string()),
+                ("request_context", "10".to_string()),
+                ("request_context_bytes", "1".to_string()),
+                ("extensions_count", "3".to_string()),
+            ]
+        );
+
+        let decoded = TlsCertificateRequest::decode_tls13(&encoded)?;
+        assert_eq!(decoded, request);
+        assert_eq!(decoded.encode_to_vec()?, encoded);
+        assert_eq!(decoded.compile()?, encoded);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_certificate_request_raw_body_remains_available() -> Result<()> {
+        let raw = TlsHandshake::certificate_request([0xca, 0xfe]);
+
+        assert_eq!(raw.body_bytes(), &[0xca, 0xfe]);
+        assert!(matches!(
+            raw.body(),
+            TlsHandshakeBody::CertificateRequest(_)
+        ));
+        assert!(raw.certificate_request_body().is_none());
+        assert!(!raw.body().is_typed_certificate_request());
+        assert_eq!(
+            raw.encode_to_vec()?,
+            vec![0x0d, 0x00, 0x00, 0x02, 0xca, 0xfe]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_certificate_request_decode_reports_structured_vector_errors() {
+        assert_eq!(
+            TlsCertificateRequest::decode_tls12([]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.certificate_request.certificate_types.length",
+                1,
+                0
+            )
+        );
+
+        assert_eq!(
+            TlsCertificateRequest::decode_tls12([0x01, 0x01, 0x00, 0x01, 0x04]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.signature_algorithms.length",
+                "length must be at least two bytes"
+            )
+        );
+
+        let truncated_tls13_extension = [
+            0x00, // empty certificate_request_context
+            0x00, 0x05, // extensions length
+            0xbe, 0xef, // extension type
+            0x00, 0x02, // extension body length
+            0xaa, // truncated extension body
+        ];
+        assert_eq!(
+            TlsCertificateRequest::decode_tls13(truncated_tls13_extension).unwrap_err(),
+            CrafterError::buffer_too_short("tls.certificate_request.extension.body", 6, 5)
         );
     }
 
