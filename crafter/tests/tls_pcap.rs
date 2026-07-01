@@ -6,10 +6,12 @@
 use std::fs;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crafter::prelude::*;
 use crafter::wire::backend::pcap::{
-    PcapLinkType, PcapReader, PcapTimestamp, PcapWriter, PcapWriterOptions, TimestampPrecision,
+    PcapLinkType, PcapReader, PcapRecord, PcapTimestamp, PcapWriter, PcapWriterOptions,
+    TimestampPrecision,
 };
 
 const RAW_IP_TLS_PCAP: &str = "pcaps/raw-ipv4-tcp-tls-client-hello.pcap";
@@ -32,6 +34,35 @@ fn fixture_path(path: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(path)
+}
+
+struct TempPcap {
+    path: PathBuf,
+}
+
+impl TempPcap {
+    fn new(label: &str) -> Self {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after Unix epoch")
+            .as_nanos();
+        Self {
+            path: std::env::temp_dir().join(format!(
+                "crafter-tls-{label}-{}-{nanos}.pcap",
+                std::process::id()
+            )),
+        }
+    }
+
+    fn path(&self) -> &PathBuf {
+        &self.path
+    }
+}
+
+impl Drop for TempPcap {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
 }
 
 fn tls_client_hello_record() -> crafter::Result<TlsRecord> {
@@ -270,6 +301,31 @@ fn ethernet_tls_pcap_bytes() -> crafter::Result<Vec<u8>> {
     Ok(pcap_bytes(PcapLinkType::Ethernet, &ethernet_tls_packets()?))
 }
 
+fn expected_packet_summaries(pcap_link_type: PcapLinkType, records: &[PcapRecord]) -> Vec<String> {
+    records
+        .iter()
+        .map(|record| {
+            pcap_link_type
+                .decode(record.data())
+                .expect("TLS pcap record should decode for expected summary")
+                .summary()
+        })
+        .collect()
+}
+
+fn sniff_filtered_tls_pcap(path: &str) -> Vec<PacketRecord> {
+    let source = PacketWire::pcap_file(fixture_path(path))
+        .filter("tcp port 443")
+        .open()
+        .expect("TLS pcap PacketWire should open")
+        .source()
+        .expect("TLS pcap PacketWire should expose source");
+    Sniffer::new(source)
+        .no_timeout()
+        .collect_records()
+        .expect("filtered TLS pcap records should sniff")
+}
+
 #[test]
 fn tls_pcap_roundtrip_fixtures_decode_and_rewrite() -> crafter::Result<()> {
     assert_tls_pcap_fixture(
@@ -286,6 +342,186 @@ fn tls_pcap_roundtrip_fixtures_decode_and_rewrite() -> crafter::Result<()> {
         ethernet_tls_packets()?,
         ethernet_tls_pcap_bytes()?,
     )?;
+    Ok(())
+}
+
+#[test]
+fn tls_pcap_read_write_filtered_sniffer_decodes_tls_fixtures() -> crafter::Result<()> {
+    assert_filtered_tls_pcap_fixture(
+        RAW_IP_TLS_PCAP,
+        PcapLinkType::RawIp,
+        LinkType::Raw,
+        &[
+            TlsContentType::handshake(),
+            TlsContentType::alert(),
+            TlsContentType::application_data(),
+        ],
+    );
+    assert_filtered_tls_pcap_fixture(
+        ETHERNET_TLS_PCAP,
+        PcapLinkType::Ethernet,
+        LinkType::Ethernet,
+        &[
+            TlsContentType::handshake(),
+            TlsContentType::alert(),
+            TlsContentType::application_data(),
+        ],
+    );
+    Ok(())
+}
+
+fn assert_filtered_tls_pcap_fixture(
+    path: &str,
+    pcap_link_type: PcapLinkType,
+    link_type: LinkType,
+    expected_content_types: &[TlsContentType],
+) {
+    let fixture_path = fixture_path(path);
+    let fixture = fs::read(&fixture_path).expect("TLS pcap fixture should exist");
+    let pcap_records = PcapReader::from_reader(fixture.as_slice())
+        .expect("TLS pcap fixture should parse for raw records")
+        .collect_records()
+        .expect("TLS pcap fixture records should read");
+    let expected_summaries = expected_packet_summaries(pcap_link_type, &pcap_records);
+
+    let records = sniff_filtered_tls_pcap(path);
+    assert_eq!(records.len(), expected_content_types.len());
+    assert_eq!(records.len(), pcap_records.len());
+
+    for ((record, pcap_record), expected_content_type) in records
+        .iter()
+        .zip(&pcap_records)
+        .zip(expected_content_types.iter().copied())
+    {
+        assert_eq!(record.metadata().backend(), &BackendKind::PcapFile);
+        assert_eq!(record.metadata().file(), Some(fixture_path.as_path()));
+        assert_eq!(record.metadata().timestamp(), Some(pcap_record.timestamp()));
+        assert_eq!(
+            record.metadata().original_len(),
+            Some(pcap_record.original_len())
+        );
+        assert_eq!(
+            record.metadata().captured_len(),
+            Some(pcap_record.captured_len())
+        );
+        assert_eq!(record.metadata().captured_bytes(), Some(pcap_record.data()));
+        assert_eq!(record.metadata().pcap_link_type(), Some(pcap_link_type));
+        assert_eq!(record.metadata().link_type(), Some(link_type));
+        assert_tls_packet(record.packet(), expected_content_type);
+    }
+
+    let actual_summaries = records
+        .iter()
+        .map(|record| record.packet().summary())
+        .collect::<Vec<_>>();
+    assert_eq!(actual_summaries, expected_summaries);
+}
+
+#[test]
+fn tls_pcap_read_write_packet_wire_recorder_roundtrips_tls_records() -> crafter::Result<()> {
+    let temp = TempPcap::new("packet-wire-roundtrip");
+    let packets = raw_ip_tls_packets()?;
+    let expected = packets
+        .iter()
+        .map(|(packet, timestamp)| {
+            let bytes = compiled_bytes(packet);
+            let summary = PcapLinkType::RawIp
+                .decode(&bytes)
+                .expect("TLS RawIp packet should decode for expected summary")
+                .summary();
+            (bytes, summary, *timestamp)
+        })
+        .collect::<Vec<_>>();
+
+    {
+        let writer = PacketWire::pcap_recorder(temp.path(), PcapLinkType::RawIp)
+            .open()
+            .expect("TLS pcap recorder should open")
+            .writer()
+            .expect("TLS pcap recorder should expose writer");
+        let mut transmitter = Transmitter::new(writer);
+
+        for ((packet, timestamp), (expected_bytes, _summary, _expected_timestamp)) in
+            packets.iter().zip(&expected)
+        {
+            let record = PacketRecord::new(packet.clone())
+                .with_pcap_link_type(PcapLinkType::RawIp)
+                .with_timestamp(*timestamp);
+            let reports = transmitter
+                .write_record(record)
+                .expect("TLS pcap record should write through transmitter");
+            assert_eq!(reports.len(), 1);
+            assert_eq!(reports[0].backend(), &BackendKind::PcapFile);
+            assert_eq!(reports[0].bytes_requested(), expected_bytes.len());
+            assert_eq!(reports[0].bytes_written(), expected_bytes.len());
+            assert!(!reports[0].is_dry_run());
+            assert_eq!(
+                reports[0].target_details(),
+                Some(temp.path().display().to_string().as_str())
+            );
+        }
+    }
+
+    let source = PacketWire::pcap_file(temp.path())
+        .filter("tcp port 443")
+        .open()
+        .expect("written TLS pcap should open")
+        .source()
+        .expect("written TLS pcap should expose source");
+    let records = Sniffer::new(source)
+        .no_timeout()
+        .collect_records()
+        .expect("written TLS pcap should sniff");
+    assert_eq!(records.len(), expected.len());
+
+    for (index, (record, (expected_bytes, expected_summary, expected_timestamp))) in
+        records.iter().zip(&expected).enumerate()
+    {
+        assert_eq!(record.metadata().backend(), &BackendKind::PcapFile);
+        assert_eq!(record.metadata().file(), Some(temp.path().as_path()));
+        assert_eq!(record.metadata().timestamp(), Some(*expected_timestamp));
+        assert_eq!(
+            record.metadata().original_len(),
+            Some(expected_bytes.len() as u32)
+        );
+        assert_eq!(
+            record.metadata().captured_len(),
+            Some(expected_bytes.len() as u32)
+        );
+        assert_eq!(
+            record.metadata().captured_bytes(),
+            Some(expected_bytes.as_slice())
+        );
+        assert_eq!(
+            record.metadata().pcap_link_type(),
+            Some(PcapLinkType::RawIp)
+        );
+        assert_eq!(record.metadata().link_type(), Some(LinkType::Raw));
+        assert_eq!(record.packet().summary(), *expected_summary);
+        assert_tls_packet(
+            record.packet(),
+            [
+                TlsContentType::handshake(),
+                TlsContentType::alert(),
+                TlsContentType::application_data(),
+            ][index],
+        );
+    }
+
+    let pcap_records = PcapReader::open(temp.path())
+        .expect("written TLS pcap should parse")
+        .collect_records()
+        .expect("written TLS pcap records should read");
+    let actual_bytes = pcap_records
+        .iter()
+        .map(|record| record.data().to_vec())
+        .collect::<Vec<_>>();
+    let expected_bytes = expected
+        .iter()
+        .map(|(bytes, _summary, _timestamp)| bytes.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(actual_bytes, expected_bytes);
+
     Ok(())
 }
 
