@@ -12,6 +12,10 @@ use super::constants::{self, TlsCodepointStatus};
 use super::named_group::{
     TlsNamedGroup, TlsNamedGroupList, TLS_NAMED_GROUP_LEN, TLS_NAMED_GROUP_LIST_PREFIX_LEN,
 };
+use super::signature_scheme::{
+    TlsSignatureScheme, TlsSignatureSchemeList, TLS_SIGNATURE_SCHEME_LEN,
+    TLS_SIGNATURE_SCHEME_LIST_PREFIX_LEN,
+};
 use super::version::TlsVersion;
 use crate::{CrafterError, Result};
 
@@ -45,6 +49,10 @@ pub const TLS_SUPPORTED_VERSION_LEN: usize = 2;
 pub const TLS_SUPPORTED_GROUPS_LIST_LENGTH_LEN: usize = TLS_NAMED_GROUP_LIST_PREFIX_LEN;
 /// TLS supported_groups NamedGroup width in bytes.
 pub const TLS_SUPPORTED_GROUP_LEN: usize = TLS_NAMED_GROUP_LEN;
+/// TLS signature_algorithms SignatureSchemeList length field width in bytes.
+pub const TLS_SIGNATURE_ALGORITHMS_LIST_LENGTH_LEN: usize = TLS_SIGNATURE_SCHEME_LIST_PREFIX_LEN;
+/// TLS signature_algorithms SignatureScheme width in bytes.
+pub const TLS_SIGNATURE_ALGORITHM_LEN: usize = TLS_SIGNATURE_SCHEME_LEN;
 
 /// A raw-preserving TLS `ExtensionType` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -142,6 +150,11 @@ impl TlsExtensionType {
     /// TLS ExtensionType `signature_algorithms` constructor.
     pub const fn signature_algorithms() -> Self {
         Self::SIGNATURE_ALGORITHMS
+    }
+
+    /// TLS ExtensionType `signature_algorithms_cert` constructor.
+    pub const fn signature_algorithms_cert() -> Self {
+        Self::SIGNATURE_ALGORITHMS_CERT
     }
 
     /// TLS ExtensionType `application_layer_protocol_negotiation` constructor.
@@ -940,6 +953,28 @@ impl TlsRawExtension {
         TlsSupportedGroups::from_raw_extension(self)
     }
 
+    /// Create a raw `signature_algorithms` extension from a typed signature scheme list.
+    pub fn signature_algorithms(schemes: impl Into<TlsSignatureAlgorithms>) -> Result<Self> {
+        schemes.into().to_raw_extension()
+    }
+
+    /// Decode this raw extension as a typed signature_algorithms SignatureSchemeList.
+    pub fn as_signature_algorithms(&self) -> Result<TlsSignatureAlgorithms> {
+        TlsSignatureAlgorithms::from_raw_extension(self)
+    }
+
+    /// Create a raw `signature_algorithms_cert` extension from a typed signature scheme list.
+    pub fn signature_algorithms_cert(
+        schemes: impl Into<TlsSignatureAlgorithmsCert>,
+    ) -> Result<Self> {
+        schemes.into().to_raw_extension()
+    }
+
+    /// Decode this raw extension as a typed signature_algorithms_cert SignatureSchemeList.
+    pub fn as_signature_algorithms_cert(&self) -> Result<TlsSignatureAlgorithmsCert> {
+        TlsSignatureAlgorithmsCert::from_raw_extension(self)
+    }
+
     /// Create a raw `application_layer_protocol_negotiation` extension.
     pub fn application_layer_protocol_negotiation(
         protocols: impl Into<TlsAlpnProtocols>,
@@ -1241,6 +1276,504 @@ fn validate_supported_groups_list_len(len: usize) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// TLS `signature_algorithms` extension body as an RFC 8446 SignatureSchemeList.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct TlsSignatureAlgorithms {
+    schemes: TlsSignatureSchemeList,
+}
+
+impl TlsSignatureAlgorithms {
+    /// Create an ordered signature_algorithms extension body.
+    pub fn new(schemes: impl Into<TlsSignatureSchemeList>) -> Self {
+        Self {
+            schemes: schemes.into(),
+        }
+    }
+
+    /// Create an ordered signature_algorithms extension body from signature scheme values.
+    pub fn from_schemes(schemes: impl Into<Vec<TlsSignatureScheme>>) -> Self {
+        Self::new(TlsSignatureSchemeList::new(schemes))
+    }
+
+    /// Create an ordered signature_algorithms extension body from raw two-octet values.
+    pub fn from_raws(raws: impl IntoIterator<Item = u16>) -> Self {
+        Self::new(TlsSignatureSchemeList::from_raws(raws))
+    }
+
+    /// Borrow the ordered signature scheme list.
+    pub const fn signature_scheme_list(&self) -> &TlsSignatureSchemeList {
+        &self.schemes
+    }
+
+    /// Borrow the ordered signature scheme list.
+    pub const fn as_signature_scheme_list(&self) -> &TlsSignatureSchemeList {
+        self.signature_scheme_list()
+    }
+
+    /// Borrow the ordered signature scheme values.
+    pub fn schemes(&self) -> &[TlsSignatureScheme] {
+        self.schemes.schemes()
+    }
+
+    /// Return the ordered raw signature scheme values.
+    pub fn raw_values(&self) -> Vec<u16> {
+        self.schemes.raw_values()
+    }
+
+    /// Return signature scheme labels in wire order.
+    pub fn labels(&self) -> Vec<String> {
+        self.schemes.labels()
+    }
+
+    /// Consume the extension body and return its signature scheme list.
+    pub fn into_signature_scheme_list(self) -> TlsSignatureSchemeList {
+        self.schemes
+    }
+
+    /// Consume the extension body and return the ordered signature scheme values.
+    pub fn into_vec(self) -> Vec<TlsSignatureScheme> {
+        self.schemes.into_vec()
+    }
+
+    /// Append one signature scheme to the ordered list.
+    pub fn push(&mut self, scheme: TlsSignatureScheme) {
+        self.schemes.push(scheme);
+    }
+
+    /// Number of signature schemes.
+    pub fn len(&self) -> usize {
+        self.schemes.len()
+    }
+
+    /// Return true when the body carries no signature scheme values.
+    pub fn is_empty(&self) -> bool {
+        self.schemes.is_empty()
+    }
+
+    /// Number of bytes occupied by the SignatureScheme vector body, excluding the length prefix.
+    pub fn byte_len(&self) -> Result<usize> {
+        let byte_len =
+            signature_scheme_list_byte_len("tls.signature_algorithms.length", &self.schemes)?;
+        validate_signature_scheme_list_len("tls.signature_algorithms.length", byte_len)?;
+        Ok(byte_len)
+    }
+
+    /// Number of bytes occupied by the complete encoded SignatureSchemeList.
+    pub fn encoded_len(&self) -> Result<usize> {
+        TLS_SIGNATURE_ALGORITHMS_LIST_LENGTH_LEN
+            .checked_add(self.byte_len()?)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.signature_algorithms.length",
+                    "length overflow",
+                )
+            })
+    }
+
+    /// Append the signature_algorithms extension body to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let byte_len = self.byte_len()?;
+        out.extend_from_slice(&(byte_len as u16).to_be_bytes());
+        for scheme in self.schemes() {
+            scheme.encode(out);
+        }
+        Ok(())
+    }
+
+    /// Return this signature_algorithms extension body encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Convert this signature_algorithms body into a raw extension.
+    pub fn to_raw_extension(&self) -> Result<TlsRawExtension> {
+        Ok(TlsRawExtension::new(
+            TlsExtensionType::SIGNATURE_ALGORITHMS,
+            self.encode_to_vec()?,
+        ))
+    }
+
+    /// Decode a signature_algorithms extension body.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (algorithms, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.signature_algorithms.length",
+                "length must match extension body",
+            ));
+        }
+        Ok(algorithms)
+    }
+
+    /// Decode a signature_algorithms body from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let (schemes, tail) = decode_signature_scheme_list_prefix(
+            "tls.signature_algorithms.length",
+            "tls.signature_algorithms",
+            bytes,
+        )?;
+        Ok((Self::new(schemes), tail))
+    }
+
+    /// Decode a raw signature_algorithms extension body.
+    pub fn from_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        if extension.extension_type() != TlsExtensionType::SIGNATURE_ALGORITHMS {
+            return Err(CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be signature_algorithms",
+            ));
+        }
+        Self::decode(extension.body())
+    }
+
+    /// Stable one-line summary preserving signature scheme order.
+    pub fn summary(&self) -> String {
+        format!(
+            "signature_algorithms count={} bytes={} values={}",
+            self.len(),
+            self.len() * TLS_SIGNATURE_ALGORITHM_LEN,
+            self.labels().join(",")
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("signature_algorithms_count", self.len().to_string()),
+            (
+                "signature_algorithms_bytes",
+                (self.len() * TLS_SIGNATURE_ALGORITHM_LEN).to_string(),
+            ),
+            ("signature_algorithms", self.labels().join(",")),
+            (
+                "signature_algorithms_raw",
+                format_signature_scheme_raw_values(&self.schemes),
+            ),
+        ]
+    }
+}
+
+impl From<TlsSignatureSchemeList> for TlsSignatureAlgorithms {
+    fn from(schemes: TlsSignatureSchemeList) -> Self {
+        Self::new(schemes)
+    }
+}
+
+impl From<Vec<TlsSignatureScheme>> for TlsSignatureAlgorithms {
+    fn from(schemes: Vec<TlsSignatureScheme>) -> Self {
+        Self::from_schemes(schemes)
+    }
+}
+
+impl<const N: usize> From<[TlsSignatureScheme; N]> for TlsSignatureAlgorithms {
+    fn from(schemes: [TlsSignatureScheme; N]) -> Self {
+        Self::from_schemes(Vec::from(schemes))
+    }
+}
+
+impl TryFrom<&TlsRawExtension> for TlsSignatureAlgorithms {
+    type Error = CrafterError;
+
+    fn try_from(value: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension(value)
+    }
+}
+
+impl TryFrom<TlsSignatureAlgorithms> for TlsRawExtension {
+    type Error = CrafterError;
+
+    fn try_from(value: TlsSignatureAlgorithms) -> Result<Self> {
+        value.to_raw_extension()
+    }
+}
+
+/// TLS `signature_algorithms_cert` extension body as an RFC 8446 SignatureSchemeList.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct TlsSignatureAlgorithmsCert {
+    schemes: TlsSignatureSchemeList,
+}
+
+impl TlsSignatureAlgorithmsCert {
+    /// Create an ordered signature_algorithms_cert extension body.
+    pub fn new(schemes: impl Into<TlsSignatureSchemeList>) -> Self {
+        Self {
+            schemes: schemes.into(),
+        }
+    }
+
+    /// Create an ordered signature_algorithms_cert extension body from signature scheme values.
+    pub fn from_schemes(schemes: impl Into<Vec<TlsSignatureScheme>>) -> Self {
+        Self::new(TlsSignatureSchemeList::new(schemes))
+    }
+
+    /// Create an ordered signature_algorithms_cert extension body from raw two-octet values.
+    pub fn from_raws(raws: impl IntoIterator<Item = u16>) -> Self {
+        Self::new(TlsSignatureSchemeList::from_raws(raws))
+    }
+
+    /// Borrow the ordered signature scheme list.
+    pub const fn signature_scheme_list(&self) -> &TlsSignatureSchemeList {
+        &self.schemes
+    }
+
+    /// Borrow the ordered signature scheme list.
+    pub const fn as_signature_scheme_list(&self) -> &TlsSignatureSchemeList {
+        self.signature_scheme_list()
+    }
+
+    /// Borrow the ordered signature scheme values.
+    pub fn schemes(&self) -> &[TlsSignatureScheme] {
+        self.schemes.schemes()
+    }
+
+    /// Return the ordered raw signature scheme values.
+    pub fn raw_values(&self) -> Vec<u16> {
+        self.schemes.raw_values()
+    }
+
+    /// Return signature scheme labels in wire order.
+    pub fn labels(&self) -> Vec<String> {
+        self.schemes.labels()
+    }
+
+    /// Consume the extension body and return its signature scheme list.
+    pub fn into_signature_scheme_list(self) -> TlsSignatureSchemeList {
+        self.schemes
+    }
+
+    /// Consume the extension body and return the ordered signature scheme values.
+    pub fn into_vec(self) -> Vec<TlsSignatureScheme> {
+        self.schemes.into_vec()
+    }
+
+    /// Append one signature scheme to the ordered list.
+    pub fn push(&mut self, scheme: TlsSignatureScheme) {
+        self.schemes.push(scheme);
+    }
+
+    /// Number of signature schemes.
+    pub fn len(&self) -> usize {
+        self.schemes.len()
+    }
+
+    /// Return true when the body carries no signature scheme values.
+    pub fn is_empty(&self) -> bool {
+        self.schemes.is_empty()
+    }
+
+    /// Number of bytes occupied by the SignatureScheme vector body, excluding the length prefix.
+    pub fn byte_len(&self) -> Result<usize> {
+        let byte_len =
+            signature_scheme_list_byte_len("tls.signature_algorithms_cert.length", &self.schemes)?;
+        validate_signature_scheme_list_len("tls.signature_algorithms_cert.length", byte_len)?;
+        Ok(byte_len)
+    }
+
+    /// Number of bytes occupied by the complete encoded SignatureSchemeList.
+    pub fn encoded_len(&self) -> Result<usize> {
+        TLS_SIGNATURE_ALGORITHMS_LIST_LENGTH_LEN
+            .checked_add(self.byte_len()?)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.signature_algorithms_cert.length",
+                    "length overflow",
+                )
+            })
+    }
+
+    /// Append the signature_algorithms_cert extension body to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let byte_len = self.byte_len()?;
+        out.extend_from_slice(&(byte_len as u16).to_be_bytes());
+        for scheme in self.schemes() {
+            scheme.encode(out);
+        }
+        Ok(())
+    }
+
+    /// Return this signature_algorithms_cert extension body encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Convert this signature_algorithms_cert body into a raw extension.
+    pub fn to_raw_extension(&self) -> Result<TlsRawExtension> {
+        Ok(TlsRawExtension::new(
+            TlsExtensionType::SIGNATURE_ALGORITHMS_CERT,
+            self.encode_to_vec()?,
+        ))
+    }
+
+    /// Decode a signature_algorithms_cert extension body.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (algorithms, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.signature_algorithms_cert.length",
+                "length must match extension body",
+            ));
+        }
+        Ok(algorithms)
+    }
+
+    /// Decode a signature_algorithms_cert body from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let (schemes, tail) = decode_signature_scheme_list_prefix(
+            "tls.signature_algorithms_cert.length",
+            "tls.signature_algorithms_cert",
+            bytes,
+        )?;
+        Ok((Self::new(schemes), tail))
+    }
+
+    /// Decode a raw signature_algorithms_cert extension body.
+    pub fn from_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        if extension.extension_type() != TlsExtensionType::SIGNATURE_ALGORITHMS_CERT {
+            return Err(CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be signature_algorithms_cert",
+            ));
+        }
+        Self::decode(extension.body())
+    }
+
+    /// Stable one-line summary preserving signature scheme order.
+    pub fn summary(&self) -> String {
+        format!(
+            "signature_algorithms_cert count={} bytes={} values={}",
+            self.len(),
+            self.len() * TLS_SIGNATURE_ALGORITHM_LEN,
+            self.labels().join(",")
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("signature_algorithms_cert_count", self.len().to_string()),
+            (
+                "signature_algorithms_cert_bytes",
+                (self.len() * TLS_SIGNATURE_ALGORITHM_LEN).to_string(),
+            ),
+            ("signature_algorithms_cert", self.labels().join(",")),
+            (
+                "signature_algorithms_cert_raw",
+                format_signature_scheme_raw_values(&self.schemes),
+            ),
+        ]
+    }
+}
+
+impl From<TlsSignatureSchemeList> for TlsSignatureAlgorithmsCert {
+    fn from(schemes: TlsSignatureSchemeList) -> Self {
+        Self::new(schemes)
+    }
+}
+
+impl From<Vec<TlsSignatureScheme>> for TlsSignatureAlgorithmsCert {
+    fn from(schemes: Vec<TlsSignatureScheme>) -> Self {
+        Self::from_schemes(schemes)
+    }
+}
+
+impl<const N: usize> From<[TlsSignatureScheme; N]> for TlsSignatureAlgorithmsCert {
+    fn from(schemes: [TlsSignatureScheme; N]) -> Self {
+        Self::from_schemes(Vec::from(schemes))
+    }
+}
+
+impl TryFrom<&TlsRawExtension> for TlsSignatureAlgorithmsCert {
+    type Error = CrafterError;
+
+    fn try_from(value: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension(value)
+    }
+}
+
+impl TryFrom<TlsSignatureAlgorithmsCert> for TlsRawExtension {
+    type Error = CrafterError;
+
+    fn try_from(value: TlsSignatureAlgorithmsCert) -> Result<Self> {
+        value.to_raw_extension()
+    }
+}
+
+fn signature_scheme_list_byte_len(
+    field: &'static str,
+    schemes: &TlsSignatureSchemeList,
+) -> Result<usize> {
+    schemes
+        .len()
+        .checked_mul(TLS_SIGNATURE_ALGORITHM_LEN)
+        .ok_or_else(|| CrafterError::invalid_field_value(field, "length overflow"))
+}
+
+fn validate_signature_scheme_list_len(field: &'static str, len: usize) -> Result<()> {
+    if len < TLS_SIGNATURE_ALGORITHM_LEN {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "length must be at least two bytes",
+        ));
+    }
+    if len % TLS_SIGNATURE_ALGORITHM_LEN != 0 {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "length must be a multiple of two bytes",
+        ));
+    }
+    if len > u16::MAX as usize - 1 {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn decode_signature_scheme_list_prefix<'a>(
+    field: &'static str,
+    body_context: &'static str,
+    bytes: &'a [u8],
+) -> Result<(TlsSignatureSchemeList, &'a [u8])> {
+    if bytes.len() < TLS_SIGNATURE_ALGORITHMS_LIST_LENGTH_LEN {
+        return Err(CrafterError::buffer_too_short(
+            field,
+            TLS_SIGNATURE_ALGORITHMS_LIST_LENGTH_LEN,
+            bytes.len(),
+        ));
+    }
+
+    let byte_len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+    validate_signature_scheme_list_len(field, byte_len)?;
+    let required = TLS_SIGNATURE_ALGORITHMS_LIST_LENGTH_LEN
+        .checked_add(byte_len)
+        .ok_or_else(|| CrafterError::invalid_field_value(field, "length overflow"))?;
+    if bytes.len() < required {
+        return Err(CrafterError::buffer_too_short(
+            body_context,
+            required,
+            bytes.len(),
+        ));
+    }
+
+    let (schemes, tail) = TlsSignatureSchemeList::decode_prefix(&bytes[..required])?;
+    debug_assert!(tail.is_empty());
+    Ok((schemes, &bytes[required..]))
+}
+
+fn format_signature_scheme_raw_values(schemes: &TlsSignatureSchemeList) -> String {
+    schemes
+        .schemes()
+        .iter()
+        .map(|scheme| format!("0x{:04x}", scheme.raw()))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Context that selects the TLS `supported_versions` extension body shape.
@@ -2619,6 +3152,10 @@ mod tests {
             constants::TLS_EXTENSION_SIGNATURE_ALGORITHMS
         );
         assert_eq!(
+            TlsExtensionType::signature_algorithms_cert().raw(),
+            constants::TLS_EXTENSION_SIGNATURE_ALGORITHMS_CERT
+        );
+        assert_eq!(
             TlsExtensionType::application_layer_protocol_negotiation().raw(),
             constants::TLS_EXTENSION_APPLICATION_LAYER_PROTOCOL_NEGOTIATION
         );
@@ -3448,6 +3985,379 @@ mod tests {
             oversized.encode_to_vec().unwrap_err(),
             CrafterError::invalid_field_value(
                 "tls.supported_groups.length",
+                "length must fit in two bytes"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_signature_algorithms_builders_encode_rfc8446_vector() {
+        // RFC 8446 Section 4.2.3 defines SignatureSchemeList as SignatureScheme<2..2^16-2>.
+        let algorithms = TlsSignatureAlgorithms::from_schemes(vec![
+            TlsSignatureScheme::ED25519,
+            TlsSignatureScheme::RSA_PSS_RSAE_SHA256,
+            TlsSignatureScheme::ECDSA_SECP256R1_SHA256,
+        ]);
+        assert_eq!(algorithms.len(), 3);
+        assert!(!algorithms.is_empty());
+        assert_eq!(
+            algorithms.schemes(),
+            &[
+                TlsSignatureScheme::ED25519,
+                TlsSignatureScheme::RSA_PSS_RSAE_SHA256,
+                TlsSignatureScheme::ECDSA_SECP256R1_SHA256,
+            ]
+        );
+        assert_eq!(algorithms.raw_values(), vec![0x0807, 0x0804, 0x0403]);
+        assert_eq!(algorithms.byte_len().unwrap(), 6);
+        assert_eq!(algorithms.encoded_len().unwrap(), 8);
+        assert_eq!(
+            algorithms.encode_to_vec().unwrap(),
+            [0x00, 0x06, 0x08, 0x07, 0x08, 0x04, 0x04, 0x03]
+        );
+
+        let encoded_with_tail = [algorithms.encode_to_vec().unwrap(), vec![0xaa]].concat();
+        let (decoded, tail) = TlsSignatureAlgorithms::decode_prefix(&encoded_with_tail).unwrap();
+        assert_eq!(tail, &[0xaa]);
+        assert_eq!(decoded, algorithms);
+        assert_eq!(
+            decoded.as_signature_scheme_list(),
+            decoded.signature_scheme_list()
+        );
+        assert_eq!(
+            decoded.summary(),
+            "signature_algorithms count=3 bytes=6 values=ed25519,rsa_pss_rsae_sha256,ecdsa_secp256r1_sha256"
+        );
+        assert!(decoded.inspection_fields().contains(&(
+            "signature_algorithms_raw",
+            "0x0807,0x0804,0x0403".to_string()
+        )));
+        assert_eq!(
+            decoded.clone().into_vec(),
+            vec![
+                TlsSignatureScheme::ED25519,
+                TlsSignatureScheme::RSA_PSS_RSAE_SHA256,
+                TlsSignatureScheme::ECDSA_SECP256R1_SHA256,
+            ]
+        );
+        assert_eq!(
+            decoded.into_signature_scheme_list(),
+            algorithms.signature_scheme_list().clone()
+        );
+
+        let mut pushed = TlsSignatureAlgorithms::from_schemes(vec![TlsSignatureScheme::ED25519]);
+        pushed.push(TlsSignatureScheme::RSA_PSS_RSAE_SHA256);
+        assert_eq!(pushed.raw_values(), vec![0x0807, 0x0804]);
+        assert_eq!(
+            TlsSignatureAlgorithms::from_raws([0x0807, 0xfe00]).raw_values(),
+            vec![0x0807, 0xfe00]
+        );
+        assert_eq!(
+            TlsSignatureAlgorithms::from([TlsSignatureScheme::ED25519]).raw_values(),
+            vec![0x0807]
+        );
+        assert_eq!(
+            TlsSignatureAlgorithms::new(TlsSignatureSchemeList::from_raws([0x0807])).raw_values(),
+            vec![0x0807]
+        );
+    }
+
+    #[test]
+    fn tls_extension_signature_algorithms_cert_builders_encode_rfc8446_vector() {
+        let cert = TlsSignatureAlgorithmsCert::from_schemes(vec![
+            TlsSignatureScheme::RSA_PKCS1_SHA384,
+            TlsSignatureScheme::ECDSA_SECP384R1_SHA384,
+        ]);
+        assert_eq!(cert.len(), 2);
+        assert!(!cert.is_empty());
+        assert_eq!(
+            cert.schemes(),
+            &[
+                TlsSignatureScheme::RSA_PKCS1_SHA384,
+                TlsSignatureScheme::ECDSA_SECP384R1_SHA384,
+            ]
+        );
+        assert_eq!(cert.raw_values(), vec![0x0501, 0x0503]);
+        assert_eq!(cert.byte_len().unwrap(), 4);
+        assert_eq!(cert.encoded_len().unwrap(), 6);
+        assert_eq!(
+            cert.encode_to_vec().unwrap(),
+            [0x00, 0x04, 0x05, 0x01, 0x05, 0x03]
+        );
+
+        let encoded_with_tail = [cert.encode_to_vec().unwrap(), vec![0xaa]].concat();
+        let (decoded, tail) =
+            TlsSignatureAlgorithmsCert::decode_prefix(&encoded_with_tail).unwrap();
+        assert_eq!(tail, &[0xaa]);
+        assert_eq!(decoded, cert);
+        assert_eq!(
+            decoded.as_signature_scheme_list(),
+            decoded.signature_scheme_list()
+        );
+        assert_eq!(
+            decoded.summary(),
+            "signature_algorithms_cert count=2 bytes=4 values=rsa_pkcs1_sha384,ecdsa_secp384r1_sha384"
+        );
+        assert!(decoded
+            .inspection_fields()
+            .contains(&("signature_algorithms_cert_raw", "0x0501,0x0503".to_string())));
+        assert_eq!(
+            decoded.clone().into_vec(),
+            vec![
+                TlsSignatureScheme::RSA_PKCS1_SHA384,
+                TlsSignatureScheme::ECDSA_SECP384R1_SHA384,
+            ]
+        );
+        assert_eq!(
+            decoded.into_signature_scheme_list(),
+            cert.signature_scheme_list().clone()
+        );
+
+        let mut pushed =
+            TlsSignatureAlgorithmsCert::from_schemes(vec![TlsSignatureScheme::RSA_PKCS1_SHA384]);
+        pushed.push(TlsSignatureScheme::ECDSA_SECP384R1_SHA384);
+        assert_eq!(pushed.raw_values(), vec![0x0501, 0x0503]);
+        assert_eq!(
+            TlsSignatureAlgorithmsCert::from_raws([0x0501, 0xfe00]).raw_values(),
+            vec![0x0501, 0xfe00]
+        );
+        assert_eq!(
+            TlsSignatureAlgorithmsCert::from([TlsSignatureScheme::RSA_PKCS1_SHA384]).raw_values(),
+            vec![0x0501]
+        );
+    }
+
+    #[test]
+    fn tls_extension_signature_algorithms_converts_to_and_from_raw_extensions() {
+        let algorithms = TlsSignatureAlgorithms::from_schemes(vec![
+            TlsSignatureScheme::ED25519,
+            TlsSignatureScheme::RSA_PSS_RSAE_SHA256,
+        ]);
+        let raw = algorithms.to_raw_extension().unwrap();
+        assert_eq!(raw.extension_type(), TlsExtensionType::SIGNATURE_ALGORITHMS);
+        assert_eq!(
+            raw.raw_type(),
+            constants::TLS_EXTENSION_SIGNATURE_ALGORITHMS
+        );
+        assert_eq!(
+            raw.encode_to_vec().unwrap(),
+            [0x00, 0x0d, 0x00, 0x06, 0x00, 0x04, 0x08, 0x07, 0x08, 0x04]
+        );
+
+        assert_eq!(raw.as_signature_algorithms().unwrap(), algorithms);
+        assert_eq!(TlsSignatureAlgorithms::try_from(&raw).unwrap(), algorithms);
+        assert_eq!(TlsRawExtension::try_from(algorithms.clone()).unwrap(), raw);
+        assert_eq!(
+            TlsRawExtension::signature_algorithms(algorithms.clone()).unwrap(),
+            raw
+        );
+        assert_eq!(
+            TlsRawExtension::decode(raw.encode_to_vec().unwrap())
+                .unwrap()
+                .as_signature_algorithms()
+                .unwrap(),
+            algorithms
+        );
+
+        let cert = TlsSignatureAlgorithmsCert::from_schemes(vec![
+            TlsSignatureScheme::RSA_PKCS1_SHA384,
+            TlsSignatureScheme::ECDSA_SECP384R1_SHA384,
+        ]);
+        let raw = cert.to_raw_extension().unwrap();
+        assert_eq!(
+            raw.extension_type(),
+            TlsExtensionType::SIGNATURE_ALGORITHMS_CERT
+        );
+        assert_eq!(
+            raw.raw_type(),
+            constants::TLS_EXTENSION_SIGNATURE_ALGORITHMS_CERT
+        );
+        assert_eq!(
+            raw.encode_to_vec().unwrap(),
+            [0x00, 0x32, 0x00, 0x06, 0x00, 0x04, 0x05, 0x01, 0x05, 0x03]
+        );
+
+        assert_eq!(raw.as_signature_algorithms_cert().unwrap(), cert);
+        assert_eq!(TlsSignatureAlgorithmsCert::try_from(&raw).unwrap(), cert);
+        assert_eq!(TlsRawExtension::try_from(cert.clone()).unwrap(), raw);
+        assert_eq!(
+            TlsRawExtension::signature_algorithms_cert(cert.clone()).unwrap(),
+            raw
+        );
+
+        assert_eq!(
+            TlsSignatureAlgorithms::from_raw_extension(&TlsRawExtension::from_raw(0xbeef, []))
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be signature_algorithms"
+            )
+        );
+        assert_eq!(
+            TlsSignatureAlgorithmsCert::from_raw_extension(&TlsRawExtension::from_raw(0xbeef, []))
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be signature_algorithms_cert"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_signature_algorithms_preserves_unknown_raw_schemes() {
+        let algorithms = TlsSignatureAlgorithms::from_raws([0x0a0a, 0xfe00, 0xbeef]);
+        assert_eq!(
+            algorithms.encode_to_vec().unwrap(),
+            [0x00, 0x06, 0x0a, 0x0a, 0xfe, 0x00, 0xbe, 0xef]
+        );
+
+        let decoded =
+            TlsSignatureAlgorithms::decode([0x00, 0x06, 0x0a, 0x0a, 0xfe, 0x00, 0xbe, 0xef])
+                .unwrap();
+        assert_eq!(decoded, algorithms);
+        assert_eq!(decoded.raw_values(), vec![0x0a0a, 0xfe00, 0xbeef]);
+        assert_eq!(
+            decoded.labels(),
+            vec![
+                "reserved grease signature scheme 0x0a0a".to_string(),
+                "private-use signature scheme 0xfe00".to_string(),
+                "unknown signature scheme 0xbeef".to_string(),
+            ]
+        );
+        assert!(decoded.inspection_fields().contains(&(
+            "signature_algorithms_raw",
+            "0x0a0a,0xfe00,0xbeef".to_string()
+        )));
+
+        let cert = TlsSignatureAlgorithmsCert::from_raws([0x0a0a, 0xbeef]);
+        assert_eq!(
+            TlsSignatureAlgorithmsCert::decode(cert.encode_to_vec().unwrap())
+                .unwrap()
+                .raw_values(),
+            vec![0x0a0a, 0xbeef]
+        );
+    }
+
+    #[test]
+    fn tls_extension_signature_algorithms_reports_structured_decode_errors() {
+        assert_eq!(
+            TlsSignatureAlgorithms::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.signature_algorithms.length",
+                TLS_SIGNATURE_ALGORITHMS_LIST_LENGTH_LEN,
+                0
+            )
+        );
+        assert_eq!(
+            TlsSignatureAlgorithms::decode([0x00]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.signature_algorithms.length",
+                TLS_SIGNATURE_ALGORITHMS_LIST_LENGTH_LEN,
+                1
+            )
+        );
+        assert_eq!(
+            TlsSignatureAlgorithms::decode([0x00, 0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.signature_algorithms.length",
+                "length must be at least two bytes"
+            )
+        );
+        assert_eq!(
+            TlsSignatureAlgorithms::decode([0x00, 0x03, 0x08, 0x07, 0xaa]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.signature_algorithms.length",
+                "length must be a multiple of two bytes"
+            )
+        );
+        assert_eq!(
+            TlsSignatureAlgorithms::decode([0x00, 0x04, 0x08, 0x07]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.signature_algorithms", 6, 4)
+        );
+        assert_eq!(
+            TlsSignatureAlgorithms::decode([0x00, 0x02, 0x08, 0x07, 0xaa]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.signature_algorithms.length",
+                "length must match extension body"
+            )
+        );
+        assert_eq!(
+            TlsSignatureAlgorithms::from_raw_extension(&TlsRawExtension::new(
+                TlsExtensionType::SIGNATURE_ALGORITHMS,
+                Vec::<u8>::new(),
+            ))
+            .unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.signature_algorithms.length",
+                TLS_SIGNATURE_ALGORITHMS_LIST_LENGTH_LEN,
+                0
+            )
+        );
+
+        assert_eq!(
+            TlsSignatureAlgorithmsCert::decode([0x00, 0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.signature_algorithms_cert.length",
+                "length must be at least two bytes"
+            )
+        );
+        assert_eq!(
+            TlsSignatureAlgorithmsCert::decode([0x00, 0x03, 0x05, 0x01, 0xaa]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.signature_algorithms_cert.length",
+                "length must be a multiple of two bytes"
+            )
+        );
+        assert_eq!(
+            TlsSignatureAlgorithmsCert::decode([0x00, 0x04, 0x05, 0x01]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.signature_algorithms_cert", 6, 4)
+        );
+        assert_eq!(
+            TlsSignatureAlgorithmsCert::decode([0x00, 0x02, 0x05, 0x01, 0xaa]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.signature_algorithms_cert.length",
+                "length must match extension body"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_signature_algorithms_reports_structured_encode_errors() {
+        assert_eq!(
+            TlsSignatureAlgorithms::default()
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.signature_algorithms.length",
+                "length must be at least two bytes"
+            )
+        );
+        assert_eq!(
+            TlsSignatureAlgorithmsCert::default()
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.signature_algorithms_cert.length",
+                "length must be at least two bytes"
+            )
+        );
+
+        let oversized =
+            TlsSignatureAlgorithms::from_schemes(vec![TlsSignatureScheme::ED25519; 32768]);
+        assert_eq!(
+            oversized.encode_to_vec().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.signature_algorithms.length",
+                "length must fit in two bytes"
+            )
+        );
+
+        let oversized_cert =
+            TlsSignatureAlgorithmsCert::from_schemes(vec![TlsSignatureScheme::ED25519; 32768]);
+        assert_eq!(
+            oversized_cert.encode_to_vec().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.signature_algorithms_cert.length",
                 "length must fit in two bytes"
             )
         );
