@@ -7,7 +7,7 @@
 //! round-trip unchanged.
 
 use super::content_type::TlsContentType;
-use super::handshake::{TlsHandshake, TLS_HANDSHAKE_HEADER_LEN};
+use super::handshake::TlsHandshake;
 use super::heartbeat::TlsHeartbeat;
 use super::version::{TlsVersion, TlsVersionField};
 use crate::field::{Field, FieldState};
@@ -1548,7 +1548,7 @@ mod tests {
     use crate::protocols::tls::heartbeat::TlsHeartbeatMessageType;
     use crate::protocols::tls::{
         TlsClientHello, TlsHandshakeType, TlsRawExtension, TLS_CLIENT_HELLO_RANDOM_LEN,
-        TLS_HEARTBEAT_HEADER_LEN, TLS_HEARTBEAT_MIN_PADDING_LEN,
+        TLS_HANDSHAKE_HEADER_LEN, TLS_HEARTBEAT_HEADER_LEN, TLS_HEARTBEAT_MIN_PADDING_LEN,
     };
     use crate::FieldState;
 
