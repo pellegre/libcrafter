@@ -52,6 +52,14 @@ pub const TLS_CERTIFICATE_LIST_LENGTH_LEN: usize = 3;
 pub const TLS_CERTIFICATE_ENTRY_LENGTH_LEN: usize = 3;
 /// TLS CertificateVerify signature length field width in bytes.
 pub const TLS_CERTIFICATE_VERIFY_SIGNATURE_LENGTH_LEN: usize = 2;
+/// TLS NewSessionTicket lifetime field width in bytes.
+pub const TLS_NEW_SESSION_TICKET_LIFETIME_LEN: usize = 4;
+/// TLS 1.3 NewSessionTicket ticket_age_add field width in bytes.
+pub const TLS_NEW_SESSION_TICKET_AGE_ADD_LEN: usize = 4;
+/// TLS 1.3 NewSessionTicket ticket_nonce length field width in bytes.
+pub const TLS_NEW_SESSION_TICKET_NONCE_LENGTH_LEN: usize = 1;
+/// TLS NewSessionTicket ticket length field width in bytes.
+pub const TLS_NEW_SESSION_TICKET_TICKET_LENGTH_LEN: usize = 2;
 /// TLS ClientCertificateType `rsa_sign`.
 pub const TLS_CLIENT_CERTIFICATE_TYPE_RSA_SIGN: u8 = 1;
 /// TLS ClientCertificateType `dss_sign`.
@@ -629,8 +637,8 @@ pub enum TlsHandshakeBody {
     ClientHello(TlsClientHelloBody),
     /// `server_hello` body bytes plus a typed view when available.
     ServerHello(TlsServerHelloBody),
-    /// Opaque `new_session_ticket` body bytes.
-    NewSessionTicket(Vec<u8>),
+    /// `new_session_ticket` body bytes plus a typed view when available.
+    NewSessionTicket(TlsNewSessionTicketBody),
     /// Opaque `end_of_early_data` body bytes.
     EndOfEarlyData(Vec<u8>),
     /// `encrypted_extensions` body bytes plus a typed view when available.
@@ -678,7 +686,14 @@ impl TlsHandshakeBody {
 
     /// Create an opaque body for a known `new_session_ticket` hook.
     pub fn new_session_ticket(body: impl Into<Vec<u8>>) -> Self {
-        Self::NewSessionTicket(body.into())
+        Self::NewSessionTicket(TlsNewSessionTicketBody::raw(body))
+    }
+
+    /// Create a typed body for a known `new_session_ticket` hook.
+    pub fn from_new_session_ticket(new_session_ticket: TlsNewSessionTicket) -> Result<Self> {
+        Ok(Self::NewSessionTicket(
+            TlsNewSessionTicketBody::from_new_session_ticket(new_session_ticket)?,
+        ))
     }
 
     /// Create an opaque body for a known `end_of_early_data` hook.
@@ -768,7 +783,9 @@ impl TlsHandshakeBody {
         match handshake_type.into() {
             TlsHandshakeType::CLIENT_HELLO => Self::ClientHello(TlsClientHelloBody::raw(body)),
             TlsHandshakeType::SERVER_HELLO => Self::ServerHello(TlsServerHelloBody::raw(body)),
-            TlsHandshakeType::NEW_SESSION_TICKET => Self::NewSessionTicket(body),
+            TlsHandshakeType::NEW_SESSION_TICKET => {
+                Self::NewSessionTicket(TlsNewSessionTicketBody::raw(body))
+            }
             TlsHandshakeType::END_OF_EARLY_DATA => Self::EndOfEarlyData(body),
             TlsHandshakeType::ENCRYPTED_EXTENSIONS => {
                 Self::EncryptedExtensions(TlsEncryptedExtensionsBody::raw(body))
@@ -800,7 +817,9 @@ impl TlsHandshakeBody {
             TlsHandshakeType::SERVER_HELLO => Ok(Self::ServerHello(
                 TlsServerHelloBody::from_decoded_body(body)?,
             )),
-            TlsHandshakeType::NEW_SESSION_TICKET => Ok(Self::NewSessionTicket(body)),
+            TlsHandshakeType::NEW_SESSION_TICKET => Ok(Self::NewSessionTicket(
+                TlsNewSessionTicketBody::from_decoded_body(body)?,
+            )),
             TlsHandshakeType::END_OF_EARLY_DATA => Ok(Self::EndOfEarlyData(body)),
             TlsHandshakeType::ENCRYPTED_EXTENSIONS => Ok(Self::EncryptedExtensions(
                 TlsEncryptedExtensionsBody::from_decoded_body(body)?,
@@ -851,8 +870,8 @@ impl TlsHandshakeBody {
             Self::CertificateRequest(body) => body.body(),
             Self::CertificateVerify(body) => body.body(),
             Self::Finished(body) => body.body(),
-            Self::NewSessionTicket(body)
-            | Self::EndOfEarlyData(body)
+            Self::NewSessionTicket(body) => body.body(),
+            Self::EndOfEarlyData(body)
             | Self::KeyUpdate(body)
             | Self::CompressedCertificate(body)
             | Self::Opaque(body) => body,
@@ -869,8 +888,8 @@ impl TlsHandshakeBody {
             Self::CertificateRequest(body) => body.into_body(),
             Self::CertificateVerify(body) => body.into_body(),
             Self::Finished(body) => body.into_body(),
-            Self::NewSessionTicket(body)
-            | Self::EndOfEarlyData(body)
+            Self::NewSessionTicket(body) => body.into_body(),
+            Self::EndOfEarlyData(body)
             | Self::KeyUpdate(body)
             | Self::CompressedCertificate(body)
             | Self::Opaque(body) => body,
@@ -948,6 +967,14 @@ impl TlsHandshakeBody {
         }
     }
 
+    /// Borrow the decoded NewSessionTicket fields when this body carries them.
+    pub const fn as_new_session_ticket(&self) -> Option<&TlsNewSessionTicket> {
+        match self {
+            Self::NewSessionTicket(body) => body.new_session_ticket(),
+            _ => None,
+        }
+    }
+
     /// Return true when this body is a decoded or typed ClientHello.
     pub const fn is_typed_client_hello(&self) -> bool {
         match self {
@@ -1000,6 +1027,14 @@ impl TlsHandshakeBody {
     pub const fn is_typed_finished(&self) -> bool {
         match self {
             Self::Finished(body) => body.is_typed(),
+            _ => false,
+        }
+    }
+
+    /// Return true when this body is a decoded or typed NewSessionTicket.
+    pub const fn is_typed_new_session_ticket(&self) -> bool {
+        match self {
+            Self::NewSessionTicket(body) => body.is_typed(),
             _ => false,
         }
     }
@@ -1126,6 +1161,14 @@ impl TlsHandshake {
             TlsHandshakeHeader::new_session_ticket(),
             TlsHandshakeBody::new_session_ticket(body),
         )
+    }
+
+    /// Construct a `new_session_ticket` handshake message from typed fields.
+    pub fn from_new_session_ticket(new_session_ticket: TlsNewSessionTicket) -> Result<Self> {
+        Ok(Self::from_header_and_body(
+            TlsHandshakeHeader::new_session_ticket(),
+            TlsHandshakeBody::from_new_session_ticket(new_session_ticket)?,
+        ))
     }
 
     /// Construct an `end_of_early_data` handshake message with opaque body bytes.
@@ -1320,6 +1363,11 @@ impl TlsHandshake {
     /// Borrow decoded Finished fields when this message carries them.
     pub fn finished_body(&self) -> Option<&TlsFinished> {
         self.body.as_finished()
+    }
+
+    /// Borrow decoded NewSessionTicket fields when this message carries them.
+    pub fn new_session_ticket_body(&self) -> Option<&TlsNewSessionTicket> {
+        self.body.as_new_session_ticket()
     }
 
     /// Consume the message and return its header plus body hook.
@@ -3788,6 +3836,422 @@ impl Default for TlsFinished {
     }
 }
 
+/// TLS NewSessionTicket message wire form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TlsNewSessionTicketForm {
+    /// TLS 1.2 form with lifetime hint and opaque ticket.
+    Tls12,
+    /// TLS 1.3 form with age_add, nonce, opaque ticket, and extensions.
+    Tls13,
+}
+
+impl TlsNewSessionTicketForm {
+    /// Stable lowercase label for summaries and inspection output.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Tls12 => "tls12",
+            Self::Tls13 => "tls13",
+        }
+    }
+}
+
+/// TLS NewSessionTicket handshake body fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsNewSessionTicket {
+    form: TlsNewSessionTicketForm,
+    ticket_lifetime: u32,
+    ticket_age_add: u32,
+    ticket_nonce: Vec<u8>,
+    ticket: Vec<u8>,
+    extensions: Vec<TlsRawExtension>,
+}
+
+impl TlsNewSessionTicket {
+    /// Construct an empty TLS 1.3 NewSessionTicket body.
+    pub fn new() -> Self {
+        Self::tls13(0, 0, Vec::new(), Vec::new(), Vec::new())
+    }
+
+    /// Construct a TLS 1.2 NewSessionTicket body.
+    pub fn tls12(ticket_lifetime_hint: u32, ticket: impl Into<Vec<u8>>) -> Self {
+        Self {
+            form: TlsNewSessionTicketForm::Tls12,
+            ticket_lifetime: ticket_lifetime_hint,
+            ticket_age_add: 0,
+            ticket_nonce: Vec::new(),
+            ticket: ticket.into(),
+            extensions: Vec::new(),
+        }
+    }
+
+    /// Construct a TLS 1.3 NewSessionTicket body.
+    pub fn tls13(
+        ticket_lifetime: u32,
+        ticket_age_add: u32,
+        ticket_nonce: impl Into<Vec<u8>>,
+        ticket: impl Into<Vec<u8>>,
+        extensions: impl Into<Vec<TlsRawExtension>>,
+    ) -> Self {
+        Self {
+            form: TlsNewSessionTicketForm::Tls13,
+            ticket_lifetime,
+            ticket_age_add,
+            ticket_nonce: ticket_nonce.into(),
+            ticket: ticket.into(),
+            extensions: extensions.into(),
+        }
+    }
+
+    /// Replace the message with TLS 1.2 wire form.
+    pub fn with_tls12_form(mut self) -> Self {
+        self.form = TlsNewSessionTicketForm::Tls12;
+        self.ticket_age_add = 0;
+        self.ticket_nonce.clear();
+        self.extensions.clear();
+        self
+    }
+
+    /// Replace the message with TLS 1.3 wire form.
+    pub fn with_tls13_form(mut self) -> Self {
+        self.form = TlsNewSessionTicketForm::Tls13;
+        self
+    }
+
+    /// Replace the ticket lifetime or TLS 1.2 lifetime hint.
+    pub fn with_ticket_lifetime(mut self, ticket_lifetime: u32) -> Self {
+        self.ticket_lifetime = ticket_lifetime;
+        self
+    }
+
+    /// Replace the TLS 1.3 ticket_age_add and select TLS 1.3 form.
+    pub fn with_ticket_age_add(mut self, ticket_age_add: u32) -> Self {
+        self.form = TlsNewSessionTicketForm::Tls13;
+        self.ticket_age_add = ticket_age_add;
+        self
+    }
+
+    /// Replace the TLS 1.3 ticket_nonce and select TLS 1.3 form.
+    pub fn with_ticket_nonce(mut self, ticket_nonce: impl Into<Vec<u8>>) -> Self {
+        self.form = TlsNewSessionTicketForm::Tls13;
+        self.ticket_nonce = ticket_nonce.into();
+        self
+    }
+
+    /// Replace the opaque ticket bytes.
+    pub fn with_ticket(mut self, ticket: impl Into<Vec<u8>>) -> Self {
+        self.ticket = ticket.into();
+        self
+    }
+
+    /// Replace the TLS 1.3 extension list and select TLS 1.3 form.
+    pub fn with_extensions(mut self, extensions: impl Into<Vec<TlsRawExtension>>) -> Self {
+        self.form = TlsNewSessionTicketForm::Tls13;
+        self.extensions = extensions.into();
+        self
+    }
+
+    /// Append one TLS 1.3 extension and select TLS 1.3 form.
+    pub fn with_extension(mut self, extension: TlsRawExtension) -> Self {
+        self.form = TlsNewSessionTicketForm::Tls13;
+        self.extensions.push(extension);
+        self
+    }
+
+    /// Append one raw TLS 1.3 extension and select TLS 1.3 form.
+    pub fn with_raw_extension(self, extension_type: u16, body: impl Into<Vec<u8>>) -> Self {
+        self.with_extension(TlsRawExtension::from_raw(extension_type, body))
+    }
+
+    /// Return the selected NewSessionTicket wire form.
+    pub const fn form(&self) -> TlsNewSessionTicketForm {
+        self.form
+    }
+
+    /// Return true when this body uses the TLS 1.2 form.
+    pub const fn is_tls12(&self) -> bool {
+        matches!(self.form, TlsNewSessionTicketForm::Tls12)
+    }
+
+    /// Return true when this body uses the TLS 1.3 form.
+    pub const fn is_tls13(&self) -> bool {
+        matches!(self.form, TlsNewSessionTicketForm::Tls13)
+    }
+
+    /// Return ticket_lifetime in TLS 1.3 or ticket_lifetime_hint in TLS 1.2.
+    pub const fn ticket_lifetime(&self) -> u32 {
+        self.ticket_lifetime
+    }
+
+    /// Return the TLS 1.3 ticket_age_add value.
+    pub const fn ticket_age_add(&self) -> u32 {
+        self.ticket_age_add
+    }
+
+    /// Borrow the TLS 1.3 ticket_nonce bytes.
+    pub fn ticket_nonce(&self) -> &[u8] {
+        &self.ticket_nonce
+    }
+
+    /// Borrow the opaque ticket bytes.
+    pub fn ticket(&self) -> &[u8] {
+        &self.ticket
+    }
+
+    /// Borrow the TLS 1.3 extension list.
+    pub fn extensions(&self) -> &[TlsRawExtension] {
+        &self.extensions
+    }
+
+    /// Number of bytes occupied by the NewSessionTicket body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        let mut len = TLS_NEW_SESSION_TICKET_LIFETIME_LEN;
+        match self.form {
+            TlsNewSessionTicketForm::Tls12 => {
+                len = checked_add_len(
+                    len,
+                    TLS_NEW_SESSION_TICKET_TICKET_LENGTH_LEN,
+                    "tls.new_session_ticket.length",
+                )?;
+                len = checked_add_len(
+                    len,
+                    validate_u16_vector_len(
+                        self.ticket.len(),
+                        "tls.new_session_ticket.ticket.length",
+                    )?,
+                    "tls.new_session_ticket.length",
+                )?;
+                Ok(len)
+            }
+            TlsNewSessionTicketForm::Tls13 => {
+                validate_u8_vector_len(
+                    self.ticket_nonce.len(),
+                    "tls.new_session_ticket.ticket_nonce.length",
+                )?;
+                len = checked_add_len(
+                    len,
+                    TLS_NEW_SESSION_TICKET_AGE_ADD_LEN,
+                    "tls.new_session_ticket.length",
+                )?;
+                len = checked_add_len(
+                    len,
+                    TLS_NEW_SESSION_TICKET_NONCE_LENGTH_LEN,
+                    "tls.new_session_ticket.length",
+                )?;
+                len = checked_add_len(
+                    len,
+                    self.ticket_nonce.len(),
+                    "tls.new_session_ticket.length",
+                )?;
+                len = checked_add_len(
+                    len,
+                    TLS_NEW_SESSION_TICKET_TICKET_LENGTH_LEN,
+                    "tls.new_session_ticket.length",
+                )?;
+                len = checked_add_len(
+                    len,
+                    validate_u16_vector_len(
+                        self.ticket.len(),
+                        "tls.new_session_ticket.ticket.length",
+                    )?,
+                    "tls.new_session_ticket.length",
+                )?;
+                len = checked_add_len(
+                    len,
+                    TlsExtensions::new(self.extensions.clone())
+                        .encoded_len_with_context(TlsExtensionListContext::new_session_ticket())?,
+                    "tls.new_session_ticket.length",
+                )?;
+                Ok(len)
+            }
+        }
+    }
+
+    /// Append the NewSessionTicket body bytes.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.encoded_len()?;
+        out.extend_from_slice(&self.ticket_lifetime.to_be_bytes());
+        match self.form {
+            TlsNewSessionTicketForm::Tls12 => {
+                encode_u16_vector(&self.ticket, "tls.new_session_ticket.ticket.length", out)?;
+            }
+            TlsNewSessionTicketForm::Tls13 => {
+                out.extend_from_slice(&self.ticket_age_add.to_be_bytes());
+                encode_u8_vector(
+                    &self.ticket_nonce,
+                    "tls.new_session_ticket.ticket_nonce.length",
+                    out,
+                )?;
+                encode_u16_vector(&self.ticket, "tls.new_session_ticket.ticket.length", out)?;
+                TlsExtensions::new(self.extensions.clone())
+                    .encode_with_context(TlsExtensionListContext::new_session_ticket(), out)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Return the encoded NewSessionTicket body bytes.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Compile the NewSessionTicket body bytes.
+    pub fn compile(&self) -> Result<Vec<u8>> {
+        self.encode_to_vec()
+    }
+
+    /// Decode one complete NewSessionTicket body, trying TLS 1.3 and then TLS 1.2.
+    ///
+    /// Use the version-specific decoders when session context already identifies
+    /// the negotiated TLS version.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        match Self::decode_tls13(bytes) {
+            Ok(ticket) => Ok(ticket),
+            Err(tls13_error) => match Self::decode_tls12(bytes) {
+                Ok(ticket) => Ok(ticket),
+                Err(_) => Err(tls13_error),
+            },
+        }
+    }
+
+    /// Decode one complete TLS 1.2 NewSessionTicket body.
+    pub fn decode_tls12(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (ticket, tail) = Self::decode_prefix_tls12(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.new_session_ticket.length",
+                "trailing bytes after ticket",
+            ));
+        }
+        Ok(ticket)
+    }
+
+    /// Decode one complete TLS 1.3 NewSessionTicket body.
+    pub fn decode_tls13(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (ticket, tail) = Self::decode_prefix_tls13(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.new_session_ticket.length",
+                "trailing bytes after extensions",
+            ));
+        }
+        Ok(ticket)
+    }
+
+    /// Decode one NewSessionTicket body from the front of `bytes`.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        match Self::decode_prefix_tls13(bytes) {
+            Ok(result) => Ok(result),
+            Err(tls13_error) => match Self::decode_prefix_tls12(bytes) {
+                Ok(result) => Ok(result),
+                Err(_) => Err(tls13_error),
+            },
+        }
+    }
+
+    /// Decode one TLS 1.2 NewSessionTicket body from the front of `bytes`.
+    pub fn decode_prefix_tls12(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let mut cursor = 0;
+        let lifetime = take_bytes(
+            bytes,
+            &mut cursor,
+            TLS_NEW_SESSION_TICKET_LIFETIME_LEN,
+            "tls.new_session_ticket.ticket_lifetime_hint",
+        )?;
+        let ticket_lifetime_hint =
+            u32::from_be_bytes([lifetime[0], lifetime[1], lifetime[2], lifetime[3]]);
+        let ticket = decode_u16_vector(
+            bytes,
+            &mut cursor,
+            "tls.new_session_ticket.ticket",
+            "tls.new_session_ticket.ticket.length",
+        )?;
+        Ok((Self::tls12(ticket_lifetime_hint, ticket), &bytes[cursor..]))
+    }
+
+    /// Decode one TLS 1.3 NewSessionTicket body from the front of `bytes`.
+    pub fn decode_prefix_tls13(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let mut cursor = 0;
+        let lifetime = take_bytes(
+            bytes,
+            &mut cursor,
+            TLS_NEW_SESSION_TICKET_LIFETIME_LEN,
+            "tls.new_session_ticket.ticket_lifetime",
+        )?;
+        let ticket_lifetime =
+            u32::from_be_bytes([lifetime[0], lifetime[1], lifetime[2], lifetime[3]]);
+        let age_add = take_bytes(
+            bytes,
+            &mut cursor,
+            TLS_NEW_SESSION_TICKET_AGE_ADD_LEN,
+            "tls.new_session_ticket.ticket_age_add",
+        )?;
+        let ticket_age_add = u32::from_be_bytes([age_add[0], age_add[1], age_add[2], age_add[3]]);
+        let ticket_nonce = decode_u8_vector(
+            bytes,
+            &mut cursor,
+            "tls.new_session_ticket.ticket_nonce",
+            "tls.new_session_ticket.ticket_nonce.length",
+        )?;
+        let ticket = decode_u16_vector(
+            bytes,
+            &mut cursor,
+            "tls.new_session_ticket.ticket",
+            "tls.new_session_ticket.ticket.length",
+        )?;
+        let extensions = decode_extension_list(
+            bytes,
+            &mut cursor,
+            TlsExtensionListContext::new_session_ticket(),
+        )?;
+        Ok((
+            Self::tls13(
+                ticket_lifetime,
+                ticket_age_add,
+                ticket_nonce,
+                ticket,
+                extensions,
+            ),
+            &bytes[cursor..],
+        ))
+    }
+
+    /// Stable one-line summary preserving form, ticket sizes, and extension count.
+    pub fn summary(&self) -> String {
+        format!(
+            "new_session_ticket form={} lifetime={} age_add={} nonce_bytes={} ticket_bytes={} extensions={}",
+            self.form.label(),
+            self.ticket_lifetime,
+            self.ticket_age_add,
+            self.ticket_nonce.len(),
+            self.ticket.len(),
+            self.extensions.len()
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("form", self.form.label().to_string()),
+            ("ticket_lifetime", self.ticket_lifetime.to_string()),
+            ("ticket_age_add", self.ticket_age_add.to_string()),
+            ("ticket_nonce", hex_bytes(&self.ticket_nonce)),
+            ("ticket_nonce_bytes", self.ticket_nonce.len().to_string()),
+            ("ticket", hex_bytes(&self.ticket)),
+            ("ticket_bytes", self.ticket.len().to_string()),
+            ("extensions_count", self.extensions.len().to_string()),
+        ]
+    }
+}
+
+impl Default for TlsNewSessionTicket {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// ServerHello handshake body bytes plus an optional decoded view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsServerHelloBody {
@@ -4146,6 +4610,67 @@ impl TlsFinishedBody {
     /// Return true when the body carries decoded Finished fields.
     pub const fn is_typed(&self) -> bool {
         self.finished.is_some()
+    }
+
+    /// Number of preserved body bytes.
+    pub fn body_len(&self) -> usize {
+        self.body.len()
+    }
+}
+
+/// NewSessionTicket handshake body bytes plus an optional decoded view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsNewSessionTicketBody {
+    body: Vec<u8>,
+    new_session_ticket: Option<TlsNewSessionTicket>,
+}
+
+impl TlsNewSessionTicketBody {
+    /// Preserve NewSessionTicket body bytes without parsing them.
+    pub fn raw(body: impl Into<Vec<u8>>) -> Self {
+        Self {
+            body: body.into(),
+            new_session_ticket: None,
+        }
+    }
+
+    /// Build NewSessionTicket body bytes from typed fields.
+    pub fn from_new_session_ticket(new_session_ticket: TlsNewSessionTicket) -> Result<Self> {
+        let body = new_session_ticket.encode_to_vec()?;
+        Ok(Self {
+            body,
+            new_session_ticket: Some(new_session_ticket),
+        })
+    }
+
+    /// Decode and preserve exact NewSessionTicket body bytes.
+    pub fn from_decoded_body(body: impl Into<Vec<u8>>) -> Result<Self> {
+        let body = body.into();
+        let new_session_ticket = TlsNewSessionTicket::decode(&body)?;
+        Ok(Self {
+            body,
+            new_session_ticket: Some(new_session_ticket),
+        })
+    }
+
+    /// Borrow the preserved body bytes.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// Consume the wrapper and return the preserved body bytes.
+    pub fn into_body(self) -> Vec<u8> {
+        self.body
+    }
+
+    /// Borrow the decoded NewSessionTicket fields when available.
+    pub const fn new_session_ticket(&self) -> Option<&TlsNewSessionTicket> {
+        self.new_session_ticket.as_ref()
+    }
+
+    /// Return true when the body carries decoded NewSessionTicket fields.
+    pub const fn is_typed(&self) -> bool {
+        self.new_session_ticket.is_some()
     }
 
     /// Number of preserved body bytes.
@@ -5451,6 +5976,138 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn tls_new_session_ticket_tls12_ticket_encodes_decodes_through_handshake() -> Result<()> {
+        let ticket = TlsNewSessionTicket::tls12(0x0102_0304, [0xaa, 0xbb]);
+        let encoded = ticket.encode_to_vec()?;
+
+        assert_eq!(
+            encoded,
+            vec![
+                0x01, 0x02, 0x03, 0x04, // ticket_lifetime_hint
+                0x00, 0x02, 0xaa, 0xbb, // ticket
+            ]
+        );
+        assert!(ticket.is_tls12());
+        assert_eq!(ticket.form(), TlsNewSessionTicketForm::Tls12);
+        assert_eq!(ticket.ticket_lifetime(), 0x0102_0304);
+        assert_eq!(ticket.ticket_age_add(), 0);
+        assert_eq!(ticket.ticket_nonce(), &[]);
+        assert_eq!(ticket.ticket(), &[0xaa, 0xbb]);
+        assert!(ticket.extensions().is_empty());
+        assert_eq!(
+            ticket.summary(),
+            "new_session_ticket form=tls12 lifetime=16909060 age_add=0 nonce_bytes=0 ticket_bytes=2 extensions=0"
+        );
+
+        let decoded = TlsNewSessionTicket::decode_tls12(&encoded)?;
+        assert_eq!(decoded, ticket);
+        assert_eq!(TlsNewSessionTicket::decode(&encoded)?, ticket);
+
+        let handshake = TlsHandshake::from_new_session_ticket(ticket.clone())?;
+        let handshake_bytes =
+            tls_handshake_fixture(TlsHandshakeType::NEW_SESSION_TICKET.raw(), &encoded);
+        assert_eq!(handshake.body_bytes(), encoded.as_slice());
+        assert!(handshake.body().is_typed_new_session_ticket());
+        assert_eq!(handshake.new_session_ticket_body(), Some(&ticket));
+        assert_eq!(handshake.encode_to_vec()?, handshake_bytes);
+
+        let decoded_handshake = TlsHandshake::decode(&handshake_bytes)?;
+        assert_eq!(decoded_handshake.new_session_ticket_body(), Some(&ticket));
+        assert_eq!(decoded_handshake.encode_to_vec()?, handshake_bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_new_session_ticket_tls13_nonce_ticket_and_unknown_extensions_round_trip() -> Result<()> {
+        let ticket = TlsNewSessionTicket::tls13(
+            7,
+            0x0102_0304,
+            [0x09],
+            [0xaa, 0xbb, 0xcc],
+            vec![TlsRawExtension::from_raw(0xbeef, [0xde])],
+        );
+        let encoded = ticket.encode_to_vec()?;
+
+        assert_eq!(
+            encoded,
+            vec![
+                0x00, 0x00, 0x00, 0x07, // ticket_lifetime
+                0x01, 0x02, 0x03, 0x04, // ticket_age_add
+                0x01, 0x09, // ticket_nonce
+                0x00, 0x03, 0xaa, 0xbb, 0xcc, // ticket
+                0x00, 0x05, 0xbe, 0xef, 0x00, 0x01, 0xde, // extensions
+            ]
+        );
+        assert!(ticket.is_tls13());
+        assert_eq!(ticket.form(), TlsNewSessionTicketForm::Tls13);
+        assert_eq!(ticket.ticket_lifetime(), 7);
+        assert_eq!(ticket.ticket_age_add(), 0x0102_0304);
+        assert_eq!(ticket.ticket_nonce(), &[0x09]);
+        assert_eq!(ticket.ticket(), &[0xaa, 0xbb, 0xcc]);
+        assert_eq!(ticket.extensions()[0].raw_type(), 0xbeef);
+        assert_eq!(ticket.extensions()[0].body(), &[0xde]);
+        assert_eq!(
+            ticket.inspection_fields(),
+            vec![
+                ("form", "tls13".to_string()),
+                ("ticket_lifetime", "7".to_string()),
+                ("ticket_age_add", "16909060".to_string()),
+                ("ticket_nonce", "09".to_string()),
+                ("ticket_nonce_bytes", "1".to_string()),
+                ("ticket", "aa bb cc".to_string()),
+                ("ticket_bytes", "3".to_string()),
+                ("extensions_count", "1".to_string()),
+            ]
+        );
+
+        let decoded = TlsNewSessionTicket::decode_tls13(&encoded)?;
+        assert_eq!(decoded, ticket);
+        assert_eq!(decoded.encode_to_vec()?, encoded);
+        assert_eq!(decoded.compile()?, encoded);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_new_session_ticket_raw_body_remains_available() -> Result<()> {
+        let raw = TlsHandshake::new_session_ticket([0xca, 0xfe]);
+
+        assert_eq!(raw.body_bytes(), &[0xca, 0xfe]);
+        assert!(matches!(raw.body(), TlsHandshakeBody::NewSessionTicket(_)));
+        assert!(raw.new_session_ticket_body().is_none());
+        assert!(!raw.body().is_typed_new_session_ticket());
+        assert_eq!(
+            raw.encode_to_vec()?,
+            vec![0x04, 0x00, 0x00, 0x02, 0xca, 0xfe]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_new_session_ticket_decode_reports_structured_vector_errors() {
+        assert_eq!(
+            TlsNewSessionTicket::decode_tls13([0x00, 0x00, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.new_session_ticket.ticket_lifetime", 4, 3)
+        );
+        assert_eq!(
+            TlsNewSessionTicket::decode_tls12([0x00, 0x00, 0x00, 0x01, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.new_session_ticket.ticket.length", 6, 5)
+        );
+        assert_eq!(
+            TlsNewSessionTicket::decode_tls13([
+                0x00, 0x00, 0x00, 0x01, // ticket_lifetime
+                0x00, 0x00, 0x00, 0x02, // ticket_age_add
+                0x00, // empty nonce
+                0x00, 0x02, 0xaa, // truncated ticket
+            ])
+            .unwrap_err(),
+            CrafterError::buffer_too_short("tls.new_session_ticket.ticket", 13, 12)
+        );
     }
 
     #[test]
