@@ -13,6 +13,7 @@ pub mod handshake;
 pub mod named_group;
 pub mod record;
 pub mod signature_scheme;
+pub mod vector;
 pub mod vectors;
 pub mod version;
 
