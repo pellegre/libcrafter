@@ -86,6 +86,20 @@ pub const TLS_KEY_SHARE_KEY_EXCHANGE_LENGTH_LEN: usize = 2;
 /// TLS key_share KeyShareEntry fixed header width in bytes.
 pub const TLS_KEY_SHARE_ENTRY_HEADER_LEN: usize =
     TLS_KEY_SHARE_GROUP_LEN + TLS_KEY_SHARE_KEY_EXCHANGE_LENGTH_LEN;
+/// TLS cookie opaque vector length field width in bytes.
+pub const TLS_COOKIE_LENGTH_LEN: usize = 2;
+/// RFC 8446 minimum cookie length.
+pub const TLS_COOKIE_MIN_LEN: usize = 1;
+/// RFC 8446 maximum cookie length.
+pub const TLS_COOKIE_MAX_LEN: usize = u16::MAX as usize;
+/// TLS record_size_limit body width in bytes.
+pub const TLS_RECORD_SIZE_LIMIT_LEN: usize = 2;
+/// RFC 8449 minimum record_size_limit value.
+pub const TLS_RECORD_SIZE_LIMIT_MIN: u16 = 64;
+/// RFC 8449 TLS 1.2 and earlier protocol-defined maximum plaintext record size.
+pub const TLS_RECORD_SIZE_LIMIT_TLS12_MAX: u16 = 1 << 14;
+/// RFC 8449 TLS 1.3 protocol-defined maximum TLSInnerPlaintext size.
+pub const TLS_RECORD_SIZE_LIMIT_TLS13_MAX: u16 = (1 << 14) + 1;
 
 /// A raw-preserving TLS `ExtensionType` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -195,9 +209,24 @@ impl TlsExtensionType {
         Self::APPLICATION_LAYER_PROTOCOL_NEGOTIATION
     }
 
+    /// TLS ExtensionType `padding` constructor.
+    pub const fn padding() -> Self {
+        Self::PADDING
+    }
+
+    /// TLS ExtensionType `record_size_limit` constructor.
+    pub const fn record_size_limit() -> Self {
+        Self::RECORD_SIZE_LIMIT
+    }
+
     /// TLS ExtensionType `supported_versions` constructor.
     pub const fn supported_versions() -> Self {
         Self::SUPPORTED_VERSIONS
+    }
+
+    /// TLS ExtensionType `cookie` constructor.
+    pub const fn cookie() -> Self {
+        Self::COOKIE
     }
 
     /// TLS ExtensionType `pre_shared_key` constructor.
@@ -475,6 +504,555 @@ impl TlsRawExtension {
             ("extension_body_bytes", self.body.len().to_string()),
         ]
     }
+}
+
+/// TLS 1.3 `cookie` extension body with opaque cookie bytes preserved.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TlsCookie {
+    bytes: Vec<u8>,
+}
+
+impl TlsCookie {
+    /// Create a cookie extension body from opaque cookie bytes.
+    pub fn new(bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            bytes: bytes.into(),
+        }
+    }
+
+    /// Create a cookie extension body from opaque cookie bytes.
+    pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> Self {
+        Self::new(bytes)
+    }
+
+    /// Borrow the preserved opaque cookie bytes.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Consume the cookie and return its opaque bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    /// Number of opaque cookie bytes.
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Return true when no opaque cookie bytes are present.
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// Number of bytes occupied by the complete encoded Cookie body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        validate_cookie_len(self.bytes.len())?;
+        TLS_COOKIE_LENGTH_LEN
+            .checked_add(self.bytes.len())
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.cookie.length", "length overflow")
+            })
+    }
+
+    /// Append this Cookie body to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        validate_cookie_len(self.bytes.len())?;
+        let len = u16::try_from(self.bytes.len()).map_err(|_| {
+            CrafterError::invalid_field_value("tls.cookie.length", "length must fit in two bytes")
+        })?;
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(&self.bytes);
+        Ok(())
+    }
+
+    /// Return this Cookie body encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Convert this Cookie body into a raw `cookie` extension.
+    pub fn to_raw_extension(&self) -> Result<TlsRawExtension> {
+        Ok(TlsRawExtension::new(
+            TlsExtensionType::COOKIE,
+            self.encode_to_vec()?,
+        ))
+    }
+
+    /// Decode a Cookie extension body.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (cookie, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.cookie.length",
+                "length must match extension body",
+            ));
+        }
+        Ok(cookie)
+    }
+
+    /// Decode a Cookie body from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_COOKIE_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.cookie.length",
+                TLS_COOKIE_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+        validate_cookie_len(len)?;
+        let required = TLS_COOKIE_LENGTH_LEN.checked_add(len).ok_or_else(|| {
+            CrafterError::invalid_field_value("tls.cookie.length", "length overflow")
+        })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "tls.cookie",
+                required,
+                bytes.len(),
+            ));
+        }
+
+        Ok((
+            Self::new(bytes[TLS_COOKIE_LENGTH_LEN..required].to_vec()),
+            &bytes[required..],
+        ))
+    }
+
+    /// Decode a raw `cookie` extension body.
+    pub fn from_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        if extension.extension_type() != TlsExtensionType::COOKIE {
+            return Err(CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be cookie",
+            ));
+        }
+        Self::decode(extension.body())
+    }
+
+    /// Stable one-line summary preserving opaque cookie size.
+    pub fn summary(&self) -> String {
+        format!("cookie bytes={}", self.bytes.len())
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("cookie_bytes", self.bytes.len().to_string()),
+            ("cookie", hex_bytes(&self.bytes)),
+        ]
+    }
+}
+
+impl From<Vec<u8>> for TlsCookie {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::new(bytes)
+    }
+}
+
+impl From<&[u8]> for TlsCookie {
+    fn from(bytes: &[u8]) -> Self {
+        Self::new(bytes.to_vec())
+    }
+}
+
+impl<const N: usize> From<[u8; N]> for TlsCookie {
+    fn from(bytes: [u8; N]) -> Self {
+        Self::new(Vec::from(bytes))
+    }
+}
+
+impl TryFrom<&TlsRawExtension> for TlsCookie {
+    type Error = CrafterError;
+
+    fn try_from(value: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension(value)
+    }
+}
+
+impl TryFrom<TlsCookie> for TlsRawExtension {
+    type Error = CrafterError;
+
+    fn try_from(value: TlsCookie) -> Result<Self> {
+        value.to_raw_extension()
+    }
+}
+
+fn validate_cookie_len(len: usize) -> Result<()> {
+    if len < TLS_COOKIE_MIN_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tls.cookie.length",
+            "length must be at least one byte",
+        ));
+    }
+    if len > TLS_COOKIE_MAX_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tls.cookie.length",
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
+/// TLS `padding` extension body with caller-provided bytes preserved.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct TlsPadding {
+    bytes: Vec<u8>,
+}
+
+impl TlsPadding {
+    /// Create a padding extension body from caller-provided bytes.
+    pub fn new(bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            bytes: bytes.into(),
+        }
+    }
+
+    /// Create a padding extension body from caller-provided bytes.
+    pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> Self {
+        Self::new(bytes)
+    }
+
+    /// Create a padding extension body filled with zero bytes.
+    pub fn zeros(len: usize) -> Self {
+        Self::new(vec![0; len])
+    }
+
+    /// Borrow the preserved padding bytes.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Consume the padding body and return its bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    /// Number of padding bytes.
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Return true when no padding bytes are present.
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// Return true when every padding byte is zero.
+    pub fn is_zero_filled(&self) -> bool {
+        self.bytes.iter().all(|byte| *byte == 0)
+    }
+
+    /// Number of bytes occupied by this padding extension body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        validate_padding_len(self.bytes.len())?;
+        Ok(self.bytes.len())
+    }
+
+    /// Append this padding extension body to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        validate_padding_len(self.bytes.len())?;
+        out.extend_from_slice(&self.bytes);
+        Ok(())
+    }
+
+    /// Return this padding extension body encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Convert this padding body into a raw `padding` extension.
+    pub fn to_raw_extension(&self) -> Result<TlsRawExtension> {
+        Ok(TlsRawExtension::new(
+            TlsExtensionType::PADDING,
+            self.encode_to_vec()?,
+        ))
+    }
+
+    /// Decode a padding extension body, preserving all bytes exactly.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        validate_padding_len(bytes.len())?;
+        Ok(Self::new(bytes.to_vec()))
+    }
+
+    /// Decode a raw `padding` extension body.
+    pub fn from_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        if extension.extension_type() != TlsExtensionType::PADDING {
+            return Err(CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be padding",
+            ));
+        }
+        Self::decode(extension.body())
+    }
+
+    /// Stable one-line summary preserving padding size and zero-fill state.
+    pub fn summary(&self) -> String {
+        format!(
+            "padding bytes={} zero_filled={}",
+            self.bytes.len(),
+            self.is_zero_filled()
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("padding_bytes", self.bytes.len().to_string()),
+            ("padding", hex_bytes(&self.bytes)),
+            ("padding_zero_filled", self.is_zero_filled().to_string()),
+        ]
+    }
+}
+
+impl From<Vec<u8>> for TlsPadding {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::new(bytes)
+    }
+}
+
+impl From<&[u8]> for TlsPadding {
+    fn from(bytes: &[u8]) -> Self {
+        Self::new(bytes.to_vec())
+    }
+}
+
+impl<const N: usize> From<[u8; N]> for TlsPadding {
+    fn from(bytes: [u8; N]) -> Self {
+        Self::new(Vec::from(bytes))
+    }
+}
+
+impl TryFrom<&TlsRawExtension> for TlsPadding {
+    type Error = CrafterError;
+
+    fn try_from(value: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension(value)
+    }
+}
+
+impl TryFrom<TlsPadding> for TlsRawExtension {
+    type Error = CrafterError;
+
+    fn try_from(value: TlsPadding) -> Result<Self> {
+        value.to_raw_extension()
+    }
+}
+
+fn validate_padding_len(len: usize) -> Result<()> {
+    if len > u16::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            "tls.padding.length",
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
+/// TLS `record_size_limit` extension body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TlsRecordSizeLimit {
+    limit: u16,
+}
+
+impl TlsRecordSizeLimit {
+    /// Create a record_size_limit extension body, preserving the caller-supplied value.
+    pub const fn new(limit: u16) -> Self {
+        Self { limit }
+    }
+
+    /// Create a record_size_limit extension body, preserving the caller-supplied value.
+    pub const fn from_u16(limit: u16) -> Self {
+        Self::new(limit)
+    }
+
+    /// Create a record_size_limit body for the TLS 1.2 and earlier maximum.
+    pub const fn tls_1_2_max() -> Self {
+        Self::new(TLS_RECORD_SIZE_LIMIT_TLS12_MAX)
+    }
+
+    /// Create a record_size_limit body for the TLS 1.3 maximum.
+    pub const fn tls_1_3_max() -> Self {
+        Self::new(TLS_RECORD_SIZE_LIMIT_TLS13_MAX)
+    }
+
+    /// Return the preserved record size limit value.
+    pub const fn limit(self) -> u16 {
+        self.limit
+    }
+
+    /// Return the preserved record size limit value.
+    pub const fn as_u16(self) -> u16 {
+        self.limit
+    }
+
+    /// Return true when this value satisfies the RFC 8449 lower bound.
+    pub const fn is_valid(self) -> bool {
+        self.limit >= TLS_RECORD_SIZE_LIMIT_MIN
+    }
+
+    /// Return true when this value is within RFC 8449 TLS 1.2 and earlier bounds.
+    pub const fn is_valid_for_tls_1_2(self) -> bool {
+        self.is_valid() && self.limit <= TLS_RECORD_SIZE_LIMIT_TLS12_MAX
+    }
+
+    /// Return true when this value is within RFC 8449 TLS 1.3 bounds.
+    pub const fn is_valid_for_tls_1_3(self) -> bool {
+        self.is_valid() && self.limit <= TLS_RECORD_SIZE_LIMIT_TLS13_MAX
+    }
+
+    /// Validate the RFC 8449 lower bound without rewriting the stored value.
+    pub fn validate(self) -> Result<()> {
+        validate_record_size_limit_min("tls.record_size_limit", self.limit)
+    }
+
+    /// Validate RFC 8449 TLS 1.2 and earlier bounds without rewriting the stored value.
+    pub fn validate_for_tls_1_2(self) -> Result<()> {
+        self.validate()?;
+        validate_record_size_limit_max(
+            "tls.record_size_limit",
+            self.limit,
+            TLS_RECORD_SIZE_LIMIT_TLS12_MAX,
+        )
+    }
+
+    /// Validate RFC 8449 TLS 1.3 bounds without rewriting the stored value.
+    pub fn validate_for_tls_1_3(self) -> Result<()> {
+        self.validate()?;
+        validate_record_size_limit_max(
+            "tls.record_size_limit",
+            self.limit,
+            TLS_RECORD_SIZE_LIMIT_TLS13_MAX,
+        )
+    }
+
+    /// Number of bytes occupied by this record_size_limit extension body.
+    pub const fn encoded_len(self) -> usize {
+        TLS_RECORD_SIZE_LIMIT_LEN
+    }
+
+    /// Append this record_size_limit extension body to `out`.
+    pub fn encode(self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.limit.to_be_bytes());
+    }
+
+    /// Return this record_size_limit extension body encoding.
+    pub fn encode_to_vec(self) -> Vec<u8> {
+        self.limit.to_be_bytes().to_vec()
+    }
+
+    /// Convert this record_size_limit body into a raw `record_size_limit` extension.
+    pub fn to_raw_extension(self) -> Result<TlsRawExtension> {
+        Ok(TlsRawExtension::new(
+            TlsExtensionType::RECORD_SIZE_LIMIT,
+            self.encode_to_vec(),
+        ))
+    }
+
+    /// Decode a record_size_limit extension body.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        if bytes.len() < TLS_RECORD_SIZE_LIMIT_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.record_size_limit",
+                TLS_RECORD_SIZE_LIMIT_LEN,
+                bytes.len(),
+            ));
+        }
+        if bytes.len() != TLS_RECORD_SIZE_LIMIT_LEN {
+            return Err(CrafterError::invalid_field_value(
+                "tls.record_size_limit.length",
+                "length must be exactly two bytes",
+            ));
+        }
+        Ok(Self::new(u16::from_be_bytes([bytes[0], bytes[1]])))
+    }
+
+    /// Decode a raw `record_size_limit` extension body.
+    pub fn from_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        if extension.extension_type() != TlsExtensionType::RECORD_SIZE_LIMIT {
+            return Err(CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be record_size_limit",
+            ));
+        }
+        Self::decode(extension.body())
+    }
+
+    /// Stable one-line summary preserving the limit and RFC 8449 validity state.
+    pub fn summary(self) -> String {
+        format!(
+            "record_size_limit limit={} valid={}",
+            self.limit,
+            self.is_valid()
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(self) -> Vec<(&'static str, String)> {
+        vec![
+            ("record_size_limit", self.limit.to_string()),
+            ("record_size_limit_valid", self.is_valid().to_string()),
+            (
+                "record_size_limit_min",
+                TLS_RECORD_SIZE_LIMIT_MIN.to_string(),
+            ),
+        ]
+    }
+}
+
+impl From<u16> for TlsRecordSizeLimit {
+    fn from(limit: u16) -> Self {
+        Self::new(limit)
+    }
+}
+
+impl From<TlsRecordSizeLimit> for u16 {
+    fn from(value: TlsRecordSizeLimit) -> Self {
+        value.limit()
+    }
+}
+
+impl TryFrom<&TlsRawExtension> for TlsRecordSizeLimit {
+    type Error = CrafterError;
+
+    fn try_from(value: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension(value)
+    }
+}
+
+impl TryFrom<TlsRecordSizeLimit> for TlsRawExtension {
+    type Error = CrafterError;
+
+    fn try_from(value: TlsRecordSizeLimit) -> Result<Self> {
+        value.to_raw_extension()
+    }
+}
+
+fn validate_record_size_limit_min(field: &'static str, limit: u16) -> Result<()> {
+    if limit < TLS_RECORD_SIZE_LIMIT_MIN {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "limit must be at least 64 bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_record_size_limit_max(field: &'static str, limit: u16, max: u16) -> Result<()> {
+    if limit > max {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "limit exceeds protocol-defined maximum",
+        ));
+    }
+    Ok(())
 }
 
 /// Raw-preserving TLS ServerName `NameType`.
@@ -1030,9 +1608,44 @@ impl TlsRawExtension {
         TlsAlpnProtocols::from_raw_extension(self)
     }
 
+    /// Create a raw `padding` extension filled with zero bytes.
+    pub fn padding(len: usize) -> Result<Self> {
+        TlsPadding::zeros(len).to_raw_extension()
+    }
+
+    /// Create a raw `padding` extension from caller-provided bytes.
+    pub fn padding_bytes(bytes: impl Into<TlsPadding>) -> Result<Self> {
+        bytes.into().to_raw_extension()
+    }
+
+    /// Decode this raw extension as a typed `padding` body.
+    pub fn as_padding(&self) -> Result<TlsPadding> {
+        TlsPadding::from_raw_extension(self)
+    }
+
+    /// Create a raw `record_size_limit` extension.
+    pub fn record_size_limit(limit: u16) -> Result<Self> {
+        TlsRecordSizeLimit::new(limit).to_raw_extension()
+    }
+
+    /// Decode this raw extension as a typed `record_size_limit` body.
+    pub fn as_record_size_limit(&self) -> Result<TlsRecordSizeLimit> {
+        TlsRecordSizeLimit::from_raw_extension(self)
+    }
+
     /// Create a raw ClientHello `supported_versions` extension.
     pub fn supported_versions_client(versions: impl Into<Vec<TlsVersion>>) -> Result<Self> {
         TlsSupportedVersions::client(versions).to_raw_extension()
+    }
+
+    /// Create a raw `cookie` extension.
+    pub fn cookie(cookie: impl Into<TlsCookie>) -> Result<Self> {
+        cookie.into().to_raw_extension()
+    }
+
+    /// Decode this raw extension as a typed `cookie` body.
+    pub fn as_cookie(&self) -> Result<TlsCookie> {
+        TlsCookie::from_raw_extension(self)
     }
 
     /// Create a raw ServerHello or HelloRetryRequest `supported_versions` extension.
@@ -6019,6 +6632,281 @@ mod tests {
             CrafterError::invalid_field_value(
                 "tls.extension.length",
                 "length must fit in two bytes"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_cookie_padding_record_size_builders_encode_and_inspect() {
+        assert_eq!(TlsExtensionType::cookie(), TlsExtensionType::COOKIE);
+        assert_eq!(TlsExtensionType::padding(), TlsExtensionType::PADDING);
+        assert_eq!(
+            TlsExtensionType::record_size_limit(),
+            TlsExtensionType::RECORD_SIZE_LIMIT
+        );
+
+        let cookie = TlsCookie::new([0xde, 0xad, 0xfa, 0xce]);
+        assert_eq!(cookie.len(), 4);
+        assert!(!cookie.is_empty());
+        assert_eq!(cookie.bytes(), &[0xde, 0xad, 0xfa, 0xce]);
+        assert_eq!(
+            cookie.encode_to_vec().unwrap(),
+            [0x00, 0x04, 0xde, 0xad, 0xfa, 0xce]
+        );
+        assert_eq!(
+            TlsCookie::decode(cookie.encode_to_vec().unwrap()).unwrap(),
+            cookie
+        );
+        assert_eq!(cookie.summary(), "cookie bytes=4");
+        assert!(cookie
+            .inspection_fields()
+            .contains(&("cookie", "de ad fa ce".to_string())));
+
+        let raw_cookie = cookie.to_raw_extension().unwrap();
+        assert_eq!(raw_cookie.extension_type(), TlsExtensionType::COOKIE);
+        assert_eq!(raw_cookie.raw_type(), constants::TLS_EXTENSION_COOKIE);
+        assert_eq!(
+            raw_cookie.encode_to_vec().unwrap(),
+            [0x00, 0x2c, 0x00, 0x06, 0x00, 0x04, 0xde, 0xad, 0xfa, 0xce]
+        );
+        assert_eq!(raw_cookie.as_cookie().unwrap(), cookie);
+        assert_eq!(TlsCookie::try_from(&raw_cookie).unwrap(), cookie);
+        assert_eq!(
+            TlsRawExtension::try_from(cookie.clone()).unwrap(),
+            raw_cookie
+        );
+        assert_eq!(
+            TlsRawExtension::cookie([0xde, 0xad, 0xfa, 0xce]).unwrap(),
+            raw_cookie
+        );
+
+        let padding = TlsPadding::zeros(6);
+        assert_eq!(padding.len(), 6);
+        assert!(padding.is_zero_filled());
+        assert_eq!(padding.encode_to_vec().unwrap(), vec![0; 6]);
+        assert_eq!(padding.summary(), "padding bytes=6 zero_filled=true");
+        assert!(padding
+            .inspection_fields()
+            .contains(&("padding_zero_filled", "true".to_string())));
+
+        let raw_padding = padding.to_raw_extension().unwrap();
+        assert_eq!(raw_padding.extension_type(), TlsExtensionType::PADDING);
+        assert_eq!(raw_padding.raw_type(), constants::TLS_EXTENSION_PADDING);
+        assert_eq!(
+            raw_padding.encode_to_vec().unwrap(),
+            [0x00, 0x15, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        );
+        assert_eq!(raw_padding.as_padding().unwrap(), padding);
+        assert_eq!(TlsPadding::try_from(&raw_padding).unwrap(), padding);
+        assert_eq!(
+            TlsRawExtension::try_from(padding.clone()).unwrap(),
+            raw_padding
+        );
+        assert_eq!(TlsRawExtension::padding(6).unwrap(), raw_padding);
+
+        let record_size_limit = TlsRecordSizeLimit::new(512);
+        assert_eq!(record_size_limit.limit(), 512);
+        assert_eq!(record_size_limit.as_u16(), 512);
+        assert!(record_size_limit.is_valid());
+        assert!(record_size_limit.is_valid_for_tls_1_2());
+        assert!(record_size_limit.is_valid_for_tls_1_3());
+        record_size_limit.validate().unwrap();
+        assert_eq!(record_size_limit.encoded_len(), TLS_RECORD_SIZE_LIMIT_LEN);
+        assert_eq!(record_size_limit.encode_to_vec(), [0x02, 0x00]);
+        assert_eq!(
+            TlsRecordSizeLimit::decode([0x02, 0x00]).unwrap(),
+            record_size_limit
+        );
+        assert_eq!(
+            record_size_limit.summary(),
+            "record_size_limit limit=512 valid=true"
+        );
+        assert!(record_size_limit
+            .inspection_fields()
+            .contains(&("record_size_limit", "512".to_string())));
+
+        let raw_record_size_limit = record_size_limit.to_raw_extension().unwrap();
+        assert_eq!(
+            raw_record_size_limit.extension_type(),
+            TlsExtensionType::RECORD_SIZE_LIMIT
+        );
+        assert_eq!(
+            raw_record_size_limit.raw_type(),
+            constants::TLS_EXTENSION_RECORD_SIZE_LIMIT
+        );
+        assert_eq!(
+            raw_record_size_limit.encode_to_vec().unwrap(),
+            [0x00, 0x1c, 0x00, 0x02, 0x02, 0x00]
+        );
+        assert_eq!(
+            raw_record_size_limit.as_record_size_limit().unwrap(),
+            record_size_limit
+        );
+        assert_eq!(
+            TlsRecordSizeLimit::try_from(&raw_record_size_limit).unwrap(),
+            record_size_limit
+        );
+        assert_eq!(
+            TlsRawExtension::try_from(record_size_limit).unwrap(),
+            raw_record_size_limit
+        );
+        assert_eq!(
+            TlsRawExtension::record_size_limit(512).unwrap(),
+            raw_record_size_limit
+        );
+    }
+
+    #[test]
+    fn tls_extension_cookie_padding_record_size_preserves_explicit_bytes_and_values() {
+        let cookie = TlsCookie::decode([0x00, 0x03, 0x00, 0xff, 0x7a]).unwrap();
+        assert_eq!(cookie.bytes(), &[0x00, 0xff, 0x7a]);
+        assert_eq!(
+            cookie.encode_to_vec().unwrap(),
+            [0x00, 0x03, 0x00, 0xff, 0x7a]
+        );
+        assert_eq!(cookie.clone().into_bytes(), vec![0x00, 0xff, 0x7a]);
+
+        let padding = TlsPadding::new([0xaa, 0x00, 0xbb]);
+        assert!(!padding.is_zero_filled());
+        assert_eq!(padding.bytes(), &[0xaa, 0x00, 0xbb]);
+        assert_eq!(padding.encode_to_vec().unwrap(), [0xaa, 0x00, 0xbb]);
+        assert_eq!(TlsPadding::decode([0xaa, 0x00, 0xbb]).unwrap(), padding);
+        assert_eq!(
+            TlsRawExtension::padding_bytes([0xaa, 0x00, 0xbb])
+                .unwrap()
+                .as_padding()
+                .unwrap()
+                .bytes(),
+            &[0xaa, 0x00, 0xbb]
+        );
+
+        let malformed = TlsRecordSizeLimit::new(TLS_RECORD_SIZE_LIMIT_MIN - 1);
+        assert_eq!(malformed.limit(), 63);
+        assert!(!malformed.is_valid());
+        assert_eq!(malformed.encode_to_vec(), [0x00, 0x3f]);
+        assert_eq!(TlsRecordSizeLimit::decode([0x00, 0x3f]).unwrap(), malformed);
+        assert_eq!(
+            malformed.validate().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.record_size_limit",
+                "limit must be at least 64 bytes"
+            )
+        );
+        assert_eq!(
+            malformed
+                .to_raw_extension()
+                .unwrap()
+                .encode_to_vec()
+                .unwrap(),
+            [0x00, 0x1c, 0x00, 0x02, 0x00, 0x3f]
+        );
+
+        let future = TlsRecordSizeLimit::new(TLS_RECORD_SIZE_LIMIT_TLS13_MAX + 1);
+        assert!(future.is_valid());
+        assert!(!future.is_valid_for_tls_1_3());
+        assert_eq!(
+            future.validate_for_tls_1_3().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.record_size_limit",
+                "limit exceeds protocol-defined maximum"
+            )
+        );
+        assert_eq!(
+            TlsRecordSizeLimit::tls_1_2_max().limit(),
+            TLS_RECORD_SIZE_LIMIT_TLS12_MAX
+        );
+        assert_eq!(
+            TlsRecordSizeLimit::tls_1_3_max().limit(),
+            TLS_RECORD_SIZE_LIMIT_TLS13_MAX
+        );
+    }
+
+    #[test]
+    fn tls_extension_cookie_padding_record_size_reports_structured_errors() {
+        assert_eq!(
+            TlsCookie::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.cookie.length", TLS_COOKIE_LENGTH_LEN, 0)
+        );
+        assert_eq!(
+            TlsCookie::decode([0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.cookie.length", TLS_COOKIE_LENGTH_LEN, 1)
+        );
+        assert_eq!(
+            TlsCookie::decode([0x00, 0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.cookie.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsCookie::decode([0x00, 0x02, 0xaa]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.cookie", 4, 3)
+        );
+        assert_eq!(
+            TlsCookie::decode([0x00, 0x01, 0xaa, 0xbb]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.cookie.length",
+                "length must match extension body"
+            )
+        );
+        assert_eq!(
+            TlsCookie::new(Vec::<u8>::new())
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.cookie.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsCookie::new(vec![0; TLS_COOKIE_MAX_LEN + 1])
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value("tls.cookie.length", "length must fit in two bytes")
+        );
+        assert_eq!(
+            TlsCookie::from_raw_extension(&TlsRawExtension::from_raw(0xbeef, [])).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be cookie"
+            )
+        );
+
+        assert_eq!(
+            TlsPadding::new(vec![0; u16::MAX as usize + 1])
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value("tls.padding.length", "length must fit in two bytes")
+        );
+        assert_eq!(
+            TlsPadding::from_raw_extension(&TlsRawExtension::from_raw(0xbeef, [])).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be padding"
+            )
+        );
+
+        assert_eq!(
+            TlsRecordSizeLimit::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.record_size_limit", TLS_RECORD_SIZE_LIMIT_LEN, 0)
+        );
+        assert_eq!(
+            TlsRecordSizeLimit::decode([0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.record_size_limit", TLS_RECORD_SIZE_LIMIT_LEN, 1)
+        );
+        assert_eq!(
+            TlsRecordSizeLimit::decode([0x00, 0x40, 0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.record_size_limit.length",
+                "length must be exactly two bytes"
+            )
+        );
+        assert_eq!(
+            TlsRecordSizeLimit::from_raw_extension(&TlsRawExtension::from_raw(0xbeef, []))
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be record_size_limit"
             )
         );
     }
