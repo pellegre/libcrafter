@@ -32,8 +32,8 @@ pub use handshake::{
 pub use layer::Tls;
 pub use named_group::{TlsNamedGroup, TlsNamedGroupList};
 pub use record::{
-    TlsRecord, TlsRecordBody, TlsRecordHeader, TLS_RECORD_CONTENT_TYPE_LEN, TLS_RECORD_HEADER_LEN,
-    TLS_RECORD_LENGTH_LEN, TLS_RECORD_VERSION_LEN,
+    TlsHandshakeRecordBody, TlsRecord, TlsRecordBody, TlsRecordHeader, TLS_RECORD_CONTENT_TYPE_LEN,
+    TLS_RECORD_HEADER_LEN, TLS_RECORD_LENGTH_LEN, TLS_RECORD_VERSION_LEN,
 };
 pub use signature_scheme::{TlsSignatureScheme, TlsSignatureSchemeList};
 pub use version::{TlsVersion, TlsVersionField};
