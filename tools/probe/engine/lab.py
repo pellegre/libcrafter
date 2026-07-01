@@ -106,6 +106,10 @@ PROBE_CAPABILITY_NAMES = (
     "mdns_controlled_responder", "mdns_unicast_response",
     "mdns_ipv4_multicast", "mdns_ipv6_multicast",
     "mdns_ipv6_link_local_scope",
+    # TLS probe cases use a controlled TCP listener on the provider target.
+    # Dry-runs only plan the listener, stimulus, capture filters, and cleanup;
+    # live runs remain provider-backed and confirmation-gated.
+    "tls_controlled_service",
 )
 
 
