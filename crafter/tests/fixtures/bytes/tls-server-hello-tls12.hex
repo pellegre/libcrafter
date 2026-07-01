@@ -1,0 +1,7 @@
+# tls-server-hello-tls12
+# RFC 5246/RFC 8446 ServerHello compatibility shape selecting a TLS 1.2
+# cipher suite and echoing a synthetic ClientHello session_id.
+16 03 03 00 30 02 00 00 2c 03 03 22 22 22 22 22
+22 22 22 22 22 22 22 22 22 22 22 22 22 22 22 22
+22 22 22 22 22 22 22 22 22 22 22 04 12 13 14 15
+c0 2f 00 00 00
