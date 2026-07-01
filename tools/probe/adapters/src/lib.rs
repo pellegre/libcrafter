@@ -9,7 +9,7 @@
 //! contracts, dry-run/live dispatch, response and artifact helpers) and one
 //! module per protocol family: [`icmp`], [`tcp`], [`dns`], [`udp`], [`dhcpv4`],
 //! [`dhcpv6`], [`arp`], [`ndp`] (IPv6 Neighbor Discovery), [`rip`] (Routing Information
-//! Protocol), [`igmp`], [`mqtt`], [`quic`], [`snmp`], [`ssdp`], and [`mdns`].
+//! Protocol), [`igmp`], [`mqtt`], [`quic`], [`tls`], [`snmp`], [`ssdp`], and [`mdns`].
 //! The binary is a thin wrapper that calls [`common::run`].
 
 // The `plan_json` builder serializes the full probe-plan contract through a
@@ -33,6 +33,7 @@ pub mod rip;
 pub mod snmp;
 pub mod ssdp;
 pub mod tcp;
+pub mod tls;
 pub mod udp;
 
 #[cfg(test)]
@@ -159,6 +160,13 @@ pub(crate) mod test_support {
             dhcpv6: None,
             dhcpv6_sends: None,
             protocol: None,
+            documentation_prefixes: None,
+            packet: None,
+            tls: None,
+            expected_records: None,
+            capture: None,
+            stimulus_driver: None,
+            safety: None,
             address_family: None,
             service_port: None,
             multicast_group: None,

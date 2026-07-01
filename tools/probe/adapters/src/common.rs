@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::{
-    arp, dhcpv4, dhcpv6, dns, icmp, mdns, mqtt, ndp, ospf, quic, rip, snmp, ssdp, tcp, udp,
+    arp, dhcpv4, dhcpv6, dns, icmp, mdns, mqtt, ndp, ospf, quic, rip, snmp, ssdp, tcp, tls, udp,
 };
 
 pub type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
@@ -367,6 +367,20 @@ pub struct ProbePlan {
     pub dhcpv6_sends: Option<Value>,
     #[serde(default)]
     pub protocol: Option<String>,
+    #[serde(default)]
+    pub documentation_prefixes: Option<Vec<String>>,
+    #[serde(default)]
+    pub packet: Option<Value>,
+    #[serde(default)]
+    pub tls: Option<Value>,
+    #[serde(default)]
+    pub expected_records: Option<Value>,
+    #[serde(default)]
+    pub capture: Option<Value>,
+    #[serde(default)]
+    pub stimulus_driver: Option<Value>,
+    #[serde(default)]
+    pub safety: Option<Value>,
     #[serde(default)]
     pub address_family: Option<String>,
     #[serde(default)]
@@ -1191,6 +1205,12 @@ fn dispatch_case(
         (RunMode::Live, "quic-initial-udp-observation") => quic::run_quic_live(request, plan),
         (
             RunMode::DryRun,
+            "tls-clienthello-observation"
+            | "tls-alert-observation"
+            | "tls-application-data-capture",
+        ) => tls::run_tls_dry_run(request, plan),
+        (
+            RunMode::DryRun,
             "mqtt-connect-connack"
             | "mqtt-v5-connect-connack"
             | "mqtt-subscribe-suback"
@@ -1446,6 +1466,13 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "dhcpv6": plan.dhcpv6,
         "dhcpv6_sends": plan.dhcpv6_sends,
         "protocol": plan.protocol,
+        "documentation_prefixes": plan.documentation_prefixes,
+        "packet": plan.packet,
+        "tls": plan.tls,
+        "expected_records": plan.expected_records,
+        "capture": plan.capture,
+        "stimulus_driver": plan.stimulus_driver,
+        "safety": plan.safety,
         "address_family": plan.address_family,
         "service_port": plan.service_port,
         "multicast_group": plan.multicast_group,
@@ -1581,6 +1608,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
     let dhcpv6 = packet.layer::<Dhcpv6>();
     let snmp_layer = packet.layer::<Snmp>();
     let quic_layer = packet.layer::<Quic>();
+    let tls_layer = packet.layer::<Tls>();
     let udp_options = packet.layer::<UdpOptions>();
     let ethernet = packet.layer::<Ethernet>();
     let arp_layer = packet.layer::<Arp>();
@@ -1637,6 +1665,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
         "dhcpv6": dhcpv6.map(dhcpv6::dhcpv6_json),
         "snmp": snmp_layer.map(snmp::snmp_json),
         "quic": quic_layer.map(quic::quic_json),
+        "tls": tls_layer.map(tls::tls_json),
         "payload_hex": hex_bytes(raw_payload(packet)),
     })
 }
@@ -1820,6 +1849,9 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
             "ip proto 89 and src host {}",
             plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
         ),
+        "tls-clienthello-observation"
+        | "tls-alert-observation"
+        | "tls-application-data-capture" => tls::capture_filter(plan),
         _ => String::new(),
     }
 }
@@ -2504,6 +2536,9 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "payload_length": plan.quic_payload_length.or(plan.udp_payload_length).or(plan.payload_length),
             "deterministic": true,
         }),
+        "tls-clienthello-observation"
+        | "tls-alert-observation"
+        | "tls-application-data-capture" => tls::target_service_metadata(plan),
         _ => json!({}),
     }
 }
@@ -2566,6 +2601,9 @@ pub fn validation_json(plan: &ProbePlan) -> Value {
             "quic_packet_count": 1,
             "target_behavior": "echo_udp_payload",
         }),
+        "tls-clienthello-observation"
+        | "tls-alert-observation"
+        | "tls-application-data-capture" => tls::validation_json(plan),
         "udp-closed-port-icmp" => json!({
             "source_ipv4": plan.expected_reply_source_ipv4,
             "destination_ipv4": plan.expected_reply_destination_ipv4,
