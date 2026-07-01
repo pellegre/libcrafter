@@ -25,6 +25,10 @@ pub use extension::{
     TLS_EXTENSION_TYPE_LEN,
 };
 pub use named_group::{TlsNamedGroup, TlsNamedGroupList};
+pub use record::{
+    TlsRecordHeader, TLS_RECORD_CONTENT_TYPE_LEN, TLS_RECORD_HEADER_LEN, TLS_RECORD_LENGTH_LEN,
+    TLS_RECORD_VERSION_LEN,
+};
 pub use signature_scheme::{TlsSignatureScheme, TlsSignatureSchemeList};
 pub use version::{TlsVersion, TlsVersionField};
 
