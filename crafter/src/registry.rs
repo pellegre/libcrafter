@@ -54,6 +54,10 @@ use crate::protocols::ssdp::{
     decode::{append_ssdp_packet, looks_like_ssdp_payload},
     SSDP_UDP_PORT,
 };
+use crate::protocols::tls::{
+    constants::TLS_COMMON_TCP_PORTS,
+    decode::{append_tls_packet_with_registry, looks_like_tls_payload},
+};
 use crate::protocols::transport::{
     append_tcp_packet_with_registry, append_udp_packet_with_registry,
 };
@@ -458,6 +462,18 @@ impl ProtocolRegistry {
         registry.bind_tcp_port_with_registry(MQTT_PORT, |registry, packet, payload| {
             append_mqtt_packet_with_registry(registry, packet, payload)
         });
+        // TLS-over-TCP binds on selected source-backed service ports, but only
+        // when the payload already looks like TLS record framing. Port use
+        // alone is not enough: cleartext HTTP, MQTT, SSH, or arbitrary bytes on
+        // a TLS port remain Raw unless a caller binds them explicitly.
+        registry.bind_tcp_with_registry(
+            |ctx| {
+                (TLS_COMMON_TCP_PORTS.contains(&ctx.source_port)
+                    || TLS_COMMON_TCP_PORTS.contains(&ctx.destination_port))
+                    && looks_like_tls_payload(ctx.payload)
+            },
+            |registry, packet, payload| append_tls_packet_with_registry(registry, packet, payload),
+        );
 
         registry.builtin_ipv4_protocol_dispatch = true;
         registry.builtin_ipv6_next_header_dispatch = true;
@@ -2566,5 +2582,149 @@ mod bgp_tcp_binding {
 
         assert!(raw_decoded.layer::<Bgp>().is_none());
         assert_eq!(raw_decoded.layer::<Raw>().unwrap().as_bytes(), keepalive);
+    }
+}
+
+#[cfg(test)]
+mod tls_tcp_binding {
+    use crate::protocols::mqtt::{Mqtt, MQTT_PORT};
+    use crate::protocols::tls::constants::{
+        TLS_COMMON_TCP_PORTS, TLS_PORT_DNS_OVER_TLS, TLS_PORT_EXAMPLE_TESTING, TLS_PORT_HTTPS,
+        TLS_PORT_MQTT_OVER_TLS,
+    };
+    use crate::protocols::tls::{Tls, TlsClientHello, TlsContentType, TlsHandshake, TlsRecord};
+    use crate::{Ipv4, NetworkLayer, Packet, ProtocolRegistry, Raw, Tcp};
+
+    fn tls_client_hello_payload() -> Vec<u8> {
+        let client_hello = TlsClientHello::new()
+            .with_raw_cipher_suites([0x1301])
+            .without_extensions();
+        let message = TlsHandshake::from_client_hello(client_hello)
+            .unwrap()
+            .encode_to_vec()
+            .unwrap();
+        TlsRecord::handshake(message).encode_to_vec().unwrap()
+    }
+
+    fn tcp_ipv4_payload(source_port: u16, destination_port: u16, payload: &[u8]) -> Vec<u8> {
+        (Ipv4::new()
+            .src("192.0.2.10".parse().unwrap())
+            .dst("198.51.100.20".parse().unwrap())
+            / Tcp::new()
+                .sport(source_port)
+                .dport(destination_port)
+                .seq(0x1111_2222)
+                .ack(0x3333_4444)
+                .ack_segment()
+            / Raw::from_bytes(payload))
+        .compile()
+        .unwrap()
+        .into_bytes()
+    }
+
+    #[test]
+    fn tls_registry_decodes_common_tls_tcp_ports() {
+        for port in [
+            TLS_PORT_HTTPS,
+            TLS_PORT_DNS_OVER_TLS,
+            TLS_PORT_MQTT_OVER_TLS,
+            TLS_PORT_EXAMPLE_TESTING,
+        ] {
+            let tls_payload = tls_client_hello_payload();
+            let bytes = tcp_ipv4_payload(49_152, port, &tls_payload);
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_slice()).unwrap();
+            let tls = decoded
+                .layer::<Tls>()
+                .expect("TLS layer on destination port");
+
+            assert_eq!(tls.record_count(), 1);
+            assert_eq!(tls.records()[0].content_type(), TlsContentType::handshake());
+            assert!(decoded.layer::<Raw>().is_none());
+            assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_slice());
+        }
+
+        let tls_payload = tls_client_hello_payload();
+        let bytes = tcp_ipv4_payload(TLS_PORT_HTTPS, 49_152, &tls_payload);
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_slice()).unwrap();
+        assert!(
+            decoded.layer::<Tls>().is_some(),
+            "TLS source port should also dispatch"
+        );
+    }
+
+    #[test]
+    fn tls_registry_rejects_non_tls_payloads_on_tls_ports() {
+        let non_tls_payloads: &[&[u8]] = &[
+            b"GET / HTTP/1.1\r\nHost: example.test\r\n\r\n",
+            b"SSH-2.0-OpenSSH_9.6\r\n",
+            &[0x10, 0x10, 0x00, 0x04, b'M', b'Q', b'T', b'T'],
+        ];
+
+        for port in TLS_COMMON_TCP_PORTS {
+            for payload in non_tls_payloads {
+                let bytes = tcp_ipv4_payload(49_152, port, payload);
+                let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_slice())
+                    .unwrap_or_else(|err| {
+                        panic!("non-TLS payload on TCP/{port} should decode as Raw: {err}")
+                    });
+
+                assert!(decoded.layer::<Tls>().is_none());
+                assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), *payload);
+            }
+        }
+    }
+
+    #[test]
+    fn tls_registry_disabled_application_decoding_preserves_raw() {
+        let registry = ProtocolRegistry::new().application_decoding(false);
+        let tls_payload = tls_client_hello_payload();
+        let bytes = tcp_ipv4_payload(49_152, TLS_PORT_HTTPS, &tls_payload);
+
+        let decoded =
+            Packet::decode_from_l3_with_registry(&registry, NetworkLayer::Ipv4, bytes.as_slice())
+                .unwrap();
+
+        assert!(decoded.layer::<Tls>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), tls_payload);
+    }
+
+    #[test]
+    fn tls_registry_custom_tcp_binding_overrides_builtin() {
+        let mut registry = ProtocolRegistry::new();
+        registry.bind_tcp_port(TLS_PORT_EXAMPLE_TESTING, |packet, payload| {
+            Ok(packet.push(Raw::from_bytes(payload)))
+        });
+        let tls_payload = tls_client_hello_payload();
+        let bytes = tcp_ipv4_payload(49_152, TLS_PORT_EXAMPLE_TESTING, &tls_payload);
+
+        let decoded =
+            Packet::decode_from_l3_with_registry(&registry, NetworkLayer::Ipv4, bytes.as_slice())
+                .unwrap();
+
+        assert!(decoded.layer::<Tls>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), tls_payload);
+    }
+
+    #[test]
+    fn tls_registry_keeps_cleartext_mqtt_on_tcp_1883() {
+        let bytes = (Ipv4::new()
+            .src("192.0.2.10".parse().unwrap())
+            .dst("198.51.100.20".parse().unwrap())
+            / Tcp::new()
+                .sport(49_152)
+                .dport(MQTT_PORT)
+                .seq(0x1111_2222)
+                .ack(0x3333_4444)
+                .ack_segment()
+            / Mqtt::connect().client_id("crafter-client"))
+        .compile()
+        .unwrap()
+        .into_bytes();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_slice()).unwrap();
+
+        assert!(decoded.layer::<Tls>().is_none());
+        assert!(decoded.layer::<Mqtt>().is_some());
+        assert!(decoded.layer::<Raw>().is_none());
     }
 }
