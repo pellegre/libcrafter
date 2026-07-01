@@ -1,0 +1,7 @@
+# TLS record-layer malformed input corpus.
+# Format: name|target|expected-kind|context|required|available|hex
+empty-record|record|buffer-too-short|tls.record.header|5|0|
+short-record-header|record-header|buffer-too-short|tls.record.header|5|4|16030300
+declared-length-overrun|record|buffer-too-short|tls.record.fragment|9|6|1603030004aa
+invalid-first-malformed-record|record|buffer-too-short|tls.record.fragment|7|6|1503030002aa
+valid-record-trailing-partial|record-tail-after-valid|buffer-too-short|tls.record.fragment|9|6|17030300036162631603030004de
