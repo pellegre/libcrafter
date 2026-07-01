@@ -1,0 +1,310 @@
+version: 1
+kind: layer
+name: tls
+summary: >-
+  TLS-over-TCP packet records, covering the TLS record header, handshake records,
+  alerts, ChangeCipherSpec, heartbeat packet grammar, selected TLS 1.2 and TLS
+  1.3 handshake and extension bodies, opaque encrypted application data, and
+  unknown/raw preservation. This is a packet-layer schema only; TLS endpoint
+  state, transcript hashing, key schedule, certificate validation, decryption,
+  scanning, and TCP stream reassembly are out of scope.
+
+roots: []
+parents:
+  - tcp
+children:
+  - payload
+
+supported_parents:
+  - layer: tcp
+    destination_port: 443
+    service: https
+  - layer: tcp
+    source_port: 443
+    service: https
+  - layer: tcp
+    destination_port: 853
+    service: domain-s
+  - layer: tcp
+    source_port: 853
+    service: domain-s
+  - layer: tcp
+    destination_port: 8883
+    service: secure-mqtt
+  - layer: tcp
+    source_port: 8883
+    service: secure-mqtt
+  - layer: tcp
+    destination_port: 4433
+    service: tls-example
+unsupported_parents:
+  - udp
+  - dtls
+  - quic
+  - raw_ip
+live_eligibility: provider_gated
+live_gate: confirm_live_run_provider_lab_only
+live_defaults:
+  default_mode: dry_run
+  allowed_without_confirmation: false
+  developer_host_raw_send: false
+  provider_required: true
+
+fields:
+  - name: records
+    type: list
+    required: true
+    domains:
+      - single
+      - multiple
+      - empty
+      - malformed_length
+  - name: record_content_type
+    type: enum
+    required: true
+    domains:
+      - handshake
+      - change_cipher_spec
+      - alert
+      - application_data
+      - heartbeat
+      - unknown_preserved
+      - reserved_preserved
+  - name: record_legacy_version
+    type: uint16
+    required: true
+    domains:
+      - tls12_legacy
+      - tls10_compatibility
+      - tls13_supported_versions
+      - ssl30_obsolete
+      - grease
+      - unknown_preserved
+  - name: record_length
+    type: uint16
+    required: true
+    domains:
+      - derived
+      - zero
+      - boundary
+      - malformed_override
+  - name: record_fragment_hex
+    type: bytes
+    required: true
+    domains:
+      - empty
+      - handshake_message
+      - alert
+      - application_data_opaque
+      - heartbeat
+      - unknown_preserved
+      - malformed_truncated
+  - name: record_body_kind
+    type: enum
+    required: true
+    domains:
+      - handshake
+      - change_cipher_spec
+      - alert
+      - application_data
+      - heartbeat
+      - opaque_raw
+  - name: handshake_messages
+    type: list
+    required: false
+    domains:
+      - client_hello
+      - server_hello
+      - hello_retry_request
+      - encrypted_extensions
+      - certificate
+      - certificate_request
+      - certificate_verify
+      - finished
+      - new_session_ticket
+      - key_update
+      - end_of_early_data
+      - unknown_preserved
+      - raw_tail_preserved
+  - name: handshake_type
+    type: enum
+    required: false
+    domains:
+      - client_hello
+      - server_hello
+      - encrypted_extensions
+      - certificate
+      - certificate_request
+      - certificate_verify
+      - finished
+      - new_session_ticket
+      - key_update
+      - end_of_early_data
+      - dtls_only_preserved
+      - unknown_preserved
+  - name: handshake_length
+    type: uint24
+    required: false
+    domains:
+      - derived
+      - zero
+      - boundary
+      - malformed_override
+  - name: hello_random
+    type: bytes
+    required: false
+    domains:
+      - deterministic_client
+      - deterministic_server
+      - hello_retry_request
+  - name: session_id
+    type: bytes
+    required: false
+    domains:
+      - empty
+      - deterministic
+      - max_len
+  - name: cipher_suites
+    type: list
+    required: false
+    domains:
+      - tls13_defaults
+      - tls12_defaults
+      - grease
+      - unknown_preserved
+  - name: compression_methods
+    type: bytes
+    required: false
+    domains:
+      - null_only
+      - raw_preserved
+  - name: extensions
+    type: list
+    required: false
+    domains:
+      - empty
+      - client_hello_core
+      - server_hello_core
+      - encrypted_extensions_core
+      - unknown_preserved
+      - duplicate_preserved
+      - malformed_length
+  - name: extension_type
+    type: enum
+    required: false
+    domains:
+      - server_name
+      - status_request
+      - status_request_v2
+      - supported_groups
+      - ec_point_formats
+      - signature_algorithms
+      - signature_algorithms_cert
+      - alpn
+      - padding
+      - supported_versions
+      - cookie
+      - key_share
+      - psk_key_exchange_modes
+      - pre_shared_key
+      - record_size_limit
+      - certificate_authorities
+      - oid_filters
+      - grease
+      - unknown_preserved
+  - name: extension_body_hex
+    type: bytes
+    required: false
+    domains:
+      - empty
+      - typed_body
+      - opaque_preserved
+      - malformed_truncated
+  - name: alert_level
+    type: enum
+    required: false
+    domains:
+      - warning
+      - fatal
+      - unknown_preserved
+  - name: alert_description
+    type: enum
+    required: false
+    domains:
+      - close_notify
+      - decode_error
+      - handshake_failure
+      - protocol_version
+      - unknown_preserved
+  - name: change_cipher_spec
+    type: uint8
+    required: false
+    domains:
+      - change_cipher_spec
+      - unknown_preserved
+  - name: heartbeat_message_type
+    type: enum
+    required: false
+    domains:
+      - request
+      - response
+      - unknown_preserved
+  - name: application_data_hex
+    type: bytes
+    required: false
+    domains:
+      - empty
+      - opaque_preserved
+      - boundary
+  - name: raw_preservation
+    type: bytes
+    required: false
+    domains:
+      - unknown_record_body
+      - unknown_handshake_body
+      - unknown_extension_body
+      - non_tls_tcp_payload_raw_fallback
+
+coverage_cases:
+  - tls-record-client-hello
+  - tls-record-server-hello
+  - tls-record-alert
+  - tls-record-change-cipher-spec
+  - tls-record-application-data-opaque
+  - tls-record-heartbeat
+  - tls-stacked-records
+  - tls-client-hello-extensions
+  - tls-server-hello-hello-retry-request
+  - tls-certificate-and-finished
+  - tls-extension-unknown-preservation
+  - tls-codepoint-unknown-preservation
+  - tls-malformed-record-length
+  - tls-malformed-handshake-length
+  - tls-tcp-port-raw-fallback
+  - tls-pcap-fixtures
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - TLS
+      - TLSClientHello
+      - TLSServerHello
+      - TLS_Ext_Unknown
+    notes:
+      - Planned Scapy backend support should materialize TLS records and preserve encrypted or unknown payload bytes when native TLS helpers are unavailable.
+  wireshark:
+    status: planned
+    native_layers:
+      - tls
+      - data
+    notes:
+      - Planned parser-only support should normalize tshark TLS fields when available and fall back to data payload bytes for encrypted or unknown records.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    pcap_read: true
+    pcap_write: true
+    notes:
+      - The public crafter TLS layer builds, decodes, summarizes, shows, preserves explicit malformed overrides, and keeps encrypted application data opaque.
