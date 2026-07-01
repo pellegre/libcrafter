@@ -4,10 +4,22 @@
 //! `.agents/docs/ntp-codepoints.md`. This module only models packet field
 //! values; it does not add synchronization or peer workflow behavior.
 
+use core::any::Any;
 use core::fmt;
+use core::net::{Ipv4Addr, Ipv6Addr};
+use core::ops::Div;
 
 use super::constants::*;
-use super::registry::{ntp_leap_indicator_meta, ntp_mode_meta, NtpRegistryMeta};
+use super::registry::{
+    ntp_extension_field_type_meta, ntp_kiss_o_death_code_meta, ntp_leap_indicator_meta,
+    ntp_mode_meta, ntp_reference_id_meta, ntp_stratum_meta, NtpRegistryMeta, NtpRegistryStatus,
+};
+use crate::error::{CrafterError, Result};
+use crate::field::Field;
+use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
+use crate::protocols::ip::v4::Ipv4;
+use crate::protocols::ip::v6::Ipv6;
+use crate::protocols::transport::Udp;
 
 /// Source-backed NTP leap-indicator field value.
 ///
@@ -16,10 +28,11 @@ use super::registry::{ntp_leap_indicator_meta, ntp_mode_meta, NtpRegistryMeta};
 /// valid packet state, not a malformed value. `Unknown` preserves
 /// caller-supplied values outside the extracted two-bit field space for
 /// boundary-packet construction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum NtpLeapIndicator {
     /// No leap warning.
+    #[default]
     NoWarning,
     /// Last minute of the day has 61 seconds.
     LastMinute61Seconds,
@@ -82,12 +95,6 @@ impl NtpLeapIndicator {
     /// Return true for the alarm condition / clock unsynchronized state.
     pub const fn is_alarm_unsynchronized(self) -> bool {
         matches!(self, Self::AlarmUnsynchronized)
-    }
-}
-
-impl Default for NtpLeapIndicator {
-    fn default() -> Self {
-        Self::NoWarning
     }
 }
 
@@ -194,7 +201,7 @@ impl fmt::Display for NtpVersion {
 /// RFC 5905 defines the complete three-bit mode space. The `Unknown` variant
 /// preserves caller-supplied values outside that extracted field space for
 /// boundary-packet construction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum NtpMode {
     /// Reserved mode value 0.
@@ -204,6 +211,7 @@ pub enum NtpMode {
     /// Symmetric passive mode value 2.
     SymmetricPassive,
     /// Client mode value 3.
+    #[default]
     Client,
     /// Server mode value 4.
     Server,
@@ -274,12 +282,6 @@ impl NtpMode {
     }
 }
 
-impl Default for NtpMode {
-    fn default() -> Self {
-        Self::Client
-    }
-}
-
 impl From<u8> for NtpMode {
     fn from(value: u8) -> Self {
         Self::from_wire(value)
@@ -296,6 +298,1081 @@ impl fmt::Display for NtpMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.label())
     }
+}
+
+/// Source-backed NTP stratum field value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct NtpStratum(u8);
+
+impl NtpStratum {
+    /// Build a stratum wrapper from a raw wire value.
+    pub const fn from_wire(value: u8) -> Self {
+        Self(value)
+    }
+
+    /// Raw stratum value.
+    pub const fn value(self) -> u8 {
+        self.0
+    }
+
+    /// Raw stratum value for serialization.
+    pub const fn wire_value(self) -> u8 {
+        self.value()
+    }
+
+    /// Source-backed registry metadata for this stratum category.
+    pub fn registry_meta(self) -> NtpRegistryMeta {
+        ntp_stratum_meta(self.value())
+    }
+
+    /// Stable summary label.
+    pub fn label(self) -> String {
+        self.registry_meta().label
+    }
+
+    /// True for stratum 0 packets, including Kiss-o'-Death responses.
+    pub const fn is_unspecified_or_kod(self) -> bool {
+        self.value() == NTP_STRATUM_UNSPECIFIED
+    }
+
+    /// True for stratum 1 primary-server/reference-clock packets.
+    pub const fn is_primary(self) -> bool {
+        self.value() == NTP_STRATUM_PRIMARY
+    }
+
+    /// True for secondary-server strata 2 through 15.
+    pub const fn is_secondary(self) -> bool {
+        matches!(
+            self.value(),
+            NTP_STRATUM_SECONDARY_FIRST..=NTP_STRATUM_SECONDARY_LAST
+        )
+    }
+
+    /// True for the explicitly unsynchronized stratum 16 value.
+    pub const fn is_unsynchronized(self) -> bool {
+        self.value() == NTP_STRATUM_UNSYNCHRONIZED
+    }
+}
+
+impl Default for NtpStratum {
+    fn default() -> Self {
+        Self(NTP_DEFAULT_STRATUM)
+    }
+}
+
+impl From<u8> for NtpStratum {
+    fn from(value: u8) -> Self {
+        Self::from_wire(value)
+    }
+}
+
+impl From<NtpStratum> for u8 {
+    fn from(value: NtpStratum) -> Self {
+        value.wire_value()
+    }
+}
+
+impl fmt::Display for NtpStratum {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.label())
+    }
+}
+
+/// Four-octet NTP Reference ID bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct NtpReferenceId([u8; NTP_REFERENCE_ID_LEN]);
+
+impl NtpReferenceId {
+    /// Build a reference identifier from raw wire bytes.
+    pub const fn from_bytes(bytes: [u8; NTP_REFERENCE_ID_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    /// Build a stratum-0 Kiss-o'-Death reference identifier from four ASCII bytes.
+    pub const fn kiss_o_death(code: [u8; NTP_REFERENCE_ID_LEN]) -> Self {
+        Self(code)
+    }
+
+    /// Borrow the raw wire bytes.
+    pub const fn bytes(self) -> [u8; NTP_REFERENCE_ID_LEN] {
+        self.0
+    }
+
+    /// Source-backed label using the packet stratum to select the reference-ID meaning.
+    pub fn label_for_stratum(self, stratum: NtpStratum) -> String {
+        if stratum.is_unspecified_or_kod() {
+            return ntp_kiss_o_death_code_meta(self.bytes()).label;
+        }
+        if stratum.is_primary() {
+            return ntp_reference_id_meta(self.bytes()).label;
+        }
+        if stratum.is_secondary() {
+            return format!(
+                "ipv4-{}.{}.{}.{}",
+                self.0[0], self.0[1], self.0[2], self.0[3]
+            );
+        }
+        format!("refid-0x{:08X}", u32::from_be_bytes(self.0))
+    }
+
+    /// ASCII view when all bytes are printable ASCII or NUL padding.
+    pub fn ascii_lossy(self) -> String {
+        self.0
+            .iter()
+            .copied()
+            .filter(|byte| *byte != 0)
+            .map(|byte| {
+                if byte.is_ascii_graphic() || byte == b' ' {
+                    byte as char
+                } else {
+                    '.'
+                }
+            })
+            .collect()
+    }
+}
+
+impl From<[u8; NTP_REFERENCE_ID_LEN]> for NtpReferenceId {
+    fn from(bytes: [u8; NTP_REFERENCE_ID_LEN]) -> Self {
+        Self::from_bytes(bytes)
+    }
+}
+
+/// NTP short-format 16.16 fixed-point field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct NtpShortFormat(u32);
+
+impl NtpShortFormat {
+    /// Build from a raw 32-bit wire value.
+    pub const fn from_raw(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    /// Build from integer and fractional halves.
+    pub const fn from_parts(integer: u16, fraction: u16) -> Self {
+        Self(((integer as u32) << 16) | fraction as u32)
+    }
+
+    /// Raw 32-bit wire value.
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+
+    /// Integer half.
+    pub const fn integer(self) -> u16 {
+        (self.0 >> 16) as u16
+    }
+
+    /// Fractional half.
+    pub const fn fraction(self) -> u16 {
+        self.0 as u16
+    }
+
+    /// Interpret the short-format value as seconds.
+    pub fn as_seconds(self) -> f64 {
+        f64::from(self.integer()) + f64::from(self.fraction()) / 65_536.0
+    }
+}
+
+impl From<u32> for NtpShortFormat {
+    fn from(raw: u32) -> Self {
+        Self::from_raw(raw)
+    }
+}
+
+/// NTP 64-bit timestamp field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct NtpTimestamp(u64);
+
+impl NtpTimestamp {
+    /// Build from a raw 64-bit wire value.
+    pub const fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    /// Build from seconds and fractional halves.
+    pub const fn from_parts(seconds: u32, fraction: u32) -> Self {
+        Self(((seconds as u64) << 32) | fraction as u64)
+    }
+
+    /// Raw 64-bit wire value.
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+
+    /// Integer seconds half.
+    pub const fn seconds(self) -> u32 {
+        (self.0 >> 32) as u32
+    }
+
+    /// Fractional half.
+    pub const fn fraction(self) -> u32 {
+        self.0 as u32
+    }
+
+    /// True when the timestamp is the all-zero unspecified value.
+    pub const fn is_zero(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Convert to seconds as a floating-point inspection helper.
+    pub fn as_seconds(self) -> f64 {
+        f64::from(self.seconds()) + f64::from(self.fraction()) / 4_294_967_296.0
+    }
+}
+
+impl From<u64> for NtpTimestamp {
+    fn from(raw: u64) -> Self {
+        Self::from_raw(raw)
+    }
+}
+
+/// Pack NTP Leap Indicator, Version, and Mode into the first header octet.
+pub fn ntp_pack_first_octet(
+    leap_indicator: NtpLeapIndicator,
+    version: NtpVersion,
+    mode: NtpMode,
+) -> u8 {
+    (leap_indicator.first_octet_bits() << NTP_FIRST_OCTET_LI_SHIFT)
+        | (version.first_octet_bits() << NTP_FIRST_OCTET_VERSION_SHIFT)
+        | (mode.first_octet_bits() << NTP_FIRST_OCTET_MODE_SHIFT)
+}
+
+/// Parse the first NTP header octet into Leap Indicator, Version, and Mode.
+pub fn ntp_parse_first_octet(first_octet: u8) -> (NtpLeapIndicator, NtpVersion, NtpMode) {
+    let leap_indicator = (first_octet & NTP_FIRST_OCTET_LI_MASK) >> NTP_FIRST_OCTET_LI_SHIFT;
+    let version = (first_octet & NTP_FIRST_OCTET_VERSION_MASK) >> NTP_FIRST_OCTET_VERSION_SHIFT;
+    let mode = (first_octet & NTP_FIRST_OCTET_MODE_MASK) >> NTP_FIRST_OCTET_MODE_SHIFT;
+
+    (
+        NtpLeapIndicator::from_wire(leap_indicator),
+        NtpVersion::from_wire(version),
+        NtpMode::from_wire(mode),
+    )
+}
+
+/// Raw-preserving NTP extension field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NtpExtensionField {
+    field_type: Field<u16>,
+    length: Field<u16>,
+    value: Vec<u8>,
+}
+
+impl NtpExtensionField {
+    /// Build an extension field with an auto-filled length.
+    pub fn new(field_type: u16, value: impl Into<Vec<u8>>) -> Self {
+        Self {
+            field_type: Field::user(field_type),
+            length: Field::unset(),
+            value: value.into(),
+        }
+    }
+
+    /// Build an NTS Unique Identifier extension field.
+    pub fn nts_unique_identifier(value: impl Into<Vec<u8>>) -> Self {
+        Self::new(0x0104, value)
+    }
+
+    /// Build an NTS Cookie extension field.
+    pub fn nts_cookie(value: impl Into<Vec<u8>>) -> Self {
+        Self::new(0x0204, value)
+    }
+
+    /// Build an NTS Cookie Placeholder extension field.
+    pub fn nts_cookie_placeholder(value: impl Into<Vec<u8>>) -> Self {
+        Self::new(0x0304, value)
+    }
+
+    /// Build an NTS Authenticator and Encrypted Extension Fields wrapper.
+    pub fn nts_authenticator_encrypted(value: impl Into<Vec<u8>>) -> Self {
+        Self::new(0x0404, value)
+    }
+
+    /// Build a UDP Checksum Complement extension field.
+    pub fn udp_checksum_complement(value: impl Into<Vec<u8>>) -> Self {
+        Self::new(0x2005, value)
+    }
+
+    /// Build an Autokey-related raw extension field by type.
+    pub fn autokey_raw(field_type: u16, value: impl Into<Vec<u8>>) -> Self {
+        Self::new(field_type, value)
+    }
+
+    /// Set an explicit declared extension length.
+    pub fn declared_length(mut self, length: u16) -> Self {
+        self.length.set_user(length);
+        self
+    }
+
+    /// Raw extension field type.
+    pub fn field_type(&self) -> u16 {
+        self.field_type.value().copied().unwrap_or(0)
+    }
+
+    /// Declared length when caller-set or decoded.
+    pub fn declared_length_value(&self) -> Option<u16> {
+        self.length.value().copied()
+    }
+
+    /// Borrow the extension value bytes excluding the four-octet envelope.
+    pub fn value(&self) -> &[u8] {
+        &self.value
+    }
+
+    /// Source-backed metadata for the extension field type.
+    pub fn registry_meta(&self) -> NtpRegistryMeta {
+        ntp_extension_field_type_meta(self.field_type())
+    }
+
+    /// Return true when the field type is assigned by the NTS extension registry.
+    pub fn is_nts_extension(&self) -> bool {
+        matches!(self.field_type(), 0x0104 | 0x0204 | 0x0304 | 0x0404)
+    }
+
+    fn encoded_len(&self, last_without_mac: bool) -> usize {
+        if let Some(length) = self.length.value().copied() {
+            return usize::from(length).max(NTP_EXTENSION_FIELD_HEADER_LEN);
+        }
+
+        let minimum = if last_without_mac {
+            NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN
+        } else {
+            NTP_EXTENSION_FIELD_MIN_LEN
+        };
+        align_4((NTP_EXTENSION_FIELD_HEADER_LEN + self.value.len()).max(minimum))
+    }
+
+    fn compile(&self, last_without_mac: bool, out: &mut Vec<u8>) -> Result<()> {
+        let encoded_len = self.encoded_len(last_without_mac);
+        let declared_len = self.length.value().copied().unwrap_or(encoded_len as u16);
+
+        out.extend_from_slice(&self.field_type().to_be_bytes());
+        out.extend_from_slice(&declared_len.to_be_bytes());
+
+        let body_len = encoded_len.saturating_sub(NTP_EXTENSION_FIELD_HEADER_LEN);
+        let copy_len = body_len.min(self.value.len());
+        out.extend_from_slice(&self.value[..copy_len]);
+        out.resize(out.len() + (body_len - copy_len), 0);
+        Ok(())
+    }
+}
+
+/// Raw-preserving legacy NTP MAC tail.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct NtpLegacyMac {
+    bytes: Vec<u8>,
+}
+
+impl NtpLegacyMac {
+    /// Build from raw tail bytes.
+    pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            bytes: bytes.into(),
+        }
+    }
+
+    /// Build from a key identifier and raw digest bytes.
+    pub fn from_key_id_and_digest(key_id: u32, digest: impl AsRef<[u8]>) -> Self {
+        let mut bytes = Vec::with_capacity(NTP_LEGACY_MAC_KEY_ID_LEN + digest.as_ref().len());
+        bytes.extend_from_slice(&key_id.to_be_bytes());
+        bytes.extend_from_slice(digest.as_ref());
+        Self { bytes }
+    }
+
+    /// Borrow the raw MAC bytes.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Return the key identifier when the tail is at least four octets.
+    pub fn key_id(&self) -> Option<u32> {
+        if self.bytes.len() < NTP_LEGACY_MAC_KEY_ID_LEN {
+            return None;
+        }
+        Some(u32::from_be_bytes([
+            self.bytes[0],
+            self.bytes[1],
+            self.bytes[2],
+            self.bytes[3],
+        ]))
+    }
+
+    /// Return the digest bytes after the key identifier.
+    pub fn digest(&self) -> &[u8] {
+        if self.bytes.len() <= NTP_LEGACY_MAC_KEY_ID_LEN {
+            &[]
+        } else {
+            &self.bytes[NTP_LEGACY_MAC_KEY_ID_LEN..]
+        }
+    }
+
+    /// Tail length in octets.
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// True when the tail is empty.
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+}
+
+/// NTP packet layer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ntp {
+    leap_indicator: Field<NtpLeapIndicator>,
+    version: Field<NtpVersion>,
+    mode: Field<NtpMode>,
+    stratum: Field<NtpStratum>,
+    poll: Field<i8>,
+    precision: Field<i8>,
+    root_delay: Field<NtpShortFormat>,
+    root_dispersion: Field<NtpShortFormat>,
+    reference_id: Field<NtpReferenceId>,
+    reference_timestamp: Field<NtpTimestamp>,
+    origin_timestamp: Field<NtpTimestamp>,
+    receive_timestamp: Field<NtpTimestamp>,
+    transmit_timestamp: Field<NtpTimestamp>,
+    extension_fields: Vec<NtpExtensionField>,
+    legacy_mac: Option<NtpLegacyMac>,
+}
+
+impl Ntp {
+    /// Create a documentation-safe NTP client-shaped packet.
+    pub fn new() -> Self {
+        Self {
+            leap_indicator: Field::defaulted(NtpLeapIndicator::default()),
+            version: Field::defaulted(NtpVersion::default()),
+            mode: Field::defaulted(NtpMode::default()),
+            stratum: Field::defaulted(NtpStratum::default()),
+            poll: Field::defaulted(NTP_DEFAULT_POLL),
+            precision: Field::defaulted(NTP_DEFAULT_PRECISION),
+            root_delay: Field::defaulted(NtpShortFormat::from_raw(NTP_DEFAULT_ROOT_DELAY)),
+            root_dispersion: Field::defaulted(NtpShortFormat::from_raw(
+                NTP_DEFAULT_ROOT_DISPERSION,
+            )),
+            reference_id: Field::defaulted(NtpReferenceId::from_bytes(NTP_DEFAULT_REFERENCE_ID)),
+            reference_timestamp: Field::defaulted(NtpTimestamp::from_raw(
+                NTP_DEFAULT_REFERENCE_TIMESTAMP,
+            )),
+            origin_timestamp: Field::defaulted(NtpTimestamp::from_raw(
+                NTP_DEFAULT_ORIGIN_TIMESTAMP,
+            )),
+            receive_timestamp: Field::defaulted(NtpTimestamp::from_raw(
+                NTP_DEFAULT_RECEIVE_TIMESTAMP,
+            )),
+            transmit_timestamp: Field::defaulted(NtpTimestamp::from_raw(
+                NTP_DEFAULT_TRANSMIT_TIMESTAMP,
+            )),
+            extension_fields: Vec::new(),
+            legacy_mac: None,
+        }
+    }
+
+    /// Build a client-mode NTP request.
+    pub fn client() -> Self {
+        Self::new().mode(NtpMode::Client)
+    }
+
+    /// Build a server-mode NTP response shape.
+    pub fn server() -> Self {
+        Self::new().mode(NtpMode::Server).stratum(1)
+    }
+
+    /// Build a stratum-0 Kiss-o'-Death server response.
+    pub fn kiss_o_death(code: [u8; NTP_REFERENCE_ID_LEN]) -> Self {
+        Self::new()
+            .mode(NtpMode::Server)
+            .stratum(NTP_STRATUM_UNSPECIFIED)
+            .reference_id(NtpReferenceId::kiss_o_death(code))
+    }
+
+    /// Decode a standalone NTP UDP payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        decode_ntp_payload(bytes)
+    }
+
+    /// Set the Leap Indicator.
+    pub fn leap_indicator(mut self, value: impl Into<NtpLeapIndicator>) -> Self {
+        self.leap_indicator.set_user(value.into());
+        self
+    }
+
+    /// Set the version wrapper.
+    pub fn version(mut self, value: impl Into<NtpVersion>) -> Self {
+        self.version.set_user(value.into());
+        self
+    }
+
+    /// Set the version from a raw wire value.
+    pub fn version_value(self, value: u8) -> Self {
+        self.version(NtpVersion::from_wire(value))
+    }
+
+    /// Set the mode wrapper.
+    pub fn mode(mut self, value: impl Into<NtpMode>) -> Self {
+        self.mode.set_user(value.into());
+        self
+    }
+
+    /// Set the stratum from a raw wire value.
+    pub fn stratum(mut self, value: u8) -> Self {
+        self.stratum.set_user(NtpStratum::from_wire(value));
+        self
+    }
+
+    /// Set the signed poll exponent.
+    pub fn poll(mut self, value: i8) -> Self {
+        self.poll.set_user(value);
+        self
+    }
+
+    /// Set the signed precision exponent.
+    pub fn precision(mut self, value: i8) -> Self {
+        self.precision.set_user(value);
+        self
+    }
+
+    /// Set the root delay fixed-point value.
+    pub fn root_delay(mut self, value: impl Into<NtpShortFormat>) -> Self {
+        self.root_delay.set_user(value.into());
+        self
+    }
+
+    /// Set the root delay raw value.
+    pub fn root_delay_raw(self, value: u32) -> Self {
+        self.root_delay(NtpShortFormat::from_raw(value))
+    }
+
+    /// Set the root dispersion fixed-point value.
+    pub fn root_dispersion(mut self, value: impl Into<NtpShortFormat>) -> Self {
+        self.root_dispersion.set_user(value.into());
+        self
+    }
+
+    /// Set the root dispersion raw value.
+    pub fn root_dispersion_raw(self, value: u32) -> Self {
+        self.root_dispersion(NtpShortFormat::from_raw(value))
+    }
+
+    /// Set the reference identifier.
+    pub fn reference_id(mut self, value: impl Into<NtpReferenceId>) -> Self {
+        self.reference_id.set_user(value.into());
+        self
+    }
+
+    /// Set the reference timestamp.
+    pub fn reference_timestamp(mut self, value: impl Into<NtpTimestamp>) -> Self {
+        self.reference_timestamp.set_user(value.into());
+        self
+    }
+
+    /// Set the origin timestamp.
+    pub fn origin_timestamp(mut self, value: impl Into<NtpTimestamp>) -> Self {
+        self.origin_timestamp.set_user(value.into());
+        self
+    }
+
+    /// Set the receive timestamp.
+    pub fn receive_timestamp(mut self, value: impl Into<NtpTimestamp>) -> Self {
+        self.receive_timestamp.set_user(value.into());
+        self
+    }
+
+    /// Set the transmit timestamp.
+    pub fn transmit_timestamp(mut self, value: impl Into<NtpTimestamp>) -> Self {
+        self.transmit_timestamp.set_user(value.into());
+        self
+    }
+
+    /// Append one extension field.
+    pub fn extension_field(mut self, field: NtpExtensionField) -> Self {
+        self.extension_fields.push(field);
+        self
+    }
+
+    /// Replace extension fields.
+    pub fn extension_fields(mut self, fields: impl Into<Vec<NtpExtensionField>>) -> Self {
+        self.extension_fields = fields.into();
+        self
+    }
+
+    /// Set a raw legacy MAC tail.
+    pub fn legacy_mac(mut self, mac: NtpLegacyMac) -> Self {
+        self.legacy_mac = Some(mac);
+        self
+    }
+
+    /// Remove the legacy MAC tail.
+    pub fn without_legacy_mac(mut self) -> Self {
+        self.legacy_mac = None;
+        self
+    }
+
+    /// Effective Leap Indicator value.
+    pub fn leap_indicator_value(&self) -> NtpLeapIndicator {
+        field_value(&self.leap_indicator, NtpLeapIndicator::default())
+    }
+
+    /// Effective version value.
+    pub fn version_value_effective(&self) -> NtpVersion {
+        field_value(&self.version, NtpVersion::default())
+    }
+
+    /// Effective mode value.
+    pub fn mode_value(&self) -> NtpMode {
+        field_value(&self.mode, NtpMode::default())
+    }
+
+    /// Effective stratum value.
+    pub fn stratum_value(&self) -> NtpStratum {
+        field_value(&self.stratum, NtpStratum::default())
+    }
+
+    /// Effective poll exponent.
+    pub fn poll_value(&self) -> i8 {
+        field_value(&self.poll, NTP_DEFAULT_POLL)
+    }
+
+    /// Effective precision exponent.
+    pub fn precision_value(&self) -> i8 {
+        field_value(&self.precision, NTP_DEFAULT_PRECISION)
+    }
+
+    /// Effective root delay value.
+    pub fn root_delay_value(&self) -> NtpShortFormat {
+        field_value(
+            &self.root_delay,
+            NtpShortFormat::from_raw(NTP_DEFAULT_ROOT_DELAY),
+        )
+    }
+
+    /// Effective root dispersion value.
+    pub fn root_dispersion_value(&self) -> NtpShortFormat {
+        field_value(
+            &self.root_dispersion,
+            NtpShortFormat::from_raw(NTP_DEFAULT_ROOT_DISPERSION),
+        )
+    }
+
+    /// Effective reference identifier.
+    pub fn reference_id_value(&self) -> NtpReferenceId {
+        field_value(
+            &self.reference_id,
+            NtpReferenceId::from_bytes(NTP_DEFAULT_REFERENCE_ID),
+        )
+    }
+
+    /// Effective reference timestamp.
+    pub fn reference_timestamp_value(&self) -> NtpTimestamp {
+        field_value(
+            &self.reference_timestamp,
+            NtpTimestamp::from_raw(NTP_DEFAULT_REFERENCE_TIMESTAMP),
+        )
+    }
+
+    /// Effective origin timestamp.
+    pub fn origin_timestamp_value(&self) -> NtpTimestamp {
+        field_value(
+            &self.origin_timestamp,
+            NtpTimestamp::from_raw(NTP_DEFAULT_ORIGIN_TIMESTAMP),
+        )
+    }
+
+    /// Effective receive timestamp.
+    pub fn receive_timestamp_value(&self) -> NtpTimestamp {
+        field_value(
+            &self.receive_timestamp,
+            NtpTimestamp::from_raw(NTP_DEFAULT_RECEIVE_TIMESTAMP),
+        )
+    }
+
+    /// Effective transmit timestamp.
+    pub fn transmit_timestamp_value(&self) -> NtpTimestamp {
+        field_value(
+            &self.transmit_timestamp,
+            NtpTimestamp::from_raw(NTP_DEFAULT_TRANSMIT_TIMESTAMP),
+        )
+    }
+
+    /// Borrow extension fields.
+    pub fn extension_fields_value(&self) -> &[NtpExtensionField] {
+        &self.extension_fields
+    }
+
+    /// Borrow the legacy MAC tail, when present.
+    pub fn legacy_mac_value(&self) -> Option<&NtpLegacyMac> {
+        self.legacy_mac.as_ref()
+    }
+
+    /// First-octet value that will be serialized.
+    pub fn first_octet_value(&self) -> u8 {
+        ntp_pack_first_octet(
+            self.leap_indicator_value(),
+            self.version_value_effective(),
+            self.mode_value(),
+        )
+    }
+
+    fn encoded_tail_len(&self) -> usize {
+        let mut len = 0;
+        for (index, field) in self.extension_fields.iter().enumerate() {
+            let last_without_mac =
+                index + 1 == self.extension_fields.len() && self.legacy_mac.is_none();
+            len += field.encoded_len(last_without_mac);
+        }
+        if let Some(mac) = &self.legacy_mac {
+            len += mac.len();
+        }
+        len
+    }
+
+    fn compile_fixed_header(&self, out: &mut Vec<u8>) {
+        out.push(self.first_octet_value());
+        out.push(self.stratum_value().wire_value());
+        out.push(self.poll_value() as u8);
+        out.push(self.precision_value() as u8);
+        out.extend_from_slice(&self.root_delay_value().raw().to_be_bytes());
+        out.extend_from_slice(&self.root_dispersion_value().raw().to_be_bytes());
+        out.extend_from_slice(&self.reference_id_value().bytes());
+        out.extend_from_slice(&self.reference_timestamp_value().raw().to_be_bytes());
+        out.extend_from_slice(&self.origin_timestamp_value().raw().to_be_bytes());
+        out.extend_from_slice(&self.receive_timestamp_value().raw().to_be_bytes());
+        out.extend_from_slice(&self.transmit_timestamp_value().raw().to_be_bytes());
+    }
+}
+
+impl Default for Ntp {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Layer for Ntp {
+    fn name(&self) -> &'static str {
+        "Ntp"
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "Ntp({}/{}/{}, stratum={}, tx=0x{:016x}, ext={}, mac={})",
+            self.leap_indicator_value().summary_label(),
+            self.version_value_effective().summary_label(),
+            self.mode_value().summary_label(),
+            self.stratum_value().value(),
+            self.transmit_timestamp_value().raw(),
+            self.extension_fields.len(),
+            self.legacy_mac.as_ref().map_or(0, NtpLegacyMac::len)
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let stratum = self.stratum_value();
+        let reference_id = self.reference_id_value();
+        vec![
+            ("first_octet", format!("0x{:02x}", self.first_octet_value())),
+            ("leap_indicator", self.leap_indicator_value().label()),
+            ("version", self.version_value_effective().label()),
+            ("mode", self.mode_value().label()),
+            (
+                "stratum",
+                format!("{} ({})", stratum.value(), stratum.label()),
+            ),
+            ("poll", self.poll_value().to_string()),
+            ("precision", self.precision_value().to_string()),
+            (
+                "root_delay",
+                format!("0x{:08x}", self.root_delay_value().raw()),
+            ),
+            (
+                "root_dispersion",
+                format!("0x{:08x}", self.root_dispersion_value().raw()),
+            ),
+            ("reference_id", reference_id.label_for_stratum(stratum)),
+            (
+                "reference_timestamp",
+                format!("0x{:016x}", self.reference_timestamp_value().raw()),
+            ),
+            (
+                "origin_timestamp",
+                format!("0x{:016x}", self.origin_timestamp_value().raw()),
+            ),
+            (
+                "receive_timestamp",
+                format!("0x{:016x}", self.receive_timestamp_value().raw()),
+            ),
+            (
+                "transmit_timestamp",
+                format!("0x{:016x}", self.transmit_timestamp_value().raw()),
+            ),
+            ("extensions", self.extension_fields.len().to_string()),
+            (
+                "legacy_mac_len",
+                self.legacy_mac
+                    .as_ref()
+                    .map_or(0, NtpLegacyMac::len)
+                    .to_string(),
+            ),
+        ]
+    }
+
+    fn encoded_len(&self) -> usize {
+        NTP_FIXED_HEADER_LEN + self.encoded_tail_len()
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        self.compile_fixed_header(out);
+        for (index, field) in self.extension_fields.iter().enumerate() {
+            let last_without_mac =
+                index + 1 == self.extension_fields.len() && self.legacy_mac.is_none();
+            field.compile(last_without_mac, out)?;
+        }
+        if let Some(mac) = &self.legacy_mac {
+            out.extend_from_slice(mac.bytes());
+        }
+        Ok(())
+    }
+
+    fn clone_layer(&self) -> Box<dyn Layer> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+impl<R> Div<R> for Ntp
+where
+    R: IntoPacket,
+{
+    type Output = Packet;
+
+    fn div(self, rhs: R) -> Self::Output {
+        Packet::from_layer(self).concat(rhs)
+    }
+}
+
+/// Decode a standalone NTP UDP payload.
+pub fn decode_ntp_payload(bytes: &[u8]) -> Result<Ntp> {
+    if bytes.len() < NTP_FIXED_HEADER_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "ntp fixed header",
+            NTP_FIXED_HEADER_LEN,
+            bytes.len(),
+        ));
+    }
+
+    let (leap_indicator, version, mode) = ntp_parse_first_octet(bytes[0]);
+    let stratum = NtpStratum::from_wire(bytes[1]);
+    let poll = bytes[2] as i8;
+    let precision = bytes[3] as i8;
+    let root_delay =
+        NtpShortFormat::from_raw(u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]));
+    let root_dispersion = NtpShortFormat::from_raw(u32::from_be_bytes([
+        bytes[8], bytes[9], bytes[10], bytes[11],
+    ]));
+    let reference_id = NtpReferenceId::from_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
+    let reference_timestamp = read_timestamp(&bytes[16..24]);
+    let origin_timestamp = read_timestamp(&bytes[24..32]);
+    let receive_timestamp = read_timestamp(&bytes[32..40]);
+    let transmit_timestamp = read_timestamp(&bytes[40..48]);
+    let (extension_fields, legacy_mac) = parse_ntp_tail(&bytes[NTP_FIXED_HEADER_LEN..])?;
+
+    Ok(Ntp {
+        leap_indicator: Field::user(leap_indicator),
+        version: Field::user(version),
+        mode: Field::user(mode),
+        stratum: Field::user(stratum),
+        poll: Field::user(poll),
+        precision: Field::user(precision),
+        root_delay: Field::user(root_delay),
+        root_dispersion: Field::user(root_dispersion),
+        reference_id: Field::user(reference_id),
+        reference_timestamp: Field::user(reference_timestamp),
+        origin_timestamp: Field::user(origin_timestamp),
+        receive_timestamp: Field::user(receive_timestamp),
+        transmit_timestamp: Field::user(transmit_timestamp),
+        extension_fields,
+        legacy_mac,
+    })
+}
+
+/// Conservative UDP/123 shape gate for built-in registry dispatch.
+pub fn looks_like_ntp_payload(bytes: &[u8]) -> bool {
+    if bytes.len() < NTP_FIXED_HEADER_LEN {
+        return false;
+    }
+
+    let (_, version, mode) = ntp_parse_first_octet(bytes[0]);
+    if !(NTP_VERSION_1..=NTP_VERSION_4).contains(&version.value()) {
+        return false;
+    }
+    if mode.value() == NTP_MODE_RESERVED {
+        return false;
+    }
+
+    ntp_tail_shape_is_plausible(&bytes[NTP_FIXED_HEADER_LEN..])
+}
+
+/// Append a decoded NTP layer to an existing packet.
+pub fn append_ntp_packet(packet: Packet, payload: &[u8]) -> Result<Packet> {
+    Ok(packet.push(Ntp::decode(payload)?))
+}
+
+/// UDP header for an NTP client request.
+pub fn ntp_client_udp() -> Udp {
+    Udp::new().source_port(NTP_PORT).destination_port(NTP_PORT)
+}
+
+/// UDP header for an NTP server response.
+pub fn ntp_server_udp() -> Udp {
+    Udp::new().source_port(NTP_PORT).destination_port(NTP_PORT)
+}
+
+/// Documentation-safe IPv4/UDP/NTP client request packet.
+pub fn ntp_ipv4_client_request(source: Ipv4Addr, destination: Ipv4Addr) -> Packet {
+    Ipv4::new().src(source).dst(destination) / ntp_client_udp() / Ntp::client()
+}
+
+/// Documentation-safe IPv6/UDP/NTP client request packet.
+pub fn ntp_ipv6_client_request(source: Ipv6Addr, destination: Ipv6Addr) -> Packet {
+    Ipv6::new().src(source).dst(destination) / ntp_client_udp() / Ntp::client()
+}
+
+fn field_value<T: Copy>(field: &Field<T>, default: T) -> T {
+    field.value().copied().unwrap_or(default)
+}
+
+fn read_timestamp(bytes: &[u8]) -> NtpTimestamp {
+    NtpTimestamp::from_raw(u64::from_be_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ]))
+}
+
+fn parse_ntp_tail(tail: &[u8]) -> Result<(Vec<NtpExtensionField>, Option<NtpLegacyMac>)> {
+    let mut fields = Vec::new();
+    let mut offset = 0;
+
+    while offset < tail.len() {
+        let remaining = &tail[offset..];
+        if !fields.is_empty() && is_plausible_legacy_mac_len(remaining.len()) {
+            return Ok((fields, Some(NtpLegacyMac::from_bytes(remaining))));
+        }
+        if remaining.len() < NTP_EXTENSION_FIELD_HEADER_LEN {
+            return Ok((fields, Some(NtpLegacyMac::from_bytes(remaining))));
+        }
+
+        let field_type = u16::from_be_bytes([remaining[0], remaining[1]]);
+        let declared_len = u16::from_be_bytes([remaining[2], remaining[3]]) as usize;
+        let meta = ntp_extension_field_type_meta(field_type);
+        let known_extension = meta.status != NtpRegistryStatus::Unassigned;
+
+        if !is_valid_extension_length(declared_len, remaining.len()) {
+            if known_extension {
+                return Err(invalid_extension_length_error(
+                    declared_len,
+                    remaining.len(),
+                ));
+            }
+            return Ok((fields, Some(NtpLegacyMac::from_bytes(remaining))));
+        }
+
+        let final_without_mac = offset + declared_len == tail.len();
+        if final_without_mac && declared_len < NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN {
+            if known_extension {
+                return Err(invalid_final_extension_without_mac_length_error());
+            }
+            return Ok((fields, Some(NtpLegacyMac::from_bytes(remaining))));
+        }
+
+        let value = remaining[NTP_EXTENSION_FIELD_HEADER_LEN..declared_len].to_vec();
+        fields.push(NtpExtensionField {
+            field_type: Field::user(field_type),
+            length: Field::user(declared_len as u16),
+            value,
+        });
+        offset += declared_len;
+    }
+
+    Ok((fields, None))
+}
+
+fn ntp_tail_shape_is_plausible(tail: &[u8]) -> bool {
+    if tail.is_empty() {
+        return true;
+    }
+    if matches!(tail.len(), 4 | 20 | 24) {
+        return true;
+    }
+
+    let mut offset = 0;
+    while offset < tail.len() {
+        let remaining = &tail[offset..];
+        if offset > 0 && is_plausible_legacy_mac_len(remaining.len()) {
+            return true;
+        }
+        if remaining.len() < NTP_EXTENSION_FIELD_HEADER_LEN {
+            return false;
+        }
+        let declared_len = u16::from_be_bytes([remaining[2], remaining[3]]) as usize;
+        if !is_valid_extension_length(declared_len, remaining.len()) {
+            return false;
+        }
+        if offset + declared_len == tail.len()
+            && declared_len < NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN
+        {
+            return false;
+        }
+        offset += declared_len;
+    }
+    true
+}
+
+fn is_plausible_legacy_mac_len(len: usize) -> bool {
+    matches!(len, 4 | 20 | 24)
+}
+
+fn is_valid_extension_length(declared_len: usize, available: usize) -> bool {
+    declared_len >= NTP_EXTENSION_FIELD_MIN_LEN
+        && declared_len % 4 == 0
+        && declared_len <= available
+}
+
+fn invalid_extension_length_error(declared_len: usize, available: usize) -> CrafterError {
+    if declared_len < NTP_EXTENSION_FIELD_MIN_LEN {
+        CrafterError::invalid_field_value(
+            "ntp.extension.length",
+            "extension length must be at least 16 bytes",
+        )
+    } else if declared_len % 4 != 0 {
+        CrafterError::invalid_field_value(
+            "ntp.extension.length",
+            "extension length must be a multiple of 4 bytes",
+        )
+    } else {
+        CrafterError::buffer_too_short("ntp extension field", declared_len, available)
+    }
+}
+
+fn invalid_final_extension_without_mac_length_error() -> CrafterError {
+    CrafterError::invalid_field_value(
+        "ntp.extension.length",
+        "final extension without MAC must be at least 28 bytes",
+    )
+}
+
+fn align_4(value: usize) -> usize {
+    (value + 3) & !3
 }
 
 #[cfg(test)]
@@ -401,7 +1478,12 @@ mod tests {
     #[test]
     fn ntp_version_mode_modes_match_source_backed_codepoints() {
         let cases = [
-            (NtpMode::Reserved, 0, "reserved", NtpRegistryStatus::Reserved),
+            (
+                NtpMode::Reserved,
+                0,
+                "reserved",
+                NtpRegistryStatus::Reserved,
+            ),
             (
                 NtpMode::SymmetricActive,
                 1,

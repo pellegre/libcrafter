@@ -9,7 +9,7 @@
 //! - `PacketWire` source/writer backends, `PacketRecord` metadata,
 //!   `Sniffer`/`Transmitter` pipelines, and packet transforms
 //! - Ethernet, IEEE 802.11/radiotap, LLC/SNAP, IP, IGMP, transport, DHCPv4,
-//!   Dhcpv6, TLS, and selected application protocol primitives
+//!   Dhcpv6, NTP, TLS, and selected application protocol primitives
 //!
 //! Public modules are organized as `crafter::core`, `crafter::net`,
 //! `crafter::wire`, and `crafter::prelude`. The `wire` module is the

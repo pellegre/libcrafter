@@ -96,9 +96,11 @@ pub fn ntp_mode_meta(value: u8) -> NtpRegistryMeta {
         NTP_MODE_SERVER => numeric_meta(value, "server", NtpRegistryStatus::Assigned),
         NTP_MODE_BROADCAST => numeric_meta(value, "broadcast", NtpRegistryStatus::Assigned),
         NTP_MODE_CONTROL => numeric_meta(value, "control", NtpRegistryStatus::Assigned),
-        NTP_MODE_PRIVATE => {
-            numeric_meta(value, "private-use", NtpRegistryStatus::PrivateOrExperimental)
-        }
+        NTP_MODE_PRIVATE => numeric_meta(
+            value,
+            "private-use",
+            NtpRegistryStatus::PrivateOrExperimental,
+        ),
         other => NtpRegistryMeta {
             value: other.into(),
             label: format!("mode-{other}"),
@@ -173,22 +175,29 @@ pub fn ntp_reference_id_meta(code: [u8; NTP_REFERENCE_ID_LEN]) -> NtpReferenceCo
 /// Return registry metadata for an NTP Extension Field Type.
 pub fn ntp_extension_field_type_meta(field_type: u16) -> NtpRegistryMeta {
     match field_type {
-        0x0000 => {
-            numeric_meta(field_type, "Crypto-NAK; authentication failure", NtpRegistryStatus::Assigned)
-        }
-        0x0002 | 0x0102 | 0x0302 | 0x0402 | 0x0502 | 0x0602 | 0x0702 | 0x0802
-        | 0x0902 | 0x8002 | 0x8102 | 0x8302 | 0x8402 | 0x8502 | 0x8602 | 0x8702
-        | 0x8802 | 0x8902 | 0xC002 | 0xC102 | 0xC302 | 0xC402 | 0xC502 | 0xC602
-        | 0xC702 | 0xC802 | 0xC902 => numeric_meta(
+        0x0000 => numeric_meta(
+            field_type,
+            "Crypto-NAK; authentication failure",
+            NtpRegistryStatus::Assigned,
+        ),
+        0x0002 | 0x0102 | 0x0302 | 0x0402 | 0x0502 | 0x0602 | 0x0702 | 0x0802 | 0x0902 | 0x8002
+        | 0x8102 | 0x8302 | 0x8402 | 0x8502 | 0x8602 | 0x8702 | 0x8802 | 0x8902 | 0xC002
+        | 0xC102 | 0xC302 | 0xC402 | 0xC502 | 0xC602 | 0xC702 | 0xC802 | 0xC902 => numeric_meta(
             field_type,
             "Reserved for historic reasons",
             NtpRegistryStatus::Reserved,
         ),
         0x0104 => numeric_meta(field_type, "Unique Identifier", NtpRegistryStatus::Assigned),
-        0x010A => numeric_meta(field_type, "Network Correction", NtpRegistryStatus::Assigned),
-        0x0200 => {
-            numeric_meta(field_type, "No-Operation Request", NtpRegistryStatus::Assigned)
-        }
+        0x010A => numeric_meta(
+            field_type,
+            "Network Correction",
+            NtpRegistryStatus::Assigned,
+        ),
+        0x0200 => numeric_meta(
+            field_type,
+            "No-Operation Request",
+            NtpRegistryStatus::Assigned,
+        ),
         0x0201 => numeric_meta(
             field_type,
             "Association Message Request",
@@ -199,9 +208,11 @@ pub fn ntp_extension_field_type_meta(field_type: u16) -> NtpRegistryMeta {
             "Certificate Message Request",
             NtpRegistryStatus::Assigned,
         ),
-        0x0203 => {
-            numeric_meta(field_type, "Cookie Message Request", NtpRegistryStatus::Assigned)
-        }
+        0x0203 => numeric_meta(
+            field_type,
+            "Cookie Message Request",
+            NtpRegistryStatus::Assigned,
+        ),
         0x0204 => numeric_meta(
             field_type,
             "Autokey Message Request / NTS Cookie",
@@ -212,7 +223,11 @@ pub fn ntp_extension_field_type_meta(field_type: u16) -> NtpRegistryMeta {
             "Leapseconds Message Request",
             NtpRegistryStatus::Assigned,
         ),
-        0x0206 => numeric_meta(field_type, "Sign Message Request", NtpRegistryStatus::Assigned),
+        0x0206 => numeric_meta(
+            field_type,
+            "Sign Message Request",
+            NtpRegistryStatus::Assigned,
+        ),
         0x0207 => numeric_meta(
             field_type,
             "IFF Identity Message Request",
@@ -228,18 +243,26 @@ pub fn ntp_extension_field_type_meta(field_type: u16) -> NtpRegistryMeta {
             "MV Identity Message Request",
             NtpRegistryStatus::Assigned,
         ),
-        0x0304 => numeric_meta(field_type, "NTS Cookie Placeholder", NtpRegistryStatus::Assigned),
+        0x0304 => numeric_meta(
+            field_type,
+            "NTS Cookie Placeholder",
+            NtpRegistryStatus::Assigned,
+        ),
         0x0404 => numeric_meta(
             field_type,
             "NTS Authenticator and Encrypted Extension Fields",
             NtpRegistryStatus::Assigned,
         ),
-        0x2005 => {
-            numeric_meta(field_type, "UDP Checksum Complement", NtpRegistryStatus::Assigned)
-        }
-        0x8200 => {
-            numeric_meta(field_type, "No-Operation Response", NtpRegistryStatus::Assigned)
-        }
+        0x2005 => numeric_meta(
+            field_type,
+            "UDP Checksum Complement",
+            NtpRegistryStatus::Assigned,
+        ),
+        0x8200 => numeric_meta(
+            field_type,
+            "No-Operation Response",
+            NtpRegistryStatus::Assigned,
+        ),
         0x8201 => numeric_meta(
             field_type,
             "Association Message Response",
@@ -250,9 +273,11 @@ pub fn ntp_extension_field_type_meta(field_type: u16) -> NtpRegistryMeta {
             "Certificate Message Response",
             NtpRegistryStatus::Assigned,
         ),
-        0x8203 => {
-            numeric_meta(field_type, "Cookie Message Response", NtpRegistryStatus::Assigned)
-        }
+        0x8203 => numeric_meta(
+            field_type,
+            "Cookie Message Response",
+            NtpRegistryStatus::Assigned,
+        ),
         0x8204 => numeric_meta(
             field_type,
             "Autokey Message Response",
@@ -263,7 +288,11 @@ pub fn ntp_extension_field_type_meta(field_type: u16) -> NtpRegistryMeta {
             "Leapseconds Message Response",
             NtpRegistryStatus::Assigned,
         ),
-        0x8206 => numeric_meta(field_type, "Sign Message Response", NtpRegistryStatus::Assigned),
+        0x8206 => numeric_meta(
+            field_type,
+            "Sign Message Response",
+            NtpRegistryStatus::Assigned,
+        ),
         0x8207 => numeric_meta(
             field_type,
             "IFF Identity Message Response",
@@ -309,9 +338,11 @@ pub fn ntp_extension_field_type_meta(field_type: u16) -> NtpRegistryMeta {
             "Leapseconds Message Error Response",
             NtpRegistryStatus::Assigned,
         ),
-        0xC206 => {
-            numeric_meta(field_type, "Sign Message Error Response", NtpRegistryStatus::Assigned)
-        }
+        0xC206 => numeric_meta(
+            field_type,
+            "Sign Message Error Response",
+            NtpRegistryStatus::Assigned,
+        ),
         0xC207 => numeric_meta(
             field_type,
             "IFF Identity Message Error Response",
@@ -348,7 +379,11 @@ pub fn ntp_nts_extension_field_type_meta(field_type: u16) -> NtpRegistryMeta {
     match field_type {
         0x0104 => numeric_meta(field_type, "Unique Identifier", NtpRegistryStatus::Assigned),
         0x0204 => numeric_meta(field_type, "NTS Cookie", NtpRegistryStatus::Assigned),
-        0x0304 => numeric_meta(field_type, "NTS Cookie Placeholder", NtpRegistryStatus::Assigned),
+        0x0304 => numeric_meta(
+            field_type,
+            "NTS Cookie Placeholder",
+            NtpRegistryStatus::Assigned,
+        ),
         0x0404 => numeric_meta(
             field_type,
             "NTS Authenticator and Encrypted Extension Fields",
@@ -429,7 +464,9 @@ fn known_kiss_o_death_code_label(code: [u8; NTP_REFERENCE_ID_LEN]) -> Option<&'s
         [b'I', b'N', b'I', b'T'] => {
             Some("The association has not yet synchronized for the first time")
         }
-        [b'M', b'C', b'S', b'T'] => Some("The association belongs to a dynamically discovered server"),
+        [b'M', b'C', b'S', b'T'] => {
+            Some("The association belongs to a dynamically discovered server")
+        }
         [b'N', b'K', b'E', b'Y'] => Some("No key found or not trusted"),
         [b'N', b'T', b'S', b'N'] => Some("Network Time Security negative acknowledgment"),
         [b'R', b'A', b'T', b'E'] => Some("Rate exceeded"),
@@ -475,7 +512,10 @@ mod tests {
 
         let private_mode = ntp_mode_meta(NTP_MODE_PRIVATE);
         assert_eq!(private_mode.label, "private-use");
-        assert_eq!(private_mode.status, NtpRegistryStatus::PrivateOrExperimental);
+        assert_eq!(
+            private_mode.status,
+            NtpRegistryStatus::PrivateOrExperimental
+        );
 
         let unknown_mode = ntp_mode_meta(9);
         assert_eq!(unknown_mode.value, 9);
@@ -500,8 +540,14 @@ mod tests {
         assert_eq!(gps.status, NtpRegistryStatus::Assigned);
 
         let private_refid = ntp_reference_id_meta([b'X', b'L', b'A', b'B']);
-        assert_eq!(private_refid.label, "refid-0x584C4142 (private-or-experimental)");
-        assert_eq!(private_refid.status, NtpRegistryStatus::PrivateOrExperimental);
+        assert_eq!(
+            private_refid.label,
+            "refid-0x584C4142 (private-or-experimental)"
+        );
+        assert_eq!(
+            private_refid.status,
+            NtpRegistryStatus::PrivateOrExperimental
+        );
 
         let unknown_refid = ntp_reference_id_meta([0x80, 0, 0, 1]);
         assert_eq!(unknown_refid.label, "refid-0x80000001");

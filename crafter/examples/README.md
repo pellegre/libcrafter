@@ -56,6 +56,8 @@ values use `Ipv4Protocol`.
 | `ssdp_decode` | Protocols | Offline | Tracked SSDP payload fixture decoding with summary and show output. | `cargo run -p crafter --example ssdp_decode` |
 | `ssdp_search_plan` | Protocols | Dry-run | SSDP M-SEARCH construction over IPv4 and IPv6 with network-layer send plan inspection. | `cargo run -p crafter --example ssdp_search_plan` |
 | `ssdp_notify` | Protocols | Offline | SSDP notification construction, compile, decode, summary, show, and hexdump output. | `cargo run -p crafter --example ssdp_notify` |
+| `ntp_decode` | Protocols | Offline | Deterministic NTP payload decode, summary, show, and round-trip hexdump output. | `cargo run -p crafter --example ntp_decode` |
+| `ntp_request_plan` | Protocols | Dry-run | NTP client request construction over IPv4 and IPv6 with network-layer send plan inspection. | `cargo run -p crafter --example ntp_request_plan` |
 | `snmp_get` | Protocols | Offline | SNMPv1 and SNMPv2c GetRequest packet construction, decode, show, and hexdump output. | `cargo run -p crafter --example snmp_get` |
 | `snmp_trap` | Protocols | Offline | SNMPv1 Trap and SNMPv2c SNMPv2-Trap packet construction, decode, show, and hexdump output. | `cargo run -p crafter --example snmp_trap` |
 | `snmpv3_message` | Protocols | Offline | Synthetic SNMPv3 USM Report packet construction, decode, show, and hexdump output without credential storage. | `cargo run -p crafter --example snmpv3_message` |

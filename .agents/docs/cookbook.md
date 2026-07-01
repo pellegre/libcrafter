@@ -144,6 +144,45 @@ Live MQTT runs must stay opt-in: use `mqtt_session --peer IP:PORT` only against
 an authorized broker, or use a provider-backed probe/lab session that provisions
 the broker, collects artifacts under `target/`, and tears the endpoint down.
 
+## Build NTP Packet Primitives
+
+NTP is a packet primitive over UDP/123, not a time synchronization workflow.
+Generated tools should build and decode `Ntp` layers, inspect summaries, and
+start with offline bytes or dry-run send plans. Use documentation addresses in
+defaults.
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+fn main() -> crafter::Result<()> {
+    let packet = ntp_ipv4_client_request(
+        Ipv4Addr::new(192, 0, 2, 10),
+        Ipv4Addr::new(198, 51, 100, 20),
+    );
+
+    let plan = packet.send_dry_run(
+        SendOptions::new().iface("dry-run0").network_layer(),
+    )?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, plan.bytes())?;
+
+    println!("mode=dry-run");
+    println!("{}", decoded.summary());
+    println!("{}", decoded.show());
+    Ok(())
+}
+```
+
+Use `Ntp::decode` for direct payload parsing when a generated tool wants
+structured errors. Standard UDP decode only claims UDP/123 payloads that pass
+the conservative NTP shape gate; unrelated bytes stay `Raw`.
+
+Do not add a pool client, peer state machine, NTS key exchange, Autokey
+verification, scanner, or live default. Provider-backed live validation for NTP
+requires explicit provider selection, credentials when required,
+`--confirm-live-run`, an NTP-specific confirmation such as
+`LIBCRAFTER_NTP_LIVE_CONFIRM=yes`, artifact collection, and endpoint teardown.
+
 ## Build TLS Packet Primitives
 
 TLS is a packet primitive over TCP, not a TLS endpoint, certificate validator,

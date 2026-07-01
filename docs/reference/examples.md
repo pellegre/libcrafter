@@ -46,6 +46,8 @@ cargo run -p crafter --example dns_query -- --name example.com
 cargo run -p crafter --example snmp_get
 cargo run -p crafter --example snmp_trap
 cargo run -p crafter --example snmpv3_message
+cargo run -p crafter --example ntp_decode
+cargo run -p crafter --example ntp_request_plan
 cargo run -p crafter --example ipv4_enrichment
 cargo run -p crafter --example tcp_options
 cargo run -p crafter --example tls_client_hello
@@ -124,6 +126,22 @@ decode fixtures, inspect `summary()`/`show()`, and keep live network I/O behind
 explicit dry-run-to-live workflow gates. DHCPv6 live validation belongs in the
 provider-backed lab, oracle, and probe workflows under `docs/operations/`,
 where artifacts and teardown are part of the run.
+
+## NTP Examples
+
+The NTP examples stay offline or dry-run. `ntp_decode` parses deterministic NTP
+payload bytes, prints `summary()` and `show()`, and verifies byte round-trip.
+`ntp_request_plan` builds IPv4 and IPv6 UDP/123 client requests with
+documentation addresses and prints network-layer dry-run send plans.
+
+```sh
+cargo run -p crafter --example ntp_decode
+cargo run -p crafter --example ntp_request_plan
+```
+
+NTP live validation is not part of examples. Use the provider-backed oracle or
+probe workflows with explicit live confirmation and disposable endpoint cleanup
+when real traffic is authorized.
 
 ## TCP Options Snippet
 
