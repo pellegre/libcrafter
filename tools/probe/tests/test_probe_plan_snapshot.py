@@ -96,6 +96,9 @@ PROFILE_PLAN_DIGESTS: dict[str, str] = {
     "tcp-smoke:1": "401b7f4dbbba35981d80ae64bb610812c2839d2157aae1227c622da4b8302387",
     "tcp-smoke:7": "0a8c417754f0bc6c251cabdd219e4d0cb118de0b5dc97017eebc921e962317f9",
     "tcp-smoke:12345": "cbaab7d6eb6ad35e860311c01c03039369292652e1e3676cb455b9ad6b3d5487",
+    "tls-smoke:1": "eb509125148b2f8bba0ac2c6f0837ecd48bd983492b3b75ab99a205eaa2935cd",
+    "tls-smoke:7": "615b388bf5598e80fa595bac529e2c929d147d49577eefee86563f3af835be2b",
+    "tls-smoke:12345": "de34529af862b688c2e5d47feb58744462a2df8fb6346524741c9b1b7bf264c4",
 }
 
 
@@ -205,6 +208,9 @@ CASE_PLAN_DIGESTS: dict[str, str] = {
     "quic-retry-observation": "478ef1f516deb35b264a2bcd11a60c19378dc9bee9e135f36127f8da0c65bcaa",
     "quic-stateless-reset-observation": "4b4b0816258c1141a218f16662adc8a8947785af6fc66b7d3549209d2d86e420",
     "quic-protected-flow-plan": "4d5bdc3b7f492061547e3a37ae61ede7e357571a9969acc04fcb47ae7cef35d5",
+    "tls-clienthello-observation": "b622d6e570830106f0cf0d2156c5f3d78a2ad024d67e80ba9167ec7b06b7092b",
+    "tls-alert-observation": "8aef39240c6a3ffdc1bbe166022b79da97457671db62106f232ae2de37713a3d",
+    "tls-application-data-capture": "bc23ea47eb3ae37ff1d9eab81c595257c7e4899928b46c44d516d57443bf17ed",
 }
 
 

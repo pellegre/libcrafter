@@ -421,6 +421,21 @@ class ProbePlanningRegistryTest(unittest.TestCase):
                         name,
                     )
                     self.assertEqual(plan["validation"]["driver"], "snmp_probe", name)
+                elif case.metadata.get("protocol") == "tls":
+                    self.assertEqual(plan["protocol"], "tls", name)
+                    self.assertEqual(plan["destination_port"], 4433, name)
+                    self.assertIn("packet", plan, name)
+                    self.assertIn("tls", plan, name)
+                    self.assertEqual(
+                        plan["target_service"]["kind"],
+                        "tls-controlled-service",
+                        name,
+                    )
+                    self.assertEqual(
+                        plan["stimulus_driver"]["name"],
+                        "tls_probe",
+                        name,
+                    )
                 elif case.metadata.get("protocol") == "dhcpv6":
                     self.assertEqual(plan["protocol"], "dhcpv6", name)
                     self.assertIn("dhcpv6", plan, name)

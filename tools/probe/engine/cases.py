@@ -450,15 +450,9 @@ DHCPV6_ADVANCED_PROFILE_CASE_NAMES: tuple[str, ...] = (
     "dhcpv6-active-leasequery-plan",
 )
 
-SSDP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
-    case.name for case in _registry_cases() if case.metadata.get("protocol") == "ssdp"
-)
-MDNS_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
-    case.name for case in _registry_cases() if case.metadata.get("protocol") == "mdns"
-)
-TLS_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
-    case.name for case in _registry_cases() if case.metadata.get("protocol") == "tls"
-)
+SSDP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "ssdp")
+MDNS_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "mdns")
+TLS_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "tls")
 
 # Profiles that select an explicit ordered case subset. A profile not listed
 # here selects the full catalog. ``smoke`` is pinned to the historical

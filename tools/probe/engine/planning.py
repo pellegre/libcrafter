@@ -261,6 +261,13 @@ from .protocols.quic import (  # noqa: F401  (re-exported for identity/back-comp
     _quic_stateless_reset_observation_probe_plan,
     _quic_version_negotiation_observation_probe_plan,
 )
+# The TLS planning surface (the planned-only controlled TLS service cases'
+# shared ``_tls_probe_plan`` builder) lives in the TLS plugin module. Re-import
+# it so ``planning._tls_probe_plan`` resolves to the same function object the
+# plugin registered and the merged ``PLAN_BUILDERS`` exposes.
+from .protocols.tls import (  # noqa: F401  (re-exported for identity)
+    _tls_probe_plan,
+)
 
 
 def planned_cases(
