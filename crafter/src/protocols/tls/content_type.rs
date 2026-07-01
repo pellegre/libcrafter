@@ -28,7 +28,7 @@ impl TlsContentType {
     pub const HANDSHAKE: Self = Self::new(TLS_CONTENT_TYPE_HANDSHAKE);
     /// TLS record `application_data` content type.
     pub const APPLICATION_DATA: Self = Self::new(TLS_CONTENT_TYPE_APPLICATION_DATA);
-    /// TLS record `heartbeat` content type, preserved as opaque until modeled.
+    /// TLS record `heartbeat` content type, selected for packet-only modeling.
     pub const HEARTBEAT: Self = Self::new(TLS_CONTENT_TYPE_HEARTBEAT);
     /// TLS record `tls12_cid` content type, preserved for explicit values.
     pub const TLS12_CID: Self = Self::new(TLS_CONTENT_TYPE_TLS12_CID);
@@ -226,7 +226,7 @@ mod tests {
         assert!(handshake.is_known());
         assert!(handshake.is_default_eligible());
 
-        assert_eq!(heartbeat.status(), TlsCodepointStatus::Deferred);
+        assert_eq!(heartbeat.status(), TlsCodepointStatus::LabelEligible);
         assert_eq!(heartbeat.label(), "heartbeat");
         assert!(!heartbeat.is_default_eligible());
 

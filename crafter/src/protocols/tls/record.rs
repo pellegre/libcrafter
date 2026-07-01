@@ -8,6 +8,7 @@
 
 use super::content_type::TlsContentType;
 use super::handshake::{TlsHandshake, TLS_HANDSHAKE_HEADER_LEN};
+use super::heartbeat::TlsHeartbeat;
 use super::version::{TlsVersion, TlsVersionField};
 use crate::field::{Field, FieldState};
 use crate::protocols::transport::common::hex_bytes;
@@ -425,6 +426,72 @@ impl TlsApplicationData {
     }
 }
 
+/// Heartbeat record body bytes plus an optional decoded view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsHeartbeatRecordBody {
+    fragment: Vec<u8>,
+    heartbeat: Option<TlsHeartbeat>,
+}
+
+impl TlsHeartbeatRecordBody {
+    /// Preserve heartbeat fragment bytes without parsing them.
+    pub fn raw(fragment: impl Into<Vec<u8>>) -> Self {
+        Self {
+            fragment: fragment.into(),
+            heartbeat: None,
+        }
+    }
+
+    /// Build heartbeat fragment bytes from typed fields.
+    pub fn from_heartbeat(heartbeat: TlsHeartbeat) -> Result<Self> {
+        let fragment = heartbeat.encode_to_vec()?;
+        Ok(Self {
+            fragment,
+            heartbeat: Some(heartbeat),
+        })
+    }
+
+    /// Decode and preserve exact heartbeat fragment bytes.
+    pub fn from_decoded_fragment(fragment: impl Into<Vec<u8>>) -> Result<Self> {
+        let fragment = fragment.into();
+        let heartbeat = TlsHeartbeat::decode(&fragment)?;
+        Ok(Self {
+            fragment,
+            heartbeat: Some(heartbeat),
+        })
+    }
+
+    /// Borrow the exact fragment bytes.
+    pub fn fragment(&self) -> &[u8] {
+        &self.fragment
+    }
+
+    /// Consume the body and return exact fragment bytes.
+    pub fn into_fragment(self) -> Vec<u8> {
+        self.fragment
+    }
+
+    /// Borrow the decoded heartbeat when available.
+    pub const fn heartbeat(&self) -> Option<&TlsHeartbeat> {
+        self.heartbeat.as_ref()
+    }
+
+    /// Return true when this body carries decoded typed fields.
+    pub const fn is_typed(&self) -> bool {
+        self.heartbeat.is_some()
+    }
+
+    /// Number of exact fragment bytes.
+    pub fn fragment_len(&self) -> usize {
+        self.fragment.len()
+    }
+
+    /// Append the exact fragment bytes.
+    pub fn encode(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.fragment);
+    }
+}
+
 /// TLS record body hook.
 ///
 /// Handshake records carry ordered generic handshake messages when the fragment
@@ -436,6 +503,8 @@ pub enum TlsRecordBody {
     ChangeCipherSpec(TlsChangeCipherSpecRecordBody),
     /// Opaque application data bytes with no inner protocol decoding.
     ApplicationData(TlsApplicationData),
+    /// Heartbeat message bytes plus a typed view when available.
+    Heartbeat(TlsHeartbeatRecordBody),
     /// Generic typed handshake messages plus any trailing raw fragment bytes.
     Handshake(TlsHandshakeRecordBody),
     /// Opaque TLS record fragment bytes.
@@ -463,6 +532,18 @@ impl TlsRecordBody {
     /// Construct an application_data body from a typed byte wrapper.
     pub fn from_application_data(application_data: TlsApplicationData) -> Self {
         Self::ApplicationData(application_data)
+    }
+
+    /// Construct a raw-preserving heartbeat body.
+    pub fn heartbeat(fragment: impl Into<Vec<u8>>) -> Self {
+        Self::Heartbeat(TlsHeartbeatRecordBody::raw(fragment))
+    }
+
+    /// Construct a typed heartbeat body.
+    pub fn from_heartbeat(heartbeat: TlsHeartbeat) -> Result<Self> {
+        Ok(Self::Heartbeat(TlsHeartbeatRecordBody::from_heartbeat(
+            heartbeat,
+        )?))
     }
 
     /// Construct a typed handshake body from complete messages and no raw tail.
@@ -504,6 +585,9 @@ impl TlsRecordBody {
             TlsContentType::APPLICATION_DATA => {
                 Ok(Self::ApplicationData(TlsApplicationData::decode(fragment)?))
             }
+            TlsContentType::HEARTBEAT => Ok(Self::Heartbeat(
+                TlsHeartbeatRecordBody::from_decoded_fragment(fragment)?,
+            )),
             TlsContentType::HANDSHAKE => Self::decode_handshake_fragment(fragment),
             _ => Ok(Self::opaque(fragment)),
         }
@@ -555,6 +639,7 @@ impl TlsRecordBody {
         match self {
             Self::ChangeCipherSpec(change_cipher_spec) => change_cipher_spec.fragment(),
             Self::ApplicationData(application_data) => application_data.bytes(),
+            Self::Heartbeat(heartbeat) => heartbeat.fragment(),
             Self::Handshake(handshake) => handshake.fragment(),
             Self::Opaque(fragment) => fragment,
         }
@@ -565,6 +650,7 @@ impl TlsRecordBody {
         match self {
             Self::ChangeCipherSpec(change_cipher_spec) => change_cipher_spec.into_fragment(),
             Self::ApplicationData(application_data) => application_data.into_bytes(),
+            Self::Heartbeat(heartbeat) => heartbeat.into_fragment(),
             Self::Handshake(handshake) => handshake.into_fragment(),
             Self::Opaque(fragment) => fragment,
         }
@@ -588,6 +674,11 @@ impl TlsRecordBody {
     /// Return true when the body carries application data bytes.
     pub const fn is_application_data(&self) -> bool {
         matches!(self, Self::ApplicationData(_))
+    }
+
+    /// Return true when the body carries a heartbeat message hook.
+    pub const fn is_heartbeat(&self) -> bool {
+        matches!(self, Self::Heartbeat(_))
     }
 
     /// Return true when the body carries decoded generic handshake messages.
@@ -619,11 +710,28 @@ impl TlsRecordBody {
         }
     }
 
+    /// Borrow the typed heartbeat record body when present.
+    pub const fn heartbeat_record_body(&self) -> Option<&TlsHeartbeatRecordBody> {
+        match self {
+            Self::Heartbeat(heartbeat) => Some(heartbeat),
+            _ => None,
+        }
+    }
+
+    /// Borrow decoded heartbeat fields when present.
+    pub const fn heartbeat_body(&self) -> Option<&TlsHeartbeat> {
+        match self {
+            Self::Heartbeat(heartbeat) => heartbeat.heartbeat(),
+            _ => None,
+        }
+    }
+
     /// Borrow the typed handshake record body when present.
     pub const fn handshake_body(&self) -> Option<&TlsHandshakeRecordBody> {
         match self {
             Self::ChangeCipherSpec(_) => None,
             Self::ApplicationData(_) => None,
+            Self::Heartbeat(_) => None,
             Self::Handshake(handshake) => Some(handshake),
             Self::Opaque(_) => None,
         }
@@ -644,6 +752,7 @@ impl TlsRecordBody {
         match self {
             Self::ChangeCipherSpec(change_cipher_spec) => change_cipher_spec.encode(out),
             Self::ApplicationData(application_data) => application_data.encode(out),
+            Self::Heartbeat(heartbeat) => heartbeat.encode(out),
             Self::Handshake(handshake) => handshake.encode(out),
             Self::Opaque(fragment) => out.extend_from_slice(fragment),
         }
@@ -658,6 +767,7 @@ impl TlsRecordBody {
         match self {
             Self::ChangeCipherSpec(_) => "change_cipher_spec",
             Self::ApplicationData(_) => "application_data",
+            Self::Heartbeat(_) => "heartbeat",
             Self::Handshake(_) => "handshake",
             Self::Opaque(_) => "opaque",
         }
@@ -685,6 +795,12 @@ impl From<TlsChangeCipherSpec> for TlsRecordBody {
 impl From<TlsApplicationData> for TlsRecordBody {
     fn from(application_data: TlsApplicationData) -> Self {
         Self::from_application_data(application_data)
+    }
+}
+
+impl From<TlsHeartbeatRecordBody> for TlsRecordBody {
+    fn from(body: TlsHeartbeatRecordBody) -> Self {
+        Self::Heartbeat(body)
     }
 }
 
@@ -806,6 +922,19 @@ impl TlsRecord {
         )
     }
 
+    /// Construct a `heartbeat` TLS record with raw fragment bytes.
+    pub fn heartbeat(fragment: impl Into<Vec<u8>>) -> Self {
+        Self::from_header_and_fragment(TlsRecordHeader::heartbeat(), fragment)
+    }
+
+    /// Construct a `heartbeat` TLS record from a typed body.
+    pub fn from_heartbeat(heartbeat: TlsHeartbeat) -> Result<Self> {
+        Ok(Self::from_header_and_body(
+            TlsRecordHeader::heartbeat(),
+            TlsRecordBody::from_heartbeat(heartbeat)?,
+        ))
+    }
+
     /// Replace the complete record header.
     pub fn with_header(mut self, header: TlsRecordHeader) -> Self {
         self.header = header;
@@ -890,6 +1019,11 @@ impl TlsRecord {
     /// Borrow application data bytes when this record carries them.
     pub const fn application_data_body(&self) -> Option<&TlsApplicationData> {
         self.body.application_data_body()
+    }
+
+    /// Borrow decoded heartbeat fields when this record carries them.
+    pub const fn heartbeat_body(&self) -> Option<&TlsHeartbeat> {
+        self.body.heartbeat_body()
     }
 
     /// Borrow the opaque fragment bytes.
@@ -1121,6 +1255,11 @@ impl TlsRecordHeader {
     /// Construct an `application_data` record header.
     pub fn application_data() -> Self {
         Self::new(TlsContentType::application_data())
+    }
+
+    /// Construct a `heartbeat` record header.
+    pub fn heartbeat() -> Self {
+        Self::new(TlsContentType::heartbeat())
     }
 
     /// Replace the record content type.
@@ -1400,8 +1539,10 @@ fn field_state_label(state: FieldState) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocols::tls::heartbeat::TlsHeartbeatMessageType;
     use crate::protocols::tls::{
         TlsClientHello, TlsHandshakeType, TlsRawExtension, TLS_CLIENT_HELLO_RANDOM_LEN,
+        TLS_HEARTBEAT_HEADER_LEN, TLS_HEARTBEAT_MIN_PADDING_LEN,
     };
     use crate::FieldState;
 
@@ -1670,6 +1811,78 @@ mod tests {
         assert_eq!(
             record.encode_to_vec()?,
             vec![0x17, 0x03, 0x03, 0x00, 0x05, 0x00, 0xff, 0x16, 0x03, 0x03]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_heartbeat_record_builds_decodes_and_preserves_full_fragment() -> Result<()> {
+        let heartbeat = TlsHeartbeat::request([0xde, 0xad], [0x77; TLS_HEARTBEAT_MIN_PADDING_LEN]);
+        let fragment = heartbeat.encode_to_vec()?;
+        let record = TlsRecord::from_heartbeat(heartbeat.clone())?;
+        let mut encoded = vec![
+            0x18,
+            0x03,
+            0x03,
+            ((fragment.len() >> 8) & 0xff) as u8,
+            (fragment.len() & 0xff) as u8,
+        ];
+        encoded.extend_from_slice(&fragment);
+
+        assert_eq!(record.content_type(), TlsContentType::HEARTBEAT);
+        assert!(record.body().is_heartbeat());
+        assert_eq!(record.heartbeat_body(), Some(&heartbeat));
+        assert_eq!(record.fragment(), fragment.as_slice());
+        assert_eq!(record.encode_to_vec()?, encoded);
+        assert_eq!(
+            record.summary(),
+            format!(
+                "record content_type=heartbeat legacy_record_version=TLS 1.2 declared_length=auto fragment_bytes={} body=heartbeat",
+                fragment.len()
+            )
+        );
+
+        let decoded = TlsRecord::decode(&encoded)?;
+        let decoded_heartbeat = decoded.heartbeat_body().expect("heartbeat body");
+        assert_eq!(decoded.content_type(), TlsContentType::HEARTBEAT);
+        assert!(decoded.body().is_heartbeat());
+        assert_eq!(
+            decoded_heartbeat.message_type(),
+            TlsHeartbeatMessageType::REQUEST
+        );
+        assert_eq!(decoded_heartbeat.declared_payload_length(), Some(2));
+        assert_eq!(decoded_heartbeat.payload(), &[0xde, 0xad]);
+        assert_eq!(
+            decoded_heartbeat.padding(),
+            &[0x77; TLS_HEARTBEAT_MIN_PADDING_LEN]
+        );
+        assert_eq!(decoded.fragment(), fragment.as_slice());
+        assert_eq!(decoded.encode_to_vec()?, encoded);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_heartbeat_record_raw_builder_preserves_malformed_fragments() -> Result<()> {
+        let raw = TlsRecord::heartbeat([0x01, 0x00, 0x04, 0xaa]);
+
+        assert_eq!(raw.content_type(), TlsContentType::HEARTBEAT);
+        assert!(raw.body().is_opaque());
+        assert_eq!(raw.heartbeat_body(), None);
+        assert_eq!(raw.fragment(), &[0x01, 0x00, 0x04, 0xaa]);
+        assert_eq!(
+            raw.encode_to_vec()?,
+            vec![0x18, 0x03, 0x03, 0x00, 0x04, 0x01, 0x00, 0x04, 0xaa]
+        );
+
+        assert_eq!(
+            TlsRecord::decode([0x18, 0x03, 0x03, 0x00, 0x04, 0x01, 0x00, 0x04, 0xaa]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.heartbeat.payload",
+                7,
+                TLS_HEARTBEAT_HEADER_LEN + 1
+            )
         );
 
         Ok(())
