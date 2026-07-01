@@ -1,0 +1,10 @@
+# TLS handshake malformed input corpus.
+# Format: name|target|expected-kind|context-or-field|required|available|reason|hex
+short-handshake-header|handshake|buffer-too-short|tls.handshake.header|4|3|-|010000
+declared-body-overrun|handshake|buffer-too-short|tls.handshake.body|8|5|-|01000004aa
+clienthello-missing-random|handshake|buffer-too-short|tls.client_hello.random|34|2|-|010000020303
+clienthello-short-cipher-suite-vector|handshake|buffer-too-short|tls.client_hello.cipher_suites|41|39|-|01000027 0303 0000000000000000000000000000000000000000000000000000000000000000 00 0004 1301
+clienthello-odd-cipher-suite-vector|handshake|invalid-field-value|tls.client_hello.cipher_suites.length|-|-|cipher suite vector length must be even|01000028 0303 0000000000000000000000000000000000000000000000000000000000000000 00 0003 1301aa
+serverhello-missing-extensions|handshake|buffer-too-short|tls.server_hello.extensions.length|2|0|-|02000026 0303 0000000000000000000000000000000000000000000000000000000000000000 00 1301 00
+unknown-message-short-body|handshake|buffer-too-short|tls.handshake.body|7|5|-|fa000003aa
+valid-message-trailing-partial|handshake-record-fragment|decodes-raw-tail|raw_tail|5|5|-|fa0000010002000004aa
