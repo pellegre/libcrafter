@@ -6,6 +6,7 @@
 
 pub mod alert;
 pub mod constants;
+pub mod content_type;
 pub(crate) mod decode;
 pub mod extension;
 pub mod handshake;
@@ -13,6 +14,7 @@ pub mod record;
 pub mod vectors;
 pub mod version;
 
+pub use content_type::TlsContentType;
 pub use version::{TlsVersion, TlsVersionField};
 
 #[cfg(test)]
