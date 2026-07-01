@@ -2,11 +2,12 @@
 //!
 //! A TLS record is the fixed five-octet record header followed by the declared
 //! fragment bytes: `ContentType | legacy_record_version | length | fragment`.
-//! Inner message parsing is intentionally deferred; record bodies are preserved
-//! as opaque fragments so unsupported, encrypted, or future content types
+//! Handshake records can expose generic typed handshake messages while other
+//! content types remain opaque so unsupported, encrypted, or future payloads
 //! round-trip unchanged.
 
 use super::content_type::TlsContentType;
+use super::handshake::{TlsHandshake, TLS_HANDSHAKE_HEADER_LEN};
 use super::version::{TlsVersion, TlsVersionField};
 use crate::field::{Field, FieldState};
 use crate::{CrafterError, Result};
@@ -21,27 +22,205 @@ pub const TLS_RECORD_LENGTH_LEN: usize = 2;
 pub const TLS_RECORD_HEADER_LEN: usize =
     TLS_RECORD_CONTENT_TYPE_LEN + TLS_RECORD_VERSION_LEN + TLS_RECORD_LENGTH_LEN;
 
+/// Parsed body for a TLS record with content type `handshake`.
+///
+/// TLS-over-TCP can split handshake messages across records. This helper keeps
+/// cross-record reassembly out of scope by decoding only complete messages
+/// available in this record fragment and preserving any trailing partial
+/// message bytes as a raw tail.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsHandshakeRecordBody {
+    messages: Vec<TlsHandshake>,
+    raw_tail: Vec<u8>,
+    fragment: Vec<u8>,
+}
+
+impl TlsHandshakeRecordBody {
+    /// Construct a handshake record body from complete messages and no raw tail.
+    pub fn from_messages<I, M>(messages: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = M>,
+        M: Into<TlsHandshake>,
+    {
+        Self::from_messages_and_raw_tail(messages, Vec::new())
+    }
+
+    /// Construct a handshake record body from complete messages plus raw tail bytes.
+    pub fn from_messages_and_raw_tail<I, M>(
+        messages: I,
+        raw_tail: impl Into<Vec<u8>>,
+    ) -> Result<Self>
+    where
+        I: IntoIterator<Item = M>,
+        M: Into<TlsHandshake>,
+    {
+        let messages = messages.into_iter().map(Into::into).collect::<Vec<_>>();
+        let raw_tail = raw_tail.into();
+        let mut fragment = Vec::new();
+
+        for message in &messages {
+            message.encode(&mut fragment)?;
+        }
+        fragment.extend_from_slice(&raw_tail);
+
+        Ok(Self {
+            messages,
+            raw_tail,
+            fragment,
+        })
+    }
+
+    fn from_decoded_parts(
+        messages: Vec<TlsHandshake>,
+        raw_tail: Vec<u8>,
+        fragment: Vec<u8>,
+    ) -> Self {
+        Self {
+            messages,
+            raw_tail,
+            fragment,
+        }
+    }
+
+    /// Borrow the ordered complete handshake messages decoded from this record.
+    pub fn messages(&self) -> &[TlsHandshake] {
+        &self.messages
+    }
+
+    /// Borrow the raw trailing fragment bytes that did not form a complete message.
+    pub fn raw_tail(&self) -> &[u8] {
+        &self.raw_tail
+    }
+
+    /// Return true when this record body has trailing raw bytes.
+    pub fn has_raw_tail(&self) -> bool {
+        !self.raw_tail.is_empty()
+    }
+
+    /// Borrow the exact fragment bytes emitted after the record header.
+    pub fn fragment(&self) -> &[u8] {
+        &self.fragment
+    }
+
+    /// Consume the body and return its ordered complete messages plus raw tail.
+    pub fn into_messages_and_raw_tail(self) -> (Vec<TlsHandshake>, Vec<u8>) {
+        (self.messages, self.raw_tail)
+    }
+
+    /// Consume the body and return the exact fragment bytes.
+    pub fn into_fragment(self) -> Vec<u8> {
+        self.fragment
+    }
+
+    /// Number of exact fragment bytes.
+    pub fn fragment_len(&self) -> usize {
+        self.fragment.len()
+    }
+
+    /// Append the exact fragment bytes to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.fragment);
+    }
+}
+
 /// TLS record body hook.
 ///
-/// The record layer currently keeps every fragment opaque. The enum exists as
-/// the local typed-body seam for later source-backed handshake, alert,
-/// change_cipher_spec, application_data, and heartbeat modeling without
-/// changing the record container shape.
+/// Handshake records carry ordered generic handshake messages when the fragment
+/// starts with at least one complete message. Non-handshake records, encrypted
+/// records, and unsupported content types stay opaque.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TlsRecordBody {
+    /// Generic typed handshake messages plus any trailing raw fragment bytes.
+    Handshake(TlsHandshakeRecordBody),
     /// Opaque TLS record fragment bytes.
     Opaque(Vec<u8>),
 }
 
 impl TlsRecordBody {
+    /// Construct a typed handshake body from complete messages and no raw tail.
+    pub fn handshake<I, M>(messages: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = M>,
+        M: Into<TlsHandshake>,
+    {
+        Ok(Self::Handshake(TlsHandshakeRecordBody::from_messages(
+            messages,
+        )?))
+    }
+
+    /// Construct a typed handshake body from complete messages plus raw tail bytes.
+    pub fn handshake_with_raw_tail<I, M>(messages: I, raw_tail: impl Into<Vec<u8>>) -> Result<Self>
+    where
+        I: IntoIterator<Item = M>,
+        M: Into<TlsHandshake>,
+    {
+        Ok(Self::Handshake(
+            TlsHandshakeRecordBody::from_messages_and_raw_tail(messages, raw_tail)?,
+        ))
+    }
+
     /// Preserve fragment bytes without inner parsing.
     pub fn opaque(fragment: impl Into<Vec<u8>>) -> Self {
         Self::Opaque(fragment.into())
     }
 
+    fn decode_for_content_type(
+        content_type: TlsContentType,
+        fragment: impl Into<Vec<u8>>,
+    ) -> Result<Self> {
+        let fragment = fragment.into();
+        if content_type == TlsContentType::HANDSHAKE {
+            Self::decode_handshake_fragment(fragment)
+        } else {
+            Ok(Self::opaque(fragment))
+        }
+    }
+
+    fn decode_handshake_fragment(fragment: Vec<u8>) -> Result<Self> {
+        if fragment.is_empty() {
+            return Err(CrafterError::buffer_too_short(
+                "tls.handshake.header",
+                TLS_HANDSHAKE_HEADER_LEN,
+                0,
+            ));
+        }
+
+        let mut remaining = fragment.as_slice();
+        let mut messages = Vec::new();
+
+        while !remaining.is_empty() {
+            match TlsHandshake::decode_with_consumed(remaining) {
+                Ok((message, consumed)) if consumed > 0 => {
+                    messages.push(message);
+                    remaining = &remaining[consumed..];
+                }
+                Ok((_message, _consumed)) => {
+                    return Err(CrafterError::invalid_field_value(
+                        "tls.handshake.length",
+                        "decoded handshake consumed no bytes",
+                    ));
+                }
+                Err(_err) if !messages.is_empty() => {
+                    let raw_tail = remaining.to_vec();
+                    return Ok(Self::Handshake(TlsHandshakeRecordBody::from_decoded_parts(
+                        messages, raw_tail, fragment,
+                    )));
+                }
+                Err(err) => return Err(err),
+            }
+        }
+
+        Ok(Self::Handshake(TlsHandshakeRecordBody::from_decoded_parts(
+            messages,
+            Vec::new(),
+            fragment,
+        )))
+    }
+
     /// Borrow the bytes that will be emitted after the record header.
     pub fn fragment(&self) -> &[u8] {
         match self {
+            Self::Handshake(handshake) => handshake.fragment(),
             Self::Opaque(fragment) => fragment,
         }
     }
@@ -49,6 +228,7 @@ impl TlsRecordBody {
     /// Consume the body hook and return the preserved fragment bytes.
     pub fn into_fragment(self) -> Vec<u8> {
         match self {
+            Self::Handshake(handshake) => handshake.into_fragment(),
             Self::Opaque(fragment) => fragment,
         }
     }
@@ -63,9 +243,35 @@ impl TlsRecordBody {
         matches!(self, Self::Opaque(_))
     }
 
+    /// Return true when the body carries decoded generic handshake messages.
+    pub const fn is_handshake(&self) -> bool {
+        matches!(self, Self::Handshake(_))
+    }
+
+    /// Borrow the typed handshake record body when present.
+    pub const fn handshake_body(&self) -> Option<&TlsHandshakeRecordBody> {
+        match self {
+            Self::Handshake(handshake) => Some(handshake),
+            Self::Opaque(_) => None,
+        }
+    }
+
+    /// Borrow decoded complete handshake messages when this is a handshake body.
+    pub fn handshake_messages(&self) -> Option<&[TlsHandshake]> {
+        self.handshake_body().map(TlsHandshakeRecordBody::messages)
+    }
+
+    /// Borrow the raw trailing handshake fragment bytes when this is a handshake body.
+    pub fn handshake_raw_tail(&self) -> Option<&[u8]> {
+        self.handshake_body().map(TlsHandshakeRecordBody::raw_tail)
+    }
+
     /// Append the body fragment bytes to `out`.
     pub fn encode(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.fragment());
+        match self {
+            Self::Handshake(handshake) => handshake.encode(out),
+            Self::Opaque(fragment) => out.extend_from_slice(fragment),
+        }
     }
 
     /// Return the preserved fragment bytes as a new vector.
@@ -75,8 +281,15 @@ impl TlsRecordBody {
 
     fn label(&self) -> &'static str {
         match self {
+            Self::Handshake(_) => "handshake",
             Self::Opaque(_) => "opaque",
         }
+    }
+}
+
+impl From<TlsHandshakeRecordBody> for TlsRecordBody {
+    fn from(body: TlsHandshakeRecordBody) -> Self {
+        Self::Handshake(body)
     }
 }
 
@@ -140,6 +353,33 @@ impl TlsRecord {
     /// Construct a `handshake` TLS record.
     pub fn handshake(fragment: impl Into<Vec<u8>>) -> Self {
         Self::from_header_and_fragment(TlsRecordHeader::handshake(), fragment)
+    }
+
+    /// Construct a `handshake` TLS record from complete generic messages.
+    pub fn handshake_messages<I, M>(messages: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = M>,
+        M: Into<TlsHandshake>,
+    {
+        Ok(Self::from_header_and_body(
+            TlsRecordHeader::handshake(),
+            TlsRecordBody::handshake(messages)?,
+        ))
+    }
+
+    /// Construct a `handshake` TLS record from complete generic messages plus raw tail bytes.
+    pub fn handshake_messages_with_raw_tail<I, M>(
+        messages: I,
+        raw_tail: impl Into<Vec<u8>>,
+    ) -> Result<Self>
+    where
+        I: IntoIterator<Item = M>,
+        M: Into<TlsHandshake>,
+    {
+        Ok(Self::from_header_and_body(
+            TlsRecordHeader::handshake(),
+            TlsRecordBody::handshake_with_raw_tail(messages, raw_tail)?,
+        ))
     }
 
     /// Construct an `application_data` TLS record.
@@ -354,8 +594,9 @@ impl TlsRecord {
         }
 
         let fragment = tail[..fragment_len].to_vec();
+        let body = TlsRecordBody::decode_for_content_type(header.content_type(), fragment)?;
         Ok((
-            Self::from_header_and_fragment(header, fragment),
+            Self::from_header_and_body(header, body),
             &tail[fragment_len..],
         ))
     }
@@ -730,6 +971,7 @@ fn field_state_label(state: FieldState) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocols::tls::TlsHandshakeType;
     use crate::FieldState;
 
     #[test]
@@ -782,6 +1024,105 @@ mod tests {
             vec![0x15, 0x03, 0x01, 0x00, 0x02, 0x01, 0x00]
         );
         assert_eq!(TlsRecord::decode(bytes)?.fragment(), &[0x01, 0x00]);
+        Ok(())
+    }
+
+    #[test]
+    fn tls_handshake_record_decode_parses_messages_and_preserves_partial_tail() -> Result<()> {
+        let first = [0x01, 0x00, 0x00, 0x02, 0xca, 0xfe];
+        let second = [0x14, 0x00, 0x00, 0x01, 0x00];
+        let partial = [0x02, 0x00, 0x00, 0x02, 0xaa];
+        let bytes = [
+            0x16, 0x03, 0x03, 0x00, 0x10, first[0], first[1], first[2], first[3], first[4],
+            first[5], second[0], second[1], second[2], second[3], second[4], partial[0],
+            partial[1], partial[2], partial[3], partial[4],
+        ];
+
+        let record = TlsRecord::decode(bytes)?;
+        let body = record
+            .body()
+            .handshake_body()
+            .expect("handshake record body");
+
+        assert_eq!(record.content_type(), TlsContentType::HANDSHAKE);
+        assert!(record.body().is_handshake());
+        assert_eq!(body.messages().len(), 2);
+        assert_eq!(
+            body.messages()[0].handshake_type(),
+            TlsHandshakeType::CLIENT_HELLO
+        );
+        assert_eq!(body.messages()[0].body_bytes(), &[0xca, 0xfe]);
+        assert_eq!(
+            body.messages()[1].handshake_type(),
+            TlsHandshakeType::FINISHED
+        );
+        assert_eq!(body.messages()[1].body_bytes(), &[0x00]);
+        assert_eq!(body.raw_tail(), &partial);
+        assert!(body.has_raw_tail());
+        let expected_fragment = [&first[..], &second[..], &partial[..]].concat();
+        assert_eq!(record.fragment(), expected_fragment.as_slice());
+        assert_eq!(record.encode_to_vec()?, bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_handshake_record_decode_errors_when_first_message_is_partial() {
+        assert_eq!(
+            TlsRecord::decode([0x16, 0x03, 0x03, 0x00, 0x01, 0x01]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.handshake.header", TLS_HANDSHAKE_HEADER_LEN, 1)
+        );
+
+        assert_eq!(
+            TlsRecord::decode([0x16, 0x03, 0x03, 0x00, 0x05, 0x01, 0x00, 0x00, 0x04, 0xaa])
+                .unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.handshake.body",
+                TLS_HANDSHAKE_HEADER_LEN + 4,
+                TLS_HANDSHAKE_HEADER_LEN + 1
+            )
+        );
+
+        assert_eq!(
+            TlsRecord::decode([0x16, 0x03, 0x03, 0x00, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.handshake.header", TLS_HANDSHAKE_HEADER_LEN, 0)
+        );
+    }
+
+    #[test]
+    fn tls_handshake_record_encode_round_trips_typed_body_and_raw_tail() -> Result<()> {
+        let message = TlsHandshake::client_hello([0xaa, 0xbb, 0xcc]).with_length(1);
+        let record = TlsRecord::handshake_messages_with_raw_tail([message], [0xde])?.with_length(2);
+
+        assert_eq!(record.declared_length(), Some(2));
+        assert_eq!(record.effective_length()?, 2);
+        assert_eq!(record.fragment_len(), TLS_HANDSHAKE_HEADER_LEN + 4);
+        assert_eq!(
+            record.encode_to_vec()?,
+            vec![0x16, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00, 0x00, 0x01, 0xaa, 0xbb, 0xcc, 0xde,]
+        );
+
+        let body = record.body().handshake_body().expect("typed body");
+        assert_eq!(body.messages().len(), 1);
+        assert_eq!(body.raw_tail(), &[0xde]);
+        assert_eq!(
+            record.fragment(),
+            &[0x01, 0x00, 0x00, 0x01, 0xaa, 0xbb, 0xcc, 0xde]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_handshake_record_non_handshake_records_remain_opaque() -> Result<()> {
+        let bytes = [0x17, 0x03, 0x03, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00];
+        let record = TlsRecord::decode(bytes)?;
+
+        assert_eq!(record.content_type(), TlsContentType::application_data());
+        assert!(record.body().is_opaque());
+        assert_eq!(record.fragment(), &[0x01, 0x00, 0x00, 0x00]);
+        assert_eq!(record.encode_to_vec()?, bytes);
+
         Ok(())
     }
 

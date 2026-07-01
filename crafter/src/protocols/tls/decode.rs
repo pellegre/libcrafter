@@ -2,9 +2,9 @@
 //!
 //! TLS over TCP is record-framed, so one byte stream segment can contain one
 //! complete record, multiple complete records, or a complete record followed by
-//! a partial tail. This module decodes only byte-complete record frames and
-//! keeps record fragments opaque; typed body parsing belongs to later
-//! source-backed steps.
+//! a partial tail. This module decodes byte-complete record frames; record
+//! bodies may expose typed handshake messages while encrypted or unsupported
+//! content stays opaque.
 
 use crate::packet::{Packet, Raw};
 use crate::registry::ProtocolRegistry;
@@ -70,12 +70,15 @@ fn decode_tls_payload_from(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
 mod tests {
     use super::*;
     use crate::packet::{Packet, Raw};
-    use crate::protocols::tls::{TlsContentType, TlsVersion, TLS_RECORD_HEADER_LEN};
+    use crate::protocols::tls::{
+        TlsContentType, TlsHandshakeType, TlsRecordBody, TlsVersion, TLS_RECORD_HEADER_LEN,
+    };
 
     #[test]
     fn tls_multi_record_decode_appends_ordered_tls_layers() -> Result<()> {
         let payload = [
-            0x16, 0x03, 0x03, 0x00, 0x01, 0xaa, 0x15, 0x03, 0x01, 0x00, 0x02, 0x01, 0x00,
+            0x16, 0x03, 0x03, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x15, 0x03, 0x01, 0x00, 0x02,
+            0x01, 0x00,
         ];
 
         let packet =
@@ -90,7 +93,19 @@ mod tests {
             tls_layers[0].records()[0].content_type(),
             TlsContentType::handshake()
         );
-        assert_eq!(tls_layers[0].records()[0].fragment(), &[0xaa]);
+        assert_eq!(
+            tls_layers[0].records()[0].fragment(),
+            &[0x01, 0x00, 0x00, 0x00]
+        );
+        let TlsRecordBody::Handshake(handshake) = tls_layers[0].records()[0].body() else {
+            panic!("handshake record should decode typed handshake body");
+        };
+        assert_eq!(handshake.messages().len(), 1);
+        assert_eq!(
+            handshake.messages()[0].handshake_type(),
+            TlsHandshakeType::CLIENT_HELLO
+        );
+        assert!(handshake.raw_tail().is_empty());
         assert_eq!(
             tls_layers[0].records()[1].content_type(),
             TlsContentType::alert()
