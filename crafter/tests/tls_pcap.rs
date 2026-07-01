@@ -14,6 +14,13 @@ use crafter::wire::backend::pcap::{
 
 const RAW_IP_TLS_PCAP: &str = "pcaps/raw-ipv4-tcp-tls-client-hello.pcap";
 const ETHERNET_TLS_PCAP: &str = "pcaps/ethernet-ipv4-tcp-tls-client-hello.pcap";
+const RAW_IP_TLS_CLIENT_HELLO_HEX: &str = "bytes/ipv4-tcp-tls-client-hello.hex";
+const RAW_IP_TLS_ALERT_HEX: &str = "bytes/ipv4-tcp-tls-alert.hex";
+const RAW_IP_TLS_APPLICATION_DATA_HEX: &str = "bytes/ipv4-tcp-tls-application-data.hex";
+const ETHERNET_TLS_CLIENT_HELLO_HEX: &str = "bytes/ethernet-ipv4-tcp-tls-client-hello.hex";
+const ETHERNET_TLS_ALERT_HEX: &str = "bytes/ethernet-ipv4-tcp-tls-alert.hex";
+const ETHERNET_TLS_APPLICATION_DATA_HEX: &str = "bytes/ethernet-ipv4-tcp-tls-application-data.hex";
+const RAW_IP_TLS_PORT_RAW_FALLBACK_HEX: &str = "bytes/ipv4-tcp-tls-port-raw-fallback.hex";
 
 const DOC_CLIENT: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 68);
 const DOC_SERVER: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 68);
@@ -106,6 +113,21 @@ fn ethernet_ipv4_tls_packet(
             .ack(ack)
             .ack_segment()
         / Tls::from_record(record)
+}
+
+fn tls_port_raw_fallback_packet() -> Packet {
+    Ipv4::new()
+        .src(DOC_CLIENT)
+        .dst(DOC_SERVER)
+        .id(0x6820)
+        .ttl(64)
+        / Tcp::new()
+            .sport(DOC_CLIENT_PORT)
+            .dport(TLS_PORT_HTTPS)
+            .seq(0x6820_0001)
+            .ack(0x6821_0001)
+            .ack_segment()
+        / Raw::from("not-a-tls-record")
 }
 
 fn raw_ip_tls_packets() -> crafter::Result<Vec<(Packet, PcapTimestamp)>> {
@@ -208,6 +230,20 @@ fn compiled_bytes(packet: &Packet) -> Vec<u8> {
         .expect("TLS fixture packet should compile")
         .as_bytes()
         .to_vec()
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    let mut out = String::new();
+    for chunk in bytes.chunks(16) {
+        for (index, byte) in chunk.iter().enumerate() {
+            if index > 0 {
+                out.push(' ');
+            }
+            out.push_str(&format!("{byte:02x}"));
+        }
+        out.push('\n');
+    }
+    out
 }
 
 fn pcap_bytes(link_type: PcapLinkType, packets: &[(Packet, PcapTimestamp)]) -> Vec<u8> {
@@ -378,4 +414,49 @@ fn tls_pcap_write_fixtures() {
         ethernet_tls_pcap_bytes().expect("Ethernet TLS pcap fixture should build"),
     )
     .expect("Ethernet TLS pcap fixture should write");
+}
+
+#[test]
+#[ignore = "regenerates the committed TLS byte fixtures used by the pcap catalog"]
+fn tls_pcap_write_byte_fixtures() -> crafter::Result<()> {
+    let raw_packets = raw_ip_tls_packets()?;
+    let ethernet_packets = ethernet_tls_packets()?;
+
+    fs::write(
+        fixture_path(RAW_IP_TLS_CLIENT_HELLO_HEX),
+        encode_hex(&compiled_bytes(&raw_packets[0].0)),
+    )
+    .expect("RawIp TLS ClientHello byte fixture should write");
+    fs::write(
+        fixture_path(RAW_IP_TLS_ALERT_HEX),
+        encode_hex(&compiled_bytes(&raw_packets[1].0)),
+    )
+    .expect("RawIp TLS alert byte fixture should write");
+    fs::write(
+        fixture_path(RAW_IP_TLS_APPLICATION_DATA_HEX),
+        encode_hex(&compiled_bytes(&raw_packets[2].0)),
+    )
+    .expect("RawIp TLS application_data byte fixture should write");
+    fs::write(
+        fixture_path(ETHERNET_TLS_CLIENT_HELLO_HEX),
+        encode_hex(&compiled_bytes(&ethernet_packets[0].0)),
+    )
+    .expect("Ethernet TLS ClientHello byte fixture should write");
+    fs::write(
+        fixture_path(ETHERNET_TLS_ALERT_HEX),
+        encode_hex(&compiled_bytes(&ethernet_packets[1].0)),
+    )
+    .expect("Ethernet TLS alert byte fixture should write");
+    fs::write(
+        fixture_path(ETHERNET_TLS_APPLICATION_DATA_HEX),
+        encode_hex(&compiled_bytes(&ethernet_packets[2].0)),
+    )
+    .expect("Ethernet TLS application_data byte fixture should write");
+    fs::write(
+        fixture_path(RAW_IP_TLS_PORT_RAW_FALLBACK_HEX),
+        encode_hex(&compiled_bytes(&tls_port_raw_fallback_packet())),
+    )
+    .expect("TLS port raw fallback byte fixture should write");
+
+    Ok(())
 }
