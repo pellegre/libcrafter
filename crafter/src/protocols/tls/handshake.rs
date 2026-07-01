@@ -60,6 +60,12 @@ pub const TLS_NEW_SESSION_TICKET_AGE_ADD_LEN: usize = 4;
 pub const TLS_NEW_SESSION_TICKET_NONCE_LENGTH_LEN: usize = 1;
 /// TLS NewSessionTicket ticket length field width in bytes.
 pub const TLS_NEW_SESSION_TICKET_TICKET_LENGTH_LEN: usize = 2;
+/// TLS KeyUpdate request_update field width in bytes.
+pub const TLS_KEY_UPDATE_REQUEST_LEN: usize = 1;
+/// TLS KeyUpdateRequest `update_not_requested`.
+pub const TLS_KEY_UPDATE_REQUEST_UPDATE_NOT_REQUESTED: u8 = 0;
+/// TLS KeyUpdateRequest `update_requested`.
+pub const TLS_KEY_UPDATE_REQUEST_UPDATE_REQUESTED: u8 = 1;
 /// TLS ClientCertificateType `rsa_sign`.
 pub const TLS_CLIENT_CERTIFICATE_TYPE_RSA_SIGN: u8 = 1;
 /// TLS ClientCertificateType `dss_sign`.
@@ -639,8 +645,8 @@ pub enum TlsHandshakeBody {
     ServerHello(TlsServerHelloBody),
     /// `new_session_ticket` body bytes plus a typed view when available.
     NewSessionTicket(TlsNewSessionTicketBody),
-    /// Opaque `end_of_early_data` body bytes.
-    EndOfEarlyData(Vec<u8>),
+    /// `end_of_early_data` body bytes plus a typed view when available.
+    EndOfEarlyData(TlsEndOfEarlyDataBody),
     /// `encrypted_extensions` body bytes plus a typed view when available.
     EncryptedExtensions(TlsEncryptedExtensionsBody),
     /// `certificate` body bytes plus a typed view when available.
@@ -651,8 +657,8 @@ pub enum TlsHandshakeBody {
     CertificateVerify(TlsCertificateVerifyBody),
     /// `finished` body bytes plus a typed view when available.
     Finished(TlsFinishedBody),
-    /// Opaque `key_update` body bytes.
-    KeyUpdate(Vec<u8>),
+    /// `key_update` body bytes plus a typed view when available.
+    KeyUpdate(TlsKeyUpdateBody),
     /// Opaque `compressed_certificate` body bytes.
     CompressedCertificate(Vec<u8>),
     /// Unknown, unsupported, or intentionally raw handshake body bytes.
@@ -698,7 +704,14 @@ impl TlsHandshakeBody {
 
     /// Create an opaque body for a known `end_of_early_data` hook.
     pub fn end_of_early_data(body: impl Into<Vec<u8>>) -> Self {
-        Self::EndOfEarlyData(body.into())
+        Self::EndOfEarlyData(TlsEndOfEarlyDataBody::raw(body))
+    }
+
+    /// Create a typed body for a known `end_of_early_data` hook.
+    pub fn from_end_of_early_data(end_of_early_data: TlsEndOfEarlyData) -> Result<Self> {
+        Ok(Self::EndOfEarlyData(
+            TlsEndOfEarlyDataBody::from_end_of_early_data(end_of_early_data)?,
+        ))
     }
 
     /// Create an opaque body for a known `encrypted_extensions` hook.
@@ -761,7 +774,14 @@ impl TlsHandshakeBody {
 
     /// Create an opaque body for a known `key_update` hook.
     pub fn key_update(body: impl Into<Vec<u8>>) -> Self {
-        Self::KeyUpdate(body.into())
+        Self::KeyUpdate(TlsKeyUpdateBody::raw(body))
+    }
+
+    /// Create a typed body for a known `key_update` hook.
+    pub fn from_key_update(key_update: TlsKeyUpdate) -> Result<Self> {
+        Ok(Self::KeyUpdate(TlsKeyUpdateBody::from_key_update(
+            key_update,
+        )?))
     }
 
     /// Create an opaque body for a known `compressed_certificate` hook.
@@ -786,7 +806,9 @@ impl TlsHandshakeBody {
             TlsHandshakeType::NEW_SESSION_TICKET => {
                 Self::NewSessionTicket(TlsNewSessionTicketBody::raw(body))
             }
-            TlsHandshakeType::END_OF_EARLY_DATA => Self::EndOfEarlyData(body),
+            TlsHandshakeType::END_OF_EARLY_DATA => {
+                Self::EndOfEarlyData(TlsEndOfEarlyDataBody::raw(body))
+            }
             TlsHandshakeType::ENCRYPTED_EXTENSIONS => {
                 Self::EncryptedExtensions(TlsEncryptedExtensionsBody::raw(body))
             }
@@ -798,7 +820,7 @@ impl TlsHandshakeBody {
                 Self::CertificateVerify(TlsCertificateVerifyBody::raw(body))
             }
             TlsHandshakeType::FINISHED => Self::Finished(TlsFinishedBody::raw(body)),
-            TlsHandshakeType::KEY_UPDATE => Self::KeyUpdate(body),
+            TlsHandshakeType::KEY_UPDATE => Self::KeyUpdate(TlsKeyUpdateBody::raw(body)),
             TlsHandshakeType::COMPRESSED_CERTIFICATE => Self::CompressedCertificate(body),
             _ => Self::Opaque(body),
         }
@@ -820,7 +842,9 @@ impl TlsHandshakeBody {
             TlsHandshakeType::NEW_SESSION_TICKET => Ok(Self::NewSessionTicket(
                 TlsNewSessionTicketBody::from_decoded_body(body)?,
             )),
-            TlsHandshakeType::END_OF_EARLY_DATA => Ok(Self::EndOfEarlyData(body)),
+            TlsHandshakeType::END_OF_EARLY_DATA => Ok(Self::EndOfEarlyData(
+                TlsEndOfEarlyDataBody::from_decoded_body(body)?,
+            )),
             TlsHandshakeType::ENCRYPTED_EXTENSIONS => Ok(Self::EncryptedExtensions(
                 TlsEncryptedExtensionsBody::from_decoded_body(body)?,
             )),
@@ -836,7 +860,9 @@ impl TlsHandshakeBody {
             TlsHandshakeType::FINISHED => {
                 Ok(Self::Finished(TlsFinishedBody::from_decoded_body(body)?))
             }
-            TlsHandshakeType::KEY_UPDATE => Ok(Self::KeyUpdate(body)),
+            TlsHandshakeType::KEY_UPDATE => {
+                Ok(Self::KeyUpdate(TlsKeyUpdateBody::from_decoded_body(body)?))
+            }
             TlsHandshakeType::COMPRESSED_CERTIFICATE => Ok(Self::CompressedCertificate(body)),
             _ => Ok(Self::Opaque(body)),
         }
@@ -871,10 +897,9 @@ impl TlsHandshakeBody {
             Self::CertificateVerify(body) => body.body(),
             Self::Finished(body) => body.body(),
             Self::NewSessionTicket(body) => body.body(),
-            Self::EndOfEarlyData(body)
-            | Self::KeyUpdate(body)
-            | Self::CompressedCertificate(body)
-            | Self::Opaque(body) => body,
+            Self::EndOfEarlyData(body) => body.body(),
+            Self::KeyUpdate(body) => body.body(),
+            Self::CompressedCertificate(body) | Self::Opaque(body) => body,
         }
     }
 
@@ -889,10 +914,9 @@ impl TlsHandshakeBody {
             Self::CertificateVerify(body) => body.into_body(),
             Self::Finished(body) => body.into_body(),
             Self::NewSessionTicket(body) => body.into_body(),
-            Self::EndOfEarlyData(body)
-            | Self::KeyUpdate(body)
-            | Self::CompressedCertificate(body)
-            | Self::Opaque(body) => body,
+            Self::EndOfEarlyData(body) => body.into_body(),
+            Self::KeyUpdate(body) => body.into_body(),
+            Self::CompressedCertificate(body) | Self::Opaque(body) => body,
         }
     }
 
@@ -975,6 +999,22 @@ impl TlsHandshakeBody {
         }
     }
 
+    /// Borrow the decoded EndOfEarlyData fields when this body carries them.
+    pub const fn as_end_of_early_data(&self) -> Option<&TlsEndOfEarlyData> {
+        match self {
+            Self::EndOfEarlyData(body) => body.end_of_early_data(),
+            _ => None,
+        }
+    }
+
+    /// Borrow the decoded KeyUpdate fields when this body carries them.
+    pub const fn as_key_update(&self) -> Option<&TlsKeyUpdate> {
+        match self {
+            Self::KeyUpdate(body) => body.key_update(),
+            _ => None,
+        }
+    }
+
     /// Return true when this body is a decoded or typed ClientHello.
     pub const fn is_typed_client_hello(&self) -> bool {
         match self {
@@ -1035,6 +1075,22 @@ impl TlsHandshakeBody {
     pub const fn is_typed_new_session_ticket(&self) -> bool {
         match self {
             Self::NewSessionTicket(body) => body.is_typed(),
+            _ => false,
+        }
+    }
+
+    /// Return true when this body is a decoded or typed EndOfEarlyData.
+    pub const fn is_typed_end_of_early_data(&self) -> bool {
+        match self {
+            Self::EndOfEarlyData(body) => body.is_typed(),
+            _ => false,
+        }
+    }
+
+    /// Return true when this body is a decoded or typed KeyUpdate.
+    pub const fn is_typed_key_update(&self) -> bool {
+        match self {
+            Self::KeyUpdate(body) => body.is_typed(),
             _ => false,
         }
     }
@@ -1179,6 +1235,14 @@ impl TlsHandshake {
         )
     }
 
+    /// Construct an `end_of_early_data` handshake message from typed fields.
+    pub fn from_end_of_early_data(end_of_early_data: TlsEndOfEarlyData) -> Result<Self> {
+        Ok(Self::from_header_and_body(
+            TlsHandshakeHeader::end_of_early_data(),
+            TlsHandshakeBody::from_end_of_early_data(end_of_early_data)?,
+        ))
+    }
+
     /// Construct an `encrypted_extensions` handshake message with opaque body bytes.
     pub fn encrypted_extensions(body: impl Into<Vec<u8>>) -> Self {
         Self::from_header_and_body(
@@ -1265,6 +1329,14 @@ impl TlsHandshake {
             TlsHandshakeHeader::key_update(),
             TlsHandshakeBody::key_update(body),
         )
+    }
+
+    /// Construct a `key_update` handshake message from typed fields.
+    pub fn from_key_update(key_update: TlsKeyUpdate) -> Result<Self> {
+        Ok(Self::from_header_and_body(
+            TlsHandshakeHeader::key_update(),
+            TlsHandshakeBody::from_key_update(key_update)?,
+        ))
     }
 
     /// Construct a `compressed_certificate` handshake message with opaque body bytes.
@@ -1368,6 +1440,16 @@ impl TlsHandshake {
     /// Borrow decoded NewSessionTicket fields when this message carries them.
     pub fn new_session_ticket_body(&self) -> Option<&TlsNewSessionTicket> {
         self.body.as_new_session_ticket()
+    }
+
+    /// Borrow decoded EndOfEarlyData fields when this message carries them.
+    pub fn end_of_early_data_body(&self) -> Option<&TlsEndOfEarlyData> {
+        self.body.as_end_of_early_data()
+    }
+
+    /// Borrow decoded KeyUpdate fields when this message carries them.
+    pub fn key_update_body(&self) -> Option<&TlsKeyUpdate> {
+        self.body.as_key_update()
     }
 
     /// Consume the message and return its header plus body hook.
@@ -4252,6 +4334,221 @@ impl Default for TlsNewSessionTicket {
     }
 }
 
+/// A raw-preserving TLS `KeyUpdateRequest` value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TlsKeyUpdateRequest {
+    raw: u8,
+}
+
+impl TlsKeyUpdateRequest {
+    /// TLS KeyUpdateRequest `update_not_requested`.
+    pub const UPDATE_NOT_REQUESTED: Self = Self::new(TLS_KEY_UPDATE_REQUEST_UPDATE_NOT_REQUESTED);
+    /// TLS KeyUpdateRequest `update_requested`.
+    pub const UPDATE_REQUESTED: Self = Self::new(TLS_KEY_UPDATE_REQUEST_UPDATE_REQUESTED);
+
+    /// Preserve a caller-supplied raw one-octet KeyUpdateRequest value.
+    pub const fn new(raw: u8) -> Self {
+        Self { raw }
+    }
+
+    /// Preserve a caller-supplied raw one-octet KeyUpdateRequest value.
+    pub const fn from_u8(raw: u8) -> Self {
+        Self::new(raw)
+    }
+
+    /// TLS KeyUpdateRequest `update_not_requested` constructor.
+    pub const fn update_not_requested() -> Self {
+        Self::UPDATE_NOT_REQUESTED
+    }
+
+    /// TLS KeyUpdateRequest `update_requested` constructor.
+    pub const fn update_requested() -> Self {
+        Self::UPDATE_REQUESTED
+    }
+
+    /// Return the preserved raw one-octet value.
+    pub const fn raw(self) -> u8 {
+        self.raw
+    }
+
+    /// Return the source-backed label, preserving unknown values numerically.
+    pub fn label(self) -> String {
+        match self.raw {
+            TLS_KEY_UPDATE_REQUEST_UPDATE_NOT_REQUESTED => "update_not_requested".to_string(),
+            TLS_KEY_UPDATE_REQUEST_UPDATE_REQUESTED => "update_requested".to_string(),
+            raw => format!("unknown key update request 0x{raw:02x}"),
+        }
+    }
+}
+
+impl From<u8> for TlsKeyUpdateRequest {
+    fn from(value: u8) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<TlsKeyUpdateRequest> for u8 {
+    fn from(value: TlsKeyUpdateRequest) -> Self {
+        value.raw()
+    }
+}
+
+impl fmt::Display for TlsKeyUpdateRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.label())
+    }
+}
+
+/// TLS KeyUpdate handshake body fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TlsKeyUpdate {
+    request_update: TlsKeyUpdateRequest,
+}
+
+impl TlsKeyUpdate {
+    /// Construct a KeyUpdate body.
+    pub fn new(request_update: impl Into<TlsKeyUpdateRequest>) -> Self {
+        Self {
+            request_update: request_update.into(),
+        }
+    }
+
+    /// Construct a KeyUpdate body from a raw request_update value.
+    pub fn from_raw_request_update(request_update: u8) -> Self {
+        Self::new(TlsKeyUpdateRequest::from_u8(request_update))
+    }
+
+    /// Replace the request_update value.
+    pub fn with_request_update(mut self, request_update: impl Into<TlsKeyUpdateRequest>) -> Self {
+        self.request_update = request_update.into();
+        self
+    }
+
+    /// Return the preserved request_update value.
+    pub const fn request_update(&self) -> TlsKeyUpdateRequest {
+        self.request_update
+    }
+
+    /// Number of bytes occupied by the KeyUpdate body.
+    pub const fn encoded_len(&self) -> usize {
+        TLS_KEY_UPDATE_REQUEST_LEN
+    }
+
+    /// Append the KeyUpdate body bytes.
+    pub fn encode(&self, out: &mut Vec<u8>) {
+        out.push(self.request_update.raw());
+    }
+
+    /// Return the encoded KeyUpdate body bytes.
+    pub fn encode_to_vec(&self) -> Vec<u8> {
+        vec![self.request_update.raw()]
+    }
+
+    /// Compile the KeyUpdate body bytes.
+    pub fn compile(&self) -> Vec<u8> {
+        self.encode_to_vec()
+    }
+
+    /// Decode one complete KeyUpdate body.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (key_update, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.key_update.length",
+                "trailing bytes after request_update",
+            ));
+        }
+        Ok(key_update)
+    }
+
+    /// Decode one KeyUpdate body from the front of `bytes`.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let mut cursor = 0;
+        let request_update = take_bytes(
+            bytes,
+            &mut cursor,
+            TLS_KEY_UPDATE_REQUEST_LEN,
+            "tls.key_update.request_update",
+        )?[0];
+        Ok((
+            Self::from_raw_request_update(request_update),
+            &bytes[cursor..],
+        ))
+    }
+
+    /// Stable one-line summary preserving the request_update value.
+    pub fn summary(&self) -> String {
+        format!("key_update request_update={}", self.request_update.label())
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("request_update", self.request_update.label()),
+            (
+                "request_update_raw",
+                format!("0x{:02x}", self.request_update.raw()),
+            ),
+        ]
+    }
+}
+
+impl Default for TlsKeyUpdate {
+    fn default() -> Self {
+        Self::new(TlsKeyUpdateRequest::update_not_requested())
+    }
+}
+
+/// TLS EndOfEarlyData handshake body fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TlsEndOfEarlyData;
+
+impl TlsEndOfEarlyData {
+    /// Construct an EndOfEarlyData body.
+    pub const fn new() -> Self {
+        Self
+    }
+
+    /// Number of bytes occupied by the EndOfEarlyData body.
+    pub const fn encoded_len(&self) -> usize {
+        0
+    }
+
+    /// Append the EndOfEarlyData body bytes.
+    pub fn encode(&self, _out: &mut Vec<u8>) {}
+
+    /// Return the encoded EndOfEarlyData body bytes.
+    pub fn encode_to_vec(&self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    /// Compile the EndOfEarlyData body bytes.
+    pub fn compile(&self) -> Vec<u8> {
+        self.encode_to_vec()
+    }
+
+    /// Decode one complete EndOfEarlyData body.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        if !bytes.as_ref().is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.end_of_early_data.length",
+                "body must be empty",
+            ));
+        }
+        Ok(Self)
+    }
+
+    /// Stable one-line summary preserving the empty-body contract.
+    pub fn summary(&self) -> String {
+        "end_of_early_data body_bytes=0".to_string()
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![("body_bytes", "0".to_string())]
+    }
+}
+
 /// ServerHello handshake body bytes plus an optional decoded view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsServerHelloBody {
@@ -4671,6 +4968,128 @@ impl TlsNewSessionTicketBody {
     /// Return true when the body carries decoded NewSessionTicket fields.
     pub const fn is_typed(&self) -> bool {
         self.new_session_ticket.is_some()
+    }
+
+    /// Number of preserved body bytes.
+    pub fn body_len(&self) -> usize {
+        self.body.len()
+    }
+}
+
+/// EndOfEarlyData handshake body bytes plus an optional decoded view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsEndOfEarlyDataBody {
+    body: Vec<u8>,
+    end_of_early_data: Option<TlsEndOfEarlyData>,
+}
+
+impl TlsEndOfEarlyDataBody {
+    /// Preserve EndOfEarlyData body bytes without parsing them.
+    pub fn raw(body: impl Into<Vec<u8>>) -> Self {
+        Self {
+            body: body.into(),
+            end_of_early_data: None,
+        }
+    }
+
+    /// Build EndOfEarlyData body bytes from typed fields.
+    pub fn from_end_of_early_data(end_of_early_data: TlsEndOfEarlyData) -> Result<Self> {
+        let body = end_of_early_data.encode_to_vec();
+        Ok(Self {
+            body,
+            end_of_early_data: Some(end_of_early_data),
+        })
+    }
+
+    /// Decode and preserve exact EndOfEarlyData body bytes.
+    pub fn from_decoded_body(body: impl Into<Vec<u8>>) -> Result<Self> {
+        let body = body.into();
+        let end_of_early_data = TlsEndOfEarlyData::decode(&body)?;
+        Ok(Self {
+            body,
+            end_of_early_data: Some(end_of_early_data),
+        })
+    }
+
+    /// Borrow the preserved body bytes.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// Consume the wrapper and return the preserved body bytes.
+    pub fn into_body(self) -> Vec<u8> {
+        self.body
+    }
+
+    /// Borrow the decoded EndOfEarlyData fields when available.
+    pub const fn end_of_early_data(&self) -> Option<&TlsEndOfEarlyData> {
+        self.end_of_early_data.as_ref()
+    }
+
+    /// Return true when the body carries decoded EndOfEarlyData fields.
+    pub const fn is_typed(&self) -> bool {
+        self.end_of_early_data.is_some()
+    }
+
+    /// Number of preserved body bytes.
+    pub fn body_len(&self) -> usize {
+        self.body.len()
+    }
+}
+
+/// KeyUpdate handshake body bytes plus an optional decoded view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsKeyUpdateBody {
+    body: Vec<u8>,
+    key_update: Option<TlsKeyUpdate>,
+}
+
+impl TlsKeyUpdateBody {
+    /// Preserve KeyUpdate body bytes without parsing them.
+    pub fn raw(body: impl Into<Vec<u8>>) -> Self {
+        Self {
+            body: body.into(),
+            key_update: None,
+        }
+    }
+
+    /// Build KeyUpdate body bytes from typed fields.
+    pub fn from_key_update(key_update: TlsKeyUpdate) -> Result<Self> {
+        let body = key_update.encode_to_vec();
+        Ok(Self {
+            body,
+            key_update: Some(key_update),
+        })
+    }
+
+    /// Decode and preserve exact KeyUpdate body bytes.
+    pub fn from_decoded_body(body: impl Into<Vec<u8>>) -> Result<Self> {
+        let body = body.into();
+        let key_update = TlsKeyUpdate::decode(&body)?;
+        Ok(Self {
+            body,
+            key_update: Some(key_update),
+        })
+    }
+
+    /// Borrow the preserved body bytes.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// Consume the wrapper and return the preserved body bytes.
+    pub fn into_body(self) -> Vec<u8> {
+        self.body
+    }
+
+    /// Borrow the decoded KeyUpdate fields when available.
+    pub const fn key_update(&self) -> Option<&TlsKeyUpdate> {
+        self.key_update.as_ref()
+    }
+
+    /// Return true when the body carries decoded KeyUpdate fields.
+    pub const fn is_typed(&self) -> bool {
+        self.key_update.is_some()
     }
 
     /// Number of preserved body bytes.
@@ -6107,6 +6526,145 @@ mod tests {
             ])
             .unwrap_err(),
             CrafterError::buffer_too_short("tls.new_session_ticket.ticket", 13, 12)
+        );
+    }
+
+    #[test]
+    fn tls_key_update_end_early_data_key_update_preserves_unknown_request_values() -> Result<()> {
+        assert_eq!(TlsKeyUpdateRequest::update_not_requested().raw(), 0);
+        assert_eq!(
+            TlsKeyUpdateRequest::update_requested().label(),
+            "update_requested"
+        );
+
+        let key_update = TlsKeyUpdate::from_raw_request_update(0x7a);
+        let encoded = key_update.encode_to_vec();
+
+        assert_eq!(encoded, vec![0x7a]);
+        assert_eq!(key_update.encoded_len(), TLS_KEY_UPDATE_REQUEST_LEN);
+        assert_eq!(
+            key_update.request_update(),
+            TlsKeyUpdateRequest::from_u8(0x7a)
+        );
+        assert_eq!(
+            key_update.summary(),
+            "key_update request_update=unknown key update request 0x7a"
+        );
+        assert_eq!(
+            key_update.inspection_fields(),
+            vec![
+                (
+                    "request_update",
+                    "unknown key update request 0x7a".to_string()
+                ),
+                ("request_update_raw", "0x7a".to_string()),
+            ]
+        );
+        assert_eq!(TlsKeyUpdate::decode(&encoded)?, key_update);
+        assert_eq!(key_update.compile(), encoded);
+
+        let with_tail = [encoded.as_slice(), &[0xaa][..]].concat();
+        let (decoded_prefix, tail) = TlsKeyUpdate::decode_prefix(&with_tail)?;
+        assert_eq!(decoded_prefix, key_update);
+        assert_eq!(tail, &[0xaa]);
+
+        let handshake = TlsHandshake::from_key_update(key_update)?;
+        let handshake_bytes = tls_handshake_fixture(TlsHandshakeType::KEY_UPDATE.raw(), &encoded);
+        assert_eq!(handshake.body_bytes(), encoded.as_slice());
+        assert!(handshake.body().is_typed_key_update());
+        assert_eq!(handshake.key_update_body(), Some(&key_update));
+        assert_eq!(handshake.encode_to_vec()?, handshake_bytes);
+
+        let decoded_handshake = TlsHandshake::decode(&handshake_bytes)?;
+        assert_eq!(decoded_handshake.key_update_body(), Some(&key_update));
+        assert_eq!(decoded_handshake.encode_to_vec()?, handshake_bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_key_update_end_early_data_empty_body_round_trips_through_handshake() -> Result<()> {
+        let end_of_early_data = TlsEndOfEarlyData::new();
+        let encoded = end_of_early_data.encode_to_vec();
+
+        assert_eq!(end_of_early_data.encoded_len(), 0);
+        assert_eq!(encoded, Vec::<u8>::new());
+        assert_eq!(end_of_early_data.compile(), encoded);
+        assert_eq!(
+            end_of_early_data.summary(),
+            "end_of_early_data body_bytes=0"
+        );
+        assert_eq!(
+            end_of_early_data.inspection_fields(),
+            vec![("body_bytes", "0".to_string())]
+        );
+        assert_eq!(TlsEndOfEarlyData::decode(&encoded)?, end_of_early_data);
+
+        let handshake = TlsHandshake::from_end_of_early_data(end_of_early_data)?;
+        let handshake_bytes =
+            tls_handshake_fixture(TlsHandshakeType::END_OF_EARLY_DATA.raw(), &encoded);
+        assert_eq!(handshake.body_bytes(), encoded.as_slice());
+        assert!(handshake.body().is_typed_end_of_early_data());
+        assert_eq!(handshake.end_of_early_data_body(), Some(&end_of_early_data));
+        assert_eq!(handshake.encode_to_vec()?, handshake_bytes);
+
+        let decoded_handshake = TlsHandshake::decode(&handshake_bytes)?;
+        assert_eq!(
+            decoded_handshake.end_of_early_data_body(),
+            Some(&end_of_early_data)
+        );
+        assert_eq!(decoded_handshake.encode_to_vec()?, handshake_bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_key_update_end_early_data_raw_bodies_remain_available() -> Result<()> {
+        let raw_key_update = TlsHandshake::key_update([0xca, 0xfe]);
+        assert_eq!(raw_key_update.body_bytes(), &[0xca, 0xfe]);
+        assert!(matches!(
+            raw_key_update.body(),
+            TlsHandshakeBody::KeyUpdate(_)
+        ));
+        assert!(raw_key_update.key_update_body().is_none());
+        assert!(!raw_key_update.body().is_typed_key_update());
+        assert_eq!(
+            raw_key_update.encode_to_vec()?,
+            tls_handshake_fixture(TlsHandshakeType::KEY_UPDATE.raw(), &[0xca, 0xfe])
+        );
+
+        let raw_end = TlsHandshake::end_of_early_data([0xca]);
+        assert_eq!(raw_end.body_bytes(), &[0xca]);
+        assert!(matches!(
+            raw_end.body(),
+            TlsHandshakeBody::EndOfEarlyData(_)
+        ));
+        assert!(raw_end.end_of_early_data_body().is_none());
+        assert!(!raw_end.body().is_typed_end_of_early_data());
+        assert_eq!(
+            raw_end.encode_to_vec()?,
+            tls_handshake_fixture(TlsHandshakeType::END_OF_EARLY_DATA.raw(), &[0xca])
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_key_update_end_early_data_decode_reports_structured_length_errors() {
+        assert_eq!(
+            TlsKeyUpdate::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.key_update.request_update", 1, 0)
+        );
+        assert_eq!(
+            TlsKeyUpdate::decode([0x00, 0x01]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.key_update.length",
+                "trailing bytes after request_update"
+            )
+        );
+        assert_eq!(
+            TlsEndOfEarlyData::decode([0x00]).unwrap_err(),
+            CrafterError::invalid_field_value("tls.end_of_early_data.length", "body must be empty")
         );
     }
 
