@@ -14,6 +14,7 @@ pub mod record;
 pub mod vectors;
 pub mod version;
 
+pub use alert::{TlsAlert, TlsAlertDescription, TlsAlertLevel, TLS_ALERT_LEN};
 pub use content_type::TlsContentType;
 pub use version::{TlsVersion, TlsVersionField};
 
