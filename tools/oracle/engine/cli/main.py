@@ -8401,6 +8401,7 @@ _SUITE_FEATURE_BY_FAMILY = {
     "quic": "quic_behavior",
     "snmp": ("snmp_basic", "snmp_pdu_matrix", "snmp_v3"),
     "ssdp": "ssdp_core",
+    "tls": "tls_records",
 }
 _LAYER_ONLY_SUITE_FAMILIES = frozenset({"igmp", "ssdp"})
 _SUITE_OFFLINE_DIRECTIONS = (

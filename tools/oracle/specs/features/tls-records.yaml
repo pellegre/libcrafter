@@ -1,0 +1,363 @@
+version: 1
+kind: feature
+name: tls_records
+summary: >-
+  TLS-over-TCP record-layer behavior for ClientHello, alert,
+  ChangeCipherSpec, opaque application data, unknown content types, stacked
+  records, explicit length overrides, and structured-error malformed record
+  exclusions.
+
+layers:
+  - tcp
+  - tls
+directions:
+  - backend_to_libcrafter
+  - libcrafter_to_backend
+  - roundtrip
+strict_bytes: true
+malformed: false
+categories:
+  - baseline
+  - boundary
+  - malformed
+
+behaviors:
+  - name: client-hello-record
+    source_refs:
+      - RFC 8446
+      - RFC 6066
+      - RFC 7301
+    checks:
+      - record_header_content_type_handshake
+      - legacy_record_version_preserved
+      - record_length_derived_from_fragment
+      - client_hello_handshake_length_derived
+      - client_random_session_id_cipher_suites_and_extensions_preserved
+  - name: alert-record
+    source_refs:
+      - RFC 8446
+    checks:
+      - alert_record_content_type_preserved
+      - alert_fragment_bytes_preserved
+      - alert_level_and_description_decode_to_stable_labels
+  - name: change-cipher-spec-record
+    source_refs:
+      - RFC 8446
+    checks:
+      - compatibility_change_cipher_spec_byte_preserved
+      - record_length_is_one
+  - name: application-data-record
+    source_refs:
+      - RFC 8446
+    checks:
+      - application_data_is_opaque
+      - encrypted_payload_is_not_decrypted_by_oracle
+      - fragment_bytes_roundtrip_exactly
+  - name: unknown-content-type
+    checks:
+      - unknown_content_type_label_is_stable
+      - unknown_legacy_record_version_is_preserved
+      - opaque_fragment_bytes_roundtrip_exactly
+  - name: stacked-records
+    checks:
+      - multiple_records_decode_from_one_tcp_payload
+      - record_order_and_types_preserved
+      - recompile_matches_input_bytes
+  - name: explicit-length-override
+    checks:
+      - caller_supplied_record_length_survives_encode
+      - decode_prefix_splits_tail_after_declared_length
+      - non_matching_tail_is_not_silently_consumed
+  - name: malformed-record-exclusions
+    checks:
+      - short_record_header_reports_structured_error
+      - short_record_fragment_reports_structured_error
+      - malformed_cases_are_excluded_from_strict_byte_suite
+
+coverage_cases:
+  - tls-record-client-hello
+  - tls-record-alert
+  - tls-record-change-cipher-spec
+  - tls-record-application-data-opaque
+  - tls-record-unknown-content-type
+  - tls-stacked-records
+  - tls-record-explicit-length-override
+  - tls-malformed-record-length
+
+supported_cases:
+  - name: tls-record-client-hello
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      tcp:
+        dport: 443
+      tls:
+        records:
+          - content_type: handshake
+            legacy_record_version: 0x0303
+            body_kind: handshake
+            handshake_messages:
+              - handshake_type: client_hello
+                legacy_version: 0x0303
+                random_hex: "1313131313131313131313131313131313131313131313131313131313131313"
+                session_id_hex: "131415161718191a1b1c1d1e"
+                cipher_suites:
+                  - 0x1301
+                  - 0x1303
+                compression_methods_hex: "00"
+                extensions:
+                  - type: server_name
+                  - type: alpn
+                  - type: supported_versions
+                  - type: supported_groups
+                  - type: signature_algorithms
+                  - type: key_share
+    fixtures:
+      record_hex_file: crafter/tests/fixtures/bytes/tls-client-hello-tls13.hex
+    expected:
+      content_type: handshake
+      legacy_record_version: 0x0303
+      record_length: 186
+      handshake_type: client_hello
+      handshake_length: 182
+      strict_record_hex_prefix: "16030300ba010000b60303"
+  - name: tls-record-alert
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tcp:
+        sport: 443
+      tls:
+        records:
+          - content_type: alert
+            legacy_record_version: 0x0303
+            alert_level: fatal
+            alert_description: decode_error
+    expected:
+      record_hex: "15030300020232"
+      content_type: alert
+      record_length: 2
+      normalized_fields:
+        alert_level: fatal
+        alert_description: decode_error
+  - name: tls-record-change-cipher-spec
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tcp:
+        dport: 443
+      tls:
+        records:
+          - content_type: change_cipher_spec
+            legacy_record_version: 0x0303
+            value: 0x01
+    expected:
+      record_hex: "140303000101"
+      content_type: change_cipher_spec
+      record_length: 1
+      normalized_fields:
+        value: change_cipher_spec
+  - name: tls-record-application-data-opaque
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tcp:
+        dport: 443
+      tls:
+        records:
+          - content_type: application_data
+            legacy_record_version: 0x0303
+            application_data_hex: "deadbeef"
+    expected:
+      record_hex: "1703030004deadbeef"
+      content_type: application_data
+      record_length: 4
+      normalized_fields:
+        body_kind: application_data
+        application_data_hex: "deadbeef"
+  - name: tls-record-unknown-content-type
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tcp:
+        dport: 443
+      tls:
+        records:
+          - content_type_raw: 0xfe
+            legacy_record_version: 0x4242
+            raw_fragment_hex: "dead"
+    expected:
+      record_hex: "fe42420002dead"
+      content_type_raw: 0xfe
+      legacy_record_version: 0x4242
+      record_length: 2
+      normalized_fields:
+        body_kind: opaque_raw
+        raw_fragment_hex: "dead"
+  - name: tls-stacked-records
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      tcp:
+        dport: 443
+      tls:
+        records:
+          - content_type: change_cipher_spec
+            value: 0x01
+          - content_type: alert
+            alert_level: warning
+            alert_description: close_notify
+          - content_type: application_data
+            application_data_hex: "dead"
+    expected:
+      record_hex: "140303000101150303000201001703030002dead"
+      record_count: 3
+      content_types:
+        - change_cipher_spec
+        - alert
+        - application_data
+  - name: tls-record-explicit-length-override
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: normalized
+    contract_only: true
+    fields:
+      tcp:
+        dport: 443
+      tls:
+        records:
+          - content_type: application_data
+            legacy_record_version: 0x0303
+            declared_length: 0
+            application_data_hex: "aa"
+    expected:
+      encoded_hex_with_tail: "1703030000aa"
+      decoded_prefix_hex: "1703030000"
+      tail_hex: "aa"
+      reason: >-
+        The crate intentionally preserves explicit caller length overrides even
+        when they create trailing bytes; the strict backend byte suite treats
+        this as a contract-only malformed-intent case.
+  - name: tls-malformed-record-length
+    directions:
+      - backend_to_libcrafter
+    byte_policy: structured_error
+    fields:
+      tls:
+        record_hex: "1603030004aa"
+    expected_error:
+      context: tls.record.fragment
+      required: 9
+      available: 6
+
+case_groups:
+  - name: tls-record-baseline
+    summary: Well-formed TLS record bytes that should compare octet-for-octet.
+    byte_policy: strict_bytes
+    cases:
+      - tls-record-client-hello
+      - tls-record-alert
+      - tls-record-change-cipher-spec
+      - tls-record-application-data-opaque
+      - tls-record-unknown-content-type
+      - tls-stacked-records
+  - name: tls-record-contract-only
+    summary: Explicit malformed-intent overrides that are inspectable but not strict cross-backend cases.
+    byte_policy: normalized
+    cases:
+      - tls-record-explicit-length-override
+  - name: tls-record-malformed
+    summary: Malformed records that must surface structured decode errors.
+    byte_policy: structured_error
+    cases:
+      - tls-malformed-record-length
+
+normalized_model:
+  record:
+    - content_type
+    - content_type_raw
+    - legacy_record_version
+    - declared_length
+    - body_kind
+    - fragment_hex
+  handshake:
+    - handshake_type
+    - handshake_length
+    - client_hello
+  alert:
+    - alert_level
+    - alert_description
+  sequence:
+    - record_count
+    - content_types
+
+source_refs:
+  - RFC 5246
+  - RFC 6066
+  - RFC 7301
+  - RFC 8446
+  - docs/guide/tls.md
+  - tools/oracle/specs/layers/tls.yaml
+
+notes:
+  - >-
+    TLS endpoint behavior, transcript hashing, key schedule, certificate
+    validation, scanning, and TCP stream reassembly remain out of scope.
+  - >-
+    Malformed record bytes are byte_policy: structured_error and are excluded
+    from ordinary offline strict-byte comparison until an oracle malformed path
+    owns decode-error comparison directly.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - Raw
+      - TLS
+      - TLSClientHello
+    notes:
+      - >-
+        The planned Scapy adapter will prefer exact TLS payload bytes and use
+        native TLS helpers only where they preserve the declared record bytes.
+  wireshark:
+    status: planned
+    native_layers:
+      - tls
+      - data
+    notes:
+      - >-
+        Wireshark support is parser-only and should normalize TLS record fields
+        while preserving opaque bytes for encrypted or unknown records.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    pcap_read: true
+    pcap_write: true
+    notes:
+      - >-
+        libcrafter builds, decodes, summarizes, shows, and recompiles these TLS
+        record shapes while preserving explicit overrides and opaque bytes.
