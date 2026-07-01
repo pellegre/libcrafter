@@ -710,6 +710,8 @@ pub const TLS_EXTENSION_SIGNATURE_ALGORITHMS: u16 = 13;
 pub const TLS_EXTENSION_HEARTBEAT: u16 = 15;
 /// TLS ExtensionType application_layer_protocol_negotiation.
 pub const TLS_EXTENSION_APPLICATION_LAYER_PROTOCOL_NEGOTIATION: u16 = 16;
+/// TLS ExtensionType status_request_v2.
+pub const TLS_EXTENSION_STATUS_REQUEST_V2: u16 = 17;
 /// TLS ExtensionType padding.
 pub const TLS_EXTENSION_PADDING: u16 = 21;
 /// TLS ExtensionType compress_certificate.
@@ -762,6 +764,7 @@ pub const fn tls_extension_name(extension: u16) -> Option<&'static str> {
         TLS_EXTENSION_APPLICATION_LAYER_PROTOCOL_NEGOTIATION => {
             Some("application_layer_protocol_negotiation")
         }
+        TLS_EXTENSION_STATUS_REQUEST_V2 => Some("status_request_v2"),
         TLS_EXTENSION_PADDING => Some("padding"),
         TLS_EXTENSION_COMPRESS_CERTIFICATE => Some("compress_certificate"),
         TLS_EXTENSION_RECORD_SIZE_LIMIT => Some("record_size_limit"),
@@ -805,7 +808,9 @@ pub const fn tls_extension_status(extension: u16) -> TlsCodepointStatus {
         | TLS_EXTENSION_POST_HANDSHAKE_AUTH
         | TLS_EXTENSION_SIGNATURE_ALGORITHMS_CERT
         | TLS_EXTENSION_KEY_SHARE => TlsCodepointStatus::DefaultEligible,
-        TLS_EXTENSION_EC_POINT_FORMATS => TlsCodepointStatus::LabelEligible,
+        TLS_EXTENSION_EC_POINT_FORMATS | TLS_EXTENSION_STATUS_REQUEST_V2 => {
+            TlsCodepointStatus::LabelEligible
+        }
         TLS_EXTENSION_HEARTBEAT | TLS_EXTENSION_COMPRESS_CERTIFICATE => {
             TlsCodepointStatus::Deferred
         }
@@ -829,6 +834,48 @@ pub fn tls_extension_label(extension: u16) -> String {
         "extension",
         extension as u64,
         4,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// CertificateStatusType
+// ---------------------------------------------------------------------------
+
+/// Reserved CertificateStatusType zero value.
+pub const TLS_CERTIFICATE_STATUS_TYPE_RESERVED: u8 = 0;
+/// CertificateStatusType ocsp.
+pub const TLS_CERTIFICATE_STATUS_TYPE_OCSP: u8 = 1;
+/// CertificateStatusType ocsp_multi, now reserved by the current IANA row.
+pub const TLS_CERTIFICATE_STATUS_TYPE_OCSP_MULTI_RESERVED: u8 = 2;
+
+/// Return the selected TLS CertificateStatusType name.
+pub const fn tls_certificate_status_type_name(status_type: u8) -> Option<&'static str> {
+    match status_type {
+        TLS_CERTIFICATE_STATUS_TYPE_RESERVED => Some("Reserved"),
+        TLS_CERTIFICATE_STATUS_TYPE_OCSP => Some("ocsp"),
+        TLS_CERTIFICATE_STATUS_TYPE_OCSP_MULTI_RESERVED => Some("ocsp_multi_RESERVED"),
+        _ => None,
+    }
+}
+
+/// Classify a TLS CertificateStatusType value.
+pub const fn tls_certificate_status_type_status(status_type: u8) -> TlsCodepointStatus {
+    match status_type {
+        TLS_CERTIFICATE_STATUS_TYPE_RESERVED => TlsCodepointStatus::Reserved,
+        TLS_CERTIFICATE_STATUS_TYPE_OCSP => TlsCodepointStatus::DefaultEligible,
+        TLS_CERTIFICATE_STATUS_TYPE_OCSP_MULTI_RESERVED => TlsCodepointStatus::PreserveOnly,
+        _ => TlsCodepointStatus::Unassigned,
+    }
+}
+
+/// Human-readable CertificateStatusType label preserving unknown values.
+pub fn tls_certificate_status_type_label(status_type: u8) -> String {
+    label_with_known_name(
+        tls_certificate_status_type_name(status_type),
+        tls_certificate_status_type_status(status_type),
+        "certificate status type",
+        status_type as u64,
+        2,
     )
 }
 
@@ -1243,6 +1290,10 @@ mod tests {
             TlsCodepointStatus::Deferred
         );
         assert_eq!(
+            tls_extension_status(TLS_EXTENSION_STATUS_REQUEST_V2),
+            TlsCodepointStatus::LabelEligible
+        );
+        assert_eq!(
             tls_extension_status(TLS_EXTENSION_ENCRYPTED_CLIENT_HELLO),
             TlsCodepointStatus::PreserveOnly
         );
@@ -1252,6 +1303,18 @@ mod tests {
         );
         assert_eq!(tls_extension_label(0xfe0e), "unknown extension 0xfe0e");
         assert_eq!(tls_extension_label(0xff10), "private-use extension 0xff10");
+        assert_eq!(
+            tls_certificate_status_type_status(TLS_CERTIFICATE_STATUS_TYPE_OCSP),
+            TlsCodepointStatus::DefaultEligible
+        );
+        assert_eq!(
+            tls_certificate_status_type_status(TLS_CERTIFICATE_STATUS_TYPE_OCSP_MULTI_RESERVED),
+            TlsCodepointStatus::PreserveOnly
+        );
+        assert_eq!(
+            tls_certificate_status_type_label(0x7a),
+            "unassigned certificate status type 0x7a"
+        );
 
         assert_eq!(
             tls_cipher_suite_name(TLS_CIPHER_SUITE_AES_128_GCM_SHA256),

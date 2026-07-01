@@ -234,6 +234,7 @@ CertificateRequest, `NST` NewSessionTicket, and `HRR` HelloRetryRequest.
 | `13` | `0x000D` | `signature_algorithms` | CH, CR | Y | IANA, RFC 8446 | Carries SignatureScheme list. | default-eligible |
 | `15` | `0x000F` | `heartbeat` | CH, EE | Y | IANA, RFC 6520 | Candidate only; heartbeat safety step must select it. | deferred |
 | `16` | `0x0010` | `application_layer_protocol_negotiation` | CH, EE | Y | IANA, RFC 7301 | ALPN vector grammar. | default-eligible |
+| `17` | `0x0011` | `status_request_v2` | - | Y | IANA, RFC 6961 | TLS 1.2 and earlier multiple certificate status request extension; no TLS 1.3 context. | label-eligible |
 | `21` | `0x0015` | `padding` | CH | Y | IANA, RFC 7685 | Padding extension. | default-eligible |
 | `27` | `0x001B` | `compress_certificate` | CH, CR | Y | IANA, RFC 8879 | Certificate compression negotiation. | deferred |
 | `28` | `0x001C` | `record_size_limit` | CH, EE | Y | IANA, RFC 8449 | Preferred record-size limit extension. | default-eligible |
@@ -260,6 +261,20 @@ CertificateRequest, `NST` NewSessionTicket, and `HRR` HelloRetryRequest.
 
 Other assigned ExtensionType rows remain unknown-preserved until a later step
 adds a row here with source, contexts, and disposition.
+
+## CertificateStatusType
+
+Source: IANA TLS Certificate Status Types; RFC 6066 sec. 8; RFC 6961 sec. 2.2
+and 3. The status-request implementation treats responder IDs and request
+extensions as opaque DER byte vectors and does not validate certificates, OCSP,
+trust anchors, or revocation policy.
+
+| Value | Hex | Name | Source | Notes | Default |
+| --- | --- | --- | --- | --- | --- |
+| `0` | `0x00` | Reserved | IANA, RFC 6961 | Reserved zero value. | preserve-only |
+| `1` | `0x01` | `ocsp` | IANA, RFC 6066, RFC 6961 | OCSP status request body uses opaque ResponderID and Extensions vectors. | default-eligible |
+| `2` | `0x02` | `ocsp_multi_RESERVED` | IANA, RFC 6961, RFC 8446bis draft row | Current registry reserves the RFC 6961 multiple-OCSP status type for TLS 1.3; preserve/build by explicit value for legacy status_request_v2. | preserve-only |
+| `3-255` | `0x03-0xFF` | Unassigned | IANA | Preserve explicit values only. | non-default |
 
 ## Supported Groups
 
