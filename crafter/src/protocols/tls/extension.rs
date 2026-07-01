@@ -137,6 +137,36 @@ pub const TLS_STATUS_REQUEST_V2_ITEM_REQUEST_LENGTH_LEN: usize = 2;
 /// RFC 6961 status_request_v2 item fixed header width in bytes.
 pub const TLS_STATUS_REQUEST_V2_ITEM_HEADER_LEN: usize =
     TLS_CERTIFICATE_STATUS_TYPE_LEN + TLS_STATUS_REQUEST_V2_ITEM_REQUEST_LENGTH_LEN;
+/// TLS DistinguishedName opaque vector length field width in bytes.
+pub const TLS_DISTINGUISHED_NAME_LENGTH_LEN: usize = 2;
+/// RFC 8446 minimum DistinguishedName length.
+pub const TLS_DISTINGUISHED_NAME_MIN_LEN: usize = 1;
+/// RFC 8446 maximum DistinguishedName length.
+pub const TLS_DISTINGUISHED_NAME_MAX_LEN: usize = u16::MAX as usize;
+/// TLS certificate_authorities vector length field width in bytes.
+pub const TLS_CERTIFICATE_AUTHORITIES_LENGTH_LEN: usize = 2;
+/// RFC 8446 minimum certificate_authorities vector body length.
+pub const TLS_CERTIFICATE_AUTHORITIES_MIN_LEN: usize =
+    TLS_DISTINGUISHED_NAME_LENGTH_LEN + TLS_DISTINGUISHED_NAME_MIN_LEN;
+/// RFC 8446 maximum certificate_authorities vector body length.
+pub const TLS_CERTIFICATE_AUTHORITIES_MAX_LEN: usize = u16::MAX as usize;
+/// TLS OIDFilter certificate_extension_oid length field width in bytes.
+pub const TLS_OID_FILTER_OID_LENGTH_LEN: usize = 1;
+/// RFC 8446 minimum OIDFilter certificate_extension_oid length.
+pub const TLS_OID_FILTER_OID_MIN_LEN: usize = 1;
+/// RFC 8446 maximum OIDFilter certificate_extension_oid length.
+pub const TLS_OID_FILTER_OID_MAX_LEN: usize = u8::MAX as usize;
+/// TLS OIDFilter certificate_extension_values length field width in bytes.
+pub const TLS_OID_FILTER_VALUES_LENGTH_LEN: usize = 2;
+/// RFC 8446 maximum OIDFilter certificate_extension_values length.
+pub const TLS_OID_FILTER_VALUES_MAX_LEN: usize = u16::MAX as usize;
+/// TLS oid_filters vector length field width in bytes.
+pub const TLS_OID_FILTERS_LENGTH_LEN: usize = 2;
+/// RFC 8446 minimum encoded OIDFilter item length.
+pub const TLS_OID_FILTER_MIN_LEN: usize =
+    TLS_OID_FILTER_OID_LENGTH_LEN + TLS_OID_FILTER_OID_MIN_LEN + TLS_OID_FILTER_VALUES_LENGTH_LEN;
+/// RFC 8446 maximum oid_filters vector body length.
+pub const TLS_OID_FILTERS_MAX_LEN: usize = u16::MAX as usize;
 
 /// A raw-preserving TLS `ExtensionType` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -281,6 +311,16 @@ impl TlsExtensionType {
     /// TLS ExtensionType `cookie` constructor.
     pub const fn cookie() -> Self {
         Self::COOKIE
+    }
+
+    /// TLS ExtensionType `certificate_authorities` constructor.
+    pub const fn certificate_authorities() -> Self {
+        Self::CERTIFICATE_AUTHORITIES
+    }
+
+    /// TLS ExtensionType `oid_filters` constructor.
+    pub const fn oid_filters() -> Self {
+        Self::OID_FILTERS
     }
 
     /// TLS ExtensionType `pre_shared_key` constructor.
@@ -2109,6 +2149,954 @@ fn validate_status_request_v2_list_len(len: usize) -> Result<()> {
     Ok(())
 }
 
+/// TLS 1.3 opaque DistinguishedName value used by `certificate_authorities`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TlsDistinguishedName {
+    bytes: Vec<u8>,
+}
+
+impl TlsDistinguishedName {
+    /// Create a DistinguishedName from caller-provided opaque bytes.
+    pub fn new(bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            bytes: bytes.into(),
+        }
+    }
+
+    /// Create a DistinguishedName from caller-provided opaque bytes.
+    pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> Self {
+        Self::new(bytes)
+    }
+
+    /// Borrow the preserved DistinguishedName bytes.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Consume the DistinguishedName and return its bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    /// Number of DistinguishedName bytes.
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Return true when no DistinguishedName bytes are present.
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// Number of bytes occupied by the complete encoded DistinguishedName item.
+    pub fn encoded_len(&self) -> Result<usize> {
+        validate_distinguished_name_len(self.bytes.len())?;
+        TLS_DISTINGUISHED_NAME_LENGTH_LEN
+            .checked_add(self.bytes.len())
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.distinguished_name.length",
+                    "length overflow",
+                )
+            })
+    }
+
+    /// Append this length-prefixed DistinguishedName item to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        validate_distinguished_name_len(self.bytes.len())?;
+        let len = u16::try_from(self.bytes.len()).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "tls.distinguished_name.length",
+                "length must fit in two bytes",
+            )
+        })?;
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(&self.bytes);
+        Ok(())
+    }
+
+    /// Return this length-prefixed DistinguishedName item encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Decode one DistinguishedName item.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (name, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.distinguished_name.length",
+                "length must match item body",
+            ));
+        }
+        Ok(name)
+    }
+
+    /// Decode one DistinguishedName item from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_DISTINGUISHED_NAME_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.distinguished_name.length",
+                TLS_DISTINGUISHED_NAME_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+        validate_distinguished_name_len(len)?;
+        let required = TLS_DISTINGUISHED_NAME_LENGTH_LEN
+            .checked_add(len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.distinguished_name.length",
+                    "length overflow",
+                )
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "tls.distinguished_name",
+                required,
+                bytes.len(),
+            ));
+        }
+
+        Ok((
+            Self::new(bytes[TLS_DISTINGUISHED_NAME_LENGTH_LEN..required].to_vec()),
+            &bytes[required..],
+        ))
+    }
+
+    /// Stable one-line summary preserving opaque DistinguishedName size.
+    pub fn summary(&self) -> String {
+        format!("distinguished_name bytes={}", self.bytes.len())
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("distinguished_name_bytes", self.bytes.len().to_string()),
+            ("distinguished_name", hex_bytes(&self.bytes)),
+        ]
+    }
+}
+
+impl From<Vec<u8>> for TlsDistinguishedName {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::new(bytes)
+    }
+}
+
+impl From<&[u8]> for TlsDistinguishedName {
+    fn from(bytes: &[u8]) -> Self {
+        Self::new(bytes.to_vec())
+    }
+}
+
+impl<const N: usize> From<[u8; N]> for TlsDistinguishedName {
+    fn from(bytes: [u8; N]) -> Self {
+        Self::new(Vec::from(bytes))
+    }
+}
+
+/// TLS `certificate_authorities` extension body as an RFC 8446 DistinguishedName list.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct TlsCertificateAuthorities {
+    distinguished_names: Vec<TlsDistinguishedName>,
+}
+
+impl TlsCertificateAuthorities {
+    /// Create an ordered certificate_authorities extension body.
+    pub fn new(distinguished_names: impl Into<Vec<TlsDistinguishedName>>) -> Self {
+        Self {
+            distinguished_names: distinguished_names.into(),
+        }
+    }
+
+    /// Create an ordered certificate_authorities extension body.
+    pub fn from_distinguished_names(
+        distinguished_names: impl Into<Vec<TlsDistinguishedName>>,
+    ) -> Self {
+        Self::new(distinguished_names)
+    }
+
+    /// Create an ordered certificate_authorities body from raw DistinguishedName bytes.
+    pub fn from_raws<I, B>(distinguished_names: I) -> Self
+    where
+        I: IntoIterator<Item = B>,
+        B: Into<TlsDistinguishedName>,
+    {
+        Self::new(
+            distinguished_names
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    /// Borrow the ordered DistinguishedName values.
+    pub fn distinguished_names(&self) -> &[TlsDistinguishedName] {
+        &self.distinguished_names
+    }
+
+    /// Return DistinguishedName byte lengths in wire order.
+    pub fn byte_lengths(&self) -> Vec<usize> {
+        self.distinguished_names
+            .iter()
+            .map(TlsDistinguishedName::len)
+            .collect()
+    }
+
+    /// Return DistinguishedName byte strings in wire order.
+    pub fn raw_values(&self) -> Vec<Vec<u8>> {
+        self.distinguished_names
+            .iter()
+            .map(|name| name.bytes().to_vec())
+            .collect()
+    }
+
+    /// Consume the extension body and return the ordered DistinguishedName values.
+    pub fn into_vec(self) -> Vec<TlsDistinguishedName> {
+        self.distinguished_names
+    }
+
+    /// Append one DistinguishedName to the ordered list.
+    pub fn push(&mut self, distinguished_name: impl Into<TlsDistinguishedName>) {
+        self.distinguished_names.push(distinguished_name.into());
+    }
+
+    /// Number of DistinguishedName entries.
+    pub fn len(&self) -> usize {
+        self.distinguished_names.len()
+    }
+
+    /// Return true when the body carries no DistinguishedName entries.
+    pub fn is_empty(&self) -> bool {
+        self.distinguished_names.is_empty()
+    }
+
+    /// Number of bytes occupied by the DistinguishedName vector body, excluding the length prefix.
+    pub fn byte_len(&self) -> Result<usize> {
+        let mut byte_len = 0usize;
+        for name in &self.distinguished_names {
+            byte_len = byte_len.checked_add(name.encoded_len()?).ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.certificate_authorities.length",
+                    "length overflow",
+                )
+            })?;
+        }
+        validate_certificate_authorities_len(byte_len)?;
+        Ok(byte_len)
+    }
+
+    /// Number of bytes occupied by the complete encoded certificate_authorities body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        TLS_CERTIFICATE_AUTHORITIES_LENGTH_LEN
+            .checked_add(self.byte_len()?)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.certificate_authorities.length",
+                    "length overflow",
+                )
+            })
+    }
+
+    /// Append this certificate_authorities extension body to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let byte_len = self.byte_len()?;
+        let byte_len = u16::try_from(byte_len).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "tls.certificate_authorities.length",
+                "length must fit in two bytes",
+            )
+        })?;
+        out.extend_from_slice(&byte_len.to_be_bytes());
+        for name in &self.distinguished_names {
+            name.encode(out)?;
+        }
+        Ok(())
+    }
+
+    /// Return this certificate_authorities extension body encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Convert this certificate_authorities body into a raw extension.
+    pub fn to_raw_extension(&self) -> Result<TlsRawExtension> {
+        Ok(TlsRawExtension::new(
+            TlsExtensionType::CERTIFICATE_AUTHORITIES,
+            self.encode_to_vec()?,
+        ))
+    }
+
+    /// Decode a certificate_authorities extension body.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (authorities, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.certificate_authorities.length",
+                "length must match extension body",
+            ));
+        }
+        Ok(authorities)
+    }
+
+    /// Decode a certificate_authorities body from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_CERTIFICATE_AUTHORITIES_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.certificate_authorities.length",
+                TLS_CERTIFICATE_AUTHORITIES_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let byte_len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+        validate_certificate_authorities_len(byte_len)?;
+        let required = TLS_CERTIFICATE_AUTHORITIES_LENGTH_LEN
+            .checked_add(byte_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.certificate_authorities.length",
+                    "length overflow",
+                )
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "tls.certificate_authorities",
+                required,
+                bytes.len(),
+            ));
+        }
+
+        let mut cursor = TLS_CERTIFICATE_AUTHORITIES_LENGTH_LEN;
+        let body_end = required;
+        let mut distinguished_names = Vec::new();
+        while cursor < body_end {
+            let (distinguished_name, tail) =
+                TlsDistinguishedName::decode_prefix(&bytes[cursor..body_end])?;
+            distinguished_names.push(distinguished_name);
+            cursor = body_end - tail.len();
+        }
+
+        Ok((Self::new(distinguished_names), &bytes[required..]))
+    }
+
+    /// Decode a raw certificate_authorities extension body.
+    pub fn from_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        if extension.extension_type() != TlsExtensionType::CERTIFICATE_AUTHORITIES {
+            return Err(CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be certificate_authorities",
+            ));
+        }
+        Self::decode(extension.body())
+    }
+
+    /// Stable one-line summary preserving DistinguishedName order.
+    pub fn summary(&self) -> String {
+        format!(
+            "certificate_authorities count={} bytes={}",
+            self.len(),
+            self.distinguished_names
+                .iter()
+                .map(|name| name.encoded_len().unwrap_or(0))
+                .sum::<usize>()
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("certificate_authorities_count", self.len().to_string()),
+            (
+                "certificate_authorities_bytes",
+                self.distinguished_names
+                    .iter()
+                    .map(|name| name.encoded_len().unwrap_or(0))
+                    .sum::<usize>()
+                    .to_string(),
+            ),
+            (
+                "certificate_authorities_lengths",
+                self.byte_lengths()
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            (
+                "certificate_authorities",
+                self.distinguished_names
+                    .iter()
+                    .map(|name| hex_bytes(name.bytes()))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+        ]
+    }
+}
+
+impl From<Vec<TlsDistinguishedName>> for TlsCertificateAuthorities {
+    fn from(distinguished_names: Vec<TlsDistinguishedName>) -> Self {
+        Self::new(distinguished_names)
+    }
+}
+
+impl<const N: usize> From<[TlsDistinguishedName; N]> for TlsCertificateAuthorities {
+    fn from(distinguished_names: [TlsDistinguishedName; N]) -> Self {
+        Self::new(Vec::from(distinguished_names))
+    }
+}
+
+impl From<TlsDistinguishedName> for TlsCertificateAuthorities {
+    fn from(distinguished_name: TlsDistinguishedName) -> Self {
+        Self::new(vec![distinguished_name])
+    }
+}
+
+impl TryFrom<&TlsRawExtension> for TlsCertificateAuthorities {
+    type Error = CrafterError;
+
+    fn try_from(value: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension(value)
+    }
+}
+
+impl TryFrom<TlsCertificateAuthorities> for TlsRawExtension {
+    type Error = CrafterError;
+
+    fn try_from(value: TlsCertificateAuthorities) -> Result<Self> {
+        value.to_raw_extension()
+    }
+}
+
+/// TLS 1.3 opaque OID/value pair used by `oid_filters`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TlsOidFilter {
+    oid: Vec<u8>,
+    values: Vec<u8>,
+}
+
+impl TlsOidFilter {
+    /// Create an OIDFilter from opaque certificate-extension OID and value bytes.
+    pub fn new(oid: impl Into<Vec<u8>>, values: impl Into<Vec<u8>>) -> Self {
+        Self {
+            oid: oid.into(),
+            values: values.into(),
+        }
+    }
+
+    /// Create an OIDFilter from opaque certificate-extension OID and value bytes.
+    pub fn from_pair(oid: impl Into<Vec<u8>>, values: impl Into<Vec<u8>>) -> Self {
+        Self::new(oid, values)
+    }
+
+    /// Borrow the preserved certificate_extension_oid bytes.
+    pub fn oid(&self) -> &[u8] {
+        &self.oid
+    }
+
+    /// Borrow the preserved certificate_extension_values bytes.
+    pub fn values(&self) -> &[u8] {
+        &self.values
+    }
+
+    /// Consume the OIDFilter and return its opaque OID and value bytes.
+    pub fn into_pair(self) -> (Vec<u8>, Vec<u8>) {
+        (self.oid, self.values)
+    }
+
+    /// Number of certificate_extension_oid bytes.
+    pub fn oid_len(&self) -> usize {
+        self.oid.len()
+    }
+
+    /// Number of certificate_extension_values bytes.
+    pub fn values_len(&self) -> usize {
+        self.values.len()
+    }
+
+    /// Number of bytes occupied by the complete encoded OIDFilter item.
+    pub fn encoded_len(&self) -> Result<usize> {
+        validate_oid_filter_oid_len(self.oid.len())?;
+        validate_oid_filter_values_len(self.values.len())?;
+        TLS_OID_FILTER_OID_LENGTH_LEN
+            .checked_add(self.oid.len())
+            .and_then(|len| len.checked_add(TLS_OID_FILTER_VALUES_LENGTH_LEN))
+            .and_then(|len| len.checked_add(self.values.len()))
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.oid_filter.length", "length overflow")
+            })
+    }
+
+    /// Append this OIDFilter item to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        validate_oid_filter_oid_len(self.oid.len())?;
+        validate_oid_filter_values_len(self.values.len())?;
+        let oid_len = u8::try_from(self.oid.len()).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "tls.oid_filter.oid.length",
+                "length must fit in one byte",
+            )
+        })?;
+        let values_len = u16::try_from(self.values.len()).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "tls.oid_filter.values.length",
+                "length must fit in two bytes",
+            )
+        })?;
+        out.push(oid_len);
+        out.extend_from_slice(&self.oid);
+        out.extend_from_slice(&values_len.to_be_bytes());
+        out.extend_from_slice(&self.values);
+        Ok(())
+    }
+
+    /// Return this OIDFilter item encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Decode one OIDFilter item.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (filter, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.oid_filter.length",
+                "length must match item body",
+            ));
+        }
+        Ok(filter)
+    }
+
+    /// Decode one OIDFilter item from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_OID_FILTER_OID_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.oid_filter.oid.length",
+                TLS_OID_FILTER_OID_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let oid_len = bytes[0] as usize;
+        validate_oid_filter_oid_len(oid_len)?;
+        let oid_end = TLS_OID_FILTER_OID_LENGTH_LEN
+            .checked_add(oid_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.oid_filter.oid.length", "length overflow")
+            })?;
+        if bytes.len() < oid_end {
+            return Err(CrafterError::buffer_too_short(
+                "tls.oid_filter.oid",
+                oid_end,
+                bytes.len(),
+            ));
+        }
+
+        let values_length_end = oid_end
+            .checked_add(TLS_OID_FILTER_VALUES_LENGTH_LEN)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.oid_filter.values.length", "length overflow")
+            })?;
+        if bytes.len() < values_length_end {
+            return Err(CrafterError::buffer_too_short(
+                "tls.oid_filter.values.length",
+                values_length_end,
+                bytes.len(),
+            ));
+        }
+
+        let values_len = u16::from_be_bytes([bytes[oid_end], bytes[oid_end + 1]]) as usize;
+        validate_oid_filter_values_len(values_len)?;
+        let required = values_length_end.checked_add(values_len).ok_or_else(|| {
+            CrafterError::invalid_field_value("tls.oid_filter.values.length", "length overflow")
+        })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "tls.oid_filter.values",
+                required,
+                bytes.len(),
+            ));
+        }
+
+        Ok((
+            Self::new(
+                bytes[1..oid_end].to_vec(),
+                bytes[values_length_end..required].to_vec(),
+            ),
+            &bytes[required..],
+        ))
+    }
+
+    /// Stable one-line summary preserving opaque OIDFilter sizes.
+    pub fn summary(&self) -> String {
+        format!(
+            "oid_filter oid_bytes={} values_bytes={}",
+            self.oid.len(),
+            self.values.len()
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("oid_filter_oid_bytes", self.oid.len().to_string()),
+            ("oid_filter_oid", hex_bytes(&self.oid)),
+            ("oid_filter_values_bytes", self.values.len().to_string()),
+            ("oid_filter_values", hex_bytes(&self.values)),
+        ]
+    }
+}
+
+impl<O, V> From<(O, V)> for TlsOidFilter
+where
+    O: Into<Vec<u8>>,
+    V: Into<Vec<u8>>,
+{
+    fn from((oid, values): (O, V)) -> Self {
+        Self::new(oid, values)
+    }
+}
+
+/// TLS `oid_filters` extension body as an RFC 8446 OIDFilter list.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct TlsOidFilters {
+    filters: Vec<TlsOidFilter>,
+}
+
+impl TlsOidFilters {
+    /// Create an ordered oid_filters extension body.
+    pub fn new(filters: impl Into<Vec<TlsOidFilter>>) -> Self {
+        Self {
+            filters: filters.into(),
+        }
+    }
+
+    /// Create an empty oid_filters extension body.
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Create an ordered oid_filters extension body.
+    pub fn from_filters(filters: impl Into<Vec<TlsOidFilter>>) -> Self {
+        Self::new(filters)
+    }
+
+    /// Create an ordered oid_filters body from raw OID/value byte pairs.
+    pub fn from_pairs<I, O, V>(filters: I) -> Self
+    where
+        I: IntoIterator<Item = (O, V)>,
+        O: Into<Vec<u8>>,
+        V: Into<Vec<u8>>,
+    {
+        Self::new(
+            filters
+                .into_iter()
+                .map(TlsOidFilter::from)
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    /// Borrow the ordered OIDFilter values.
+    pub fn filters(&self) -> &[TlsOidFilter] {
+        &self.filters
+    }
+
+    /// Return OIDFilter byte lengths in wire order.
+    pub fn byte_lengths(&self) -> Vec<usize> {
+        self.filters
+            .iter()
+            .map(|filter| filter.encoded_len().unwrap_or(0))
+            .collect()
+    }
+
+    /// Consume the extension body and return the ordered OIDFilter values.
+    pub fn into_vec(self) -> Vec<TlsOidFilter> {
+        self.filters
+    }
+
+    /// Append one OIDFilter to the ordered list.
+    pub fn push(&mut self, filter: impl Into<TlsOidFilter>) {
+        self.filters.push(filter.into());
+    }
+
+    /// Number of OIDFilter entries.
+    pub fn len(&self) -> usize {
+        self.filters.len()
+    }
+
+    /// Return true when the body carries no OIDFilter entries.
+    pub fn is_empty(&self) -> bool {
+        self.filters.is_empty()
+    }
+
+    /// Number of bytes occupied by the OIDFilter vector body, excluding the length prefix.
+    pub fn byte_len(&self) -> Result<usize> {
+        let mut byte_len = 0usize;
+        for filter in &self.filters {
+            byte_len = byte_len.checked_add(filter.encoded_len()?).ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.oid_filters.length", "length overflow")
+            })?;
+        }
+        validate_oid_filters_len(byte_len)?;
+        Ok(byte_len)
+    }
+
+    /// Number of bytes occupied by the complete encoded oid_filters body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        TLS_OID_FILTERS_LENGTH_LEN
+            .checked_add(self.byte_len()?)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.oid_filters.length", "length overflow")
+            })
+    }
+
+    /// Append this oid_filters extension body to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let byte_len = self.byte_len()?;
+        let byte_len = u16::try_from(byte_len).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "tls.oid_filters.length",
+                "length must fit in two bytes",
+            )
+        })?;
+        out.extend_from_slice(&byte_len.to_be_bytes());
+        for filter in &self.filters {
+            filter.encode(out)?;
+        }
+        Ok(())
+    }
+
+    /// Return this oid_filters extension body encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Convert this oid_filters body into a raw extension.
+    pub fn to_raw_extension(&self) -> Result<TlsRawExtension> {
+        Ok(TlsRawExtension::new(
+            TlsExtensionType::OID_FILTERS,
+            self.encode_to_vec()?,
+        ))
+    }
+
+    /// Decode an oid_filters extension body.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (filters, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.oid_filters.length",
+                "length must match extension body",
+            ));
+        }
+        Ok(filters)
+    }
+
+    /// Decode an oid_filters body from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_OID_FILTERS_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.oid_filters.length",
+                TLS_OID_FILTERS_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let byte_len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+        validate_oid_filters_len(byte_len)?;
+        let required = TLS_OID_FILTERS_LENGTH_LEN
+            .checked_add(byte_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value("tls.oid_filters.length", "length overflow")
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "tls.oid_filters",
+                required,
+                bytes.len(),
+            ));
+        }
+
+        let mut cursor = TLS_OID_FILTERS_LENGTH_LEN;
+        let body_end = required;
+        let mut filters = Vec::new();
+        while cursor < body_end {
+            let (filter, tail) = TlsOidFilter::decode_prefix(&bytes[cursor..body_end])?;
+            filters.push(filter);
+            cursor = body_end - tail.len();
+        }
+
+        Ok((Self::new(filters), &bytes[required..]))
+    }
+
+    /// Decode a raw oid_filters extension body.
+    pub fn from_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        if extension.extension_type() != TlsExtensionType::OID_FILTERS {
+            return Err(CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be oid_filters",
+            ));
+        }
+        Self::decode(extension.body())
+    }
+
+    /// Stable one-line summary preserving OIDFilter order.
+    pub fn summary(&self) -> String {
+        format!(
+            "oid_filters count={} bytes={}",
+            self.len(),
+            self.filters
+                .iter()
+                .map(|filter| filter.encoded_len().unwrap_or(0))
+                .sum::<usize>()
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("oid_filters_count", self.len().to_string()),
+            (
+                "oid_filters_bytes",
+                self.filters
+                    .iter()
+                    .map(|filter| filter.encoded_len().unwrap_or(0))
+                    .sum::<usize>()
+                    .to_string(),
+            ),
+            (
+                "oid_filters_lengths",
+                self.byte_lengths()
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            (
+                "oid_filters_oids",
+                self.filters
+                    .iter()
+                    .map(|filter| hex_bytes(filter.oid()))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+        ]
+    }
+}
+
+impl From<Vec<TlsOidFilter>> for TlsOidFilters {
+    fn from(filters: Vec<TlsOidFilter>) -> Self {
+        Self::new(filters)
+    }
+}
+
+impl<const N: usize> From<[TlsOidFilter; N]> for TlsOidFilters {
+    fn from(filters: [TlsOidFilter; N]) -> Self {
+        Self::new(Vec::from(filters))
+    }
+}
+
+impl From<TlsOidFilter> for TlsOidFilters {
+    fn from(filter: TlsOidFilter) -> Self {
+        Self::new(vec![filter])
+    }
+}
+
+impl TryFrom<&TlsRawExtension> for TlsOidFilters {
+    type Error = CrafterError;
+
+    fn try_from(value: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension(value)
+    }
+}
+
+impl TryFrom<TlsOidFilters> for TlsRawExtension {
+    type Error = CrafterError;
+
+    fn try_from(value: TlsOidFilters) -> Result<Self> {
+        value.to_raw_extension()
+    }
+}
+
+fn validate_distinguished_name_len(len: usize) -> Result<()> {
+    if len < TLS_DISTINGUISHED_NAME_MIN_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tls.distinguished_name.length",
+            "length must be at least one byte",
+        ));
+    }
+    if len > TLS_DISTINGUISHED_NAME_MAX_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tls.distinguished_name.length",
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_certificate_authorities_len(len: usize) -> Result<()> {
+    if len < TLS_CERTIFICATE_AUTHORITIES_MIN_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tls.certificate_authorities.length",
+            "length must be at least three bytes",
+        ));
+    }
+    if len > TLS_CERTIFICATE_AUTHORITIES_MAX_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tls.certificate_authorities.length",
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_oid_filter_oid_len(len: usize) -> Result<()> {
+    if len < TLS_OID_FILTER_OID_MIN_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tls.oid_filter.oid.length",
+            "length must be at least one byte",
+        ));
+    }
+    if len > TLS_OID_FILTER_OID_MAX_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tls.oid_filter.oid.length",
+            "length must fit in one byte",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_oid_filter_values_len(len: usize) -> Result<()> {
+    if len > TLS_OID_FILTER_VALUES_MAX_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tls.oid_filter.values.length",
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_oid_filters_len(len: usize) -> Result<()> {
+    if len > TLS_OID_FILTERS_MAX_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tls.oid_filters.length",
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
 /// TLS 1.3 `cookie` extension body with opaque cookie bytes preserved.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TlsCookie {
@@ -3185,6 +4173,28 @@ impl TlsRawExtension {
     /// Decode this raw extension as a typed `status_request_v2` body.
     pub fn as_status_request_v2(&self) -> Result<TlsStatusRequestV2> {
         TlsStatusRequestV2::from_raw_extension(self)
+    }
+
+    /// Create a raw `certificate_authorities` extension from a typed DistinguishedName list.
+    pub fn certificate_authorities(
+        authorities: impl Into<TlsCertificateAuthorities>,
+    ) -> Result<Self> {
+        authorities.into().to_raw_extension()
+    }
+
+    /// Decode this raw extension as a typed certificate_authorities body.
+    pub fn as_certificate_authorities(&self) -> Result<TlsCertificateAuthorities> {
+        TlsCertificateAuthorities::from_raw_extension(self)
+    }
+
+    /// Create a raw `oid_filters` extension from a typed OIDFilter list.
+    pub fn oid_filters(filters: impl Into<TlsOidFilters>) -> Result<Self> {
+        filters.into().to_raw_extension()
+    }
+
+    /// Decode this raw extension as a typed oid_filters body.
+    pub fn as_oid_filters(&self) -> Result<TlsOidFilters> {
+        TlsOidFilters::from_raw_extension(self)
     }
 
     /// Create a raw `supported_groups` extension from a typed group list.
@@ -9109,6 +10119,405 @@ mod tests {
             CrafterError::invalid_field_value(
                 "tls.status_request_v2.length",
                 "length must be at least three bytes"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_certificate_authorities_builders_encode_and_inspect() {
+        assert_eq!(
+            TlsExtensionType::certificate_authorities(),
+            TlsExtensionType::CERTIFICATE_AUTHORITIES
+        );
+        assert_eq!(
+            TlsExtensionType::oid_filters(),
+            TlsExtensionType::OID_FILTERS
+        );
+
+        let dn1 = TlsDistinguishedName::new([0x30, 0x03, 0x31]);
+        let dn2 = TlsDistinguishedName::new([0xaa, 0xbb]);
+        assert_eq!(dn1.len(), 3);
+        assert!(!dn1.is_empty());
+        assert_eq!(dn1.bytes(), &[0x30, 0x03, 0x31]);
+        assert_eq!(dn1.encode_to_vec().unwrap(), [0x00, 0x03, 0x30, 0x03, 0x31]);
+        assert_eq!(
+            TlsDistinguishedName::decode(dn1.encode_to_vec().unwrap()).unwrap(),
+            dn1
+        );
+        assert_eq!(dn1.summary(), "distinguished_name bytes=3");
+        assert!(dn1
+            .inspection_fields()
+            .contains(&("distinguished_name", "30 03 31".to_string())));
+
+        let authorities = TlsCertificateAuthorities::new([dn1.clone(), dn2.clone()]);
+        assert_eq!(authorities.len(), 2);
+        assert!(!authorities.is_empty());
+        assert_eq!(
+            authorities.distinguished_names(),
+            &[dn1.clone(), dn2.clone()]
+        );
+        assert_eq!(authorities.byte_lengths(), vec![3, 2]);
+        assert_eq!(
+            authorities.raw_values(),
+            vec![vec![0x30, 0x03, 0x31], vec![0xaa, 0xbb]]
+        );
+        assert_eq!(authorities.byte_len().unwrap(), 9);
+        assert_eq!(authorities.encoded_len().unwrap(), 11);
+        assert_eq!(
+            authorities.encode_to_vec().unwrap(),
+            [0x00, 0x09, 0x00, 0x03, 0x30, 0x03, 0x31, 0x00, 0x02, 0xaa, 0xbb]
+        );
+        assert_eq!(
+            TlsCertificateAuthorities::decode(authorities.encode_to_vec().unwrap()).unwrap(),
+            authorities
+        );
+        assert_eq!(
+            authorities.summary(),
+            "certificate_authorities count=2 bytes=9"
+        );
+        assert!(authorities
+            .inspection_fields()
+            .contains(&("certificate_authorities_lengths", "3,2".to_string())));
+
+        let raw = authorities.to_raw_extension().unwrap();
+        assert_eq!(
+            raw.extension_type(),
+            TlsExtensionType::CERTIFICATE_AUTHORITIES
+        );
+        assert_eq!(
+            raw.raw_type(),
+            constants::TLS_EXTENSION_CERTIFICATE_AUTHORITIES
+        );
+        assert_eq!(
+            raw.encode_to_vec().unwrap(),
+            [
+                0x00, 0x2f, 0x00, 0x0b, 0x00, 0x09, 0x00, 0x03, 0x30, 0x03, 0x31, 0x00, 0x02, 0xaa,
+                0xbb
+            ]
+        );
+        assert_eq!(raw.as_certificate_authorities().unwrap(), authorities);
+        assert_eq!(
+            TlsCertificateAuthorities::try_from(&raw).unwrap(),
+            authorities
+        );
+        assert_eq!(TlsRawExtension::try_from(authorities.clone()).unwrap(), raw);
+        assert_eq!(
+            TlsRawExtension::certificate_authorities(authorities.clone()).unwrap(),
+            raw
+        );
+        assert_eq!(
+            TlsCertificateAuthorities::from_raws([&[0x30, 0x03, 0x31][..], &[0xaa, 0xbb][..]]),
+            authorities
+        );
+
+        let filter = TlsOidFilter::new([0x55, 0x1d, 0x25], [0x30, 0x00]);
+        assert_eq!(filter.oid(), &[0x55, 0x1d, 0x25]);
+        assert_eq!(filter.values(), &[0x30, 0x00]);
+        assert_eq!(filter.oid_len(), 3);
+        assert_eq!(filter.values_len(), 2);
+        assert_eq!(
+            filter.encode_to_vec().unwrap(),
+            [0x03, 0x55, 0x1d, 0x25, 0x00, 0x02, 0x30, 0x00]
+        );
+        assert_eq!(
+            TlsOidFilter::decode(filter.encode_to_vec().unwrap()).unwrap(),
+            filter
+        );
+        assert_eq!(filter.summary(), "oid_filter oid_bytes=3 values_bytes=2");
+        assert!(filter
+            .inspection_fields()
+            .contains(&("oid_filter_oid", "55 1d 25".to_string())));
+
+        let empty_values = TlsOidFilter::new([0x55, 0x1d, 0x13], Vec::<u8>::new());
+        let filters = TlsOidFilters::new([filter.clone(), empty_values.clone()]);
+        assert_eq!(filters.len(), 2);
+        assert_eq!(filters.filters(), &[filter.clone(), empty_values.clone()]);
+        assert_eq!(filters.byte_lengths(), vec![8, 6]);
+        assert_eq!(filters.byte_len().unwrap(), 14);
+        assert_eq!(filters.encoded_len().unwrap(), 16);
+        assert_eq!(
+            filters.encode_to_vec().unwrap(),
+            [
+                0x00, 0x0e, 0x03, 0x55, 0x1d, 0x25, 0x00, 0x02, 0x30, 0x00, 0x03, 0x55, 0x1d, 0x13,
+                0x00, 0x00
+            ]
+        );
+        assert_eq!(
+            TlsOidFilters::decode(filters.encode_to_vec().unwrap()).unwrap(),
+            filters
+        );
+        assert_eq!(filters.summary(), "oid_filters count=2 bytes=14");
+        assert!(filters
+            .inspection_fields()
+            .contains(&("oid_filters_lengths", "8,6".to_string())));
+
+        let raw_filters = filters.to_raw_extension().unwrap();
+        assert_eq!(raw_filters.extension_type(), TlsExtensionType::OID_FILTERS);
+        assert_eq!(raw_filters.raw_type(), constants::TLS_EXTENSION_OID_FILTERS);
+        assert_eq!(
+            raw_filters.encode_to_vec().unwrap(),
+            [
+                0x00, 0x30, 0x00, 0x10, 0x00, 0x0e, 0x03, 0x55, 0x1d, 0x25, 0x00, 0x02, 0x30, 0x00,
+                0x03, 0x55, 0x1d, 0x13, 0x00, 0x00
+            ]
+        );
+        assert_eq!(raw_filters.as_oid_filters().unwrap(), filters);
+        assert_eq!(TlsOidFilters::try_from(&raw_filters).unwrap(), filters);
+        assert_eq!(
+            TlsRawExtension::try_from(filters.clone()).unwrap(),
+            raw_filters
+        );
+        assert_eq!(
+            TlsRawExtension::oid_filters(filters.clone()).unwrap(),
+            raw_filters
+        );
+        assert_eq!(
+            TlsOidFilters::from_pairs([
+                (&[0x55, 0x1d, 0x25][..], &[0x30, 0x00][..]),
+                (&[0x55, 0x1d, 0x13][..], &[][..]),
+            ]),
+            filters
+        );
+        assert_eq!(
+            TlsOidFilters::empty().encode_to_vec().unwrap(),
+            [0x00, 0x00]
+        );
+    }
+
+    #[test]
+    fn tls_extension_certificate_authorities_preserves_explicit_bytes() {
+        let authorities =
+            TlsCertificateAuthorities::decode([0x00, 0x05, 0x00, 0x03, 0xff, 0x00, 0x7a]).unwrap();
+        assert_eq!(authorities.raw_values(), vec![vec![0xff, 0x00, 0x7a]]);
+        assert_eq!(
+            authorities.encode_to_vec().unwrap(),
+            [0x00, 0x05, 0x00, 0x03, 0xff, 0x00, 0x7a]
+        );
+
+        let mut built = TlsCertificateAuthorities::from_raws([&[0xde, 0xad][..]]);
+        built.push([0xfa, 0xce, 0x00]);
+        assert_eq!(built.byte_lengths(), vec![2, 3]);
+        assert_eq!(
+            built.clone().into_vec(),
+            vec![
+                TlsDistinguishedName::new([0xde, 0xad]),
+                TlsDistinguishedName::new([0xfa, 0xce, 0x00])
+            ]
+        );
+        assert_eq!(
+            TlsDistinguishedName::new([0xde, 0xad]).clone().into_bytes(),
+            vec![0xde, 0xad]
+        );
+
+        let filters =
+            TlsOidFilters::decode([0x00, 0x08, 0x02, 0xff, 0x00, 0x00, 0x03, 0xaa, 0x00, 0xbb])
+                .unwrap();
+        assert_eq!(filters.byte_lengths(), vec![8]);
+        assert_eq!(filters.filters()[0].oid(), &[0xff, 0x00]);
+        assert_eq!(filters.filters()[0].values(), &[0xaa, 0x00, 0xbb]);
+        assert_eq!(
+            filters.encode_to_vec().unwrap(),
+            [0x00, 0x08, 0x02, 0xff, 0x00, 0x00, 0x03, 0xaa, 0x00, 0xbb]
+        );
+
+        let mut built_filters = TlsOidFilters::empty();
+        built_filters.push(([0x01], [0x02, 0x03]));
+        assert_eq!(built_filters.filters()[0].oid(), &[0x01]);
+        assert_eq!(built_filters.filters()[0].values(), &[0x02, 0x03]);
+        assert_eq!(
+            TlsOidFilter::new([0x01], [0x02, 0x03]).into_pair(),
+            (vec![0x01], vec![0x02, 0x03])
+        );
+    }
+
+    #[test]
+    fn tls_extension_certificate_authorities_reports_structured_errors() {
+        assert_eq!(
+            TlsDistinguishedName::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.distinguished_name.length",
+                TLS_DISTINGUISHED_NAME_LENGTH_LEN,
+                0
+            )
+        );
+        assert_eq!(
+            TlsDistinguishedName::decode([0x00, 0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.distinguished_name.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsDistinguishedName::decode([0x00, 0x02, 0xaa]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.distinguished_name", 4, 3)
+        );
+        assert_eq!(
+            TlsDistinguishedName::decode([0x00, 0x01, 0xaa, 0xbb]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.distinguished_name.length",
+                "length must match item body"
+            )
+        );
+        assert_eq!(
+            TlsDistinguishedName::new(Vec::<u8>::new())
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.distinguished_name.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsDistinguishedName::new(vec![0; TLS_DISTINGUISHED_NAME_MAX_LEN + 1])
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.distinguished_name.length",
+                "length must fit in two bytes"
+            )
+        );
+        assert_eq!(
+            TlsCertificateAuthorities::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.certificate_authorities.length",
+                TLS_CERTIFICATE_AUTHORITIES_LENGTH_LEN,
+                0
+            )
+        );
+        assert_eq!(
+            TlsCertificateAuthorities::decode([0x00, 0x02, 0xaa, 0xbb]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.certificate_authorities.length",
+                "length must be at least three bytes"
+            )
+        );
+        assert_eq!(
+            TlsCertificateAuthorities::decode([0x00, 0x04, 0x00, 0x03, 0xaa, 0xbb]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.distinguished_name", 5, 4)
+        );
+        assert_eq!(
+            TlsCertificateAuthorities::decode([0x00, 0x03, 0x00, 0x00, 0xaa]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.distinguished_name.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsCertificateAuthorities::new(Vec::<TlsDistinguishedName>::new())
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.certificate_authorities.length",
+                "length must be at least three bytes"
+            )
+        );
+        assert_eq!(
+            TlsCertificateAuthorities::new([TlsDistinguishedName::new(vec![
+                0;
+                TLS_DISTINGUISHED_NAME_MAX_LEN
+            ])])
+            .encode_to_vec()
+            .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.certificate_authorities.length",
+                "length must fit in two bytes"
+            )
+        );
+        assert_eq!(
+            TlsCertificateAuthorities::from_raw_extension(&TlsRawExtension::from_raw(0xbeef, []))
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be certificate_authorities"
+            )
+        );
+
+        assert_eq!(
+            TlsOidFilter::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.oid_filter.oid.length",
+                TLS_OID_FILTER_OID_LENGTH_LEN,
+                0
+            )
+        );
+        assert_eq!(
+            TlsOidFilter::decode([0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.oid_filter.oid.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsOidFilter::decode([0x02, 0xaa]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.oid_filter.oid", 3, 2)
+        );
+        assert_eq!(
+            TlsOidFilter::decode([0x01, 0xaa, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.oid_filter.values.length", 4, 3)
+        );
+        assert_eq!(
+            TlsOidFilter::decode([0x01, 0xaa, 0x00, 0x02, 0xbb]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.oid_filter.values", 6, 5)
+        );
+        assert_eq!(
+            TlsOidFilter::decode([0x01, 0xaa, 0x00, 0x00, 0xcc]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.oid_filter.length",
+                "length must match item body"
+            )
+        );
+        assert_eq!(
+            TlsOidFilter::new(Vec::<u8>::new(), Vec::<u8>::new())
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.oid_filter.oid.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsOidFilter::new(vec![0; TLS_OID_FILTER_OID_MAX_LEN + 1], Vec::<u8>::new())
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.oid_filter.oid.length",
+                "length must fit in one byte"
+            )
+        );
+        assert_eq!(
+            TlsOidFilter::new([0xaa], vec![0; TLS_OID_FILTER_VALUES_MAX_LEN + 1])
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.oid_filter.values.length",
+                "length must fit in two bytes"
+            )
+        );
+        assert_eq!(
+            TlsOidFilters::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.oid_filters.length", TLS_OID_FILTERS_LENGTH_LEN, 0)
+        );
+        assert_eq!(
+            TlsOidFilters::decode([0x00, 0x04, 0x01, 0xaa, 0x00, 0x02]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.oid_filter.values", 6, 4)
+        );
+        assert_eq!(
+            TlsOidFilters::new([TlsOidFilter::new(
+                [0xaa],
+                vec![0; TLS_OID_FILTER_VALUES_MAX_LEN]
+            )])
+            .encode_to_vec()
+            .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.oid_filters.length",
+                "length must fit in two bytes"
+            )
+        );
+        assert_eq!(
+            TlsOidFilters::from_raw_extension(&TlsRawExtension::from_raw(0xbeef, [])).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be oid_filters"
             )
         );
     }
