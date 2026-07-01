@@ -1,7 +1,7 @@
 use crafter::core::{
     Ah, Arp, Bgp, Dhcpv4, Dns, Dot11, Eapol, EapolKey, Esp, Ethernet, Icmpv4, Icmpv6, Ipv4, Ipv6,
     Ipv6FragmentHeader, Ipv6MobileRoutingHeader, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader,
-    Layer, LinuxSll, LlcSnap, NullLoopback, Radiotap, Raw, Rip, Ripng, Tcp, Udp, Vlan,
+    Layer, LinuxSll, LlcSnap, NullLoopback, Radiotap, Raw, Rip, Ripng, Tcp, Tls, Udp, Vlan,
 };
 use crafter::prelude::*;
 use crafter::protocols::igmp::IgmpExtension;
@@ -456,6 +456,8 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "udp"
     } else if layer.as_any().is::<Tcp>() {
         "tcp"
+    } else if layer.as_any().is::<Tls>() {
+        "tls"
     } else if layer.as_any().is::<Bgp>() {
         "bgp"
     } else if layer.as_any().is::<Mqtt>() {
