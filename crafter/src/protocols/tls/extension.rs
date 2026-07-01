@@ -5613,9 +5613,10 @@ fn format_signature_scheme_raw_values(schemes: &TlsSignatureSchemeList) -> Strin
 }
 
 /// Context that selects the TLS `supported_versions` extension body shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TlsSupportedVersionsContext {
     /// ClientHello carries a uint8 length-prefixed ProtocolVersion list.
+    #[default]
     ClientHello,
     /// ServerHello carries one selected ProtocolVersion.
     ServerHello,
@@ -5657,12 +5658,6 @@ impl TlsSupportedVersionsContext {
             Self::ServerHello => "tls.supported_versions.server.version",
             Self::HelloRetryRequest => "tls.supported_versions.hello_retry_request.version",
         }
-    }
-}
-
-impl Default for TlsSupportedVersionsContext {
-    fn default() -> Self {
-        Self::ClientHello
     }
 }
 
@@ -6573,9 +6568,10 @@ impl TlsPskBindersContext {
 }
 
 /// Context that selects the TLS 1.3 `pre_shared_key` extension body shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TlsPreSharedKeyContext {
     /// ClientHello carries identities and binders vectors.
+    #[default]
     ClientHello,
     /// ServerHello carries a selected identity index.
     ServerHello,
@@ -6629,12 +6625,6 @@ impl TlsPreSharedKeyContext {
             Self::ClientHello => TlsPskBindersContext::client_hello(),
             Self::ServerHello => TlsPskBindersContext::generic(),
         }
-    }
-}
-
-impl Default for TlsPreSharedKeyContext {
-    fn default() -> Self {
-        Self::ClientHello
     }
 }
 
@@ -7846,9 +7836,10 @@ impl TlsKeyShareEntryContext {
 }
 
 /// Context that selects the TLS 1.3 `key_share` extension body shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TlsKeyShareContext {
     /// ClientHello carries a uint16 length-prefixed KeyShareEntry list.
+    #[default]
     ClientHello,
     /// ServerHello carries one selected KeyShareEntry.
     ServerHello,
@@ -7910,12 +7901,6 @@ impl TlsKeyShareContext {
             Self::ServerHello => TlsKeyShareEntryContext::server_hello(),
             Self::HelloRetryRequest => TlsKeyShareEntryContext::generic(),
         }
-    }
-}
-
-impl Default for TlsKeyShareContext {
-    fn default() -> Self {
-        Self::ClientHello
     }
 }
 
@@ -12648,7 +12633,7 @@ mod tests {
         let identities = TlsPskIdentities::new(vec![identity.clone()]);
         assert_eq!(identities.len(), 1);
         assert!(!identities.is_empty());
-        assert_eq!(identities.identities(), &[identity.clone()]);
+        assert_eq!(identities.identities(), std::slice::from_ref(&identity));
         assert_eq!(identities.identity_lengths(), vec![4]);
         assert_eq!(identities.obfuscated_ticket_ages(), vec![0x0102_0304]);
         assert_eq!(identities.byte_len().unwrap(), 10);
@@ -12665,7 +12650,7 @@ mod tests {
         let binders = TlsPskBinders::new(vec![binder.clone()]);
         assert_eq!(binders.len(), 1);
         assert!(!binders.is_empty());
-        assert_eq!(binders.binders(), &[binder.clone()]);
+        assert_eq!(binders.binders(), std::slice::from_ref(&binder));
         assert_eq!(binders.binder_lengths(), vec![32]);
         assert_eq!(binders.byte_len().unwrap(), 33);
         assert_eq!(binders.encoded_len().unwrap(), 35);

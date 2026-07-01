@@ -472,7 +472,7 @@ impl ProtocolRegistry {
                     || TLS_COMMON_TCP_PORTS.contains(&ctx.destination_port))
                     && looks_like_tls_payload(ctx.payload)
             },
-            |registry, packet, payload| append_tls_packet_with_registry(registry, packet, payload),
+            append_tls_packet_with_registry,
         );
 
         registry.builtin_ipv4_protocol_dispatch = true;
