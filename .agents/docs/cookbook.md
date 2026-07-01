@@ -253,6 +253,16 @@ the provider resources after the run. Never send crafted TLS traffic from the
 developer host by default and never embed real credentials, public hostnames,
 private certificates, or sensitive captures in tracked files.
 
+Use an environment-gated command so unattended runs stay offline:
+
+```sh
+if [ -n "${LIBCRAFTER_TLS_LIVE_PROVIDER:-}" ] && [ "${LIBCRAFTER_TLS_LIVE_CONFIRM:-}" = "yes" ]; then
+  tools/probe/run --provider "$LIBCRAFTER_TLS_LIVE_PROVIDER" --confirm-live-run --profile tls-smoke --seed 8446 --count 1 --out target/probe/tls-live
+else
+  tools/probe/run --provider qemu --dry-run --profile tls-smoke --seed 8446 --count 1 --out target/probe/tls-live-dry-run
+fi
+```
+
 ## Build SSDP Discovery Packets
 
 SSDP is a UDP/1900 application payload. Generated tools should use

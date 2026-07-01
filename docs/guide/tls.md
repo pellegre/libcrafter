@@ -270,6 +270,20 @@ provider endpoint or lab session with explicit authorization, collect artifacts
 under `target/`, and tear the endpoint down. Do not elevate the developer host
 or aim crafted TLS traffic at arbitrary public services from local examples.
 
+Use the same guarded shell shape for TLS probe validation. With no environment
+variables set, the command below is a dry-run. A live provider-backed run
+requires both `LIBCRAFTER_TLS_LIVE_PROVIDER` and
+`LIBCRAFTER_TLS_LIVE_CONFIRM=yes`, and still passes `--confirm-live-run` to the
+probe runner:
+
+```console
+if [ -n "${LIBCRAFTER_TLS_LIVE_PROVIDER:-}" ] && [ "${LIBCRAFTER_TLS_LIVE_CONFIRM:-}" = "yes" ]; then
+  tools/probe/run --provider "$LIBCRAFTER_TLS_LIVE_PROVIDER" --confirm-live-run --profile tls-smoke --seed 8446 --count 1 --out target/probe/tls-live
+else
+  tools/probe/run --provider qemu --dry-run --profile tls-smoke --seed 8446 --count 1 --out target/probe/tls-live-dry-run
+fi
+```
+
 The TLS layer only provides packet primitives. Provider-backed probes can use
 those primitives to observe a controlled service, but the crate itself remains
 limited to building, decoding, preserving, and inspecting wire bytes.
