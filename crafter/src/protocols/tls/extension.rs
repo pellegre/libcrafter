@@ -54,6 +54,21 @@ pub const TLS_PSK_KEY_EXCHANGE_MODE_LEN: usize = 1;
 pub const TLS_PSK_KEY_EXCHANGE_MODE_PSK_KE: u8 = constants::TLS_PSK_MODE_PSK_KE;
 /// TLS 1.3 PskKeyExchangeMode `psk_dhe_ke`.
 pub const TLS_PSK_KEY_EXCHANGE_MODE_PSK_DHE_KE: u8 = constants::TLS_PSK_MODE_PSK_DHE_KE;
+/// TLS pre_shared_key selected_identity width in bytes.
+pub const TLS_PRE_SHARED_KEY_SELECTED_IDENTITY_LEN: usize = 2;
+/// TLS PSK identity opaque identity length field width in bytes.
+pub const TLS_PSK_IDENTITY_LENGTH_LEN: usize = 2;
+/// TLS PSK identity obfuscated_ticket_age width in bytes.
+pub const TLS_PSK_IDENTITY_OBFUSCATED_TICKET_AGE_LEN: usize = 4;
+/// TLS PSK identity fixed header width in bytes.
+pub const TLS_PSK_IDENTITY_HEADER_LEN: usize =
+    TLS_PSK_IDENTITY_LENGTH_LEN + TLS_PSK_IDENTITY_OBFUSCATED_TICKET_AGE_LEN;
+/// TLS PSK identities vector length field width in bytes.
+pub const TLS_PSK_IDENTITIES_LENGTH_LEN: usize = 2;
+/// TLS PSK binder entry length field width in bytes.
+pub const TLS_PSK_BINDER_LENGTH_LEN: usize = 1;
+/// TLS PSK binders vector length field width in bytes.
+pub const TLS_PSK_BINDERS_LENGTH_LEN: usize = 2;
 /// TLS supported_groups NamedGroupList length field width in bytes.
 pub const TLS_SUPPORTED_GROUPS_LIST_LENGTH_LEN: usize = TLS_NAMED_GROUP_LIST_PREFIX_LEN;
 /// TLS supported_groups NamedGroup width in bytes.
@@ -183,6 +198,11 @@ impl TlsExtensionType {
     /// TLS ExtensionType `supported_versions` constructor.
     pub const fn supported_versions() -> Self {
         Self::SUPPORTED_VERSIONS
+    }
+
+    /// TLS ExtensionType `pre_shared_key` constructor.
+    pub const fn pre_shared_key() -> Self {
+        Self::PRE_SHARED_KEY
     }
 
     /// TLS ExtensionType `key_share` constructor.
@@ -1046,6 +1066,37 @@ impl TlsRawExtension {
     /// Decode this raw extension as a typed `psk_key_exchange_modes` body.
     pub fn as_psk_key_exchange_modes(&self) -> Result<TlsPskKeyExchangeModes> {
         TlsPskKeyExchangeModes::from_raw_extension(self)
+    }
+
+    /// Create a raw ClientHello `pre_shared_key` extension.
+    pub fn pre_shared_key_client(
+        identities: impl Into<TlsPskIdentities>,
+        binders: impl Into<TlsPskBinders>,
+    ) -> Result<Self> {
+        TlsPreSharedKey::client(identities, binders).to_raw_extension()
+    }
+
+    /// Create a raw ServerHello `pre_shared_key` extension.
+    pub fn pre_shared_key_server(selected_identity: u16) -> Result<Self> {
+        TlsPreSharedKey::server(selected_identity).to_raw_extension()
+    }
+
+    /// Decode this raw extension as a ClientHello `pre_shared_key` body.
+    pub fn as_pre_shared_key_client(&self) -> Result<TlsPreSharedKey> {
+        TlsPreSharedKey::from_client_hello_raw_extension(self)
+    }
+
+    /// Decode this raw extension as a ServerHello `pre_shared_key` body.
+    pub fn as_pre_shared_key_server(&self) -> Result<TlsPreSharedKey> {
+        TlsPreSharedKey::from_server_hello_raw_extension(self)
+    }
+
+    /// Decode this raw extension as a context-selected `pre_shared_key` body.
+    pub fn as_pre_shared_key_with_context(
+        &self,
+        context: TlsPreSharedKeyContext,
+    ) -> Result<TlsPreSharedKey> {
+        TlsPreSharedKey::from_raw_extension_with_context(context, self)
     }
 
     /// Create a raw ClientHello `key_share` extension.
@@ -2700,6 +2751,1343 @@ fn validate_psk_key_exchange_modes_len(len: usize) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct TlsPskIdentityContext {
+    identity_length: &'static str,
+    identity: &'static str,
+    obfuscated_ticket_age: &'static str,
+}
+
+impl TlsPskIdentityContext {
+    const fn generic() -> Self {
+        Self {
+            identity_length: "tls.pre_shared_key.identity.bytes.length",
+            identity: "tls.pre_shared_key.identity.bytes",
+            obfuscated_ticket_age: "tls.pre_shared_key.identity.obfuscated_ticket_age",
+        }
+    }
+
+    const fn client_hello() -> Self {
+        Self {
+            identity_length: "tls.pre_shared_key.client.identity.bytes.length",
+            identity: "tls.pre_shared_key.client.identity.bytes",
+            obfuscated_ticket_age: "tls.pre_shared_key.client.identity.obfuscated_ticket_age",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct TlsPskIdentitiesContext {
+    list_length: &'static str,
+    list: &'static str,
+    identity: TlsPskIdentityContext,
+}
+
+impl TlsPskIdentitiesContext {
+    const fn generic() -> Self {
+        Self {
+            list_length: "tls.pre_shared_key.identities.length",
+            list: "tls.pre_shared_key.identities",
+            identity: TlsPskIdentityContext::generic(),
+        }
+    }
+
+    const fn client_hello() -> Self {
+        Self {
+            list_length: "tls.pre_shared_key.client.identities.length",
+            list: "tls.pre_shared_key.client.identities",
+            identity: TlsPskIdentityContext::client_hello(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct TlsPskBinderContext {
+    binder_length: &'static str,
+    binder: &'static str,
+}
+
+impl TlsPskBinderContext {
+    const fn generic() -> Self {
+        Self {
+            binder_length: "tls.pre_shared_key.binder.length",
+            binder: "tls.pre_shared_key.binder",
+        }
+    }
+
+    const fn client_hello() -> Self {
+        Self {
+            binder_length: "tls.pre_shared_key.client.binder.length",
+            binder: "tls.pre_shared_key.client.binder",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct TlsPskBindersContext {
+    list_length: &'static str,
+    list: &'static str,
+    binder: TlsPskBinderContext,
+}
+
+impl TlsPskBindersContext {
+    const fn generic() -> Self {
+        Self {
+            list_length: "tls.pre_shared_key.binders.length",
+            list: "tls.pre_shared_key.binders",
+            binder: TlsPskBinderContext::generic(),
+        }
+    }
+
+    const fn client_hello() -> Self {
+        Self {
+            list_length: "tls.pre_shared_key.client.binders.length",
+            list: "tls.pre_shared_key.client.binders",
+            binder: TlsPskBinderContext::client_hello(),
+        }
+    }
+}
+
+/// Context that selects the TLS 1.3 `pre_shared_key` extension body shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TlsPreSharedKeyContext {
+    /// ClientHello carries identities and binders vectors.
+    ClientHello,
+    /// ServerHello carries a selected identity index.
+    ServerHello,
+}
+
+impl TlsPreSharedKeyContext {
+    /// ClientHello context constructor.
+    pub const fn client_hello() -> Self {
+        Self::ClientHello
+    }
+
+    /// ServerHello context constructor.
+    pub const fn server_hello() -> Self {
+        Self::ServerHello
+    }
+
+    const fn is_client(self) -> bool {
+        matches!(self, Self::ClientHello)
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::ClientHello => "client",
+            Self::ServerHello => "server",
+        }
+    }
+
+    const fn length_field(self) -> &'static str {
+        match self {
+            Self::ClientHello => "tls.pre_shared_key.client.length",
+            Self::ServerHello => "tls.pre_shared_key.server.length",
+        }
+    }
+
+    const fn selected_identity_field(self) -> &'static str {
+        match self {
+            Self::ClientHello => "tls.pre_shared_key.client.selected_identity",
+            Self::ServerHello => "tls.pre_shared_key.server.selected_identity",
+        }
+    }
+
+    const fn identities_context(self) -> TlsPskIdentitiesContext {
+        match self {
+            Self::ClientHello => TlsPskIdentitiesContext::client_hello(),
+            Self::ServerHello => TlsPskIdentitiesContext::generic(),
+        }
+    }
+
+    const fn binders_context(self) -> TlsPskBindersContext {
+        match self {
+            Self::ClientHello => TlsPskBindersContext::client_hello(),
+            Self::ServerHello => TlsPskBindersContext::generic(),
+        }
+    }
+}
+
+impl Default for TlsPreSharedKeyContext {
+    fn default() -> Self {
+        Self::ClientHello
+    }
+}
+
+/// One TLS 1.3 PskIdentity with opaque identity bytes preserved.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TlsPskIdentity {
+    identity: Vec<u8>,
+    obfuscated_ticket_age: u32,
+}
+
+impl TlsPskIdentity {
+    /// Create a PskIdentity from opaque identity bytes and obfuscated_ticket_age.
+    pub fn new(identity: impl Into<Vec<u8>>, obfuscated_ticket_age: u32) -> Self {
+        Self {
+            identity: identity.into(),
+            obfuscated_ticket_age,
+        }
+    }
+
+    /// Borrow the preserved opaque identity bytes.
+    pub fn identity(&self) -> &[u8] {
+        &self.identity
+    }
+
+    /// Return the preserved obfuscated_ticket_age value.
+    pub const fn obfuscated_ticket_age(&self) -> u32 {
+        self.obfuscated_ticket_age
+    }
+
+    /// Consume the identity and return the opaque identity bytes.
+    pub fn into_identity(self) -> Vec<u8> {
+        self.identity
+    }
+
+    /// Number of bytes occupied by the complete encoded PskIdentity.
+    pub fn encoded_len(&self) -> Result<usize> {
+        self.encoded_len_with_context(TlsPskIdentityContext::generic())
+    }
+
+    fn encoded_len_with_context(&self, context: TlsPskIdentityContext) -> Result<usize> {
+        validate_psk_identity_len(context.identity_length, self.identity.len())?;
+        TLS_PSK_IDENTITY_HEADER_LEN
+            .checked_add(self.identity.len())
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(context.identity_length, "length overflow")
+            })
+    }
+
+    /// Append this PskIdentity to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.encode_with_context(TlsPskIdentityContext::generic(), out)
+    }
+
+    fn encode_with_context(&self, context: TlsPskIdentityContext, out: &mut Vec<u8>) -> Result<()> {
+        validate_psk_identity_len(context.identity_length, self.identity.len())?;
+        let identity_len = u16::try_from(self.identity.len()).map_err(|_| {
+            CrafterError::invalid_field_value(
+                context.identity_length,
+                "length must fit in two bytes",
+            )
+        })?;
+        out.extend_from_slice(&identity_len.to_be_bytes());
+        out.extend_from_slice(&self.identity);
+        out.extend_from_slice(&self.obfuscated_ticket_age.to_be_bytes());
+        Ok(())
+    }
+
+    /// Return this PskIdentity encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Decode one PskIdentity from `bytes`.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (identity, _) = Self::decode_prefix(bytes.as_ref())?;
+        Ok(identity)
+    }
+
+    /// Decode one PskIdentity from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        Self::decode_prefix_with_context(TlsPskIdentityContext::generic(), bytes)
+    }
+
+    fn decode_prefix_with_context(
+        context: TlsPskIdentityContext,
+        bytes: &[u8],
+    ) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_PSK_IDENTITY_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                context.identity_length,
+                TLS_PSK_IDENTITY_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let identity_len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+        validate_psk_identity_len(context.identity_length, identity_len)?;
+        let identity_end = TLS_PSK_IDENTITY_LENGTH_LEN
+            .checked_add(identity_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(context.identity_length, "length overflow")
+            })?;
+        if bytes.len() < identity_end {
+            return Err(CrafterError::buffer_too_short(
+                context.identity,
+                identity_end,
+                bytes.len(),
+            ));
+        }
+
+        let required = identity_end
+            .checked_add(TLS_PSK_IDENTITY_OBFUSCATED_TICKET_AGE_LEN)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(context.identity_length, "length overflow")
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                context.obfuscated_ticket_age,
+                required,
+                bytes.len(),
+            ));
+        }
+
+        let obfuscated_ticket_age = u32::from_be_bytes([
+            bytes[identity_end],
+            bytes[identity_end + 1],
+            bytes[identity_end + 2],
+            bytes[identity_end + 3],
+        ]);
+        Ok((
+            Self::new(
+                bytes[TLS_PSK_IDENTITY_LENGTH_LEN..identity_end].to_vec(),
+                obfuscated_ticket_age,
+            ),
+            &bytes[required..],
+        ))
+    }
+
+    /// Stable one-line summary preserving identity size and obfuscated_ticket_age.
+    pub fn summary(&self) -> String {
+        format!(
+            "psk_identity identity_bytes={} obfuscated_ticket_age={}",
+            self.identity.len(),
+            self.obfuscated_ticket_age
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("psk_identity_bytes", self.identity.len().to_string()),
+            ("psk_identity", hex_bytes(&self.identity)),
+            (
+                "psk_obfuscated_ticket_age",
+                self.obfuscated_ticket_age.to_string(),
+            ),
+        ]
+    }
+}
+
+impl<I> From<(I, u32)> for TlsPskIdentity
+where
+    I: Into<Vec<u8>>,
+{
+    fn from(value: (I, u32)) -> Self {
+        Self::new(value.0, value.1)
+    }
+}
+
+/// TLS 1.3 PskIdentity vector with opaque identity bytes preserved.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct TlsPskIdentities {
+    identities: Vec<TlsPskIdentity>,
+}
+
+impl TlsPskIdentities {
+    /// Create an ordered PSK identities vector.
+    pub fn new(identities: impl Into<Vec<TlsPskIdentity>>) -> Self {
+        Self {
+            identities: identities.into(),
+        }
+    }
+
+    /// Create an ordered PSK identities vector.
+    pub fn from_identities(identities: impl Into<Vec<TlsPskIdentity>>) -> Self {
+        Self::new(identities)
+    }
+
+    /// Borrow the ordered PSK identities.
+    pub fn identities(&self) -> &[TlsPskIdentity] {
+        &self.identities
+    }
+
+    /// Consume the vector and return the ordered PSK identities.
+    pub fn into_vec(self) -> Vec<TlsPskIdentity> {
+        self.identities
+    }
+
+    /// Append one PSK identity.
+    pub fn push(&mut self, identity: TlsPskIdentity) {
+        self.identities.push(identity);
+    }
+
+    /// Number of PSK identities.
+    pub fn len(&self) -> usize {
+        self.identities.len()
+    }
+
+    /// Return true when no identities are present.
+    pub fn is_empty(&self) -> bool {
+        self.identities.is_empty()
+    }
+
+    /// Return identity byte lengths in wire order.
+    pub fn identity_lengths(&self) -> Vec<usize> {
+        self.identities
+            .iter()
+            .map(|identity| identity.identity().len())
+            .collect()
+    }
+
+    /// Return obfuscated_ticket_age values in wire order.
+    pub fn obfuscated_ticket_ages(&self) -> Vec<u32> {
+        self.identities
+            .iter()
+            .map(TlsPskIdentity::obfuscated_ticket_age)
+            .collect()
+    }
+
+    /// Number of bytes occupied by PskIdentity entries, excluding the vector length prefix.
+    pub fn byte_len(&self) -> Result<usize> {
+        self.byte_len_with_context(TlsPskIdentitiesContext::generic())
+    }
+
+    fn byte_len_with_context(&self, context: TlsPskIdentitiesContext) -> Result<usize> {
+        let mut len = 0usize;
+        for identity in &self.identities {
+            len = len
+                .checked_add(identity.encoded_len_with_context(context.identity)?)
+                .ok_or_else(|| {
+                    CrafterError::invalid_field_value(context.list_length, "length overflow")
+                })?;
+        }
+        validate_psk_identities_list_len(context.list_length, len)?;
+        Ok(len)
+    }
+
+    /// Number of bytes occupied by the complete encoded PSK identities vector.
+    pub fn encoded_len(&self) -> Result<usize> {
+        self.encoded_len_with_context(TlsPskIdentitiesContext::generic())
+    }
+
+    fn encoded_len_with_context(&self, context: TlsPskIdentitiesContext) -> Result<usize> {
+        TLS_PSK_IDENTITIES_LENGTH_LEN
+            .checked_add(self.byte_len_with_context(context)?)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(context.list_length, "length overflow")
+            })
+    }
+
+    /// Append the uint16 length-prefixed PSK identities vector.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.encode_with_context(TlsPskIdentitiesContext::generic(), out)
+    }
+
+    fn encode_with_context(
+        &self,
+        context: TlsPskIdentitiesContext,
+        out: &mut Vec<u8>,
+    ) -> Result<()> {
+        let byte_len = self.byte_len_with_context(context)?;
+        let byte_len = u16::try_from(byte_len).map_err(|_| {
+            CrafterError::invalid_field_value(context.list_length, "length must fit in two bytes")
+        })?;
+        out.extend_from_slice(&byte_len.to_be_bytes());
+        for identity in &self.identities {
+            identity.encode_with_context(context.identity, out)?;
+        }
+        Ok(())
+    }
+
+    /// Return this PSK identities vector encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Decode a PSK identities vector.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (identities, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.pre_shared_key.identities.length",
+                "length must match vector body",
+            ));
+        }
+        Ok(identities)
+    }
+
+    /// Decode a PSK identities vector from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        Self::decode_prefix_with_context(TlsPskIdentitiesContext::generic(), bytes)
+    }
+
+    fn decode_prefix_with_context(
+        context: TlsPskIdentitiesContext,
+        bytes: &[u8],
+    ) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_PSK_IDENTITIES_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                context.list_length,
+                TLS_PSK_IDENTITIES_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let byte_len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+        validate_psk_identities_list_len(context.list_length, byte_len)?;
+        let required = TLS_PSK_IDENTITIES_LENGTH_LEN
+            .checked_add(byte_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(context.list_length, "length overflow")
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                context.list,
+                required,
+                bytes.len(),
+            ));
+        }
+
+        let mut identities = Vec::new();
+        let mut cursor = TLS_PSK_IDENTITIES_LENGTH_LEN;
+        let body_end = required;
+        while cursor < body_end {
+            let (identity, tail) = TlsPskIdentity::decode_prefix_with_context(
+                context.identity,
+                &bytes[cursor..body_end],
+            )?;
+            cursor = body_end - tail.len();
+            identities.push(identity);
+        }
+
+        Ok((Self::new(identities), &bytes[required..]))
+    }
+
+    /// Stable one-line summary preserving identity order and sizes.
+    pub fn summary(&self) -> String {
+        format!(
+            "psk_identities count={} bytes={} identities={}",
+            self.len(),
+            self.byte_len().unwrap_or(0),
+            format_psk_identity_entries(&self.identities)
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("psk_identities_count", self.len().to_string()),
+            (
+                "psk_identities_bytes",
+                self.byte_len().unwrap_or(0).to_string(),
+            ),
+            (
+                "psk_identity_bytes",
+                self.identity_lengths()
+                    .iter()
+                    .map(|len| len.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            (
+                "psk_obfuscated_ticket_ages",
+                self.obfuscated_ticket_ages()
+                    .iter()
+                    .map(|age| age.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            (
+                "psk_identities",
+                self.identities
+                    .iter()
+                    .map(|identity| hex_bytes(identity.identity()))
+                    .collect::<Vec<_>>()
+                    .join("|"),
+            ),
+        ]
+    }
+}
+
+impl From<Vec<TlsPskIdentity>> for TlsPskIdentities {
+    fn from(identities: Vec<TlsPskIdentity>) -> Self {
+        Self::new(identities)
+    }
+}
+
+impl<const N: usize> From<[TlsPskIdentity; N]> for TlsPskIdentities {
+    fn from(identities: [TlsPskIdentity; N]) -> Self {
+        Self::new(Vec::from(identities))
+    }
+}
+
+/// One opaque TLS 1.3 PskBinderEntry.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TlsPskBinderEntry {
+    bytes: Vec<u8>,
+}
+
+impl TlsPskBinderEntry {
+    /// Create a PskBinderEntry from caller-supplied opaque binder bytes.
+    pub fn new(bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            bytes: bytes.into(),
+        }
+    }
+
+    /// Borrow the preserved opaque binder bytes.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Consume the binder and return its opaque bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    /// Number of bytes occupied by the complete encoded PskBinderEntry.
+    pub fn encoded_len(&self) -> Result<usize> {
+        self.encoded_len_with_context(TlsPskBinderContext::generic())
+    }
+
+    fn encoded_len_with_context(&self, context: TlsPskBinderContext) -> Result<usize> {
+        validate_psk_binder_len(context.binder_length, self.bytes.len())?;
+        TLS_PSK_BINDER_LENGTH_LEN
+            .checked_add(self.bytes.len())
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(context.binder_length, "length overflow")
+            })
+    }
+
+    /// Append this PskBinderEntry to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.encode_with_context(TlsPskBinderContext::generic(), out)
+    }
+
+    fn encode_with_context(&self, context: TlsPskBinderContext, out: &mut Vec<u8>) -> Result<()> {
+        validate_psk_binder_len(context.binder_length, self.bytes.len())?;
+        let len = u8::try_from(self.bytes.len()).map_err(|_| {
+            CrafterError::invalid_field_value(context.binder_length, "length must fit in one byte")
+        })?;
+        out.push(len);
+        out.extend_from_slice(&self.bytes);
+        Ok(())
+    }
+
+    /// Return this PskBinderEntry encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Decode one PskBinderEntry from `bytes`.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (binder, _) = Self::decode_prefix(bytes.as_ref())?;
+        Ok(binder)
+    }
+
+    /// Decode one PskBinderEntry from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        Self::decode_prefix_with_context(TlsPskBinderContext::generic(), bytes)
+    }
+
+    fn decode_prefix_with_context(
+        context: TlsPskBinderContext,
+        bytes: &[u8],
+    ) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_PSK_BINDER_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                context.binder_length,
+                TLS_PSK_BINDER_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let len = bytes[0] as usize;
+        validate_psk_binder_len(context.binder_length, len)?;
+        let required = TLS_PSK_BINDER_LENGTH_LEN.checked_add(len).ok_or_else(|| {
+            CrafterError::invalid_field_value(context.binder_length, "length overflow")
+        })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                context.binder,
+                required,
+                bytes.len(),
+            ));
+        }
+
+        Ok((
+            Self::new(bytes[TLS_PSK_BINDER_LENGTH_LEN..required].to_vec()),
+            &bytes[required..],
+        ))
+    }
+
+    /// Stable one-line summary preserving binder size.
+    pub fn summary(&self) -> String {
+        format!("psk_binder bytes={}", self.bytes.len())
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("psk_binder_bytes", self.bytes.len().to_string()),
+            ("psk_binder", hex_bytes(&self.bytes)),
+        ]
+    }
+}
+
+impl From<Vec<u8>> for TlsPskBinderEntry {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::new(bytes)
+    }
+}
+
+impl From<&[u8]> for TlsPskBinderEntry {
+    fn from(bytes: &[u8]) -> Self {
+        Self::new(bytes)
+    }
+}
+
+impl<const N: usize> From<[u8; N]> for TlsPskBinderEntry {
+    fn from(bytes: [u8; N]) -> Self {
+        Self::new(bytes)
+    }
+}
+
+/// TLS 1.3 PskBinderEntry vector with opaque binder bytes preserved.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct TlsPskBinders {
+    binders: Vec<TlsPskBinderEntry>,
+}
+
+impl TlsPskBinders {
+    /// Create an ordered PSK binders vector.
+    pub fn new(binders: impl Into<Vec<TlsPskBinderEntry>>) -> Self {
+        Self {
+            binders: binders.into(),
+        }
+    }
+
+    /// Create an ordered PSK binders vector.
+    pub fn from_binders(binders: impl Into<Vec<TlsPskBinderEntry>>) -> Self {
+        Self::new(binders)
+    }
+
+    /// Borrow the ordered PSK binders.
+    pub fn binders(&self) -> &[TlsPskBinderEntry] {
+        &self.binders
+    }
+
+    /// Consume the vector and return the ordered PSK binders.
+    pub fn into_vec(self) -> Vec<TlsPskBinderEntry> {
+        self.binders
+    }
+
+    /// Append one PSK binder.
+    pub fn push(&mut self, binder: TlsPskBinderEntry) {
+        self.binders.push(binder);
+    }
+
+    /// Number of PSK binders.
+    pub fn len(&self) -> usize {
+        self.binders.len()
+    }
+
+    /// Return true when no binders are present.
+    pub fn is_empty(&self) -> bool {
+        self.binders.is_empty()
+    }
+
+    /// Return binder byte lengths in wire order.
+    pub fn binder_lengths(&self) -> Vec<usize> {
+        self.binders
+            .iter()
+            .map(|binder| binder.bytes().len())
+            .collect()
+    }
+
+    /// Number of bytes occupied by PskBinderEntry entries, excluding the vector length prefix.
+    pub fn byte_len(&self) -> Result<usize> {
+        self.byte_len_with_context(TlsPskBindersContext::generic())
+    }
+
+    fn byte_len_with_context(&self, context: TlsPskBindersContext) -> Result<usize> {
+        let mut len = 0usize;
+        for binder in &self.binders {
+            len = len
+                .checked_add(binder.encoded_len_with_context(context.binder)?)
+                .ok_or_else(|| {
+                    CrafterError::invalid_field_value(context.list_length, "length overflow")
+                })?;
+        }
+        validate_psk_binders_list_len(context.list_length, len)?;
+        Ok(len)
+    }
+
+    /// Number of bytes occupied by the complete encoded PSK binders vector.
+    pub fn encoded_len(&self) -> Result<usize> {
+        self.encoded_len_with_context(TlsPskBindersContext::generic())
+    }
+
+    fn encoded_len_with_context(&self, context: TlsPskBindersContext) -> Result<usize> {
+        TLS_PSK_BINDERS_LENGTH_LEN
+            .checked_add(self.byte_len_with_context(context)?)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(context.list_length, "length overflow")
+            })
+    }
+
+    /// Append the uint16 length-prefixed PSK binders vector.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.encode_with_context(TlsPskBindersContext::generic(), out)
+    }
+
+    fn encode_with_context(&self, context: TlsPskBindersContext, out: &mut Vec<u8>) -> Result<()> {
+        let byte_len = self.byte_len_with_context(context)?;
+        let byte_len = u16::try_from(byte_len).map_err(|_| {
+            CrafterError::invalid_field_value(context.list_length, "length must fit in two bytes")
+        })?;
+        out.extend_from_slice(&byte_len.to_be_bytes());
+        for binder in &self.binders {
+            binder.encode_with_context(context.binder, out)?;
+        }
+        Ok(())
+    }
+
+    /// Return this PSK binders vector encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Decode a PSK binders vector.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (binders, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.pre_shared_key.binders.length",
+                "length must match vector body",
+            ));
+        }
+        Ok(binders)
+    }
+
+    /// Decode a PSK binders vector from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        Self::decode_prefix_with_context(TlsPskBindersContext::generic(), bytes)
+    }
+
+    fn decode_prefix_with_context(
+        context: TlsPskBindersContext,
+        bytes: &[u8],
+    ) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_PSK_BINDERS_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                context.list_length,
+                TLS_PSK_BINDERS_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let byte_len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+        validate_psk_binders_list_len(context.list_length, byte_len)?;
+        let required = TLS_PSK_BINDERS_LENGTH_LEN
+            .checked_add(byte_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(context.list_length, "length overflow")
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                context.list,
+                required,
+                bytes.len(),
+            ));
+        }
+
+        let mut binders = Vec::new();
+        let mut cursor = TLS_PSK_BINDERS_LENGTH_LEN;
+        let body_end = required;
+        while cursor < body_end {
+            let (binder, tail) = TlsPskBinderEntry::decode_prefix_with_context(
+                context.binder,
+                &bytes[cursor..body_end],
+            )?;
+            cursor = body_end - tail.len();
+            binders.push(binder);
+        }
+
+        Ok((Self::new(binders), &bytes[required..]))
+    }
+
+    /// Stable one-line summary preserving binder order and sizes.
+    pub fn summary(&self) -> String {
+        format!(
+            "psk_binders count={} bytes={} binders={}",
+            self.len(),
+            self.byte_len().unwrap_or(0),
+            format_psk_binder_entries(&self.binders)
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("psk_binders_count", self.len().to_string()),
+            (
+                "psk_binders_bytes",
+                self.byte_len().unwrap_or(0).to_string(),
+            ),
+            (
+                "psk_binder_bytes",
+                self.binder_lengths()
+                    .iter()
+                    .map(|len| len.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            (
+                "psk_binders",
+                self.binders
+                    .iter()
+                    .map(|binder| hex_bytes(binder.bytes()))
+                    .collect::<Vec<_>>()
+                    .join("|"),
+            ),
+        ]
+    }
+}
+
+impl From<Vec<TlsPskBinderEntry>> for TlsPskBinders {
+    fn from(binders: Vec<TlsPskBinderEntry>) -> Self {
+        Self::new(binders)
+    }
+}
+
+impl<const N: usize> From<[TlsPskBinderEntry; N]> for TlsPskBinders {
+    fn from(binders: [TlsPskBinderEntry; N]) -> Self {
+        Self::new(Vec::from(binders))
+    }
+}
+
+/// TLS 1.3 `pre_shared_key` extension body.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TlsPreSharedKey {
+    /// ClientHello OfferedPsks form.
+    Client {
+        identities: TlsPskIdentities,
+        binders: TlsPskBinders,
+    },
+    /// ServerHello selected identity index.
+    Server { selected_identity: u16 },
+}
+
+impl TlsPreSharedKey {
+    /// Create a ClientHello pre_shared_key body.
+    pub fn client(
+        identities: impl Into<TlsPskIdentities>,
+        binders: impl Into<TlsPskBinders>,
+    ) -> Self {
+        Self::Client {
+            identities: identities.into(),
+            binders: binders.into(),
+        }
+    }
+
+    /// Create a ServerHello pre_shared_key body.
+    pub const fn server(selected_identity: u16) -> Self {
+        Self::Server { selected_identity }
+    }
+
+    /// Return true when this is the ClientHello OfferedPsks form.
+    pub const fn is_client(&self) -> bool {
+        matches!(self, Self::Client { .. })
+    }
+
+    /// Return true when this is the ServerHello selected_identity form.
+    pub const fn is_server(&self) -> bool {
+        matches!(self, Self::Server { .. })
+    }
+
+    /// Borrow ClientHello PSK identities, if this is the client form.
+    pub const fn identities(&self) -> Option<&TlsPskIdentities> {
+        match self {
+            Self::Client { identities, .. } => Some(identities),
+            Self::Server { .. } => None,
+        }
+    }
+
+    /// Borrow ClientHello PSK binders, if this is the client form.
+    pub const fn binders(&self) -> Option<&TlsPskBinders> {
+        match self {
+            Self::Client { binders, .. } => Some(binders),
+            Self::Server { .. } => None,
+        }
+    }
+
+    /// Return ServerHello selected_identity, if this is the server form.
+    pub const fn selected_identity(&self) -> Option<u16> {
+        match self {
+            Self::Client { .. } => None,
+            Self::Server { selected_identity } => Some(*selected_identity),
+        }
+    }
+
+    /// Return true when the ClientHello binder count matches the identity count.
+    pub fn binder_count_matches_identities(&self) -> Option<bool> {
+        match self {
+            Self::Client {
+                identities,
+                binders,
+            } => Some(identities.len() == binders.len()),
+            Self::Server { .. } => None,
+        }
+    }
+
+    /// Validate the RFC 8446 one-binder-per-identity relationship on demand.
+    pub fn validate_binder_count_matches_identities(&self) -> Result<()> {
+        match self {
+            Self::Client {
+                identities,
+                binders,
+            } if identities.len() != binders.len() => Err(CrafterError::invalid_field_value(
+                "tls.pre_shared_key.client.binders.count",
+                "binder count must match identity count",
+            )),
+            Self::Client { .. } | Self::Server { .. } => Ok(()),
+        }
+    }
+
+    /// Number of bytes occupied by this extension body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        match self {
+            Self::Client {
+                identities,
+                binders,
+            } => identities
+                .encoded_len_with_context(TlsPreSharedKeyContext::ClientHello.identities_context())?
+                .checked_add(binders.encoded_len_with_context(
+                    TlsPreSharedKeyContext::ClientHello.binders_context(),
+                )?)
+                .ok_or_else(|| {
+                    CrafterError::invalid_field_value(
+                        TlsPreSharedKeyContext::ClientHello.length_field(),
+                        "length overflow",
+                    )
+                }),
+            Self::Server { .. } => Ok(TLS_PRE_SHARED_KEY_SELECTED_IDENTITY_LEN),
+        }
+    }
+
+    /// Append this pre_shared_key body to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        match self {
+            Self::Client {
+                identities,
+                binders,
+            } => {
+                identities.encode_with_context(
+                    TlsPreSharedKeyContext::ClientHello.identities_context(),
+                    out,
+                )?;
+                binders.encode_with_context(
+                    TlsPreSharedKeyContext::ClientHello.binders_context(),
+                    out,
+                )?;
+            }
+            Self::Server { selected_identity } => {
+                out.extend_from_slice(&selected_identity.to_be_bytes());
+            }
+        }
+        Ok(())
+    }
+
+    /// Return this pre_shared_key body encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Convert this pre_shared_key body into a raw extension.
+    pub fn to_raw_extension(&self) -> Result<TlsRawExtension> {
+        Ok(TlsRawExtension::new(
+            TlsExtensionType::PRE_SHARED_KEY,
+            self.encode_to_vec()?,
+        ))
+    }
+
+    /// Decode a context-selected pre_shared_key body.
+    pub fn decode_with_context(
+        context: TlsPreSharedKeyContext,
+        bytes: impl AsRef<[u8]>,
+    ) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        if context.is_client() {
+            Self::decode_client(bytes)
+        } else {
+            Self::decode_server(bytes)
+        }
+    }
+
+    /// Decode a ClientHello pre_shared_key body.
+    pub fn decode_client(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let context = TlsPreSharedKeyContext::ClientHello;
+        let (identities, tail) =
+            TlsPskIdentities::decode_prefix_with_context(context.identities_context(), bytes)?;
+        let (binders, tail) =
+            TlsPskBinders::decode_prefix_with_context(context.binders_context(), tail)?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                context.length_field(),
+                "length must match extension body",
+            ));
+        }
+        Ok(Self::client(identities, binders))
+    }
+
+    /// Decode a ServerHello pre_shared_key body.
+    pub fn decode_server(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let context = TlsPreSharedKeyContext::ServerHello;
+        if bytes.len() < TLS_PRE_SHARED_KEY_SELECTED_IDENTITY_LEN {
+            return Err(CrafterError::buffer_too_short(
+                context.selected_identity_field(),
+                TLS_PRE_SHARED_KEY_SELECTED_IDENTITY_LEN,
+                bytes.len(),
+            ));
+        }
+        if bytes.len() != TLS_PRE_SHARED_KEY_SELECTED_IDENTITY_LEN {
+            return Err(CrafterError::invalid_field_value(
+                context.length_field(),
+                "length must be exactly two bytes",
+            ));
+        }
+        Ok(Self::server(u16::from_be_bytes([bytes[0], bytes[1]])))
+    }
+
+    /// Decode a raw pre_shared_key extension body using a context.
+    pub fn from_raw_extension_with_context(
+        context: TlsPreSharedKeyContext,
+        extension: &TlsRawExtension,
+    ) -> Result<Self> {
+        if extension.extension_type() != TlsExtensionType::PRE_SHARED_KEY {
+            return Err(CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be pre_shared_key",
+            ));
+        }
+        Self::decode_with_context(context, extension.body())
+    }
+
+    /// Decode a raw ClientHello pre_shared_key extension body.
+    pub fn from_client_hello_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension_with_context(TlsPreSharedKeyContext::ClientHello, extension)
+    }
+
+    /// Decode a raw ServerHello pre_shared_key extension body.
+    pub fn from_server_hello_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension_with_context(TlsPreSharedKeyContext::ServerHello, extension)
+    }
+
+    /// Stable one-line summary preserving body shape and opaque byte sizes.
+    pub fn summary(&self) -> String {
+        match self {
+            Self::Client {
+                identities,
+                binders,
+            } => format!(
+                "pre_shared_key context=client identities={} identities_bytes={} binders={} binders_bytes={}",
+                identities.len(),
+                identities.byte_len().unwrap_or(0),
+                binders.len(),
+                binders.byte_len().unwrap_or(0)
+            ),
+            Self::Server { selected_identity } => format!(
+                "pre_shared_key context=server selected_identity={}",
+                selected_identity
+            ),
+        }
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            Self::Client {
+                identities,
+                binders,
+            } => vec![
+                (
+                    "pre_shared_key_context",
+                    TlsPreSharedKeyContext::ClientHello.label().to_string(),
+                ),
+                ("psk_identities_count", identities.len().to_string()),
+                (
+                    "psk_identities_bytes",
+                    identities.byte_len().unwrap_or(0).to_string(),
+                ),
+                (
+                    "psk_identity_bytes",
+                    identities
+                        .identity_lengths()
+                        .iter()
+                        .map(|len| len.to_string())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ),
+                (
+                    "psk_obfuscated_ticket_ages",
+                    identities
+                        .obfuscated_ticket_ages()
+                        .iter()
+                        .map(|age| age.to_string())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ),
+                (
+                    "psk_identities",
+                    identities
+                        .identities()
+                        .iter()
+                        .map(|identity| hex_bytes(identity.identity()))
+                        .collect::<Vec<_>>()
+                        .join("|"),
+                ),
+                ("psk_binders_count", binders.len().to_string()),
+                (
+                    "psk_binders_bytes",
+                    binders.byte_len().unwrap_or(0).to_string(),
+                ),
+                (
+                    "psk_binder_bytes",
+                    binders
+                        .binder_lengths()
+                        .iter()
+                        .map(|len| len.to_string())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ),
+                (
+                    "psk_binders",
+                    binders
+                        .binders()
+                        .iter()
+                        .map(|binder| hex_bytes(binder.bytes()))
+                        .collect::<Vec<_>>()
+                        .join("|"),
+                ),
+            ],
+            Self::Server { selected_identity } => vec![
+                (
+                    "pre_shared_key_context",
+                    TlsPreSharedKeyContext::ServerHello.label().to_string(),
+                ),
+                (
+                    "pre_shared_key_selected_identity",
+                    selected_identity.to_string(),
+                ),
+                (
+                    "pre_shared_key_selected_identity_raw",
+                    format!("0x{:04x}", selected_identity),
+                ),
+            ],
+        }
+    }
+}
+
+impl TryFrom<TlsPreSharedKey> for TlsRawExtension {
+    type Error = CrafterError;
+
+    fn try_from(value: TlsPreSharedKey) -> Result<Self> {
+        value.to_raw_extension()
+    }
+}
+
+fn validate_psk_identity_len(field: &'static str, len: usize) -> Result<()> {
+    if len == 0 {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "length must be at least one byte",
+        ));
+    }
+    if len > u16::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_psk_identities_list_len(field: &'static str, len: usize) -> Result<()> {
+    if len < TLS_PSK_IDENTITY_HEADER_LEN + 1 {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "length must be at least seven bytes",
+        ));
+    }
+    if len > u16::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_psk_binder_len(field: &'static str, len: usize) -> Result<()> {
+    if len < 32 {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "length must be at least 32 bytes",
+        ));
+    }
+    if len > u8::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "length must fit in one byte",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_psk_binders_list_len(field: &'static str, len: usize) -> Result<()> {
+    if len < TLS_PSK_BINDER_LENGTH_LEN + 32 {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "length must be at least 33 bytes",
+        ));
+    }
+    if len > u16::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
+}
+
+fn format_psk_identity_entries(identities: &[TlsPskIdentity]) -> String {
+    identities
+        .iter()
+        .map(|identity| {
+            format!(
+                "{} bytes age={}",
+                identity.identity().len(),
+                identity.obfuscated_ticket_age()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn format_psk_binder_entries(binders: &[TlsPskBinderEntry]) -> String {
+    binders
+        .iter()
+        .map(|binder| format!("{} bytes", binder.bytes().len()))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -6186,6 +7574,462 @@ mod tests {
             CrafterError::invalid_field_value(
                 "tls.psk_key_exchange_modes.length",
                 "length must fit in one byte"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_pre_shared_key_builders_encode_client_and_server_forms() {
+        // RFC 8446 Section 4.2.11 defines PskIdentity, PskBinderEntry, and
+        // the context-selected PreSharedKeyExtension body.
+        assert_eq!(
+            TlsExtensionType::pre_shared_key().raw(),
+            constants::TLS_EXTENSION_PRE_SHARED_KEY
+        );
+
+        let identity = TlsPskIdentity::new([0xde, 0xad, 0xbe, 0xef], 0x0102_0304);
+        assert_eq!(identity.identity(), &[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(identity.obfuscated_ticket_age(), 0x0102_0304);
+        assert_eq!(identity.encoded_len().unwrap(), 10);
+        assert_eq!(
+            identity.encode_to_vec().unwrap(),
+            [0x00, 0x04, 0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04]
+        );
+        assert_eq!(
+            TlsPskIdentity::decode_prefix(&[
+                0x00, 0x04, 0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04, 0xaa,
+            ])
+            .unwrap(),
+            (identity.clone(), &[0xaa][..])
+        );
+        assert_eq!(
+            identity.summary(),
+            "psk_identity identity_bytes=4 obfuscated_ticket_age=16909060"
+        );
+        assert!(identity
+            .inspection_fields()
+            .contains(&("psk_identity", "de ad be ef".to_string())));
+
+        let binder = TlsPskBinderEntry::new([0x11; 32]);
+        assert_eq!(binder.bytes(), &[0x11; 32]);
+        assert_eq!(binder.encoded_len().unwrap(), 33);
+        let mut expected_binder = vec![0x20];
+        expected_binder.extend_from_slice(&[0x11; 32]);
+        assert_eq!(binder.encode_to_vec().unwrap(), expected_binder);
+        assert_eq!(
+            TlsPskBinderEntry::decode_prefix(&[expected_binder.clone(), vec![0xaa]].concat())
+                .unwrap(),
+            (binder.clone(), &[0xaa][..])
+        );
+        assert_eq!(binder.summary(), "psk_binder bytes=32");
+        assert!(binder
+            .inspection_fields()
+            .contains(&("psk_binder_bytes", "32".to_string())));
+
+        let identities = TlsPskIdentities::new(vec![identity.clone()]);
+        assert_eq!(identities.len(), 1);
+        assert!(!identities.is_empty());
+        assert_eq!(identities.identities(), &[identity.clone()]);
+        assert_eq!(identities.identity_lengths(), vec![4]);
+        assert_eq!(identities.obfuscated_ticket_ages(), vec![0x0102_0304]);
+        assert_eq!(identities.byte_len().unwrap(), 10);
+        assert_eq!(identities.encoded_len().unwrap(), 12);
+        assert_eq!(
+            identities.encode_to_vec().unwrap(),
+            [0x00, 0x0a, 0x00, 0x04, 0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04]
+        );
+        assert_eq!(
+            identities.summary(),
+            "psk_identities count=1 bytes=10 identities=4 bytes age=16909060"
+        );
+
+        let binders = TlsPskBinders::new(vec![binder.clone()]);
+        assert_eq!(binders.len(), 1);
+        assert!(!binders.is_empty());
+        assert_eq!(binders.binders(), &[binder.clone()]);
+        assert_eq!(binders.binder_lengths(), vec![32]);
+        assert_eq!(binders.byte_len().unwrap(), 33);
+        assert_eq!(binders.encoded_len().unwrap(), 35);
+        let mut expected_binders = vec![0x00, 0x21, 0x20];
+        expected_binders.extend_from_slice(&[0x11; 32]);
+        assert_eq!(binders.encode_to_vec().unwrap(), expected_binders);
+        assert_eq!(
+            binders.summary(),
+            "psk_binders count=1 bytes=33 binders=32 bytes"
+        );
+
+        let client = TlsPreSharedKey::client(identities.clone(), binders.clone());
+        assert!(client.is_client());
+        assert!(!client.is_server());
+        assert_eq!(client.identities(), Some(&identities));
+        assert_eq!(client.binders(), Some(&binders));
+        assert_eq!(client.selected_identity(), None);
+        assert_eq!(client.binder_count_matches_identities(), Some(true));
+        client.validate_binder_count_matches_identities().unwrap();
+        assert_eq!(client.encoded_len().unwrap(), 47);
+
+        let mut expected_client = identities.encode_to_vec().unwrap();
+        expected_client.extend_from_slice(&binders.encode_to_vec().unwrap());
+        assert_eq!(client.encode_to_vec().unwrap(), expected_client);
+        assert_eq!(
+            TlsPreSharedKey::decode_client(expected_client).unwrap(),
+            client
+        );
+        assert_eq!(
+            TlsPreSharedKey::decode_with_context(
+                TlsPreSharedKeyContext::client_hello(),
+                client.encode_to_vec().unwrap(),
+            )
+            .unwrap(),
+            client
+        );
+        assert_eq!(
+            client.summary(),
+            "pre_shared_key context=client identities=1 identities_bytes=10 binders=1 binders_bytes=33"
+        );
+        assert!(client
+            .inspection_fields()
+            .contains(&("psk_identities", "de ad be ef".to_string())));
+        assert!(client
+            .inspection_fields()
+            .contains(&("psk_binder_bytes", "32".to_string())));
+
+        let server = TlsPreSharedKey::server(2);
+        assert!(!server.is_client());
+        assert!(server.is_server());
+        assert_eq!(server.identities(), None);
+        assert_eq!(server.binders(), None);
+        assert_eq!(server.selected_identity(), Some(2));
+        assert_eq!(server.binder_count_matches_identities(), None);
+        assert_eq!(server.encoded_len().unwrap(), 2);
+        assert_eq!(server.encode_to_vec().unwrap(), [0x00, 0x02]);
+        assert_eq!(
+            TlsPreSharedKey::decode_server([0x00, 0x02]).unwrap(),
+            server
+        );
+        assert_eq!(
+            TlsPreSharedKey::decode_with_context(
+                TlsPreSharedKeyContext::server_hello(),
+                [0x00, 0x02],
+            )
+            .unwrap(),
+            server
+        );
+        assert_eq!(
+            server.summary(),
+            "pre_shared_key context=server selected_identity=2"
+        );
+        assert!(server
+            .inspection_fields()
+            .contains(&("pre_shared_key_selected_identity_raw", "0x0002".to_string())));
+    }
+
+    #[test]
+    fn tls_extension_pre_shared_key_converts_to_and_from_raw_extension_with_context() {
+        let identity = TlsPskIdentity::new([0xaa], 0);
+        let binder = TlsPskBinderEntry::new([0xbb; 32]);
+        let client = TlsPreSharedKey::client([identity], [binder]);
+        let raw = client.to_raw_extension().unwrap();
+        assert_eq!(raw.extension_type(), TlsExtensionType::PRE_SHARED_KEY);
+        assert_eq!(raw.raw_type(), constants::TLS_EXTENSION_PRE_SHARED_KEY);
+
+        let mut expected_raw = vec![0x00, 0x29, 0x00, 0x2c];
+        expected_raw.extend_from_slice(&client.encode_to_vec().unwrap());
+        assert_eq!(raw.encode_to_vec().unwrap(), expected_raw);
+        assert_eq!(raw.as_pre_shared_key_client().unwrap(), client);
+        assert_eq!(
+            raw.as_pre_shared_key_with_context(TlsPreSharedKeyContext::client_hello())
+                .unwrap(),
+            client
+        );
+        assert_eq!(
+            TlsPreSharedKey::from_client_hello_raw_extension(&raw).unwrap(),
+            client
+        );
+        assert_eq!(TlsRawExtension::try_from(client.clone()).unwrap(), raw);
+        assert_eq!(
+            TlsRawExtension::pre_shared_key_client(
+                client.identities().unwrap().clone(),
+                client.binders().unwrap().clone(),
+            )
+            .unwrap(),
+            raw
+        );
+
+        let server = TlsPreSharedKey::server(3);
+        let raw = server.to_raw_extension().unwrap();
+        assert_eq!(
+            raw.encode_to_vec().unwrap(),
+            [0x00, 0x29, 0x00, 0x02, 0x00, 0x03]
+        );
+        assert_eq!(raw.as_pre_shared_key_server().unwrap(), server);
+        assert_eq!(
+            raw.as_pre_shared_key_with_context(TlsPreSharedKeyContext::server_hello())
+                .unwrap(),
+            server
+        );
+        assert_eq!(
+            TlsPreSharedKey::from_server_hello_raw_extension(&raw).unwrap(),
+            server
+        );
+        assert_eq!(TlsRawExtension::pre_shared_key_server(3).unwrap(), raw);
+
+        assert_eq!(
+            TlsPreSharedKey::from_client_hello_raw_extension(&TlsRawExtension::from_raw(
+                0xbeef,
+                []
+            ))
+            .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be pre_shared_key"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_pre_shared_key_preserves_opaque_values_without_psk_semantics() {
+        let first = TlsPskIdentity::new([0x00, 0xff, 0x00, 0x42], 7);
+        let second = TlsPskIdentity::new([0xde, 0xad], u32::MAX);
+        let binder = TlsPskBinderEntry::new([0xcc; 32]);
+        let client = TlsPreSharedKey::client(
+            TlsPskIdentities::new(vec![first.clone(), second.clone()]),
+            TlsPskBinders::new(vec![binder.clone()]),
+        );
+
+        assert_eq!(client.binder_count_matches_identities(), Some(false));
+        assert_eq!(
+            client
+                .validate_binder_count_matches_identities()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.pre_shared_key.client.binders.count",
+                "binder count must match identity count"
+            )
+        );
+
+        let decoded = TlsPreSharedKey::decode_client(client.encode_to_vec().unwrap()).unwrap();
+        assert_eq!(decoded, client);
+        let identities = decoded.identities().unwrap();
+        assert_eq!(identities.identities()[0].identity(), first.identity());
+        assert_eq!(identities.identities()[1].identity(), second.identity());
+        assert_eq!(identities.obfuscated_ticket_ages(), vec![7, u32::MAX]);
+        assert_eq!(
+            decoded.binders().unwrap().binders()[0].bytes(),
+            binder.bytes()
+        );
+        assert!(decoded
+            .inspection_fields()
+            .contains(&("psk_identities", "00 ff 00 42|de ad".to_string())));
+        assert!(decoded
+            .inspection_fields()
+            .contains(&("psk_binders_count", "1".to_string())));
+    }
+
+    #[test]
+    fn tls_extension_pre_shared_key_reports_structured_client_decode_errors() {
+        assert_eq!(
+            TlsPreSharedKey::decode_client([]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.pre_shared_key.client.identities.length",
+                TLS_PSK_IDENTITIES_LENGTH_LEN,
+                0
+            )
+        );
+        assert_eq!(
+            TlsPreSharedKey::decode_client([0x00, 0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.pre_shared_key.client.identities.length",
+                "length must be at least seven bytes"
+            )
+        );
+        assert_eq!(
+            TlsPreSharedKey::decode_client([0x00, 0x07, 0x00, 0x00, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,])
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.pre_shared_key.client.identity.bytes.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsPreSharedKey::decode_client([0x00, 0x08, 0x00, 0x01, 0xaa, 0x00,]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.pre_shared_key.client.identities", 10, 6)
+        );
+        assert_eq!(
+            TlsPreSharedKey::decode_client([0x00, 0x07, 0x00, 0x06, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,])
+                .unwrap_err(),
+            CrafterError::buffer_too_short("tls.pre_shared_key.client.identity.bytes", 8, 7)
+        );
+        assert_eq!(
+            TlsPreSharedKey::decode_client([0x00, 0x07, 0x00, 0x02, 0xaa, 0xbb, 0x00, 0x00, 0x00,])
+                .unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.pre_shared_key.client.identity.obfuscated_ticket_age",
+                8,
+                7
+            )
+        );
+
+        let mut identity_then_empty_binders =
+            vec![0x00, 0x07, 0x00, 0x01, 0xaa, 0x00, 0x00, 0x00, 0x00];
+        identity_then_empty_binders.extend_from_slice(&[0x00, 0x00]);
+        assert_eq!(
+            TlsPreSharedKey::decode_client(identity_then_empty_binders).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.pre_shared_key.client.binders.length",
+                "length must be at least 33 bytes"
+            )
+        );
+
+        let mut binder_zero_len = vec![
+            0x00, 0x07, 0x00, 0x01, 0xaa, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x00,
+        ];
+        binder_zero_len.extend_from_slice(&[0x00; 32]);
+        assert_eq!(
+            TlsPreSharedKey::decode_client(binder_zero_len).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.pre_shared_key.client.binder.length",
+                "length must be at least 32 bytes"
+            )
+        );
+
+        let mut binder_truncated = vec![
+            0x00, 0x07, 0x00, 0x01, 0xaa, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x21,
+        ];
+        binder_truncated.extend_from_slice(&[0xbb; 32]);
+        assert_eq!(
+            TlsPreSharedKey::decode_client(binder_truncated).unwrap_err(),
+            CrafterError::buffer_too_short("tls.pre_shared_key.client.binder", 34, 33)
+        );
+
+        let client = TlsPreSharedKey::client(
+            [TlsPskIdentity::new([0xaa], 0)],
+            [TlsPskBinderEntry::new([0xbb; 32])],
+        );
+        let mut with_tail = client.encode_to_vec().unwrap();
+        with_tail.push(0xcc);
+        assert_eq!(
+            TlsPreSharedKey::decode_client(with_tail).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.pre_shared_key.client.length",
+                "length must match extension body"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_pre_shared_key_reports_structured_server_decode_errors() {
+        assert_eq!(
+            TlsPreSharedKey::decode_server([]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.pre_shared_key.server.selected_identity", 2, 0)
+        );
+        assert_eq!(
+            TlsPreSharedKey::decode_server([0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.pre_shared_key.server.selected_identity", 2, 1)
+        );
+        assert_eq!(
+            TlsPreSharedKey::decode_server([0x00, 0x01, 0x02]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.pre_shared_key.server.length",
+                "length must be exactly two bytes"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_pre_shared_key_reports_structured_encode_errors() {
+        assert_eq!(
+            TlsPskIdentity::new(Vec::<u8>::new(), 0)
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.pre_shared_key.identity.bytes.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsPreSharedKey::client(
+                [TlsPskIdentity::new(Vec::<u8>::new(), 0)],
+                [TlsPskBinderEntry::new([0xbb; 32])],
+            )
+            .encode_to_vec()
+            .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.pre_shared_key.client.identity.bytes.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsPskIdentity::new(vec![0; u16::MAX as usize + 1], 0)
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.pre_shared_key.identity.bytes.length",
+                "length must fit in two bytes"
+            )
+        );
+        assert_eq!(
+            TlsPskIdentities::default().encode_to_vec().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.pre_shared_key.identities.length",
+                "length must be at least seven bytes"
+            )
+        );
+
+        let oversized_identities =
+            TlsPskIdentities::new(vec![TlsPskIdentity::new([0xaa], 0); 9_363]);
+        assert_eq!(
+            oversized_identities.encode_to_vec().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.pre_shared_key.identities.length",
+                "length must fit in two bytes"
+            )
+        );
+
+        assert_eq!(
+            TlsPskBinderEntry::new(vec![0xbb; 31])
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.pre_shared_key.binder.length",
+                "length must be at least 32 bytes"
+            )
+        );
+        assert_eq!(
+            TlsPreSharedKey::client(
+                [TlsPskIdentity::new([0xaa], 0)],
+                [TlsPskBinderEntry::new(vec![0xbb; 31])],
+            )
+            .encode_to_vec()
+            .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.pre_shared_key.client.binder.length",
+                "length must be at least 32 bytes"
+            )
+        );
+        assert_eq!(
+            TlsPskBinderEntry::new(vec![0xbb; 256])
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.pre_shared_key.binder.length",
+                "length must fit in one byte"
+            )
+        );
+        assert_eq!(
+            TlsPskBinders::default().encode_to_vec().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.pre_shared_key.binders.length",
+                "length must be at least 33 bytes"
+            )
+        );
+
+        let oversized_binders = TlsPskBinders::new(vec![TlsPskBinderEntry::new([0xbb; 32]); 1_986]);
+        assert_eq!(
+            oversized_binders.encode_to_vec().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.pre_shared_key.binders.length",
+                "length must fit in two bytes"
             )
         );
     }
