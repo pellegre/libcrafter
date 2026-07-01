@@ -28,6 +28,13 @@ pub const TLS_CLIENT_HELLO_RANDOM_LEN: usize = 32;
 /// TLS ClientHello fixed field width before vectors.
 pub const TLS_CLIENT_HELLO_FIXED_LEN: usize =
     TLS_CLIENT_HELLO_LEGACY_VERSION_LEN + TLS_CLIENT_HELLO_RANDOM_LEN;
+/// TLS ServerHello legacy-version field width in bytes.
+pub const TLS_SERVER_HELLO_LEGACY_VERSION_LEN: usize = 2;
+/// TLS ServerHello random field width in bytes.
+pub const TLS_SERVER_HELLO_RANDOM_LEN: usize = 32;
+/// TLS ServerHello fixed field width before vectors.
+pub const TLS_SERVER_HELLO_FIXED_LEN: usize =
+    TLS_SERVER_HELLO_LEGACY_VERSION_LEN + TLS_SERVER_HELLO_RANDOM_LEN;
 
 /// A raw-preserving TLS `HandshakeType` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -583,8 +590,8 @@ impl TlsHandshakeHeader {
 pub enum TlsHandshakeBody {
     /// `client_hello` body bytes plus a typed view when available.
     ClientHello(TlsClientHelloBody),
-    /// Opaque `server_hello` body bytes.
-    ServerHello(Vec<u8>),
+    /// `server_hello` body bytes plus a typed view when available.
+    ServerHello(TlsServerHelloBody),
     /// Opaque `new_session_ticket` body bytes.
     NewSessionTicket(Vec<u8>),
     /// Opaque `end_of_early_data` body bytes.
@@ -622,7 +629,14 @@ impl TlsHandshakeBody {
 
     /// Create an opaque body for a known `server_hello` hook.
     pub fn server_hello(body: impl Into<Vec<u8>>) -> Self {
-        Self::ServerHello(body.into())
+        Self::ServerHello(TlsServerHelloBody::raw(body))
+    }
+
+    /// Create a typed body for a known `server_hello` hook.
+    pub fn from_server_hello(server_hello: TlsServerHello) -> Result<Self> {
+        Ok(Self::ServerHello(TlsServerHelloBody::from_server_hello(
+            server_hello,
+        )?))
     }
 
     /// Create an opaque body for a known `new_session_ticket` hook.
@@ -683,7 +697,7 @@ impl TlsHandshakeBody {
         let body = body.into();
         match handshake_type.into() {
             TlsHandshakeType::CLIENT_HELLO => Self::ClientHello(TlsClientHelloBody::raw(body)),
-            TlsHandshakeType::SERVER_HELLO => Self::ServerHello(body),
+            TlsHandshakeType::SERVER_HELLO => Self::ServerHello(TlsServerHelloBody::raw(body)),
             TlsHandshakeType::NEW_SESSION_TICKET => Self::NewSessionTicket(body),
             TlsHandshakeType::END_OF_EARLY_DATA => Self::EndOfEarlyData(body),
             TlsHandshakeType::ENCRYPTED_EXTENSIONS => Self::EncryptedExtensions(body),
@@ -707,7 +721,9 @@ impl TlsHandshakeBody {
             TlsHandshakeType::CLIENT_HELLO => Ok(Self::ClientHello(
                 TlsClientHelloBody::from_decoded_body(body)?,
             )),
-            TlsHandshakeType::SERVER_HELLO => Ok(Self::ServerHello(body)),
+            TlsHandshakeType::SERVER_HELLO => Ok(Self::ServerHello(
+                TlsServerHelloBody::from_decoded_body(body)?,
+            )),
             TlsHandshakeType::NEW_SESSION_TICKET => Ok(Self::NewSessionTicket(body)),
             TlsHandshakeType::END_OF_EARLY_DATA => Ok(Self::EndOfEarlyData(body)),
             TlsHandshakeType::ENCRYPTED_EXTENSIONS => Ok(Self::EncryptedExtensions(body)),
@@ -743,8 +759,8 @@ impl TlsHandshakeBody {
     pub fn body(&self) -> &[u8] {
         match self {
             Self::ClientHello(body) => body.body(),
-            Self::ServerHello(body)
-            | Self::NewSessionTicket(body)
+            Self::ServerHello(body) => body.body(),
+            Self::NewSessionTicket(body)
             | Self::EndOfEarlyData(body)
             | Self::EncryptedExtensions(body)
             | Self::Certificate(body)
@@ -761,8 +777,8 @@ impl TlsHandshakeBody {
     pub fn into_body(self) -> Vec<u8> {
         match self {
             Self::ClientHello(body) => body.into_body(),
-            Self::ServerHello(body)
-            | Self::NewSessionTicket(body)
+            Self::ServerHello(body) => body.into_body(),
+            Self::NewSessionTicket(body)
             | Self::EndOfEarlyData(body)
             | Self::EncryptedExtensions(body)
             | Self::Certificate(body)
@@ -798,10 +814,26 @@ impl TlsHandshakeBody {
         }
     }
 
+    /// Borrow the decoded ServerHello fields when this body carries them.
+    pub const fn as_server_hello(&self) -> Option<&TlsServerHello> {
+        match self {
+            Self::ServerHello(body) => body.server_hello(),
+            _ => None,
+        }
+    }
+
     /// Return true when this body is a decoded or typed ClientHello.
     pub const fn is_typed_client_hello(&self) -> bool {
         match self {
             Self::ClientHello(body) => body.is_typed(),
+            _ => false,
+        }
+    }
+
+    /// Return true when this body is a decoded or typed ServerHello.
+    pub const fn is_typed_server_hello(&self) -> bool {
+        match self {
+            Self::ServerHello(body) => body.is_typed(),
             _ => false,
         }
     }
@@ -912,6 +944,14 @@ impl TlsHandshake {
             TlsHandshakeHeader::server_hello(),
             TlsHandshakeBody::server_hello(body),
         )
+    }
+
+    /// Construct a `server_hello` handshake message from typed ServerHello fields.
+    pub fn from_server_hello(server_hello: TlsServerHello) -> Result<Self> {
+        Ok(Self::from_header_and_body(
+            TlsHandshakeHeader::server_hello(),
+            TlsHandshakeBody::from_server_hello(server_hello)?,
+        ))
     }
 
     /// Construct a `new_session_ticket` handshake message with opaque body bytes.
@@ -1044,6 +1084,11 @@ impl TlsHandshake {
     /// Borrow decoded ClientHello fields when this message carries them.
     pub fn client_hello_body(&self) -> Option<&TlsClientHello> {
         self.body.as_client_hello()
+    }
+
+    /// Borrow decoded ServerHello fields when this message carries them.
+    pub fn server_hello_body(&self) -> Option<&TlsServerHello> {
+        self.body.as_server_hello()
     }
 
     /// Consume the message and return its header plus body hook.
@@ -1611,6 +1656,415 @@ impl Default for TlsClientHello {
     }
 }
 
+/// TLS ServerHello body fields.
+///
+/// RFC 8446 section 4.1.3 defines the TLS 1.3 ServerHello layout as
+/// `legacy_version`, 32 random bytes, a one-octet length-prefixed legacy
+/// session ID echo, one selected cipher suite, a legacy compression-method
+/// byte, and an extensions vector. This type models those core fields while
+/// leaving extension bodies raw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsServerHello {
+    legacy_version: TlsVersion,
+    random: [u8; TLS_SERVER_HELLO_RANDOM_LEN],
+    session_id_echo: Vec<u8>,
+    cipher_suite: TlsCipherSuite,
+    compression_method: u8,
+    extensions: Vec<TlsRawExtension>,
+}
+
+impl TlsServerHello {
+    /// Construct a ServerHello with compatibility defaults and no extensions.
+    pub fn new() -> Self {
+        Self {
+            legacy_version: TlsVersion::legacy_hello(),
+            random: [0; TLS_SERVER_HELLO_RANDOM_LEN],
+            session_id_echo: Vec::new(),
+            cipher_suite: TlsCipherSuite::AES_128_GCM_SHA256,
+            compression_method: 0,
+            extensions: Vec::new(),
+        }
+    }
+
+    /// Construct a ServerHello from all decoded or caller-supplied fields.
+    pub fn from_fields(
+        legacy_version: impl Into<TlsVersion>,
+        random: [u8; TLS_SERVER_HELLO_RANDOM_LEN],
+        session_id_echo: impl Into<Vec<u8>>,
+        cipher_suite: impl Into<TlsCipherSuite>,
+        compression_method: u8,
+        extensions: impl Into<Vec<TlsRawExtension>>,
+    ) -> Self {
+        Self {
+            legacy_version: legacy_version.into(),
+            random,
+            session_id_echo: session_id_echo.into(),
+            cipher_suite: cipher_suite.into(),
+            compression_method,
+            extensions: extensions.into(),
+        }
+    }
+
+    /// Replace the legacy ServerHello version field.
+    pub fn with_legacy_version(mut self, legacy_version: impl Into<TlsVersion>) -> Self {
+        self.legacy_version = legacy_version.into();
+        self
+    }
+
+    /// Replace the legacy ServerHello version field from a raw `u16`.
+    pub fn with_raw_legacy_version(self, legacy_version: u16) -> Self {
+        self.with_legacy_version(TlsVersion::from_u16(legacy_version))
+    }
+
+    /// Replace the 32-byte ServerHello random field.
+    pub fn with_random(mut self, random: [u8; TLS_SERVER_HELLO_RANDOM_LEN]) -> Self {
+        self.random = random;
+        self
+    }
+
+    /// Replace the legacy session ID echo vector body bytes.
+    pub fn with_session_id_echo(mut self, session_id_echo: impl Into<Vec<u8>>) -> Self {
+        self.session_id_echo = session_id_echo.into();
+        self
+    }
+
+    /// Compatibility alias for replacing the legacy session ID echo bytes.
+    pub fn with_session_id(self, session_id_echo: impl Into<Vec<u8>>) -> Self {
+        self.with_session_id_echo(session_id_echo)
+    }
+
+    /// Replace the selected cipher suite.
+    pub fn with_cipher_suite(mut self, cipher_suite: impl Into<TlsCipherSuite>) -> Self {
+        self.cipher_suite = cipher_suite.into();
+        self
+    }
+
+    /// Replace the selected cipher suite from a raw two-octet value.
+    pub fn with_raw_cipher_suite(self, cipher_suite: u16) -> Self {
+        self.with_cipher_suite(TlsCipherSuite::from_u16(cipher_suite))
+    }
+
+    /// Replace the legacy compression method byte.
+    pub fn with_compression_method(mut self, compression_method: u8) -> Self {
+        self.compression_method = compression_method;
+        self
+    }
+
+    /// Replace the raw extension list.
+    pub fn with_extensions(mut self, extensions: impl Into<Vec<TlsRawExtension>>) -> Self {
+        self.extensions = extensions.into();
+        self
+    }
+
+    /// Append one raw extension.
+    pub fn with_extension(mut self, extension: TlsRawExtension) -> Self {
+        self.extensions.push(extension);
+        self
+    }
+
+    /// Return the preserved legacy version field.
+    pub const fn legacy_version(&self) -> TlsVersion {
+        self.legacy_version
+    }
+
+    /// Return the preserved raw legacy version field.
+    pub const fn raw_legacy_version(&self) -> u16 {
+        self.legacy_version.raw()
+    }
+
+    /// Borrow the preserved 32-byte random field.
+    pub const fn random(&self) -> &[u8; TLS_SERVER_HELLO_RANDOM_LEN] {
+        &self.random
+    }
+
+    /// Borrow the preserved legacy session ID echo bytes.
+    pub fn session_id_echo(&self) -> &[u8] {
+        &self.session_id_echo
+    }
+
+    /// Compatibility alias for borrowing the legacy session ID echo bytes.
+    pub fn session_id(&self) -> &[u8] {
+        self.session_id_echo()
+    }
+
+    /// Return the selected cipher suite.
+    pub const fn cipher_suite(&self) -> TlsCipherSuite {
+        self.cipher_suite
+    }
+
+    /// Return the preserved raw selected cipher suite value.
+    pub const fn raw_cipher_suite(&self) -> u16 {
+        self.cipher_suite.raw()
+    }
+
+    /// Return the preserved legacy compression method byte.
+    pub const fn compression_method(&self) -> u8 {
+        self.compression_method
+    }
+
+    /// Borrow the raw extension list.
+    pub fn extensions(&self) -> &[TlsRawExtension] {
+        &self.extensions
+    }
+
+    /// Number of bytes occupied by the ServerHello body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        validate_u8_vector_len(
+            self.session_id_echo.len(),
+            "tls.server_hello.session_id_echo.length",
+        )?;
+
+        let mut len = TLS_SERVER_HELLO_FIXED_LEN;
+        len = checked_add_len(len, 1, "tls.server_hello.length")?;
+        len = checked_add_len(len, self.session_id_echo.len(), "tls.server_hello.length")?;
+        len = checked_add_len(len, TLS_CIPHER_SUITE_LEN, "tls.server_hello.length")?;
+        len = checked_add_len(len, 1, "tls.server_hello.length")?;
+        len = checked_add_len(len, 2, "tls.server_hello.length")?;
+        len = checked_add_len(len, self.extensions_body_len()?, "tls.server_hello.length")?;
+
+        Ok(len)
+    }
+
+    /// Append the ServerHello body bytes.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.encoded_len()?;
+
+        out.extend_from_slice(&self.legacy_version.to_be_bytes());
+        out.extend_from_slice(&self.random);
+        encode_u8_vector(
+            &self.session_id_echo,
+            "tls.server_hello.session_id_echo.length",
+            out,
+        )?;
+        self.cipher_suite.encode(out);
+        out.push(self.compression_method);
+
+        let body_len = self.extensions_body_len()?;
+        let body_len = u16::try_from(body_len).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "tls.server_hello.extensions.length",
+                "length must fit in two bytes",
+            )
+        })?;
+        out.extend_from_slice(&body_len.to_be_bytes());
+        for extension in &self.extensions {
+            extension.encode(out)?;
+        }
+
+        Ok(())
+    }
+
+    /// Return the encoded ServerHello body bytes.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Compatibility alias for returning the encoded ServerHello body bytes.
+    pub fn compile(&self) -> Result<Vec<u8>> {
+        self.encode_to_vec()
+    }
+
+    /// Decode one complete ServerHello body.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (server_hello, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.server_hello.length",
+                "trailing bytes after extensions",
+            ));
+        }
+
+        Ok(server_hello)
+    }
+
+    /// Decode one ServerHello body from the front of `bytes`.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let mut cursor = 0;
+
+        let legacy_version = {
+            let version = take_bytes(
+                bytes,
+                &mut cursor,
+                TLS_SERVER_HELLO_LEGACY_VERSION_LEN,
+                "tls.server_hello.legacy_version",
+            )?;
+            TlsVersion::from_be_bytes([version[0], version[1]])
+        };
+
+        let random = {
+            let random = take_bytes(
+                bytes,
+                &mut cursor,
+                TLS_SERVER_HELLO_RANDOM_LEN,
+                "tls.server_hello.random",
+            )?;
+            let mut out = [0u8; TLS_SERVER_HELLO_RANDOM_LEN];
+            out.copy_from_slice(random);
+            out
+        };
+
+        let session_id_echo = decode_u8_vector(
+            bytes,
+            &mut cursor,
+            "tls.server_hello.session_id_echo",
+            "tls.server_hello.session_id_echo.length",
+        )?;
+
+        let cipher_suite = {
+            let suite = take_bytes(
+                bytes,
+                &mut cursor,
+                TLS_CIPHER_SUITE_LEN,
+                "tls.server_hello.cipher_suite",
+            )?;
+            TlsCipherSuite::from_be_bytes([suite[0], suite[1]])
+        };
+
+        let compression_method =
+            take_bytes(bytes, &mut cursor, 1, "tls.server_hello.compression_method")?[0];
+        let extensions = decode_server_hello_extension_list(bytes, &mut cursor)?;
+
+        Ok((
+            Self {
+                legacy_version,
+                random,
+                session_id_echo,
+                cipher_suite,
+                compression_method,
+                extensions,
+            },
+            &bytes[cursor..],
+        ))
+    }
+
+    /// Stable one-line summary preserving vector sizes.
+    pub fn summary(&self) -> String {
+        format!(
+            "server_hello legacy_version={} session_id_echo_bytes={} cipher_suite={} compression_method=0x{:02x} extensions={}",
+            self.legacy_version.label(),
+            self.session_id_echo.len(),
+            self.cipher_suite.label(),
+            self.compression_method,
+            self.extensions.len()
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("legacy_version", self.legacy_version.label()),
+            (
+                "legacy_version_raw",
+                format!("0x{:04x}", self.legacy_version.raw()),
+            ),
+            ("random_bytes", self.random.len().to_string()),
+            (
+                "session_id_echo_bytes",
+                self.session_id_echo.len().to_string(),
+            ),
+            ("cipher_suite", self.cipher_suite.label()),
+            (
+                "cipher_suite_raw",
+                format!("0x{:04x}", self.cipher_suite.raw()),
+            ),
+            (
+                "compression_method",
+                format!("0x{:02x}", self.compression_method),
+            ),
+            ("extensions_count", self.extensions.len().to_string()),
+        ]
+    }
+
+    fn extensions_body_len(&self) -> Result<usize> {
+        let mut len = 0usize;
+        for extension in &self.extensions {
+            len = checked_add_len(
+                len,
+                extension.encoded_len()?,
+                "tls.server_hello.extensions.length",
+            )?;
+        }
+
+        if len > u16::MAX as usize {
+            return Err(CrafterError::invalid_field_value(
+                "tls.server_hello.extensions.length",
+                "length must fit in two bytes",
+            ));
+        }
+
+        Ok(len)
+    }
+}
+
+impl Default for TlsServerHello {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// ServerHello handshake body bytes plus an optional decoded view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsServerHelloBody {
+    body: Vec<u8>,
+    server_hello: Option<TlsServerHello>,
+}
+
+impl TlsServerHelloBody {
+    /// Preserve ServerHello body bytes without parsing them.
+    pub fn raw(body: impl Into<Vec<u8>>) -> Self {
+        Self {
+            body: body.into(),
+            server_hello: None,
+        }
+    }
+
+    /// Build ServerHello body bytes from typed fields.
+    pub fn from_server_hello(server_hello: TlsServerHello) -> Result<Self> {
+        let body = server_hello.encode_to_vec()?;
+        Ok(Self {
+            body,
+            server_hello: Some(server_hello),
+        })
+    }
+
+    /// Decode and preserve exact ServerHello body bytes.
+    pub fn from_decoded_body(body: impl Into<Vec<u8>>) -> Result<Self> {
+        let body = body.into();
+        let server_hello = TlsServerHello::decode(&body)?;
+        Ok(Self {
+            body,
+            server_hello: Some(server_hello),
+        })
+    }
+
+    /// Borrow the preserved body bytes.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// Consume the wrapper and return the preserved body bytes.
+    pub fn into_body(self) -> Vec<u8> {
+        self.body
+    }
+
+    /// Borrow the decoded ServerHello fields when available.
+    pub const fn server_hello(&self) -> Option<&TlsServerHello> {
+        self.server_hello.as_ref()
+    }
+
+    /// Return true when the body carries decoded ServerHello fields.
+    pub const fn is_typed(&self) -> bool {
+        self.server_hello.is_some()
+    }
+
+    /// Number of preserved body bytes.
+    pub fn body_len(&self) -> usize {
+        self.body.len()
+    }
+}
+
 /// ClientHello handshake body bytes plus an optional decoded view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsClientHelloBody {
@@ -1778,6 +2232,56 @@ fn decode_extension_list(bytes: &[u8], cursor: &mut usize) -> Result<Vec<TlsRawE
     Ok(extensions)
 }
 
+fn decode_server_hello_extension_list(
+    bytes: &[u8],
+    cursor: &mut usize,
+) -> Result<Vec<TlsRawExtension>> {
+    let length = take_bytes(bytes, cursor, 2, "tls.server_hello.extensions.length")?;
+    let byte_len = u16::from_be_bytes([length[0], length[1]]) as usize;
+    let body = take_bytes(bytes, cursor, byte_len, "tls.server_hello.extensions")?;
+    let mut extension_cursor = 0usize;
+    let mut extensions = Vec::new();
+
+    while extension_cursor < body.len() {
+        let remaining = body.len() - extension_cursor;
+        if remaining < TLS_EXTENSION_HEADER_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.server_hello.extension",
+                TLS_EXTENSION_HEADER_LEN,
+                remaining,
+            ));
+        }
+
+        let extension_type = {
+            let raw_type = take_bytes(
+                body,
+                &mut extension_cursor,
+                2,
+                "tls.server_hello.extension.type",
+            )?;
+            u16::from_be_bytes([raw_type[0], raw_type[1]])
+        };
+        let body_len = {
+            let raw_len = take_bytes(
+                body,
+                &mut extension_cursor,
+                2,
+                "tls.server_hello.extension.length",
+            )?;
+            u16::from_be_bytes([raw_len[0], raw_len[1]]) as usize
+        };
+        let extension_body = take_bytes(
+            body,
+            &mut extension_cursor,
+            body_len,
+            "tls.server_hello.extension.body",
+        )?;
+        extensions.push(TlsRawExtension::from_raw(extension_type, extension_body));
+    }
+
+    Ok(extensions)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1789,6 +2293,17 @@ mod tests {
             .with_session_id([0x01, 0x02])
             .with_raw_cipher_suites([0x1301, 0x0a0a])
             .with_compression_methods([0x00])
+            .with_extension(TlsRawExtension::from_raw(0xbeef, [0xde, 0xad]))
+            .encode_to_vec()
+            .unwrap()
+    }
+
+    fn tls_server_hello_test_body() -> Vec<u8> {
+        TlsServerHello::new()
+            .with_random([0x22; TLS_SERVER_HELLO_RANDOM_LEN])
+            .with_session_id_echo([0x01, 0x02])
+            .with_raw_cipher_suite(0x0a0a)
+            .with_compression_method(0xff)
             .with_extension(TlsRawExtension::from_raw(0xbeef, [0xde, 0xad]))
             .encode_to_vec()
             .unwrap()
@@ -2026,6 +2541,146 @@ mod tests {
     }
 
     #[test]
+    fn tls_server_hello_builds_and_encodes_core_fields() -> Result<()> {
+        let random = [0x42; TLS_SERVER_HELLO_RANDOM_LEN];
+        let hello = TlsServerHello::new()
+            .with_raw_legacy_version(0x7a7a)
+            .with_random(random)
+            .with_session_id_echo([0x01, 0x02, 0x03])
+            .with_raw_cipher_suite(0x0a0a)
+            .with_compression_method(0xff)
+            .with_extension(TlsRawExtension::from_raw(0xbeef, [0xde, 0xad, 0xfa, 0xce]));
+
+        let encoded = hello.encode_to_vec()?;
+        let mut expected = vec![0x7a, 0x7a];
+        expected.extend_from_slice(&random);
+        expected.extend_from_slice(&[
+            0x03, 0x01, 0x02, 0x03, 0x0a, 0x0a, 0xff, 0x00, 0x08, 0xbe, 0xef, 0x00, 0x04, 0xde,
+            0xad, 0xfa, 0xce,
+        ]);
+
+        assert_eq!(encoded, expected);
+        assert_eq!(hello.encoded_len()?, encoded.len());
+        assert_eq!(hello.session_id(), &[0x01, 0x02, 0x03]);
+        assert_eq!(hello.session_id_echo(), &[0x01, 0x02, 0x03]);
+        assert_eq!(hello.raw_cipher_suite(), 0x0a0a);
+        assert_eq!(
+            hello.summary(),
+            "server_hello legacy_version=reserved grease protocol version 0x7a7a session_id_echo_bytes=3 cipher_suite=reserved grease cipher suite 0x0a0a compression_method=0xff extensions=1"
+        );
+
+        let handshake = TlsHandshake::from_server_hello(hello.clone())?;
+        assert_eq!(handshake.server_hello_body(), Some(&hello));
+        assert_eq!(handshake.body_bytes(), encoded.as_slice());
+        assert_eq!(handshake.effective_length()?, encoded.len() as u32);
+        assert_eq!(
+            handshake.encode_to_vec()?,
+            tls_handshake_fixture(TlsHandshakeType::SERVER_HELLO.raw(), &encoded)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_server_hello_decodes_core_fields_and_unknown_extensions() -> Result<()> {
+        let body = tls_server_hello_test_body();
+        let with_tail = [body.as_slice(), &[0xaa, 0xbb][..]].concat();
+        let (decoded, tail) = TlsServerHello::decode_prefix(&with_tail)?;
+
+        assert_eq!(tail, &[0xaa, 0xbb]);
+        assert_eq!(decoded.legacy_version(), TlsVersion::legacy_hello());
+        assert_eq!(decoded.random(), &[0x22; TLS_SERVER_HELLO_RANDOM_LEN]);
+        assert_eq!(decoded.session_id_echo(), &[0x01, 0x02]);
+        assert_eq!(decoded.cipher_suite(), TlsCipherSuite::from_u16(0x0a0a));
+        assert_eq!(decoded.compression_method(), 0xff);
+        assert_eq!(decoded.extensions().len(), 1);
+        assert_eq!(decoded.extensions()[0].raw_type(), 0xbeef);
+        assert_eq!(decoded.extensions()[0].body(), &[0xde, 0xad]);
+        assert_eq!(decoded.encode_to_vec()?, body);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_server_hello_byte_exact_round_trips_through_handshake() -> Result<()> {
+        let body = tls_server_hello_test_body();
+        let bytes = tls_handshake_fixture(0x02, &body);
+
+        let message = TlsHandshake::decode(&bytes)?;
+
+        assert!(message.server_hello_body().is_some());
+        assert!(message.body().is_typed_server_hello());
+        assert_eq!(message.body_bytes(), body.as_slice());
+        assert_eq!(message.encode_to_vec()?, bytes);
+        assert_eq!(message.compile()?, bytes);
+
+        let raw = TlsHandshake::server_hello([0xca, 0xfe]);
+        assert_eq!(raw.body_bytes(), &[0xca, 0xfe]);
+        assert!(matches!(raw.body(), TlsHandshakeBody::ServerHello(_)));
+        assert!(raw.server_hello_body().is_none());
+        assert!(!raw.body().is_typed_server_hello());
+        assert_eq!(
+            raw.encode_to_vec()?,
+            vec![0x02, 0x00, 0x00, 0x02, 0xca, 0xfe]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_server_hello_decode_reports_structured_errors() {
+        assert_eq!(
+            TlsServerHello::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.server_hello.legacy_version", 2, 0)
+        );
+        assert_eq!(
+            TlsServerHello::decode([0x03]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.server_hello.legacy_version", 2, 1)
+        );
+
+        let mut missing_session_len = vec![0x03, 0x03];
+        missing_session_len.extend_from_slice(&[0; TLS_SERVER_HELLO_RANDOM_LEN]);
+        assert_eq!(
+            TlsServerHello::decode(&missing_session_len).unwrap_err(),
+            CrafterError::buffer_too_short("tls.server_hello.session_id_echo.length", 35, 34)
+        );
+
+        let mut truncated_session_id = missing_session_len.clone();
+        truncated_session_id.extend_from_slice(&[0x02, 0xaa]);
+        assert_eq!(
+            TlsServerHello::decode(&truncated_session_id).unwrap_err(),
+            CrafterError::buffer_too_short("tls.server_hello.session_id_echo", 37, 36)
+        );
+
+        let mut missing_extensions_len = missing_session_len.clone();
+        missing_extensions_len.extend_from_slice(&[
+            0x00, // session_id_echo
+            0x13, 0x01, // cipher_suite
+            0x00, // compression_method
+        ]);
+        assert_eq!(
+            TlsServerHello::decode(&missing_extensions_len).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.server_hello.extensions.length",
+                missing_extensions_len.len() + 2,
+                missing_extensions_len.len()
+            )
+        );
+
+        let mut truncated_extension = missing_extensions_len;
+        truncated_extension.extend_from_slice(&[
+            0x00, 0x05, // extensions length
+            0xbe, 0xef, // extension type
+            0x00, 0x02, // extension body length
+            0xaa, // truncated extension body
+        ]);
+        assert_eq!(
+            TlsServerHello::decode(&truncated_extension).unwrap_err(),
+            CrafterError::buffer_too_short("tls.server_hello.extension.body", 6, 5)
+        );
+    }
+
+    #[test]
     fn tls_handshake_message_explicit_length_override_is_preserved() -> Result<()> {
         let message = TlsHandshake::client_hello([0xaa, 0xbb, 0xcc]).with_length(1);
 
@@ -2060,9 +2715,10 @@ mod tests {
     #[test]
     fn tls_handshake_message_byte_exact_round_trips() -> Result<()> {
         let client_hello = tls_handshake_fixture(0x01, &tls_client_hello_test_body());
+        let server_hello = tls_handshake_fixture(0x02, &tls_server_hello_test_body());
         let fixtures = [
             client_hello,
-            vec![0x02, 0x00, 0x00, 0x00],
+            server_hello,
             vec![0x14, 0x00, 0x00, 0x01, 0x00],
             vec![0x1b, 0x00, 0x00, 0x02, 0xab, 0xcd],
             vec![0x12, 0x00, 0x00, 0x03, 0xde, 0xad, 0xbe],
