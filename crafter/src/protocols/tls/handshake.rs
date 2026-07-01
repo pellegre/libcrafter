@@ -1,12 +1,15 @@
-//! TLS handshake message header helpers.
+//! TLS handshake message helpers.
 //!
 //! A TLS handshake message starts with a one-octet `HandshakeType` followed by
-//! a three-octet big-endian body length. Message bodies are intentionally left
-//! opaque for later source-backed grammar steps.
+//! a three-octet big-endian body length. Unknown, unsupported, encrypted, or
+//! intentionally raw message bodies stay opaque so callers can preserve bytes.
 
 use core::fmt;
 
+use super::cipher_suite::{TlsCipherSuite, TlsCipherSuiteList, TLS_CIPHER_SUITE_LEN};
 use super::constants::{self, TlsCodepointStatus};
+use super::extension::{TlsRawExtension, TLS_EXTENSION_HEADER_LEN};
+use super::version::TlsVersion;
 use crate::field::{Field, FieldState};
 use crate::{CrafterError, Result};
 
@@ -18,6 +21,13 @@ pub const TLS_HANDSHAKE_LENGTH_LEN: usize = 3;
 pub const TLS_HANDSHAKE_HEADER_LEN: usize = TLS_HANDSHAKE_TYPE_LEN + TLS_HANDSHAKE_LENGTH_LEN;
 /// Maximum body length representable by the TLS handshake three-octet length.
 pub const TLS_HANDSHAKE_MAX_LENGTH: u32 = 0x00ff_ffff;
+/// TLS ClientHello legacy-version field width in bytes.
+pub const TLS_CLIENT_HELLO_LEGACY_VERSION_LEN: usize = 2;
+/// TLS ClientHello random field width in bytes.
+pub const TLS_CLIENT_HELLO_RANDOM_LEN: usize = 32;
+/// TLS ClientHello fixed field width before vectors.
+pub const TLS_CLIENT_HELLO_FIXED_LEN: usize =
+    TLS_CLIENT_HELLO_LEGACY_VERSION_LEN + TLS_CLIENT_HELLO_RANDOM_LEN;
 
 /// A raw-preserving TLS `HandshakeType` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -571,8 +581,8 @@ impl TlsHandshakeHeader {
 /// [`TlsHandshakeBody::Opaque`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TlsHandshakeBody {
-    /// Opaque `client_hello` body bytes.
-    ClientHello(Vec<u8>),
+    /// `client_hello` body bytes plus a typed view when available.
+    ClientHello(TlsClientHelloBody),
     /// Opaque `server_hello` body bytes.
     ServerHello(Vec<u8>),
     /// Opaque `new_session_ticket` body bytes.
@@ -600,7 +610,14 @@ pub enum TlsHandshakeBody {
 impl TlsHandshakeBody {
     /// Create an opaque body for a known `client_hello` hook.
     pub fn client_hello(body: impl Into<Vec<u8>>) -> Self {
-        Self::ClientHello(body.into())
+        Self::ClientHello(TlsClientHelloBody::raw(body))
+    }
+
+    /// Create a typed body for a known `client_hello` hook.
+    pub fn from_client_hello(client_hello: TlsClientHello) -> Result<Self> {
+        Ok(Self::ClientHello(TlsClientHelloBody::from_client_hello(
+            client_hello,
+        )?))
     }
 
     /// Create an opaque body for a known `server_hello` hook.
@@ -665,7 +682,7 @@ impl TlsHandshakeBody {
     ) -> Self {
         let body = body.into();
         match handshake_type.into() {
-            TlsHandshakeType::CLIENT_HELLO => Self::ClientHello(body),
+            TlsHandshakeType::CLIENT_HELLO => Self::ClientHello(TlsClientHelloBody::raw(body)),
             TlsHandshakeType::SERVER_HELLO => Self::ServerHello(body),
             TlsHandshakeType::NEW_SESSION_TICKET => Self::NewSessionTicket(body),
             TlsHandshakeType::END_OF_EARLY_DATA => Self::EndOfEarlyData(body),
@@ -677,6 +694,30 @@ impl TlsHandshakeBody {
             TlsHandshakeType::KEY_UPDATE => Self::KeyUpdate(body),
             TlsHandshakeType::COMPRESSED_CERTIFICATE => Self::CompressedCertificate(body),
             _ => Self::Opaque(body),
+        }
+    }
+
+    /// Select the current typed hook for `handshake_type`, decoding known bodies.
+    fn decoded_for_type(
+        handshake_type: impl Into<TlsHandshakeType>,
+        body: impl Into<Vec<u8>>,
+    ) -> Result<Self> {
+        let body = body.into();
+        match handshake_type.into() {
+            TlsHandshakeType::CLIENT_HELLO => Ok(Self::ClientHello(
+                TlsClientHelloBody::from_decoded_body(body)?,
+            )),
+            TlsHandshakeType::SERVER_HELLO => Ok(Self::ServerHello(body)),
+            TlsHandshakeType::NEW_SESSION_TICKET => Ok(Self::NewSessionTicket(body)),
+            TlsHandshakeType::END_OF_EARLY_DATA => Ok(Self::EndOfEarlyData(body)),
+            TlsHandshakeType::ENCRYPTED_EXTENSIONS => Ok(Self::EncryptedExtensions(body)),
+            TlsHandshakeType::CERTIFICATE => Ok(Self::Certificate(body)),
+            TlsHandshakeType::CERTIFICATE_REQUEST => Ok(Self::CertificateRequest(body)),
+            TlsHandshakeType::CERTIFICATE_VERIFY => Ok(Self::CertificateVerify(body)),
+            TlsHandshakeType::FINISHED => Ok(Self::Finished(body)),
+            TlsHandshakeType::KEY_UPDATE => Ok(Self::KeyUpdate(body)),
+            TlsHandshakeType::COMPRESSED_CERTIFICATE => Ok(Self::CompressedCertificate(body)),
+            _ => Ok(Self::Opaque(body)),
         }
     }
 
@@ -701,8 +742,8 @@ impl TlsHandshakeBody {
     /// Borrow the bytes that will be emitted after the handshake header.
     pub fn body(&self) -> &[u8] {
         match self {
-            Self::ClientHello(body)
-            | Self::ServerHello(body)
+            Self::ClientHello(body) => body.body(),
+            Self::ServerHello(body)
             | Self::NewSessionTicket(body)
             | Self::EndOfEarlyData(body)
             | Self::EncryptedExtensions(body)
@@ -719,8 +760,8 @@ impl TlsHandshakeBody {
     /// Consume the body hook and return the preserved bytes.
     pub fn into_body(self) -> Vec<u8> {
         match self {
-            Self::ClientHello(body)
-            | Self::ServerHello(body)
+            Self::ClientHello(body) => body.into_body(),
+            Self::ServerHello(body)
             | Self::NewSessionTicket(body)
             | Self::EndOfEarlyData(body)
             | Self::EncryptedExtensions(body)
@@ -747,6 +788,22 @@ impl TlsHandshakeBody {
     /// Return true when this is one of the named known-body hooks.
     pub const fn is_known_hook(&self) -> bool {
         !self.is_opaque()
+    }
+
+    /// Borrow the decoded ClientHello fields when this body carries them.
+    pub const fn as_client_hello(&self) -> Option<&TlsClientHello> {
+        match self {
+            Self::ClientHello(body) => body.client_hello(),
+            _ => None,
+        }
+    }
+
+    /// Return true when this body is a decoded or typed ClientHello.
+    pub const fn is_typed_client_hello(&self) -> bool {
+        match self {
+            Self::ClientHello(body) => body.is_typed(),
+            _ => false,
+        }
     }
 
     /// Append the preserved body bytes to `out`.
@@ -839,6 +896,14 @@ impl TlsHandshake {
             TlsHandshakeHeader::client_hello(),
             TlsHandshakeBody::client_hello(body),
         )
+    }
+
+    /// Construct a `client_hello` handshake message from typed ClientHello fields.
+    pub fn from_client_hello(client_hello: TlsClientHello) -> Result<Self> {
+        Ok(Self::from_header_and_body(
+            TlsHandshakeHeader::client_hello(),
+            TlsHandshakeBody::from_client_hello(client_hello)?,
+        ))
     }
 
     /// Construct a `server_hello` handshake message with opaque body bytes.
@@ -976,6 +1041,11 @@ impl TlsHandshake {
         self.body.body()
     }
 
+    /// Borrow decoded ClientHello fields when this message carries them.
+    pub fn client_hello_body(&self) -> Option<&TlsClientHello> {
+        self.body.as_client_hello()
+    }
+
     /// Consume the message and return its header plus body hook.
     pub fn into_header_and_body(self) -> (TlsHandshakeHeader, TlsHandshakeBody) {
         (self.header, self.body)
@@ -1085,7 +1155,8 @@ impl TlsHandshake {
         }
 
         let body = tail[..body_len].to_vec();
-        Ok((Self::from_decoded_parts(header, body), &tail[body_len..]))
+        let body = TlsHandshakeBody::decoded_for_type(header.handshake_type(), body)?;
+        Ok((Self::from_header_and_body(header, body), &tail[body_len..]))
     }
 
     /// Decode one complete TLS handshake message, returning consumed bytes.
@@ -1164,10 +1235,576 @@ fn field_state_label(state: FieldState) -> &'static str {
     }
 }
 
+/// TLS ClientHello body fields.
+///
+/// RFC 8446 section 4.1.2 defines the base ClientHello layout as
+/// `legacy_version`, 32 random bytes, a one-octet length-prefixed legacy
+/// session ID, a two-octet length-prefixed cipher suite vector, a one-octet
+/// length-prefixed compression-method vector, and an optional extensions
+/// vector. This type models those core fields while leaving extension bodies
+/// raw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsClientHello {
+    legacy_version: TlsVersion,
+    random: [u8; TLS_CLIENT_HELLO_RANDOM_LEN],
+    session_id: Vec<u8>,
+    cipher_suites: TlsCipherSuiteList,
+    compression_methods: Vec<u8>,
+    extensions: Vec<TlsRawExtension>,
+    extensions_present: bool,
+}
+
+impl TlsClientHello {
+    /// Construct a ClientHello with compatibility defaults and empty vectors.
+    pub fn new() -> Self {
+        Self {
+            legacy_version: TlsVersion::legacy_hello(),
+            random: [0; TLS_CLIENT_HELLO_RANDOM_LEN],
+            session_id: Vec::new(),
+            cipher_suites: TlsCipherSuiteList::empty(),
+            compression_methods: vec![0],
+            extensions: Vec::new(),
+            extensions_present: true,
+        }
+    }
+
+    /// Construct a ClientHello from all decoded or caller-supplied fields.
+    pub fn from_fields(
+        legacy_version: impl Into<TlsVersion>,
+        random: [u8; TLS_CLIENT_HELLO_RANDOM_LEN],
+        session_id: impl Into<Vec<u8>>,
+        cipher_suites: impl Into<TlsCipherSuiteList>,
+        compression_methods: impl Into<Vec<u8>>,
+        extensions: impl Into<Vec<TlsRawExtension>>,
+    ) -> Self {
+        Self {
+            legacy_version: legacy_version.into(),
+            random,
+            session_id: session_id.into(),
+            cipher_suites: cipher_suites.into(),
+            compression_methods: compression_methods.into(),
+            extensions: extensions.into(),
+            extensions_present: true,
+        }
+    }
+
+    /// Replace the legacy ClientHello version field.
+    pub fn with_legacy_version(mut self, legacy_version: impl Into<TlsVersion>) -> Self {
+        self.legacy_version = legacy_version.into();
+        self
+    }
+
+    /// Replace the legacy ClientHello version field from a raw `u16`.
+    pub fn with_raw_legacy_version(self, legacy_version: u16) -> Self {
+        self.with_legacy_version(TlsVersion::from_u16(legacy_version))
+    }
+
+    /// Replace the 32-byte ClientHello random field.
+    pub fn with_random(mut self, random: [u8; TLS_CLIENT_HELLO_RANDOM_LEN]) -> Self {
+        self.random = random;
+        self
+    }
+
+    /// Replace the legacy session ID vector body bytes.
+    pub fn with_session_id(mut self, session_id: impl Into<Vec<u8>>) -> Self {
+        self.session_id = session_id.into();
+        self
+    }
+
+    /// Replace the ordered cipher suite vector.
+    pub fn with_cipher_suites(mut self, cipher_suites: impl Into<TlsCipherSuiteList>) -> Self {
+        self.cipher_suites = cipher_suites.into();
+        self
+    }
+
+    /// Replace the ordered cipher suite vector from raw two-octet values.
+    pub fn with_raw_cipher_suites<I>(self, cipher_suites: I) -> Self
+    where
+        I: IntoIterator<Item = u16>,
+    {
+        self.with_cipher_suites(TlsCipherSuiteList::from_raws(cipher_suites))
+    }
+
+    /// Append one cipher suite to the ordered vector.
+    pub fn with_cipher_suite(mut self, cipher_suite: impl Into<TlsCipherSuite>) -> Self {
+        self.cipher_suites.push(cipher_suite.into());
+        self
+    }
+
+    /// Replace the legacy compression-method vector body bytes.
+    pub fn with_compression_methods(mut self, compression_methods: impl Into<Vec<u8>>) -> Self {
+        self.compression_methods = compression_methods.into();
+        self
+    }
+
+    /// Append one legacy compression method byte.
+    pub fn with_compression_method(mut self, compression_method: u8) -> Self {
+        self.compression_methods.push(compression_method);
+        self
+    }
+
+    /// Replace the raw extension list and mark the extensions vector present.
+    pub fn with_extensions(mut self, extensions: impl Into<Vec<TlsRawExtension>>) -> Self {
+        self.extensions = extensions.into();
+        self.extensions_present = true;
+        self
+    }
+
+    /// Append one raw extension and mark the extensions vector present.
+    pub fn with_extension(mut self, extension: TlsRawExtension) -> Self {
+        self.extensions.push(extension);
+        self.extensions_present = true;
+        self
+    }
+
+    /// Omit the optional ClientHello extensions vector when encoding.
+    pub fn without_extensions(mut self) -> Self {
+        self.extensions.clear();
+        self.extensions_present = false;
+        self
+    }
+
+    /// Return the preserved legacy version field.
+    pub const fn legacy_version(&self) -> TlsVersion {
+        self.legacy_version
+    }
+
+    /// Return the preserved raw legacy version field.
+    pub const fn raw_legacy_version(&self) -> u16 {
+        self.legacy_version.raw()
+    }
+
+    /// Borrow the preserved 32-byte random field.
+    pub const fn random(&self) -> &[u8; TLS_CLIENT_HELLO_RANDOM_LEN] {
+        &self.random
+    }
+
+    /// Borrow the preserved legacy session ID bytes.
+    pub fn session_id(&self) -> &[u8] {
+        &self.session_id
+    }
+
+    /// Borrow the ordered cipher suite list.
+    pub const fn cipher_suites(&self) -> &TlsCipherSuiteList {
+        &self.cipher_suites
+    }
+
+    /// Borrow the preserved compression-method vector body bytes.
+    pub fn compression_methods(&self) -> &[u8] {
+        &self.compression_methods
+    }
+
+    /// Borrow the raw extension list.
+    pub fn extensions(&self) -> &[TlsRawExtension] {
+        &self.extensions
+    }
+
+    /// Return true when the optional extensions vector is encoded.
+    pub const fn extensions_present(&self) -> bool {
+        self.extensions_present
+    }
+
+    /// Number of bytes occupied by the ClientHello body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        validate_u8_vector_len(self.session_id.len(), "tls.client_hello.session_id.length")?;
+        validate_u8_vector_len(
+            self.compression_methods.len(),
+            "tls.client_hello.compression_methods.length",
+        )?;
+
+        let mut len = TLS_CLIENT_HELLO_FIXED_LEN;
+        len = checked_add_len(len, 1, "tls.client_hello.length")?;
+        len = checked_add_len(len, self.session_id.len(), "tls.client_hello.length")?;
+        len = checked_add_len(
+            len,
+            self.cipher_suites.encoded_len()?,
+            "tls.client_hello.length",
+        )?;
+        len = checked_add_len(len, 1, "tls.client_hello.length")?;
+        len = checked_add_len(
+            len,
+            self.compression_methods.len(),
+            "tls.client_hello.length",
+        )?;
+
+        if self.extensions_present {
+            len = checked_add_len(len, 2, "tls.client_hello.length")?;
+            len = checked_add_len(len, self.extensions_body_len()?, "tls.client_hello.length")?;
+        }
+
+        Ok(len)
+    }
+
+    /// Append the ClientHello body bytes.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.encoded_len()?;
+
+        out.extend_from_slice(&self.legacy_version.to_be_bytes());
+        out.extend_from_slice(&self.random);
+        encode_u8_vector(&self.session_id, "tls.client_hello.session_id.length", out)?;
+        self.cipher_suites.encode(out)?;
+        encode_u8_vector(
+            &self.compression_methods,
+            "tls.client_hello.compression_methods.length",
+            out,
+        )?;
+
+        if self.extensions_present {
+            let body_len = self.extensions_body_len()?;
+            let body_len = u16::try_from(body_len).map_err(|_| {
+                CrafterError::invalid_field_value(
+                    "tls.client_hello.extensions.length",
+                    "length must fit in two bytes",
+                )
+            })?;
+            out.extend_from_slice(&body_len.to_be_bytes());
+            for extension in &self.extensions {
+                extension.encode(out)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Return the encoded ClientHello body bytes.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Compatibility alias for returning the encoded ClientHello body bytes.
+    pub fn compile(&self) -> Result<Vec<u8>> {
+        self.encode_to_vec()
+    }
+
+    /// Decode one complete ClientHello body.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (client_hello, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.client_hello.length",
+                "trailing bytes after extensions",
+            ));
+        }
+
+        Ok(client_hello)
+    }
+
+    /// Decode one ClientHello body from the front of `bytes`.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let mut cursor = 0;
+
+        let legacy_version = {
+            let version = take_bytes(
+                bytes,
+                &mut cursor,
+                TLS_CLIENT_HELLO_LEGACY_VERSION_LEN,
+                "tls.client_hello.legacy_version",
+            )?;
+            TlsVersion::from_be_bytes([version[0], version[1]])
+        };
+
+        let random = {
+            let random = take_bytes(
+                bytes,
+                &mut cursor,
+                TLS_CLIENT_HELLO_RANDOM_LEN,
+                "tls.client_hello.random",
+            )?;
+            let mut out = [0u8; TLS_CLIENT_HELLO_RANDOM_LEN];
+            out.copy_from_slice(random);
+            out
+        };
+
+        let session_id = decode_u8_vector(
+            bytes,
+            &mut cursor,
+            "tls.client_hello.session_id",
+            "tls.client_hello.session_id.length",
+        )?;
+        let cipher_suites = decode_cipher_suite_list(bytes, &mut cursor)?;
+        let compression_methods = decode_u8_vector(
+            bytes,
+            &mut cursor,
+            "tls.client_hello.compression_methods",
+            "tls.client_hello.compression_methods.length",
+        )?;
+
+        let (extensions, extensions_present) = if cursor == bytes.len() {
+            (Vec::new(), false)
+        } else {
+            (decode_extension_list(bytes, &mut cursor)?, true)
+        };
+
+        Ok((
+            Self {
+                legacy_version,
+                random,
+                session_id,
+                cipher_suites,
+                compression_methods,
+                extensions,
+                extensions_present,
+            },
+            &bytes[cursor..],
+        ))
+    }
+
+    /// Stable one-line summary preserving vector sizes.
+    pub fn summary(&self) -> String {
+        format!(
+            "client_hello legacy_version={} session_id_bytes={} cipher_suites={} compression_methods={} extensions={} extensions_present={}",
+            self.legacy_version.label(),
+            self.session_id.len(),
+            self.cipher_suites.len(),
+            self.compression_methods.len(),
+            self.extensions.len(),
+            self.extensions_present
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("legacy_version", self.legacy_version.label()),
+            (
+                "legacy_version_raw",
+                format!("0x{:04x}", self.legacy_version.raw()),
+            ),
+            ("random_bytes", self.random.len().to_string()),
+            ("session_id_bytes", self.session_id.len().to_string()),
+            ("cipher_suites_count", self.cipher_suites.len().to_string()),
+            (
+                "compression_methods_count",
+                self.compression_methods.len().to_string(),
+            ),
+            ("extensions_count", self.extensions.len().to_string()),
+            ("extensions_present", self.extensions_present.to_string()),
+        ]
+    }
+
+    fn extensions_body_len(&self) -> Result<usize> {
+        let mut len = 0usize;
+        for extension in &self.extensions {
+            len = checked_add_len(
+                len,
+                extension.encoded_len()?,
+                "tls.client_hello.extensions.length",
+            )?;
+        }
+
+        if len > u16::MAX as usize {
+            return Err(CrafterError::invalid_field_value(
+                "tls.client_hello.extensions.length",
+                "length must fit in two bytes",
+            ));
+        }
+
+        Ok(len)
+    }
+}
+
+impl Default for TlsClientHello {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// ClientHello handshake body bytes plus an optional decoded view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsClientHelloBody {
+    body: Vec<u8>,
+    client_hello: Option<TlsClientHello>,
+}
+
+impl TlsClientHelloBody {
+    /// Preserve ClientHello body bytes without parsing them.
+    pub fn raw(body: impl Into<Vec<u8>>) -> Self {
+        Self {
+            body: body.into(),
+            client_hello: None,
+        }
+    }
+
+    /// Build ClientHello body bytes from typed fields.
+    pub fn from_client_hello(client_hello: TlsClientHello) -> Result<Self> {
+        let body = client_hello.encode_to_vec()?;
+        Ok(Self {
+            body,
+            client_hello: Some(client_hello),
+        })
+    }
+
+    /// Decode and preserve exact ClientHello body bytes.
+    pub fn from_decoded_body(body: impl Into<Vec<u8>>) -> Result<Self> {
+        let body = body.into();
+        let client_hello = TlsClientHello::decode(&body)?;
+        Ok(Self {
+            body,
+            client_hello: Some(client_hello),
+        })
+    }
+
+    /// Borrow the preserved body bytes.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// Consume the wrapper and return the preserved body bytes.
+    pub fn into_body(self) -> Vec<u8> {
+        self.body
+    }
+
+    /// Borrow the decoded ClientHello fields when available.
+    pub const fn client_hello(&self) -> Option<&TlsClientHello> {
+        self.client_hello.as_ref()
+    }
+
+    /// Return true when the body carries decoded ClientHello fields.
+    pub const fn is_typed(&self) -> bool {
+        self.client_hello.is_some()
+    }
+
+    /// Number of preserved body bytes.
+    pub fn body_len(&self) -> usize {
+        self.body.len()
+    }
+}
+
+fn checked_add_len(lhs: usize, rhs: usize, field: &'static str) -> Result<usize> {
+    lhs.checked_add(rhs)
+        .ok_or_else(|| CrafterError::invalid_field_value(field, "length overflow"))
+}
+
+fn validate_u8_vector_len(len: usize, field: &'static str) -> Result<usize> {
+    if len > u8::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "length must fit in one byte",
+        ));
+    }
+
+    Ok(len)
+}
+
+fn encode_u8_vector(body: &[u8], length_context: &'static str, out: &mut Vec<u8>) -> Result<()> {
+    let len = validate_u8_vector_len(body.len(), length_context)?;
+    out.push(len as u8);
+    out.extend_from_slice(body);
+    Ok(())
+}
+
+fn checked_end(bytes: &[u8], cursor: usize, width: usize, context: &'static str) -> Result<usize> {
+    let end = cursor
+        .checked_add(width)
+        .ok_or_else(|| CrafterError::invalid_field_value(context, "cursor overflow"))?;
+    if bytes.len() < end {
+        return Err(CrafterError::buffer_too_short(context, end, bytes.len()));
+    }
+
+    Ok(end)
+}
+
+fn take_bytes<'a>(
+    bytes: &'a [u8],
+    cursor: &mut usize,
+    width: usize,
+    context: &'static str,
+) -> Result<&'a [u8]> {
+    let start = *cursor;
+    let end = checked_end(bytes, start, width, context)?;
+    *cursor = end;
+    Ok(&bytes[start..end])
+}
+
+fn decode_u8_vector(
+    bytes: &[u8],
+    cursor: &mut usize,
+    vector_context: &'static str,
+    length_context: &'static str,
+) -> Result<Vec<u8>> {
+    let declared_len = take_bytes(bytes, cursor, 1, length_context)?[0] as usize;
+    Ok(take_bytes(bytes, cursor, declared_len, vector_context)?.to_vec())
+}
+
+fn decode_cipher_suite_list(bytes: &[u8], cursor: &mut usize) -> Result<TlsCipherSuiteList> {
+    let length = take_bytes(bytes, cursor, 2, "tls.client_hello.cipher_suites.length")?;
+    let byte_len = u16::from_be_bytes([length[0], length[1]]) as usize;
+    let body = take_bytes(bytes, cursor, byte_len, "tls.client_hello.cipher_suites")?;
+
+    if byte_len % TLS_CIPHER_SUITE_LEN != 0 {
+        return Err(CrafterError::invalid_field_value(
+            "tls.client_hello.cipher_suites.length",
+            "cipher suite vector length must be even",
+        ));
+    }
+
+    let suites = body
+        .chunks_exact(TLS_CIPHER_SUITE_LEN)
+        .map(|chunk| TlsCipherSuite::from_be_bytes([chunk[0], chunk[1]]))
+        .collect::<Vec<_>>();
+
+    Ok(TlsCipherSuiteList::new(suites))
+}
+
+fn decode_extension_list(bytes: &[u8], cursor: &mut usize) -> Result<Vec<TlsRawExtension>> {
+    let length = take_bytes(bytes, cursor, 2, "tls.client_hello.extensions.length")?;
+    let byte_len = u16::from_be_bytes([length[0], length[1]]) as usize;
+    let body = take_bytes(bytes, cursor, byte_len, "tls.client_hello.extensions")?;
+    let mut remaining = body;
+    let mut extensions = Vec::new();
+
+    while !remaining.is_empty() {
+        if remaining.len() < TLS_EXTENSION_HEADER_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.client_hello.extension",
+                TLS_EXTENSION_HEADER_LEN,
+                remaining.len(),
+            ));
+        }
+
+        let (extension, tail) = TlsRawExtension::decode_prefix(remaining)?;
+        if tail.len() == remaining.len() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.client_hello.extension",
+                "decoded extension consumed no bytes",
+            ));
+        }
+        extensions.push(extension);
+        remaining = tail;
+    }
+
+    Ok(extensions)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::FieldState;
+
+    fn tls_client_hello_test_body() -> Vec<u8> {
+        TlsClientHello::new()
+            .with_random([0x11; TLS_CLIENT_HELLO_RANDOM_LEN])
+            .with_session_id([0x01, 0x02])
+            .with_raw_cipher_suites([0x1301, 0x0a0a])
+            .with_compression_methods([0x00])
+            .with_extension(TlsRawExtension::from_raw(0xbeef, [0xde, 0xad]))
+            .encode_to_vec()
+            .unwrap()
+    }
+
+    fn tls_handshake_fixture(handshake_type: u8, body: &[u8]) -> Vec<u8> {
+        let len = body.len() as u32;
+        let mut out = vec![
+            handshake_type,
+            ((len >> 16) & 0xff) as u8,
+            ((len >> 8) & 0xff) as u8,
+            (len & 0xff) as u8,
+        ];
+        out.extend_from_slice(body);
+        out
+    }
 
     #[test]
     fn tls_handshake_message_unknown_type_preserves_opaque_body_and_tail() -> Result<()> {
@@ -1208,9 +1845,10 @@ mod tests {
     }
 
     #[test]
-    fn tls_handshake_message_known_type_uses_opaque_body_hook() -> Result<()> {
-        let bytes = [0x01, 0x00, 0x00, 0x02, 0xca, 0xfe];
-        let message = TlsHandshake::decode(bytes)?;
+    fn tls_handshake_message_known_type_uses_client_hello_body_hook() -> Result<()> {
+        let body = tls_client_hello_test_body();
+        let bytes = tls_handshake_fixture(0x01, &body);
+        let message = TlsHandshake::decode(&bytes)?;
 
         assert_eq!(message.handshake_type(), TlsHandshakeType::CLIENT_HELLO);
         assert_eq!(
@@ -1218,12 +1856,11 @@ mod tests {
             Some(TlsHandshakeType::CLIENT_HELLO)
         );
         assert!(message.body().is_known_hook());
+        assert!(message.body().is_typed_client_hello());
         assert!(matches!(message.body(), TlsHandshakeBody::ClientHello(_)));
-        assert_eq!(message.body_bytes(), &[0xca, 0xfe]);
-        assert_eq!(
-            message.encode_to_vec()?,
-            vec![0x01, 0x00, 0x00, 0x02, 0xca, 0xfe]
-        );
+        assert_eq!(message.body_bytes(), body.as_slice());
+        assert_eq!(message.client_hello_body().unwrap().session_id(), &[1, 2]);
+        assert_eq!(message.encode_to_vec()?, bytes);
 
         let built = TlsHandshake::client_hello([0xca, 0xfe]);
         assert_eq!(built.declared_length(), None);
@@ -1238,6 +1875,154 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn tls_client_hello_builds_and_encodes_core_fields() -> Result<()> {
+        let random = [0x42; TLS_CLIENT_HELLO_RANDOM_LEN];
+        let hello = TlsClientHello::new()
+            .with_raw_legacy_version(0x7a7a)
+            .with_random(random)
+            .with_session_id([0x01, 0x02, 0x03])
+            .with_raw_cipher_suites([0x1301, 0x0a0a])
+            .with_compression_methods([0x00, 0xff])
+            .with_extension(TlsRawExtension::from_raw(0xbeef, [0xde, 0xad, 0xfa, 0xce]));
+
+        let encoded = hello.encode_to_vec()?;
+        let mut expected = vec![0x7a, 0x7a];
+        expected.extend_from_slice(&random);
+        expected.extend_from_slice(&[
+            0x03, 0x01, 0x02, 0x03, 0x00, 0x04, 0x13, 0x01, 0x0a, 0x0a, 0x02, 0x00, 0xff, 0x00,
+            0x08, 0xbe, 0xef, 0x00, 0x04, 0xde, 0xad, 0xfa, 0xce,
+        ]);
+
+        assert_eq!(encoded, expected);
+        assert_eq!(hello.encoded_len()?, encoded.len());
+        assert_eq!(
+            hello.summary(),
+            "client_hello legacy_version=reserved grease protocol version 0x7a7a session_id_bytes=3 cipher_suites=2 compression_methods=2 extensions=1 extensions_present=true"
+        );
+
+        let handshake = TlsHandshake::from_client_hello(hello.clone())?;
+        assert_eq!(handshake.client_hello_body(), Some(&hello));
+        assert_eq!(handshake.body_bytes(), encoded.as_slice());
+        assert_eq!(handshake.effective_length()?, encoded.len() as u32);
+        assert_eq!(
+            handshake.encode_to_vec()?,
+            tls_handshake_fixture(TlsHandshakeType::CLIENT_HELLO.raw(), &encoded)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_client_hello_decodes_core_fields_and_unknown_extensions() -> Result<()> {
+        let body = tls_client_hello_test_body();
+        let with_tail = [body.as_slice(), &[0xaa, 0xbb][..]].concat();
+        let (decoded, tail) = TlsClientHello::decode_prefix(&with_tail)?;
+
+        assert_eq!(tail, &[0xaa, 0xbb]);
+        assert_eq!(decoded.legacy_version(), TlsVersion::legacy_hello());
+        assert_eq!(decoded.random(), &[0x11; TLS_CLIENT_HELLO_RANDOM_LEN]);
+        assert_eq!(decoded.session_id(), &[0x01, 0x02]);
+        assert_eq!(decoded.cipher_suites().raw_values(), vec![0x1301, 0x0a0a]);
+        assert_eq!(decoded.compression_methods(), &[0x00]);
+        assert!(decoded.extensions_present());
+        assert_eq!(decoded.extensions().len(), 1);
+        assert_eq!(decoded.extensions()[0].raw_type(), 0xbeef);
+        assert_eq!(decoded.extensions()[0].body(), &[0xde, 0xad]);
+        assert_eq!(decoded.encode_to_vec()?, body);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_client_hello_byte_exact_round_trips_through_handshake() -> Result<()> {
+        let body = tls_client_hello_test_body();
+        let bytes = tls_handshake_fixture(0x01, &body);
+
+        let message = TlsHandshake::decode(&bytes)?;
+
+        assert!(message.client_hello_body().is_some());
+        assert_eq!(message.body_bytes(), body.as_slice());
+        assert_eq!(message.encode_to_vec()?, bytes);
+        assert_eq!(message.compile()?, bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_client_hello_preserves_absent_extension_list() -> Result<()> {
+        let hello = TlsClientHello::new()
+            .with_random([0x55; TLS_CLIENT_HELLO_RANDOM_LEN])
+            .with_raw_cipher_suites([0x1301])
+            .with_compression_methods([0x00])
+            .without_extensions();
+        let encoded = hello.encode_to_vec()?;
+
+        assert_eq!(
+            &encoded[TLS_CLIENT_HELLO_FIXED_LEN..],
+            &[0x00, 0x00, 0x02, 0x13, 0x01, 0x01, 0x00][..]
+        );
+
+        let decoded = TlsClientHello::decode(&encoded)?;
+        assert!(!decoded.extensions_present());
+        assert!(decoded.extensions().is_empty());
+        assert_eq!(decoded.encode_to_vec()?, encoded);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_client_hello_decode_reports_structured_errors() {
+        assert_eq!(
+            TlsClientHello::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.client_hello.legacy_version", 2, 0)
+        );
+        assert_eq!(
+            TlsClientHello::decode([0x03]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.client_hello.legacy_version", 2, 1)
+        );
+
+        let mut missing_session_len = vec![0x03, 0x03];
+        missing_session_len.extend_from_slice(&[0; TLS_CLIENT_HELLO_RANDOM_LEN]);
+        assert_eq!(
+            TlsClientHello::decode(&missing_session_len).unwrap_err(),
+            CrafterError::buffer_too_short("tls.client_hello.session_id.length", 35, 34)
+        );
+
+        let mut truncated_session_id = missing_session_len.clone();
+        truncated_session_id.extend_from_slice(&[0x02, 0xaa]);
+        assert_eq!(
+            TlsClientHello::decode(&truncated_session_id).unwrap_err(),
+            CrafterError::buffer_too_short("tls.client_hello.session_id", 37, 36)
+        );
+
+        let mut odd_cipher_suites = missing_session_len.clone();
+        odd_cipher_suites.extend_from_slice(&[0x00, 0x00, 0x03, 0x13, 0x01, 0xaa]);
+        assert_eq!(
+            TlsClientHello::decode(&odd_cipher_suites).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.client_hello.cipher_suites.length",
+                "cipher suite vector length must be even"
+            )
+        );
+
+        let mut truncated_extensions_len = missing_session_len;
+        truncated_extensions_len.extend_from_slice(&[
+            0x00, // session_id
+            0x00, 0x00, // cipher_suites
+            0x01, 0x00, // compression_methods
+            0x00,
+        ]);
+        assert_eq!(
+            TlsClientHello::decode(&truncated_extensions_len).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.client_hello.extensions.length",
+                truncated_extensions_len.len() + 1,
+                truncated_extensions_len.len()
+            )
+        );
     }
 
     #[test]
@@ -1274,8 +2059,9 @@ mod tests {
 
     #[test]
     fn tls_handshake_message_byte_exact_round_trips() -> Result<()> {
+        let client_hello = tls_handshake_fixture(0x01, &tls_client_hello_test_body());
         let fixtures = [
-            vec![0x01, 0x00, 0x00, 0x02, 0xca, 0xfe],
+            client_hello,
             vec![0x02, 0x00, 0x00, 0x00],
             vec![0x14, 0x00, 0x00, 0x01, 0x00],
             vec![0x1b, 0x00, 0x00, 0x02, 0xab, 0xcd],
