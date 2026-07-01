@@ -38,6 +38,12 @@ pub const TLS_SERVER_HELLO_FIXED_LEN: usize =
     TLS_SERVER_HELLO_LEGACY_VERSION_LEN + TLS_SERVER_HELLO_RANDOM_LEN;
 /// TLS legacy null compression method byte.
 pub const TLS_COMPRESSION_METHOD_NULL: u8 = 0x00;
+/// TLS Certificate request-context length field width in bytes.
+pub const TLS_CERTIFICATE_REQUEST_CONTEXT_LENGTH_LEN: usize = 1;
+/// TLS Certificate certificate-list length field width in bytes.
+pub const TLS_CERTIFICATE_LIST_LENGTH_LEN: usize = 3;
+/// TLS CertificateEntry certificate-data length field width in bytes.
+pub const TLS_CERTIFICATE_ENTRY_LENGTH_LEN: usize = 3;
 
 /// A raw-preserving TLS `HandshakeType` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -601,8 +607,8 @@ pub enum TlsHandshakeBody {
     EndOfEarlyData(Vec<u8>),
     /// `encrypted_extensions` body bytes plus a typed view when available.
     EncryptedExtensions(TlsEncryptedExtensionsBody),
-    /// Opaque `certificate` body bytes.
-    Certificate(Vec<u8>),
+    /// `certificate` body bytes plus a typed view when available.
+    Certificate(TlsCertificateBody),
     /// Opaque `certificate_request` body bytes.
     CertificateRequest(Vec<u8>),
     /// Opaque `certificate_verify` body bytes.
@@ -666,7 +672,14 @@ impl TlsHandshakeBody {
 
     /// Create an opaque body for a known `certificate` hook.
     pub fn certificate(body: impl Into<Vec<u8>>) -> Self {
-        Self::Certificate(body.into())
+        Self::Certificate(TlsCertificateBody::raw(body))
+    }
+
+    /// Create a typed body for a known `certificate` hook.
+    pub fn from_certificate(certificate: TlsCertificate) -> Result<Self> {
+        Ok(Self::Certificate(TlsCertificateBody::from_certificate(
+            certificate,
+        )?))
     }
 
     /// Create an opaque body for a known `certificate_request` hook.
@@ -713,7 +726,7 @@ impl TlsHandshakeBody {
             TlsHandshakeType::ENCRYPTED_EXTENSIONS => {
                 Self::EncryptedExtensions(TlsEncryptedExtensionsBody::raw(body))
             }
-            TlsHandshakeType::CERTIFICATE => Self::Certificate(body),
+            TlsHandshakeType::CERTIFICATE => Self::Certificate(TlsCertificateBody::raw(body)),
             TlsHandshakeType::CERTIFICATE_REQUEST => Self::CertificateRequest(body),
             TlsHandshakeType::CERTIFICATE_VERIFY => Self::CertificateVerify(body),
             TlsHandshakeType::FINISHED => Self::Finished(body),
@@ -741,7 +754,9 @@ impl TlsHandshakeBody {
             TlsHandshakeType::ENCRYPTED_EXTENSIONS => Ok(Self::EncryptedExtensions(
                 TlsEncryptedExtensionsBody::from_decoded_body(body)?,
             )),
-            TlsHandshakeType::CERTIFICATE => Ok(Self::Certificate(body)),
+            TlsHandshakeType::CERTIFICATE => Ok(Self::Certificate(
+                TlsCertificateBody::from_decoded_body(body)?,
+            )),
             TlsHandshakeType::CERTIFICATE_REQUEST => Ok(Self::CertificateRequest(body)),
             TlsHandshakeType::CERTIFICATE_VERIFY => Ok(Self::CertificateVerify(body)),
             TlsHandshakeType::FINISHED => Ok(Self::Finished(body)),
@@ -775,9 +790,9 @@ impl TlsHandshakeBody {
             Self::ClientHello(body) => body.body(),
             Self::ServerHello(body) => body.body(),
             Self::EncryptedExtensions(body) => body.body(),
+            Self::Certificate(body) => body.body(),
             Self::NewSessionTicket(body)
             | Self::EndOfEarlyData(body)
-            | Self::Certificate(body)
             | Self::CertificateRequest(body)
             | Self::CertificateVerify(body)
             | Self::Finished(body)
@@ -793,9 +808,9 @@ impl TlsHandshakeBody {
             Self::ClientHello(body) => body.into_body(),
             Self::ServerHello(body) => body.into_body(),
             Self::EncryptedExtensions(body) => body.into_body(),
+            Self::Certificate(body) => body.into_body(),
             Self::NewSessionTicket(body)
             | Self::EndOfEarlyData(body)
-            | Self::Certificate(body)
             | Self::CertificateRequest(body)
             | Self::CertificateVerify(body)
             | Self::Finished(body)
@@ -844,6 +859,14 @@ impl TlsHandshakeBody {
         }
     }
 
+    /// Borrow the decoded Certificate fields when this body carries them.
+    pub const fn as_certificate(&self) -> Option<&TlsCertificate> {
+        match self {
+            Self::Certificate(body) => body.certificate(),
+            _ => None,
+        }
+    }
+
     /// Return true when this body is a decoded or typed ClientHello.
     pub const fn is_typed_client_hello(&self) -> bool {
         match self {
@@ -864,6 +887,14 @@ impl TlsHandshakeBody {
     pub const fn is_typed_encrypted_extensions(&self) -> bool {
         match self {
             Self::EncryptedExtensions(body) => body.is_typed(),
+            _ => false,
+        }
+    }
+
+    /// Return true when this body is a decoded or typed Certificate.
+    pub const fn is_typed_certificate(&self) -> bool {
+        match self {
+            Self::Certificate(body) => body.is_typed(),
             _ => false,
         }
     }
@@ -1024,6 +1055,14 @@ impl TlsHandshake {
         )
     }
 
+    /// Construct a `certificate` handshake message from typed fields.
+    pub fn from_certificate(certificate: TlsCertificate) -> Result<Self> {
+        Ok(Self::from_header_and_body(
+            TlsHandshakeHeader::certificate(),
+            TlsHandshakeBody::from_certificate(certificate)?,
+        ))
+    }
+
     /// Construct a `certificate_request` handshake message with opaque body bytes.
     pub fn certificate_request(body: impl Into<Vec<u8>>) -> Self {
         Self::from_header_and_body(
@@ -1132,6 +1171,11 @@ impl TlsHandshake {
     /// Borrow decoded EncryptedExtensions fields when this message carries them.
     pub fn encrypted_extensions_body(&self) -> Option<&TlsEncryptedExtensions> {
         self.body.as_encrypted_extensions()
+    }
+
+    /// Borrow decoded Certificate fields when this message carries them.
+    pub fn certificate_body(&self) -> Option<&TlsCertificate> {
+        self.body.as_certificate()
     }
 
     /// Consume the message and return its header plus body hook.
@@ -2249,6 +2293,537 @@ impl<const N: usize> From<[TlsRawExtension; N]> for TlsEncryptedExtensions {
     }
 }
 
+/// TLS Certificate message wire form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TlsCertificateForm {
+    /// TLS 1.2 and earlier certificate list without request context or entry extensions.
+    Tls12,
+    /// TLS 1.3 certificate message with request context and per-entry extensions.
+    Tls13,
+}
+
+impl TlsCertificateForm {
+    /// Stable lowercase label for summaries and inspection output.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Tls12 => "tls12",
+            Self::Tls13 => "tls13",
+        }
+    }
+}
+
+/// One opaque certificate entry.
+///
+/// Certificate bytes stay opaque; this type does not parse or validate X.509,
+/// RawPublicKey, or ASN.1. TLS 1.3 entry extensions are preserved as raw
+/// extension entries and are ignored when encoding the TLS 1.2 form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsCertificateEntry {
+    certificate: Vec<u8>,
+    extensions: Vec<TlsRawExtension>,
+}
+
+impl TlsCertificateEntry {
+    /// Construct an entry from opaque certificate bytes.
+    pub fn new(certificate: impl Into<Vec<u8>>) -> Self {
+        Self {
+            certificate: certificate.into(),
+            extensions: Vec::new(),
+        }
+    }
+
+    /// Replace the opaque certificate bytes.
+    pub fn with_certificate(mut self, certificate: impl Into<Vec<u8>>) -> Self {
+        self.certificate = certificate.into();
+        self
+    }
+
+    /// Replace the TLS 1.3 per-entry extension list.
+    pub fn with_extensions(mut self, extensions: impl Into<Vec<TlsRawExtension>>) -> Self {
+        self.extensions = extensions.into();
+        self
+    }
+
+    /// Append one TLS 1.3 per-entry extension.
+    pub fn with_extension(mut self, extension: TlsRawExtension) -> Self {
+        self.extensions.push(extension);
+        self
+    }
+
+    /// Append one TLS 1.3 per-entry extension from a raw type and body.
+    pub fn with_raw_extension(self, extension_type: u16, body: impl Into<Vec<u8>>) -> Self {
+        self.with_extension(TlsRawExtension::from_raw(extension_type, body))
+    }
+
+    /// Borrow the opaque certificate bytes.
+    pub fn certificate_data(&self) -> &[u8] {
+        &self.certificate
+    }
+
+    /// Borrow the TLS 1.3 per-entry extensions.
+    pub fn extensions(&self) -> &[TlsRawExtension] {
+        &self.extensions
+    }
+
+    /// Number of opaque certificate bytes.
+    pub fn certificate_len(&self) -> usize {
+        self.certificate.len()
+    }
+
+    /// Return true when the certificate byte vector is empty.
+    pub fn is_empty_certificate(&self) -> bool {
+        self.certificate.is_empty()
+    }
+
+    /// Number of bytes this entry occupies inside a TLS 1.2 certificate list.
+    pub fn encoded_len_tls12(&self) -> Result<usize> {
+        validate_u24_vector_len(self.certificate.len(), "tls.certificate.certificate.length")?;
+        checked_add_len(
+            TLS_CERTIFICATE_ENTRY_LENGTH_LEN,
+            self.certificate.len(),
+            "tls.certificate.entry.length",
+        )
+    }
+
+    /// Number of bytes this entry occupies inside a TLS 1.3 certificate list.
+    pub fn encoded_len_tls13(&self) -> Result<usize> {
+        let mut len = self.encoded_len_tls12()?;
+        len = checked_add_len(
+            len,
+            TlsExtensions::new(self.extensions.clone())
+                .encoded_len_with_context(TlsExtensionListContext::certificate_entry())?,
+            "tls.certificate.entry.length",
+        )?;
+        Ok(len)
+    }
+
+    /// Stable one-line summary preserving byte and extension counts.
+    pub fn summary(&self) -> String {
+        format!(
+            "certificate_entry certificate_bytes={} extensions={}",
+            self.certificate.len(),
+            self.extensions.len()
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("certificate", hex_bytes(&self.certificate)),
+            ("certificate_bytes", self.certificate.len().to_string()),
+            ("extensions_count", self.extensions.len().to_string()),
+        ]
+    }
+
+    fn encode_tls12(&self, out: &mut Vec<u8>) -> Result<()> {
+        encode_u24_vector(&self.certificate, "tls.certificate.certificate.length", out)
+    }
+
+    fn encode_tls13(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.encode_tls12(out)?;
+        TlsExtensions::new(self.extensions.clone())
+            .encode_with_context(TlsExtensionListContext::certificate_entry(), out)
+    }
+
+    fn decode_tls12_from(bytes: &[u8], cursor: &mut usize) -> Result<Self> {
+        let certificate = decode_u24_vector(
+            bytes,
+            cursor,
+            "tls.certificate.certificate",
+            "tls.certificate.certificate.length",
+        )?;
+        Ok(Self {
+            certificate,
+            extensions: Vec::new(),
+        })
+    }
+
+    fn decode_tls13_from(bytes: &[u8], cursor: &mut usize) -> Result<Self> {
+        let certificate = decode_u24_vector(
+            bytes,
+            cursor,
+            "tls.certificate.certificate",
+            "tls.certificate.certificate.length",
+        )?;
+        let extensions =
+            decode_extension_list(bytes, cursor, TlsExtensionListContext::certificate_entry())?;
+        Ok(Self {
+            certificate,
+            extensions,
+        })
+    }
+}
+
+impl From<Vec<u8>> for TlsCertificateEntry {
+    fn from(certificate: Vec<u8>) -> Self {
+        Self::new(certificate)
+    }
+}
+
+impl<const N: usize> From<[u8; N]> for TlsCertificateEntry {
+    fn from(certificate: [u8; N]) -> Self {
+        Self::new(certificate)
+    }
+}
+
+/// TLS Certificate handshake body fields.
+///
+/// The TLS 1.2 form encodes only a three-octet length-prefixed certificate
+/// list. The TLS 1.3 form additionally encodes a one-octet length-prefixed
+/// request context and a per-entry extension list. Certificate bytes stay
+/// opaque in both forms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsCertificate {
+    form: TlsCertificateForm,
+    request_context: Vec<u8>,
+    certificate_list: Vec<TlsCertificateEntry>,
+}
+
+impl TlsCertificate {
+    /// Construct an empty TLS 1.3 Certificate body.
+    pub fn new() -> Self {
+        Self::tls13(Vec::new(), Vec::new())
+    }
+
+    /// Construct a TLS 1.2 Certificate body.
+    pub fn tls12(certificate_list: impl Into<Vec<TlsCertificateEntry>>) -> Self {
+        Self {
+            form: TlsCertificateForm::Tls12,
+            request_context: Vec::new(),
+            certificate_list: certificate_list.into(),
+        }
+    }
+
+    /// Construct a TLS 1.3 Certificate body.
+    pub fn tls13(
+        request_context: impl Into<Vec<u8>>,
+        certificate_list: impl Into<Vec<TlsCertificateEntry>>,
+    ) -> Self {
+        Self {
+            form: TlsCertificateForm::Tls13,
+            request_context: request_context.into(),
+            certificate_list: certificate_list.into(),
+        }
+    }
+
+    /// Replace the message with TLS 1.2 wire form.
+    pub fn with_tls12_form(mut self) -> Self {
+        self.form = TlsCertificateForm::Tls12;
+        self.request_context.clear();
+        self
+    }
+
+    /// Replace the message with TLS 1.3 wire form.
+    pub fn with_tls13_form(mut self) -> Self {
+        self.form = TlsCertificateForm::Tls13;
+        self
+    }
+
+    /// Replace the TLS 1.3 request context and select TLS 1.3 wire form.
+    pub fn with_request_context(mut self, request_context: impl Into<Vec<u8>>) -> Self {
+        self.form = TlsCertificateForm::Tls13;
+        self.request_context = request_context.into();
+        self
+    }
+
+    /// Replace the ordered certificate list.
+    pub fn with_certificate_list(
+        mut self,
+        certificate_list: impl Into<Vec<TlsCertificateEntry>>,
+    ) -> Self {
+        self.certificate_list = certificate_list.into();
+        self
+    }
+
+    /// Append one certificate entry.
+    pub fn with_entry(mut self, entry: impl Into<TlsCertificateEntry>) -> Self {
+        self.certificate_list.push(entry.into());
+        self
+    }
+
+    /// Return the selected TLS Certificate wire form.
+    pub const fn form(&self) -> TlsCertificateForm {
+        self.form
+    }
+
+    /// Return true when this body uses the TLS 1.2 certificate-list form.
+    pub const fn is_tls12(&self) -> bool {
+        matches!(self.form, TlsCertificateForm::Tls12)
+    }
+
+    /// Return true when this body uses the TLS 1.3 request-context form.
+    pub const fn is_tls13(&self) -> bool {
+        matches!(self.form, TlsCertificateForm::Tls13)
+    }
+
+    /// Borrow the TLS 1.3 certificate_request_context bytes.
+    pub fn request_context(&self) -> &[u8] {
+        &self.request_context
+    }
+
+    /// Borrow the ordered certificate list.
+    pub fn certificate_list(&self) -> &[TlsCertificateEntry] {
+        &self.certificate_list
+    }
+
+    /// Number of certificate entries.
+    pub fn len(&self) -> usize {
+        self.certificate_list.len()
+    }
+
+    /// Return true when the certificate list is empty.
+    pub fn is_empty(&self) -> bool {
+        self.certificate_list.is_empty()
+    }
+
+    /// Total opaque certificate bytes across all entries.
+    pub fn certificate_bytes(&self) -> usize {
+        self.certificate_list
+            .iter()
+            .map(TlsCertificateEntry::certificate_len)
+            .sum()
+    }
+
+    /// Total TLS 1.3 per-entry extension count across all entries.
+    pub fn entry_extensions_len(&self) -> usize {
+        self.certificate_list
+            .iter()
+            .map(|entry| entry.extensions().len())
+            .sum()
+    }
+
+    /// Number of bytes occupied by the Certificate body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        match self.form {
+            TlsCertificateForm::Tls12 => checked_add_len(
+                TLS_CERTIFICATE_LIST_LENGTH_LEN,
+                self.certificate_list_body_len_tls12()?,
+                "tls.certificate.length",
+            ),
+            TlsCertificateForm::Tls13 => {
+                validate_u8_vector_len(
+                    self.request_context.len(),
+                    "tls.certificate.request_context.length",
+                )?;
+                let mut len = TLS_CERTIFICATE_REQUEST_CONTEXT_LENGTH_LEN;
+                len = checked_add_len(len, self.request_context.len(), "tls.certificate.length")?;
+                len = checked_add_len(
+                    len,
+                    TLS_CERTIFICATE_LIST_LENGTH_LEN,
+                    "tls.certificate.length",
+                )?;
+                len = checked_add_len(
+                    len,
+                    self.certificate_list_body_len_tls13()?,
+                    "tls.certificate.length",
+                )?;
+                Ok(len)
+            }
+        }
+    }
+
+    /// Append the Certificate body bytes.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.encoded_len()?;
+        match self.form {
+            TlsCertificateForm::Tls12 => {
+                let mut list = Vec::with_capacity(self.certificate_list_body_len_tls12()?);
+                for entry in &self.certificate_list {
+                    entry.encode_tls12(&mut list)?;
+                }
+                encode_u24_vector(&list, "tls.certificate.certificate_list.length", out)?;
+            }
+            TlsCertificateForm::Tls13 => {
+                encode_u8_vector(
+                    &self.request_context,
+                    "tls.certificate.request_context.length",
+                    out,
+                )?;
+                let mut list = Vec::with_capacity(self.certificate_list_body_len_tls13()?);
+                for entry in &self.certificate_list {
+                    entry.encode_tls13(&mut list)?;
+                }
+                encode_u24_vector(&list, "tls.certificate.certificate_list.length", out)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Return the encoded Certificate body bytes.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Compile the Certificate body bytes.
+    pub fn compile(&self) -> Result<Vec<u8>> {
+        self.encode_to_vec()
+    }
+
+    /// Decode one complete Certificate body, trying TLS 1.3 and then TLS 1.2.
+    ///
+    /// Use the version-specific decoders when session context already identifies
+    /// the negotiated TLS version.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        match Self::decode_tls13(bytes) {
+            Ok(certificate) => Ok(certificate),
+            Err(tls13_error) => match Self::decode_tls12(bytes) {
+                Ok(certificate) => Ok(certificate),
+                Err(_) => Err(tls13_error),
+            },
+        }
+    }
+
+    /// Decode one complete TLS 1.2 Certificate body.
+    pub fn decode_tls12(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (certificate, tail) = Self::decode_prefix_tls12(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.certificate.certificate_list.length",
+                "trailing bytes after certificate list",
+            ));
+        }
+        Ok(certificate)
+    }
+
+    /// Decode one complete TLS 1.3 Certificate body.
+    pub fn decode_tls13(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (certificate, tail) = Self::decode_prefix_tls13(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.certificate.certificate_list.length",
+                "trailing bytes after certificate list",
+            ));
+        }
+        Ok(certificate)
+    }
+
+    /// Decode one Certificate body from the front of `bytes`.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        match Self::decode_prefix_tls13(bytes) {
+            Ok(result) => Ok(result),
+            Err(tls13_error) => match Self::decode_prefix_tls12(bytes) {
+                Ok(result) => Ok(result),
+                Err(_) => Err(tls13_error),
+            },
+        }
+    }
+
+    /// Decode one TLS 1.2 Certificate body from the front of `bytes`.
+    pub fn decode_prefix_tls12(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let mut cursor = 0;
+        let list_body = decode_u24_vector(
+            bytes,
+            &mut cursor,
+            "tls.certificate.certificate_list",
+            "tls.certificate.certificate_list.length",
+        )?;
+        let mut list_cursor = 0;
+        let mut certificate_list = Vec::new();
+        while list_cursor < list_body.len() {
+            certificate_list.push(TlsCertificateEntry::decode_tls12_from(
+                &list_body,
+                &mut list_cursor,
+            )?);
+        }
+        Ok((Self::tls12(certificate_list), &bytes[cursor..]))
+    }
+
+    /// Decode one TLS 1.3 Certificate body from the front of `bytes`.
+    pub fn decode_prefix_tls13(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let mut cursor = 0;
+        let request_context = decode_u8_vector(
+            bytes,
+            &mut cursor,
+            "tls.certificate.request_context",
+            "tls.certificate.request_context.length",
+        )?;
+        let list_body = decode_u24_vector(
+            bytes,
+            &mut cursor,
+            "tls.certificate.certificate_list",
+            "tls.certificate.certificate_list.length",
+        )?;
+        let mut list_cursor = 0;
+        let mut certificate_list = Vec::new();
+        while list_cursor < list_body.len() {
+            certificate_list.push(TlsCertificateEntry::decode_tls13_from(
+                &list_body,
+                &mut list_cursor,
+            )?);
+        }
+        Ok((
+            Self::tls13(request_context, certificate_list),
+            &bytes[cursor..],
+        ))
+    }
+
+    /// Stable one-line summary preserving form, vector sizes, and counts.
+    pub fn summary(&self) -> String {
+        format!(
+            "certificate form={} request_context_bytes={} certificate_list={} certificate_bytes={} entry_extensions={}",
+            self.form.label(),
+            self.request_context.len(),
+            self.certificate_list.len(),
+            self.certificate_bytes(),
+            self.entry_extensions_len()
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("form", self.form.label().to_string()),
+            ("request_context", hex_bytes(&self.request_context)),
+            (
+                "request_context_bytes",
+                self.request_context.len().to_string(),
+            ),
+            (
+                "certificate_list_count",
+                self.certificate_list.len().to_string(),
+            ),
+            ("certificate_bytes", self.certificate_bytes().to_string()),
+            (
+                "entry_extensions_count",
+                self.entry_extensions_len().to_string(),
+            ),
+        ]
+    }
+
+    fn certificate_list_body_len_tls12(&self) -> Result<usize> {
+        let mut len = 0usize;
+        for entry in &self.certificate_list {
+            len = checked_add_len(
+                len,
+                entry.encoded_len_tls12()?,
+                "tls.certificate.certificate_list.length",
+            )?;
+        }
+        validate_u24_vector_len(len, "tls.certificate.certificate_list.length")
+    }
+
+    fn certificate_list_body_len_tls13(&self) -> Result<usize> {
+        let mut len = 0usize;
+        for entry in &self.certificate_list {
+            len = checked_add_len(
+                len,
+                entry.encoded_len_tls13()?,
+                "tls.certificate.certificate_list.length",
+            )?;
+        }
+        validate_u24_vector_len(len, "tls.certificate.certificate_list.length")
+    }
+}
+
+impl Default for TlsCertificate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// ServerHello handshake body bytes plus an optional decoded view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsServerHelloBody {
@@ -2371,6 +2946,67 @@ impl TlsEncryptedExtensionsBody {
     }
 }
 
+/// Certificate handshake body bytes plus an optional decoded view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlsCertificateBody {
+    body: Vec<u8>,
+    certificate: Option<TlsCertificate>,
+}
+
+impl TlsCertificateBody {
+    /// Preserve Certificate body bytes without parsing them.
+    pub fn raw(body: impl Into<Vec<u8>>) -> Self {
+        Self {
+            body: body.into(),
+            certificate: None,
+        }
+    }
+
+    /// Build Certificate body bytes from typed fields.
+    pub fn from_certificate(certificate: TlsCertificate) -> Result<Self> {
+        let body = certificate.encode_to_vec()?;
+        Ok(Self {
+            body,
+            certificate: Some(certificate),
+        })
+    }
+
+    /// Decode and preserve exact Certificate body bytes.
+    pub fn from_decoded_body(body: impl Into<Vec<u8>>) -> Result<Self> {
+        let body = body.into();
+        let certificate = TlsCertificate::decode(&body)?;
+        Ok(Self {
+            body,
+            certificate: Some(certificate),
+        })
+    }
+
+    /// Borrow the preserved body bytes.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// Consume the wrapper and return the preserved body bytes.
+    pub fn into_body(self) -> Vec<u8> {
+        self.body
+    }
+
+    /// Borrow the decoded Certificate fields when available.
+    pub const fn certificate(&self) -> Option<&TlsCertificate> {
+        self.certificate.as_ref()
+    }
+
+    /// Return true when the body carries decoded Certificate fields.
+    pub const fn is_typed(&self) -> bool {
+        self.certificate.is_some()
+    }
+
+    /// Number of preserved body bytes.
+    pub fn body_len(&self) -> usize {
+        self.body.len()
+    }
+}
+
 /// ClientHello handshake body bytes plus an optional decoded view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsClientHelloBody {
@@ -2448,9 +3084,27 @@ fn validate_u8_vector_len(len: usize, field: &'static str) -> Result<usize> {
     Ok(len)
 }
 
+fn validate_u24_vector_len(len: usize, field: &'static str) -> Result<usize> {
+    if len > TLS_HANDSHAKE_MAX_LENGTH as usize {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "length must fit in three bytes",
+        ));
+    }
+
+    Ok(len)
+}
+
 fn encode_u8_vector(body: &[u8], length_context: &'static str, out: &mut Vec<u8>) -> Result<()> {
     let len = validate_u8_vector_len(body.len(), length_context)?;
     out.push(len as u8);
+    out.extend_from_slice(body);
+    Ok(())
+}
+
+fn encode_u24_vector(body: &[u8], length_context: &'static str, out: &mut Vec<u8>) -> Result<()> {
+    let len = validate_u24_vector_len(body.len(), length_context)? as u32;
+    out.extend_from_slice(&u24_to_be_bytes(len)?);
     out.extend_from_slice(body);
     Ok(())
 }
@@ -2485,6 +3139,22 @@ fn decode_u8_vector(
     length_context: &'static str,
 ) -> Result<Vec<u8>> {
     let declared_len = take_bytes(bytes, cursor, 1, length_context)?[0] as usize;
+    Ok(take_bytes(bytes, cursor, declared_len, vector_context)?.to_vec())
+}
+
+fn decode_u24_vector(
+    bytes: &[u8],
+    cursor: &mut usize,
+    vector_context: &'static str,
+    length_context: &'static str,
+) -> Result<Vec<u8>> {
+    let length = take_bytes(
+        bytes,
+        cursor,
+        TLS_CERTIFICATE_LIST_LENGTH_LEN,
+        length_context,
+    )?;
+    let declared_len = u24_from_be_bytes([length[0], length[1], length[2]]) as usize;
     Ok(take_bytes(bytes, cursor, declared_len, vector_context)?.to_vec())
 }
 
@@ -3118,6 +3788,162 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn tls_certificate_message_tls12_list_encodes_decodes_through_handshake() -> Result<()> {
+        let certificate = TlsCertificate::tls12(vec![
+            TlsCertificateEntry::new([0x30, 0x03, 0x01]),
+            TlsCertificateEntry::new([0x30, 0x01]),
+        ]);
+        let encoded = certificate.encode_to_vec()?;
+
+        assert_eq!(
+            encoded,
+            vec![
+                0x00, 0x00, 0x0b, // certificate_list length
+                0x00, 0x00, 0x03, 0x30, 0x03, 0x01, // first opaque certificate
+                0x00, 0x00, 0x02, 0x30, 0x01, // second opaque certificate
+            ]
+        );
+        assert!(certificate.is_tls12());
+        assert!(!certificate.is_tls13());
+        assert_eq!(certificate.form(), TlsCertificateForm::Tls12);
+        assert_eq!(certificate.request_context(), &[]);
+        assert_eq!(certificate.certificate_list().len(), 2);
+        assert_eq!(certificate.certificate_bytes(), 5);
+        assert_eq!(certificate.entry_extensions_len(), 0);
+        assert_eq!(
+            certificate.summary(),
+            "certificate form=tls12 request_context_bytes=0 certificate_list=2 certificate_bytes=5 entry_extensions=0"
+        );
+
+        let decoded = TlsCertificate::decode_tls12(&encoded)?;
+        assert_eq!(decoded, certificate);
+        assert_eq!(TlsCertificate::decode(&encoded)?, certificate);
+
+        let handshake = TlsHandshake::from_certificate(certificate.clone())?;
+        let handshake_bytes = tls_handshake_fixture(TlsHandshakeType::CERTIFICATE.raw(), &encoded);
+        assert_eq!(handshake.body_bytes(), encoded.as_slice());
+        assert!(handshake.body().is_typed_certificate());
+        assert_eq!(handshake.certificate_body(), Some(&certificate));
+        assert_eq!(handshake.encode_to_vec()?, handshake_bytes);
+
+        let decoded_handshake = TlsHandshake::decode(&handshake_bytes)?;
+        assert_eq!(decoded_handshake.certificate_body(), Some(&certificate));
+        assert_eq!(decoded_handshake.encode_to_vec()?, handshake_bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_certificate_message_tls13_preserves_request_context_and_entry_extensions() -> Result<()>
+    {
+        let certificate = TlsCertificate::tls13(
+            [0x01, 0x02],
+            vec![
+                TlsCertificateEntry::new([0x30, 0x82]).with_raw_extension(0xbeef, [0xaa]),
+                TlsCertificateEntry::new([0x04]),
+            ],
+        );
+        let encoded = certificate.encode_to_vec()?;
+
+        assert_eq!(
+            encoded,
+            vec![
+                0x02, 0x01, 0x02, // certificate_request_context
+                0x00, 0x00, 0x12, // certificate_list length
+                0x00, 0x00, 0x02, 0x30, 0x82, // first opaque certificate
+                0x00, 0x05, 0xbe, 0xef, 0x00, 0x01, 0xaa, // first entry extensions
+                0x00, 0x00, 0x01, 0x04, // second opaque certificate
+                0x00, 0x00, // second entry extensions
+            ]
+        );
+        assert!(certificate.is_tls13());
+        assert_eq!(certificate.form(), TlsCertificateForm::Tls13);
+        assert_eq!(certificate.request_context(), &[0x01, 0x02]);
+        assert_eq!(
+            certificate.certificate_list()[0].certificate_data(),
+            &[0x30, 0x82]
+        );
+        assert_eq!(
+            certificate.certificate_list()[0].extensions()[0].raw_type(),
+            0xbeef
+        );
+        assert_eq!(
+            certificate.certificate_list()[0].extensions()[0].body(),
+            &[0xaa]
+        );
+        assert_eq!(certificate.entry_extensions_len(), 1);
+        assert_eq!(
+            certificate.inspection_fields(),
+            vec![
+                ("form", "tls13".to_string()),
+                ("request_context", "01 02".to_string()),
+                ("request_context_bytes", "2".to_string()),
+                ("certificate_list_count", "2".to_string()),
+                ("certificate_bytes", "3".to_string()),
+                ("entry_extensions_count", "1".to_string()),
+            ]
+        );
+
+        let decoded = TlsCertificate::decode_tls13(&encoded)?;
+        assert_eq!(decoded, certificate);
+        assert_eq!(decoded.encode_to_vec()?, encoded);
+        assert_eq!(decoded.compile()?, encoded);
+
+        let entry_fields = certificate.certificate_list()[0].inspection_fields();
+        assert!(entry_fields.contains(&("certificate", "30 82".to_string())));
+        assert!(entry_fields.contains(&("certificate_bytes", "2".to_string())));
+        assert_eq!(
+            certificate.certificate_list()[0].summary(),
+            "certificate_entry certificate_bytes=2 extensions=1"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_certificate_message_raw_body_remains_available() -> Result<()> {
+        let raw = TlsHandshake::certificate([0xca, 0xfe]);
+
+        assert_eq!(raw.body_bytes(), &[0xca, 0xfe]);
+        assert!(matches!(raw.body(), TlsHandshakeBody::Certificate(_)));
+        assert!(raw.certificate_body().is_none());
+        assert!(!raw.body().is_typed_certificate());
+        assert_eq!(
+            raw.encode_to_vec()?,
+            vec![0x0b, 0x00, 0x00, 0x02, 0xca, 0xfe]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn tls_certificate_message_decode_reports_structured_vector_errors() {
+        assert_eq!(
+            TlsCertificate::decode_tls12([0x00, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.certificate.certificate_list.length", 3, 2)
+        );
+
+        let truncated_tls12_entry = [
+            0x00, 0x00, 0x04, // certificate_list length
+            0x00, 0x00, 0x02, 0xaa, // certificate length says two bytes, body has one
+        ];
+        assert_eq!(
+            TlsCertificate::decode_tls12(truncated_tls12_entry).unwrap_err(),
+            CrafterError::buffer_too_short("tls.certificate.certificate", 5, 4)
+        );
+
+        let truncated_tls13_entry_extensions = [
+            0x00, // empty certificate_request_context
+            0x00, 0x00, 0x04, // certificate_list length
+            0x00, 0x00, 0x01, 0xaa, // certificate entry without extensions vector
+        ];
+        assert_eq!(
+            TlsCertificate::decode_tls13(truncated_tls13_entry_extensions).unwrap_err(),
+            CrafterError::buffer_too_short("tls.certificate_entry.extensions.length", 2, 0)
+        );
     }
 
     #[test]
