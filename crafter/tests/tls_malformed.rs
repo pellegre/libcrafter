@@ -3,13 +3,18 @@
 //! These tests stay offline and exercise the public TLS packet-layer primitives.
 
 use crafter::protocols::tls::{
-    TlsAlert, TlsAlpnProtocols, TlsCertificate, TlsHandshake, TlsKeyShare, TlsRawExtension,
-    TlsRecord, TlsRecordBody, TlsRecordHeader, TlsServerNameList, TlsSignatureAlgorithms,
-    TLS_ALERT_LEN, TLS_CERTIFICATE_LIST_LENGTH_LEN, TLS_EXTENSION_HEADER_LEN,
+    TlsAlert, TlsAlpnProtocols, TlsCertificate, TlsCertificateAuthorities, TlsExtensionListContext,
+    TlsExtensions, TlsHandshake, TlsKeyShare, TlsPreSharedKey, TlsRawExtension, TlsRecord,
+    TlsRecordBody, TlsRecordHeader, TlsServerNameList, TlsSignatureAlgorithms,
+    TlsSupportedVersions, TLS_ALERT_LEN, TLS_CERTIFICATE_LIST_LENGTH_LEN, TLS_EXTENSION_HEADER_LEN,
     TLS_HANDSHAKE_HEADER_LEN, TLS_RECORD_HEADER_LEN,
 };
 use crafter::{CrafterError, Result};
 
+const TLS_EXTENSION_MALFORMED_CORPUS: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/malformed/tls-extension-corpus.hex"
+));
 const TLS_HANDSHAKE_MALFORMED_CORPUS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/malformed/tls-handshake-corpus.hex"
@@ -18,6 +23,26 @@ const TLS_RECORD_MALFORMED_CORPUS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/malformed/tls-record-corpus.hex"
 ));
+
+#[derive(Debug)]
+struct TlsExtensionMalformedCase {
+    name: &'static str,
+    target: TlsExtensionMalformedTarget,
+    expected: TlsMalformedExpected,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TlsExtensionMalformedTarget {
+    RawExtension,
+    ExtensionListClient,
+    Sni,
+    Alpn,
+    SupportedVersionsClient,
+    KeyShareClient,
+    PreSharedKeyClient,
+    CertificateAuthorities,
+}
 
 #[derive(Debug)]
 struct TlsHandshakeMalformedCase {
@@ -76,6 +101,41 @@ fn assert_buffer_too_short(
         err,
         CrafterError::buffer_too_short(context, required, available)
     );
+}
+
+fn tls_extension_malformed_cases() -> Vec<TlsExtensionMalformedCase> {
+    TLS_EXTENSION_MALFORMED_CORPUS
+        .lines()
+        .enumerate()
+        .filter_map(|(line_index, line)| {
+            let line_number = line_index + 1;
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+
+            let parts = line.split('|').collect::<Vec<_>>();
+            assert_eq!(
+                parts.len(),
+                8,
+                "TLS extension malformed corpus line {line_number} must have 8 fields"
+            );
+
+            let name = parts[0];
+            let target = parse_tls_extension_malformed_target(name, parts[1]);
+            let expected = parse_tls_malformed_expected(
+                name, parts[2], parts[3], parts[4], parts[5], parts[6],
+            );
+            let bytes = parse_hex(name, parts[7]);
+
+            Some(TlsExtensionMalformedCase {
+                name,
+                target,
+                expected,
+                bytes,
+            })
+        })
+        .collect()
 }
 
 fn tls_handshake_malformed_cases() -> Vec<TlsHandshakeMalformedCase> {
@@ -154,6 +214,20 @@ fn tls_record_malformed_cases() -> Vec<TlsRecordMalformedCase> {
         .collect()
 }
 
+fn parse_tls_extension_malformed_target(name: &str, target: &str) -> TlsExtensionMalformedTarget {
+    match target {
+        "raw-extension" => TlsExtensionMalformedTarget::RawExtension,
+        "extension-list-client" => TlsExtensionMalformedTarget::ExtensionListClient,
+        "sni" => TlsExtensionMalformedTarget::Sni,
+        "alpn" => TlsExtensionMalformedTarget::Alpn,
+        "supported-versions-client" => TlsExtensionMalformedTarget::SupportedVersionsClient,
+        "key-share-client" => TlsExtensionMalformedTarget::KeyShareClient,
+        "pre-shared-key-client" => TlsExtensionMalformedTarget::PreSharedKeyClient,
+        "certificate-authorities" => TlsExtensionMalformedTarget::CertificateAuthorities,
+        other => panic!("TLS extension malformed corpus case {name} has unknown target {other}"),
+    }
+}
+
 fn parse_tls_handshake_malformed_target(name: &str, target: &str) -> TlsHandshakeMalformedTarget {
     match target {
         "handshake" => TlsHandshakeMalformedTarget::Handshake,
@@ -207,12 +281,21 @@ fn parse_tls_record_malformed_context(name: &str, context: &str) -> &'static str
 fn parse_tls_malformed_context(name: &str, context: &str) -> &'static str {
     match context {
         "raw_tail" => "raw_tail",
+        "tls.extension" => "tls.extension",
+        "tls.extension.body" => "tls.extension.body",
+        "tls.client_hello.extensions" => "tls.client_hello.extensions",
         "tls.handshake.header" => "tls.handshake.header",
         "tls.handshake.body" => "tls.handshake.body",
         "tls.client_hello.random" => "tls.client_hello.random",
         "tls.client_hello.cipher_suites" => "tls.client_hello.cipher_suites",
         "tls.client_hello.cipher_suites.length" => "tls.client_hello.cipher_suites.length",
         "tls.server_hello.extensions.length" => "tls.server_hello.extensions.length",
+        "tls.server_name_list" => "tls.server_name_list",
+        "tls.alpn.protocol_name" => "tls.alpn.protocol_name",
+        "tls.supported_versions.client.length" => "tls.supported_versions.client.length",
+        "tls.key_share.client.key_exchange" => "tls.key_share.client.key_exchange",
+        "tls.pre_shared_key.client.binder" => "tls.pre_shared_key.client.binder",
+        "tls.distinguished_name" => "tls.distinguished_name",
         other => panic!("TLS malformed corpus case {name} has unknown context {other}"),
     }
 }
@@ -220,6 +303,7 @@ fn parse_tls_malformed_context(name: &str, context: &str) -> &'static str {
 fn parse_tls_malformed_reason(name: &str, reason: &str) -> &'static str {
     match reason {
         "cipher suite vector length must be even" => "cipher suite vector length must be even",
+        "length must be a multiple of two bytes" => "length must be a multiple of two bytes",
         other => panic!("TLS malformed corpus case {name} has unknown reason {other}"),
     }
 }
@@ -251,6 +335,27 @@ fn parse_hex(name: &str, hex: &str) -> Vec<u8> {
             })
         })
         .collect()
+}
+
+fn assert_required_tls_extension_malformed_cases(cases: &[TlsExtensionMalformedCase]) {
+    const REQUIRED: &[&str] = &[
+        "short-extension-header",
+        "extension-body-overrun",
+        "extension-list-body-overrun",
+        "sni-list-overrun",
+        "alpn-name-overrun",
+        "supported-versions-odd-length",
+        "key-share-vector-overrun",
+        "psk-binder-overrun",
+        "certificate-authorities-overrun",
+    ];
+
+    for required in REQUIRED {
+        assert!(
+            cases.iter().any(|case| case.name == *required),
+            "TLS extension malformed corpus missing required case {required}"
+        );
+    }
 }
 
 fn assert_required_tls_handshake_malformed_cases(cases: &[TlsHandshakeMalformedCase]) {
@@ -287,6 +392,47 @@ fn assert_required_tls_record_malformed_cases(cases: &[TlsRecordMalformedCase]) 
             cases.iter().any(|case| case.name == *required),
             "TLS record malformed corpus missing required case {required}"
         );
+    }
+}
+
+fn assert_tls_extension_malformed_case(case: &TlsExtensionMalformedCase) {
+    let err = match case.target {
+        TlsExtensionMalformedTarget::RawExtension => {
+            TlsRawExtension::decode(&case.bytes).unwrap_err()
+        }
+        TlsExtensionMalformedTarget::ExtensionListClient => {
+            TlsExtensions::decode_with_context(TlsExtensionListContext::client_hello(), &case.bytes)
+                .unwrap_err()
+        }
+        TlsExtensionMalformedTarget::Sni => TlsServerNameList::decode(&case.bytes).unwrap_err(),
+        TlsExtensionMalformedTarget::Alpn => TlsAlpnProtocols::decode(&case.bytes).unwrap_err(),
+        TlsExtensionMalformedTarget::SupportedVersionsClient => {
+            TlsSupportedVersions::decode_client(&case.bytes).unwrap_err()
+        }
+        TlsExtensionMalformedTarget::KeyShareClient => {
+            TlsKeyShare::decode_client(&case.bytes).unwrap_err()
+        }
+        TlsExtensionMalformedTarget::PreSharedKeyClient => {
+            TlsPreSharedKey::decode_client(&case.bytes).unwrap_err()
+        }
+        TlsExtensionMalformedTarget::CertificateAuthorities => {
+            TlsCertificateAuthorities::decode(&case.bytes).unwrap_err()
+        }
+    };
+
+    match case.expected {
+        TlsMalformedExpected::BufferTooShort {
+            context,
+            required,
+            available,
+        } => assert_buffer_too_short(err, context, required, available),
+        TlsMalformedExpected::InvalidFieldValue { field, reason } => {
+            assert_eq!(err, CrafterError::invalid_field_value(field, reason));
+        }
+        TlsMalformedExpected::DecodesRawTail { .. } => panic!(
+            "TLS extension malformed corpus case {} cannot expect raw-tail decode",
+            case.name
+        ),
     }
 }
 
@@ -423,6 +569,18 @@ fn tls_malformed_structured_truncation_contexts_are_public() {
         TLS_ALERT_LEN,
         1,
     );
+}
+
+#[test]
+fn tls_malformed_extension_corpus_reports_structured_errors() {
+    let cases = tls_extension_malformed_cases();
+    assert_required_tls_extension_malformed_cases(&cases);
+
+    for case in cases {
+        std::panic::catch_unwind(|| assert_tls_extension_malformed_case(&case)).unwrap_or_else(
+            |_| panic!("TLS extension malformed corpus case {} panicked", case.name),
+        );
+    }
 }
 
 #[test]
