@@ -92,6 +92,22 @@ may be read by provider tooling at runtime, but credential values must never be
 printed into plans, artifacts, documentation, fixtures, or logs committed to the
 repository.
 
+TLS live probe validation uses a two-part environment gate plus the existing
+probe confirmation flag. The default branch is intentionally dry-run:
+
+```sh
+if [ -n "${LIBCRAFTER_TLS_LIVE_PROVIDER:-}" ] && [ "${LIBCRAFTER_TLS_LIVE_CONFIRM:-}" = "yes" ]; then
+  tools/probe/run --provider "$LIBCRAFTER_TLS_LIVE_PROVIDER" --confirm-live-run --profile tls-smoke --seed 8446 --count 1 --out target/probe/tls-live
+else
+  tools/probe/run --provider qemu --dry-run --profile tls-smoke --seed 8446 --count 1 --out target/probe/tls-live-dry-run
+fi
+```
+
+Do not set `LIBCRAFTER_TLS_LIVE_PROVIDER` or
+`LIBCRAFTER_TLS_LIVE_CONFIRM=yes` from unattended automation. The provider name
+selects the disposable lab backend; confirmation records the operator's
+authorization to leave the dry-run path.
+
 ## Artifacts, teardown, and redaction
 
 Live-capable TLS workflows must collect enough evidence to explain the result:
