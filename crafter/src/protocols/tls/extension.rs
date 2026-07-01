@@ -29,6 +29,10 @@ pub const TLS_SERVER_NAME_HEADER_LEN: usize = TLS_SERVER_NAME_TYPE_LEN + TLS_SER
 pub const TLS_SERVER_NAME_LIST_LENGTH_LEN: usize = 2;
 /// TLS ServerName `host_name` NameType value from RFC 6066.
 pub const TLS_SERVER_NAME_TYPE_HOST_NAME: u8 = 0;
+/// TLS ALPN ProtocolName length field width in bytes.
+pub const TLS_ALPN_PROTOCOL_NAME_LENGTH_LEN: usize = 1;
+/// TLS ALPN ProtocolNameList aggregate length field width in bytes.
+pub const TLS_ALPN_PROTOCOL_NAME_LIST_LENGTH_LEN: usize = 2;
 
 /// A raw-preserving TLS `ExtensionType` value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -913,6 +917,483 @@ impl TlsRawExtension {
     pub fn as_server_name_list(&self) -> Result<TlsServerNameList> {
         TlsServerNameList::from_raw_extension(self)
     }
+
+    /// Create a raw `application_layer_protocol_negotiation` extension.
+    pub fn application_layer_protocol_negotiation(
+        protocols: impl Into<TlsAlpnProtocols>,
+    ) -> Result<Self> {
+        protocols.into().to_raw_extension()
+    }
+
+    /// Create a raw `application_layer_protocol_negotiation` extension.
+    pub fn alpn(protocols: impl Into<TlsAlpnProtocols>) -> Result<Self> {
+        Self::application_layer_protocol_negotiation(protocols)
+    }
+
+    /// Decode this raw extension as a typed ALPN ProtocolNameList.
+    pub fn as_alpn_protocols(&self) -> Result<TlsAlpnProtocols> {
+        TlsAlpnProtocols::from_raw_extension(self)
+    }
+}
+
+/// One opaque RFC 7301 ALPN `ProtocolName`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TlsAlpnProtocol {
+    bytes: Vec<u8>,
+}
+
+impl TlsAlpnProtocol {
+    /// Build an opaque ALPN protocol name from caller-supplied bytes.
+    pub fn new(bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            bytes: bytes.into(),
+        }
+    }
+
+    /// Build the IANA-registered HTTP/1.1 ALPN identifier (`http/1.1`).
+    pub fn http_1_1() -> Self {
+        Self::new(b"http/1.1")
+    }
+
+    /// Build the IANA-registered HTTP/2-over-TLS ALPN identifier (`h2`).
+    pub fn h2() -> Self {
+        Self::new(b"h2")
+    }
+
+    /// Borrow the preserved opaque protocol-name bytes.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Compatibility alias for borrowing the preserved opaque protocol-name bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        self.bytes()
+    }
+
+    /// Consume the protocol name and return its opaque bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    /// Number of bytes occupied by the complete encoded ProtocolName entry.
+    pub fn encoded_len(&self) -> Result<usize> {
+        TLS_ALPN_PROTOCOL_NAME_LENGTH_LEN
+            .checked_add(self.bytes.len())
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.alpn.protocol_name.length",
+                    "length overflow",
+                )
+            })
+    }
+
+    /// Append this length-prefixed ProtocolName entry to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        validate_alpn_protocol(self)?;
+        let len = u8::try_from(self.bytes.len()).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "tls.alpn.protocol_name.length",
+                "length must fit in one byte",
+            )
+        })?;
+
+        out.push(len);
+        out.extend_from_slice(&self.bytes);
+        Ok(())
+    }
+
+    /// Return the encoded ProtocolName entry.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Decode one ALPN ProtocolName entry from `bytes`.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (protocol, _) = Self::decode_prefix(bytes.as_ref())?;
+        Ok(protocol)
+    }
+
+    /// Decode one ALPN ProtocolName entry from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_ALPN_PROTOCOL_NAME_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.alpn.protocol_name.length",
+                TLS_ALPN_PROTOCOL_NAME_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let len = bytes[0] as usize;
+        let required = TLS_ALPN_PROTOCOL_NAME_LENGTH_LEN
+            .checked_add(len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.alpn.protocol_name.length",
+                    "length overflow",
+                )
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "tls.alpn.protocol_name",
+                required,
+                bytes.len(),
+            ));
+        }
+
+        let protocol = Self::new(bytes[TLS_ALPN_PROTOCOL_NAME_LENGTH_LEN..required].to_vec());
+        validate_alpn_protocol(&protocol)?;
+        Ok((protocol, &bytes[required..]))
+    }
+
+    /// Stable one-line summary preserving the opaque protocol bytes.
+    pub fn summary(&self) -> String {
+        format!(
+            "alpn protocol={} bytes={}",
+            String::from_utf8_lossy(&self.bytes),
+            self.bytes.len()
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            (
+                "alpn_protocol",
+                String::from_utf8_lossy(&self.bytes).to_string(),
+            ),
+            ("alpn_protocol_bytes", self.bytes.len().to_string()),
+        ]
+    }
+}
+
+impl From<Vec<u8>> for TlsAlpnProtocol {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::new(bytes)
+    }
+}
+
+impl From<&[u8]> for TlsAlpnProtocol {
+    fn from(bytes: &[u8]) -> Self {
+        Self::new(bytes)
+    }
+}
+
+impl<const N: usize> From<[u8; N]> for TlsAlpnProtocol {
+    fn from(bytes: [u8; N]) -> Self {
+        Self::new(bytes)
+    }
+}
+
+impl From<&str> for TlsAlpnProtocol {
+    fn from(value: &str) -> Self {
+        Self::new(value.as_bytes())
+    }
+}
+
+impl From<String> for TlsAlpnProtocol {
+    fn from(value: String) -> Self {
+        Self::new(value.into_bytes())
+    }
+}
+
+/// TLS `application_layer_protocol_negotiation` extension body as an RFC 7301 ProtocolNameList.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct TlsAlpnProtocols {
+    protocols: Vec<TlsAlpnProtocol>,
+}
+
+impl TlsAlpnProtocols {
+    /// Create an ordered ALPN ProtocolNameList.
+    pub fn new(protocols: impl Into<Vec<TlsAlpnProtocol>>) -> Self {
+        Self {
+            protocols: protocols.into(),
+        }
+    }
+
+    /// Create a one-entry ProtocolNameList containing `protocol`.
+    pub fn from_protocol(protocol: impl Into<TlsAlpnProtocol>) -> Self {
+        Self::new(vec![protocol.into()])
+    }
+
+    /// Create a one-entry ProtocolNameList containing `http/1.1`.
+    pub fn http_1_1() -> Self {
+        Self::from_protocol(TlsAlpnProtocol::http_1_1())
+    }
+
+    /// Create a one-entry ProtocolNameList containing `h2`.
+    pub fn h2() -> Self {
+        Self::from_protocol(TlsAlpnProtocol::h2())
+    }
+
+    /// Create a ProtocolNameList containing `h2`, then `http/1.1`.
+    pub fn h2_then_http_1_1() -> Self {
+        Self::new(vec![TlsAlpnProtocol::h2(), TlsAlpnProtocol::http_1_1()])
+    }
+
+    /// Borrow the ordered protocol names.
+    pub fn protocols(&self) -> &[TlsAlpnProtocol] {
+        &self.protocols
+    }
+
+    /// Compatibility alias for borrowing the ordered protocol names.
+    pub fn as_slice(&self) -> &[TlsAlpnProtocol] {
+        self.protocols()
+    }
+
+    /// Return the ordered opaque protocol-name bytes.
+    pub fn protocol_bytes(&self) -> Vec<&[u8]> {
+        self.protocols.iter().map(TlsAlpnProtocol::bytes).collect()
+    }
+
+    /// Consume the list and return the ordered protocol names.
+    pub fn into_vec(self) -> Vec<TlsAlpnProtocol> {
+        self.protocols
+    }
+
+    /// Append one protocol name.
+    pub fn push(&mut self, protocol: impl Into<TlsAlpnProtocol>) {
+        self.protocols.push(protocol.into());
+    }
+
+    /// Number of protocol names.
+    pub fn len(&self) -> usize {
+        self.protocols.len()
+    }
+
+    /// Return true when the list carries no protocol names.
+    pub fn is_empty(&self) -> bool {
+        self.protocols.is_empty()
+    }
+
+    /// Number of bytes occupied by ProtocolName entries, excluding the list length prefix.
+    pub fn byte_len(&self) -> Result<usize> {
+        validate_alpn_protocols(&self.protocols)?;
+        let mut len = 0usize;
+        for protocol in &self.protocols {
+            len = len.checked_add(protocol.encoded_len()?).ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.alpn.protocol_name_list.length",
+                    "length overflow",
+                )
+            })?;
+        }
+        validate_alpn_protocol_name_list_len(len)?;
+        Ok(len)
+    }
+
+    /// Number of bytes occupied by the complete encoded ProtocolNameList.
+    pub fn encoded_len(&self) -> Result<usize> {
+        TLS_ALPN_PROTOCOL_NAME_LIST_LENGTH_LEN
+            .checked_add(self.byte_len()?)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.alpn.protocol_name_list.length",
+                    "length overflow",
+                )
+            })
+    }
+
+    /// Append the uint16 length-prefixed ProtocolNameList.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let body_len = self.byte_len()?;
+        let body_len = u16::try_from(body_len).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "tls.alpn.protocol_name_list.length",
+                "length must fit in two bytes",
+            )
+        })?;
+
+        out.extend_from_slice(&body_len.to_be_bytes());
+        for protocol in &self.protocols {
+            protocol.encode(out)?;
+        }
+        Ok(())
+    }
+
+    /// Return the uint16 length-prefixed ProtocolNameList encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Convert this ProtocolNameList into a raw ALPN extension.
+    pub fn to_raw_extension(&self) -> Result<TlsRawExtension> {
+        Ok(TlsRawExtension::new(
+            TlsExtensionType::APPLICATION_LAYER_PROTOCOL_NEGOTIATION,
+            self.encode_to_vec()?,
+        ))
+    }
+
+    /// Decode a uint16 length-prefixed ProtocolNameList.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (protocols, _) = Self::decode_prefix(bytes.as_ref())?;
+        Ok(protocols)
+    }
+
+    /// Decode a uint16 length-prefixed ProtocolNameList from the front of `bytes`.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_ALPN_PROTOCOL_NAME_LIST_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.alpn.protocol_name_list.length",
+                TLS_ALPN_PROTOCOL_NAME_LIST_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let byte_len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+        validate_alpn_protocol_name_list_len(byte_len)?;
+        let required = TLS_ALPN_PROTOCOL_NAME_LIST_LENGTH_LEN
+            .checked_add(byte_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.alpn.protocol_name_list.length",
+                    "length overflow",
+                )
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "tls.alpn.protocol_name_list",
+                required,
+                bytes.len(),
+            ));
+        }
+
+        let mut cursor = TLS_ALPN_PROTOCOL_NAME_LIST_LENGTH_LEN;
+        let body_end = required;
+        let mut protocols = Vec::new();
+        while cursor < body_end {
+            let (protocol, tail) = TlsAlpnProtocol::decode_prefix(&bytes[cursor..body_end])?;
+            cursor = body_end - tail.len();
+            protocols.push(protocol);
+        }
+
+        validate_alpn_protocols(&protocols)?;
+        Ok((Self::new(protocols), &bytes[required..]))
+    }
+
+    /// Decode a raw ALPN extension body.
+    pub fn from_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        if extension.extension_type() != TlsExtensionType::APPLICATION_LAYER_PROTOCOL_NEGOTIATION {
+            return Err(CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be application_layer_protocol_negotiation",
+            ));
+        }
+        Self::decode(extension.body())
+    }
+
+    /// Stable one-line summary preserving protocol order.
+    pub fn summary(&self) -> String {
+        let values = self
+            .protocols
+            .iter()
+            .map(|protocol| String::from_utf8_lossy(protocol.bytes()).to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "alpn protocols count={} bytes={} values={}",
+            self.len(),
+            self.protocols
+                .iter()
+                .map(|protocol| protocol.encoded_len().unwrap_or(0))
+                .sum::<usize>(),
+            values
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("alpn_protocol_count", self.len().to_string()),
+            (
+                "alpn_protocols",
+                self.protocols
+                    .iter()
+                    .map(|protocol| String::from_utf8_lossy(protocol.bytes()).to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            (
+                "alpn_protocol_bytes",
+                self.protocols
+                    .iter()
+                    .map(|protocol| protocol.encoded_len().unwrap_or(0))
+                    .sum::<usize>()
+                    .to_string(),
+            ),
+        ]
+    }
+}
+
+impl From<Vec<TlsAlpnProtocol>> for TlsAlpnProtocols {
+    fn from(protocols: Vec<TlsAlpnProtocol>) -> Self {
+        Self::new(protocols)
+    }
+}
+
+impl<const N: usize> From<[TlsAlpnProtocol; N]> for TlsAlpnProtocols {
+    fn from(protocols: [TlsAlpnProtocol; N]) -> Self {
+        Self::new(Vec::from(protocols))
+    }
+}
+
+impl TryFrom<&TlsRawExtension> for TlsAlpnProtocols {
+    type Error = CrafterError;
+
+    fn try_from(value: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension(value)
+    }
+}
+
+impl TryFrom<TlsAlpnProtocols> for TlsRawExtension {
+    type Error = CrafterError;
+
+    fn try_from(value: TlsAlpnProtocols) -> Result<Self> {
+        value.to_raw_extension()
+    }
+}
+
+fn validate_alpn_protocol(protocol: &TlsAlpnProtocol) -> Result<()> {
+    let len = protocol.bytes().len();
+    if len == 0 {
+        return Err(CrafterError::invalid_field_value(
+            "tls.alpn.protocol_name.length",
+            "length must be at least one byte",
+        ));
+    }
+    if len > u8::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            "tls.alpn.protocol_name.length",
+            "length must fit in one byte",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_alpn_protocols(protocols: &[TlsAlpnProtocol]) -> Result<()> {
+    for protocol in protocols {
+        validate_alpn_protocol(protocol)?;
+    }
+    Ok(())
+}
+
+fn validate_alpn_protocol_name_list_len(len: usize) -> Result<()> {
+    if len < TLS_ALPN_PROTOCOL_NAME_LENGTH_LEN + 1 {
+        return Err(CrafterError::invalid_field_value(
+            "tls.alpn.protocol_name_list.length",
+            "length must be at least two bytes",
+        ));
+    }
+    if len > u16::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            "tls.alpn.protocol_name_list.length",
+            "length must fit in two bytes",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_server_name_entry(name: &TlsServerName) -> Result<()> {
@@ -1822,6 +2303,219 @@ mod tests {
             oversized.encode_to_vec().unwrap_err(),
             CrafterError::invalid_field_value(
                 "tls.server_name_list.length",
+                "length must fit in two bytes"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_alpn_protocol_builders_encode_rfc7301_vector() {
+        let h2 = TlsAlpnProtocol::h2();
+        assert_eq!(h2.bytes(), b"h2");
+        assert_eq!(h2.as_bytes(), b"h2");
+        assert_eq!(h2.encode_to_vec().unwrap(), [0x02, b'h', b'2']);
+        assert_eq!(h2.clone().into_bytes(), b"h2".to_vec());
+        assert_eq!(h2.summary(), "alpn protocol=h2 bytes=2");
+        assert!(h2
+            .inspection_fields()
+            .contains(&("alpn_protocol", "h2".to_string())));
+
+        let http_1_1 = TlsAlpnProtocol::http_1_1();
+        assert_eq!(http_1_1.bytes(), b"http/1.1");
+        assert_eq!(
+            http_1_1.encode_to_vec().unwrap(),
+            [0x08, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1']
+        );
+
+        let protocols = TlsAlpnProtocols::h2_then_http_1_1();
+        assert_eq!(protocols.len(), 2);
+        assert!(!protocols.is_empty());
+        assert_eq!(
+            protocols.protocol_bytes(),
+            vec![b"h2".as_slice(), b"http/1.1".as_slice()]
+        );
+        assert_eq!(protocols.byte_len().unwrap(), 12);
+        assert_eq!(protocols.encoded_len().unwrap(), 14);
+        assert_eq!(
+            protocols.encode_to_vec().unwrap(),
+            [0x00, 0x0c, 0x02, b'h', b'2', 0x08, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1',]
+        );
+
+        let encoded_with_tail = [protocols.encode_to_vec().unwrap(), vec![0xaa]].concat();
+        let (decoded, tail) = TlsAlpnProtocols::decode_prefix(&encoded_with_tail).unwrap();
+        assert_eq!(tail, &[0xaa]);
+        assert_eq!(decoded, protocols);
+        assert_eq!(decoded.as_slice(), decoded.protocols());
+        assert_eq!(decoded.clone().into_vec(), protocols.clone().into_vec());
+        assert_eq!(
+            decoded.summary(),
+            "alpn protocols count=2 bytes=12 values=h2,http/1.1"
+        );
+        assert!(decoded
+            .inspection_fields()
+            .contains(&("alpn_protocols", "h2,http/1.1".to_string())));
+
+        let mut pushed = TlsAlpnProtocols::h2();
+        pushed.push("http/1.1");
+        assert_eq!(pushed, protocols);
+        assert_eq!(
+            TlsAlpnProtocols::http_1_1().protocol_bytes(),
+            vec![b"http/1.1".as_slice()]
+        );
+        assert_eq!(
+            TlsAlpnProtocols::from_protocol("h2").protocol_bytes(),
+            vec![b"h2".as_slice()]
+        );
+    }
+
+    #[test]
+    fn tls_extension_alpn_converts_to_and_from_raw_extension() {
+        let protocols = TlsAlpnProtocols::h2_then_http_1_1();
+        let raw = protocols.to_raw_extension().unwrap();
+        assert_eq!(
+            raw.extension_type(),
+            TlsExtensionType::APPLICATION_LAYER_PROTOCOL_NEGOTIATION
+        );
+        assert_eq!(
+            raw.raw_type(),
+            constants::TLS_EXTENSION_APPLICATION_LAYER_PROTOCOL_NEGOTIATION
+        );
+        assert_eq!(
+            raw.encode_to_vec().unwrap(),
+            [
+                0x00, 0x10, 0x00, 0x0e, 0x00, 0x0c, 0x02, b'h', b'2', 0x08, b'h', b't', b't', b'p',
+                b'/', b'1', b'.', b'1',
+            ]
+        );
+
+        assert_eq!(raw.as_alpn_protocols().unwrap(), protocols);
+        assert_eq!(TlsAlpnProtocols::try_from(&raw).unwrap(), protocols);
+        assert_eq!(TlsRawExtension::try_from(protocols.clone()).unwrap(), raw);
+        assert_eq!(TlsRawExtension::alpn(protocols.clone()).unwrap(), raw);
+        assert_eq!(
+            TlsRawExtension::application_layer_protocol_negotiation(protocols).unwrap(),
+            raw
+        );
+
+        assert_eq!(
+            TlsAlpnProtocols::from_raw_extension(&TlsRawExtension::from_raw(0xbeef, []))
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be application_layer_protocol_negotiation"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_alpn_preserves_opaque_protocol_bytes() {
+        let protocol = TlsAlpnProtocol::new([0xff, 0x00, 0x80]);
+        assert_eq!(protocol.bytes(), &[0xff, 0x00, 0x80]);
+        assert_eq!(
+            TlsAlpnProtocol::decode(protocol.encode_to_vec().unwrap()).unwrap(),
+            protocol
+        );
+
+        let protocols = TlsAlpnProtocols::new([protocol.clone()]);
+        let decoded = TlsAlpnProtocols::decode(protocols.encode_to_vec().unwrap()).unwrap();
+        assert_eq!(decoded.protocols()[0].bytes(), &[0xff, 0x00, 0x80]);
+    }
+
+    #[test]
+    fn tls_extension_alpn_reports_structured_decode_errors() {
+        assert_eq!(
+            TlsAlpnProtocol::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.alpn.protocol_name.length",
+                TLS_ALPN_PROTOCOL_NAME_LENGTH_LEN,
+                0
+            )
+        );
+        assert_eq!(
+            TlsAlpnProtocol::decode([0x03, b'h']).unwrap_err(),
+            CrafterError::buffer_too_short("tls.alpn.protocol_name", 4, 2)
+        );
+        assert_eq!(
+            TlsAlpnProtocol::decode([0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.alpn.protocol_name.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsAlpnProtocols::decode([0x00]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.alpn.protocol_name_list.length",
+                TLS_ALPN_PROTOCOL_NAME_LIST_LENGTH_LEN,
+                1
+            )
+        );
+        assert_eq!(
+            TlsAlpnProtocols::decode([0x00, 0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.alpn.protocol_name_list.length",
+                "length must be at least two bytes"
+            )
+        );
+        assert_eq!(
+            TlsAlpnProtocols::decode([0x00, 0x01, 0x01]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.alpn.protocol_name_list.length",
+                "length must be at least two bytes"
+            )
+        );
+        assert_eq!(
+            TlsAlpnProtocols::decode([0x00, 0x03, 0x02, b'h']).unwrap_err(),
+            CrafterError::buffer_too_short("tls.alpn.protocol_name_list", 5, 4)
+        );
+        assert_eq!(
+            TlsAlpnProtocols::decode([0x00, 0x02, 0x00, b'h']).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.alpn.protocol_name.length",
+                "length must be at least one byte"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_alpn_reports_structured_encode_errors() {
+        assert_eq!(
+            TlsAlpnProtocol::new(Vec::<u8>::new())
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.alpn.protocol_name.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsAlpnProtocol::new(vec![0; u8::MAX as usize + 1])
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.alpn.protocol_name.length",
+                "length must fit in one byte"
+            )
+        );
+        assert_eq!(
+            TlsAlpnProtocols::new(Vec::<TlsAlpnProtocol>::new())
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.alpn.protocol_name_list.length",
+                "length must be at least two bytes"
+            )
+        );
+
+        let oversized =
+            TlsAlpnProtocols::new(vec![
+                TlsAlpnProtocol::new(vec![0xaa; u8::MAX as usize]);
+                258
+            ]);
+        assert_eq!(
+            oversized.encode_to_vec().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.alpn.protocol_name_list.length",
                 "length must fit in two bytes"
             )
         );
