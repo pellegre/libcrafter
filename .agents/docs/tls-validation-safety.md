@@ -57,7 +57,7 @@ each layer that will participate:
 
 ```sh
 tools/lab/run plan --provider qemu --dry-run --profile tls-smoke --seed 443 --role stimulus --role target --json
-tools/oracle/run live --backend scapy --provider qemu --dry-run --profile tls-smoke --seed 443 --count 5 --out target/oracle/tls-dry-run
+tools/oracle/run live --backend <oracle-backend> --provider qemu --dry-run --profile tls-smoke --seed 443 --count 5 --out target/oracle/tls-dry-run
 tools/probe/run --provider qemu --dry-run --profile tls-smoke --seed 443 --count 5 --out target/probe/tls-dry-run
 ```
 
