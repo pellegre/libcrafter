@@ -21,6 +21,7 @@ pub mod version;
 
 pub use alert::{TlsAlert, TlsAlertDescription, TlsAlertLevel, TLS_ALERT_LEN};
 pub use cipher_suite::{TlsCipherSuite, TlsCipherSuiteList};
+pub use constants::*;
 pub use content_type::TlsContentType;
 pub use extension::{
     TlsAlpnProtocol, TlsAlpnProtocols, TlsCertificateAuthorities, TlsCertificateStatusType,
