@@ -26,8 +26,8 @@ pub use extension::{
     TLS_EXTENSION_TYPE_LEN,
 };
 pub use handshake::{
-    TlsHandshakeHeader, TlsHandshakeType, TLS_HANDSHAKE_HEADER_LEN, TLS_HANDSHAKE_LENGTH_LEN,
-    TLS_HANDSHAKE_MAX_LENGTH, TLS_HANDSHAKE_TYPE_LEN,
+    TlsHandshake, TlsHandshakeBody, TlsHandshakeHeader, TlsHandshakeType, TLS_HANDSHAKE_HEADER_LEN,
+    TLS_HANDSHAKE_LENGTH_LEN, TLS_HANDSHAKE_MAX_LENGTH, TLS_HANDSHAKE_TYPE_LEN,
 };
 pub use layer::Tls;
 pub use named_group::{TlsNamedGroup, TlsNamedGroupList};
