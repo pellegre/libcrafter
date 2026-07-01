@@ -23,13 +23,17 @@ pub use cipher_suite::{TlsCipherSuite, TlsCipherSuiteList};
 pub use content_type::TlsContentType;
 pub use extension::{
     TlsAlpnProtocol, TlsAlpnProtocols, TlsExtensionListContext, TlsExtensionType, TlsExtensions,
-    TlsKeyShare, TlsKeyShareContext, TlsKeyShareEntry, TlsPskKeyExchangeMode,
+    TlsKeyShare, TlsKeyShareContext, TlsKeyShareEntry, TlsPreSharedKey, TlsPreSharedKeyContext,
+    TlsPskBinderEntry, TlsPskBinders, TlsPskIdentities, TlsPskIdentity, TlsPskKeyExchangeMode,
     TlsPskKeyExchangeModes, TlsRawExtension, TlsServerName, TlsServerNameList, TlsServerNameType,
     TlsSignatureAlgorithms, TlsSignatureAlgorithmsCert, TlsSupportedGroups, TlsSupportedVersions,
     TlsSupportedVersionsContext, TLS_ALPN_PROTOCOL_NAME_LENGTH_LEN,
     TLS_ALPN_PROTOCOL_NAME_LIST_LENGTH_LEN, TLS_EXTENSION_HEADER_LEN, TLS_EXTENSION_LENGTH_LEN,
     TLS_EXTENSION_LIST_LENGTH_LEN, TLS_EXTENSION_TYPE_LEN, TLS_KEY_SHARE_CLIENT_SHARES_LENGTH_LEN,
     TLS_KEY_SHARE_ENTRY_HEADER_LEN, TLS_KEY_SHARE_GROUP_LEN, TLS_KEY_SHARE_KEY_EXCHANGE_LENGTH_LEN,
+    TLS_PRE_SHARED_KEY_SELECTED_IDENTITY_LEN, TLS_PSK_BINDERS_LENGTH_LEN,
+    TLS_PSK_BINDER_LENGTH_LEN, TLS_PSK_IDENTITIES_LENGTH_LEN, TLS_PSK_IDENTITY_HEADER_LEN,
+    TLS_PSK_IDENTITY_LENGTH_LEN, TLS_PSK_IDENTITY_OBFUSCATED_TICKET_AGE_LEN,
     TLS_PSK_KEY_EXCHANGE_MODES_LENGTH_LEN, TLS_PSK_KEY_EXCHANGE_MODE_LEN,
     TLS_PSK_KEY_EXCHANGE_MODE_PSK_DHE_KE, TLS_PSK_KEY_EXCHANGE_MODE_PSK_KE,
     TLS_SERVER_NAME_HEADER_LEN, TLS_SERVER_NAME_LENGTH_LEN, TLS_SERVER_NAME_LIST_LENGTH_LEN,
