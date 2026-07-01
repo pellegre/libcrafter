@@ -53,6 +53,20 @@ protocols carried inside TLS application data. Once bytes are encrypted or
 application-specific, `crafter` keeps them opaque unless a later source-backed
 packet-layer plan explicitly adds a narrower primitive.
 
+## Heartbeat Boundary
+
+TLS heartbeat is selected only as an RFC 6520 packet primitive: a heartbeat
+record can be built, decoded, inspected, and round-tripped as bytes containing
+message type, declared payload length, payload, and padding. The RFC 6520
+errata state reviewed for this step contains only an editorial typo in the
+overview text, so the message grammar remains usable for packet modeling.
+
+`crafter` must not add heartbeat keepalive scheduling, PMTU probing, connection
+liveness policy, response generation, retry behavior, scanner workflows, or
+live heartbeat sends. Generated tools that need live heartbeat traffic must use
+the repo's explicit provider-backed live-validation rules and must keep dry-run
+or fixture paths as the default.
+
 DTLS, QUIC TLS transcript internals, Encrypted ClientHello, and other
 TLS-adjacent transports or extensions remain deferred unless a separate
 source-backed plan scopes them.
@@ -108,4 +122,3 @@ artifact-preserving, and safe to skip when provider credentials, disposable
 endpoints, controlled TLS peers, or confirmation flags are absent. Live work
 must not add credentials, public endpoint data, sensitive captures, host-specific
 paths, or live traffic defaults to tracked files.
-

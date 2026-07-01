@@ -10,6 +10,7 @@ pub mod content_type;
 pub(crate) mod decode;
 pub mod extension;
 pub mod handshake;
+pub mod heartbeat;
 pub mod layer;
 pub mod named_group;
 pub mod record;
@@ -88,11 +89,17 @@ pub use handshake::{
     TLS_NEW_SESSION_TICKET_NONCE_LENGTH_LEN, TLS_NEW_SESSION_TICKET_TICKET_LENGTH_LEN,
     TLS_SERVER_HELLO_FIXED_LEN, TLS_SERVER_HELLO_LEGACY_VERSION_LEN, TLS_SERVER_HELLO_RANDOM_LEN,
 };
+pub use heartbeat::{
+    TlsHeartbeat, TlsHeartbeatMessageType, TLS_HEARTBEAT_HEADER_LEN,
+    TLS_HEARTBEAT_MESSAGE_TYPE_LEN, TLS_HEARTBEAT_MESSAGE_TYPE_REQUEST,
+    TLS_HEARTBEAT_MESSAGE_TYPE_RESPONSE, TLS_HEARTBEAT_MIN_PADDING_LEN,
+    TLS_HEARTBEAT_PAYLOAD_LENGTH_LEN,
+};
 pub use layer::Tls;
 pub use named_group::{TlsNamedGroup, TlsNamedGroupList};
 pub use record::{
     TlsApplicationData, TlsChangeCipherSpec, TlsChangeCipherSpecRecordBody, TlsHandshakeRecordBody,
-    TlsRecord, TlsRecordBody, TlsRecordHeader, TLS_CHANGE_CIPHER_SPEC_LEN,
+    TlsHeartbeatRecordBody, TlsRecord, TlsRecordBody, TlsRecordHeader, TLS_CHANGE_CIPHER_SPEC_LEN,
     TLS_CHANGE_CIPHER_SPEC_VALUE, TLS_RECORD_CONTENT_TYPE_LEN, TLS_RECORD_HEADER_LEN,
     TLS_RECORD_LENGTH_LEN, TLS_RECORD_VERSION_LEN,
 };

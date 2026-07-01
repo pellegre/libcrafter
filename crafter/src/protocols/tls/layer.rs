@@ -5,7 +5,7 @@
 //! parsing without changing the packet-layer container.
 
 use super::{
-    TlsAlert, TlsApplicationData, TlsChangeCipherSpec, TlsContentType, TlsRecord,
+    TlsAlert, TlsApplicationData, TlsChangeCipherSpec, TlsContentType, TlsHeartbeat, TlsRecord,
     TLS_RECORD_HEADER_LEN,
 };
 use crate::packet::{Layer, LayerContext};
@@ -102,6 +102,16 @@ impl Tls {
     /// Construct a TLS `change_cipher_spec` record from the typed helper.
     pub fn change_cipher_spec_message(change_cipher_spec: TlsChangeCipherSpec) -> Self {
         Self::from_record(TlsRecord::from_change_cipher_spec(change_cipher_spec))
+    }
+
+    /// Construct a TLS `heartbeat` record with raw fragment bytes.
+    pub fn heartbeat(fragment: impl Into<Vec<u8>>) -> Self {
+        Self::from_record(TlsRecord::heartbeat(fragment))
+    }
+
+    /// Construct a TLS `heartbeat` record from the typed helper.
+    pub fn heartbeat_message(heartbeat: TlsHeartbeat) -> Result<Self> {
+        Ok(Self::from_record(TlsRecord::from_heartbeat(heartbeat)?))
     }
 
     /// Append a complete record and return the updated TLS layer.
@@ -289,6 +299,18 @@ mod tests {
                 .compile()?
                 .as_bytes(),
             &[0x17, 0x03, 0x03, 0x00, 0x05, b'G', b'E', b'T', b' ', b'/']
+        );
+        assert_eq!(
+            Packet::from_layer(Tls::heartbeat_message(TlsHeartbeat::request(
+                [0xaa],
+                [0x55; 16],
+            ))?)
+            .compile()?
+            .as_bytes(),
+            &[
+                0x18, 0x03, 0x03, 0x00, 0x14, 0x01, 0x00, 0x01, 0xaa, 0x55, 0x55, 0x55, 0x55, 0x55,
+                0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
+            ]
         );
         Ok(())
     }

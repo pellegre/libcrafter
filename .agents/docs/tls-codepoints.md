@@ -85,7 +85,7 @@ Source: IANA TLS Parameters registry `TLS ContentType`; record syntax in RFC
 | `21` | `0x15` | `alert` | assigned | IANA, RFC 8446bis draft row; RFC 8446 sec. 6 | Alert records carry `AlertLevel` and `AlertDescription`. | default-eligible |
 | `22` | `0x16` | `handshake` | assigned | IANA, RFC 8446bis draft row; RFC 8446 sec. 4 | Handshake records may contain one or more handshake messages or fragments. | default-eligible |
 | `23` | `0x17` | `application_data` | assigned | IANA, RFC 8446bis draft row; RFC 8446 sec. 5 | TLS 1.3 encrypted content remains opaque. | default-eligible |
-| `24` | `0x18` | `heartbeat` | assigned | IANA, RFC 6520 | Candidate only; heartbeat step must resolve RFC 6520 errata and safety boundary. | deferred |
+| `24` | `0x18` | `heartbeat` | assigned | IANA, RFC 6520 | Packet primitive selected after resolving RFC 6520 errata as editorial-only for grammar; no live probing defaults. | packet-only |
 | `25` | `0x19` | `tls12_cid` | assigned | IANA, RFC 9146 | DTLS/TLS CID behavior is out of the TLS-over-TCP bootstrap. | preserve-only |
 | `26` | `0x1A` | `ACK` | assigned | IANA, RFC 9147 | DTLS 1.3; not TLS-over-TCP. | preserve-only |
 | `27` | `0x1B` | `return_routability_check` | assigned | IANA, RFC 9853 | DTLS path validation; not TLS-over-TCP. | preserve-only |

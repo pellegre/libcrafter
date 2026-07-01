@@ -194,7 +194,7 @@ pub const TLS_CONTENT_TYPE_ALERT: u8 = 21;
 pub const TLS_CONTENT_TYPE_HANDSHAKE: u8 = 22;
 /// TLS record ContentType application_data.
 pub const TLS_CONTENT_TYPE_APPLICATION_DATA: u8 = 23;
-/// TLS record ContentType heartbeat, deferred for a later safety-scoped step.
+/// TLS record ContentType heartbeat, selected for packet-only modeling.
 pub const TLS_CONTENT_TYPE_HEARTBEAT: u8 = 24;
 /// TLS record ContentType tls12_cid, preserved for explicit values only.
 pub const TLS_CONTENT_TYPE_TLS12_CID: u8 = 25;
@@ -225,7 +225,7 @@ pub const fn tls_content_type_status(content_type: u8) -> TlsCodepointStatus {
         | TLS_CONTENT_TYPE_ALERT
         | TLS_CONTENT_TYPE_HANDSHAKE
         | TLS_CONTENT_TYPE_APPLICATION_DATA => TlsCodepointStatus::DefaultEligible,
-        TLS_CONTENT_TYPE_HEARTBEAT => TlsCodepointStatus::Deferred,
+        TLS_CONTENT_TYPE_HEARTBEAT => TlsCodepointStatus::LabelEligible,
         TLS_CONTENT_TYPE_TLS12_CID => TlsCodepointStatus::PreserveOnly,
         TLS_CONTENT_TYPE_ACK | TLS_CONTENT_TYPE_RETURN_ROUTABILITY_CHECK => {
             TlsCodepointStatus::DtlsOnly
@@ -1243,7 +1243,7 @@ mod tests {
         );
         assert_eq!(
             tls_content_type_status(TLS_CONTENT_TYPE_HEARTBEAT),
-            TlsCodepointStatus::Deferred
+            TlsCodepointStatus::LabelEligible
         );
         assert_eq!(tls_content_type_label(0x30), "reserved content type 0x30");
 

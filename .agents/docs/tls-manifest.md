@@ -202,6 +202,6 @@ RFC Editor errata state reviewed on 2026-06-30:
   code must decide which contexts are typed and which remain raw-preserved.
 - RFC 8879 has reported errata. Certificate compression must not be implemented
   until those reports are reviewed against the selected sections.
-- Heartbeat remains only a candidate. It must stay deferred unless the later
-  heartbeat step resolves RFC 6520 errata and documents a safe packet-primitive
+- Heartbeat record messages are selected only as a packet primitive after the
+  heartbeat step resolved RFC 6520 errata and documented a safe packet-primitive
   boundary.
