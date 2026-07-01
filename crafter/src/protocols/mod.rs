@@ -41,8 +41,8 @@ pub mod ipv6 {
 /// Curated protocol symbols exported by both `crate::protocols` and the crate root.
 pub mod exports {
     use super::{
-        bgp, dhcp, dns, eapol, icmp, igmp, ip, ipsec, ipv4, ipv6, link, mqtt, ospf, quic, rip, rsn,
-        snmp, ssdp, tls, transport,
+        bgp, dhcp, dns, eapol, icmp, igmp, ip, ipsec, ipv4, ipv6, link, mqtt, ntp, ospf, quic, rip,
+        rsn, snmp, ssdp, tls, transport,
     };
 
     pub use crate::packet::Raw;
@@ -139,6 +139,16 @@ pub mod exports {
         EAPOL_TYPE_START, EAPOL_VERSION_1, EAPOL_VERSION_2, EAPOL_VERSION_3,
     };
     pub use mqtt::{Mqtt, MqttControlPacketType, MQTT_PORT, MQTT_TLS_PORT};
+    pub use ntp::constants::*;
+    pub use ntp::{
+        append_ntp_packet, decode_ntp_payload, looks_like_ntp_payload, ntp_client_udp,
+        ntp_extension_field_type_meta, ntp_ipv4_client_request, ntp_ipv6_client_request,
+        ntp_kiss_o_death_code_meta, ntp_leap_indicator_meta, ntp_mode_meta,
+        ntp_nts_extension_field_type_meta, ntp_pack_first_octet, ntp_parse_first_octet,
+        ntp_reference_id_meta, ntp_server_udp, ntp_stratum_meta, Ntp, NtpExtensionField,
+        NtpLeapIndicator, NtpLegacyMac, NtpMode, NtpReferenceCodeMeta, NtpReferenceId,
+        NtpRegistryMeta, NtpRegistryStatus, NtpShortFormat, NtpStratum, NtpTimestamp, NtpVersion,
+    };
     // Re-export the deprecated `Icmp*` aliases separately so the
     // `#[allow(deprecated)]` scope stays narrow: only these aliases are exempt from
     // the deprecation warning, while the rest of the icmp surface keeps full lint

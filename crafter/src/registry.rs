@@ -29,6 +29,7 @@ use crate::protocols::ipv4::{
 };
 use crate::protocols::ipv6::{append_ipv6_packet_with_registry, IPPROTO_IPV6_AH, IPPROTO_IPV6_ESP};
 use crate::protocols::mqtt::{decode::append_mqtt_packet_with_registry, MQTT_PORT};
+use crate::protocols::ntp::{append_ntp_packet, looks_like_ntp_payload, NTP_PORT};
 use crate::protocols::ospf::decode::append_ospf_packet_with_checksum_validation;
 use crate::protocols::ospf::v3::append_ospfv3_packet_with_checksum_validation;
 // Re-export the checksum-agnostic OSPF entrypoint alongside the registry so
@@ -431,6 +432,17 @@ impl ProtocolRegistry {
                     && looks_like_ripng_payload(ctx.payload)
             },
             |_registry, packet, payload| append_ripng_packet(packet, payload),
+        );
+
+        // NTP (RFC 5905) decode binds on UDP/123 only when the payload passes a
+        // conservative fixed-header and tail shape gate. Unrelated or truncated
+        // UDP/123 payloads remain Raw.
+        registry.bind_udp_with_registry(
+            |ctx| {
+                (ctx.source_port == NTP_PORT || ctx.destination_port == NTP_PORT)
+                    && looks_like_ntp_payload(ctx.payload)
+            },
+            |_registry, packet, payload| append_ntp_packet(packet, payload),
         );
 
         // SNMP message and notification decode binds on the source-backed
@@ -898,6 +910,12 @@ impl ProtocolRegistry {
                 && looks_like_ripng_payload(payload)
             {
                 return append_ripng_packet(packet, payload);
+            }
+
+            if (source_port == NTP_PORT || destination_port == NTP_PORT)
+                && looks_like_ntp_payload(payload)
+            {
+                return append_ntp_packet(packet, payload);
             }
 
             if (is_snmp_udp_port(source_port) || is_snmp_udp_port(destination_port))

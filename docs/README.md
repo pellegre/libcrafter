@@ -53,6 +53,10 @@ Per-protocol wire coverage for building and decoding packets.
   preservation, pcap fixtures, and the dry-run/live-lab boundary. SNMP support
   is not a scanner, manager, agent daemon, MIB engine, credential store, or
   VACM evaluator.
+- [NTP wire coverage](guide/ntp.md) — NTP fixed-header construction, UDP/123
+  decode dispatch, extension fields, NTS packet extension wrappers, legacy MAC
+  tails, Kiss-o'-Death labels, raw fallback, and the provider-backed live
+  boundary.
 - [RIP wire coverage](guide/rip.md) — RIPv1/RIPv2 and RIPng message
   construction, route entries, authentication, UDP/520 and UDP/521 decode
   dispatch, and the offline/live surfaces.

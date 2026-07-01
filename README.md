@@ -232,6 +232,7 @@ preserved as `Raw` payloads when the enclosing header is valid.
 | DHCPv6 | DHCPv6 client/server and relay packet construction and decode, DUIDs, status codes, IA_NA, IA_PD, IA Address, IA Prefix, relay message encapsulation, leasequery families, and unknown option preservation; not a client, server, relay daemon, or lease engine | [dhcpv6](docs/guide/dhcpv6.md) |
 | BGP | OPEN, UPDATE, KEEPALIVE, NOTIFICATION, ROUTE-REFRESH, path attributes, capabilities | [bgp](docs/guide/bgp.md) |
 | MQTT | MQTT 3.1.1 and 5.0 control packets over TCP/1883, typed properties, reason codes, and stacked payload decode | [mqtt](docs/guide/mqtt.md) |
+| NTP | NTP fixed headers over UDP/123, LI/version/mode/stratum/reference metadata, timestamps, extension fields, NTS packet extension wrappers, legacy MAC tails, Kiss-o'-Death labels, and raw fallback; not a clock, daemon, scanner, NTS-KE client, or Autokey verifier | [ntp](docs/guide/ntp.md) |
 | SNMP | BER values, VarBinds, SNMPv1/v2c PDUs, SNMPv3 wire framing, UDP/161 and UDP/162 decode dispatch, unknown preservation, and offline pcap fixtures; not a scanner, manager, agent daemon, MIB engine, credential store, or VACM evaluator | [snmp](docs/guide/snmp.md) |
 | OSPF | OSPFv2 Hello/DD/LSR/LSU/LSAck packets, Router/Network/Summary/AS-External/NSSA/Opaque (TE, RI) LSAs, null/simple/keyed-MD5/HMAC-SHA authentication, plus an OSPFv3 base layer; wire-level build and decode only (no state machine, SPF, or LSDB) | [ospf](docs/guide/ospf.md) |
 | IPsec | ESP, AH, and IKEv2 (IKE header and payload set) with SA and transform primitives | [ipsec](docs/guide/ipsec.md) |
@@ -268,9 +269,10 @@ By category:
 - Protocols — `arp_who_has`, `dns_query`, `dhcpv4_discover`,
   `dhcpv4_option82`, `dhcpv4_leasequery`, `dhcpv6_solicit`,
   `dhcpv6_information_request`, `dhcpv6_prefix_delegation`, `dhcpv6_relay`,
-  `icmpv4_error`, `icmpv6_echo`, `snmp_get`, `snmp_trap`, `snmpv3_message`,
-  `vlan`, `dot11_beacon_rsn`, `ipsec_esp`, `bgp_session`, `mqtt_session`. SNMP wire
-  guidance also lives in
+  `icmpv4_error`, `icmpv6_echo`, `ntp_decode`, `ntp_request_plan`,
+  `snmp_get`, `snmp_trap`, `snmpv3_message`, `vlan`, `dot11_beacon_rsn`,
+  `ipsec_esp`, `bgp_session`, `mqtt_session`. NTP and SNMP wire guidance also
+  lives in [docs/guide/ntp.md](docs/guide/ntp.md) and
   [docs/guide/snmp.md](docs/guide/snmp.md), and examples stay offline or
   dry-run by default.
 
@@ -282,8 +284,8 @@ The full annotated table, with safety modes and commands, is in
 - [docs/README.md](docs/README.md) is the documentation index.
 - [docs/guide/](docs/guide/) — per-protocol wire coverage for everyday packet
   work (IPv4, IGMP, IPv6, TCP, UDP, ARP, ICMPv6, DHCPv6, DNS, mDNS/DNS-SD,
-  BGP, MQTT, SNMP, OSPF, 802.11, IPsec); UDP, ARP, ICMPv6, IGMP, DHCPv6, DNS,
-  mDNS, SNMP, and OSPF now have their own guides.
+  BGP, MQTT, NTP, SNMP, OSPF, 802.11, IPsec); UDP, ARP, ICMPv6, IGMP, DHCPv6,
+  DNS, mDNS, NTP, SNMP, and OSPF now have their own guides.
 - [docs/reference/](docs/reference/) — the public API
   ([api.md](docs/reference/api.md)), the wire I/O layer
   ([wire.md](docs/reference/wire.md)), and the example catalog
