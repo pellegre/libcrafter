@@ -19,24 +19,25 @@ use crafter::core::{
     Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll, LlcSnap, MacAddr, NetworkLayer,
     NullByteOrder, NullLoopback, OptionOverload, OspfChecksumStatus, Ospfv2, Ospfv3, Packet, Quic,
     QuicFrame, QuicPacket, QuicTransportParameter, QuicUnknownFrame, QuicVarInt, Radiotap, Raw,
-    Rip, Ripng, Snmp, Tcp, TcpOption, TcpSackBlock, Udp, UdpChecksumStatus, UdpOption,
-    UdpOptionStatus, UdpOptions, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCPV4_CLIENT_PORT,
-    DHCPV4_SERVER_PORT, DNS_CLASS_IN, DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE,
-    DNS_EDNS_OPTION_NSID, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED,
-    DNS_SVCB_KEY_ALPN, DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A,
-    DNS_TYPE_AAAA, DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NS,
-    DNS_TYPE_NSEC, DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_PTR, DNS_TYPE_RRSIG, DNS_TYPE_SOA,
-    DNS_TYPE_SRV, DNS_TYPE_SVCB, DNS_TYPE_TXT, ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4,
-    ETHERTYPE_IPV6, ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED,
-    ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IGMP_FIXED_HEADER_LEN, IGMP_QUERY_CODE_V1,
-    IGMP_TYPE_UNASSIGNED_FIRST, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IGMP, IPPROTO_IPV6_DSTOPTS,
-    IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_ROUTE,
-    IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS,
-    IPV4_FLAG_RESERVED, IPV6_ROUTING_TYPE_MOBILE, IPV6_ROUTING_TYPE_SEGMENT, MDNS_CLASS_BIT,
-    MDNS_GOODBYE_TTL, MDNS_IPV4_ETHERNET_MULTICAST, MDNS_IPV4_MULTICAST,
-    MDNS_IPV6_ETHERNET_MULTICAST, MDNS_IPV6_LINK_LOCAL_MULTICAST, MDNS_PORT, QUIC_VERSION_1,
-    QUIC_VERSION_2, SNMP_PORT, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN,
-    UDP_OPTION_EOL, UDP_OPTION_NOP,
+    Rip, Ripng, Snmp, Tcp, TcpOption, TcpSackBlock, Tls, TlsAlert, TlsContentType, TlsRecord, Udp,
+    UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions, Vlan, ARP_HRD_INFINIBAND,
+    BOOTP_REQUEST, DHCPV4_CLIENT_PORT, DHCPV4_SERVER_PORT, DNS_CLASS_IN,
+    DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
+    DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_SVCB_KEY_ALPN,
+    DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A, DNS_TYPE_AAAA,
+    DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NS, DNS_TYPE_NSEC,
+    DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_PTR, DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV,
+    DNS_TYPE_SVCB, DNS_TYPE_TXT, ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_IPV6,
+    ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE,
+    ICMP_ECHO_REQUEST, IGMP_FIXED_HEADER_LEN, IGMP_QUERY_CODE_V1, IGMP_TYPE_UNASSIGNED_FIRST,
+    IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IGMP, IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1,
+    IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_ROUTE, IPPROTO_TCP, IPPROTO_UDP,
+    IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED,
+    IPV6_ROUTING_TYPE_MOBILE, IPV6_ROUTING_TYPE_SEGMENT, MDNS_CLASS_BIT, MDNS_GOODBYE_TTL,
+    MDNS_IPV4_ETHERNET_MULTICAST, MDNS_IPV4_MULTICAST, MDNS_IPV6_ETHERNET_MULTICAST,
+    MDNS_IPV6_LINK_LOCAL_MULTICAST, MDNS_PORT, QUIC_VERSION_1, QUIC_VERSION_2, SNMP_PORT,
+    TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, TLS_PORT_HTTPS, UDP_HEADER_LEN, UDP_OPTION_EOL,
+    UDP_OPTION_NOP,
 };
 use crafter::protocols::dhcp::{
     Dhcpv6, Dhcpv6IaAddr, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6Option, Dhcpv6StatusCode,
@@ -67,6 +68,7 @@ enum FixtureDecodeTarget {
     Packet(PacketDecodeTarget),
     Dhcpv4Options,
     QuicDatagram,
+    TlsRecords,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,6 +110,7 @@ enum ExpectedLayer {
     IgmpExtension,
     Icmpv6,
     Tcp,
+    Tls,
     Udp,
     UdpOptions,
     Snmp,
@@ -149,6 +152,7 @@ enum CoverageFamily {
     Ipv4Options,
     Ipv4TcpOptions,
     Ipv4TcpBgp,
+    Ipv4TcpTls,
     Ipv4UdpDnsQuery,
     Ipv4UdpDnsResponse,
     Ipv4UdpDnsSoaSrv,
@@ -187,6 +191,7 @@ enum CoverageFamily {
     Ipv4UdpRip,
     Ipv6UdpRipng,
     QuicPackets,
+    TlsRecords,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -379,6 +384,51 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         contents: FixtureContents::Hex(fixture_str!("bytes/quic-short-header.hex")),
         target: FixtureDecodeTarget::QuicDatagram,
         expected_layers: &[ExpectedLayer::Quic],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "tls-client-hello-tls12-compatible",
+        path: "bytes/tls-client-hello-tls12-compatible.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/tls-client-hello-tls12-compatible.hex")),
+        target: FixtureDecodeTarget::TlsRecords,
+        expected_layers: &[ExpectedLayer::Tls],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "tls-client-hello-tls13",
+        path: "bytes/tls-client-hello-tls13.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/tls-client-hello-tls13.hex")),
+        target: FixtureDecodeTarget::TlsRecords,
+        expected_layers: &[ExpectedLayer::Tls],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "tls-server-hello-tls12",
+        path: "bytes/tls-server-hello-tls12.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/tls-server-hello-tls12.hex")),
+        target: FixtureDecodeTarget::TlsRecords,
+        expected_layers: &[ExpectedLayer::Tls],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "tls-server-hello-tls13",
+        path: "bytes/tls-server-hello-tls13.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/tls-server-hello-tls13.hex")),
+        target: FixtureDecodeTarget::TlsRecords,
+        expected_layers: &[ExpectedLayer::Tls],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "tls-hello-retry-request",
+        path: "bytes/tls-hello-retry-request.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/tls-hello-retry-request.hex")),
+        target: FixtureDecodeTarget::TlsRecords,
+        expected_layers: &[ExpectedLayer::Tls],
         preserve_exact_bytes: true,
         summary_path: None,
     },
@@ -1092,6 +1142,42 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: Some("summaries/ipv4-tcp-syn-rich-options.summary.txt"),
     },
     ValidFixtureCase {
+        name: "ipv4-tcp-tls-client-hello",
+        path: "bytes/ipv4-tcp-tls-client-hello.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-tcp-tls-client-hello.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Tcp, ExpectedLayer::Tls],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-tcp-tls-alert",
+        path: "bytes/ipv4-tcp-tls-alert.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-tcp-tls-alert.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Tcp, ExpectedLayer::Tls],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-tcp-tls-application-data",
+        path: "bytes/ipv4-tcp-tls-application-data.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-tcp-tls-application-data.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Tcp, ExpectedLayer::Tls],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-tcp-tls-port-raw-fallback",
+        path: "bytes/ipv4-tcp-tls-port-raw-fallback.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-tcp-tls-port-raw-fallback.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Tcp, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
         name: "ipv4-tcp-bgp-open",
         path: "bytes/ipv4-tcp-bgp-open.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-tcp-bgp-open.hex")),
@@ -1351,6 +1437,52 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
             ExpectedLayer::Ipv4,
             ExpectedLayer::Tcp,
             ExpectedLayer::Bgp,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ethernet-ipv4-tcp-tls-client-hello",
+        path: "bytes/ethernet-ipv4-tcp-tls-client-hello.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ethernet-ipv4-tcp-tls-client-hello.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ethernet)),
+        expected_layers: &[
+            ExpectedLayer::Ethernet,
+            ExpectedLayer::Ipv4,
+            ExpectedLayer::Tcp,
+            ExpectedLayer::Tls,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ethernet-ipv4-tcp-tls-alert",
+        path: "bytes/ethernet-ipv4-tcp-tls-alert.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ethernet-ipv4-tcp-tls-alert.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ethernet)),
+        expected_layers: &[
+            ExpectedLayer::Ethernet,
+            ExpectedLayer::Ipv4,
+            ExpectedLayer::Tcp,
+            ExpectedLayer::Tls,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ethernet-ipv4-tcp-tls-application-data",
+        path: "bytes/ethernet-ipv4-tcp-tls-application-data.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ethernet-ipv4-tcp-tls-application-data.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ethernet)),
+        expected_layers: &[
+            ExpectedLayer::Ethernet,
+            ExpectedLayer::Ipv4,
+            ExpectedLayer::Tcp,
+            ExpectedLayer::Tls,
         ],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -2282,6 +2414,58 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
             fixture_name: QUIC_PCAP_ETHERNET_RECORD_FIXTURE_NAME,
         }],
     },
+    PcapFixtureCase {
+        name: "raw-ipv4-tcp-tls-client-hello",
+        path: "pcaps/raw-ipv4-tcp-tls-client-hello.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv4-tcp-tls-client-hello.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv4,
+        records: &[
+            PcapFixtureRecord {
+                seconds: 68,
+                fractional: 1,
+                fixture_name: "ipv4-tcp-tls-client-hello",
+            },
+            PcapFixtureRecord {
+                seconds: 68,
+                fractional: 2,
+                fixture_name: "ipv4-tcp-tls-alert",
+            },
+            PcapFixtureRecord {
+                seconds: 68,
+                fractional: 3,
+                fixture_name: "ipv4-tcp-tls-application-data",
+            },
+        ],
+    },
+    PcapFixtureCase {
+        name: "ethernet-ipv4-tcp-tls-client-hello",
+        path: "pcaps/ethernet-ipv4-tcp-tls-client-hello.pcap",
+        contents: fixture_bytes!("pcaps/ethernet-ipv4-tcp-tls-client-hello.pcap"),
+        pcap_link_type: PcapLinkType::Ethernet,
+        link_type: LinkType::Ethernet,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::Ethernet,
+        records: &[
+            PcapFixtureRecord {
+                seconds: 68,
+                fractional: 11,
+                fixture_name: "ethernet-ipv4-tcp-tls-client-hello",
+            },
+            PcapFixtureRecord {
+                seconds: 68,
+                fractional: 12,
+                fixture_name: "ethernet-ipv4-tcp-tls-alert",
+            },
+            PcapFixtureRecord {
+                seconds: 68,
+                fractional: 13,
+                fixture_name: "ethernet-ipv4-tcp-tls-application-data",
+            },
+        ],
+    },
     // RawIp pcap fixtures carrying the RIP / RIPng UDP fixtures so the full
     // read -> decode -> summary path is exercised: a RIPv1 whole-table request
     // (Ipv4/Udp 520), a RIPv2 simple-password authenticated response
@@ -2750,6 +2934,10 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
     ),
     (CoverageFamily::Ipv4TcpOptions, "IPv4 TCP SYN options"),
     (CoverageFamily::Ipv4TcpBgp, "IPv4 TCP BGP messages"),
+    (
+        CoverageFamily::Ipv4TcpTls,
+        "IPv4 TCP TLS records and TLS-port raw fallback",
+    ),
     (CoverageFamily::Ipv4UdpDnsQuery, "IPv4 UDP DNS query"),
     (CoverageFamily::Ipv4UdpDnsResponse, "IPv4 UDP DNS response"),
     (
@@ -2848,6 +3036,10 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
         CoverageFamily::QuicPackets,
         "QUIC packet fixtures and typed datagram layer",
     ),
+    (
+        CoverageFamily::TlsRecords,
+        "TLS record fixtures and typed TLS layer",
+    ),
 ];
 
 const REQUIRED_PCAP_COVERAGE: &[(PcapCoverageFamily, &str)] = &[
@@ -2890,6 +3082,11 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         | "quic-handshake"
         | "quic-zero-rtt"
         | "quic-short-header" => &[CoverageFamily::QuicPackets],
+        "tls-client-hello-tls12-compatible"
+        | "tls-client-hello-tls13"
+        | "tls-server-hello-tls12"
+        | "tls-server-hello-tls13"
+        | "tls-hello-retry-request" => &[CoverageFamily::TlsRecords],
         "arp-who-has" => &[CoverageFamily::EthernetArpRequest],
         "ethernet-arp-reply" => &[CoverageFamily::EthernetArpReply],
         "ethernet-arp-infiniband-ipv6-nonstandard" => &[CoverageFamily::EthernetArpNonstandard],
@@ -2956,6 +3153,13 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         | "ethernet-ipv4-tcp-bgp-open"
         | "ethernet-ipv4-tcp-bgp-keepalive"
         | "ethernet-ipv4-tcp-bgp-update-announce" => &[CoverageFamily::Ipv4TcpBgp],
+        "ipv4-tcp-tls-client-hello"
+        | "ipv4-tcp-tls-alert"
+        | "ipv4-tcp-tls-application-data"
+        | "ipv4-tcp-tls-port-raw-fallback"
+        | "ethernet-ipv4-tcp-tls-client-hello"
+        | "ethernet-ipv4-tcp-tls-alert"
+        | "ethernet-ipv4-tcp-tls-application-data" => &[CoverageFamily::Ipv4TcpTls],
         "ipv4-udp-dns-query-example-com" => &[CoverageFamily::Ipv4UdpDnsQuery],
         "ipv4-udp-dns-response-example-com" => &[CoverageFamily::Ipv4UdpDnsResponse],
         "ipv4-udp-dns-soa-srv-response" => &[CoverageFamily::Ipv4UdpDnsSoaSrv],
@@ -3069,6 +3273,12 @@ fn packet_target_for_case(case: &ValidFixtureCase) -> PacketDecodeTarget {
                 case.name
             )
         }
+        FixtureDecodeTarget::TlsRecords => {
+            panic!(
+                "pcap fixture {} references raw TLS record fixture",
+                case.name
+            )
+        }
     }
 }
 
@@ -3142,6 +3352,17 @@ fn decode_quic_fixture_datagram(bytes: &[u8]) -> crafter::core::Result<Packet> {
     Ok(Packet::from_layer(Quic::from_packets([
         QuicPacket::decode(bytes)?,
     ])))
+}
+
+fn decode_tls_records_fixture(bytes: &[u8]) -> crafter::core::Result<Packet> {
+    let mut remaining = bytes;
+    let mut records = Vec::new();
+    while !remaining.is_empty() {
+        let (record, tail) = TlsRecord::decode_prefix(remaining)?;
+        records.push(record);
+        remaining = tail;
+    }
+    Ok(Packet::from_layer(Tls::from_records(records)))
 }
 
 fn ipv4_fragment_record_from_fixture(name: &str, timestamp_micros: u32) -> PacketRecord {
@@ -3475,6 +3696,9 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             ExpectedLayer::Tcp => {
                 let _ = expect_layer::<Tcp>(case, packet);
             }
+            ExpectedLayer::Tls => {
+                let _ = expect_layer::<Tls>(case, packet);
+            }
             ExpectedLayer::Udp => {
                 let _ = expect_layer::<Udp>(case, packet);
             }
@@ -3585,6 +3809,7 @@ fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
         ExpectedLayer::IgmpExtension => "IgmpExtension",
         ExpectedLayer::Icmpv6 => "Icmpv6",
         ExpectedLayer::Tcp => "Tcp",
+        ExpectedLayer::Tls => "TLS",
         ExpectedLayer::Udp => "Udp",
         ExpectedLayer::UdpOptions => "UdpOptions",
         ExpectedLayer::Snmp => "Snmp",
@@ -4541,6 +4766,100 @@ fn assert_quic_long_header_fixture_fields(case: &ValidFixtureCase, quic_packet: 
     assert_eq!(long_header.protected_payload(), protected_payload);
 }
 
+fn assert_tls_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
+    if case.name == "ipv4-tcp-tls-port-raw-fallback" {
+        let tcp = expect_layer::<Tcp>(case, packet);
+        assert_eq!(tcp.source_port_value(), 49_168);
+        assert_eq!(tcp.destination_port_value(), TLS_PORT_HTTPS);
+        assert!(packet.layer::<Tls>().is_none());
+        assert_eq!(
+            expect_layer::<Raw>(case, packet).as_bytes(),
+            b"not-a-tls-record"
+        );
+        return;
+    }
+
+    if case.name.starts_with("ethernet-ipv4-tcp-tls-") {
+        let ethernet = expect_layer::<Ethernet>(case, packet);
+        assert!(
+            matches!(
+                ethernet.source(),
+                Some(mac) if mac == MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x54, 0x68])
+                    || mac == MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x54, 0x69])
+            ),
+            "unexpected TLS Ethernet source {:?}",
+            ethernet.source()
+        );
+        assert!(
+            matches!(
+                ethernet.destination(),
+                Some(mac) if mac == MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x54, 0x68])
+                    || mac == MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x54, 0x69])
+            ),
+            "unexpected TLS Ethernet destination {:?}",
+            ethernet.destination()
+        );
+    }
+
+    if case.name.contains("-tcp-tls-") {
+        let tcp = expect_layer::<Tcp>(case, packet);
+        assert!(
+            (tcp.source_port_value() == 49_168 && tcp.destination_port_value() == TLS_PORT_HTTPS)
+                || (tcp.source_port_value() == TLS_PORT_HTTPS
+                    && tcp.destination_port_value() == 49_168)
+        );
+    }
+
+    let tls = expect_layer::<Tls>(case, packet);
+    assert_eq!(tls.record_count(), 1);
+    let record = &tls.records()[0];
+
+    match case.name {
+        name if name.contains("client-hello") => {
+            assert_eq!(record.content_type(), TlsContentType::handshake());
+            let messages = record
+                .body()
+                .handshake_messages()
+                .expect("TLS ClientHello fixture should decode as handshake");
+            assert_eq!(messages.len(), 1);
+            assert!(
+                messages[0].client_hello_body().is_some(),
+                "TLS ClientHello fixture should expose typed ClientHello"
+            );
+        }
+        name if name.contains("server-hello") || name.contains("hello-retry-request") => {
+            assert_eq!(record.content_type(), TlsContentType::handshake());
+            let messages = record
+                .body()
+                .handshake_messages()
+                .expect("TLS ServerHello fixture should decode as handshake");
+            assert_eq!(messages.len(), 1);
+            assert!(
+                messages[0].server_hello_body().is_some(),
+                "TLS ServerHello fixture should expose typed ServerHello"
+            );
+        }
+        name if name.contains("alert") => {
+            assert_eq!(record.content_type(), TlsContentType::alert());
+            assert_eq!(
+                TlsAlert::decode(record.fragment()).expect("TLS alert fixture should decode"),
+                TlsAlert::decode_error()
+            );
+        }
+        name if name.contains("application-data") => {
+            assert_eq!(record.content_type(), TlsContentType::application_data());
+            assert_eq!(
+                record
+                    .application_data_body()
+                    .expect("TLS application_data fixture should decode")
+                    .bytes(),
+                &[0xde, 0xad, 0xbe, 0xef, 0x68, 0x00, 0x01]
+            );
+        }
+        other => panic!("TLS fixture {other} is missing typed field assertions"),
+    }
+}
+
 fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     match case.name {
         name if name.starts_with("ble-") => assert_ble_fixture_fields(case, packet),
@@ -4591,6 +4910,9 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             );
         }
         name if name.starts_with("quic-") => assert_quic_fixture_fields(case, packet),
+        name if name.starts_with("tls-") || name.contains("-tcp-tls-") => {
+            assert_tls_fixture_fields(case, packet)
+        }
         "ethernet-arp-reply" => {
             let ethernet = expect_layer::<Ethernet>(case, packet);
             assert_eq!(
@@ -8462,6 +8784,87 @@ fn valid_byte_fixtures_decode_compile_and_summarize() {
                 assert_fixture_fields(case, &packet);
                 assert_quic_datagram_compile_decode_compile(case, &packet, &bytes);
             }
+            FixtureDecodeTarget::TlsRecords => {
+                let packet = decode_tls_records_fixture(&bytes)
+                    .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+                assert_packet_surface(case, &packet);
+                assert_fixture_fields(case, &packet);
+                assert_eq!(
+                    packet
+                        .compile()
+                        .unwrap_or_else(|err| panic!("fixture {} should compile: {err}", case.path))
+                        .as_bytes(),
+                    bytes.as_slice()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn tls_fixture_suite_decodes_byte_and_pcap_fixtures() {
+    for name in [
+        "tls-client-hello-tls12-compatible",
+        "tls-client-hello-tls13",
+        "tls-server-hello-tls12",
+        "tls-server-hello-tls13",
+        "tls-hello-retry-request",
+        "ipv4-tcp-tls-client-hello",
+        "ipv4-tcp-tls-alert",
+        "ipv4-tcp-tls-application-data",
+        "ipv4-tcp-tls-port-raw-fallback",
+        "ethernet-ipv4-tcp-tls-client-hello",
+        "ethernet-ipv4-tcp-tls-alert",
+        "ethernet-ipv4-tcp-tls-application-data",
+    ] {
+        let case = valid_fixture_case(name);
+        ensure_fixture_exists(case.path);
+        let bytes = fixture_bytes_for_case(case);
+
+        match case.target {
+            FixtureDecodeTarget::Packet(target) => {
+                let packet = decode_packet(target, &bytes)
+                    .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+                assert_packet_surface(case, &packet);
+                assert_fixture_fields(case, &packet);
+                assert_compile_decode_compile(case, target, &packet, &bytes);
+            }
+            FixtureDecodeTarget::TlsRecords => {
+                let packet = decode_tls_records_fixture(&bytes)
+                    .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+                assert_packet_surface(case, &packet);
+                assert_fixture_fields(case, &packet);
+                assert_eq!(
+                    packet
+                        .compile()
+                        .unwrap_or_else(|err| panic!("fixture {} should compile: {err}", case.path))
+                        .as_bytes(),
+                    bytes.as_slice()
+                );
+            }
+            FixtureDecodeTarget::Dhcpv4Options => unreachable!("TLS fixture cannot be DHCPv4"),
+            FixtureDecodeTarget::QuicDatagram => unreachable!("TLS fixture cannot be QUIC"),
+        }
+    }
+
+    for name in [
+        "raw-ipv4-tcp-tls-client-hello",
+        "ethernet-ipv4-tcp-tls-client-hello",
+    ] {
+        let case = pcap_fixture_case(name);
+        assert_eq!(case.records.len(), 3);
+        let packets = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| panic!("pcap fixture {} should parse: {err}", case.path))
+            .collect_packets()
+            .unwrap_or_else(|err| {
+                panic!("pcap fixture {} should decode packets: {err}", case.path)
+            });
+        assert_eq!(packets.len(), case.records.len());
+
+        for (packet, expected) in packets.iter().zip(case.records) {
+            let expected_fixture = valid_fixture_case(expected.fixture_name);
+            assert_packet_surface(expected_fixture, packet.packet());
+            assert_fixture_fields(expected_fixture, packet.packet());
         }
     }
 }
@@ -8544,6 +8947,7 @@ fn dhcpv4_fixture_catalog_decodes_renamed_fixtures() {
             }
             FixtureDecodeTarget::Dhcpv4Options => assert_dhcpv4_option_fixture(case, &bytes),
             FixtureDecodeTarget::QuicDatagram => unreachable!("DHCPv4 fixture cannot be QUIC"),
+            FixtureDecodeTarget::TlsRecords => unreachable!("DHCPv4 fixture cannot be TLS"),
         }
     }
 }
@@ -8580,6 +8984,7 @@ fn dhcpv6_fixture_catalog_decodes_byte_fixtures() {
             }
             FixtureDecodeTarget::Dhcpv4Options => unreachable!("DHCPv6 fixture cannot be DHCPv4"),
             FixtureDecodeTarget::QuicDatagram => unreachable!("DHCPv6 fixture cannot be QUIC"),
+            FixtureDecodeTarget::TlsRecords => unreachable!("DHCPv6 fixture cannot be TLS"),
         }
     }
 }

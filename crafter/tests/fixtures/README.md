@@ -106,6 +106,16 @@ Valid byte fixtures cover:
   `ipv4-tcp-syn-options.hex`, `ipv4-tcp-syn-rich-options.hex` (MSS, Window
   Scale, SACK Permitted, Timestamp, RFC 5482 User Timeout, and a classified
   Generic option)
+- TLS record and IPv4 TCP TLS fixtures:
+  `tls-client-hello-tls12-compatible.hex`, `tls-client-hello-tls13.hex`,
+  `tls-server-hello-tls12.hex`, `tls-server-hello-tls13.hex`,
+  `tls-hello-retry-request.hex`, `ipv4-tcp-tls-client-hello.hex`,
+  `ipv4-tcp-tls-alert.hex`, `ipv4-tcp-tls-application-data.hex`,
+  `ethernet-ipv4-tcp-tls-client-hello.hex`, `ethernet-ipv4-tcp-tls-alert.hex`,
+  `ethernet-ipv4-tcp-tls-application-data.hex`, and
+  `ipv4-tcp-tls-port-raw-fallback.hex` cover raw TLS record decode,
+  TLS-over-TCP port inference, typed alert/application data records, and raw
+  fallback for non-TLS payloads on TCP/443.
 - IPv4 UDP DNS query and response:
   `ipv4-udp-dns-query-example-com.bin`,
   `ipv4-udp-dns-response-example-com.hex`
@@ -175,6 +185,9 @@ Pcap fixtures cover:
   `raw-ipv4-udp-quic-initial.pcap` and
   `raw-ipv6-udp-quic-initial.pcap` carry one synthetic UDP/4433 QUIC Initial
   datagram each and decode as IPv4/UDP/QUIC and IPv6/UDP/QUIC.
+  `raw-ipv4-tcp-tls-client-hello.pcap` carries synthetic IPv4/TCP/TLS client
+  hello, alert, and application data records over TCP/443 using documentation
+  address space and deterministic timestamps.
   The RawIp pcap corpus also includes deterministic IP fragment transform
   fixtures: `raw-ipv4-ipfragment-generated.pcap` is byte-for-byte regenerated
   from `IpFragment`, and `raw-ipv6-fragment-oracle-reference.pcap` carries an
@@ -182,7 +195,9 @@ Pcap fixtures cover:
   and reassembled through `IpDefrag`.
 - Ethernet link type also includes `ethernet-ipv4-udp-quic-initial.pcap`, a
   synthetic Ethernet/IPv4/UDP/QUIC record using documentation MAC and IPv4
-  address space.
+  address space. `ethernet-ipv4-tcp-tls-client-hello.pcap` carries synthetic
+  Ethernet/IPv4/TCP/TLS client hello, alert, and application data records
+  generated offline from checked-in byte fixtures.
 - LinuxSll link type with an ARP payload.
 - NullLoopback link type with an IPv4 UDP payload.
 - IEEE 802.11 link type with a synthetic WPA2-PSK CCMP conversation:
