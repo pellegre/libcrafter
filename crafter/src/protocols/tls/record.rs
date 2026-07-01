@@ -971,8 +971,29 @@ fn field_state_label(state: FieldState) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::tls::TlsHandshakeType;
+    use crate::protocols::tls::{
+        TlsClientHello, TlsHandshakeType, TlsRawExtension, TLS_CLIENT_HELLO_RANDOM_LEN,
+    };
     use crate::FieldState;
+
+    fn record_test_client_hello_message() -> (Vec<u8>, Vec<u8>) {
+        let body = TlsClientHello::new()
+            .with_random([0x11; TLS_CLIENT_HELLO_RANDOM_LEN])
+            .with_raw_cipher_suites([0x1301])
+            .with_compression_methods([0x00])
+            .with_extension(TlsRawExtension::from_raw(0xbeef, [0xde, 0xad]))
+            .encode_to_vec()
+            .unwrap();
+        let len = body.len() as u32;
+        let mut message = vec![
+            TlsHandshakeType::CLIENT_HELLO.raw(),
+            ((len >> 16) & 0xff) as u8,
+            ((len >> 8) & 0xff) as u8,
+            (len & 0xff) as u8,
+        ];
+        message.extend_from_slice(&body);
+        (message, body)
+    }
 
     #[test]
     fn tls_record_encodes_auto_length_and_preserves_override() -> Result<()> {
@@ -1029,16 +1050,20 @@ mod tests {
 
     #[test]
     fn tls_handshake_record_decode_parses_messages_and_preserves_partial_tail() -> Result<()> {
-        let first = [0x01, 0x00, 0x00, 0x02, 0xca, 0xfe];
+        let (first, first_body) = record_test_client_hello_message();
         let second = [0x14, 0x00, 0x00, 0x01, 0x00];
         let partial = [0x02, 0x00, 0x00, 0x02, 0xaa];
-        let bytes = [
-            0x16, 0x03, 0x03, 0x00, 0x10, first[0], first[1], first[2], first[3], first[4],
-            first[5], second[0], second[1], second[2], second[3], second[4], partial[0],
-            partial[1], partial[2], partial[3], partial[4],
+        let expected_fragment = [&first[..], &second[..], &partial[..]].concat();
+        let mut bytes = vec![
+            0x16,
+            0x03,
+            0x03,
+            ((expected_fragment.len() >> 8) & 0xff) as u8,
+            (expected_fragment.len() & 0xff) as u8,
         ];
+        bytes.extend_from_slice(&expected_fragment);
 
-        let record = TlsRecord::decode(bytes)?;
+        let record = TlsRecord::decode(&bytes)?;
         let body = record
             .body()
             .handshake_body()
@@ -1051,7 +1076,7 @@ mod tests {
             body.messages()[0].handshake_type(),
             TlsHandshakeType::CLIENT_HELLO
         );
-        assert_eq!(body.messages()[0].body_bytes(), &[0xca, 0xfe]);
+        assert_eq!(body.messages()[0].body_bytes(), first_body.as_slice());
         assert_eq!(
             body.messages()[1].handshake_type(),
             TlsHandshakeType::FINISHED
@@ -1059,7 +1084,6 @@ mod tests {
         assert_eq!(body.messages()[1].body_bytes(), &[0x00]);
         assert_eq!(body.raw_tail(), &partial);
         assert!(body.has_raw_tail());
-        let expected_fragment = [&first[..], &second[..], &partial[..]].concat();
         assert_eq!(record.fragment(), expected_fragment.as_slice());
         assert_eq!(record.encode_to_vec()?, bytes);
 

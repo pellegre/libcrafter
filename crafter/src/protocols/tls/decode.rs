@@ -71,15 +71,26 @@ mod tests {
     use super::*;
     use crate::packet::{Packet, Raw};
     use crate::protocols::tls::{
-        TlsContentType, TlsHandshakeType, TlsRecordBody, TlsVersion, TLS_RECORD_HEADER_LEN,
+        TlsClientHello, TlsContentType, TlsHandshake, TlsHandshakeType, TlsRecordBody, TlsVersion,
+        TLS_RECORD_HEADER_LEN,
     };
 
     #[test]
     fn tls_multi_record_decode_appends_ordered_tls_layers() -> Result<()> {
-        let payload = [
-            0x16, 0x03, 0x03, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x15, 0x03, 0x01, 0x00, 0x02,
-            0x01, 0x00,
+        let client_hello = TlsClientHello::new()
+            .with_raw_cipher_suites([0x1301])
+            .without_extensions();
+        let client_hello_message =
+            TlsHandshake::from_client_hello(client_hello)?.encode_to_vec()?;
+        let mut payload = vec![
+            0x16,
+            0x03,
+            0x03,
+            ((client_hello_message.len() >> 8) & 0xff) as u8,
+            (client_hello_message.len() & 0xff) as u8,
         ];
+        payload.extend_from_slice(&client_hello_message);
+        payload.extend_from_slice(&[0x15, 0x03, 0x01, 0x00, 0x02, 0x01, 0x00]);
 
         let packet =
             append_tls_packet_with_registry(&ProtocolRegistry::empty(), Packet::new(), &payload)?;
@@ -95,7 +106,7 @@ mod tests {
         );
         assert_eq!(
             tls_layers[0].records()[0].fragment(),
-            &[0x01, 0x00, 0x00, 0x00]
+            client_hello_message.as_slice()
         );
         let TlsRecordBody::Handshake(handshake) = tls_layers[0].records()[0].body() else {
             panic!("handshake record should decode typed handshake body");
@@ -115,7 +126,7 @@ mod tests {
             TlsVersion::tls_1_0()
         );
         assert_eq!(tls_layers[0].records()[1].fragment(), &[0x01, 0x00]);
-        assert_eq!(packet.compile()?.as_bytes(), &payload);
+        assert_eq!(packet.compile()?.as_bytes(), payload.as_slice());
         Ok(())
     }
 
