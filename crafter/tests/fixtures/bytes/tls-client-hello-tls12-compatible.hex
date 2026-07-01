@@ -1,0 +1,12 @@
+# tls-client-hello-tls12-compatible
+# RFC 5246/RFC 8446 ClientHello compatibility shape with RFC 6066 SNI,
+# RFC 7301 ALPN, supported_groups, and signature_algorithms extensions.
+16 03 03 00 7d 01 00 00 79 03 03 12 12 12 12 12
+12 12 12 12 12 12 12 12 12 12 12 12 12 12 12 12
+12 12 12 12 12 12 12 12 12 12 12 04 12 13 14 15
+00 04 c0 2b c0 2f 01 00 00 48 00 00 00 1e 00 1c
+00 00 19 74 6c 73 31 32 2e 63 6c 69 65 6e 74 2e
+65 78 61 6d 70 6c 65 2e 74 65 73 74 00 10 00 0e
+00 0c 02 68 32 08 68 74 74 70 2f 31 2e 31 00 0a
+00 06 00 04 00 17 00 1d 00 0d 00 06 00 04 04 03
+08 04

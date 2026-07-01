@@ -1,0 +1,16 @@
+# tls-client-hello-tls13
+# RFC 8446 TLS 1.3 ClientHello compatibility record with RFC 6066 SNI,
+# RFC 7301 ALPN, supported_versions, supported_groups, signature_algorithms,
+# and key_share extensions using synthetic .test names and opaque key bytes.
+16 03 03 00 ba 01 00 00 b6 03 03 13 13 13 13 13
+13 13 13 13 13 13 13 13 13 13 13 13 13 13 13 13
+13 13 13 13 13 13 13 13 13 13 13 0c 13 14 15 16
+17 18 19 1a 1b 1c 1d 1e 00 04 13 01 13 03 01 00
+00 7d 00 00 00 1e 00 1c 00 00 19 74 6c 73 31 33
+2e 63 6c 69 65 6e 74 2e 65 78 61 6d 70 6c 65 2e
+74 65 73 74 00 10 00 0e 00 0c 02 68 32 08 68 74
+74 70 2f 31 2e 31 00 2b 00 05 04 03 04 03 03 00
+0a 00 06 00 04 00 1d 00 17 00 0d 00 08 00 06 08
+07 08 04 04 03 00 33 00 26 00 24 00 1d 00 20 44
+44 44 44 44 44 44 44 44 44 44 44 44 44 44 44 44
+44 44 44 44 44 44 44 44 44 44 44 44 44 44 44
