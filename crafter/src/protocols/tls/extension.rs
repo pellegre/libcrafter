@@ -46,6 +46,14 @@ pub const TLS_ALPN_PROTOCOL_NAME_LIST_LENGTH_LEN: usize = 2;
 pub const TLS_SUPPORTED_VERSIONS_CLIENT_LENGTH_LEN: usize = 1;
 /// TLS supported_versions ProtocolVersion width in bytes.
 pub const TLS_SUPPORTED_VERSION_LEN: usize = 2;
+/// TLS psk_key_exchange_modes vector length field width in bytes.
+pub const TLS_PSK_KEY_EXCHANGE_MODES_LENGTH_LEN: usize = 1;
+/// TLS PskKeyExchangeMode width in bytes.
+pub const TLS_PSK_KEY_EXCHANGE_MODE_LEN: usize = 1;
+/// TLS 1.3 PskKeyExchangeMode `psk_ke`.
+pub const TLS_PSK_KEY_EXCHANGE_MODE_PSK_KE: u8 = constants::TLS_PSK_MODE_PSK_KE;
+/// TLS 1.3 PskKeyExchangeMode `psk_dhe_ke`.
+pub const TLS_PSK_KEY_EXCHANGE_MODE_PSK_DHE_KE: u8 = constants::TLS_PSK_MODE_PSK_DHE_KE;
 /// TLS supported_groups NamedGroupList length field width in bytes.
 pub const TLS_SUPPORTED_GROUPS_LIST_LENGTH_LEN: usize = TLS_NAMED_GROUP_LIST_PREFIX_LEN;
 /// TLS supported_groups NamedGroup width in bytes.
@@ -1028,6 +1036,16 @@ impl TlsRawExtension {
         context: TlsSupportedVersionsContext,
     ) -> Result<TlsSupportedVersions> {
         TlsSupportedVersions::from_raw_extension_with_context(context, self)
+    }
+
+    /// Create a raw `psk_key_exchange_modes` extension.
+    pub fn psk_key_exchange_modes(modes: impl Into<TlsPskKeyExchangeModes>) -> Result<Self> {
+        modes.into().to_raw_extension()
+    }
+
+    /// Decode this raw extension as a typed `psk_key_exchange_modes` body.
+    pub fn as_psk_key_exchange_modes(&self) -> Result<TlsPskKeyExchangeModes> {
+        TlsPskKeyExchangeModes::from_raw_extension(self)
     }
 
     /// Create a raw ClientHello `key_share` extension.
@@ -2240,6 +2258,444 @@ fn validate_supported_versions_client_list_len(len: usize) -> Result<()> {
     if len > u8::MAX as usize {
         return Err(CrafterError::invalid_field_value(
             "tls.supported_versions.client.length",
+            "length must fit in one byte",
+        ));
+    }
+    Ok(())
+}
+
+/// A raw-preserving TLS 1.3 `PskKeyExchangeMode` value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TlsPskKeyExchangeMode {
+    raw: u8,
+}
+
+impl TlsPskKeyExchangeMode {
+    /// TLS 1.3 PskKeyExchangeMode `psk_ke`.
+    pub const PSK_KE: Self = Self::new(TLS_PSK_KEY_EXCHANGE_MODE_PSK_KE);
+    /// TLS 1.3 PskKeyExchangeMode `psk_dhe_ke`.
+    pub const PSK_DHE_KE: Self = Self::new(TLS_PSK_KEY_EXCHANGE_MODE_PSK_DHE_KE);
+
+    /// Preserve a caller-supplied one-octet PSK key exchange mode value.
+    pub const fn new(raw: u8) -> Self {
+        Self { raw }
+    }
+
+    /// Preserve a caller-supplied one-octet PSK key exchange mode value.
+    pub const fn from_u8(raw: u8) -> Self {
+        Self::new(raw)
+    }
+
+    /// Decode a TLS PSK key exchange mode from exactly one byte.
+    pub const fn from_be_bytes(bytes: [u8; TLS_PSK_KEY_EXCHANGE_MODE_LEN]) -> Self {
+        Self::new(bytes[0])
+    }
+
+    /// TLS 1.3 PskKeyExchangeMode `psk_ke` constructor.
+    pub const fn psk_ke() -> Self {
+        Self::PSK_KE
+    }
+
+    /// TLS 1.3 PskKeyExchangeMode `psk_dhe_ke` constructor.
+    pub const fn psk_dhe_ke() -> Self {
+        Self::PSK_DHE_KE
+    }
+
+    /// Return the preserved raw one-octet wire value.
+    pub const fn raw(self) -> u8 {
+        self.raw
+    }
+
+    /// Return the preserved raw one-octet wire value.
+    pub const fn as_u8(self) -> u8 {
+        self.raw
+    }
+
+    /// Return the one-byte wire encoding.
+    pub const fn to_be_bytes(self) -> [u8; TLS_PSK_KEY_EXCHANGE_MODE_LEN] {
+        [self.raw]
+    }
+
+    /// Append the one-byte wire encoding to `out`.
+    pub fn encode(self, out: &mut Vec<u8>) {
+        out.push(self.raw);
+    }
+
+    /// Return the one-byte wire encoding as a vector.
+    pub fn encode_to_vec(self) -> Vec<u8> {
+        self.to_be_bytes().to_vec()
+    }
+
+    /// Decode a TLS PSK key exchange mode from the first byte of `bytes`.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (mode, _) = Self::decode_prefix(bytes.as_ref())?;
+        Ok(mode)
+    }
+
+    /// Decode a TLS PSK key exchange mode from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_PSK_KEY_EXCHANGE_MODE_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.psk_key_exchange_mode",
+                TLS_PSK_KEY_EXCHANGE_MODE_LEN,
+                bytes.len(),
+            ));
+        }
+
+        Ok((Self::from_be_bytes([bytes[0]]), &bytes[1..]))
+    }
+
+    /// Return the source-backed PSK key exchange mode name, when selected.
+    pub const fn name(self) -> Option<&'static str> {
+        constants::tls_psk_mode_name(self.raw)
+    }
+
+    /// Return the source-backed assignment status.
+    pub const fn status(self) -> TlsCodepointStatus {
+        constants::tls_psk_mode_status(self.raw)
+    }
+
+    /// Return true when this mode has a selected source-backed name.
+    pub const fn is_known(self) -> bool {
+        self.name().is_some()
+    }
+
+    /// Return true for modes selected for default TLS builders.
+    pub const fn is_default_eligible(self) -> bool {
+        matches!(self.status(), TlsCodepointStatus::DefaultEligible)
+    }
+
+    /// Return true for RFC 8701 sparse GREASE PSK key exchange mode values.
+    pub const fn is_grease(self) -> bool {
+        constants::is_tls_psk_mode_grease(self.raw)
+    }
+
+    /// Return true for IANA private-use PSK key exchange mode values.
+    pub const fn is_private_use(self) -> bool {
+        matches!(self.status(), TlsCodepointStatus::PrivateUse)
+    }
+
+    /// Human-readable label preserving unknown values numerically.
+    pub fn label(self) -> String {
+        constants::tls_psk_mode_label(self.raw)
+    }
+
+    /// Stable one-line summary preserving raw value and source-backed status.
+    pub fn summary(self) -> String {
+        format!(
+            "{} raw=0x{:02x} status={}",
+            self.label(),
+            self.raw,
+            self.status().label()
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(self) -> Vec<(&'static str, String)> {
+        vec![
+            ("psk_key_exchange_mode", self.label()),
+            ("psk_key_exchange_mode_raw", format!("0x{:02x}", self.raw)),
+            (
+                "psk_key_exchange_mode_status",
+                self.status().label().to_string(),
+            ),
+            ("grease", self.is_grease().to_string()),
+            ("private_use", self.is_private_use().to_string()),
+        ]
+    }
+}
+
+impl From<u8> for TlsPskKeyExchangeMode {
+    fn from(value: u8) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<TlsPskKeyExchangeMode> for u8 {
+    fn from(value: TlsPskKeyExchangeMode) -> Self {
+        value.raw()
+    }
+}
+
+impl fmt::Display for TlsPskKeyExchangeMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.label())
+    }
+}
+
+/// TLS `psk_key_exchange_modes` extension body as an RFC 8446 PskKeyExchangeModes vector.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct TlsPskKeyExchangeModes {
+    modes: Vec<TlsPskKeyExchangeMode>,
+}
+
+impl TlsPskKeyExchangeModes {
+    /// Create an ordered psk_key_exchange_modes extension body.
+    pub fn new(modes: impl Into<Vec<TlsPskKeyExchangeMode>>) -> Self {
+        Self {
+            modes: modes.into(),
+        }
+    }
+
+    /// Create an ordered psk_key_exchange_modes extension body from mode values.
+    pub fn from_modes(modes: impl Into<Vec<TlsPskKeyExchangeMode>>) -> Self {
+        Self::new(modes)
+    }
+
+    /// Create an ordered psk_key_exchange_modes extension body from raw one-octet values.
+    pub fn from_raws(raws: impl IntoIterator<Item = u8>) -> Self {
+        Self::new(
+            raws.into_iter()
+                .map(TlsPskKeyExchangeMode::from_u8)
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    /// Create a psk_key_exchange_modes body advertising only `psk_ke`.
+    pub fn psk_ke() -> Self {
+        Self::new(vec![TlsPskKeyExchangeMode::PSK_KE])
+    }
+
+    /// Create a psk_key_exchange_modes body advertising only `psk_dhe_ke`.
+    pub fn psk_dhe_ke() -> Self {
+        Self::new(vec![TlsPskKeyExchangeMode::PSK_DHE_KE])
+    }
+
+    /// Create a psk_key_exchange_modes body advertising `psk_ke`, then `psk_dhe_ke`.
+    pub fn psk_ke_then_psk_dhe_ke() -> Self {
+        Self::new(vec![
+            TlsPskKeyExchangeMode::PSK_KE,
+            TlsPskKeyExchangeMode::PSK_DHE_KE,
+        ])
+    }
+
+    /// Borrow the ordered PSK key exchange mode values.
+    pub fn modes(&self) -> &[TlsPskKeyExchangeMode] {
+        &self.modes
+    }
+
+    /// Borrow the ordered PSK key exchange mode values.
+    pub fn as_slice(&self) -> &[TlsPskKeyExchangeMode] {
+        self.modes()
+    }
+
+    /// Return the ordered raw mode values.
+    pub fn raw_values(&self) -> Vec<u8> {
+        self.modes.iter().map(|mode| mode.raw()).collect()
+    }
+
+    /// Return mode labels in wire order.
+    pub fn labels(&self) -> Vec<String> {
+        self.modes.iter().map(|mode| mode.label()).collect()
+    }
+
+    /// Consume the extension body and return the ordered mode values.
+    pub fn into_vec(self) -> Vec<TlsPskKeyExchangeMode> {
+        self.modes
+    }
+
+    /// Append one PSK key exchange mode to the ordered list.
+    pub fn push(&mut self, mode: TlsPskKeyExchangeMode) {
+        self.modes.push(mode);
+    }
+
+    /// Number of PSK key exchange modes.
+    pub fn len(&self) -> usize {
+        self.modes.len()
+    }
+
+    /// Return true when the body carries no PSK key exchange modes.
+    pub fn is_empty(&self) -> bool {
+        self.modes.is_empty()
+    }
+
+    /// Number of bytes occupied by the mode vector body, excluding the length prefix.
+    pub fn byte_len(&self) -> Result<usize> {
+        let byte_len = self
+            .modes
+            .len()
+            .checked_mul(TLS_PSK_KEY_EXCHANGE_MODE_LEN)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.psk_key_exchange_modes.length",
+                    "length overflow",
+                )
+            })?;
+        validate_psk_key_exchange_modes_len(byte_len)?;
+        Ok(byte_len)
+    }
+
+    /// Number of bytes occupied by the complete encoded PskKeyExchangeModes body.
+    pub fn encoded_len(&self) -> Result<usize> {
+        TLS_PSK_KEY_EXCHANGE_MODES_LENGTH_LEN
+            .checked_add(self.byte_len()?)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.psk_key_exchange_modes.length",
+                    "length overflow",
+                )
+            })
+    }
+
+    /// Append the psk_key_exchange_modes extension body to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let byte_len = self.byte_len()?;
+        let byte_len = u8::try_from(byte_len).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "tls.psk_key_exchange_modes.length",
+                "length must fit in one byte",
+            )
+        })?;
+        out.push(byte_len);
+        for mode in &self.modes {
+            mode.encode(out);
+        }
+        Ok(())
+    }
+
+    /// Return this psk_key_exchange_modes extension body encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len()?);
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Convert this psk_key_exchange_modes body into a raw extension.
+    pub fn to_raw_extension(&self) -> Result<TlsRawExtension> {
+        Ok(TlsRawExtension::new(
+            TlsExtensionType::PSK_KEY_EXCHANGE_MODES,
+            self.encode_to_vec()?,
+        ))
+    }
+
+    /// Decode a psk_key_exchange_modes extension body.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let (modes, tail) = Self::decode_prefix(bytes.as_ref())?;
+        if !tail.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "tls.psk_key_exchange_modes.length",
+                "length must match extension body",
+            ));
+        }
+        Ok(modes)
+    }
+
+    /// Decode a psk_key_exchange_modes body from the front of `bytes`, returning any tail bytes.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < TLS_PSK_KEY_EXCHANGE_MODES_LENGTH_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "tls.psk_key_exchange_modes.length",
+                TLS_PSK_KEY_EXCHANGE_MODES_LENGTH_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let byte_len = bytes[0] as usize;
+        validate_psk_key_exchange_modes_len(byte_len)?;
+        let required = TLS_PSK_KEY_EXCHANGE_MODES_LENGTH_LEN
+            .checked_add(byte_len)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "tls.psk_key_exchange_modes.length",
+                    "length overflow",
+                )
+            })?;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "tls.psk_key_exchange_modes",
+                required,
+                bytes.len(),
+            ));
+        }
+
+        let modes = bytes[TLS_PSK_KEY_EXCHANGE_MODES_LENGTH_LEN..required]
+            .iter()
+            .copied()
+            .map(TlsPskKeyExchangeMode::from_u8)
+            .collect::<Vec<_>>();
+        Ok((Self::new(modes), &bytes[required..]))
+    }
+
+    /// Decode a raw psk_key_exchange_modes extension body.
+    pub fn from_raw_extension(extension: &TlsRawExtension) -> Result<Self> {
+        if extension.extension_type() != TlsExtensionType::PSK_KEY_EXCHANGE_MODES {
+            return Err(CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be psk_key_exchange_modes",
+            ));
+        }
+        Self::decode(extension.body())
+    }
+
+    /// Stable one-line summary preserving mode order.
+    pub fn summary(&self) -> String {
+        format!(
+            "psk_key_exchange_modes count={} bytes={} values={}",
+            self.len(),
+            self.len() * TLS_PSK_KEY_EXCHANGE_MODE_LEN,
+            self.labels().join(",")
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("psk_key_exchange_modes_count", self.len().to_string()),
+            (
+                "psk_key_exchange_modes_bytes",
+                (self.len() * TLS_PSK_KEY_EXCHANGE_MODE_LEN).to_string(),
+            ),
+            ("psk_key_exchange_modes", self.labels().join(",")),
+            (
+                "psk_key_exchange_modes_raw",
+                self.modes
+                    .iter()
+                    .map(|mode| format!("0x{:02x}", mode.raw()))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+        ]
+    }
+}
+
+impl From<Vec<TlsPskKeyExchangeMode>> for TlsPskKeyExchangeModes {
+    fn from(modes: Vec<TlsPskKeyExchangeMode>) -> Self {
+        Self::new(modes)
+    }
+}
+
+impl<const N: usize> From<[TlsPskKeyExchangeMode; N]> for TlsPskKeyExchangeModes {
+    fn from(modes: [TlsPskKeyExchangeMode; N]) -> Self {
+        Self::new(Vec::from(modes))
+    }
+}
+
+impl TryFrom<&TlsRawExtension> for TlsPskKeyExchangeModes {
+    type Error = CrafterError;
+
+    fn try_from(value: &TlsRawExtension) -> Result<Self> {
+        Self::from_raw_extension(value)
+    }
+}
+
+impl TryFrom<TlsPskKeyExchangeModes> for TlsRawExtension {
+    type Error = CrafterError;
+
+    fn try_from(value: TlsPskKeyExchangeModes) -> Result<Self> {
+        value.to_raw_extension()
+    }
+}
+
+fn validate_psk_key_exchange_modes_len(len: usize) -> Result<()> {
+    if len < TLS_PSK_KEY_EXCHANGE_MODE_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "tls.psk_key_exchange_modes.length",
+            "length must be at least one byte",
+        ));
+    }
+    if len > u8::MAX as usize {
+        return Err(CrafterError::invalid_field_value(
+            "tls.psk_key_exchange_modes.length",
             "length must fit in one byte",
         ));
     }
@@ -5480,6 +5936,256 @@ mod tests {
                 "tls.supported_versions.hello_retry_request.version",
                 TLS_SUPPORTED_VERSION_LEN,
                 1
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_psk_modes_known_codepoints_expose_raw_values() {
+        assert_eq!(
+            TlsPskKeyExchangeMode::psk_ke().raw(),
+            TLS_PSK_KEY_EXCHANGE_MODE_PSK_KE
+        );
+        assert_eq!(
+            TlsPskKeyExchangeMode::psk_dhe_ke().raw(),
+            TLS_PSK_KEY_EXCHANGE_MODE_PSK_DHE_KE
+        );
+        assert_eq!(
+            TlsPskKeyExchangeMode::from_be_bytes([0x01]),
+            TlsPskKeyExchangeMode::PSK_DHE_KE
+        );
+        assert_eq!(TlsPskKeyExchangeMode::PSK_DHE_KE.to_be_bytes(), [0x01]);
+        assert_eq!(TlsPskKeyExchangeMode::PSK_KE.name(), Some("psk_ke"));
+        assert_eq!(TlsPskKeyExchangeMode::PSK_DHE_KE.name(), Some("psk_dhe_ke"));
+        assert!(TlsPskKeyExchangeMode::PSK_KE.is_known());
+        assert_eq!(
+            TlsPskKeyExchangeMode::PSK_DHE_KE.status(),
+            TlsCodepointStatus::DefaultEligible
+        );
+        assert!(TlsPskKeyExchangeMode::PSK_DHE_KE.is_default_eligible());
+
+        let unknown = TlsPskKeyExchangeMode::from_u8(0x7a);
+        assert_eq!(unknown.name(), None);
+        assert_eq!(unknown.status(), TlsCodepointStatus::Unassigned);
+        assert_eq!(unknown.label(), "unassigned psk mode 0x7a");
+        assert_eq!(unknown.to_string(), "unassigned psk mode 0x7a");
+        assert_eq!(unknown.encode_to_vec(), [0x7a]);
+        assert_eq!(TlsPskKeyExchangeMode::decode([0x7a]).unwrap(), unknown);
+        assert_eq!(
+            TlsPskKeyExchangeMode::decode_prefix(&[0x7a, 0xaa]).unwrap(),
+            (unknown, &[0xaa][..])
+        );
+        assert_eq!(u8::from(unknown), 0x7a);
+        assert_eq!(TlsPskKeyExchangeMode::from(0x7a).as_u8(), 0x7a);
+
+        let private = TlsPskKeyExchangeMode::from_u8(0xfe);
+        assert!(private.is_private_use());
+        assert_eq!(
+            private.summary(),
+            "private-use psk mode 0xfe raw=0xfe status=private-use"
+        );
+        assert!(private
+            .inspection_fields()
+            .contains(&("psk_key_exchange_mode_raw", "0xfe".to_string())));
+        assert!(private
+            .inspection_fields()
+            .contains(&("psk_key_exchange_mode_status", "private-use".to_string())));
+
+        let grease = TlsPskKeyExchangeMode::from_u8(0x2a);
+        assert!(grease.is_grease());
+        assert_eq!(grease.status(), TlsCodepointStatus::ReservedGrease);
+        assert_eq!(grease.label(), "reserved grease psk mode 0x2a");
+    }
+
+    #[test]
+    fn tls_extension_psk_modes_builders_encode_rfc8446_vector() {
+        // RFC 8446 Section 4.2.9 defines PskKeyExchangeModes as PskKeyExchangeMode<1..255>.
+        let modes = TlsPskKeyExchangeModes::from_modes(vec![
+            TlsPskKeyExchangeMode::PSK_KE,
+            TlsPskKeyExchangeMode::PSK_DHE_KE,
+        ]);
+        assert_eq!(modes.len(), 2);
+        assert!(!modes.is_empty());
+        assert_eq!(
+            modes.modes(),
+            &[
+                TlsPskKeyExchangeMode::PSK_KE,
+                TlsPskKeyExchangeMode::PSK_DHE_KE,
+            ]
+        );
+        assert_eq!(modes.as_slice(), modes.modes());
+        assert_eq!(modes.raw_values(), vec![0x00, 0x01]);
+        assert_eq!(modes.byte_len().unwrap(), 2);
+        assert_eq!(modes.encoded_len().unwrap(), 3);
+        assert_eq!(modes.encode_to_vec().unwrap(), [0x02, 0x00, 0x01]);
+
+        let encoded_with_tail = [modes.encode_to_vec().unwrap(), vec![0xaa]].concat();
+        let (decoded, tail) = TlsPskKeyExchangeModes::decode_prefix(&encoded_with_tail).unwrap();
+        assert_eq!(tail, &[0xaa]);
+        assert_eq!(decoded, modes);
+        assert_eq!(
+            decoded.summary(),
+            "psk_key_exchange_modes count=2 bytes=2 values=psk_ke,psk_dhe_ke"
+        );
+        assert!(decoded
+            .inspection_fields()
+            .contains(&("psk_key_exchange_modes_raw", "0x00,0x01".to_string())));
+        assert_eq!(
+            decoded.clone().into_vec(),
+            vec![
+                TlsPskKeyExchangeMode::PSK_KE,
+                TlsPskKeyExchangeMode::PSK_DHE_KE,
+            ]
+        );
+
+        let mut pushed = TlsPskKeyExchangeModes::psk_ke();
+        pushed.push(TlsPskKeyExchangeMode::PSK_DHE_KE);
+        assert_eq!(pushed, modes);
+        assert_eq!(
+            TlsPskKeyExchangeModes::psk_dhe_ke()
+                .encode_to_vec()
+                .unwrap(),
+            [0x01, 0x01]
+        );
+        assert_eq!(TlsPskKeyExchangeModes::psk_ke_then_psk_dhe_ke(), modes);
+        assert_eq!(
+            TlsPskKeyExchangeModes::from_raws([0x00, 0x7a]).raw_values(),
+            vec![0x00, 0x7a]
+        );
+        assert_eq!(
+            TlsPskKeyExchangeModes::from([TlsPskKeyExchangeMode::PSK_DHE_KE]).raw_values(),
+            vec![0x01]
+        );
+    }
+
+    #[test]
+    fn tls_extension_psk_modes_converts_to_and_from_raw_extension() {
+        let modes = TlsPskKeyExchangeModes::psk_ke_then_psk_dhe_ke();
+        let raw = modes.to_raw_extension().unwrap();
+        assert_eq!(
+            raw.extension_type(),
+            TlsExtensionType::PSK_KEY_EXCHANGE_MODES
+        );
+        assert_eq!(
+            raw.raw_type(),
+            constants::TLS_EXTENSION_PSK_KEY_EXCHANGE_MODES
+        );
+        assert_eq!(
+            raw.encode_to_vec().unwrap(),
+            [0x00, 0x2d, 0x00, 0x03, 0x02, 0x00, 0x01]
+        );
+
+        assert_eq!(raw.as_psk_key_exchange_modes().unwrap(), modes);
+        assert_eq!(TlsPskKeyExchangeModes::try_from(&raw).unwrap(), modes);
+        assert_eq!(TlsRawExtension::try_from(modes.clone()).unwrap(), raw);
+        assert_eq!(
+            TlsRawExtension::psk_key_exchange_modes(modes.clone()).unwrap(),
+            raw
+        );
+        assert_eq!(
+            TlsRawExtension::decode(raw.encode_to_vec().unwrap())
+                .unwrap()
+                .as_psk_key_exchange_modes()
+                .unwrap(),
+            modes
+        );
+
+        assert_eq!(
+            TlsPskKeyExchangeModes::from_raw_extension(&TlsRawExtension::from_raw(0xbeef, []))
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.extension.type",
+                "extension type must be psk_key_exchange_modes"
+            )
+        );
+    }
+
+    #[test]
+    fn tls_extension_psk_modes_preserves_unknown_raw_modes() {
+        let modes = TlsPskKeyExchangeModes::from_raws([0x7a, 0xfe, 0xff]);
+        assert_eq!(modes.encode_to_vec().unwrap(), [0x03, 0x7a, 0xfe, 0xff]);
+
+        let decoded = TlsPskKeyExchangeModes::decode([0x03, 0x7a, 0xfe, 0xff]).unwrap();
+        assert_eq!(decoded, modes);
+        assert_eq!(decoded.raw_values(), vec![0x7a, 0xfe, 0xff]);
+        assert_eq!(
+            decoded.labels(),
+            vec![
+                "unassigned psk mode 0x7a".to_string(),
+                "private-use psk mode 0xfe".to_string(),
+                "private-use psk mode 0xff".to_string(),
+            ]
+        );
+        assert!(decoded
+            .inspection_fields()
+            .contains(&("psk_key_exchange_modes_raw", "0x7a,0xfe,0xff".to_string())));
+    }
+
+    #[test]
+    fn tls_extension_psk_modes_reports_structured_decode_and_encode_errors() {
+        assert_eq!(
+            TlsPskKeyExchangeMode::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.psk_key_exchange_mode",
+                TLS_PSK_KEY_EXCHANGE_MODE_LEN,
+                0
+            )
+        );
+        assert_eq!(
+            TlsPskKeyExchangeModes::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.psk_key_exchange_modes.length",
+                TLS_PSK_KEY_EXCHANGE_MODES_LENGTH_LEN,
+                0
+            )
+        );
+        assert_eq!(
+            TlsPskKeyExchangeModes::decode([0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.psk_key_exchange_modes.length",
+                "length must be at least one byte"
+            )
+        );
+        assert_eq!(
+            TlsPskKeyExchangeModes::decode([0x02, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("tls.psk_key_exchange_modes", 3, 2)
+        );
+        assert_eq!(
+            TlsPskKeyExchangeModes::decode([0x01, 0x00, 0xaa]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.psk_key_exchange_modes.length",
+                "length must match extension body"
+            )
+        );
+        assert_eq!(
+            TlsPskKeyExchangeModes::from_raw_extension(&TlsRawExtension::new(
+                TlsExtensionType::PSK_KEY_EXCHANGE_MODES,
+                Vec::<u8>::new(),
+            ))
+            .unwrap_err(),
+            CrafterError::buffer_too_short(
+                "tls.psk_key_exchange_modes.length",
+                TLS_PSK_KEY_EXCHANGE_MODES_LENGTH_LEN,
+                0
+            )
+        );
+        assert_eq!(
+            TlsPskKeyExchangeModes::default()
+                .encode_to_vec()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.psk_key_exchange_modes.length",
+                "length must be at least one byte"
+            )
+        );
+
+        let oversized =
+            TlsPskKeyExchangeModes::from_modes(vec![TlsPskKeyExchangeMode::PSK_DHE_KE; 256]);
+        assert_eq!(
+            oversized.encode_to_vec().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "tls.psk_key_exchange_modes.length",
+                "length must fit in one byte"
             )
         );
     }
