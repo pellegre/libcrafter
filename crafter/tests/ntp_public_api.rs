@@ -78,3 +78,91 @@ fn ntp_public_api_root_core_and_protocol_paths_resolve() -> crafter::Result<()> 
         .contains("Ntp("));
     Ok(())
 }
+
+#[test]
+fn ntp_constants_and_registry() {
+    assert_eq!(NTP_SERVICE_NAME, "ntp");
+    assert_eq!(NTP_PORT, 123);
+    assert_eq!(NTP_UDP_PORT, NTP_PORT);
+    assert_eq!(NTP_TCP_PORT, 123);
+    assert_eq!(NTP_FIXED_HEADER_LEN, 48);
+    assert_eq!(NTP_TIMESTAMP_LEN, 8);
+    assert_eq!(NTP_REFERENCE_ID_LEN, 4);
+    assert_eq!(NTP_DEFAULT_FIRST_OCTET, 0x23);
+
+    let leap = ntp_leap_indicator_meta(NTP_LI_ALARM_UNSYNCHRONIZED);
+    assert_eq!(leap.label, "alarm-unsynchronized");
+    assert_eq!(leap.status, NtpRegistryStatus::Assigned);
+    assert_eq!(
+        ntp_leap_indicator_meta(4).status,
+        NtpRegistryStatus::Unknown
+    );
+
+    let mode = ntp_mode_meta(NTP_MODE_CLIENT);
+    assert_eq!(mode.label, "client");
+    assert_eq!(mode.status, NtpRegistryStatus::Assigned);
+    assert_eq!(
+        ntp_mode_meta(NTP_MODE_PRIVATE).status,
+        NtpRegistryStatus::PrivateOrExperimental
+    );
+    assert_eq!(ntp_mode_meta(9).status, NtpRegistryStatus::Unknown);
+
+    assert_eq!(
+        ntp_stratum_meta(NTP_STRATUM_UNSPECIFIED).label,
+        "unspecified-or-invalid"
+    );
+    assert_eq!(ntp_stratum_meta(NTP_STRATUM_PRIMARY).label, "primary");
+    assert_eq!(ntp_stratum_meta(12).label, "secondary");
+    assert_eq!(
+        ntp_stratum_meta(NTP_STRATUM_UNSYNCHRONIZED).label,
+        "unsynchronized"
+    );
+    assert_eq!(ntp_stratum_meta(42).status, NtpRegistryStatus::Reserved);
+
+    let gps = ntp_reference_id_meta(*b"GPS\0");
+    assert_eq!(gps.label, "Global Position System");
+    assert_eq!(gps.status, NtpRegistryStatus::Assigned);
+    assert_eq!(gps.ascii_label().as_deref(), Some("GPS"));
+
+    let private_refid = ntp_reference_id_meta(*b"XLAB");
+    assert_eq!(
+        private_refid.label,
+        "refid-0x584C4142 (private-or-experimental)"
+    );
+    assert_eq!(
+        private_refid.status,
+        NtpRegistryStatus::PrivateOrExperimental
+    );
+
+    let rate = ntp_kiss_o_death_code_meta(*b"RATE");
+    assert_eq!(rate.label, "Rate exceeded");
+    assert_eq!(rate.status, NtpRegistryStatus::Assigned);
+    assert_eq!(
+        ntp_kiss_o_death_code_meta(*b"NOPE").status,
+        NtpRegistryStatus::Unassigned
+    );
+
+    let nts_cookie = ntp_extension_type(NtpNtsCookieExtension::FIELD_TYPE);
+    assert_eq!(nts_cookie.label(), "Autokey Message Request / NTS Cookie");
+    assert_eq!(
+        nts_cookie.category(),
+        NtpExtensionFieldTypeCategory::Assigned
+    );
+    assert_eq!(nts_cookie.status(), NtpRegistryStatus::Assigned);
+    assert_eq!(
+        ntp_extension_field_type_meta(NtpChecksumComplementExtension::FIELD_TYPE).label,
+        "UDP Checksum Complement"
+    );
+    assert_eq!(
+        ntp_nts_extension_field_type_meta(NtpNtsAuthenticatorExtension::FIELD_TYPE).label,
+        "NTS Authenticator and Encrypted Extension Fields"
+    );
+
+    let unknown = ntp_extension_type(0x2222);
+    assert_eq!(unknown.label(), "extension-field-0x2222");
+    assert_eq!(
+        unknown.category(),
+        NtpExtensionFieldTypeCategory::UnknownOrUnassigned
+    );
+    assert_eq!(unknown.status(), NtpRegistryStatus::Unassigned);
+}
