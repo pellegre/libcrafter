@@ -7,7 +7,7 @@ fn udp_123_packet_bytes(payload: &[u8]) -> crafter::Result<Vec<u8>> {
         .src(Ipv4Addr::new(192, 0, 2, 10))
         .dst(Ipv4Addr::new(198, 51, 100, 123))
         / Udp::new().source_port(NTP_PORT).destination_port(NTP_PORT)
-        / Raw::from_bytes(payload.to_vec());
+        / Raw::from_bytes(payload);
 
     Ok(packet.compile()?.into_bytes())
 }
