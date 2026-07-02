@@ -2,14 +2,21 @@
 
 use super::constants::{
     NTP_EXTENSION_FIELD_HEADER_LEN, NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN,
-    NTP_EXTENSION_FIELD_MIN_LEN,
+    NTP_EXTENSION_FIELD_MIN_LEN, NTP_LEGACY_MAC_KEY_ID_LEN,
 };
-use super::registry::{ntp_extension_field_type_meta, NtpRegistryMeta};
+use super::registry::{ntp_extension_field_type_meta, NtpRegistryMeta, NtpRegistryStatus};
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 
 pub(super) const NTP_EXTENSION_CONTEXT: &str = "ntp.extension";
 pub(super) const NTP_EXTENSION_LENGTH_CONTEXT: &str = "ntp.extension.length";
+pub(super) const NTP_MAC_CONTEXT: &str = "ntp.mac";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct NtpExtensionDecodeAll {
+    pub(super) fields: Vec<NtpExtensionField>,
+    pub(super) legacy_mac: Option<Vec<u8>>,
+}
 
 /// Raw-preserving NTP extension field.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,6 +162,137 @@ impl NtpExtensionField {
     fn body_len(&self) -> usize {
         self.value.len() + self.padding.as_ref().map(Vec::len).unwrap_or(0)
     }
+}
+
+pub(super) fn encoded_all_len(fields: &[NtpExtensionField], has_legacy_mac: bool) -> usize {
+    fields
+        .iter()
+        .enumerate()
+        .map(|(index, field)| {
+            let last_without_mac = index + 1 == fields.len() && !has_legacy_mac;
+            field.encoded_len(last_without_mac)
+        })
+        .sum()
+}
+
+pub(super) fn encode_all(
+    fields: &[NtpExtensionField],
+    has_legacy_mac: bool,
+    out: &mut Vec<u8>,
+) -> Result<()> {
+    for (index, field) in fields.iter().enumerate() {
+        let last_without_mac = index + 1 == fields.len() && !has_legacy_mac;
+        field.compile(last_without_mac, out)?;
+    }
+    Ok(())
+}
+
+pub(super) fn decode_all(tail: &[u8]) -> Result<NtpExtensionDecodeAll> {
+    let mut fields = Vec::new();
+    let mut offset = 0;
+
+    while offset < tail.len() {
+        let remaining = &tail[offset..];
+        if !fields.is_empty() && is_plausible_legacy_mac_len(remaining.len()) {
+            return Ok(NtpExtensionDecodeAll {
+                fields,
+                legacy_mac: Some(remaining.to_vec()),
+            });
+        }
+        if remaining.len() < NTP_EXTENSION_FIELD_HEADER_LEN {
+            let context = if fields.is_empty() {
+                NTP_EXTENSION_CONTEXT
+            } else {
+                NTP_MAC_CONTEXT
+            };
+            let required = if fields.is_empty() {
+                NTP_EXTENSION_FIELD_HEADER_LEN
+            } else {
+                NTP_LEGACY_MAC_KEY_ID_LEN
+            };
+            return Err(CrafterError::buffer_too_short(
+                context,
+                required,
+                remaining.len(),
+            ));
+        }
+
+        let field_type = u16::from_be_bytes([remaining[0], remaining[1]]);
+        let declared_len = u16::from_be_bytes([remaining[2], remaining[3]]) as usize;
+        let meta = ntp_extension_field_type_meta(field_type);
+        let known_extension = meta.status != NtpRegistryStatus::Unassigned;
+
+        if let Err(err) = validate_extension_length(declared_len, remaining.len()) {
+            if known_extension || !is_plausible_legacy_mac_len(remaining.len()) {
+                return Err(err);
+            }
+            return Ok(NtpExtensionDecodeAll {
+                fields,
+                legacy_mac: Some(remaining.to_vec()),
+            });
+        }
+
+        let final_without_mac = offset + declared_len == tail.len();
+        if final_without_mac {
+            if let Err(err) = validate_final_extension_without_mac_length(declared_len) {
+                if known_extension || !is_plausible_legacy_mac_len(remaining.len()) {
+                    return Err(err);
+                }
+                return Ok(NtpExtensionDecodeAll {
+                    fields,
+                    legacy_mac: Some(remaining.to_vec()),
+                });
+            }
+        }
+
+        let value = remaining[NTP_EXTENSION_FIELD_HEADER_LEN..declared_len].to_vec();
+        fields.push(NtpExtensionField::from_decoded(
+            field_type,
+            declared_len as u16,
+            value,
+        ));
+        offset += declared_len;
+    }
+
+    Ok(NtpExtensionDecodeAll {
+        fields,
+        legacy_mac: None,
+    })
+}
+
+pub(super) fn tail_shape_is_plausible(tail: &[u8]) -> bool {
+    if tail.is_empty() {
+        return true;
+    }
+    if is_plausible_legacy_mac_len(tail.len()) {
+        return true;
+    }
+
+    let mut offset = 0;
+    while offset < tail.len() {
+        let remaining = &tail[offset..];
+        if offset > 0 && is_plausible_legacy_mac_len(remaining.len()) {
+            return true;
+        }
+        if remaining.len() < NTP_EXTENSION_FIELD_HEADER_LEN {
+            return false;
+        }
+        let declared_len = u16::from_be_bytes([remaining[2], remaining[3]]) as usize;
+        if !is_valid_extension_length(declared_len, remaining.len()) {
+            return false;
+        }
+        if offset + declared_len == tail.len()
+            && !is_valid_final_extension_without_mac_length(declared_len)
+        {
+            return false;
+        }
+        offset += declared_len;
+    }
+    true
+}
+
+fn is_plausible_legacy_mac_len(len: usize) -> bool {
+    matches!(len, 4 | 20 | 24)
 }
 
 fn align_4(value: usize) -> usize {
@@ -318,6 +456,63 @@ mod tests {
         );
         assert_eq!(out.len(), 12);
         assert!(validate_extension_length(12, out.len()).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_extension_roundtrip_sequence_preserves_body_padding_and_unknown_types() -> Result<()> {
+        let fields = vec![
+            NtpExtensionField::new(0xdead, [0xaa, 0xbb])
+                .padding([0xcc, 0xdd])
+                .declared_length(NTP_EXTENSION_FIELD_MIN_LEN as u16),
+            NtpExtensionField::udp_checksum_complement([0x11, 0x22, 0x33, 0x44])
+                .declared_length(NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN as u16),
+        ];
+        let mut encoded = Vec::new();
+
+        encode_all(&fields, false, &mut encoded)?;
+        let decoded = decode_all(&encoded)?;
+
+        assert_eq!(decoded.legacy_mac, None);
+        assert_eq!(decoded.fields.len(), 2);
+        assert_eq!(decoded.fields[0].field_type(), 0xdead);
+        assert_eq!(
+            decoded.fields[0].value(),
+            &[0xaa, 0xbb, 0xcc, 0xdd, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        );
+        assert_eq!(decoded.fields[0].padding_value(), None);
+        assert_eq!(
+            decoded.fields[1].declared_length_value(),
+            Some(NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN as u16)
+        );
+
+        let mut reencoded = Vec::new();
+        encode_all(&decoded.fields, false, &mut reencoded)?;
+        assert_eq!(reencoded, encoded);
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_extension_roundtrip_decode_all_splits_legacy_mac_tail() -> Result<()> {
+        let fields = vec![NtpExtensionField::nts_cookie([0x01, 0x02, 0x03])];
+        let legacy_mac = vec![0x01, 0x02, 0x03, 0x04, 0xcc, 0xcc, 0xcc, 0xcc];
+        let mut legacy_mac = legacy_mac.into_iter().chain([0xcc; 12]).collect::<Vec<_>>();
+        let mut encoded = Vec::new();
+
+        encode_all(&fields, true, &mut encoded)?;
+        encoded.append(&mut legacy_mac);
+        let decoded = decode_all(&encoded)?;
+
+        assert_eq!(decoded.fields.len(), 1);
+        assert_eq!(decoded.fields[0].field_type(), 0x0204);
+        assert_eq!(
+            decoded.fields[0].declared_length_value(),
+            Some(NTP_EXTENSION_FIELD_MIN_LEN as u16)
+        );
+        assert_eq!(
+            decoded.legacy_mac.as_deref(),
+            Some(&encoded[NTP_EXTENSION_FIELD_MIN_LEN..])
+        );
         Ok(())
     }
 }

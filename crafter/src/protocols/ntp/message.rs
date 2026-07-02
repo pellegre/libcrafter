@@ -8,15 +8,11 @@ use core::fmt;
 use core::net::{Ipv4Addr, Ipv6Addr};
 
 use super::constants::*;
+use super::decode as ntp_decode;
 pub use super::extension::NtpExtensionField;
-use super::extension::{
-    is_valid_extension_length, is_valid_final_extension_without_mac_length,
-    validate_extension_length, validate_final_extension_without_mac_length, NTP_EXTENSION_CONTEXT,
-};
 use super::registry::{
-    ntp_extension_field_type_meta, ntp_kiss_o_death_code_meta, ntp_leap_indicator_meta,
-    ntp_mode_meta, ntp_reference_code_ascii_label, ntp_reference_id_meta, ntp_stratum_meta,
-    NtpRegistryMeta, NtpRegistryStatus,
+    ntp_kiss_o_death_code_meta, ntp_leap_indicator_meta, ntp_mode_meta,
+    ntp_reference_code_ascii_label, ntp_reference_id_meta, ntp_stratum_meta, NtpRegistryMeta,
 };
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
@@ -27,7 +23,6 @@ use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::protocols::transport::Udp;
 
 const NTP_HEADER_CONTEXT: &str = "ntp.header";
-const NTP_MAC_CONTEXT: &str = "ntp.mac";
 const NTP_DOCUMENTATION_IPV4_CLIENT: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 10);
 const NTP_DOCUMENTATION_IPV4_SERVER: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 123);
 const NTP_DOCUMENTATION_IPV6_CLIENT: Ipv6Addr =
@@ -950,16 +945,7 @@ impl Ntp {
     }
 
     fn encoded_tail_len(&self) -> usize {
-        let mut len = 0;
-        for (index, field) in self.extension_fields.iter().enumerate() {
-            let last_without_mac =
-                index + 1 == self.extension_fields.len() && self.legacy_mac.is_none();
-            len += field.encoded_len(last_without_mac);
-        }
-        if let Some(mac) = &self.legacy_mac {
-            len += mac.len();
-        }
-        len
+        ntp_decode::encoded_tail_len(&self.extension_fields, self.legacy_mac.as_ref())
     }
 
     fn serialize_header(&self, out: &mut Vec<u8>) {
@@ -1076,15 +1062,7 @@ impl Layer for Ntp {
 
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
         self.serialize_header(out);
-        for (index, field) in self.extension_fields.iter().enumerate() {
-            let last_without_mac =
-                index + 1 == self.extension_fields.len() && self.legacy_mac.is_none();
-            field.compile(last_without_mac, out)?;
-        }
-        if let Some(mac) = &self.legacy_mac {
-            out.extend_from_slice(mac.bytes());
-        }
-        Ok(())
+        ntp_decode::encode_tail(&self.extension_fields, self.legacy_mac.as_ref(), out)
     }
 
     impl_layer_object!(Ntp);
@@ -1116,7 +1094,7 @@ pub fn decode_ntp_payload(bytes: &[u8]) -> Result<Ntp> {
     let origin_timestamp = read_timestamp(&bytes[24..32]);
     let receive_timestamp = read_timestamp(&bytes[32..40]);
     let transmit_timestamp = read_timestamp(&bytes[40..48]);
-    let (extension_fields, legacy_mac) = parse_ntp_tail(&bytes[NTP_FIXED_HEADER_LEN..])?;
+    let decoded_tail = ntp_decode::decode_tail(&bytes[NTP_FIXED_HEADER_LEN..])?;
 
     Ok(Ntp {
         leap_indicator: Field::user(leap_indicator),
@@ -1132,8 +1110,8 @@ pub fn decode_ntp_payload(bytes: &[u8]) -> Result<Ntp> {
         origin_timestamp: Field::user(origin_timestamp),
         receive_timestamp: Field::user(receive_timestamp),
         transmit_timestamp: Field::user(transmit_timestamp),
-        extension_fields,
-        legacy_mac,
+        extension_fields: decoded_tail.extension_fields,
+        legacy_mac: decoded_tail.legacy_mac,
     })
 }
 
@@ -1151,7 +1129,7 @@ pub fn looks_like_ntp_payload(bytes: &[u8]) -> bool {
         return false;
     }
 
-    ntp_tail_shape_is_plausible(&bytes[NTP_FIXED_HEADER_LEN..])
+    ntp_decode::tail_shape_is_plausible(&bytes[NTP_FIXED_HEADER_LEN..])
 }
 
 /// Append a decoded NTP layer to an existing packet.
@@ -1237,105 +1215,11 @@ fn read_timestamp(bytes: &[u8]) -> NtpTimestamp {
     ]))
 }
 
-fn parse_ntp_tail(tail: &[u8]) -> Result<(Vec<NtpExtensionField>, Option<NtpLegacyMac>)> {
-    let mut fields = Vec::new();
-    let mut offset = 0;
-
-    while offset < tail.len() {
-        let remaining = &tail[offset..];
-        if !fields.is_empty() && is_plausible_legacy_mac_len(remaining.len()) {
-            return Ok((fields, Some(NtpLegacyMac::from_bytes(remaining))));
-        }
-        if remaining.len() < NTP_EXTENSION_FIELD_HEADER_LEN {
-            let context = if fields.is_empty() {
-                NTP_EXTENSION_CONTEXT
-            } else {
-                NTP_MAC_CONTEXT
-            };
-            let required = if fields.is_empty() {
-                NTP_EXTENSION_FIELD_HEADER_LEN
-            } else {
-                NTP_LEGACY_MAC_KEY_ID_LEN
-            };
-            return Err(CrafterError::buffer_too_short(
-                context,
-                required,
-                remaining.len(),
-            ));
-        }
-
-        let field_type = u16::from_be_bytes([remaining[0], remaining[1]]);
-        let declared_len = u16::from_be_bytes([remaining[2], remaining[3]]) as usize;
-        let meta = ntp_extension_field_type_meta(field_type);
-        let known_extension = meta.status != NtpRegistryStatus::Unassigned;
-
-        if let Err(err) = validate_extension_length(declared_len, remaining.len()) {
-            if known_extension || !is_plausible_legacy_mac_len(remaining.len()) {
-                return Err(err);
-            }
-            return Ok((fields, Some(NtpLegacyMac::from_bytes(remaining))));
-        }
-
-        let final_without_mac = offset + declared_len == tail.len();
-        if final_without_mac {
-            if let Err(err) = validate_final_extension_without_mac_length(declared_len) {
-                if known_extension || !is_plausible_legacy_mac_len(remaining.len()) {
-                    return Err(err);
-                }
-                return Ok((fields, Some(NtpLegacyMac::from_bytes(remaining))));
-            }
-        }
-
-        let value = remaining[NTP_EXTENSION_FIELD_HEADER_LEN..declared_len].to_vec();
-        fields.push(NtpExtensionField::from_decoded(
-            field_type,
-            declared_len as u16,
-            value,
-        ));
-        offset += declared_len;
-    }
-
-    Ok((fields, None))
-}
-
-fn ntp_tail_shape_is_plausible(tail: &[u8]) -> bool {
-    if tail.is_empty() {
-        return true;
-    }
-    if matches!(tail.len(), 4 | 20 | 24) {
-        return true;
-    }
-
-    let mut offset = 0;
-    while offset < tail.len() {
-        let remaining = &tail[offset..];
-        if offset > 0 && is_plausible_legacy_mac_len(remaining.len()) {
-            return true;
-        }
-        if remaining.len() < NTP_EXTENSION_FIELD_HEADER_LEN {
-            return false;
-        }
-        let declared_len = u16::from_be_bytes([remaining[2], remaining[3]]) as usize;
-        if !is_valid_extension_length(declared_len, remaining.len()) {
-            return false;
-        }
-        if offset + declared_len == tail.len()
-            && !is_valid_final_extension_without_mac_length(declared_len)
-        {
-            return false;
-        }
-        offset += declared_len;
-    }
-    true
-}
-
-fn is_plausible_legacy_mac_len(len: usize) -> bool {
-    matches!(len, 4 | 20 | 24)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::super::extension::NTP_EXTENSION_LENGTH_CONTEXT;
+    use super::super::extension::{
+        NTP_EXTENSION_CONTEXT, NTP_EXTENSION_LENGTH_CONTEXT, NTP_MAC_CONTEXT,
+    };
     use super::*;
     use crate::field::FieldState;
     use crate::protocols::ntp::NtpRegistryStatus;
