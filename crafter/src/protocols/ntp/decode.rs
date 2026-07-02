@@ -36,12 +36,17 @@ pub(super) fn encode_tail(
     Ok(())
 }
 
-pub(super) fn decode_tail(tail: &[u8]) -> Result<NtpDecodedTail> {
+/// Parse bytes after the fixed NTP header into extension fields and MAC tail.
+pub(super) fn parse_tail(tail: &[u8]) -> Result<NtpDecodedTail> {
     let decoded = extension::decode_all(tail)?;
     Ok(NtpDecodedTail {
         extension_fields: decoded.fields,
         legacy_mac: decoded.legacy_mac.map(NtpLegacyMac::from_bytes),
     })
+}
+
+pub(super) fn decode_tail(tail: &[u8]) -> Result<NtpDecodedTail> {
+    parse_tail(tail)
 }
 
 pub(super) fn tail_shape_is_plausible(tail: &[u8]) -> bool {
@@ -50,7 +55,10 @@ pub(super) fn tail_shape_is_plausible(tail: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::super::constants::NTP_FIXED_HEADER_LEN;
+    use super::super::constants::{
+        NTP_EXTENSION_FIELD_HEADER_LEN, NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN,
+        NTP_EXTENSION_FIELD_MIN_LEN, NTP_FIXED_HEADER_LEN, NTP_LEGACY_MAC_KEY_ID_LEN,
+    };
     use super::*;
     use crate::error::CrafterError;
     use crate::packet::Packet;
@@ -123,5 +131,107 @@ mod tests {
         )?;
         assert_eq!(reencoded, tail);
         Ok(())
+    }
+
+    #[test]
+    fn ntp_tail_parser_parse_tail_preserves_standalone_crypto_nak() -> Result<()> {
+        let tail = [0x01, 0x02, 0x03, 0x04];
+
+        let decoded = parse_tail(&tail)?;
+
+        assert!(decoded.extension_fields.is_empty());
+        let legacy_mac = decoded.legacy_mac.expect("crypto-NAK tail");
+        assert_eq!(legacy_mac.bytes(), tail.as_slice());
+        assert_eq!(legacy_mac.key_id(), Some(0x0102_0304));
+        assert_eq!(legacy_mac.digest(), &[]);
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_tail_parser_parse_tail_preserves_standalone_legacy_mac_lengths() -> Result<()> {
+        for tail_len in [20, 24] {
+            let mut tail = vec![0x7f; tail_len];
+            tail[..NTP_LEGACY_MAC_KEY_ID_LEN].copy_from_slice(&[0x01, 0x02, 0x03, 0x04]);
+
+            let decoded = parse_tail(&tail)?;
+
+            assert!(decoded.extension_fields.is_empty());
+            let legacy_mac = decoded.legacy_mac.expect("standalone legacy MAC");
+            assert_eq!(legacy_mac.bytes(), tail.as_slice());
+            assert_eq!(legacy_mac.key_id(), Some(0x0102_0304));
+            assert_eq!(
+                legacy_mac.digest().len(),
+                tail_len - NTP_LEGACY_MAC_KEY_ID_LEN
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_tail_parser_parse_tail_preserves_extension_without_mac() -> Result<()> {
+        let body =
+            [0xaa; NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN - NTP_EXTENSION_FIELD_HEADER_LEN];
+        let mut tail = Vec::new();
+        tail.extend_from_slice(&0xdeadu16.to_be_bytes());
+        tail.extend_from_slice(
+            &(NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN as u16).to_be_bytes(),
+        );
+        tail.extend_from_slice(&body);
+
+        let decoded = parse_tail(&tail)?;
+
+        assert_eq!(decoded.extension_fields.len(), 1);
+        assert_eq!(decoded.extension_fields[0].field_type(), 0xdead);
+        assert_eq!(
+            decoded.extension_fields[0].declared_length_value(),
+            Some(NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN as u16)
+        );
+        assert_eq!(decoded.extension_fields[0].value(), body.as_slice());
+        assert!(decoded.legacy_mac.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_tail_parser_parse_tail_splits_extension_and_crypto_nak() -> Result<()> {
+        let body = [0xaa; NTP_EXTENSION_FIELD_MIN_LEN - NTP_EXTENSION_FIELD_HEADER_LEN];
+        let crypto_nak = [0x01, 0x02, 0x03, 0x04];
+        let mut tail = Vec::new();
+        tail.extend_from_slice(&0xbeefu16.to_be_bytes());
+        tail.extend_from_slice(&(NTP_EXTENSION_FIELD_MIN_LEN as u16).to_be_bytes());
+        tail.extend_from_slice(&body);
+        tail.extend_from_slice(&crypto_nak);
+
+        let decoded = parse_tail(&tail)?;
+
+        assert_eq!(decoded.extension_fields.len(), 1);
+        assert_eq!(decoded.extension_fields[0].field_type(), 0xbeef);
+        assert_eq!(decoded.extension_fields[0].value(), body.as_slice());
+        let legacy_mac = decoded.legacy_mac.expect("crypto-NAK after extension");
+        assert_eq!(legacy_mac.bytes(), crypto_nak.as_slice());
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_tail_parser_parse_tail_reports_truncated_mac_after_extension() {
+        let mut tail = Vec::new();
+        tail.extend_from_slice(&0xbeefu16.to_be_bytes());
+        tail.extend_from_slice(&(NTP_EXTENSION_FIELD_MIN_LEN as u16).to_be_bytes());
+        tail.extend_from_slice(
+            &[0xaa; NTP_EXTENSION_FIELD_MIN_LEN - NTP_EXTENSION_FIELD_HEADER_LEN],
+        );
+        tail.extend_from_slice(&[0xcc, 0xdd]);
+
+        match parse_tail(&tail).unwrap_err() {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, extension::NTP_MAC_CONTEXT);
+                assert_eq!(required, NTP_LEGACY_MAC_KEY_ID_LEN);
+                assert_eq!(available, 2);
+            }
+            other => panic!("unexpected tail error: {other:?}"),
+        }
     }
 }

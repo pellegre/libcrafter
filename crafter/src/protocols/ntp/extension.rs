@@ -4,6 +4,7 @@ use super::constants::{
     NTP_EXTENSION_FIELD_HEADER_LEN, NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN,
     NTP_EXTENSION_FIELD_MIN_LEN, NTP_LEGACY_MAC_KEY_ID_LEN,
 };
+use super::mac::ntp_legacy_mac_tail_len_is_plausible;
 use super::registry::{
     ntp_extension_field_type_is_autokey_related, ntp_extension_type, NtpExtensionFieldType,
     NtpExtensionFieldTypeCategory, NtpRegistryMeta,
@@ -822,7 +823,7 @@ pub(super) fn decode_all(tail: &[u8]) -> Result<NtpExtensionDecodeAll> {
         let declared_len = u16::from_be_bytes([remaining[2], remaining[3]]) as usize;
 
         if let Err(err) = validate_extension_length(declared_len, remaining.len()) {
-            return if can_partition_as_legacy_mac(fields.is_empty(), remaining.len()) {
+            return if can_partition_as_legacy_mac(fields.is_empty(), remaining) {
                 Ok(NtpExtensionDecodeAll {
                     fields,
                     legacy_mac: Some(remaining.to_vec()),
@@ -835,7 +836,7 @@ pub(super) fn decode_all(tail: &[u8]) -> Result<NtpExtensionDecodeAll> {
         let final_without_mac = offset + declared_len == tail.len();
         if final_without_mac {
             if let Err(err) = validate_final_extension_without_mac_length(declared_len) {
-                return if can_partition_as_legacy_mac(fields.is_empty(), remaining.len()) {
+                return if can_partition_as_legacy_mac(fields.is_empty(), remaining) {
                     Ok(NtpExtensionDecodeAll {
                         fields,
                         legacy_mac: Some(remaining.to_vec()),
@@ -893,15 +894,18 @@ pub(super) fn tail_shape_is_plausible(tail: &[u8]) -> bool {
 }
 
 fn is_plausible_legacy_mac_len(len: usize) -> bool {
-    matches!(len, 4 | 20 | 24)
+    ntp_legacy_mac_tail_len_is_plausible(len)
 }
 
-fn can_partition_as_legacy_mac(no_extensions_seen: bool, len: usize) -> bool {
-    if no_extensions_seen {
-        matches!(len, 20 | 24)
-    } else {
-        is_plausible_legacy_mac_len(len)
+fn can_partition_as_legacy_mac(no_extensions_seen: bool, remaining: &[u8]) -> bool {
+    if !is_plausible_legacy_mac_len(remaining.len()) {
+        return false;
     }
+    if no_extensions_seen && remaining.len() == NTP_LEGACY_MAC_KEY_ID_LEN {
+        let declared_len = u16::from_be_bytes([remaining[2], remaining[3]]) as usize;
+        return declared_len >= NTP_EXTENSION_FIELD_MIN_LEN;
+    }
+    true
 }
 
 fn u16_len(len: usize, field: &'static str, reason: &'static str) -> Result<u16> {
@@ -1551,6 +1555,42 @@ mod tests {
 
         assert_eq!(decoded.fields, Vec::new());
         assert_eq!(decoded.legacy_mac.as_deref(), Some(tail.as_slice()));
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_tail_parser_decode_all_preserves_standalone_crypto_nak() -> Result<()> {
+        let tail = [0xde, 0xad, 0xbe, 0xef];
+
+        let decoded = decode_all(&tail)?;
+
+        assert_eq!(decoded.fields, Vec::new());
+        assert_eq!(decoded.legacy_mac.as_deref(), Some(tail.as_slice()));
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_tail_parser_decode_all_preserves_extension_then_crypto_nak() -> Result<()> {
+        let mut tail = Vec::new();
+        tail.extend_from_slice(&0xdeadu16.to_be_bytes());
+        tail.extend_from_slice(&(NTP_EXTENSION_FIELD_MIN_LEN as u16).to_be_bytes());
+        tail.extend_from_slice(
+            &[0xaa; NTP_EXTENSION_FIELD_MIN_LEN - NTP_EXTENSION_FIELD_HEADER_LEN],
+        );
+        tail.extend_from_slice(&[0x01, 0x02, 0x03, 0x04]);
+
+        let decoded = decode_all(&tail)?;
+
+        assert_eq!(decoded.fields.len(), 1);
+        assert_eq!(decoded.fields[0].field_type(), 0xdead);
+        assert_eq!(
+            decoded.fields[0].declared_length_value(),
+            Some(NTP_EXTENSION_FIELD_MIN_LEN as u16)
+        );
+        assert_eq!(
+            decoded.legacy_mac.as_deref(),
+            Some(&tail[NTP_EXTENSION_FIELD_MIN_LEN..])
+        );
         Ok(())
     }
 
