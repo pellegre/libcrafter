@@ -141,13 +141,18 @@ pub mod exports {
     pub use mqtt::{Mqtt, MqttControlPacketType, MQTT_PORT, MQTT_TLS_PORT};
     pub use ntp::constants::*;
     pub use ntp::{
-        append_ntp_packet, decode_ntp_payload, looks_like_ntp_payload, ntp_client_udp,
-        ntp_extension_field_type_meta, ntp_ipv4_client_request, ntp_ipv6_client_request,
-        ntp_kiss_o_death_code_meta, ntp_leap_indicator_meta, ntp_mode_meta,
-        ntp_nts_extension_field_type_meta, ntp_pack_first_octet, ntp_parse_first_octet,
-        ntp_reference_id_meta, ntp_server_udp, ntp_stratum_meta, Ntp, NtpExtensionField,
-        NtpLeapIndicator, NtpLegacyMac, NtpMode, NtpReferenceCodeMeta, NtpReferenceId,
-        NtpRegistryMeta, NtpRegistryStatus, NtpShortFormat, NtpStratum, NtpTimestamp, NtpVersion,
+        append_ntp_packet, decode_ntp, decode_ntp_payload, looks_like_ntp_payload, ntp_client_udp,
+        ntp_extension_field_type_meta, ntp_extension_type, ntp_ipv4_client_request,
+        ntp_ipv4_documentation_client_request, ntp_ipv6_client_request,
+        ntp_ipv6_documentation_client_request, ntp_kiss_o_death_code_meta, ntp_leap_indicator_meta,
+        ntp_mode_meta, ntp_nts_extension_field_type_meta, ntp_pack_first_octet,
+        ntp_parse_first_octet, ntp_reference_id_meta, ntp_server_udp, ntp_stratum_meta, Ntp,
+        NtpAutokeyRawExtension, NtpChecksumComplementExtension, NtpExtensionField,
+        NtpExtensionFieldType, NtpExtensionFieldTypeCategory, NtpLeapIndicator, NtpLegacyMac,
+        NtpMac, NtpMacLengthClass, NtpMode, NtpNtsAuthenticatorExtension, NtpNtsAuthenticatorParts,
+        NtpNtsCookieExtension, NtpNtsCookiePlaceholderExtension, NtpNtsUniqueIdentifierExtension,
+        NtpReferenceCodeMeta, NtpReferenceId, NtpRegistryMeta, NtpRegistryStatus, NtpShortFormat,
+        NtpStratum, NtpTimestamp, NtpVersion,
     };
     // Re-export the deprecated `Icmp*` aliases separately so the
     // `#[allow(deprecated)]` scope stays narrow: only these aliases are exempt from

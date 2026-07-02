@@ -17,16 +17,23 @@ pub mod time;
 
 pub use self::constants::*;
 pub use self::decode::{decode_ntp, looks_like_ntp_payload};
-pub use self::extension::NtpExtensionField;
-pub use self::mac::NtpMac;
+pub use self::extension::{
+    NtpAutokeyRawExtension, NtpChecksumComplementExtension, NtpExtensionField,
+    NtpNtsAuthenticatorExtension, NtpNtsAuthenticatorParts, NtpNtsCookieExtension,
+    NtpNtsCookiePlaceholderExtension, NtpNtsUniqueIdentifierExtension,
+};
+pub use self::mac::{NtpMac, NtpMacLengthClass};
 pub use self::message::{
     append_ntp_packet, decode_ntp_payload, ntp_client_udp, ntp_ipv4_client_request,
-    ntp_ipv6_client_request, ntp_pack_first_octet, ntp_parse_first_octet, ntp_server_udp, Ntp,
-    NtpLeapIndicator, NtpLegacyMac, NtpMode, NtpReferenceId, NtpStratum, NtpTimestamp, NtpVersion,
+    ntp_ipv4_documentation_client_request, ntp_ipv6_client_request,
+    ntp_ipv6_documentation_client_request, ntp_pack_first_octet, ntp_parse_first_octet,
+    ntp_server_udp, Ntp, NtpLeapIndicator, NtpLegacyMac, NtpMode, NtpReferenceId, NtpStratum,
+    NtpTimestamp, NtpVersion,
 };
 pub use self::registry::{
-    ntp_extension_field_type_meta, ntp_kiss_o_death_code_meta, ntp_leap_indicator_meta,
-    ntp_mode_meta, ntp_nts_extension_field_type_meta, ntp_reference_id_meta, ntp_stratum_meta,
+    ntp_extension_field_type_meta, ntp_extension_type, ntp_kiss_o_death_code_meta,
+    ntp_leap_indicator_meta, ntp_mode_meta, ntp_nts_extension_field_type_meta,
+    ntp_reference_id_meta, ntp_stratum_meta, NtpExtensionFieldType, NtpExtensionFieldTypeCategory,
     NtpReferenceCodeMeta, NtpRegistryMeta, NtpRegistryStatus,
 };
 pub use self::time::NtpShortFormat;
