@@ -1,0 +1,343 @@
+version: 1
+kind: feature
+name: ntp_extensions
+summary: >-
+  NTP extension field and legacy MAC tail behavior, including unknown extension
+  preservation, UDP Checksum Complement bytes, legacy MAC tails, ambiguous
+  extension-versus-MAC partitioning, raw fallback boundaries, and structured
+  malformed extension errors.
+
+layers:
+  - udp
+  - ntp
+directions:
+  - backend_to_libcrafter
+  - libcrafter_to_backend
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: unknown-extension-field
+    summary: Unknown but well-formed extension field preserves type, length, body, and padding.
+    ntp:
+      extension_fields:
+        - field_type: 0x2222
+          length: 28
+          body_hex: "deadbeef01020304"
+    checks:
+      - extension_type_unknown_preserved
+      - declared_length_preserved
+      - body_bytes_preserved
+      - recompile_matches_input
+  - name: checksum-complement-extension
+    summary: UDP Checksum Complement extension is packet data and does not mutate UDP checksum policy.
+    ntp:
+      extension_fields:
+        - field_type: 0x2005
+          length: 28
+          body_hex: "aabb"
+    checks:
+      - checksum_complement_label_stable
+      - complement_body_preserved
+      - udp_checksum_remains_udp_layer_state
+  - name: extension-with-legacy-mac
+    summary: A valid extension followed by a 20-octet legacy MAC splits the tail deterministically.
+    ntp:
+      extension_fields:
+        - field_type: 0x0204
+          length: 16
+          body_hex: "010203"
+      legacy_mac:
+        key_id: 0x01020304
+        digest_hex: "cccccccccccccccccccccccccccccccc"
+    checks:
+      - extension_count_one
+      - legacy_mac_len_20
+      - mac_key_and_digest_preserved
+      - summary_redacts_mac_material
+  - name: standalone-legacy-mac-tail
+    summary: A plausible 20-octet tail after the fixed header is preserved as legacy MAC bytes.
+    ntp:
+      extension_fields: []
+      legacy_mac:
+        key_id: 0x01020304
+        digest_hex: "abababababababababababababababab"
+    checks:
+      - no_extension_fields
+      - legacy_mac_len_20
+      - legacy_mac_bytes_roundtrip
+  - name: ambiguous-tail-handling
+    summary: Ambiguous tail bytes that match a plausible legacy MAC length remain a legacy MAC, not an extension.
+    ntp:
+      tail_hex: "01020304cccccccccccccccccccccccccccccccc"
+    checks:
+      - ambiguous_tail_preserved_as_legacy_mac
+      - no_registry_label_can_force_extension_decode
+      - recompile_matches_input
+  - name: raw-fallback-boundary
+    summary: UDP/123 payloads with invalid NTP tail shape remain Raw during stack dispatch.
+    udp:
+      source_port: 49152
+      destination_port: 123
+    payload:
+      encoding: hex
+      value: "230000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010203"
+    expected_layers:
+      - udp
+      - raw
+    checks:
+      - no_ntp_layer
+      - raw_payload_preserved
+      - direct_ntp_decode_reports_structured_error
+  - name: malformed-short-extension-header
+    malformed: true
+    fields:
+      - extension_fields
+    expected_error:
+      context: ntp.extension
+      required: 4
+      available: fewer_than_required
+  - name: malformed-invalid-extension-length
+    malformed: true
+    fields:
+      - extension_field_length
+    expected_error:
+      context: ntp.extension.length
+      required: aligned_minimum_length
+      available: declared_length
+  - name: malformed-truncated-mac-after-extension
+    malformed: true
+    fields:
+      - legacy_mac
+    expected_error:
+      context: ntp.mac
+      required: 4
+      available: fewer_than_required
+
+coverage_cases:
+  - ntp-extension-unknown-field
+  - ntp-extension-checksum-complement
+  - ntp-extension-with-legacy-mac
+  - ntp-extension-standalone-legacy-mac
+  - ntp-extension-ambiguous-tail
+  - ntp-extension-raw-fallback-boundary
+  - malformed-ntp-short-extension-header
+  - malformed-ntp-invalid-extension-length
+  - malformed-ntp-truncated-mac-after-extension
+
+supported_cases:
+  - name: ntp-extension-unknown-field
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      ntp:
+        extension_fields:
+          - field_type: 0x2222
+            declared_length: 28
+            body_hex: "deadbeef01020304"
+    expected:
+      extension_count: 1
+      extension_field_type: 0x2222
+      declared_length: 28
+  - name: ntp-extension-checksum-complement
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      ntp:
+        extension_fields:
+          - field_type: 0x2005
+            declared_length: 28
+            body_hex: "aabb"
+    expected:
+      extension_label: "udp-checksum-complement"
+      body_hex_prefix: "aabb"
+  - name: ntp-extension-with-legacy-mac
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      ntp:
+        extension_fields:
+          - field_type: 0x0204
+            declared_length: 16
+            body_hex: "010203"
+        legacy_mac:
+          key_id: 0x01020304
+          digest_hex: "cccccccccccccccccccccccccccccccc"
+    expected:
+      extension_count: 1
+      legacy_mac_len: 20
+      summary_tail: legacy-mac
+  - name: ntp-extension-standalone-legacy-mac
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      ntp:
+        legacy_mac:
+          key_id: 0x01020304
+          digest_hex: "abababababababababababababababab"
+    expected:
+      extension_count: 0
+      legacy_mac_len: 20
+  - name: ntp-extension-ambiguous-tail
+    directions:
+      - backend_to_libcrafter
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      ntp:
+        tail_hex: "01020304cccccccccccccccccccccccccccccccc"
+    expected:
+      extension_count: 0
+      legacy_mac_len: 20
+      reason: >-
+        Plausible legacy MAC tails are preserved as MAC bytes even when the
+        first four bytes could also be read as an extension field envelope.
+  - name: ntp-extension-raw-fallback-boundary
+    directions:
+      - backend_to_libcrafter
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      udp:
+        sport: 49152
+        dport: 123
+      payload:
+        raw_hex: "230000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010203"
+    expected:
+      layers:
+        - udp
+        - raw
+      direct_error_context: ntp.extension
+  - name: malformed-ntp-short-extension-header
+    directions:
+      - backend_to_libcrafter
+    byte_policy: structured_error
+    fields:
+      ntp:
+        payload_hex: "230000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010203"
+    expected_error:
+      context: ntp.extension
+      required: 4
+      available: 3
+  - name: malformed-ntp-invalid-extension-length
+    directions:
+      - backend_to_libcrafter
+    byte_policy: structured_error
+    fields:
+      ntp:
+        extension_header_hex: "2222000c"
+    expected_error:
+      context: ntp.extension.length
+  - name: malformed-ntp-truncated-mac-after-extension
+    directions:
+      - backend_to_libcrafter
+    byte_policy: structured_error
+    fields:
+      ntp:
+        extension_fields:
+          - field_type: 0x2222
+            declared_length: 16
+            body_hex: "aabb"
+        trailing_mac_hex: "010203"
+    expected_error:
+      context: ntp.mac
+      required: 4
+      available: 3
+
+case_groups:
+  - name: ntp-extension-strict
+    summary: Well-formed extension fields and MAC tails that preserve exact bytes.
+    byte_policy: strict_bytes
+    cases:
+      - ntp-extension-unknown-field
+      - ntp-extension-checksum-complement
+      - ntp-extension-with-legacy-mac
+      - ntp-extension-standalone-legacy-mac
+      - ntp-extension-ambiguous-tail
+      - ntp-extension-raw-fallback-boundary
+  - name: ntp-extension-malformed
+    summary: Malformed extension and MAC-tail inputs asserted by Rust structured-error tests.
+    byte_policy: structured_error
+    cases:
+      - malformed-ntp-short-extension-header
+      - malformed-ntp-invalid-extension-length
+      - malformed-ntp-truncated-mac-after-extension
+
+normalized_model:
+  extension:
+    - extension_field_type
+    - declared_length
+    - body_hex
+    - padding_hex
+    - summary_label
+  mac:
+    - legacy_mac_len
+    - key_id
+    - digest_len
+    - digest_hex
+  fallback:
+    - layers
+    - raw_hex
+    - direct_error_context
+
+source_refs:
+  - RFC 5905
+  - RFC 7821
+  - RFC 7822
+  - RFC 8915
+  - IANA NTP registries
+  - .agents/docs/ntp-wire-grammar.md
+  - tools/oracle/specs/layers/ntp.yaml
+
+notes:
+  - >-
+    Extension fields are byte-preserving envelopes. Unknown, Autokey-related,
+    checksum-complement, and NTS field bodies stay opaque unless a later feature
+    explicitly owns a typed body.
+  - >-
+    Structured-error malformed cases are documented here for coverage
+    accounting, but ordinary offline strict-byte comparison excludes them until
+    the oracle owns a malformed decode-error comparison pathway.
+  - >-
+    MAC material is synthetic packet data. Summaries should compare lengths and
+    labels without requiring key or digest bytes to appear in compact output.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - NTP
+      - Raw
+    notes:
+      - A later Scapy backend step will materialize extension and MAC-tail bytes
+        as deterministic NTP or Raw UDP payloads.
+  wireshark:
+    status: planned
+    native_layers:
+      - ntp
+      - data
+    decode: true
+    notes:
+      - Wireshark support is parser-only and must preserve opaque extension
+        bodies and MAC-tail metadata where tshark exposes it.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - libcrafter builds, decodes, summarizes, shows, and round-trips NTP
+        extension fields and legacy MAC tails, with malformed inputs covered by
+        Rust structured-error tests.
