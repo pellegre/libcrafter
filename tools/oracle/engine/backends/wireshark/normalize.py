@@ -60,7 +60,9 @@ _DLT_BY_ROOT: dict[str, int] = {
     "link:radiotap": 127,
     "link:raw": 101,
     "l3:ipv4": 101,
+    "l3:ipv4-ntp": 101,
     "l3:ipv6": 101,
+    "l3:ipv6-ntp": 101,
     "l3:raw": 101,
 }
 _PROTOCOL_LAYER_ALIASES: dict[str, str | None] = {
@@ -86,6 +88,7 @@ _PROTOCOL_LAYER_ALIASES: dict[str, str | None] = {
     "llc": "llc_snap",
     "mdns": "mdns",
     "null": "null_loopback",
+    "ntp": "ntp",
     "quic": "quic",
     "radiotap": "radiotap",
     "raw": None,

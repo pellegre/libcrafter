@@ -18,6 +18,8 @@ _ROOT_ALIASES: dict[str, str] = {
     "IPv6": "l3:ipv6",
     "RadioTap": "link:radiotap",
     "Raw": "link:raw",
+    "l3:ipv4-ntp": "l3:ipv4-ntp",
+    "l3:ipv6-ntp": "l3:ipv6-ntp",
     "link:ieee80211": "link:dot11",
     "link:linux-sll": "link:linux-cooked",
 }
