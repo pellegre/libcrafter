@@ -1181,20 +1181,22 @@ fn ntp_tail_status(extension_count: usize, has_legacy_mac: bool) -> &'static str
 }
 
 fn ntp_extension_inspection(extension: &NtpExtensionField, last_without_mac: bool) -> String {
-    let meta = extension.registry_meta();
+    let extension_type = extension.extension_type();
+    let meta = extension_type.registry_meta();
     let declared_len = extension
         .declared_length_value()
         .map(|value| value.to_string())
         .unwrap_or_else(|| "auto".to_string());
 
     format!(
-        "type=0x{:04x} label={} status={} declared_len={} encoded_len={} value_len={}",
+        "type=0x{:04x} label={} status={} declared_len={} encoded_len={} value_len={} category={}",
         extension.field_type(),
-        meta.label,
+        extension.label(),
         meta.status.label(),
         declared_len,
         extension.encoded_len(last_without_mac),
-        extension.value().len()
+        extension.value().len(),
+        extension_type.category().label()
     )
 }
 
