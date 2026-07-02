@@ -4,7 +4,7 @@ use super::constants::{
     NTP_EXTENSION_FIELD_HEADER_LEN, NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN,
     NTP_EXTENSION_FIELD_MIN_LEN, NTP_LEGACY_MAC_KEY_ID_LEN,
 };
-use super::registry::{ntp_extension_field_type_meta, NtpRegistryMeta, NtpRegistryStatus};
+use super::registry::{ntp_extension_type, NtpExtensionFieldType, NtpRegistryMeta};
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 
@@ -85,6 +85,11 @@ impl NtpExtensionField {
         self.field_type.value().copied().unwrap_or(0)
     }
 
+    /// Source-backed extension field type metadata.
+    pub fn extension_type(&self) -> NtpExtensionFieldType {
+        ntp_extension_type(self.field_type())
+    }
+
     /// Declared length when caller-set or decoded.
     pub fn declared_length_value(&self) -> Option<u16> {
         self.length.value().copied()
@@ -102,7 +107,7 @@ impl NtpExtensionField {
 
     /// Source-backed metadata for the extension field type.
     pub fn registry_meta(&self) -> NtpRegistryMeta {
-        ntp_extension_field_type_meta(self.field_type())
+        self.extension_type().registry_meta()
     }
 
     /// Return true when the field type is assigned by the NTS extension registry.
@@ -219,29 +224,29 @@ pub(super) fn decode_all(tail: &[u8]) -> Result<NtpExtensionDecodeAll> {
 
         let field_type = u16::from_be_bytes([remaining[0], remaining[1]]);
         let declared_len = u16::from_be_bytes([remaining[2], remaining[3]]) as usize;
-        let meta = ntp_extension_field_type_meta(field_type);
-        let known_extension = meta.status != NtpRegistryStatus::Unassigned;
 
         if let Err(err) = validate_extension_length(declared_len, remaining.len()) {
-            if known_extension || !is_plausible_legacy_mac_len(remaining.len()) {
-                return Err(err);
-            }
-            return Ok(NtpExtensionDecodeAll {
-                fields,
-                legacy_mac: Some(remaining.to_vec()),
-            });
+            return if can_partition_as_legacy_mac(fields.is_empty(), remaining.len()) {
+                Ok(NtpExtensionDecodeAll {
+                    fields,
+                    legacy_mac: Some(remaining.to_vec()),
+                })
+            } else {
+                Err(err)
+            };
         }
 
         let final_without_mac = offset + declared_len == tail.len();
         if final_without_mac {
             if let Err(err) = validate_final_extension_without_mac_length(declared_len) {
-                if known_extension || !is_plausible_legacy_mac_len(remaining.len()) {
-                    return Err(err);
-                }
-                return Ok(NtpExtensionDecodeAll {
-                    fields,
-                    legacy_mac: Some(remaining.to_vec()),
-                });
+                return if can_partition_as_legacy_mac(fields.is_empty(), remaining.len()) {
+                    Ok(NtpExtensionDecodeAll {
+                        fields,
+                        legacy_mac: Some(remaining.to_vec()),
+                    })
+                } else {
+                    Err(err)
+                };
             }
         }
 
@@ -295,6 +300,14 @@ fn is_plausible_legacy_mac_len(len: usize) -> bool {
     matches!(len, 4 | 20 | 24)
 }
 
+fn can_partition_as_legacy_mac(no_extensions_seen: bool, len: usize) -> bool {
+    if no_extensions_seen {
+        matches!(len, 20 | 24)
+    } else {
+        is_plausible_legacy_mac_len(len)
+    }
+}
+
 fn align_4(value: usize) -> usize {
     (value + 3) & !3
 }
@@ -344,6 +357,7 @@ pub(super) fn is_valid_final_extension_without_mac_length(declared_len: usize) -
 mod tests {
     use super::*;
     use crate::error::CrafterError;
+    use crate::protocols::ntp::registry::NtpExtensionFieldTypeCategory;
     use crate::protocols::ntp::NtpRegistryStatus;
 
     #[test]
@@ -356,6 +370,21 @@ mod tests {
         assert_eq!(field.value(), value.as_slice());
         assert_eq!(field.padding_value(), None);
         assert_eq!(field.registry_meta().status, NtpRegistryStatus::Unassigned);
+    }
+
+    #[test]
+    fn ntp_extension_registry_field_exposes_extension_type_metadata() {
+        let field = NtpExtensionField::from_decoded(0xdead, 28, vec![0xaa; 24]);
+        let extension_type = field.extension_type();
+
+        assert_eq!(extension_type.value(), 0xdead);
+        assert_eq!(extension_type.label(), "extension-field-0xDEAD");
+        assert_eq!(
+            extension_type.category(),
+            NtpExtensionFieldTypeCategory::UnknownOrUnassigned
+        );
+        assert_eq!(extension_type.status(), NtpRegistryStatus::Unassigned);
+        assert_eq!(field.registry_meta(), extension_type.registry_meta());
     }
 
     #[test]
@@ -456,6 +485,20 @@ mod tests {
         );
         assert_eq!(out.len(), 12);
         assert!(validate_extension_length(12, out.len()).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_extension_registry_labels_do_not_gate_legacy_mac_partition() -> Result<()> {
+        let mut tail = Vec::new();
+        tail.extend_from_slice(&0x0204u16.to_be_bytes());
+        tail.extend_from_slice(&12u16.to_be_bytes());
+        tail.extend_from_slice(&[0xcc; 16]);
+
+        let decoded = decode_all(&tail)?;
+
+        assert_eq!(decoded.fields, Vec::new());
+        assert_eq!(decoded.legacy_mac.as_deref(), Some(tail.as_slice()));
         Ok(())
     }
 
