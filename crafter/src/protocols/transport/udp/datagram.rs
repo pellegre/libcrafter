@@ -6,7 +6,7 @@ use crate::protocols::dhcp::{
 };
 use crate::protocols::dns::Dns;
 use crate::protocols::ipv4::IPPROTO_UDP;
-use crate::protocols::ntp::Ntp;
+use crate::protocols::ntp::{Ntp, NTP_PORT};
 use crate::protocols::quic::Quic;
 use crate::registry::ProtocolRegistry;
 
@@ -100,6 +100,13 @@ impl Udp {
         Self::new()
             .source_port(DHCPV6_SERVER_PORT)
             .destination_port(DHCPV6_SERVER_PORT)
+    }
+
+    /// Create an NTP UDP service header.
+    pub fn ntp() -> Self {
+        Self::new()
+            .source_port(NTP_PORT)
+            .destination_port(NTP_PORT)
     }
 
     /// Set the source port.
@@ -535,4 +542,25 @@ pub(super) fn is_current_udp_surplus_layer(
     seen_application_layer: bool,
 ) -> bool {
     layer.as_any().is::<UdpOptions>() || (seen_application_layer && layer.as_any().is::<Raw>())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ntp_udp_helper_sets_service_ports() {
+        let udp = Udp::ntp();
+
+        assert_eq!(udp.source_port_value(), NTP_PORT);
+        assert_eq!(udp.destination_port_value(), NTP_PORT);
+    }
+
+    #[test]
+    fn ntp_udp_helper_preserves_udp_setter_overrides() {
+        let udp = Udp::ntp().source_port(49_152).destination_port(12_345);
+
+        assert_eq!(udp.source_port_value(), 49_152);
+        assert_eq!(udp.destination_port_value(), 12_345);
+    }
 }
