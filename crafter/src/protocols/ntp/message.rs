@@ -9,6 +9,10 @@ use core::net::{Ipv4Addr, Ipv6Addr};
 
 use super::constants::*;
 pub use super::extension::NtpExtensionField;
+use super::extension::{
+    is_valid_extension_length, is_valid_final_extension_without_mac_length,
+    validate_extension_length, validate_final_extension_without_mac_length, NTP_EXTENSION_CONTEXT,
+};
 use super::registry::{
     ntp_extension_field_type_meta, ntp_kiss_o_death_code_meta, ntp_leap_indicator_meta,
     ntp_mode_meta, ntp_reference_code_ascii_label, ntp_reference_id_meta, ntp_stratum_meta,
@@ -23,8 +27,6 @@ use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::protocols::transport::Udp;
 
 const NTP_HEADER_CONTEXT: &str = "ntp.header";
-const NTP_EXTENSION_CONTEXT: &str = "ntp.extension";
-const NTP_EXTENSION_LENGTH_CONTEXT: &str = "ntp.extension.length";
 const NTP_MAC_CONTEXT: &str = "ntp.mac";
 const NTP_DOCUMENTATION_IPV4_CLIENT: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 10);
 const NTP_DOCUMENTATION_IPV4_SERVER: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 123);
@@ -1267,22 +1269,21 @@ fn parse_ntp_tail(tail: &[u8]) -> Result<(Vec<NtpExtensionField>, Option<NtpLega
         let meta = ntp_extension_field_type_meta(field_type);
         let known_extension = meta.status != NtpRegistryStatus::Unassigned;
 
-        if !is_valid_extension_length(declared_len, remaining.len()) {
+        if let Err(err) = validate_extension_length(declared_len, remaining.len()) {
             if known_extension || !is_plausible_legacy_mac_len(remaining.len()) {
-                return Err(invalid_extension_length_error(
-                    declared_len,
-                    remaining.len(),
-                ));
+                return Err(err);
             }
             return Ok((fields, Some(NtpLegacyMac::from_bytes(remaining))));
         }
 
         let final_without_mac = offset + declared_len == tail.len();
-        if final_without_mac && declared_len < NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN {
-            if known_extension || !is_plausible_legacy_mac_len(remaining.len()) {
-                return Err(invalid_final_extension_without_mac_length_error());
+        if final_without_mac {
+            if let Err(err) = validate_final_extension_without_mac_length(declared_len) {
+                if known_extension || !is_plausible_legacy_mac_len(remaining.len()) {
+                    return Err(err);
+                }
+                return Ok((fields, Some(NtpLegacyMac::from_bytes(remaining))));
             }
-            return Ok((fields, Some(NtpLegacyMac::from_bytes(remaining))));
         }
 
         let value = remaining[NTP_EXTENSION_FIELD_HEADER_LEN..declared_len].to_vec();
@@ -1319,7 +1320,7 @@ fn ntp_tail_shape_is_plausible(tail: &[u8]) -> bool {
             return false;
         }
         if offset + declared_len == tail.len()
-            && declared_len < NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN
+            && !is_valid_final_extension_without_mac_length(declared_len)
         {
             return false;
         }
@@ -1332,37 +1333,9 @@ fn is_plausible_legacy_mac_len(len: usize) -> bool {
     matches!(len, 4 | 20 | 24)
 }
 
-fn is_valid_extension_length(declared_len: usize, available: usize) -> bool {
-    declared_len >= NTP_EXTENSION_FIELD_MIN_LEN
-        && declared_len % 4 == 0
-        && declared_len <= available
-}
-
-fn invalid_extension_length_error(declared_len: usize, available: usize) -> CrafterError {
-    if declared_len < NTP_EXTENSION_FIELD_MIN_LEN {
-        CrafterError::invalid_field_value(
-            NTP_EXTENSION_LENGTH_CONTEXT,
-            "extension length must be at least 16 bytes",
-        )
-    } else if declared_len % 4 != 0 {
-        CrafterError::invalid_field_value(
-            NTP_EXTENSION_LENGTH_CONTEXT,
-            "extension length must be a multiple of 4 bytes",
-        )
-    } else {
-        CrafterError::buffer_too_short(NTP_EXTENSION_CONTEXT, declared_len, available)
-    }
-}
-
-fn invalid_final_extension_without_mac_length_error() -> CrafterError {
-    CrafterError::invalid_field_value(
-        NTP_EXTENSION_LENGTH_CONTEXT,
-        "final extension without MAC must be at least 28 bytes",
-    )
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::extension::NTP_EXTENSION_LENGTH_CONTEXT;
     use super::*;
     use crate::field::FieldState;
     use crate::protocols::ntp::NtpRegistryStatus;
