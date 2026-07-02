@@ -2049,6 +2049,62 @@ mod dns_udp_binding {
 }
 
 #[cfg(test)]
+mod ntp_udp_registry {
+    use super::ProtocolRegistry;
+    use crate::{Ipv4, NetworkLayer, Ntp, NtpMode, Packet, Raw, Udp, NTP_PORT};
+
+    fn udp_ipv4_packet(source_port: u16, destination_port: u16, payload: impl Into<Raw>) -> Packet {
+        Ipv4::new() / Udp::new().sport(source_port).dport(destination_port) / payload.into()
+    }
+
+    #[test]
+    fn ntp_udp_registry_decodes_destination_port_123_payloads() {
+        let bytes = (Ipv4::new() / Udp::new().sport(49_152).dport(NTP_PORT) / Ntp::client())
+            .compile()
+            .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let ntp = decoded.layer::<Ntp>().expect("NTP layer");
+
+        assert_eq!(ntp.first_octet_value(), 0x23);
+        assert_eq!(ntp.mode_value(), NtpMode::Client);
+        assert!(decoded.layer::<Raw>().is_none());
+    }
+
+    #[test]
+    fn ntp_udp_registry_preserves_non_ntp_payloads_on_port_123_as_raw() {
+        let payload = [0x23, 0x01, 0x02, 0x03, 0xde, 0xad];
+        let bytes = udp_ipv4_packet(49_152, NTP_PORT, Raw::from_bytes(payload))
+            .compile()
+            .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+
+        assert!(decoded.layer::<Ntp>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), payload);
+    }
+
+    #[test]
+    fn ntp_udp_registry_respects_application_decoding_toggle() {
+        let registry = ProtocolRegistry::new().application_decoding(false);
+        let ntp_payload = Packet::from_layer(Ntp::client()).compile().unwrap();
+        let bytes = udp_ipv4_packet(NTP_PORT, 49_152, Raw::from_bytes(ntp_payload.as_bytes()))
+            .compile()
+            .unwrap();
+
+        let decoded =
+            Packet::decode_from_l3_with_registry(&registry, NetworkLayer::Ipv4, bytes.as_bytes())
+                .unwrap();
+
+        assert!(decoded.layer::<Ntp>().is_none());
+        assert_eq!(
+            decoded.layer::<Raw>().unwrap().as_bytes(),
+            ntp_payload.as_bytes()
+        );
+    }
+}
+
+#[cfg(test)]
 mod snmp_udp_decode {
     use std::net::{Ipv4Addr, Ipv6Addr};
 

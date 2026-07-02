@@ -1,8 +1,8 @@
 //! NTP packet decode helpers.
 
+use super::constants::{NTP_FIXED_HEADER_LEN, NTP_MODE_RESERVED, NTP_VERSION_1, NTP_VERSION_4};
 use super::extension::{self, NtpExtensionField};
-use super::message::Ntp;
-use super::message::NtpLegacyMac;
+use super::message::{ntp_parse_first_octet, Ntp, NtpLegacyMac};
 use crate::error::Result;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,6 +14,23 @@ pub(super) struct NtpDecodedTail {
 /// Decode a standalone NTP UDP payload.
 pub fn decode_ntp(bytes: &[u8]) -> Result<Ntp> {
     Ntp::decode(bytes)
+}
+
+/// Conservative UDP/123 shape gate for built-in registry dispatch.
+pub fn looks_like_ntp_payload(bytes: &[u8]) -> bool {
+    if bytes.len() < NTP_FIXED_HEADER_LEN {
+        return false;
+    }
+
+    let (_, version, mode) = ntp_parse_first_octet(bytes[0]);
+    if !(NTP_VERSION_1..=NTP_VERSION_4).contains(&version.value()) {
+        return false;
+    }
+    if mode.value() == NTP_MODE_RESERVED {
+        return false;
+    }
+
+    tail_shape_is_plausible(&bytes[NTP_FIXED_HEADER_LEN..])
 }
 
 pub(super) fn encoded_tail_len(
