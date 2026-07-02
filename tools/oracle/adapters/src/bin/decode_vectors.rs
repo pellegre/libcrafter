@@ -20,6 +20,7 @@ use crafter::protocols::mqtt::{
     Mqtt, MqttControlPacketType, MqttProperties, MqttProperty, MQTT_CONNECT_FLAG_CLEAN_SESSION,
     MQTT_PUBLISH_FLAG_DUP, MQTT_PUBLISH_FLAG_QOS_MASK, MQTT_PUBLISH_FLAG_RETAIN,
 };
+use crafter::protocols::ntp::{Ntp, NtpExtensionField};
 use crafter::protocols::quic::Quic;
 use crafter::protocols::rip::ripng::{Ripng, RipngRte};
 use crafter::protocols::rip::{Rip, RipAuth, RipAuthPayload, RipEntry, RIP_AFI_AUTH};
@@ -223,8 +224,10 @@ fn decode_for_root(root: &str, bytes: &[u8]) -> ExampleResult<Packet> {
             Packet::decode_from_link(LinkType::Ieee80211, bytes)
         }
         "RadioTap" | "link:radiotap" => Packet::decode_from_link(LinkType::Radiotap, bytes),
-        "IP" | "l3:ipv4" | "l2:ipv4" => Packet::decode_from_l3(NetworkLayer::Ipv4, bytes),
-        "IPv6" | "l3:ipv6" => Packet::decode_from_l3(NetworkLayer::Ipv6, bytes),
+        "IP" | "l3:ipv4" | "l2:ipv4" | "l3:ipv4-ntp" => {
+            Packet::decode_from_l3(NetworkLayer::Ipv4, bytes)
+        }
+        "IPv6" | "l3:ipv6" | "l3:ipv6-ntp" => Packet::decode_from_l3(NetworkLayer::Ipv6, bytes),
         "l3:raw" => Packet::decode_from_l3(NetworkLayer::Raw, bytes),
         "BTLE" | "link:bluetooth-le-ll-with-phdr" => {
             Packet::decode_from_link(LinkType::BluetoothLeLl, bytes)
@@ -495,6 +498,8 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "ssdp"
     } else if layer.as_any().is::<Snmp>() {
         "snmp"
+    } else if layer.as_any().is::<Ntp>() {
+        "ntp"
     } else if layer.as_any().is::<Eapol>() {
         "eapol"
     } else if layer.as_any().is::<EapolKey>() {
@@ -650,6 +655,9 @@ fn normalized_layer_fields(
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Snmp>() {
         return snmp_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<Ntp>() {
+        return ntp_fields(layer);
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Eapol>() {
         return eapol_fields(layer);
@@ -874,6 +882,105 @@ fn snmp_fields(layer: &Snmp) -> BTreeMap<String, Value> {
         );
     }
     fields
+}
+
+fn ntp_fields(layer: &Ntp) -> BTreeMap<String, Value> {
+    let mut fields = map([
+        ("first_octet", json!(layer.first_octet_value())),
+        (
+            "leap_indicator",
+            json!(layer.leap_indicator_value().value()),
+        ),
+        ("version", json!(layer.version_value_effective().value())),
+        ("mode", json!(layer.mode_value().value())),
+        ("stratum", json!(layer.stratum_value().value())),
+        ("poll", json!(layer.poll_value())),
+        ("precision", json!(layer.precision_value())),
+        ("root_delay", json!(layer.root_delay_value().raw())),
+        (
+            "root_dispersion",
+            json!(layer.root_dispersion_value().raw()),
+        ),
+        (
+            "reference_id",
+            json!({"hex": hex_bytes(&layer.reference_id_value().bytes())}),
+        ),
+        (
+            "reference_timestamp",
+            json!(layer.reference_timestamp_value().raw()),
+        ),
+        (
+            "origin_timestamp",
+            json!(layer.origin_timestamp_value().raw()),
+        ),
+        (
+            "receive_timestamp",
+            json!(layer.receive_timestamp_value().raw()),
+        ),
+        (
+            "transmit_timestamp",
+            json!(layer.transmit_timestamp_value().raw()),
+        ),
+        (
+            "extension_count",
+            json!(layer.extension_fields_value().len()),
+        ),
+        (
+            "extension_fields",
+            Value::Array(
+                layer
+                    .extension_fields_value()
+                    .iter()
+                    .map(ntp_extension_field)
+                    .collect(),
+            ),
+        ),
+    ]);
+
+    if let Some(mac) = layer.legacy_mac_value() {
+        fields.insert(
+            "legacy_mac".to_string(),
+            json!({"hex": hex_bytes(mac.bytes())}),
+        );
+        if let Some(key_id) = mac.key_id() {
+            fields.insert("mac_key_id".to_string(), json!(key_id));
+        }
+        fields.insert(
+            "mac_digest".to_string(),
+            json!({"hex": hex_bytes(mac.digest())}),
+        );
+        fields.insert("mac_digest_len".to_string(), json!(mac.digest().len()));
+        fields.insert("mac_total_len".to_string(), json!(mac.len()));
+    }
+
+    fields
+}
+
+fn ntp_extension_field(field: &NtpExtensionField) -> Value {
+    let mut fields = map([
+        ("extension_field_type", json!(field.field_type())),
+        (
+            "extension_field_length",
+            json!(field.declared_length_value().unwrap_or(0)),
+        ),
+        (
+            "extension_field_body",
+            json!({"hex": hex_bytes(field.value())}),
+        ),
+        ("summary_label", json!(field.summary_label())),
+    ]);
+
+    if field.is_nts_unique_identifier() {
+        fields.insert("nts_extension".to_string(), json!("unique_identifier"));
+    } else if field.is_nts_cookie() {
+        fields.insert("nts_extension".to_string(), json!("cookie"));
+    } else if field.is_nts_cookie_placeholder() {
+        fields.insert("nts_extension".to_string(), json!("cookie_placeholder"));
+    } else if field.is_nts_authenticator() {
+        fields.insert("nts_extension".to_string(), json!("authenticator"));
+    }
+
+    Value::Object(fields.into_iter().collect())
 }
 
 fn ssdp_fields(layer: &Ssdp) -> BTreeMap<String, Value> {

@@ -1,6 +1,6 @@
 //! NTP packet decode helpers.
 
-use super::constants::{NTP_FIXED_HEADER_LEN, NTP_MODE_RESERVED, NTP_VERSION_1, NTP_VERSION_4};
+use super::constants::{NTP_FIXED_HEADER_LEN, NTP_MODE_RESERVED, NTP_VERSION_1, NTP_VERSION_MAX};
 use super::extension::{self, NtpExtensionField};
 use super::message::{ntp_parse_first_octet, Ntp, NtpLegacyMac};
 use crate::error::Result;
@@ -23,7 +23,7 @@ pub fn looks_like_ntp_payload(bytes: &[u8]) -> bool {
     }
 
     let (_, version, mode) = ntp_parse_first_octet(bytes[0]);
-    if !(NTP_VERSION_1..=NTP_VERSION_4).contains(&version.value()) {
+    if !(NTP_VERSION_1..=NTP_VERSION_MAX).contains(&version.value()) {
         return false;
     }
     if mode.value() == NTP_MODE_RESERVED {

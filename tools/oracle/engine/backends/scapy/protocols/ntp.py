@@ -59,6 +59,16 @@ _SUPPORTED_FIELDS = frozenset(
 )
 
 _LAYER_ALIASES = (("NTP", "ntp"),)
+_NTP_NATIVE_LAYERS = frozenset(
+    {
+        "ntp",
+        "ntpheader",
+        "ntpcontrol",
+        "ntpprivate",
+        "ntpextensions",
+        "ntpauthenticator",
+    }
+)
 _FIELD_ALIASES = (
     ("delay", "root_delay"),
     ("dispersion", "root_dispersion"),
@@ -115,11 +125,11 @@ _NTS_EXTENSION_KINDS = {
     0x0404: "authenticator",
 }
 _EXTENSION_LABELS = {
-    0x0104: "nts-unique-identifier",
-    0x0204: "nts-cookie",
-    0x0304: "nts-cookie-placeholder",
-    0x0404: "nts-authenticator",
-    0x2005: "udp-checksum-complement",
+    0x0104: "Unique Identifier",
+    0x0204: "Autokey Message Request / NTS Cookie",
+    0x0304: "NTS Cookie Placeholder",
+    0x0404: "NTS Authenticator and Encrypted Extension Fields",
+    0x2005: "UDP Checksum Complement",
 }
 
 
@@ -295,7 +305,7 @@ def ntp_fields_from_bytes(raw: bytes) -> JSONObject | None:
     leap_indicator = (first_octet >> 6) & 0x03
     version = (first_octet >> 3) & 0x07
     mode = first_octet & 0x07
-    if not 1 <= version <= 4 or mode == 0:
+    if not 1 <= version <= 7 or mode == 0:
         return None
 
     tail = _parse_tail(raw[_NTP_FIXED_HEADER_LEN :])
@@ -376,7 +386,7 @@ def _extension_fields(field_type: int, declared_len: int, body: bytes) -> JSONOb
         "extension_field_type": field_type,
         "extension_field_length": declared_len,
         "extension_field_body": {"hex": body.hex()},
-        "summary_label": _EXTENSION_LABELS.get(field_type, "unknown-preserved"),
+        "summary_label": _extension_summary_label(field_type),
     }
     nts_kind = _NTS_EXTENSION_KINDS.get(field_type)
     if nts_kind is not None:
@@ -384,6 +394,15 @@ def _extension_fields(field_type: int, declared_len: int, body: bytes) -> JSONOb
     if field_type == 0x0404:
         output["authenticator"] = _nts_authenticator_fields(body)
     return output
+
+
+def _extension_summary_label(field_type: int) -> str:
+    label = _EXTENSION_LABELS.get(field_type)
+    if label is not None:
+        return label
+    if 0xF000 <= field_type <= 0xFFFF:
+        return f"extension-field-0x{field_type:04x} (private-or-experimental)"
+    return f"extension-field-0x{field_type:04x}"
 
 
 def _nts_authenticator_fields(body: bytes) -> JSONObject:
@@ -459,6 +478,8 @@ def canonicalize_ntp_payload(
         return
 
     ntp_index = _first_layer_index(layers, "ntp")
+    if ntp_index is None:
+        ntp_index = _first_native_ntp_layer_index(layers)
     payload_index = _payload_index_after_udp(layers)
     target_index = ntp_index if ntp_index is not None else payload_index
     if target_index is None:
@@ -471,7 +492,7 @@ def canonicalize_ntp_payload(
     fields[ntp_key] = normalized
 
     for index in range(len(layers) - 1, target_index, -1):
-        if layers[index] in {"payload", "raw"}:
+        if layers[index] in {"payload", "raw"} or layers[index] in _NTP_NATIVE_LAYERS:
             fields.pop(_layer_key_at(layers, index), None)
             layers.pop(index)
 
@@ -592,6 +613,13 @@ def _payload_index_after_udp(layers: Sequence[str]) -> int | None:
 def _first_layer_index(layers: Sequence[str], name: str) -> int | None:
     for index, layer in enumerate(layers):
         if layer == name:
+            return index
+    return None
+
+
+def _first_native_ntp_layer_index(layers: Sequence[str]) -> int | None:
+    for index, layer in enumerate(layers):
+        if layer in _NTP_NATIVE_LAYERS:
             return index
     return None
 
