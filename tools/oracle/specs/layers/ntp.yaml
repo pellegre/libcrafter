@@ -1,0 +1,327 @@
+version: 1
+kind: layer
+name: ntp
+summary: >-
+  Network Time Protocol packet payloads over UDP/123, covering the 48-octet
+  fixed header, LI/version/mode first-octet fields, stratum, poll, precision,
+  root delay, root dispersion, reference ID, the four raw timestamp fields,
+  extension field envelopes, NTS packet extension bytes, legacy MAC tails,
+  Kiss-o'-Death labels, and conservative raw fallback. This is a packet-layer
+  spec only; clock synchronization, peer selection, NTS key exchange, Autokey
+  verification, scanning, retries, and live target selection are out of scope.
+
+roots: []
+parents:
+  - udp
+children: []
+
+supported_parents:
+  - layer: udp
+    destination_port: 123
+    service: ntp
+  - layer: udp
+    source_port: 123
+    service: ntp
+unsupported_parents:
+  - tcp
+  - tls
+  - dtls
+  - quic
+live_eligibility: provider_gated
+live_gate: confirm_live_run_provider_lab_only
+live_defaults:
+  default_mode: dry_run
+  allowed_without_confirmation: false
+  developer_host_raw_send: false
+  provider_required: true
+
+fields:
+  - name: first_octet
+    type: uint8
+    required: true
+    domains:
+      - derived
+      - explicit_preserved
+      - boundary
+  - name: leap_indicator
+    type: uint2
+    required: true
+    domains:
+      - no_warning
+      - last_minute_61_seconds
+      - last_minute_59_seconds
+      - alarm_unsynchronized
+  - name: version
+    type: uint3
+    required: true
+    domains:
+      - ntp_v4
+      - ntp_v3_sntp
+      - old_version_preserved
+      - future_preserved
+  - name: mode
+    type: uint3
+    required: true
+    domains:
+      - client
+      - server
+      - symmetric_active
+      - symmetric_passive
+      - broadcast
+      - control
+      - private_use
+  - name: stratum
+    type: uint8
+    required: true
+    domains:
+      - unspecified_or_kod
+      - primary
+      - secondary
+      - unsynchronized
+      - reserved_preserved
+  - name: poll
+    type: int8
+    required: true
+    domains:
+      - default
+      - deterministic
+      - boundary
+  - name: precision
+    type: int8
+    required: true
+    domains:
+      - default
+      - deterministic
+      - boundary
+  - name: root_delay
+    type: ntp_short_format
+    required: true
+    domains:
+      - zero
+      - deterministic
+      - negative_raw_preserved
+      - boundary
+  - name: root_dispersion
+    type: ntp_short_format
+    required: true
+    domains:
+      - zero
+      - deterministic
+      - boundary
+  - name: reference_id
+    type: bytes4
+    required: true
+    domains:
+      - zero
+      - primary_ascii
+      - secondary_ipv4
+      - kiss_o_death
+      - opaque_preserved
+  - name: reference_timestamp
+    type: ntp_timestamp
+    required: true
+    domains:
+      - zero
+      - deterministic
+      - boundary
+  - name: origin_timestamp
+    type: ntp_timestamp
+    required: true
+    domains:
+      - zero
+      - deterministic
+      - boundary
+  - name: receive_timestamp
+    type: ntp_timestamp
+    required: true
+    domains:
+      - zero
+      - deterministic
+      - boundary
+  - name: transmit_timestamp
+    type: ntp_timestamp
+    required: true
+    domains:
+      - zero
+      - deterministic
+      - boundary
+  - name: extension_fields
+    type: ntp_extension_list
+    required: false
+    domains:
+      - empty
+      - single
+      - multiple
+      - unknown_preserved
+      - malformed_length
+  - name: extension_field_type
+    type: uint16
+    required: false
+    domains:
+      - checksum_complement
+      - autokey_related
+      - nts_unique_identifier
+      - nts_cookie
+      - nts_cookie_placeholder
+      - nts_authenticator
+      - unknown_preserved
+  - name: extension_field_length
+    type: uint16
+    required: false
+    domains:
+      - derived
+      - minimum
+      - final_without_mac_minimum
+      - malformed_short
+      - malformed_unaligned
+      - explicit_preserved
+  - name: extension_field_body
+    type: bytes
+    required: false
+    domains:
+      - empty
+      - opaque_preserved
+      - nts_body
+      - padded
+      - malformed_truncated
+  - name: nts_extension
+    type: enum
+    required: false
+    domains:
+      - unique_identifier
+      - cookie
+      - cookie_placeholder
+      - authenticator
+      - authenticator_opaque
+  - name: legacy_mac
+    type: bytes
+    required: false
+    domains:
+      - absent
+      - crypto_nak_4_octet
+      - legacy_20_octet
+      - legacy_24_octet
+      - ambiguous_preserved
+  - name: mac_key_id
+    type: uint32
+    required: false
+    domains:
+      - absent
+      - synthetic
+      - redacted_summary
+  - name: mac_digest
+    type: bytes
+    required: false
+    domains:
+      - absent
+      - synthetic
+      - redacted_summary
+  - name: raw_fallback
+    type: bytes
+    required: false
+    domains:
+      - non_ntp_udp_123_payload
+      - short_udp_123_payload
+      - malformed_tail_dispatch_rejected
+
+normalized_fields:
+  header:
+    - first_octet
+    - leap_indicator
+    - version
+    - mode
+    - stratum
+    - poll
+    - precision
+    - root_delay
+    - root_dispersion
+    - reference_id
+    - reference_timestamp
+    - origin_timestamp
+    - receive_timestamp
+    - transmit_timestamp
+  extension:
+    - extension_field_type
+    - extension_field_length
+    - extension_field_body
+    - summary_label
+    - nts_extension
+  mac:
+    - legacy_mac
+    - mac_key_id
+    - mac_digest_len
+    - mac_total_len
+  registry:
+    - leap_indicator_status
+    - mode_status
+    - stratum_status
+    - reference_id_status
+    - kiss_o_death_status
+    - extension_field_type_status
+
+coverage_cases:
+  - ntp-v4-client-request
+  - ntp-v4-server-response
+  - ntp-v3-sntp-client
+  - ntp-kiss-o-death-reference-id
+  - ntp-timestamp-raw-preservation
+  - ntp-extension-field-unknown-preservation
+  - ntp-nts-extension-bytes
+  - ntp-legacy-mac-tail
+  - ntp-udp-port-raw-fallback
+  - ntp-malformed-short-header
+  - ntp-malformed-extension-length
+  - ntp-pcap-raw-ipv4
+  - ntp-pcap-ethernet-ipv4
+
+notes:
+  - >-
+    Source authority for the packet grammar is recorded in
+    .agents/docs/ntp-wire-grammar.md and .agents/docs/ntp-codepoints.md. Oracle
+    cases must preserve packet bytes and source-backed labels without adding
+    time synchronization behavior.
+  - >-
+    UDP dispatch is conservative: UDP/123 payloads decode as NTP only when the
+    fixed header and post-header tail pass the NTP shape gate. Unrelated or
+    structurally invalid UDP payloads remain raw data in normal stack decode.
+  - >-
+    NTS and legacy MAC material is packet data only. Oracle cases must use
+    synthetic bytes, compare lengths and preservation, and never require
+    cryptographic verification, key derivation, replay-cache decisions, or live
+    captures.
+  - >-
+    Live validation remains provider-gated and starts from dry-run plans with
+    explicit confirmation, artifact collection, and endpoint teardown.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - NTP
+      - Raw
+    notes:
+      - >-
+        A later Scapy backend step will materialize deterministic NTP UDP
+        payload bytes and normalize native or Raw decode output.
+  wireshark:
+    status: planned
+    native_layers:
+      - ntp
+    decode: true
+    pcap_read: true
+    notes:
+      - >-
+        A later Wireshark backend step will normalize stable tshark NTP fields
+        when tshark is available.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    pcap_read: true
+    pcap_write: true
+    notes:
+      - >-
+        The Rust crate builds, serializes, decodes, summarizes, shows, and
+        round-trips fixed headers, extension fields, NTS extension bytes, legacy
+        MAC tails, malformed direct-decode errors, raw fallback, and pcap
+        fixture cases offline.
