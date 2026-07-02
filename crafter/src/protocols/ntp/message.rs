@@ -8,6 +8,7 @@ use core::fmt;
 use core::net::{Ipv4Addr, Ipv6Addr};
 
 use super::constants::*;
+pub use super::extension::NtpExtensionField;
 use super::registry::{
     ntp_extension_field_type_meta, ntp_kiss_o_death_code_meta, ntp_leap_indicator_meta,
     ntp_mode_meta, ntp_reference_code_ascii_label, ntp_reference_id_meta, ntp_stratum_meta,
@@ -560,113 +561,6 @@ pub fn ntp_parse_first_octet(first_octet: u8) -> (NtpLeapIndicator, NtpVersion, 
         NtpVersion::from_wire(version),
         NtpMode::from_wire(mode),
     )
-}
-
-/// Raw-preserving NTP extension field.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NtpExtensionField {
-    field_type: Field<u16>,
-    length: Field<u16>,
-    value: Vec<u8>,
-}
-
-impl NtpExtensionField {
-    /// Build an extension field with an auto-filled length.
-    pub fn new(field_type: u16, value: impl Into<Vec<u8>>) -> Self {
-        Self {
-            field_type: Field::user(field_type),
-            length: Field::unset(),
-            value: value.into(),
-        }
-    }
-
-    /// Build an NTS Unique Identifier extension field.
-    pub fn nts_unique_identifier(value: impl Into<Vec<u8>>) -> Self {
-        Self::new(0x0104, value)
-    }
-
-    /// Build an NTS Cookie extension field.
-    pub fn nts_cookie(value: impl Into<Vec<u8>>) -> Self {
-        Self::new(0x0204, value)
-    }
-
-    /// Build an NTS Cookie Placeholder extension field.
-    pub fn nts_cookie_placeholder(value: impl Into<Vec<u8>>) -> Self {
-        Self::new(0x0304, value)
-    }
-
-    /// Build an NTS Authenticator and Encrypted Extension Fields wrapper.
-    pub fn nts_authenticator_encrypted(value: impl Into<Vec<u8>>) -> Self {
-        Self::new(0x0404, value)
-    }
-
-    /// Build a UDP Checksum Complement extension field.
-    pub fn udp_checksum_complement(value: impl Into<Vec<u8>>) -> Self {
-        Self::new(0x2005, value)
-    }
-
-    /// Build an Autokey-related raw extension field by type.
-    pub fn autokey_raw(field_type: u16, value: impl Into<Vec<u8>>) -> Self {
-        Self::new(field_type, value)
-    }
-
-    /// Set an explicit declared extension length.
-    pub fn declared_length(mut self, length: u16) -> Self {
-        self.length.set_user(length);
-        self
-    }
-
-    /// Raw extension field type.
-    pub fn field_type(&self) -> u16 {
-        self.field_type.value().copied().unwrap_or(0)
-    }
-
-    /// Declared length when caller-set or decoded.
-    pub fn declared_length_value(&self) -> Option<u16> {
-        self.length.value().copied()
-    }
-
-    /// Borrow the extension value bytes excluding the four-octet envelope.
-    pub fn value(&self) -> &[u8] {
-        &self.value
-    }
-
-    /// Source-backed metadata for the extension field type.
-    pub fn registry_meta(&self) -> NtpRegistryMeta {
-        ntp_extension_field_type_meta(self.field_type())
-    }
-
-    /// Return true when the field type is assigned by the NTS extension registry.
-    pub fn is_nts_extension(&self) -> bool {
-        matches!(self.field_type(), 0x0104 | 0x0204 | 0x0304 | 0x0404)
-    }
-
-    fn encoded_len(&self, last_without_mac: bool) -> usize {
-        if let Some(length) = self.length.value().copied() {
-            return usize::from(length).max(NTP_EXTENSION_FIELD_HEADER_LEN);
-        }
-
-        let minimum = if last_without_mac {
-            NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN
-        } else {
-            NTP_EXTENSION_FIELD_MIN_LEN
-        };
-        align_4((NTP_EXTENSION_FIELD_HEADER_LEN + self.value.len()).max(minimum))
-    }
-
-    fn compile(&self, last_without_mac: bool, out: &mut Vec<u8>) -> Result<()> {
-        let encoded_len = self.encoded_len(last_without_mac);
-        let declared_len = self.length.value().copied().unwrap_or(encoded_len as u16);
-
-        out.extend_from_slice(&self.field_type().to_be_bytes());
-        out.extend_from_slice(&declared_len.to_be_bytes());
-
-        let body_len = encoded_len.saturating_sub(NTP_EXTENSION_FIELD_HEADER_LEN);
-        let copy_len = body_len.min(self.value.len());
-        out.extend_from_slice(&self.value[..copy_len]);
-        out.resize(out.len() + (body_len - copy_len), 0);
-        Ok(())
-    }
 }
 
 /// Raw-preserving legacy NTP MAC tail.
@@ -1392,11 +1286,11 @@ fn parse_ntp_tail(tail: &[u8]) -> Result<(Vec<NtpExtensionField>, Option<NtpLega
         }
 
         let value = remaining[NTP_EXTENSION_FIELD_HEADER_LEN..declared_len].to_vec();
-        fields.push(NtpExtensionField {
-            field_type: Field::user(field_type),
-            length: Field::user(declared_len as u16),
+        fields.push(NtpExtensionField::from_decoded(
+            field_type,
+            declared_len as u16,
             value,
-        });
+        ));
         offset += declared_len;
     }
 
@@ -1465,10 +1359,6 @@ fn invalid_final_extension_without_mac_length_error() -> CrafterError {
         NTP_EXTENSION_LENGTH_CONTEXT,
         "final extension without MAC must be at least 28 bytes",
     )
-}
-
-fn align_4(value: usize) -> usize {
-    (value + 3) & !3
 }
 
 #[cfg(test)]
