@@ -8291,7 +8291,16 @@ def _pcap_link_type_for_root(root: str) -> str:
         return "linux_cooked"
     if normalized in {"link:null-loopback", "loopback"}:
         return "null_loopback"
-    if normalized in {"link:raw", "l3:ipv4", "l3:ipv6", "ip", "ipv6", "raw"}:
+    if normalized in {
+        "link:raw",
+        "l3:ipv4",
+        "l3:ipv4-ntp",
+        "l3:ipv6",
+        "l3:ipv6-ntp",
+        "ip",
+        "ipv6",
+        "raw",
+    }:
         return "raw"
     raise ValueError(f"unsupported pcap root for link type selection: {root}")
 

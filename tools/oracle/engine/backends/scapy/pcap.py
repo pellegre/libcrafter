@@ -248,7 +248,16 @@ def _pcap_link_type_for_vector(vector: EncodedVector, requested: str) -> str:
         "link:bluetooth_le_ll_with_phdr",
     }:
         return "bluetooth_le_ll_with_phdr"
-    if root in {"IP", "IPv6", "Raw", "l3:ipv4", "l3:ipv6", "link:raw"}:
+    if root in {
+        "IP",
+        "IPv6",
+        "Raw",
+        "l3:ipv4",
+        "l3:ipv4-ntp",
+        "l3:ipv6",
+        "l3:ipv6-ntp",
+        "link:raw",
+    }:
         return "raw"
     if root in {"Ether", "link:ethernet"}:
         return "ethernet"
@@ -291,7 +300,9 @@ def _decode_packet_for_write(root: str | None, raw: bytes, scapy_all: Any) -> An
         "link:raw",
         "raw:tls",
         "l3:ipv4",
+        "l3:ipv4-ntp",
         "l3:ipv6",
+        "l3:ipv6-ntp",
         "IP",
         "IPv6",
         # The IEEE 802.15.4 TAP (DLT 283) pseudo-header has no native Scapy
@@ -319,8 +330,10 @@ def _decode_packet_for_write(root: str | None, raw: bytes, scapy_all: Any) -> An
         "Raw": "Raw",
         "link:raw": "Raw",
         "l3:ipv4": "IP",
+        "l3:ipv4-ntp": "IP",
         "IP": "IP",
         "l3:ipv6": "IPv6",
+        "l3:ipv6-ntp": "IPv6",
         "IPv6": "IPv6",
     }.get(root or "link:ethernet")
     if decoder_name is None:

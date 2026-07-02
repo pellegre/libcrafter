@@ -79,7 +79,9 @@ _PCAP_LINK_TYPES_BY_ROOT = {
     "link:linux-cooked": "DLT_LINUX_SLL",
     "link:null-loopback": "DLT_NULL",
     "l3:ipv4": "DLT_RAW",
+    "l3:ipv4-ntp": "DLT_RAW",
     "l3:ipv6": "DLT_RAW",
+    "l3:ipv6-ntp": "DLT_RAW",
 }
 _WIRE_DEFAULT_PROVIDER = "hetzner"
 _WIRE_COMPARE_ROOT_ALIASES = {
