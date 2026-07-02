@@ -216,6 +216,7 @@ _SCAPY_MATERIALIZED_LAYERS = {
     "zigbee_nwk",
 }
 _TLS_PROFILES = frozenset({"tls", "tls-smoke", "tls-ci"})
+_NTP_PROFILES = frozenset({"ntp-smoke", "ntp-ci", "ntp-live-dry-run"})
 
 
 def load_stack_grammar(path: str | Path | None = None) -> JSONObject:
@@ -760,6 +761,12 @@ class PacketGenerator:
                     if "tls" not in stack_layers:
                         continue
                 elif "tls" in stack_layers:
+                    continue
+            if feature is None and case is None and root is None and family is None:
+                if self.profile in _NTP_PROFILES:
+                    if "ntp" not in stack_layers:
+                        continue
+                elif "ntp" in stack_layers:
                     continue
             if (
                 feature is None
@@ -1306,6 +1313,8 @@ class PacketGenerator:
             if self.profile in _DHCPV6_SMOKE_PROFILES and name != "dhcpv6_behavior":
                 continue
             if self.profile in _TLS_PROFILES and not name.startswith("tls_"):
+                continue
+            if self.profile in _NTP_PROFILES and not name.startswith("ntp_"):
                 continue
             feature = _object(raw_feature, f"features.{name}")
             layers = _string_list(feature.get("layers"), f"features.{name}.layers")

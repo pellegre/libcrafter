@@ -2,6 +2,24 @@ version: 1
 kind: stack_grammar
 name: ntp_stacks
 
+roots:
+  - name: "l3:ipv4-ntp"
+    layers:
+      - ipv4
+    families:
+      - ipv4
+      - udp
+      - transport
+      - ntp
+  - name: "l3:ipv6-ntp"
+    layers:
+      - ipv6
+    families:
+      - ipv6
+      - udp
+      - transport
+      - ntp
+
 families:
   - name: ntp
     default_stack:
@@ -16,7 +34,7 @@ families:
 
 stacks:
   - name: ipv4_udp_ntp
-    root: "l3:ipv4"
+    root: "l3:ipv4-ntp"
     layers:
       - ipv4
       - udp
@@ -44,7 +62,7 @@ stacks:
       - malformed-ntp-invalid-extension-length
       - malformed-ntp-truncated-mac-after-extension
   - name: ipv6_udp_ntp
-    root: "l3:ipv6"
+    root: "l3:ipv6-ntp"
     layers:
       - ipv6
       - udp
