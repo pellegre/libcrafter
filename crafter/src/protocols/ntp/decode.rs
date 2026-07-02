@@ -1,66 +1,18 @@
 //! NTP packet decode helpers.
 
-use super::constants::NTP_FIXED_HEADER_LEN;
-use super::message::{ntp_parse_first_octet, Ntp, NtpReferenceId, NtpShortFormat, NtpTimestamp};
-use crate::error::{CrafterError, Result};
+use super::message::Ntp;
+use crate::error::Result;
 
-const NTP_HEADER_CONTEXT: &str = "ntp.header";
-
-/// Decode an NTP packet fixed header.
+/// Decode a standalone NTP UDP payload.
 pub fn decode_ntp(bytes: &[u8]) -> Result<Ntp> {
-    if bytes.len() < NTP_FIXED_HEADER_LEN {
-        return Err(CrafterError::buffer_too_short(
-            NTP_HEADER_CONTEXT,
-            NTP_FIXED_HEADER_LEN,
-            bytes.len(),
-        ));
-    }
-
-    let (leap_indicator, version, mode) = ntp_parse_first_octet(bytes[0]);
-
-    Ok(Ntp::new()
-        .leap_indicator(leap_indicator)
-        .version(version)
-        .mode(mode)
-        .stratum(bytes[1])
-        .poll(bytes[2] as i8)
-        .precision(bytes[3] as i8)
-        .root_delay(NtpShortFormat::from_raw(read_u32(bytes, 4)))
-        .root_dispersion(NtpShortFormat::from_raw(read_u32(bytes, 8)))
-        .reference_id(NtpReferenceId::from_bytes([
-            bytes[12], bytes[13], bytes[14], bytes[15],
-        ]))
-        .reference_timestamp(NtpTimestamp::from_raw(read_u64(bytes, 16)))
-        .origin_timestamp(NtpTimestamp::from_raw(read_u64(bytes, 24)))
-        .receive_timestamp(NtpTimestamp::from_raw(read_u64(bytes, 32)))
-        .transmit_timestamp(NtpTimestamp::from_raw(read_u64(bytes, 40))))
-}
-
-fn read_u32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_be_bytes([
-        bytes[offset],
-        bytes[offset + 1],
-        bytes[offset + 2],
-        bytes[offset + 3],
-    ])
-}
-
-fn read_u64(bytes: &[u8], offset: usize) -> u64 {
-    u64::from_be_bytes([
-        bytes[offset],
-        bytes[offset + 1],
-        bytes[offset + 2],
-        bytes[offset + 3],
-        bytes[offset + 4],
-        bytes[offset + 5],
-        bytes[offset + 6],
-        bytes[offset + 7],
-    ])
+    Ntp::decode(bytes)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::constants::NTP_FIXED_HEADER_LEN;
     use super::*;
+    use crate::error::CrafterError;
     use crate::packet::Packet;
 
     #[test]
