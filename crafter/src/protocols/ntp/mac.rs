@@ -14,6 +14,13 @@ const NTP_MAC_CRYPTO_NAK_LEN: usize = NTP_LEGACY_MAC_KEY_ID_LEN;
 const NTP_MAC_20_OCTET_LEN: usize = 20;
 const NTP_MAC_24_OCTET_LEN: usize = 24;
 
+pub(super) const fn ntp_legacy_mac_tail_len_is_plausible(len: usize) -> bool {
+    matches!(
+        len,
+        NTP_MAC_CRYPTO_NAK_LEN | NTP_MAC_20_OCTET_LEN | NTP_MAC_24_OCTET_LEN
+    )
+}
+
 /// Structural length class for a legacy NTP MAC tail.
 ///
 /// These labels are packet-shape descriptions only. They do not imply that
@@ -187,6 +194,17 @@ mod tests {
             NtpMac::from_key_id_and_digest(0, [0u8; 7]).length_class(),
             NtpMacLengthClass::Other
         );
+    }
+
+    #[test]
+    fn ntp_tail_parser_mac_length_helper_covers_source_backed_shapes() {
+        assert!(ntp_legacy_mac_tail_len_is_plausible(4));
+        assert!(ntp_legacy_mac_tail_len_is_plausible(20));
+        assert!(ntp_legacy_mac_tail_len_is_plausible(24));
+
+        assert!(!ntp_legacy_mac_tail_len_is_plausible(0));
+        assert!(!ntp_legacy_mac_tail_len_is_plausible(8));
+        assert!(!ntp_legacy_mac_tail_len_is_plausible(28));
     }
 
     #[test]
