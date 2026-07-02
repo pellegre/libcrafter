@@ -1817,6 +1817,112 @@ mod tests {
     }
 
     #[test]
+    fn ntp_accessors_expose_default_fixed_header_values() {
+        let ntp = Ntp::new();
+
+        assert_eq!(ntp.leap_indicator_value(), NtpLeapIndicator::NoWarning);
+        assert_eq!(ntp.version_value_effective(), NtpVersion::current());
+        assert_eq!(ntp.mode_value(), NtpMode::Client);
+        assert_eq!(
+            ntp.stratum_value(),
+            NtpStratum::from_wire(NTP_DEFAULT_STRATUM)
+        );
+        assert_eq!(ntp.poll_value(), NTP_DEFAULT_POLL);
+        assert_eq!(ntp.precision_value(), NTP_DEFAULT_PRECISION);
+        assert_eq!(ntp.root_delay_value().raw(), NTP_DEFAULT_ROOT_DELAY);
+        assert_eq!(
+            ntp.root_dispersion_value().raw(),
+            NTP_DEFAULT_ROOT_DISPERSION
+        );
+        assert_eq!(ntp.reference_id_value().bytes(), NTP_DEFAULT_REFERENCE_ID);
+        assert_eq!(
+            ntp.reference_timestamp_value().raw(),
+            NTP_DEFAULT_REFERENCE_TIMESTAMP
+        );
+        assert_eq!(
+            ntp.origin_timestamp_value().raw(),
+            NTP_DEFAULT_ORIGIN_TIMESTAMP
+        );
+        assert_eq!(
+            ntp.receive_timestamp_value().raw(),
+            NTP_DEFAULT_RECEIVE_TIMESTAMP
+        );
+        assert_eq!(
+            ntp.transmit_timestamp_value().raw(),
+            NTP_DEFAULT_TRANSMIT_TIMESTAMP
+        );
+        assert_eq!(ntp.first_octet_value(), NTP_DEFAULT_FIRST_OCTET);
+    }
+
+    #[test]
+    fn ntp_accessors_and_setters_preserve_explicit_fixed_header_values() -> Result<()> {
+        let ntp = Ntp::new()
+            .leap_indicator(0xaa)
+            .version_value(0x0f)
+            .mode(0x2a)
+            .stratum(0xff)
+            .poll(i8::MIN)
+            .precision(i8::MAX)
+            .root_delay(0xffff_0001u32)
+            .root_dispersion_raw(0x8000_0002)
+            .reference_id([0xde, 0xad, 0xbe, 0xef])
+            .reference_timestamp(0x0102_0304_0506_0708u64)
+            .origin_timestamp(NtpTimestamp::from_raw(0x1112_1314_1516_1718))
+            .receive_timestamp(0x2122_2324_2526_2728u64)
+            .transmit_timestamp(NtpTimestamp::from_parts(0x3132_3334, 0x3536_3738));
+
+        assert_eq!(ntp.leap_indicator.state(), FieldState::User);
+        assert_eq!(ntp.version.state(), FieldState::User);
+        assert_eq!(ntp.mode.state(), FieldState::User);
+        assert_eq!(ntp.stratum.state(), FieldState::User);
+        assert_eq!(ntp.poll.state(), FieldState::User);
+        assert_eq!(ntp.precision.state(), FieldState::User);
+        assert_eq!(ntp.root_delay.state(), FieldState::User);
+        assert_eq!(ntp.root_dispersion.state(), FieldState::User);
+        assert_eq!(ntp.reference_id.state(), FieldState::User);
+        assert_eq!(ntp.reference_timestamp.state(), FieldState::User);
+        assert_eq!(ntp.origin_timestamp.state(), FieldState::User);
+        assert_eq!(ntp.receive_timestamp.state(), FieldState::User);
+        assert_eq!(ntp.transmit_timestamp.state(), FieldState::User);
+
+        assert_eq!(ntp.leap_indicator_value(), NtpLeapIndicator::Unknown(0xaa));
+        assert_eq!(ntp.version_value_effective(), NtpVersion::from_wire(0x0f));
+        assert_eq!(ntp.mode_value(), NtpMode::Unknown(0x2a));
+        assert_eq!(ntp.stratum_value(), NtpStratum::from_wire(0xff));
+        assert_eq!(ntp.poll_value(), i8::MIN);
+        assert_eq!(ntp.precision_value(), i8::MAX);
+        assert_eq!(ntp.root_delay_value().raw(), 0xffff_0001);
+        assert_eq!(ntp.root_dispersion_value().raw(), 0x8000_0002);
+        assert_eq!(ntp.reference_id_value().bytes(), [0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(ntp.reference_timestamp_value().raw(), 0x0102_0304_0506_0708);
+        assert_eq!(ntp.origin_timestamp_value().raw(), 0x1112_1314_1516_1718);
+        assert_eq!(ntp.receive_timestamp_value().raw(), 0x2122_2324_2526_2728);
+        assert_eq!(ntp.transmit_timestamp_value().raw(), 0x3132_3334_3536_3738);
+        assert_eq!(
+            ntp.first_octet_value(),
+            ((0xaa & NTP_LI_VALUE_MASK) << NTP_FIRST_OCTET_LI_SHIFT)
+                | ((0x0f & NTP_VERSION_VALUE_MASK) << NTP_FIRST_OCTET_VERSION_SHIFT)
+                | (0x2a & NTP_MODE_VALUE_MASK)
+        );
+
+        let bytes = Packet::from_layer(ntp).compile()?.into_bytes();
+        assert_eq!(bytes.len(), NTP_FIXED_HEADER_LEN);
+        assert_eq!(bytes[0], 0xba);
+        assert_eq!(bytes[1], 0xff);
+        assert_eq!(bytes[2], 0x80);
+        assert_eq!(bytes[3], 0x7f);
+        assert_eq!(&bytes[4..8], &0xffff_0001u32.to_be_bytes());
+        assert_eq!(&bytes[8..12], &0x8000_0002u32.to_be_bytes());
+        assert_eq!(&bytes[12..16], &[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(&bytes[16..24], &0x0102_0304_0506_0708u64.to_be_bytes());
+        assert_eq!(&bytes[24..32], &0x1112_1314_1516_1718u64.to_be_bytes());
+        assert_eq!(&bytes[32..40], &0x2122_2324_2526_2728u64.to_be_bytes());
+        assert_eq!(&bytes[40..48], &0x3132_3334_3536_3738u64.to_be_bytes());
+
+        Ok(())
+    }
+
+    #[test]
     fn ntp_header_fields_setters_track_user_state_and_tails() {
         let extension = NtpExtensionField::nts_unique_identifier([0xaa, 0xbb]);
         let legacy_mac = NtpLegacyMac::from_key_id_and_digest(0x0102_0304, [0xcc; 16]);
