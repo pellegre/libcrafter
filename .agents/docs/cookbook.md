@@ -149,17 +149,20 @@ the broker, collects artifacts under `target/`, and tears the endpoint down.
 NTP is a packet primitive over UDP/123, not a time synchronization workflow.
 Generated tools should build and decode `Ntp` layers, inspect summaries, and
 start with offline bytes or dry-run send plans. Use documentation addresses in
-defaults.
+defaults and keep live traffic behind provider-backed gates.
 
 ```rust
 use crafter::prelude::*;
 use std::net::Ipv4Addr;
 
 fn main() -> crafter::Result<()> {
-    let packet = ntp_ipv4_client_request(
-        Ipv4Addr::new(192, 0, 2, 10),
-        Ipv4Addr::new(198, 51, 100, 20),
-    );
+    let packet =
+        Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+        / Udp::new().source_port(49_152).destination_port(NTP_PORT)
+        / Ntp::client()
+            .transmit_timestamp(NtpTimestamp::from_parts(0xecc0_0000, 0x1234_5678));
 
     let plan = packet.send_dry_run(
         SendOptions::new().iface("dry-run0").network_layer(),
@@ -173,13 +176,35 @@ fn main() -> crafter::Result<()> {
 }
 ```
 
+Decode deterministic fixture bytes directly when a generated tool is consuming
+payload fixtures instead of a full IP packet:
+
+```rust
+use crafter::prelude::*;
+
+const NTP_CLIENT_FIXTURE: [u8; NTP_FIXED_HEADER_LEN] = [
+    0x23, 0x00, 0x06, 0xec, 0x00, 0x01, 0x00, 0x00,
+    0x00, 0x02, 0x00, 0x00, b'L', b'O', b'C', b'L',
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xec, 0xc0, 0x00, 0x00, 0x12, 0x34, 0x56, 0x78,
+];
+
+let ntp = Ntp::decode(&NTP_CLIENT_FIXTURE)?;
+let packet = Packet::from_layer(ntp);
+println!("{}", packet.summary());
+println!("{}", packet.show());
+# Ok::<(), crafter::CrafterError>(())
+```
+
 Use `Ntp::decode` for direct payload parsing when a generated tool wants
 structured errors. Standard UDP decode only claims UDP/123 payloads that pass
 the conservative NTP shape gate; unrelated bytes stay `Raw`.
 
 Do not add a pool client, peer state machine, NTS key exchange, Autokey
 verification, scanner, or live default. Provider-backed live validation for NTP
-requires explicit provider selection, credentials when required,
+requires explicit provider selection, dry-run review,
 `--confirm-live-run`, an NTP-specific confirmation such as
 `LIBCRAFTER_NTP_LIVE_CONFIRM=yes`, artifact collection, and endpoint teardown.
 
