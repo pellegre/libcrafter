@@ -168,6 +168,103 @@ fn ntp_constants_and_registry() {
 }
 
 #[test]
+fn ntp_kiss_refid_labels_raw_bytes_summary_and_show() -> crafter::Result<()> {
+    let cases = [
+        (
+            "assigned-kod",
+            Ntp::kiss_o_death(*b"RATE"),
+            *b"RATE",
+            NTP_STRATUM_UNSPECIFIED,
+            "RATE",
+            "Rate exceeded",
+            NtpRegistryStatus::Assigned,
+        ),
+        (
+            "unknown-kod",
+            Ntp::kiss_o_death(*b"NOPE"),
+            *b"NOPE",
+            NTP_STRATUM_UNSPECIFIED,
+            "NOPE",
+            "kod-0x4E4F5045",
+            NtpRegistryStatus::Unassigned,
+        ),
+        (
+            "assigned-primary-refid",
+            Ntp::server().reference_id(NtpReferenceId::from_bytes(*b"GPS\0")),
+            *b"GPS\0",
+            NTP_STRATUM_PRIMARY,
+            "GPS",
+            "Global Position System",
+            NtpRegistryStatus::Assigned,
+        ),
+        (
+            "unknown-primary-refid",
+            Ntp::server().reference_id(NtpReferenceId::from_bytes([0x80, 0, 0, 1])),
+            [0x80, 0, 0, 1],
+            NTP_STRATUM_PRIMARY,
+            "",
+            "refid-0x80000001",
+            NtpRegistryStatus::Unassigned,
+        ),
+    ];
+
+    for (name, ntp, bytes, stratum, ascii_label, refid_label, status) in cases {
+        let reference_id = ntp.reference_id_value();
+        assert_eq!(reference_id.bytes(), bytes, "{name}");
+        assert_eq!(
+            reference_id.label_for_stratum(ntp.stratum_value()),
+            refid_label,
+            "{name}"
+        );
+        if ascii_label.is_empty() {
+            assert!(reference_id.ascii_label().is_none(), "{name}");
+        } else {
+            assert_eq!(
+                reference_id.ascii_label().as_deref(),
+                Some(ascii_label),
+                "{name}"
+            );
+        }
+
+        let meta = if stratum == NTP_STRATUM_UNSPECIFIED {
+            ntp_kiss_o_death_code_meta(bytes)
+        } else {
+            ntp_reference_id_meta(bytes)
+        };
+        assert_eq!(meta.bytes, bytes, "{name}");
+        assert_eq!(meta.label, refid_label, "{name}");
+        assert_eq!(meta.status, status, "{name}");
+
+        let compiled = Packet::from_layer(ntp).compile()?;
+        assert_eq!(&compiled.as_bytes()[12..16], &bytes, "{name}");
+
+        let decoded = Ntp::decode(compiled.as_bytes())?;
+        assert_eq!(decoded.reference_id_value().bytes(), bytes, "{name}");
+        assert_eq!(decoded.stratum_value().value(), stratum, "{name}");
+        assert_eq!(
+            decoded
+                .reference_id_value()
+                .label_for_stratum(decoded.stratum_value()),
+            refid_label,
+            "{name}"
+        );
+
+        let summary = decoded.summary();
+        assert!(summary.contains(&format!("refid={refid_label}")), "{name}");
+        assert!(summary.contains(&format!("stratum={}(", stratum)), "{name}");
+
+        let show = Packet::from_layer(decoded).show();
+        assert!(
+            show.contains(&format!("reference_id: {refid_label}")),
+            "{name}"
+        );
+        assert!(show.contains(&format!("stratum: {}", stratum)), "{name}");
+    }
+
+    Ok(())
+}
+
+#[test]
 fn ntp_bitfield_packing() -> crafter::Result<()> {
     let cases = [
         (
