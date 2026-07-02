@@ -771,14 +771,36 @@ impl Ntp {
         }
     }
 
-    /// Build a client-mode NTP request.
-    pub fn client() -> Self {
+    /// Build a client-mode NTP request shape.
+    pub fn client_request() -> Self {
         Self::new().mode(NtpMode::Client)
+    }
+
+    /// Build a client-mode NTP request shape.
+    pub fn client() -> Self {
+        Self::client_request()
+    }
+
+    /// Build a server-mode NTP response shape.
+    pub fn server_response() -> Self {
+        Self::new()
+            .mode(NtpMode::Server)
+            .stratum(NTP_STRATUM_PRIMARY)
     }
 
     /// Build a server-mode NTP response shape.
     pub fn server() -> Self {
-        Self::new().mode(NtpMode::Server).stratum(1)
+        Self::server_response()
+    }
+
+    /// Build a symmetric-active NTP packet shape.
+    pub fn symmetric_active() -> Self {
+        Self::new().mode(NtpMode::SymmetricActive)
+    }
+
+    /// Build a broadcast-mode NTP packet shape.
+    pub fn broadcast() -> Self {
+        Self::new().mode(NtpMode::Broadcast)
     }
 
     /// Build a stratum-0 Kiss-o'-Death server response.
@@ -1657,6 +1679,141 @@ mod tests {
         );
         assert!(ntp.extension_fields_value().is_empty());
         assert!(ntp.legacy_mac_value().is_none());
+    }
+
+    #[test]
+    fn ntp_constructors_use_source_backed_packet_shapes() -> Result<()> {
+        assert_eq!(Ntp::client(), Ntp::client_request());
+        assert_eq!(Ntp::server(), Ntp::server_response());
+
+        let cases = [
+            (
+                Ntp::client_request(),
+                NtpMode::Client,
+                NTP_STRATUM_UNSPECIFIED,
+                FieldState::Defaulted,
+                0x23,
+            ),
+            (
+                Ntp::server_response(),
+                NtpMode::Server,
+                NTP_STRATUM_PRIMARY,
+                FieldState::User,
+                0x24,
+            ),
+            (
+                Ntp::symmetric_active(),
+                NtpMode::SymmetricActive,
+                NTP_STRATUM_UNSPECIFIED,
+                FieldState::Defaulted,
+                0x21,
+            ),
+            (
+                Ntp::broadcast(),
+                NtpMode::Broadcast,
+                NTP_STRATUM_UNSPECIFIED,
+                FieldState::Defaulted,
+                0x25,
+            ),
+        ];
+
+        for (ntp, mode, stratum, stratum_state, first_octet) in cases {
+            assert_eq!(ntp.leap_indicator.state(), FieldState::Defaulted);
+            assert_eq!(ntp.version.state(), FieldState::Defaulted);
+            assert_eq!(ntp.mode.state(), FieldState::User);
+            assert_eq!(ntp.stratum.state(), stratum_state);
+            assert_eq!(ntp.poll.state(), FieldState::Defaulted);
+            assert_eq!(ntp.precision.state(), FieldState::Defaulted);
+            assert_eq!(ntp.root_delay.state(), FieldState::Defaulted);
+            assert_eq!(ntp.root_dispersion.state(), FieldState::Defaulted);
+            assert_eq!(ntp.reference_id.state(), FieldState::Defaulted);
+            assert_eq!(ntp.reference_timestamp.state(), FieldState::Defaulted);
+            assert_eq!(ntp.origin_timestamp.state(), FieldState::Defaulted);
+            assert_eq!(ntp.receive_timestamp.state(), FieldState::Defaulted);
+            assert_eq!(ntp.transmit_timestamp.state(), FieldState::Defaulted);
+            assert!(ntp.extension_fields_value().is_empty());
+            assert!(ntp.legacy_mac_value().is_none());
+
+            assert_eq!(ntp.leap_indicator_value(), NtpLeapIndicator::NoWarning);
+            assert_eq!(ntp.version_value_effective(), NtpVersion::current());
+            assert_eq!(ntp.mode_value(), mode);
+            assert_eq!(ntp.stratum_value(), NtpStratum::from_wire(stratum));
+            assert_eq!(ntp.first_octet_value(), first_octet);
+
+            let bytes = Packet::from_layer(ntp).compile()?.into_bytes();
+            assert_eq!(bytes.len(), NTP_FIXED_HEADER_LEN);
+            assert_eq!(bytes[0], first_octet);
+            assert_eq!(bytes[1], stratum);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_constructors_leave_every_field_overridable() {
+        let constructors = [
+            Ntp::client_request(),
+            Ntp::server_response(),
+            Ntp::symmetric_active(),
+            Ntp::broadcast(),
+        ];
+
+        for ntp in constructors {
+            let extension = NtpExtensionField::nts_cookie([0xaa, 0xbb]);
+            let legacy_mac = NtpLegacyMac::from_key_id_and_digest(0x0102_0304, [0xcc; 16]);
+            let ntp = ntp
+                .leap_indicator(NtpLeapIndicator::AlarmUnsynchronized)
+                .version_value(3)
+                .mode(NtpMode::PrivateUse)
+                .stratum(NTP_STRATUM_UNSYNCHRONIZED)
+                .poll(6)
+                .precision(-20)
+                .root_delay_raw(0x0001_8000)
+                .root_dispersion_raw(0x0002_4000)
+                .reference_id(*b"TEST")
+                .reference_timestamp(NtpTimestamp::from_raw(0x0102_0304_0506_0708))
+                .origin_timestamp(NtpTimestamp::from_raw(0x1112_1314_1516_1718))
+                .receive_timestamp(NtpTimestamp::from_raw(0x2122_2324_2526_2728))
+                .transmit_timestamp(NtpTimestamp::from_raw(0x3132_3334_3536_3738))
+                .extension_field(extension.clone())
+                .legacy_mac(legacy_mac.clone());
+
+            assert_eq!(ntp.leap_indicator.state(), FieldState::User);
+            assert_eq!(ntp.version.state(), FieldState::User);
+            assert_eq!(ntp.mode.state(), FieldState::User);
+            assert_eq!(ntp.stratum.state(), FieldState::User);
+            assert_eq!(ntp.poll.state(), FieldState::User);
+            assert_eq!(ntp.precision.state(), FieldState::User);
+            assert_eq!(ntp.root_delay.state(), FieldState::User);
+            assert_eq!(ntp.root_dispersion.state(), FieldState::User);
+            assert_eq!(ntp.reference_id.state(), FieldState::User);
+            assert_eq!(ntp.reference_timestamp.state(), FieldState::User);
+            assert_eq!(ntp.origin_timestamp.state(), FieldState::User);
+            assert_eq!(ntp.receive_timestamp.state(), FieldState::User);
+            assert_eq!(ntp.transmit_timestamp.state(), FieldState::User);
+
+            assert_eq!(
+                ntp.leap_indicator_value(),
+                NtpLeapIndicator::AlarmUnsynchronized
+            );
+            assert_eq!(ntp.version_value_effective(), NtpVersion::from_wire(3));
+            assert_eq!(ntp.mode_value(), NtpMode::PrivateUse);
+            assert_eq!(
+                ntp.stratum_value(),
+                NtpStratum::from_wire(NTP_STRATUM_UNSYNCHRONIZED)
+            );
+            assert_eq!(ntp.poll_value(), 6);
+            assert_eq!(ntp.precision_value(), -20);
+            assert_eq!(ntp.root_delay_value().raw(), 0x0001_8000);
+            assert_eq!(ntp.root_dispersion_value().raw(), 0x0002_4000);
+            assert_eq!(ntp.reference_id_value().bytes(), *b"TEST");
+            assert_eq!(ntp.reference_timestamp_value().raw(), 0x0102_0304_0506_0708);
+            assert_eq!(ntp.origin_timestamp_value().raw(), 0x1112_1314_1516_1718);
+            assert_eq!(ntp.receive_timestamp_value().raw(), 0x2122_2324_2526_2728);
+            assert_eq!(ntp.transmit_timestamp_value().raw(), 0x3132_3334_3536_3738);
+            assert_eq!(ntp.extension_fields_value(), &[extension]);
+            assert_eq!(ntp.legacy_mac_value(), Some(&legacy_mac));
+        }
     }
 
     #[test]
