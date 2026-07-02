@@ -5,8 +5,11 @@ use super::constants::{
     NTP_EXTENSION_FIELD_MIN_LEN,
 };
 use super::registry::{ntp_extension_field_type_meta, NtpRegistryMeta};
-use crate::error::Result;
+use crate::error::{CrafterError, Result};
 use crate::field::Field;
+
+pub(super) const NTP_EXTENSION_CONTEXT: &str = "ntp.extension";
+pub(super) const NTP_EXTENSION_LENGTH_CONTEXT: &str = "ntp.extension.length";
 
 /// Raw-preserving NTP extension field.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,9 +161,51 @@ fn align_4(value: usize) -> usize {
     (value + 3) & !3
 }
 
+pub(super) fn validate_extension_length(declared_len: usize, available: usize) -> Result<()> {
+    if declared_len < NTP_EXTENSION_FIELD_MIN_LEN {
+        return Err(CrafterError::invalid_field_value(
+            NTP_EXTENSION_LENGTH_CONTEXT,
+            "extension length must be at least 16 bytes",
+        ));
+    }
+    if declared_len % 4 != 0 {
+        return Err(CrafterError::invalid_field_value(
+            NTP_EXTENSION_LENGTH_CONTEXT,
+            "extension length must be a multiple of 4 bytes",
+        ));
+    }
+    if declared_len > available {
+        return Err(CrafterError::buffer_too_short(
+            NTP_EXTENSION_CONTEXT,
+            declared_len,
+            available,
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn is_valid_extension_length(declared_len: usize, available: usize) -> bool {
+    validate_extension_length(declared_len, available).is_ok()
+}
+
+pub(super) fn validate_final_extension_without_mac_length(declared_len: usize) -> Result<()> {
+    if declared_len < NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN {
+        return Err(CrafterError::invalid_field_value(
+            NTP_EXTENSION_LENGTH_CONTEXT,
+            "final extension without MAC must be at least 28 bytes",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn is_valid_final_extension_without_mac_length(declared_len: usize) -> bool {
+    validate_final_extension_without_mac_length(declared_len).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::CrafterError;
     use crate::protocols::ntp::NtpRegistryStatus;
 
     #[test]
@@ -191,6 +236,88 @@ mod tests {
                 0x00, 0x00
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_extension_lengths_reject_declared_length_below_minimum() {
+        assert_eq!(
+            validate_extension_length(NTP_EXTENSION_FIELD_MIN_LEN - 4, 64).unwrap_err(),
+            CrafterError::invalid_field_value(
+                NTP_EXTENSION_LENGTH_CONTEXT,
+                "extension length must be at least 16 bytes",
+            )
+        );
+    }
+
+    #[test]
+    fn ntp_extension_lengths_reject_unaligned_declared_length() {
+        assert_eq!(
+            validate_extension_length(NTP_EXTENSION_FIELD_MIN_LEN + 2, 64).unwrap_err(),
+            CrafterError::invalid_field_value(
+                NTP_EXTENSION_LENGTH_CONTEXT,
+                "extension length must be a multiple of 4 bytes",
+            )
+        );
+    }
+
+    #[test]
+    fn ntp_extension_lengths_report_required_and_available_bytes() {
+        assert_eq!(
+            validate_extension_length(20, 16).unwrap_err(),
+            CrafterError::buffer_too_short(NTP_EXTENSION_CONTEXT, 20, 16)
+        );
+    }
+
+    #[test]
+    fn ntp_extension_lengths_reject_short_final_extension_without_mac() {
+        assert_eq!(
+            validate_final_extension_without_mac_length(NTP_EXTENSION_FIELD_MIN_LEN).unwrap_err(),
+            CrafterError::invalid_field_value(
+                NTP_EXTENSION_LENGTH_CONTEXT,
+                "final extension without MAC must be at least 28 bytes",
+            )
+        );
+        assert!(validate_final_extension_without_mac_length(
+            NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn ntp_extension_lengths_accept_unknown_structurally_valid_type() -> Result<()> {
+        let field = NtpExtensionField::new(0xdead, [0xaa, 0xbb, 0xcc, 0xdd])
+            .declared_length(NTP_EXTENSION_FIELD_MIN_LEN as u16);
+        let mut out = Vec::new();
+
+        validate_extension_length(
+            field.declared_length_value().unwrap() as usize,
+            NTP_EXTENSION_FIELD_MIN_LEN,
+        )?;
+        field.compile(false, &mut out)?;
+
+        assert_eq!(field.registry_meta().status, NtpRegistryStatus::Unassigned);
+        assert_eq!(
+            &out[..NTP_EXTENSION_FIELD_HEADER_LEN],
+            &[0xde, 0xad, 0x00, 0x10]
+        );
+        assert_eq!(out.len(), NTP_EXTENSION_FIELD_MIN_LEN);
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_extension_lengths_compile_preserves_malformed_declared_length_override() -> Result<()> {
+        let field = NtpExtensionField::nts_cookie([0xaa, 0xbb, 0xcc]).declared_length(12);
+        let mut out = Vec::new();
+
+        field.compile(false, &mut out)?;
+
+        assert_eq!(
+            &out[..NTP_EXTENSION_FIELD_HEADER_LEN],
+            &[0x02, 0x04, 0x00, 0x0c]
+        );
+        assert_eq!(out.len(), 12);
+        assert!(validate_extension_length(12, out.len()).is_err());
         Ok(())
     }
 }
