@@ -454,6 +454,8 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "ipv6_routing"
     } else if layer.as_any().is::<Udp>() {
         "udp"
+    } else if layer.as_any().is::<Ntp>() {
+        "ntp"
     } else if layer.as_any().is::<Tcp>() {
         "tcp"
     } else if layer.as_any().is::<Tls>() {
