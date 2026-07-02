@@ -236,3 +236,84 @@ fn ntp_bitfield_packing() -> crafter::Result<()> {
     assert_eq!(masked_mode, NtpMode::SymmetricPassive);
     Ok(())
 }
+
+#[test]
+fn ntp_overrides_survive_compile() -> crafter::Result<()> {
+    const IPV4_HEADER_LEN: usize = 20;
+    const UDP_HEADER_LEN: usize = 8;
+    const UDP_OFFSET: usize = IPV4_HEADER_LEN;
+    const NTP_OFFSET: usize = IPV4_HEADER_LEN + UDP_HEADER_LEN;
+
+    let first_octet = ntp_pack_first_octet(
+        NtpLeapIndicator::AlarmUnsynchronized,
+        NtpVersion::from_wire(7),
+        NtpMode::PrivateUse,
+    );
+    let stratum = 0xfe;
+    let poll = -17i8;
+    let precision = -42i8;
+    let root_delay = 0xdead_beefu32;
+    let root_dispersion = 0x8000_0001u32;
+    let reference_id = *b"ODD!";
+    let reference_timestamp = 0x0102_0304_0506_0708u64;
+    let origin_timestamp = 0x1112_1314_1516_1718u64;
+    let receive_timestamp = 0x2122_2324_2526_2728u64;
+    let transmit_timestamp = 0x3132_3334_3536_3738u64;
+    let extension_declared_length = 28u16;
+    let udp_length = 0x1234u16;
+    let udp_checksum = 0xbeefu16;
+
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        / Udp::new()
+            .sport(49_152)
+            .dport(NTP_PORT)
+            .length(udp_length)
+            .checksum(udp_checksum)
+        / Ntp::new()
+            .leap_indicator(NtpLeapIndicator::AlarmUnsynchronized)
+            .version(NtpVersion::from_wire(7))
+            .mode(NtpMode::PrivateUse)
+            .stratum(stratum)
+            .poll(poll)
+            .precision(precision)
+            .root_delay_raw(root_delay)
+            .root_dispersion_raw(root_dispersion)
+            .reference_id(reference_id)
+            .reference_timestamp(reference_timestamp)
+            .origin_timestamp(origin_timestamp)
+            .receive_timestamp(receive_timestamp)
+            .transmit_timestamp(transmit_timestamp)
+            .extension_field(
+                NtpExtensionField::unknown(0xbeef, [0xaa, 0xbb, 0xcc, 0xdd])
+                    .declared_length(extension_declared_length),
+            );
+    let bytes = packet.compile()?.into_bytes();
+    let ntp = &bytes[NTP_OFFSET..];
+
+    assert_eq!(
+        &bytes[UDP_OFFSET + 4..UDP_OFFSET + 6],
+        &udp_length.to_be_bytes()
+    );
+    assert_eq!(
+        &bytes[UDP_OFFSET + 6..UDP_OFFSET + 8],
+        &udp_checksum.to_be_bytes()
+    );
+    assert_eq!(ntp[0], first_octet);
+    assert_eq!(ntp[1], stratum);
+    assert_eq!(ntp[2], poll as u8);
+    assert_eq!(ntp[3], precision as u8);
+    assert_eq!(&ntp[4..8], &root_delay.to_be_bytes());
+    assert_eq!(&ntp[8..12], &root_dispersion.to_be_bytes());
+    assert_eq!(&ntp[12..16], &reference_id);
+    assert_eq!(&ntp[16..24], &reference_timestamp.to_be_bytes());
+    assert_eq!(&ntp[24..32], &origin_timestamp.to_be_bytes());
+    assert_eq!(&ntp[32..40], &receive_timestamp.to_be_bytes());
+    assert_eq!(&ntp[40..48], &transmit_timestamp.to_be_bytes());
+    assert_eq!(
+        &ntp[NTP_FIXED_HEADER_LEN + 2..NTP_FIXED_HEADER_LEN + 4],
+        &extension_declared_length.to_be_bytes()
+    );
+    Ok(())
+}
