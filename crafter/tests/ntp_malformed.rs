@@ -4,6 +4,39 @@ const NTP_EXTENSION_SHORT_FIXTURE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/malformed/ntp-extension-short.hex"
 ));
+const NTP_MALFORMED_CORPUS: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/malformed/ntp-corpus.hex"
+));
+const REQUIRED_NTP_MALFORMED_CORPUS_CASES: &[&str] = &[
+    "short-fixed-header",
+    "short-extension-header",
+    "invalid-extension-length",
+    "truncated-mac-after-extension",
+    "ambiguous-legacy-mac-tail",
+];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NtpMalformedExpected {
+    BufferTooShort {
+        context: String,
+        required: usize,
+        available: usize,
+    },
+    InvalidFieldValue {
+        field: String,
+    },
+    Decodes {
+        marker: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NtpMalformedCase {
+    name: String,
+    expected: NtpMalformedExpected,
+    bytes: Vec<u8>,
+}
 
 fn valid_ntp_header_with_tail(tail: &[u8]) -> Vec<u8> {
     let mut payload = Packet::from_layer(Ntp::client())
@@ -15,10 +48,13 @@ fn valid_ntp_header_with_tail(tail: &[u8]) -> Vec<u8> {
     payload
 }
 
-fn decode_err_without_panic(name: &str, payload: &[u8]) -> CrafterError {
+fn decode_without_panic(name: &str, payload: &[u8]) -> crafter::Result<Ntp> {
     std::panic::catch_unwind(|| Ntp::decode(payload))
         .unwrap_or_else(|_| panic!("{name} panicked during NTP decode"))
-        .unwrap_err()
+}
+
+fn decode_err_without_panic(name: &str, payload: &[u8]) -> CrafterError {
+    decode_without_panic(name, payload).unwrap_err()
 }
 
 fn assert_buffer_too_short(
@@ -77,6 +113,164 @@ fn parse_hex_fixture(name: &str, hex: &str) -> Vec<u8> {
                 .unwrap_or_else(|_| panic!("{name} fixture has invalid hex byte {byte}"))
         })
         .collect()
+}
+
+fn ntp_malformed_corpus_cases() -> Vec<NtpMalformedCase> {
+    NTP_MALFORMED_CORPUS
+        .lines()
+        .enumerate()
+        .filter_map(|(line_number, line)| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let parts = line.split('|').map(str::trim).collect::<Vec<_>>();
+            assert_eq!(
+                parts.len(),
+                6,
+                "NTP malformed corpus line {} must have 6 fields",
+                line_number + 1
+            );
+            let name = parts[0].to_string();
+            let expected = parse_ntp_malformed_expected(&name, &parts);
+            let bytes = parse_hex_fixture(&name, parts[5]);
+            Some(NtpMalformedCase {
+                name,
+                expected,
+                bytes,
+            })
+        })
+        .collect()
+}
+
+fn parse_ntp_malformed_expected(name: &str, parts: &[&str]) -> NtpMalformedExpected {
+    match parts[1] {
+        "buffer-too-short" => NtpMalformedExpected::BufferTooShort {
+            context: parts[2].to_string(),
+            required: parts[3]
+                .parse()
+                .unwrap_or_else(|_| panic!("case {name} has invalid required byte count")),
+            available: parts[4]
+                .parse()
+                .unwrap_or_else(|_| panic!("case {name} has invalid available byte count")),
+        },
+        "invalid-field-value" => {
+            assert_eq!(parts[3], "-", "case {name} must use '-' for required");
+            assert_eq!(parts[4], "-", "case {name} must use '-' for available");
+            NtpMalformedExpected::InvalidFieldValue {
+                field: parts[2].to_string(),
+            }
+        }
+        "decodes" => {
+            assert_eq!(parts[3], "-", "case {name} must use '-' for required");
+            assert_eq!(parts[4], "-", "case {name} must use '-' for available");
+            NtpMalformedExpected::Decodes {
+                marker: parts[2].to_string(),
+            }
+        }
+        expected => panic!("NTP malformed corpus case {name} has unknown kind {expected}"),
+    }
+}
+
+fn assert_required_ntp_malformed_corpus_cases(cases: &[NtpMalformedCase]) {
+    for required in REQUIRED_NTP_MALFORMED_CORPUS_CASES {
+        assert!(
+            cases.iter().any(|case| case.name == *required),
+            "NTP malformed corpus missing required case {required}"
+        );
+    }
+}
+
+fn assert_ntp_malformed_corpus_case(case: &NtpMalformedCase) {
+    match &case.expected {
+        NtpMalformedExpected::BufferTooShort {
+            context,
+            required,
+            available,
+        } => match decode_err_without_panic(&case.name, &case.bytes) {
+            CrafterError::BufferTooShort {
+                context: actual_context,
+                required: actual_required,
+                available: actual_available,
+            } => {
+                assert_eq!(actual_context, context.as_str(), "case {}", case.name);
+                assert_eq!(actual_required, *required, "case {}", case.name);
+                assert_eq!(actual_available, *available, "case {}", case.name);
+            }
+            other => panic!(
+                "NTP malformed corpus case {} expected BufferTooShort, got {other:?}",
+                case.name
+            ),
+        },
+        NtpMalformedExpected::InvalidFieldValue { field } => {
+            match decode_err_without_panic(&case.name, &case.bytes) {
+                CrafterError::InvalidFieldValue {
+                    field: actual_field,
+                    reason,
+                } => {
+                    assert_eq!(actual_field, field.as_str(), "case {}", case.name);
+                    assert!(
+                        !reason.is_empty(),
+                        "case {} InvalidFieldValue must carry a reason",
+                        case.name
+                    );
+                }
+                other => panic!(
+                    "NTP malformed corpus case {} expected InvalidFieldValue, got {other:?}",
+                    case.name
+                ),
+            }
+        }
+        NtpMalformedExpected::Decodes { marker } => {
+            assert_ntp_malformed_corpus_decode_marker(case, marker);
+        }
+    }
+}
+
+fn assert_ntp_malformed_corpus_decode_marker(case: &NtpMalformedCase, marker: &str) {
+    let packet = decode_without_panic(&case.name, &case.bytes)
+        .unwrap_or_else(|err| panic!("case {} should decode: {err}", case.name));
+
+    match marker {
+        "legacy-mac-20" => {
+            assert!(
+                packet.extension_fields_value().is_empty(),
+                "case {} should not decode extension fields",
+                case.name
+            );
+            let mac = packet
+                .legacy_mac_value()
+                .unwrap_or_else(|| panic!("case {} should preserve a legacy MAC tail", case.name));
+            assert_eq!(mac.len(), 20, "case {} legacy MAC length", case.name);
+            assert_eq!(
+                mac.key_id(),
+                Some(0x0104_000c),
+                "case {} legacy MAC key id",
+                case.name
+            );
+            assert_eq!(
+                mac.digest(),
+                &[0xcc; 16],
+                "case {} legacy MAC digest",
+                case.name
+            );
+        }
+        other => panic!(
+            "NTP malformed corpus case {} has unknown decode marker {other}",
+            case.name
+        ),
+    }
+}
+
+#[test]
+fn ntp_malformed_corpus_reports_structured_outcomes() {
+    let cases = ntp_malformed_corpus_cases();
+    assert_required_ntp_malformed_corpus_cases(&cases);
+
+    for case in cases {
+        std::panic::catch_unwind(|| assert_ntp_malformed_corpus_case(&case))
+            .unwrap_or_else(|_| panic!("NTP malformed corpus case {} panicked", case.name));
+    }
 }
 
 #[test]
