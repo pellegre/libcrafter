@@ -1,0 +1,12 @@
+# NTP malformed corpus.
+# Format: name|expected-kind|expected-context-or-marker|required|available|hex
+# expected-kind:
+#   buffer-too-short    -> Err(CrafterError::BufferTooShort)
+#   invalid-field-value -> Err(CrafterError::InvalidFieldValue)
+#   decodes             -> Ntp::decode succeeds and preserves raw tail material
+
+short-fixed-header|buffer-too-short|ntp.header|48|47|23 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+short-extension-header|buffer-too-short|ntp.extension|4|3|23 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 04 00
+invalid-extension-length|invalid-field-value|ntp.extension.length|-|-|23 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 04 00 0c aa aa aa aa aa aa aa aa
+truncated-mac-after-extension|buffer-too-short|ntp.mac|4|2|23 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 be ef 00 10 aa aa aa aa aa aa aa aa aa aa aa aa cc dd
+ambiguous-legacy-mac-tail|decodes|legacy-mac-20|-|-|23 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 04 00 0c cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc cc
