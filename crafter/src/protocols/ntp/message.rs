@@ -1551,6 +1551,64 @@ mod tests {
     }
 
     #[test]
+    fn ntp_first_octet_packs_and_parses_default_client_shape() {
+        let first_octet = ntp_pack_first_octet(
+            NtpLeapIndicator::default(),
+            NtpVersion::default(),
+            NtpMode::default(),
+        );
+
+        assert_eq!(first_octet, NTP_DEFAULT_FIRST_OCTET);
+        assert_eq!(first_octet, 0x23);
+
+        let (leap_indicator, version, mode) = ntp_parse_first_octet(first_octet);
+        assert_eq!(leap_indicator, NtpLeapIndicator::NoWarning);
+        assert_eq!(version, NtpVersion::current());
+        assert_eq!(mode, NtpMode::Client);
+    }
+
+    #[test]
+    fn ntp_first_octet_round_trips_every_wire_combination() {
+        for first_octet in u8::MIN..=u8::MAX {
+            let (leap_indicator, version, mode) = ntp_parse_first_octet(first_octet);
+
+            assert_eq!(
+                ntp_pack_first_octet(leap_indicator, version, mode),
+                first_octet
+            );
+            assert_eq!(
+                leap_indicator.value(),
+                (first_octet & NTP_FIRST_OCTET_LI_MASK) >> NTP_FIRST_OCTET_LI_SHIFT
+            );
+            assert_eq!(
+                version.value(),
+                (first_octet & NTP_FIRST_OCTET_VERSION_MASK) >> NTP_FIRST_OCTET_VERSION_SHIFT
+            );
+            assert_eq!(
+                mode.value(),
+                (first_octet & NTP_FIRST_OCTET_MODE_MASK) >> NTP_FIRST_OCTET_MODE_SHIFT
+            );
+        }
+    }
+
+    #[test]
+    fn ntp_first_octet_masks_caller_values_to_field_widths() {
+        let leap_indicator = NtpLeapIndicator::Unknown(0xaa);
+        let version = NtpVersion::from_wire(0x0f);
+        let mode = NtpMode::Unknown(0x2a);
+
+        assert_eq!(
+            ntp_pack_first_octet(leap_indicator, version, mode),
+            ((0xaa & NTP_LI_VALUE_MASK) << NTP_FIRST_OCTET_LI_SHIFT)
+                | ((0x0f & NTP_VERSION_VALUE_MASK) << NTP_FIRST_OCTET_VERSION_SHIFT)
+                | ((0x2a & NTP_MODE_VALUE_MASK) << NTP_FIRST_OCTET_MODE_SHIFT)
+        );
+        assert_eq!(leap_indicator.wire_value(), 0xaa);
+        assert_eq!(version.wire_value(), 0x0f);
+        assert_eq!(mode.wire_value(), 0x2a);
+    }
+
+    #[test]
     fn ntp_stratum_refid_strata_are_classified_without_rejecting_values() {
         let unspecified = NtpStratum::from_wire(0);
         assert_eq!(unspecified.value(), 0);
