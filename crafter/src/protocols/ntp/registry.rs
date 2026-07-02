@@ -111,6 +111,11 @@ impl NtpExtensionFieldType {
         self.status
     }
 
+    /// Return true when this field type is one of the registry-listed Autokey rows.
+    pub const fn is_autokey_related(&self) -> bool {
+        ntp_extension_field_type_is_autokey_related(self.value)
+    }
+
     /// Convert to the older generic registry metadata shape.
     pub fn registry_meta(&self) -> NtpRegistryMeta {
         NtpRegistryMeta {
@@ -277,6 +282,17 @@ pub fn ntp_reference_id_meta(code: [u8; NTP_REFERENCE_ID_LEN]) -> NtpReferenceCo
 /// Return registry metadata for an NTP Extension Field Type.
 pub fn ntp_extension_field_type_meta(field_type: u16) -> NtpRegistryMeta {
     ntp_extension_type(field_type).registry_meta()
+}
+
+/// Return true for Autokey-related NTP Extension Field Type rows.
+///
+/// RFC 5906 is blocked for cryptographic and workflow behavior in this crate;
+/// the current registry rows are still useful labels for preserving packet data.
+pub const fn ntp_extension_field_type_is_autokey_related(field_type: u16) -> bool {
+    matches!(
+        field_type,
+        0x0200..=0x0209 | 0x8200..=0x8209 | 0xC200..=0xC209
+    )
 }
 
 /// Return source-backed metadata for an NTP Extension Field Type.
@@ -847,5 +863,35 @@ mod tests {
         let unknown_nts = ntp_nts_extension_field_type_meta(0x1111);
         assert_eq!(unknown_nts.label, "nts-extension-0x1111");
         assert_eq!(unknown_nts.status, NtpRegistryStatus::Unassigned);
+    }
+
+    #[test]
+    fn ntp_autokey_raw_extensions_registry_recognizes_manifest_rows() {
+        for field_type in [
+            0x0200, 0x0204, 0x0209, 0x8200, 0x8204, 0x8209, 0xC200, 0xC204, 0xC209,
+        ] {
+            let extension_type = ntp_extension_type(field_type);
+
+            assert!(ntp_extension_field_type_is_autokey_related(field_type));
+            assert!(extension_type.is_autokey_related());
+            assert_eq!(extension_type.status(), NtpRegistryStatus::Assigned);
+            assert_eq!(
+                extension_type.category(),
+                NtpExtensionFieldTypeCategory::Assigned
+            );
+        }
+
+        let duplicate = ntp_extension_type(0x0204);
+        assert_eq!(duplicate.label(), "Autokey Message Request / NTS Cookie");
+        assert!(duplicate.is_autokey_related());
+        assert_eq!(
+            ntp_nts_extension_field_type_meta(0x0204).label,
+            "NTS Cookie"
+        );
+
+        for field_type in [0x0104, 0x0304, 0x0404, 0x2005, 0x2222] {
+            assert!(!ntp_extension_field_type_is_autokey_related(field_type));
+            assert!(!ntp_extension_type(field_type).is_autokey_related());
+        }
     }
 }

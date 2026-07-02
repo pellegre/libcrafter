@@ -5,7 +5,8 @@ use super::constants::{
     NTP_EXTENSION_FIELD_MIN_LEN, NTP_LEGACY_MAC_KEY_ID_LEN,
 };
 use super::registry::{
-    ntp_extension_type, NtpExtensionFieldType, NtpExtensionFieldTypeCategory, NtpRegistryMeta,
+    ntp_extension_field_type_is_autokey_related, ntp_extension_type, NtpExtensionFieldType,
+    NtpExtensionFieldTypeCategory, NtpRegistryMeta,
 };
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
@@ -79,6 +80,67 @@ impl NtpChecksumComplementExtension {
 impl From<NtpChecksumComplementExtension> for NtpExtensionField {
     fn from(extension: NtpChecksumComplementExtension) -> Self {
         Self::new(NtpChecksumComplementExtension::FIELD_TYPE, extension.body)
+    }
+}
+
+/// Raw-preserving Autokey-related NTP extension body.
+///
+/// RFC 5906 Autokey workflows and cryptographic payload semantics are out of
+/// scope for this crate. This helper only labels registry-listed Autokey field
+/// types and preserves their packet bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NtpAutokeyRawExtension {
+    field_type: u16,
+    body: Vec<u8>,
+}
+
+impl NtpAutokeyRawExtension {
+    /// Build an Autokey-related extension body from raw packet bytes.
+    pub fn new(field_type: u16, body: impl Into<Vec<u8>>) -> Self {
+        Self {
+            field_type,
+            body: body.into(),
+        }
+    }
+
+    /// NTP Extension Field Type encoded for this body.
+    pub const fn field_type(&self) -> u16 {
+        self.field_type
+    }
+
+    /// Source-backed extension field type metadata.
+    pub fn extension_type(&self) -> NtpExtensionFieldType {
+        ntp_extension_type(self.field_type)
+    }
+
+    /// Return true when the field type is a registry-listed Autokey row.
+    pub const fn is_autokey_related(&self) -> bool {
+        ntp_extension_field_type_is_autokey_related(self.field_type)
+    }
+
+    /// Raw extension body bytes, excluding the four-octet extension envelope.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// Convert to the generic raw-preserving NTP extension field envelope.
+    pub fn into_extension_field(self) -> NtpExtensionField {
+        self.into()
+    }
+
+    /// Decode a generic extension field as Autokey-related raw data when typed.
+    pub fn from_extension_field(field: &NtpExtensionField) -> Option<Self> {
+        if field.is_autokey_related() {
+            Some(Self::new(field.field_type(), field.value().to_vec()))
+        } else {
+            None
+        }
+    }
+}
+
+impl From<NtpAutokeyRawExtension> for NtpExtensionField {
+    fn from(extension: NtpAutokeyRawExtension) -> Self {
+        Self::new(extension.field_type, extension.body)
     }
 }
 
@@ -521,7 +583,7 @@ impl NtpExtensionField {
 
     /// Build an Autokey-related raw extension field by type.
     pub fn autokey_raw(field_type: u16, value: impl Into<Vec<u8>>) -> Self {
-        Self::new(field_type, value)
+        NtpAutokeyRawExtension::new(field_type, value).into_extension_field()
     }
 
     /// Set an explicit declared extension length.
@@ -589,6 +651,11 @@ impl NtpExtensionField {
         matches!(self.field_type(), 0x0104 | 0x0204 | 0x0304 | 0x0404)
     }
 
+    /// Return true when the field type is one of the registry-listed Autokey rows.
+    pub fn is_autokey_related(&self) -> bool {
+        self.extension_type().is_autokey_related()
+    }
+
     /// Return true when the field type is NTS Unique Identifier.
     pub fn is_nts_unique_identifier(&self) -> bool {
         self.field_type() == NtpNtsUniqueIdentifierExtension::FIELD_TYPE
@@ -637,6 +704,11 @@ impl NtpExtensionField {
     /// Borrow this field body through the typed UDP Checksum Complement helper.
     pub fn as_udp_checksum_complement(&self) -> Option<NtpChecksumComplementExtension> {
         NtpChecksumComplementExtension::from_extension_field(self)
+    }
+
+    /// Borrow this field body through the raw Autokey-related helper.
+    pub fn as_autokey_raw(&self) -> Option<NtpAutokeyRawExtension> {
+        NtpAutokeyRawExtension::from_extension_field(self)
     }
 
     pub(super) fn from_decoded(field_type: u16, declared_length: u16, value: Vec<u8>) -> Self {
@@ -1014,6 +1086,129 @@ mod tests {
         let bytes = compiled.as_bytes();
 
         assert_eq!(u16::from_be_bytes([bytes[26], bytes[27]]), 0x1234);
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_autokey_raw_extensions_helpers_preserve_assigned_bodies() {
+        let request_body = vec![0x10, 0x11, 0x12, 0x13];
+        let response_body = vec![0x20, 0x21, 0x22, 0x23, 0x24];
+        let error_body = vec![0x30, 0x31, 0x32, 0x33, 0x34, 0x35];
+
+        let request = NtpAutokeyRawExtension::new(0x0200, request_body.clone());
+        let response = NtpAutokeyRawExtension::new(0x8204, response_body.clone());
+        let error = NtpAutokeyRawExtension::new(0xC209, error_body.clone());
+
+        for extension in [&request, &response, &error] {
+            assert!(extension.is_autokey_related());
+            assert_eq!(
+                extension.extension_type().status(),
+                NtpRegistryStatus::Assigned
+            );
+        }
+        assert_eq!(request.extension_type().label(), "No-Operation Request");
+        assert_eq!(
+            response.extension_type().label(),
+            "Autokey Message Response"
+        );
+        assert_eq!(
+            error.extension_type().label(),
+            "MV Identity Message Error Response"
+        );
+
+        let request_field = request.clone().into_extension_field();
+        let response_field = NtpExtensionField::autokey_raw(0x8204, response_body.clone());
+        let error_field = error.clone().into_extension_field();
+
+        assert_eq!(request.field_type(), 0x0200);
+        assert_eq!(request.body(), request_body.as_slice());
+        assert_eq!(request_field.value(), request_body.as_slice());
+        assert!(request_field.is_autokey_related());
+        assert!(!request_field.is_nts_extension());
+        assert_eq!(request_field.as_autokey_raw(), Some(request));
+
+        assert_eq!(response_field.field_type(), 0x8204);
+        assert_eq!(response_field.value(), response_body.as_slice());
+        assert!(response_field.is_autokey_related());
+        assert_eq!(
+            response_field
+                .as_autokey_raw()
+                .expect("Autokey response helper preserves raw body")
+                .body(),
+            response_body.as_slice()
+        );
+
+        assert_eq!(error_field.field_type(), 0xC209);
+        assert_eq!(error_field.value(), error_body.as_slice());
+        assert!(error_field.is_autokey_related());
+        assert_eq!(error_field.as_autokey_raw(), Some(error));
+
+        let unknown_field = NtpExtensionField::unknown(0x2222, [0xde, 0xad]);
+        assert!(!unknown_field.is_autokey_related());
+        assert_eq!(unknown_field.as_autokey_raw(), None);
+    }
+
+    #[test]
+    fn ntp_autokey_raw_extensions_decode_preserves_raw_bodies_and_nts_cookie_duplicate(
+    ) -> Result<()> {
+        let request_body = (0u8..12).map(|offset| 0x10 + offset).collect::<Vec<_>>();
+        let response_body = (0u8..12).map(|offset| 0x40 + offset).collect::<Vec<_>>();
+        let error_body = (0u8..24).map(|offset| 0x80 + offset).collect::<Vec<_>>();
+        let mut encoded = Vec::new();
+
+        let mut append_extension = |field_type: u16, body: &[u8]| {
+            let declared_len = (NTP_EXTENSION_FIELD_HEADER_LEN + body.len()) as u16;
+            encoded.extend_from_slice(&field_type.to_be_bytes());
+            encoded.extend_from_slice(&declared_len.to_be_bytes());
+            encoded.extend_from_slice(body);
+        };
+        append_extension(0x0201, &request_body);
+        append_extension(0x8209, &response_body);
+        append_extension(0xC204, &error_body);
+
+        let decoded = decode_all(&encoded)?;
+
+        assert_eq!(decoded.legacy_mac, None);
+        assert_eq!(decoded.fields.len(), 3);
+        for (field, body) in [
+            (&decoded.fields[0], request_body.as_slice()),
+            (&decoded.fields[1], response_body.as_slice()),
+            (&decoded.fields[2], error_body.as_slice()),
+        ] {
+            assert!(field.is_autokey_related());
+            assert_eq!(field.value(), body);
+            assert_eq!(
+                field
+                    .as_autokey_raw()
+                    .expect("registry-listed Autokey row decodes as raw Autokey data")
+                    .body(),
+                body
+            );
+        }
+        assert_eq!(decoded.fields[0].label(), "Association Message Request");
+        assert_eq!(decoded.fields[1].label(), "MV Identity Message Response");
+        assert_eq!(decoded.fields[2].label(), "Autokey Message Error Response");
+
+        let cookie_body = vec![0xaa, 0xbb, 0xcc, 0xdd];
+        let cookie_field = NtpExtensionField::nts_cookie(cookie_body.clone());
+        assert!(cookie_field.is_nts_extension());
+        assert!(cookie_field.is_nts_cookie());
+        assert!(cookie_field.is_autokey_related());
+        assert_eq!(cookie_field.label(), "Autokey Message Request / NTS Cookie");
+        assert_eq!(
+            cookie_field
+                .as_nts_cookie()
+                .expect("0x0204 keeps NTS Cookie interpretation")
+                .body(),
+            cookie_body.as_slice()
+        );
+        assert_eq!(
+            cookie_field
+                .as_autokey_raw()
+                .expect("0x0204 also records the duplicate Autokey assignment")
+                .body(),
+            cookie_body.as_slice()
+        );
         Ok(())
     }
 
