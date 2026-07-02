@@ -1115,23 +1115,6 @@ pub fn decode_ntp_payload(bytes: &[u8]) -> Result<Ntp> {
     })
 }
 
-/// Conservative UDP/123 shape gate for built-in registry dispatch.
-pub fn looks_like_ntp_payload(bytes: &[u8]) -> bool {
-    if bytes.len() < NTP_FIXED_HEADER_LEN {
-        return false;
-    }
-
-    let (_, version, mode) = ntp_parse_first_octet(bytes[0]);
-    if !(NTP_VERSION_1..=NTP_VERSION_4).contains(&version.value()) {
-        return false;
-    }
-    if mode.value() == NTP_MODE_RESERVED {
-        return false;
-    }
-
-    ntp_decode::tail_shape_is_plausible(&bytes[NTP_FIXED_HEADER_LEN..])
-}
-
 /// Append a decoded NTP layer to an existing packet.
 pub fn append_ntp_packet(packet: Packet, payload: &[u8]) -> Result<Packet> {
     Ok(packet.push(Ntp::decode(payload)?))
