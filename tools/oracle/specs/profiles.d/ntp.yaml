@@ -1,0 +1,67 @@
+version: 1
+kind: profiles
+name: ntp_profiles
+
+profiles:
+  - name: ntp-smoke
+    purpose: focused offline NTP fixed-header, extension, and NTS packet smoke coverage over UDP/123
+    default_count: 12
+    family_weights:
+      - name: ntp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 0
+    feature_weights:
+      baseline: 10
+      boundary: 3
+      malformed: 0
+      pcap: 0
+      live: 0
+  - name: ntp-ci
+    purpose: deterministic NTP pull request coverage for strict-byte, normalized, and structured-error cases
+    default_count: 200
+    family_weights:
+      - name: ntp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 0
+    feature_weights:
+      baseline: 10
+      boundary: 5
+      malformed: 1
+      pcap: 1
+      live: 0
+  - name: ntp-live-dry-run
+    purpose: provider-neutral NTP live validation dry-run planning without sending traffic
+    default_count: 10
+    family_weights:
+      - name: ntp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 0
+    feature_weights:
+      baseline: 2
+      boundary: 4
+      malformed: 0
+      pcap: 0
+      live: 0
+
+backend_support:
+  scapy:
+    status: planned
+    notes:
+      - Profiles affect NTP generator sampling after the Scapy backend adapter lands.
+  wireshark:
+    status: planned
+    notes:
+      - Parser-only NTP profiles are used by pcap/read-side validation after fixtures are available.
+  libcrafter:
+    status: supported
+    notes:
+      - >-
+        Profiles remain offline or dry-run only, use documentation-safe NTP
+        packet shapes, and keep live traffic ineligible unless a provider-backed
+        workflow supplies protected confirmation outside these default profiles.
