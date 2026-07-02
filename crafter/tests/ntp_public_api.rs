@@ -166,3 +166,73 @@ fn ntp_constants_and_registry() {
     );
     assert_eq!(unknown.status(), NtpRegistryStatus::Unassigned);
 }
+
+#[test]
+fn ntp_bitfield_packing() -> crafter::Result<()> {
+    let cases = [
+        (
+            NtpLeapIndicator::NoWarning,
+            NtpVersion::current(),
+            NtpMode::Client,
+            0x23,
+        ),
+        (
+            NtpLeapIndicator::AlarmUnsynchronized,
+            NtpVersion::from_wire(3),
+            NtpMode::Server,
+            0xdc,
+        ),
+        (
+            NtpLeapIndicator::LastMinute61Seconds,
+            NtpVersion::from_wire(1),
+            NtpMode::SymmetricActive,
+            0x49,
+        ),
+        (
+            NtpLeapIndicator::LastMinute59Seconds,
+            NtpVersion::from_wire(7),
+            NtpMode::PrivateUse,
+            0xbf,
+        ),
+    ];
+
+    for (leap_indicator, version, mode, expected_first_octet) in cases {
+        assert_eq!(
+            ntp_pack_first_octet(leap_indicator, version, mode),
+            expected_first_octet
+        );
+
+        let (parsed_leap_indicator, parsed_version, parsed_mode) =
+            ntp_parse_first_octet(expected_first_octet);
+        assert_eq!(parsed_leap_indicator, leap_indicator);
+        assert_eq!(parsed_version, version);
+        assert_eq!(parsed_mode, mode);
+
+        let ntp = Ntp::new()
+            .leap_indicator(leap_indicator)
+            .version(version)
+            .mode(mode);
+        let bytes = Packet::from_layer(ntp).compile()?;
+        assert_eq!(bytes.as_bytes()[0], expected_first_octet);
+
+        let decoded = Ntp::decode(bytes.as_bytes())?;
+        assert_eq!(decoded.first_octet_value(), expected_first_octet);
+        assert_eq!(decoded.leap_indicator_value(), leap_indicator);
+        assert_eq!(decoded.version_value_effective(), version);
+        assert_eq!(decoded.mode_value(), mode);
+    }
+
+    let masked = Ntp::new()
+        .leap_indicator(NtpLeapIndicator::Unknown(0xaa))
+        .version(NtpVersion::from_wire(0x0f))
+        .mode(NtpMode::Unknown(0x2a));
+    let masked_first_octet = Packet::from_layer(masked).compile()?.as_bytes()[0];
+    let (masked_leap_indicator, masked_version, masked_mode) =
+        ntp_parse_first_octet(masked_first_octet);
+
+    assert_eq!(masked_first_octet, 0xba);
+    assert_eq!(masked_leap_indicator, NtpLeapIndicator::LastMinute59Seconds);
+    assert_eq!(masked_version, NtpVersion::from_wire(7));
+    assert_eq!(masked_mode, NtpMode::SymmetricPassive);
+    Ok(())
+}
