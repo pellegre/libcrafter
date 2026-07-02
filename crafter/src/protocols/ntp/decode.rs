@@ -1,11 +1,51 @@
 //! NTP packet decode helpers.
 
+use super::extension::{self, NtpExtensionField};
 use super::message::Ntp;
+use super::message::NtpLegacyMac;
 use crate::error::Result;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct NtpDecodedTail {
+    pub(super) extension_fields: Vec<NtpExtensionField>,
+    pub(super) legacy_mac: Option<NtpLegacyMac>,
+}
 
 /// Decode a standalone NTP UDP payload.
 pub fn decode_ntp(bytes: &[u8]) -> Result<Ntp> {
     Ntp::decode(bytes)
+}
+
+pub(super) fn encoded_tail_len(
+    extension_fields: &[NtpExtensionField],
+    legacy_mac: Option<&NtpLegacyMac>,
+) -> usize {
+    extension::encoded_all_len(extension_fields, legacy_mac.is_some())
+        + legacy_mac.map_or(0, NtpLegacyMac::len)
+}
+
+pub(super) fn encode_tail(
+    extension_fields: &[NtpExtensionField],
+    legacy_mac: Option<&NtpLegacyMac>,
+    out: &mut Vec<u8>,
+) -> Result<()> {
+    extension::encode_all(extension_fields, legacy_mac.is_some(), out)?;
+    if let Some(mac) = legacy_mac {
+        out.extend_from_slice(mac.bytes());
+    }
+    Ok(())
+}
+
+pub(super) fn decode_tail(tail: &[u8]) -> Result<NtpDecodedTail> {
+    let decoded = extension::decode_all(tail)?;
+    Ok(NtpDecodedTail {
+        extension_fields: decoded.fields,
+        legacy_mac: decoded.legacy_mac.map(NtpLegacyMac::from_bytes),
+    })
+}
+
+pub(super) fn tail_shape_is_plausible(tail: &[u8]) -> bool {
+    extension::tail_shape_is_plausible(tail)
 }
 
 #[cfg(test)]
@@ -54,5 +94,34 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn ntp_extension_roundtrip_decode_helpers_preserve_tail_partition() -> Result<()> {
+        let extension = NtpExtensionField::new(0xbeef, [0xaa, 0xbb])
+            .padding([0xcc, 0xdd])
+            .declared_length(16);
+        let legacy_mac = NtpLegacyMac::from_key_id_and_digest(0x0102_0304, [0xee; 16]);
+        let mut tail = Vec::new();
+
+        encode_tail(&[extension], Some(&legacy_mac), &mut tail)?;
+        let decoded = decode_tail(&tail)?;
+
+        assert_eq!(decoded.extension_fields.len(), 1);
+        assert_eq!(decoded.extension_fields[0].field_type(), 0xbeef);
+        assert_eq!(
+            decoded.extension_fields[0].value(),
+            &[0xaa, 0xbb, 0xcc, 0xdd, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
+        assert_eq!(decoded.legacy_mac.as_ref(), Some(&legacy_mac));
+
+        let mut reencoded = Vec::new();
+        encode_tail(
+            &decoded.extension_fields,
+            decoded.legacy_mac.as_ref(),
+            &mut reencoded,
+        )?;
+        assert_eq!(reencoded, tail);
+        Ok(())
     }
 }
