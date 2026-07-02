@@ -1082,15 +1082,18 @@ impl Layer for Ntp {
     }
 
     fn summary(&self) -> String {
+        let stratum = self.stratum_value();
+        let reference_id = self.reference_id_value();
         format!(
-            "Ntp({}/{}/{}, stratum={}, tx=0x{:016x}, ext={}, mac={})",
+            "Ntp(li={}, version={}, mode={}, stratum={}({}), refid={}, extensions={}, tail={})",
             self.leap_indicator_value().summary_label(),
             self.version_value_effective().summary_label(),
             self.mode_value().summary_label(),
-            self.stratum_value().value(),
-            self.transmit_timestamp_value().raw(),
+            stratum.value(),
+            stratum.label(),
+            reference_id.label_for_stratum(stratum),
             self.extension_fields.len(),
-            self.legacy_mac.as_ref().map_or(0, NtpLegacyMac::len)
+            ntp_tail_status(self.extension_fields.len(), self.legacy_mac.is_some())
         )
     }
 
@@ -1255,6 +1258,15 @@ pub fn ntp_ipv6_client_request(source: Ipv6Addr, destination: Ipv6Addr) -> Packe
 
 fn field_value<T: Copy>(field: &Field<T>, default: T) -> T {
     field.value().copied().unwrap_or(default)
+}
+
+fn ntp_tail_status(extension_count: usize, has_legacy_mac: bool) -> &'static str {
+    match (extension_count == 0, has_legacy_mac) {
+        (true, false) => "none",
+        (false, false) => "extensions",
+        (true, true) => "legacy-mac",
+        (false, true) => "extensions+legacy-mac",
+    }
 }
 
 fn read_timestamp(bytes: &[u8]) -> NtpTimestamp {
@@ -1706,6 +1718,52 @@ mod tests {
         assert_eq!(leap_indicator.wire_value(), 0xaa);
         assert_eq!(version.wire_value(), 0x0f);
         assert_eq!(mode.wire_value(), 0x2a);
+    }
+
+    #[test]
+    fn ntp_summary_includes_core_fields_reference_id_and_tail_status() {
+        let primary = Ntp::server()
+            .leap_indicator(NtpLeapIndicator::AlarmUnsynchronized)
+            .reference_id(NtpReferenceId::from_bytes([b'G', b'P', b'S', 0]));
+
+        assert_eq!(
+            primary.summary(),
+            "Ntp(li=alarm-unsynchronized, version=ntp-v4, mode=server, stratum=1(primary), refid=Global Position System, extensions=0, tail=none)"
+        );
+
+        let secondary = Ntp::client()
+            .stratum(2)
+            .reference_id(NtpReferenceId::from_bytes([192, 0, 2, 44]))
+            .extension_field(NtpExtensionField::udp_checksum_complement([0xaa, 0xbb]));
+
+        assert_eq!(
+            secondary.summary(),
+            "Ntp(li=no-warning, version=ntp-v4, mode=client, stratum=2(secondary), refid=refid-0xC000022C, extensions=1, tail=extensions)"
+        );
+    }
+
+    #[test]
+    fn ntp_summary_hides_extension_cookie_and_mac_bytes() {
+        let ntp = Ntp::kiss_o_death(*b"RATE")
+            .extension_field(NtpExtensionField::nts_cookie([
+                0xde, 0xad, 0xbe, 0xef, 0x13, 0x37,
+            ]))
+            .legacy_mac(NtpLegacyMac::from_key_id_and_digest(
+                0x0102_0304,
+                [0xcc; 16],
+            ));
+
+        let summary = ntp.summary();
+
+        assert_eq!(
+            summary,
+            "Ntp(li=no-warning, version=ntp-v4, mode=server, stratum=0(unspecified-or-invalid), refid=Rate exceeded, extensions=1, tail=extensions+legacy-mac)"
+        );
+        assert!(!summary.contains("0x0204"), "{summary}");
+        assert!(!summary.contains("deadbeef"), "{summary}");
+        assert!(!summary.contains("1337"), "{summary}");
+        assert!(!summary.contains("0x01020304"), "{summary}");
+        assert!(!summary.contains("cccc"), "{summary}");
     }
 
     #[test]
