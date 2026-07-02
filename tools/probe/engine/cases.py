@@ -454,19 +454,12 @@ DHCPV6_ADVANCED_PROFILE_CASE_NAMES: tuple[str, ...] = (
 SSDP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "ssdp")
 MDNS_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "mdns")
 TLS_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "tls")
-NTP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
-    case.name for case in _registry_cases() if case.metadata.get("protocol") == "ntp"
-)
+NTP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "ntp")
 
-# Profiles that select an explicit ordered case subset. A profile not listed
-# here selects the full catalog. ``smoke`` is pinned to the historical
-# ICMP/TCP/DNS/TTL/ARP set so adding the behavioral catalog does not change what
-# smoke samples. Every entry's ordered case names come from the registry-sourced
-# ``*_PROFILE_CASE_NAMES`` tables above (which filter ``_registry_cases()`` while
-# fixing the observable selection order the plan-JSON snapshot pins); the
-# registry's ``profile_counts`` contribution stays empty by design, so profile
-# membership ordering lives here and these tables are the registry-built profile
-# assembly.
+# Explicit profile case subsets; profiles not listed select the full catalog.
+# ``smoke`` stays pinned to the historical ICMP/TCP/DNS/TTL/ARP set, and the
+# registry-sourced ``*_PROFILE_CASE_NAMES`` tables preserve observable ordering.
+# The registry's ``profile_counts`` contribution stays empty by design.
 _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     SMOKE_PROFILE: SMOKE_PROFILE_CASE_NAMES,
     BEHAVIOR_PROFILE: BEHAVIOR_PROFILE_CASE_NAMES,

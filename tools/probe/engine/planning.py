@@ -268,6 +268,13 @@ from .protocols.quic import (  # noqa: F401  (re-exported for identity/back-comp
 from .protocols.tls import (  # noqa: F401  (re-exported for identity)
     _tls_probe_plan,
 )
+# The NTP planning surface (the planned-only controlled UDP/123 probe cases'
+# shared ``_ntp_probe_plan`` builder) lives in the NTP plugin module. Re-import
+# it so ``planning._ntp_probe_plan`` resolves to the same function object the
+# plugin registered and the merged ``PLAN_BUILDERS`` exposes.
+from .protocols.ntp import (  # noqa: F401  (re-exported for identity)
+    _ntp_probe_plan,
+)
 
 
 def planned_cases(
