@@ -1,0 +1,287 @@
+version: 1
+kind: feature
+name: ntp_nts
+summary: >-
+  NTS packet extension field coverage for Unique Identifier, Cookie, Cookie
+  Placeholder, and Authenticator/Encrypted Extension Fields as opaque NTP
+  packet data. This feature preserves bytes and packet grammar only; NTS-KE,
+  AEAD encryption, cookie construction, replay state, authentication decisions,
+  and secret material are out of scope.
+
+layers:
+  - udp
+  - ntp
+directions:
+  - backend_to_libcrafter
+  - libcrafter_to_backend
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: unique-identifier
+    summary: NTS Unique Identifier extension preserves opaque body bytes.
+    ntp:
+      extension_fields:
+        - field_type: 0x0104
+          body_hex: "101112131415161718191a1b"
+    checks:
+      - nts_unique_identifier_type_label
+      - body_bytes_preserved
+      - no_replay_cache_decision
+  - name: cookie
+    summary: NTS Cookie extension preserves opaque cookie bytes.
+    ntp:
+      extension_fields:
+        - field_type: 0x0204
+          body_hex: "404142434445464748494a4b"
+    checks:
+      - nts_cookie_type_label
+      - cookie_bytes_not_decrypted
+      - no_cookie_construction
+  - name: cookie-placeholder
+    summary: NTS Cookie Placeholder extension preserves placeholder bytes.
+    ntp:
+      extension_fields:
+        - field_type: 0x0304
+          body_hex: "808182838485868788898a8b"
+    checks:
+      - nts_cookie_placeholder_type_label
+      - placeholder_bytes_preserved
+  - name: authenticator-opaque
+    summary: NTS Authenticator extension with non-splittable body stays raw and inspectable.
+    ntp:
+      extension_fields:
+        - field_type: 0x0404
+          body_hex: "00200010aabbccdde0e1e2e3f0f1f2f355565758595a5b5c"
+    checks:
+      - nts_authenticator_type_label
+      - body_bytes_preserved
+      - parts_absent_for_inconsistent_lengths
+      - no_aead_verification
+  - name: authenticator-parts
+    summary: NTS Authenticator body can split nonce, ciphertext, tag, and padding without crypto.
+    ntp:
+      extension_fields:
+        - field_type: 0x0404
+          nonce_hex: "101112"
+          ciphertext_hex: "2021222324"
+          tag_hex: "303132"
+          additional_padding_hex: "a0a1a2a3a4a5a6a7"
+    checks:
+      - nonce_bytes_preserved
+      - ciphertext_bytes_preserved
+      - tag_bytes_preserved
+      - additional_padding_preserved
+      - no_aead_decrypt_or_verify
+  - name: nts-stack
+    summary: Ordered NTS Unique Identifier, Cookie, Placeholder, and Authenticator fields round-trip together.
+    ntp:
+      extension_fields:
+        - field_type: 0x0104
+          body_hex: "101112131415161718191a1b"
+        - field_type: 0x0204
+          body_hex: "404142434445464748494a4b"
+        - field_type: 0x0304
+          body_hex: "808182838485868788898a8b"
+        - field_type: 0x0404
+          body_hex: "00200010aabbccdde0e1e2e3f0f1f2f355565758595a5b5c"
+    checks:
+      - extension_order_preserved
+      - nts_field_types_preserved
+      - recompile_matches_input
+
+coverage_cases:
+  - ntp-nts-unique-identifier
+  - ntp-nts-cookie
+  - ntp-nts-cookie-placeholder
+  - ntp-nts-authenticator-opaque
+  - ntp-nts-authenticator-parts
+  - ntp-nts-stack
+
+supported_cases:
+  - name: ntp-nts-unique-identifier
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      ntp:
+        extension_fields:
+          - field_type: 0x0104
+            declared_length: 16
+            body_hex: "101112131415161718191a1b"
+    expected:
+      nts_extension: unique_identifier
+      body_hex: "101112131415161718191a1b"
+  - name: ntp-nts-cookie
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      ntp:
+        extension_fields:
+          - field_type: 0x0204
+            declared_length: 16
+            body_hex: "404142434445464748494a4b"
+    expected:
+      nts_extension: cookie
+      body_hex: "404142434445464748494a4b"
+  - name: ntp-nts-cookie-placeholder
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      ntp:
+        extension_fields:
+          - field_type: 0x0304
+            declared_length: 16
+            body_hex: "808182838485868788898a8b"
+    expected:
+      nts_extension: cookie_placeholder
+      body_hex: "808182838485868788898a8b"
+  - name: ntp-nts-authenticator-opaque
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      ntp:
+        extension_fields:
+          - field_type: 0x0404
+            declared_length: 28
+            body_hex: "00200010aabbccdde0e1e2e3f0f1f2f355565758595a5b5c"
+    expected:
+      nts_extension: authenticator
+      parts: null
+      body_hex: "00200010aabbccdde0e1e2e3f0f1f2f355565758595a5b5c"
+  - name: ntp-nts-authenticator-parts
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      ntp:
+        extension_fields:
+          - field_type: 0x0404
+            nonce_hex: "101112"
+            ciphertext_hex: "2021222324"
+            tag_hex: "303132"
+            additional_padding_hex: "a0a1a2a3a4a5a6a7"
+    expected:
+      nonce_hex: "101112"
+      ciphertext_without_tag_hex: "2021222324"
+      tag_hex: "303132"
+      additional_padding_hex: "a0a1a2a3a4a5a6a7"
+      crypto_verified: false
+  - name: ntp-nts-stack
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      ntp:
+        extension_fields:
+          - field_type: 0x0104
+            declared_length: 16
+            body_hex: "101112131415161718191a1b"
+          - field_type: 0x0204
+            declared_length: 16
+            body_hex: "404142434445464748494a4b"
+          - field_type: 0x0304
+            declared_length: 16
+            body_hex: "808182838485868788898a8b"
+          - field_type: 0x0404
+            declared_length: 28
+            body_hex: "00200010aabbccdde0e1e2e3f0f1f2f355565758595a5b5c"
+    expected:
+      extension_count: 4
+      nts_extensions:
+        - unique_identifier
+        - cookie
+        - cookie_placeholder
+        - authenticator
+
+case_groups:
+  - name: ntp-nts-opaque
+    summary: NTS extension bodies that remain opaque packet bytes.
+    byte_policy: strict_bytes
+    cases:
+      - ntp-nts-unique-identifier
+      - ntp-nts-cookie
+      - ntp-nts-cookie-placeholder
+      - ntp-nts-authenticator-opaque
+      - ntp-nts-stack
+  - name: ntp-nts-authenticator-parts
+    summary: Authenticator body splitting that exposes nonce/ciphertext/tag/padding without crypto.
+    byte_policy: strict_bytes
+    cases:
+      - ntp-nts-authenticator-parts
+
+normalized_model:
+  nts_extension:
+    - field_type
+    - declared_length
+    - body_hex
+    - kind
+  authenticator:
+    - nonce_hex
+    - nonce_padding_hex
+    - ciphertext_hex
+    - ciphertext_without_tag_hex
+    - tag_hex
+    - ciphertext_padding_hex
+    - additional_padding_hex
+    - parts_present
+    - crypto_verified
+
+source_refs:
+  - RFC 8915
+  - .agents/docs/ntp-wire-grammar.md
+  - tools/oracle/specs/layers/ntp.yaml
+  - tools/oracle/specs/features/ntp-extensions.yaml
+
+notes:
+  - >-
+    NTS extension fields are packet data. Oracle checks preserve bytes and
+    optional body partitioning only; they must not require NTS-KE, TLS exporter
+    logic, AEAD encryption or decryption, cookie construction, replay-cache
+    behavior, or authentication success/failure.
+  - >-
+    All bodies and tags in this spec are synthetic fixture bytes, not secret
+    material.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - NTP
+      - Raw
+    notes:
+      - A later Scapy backend step will materialize NTS extension fields as
+        deterministic opaque NTP extension bytes.
+  wireshark:
+    status: planned
+    native_layers:
+      - ntp
+      - data
+    decode: true
+    notes:
+      - Wireshark support is parser-only and must not be treated as
+        cryptographic validation.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - libcrafter preserves NTS Unique Identifier, Cookie, Cookie Placeholder,
+        and Authenticator extension bytes and exposes authenticator body parts
+        without performing cryptography.
