@@ -104,9 +104,7 @@ impl Udp {
 
     /// Create an NTP UDP service header.
     pub fn ntp() -> Self {
-        Self::new()
-            .source_port(NTP_PORT)
-            .destination_port(NTP_PORT)
+        Self::new().source_port(NTP_PORT).destination_port(NTP_PORT)
     }
 
     /// Set the source port.
