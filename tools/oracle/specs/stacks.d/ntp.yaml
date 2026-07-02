@@ -1,0 +1,115 @@
+version: 1
+kind: stack_grammar
+name: ntp_stacks
+
+families:
+  - name: ntp
+    default_stack:
+      - ipv4
+      - udp
+      - ntp
+    feature_tags:
+      - ipv4
+      - ipv6
+      - udp
+      - ntp
+
+stacks:
+  - name: ipv4_udp_ntp
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - udp
+      - ntp
+    coverage_cases:
+      - ntp-header-client-request
+      - ntp-header-server-response
+      - ntp-header-kiss-o-death
+      - ntp-header-ntpv3-sntp
+      - ntp-header-raw-timestamps
+      - ntp-header-override-friendly-fields
+      - ntp-extension-unknown-field
+      - ntp-extension-checksum-complement
+      - ntp-extension-with-legacy-mac
+      - ntp-extension-standalone-legacy-mac
+      - ntp-extension-ambiguous-tail
+      - ntp-extension-raw-fallback-boundary
+      - ntp-nts-unique-identifier
+      - ntp-nts-cookie
+      - ntp-nts-cookie-placeholder
+      - ntp-nts-authenticator-opaque
+      - ntp-nts-authenticator-parts
+      - ntp-nts-stack
+      - malformed-ntp-short-extension-header
+      - malformed-ntp-invalid-extension-length
+      - malformed-ntp-truncated-mac-after-extension
+  - name: ipv6_udp_ntp
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - udp
+      - ntp
+    coverage_cases:
+      - ntp-header-client-request
+      - ntp-header-server-response
+      - ntp-header-kiss-o-death
+      - ntp-header-ntpv3-sntp
+      - ntp-header-raw-timestamps
+      - ntp-header-override-friendly-fields
+      - ntp-extension-unknown-field
+      - ntp-extension-checksum-complement
+      - ntp-extension-with-legacy-mac
+      - ntp-extension-standalone-legacy-mac
+      - ntp-extension-ambiguous-tail
+      - ntp-extension-raw-fallback-boundary
+      - ntp-nts-unique-identifier
+      - ntp-nts-cookie
+      - ntp-nts-cookie-placeholder
+      - ntp-nts-authenticator-opaque
+      - ntp-nts-authenticator-parts
+      - ntp-nts-stack
+
+constraints:
+  - name: ntp_udp_children
+    parent: udp
+    children:
+      - ntp
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - IP
+      - IPv6
+      - UDP
+      - NTP
+      - Raw
+    notes:
+      - >-
+        NTP stack materialization is planned as deterministic IPv4 or IPv6 over
+        UDP/123 with NTP or Raw payload bytes after the Scapy backend adapter
+        learns the NTP feature cases.
+  wireshark:
+    status: planned
+    native_layers:
+      - ip
+      - ipv6
+      - udp
+      - ntp
+    notes:
+      - >-
+        Wireshark NTP stack support is parser-only and used for pcap/read-side
+        normalization after fixtures are available.
+  libcrafter:
+    status: supported
+    native_layers:
+      - Ipv4
+      - Ipv6
+      - Udp
+      - Ntp
+      - Raw
+    notes:
+      - >-
+        The crate builds, decodes, inspects, and round-trips IPv4 and IPv6
+        UDP/123 NTP packet stacks offline while preserving conservative Raw
+        fallback and structured malformed-tail coverage.
