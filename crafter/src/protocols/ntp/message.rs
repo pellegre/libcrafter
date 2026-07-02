@@ -1539,6 +1539,82 @@ mod tests {
     }
 
     #[test]
+    fn ntp_standalone_decode_parses_extension_and_mac_tail() -> Result<()> {
+        let extension = NtpExtensionField::nts_cookie([0xaa, 0xbb]);
+        let mut decoded_extension_value = vec![0xaa, 0xbb];
+        decoded_extension_value.resize(
+            NTP_EXTENSION_FIELD_MIN_LEN - NTP_EXTENSION_FIELD_HEADER_LEN,
+            0,
+        );
+        let decoded_extension = NtpExtensionField::nts_cookie(decoded_extension_value)
+            .declared_length(NTP_EXTENSION_FIELD_MIN_LEN as u16);
+        let legacy_mac = NtpLegacyMac::from_key_id_and_digest(0x0102_0304, [0xcc; 16]);
+        let bytes = Packet::from_layer(
+            Ntp::server()
+                .poll(6)
+                .precision(-20)
+                .root_delay_raw(0x0001_8000)
+                .root_dispersion_raw(0x0002_4000)
+                .reference_id(NtpReferenceId::from_bytes(*b"GPS\0"))
+                .reference_timestamp(0x0102_0304_0506_0708u64)
+                .origin_timestamp(0x1112_1314_1516_1718u64)
+                .receive_timestamp(0x2122_2324_2526_2728u64)
+                .transmit_timestamp(0x3132_3334_3536_3738u64)
+                .extension_field(extension.clone())
+                .legacy_mac(legacy_mac.clone()),
+        )
+        .compile()?
+        .into_bytes();
+
+        let ntp = Ntp::decode(&bytes)?;
+
+        assert_eq!(ntp.mode_value(), NtpMode::Server);
+        assert_eq!(
+            ntp.stratum_value(),
+            NtpStratum::from_wire(NTP_STRATUM_PRIMARY)
+        );
+        assert_eq!(ntp.poll_value(), 6);
+        assert_eq!(ntp.precision_value(), -20);
+        assert_eq!(ntp.root_delay_value().raw(), 0x0001_8000);
+        assert_eq!(ntp.root_dispersion_value().raw(), 0x0002_4000);
+        assert_eq!(ntp.reference_id_value().bytes(), *b"GPS\0");
+        assert_eq!(ntp.reference_timestamp_value().raw(), 0x0102_0304_0506_0708);
+        assert_eq!(ntp.origin_timestamp_value().raw(), 0x1112_1314_1516_1718);
+        assert_eq!(ntp.receive_timestamp_value().raw(), 0x2122_2324_2526_2728);
+        assert_eq!(ntp.transmit_timestamp_value().raw(), 0x3132_3334_3536_3738);
+        assert_eq!(ntp.extension_fields_value(), &[decoded_extension]);
+        assert_eq!(ntp.legacy_mac_value(), Some(&legacy_mac));
+        assert_eq!(decode_ntp_payload(&bytes)?, ntp);
+        assert_eq!(crate::protocols::ntp::decode_ntp(&bytes)?, ntp);
+
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_standalone_decode_reports_structured_errors() {
+        match Ntp::decode(&[0u8; NTP_FIXED_HEADER_LEN - 1]).unwrap_err() {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, NTP_HEADER_CONTEXT);
+                assert_eq!(required, NTP_FIXED_HEADER_LEN);
+                assert_eq!(available, NTP_FIXED_HEADER_LEN - 1);
+            }
+            other => panic!("unexpected fixed header error: {other:?}"),
+        }
+
+        let short_known_extension = ntp_parse_error_with_tail(&[0x01, 0x04, 0x00, 0x0c]);
+        match Ntp::decode(&short_known_extension).unwrap_err() {
+            CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(field, NTP_EXTENSION_LENGTH_CONTEXT);
+            }
+            other => panic!("unexpected extension length error: {other:?}"),
+        }
+    }
+
+    #[test]
     fn ntp_leap_indicator_values_and_labels_match_source_backed_codepoints() {
         let cases = [
             (
