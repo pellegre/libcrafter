@@ -1100,7 +1100,7 @@ impl Layer for Ntp {
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
         let stratum = self.stratum_value();
         let reference_id = self.reference_id_value();
-        vec![
+        let mut fields = vec![
             ("first_octet", format!("0x{:02x}", self.first_octet_value())),
             ("leap_indicator", self.leap_indicator_value().label()),
             ("version", self.version_value_effective().label()),
@@ -1137,6 +1137,7 @@ impl Layer for Ntp {
                 format!("0x{:016x}", self.transmit_timestamp_value().raw()),
             ),
             ("extensions", self.extension_fields.len().to_string()),
+            ("extension_count", self.extension_fields.len().to_string()),
             (
                 "legacy_mac_len",
                 self.legacy_mac
@@ -1144,7 +1145,22 @@ impl Layer for Ntp {
                     .map_or(0, NtpLegacyMac::len)
                     .to_string(),
             ),
-        ]
+            (
+                "mac_status",
+                ntp_legacy_mac_status(self.legacy_mac.as_ref()),
+            ),
+        ];
+
+        for (index, extension) in self.extension_fields.iter().enumerate() {
+            let last_without_mac =
+                index + 1 == self.extension_fields.len() && self.legacy_mac.is_none();
+            fields.push((
+                "extension",
+                ntp_extension_inspection(extension, last_without_mac),
+            ));
+        }
+
+        fields
     }
 
     fn encoded_len(&self) -> usize {
@@ -1266,6 +1282,35 @@ fn ntp_tail_status(extension_count: usize, has_legacy_mac: bool) -> &'static str
         (false, false) => "extensions",
         (true, true) => "legacy-mac",
         (false, true) => "extensions+legacy-mac",
+    }
+}
+
+fn ntp_extension_inspection(extension: &NtpExtensionField, last_without_mac: bool) -> String {
+    let meta = extension.registry_meta();
+    let declared_len = extension
+        .declared_length_value()
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "auto".to_string());
+
+    format!(
+        "type=0x{:04x} label={} status={} declared_len={} encoded_len={} value_len={}",
+        extension.field_type(),
+        meta.label,
+        meta.status.label(),
+        declared_len,
+        extension.encoded_len(last_without_mac),
+        extension.value().len()
+    )
+}
+
+fn ntp_legacy_mac_status(mac: Option<&NtpLegacyMac>) -> String {
+    match mac {
+        Some(mac) => format!(
+            "legacy-mac digest_len={} total_len={}",
+            mac.digest().len(),
+            mac.len()
+        ),
+        None => "none".to_string(),
     }
 }
 
@@ -1764,6 +1809,91 @@ mod tests {
         assert!(!summary.contains("1337"), "{summary}");
         assert!(!summary.contains("0x01020304"), "{summary}");
         assert!(!summary.contains("cccc"), "{summary}");
+    }
+
+    #[test]
+    fn ntp_show_fields_include_fixed_header_extension_labels_and_mac_status() {
+        let ntp = Ntp::server()
+            .leap_indicator(NtpLeapIndicator::AlarmUnsynchronized)
+            .version_value(3)
+            .poll(6)
+            .precision(-20)
+            .root_delay_raw(0x0001_8000)
+            .root_dispersion_raw(0x0002_4000)
+            .reference_id(NtpReferenceId::from_bytes(*b"GPS\0"))
+            .reference_timestamp(0xa1a2_a3a4_a5a6_a7a8u64)
+            .origin_timestamp(0xb1b2_b3b4_b5b6_b7b8u64)
+            .receive_timestamp(0xc1c2_c3c4_c5c6_c7c8u64)
+            .transmit_timestamp(0xd1d2_d3d4_d5d6_d7d8u64)
+            .extension_field(NtpExtensionField::nts_cookie([
+                0xde, 0xad, 0xbe, 0xef, 0x13, 0x37,
+            ]))
+            .extension_field(NtpExtensionField::udp_checksum_complement([0xaa, 0xbb]))
+            .legacy_mac(NtpLegacyMac::from_key_id_and_digest(
+                0x0102_0304,
+                [0xcc; 16],
+            ));
+
+        let show = Packet::from_layer(ntp).show();
+
+        assert!(
+            show.contains("leap_indicator: alarm-unsynchronized"),
+            "{show}"
+        );
+        assert!(show.contains("version: ntp-v3"), "{show}");
+        assert!(show.contains("mode: server"), "{show}");
+        assert!(show.contains("stratum: 1 (primary)"), "{show}");
+        assert!(show.contains("poll: 6"), "{show}");
+        assert!(show.contains("precision: -20"), "{show}");
+        assert!(show.contains("root_delay: 0x00018000"), "{show}");
+        assert!(show.contains("root_dispersion: 0x00024000"), "{show}");
+        assert!(
+            show.contains("reference_id: Global Position System"),
+            "{show}"
+        );
+        assert!(
+            show.contains("reference_timestamp: 0xa1a2a3a4a5a6a7a8"),
+            "{show}"
+        );
+        assert!(
+            show.contains("origin_timestamp: 0xb1b2b3b4b5b6b7b8"),
+            "{show}"
+        );
+        assert!(
+            show.contains("receive_timestamp: 0xc1c2c3c4c5c6c7c8"),
+            "{show}"
+        );
+        assert!(
+            show.contains("transmit_timestamp: 0xd1d2d3d4d5d6d7d8"),
+            "{show}"
+        );
+        assert!(show.contains("extension_count: 2"), "{show}");
+        assert!(
+            show.contains("extension: type=0x0204 label=Autokey Message Request / NTS Cookie status=assigned declared_len=auto encoded_len=16 value_len=6"),
+            "{show}"
+        );
+        assert!(
+            show.contains("extension: type=0x2005 label=UDP Checksum Complement status=assigned declared_len=auto encoded_len=16 value_len=2"),
+            "{show}"
+        );
+        assert!(
+            show.contains("mac_status: legacy-mac digest_len=16 total_len=20"),
+            "{show}"
+        );
+        assert!(!show.contains("deadbeef"), "{show}");
+        assert!(!show.contains("1337"), "{show}");
+        assert!(!show.contains("cccc"), "{show}");
+        assert!(!show.contains("0x01020304"), "{show}");
+    }
+
+    #[test]
+    fn ntp_show_fields_report_empty_tail_without_opaque_bytes() {
+        let show = Packet::from_layer(Ntp::client()).show();
+
+        assert!(show.contains("extension_count: 0"), "{show}");
+        assert!(show.contains("legacy_mac_len: 0"), "{show}");
+        assert!(show.contains("mac_status: none"), "{show}");
+        assert!(!show.contains("extension: type="), "{show}");
     }
 
     #[test]
