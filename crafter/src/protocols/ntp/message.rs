@@ -12,7 +12,8 @@ use core::ops::Div;
 use super::constants::*;
 use super::registry::{
     ntp_extension_field_type_meta, ntp_kiss_o_death_code_meta, ntp_leap_indicator_meta,
-    ntp_mode_meta, ntp_reference_id_meta, ntp_stratum_meta, NtpRegistryMeta, NtpRegistryStatus,
+    ntp_mode_meta, ntp_reference_code_ascii_label, ntp_reference_id_meta, ntp_stratum_meta,
+    NtpRegistryMeta, NtpRegistryStatus,
 };
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
@@ -406,13 +407,13 @@ impl NtpReferenceId {
         if stratum.is_primary() {
             return ntp_reference_id_meta(self.bytes()).label;
         }
-        if stratum.is_secondary() {
-            return format!(
-                "ipv4-{}.{}.{}.{}",
-                self.0[0], self.0[1], self.0[2], self.0[3]
-            );
-        }
         format!("refid-0x{:08X}", u32::from_be_bytes(self.0))
+    }
+
+    /// ASCII registry code when the raw bytes are uppercase alphanumeric and
+    /// right-padded with NUL bytes.
+    pub fn ascii_label(self) -> Option<String> {
+        ntp_reference_code_ascii_label(self.bytes())
     }
 
     /// ASCII view when all bytes are printable ASCII or NUL padding.
@@ -1547,5 +1548,84 @@ mod tests {
         assert_eq!(caller_mode.label(), "mode-42");
         assert_eq!(caller_mode.summary_label(), "mode-42");
         assert!(!caller_mode.to_string().chars().any(char::is_whitespace));
+    }
+
+    #[test]
+    fn ntp_stratum_refid_strata_are_classified_without_rejecting_values() {
+        let unspecified = NtpStratum::from_wire(0);
+        assert_eq!(unspecified.value(), 0);
+        assert_eq!(unspecified.wire_value(), 0);
+        assert!(unspecified.is_unspecified_or_kod());
+        assert!(!unspecified.is_primary());
+        assert_eq!(unspecified.label(), "unspecified-or-invalid");
+
+        let primary = NtpStratum::from_wire(1);
+        assert!(primary.is_primary());
+        assert_eq!(primary.label(), "primary");
+
+        let secondary = NtpStratum::from_wire(15);
+        assert!(secondary.is_secondary());
+        assert_eq!(secondary.label(), "secondary");
+
+        let unsynchronized = NtpStratum::from_wire(16);
+        assert!(unsynchronized.is_unsynchronized());
+        assert_eq!(unsynchronized.label(), "unsynchronized");
+
+        let reserved = NtpStratum::from_wire(42);
+        assert_eq!(reserved.value(), 42);
+        assert_eq!(reserved.label(), "reserved");
+        assert_eq!(reserved.registry_meta().status, NtpRegistryStatus::Reserved);
+        assert_eq!(u8::from(reserved), 42);
+        assert_eq!(reserved.to_string(), "reserved");
+    }
+
+    #[test]
+    fn ntp_stratum_refid_reference_ids_preserve_bytes_and_expose_valid_ascii() {
+        let rate = NtpReferenceId::from_bytes(*b"RATE");
+        assert_eq!(rate.bytes(), *b"RATE");
+        assert_eq!(rate.ascii_label().as_deref(), Some("RATE"));
+        assert_eq!(
+            rate.label_for_stratum(NtpStratum::from_wire(0)),
+            "Rate exceeded"
+        );
+
+        let gps = NtpReferenceId::from_bytes([b'G', b'P', b'S', 0]);
+        assert_eq!(gps.bytes(), [b'G', b'P', b'S', 0]);
+        assert_eq!(gps.ascii_label().as_deref(), Some("GPS"));
+        assert_eq!(
+            gps.label_for_stratum(NtpStratum::from_wire(1)),
+            "Global Position System"
+        );
+
+        let private = NtpReferenceId::from_bytes(*b"XLAB");
+        assert_eq!(private.ascii_label().as_deref(), Some("XLAB"));
+        assert_eq!(
+            private.label_for_stratum(NtpStratum::from_wire(1)),
+            "refid-0x584C4142 (private-or-experimental)"
+        );
+
+        let secondary = NtpReferenceId::from_bytes([192, 0, 2, 44]);
+        assert_eq!(secondary.bytes(), [192, 0, 2, 44]);
+        assert_eq!(secondary.ascii_label(), None);
+        assert_eq!(
+            secondary.label_for_stratum(NtpStratum::from_wire(2)),
+            "refid-0xC000022C"
+        );
+
+        let invalid_padding = NtpReferenceId::from_bytes([b'G', 0, b'P', 0]);
+        assert_eq!(invalid_padding.bytes(), [b'G', 0, b'P', 0]);
+        assert_eq!(invalid_padding.ascii_label(), None);
+        assert_eq!(
+            invalid_padding.label_for_stratum(NtpStratum::from_wire(1)),
+            "refid-0x47005000"
+        );
+
+        let non_ascii = NtpReferenceId::from_bytes([0x80, 0, 0, 1]);
+        assert_eq!(non_ascii.bytes(), [0x80, 0, 0, 1]);
+        assert_eq!(non_ascii.ascii_label(), None);
+        assert_eq!(
+            non_ascii.label_for_stratum(NtpStratum::from_wire(1)),
+            "refid-0x80000001"
+        );
     }
 }
