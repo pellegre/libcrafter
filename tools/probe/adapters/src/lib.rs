@@ -9,8 +9,8 @@
 //! contracts, dry-run/live dispatch, response and artifact helpers) and one
 //! module per protocol family: [`icmp`], [`tcp`], [`dns`], [`udp`], [`dhcpv4`],
 //! [`dhcpv6`], [`arp`], [`ndp`] (IPv6 Neighbor Discovery), [`rip`] (Routing Information
-//! Protocol), [`igmp`], [`mqtt`], [`quic`], [`tls`], [`snmp`], [`ssdp`], and [`mdns`].
-//! The binary is a thin wrapper that calls [`common::run`].
+//! Protocol), [`igmp`], [`mqtt`], [`quic`], [`tls`], [`snmp`], [`ssdp`], [`ntp`],
+//! and [`mdns`]. The binary is a thin wrapper that calls [`common::run`].
 
 // The `plan_json` builder serializes the full probe-plan contract through a
 // single `json!` literal; the field count pushes the macro past serde_json's
@@ -27,6 +27,7 @@ pub mod igmp;
 pub mod mdns;
 pub mod mqtt;
 pub mod ndp;
+pub mod ntp;
 pub mod ospf;
 pub mod quic;
 pub mod rip;
