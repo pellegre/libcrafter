@@ -202,6 +202,7 @@ DHCPV6_ADVANCED_PROFILE = "dhcpv6-advanced"
 SSDP_SMOKE_PROFILE = "ssdp-smoke"
 MDNS_SMOKE_PROFILE = "mdns-smoke"
 TLS_SMOKE_PROFILE = "tls-smoke"
+NTP_SMOKE_PROFILE = "ntp-smoke"
 
 # Legacy default count used by the smoke profile and any profile without an
 # explicit default; preserves the pre-behavior-suite CLI behavior.
@@ -453,6 +454,9 @@ DHCPV6_ADVANCED_PROFILE_CASE_NAMES: tuple[str, ...] = (
 SSDP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "ssdp")
 MDNS_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "mdns")
 TLS_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "tls")
+NTP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name for case in _registry_cases() if case.metadata.get("protocol") == "ntp"
+)
 
 # Profiles that select an explicit ordered case subset. A profile not listed
 # here selects the full catalog. ``smoke`` is pinned to the historical
@@ -481,6 +485,7 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     SSDP_SMOKE_PROFILE: SSDP_SMOKE_PROFILE_CASE_NAMES,
     MDNS_SMOKE_PROFILE: MDNS_SMOKE_PROFILE_CASE_NAMES,
     TLS_SMOKE_PROFILE: TLS_SMOKE_PROFILE_CASE_NAMES,
+    NTP_SMOKE_PROFILE: NTP_SMOKE_PROFILE_CASE_NAMES,
 }
 
 # Per-profile default counts used when no explicit ``--count`` is supplied. The
@@ -502,6 +507,7 @@ _PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     SSDP_SMOKE_PROFILE: len(SSDP_SMOKE_PROFILE_CASE_NAMES),
     MDNS_SMOKE_PROFILE: len(MDNS_SMOKE_PROFILE_CASE_NAMES),
     TLS_SMOKE_PROFILE: len(TLS_SMOKE_PROFILE_CASE_NAMES),
+    NTP_SMOKE_PROFILE: len(NTP_SMOKE_PROFILE_CASE_NAMES),
 }
 
 

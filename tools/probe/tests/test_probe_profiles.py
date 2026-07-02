@@ -38,6 +38,7 @@ _DHCPV6_RELAY_CASE_COUNT = len(cases.DHCPV6_RELAY_PROFILE_CASE_NAMES)
 _DHCPV6_SMOKE_CASE_COUNT = len(cases.DHCPV6_SMOKE_PROFILE_CASE_NAMES)
 _MDNS_SMOKE_CASE_COUNT = len(cases.MDNS_SMOKE_PROFILE_CASE_NAMES)
 _MQTT_SMOKE_CASE_COUNT = len(cases.MQTT_SMOKE_PROFILE_CASE_NAMES)
+_NTP_SMOKE_CASE_COUNT = len(cases.NTP_SMOKE_PROFILE_CASE_NAMES)
 _OSPF_SMOKE_CASE_COUNT = len(cases.OSPF_SMOKE_PROFILE_CASE_NAMES)
 _QUIC_SMOKE_CASE_COUNT = len(cases.QUIC_SMOKE_PROFILE_CASE_NAMES)
 _SNMP_CASE_COUNT = len(cases.SNMP_SMOKE_PROFILE_CASE_NAMES)
@@ -146,6 +147,7 @@ class ProbeProfileMembershipTest(unittest.TestCase):
                 "ipsec",
                 "mdns-smoke",
                 "mqtt-smoke",
+                "ntp-smoke",
                 "ospf-smoke",
                 "quic-smoke",
                 "rip-smoke",
@@ -466,6 +468,13 @@ class ProbeProfileDefaultCountTest(unittest.TestCase):
         self.assertEqual(
             cases.profile_default_count("snmp-smoke"),
             len(cases.SNMP_SMOKE_PROFILE_CASE_NAMES),
+        )
+
+    def test_ntp_smoke_profile_default_count_is_full_suite(self) -> None:
+        self.assertEqual(cases.profile_default_count("ntp-smoke"), _NTP_SMOKE_CASE_COUNT)
+        self.assertEqual(
+            cases.profile_default_count("ntp-smoke"),
+            len(cases.NTP_SMOKE_PROFILE_CASE_NAMES),
         )
 
     def test_unknown_profile_default_count_is_legacy_five(self) -> None:
