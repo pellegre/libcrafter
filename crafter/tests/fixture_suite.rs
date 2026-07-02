@@ -16,28 +16,29 @@ use crafter::core::{
     Ipv4ChecksumStatus, Ipv4Option, Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader,
     Ipv6FragmentHeaderStatus, Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader,
     Ipv6MobileRoutingHeaderStatus, Ipv6Option, Ipv6RoutingHeader, Ipv6RoutingTypeStatus,
-    Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll, LlcSnap, MacAddr, NetworkLayer,
-    NullByteOrder, NullLoopback, OptionOverload, OspfChecksumStatus, Ospfv2, Ospfv3, Packet, Quic,
-    QuicFrame, QuicPacket, QuicTransportParameter, QuicUnknownFrame, QuicVarInt, Radiotap, Raw,
-    Rip, Ripng, Snmp, Tcp, TcpOption, TcpSackBlock, Tls, TlsAlert, TlsContentType, TlsRecord, Udp,
-    UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions, Vlan, ARP_HRD_INFINIBAND,
-    BOOTP_REQUEST, DHCPV4_CLIENT_PORT, DHCPV4_SERVER_PORT, DNS_CLASS_IN,
-    DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
-    DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_SVCB_KEY_ALPN,
-    DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A, DNS_TYPE_AAAA,
-    DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NS, DNS_TYPE_NSEC,
-    DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_PTR, DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV,
-    DNS_TYPE_SVCB, DNS_TYPE_TXT, ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_IPV6,
-    ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE,
-    ICMP_ECHO_REQUEST, IGMP_FIXED_HEADER_LEN, IGMP_QUERY_CODE_V1, IGMP_TYPE_UNASSIGNED_FIRST,
-    IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IGMP, IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1,
-    IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_ROUTE, IPPROTO_TCP, IPPROTO_UDP,
-    IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED,
-    IPV6_ROUTING_TYPE_MOBILE, IPV6_ROUTING_TYPE_SEGMENT, MDNS_CLASS_BIT, MDNS_GOODBYE_TTL,
-    MDNS_IPV4_ETHERNET_MULTICAST, MDNS_IPV4_MULTICAST, MDNS_IPV6_ETHERNET_MULTICAST,
-    MDNS_IPV6_LINK_LOCAL_MULTICAST, MDNS_PORT, QUIC_VERSION_1, QUIC_VERSION_2, SNMP_PORT,
-    TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, TLS_PORT_HTTPS, UDP_HEADER_LEN, UDP_OPTION_EOL,
-    UDP_OPTION_NOP,
+    Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll, LlcSnap, MacAddr, NetworkLayer, Ntp,
+    NtpMode, NtpTimestamp, NtpVersion, NullByteOrder, NullLoopback, OptionOverload,
+    OspfChecksumStatus, Ospfv2, Ospfv3, Packet, Quic, QuicFrame, QuicPacket,
+    QuicTransportParameter, QuicUnknownFrame, QuicVarInt, Radiotap, Raw, Rip, Ripng, Snmp, Tcp,
+    TcpOption, TcpSackBlock, Tls, TlsAlert, TlsContentType, TlsRecord, Udp, UdpChecksumStatus,
+    UdpOption, UdpOptionStatus, UdpOptions, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST,
+    DHCPV4_CLIENT_PORT, DHCPV4_SERVER_PORT, DNS_CLASS_IN, DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE,
+    DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE,
+    DNS_FLAG_RECURSION_DESIRED, DNS_SVCB_KEY_ALPN, DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT,
+    DNS_SVCB_KEY_PORT, DNS_TYPE_A, DNS_TYPE_AAAA, DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS,
+    DNS_TYPE_HTTPS, DNS_TYPE_NS, DNS_TYPE_NSEC, DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_PTR,
+    DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB, DNS_TYPE_TXT, ETHERTYPE_ARP,
+    ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST,
+    ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IGMP_FIXED_HEADER_LEN,
+    IGMP_QUERY_CODE_V1, IGMP_TYPE_UNASSIGNED_FIRST, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IGMP,
+    IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS,
+    IPPROTO_IPV6_ROUTE, IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT,
+    IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED, IPV6_ROUTING_TYPE_MOBILE,
+    IPV6_ROUTING_TYPE_SEGMENT, MDNS_CLASS_BIT, MDNS_GOODBYE_TTL, MDNS_IPV4_ETHERNET_MULTICAST,
+    MDNS_IPV4_MULTICAST, MDNS_IPV6_ETHERNET_MULTICAST, MDNS_IPV6_LINK_LOCAL_MULTICAST, MDNS_PORT,
+    NTP_EXTENSION_FIELD_HEADER_LEN, NTP_FIXED_HEADER_LEN, NTP_PORT, QUIC_VERSION_1, QUIC_VERSION_2,
+    SNMP_PORT, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, TLS_PORT_HTTPS, UDP_HEADER_LEN,
+    UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
 use crafter::protocols::dhcp::{
     Dhcpv6, Dhcpv6IaAddr, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6Option, Dhcpv6StatusCode,
@@ -113,6 +114,7 @@ enum ExpectedLayer {
     Tls,
     Udp,
     UdpOptions,
+    Ntp,
     Snmp,
     Bgp,
     Rip,
@@ -2359,6 +2361,34 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
         }],
     },
     PcapFixtureCase {
+        name: "raw-ipv4-udp-ntp-client",
+        path: "pcaps/raw-ipv4-udp-ntp-client.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv4-udp-ntp-client.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv4,
+        records: &[PcapFixtureRecord {
+            seconds: 65,
+            fractional: 123,
+            fixture_name: NTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME,
+        }],
+    },
+    PcapFixtureCase {
+        name: "ethernet-ipv4-udp-ntp-client",
+        path: "pcaps/ethernet-ipv4-udp-ntp-client.pcap",
+        contents: fixture_bytes!("pcaps/ethernet-ipv4-udp-ntp-client.pcap"),
+        pcap_link_type: PcapLinkType::Ethernet,
+        link_type: LinkType::Ethernet,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::Ethernet,
+        records: &[PcapFixtureRecord {
+            seconds: 65,
+            fractional: 124,
+            fixture_name: NTP_PCAP_ETHERNET_RECORD_FIXTURE_NAME,
+        }],
+    },
+    PcapFixtureCase {
         name: "raw-ipv4-udp-mdns-query",
         path: "pcaps/raw-ipv4-udp-mdns-query.pcap",
         contents: fixture_bytes!("pcaps/raw-ipv4-udp-mdns-query.pcap"),
@@ -3705,6 +3735,9 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             ExpectedLayer::UdpOptions => {
                 let _ = expect_layer::<UdpOptions>(case, packet);
             }
+            ExpectedLayer::Ntp => {
+                let _ = expect_layer::<Ntp>(case, packet);
+            }
             ExpectedLayer::Snmp => {
                 let _ = expect_layer::<Snmp>(case, packet);
             }
@@ -3812,6 +3845,7 @@ fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
         ExpectedLayer::Tls => "TLS",
         ExpectedLayer::Udp => "Udp",
         ExpectedLayer::UdpOptions => "UdpOptions",
+        ExpectedLayer::Ntp => "Ntp",
         ExpectedLayer::Snmp => "Snmp",
         ExpectedLayer::Bgp => "BGP",
         ExpectedLayer::Rip => "Rip",
@@ -9553,6 +9587,134 @@ fn snmp_fixture_suite_pcap_decodes_records() {
 }
 
 #[test]
+fn fixture_suite_ntp_pcap_fixtures_decode_and_roundtrip() {
+    for case_name in ["raw-ipv4-udp-ntp-client", "ethernet-ipv4-udp-ntp-client"] {
+        let case = pcap_fixture_case(case_name);
+        let expected_pcap = ntp_pcap_expected_bytes(case_name);
+        assert_eq!(case.records.len(), 1);
+        assert_eq!(case.contents, expected_pcap.as_slice());
+
+        let expected = case.records[0];
+        let expected_record_bytes = pcap_record_expected_bytes(expected.fixture_name);
+        let expected_timestamp = ntp_pcap_timestamp(expected.fixture_name);
+
+        let reader = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| panic!("pcap fixture {} should parse: {err}", case.path));
+        assert_eq!(reader.pcap_link_type(), case.pcap_link_type);
+        assert_eq!(reader.link_type(), case.link_type);
+        assert_eq!(reader.header().precision(), case.timestamp_precision);
+
+        let records = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} should parse header for records: {err}",
+                    case.path
+                )
+            })
+            .collect_records()
+            .unwrap_or_else(|err| panic!("pcap fixture {} should read records: {err}", case.path));
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.timestamp(), expected_timestamp);
+        assert_eq!(record.pcap_link_type(), case.pcap_link_type);
+        assert_eq!(record.link_type(), case.link_type);
+        assert_eq!(record.captured_len(), expected_record_bytes.len() as u32);
+        assert_eq!(record.original_len(), expected_record_bytes.len() as u32);
+        assert_eq!(record.data(), expected_record_bytes.as_slice());
+
+        let packets = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} should parse header for packets: {err}",
+                    case.path
+                )
+            })
+            .collect_packets()
+            .unwrap_or_else(|err| {
+                panic!("pcap fixture {} should decode packets: {err}", case.path)
+            });
+        assert_eq!(packets.len(), 1);
+        let packet = &packets[0];
+        assert_eq!(packet.timestamp(), expected_timestamp);
+        assert_eq!(packet.original_len(), expected_record_bytes.len() as u32);
+        assert_eq!(packet.pcap_link_type(), case.pcap_link_type);
+        assert_eq!(packet.link_type(), case.link_type);
+        assert_eq!(packet.data(), expected_record_bytes.as_slice());
+        assert_ntp_pcap_packet_surface(expected.fixture_name, packet.packet());
+
+        let mut rewritten_packet = Vec::new();
+        {
+            let options =
+                PcapWriterOptions::new(case.pcap_link_type).precision(case.timestamp_precision);
+            let mut writer = PcapWriter::from_writer_with_options(&mut rewritten_packet, options)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "pcap fixture {} packet writer should initialize: {err}",
+                        case.path
+                    )
+                });
+            writer
+                .write_packet_with_timestamp(packet.packet(), expected_timestamp)
+                .unwrap_or_else(|err| {
+                    panic!("pcap fixture {} packet should write: {err}", case.path)
+                });
+            writer.flush().unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} packet writer should flush: {err}",
+                    case.path
+                )
+            });
+        }
+        assert_eq!(rewritten_packet, case.contents);
+
+        let mut rewritten_record = Vec::new();
+        {
+            let options =
+                PcapWriterOptions::new(case.pcap_link_type).precision(case.timestamp_precision);
+            let mut writer = PcapWriter::from_writer_with_options(&mut rewritten_record, options)
+                .unwrap_or_else(|err| {
+                    panic!("pcap fixture {} writer should initialize: {err}", case.path)
+                });
+            writer.write_record(record).unwrap_or_else(|err| {
+                panic!("pcap fixture {} record should write: {err}", case.path)
+            });
+            writer.flush().unwrap_or_else(|err| {
+                panic!("pcap fixture {} writer should flush: {err}", case.path)
+            });
+        }
+        assert_eq!(rewritten_record, case.contents);
+    }
+}
+
+#[test]
+fn fixture_suite_ntp_malformed_fixture_reports_structured_error() {
+    let path = "malformed/ntp-extension-short.hex";
+    ensure_fixture_exists(path);
+    let bytes = decode_hex(
+        "ntp-extension-short",
+        fixture_str!("malformed/ntp-extension-short.hex"),
+    );
+    assert_eq!(bytes.len(), NTP_FIXED_HEADER_LEN + 3);
+
+    match Ntp::decode(&bytes) {
+        Err(CrafterError::BufferTooShort {
+            context,
+            required,
+            available,
+        }) => {
+            assert_eq!(context, "ntp.extension");
+            assert_eq!(required, NTP_EXTENSION_FIELD_HEADER_LEN);
+            assert_eq!(available, 3);
+        }
+        Ok(packet) => panic!(
+            "NTP malformed fixture decoded unexpectedly as {}",
+            packet.summary()
+        ),
+        Err(other) => panic!("NTP malformed fixture expected BufferTooShort, got {other:?}"),
+    }
+}
+
+#[test]
 fn dhcpv6_pcap_fixtures_decode_records() {
     for name in [
         "ipv6-udp-dhcpv6-solicit",
@@ -9642,6 +9804,16 @@ const QUIC_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME: &str = "quic-pcap-raw-ipv6-record"
 const QUIC_PCAP_ETHERNET_RECORD_FIXTURE_NAME: &str = "quic-pcap-ethernet-record";
 const MDNS_PCAP_ETHERNET_IPV4_RECORD_FIXTURE_NAME: &str = "mdns-pcap-ethernet-ipv4-record";
 const MDNS_PCAP_ETHERNET_IPV6_RECORD_FIXTURE_NAME: &str = "mdns-pcap-ethernet-ipv6-record";
+const NTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME: &str = "ntp-pcap-raw-ipv4-record";
+const NTP_PCAP_ETHERNET_RECORD_FIXTURE_NAME: &str = "ntp-pcap-ethernet-record";
+const NTP_RAW_IPV4_EXPECTED_LAYERS: &[ExpectedLayer] =
+    &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Ntp];
+const NTP_ETHERNET_EXPECTED_LAYERS: &[ExpectedLayer] = &[
+    ExpectedLayer::Ethernet,
+    ExpectedLayer::Ipv4,
+    ExpectedLayer::Udp,
+    ExpectedLayer::Ntp,
+];
 
 fn pcap_record_expected_bytes(fixture_name: &str) -> Vec<u8> {
     match fixture_name {
@@ -9653,6 +9825,8 @@ fn pcap_record_expected_bytes(fixture_name: &str) -> Vec<u8> {
         QUIC_PCAP_ETHERNET_RECORD_FIXTURE_NAME => quic_pcap_ethernet_record_bytes(),
         MDNS_PCAP_ETHERNET_IPV4_RECORD_FIXTURE_NAME => mdns_pcap_ethernet_ipv4_record_bytes(),
         MDNS_PCAP_ETHERNET_IPV6_RECORD_FIXTURE_NAME => mdns_pcap_ethernet_ipv6_record_bytes(),
+        NTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME => ntp_pcap_raw_ipv4_record_bytes(),
+        NTP_PCAP_ETHERNET_RECORD_FIXTURE_NAME => ntp_pcap_ethernet_record_bytes(),
         _ => fixture_bytes_for_case(valid_fixture_case(fixture_name)),
     }
 }
@@ -9666,8 +9840,171 @@ fn pcap_record_valid_fixture(fixture_name: &str) -> Option<&'static ValidFixture
         | QUIC_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME
         | QUIC_PCAP_ETHERNET_RECORD_FIXTURE_NAME
         | MDNS_PCAP_ETHERNET_IPV4_RECORD_FIXTURE_NAME
-        | MDNS_PCAP_ETHERNET_IPV6_RECORD_FIXTURE_NAME => None,
+        | MDNS_PCAP_ETHERNET_IPV6_RECORD_FIXTURE_NAME
+        | NTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME
+        | NTP_PCAP_ETHERNET_RECORD_FIXTURE_NAME => None,
         _ => Some(valid_fixture_case(fixture_name)),
+    }
+}
+
+fn ntp_pcap_client_mac() -> MacAddr {
+    MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x7b, 0x01])
+}
+
+fn ntp_pcap_server_mac() -> MacAddr {
+    MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x7b, 0x02])
+}
+
+fn ntp_pcap_raw_ipv4_packet() -> Packet {
+    Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 123))
+        .id(0x4e54)
+        .ttl(64)
+        / Udp::ntp().sport(49_152)
+        / Ntp::client()
+            .poll(6)
+            .precision(-20)
+            .reference_id(*b"LOCL")
+            .transmit_timestamp(NtpTimestamp::from_parts(0xecc0_0000, 0x1234_5678))
+}
+
+fn ntp_pcap_ethernet_packet() -> Packet {
+    Ethernet::with_addresses(ntp_pcap_client_mac(), ntp_pcap_server_mac())
+        / ntp_pcap_raw_ipv4_packet()
+}
+
+fn ntp_pcap_raw_ipv4_record_bytes() -> Vec<u8> {
+    ntp_pcap_raw_ipv4_packet()
+        .compile()
+        .expect("NTP RawIp pcap fixture packet should compile")
+        .as_bytes()
+        .to_vec()
+}
+
+fn ntp_pcap_ethernet_record_bytes() -> Vec<u8> {
+    ntp_pcap_ethernet_packet()
+        .compile()
+        .expect("NTP Ethernet pcap fixture packet should compile")
+        .as_bytes()
+        .to_vec()
+}
+
+fn ntp_pcap_timestamp(record_fixture_name: &str) -> PcapTimestamp {
+    match record_fixture_name {
+        NTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME => PcapTimestamp::micros(65, 123),
+        NTP_PCAP_ETHERNET_RECORD_FIXTURE_NAME => PcapTimestamp::micros(65, 124),
+        other => panic!("unknown NTP pcap record fixture {other}"),
+    }
+    .expect("NTP pcap timestamp should be valid")
+}
+
+fn ntp_pcap_bytes(
+    pcap_link_type: PcapLinkType,
+    record_fixture_name: &str,
+    packet: &Packet,
+) -> Vec<u8> {
+    let mut pcap = Vec::new();
+    {
+        let options =
+            PcapWriterOptions::new(pcap_link_type).precision(TimestampPrecision::Microseconds);
+        let mut writer = PcapWriter::from_writer_with_options(&mut pcap, options)
+            .expect("NTP pcap writer should initialize");
+        writer
+            .write_packet_with_timestamp(packet, ntp_pcap_timestamp(record_fixture_name))
+            .expect("NTP pcap packet should write");
+        writer.flush().expect("NTP pcap writer should flush");
+    }
+    pcap
+}
+
+fn ntp_pcap_raw_ipv4_bytes() -> Vec<u8> {
+    ntp_pcap_bytes(
+        PcapLinkType::RawIp,
+        NTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME,
+        &ntp_pcap_raw_ipv4_packet(),
+    )
+}
+
+fn ntp_pcap_ethernet_bytes() -> Vec<u8> {
+    ntp_pcap_bytes(
+        PcapLinkType::Ethernet,
+        NTP_PCAP_ETHERNET_RECORD_FIXTURE_NAME,
+        &ntp_pcap_ethernet_packet(),
+    )
+}
+
+fn ntp_pcap_expected_bytes(case_name: &str) -> Vec<u8> {
+    match case_name {
+        "raw-ipv4-udp-ntp-client" => ntp_pcap_raw_ipv4_bytes(),
+        "ethernet-ipv4-udp-ntp-client" => ntp_pcap_ethernet_bytes(),
+        other => panic!("unknown NTP pcap fixture {other}"),
+    }
+}
+
+fn ntp_pcap_surface_case(label: &'static str) -> ValidFixtureCase {
+    match label {
+        "raw-ipv4-udp-ntp-client" | NTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME => ValidFixtureCase {
+            name: "raw-ipv4-udp-ntp-client",
+            path: "pcaps/raw-ipv4-udp-ntp-client.pcap",
+            contents: FixtureContents::Bytes(&[]),
+            target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+            expected_layers: NTP_RAW_IPV4_EXPECTED_LAYERS,
+            preserve_exact_bytes: false,
+            summary_path: None,
+        },
+        "ethernet-ipv4-udp-ntp-client" | NTP_PCAP_ETHERNET_RECORD_FIXTURE_NAME => {
+            ValidFixtureCase {
+                name: "ethernet-ipv4-udp-ntp-client",
+                path: "pcaps/ethernet-ipv4-udp-ntp-client.pcap",
+                contents: FixtureContents::Bytes(&[]),
+                target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ethernet)),
+                expected_layers: NTP_ETHERNET_EXPECTED_LAYERS,
+                preserve_exact_bytes: false,
+                summary_path: None,
+            }
+        }
+        other => panic!("unknown NTP pcap fixture {other}"),
+    }
+}
+
+fn assert_ntp_pcap_packet_surface(label: &'static str, packet: &Packet) {
+    let surface_case = ntp_pcap_surface_case(label);
+    assert_packet_surface(&surface_case, packet);
+    assert_exact_layer_stack(&surface_case, packet);
+
+    let ipv4 = packet.layer::<Ipv4>().expect("NTP pcap packet has IPv4");
+    assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 10));
+    assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, 123));
+    assert_eq!(ipv4.identification_value(), 0x4e54);
+    assert_eq!(ipv4.ttl_value(), 64);
+    assert_eq!(ipv4.protocol_value(), IPPROTO_UDP);
+
+    let udp = packet.layer::<Udp>().expect("NTP pcap packet has UDP");
+    assert_eq!(udp.source_port_value(), 49_152);
+    assert_eq!(udp.destination_port_value(), NTP_PORT);
+    assert_eq!(udp.checksum_status(), UdpChecksumStatus::Valid);
+
+    let ntp = packet.layer::<Ntp>().expect("NTP pcap packet has NTP");
+    assert_eq!(ntp.mode_value(), NtpMode::Client);
+    assert_eq!(ntp.version_value_effective(), NtpVersion::current());
+    assert_eq!(ntp.poll_value(), 6);
+    assert_eq!(ntp.precision_value(), -20);
+    assert_eq!(ntp.reference_id_value().bytes(), *b"LOCL");
+    assert_eq!(ntp.transmit_timestamp_value().raw(), 0xecc0_0000_1234_5678);
+    assert!(packet.layer::<Raw>().is_none());
+
+    match label {
+        "raw-ipv4-udp-ntp-client" | NTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME => {
+            assert!(packet.layer::<Ethernet>().is_none());
+        }
+        "ethernet-ipv4-udp-ntp-client" | NTP_PCAP_ETHERNET_RECORD_FIXTURE_NAME => {
+            let ethernet = packet.layer::<Ethernet>().expect("NTP pcap has Ethernet");
+            assert_eq!(ethernet.source(), Some(ntp_pcap_client_mac()));
+            assert_eq!(ethernet.destination(), Some(ntp_pcap_server_mac()));
+            assert_eq!(ethernet.ethertype_value(), Some(ETHERTYPE_IPV4));
+        }
+        other => panic!("unknown NTP pcap fixture {other}"),
     }
 }
 
@@ -11064,6 +11401,10 @@ fn pcap_fixture_corpus_decodes_supported_link_types() {
                     MDNS_PCAP_ETHERNET_IPV4_RECORD_FIXTURE_NAME
                     | MDNS_PCAP_ETHERNET_IPV6_RECORD_FIXTURE_NAME => {
                         assert_mdns_pcap_packet_surface(expected.fixture_name, packet.packet())
+                    }
+                    NTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME
+                    | NTP_PCAP_ETHERNET_RECORD_FIXTURE_NAME => {
+                        assert_ntp_pcap_packet_surface(expected.fixture_name, packet.packet())
                     }
                     other => panic!("pcap sentinel record {other} has no surface assertion"),
                 }
