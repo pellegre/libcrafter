@@ -4,7 +4,9 @@ use super::constants::{
     NTP_EXTENSION_FIELD_HEADER_LEN, NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN,
     NTP_EXTENSION_FIELD_MIN_LEN, NTP_LEGACY_MAC_KEY_ID_LEN,
 };
-use super::registry::{ntp_extension_type, NtpExtensionFieldType, NtpRegistryMeta};
+use super::registry::{
+    ntp_extension_type, NtpExtensionFieldType, NtpExtensionFieldTypeCategory, NtpRegistryMeta,
+};
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 
@@ -36,6 +38,11 @@ impl NtpExtensionField {
             value: value.into(),
             padding: None,
         }
+    }
+
+    /// Build an Unknown or currently unassigned extension field.
+    pub fn unknown(field_type: u16, value: impl Into<Vec<u8>>) -> Self {
+        Self::new(field_type, value)
     }
 
     /// Build an NTS Unique Identifier extension field.
@@ -90,6 +97,16 @@ impl NtpExtensionField {
         ntp_extension_type(self.field_type())
     }
 
+    /// Stable extension field type label for summary and inspection output.
+    pub fn label(&self) -> String {
+        self.extension_type().label().to_string()
+    }
+
+    /// Stable extension field type summary label without exposing body bytes.
+    pub fn summary_label(&self) -> String {
+        self.label()
+    }
+
     /// Declared length when caller-set or decoded.
     pub fn declared_length_value(&self) -> Option<u16> {
         self.length.value().copied()
@@ -108,6 +125,14 @@ impl NtpExtensionField {
     /// Source-backed metadata for the extension field type.
     pub fn registry_meta(&self) -> NtpRegistryMeta {
         self.extension_type().registry_meta()
+    }
+
+    /// Return true when the field type is unknown or currently unassigned.
+    pub fn is_unknown_or_unassigned(&self) -> bool {
+        matches!(
+            self.extension_type().category(),
+            NtpExtensionFieldTypeCategory::UnknownOrUnassigned
+        )
     }
 
     /// Return true when the field type is assigned by the NTS extension registry.
@@ -385,6 +410,22 @@ mod tests {
         );
         assert_eq!(extension_type.status(), NtpRegistryStatus::Unassigned);
         assert_eq!(field.registry_meta(), extension_type.registry_meta());
+    }
+
+    #[test]
+    fn ntp_unknown_extensions_constructor_exposes_fallback_label_and_category() {
+        let field = NtpExtensionField::unknown(0x2222, [0xde, 0xad, 0xbe, 0xef]);
+
+        assert_eq!(field.field_type(), 0x2222);
+        assert_eq!(field.value(), &[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(field.label(), "extension-field-0x2222");
+        assert_eq!(field.summary_label(), "extension-field-0x2222");
+        assert!(field.is_unknown_or_unassigned());
+        assert_eq!(field.registry_meta().status, NtpRegistryStatus::Unassigned);
+        assert_eq!(
+            field.extension_type().category(),
+            NtpExtensionFieldTypeCategory::UnknownOrUnassigned
+        );
     }
 
     #[test]

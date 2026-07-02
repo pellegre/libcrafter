@@ -67,6 +67,63 @@ fn ntp_extension_fields_and_legacy_mac_roundtrip() -> crafter::Result<()> {
 }
 
 #[test]
+fn ntp_unknown_extensions_decode_as_typed_fields_not_raw() -> crafter::Result<()> {
+    let value = vec![0xde, 0xad, 0xbe, 0xef];
+    let padding = (0u8..20).map(|offset| 0xa0u8 + offset).collect::<Vec<_>>();
+    let expected_body = value
+        .iter()
+        .chain(padding.iter())
+        .copied()
+        .collect::<Vec<_>>();
+    let unknown_extension = NtpExtensionField::unknown(0x2222, value)
+        .padding(padding)
+        .declared_length(28);
+    let ntp_payload = Packet::from_layer(Ntp::client().extension_field(unknown_extension))
+        .compile()?
+        .into_bytes();
+
+    assert!(looks_like_ntp_payload(&ntp_payload));
+
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        / Udp::new().source_port(49_152).destination_port(NTP_PORT)
+        / Raw::from_bytes(ntp_payload.clone());
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, packet.compile()?.as_bytes())?;
+
+    assert!(decoded.layer::<Raw>().is_none());
+    let decoded_ntp = decoded.layer::<Ntp>().expect("decoded NTP layer");
+    assert_eq!(decoded_ntp.extension_fields_value().len(), 1);
+
+    let field = &decoded_ntp.extension_fields_value()[0];
+    assert_eq!(field.field_type(), 0x2222);
+    assert_eq!(field.declared_length_value(), Some(28));
+    assert_eq!(field.value(), expected_body.as_slice());
+    assert_eq!(field.padding_value(), None);
+    assert_eq!(field.label(), "extension-field-0x2222");
+    assert_eq!(field.summary_label(), "extension-field-0x2222");
+    assert!(field.is_unknown_or_unassigned());
+    assert_eq!(field.registry_meta().status, NtpRegistryStatus::Unassigned);
+
+    let summary = decoded.summary();
+    assert!(summary.contains("extensions=1"), "{summary}");
+    assert!(summary.contains("tail=extensions"), "{summary}");
+
+    let show = decoded.show();
+    assert!(
+        show.contains(
+            "extension: type=0x2222 label=extension-field-0x2222 status=unassigned declared_len=28 encoded_len=28 value_len=24 category=unknown-or-unassigned"
+        ),
+        "{show}"
+    );
+    assert!(!show.contains("deadbeef"), "{show}");
+
+    let recompiled = Packet::from_layer(decoded_ntp.clone()).compile()?;
+    assert_eq!(recompiled.as_bytes(), ntp_payload.as_slice());
+    Ok(())
+}
+
+#[test]
 fn ntp_malformed_extension_length_is_structured_error() {
     let mut bytes = Packet::from_layer(Ntp::client())
         .compile()
