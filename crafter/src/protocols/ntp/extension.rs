@@ -81,6 +81,156 @@ impl From<NtpChecksumComplementExtension> for NtpExtensionField {
     }
 }
 
+/// Raw-preserving NTS Unique Identifier packet extension body.
+///
+/// RFC 8915 defines this NTP packet extension field at field type `0x0104`.
+/// This helper labels and preserves the packet bytes only; it does not make
+/// replay-cache or authentication decisions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NtpNtsUniqueIdentifierExtension {
+    body: Vec<u8>,
+}
+
+impl NtpNtsUniqueIdentifierExtension {
+    /// NTP Extension Field Type for NTS Unique Identifier.
+    pub const FIELD_TYPE: u16 = 0x0104;
+
+    /// Build an NTS Unique Identifier body from raw packet bytes.
+    pub fn new(body: impl Into<Vec<u8>>) -> Self {
+        Self { body: body.into() }
+    }
+
+    /// NTP Extension Field Type encoded for this body.
+    pub const fn field_type(&self) -> u16 {
+        Self::FIELD_TYPE
+    }
+
+    /// Raw extension body bytes, excluding the four-octet extension envelope.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// Convert to the generic raw-preserving NTP extension field envelope.
+    pub fn into_extension_field(self) -> NtpExtensionField {
+        self.into()
+    }
+
+    /// Decode a generic extension field as NTS Unique Identifier when typed.
+    pub fn from_extension_field(field: &NtpExtensionField) -> Option<Self> {
+        if field.is_nts_unique_identifier() {
+            Some(Self::new(field.value().to_vec()))
+        } else {
+            None
+        }
+    }
+}
+
+impl From<NtpNtsUniqueIdentifierExtension> for NtpExtensionField {
+    fn from(extension: NtpNtsUniqueIdentifierExtension) -> Self {
+        Self::new(NtpNtsUniqueIdentifierExtension::FIELD_TYPE, extension.body)
+    }
+}
+
+/// Raw-preserving NTS Cookie packet extension body.
+///
+/// RFC 8915 defines this NTP packet extension field at field type `0x0204`.
+/// This helper treats cookie bytes as opaque packet data and does not construct
+/// or validate NTS cookies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NtpNtsCookieExtension {
+    body: Vec<u8>,
+}
+
+impl NtpNtsCookieExtension {
+    /// NTP Extension Field Type for NTS Cookie.
+    pub const FIELD_TYPE: u16 = 0x0204;
+
+    /// Build an NTS Cookie body from opaque packet bytes.
+    pub fn new(body: impl Into<Vec<u8>>) -> Self {
+        Self { body: body.into() }
+    }
+
+    /// NTP Extension Field Type encoded for this body.
+    pub const fn field_type(&self) -> u16 {
+        Self::FIELD_TYPE
+    }
+
+    /// Raw extension body bytes, excluding the four-octet extension envelope.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// Convert to the generic raw-preserving NTP extension field envelope.
+    pub fn into_extension_field(self) -> NtpExtensionField {
+        self.into()
+    }
+
+    /// Decode a generic extension field as NTS Cookie when typed.
+    pub fn from_extension_field(field: &NtpExtensionField) -> Option<Self> {
+        if field.is_nts_cookie() {
+            Some(Self::new(field.value().to_vec()))
+        } else {
+            None
+        }
+    }
+}
+
+impl From<NtpNtsCookieExtension> for NtpExtensionField {
+    fn from(extension: NtpNtsCookieExtension) -> Self {
+        Self::new(NtpNtsCookieExtension::FIELD_TYPE, extension.body)
+    }
+}
+
+/// Raw-preserving NTS Cookie Placeholder packet extension body.
+///
+/// RFC 8915 defines this NTP packet extension field at field type `0x0304`.
+/// This helper preserves placeholder body bytes without deriving or filling
+/// cookie material.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NtpNtsCookiePlaceholderExtension {
+    body: Vec<u8>,
+}
+
+impl NtpNtsCookiePlaceholderExtension {
+    /// NTP Extension Field Type for NTS Cookie Placeholder.
+    pub const FIELD_TYPE: u16 = 0x0304;
+
+    /// Build an NTS Cookie Placeholder body from raw packet bytes.
+    pub fn new(body: impl Into<Vec<u8>>) -> Self {
+        Self { body: body.into() }
+    }
+
+    /// NTP Extension Field Type encoded for this body.
+    pub const fn field_type(&self) -> u16 {
+        Self::FIELD_TYPE
+    }
+
+    /// Raw extension body bytes, excluding the four-octet extension envelope.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// Convert to the generic raw-preserving NTP extension field envelope.
+    pub fn into_extension_field(self) -> NtpExtensionField {
+        self.into()
+    }
+
+    /// Decode a generic extension field as NTS Cookie Placeholder when typed.
+    pub fn from_extension_field(field: &NtpExtensionField) -> Option<Self> {
+        if field.is_nts_cookie_placeholder() {
+            Some(Self::new(field.value().to_vec()))
+        } else {
+            None
+        }
+    }
+}
+
+impl From<NtpNtsCookiePlaceholderExtension> for NtpExtensionField {
+    fn from(extension: NtpNtsCookiePlaceholderExtension) -> Self {
+        Self::new(NtpNtsCookiePlaceholderExtension::FIELD_TYPE, extension.body)
+    }
+}
+
 /// Raw-preserving NTP extension field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NtpExtensionField {
@@ -108,17 +258,17 @@ impl NtpExtensionField {
 
     /// Build an NTS Unique Identifier extension field.
     pub fn nts_unique_identifier(value: impl Into<Vec<u8>>) -> Self {
-        Self::new(0x0104, value)
+        NtpNtsUniqueIdentifierExtension::new(value).into_extension_field()
     }
 
     /// Build an NTS Cookie extension field.
     pub fn nts_cookie(value: impl Into<Vec<u8>>) -> Self {
-        Self::new(0x0204, value)
+        NtpNtsCookieExtension::new(value).into_extension_field()
     }
 
     /// Build an NTS Cookie Placeholder extension field.
     pub fn nts_cookie_placeholder(value: impl Into<Vec<u8>>) -> Self {
-        Self::new(0x0304, value)
+        NtpNtsCookiePlaceholderExtension::new(value).into_extension_field()
     }
 
     /// Build an NTS Authenticator and Encrypted Extension Fields wrapper.
@@ -201,9 +351,39 @@ impl NtpExtensionField {
         matches!(self.field_type(), 0x0104 | 0x0204 | 0x0304 | 0x0404)
     }
 
+    /// Return true when the field type is NTS Unique Identifier.
+    pub fn is_nts_unique_identifier(&self) -> bool {
+        self.field_type() == NtpNtsUniqueIdentifierExtension::FIELD_TYPE
+    }
+
+    /// Return true when the field type is NTS Cookie.
+    pub fn is_nts_cookie(&self) -> bool {
+        self.field_type() == NtpNtsCookieExtension::FIELD_TYPE
+    }
+
+    /// Return true when the field type is NTS Cookie Placeholder.
+    pub fn is_nts_cookie_placeholder(&self) -> bool {
+        self.field_type() == NtpNtsCookiePlaceholderExtension::FIELD_TYPE
+    }
+
     /// Return true when the field type is the UDP Checksum Complement extension.
     pub fn is_udp_checksum_complement(&self) -> bool {
         self.field_type() == NtpChecksumComplementExtension::FIELD_TYPE
+    }
+
+    /// Borrow this field body through the typed NTS Unique Identifier helper.
+    pub fn as_nts_unique_identifier(&self) -> Option<NtpNtsUniqueIdentifierExtension> {
+        NtpNtsUniqueIdentifierExtension::from_extension_field(self)
+    }
+
+    /// Borrow this field body through the typed NTS Cookie helper.
+    pub fn as_nts_cookie(&self) -> Option<NtpNtsCookieExtension> {
+        NtpNtsCookieExtension::from_extension_field(self)
+    }
+
+    /// Borrow this field body through the typed NTS Cookie Placeholder helper.
+    pub fn as_nts_cookie_placeholder(&self) -> Option<NtpNtsCookiePlaceholderExtension> {
+        NtpNtsCookiePlaceholderExtension::from_extension_field(self)
     }
 
     /// Borrow this field body through the typed UDP Checksum Complement helper.
@@ -582,6 +762,123 @@ mod tests {
         let bytes = compiled.as_bytes();
 
         assert_eq!(u16::from_be_bytes([bytes[26], bytes[27]]), 0x1234);
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_nts_cookie_extensions_helpers_encode_assigned_types() {
+        let unique_body = vec![0x10, 0x11, 0x12, 0x13];
+        let cookie_body = vec![0x20, 0x21, 0x22, 0x23, 0x24];
+        let placeholder_body = vec![0x30, 0x31, 0x32, 0x33, 0x34, 0x35];
+
+        let unique = NtpNtsUniqueIdentifierExtension::new(unique_body.clone());
+        let cookie = NtpNtsCookieExtension::new(cookie_body.clone());
+        let placeholder = NtpNtsCookiePlaceholderExtension::new(placeholder_body.clone());
+
+        assert_eq!(unique.field_type(), 0x0104);
+        assert_eq!(cookie.field_type(), 0x0204);
+        assert_eq!(placeholder.field_type(), 0x0304);
+        assert_eq!(unique.body(), unique_body.as_slice());
+        assert_eq!(cookie.body(), cookie_body.as_slice());
+        assert_eq!(placeholder.body(), placeholder_body.as_slice());
+
+        let unique_field = unique.clone().into_extension_field();
+        let cookie_field = cookie.clone().into_extension_field();
+        let placeholder_field = placeholder.clone().into_extension_field();
+
+        assert!(unique_field.is_nts_extension());
+        assert!(unique_field.is_nts_unique_identifier());
+        assert!(!unique_field.is_nts_cookie());
+        assert_eq!(unique_field.label(), "Unique Identifier");
+        assert_eq!(unique_field.as_nts_unique_identifier(), Some(unique));
+        assert_eq!(unique_field.as_nts_cookie(), None);
+
+        assert!(cookie_field.is_nts_extension());
+        assert!(cookie_field.is_nts_cookie());
+        assert!(!cookie_field.is_nts_cookie_placeholder());
+        assert_eq!(cookie_field.label(), "Autokey Message Request / NTS Cookie");
+        assert_eq!(cookie_field.as_nts_cookie(), Some(cookie));
+        assert_eq!(cookie_field.as_nts_cookie_placeholder(), None);
+
+        assert!(placeholder_field.is_nts_extension());
+        assert!(placeholder_field.is_nts_cookie_placeholder());
+        assert_eq!(placeholder_field.label(), "NTS Cookie Placeholder");
+        assert_eq!(
+            placeholder_field.as_nts_cookie_placeholder(),
+            Some(placeholder)
+        );
+
+        assert_eq!(
+            NtpExtensionField::nts_unique_identifier(unique_body)
+                .as_nts_unique_identifier()
+                .expect("unique identifier helper preserves raw body")
+                .body(),
+            &[0x10, 0x11, 0x12, 0x13]
+        );
+        assert_eq!(
+            NtpExtensionField::nts_cookie(cookie_body)
+                .as_nts_cookie()
+                .expect("cookie helper preserves raw body")
+                .body(),
+            &[0x20, 0x21, 0x22, 0x23, 0x24]
+        );
+        assert_eq!(
+            NtpExtensionField::nts_cookie_placeholder(placeholder_body)
+                .as_nts_cookie_placeholder()
+                .expect("cookie placeholder helper preserves raw body")
+                .body(),
+            &[0x30, 0x31, 0x32, 0x33, 0x34, 0x35]
+        );
+    }
+
+    #[test]
+    fn ntp_nts_cookie_extensions_decode_preserves_raw_bodies() -> Result<()> {
+        let unique_body = (0u8..12).map(|offset| 0x10 + offset).collect::<Vec<_>>();
+        let cookie_body = (0u8..12).map(|offset| 0x40 + offset).collect::<Vec<_>>();
+        let placeholder_body = (0u8..24).map(|offset| 0x80 + offset).collect::<Vec<_>>();
+        let mut encoded = Vec::new();
+
+        let mut append_extension = |field_type: u16, body: &[u8]| {
+            let declared_len = (NTP_EXTENSION_FIELD_HEADER_LEN + body.len()) as u16;
+            encoded.extend_from_slice(&field_type.to_be_bytes());
+            encoded.extend_from_slice(&declared_len.to_be_bytes());
+            encoded.extend_from_slice(body);
+        };
+        append_extension(NtpNtsUniqueIdentifierExtension::FIELD_TYPE, &unique_body);
+        append_extension(NtpNtsCookieExtension::FIELD_TYPE, &cookie_body);
+        append_extension(
+            NtpNtsCookiePlaceholderExtension::FIELD_TYPE,
+            &placeholder_body,
+        );
+
+        let decoded = decode_all(&encoded)?;
+
+        assert_eq!(decoded.legacy_mac, None);
+        assert_eq!(decoded.fields.len(), 3);
+        assert_eq!(decoded.fields[0].value(), unique_body.as_slice());
+        assert_eq!(decoded.fields[1].value(), cookie_body.as_slice());
+        assert_eq!(decoded.fields[2].value(), placeholder_body.as_slice());
+        assert_eq!(
+            decoded.fields[0]
+                .as_nts_unique_identifier()
+                .expect("0x0104 decodes through unique identifier helper")
+                .body(),
+            unique_body.as_slice()
+        );
+        assert_eq!(
+            decoded.fields[1]
+                .as_nts_cookie()
+                .expect("0x0204 decodes through NTS cookie helper")
+                .body(),
+            cookie_body.as_slice()
+        );
+        assert_eq!(
+            decoded.fields[2]
+                .as_nts_cookie_placeholder()
+                .expect("0x0304 decodes through NTS cookie placeholder helper")
+                .body(),
+            placeholder_body.as_slice()
+        );
         Ok(())
     }
 
