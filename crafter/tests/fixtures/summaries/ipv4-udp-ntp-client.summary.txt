@@ -1,0 +1,1 @@
+Ipv4(src=192.0.2.10, dst=198.51.100.123, proto=udp(17)) / Udp(sport=49152, dport=123, len=76, checksum_status=Valid) / Ntp(li=no-warning, version=ntp-v4, mode=client, stratum=1(primary), refid=Global Position System, extensions=0, tail=legacy-mac)
