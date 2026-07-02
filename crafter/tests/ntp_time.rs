@@ -47,3 +47,39 @@ fn ntp_timestamp_era_safe_raw_preservation_roundtrips_through_packet() -> crafte
     );
     Ok(())
 }
+
+#[test]
+fn ntp_fixed_point_short_format_accessors_preserve_raw_values() {
+    let value = NtpShortFormat::from_parts(1, 0x8000);
+    assert_eq!(value.raw(), 0x0001_8000);
+    assert_eq!(value.integer(), 1);
+    assert_eq!(value.fraction(), 0x8000);
+    assert_eq!(value.as_seconds(), 1.5);
+
+    let negative_shaped_delay = NtpShortFormat::from_raw(0xffff_0001);
+    assert_eq!(negative_shaped_delay.raw(), 0xffff_0001);
+    assert_eq!(negative_shaped_delay.integer(), 0xffff);
+    assert_eq!(negative_shaped_delay.fraction(), 0x0001);
+}
+
+#[test]
+fn ntp_fixed_point_root_delay_dispersion_roundtrip_and_show() -> crafter::Result<()> {
+    let root_delay = NtpShortFormat::from_raw(0xffff_0001);
+    let root_dispersion = NtpShortFormat::from_parts(2, 0x4000);
+    let ntp = Ntp::server()
+        .root_delay(root_delay)
+        .root_dispersion(root_dispersion);
+
+    let compiled = Packet::from_layer(ntp).compile()?;
+    let decoded = Ntp::decode(compiled.as_bytes())?;
+
+    assert_eq!(decoded.root_delay_value().raw(), 0xffff_0001);
+    assert_eq!(decoded.root_dispersion_value().raw(), 0x0002_4000);
+    assert_eq!(decoded.root_delay_value().integer(), 0xffff);
+    assert_eq!(decoded.root_dispersion_value().as_seconds(), 2.25);
+
+    let show = Packet::from_layer(decoded).show();
+    assert!(show.contains("root_delay: 0xffff0001"), "{show}");
+    assert!(show.contains("root_dispersion: 0x00024000"), "{show}");
+    Ok(())
+}
