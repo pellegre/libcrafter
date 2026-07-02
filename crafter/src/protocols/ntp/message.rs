@@ -1379,6 +1379,7 @@ fn align_4(value: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::field::FieldState;
     use crate::protocols::ntp::NtpRegistryStatus;
 
     #[test]
@@ -1606,6 +1607,111 @@ mod tests {
         assert_eq!(leap_indicator.wire_value(), 0xaa);
         assert_eq!(version.wire_value(), 0x0f);
         assert_eq!(mode.wire_value(), 0x2a);
+    }
+
+    #[test]
+    fn ntp_header_fields_default_constructor_tracks_default_state() {
+        let ntp = Ntp::new();
+
+        assert_eq!(ntp.leap_indicator.state(), FieldState::Defaulted);
+        assert_eq!(ntp.version.state(), FieldState::Defaulted);
+        assert_eq!(ntp.mode.state(), FieldState::Defaulted);
+        assert_eq!(ntp.stratum.state(), FieldState::Defaulted);
+        assert_eq!(ntp.poll.state(), FieldState::Defaulted);
+        assert_eq!(ntp.precision.state(), FieldState::Defaulted);
+        assert_eq!(ntp.root_delay.state(), FieldState::Defaulted);
+        assert_eq!(ntp.root_dispersion.state(), FieldState::Defaulted);
+        assert_eq!(ntp.reference_id.state(), FieldState::Defaulted);
+        assert_eq!(ntp.reference_timestamp.state(), FieldState::Defaulted);
+        assert_eq!(ntp.origin_timestamp.state(), FieldState::Defaulted);
+        assert_eq!(ntp.receive_timestamp.state(), FieldState::Defaulted);
+        assert_eq!(ntp.transmit_timestamp.state(), FieldState::Defaulted);
+
+        assert_eq!(ntp.leap_indicator_value(), NtpLeapIndicator::NoWarning);
+        assert_eq!(ntp.version_value_effective(), NtpVersion::current());
+        assert_eq!(ntp.mode_value(), NtpMode::Client);
+        assert_eq!(ntp.stratum_value(), NtpStratum::from_wire(0));
+        assert_eq!(ntp.poll_value(), NTP_DEFAULT_POLL);
+        assert_eq!(ntp.precision_value(), NTP_DEFAULT_PRECISION);
+        assert_eq!(ntp.root_delay_value().raw(), NTP_DEFAULT_ROOT_DELAY);
+        assert_eq!(
+            ntp.root_dispersion_value().raw(),
+            NTP_DEFAULT_ROOT_DISPERSION
+        );
+        assert_eq!(ntp.reference_id_value().bytes(), NTP_DEFAULT_REFERENCE_ID);
+        assert_eq!(
+            ntp.reference_timestamp_value().raw(),
+            NTP_DEFAULT_REFERENCE_TIMESTAMP
+        );
+        assert_eq!(
+            ntp.origin_timestamp_value().raw(),
+            NTP_DEFAULT_ORIGIN_TIMESTAMP
+        );
+        assert_eq!(
+            ntp.receive_timestamp_value().raw(),
+            NTP_DEFAULT_RECEIVE_TIMESTAMP
+        );
+        assert_eq!(
+            ntp.transmit_timestamp_value().raw(),
+            NTP_DEFAULT_TRANSMIT_TIMESTAMP
+        );
+        assert!(ntp.extension_fields_value().is_empty());
+        assert!(ntp.legacy_mac_value().is_none());
+    }
+
+    #[test]
+    fn ntp_header_fields_setters_track_user_state_and_tails() {
+        let extension = NtpExtensionField::nts_unique_identifier([0xaa, 0xbb]);
+        let legacy_mac = NtpLegacyMac::from_key_id_and_digest(0x0102_0304, [0xcc; 16]);
+        let ntp = Ntp::new()
+            .leap_indicator(NtpLeapIndicator::AlarmUnsynchronized)
+            .version_value(3)
+            .mode(NtpMode::Server)
+            .stratum(1)
+            .poll(6)
+            .precision(-20)
+            .root_delay_raw(0x0001_8000)
+            .root_dispersion_raw(0x0002_4000)
+            .reference_id(NtpReferenceId::from_bytes(*b"GPS\0"))
+            .reference_timestamp(NtpTimestamp::from_raw(0x0102_0304_0506_0708))
+            .origin_timestamp(NtpTimestamp::from_raw(0x1112_1314_1516_1718))
+            .receive_timestamp(NtpTimestamp::from_raw(0x2122_2324_2526_2728))
+            .transmit_timestamp(NtpTimestamp::from_raw(0x3132_3334_3536_3738))
+            .extension_field(extension.clone())
+            .legacy_mac(legacy_mac.clone());
+
+        assert_eq!(ntp.leap_indicator.state(), FieldState::User);
+        assert_eq!(ntp.version.state(), FieldState::User);
+        assert_eq!(ntp.mode.state(), FieldState::User);
+        assert_eq!(ntp.stratum.state(), FieldState::User);
+        assert_eq!(ntp.poll.state(), FieldState::User);
+        assert_eq!(ntp.precision.state(), FieldState::User);
+        assert_eq!(ntp.root_delay.state(), FieldState::User);
+        assert_eq!(ntp.root_dispersion.state(), FieldState::User);
+        assert_eq!(ntp.reference_id.state(), FieldState::User);
+        assert_eq!(ntp.reference_timestamp.state(), FieldState::User);
+        assert_eq!(ntp.origin_timestamp.state(), FieldState::User);
+        assert_eq!(ntp.receive_timestamp.state(), FieldState::User);
+        assert_eq!(ntp.transmit_timestamp.state(), FieldState::User);
+
+        assert_eq!(
+            ntp.leap_indicator_value(),
+            NtpLeapIndicator::AlarmUnsynchronized
+        );
+        assert_eq!(ntp.version_value_effective(), NtpVersion::from_wire(3));
+        assert_eq!(ntp.mode_value(), NtpMode::Server);
+        assert_eq!(ntp.stratum_value(), NtpStratum::from_wire(1));
+        assert_eq!(ntp.poll_value(), 6);
+        assert_eq!(ntp.precision_value(), -20);
+        assert_eq!(ntp.root_delay_value().raw(), 0x0001_8000);
+        assert_eq!(ntp.root_dispersion_value().raw(), 0x0002_4000);
+        assert_eq!(ntp.reference_id_value().bytes(), *b"GPS\0");
+        assert_eq!(ntp.reference_timestamp_value().raw(), 0x0102_0304_0506_0708);
+        assert_eq!(ntp.origin_timestamp_value().raw(), 0x1112_1314_1516_1718);
+        assert_eq!(ntp.receive_timestamp_value().raw(), 0x2122_2324_2526_2728);
+        assert_eq!(ntp.transmit_timestamp_value().raw(), 0x3132_3334_3536_3738);
+        assert_eq!(ntp.extension_fields_value(), &[extension]);
+        assert_eq!(ntp.legacy_mac_value(), Some(&legacy_mac));
     }
 
     #[test]
