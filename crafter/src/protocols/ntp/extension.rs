@@ -20,6 +20,67 @@ pub(super) struct NtpExtensionDecodeAll {
     pub(super) legacy_mac: Option<Vec<u8>>,
 }
 
+/// UDP Checksum Complement NTP extension body.
+///
+/// RFC 7821 defines this packet-data extension, and RFC 9748 keeps the current
+/// registry assignment at field type `0x2005`. This model only carries the NTP
+/// extension bytes; UDP checksum calculation remains the UDP layer's job.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NtpChecksumComplementExtension {
+    body: Vec<u8>,
+}
+
+impl NtpChecksumComplementExtension {
+    /// NTP Extension Field Type for UDP Checksum Complement.
+    pub const FIELD_TYPE: u16 = 0x2005;
+
+    /// Build a UDP Checksum Complement body from raw bytes.
+    pub fn new(body: impl Into<Vec<u8>>) -> Self {
+        Self { body: body.into() }
+    }
+
+    /// Build a UDP Checksum Complement body from the two-octet complement.
+    pub fn from_complement(complement: u16) -> Self {
+        Self::new(complement.to_be_bytes())
+    }
+
+    /// NTP Extension Field Type encoded for this body.
+    pub const fn field_type(&self) -> u16 {
+        Self::FIELD_TYPE
+    }
+
+    /// Raw extension body bytes, excluding the four-octet extension envelope.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// Return the first two body octets as a checksum complement, when present.
+    pub fn complement_value(&self) -> Option<u16> {
+        let bytes = self.body.get(..2)?;
+        Some(u16::from_be_bytes([bytes[0], bytes[1]]))
+    }
+
+    /// Convert to the generic raw-preserving NTP extension field envelope.
+    pub fn into_extension_field(self) -> NtpExtensionField {
+        self.into()
+    }
+
+    /// Decode a generic extension field as UDP Checksum Complement when typed.
+    pub fn from_extension_field(field: &NtpExtensionField) -> Option<Self> {
+        if field.is_udp_checksum_complement() {
+            Some(Self::new(field.value().to_vec()))
+        } else {
+            None
+        }
+    }
+}
+
+impl From<NtpChecksumComplementExtension> for NtpExtensionField {
+    fn from(extension: NtpChecksumComplementExtension) -> Self {
+        Self::new(NtpChecksumComplementExtension::FIELD_TYPE, extension.body)
+    }
+}
+
 /// Raw-preserving NTP extension field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NtpExtensionField {
@@ -67,7 +128,7 @@ impl NtpExtensionField {
 
     /// Build a UDP Checksum Complement extension field.
     pub fn udp_checksum_complement(value: impl Into<Vec<u8>>) -> Self {
-        Self::new(0x2005, value)
+        NtpChecksumComplementExtension::new(value).into_extension_field()
     }
 
     /// Build an Autokey-related raw extension field by type.
@@ -138,6 +199,16 @@ impl NtpExtensionField {
     /// Return true when the field type is assigned by the NTS extension registry.
     pub fn is_nts_extension(&self) -> bool {
         matches!(self.field_type(), 0x0104 | 0x0204 | 0x0304 | 0x0404)
+    }
+
+    /// Return true when the field type is the UDP Checksum Complement extension.
+    pub fn is_udp_checksum_complement(&self) -> bool {
+        self.field_type() == NtpChecksumComplementExtension::FIELD_TYPE
+    }
+
+    /// Borrow this field body through the typed UDP Checksum Complement helper.
+    pub fn as_udp_checksum_complement(&self) -> Option<NtpChecksumComplementExtension> {
+        NtpChecksumComplementExtension::from_extension_field(self)
     }
 
     pub(super) fn from_decoded(field_type: u16, declared_length: u16, value: Vec<u8>) -> Self {
@@ -384,6 +455,8 @@ mod tests {
     use crate::error::CrafterError;
     use crate::protocols::ntp::registry::NtpExtensionFieldTypeCategory;
     use crate::protocols::ntp::NtpRegistryStatus;
+    use crate::{Ipv4, Ntp, Udp};
+    use std::net::Ipv4Addr;
 
     #[test]
     fn ntp_extension_model_preserves_unknown_type_value_and_declared_length() {
@@ -444,6 +517,71 @@ mod tests {
                 0x00, 0x00
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_checksum_complement_extension_helper_encodes_type_and_body() -> Result<()> {
+        let checksum = NtpChecksumComplementExtension::from_complement(0x1234);
+        let field = checksum.clone().into_extension_field().declared_length(16);
+        let mut out = Vec::new();
+
+        field.compile(false, &mut out)?;
+
+        assert_eq!(checksum.field_type(), 0x2005);
+        assert_eq!(checksum.body(), &[0x12, 0x34]);
+        assert_eq!(checksum.complement_value(), Some(0x1234));
+        assert_eq!(
+            &out[..NTP_EXTENSION_FIELD_HEADER_LEN],
+            &[0x20, 0x05, 0x00, 0x10]
+        );
+        assert_eq!(&out[NTP_EXTENSION_FIELD_HEADER_LEN..6], &[0x12, 0x34]);
+        assert!(out[6..].iter().all(|byte| *byte == 0));
+        assert!(field.is_udp_checksum_complement());
+        assert_eq!(field.label(), "UDP Checksum Complement");
+        assert_eq!(field.registry_meta().status, NtpRegistryStatus::Assigned);
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_checksum_complement_extension_decode_preserves_raw_body_bytes() -> Result<()> {
+        let body = (0u8..24).map(|offset| 0xa0 + offset).collect::<Vec<_>>();
+        let mut encoded = Vec::new();
+        encoded.extend_from_slice(&NtpChecksumComplementExtension::FIELD_TYPE.to_be_bytes());
+        encoded.extend_from_slice(
+            &(NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN as u16).to_be_bytes(),
+        );
+        encoded.extend_from_slice(&body);
+
+        let decoded = decode_all(&encoded)?;
+
+        assert_eq!(decoded.legacy_mac, None);
+        assert_eq!(decoded.fields.len(), 1);
+        let field = &decoded.fields[0];
+        let checksum = field
+            .as_udp_checksum_complement()
+            .expect("0x2005 decodes through checksum complement helper");
+        assert_eq!(field.declared_length_value(), Some(28));
+        assert_eq!(field.value(), body.as_slice());
+        assert_eq!(field.padding_value(), None);
+        assert_eq!(checksum.body(), body.as_slice());
+        assert_eq!(checksum.complement_value(), Some(0xa0a1));
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_checksum_complement_extension_does_not_mutate_udp_checksum() -> Result<()> {
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            / Udp::ntp().checksum(0x1234)
+            / Ntp::client()
+                .extension_field(NtpExtensionField::udp_checksum_complement([0xaa, 0xbb]));
+
+        let compiled = packet.compile()?;
+        let bytes = compiled.as_bytes();
+
+        assert_eq!(u16::from_be_bytes([bytes[26], bytes[27]]), 0x1234);
         Ok(())
     }
 
