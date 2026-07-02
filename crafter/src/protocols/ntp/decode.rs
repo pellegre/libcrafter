@@ -89,7 +89,7 @@ mod tests {
     }
 
     #[test]
-    fn ntp_parse_header_reports_stable_truncation_context() {
+    fn ntp_parse_errors_header_reports_stable_truncation_context() {
         match decode_ntp(&[0u8; NTP_FIXED_HEADER_LEN - 1]).unwrap_err() {
             CrafterError::BufferTooShort {
                 context,
