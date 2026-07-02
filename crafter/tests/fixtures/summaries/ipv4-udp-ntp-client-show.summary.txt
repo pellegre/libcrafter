@@ -1,0 +1,44 @@
+Packet(len=96, layers=3)
+  [0] Ipv4
+      version: 4
+      ihl: 5
+      tos: 0
+      dscp: 0
+      ecn: Not-ECT
+      total_length: 96
+      id: 0x4e54
+      flags: none
+      fragment_offset: 0
+      ttl: 64
+      protocol: udp(17)
+      checksum: 0x3f80
+      checksum_status: valid
+      src: 192.0.2.10
+      dst: 198.51.100.123
+      option_count: 0
+      options:
+  [1] Udp
+      sport: 49152
+      dport: 123
+      length: 76
+      checksum: 0xddfe
+      checksum_status: Valid
+  [2] Ntp
+      first_octet: 0x23
+      leap_indicator: no-warning
+      version: ntp-v4
+      mode: client
+      stratum: 1 (primary)
+      poll: 0
+      precision: 0
+      root_delay: 0x00000000
+      root_dispersion: 0x00000000
+      reference_id: Global Position System
+      reference_timestamp: 0x0000000000000000
+      origin_timestamp: 0x0000000000000000
+      receive_timestamp: 0x0000000000000000
+      transmit_timestamp: 0xecc0000012345678
+      extensions: 0
+      extension_count: 0
+      legacy_mac_len: 20
+      mac_status: legacy-mac digest_len=16 total_len=20
