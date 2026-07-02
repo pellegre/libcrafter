@@ -105,3 +105,97 @@ fn ntp_header_golden_server_response_fixed_header() -> crafter::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn ntp_decode_golden_ntpv4_server_fixed_header_payload() -> crafter::Result<()> {
+    let payload = [
+        0x24, 0x02, 0x04, 0xe8, 0x00, 0x00, 0x03, 0xe8, 0x00, 0x00, 0x07, 0xd0, 192, 0, 2, 123,
+        0xe4, 0xe1, 0xcd, 0xdc, 0x12, 0x34, 0x56, 0x78, 0xe4, 0xe1, 0xce, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0xe4, 0xe1, 0xce, 0x00, 0x80, 0x00, 0x00, 0x00, 0xe4, 0xe1, 0xce, 0x01, 0x00, 0x00,
+        0x00, 0x00,
+    ];
+
+    let decoded = Ntp::decode(&payload)?;
+
+    assert_eq!(payload.len(), NTP_FIXED_HEADER_LEN);
+    assert_eq!(decoded.first_octet_value(), 0x24);
+    assert_eq!(decoded.leap_indicator_value(), NtpLeapIndicator::NoWarning);
+    assert_eq!(decoded.version_value_effective(), NtpVersion::current());
+    assert_eq!(decoded.mode_value(), NtpMode::Server);
+    assert_eq!(decoded.stratum_value().value(), 2);
+    assert_eq!(decoded.poll_value(), 4);
+    assert_eq!(decoded.precision_value(), -24);
+    assert_eq!(decoded.root_delay_value().raw(), 0x0000_03e8);
+    assert_eq!(decoded.root_dispersion_value().raw(), 0x0000_07d0);
+    assert_eq!(decoded.reference_id_value().bytes(), [192, 0, 2, 123]);
+    assert_eq!(
+        decoded.reference_timestamp_value().raw(),
+        0xe4e1_cddc_1234_5678
+    );
+    assert_eq!(
+        decoded.origin_timestamp_value().raw(),
+        0xe4e1_ce00_0000_0000
+    );
+    assert_eq!(
+        decoded.receive_timestamp_value().raw(),
+        0xe4e1_ce00_8000_0000
+    );
+    assert_eq!(
+        decoded.transmit_timestamp_value().raw(),
+        0xe4e1_ce01_0000_0000
+    );
+    assert!(decoded.extension_fields_value().is_empty());
+    assert!(decoded.legacy_mac_value().is_none());
+
+    let recompiled = Packet::from_layer(decoded).compile()?;
+    assert_eq!(recompiled.as_bytes(), payload);
+
+    Ok(())
+}
+
+#[test]
+fn ntp_decode_golden_ntpv3_compatible_server_fixed_header_payload() -> crafter::Result<()> {
+    let payload = [
+        0x1c, 0x01, 0x06, 0xec, 0x00, 0x01, 0x80, 0x00, 0x00, 0x00, 0xc0, 0x00, b'L', b'O', b'C',
+        b'L', 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6,
+        0xa7, 0xa8, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5,
+        0xc6, 0xc7, 0xc8,
+    ];
+
+    let decoded = Ntp::decode(&payload)?;
+
+    assert_eq!(payload.len(), NTP_FIXED_HEADER_LEN);
+    assert_eq!(decoded.first_octet_value(), 0x1c);
+    assert_eq!(decoded.leap_indicator_value(), NtpLeapIndicator::NoWarning);
+    assert_eq!(decoded.version_value_effective(), NtpVersion::from_wire(3));
+    assert_eq!(decoded.mode_value(), NtpMode::Server);
+    assert_eq!(decoded.stratum_value().value(), NTP_STRATUM_PRIMARY);
+    assert_eq!(decoded.poll_value(), 6);
+    assert_eq!(decoded.precision_value(), -20);
+    assert_eq!(decoded.root_delay_value().raw(), 0x0001_8000);
+    assert_eq!(decoded.root_dispersion_value().raw(), 0x0000_c000);
+    assert_eq!(decoded.reference_id_value().bytes(), *b"LOCL");
+    assert_eq!(
+        decoded.reference_timestamp_value().raw(),
+        0xd1d2_d3d4_d5d6_d7d8
+    );
+    assert_eq!(
+        decoded.origin_timestamp_value().raw(),
+        0xa1a2_a3a4_a5a6_a7a8
+    );
+    assert_eq!(
+        decoded.receive_timestamp_value().raw(),
+        0xb1b2_b3b4_b5b6_b7b8
+    );
+    assert_eq!(
+        decoded.transmit_timestamp_value().raw(),
+        0xc1c2_c3c4_c5c6_c7c8
+    );
+    assert!(decoded.extension_fields_value().is_empty());
+    assert!(decoded.legacy_mac_value().is_none());
+
+    let recompiled = Packet::from_layer(decoded).compile()?;
+    assert_eq!(recompiled.as_bytes(), payload);
+
+    Ok(())
+}
