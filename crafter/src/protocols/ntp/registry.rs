@@ -39,6 +39,100 @@ impl NtpRegistryStatus {
     }
 }
 
+/// Source-backed category for NTP Extension Field Type inspection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NtpExtensionFieldTypeCategory {
+    /// Value has a current source-backed assignment.
+    Assigned,
+    /// Value is reserved for private or experimental use.
+    PrivateOrExperimental,
+    /// Value has no current registry assignment.
+    UnknownOrUnassigned,
+    /// Value is reserved because of obsolete or historic registry use.
+    ObsoleteOrHistoric,
+    /// Value is reserved without a narrower source-backed category.
+    Reserved,
+}
+
+impl NtpExtensionFieldTypeCategory {
+    /// Stable category label for extension type inspection.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Assigned => "assigned",
+            Self::PrivateOrExperimental => "private-or-experimental",
+            Self::UnknownOrUnassigned => "unknown-or-unassigned",
+            Self::ObsoleteOrHistoric => "obsolete-or-historic",
+            Self::Reserved => "reserved",
+        }
+    }
+}
+
+/// Source-backed metadata for an NTP Extension Field Type.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NtpExtensionFieldType {
+    /// Raw 16-bit extension field type.
+    pub value: u16,
+    /// Stable display label.
+    pub label: String,
+    /// Extension-specific source category.
+    pub category: NtpExtensionFieldTypeCategory,
+    /// Compatibility status for the generic registry metadata API.
+    pub status: NtpRegistryStatus,
+}
+
+impl NtpExtensionFieldType {
+    /// Build extension type metadata from a raw field type value.
+    pub fn new(value: u16) -> Self {
+        ntp_extension_type(value)
+    }
+
+    /// Raw 16-bit extension field type.
+    pub const fn value(&self) -> u16 {
+        self.value
+    }
+
+    /// Raw 16-bit value for serialization.
+    pub const fn wire_value(&self) -> u16 {
+        self.value
+    }
+
+    /// Stable display label.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Extension-specific source category.
+    pub const fn category(&self) -> NtpExtensionFieldTypeCategory {
+        self.category
+    }
+
+    /// Compatibility status for the generic registry metadata API.
+    pub const fn status(&self) -> NtpRegistryStatus {
+        self.status
+    }
+
+    /// Convert to the older generic registry metadata shape.
+    pub fn registry_meta(&self) -> NtpRegistryMeta {
+        NtpRegistryMeta {
+            value: self.value.into(),
+            label: self.label.clone(),
+            status: self.status,
+        }
+    }
+}
+
+impl From<u16> for NtpExtensionFieldType {
+    fn from(value: u16) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<NtpExtensionFieldType> for u16 {
+    fn from(value: NtpExtensionFieldType) -> Self {
+        value.value
+    }
+}
+
 /// Metadata for numeric NTP codepoints.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NtpRegistryMeta {
@@ -182,189 +276,237 @@ pub fn ntp_reference_id_meta(code: [u8; NTP_REFERENCE_ID_LEN]) -> NtpReferenceCo
 
 /// Return registry metadata for an NTP Extension Field Type.
 pub fn ntp_extension_field_type_meta(field_type: u16) -> NtpRegistryMeta {
+    ntp_extension_type(field_type).registry_meta()
+}
+
+/// Return source-backed metadata for an NTP Extension Field Type.
+pub fn ntp_extension_type(field_type: u16) -> NtpExtensionFieldType {
     match field_type {
-        0x0000 => numeric_meta(
+        0x0000 => extension_field_type_meta(
             field_type,
             "Crypto-NAK; authentication failure",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
         0x0002 | 0x0102 | 0x0302 | 0x0402 | 0x0502 | 0x0602 | 0x0702 | 0x0802 | 0x0902 | 0x8002
         | 0x8102 | 0x8302 | 0x8402 | 0x8502 | 0x8602 | 0x8702 | 0x8802 | 0x8902 | 0xC002
-        | 0xC102 | 0xC302 | 0xC402 | 0xC502 | 0xC602 | 0xC702 | 0xC802 | 0xC902 => numeric_meta(
+        | 0xC102 | 0xC302 | 0xC402 | 0xC502 | 0xC602 | 0xC702 | 0xC802 | 0xC902 => {
+            extension_field_type_meta(
+                field_type,
+                "Reserved for historic reasons",
+                NtpRegistryStatus::Reserved,
+                NtpExtensionFieldTypeCategory::ObsoleteOrHistoric,
+            )
+        }
+        0x0104 => extension_field_type_meta(
             field_type,
-            "Reserved for historic reasons",
-            NtpRegistryStatus::Reserved,
+            "Unique Identifier",
+            NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x0104 => numeric_meta(field_type, "Unique Identifier", NtpRegistryStatus::Assigned),
-        0x010A => numeric_meta(
+        0x010A => extension_field_type_meta(
             field_type,
             "Network Correction",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x0200 => numeric_meta(
+        0x0200 => extension_field_type_meta(
             field_type,
             "No-Operation Request",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x0201 => numeric_meta(
+        0x0201 => extension_field_type_meta(
             field_type,
             "Association Message Request",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x0202 => numeric_meta(
+        0x0202 => extension_field_type_meta(
             field_type,
             "Certificate Message Request",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x0203 => numeric_meta(
+        0x0203 => extension_field_type_meta(
             field_type,
             "Cookie Message Request",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x0204 => numeric_meta(
+        0x0204 => extension_field_type_meta(
             field_type,
             "Autokey Message Request / NTS Cookie",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x0205 => numeric_meta(
+        0x0205 => extension_field_type_meta(
             field_type,
             "Leapseconds Message Request",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x0206 => numeric_meta(
+        0x0206 => extension_field_type_meta(
             field_type,
             "Sign Message Request",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x0207 => numeric_meta(
+        0x0207 => extension_field_type_meta(
             field_type,
             "IFF Identity Message Request",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x0208 => numeric_meta(
+        0x0208 => extension_field_type_meta(
             field_type,
             "GQ Identity Message Request",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x0209 => numeric_meta(
+        0x0209 => extension_field_type_meta(
             field_type,
             "MV Identity Message Request",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x0304 => numeric_meta(
+        0x0304 => extension_field_type_meta(
             field_type,
             "NTS Cookie Placeholder",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x0404 => numeric_meta(
+        0x0404 => extension_field_type_meta(
             field_type,
             "NTS Authenticator and Encrypted Extension Fields",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x2005 => numeric_meta(
+        0x2005 => extension_field_type_meta(
             field_type,
             "UDP Checksum Complement",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x8200 => numeric_meta(
+        0x8200 => extension_field_type_meta(
             field_type,
             "No-Operation Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x8201 => numeric_meta(
+        0x8201 => extension_field_type_meta(
             field_type,
             "Association Message Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x8202 => numeric_meta(
+        0x8202 => extension_field_type_meta(
             field_type,
             "Certificate Message Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x8203 => numeric_meta(
+        0x8203 => extension_field_type_meta(
             field_type,
             "Cookie Message Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x8204 => numeric_meta(
+        0x8204 => extension_field_type_meta(
             field_type,
             "Autokey Message Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x8205 => numeric_meta(
+        0x8205 => extension_field_type_meta(
             field_type,
             "Leapseconds Message Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x8206 => numeric_meta(
+        0x8206 => extension_field_type_meta(
             field_type,
             "Sign Message Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x8207 => numeric_meta(
+        0x8207 => extension_field_type_meta(
             field_type,
             "IFF Identity Message Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x8208 => numeric_meta(
+        0x8208 => extension_field_type_meta(
             field_type,
             "GQ Identity Message Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0x8209 => numeric_meta(
+        0x8209 => extension_field_type_meta(
             field_type,
             "MV Identity Message Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0xC200 => numeric_meta(
+        0xC200 => extension_field_type_meta(
             field_type,
             "No-Operation Error Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0xC201 => numeric_meta(
+        0xC201 => extension_field_type_meta(
             field_type,
             "Association Message Error Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0xC202 => numeric_meta(
+        0xC202 => extension_field_type_meta(
             field_type,
             "Certificate Message Error Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0xC203 => numeric_meta(
+        0xC203 => extension_field_type_meta(
             field_type,
             "Cookie Message Error Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0xC204 => numeric_meta(
+        0xC204 => extension_field_type_meta(
             field_type,
             "Autokey Message Error Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0xC205 => numeric_meta(
+        0xC205 => extension_field_type_meta(
             field_type,
             "Leapseconds Message Error Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0xC206 => numeric_meta(
+        0xC206 => extension_field_type_meta(
             field_type,
             "Sign Message Error Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0xC207 => numeric_meta(
+        0xC207 => extension_field_type_meta(
             field_type,
             "IFF Identity Message Error Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0xC208 => numeric_meta(
+        0xC208 => extension_field_type_meta(
             field_type,
             "GQ Identity Message Error Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
-        0xC209 => numeric_meta(
+        0xC209 => extension_field_type_meta(
             field_type,
             "MV Identity Message Error Response",
             NtpRegistryStatus::Assigned,
+            NtpExtensionFieldTypeCategory::Assigned,
         ),
         0xF000..=0xFFFF => NtpRegistryMeta {
             value: field_type.into(),
@@ -373,12 +515,14 @@ pub fn ntp_extension_field_type_meta(field_type: u16) -> NtpRegistryMeta {
                 hex16_label("extension-field", field_type)
             ),
             status: NtpRegistryStatus::PrivateOrExperimental,
-        },
+        }
+        .into_extension_field_type(NtpExtensionFieldTypeCategory::PrivateOrExperimental),
         other => NtpRegistryMeta {
             value: other.into(),
             label: hex16_label("extension-field", other),
             status: NtpRegistryStatus::Unassigned,
-        },
+        }
+        .into_extension_field_type(NtpExtensionFieldTypeCategory::UnknownOrUnassigned),
     }
 }
 
@@ -413,9 +557,7 @@ pub fn ntp_nts_extension_field_type_meta(field_type: u16) -> NtpRegistryMeta {
     }
 }
 
-pub(super) fn ntp_reference_code_ascii_label(
-    code: [u8; NTP_REFERENCE_ID_LEN],
-) -> Option<String> {
+pub(super) fn ntp_reference_code_ascii_label(code: [u8; NTP_REFERENCE_ID_LEN]) -> Option<String> {
     let mut len = 0;
     while len < NTP_REFERENCE_ID_LEN && code[len] != 0 {
         let byte = code[len];
@@ -437,6 +579,34 @@ fn numeric_meta(value: impl Into<u32>, label: &str, status: NtpRegistryStatus) -
         value: value.into(),
         label: label.to_string(),
         status,
+    }
+}
+
+fn extension_field_type_meta(
+    value: u16,
+    label: &str,
+    status: NtpRegistryStatus,
+    category: NtpExtensionFieldTypeCategory,
+) -> NtpExtensionFieldType {
+    NtpExtensionFieldType {
+        value,
+        label: label.to_string(),
+        category,
+        status,
+    }
+}
+
+impl NtpRegistryMeta {
+    fn into_extension_field_type(
+        self,
+        category: NtpExtensionFieldTypeCategory,
+    ) -> NtpExtensionFieldType {
+        NtpExtensionFieldType {
+            value: self.value as u16,
+            label: self.label,
+            category,
+            status: self.status,
+        }
     }
 }
 
@@ -602,44 +772,71 @@ mod tests {
             Some("XLAB")
         );
         assert_eq!(ntp_reference_code_ascii_label([0, 0, 0, 0]), None);
-        assert_eq!(
-            ntp_reference_code_ascii_label([b'G', 0, b'P', 0]),
-            None
-        );
-        assert_eq!(
-            ntp_reference_code_ascii_label([b'g', b'P', b'S', 0]),
-            None
-        );
+        assert_eq!(ntp_reference_code_ascii_label([b'G', 0, b'P', 0]), None);
+        assert_eq!(ntp_reference_code_ascii_label([b'g', b'P', b'S', 0]), None);
         assert_eq!(ntp_reference_code_ascii_label([0x80, 0, 0, 1]), None);
     }
 
     #[test]
-    fn ntp_registry_labels_extension_and_nts_types() {
-        let nts_cookie = ntp_extension_field_type_meta(0x0204);
+    fn ntp_extension_registry_extension_type_labels_categories_and_statuses() {
+        let nts_cookie = ntp_extension_type(0x0204);
         assert_eq!(nts_cookie.value, 0x0204);
         assert_eq!(nts_cookie.label, "Autokey Message Request / NTS Cookie");
+        assert_eq!(nts_cookie.category, NtpExtensionFieldTypeCategory::Assigned);
         assert_eq!(nts_cookie.status, NtpRegistryStatus::Assigned);
+        assert_eq!(
+            nts_cookie.registry_meta(),
+            ntp_extension_field_type_meta(0x0204)
+        );
+        assert_eq!(u16::from(nts_cookie.clone()), 0x0204);
 
-        let reserved = ntp_extension_field_type_meta(0x0302);
+        let reserved = ntp_extension_type(0x0302);
         assert_eq!(reserved.label, "Reserved for historic reasons");
+        assert_eq!(
+            reserved.category,
+            NtpExtensionFieldTypeCategory::ObsoleteOrHistoric
+        );
         assert_eq!(reserved.status, NtpRegistryStatus::Reserved);
 
-        let checksum = ntp_extension_field_type_meta(0x2005);
+        let checksum = ntp_extension_type(0x2005);
         assert_eq!(checksum.label, "UDP Checksum Complement");
+        assert_eq!(checksum.category, NtpExtensionFieldTypeCategory::Assigned);
         assert_eq!(checksum.status, NtpRegistryStatus::Assigned);
 
-        let unknown = ntp_extension_field_type_meta(0x2222);
+        let unknown = ntp_extension_type(0x2222);
         assert_eq!(unknown.value, 0x2222);
         assert_eq!(unknown.label, "extension-field-0x2222");
+        assert_eq!(
+            unknown.category,
+            NtpExtensionFieldTypeCategory::UnknownOrUnassigned
+        );
         assert_eq!(unknown.status, NtpRegistryStatus::Unassigned);
 
-        let private = ntp_extension_field_type_meta(0xF123);
+        let private = NtpExtensionFieldType::new(0xF123);
         assert_eq!(
             private.label,
             "extension-field-0xF123 (private-or-experimental)"
         );
+        assert_eq!(
+            private.category,
+            NtpExtensionFieldTypeCategory::PrivateOrExperimental
+        );
         assert_eq!(private.status, NtpRegistryStatus::PrivateOrExperimental);
+        assert_eq!(NtpExtensionFieldTypeCategory::Reserved.label(), "reserved");
 
+        let crypto_nak = NtpExtensionFieldType::from(0x0000);
+        assert_eq!(crypto_nak.value(), 0x0000);
+        assert_eq!(crypto_nak.wire_value(), 0x0000);
+        assert_eq!(crypto_nak.label(), "Crypto-NAK; authentication failure");
+        assert_eq!(
+            crypto_nak.category(),
+            NtpExtensionFieldTypeCategory::Assigned
+        );
+        assert_eq!(crypto_nak.status(), NtpRegistryStatus::Assigned);
+    }
+
+    #[test]
+    fn ntp_extension_registry_nts_packet_extension_labels_stay_scoped() {
         let nts_auth = ntp_nts_extension_field_type_meta(0x0404);
         assert_eq!(
             nts_auth.label,
