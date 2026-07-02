@@ -22,6 +22,11 @@ use crate::protocols::ip::v4::Ipv4;
 use crate::protocols::ip::v6::Ipv6;
 use crate::protocols::transport::Udp;
 
+const NTP_HEADER_CONTEXT: &str = "ntp.header";
+const NTP_EXTENSION_CONTEXT: &str = "ntp.extension";
+const NTP_EXTENSION_LENGTH_CONTEXT: &str = "ntp.extension.length";
+const NTP_MAC_CONTEXT: &str = "ntp.mac";
+
 /// Source-backed NTP leap-indicator field value.
 ///
 /// The leap indicator is the high two bits of the first NTP fixed-header
@@ -1189,7 +1194,7 @@ where
 pub fn decode_ntp_payload(bytes: &[u8]) -> Result<Ntp> {
     if bytes.len() < NTP_FIXED_HEADER_LEN {
         return Err(CrafterError::buffer_too_short(
-            "ntp fixed header",
+            NTP_HEADER_CONTEXT,
             NTP_FIXED_HEADER_LEN,
             bytes.len(),
         ));
@@ -1292,7 +1297,21 @@ fn parse_ntp_tail(tail: &[u8]) -> Result<(Vec<NtpExtensionField>, Option<NtpLega
             return Ok((fields, Some(NtpLegacyMac::from_bytes(remaining))));
         }
         if remaining.len() < NTP_EXTENSION_FIELD_HEADER_LEN {
-            return Ok((fields, Some(NtpLegacyMac::from_bytes(remaining))));
+            let context = if fields.is_empty() {
+                NTP_EXTENSION_CONTEXT
+            } else {
+                NTP_MAC_CONTEXT
+            };
+            let required = if fields.is_empty() {
+                NTP_EXTENSION_FIELD_HEADER_LEN
+            } else {
+                NTP_LEGACY_MAC_KEY_ID_LEN
+            };
+            return Err(CrafterError::buffer_too_short(
+                context,
+                required,
+                remaining.len(),
+            ));
         }
 
         let field_type = u16::from_be_bytes([remaining[0], remaining[1]]);
@@ -1301,7 +1320,7 @@ fn parse_ntp_tail(tail: &[u8]) -> Result<(Vec<NtpExtensionField>, Option<NtpLega
         let known_extension = meta.status != NtpRegistryStatus::Unassigned;
 
         if !is_valid_extension_length(declared_len, remaining.len()) {
-            if known_extension {
+            if known_extension || !is_plausible_legacy_mac_len(remaining.len()) {
                 return Err(invalid_extension_length_error(
                     declared_len,
                     remaining.len(),
@@ -1312,7 +1331,7 @@ fn parse_ntp_tail(tail: &[u8]) -> Result<(Vec<NtpExtensionField>, Option<NtpLega
 
         let final_without_mac = offset + declared_len == tail.len();
         if final_without_mac && declared_len < NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN {
-            if known_extension {
+            if known_extension || !is_plausible_legacy_mac_len(remaining.len()) {
                 return Err(invalid_final_extension_without_mac_length_error());
             }
             return Ok((fields, Some(NtpLegacyMac::from_bytes(remaining))));
@@ -1374,22 +1393,22 @@ fn is_valid_extension_length(declared_len: usize, available: usize) -> bool {
 fn invalid_extension_length_error(declared_len: usize, available: usize) -> CrafterError {
     if declared_len < NTP_EXTENSION_FIELD_MIN_LEN {
         CrafterError::invalid_field_value(
-            "ntp.extension.length",
+            NTP_EXTENSION_LENGTH_CONTEXT,
             "extension length must be at least 16 bytes",
         )
     } else if declared_len % 4 != 0 {
         CrafterError::invalid_field_value(
-            "ntp.extension.length",
+            NTP_EXTENSION_LENGTH_CONTEXT,
             "extension length must be a multiple of 4 bytes",
         )
     } else {
-        CrafterError::buffer_too_short("ntp extension field", declared_len, available)
+        CrafterError::buffer_too_short(NTP_EXTENSION_CONTEXT, declared_len, available)
     }
 }
 
 fn invalid_final_extension_without_mac_length_error() -> CrafterError {
     CrafterError::invalid_field_value(
-        "ntp.extension.length",
+        NTP_EXTENSION_LENGTH_CONTEXT,
         "final extension without MAC must be at least 28 bytes",
     )
 }
@@ -1403,6 +1422,88 @@ mod tests {
     use super::*;
     use crate::field::FieldState;
     use crate::protocols::ntp::NtpRegistryStatus;
+
+    fn ntp_parse_error_base_header() -> Vec<u8> {
+        let mut bytes = vec![NTP_DEFAULT_FIRST_OCTET];
+        bytes.resize(NTP_FIXED_HEADER_LEN, 0);
+        bytes
+    }
+
+    fn ntp_parse_error_with_tail(tail: &[u8]) -> Vec<u8> {
+        let mut bytes = ntp_parse_error_base_header();
+        bytes.extend_from_slice(tail);
+        bytes
+    }
+
+    #[test]
+    fn ntp_parse_errors_report_structured_fixed_header_and_tail_contexts() {
+        match decode_ntp_payload(&[0u8; NTP_FIXED_HEADER_LEN - 1]).unwrap_err() {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, NTP_HEADER_CONTEXT);
+                assert_eq!(required, NTP_FIXED_HEADER_LEN);
+                assert_eq!(available, NTP_FIXED_HEADER_LEN - 1);
+            }
+            other => panic!("unexpected fixed header error: {other:?}"),
+        }
+
+        let truncated_extension_header = ntp_parse_error_with_tail(&[0x01, 0x04, 0x00]);
+        match decode_ntp_payload(&truncated_extension_header).unwrap_err() {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, NTP_EXTENSION_CONTEXT);
+                assert_eq!(required, NTP_EXTENSION_FIELD_HEADER_LEN);
+                assert_eq!(available, 3);
+            }
+            other => panic!("unexpected extension header error: {other:?}"),
+        }
+
+        let short_extension_length = ntp_parse_error_with_tail(&[0x01, 0x04, 0x00, 0x0c]);
+        match decode_ntp_payload(&short_extension_length).unwrap_err() {
+            CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(field, NTP_EXTENSION_LENGTH_CONTEXT);
+            }
+            other => panic!("unexpected extension length error: {other:?}"),
+        }
+
+        let truncated_extension_body =
+            ntp_parse_error_with_tail(&[0x01, 0x04, 0x00, 0x10, 0xaa, 0xbb, 0xcc, 0xdd]);
+        match decode_ntp_payload(&truncated_extension_body).unwrap_err() {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, NTP_EXTENSION_CONTEXT);
+                assert_eq!(required, NTP_EXTENSION_FIELD_MIN_LEN);
+                assert_eq!(available, 8);
+            }
+            other => panic!("unexpected extension body error: {other:?}"),
+        }
+
+        let mut extension_then_truncated_mac = vec![0x01, 0x04, 0x00, 0x10];
+        extension_then_truncated_mac.resize(NTP_EXTENSION_FIELD_MIN_LEN, 0);
+        extension_then_truncated_mac.extend_from_slice(&[0xaa, 0xbb]);
+        let extension_then_truncated_mac = ntp_parse_error_with_tail(&extension_then_truncated_mac);
+        match decode_ntp_payload(&extension_then_truncated_mac).unwrap_err() {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, NTP_MAC_CONTEXT);
+                assert_eq!(required, NTP_LEGACY_MAC_KEY_ID_LEN);
+                assert_eq!(available, 2);
+            }
+            other => panic!("unexpected MAC tail error: {other:?}"),
+        }
+    }
 
     #[test]
     fn ntp_leap_indicator_values_and_labels_match_source_backed_codepoints() {
