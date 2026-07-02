@@ -94,6 +94,8 @@ Live, provider-backed, and manual testing workflows.
   used by oracle and probe.
 - [Endpoint provider guide](operations/endpoint.md) — shared disposable endpoint
   provider setup, credentials, artifacts, and cleanup for one endpoint.
+- [NTP live validation](operations/ntp.md) — guarded dry-run, oracle, probe,
+  endpoint, artifact, and teardown notes for NTP live validation.
 - [Dot11 live manual](operations/dot11-live-manual.md) — manual procedure for
   the IEEE 802.11 live testing boundary.
 - [BLE WHAD live manual](operations/ble-whad-live-manual.md) — manual procedure
