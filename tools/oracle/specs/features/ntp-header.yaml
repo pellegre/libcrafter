@@ -1,0 +1,341 @@
+version: 1
+kind: feature
+name: ntp_header
+summary: >-
+  Fixed NTP header behavior for client requests, server responses,
+  Kiss-o'-Death packets, NTPv3/SNTP-compatible packets, raw timestamp values,
+  and explicit caller overrides that must remain packet bytes.
+
+layers:
+  - udp
+  - ntp
+directions:
+  - backend_to_libcrafter
+  - libcrafter_to_backend
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: client-request
+    summary: NTPv4 client request with documentation-address UDP stack.
+    udp:
+      source_port: 49152
+      destination_port: 123
+    ntp:
+      leap_indicator: no_warning
+      version: ntp_v4
+      mode: client
+      stratum: unspecified_or_kod
+      poll: 6
+      precision: -20
+      root_delay: 0x00010000
+      root_dispersion: 0x00020000
+      reference_id: "4c4f434c"
+      reference_timestamp: 0x0000000000000000
+      origin_timestamp: 0x0000000000000000
+      receive_timestamp: 0x0000000000000000
+      transmit_timestamp: 0xecc0000012345678
+    checks:
+      - first_octet_0x23
+      - udp_destination_port_123
+      - fixed_header_length_48
+      - timestamps_preserve_raw_bits
+  - name: server-response
+    summary: NTPv4 server response preserving primary reference ID and all timestamps.
+    udp:
+      source_port: 123
+      destination_port: 49152
+    ntp:
+      leap_indicator: no_warning
+      version: ntp_v4
+      mode: server
+      stratum: primary
+      poll: 6
+      precision: -20
+      root_delay: 0x00010000
+      root_dispersion: 0x00024000
+      reference_id: "47505300"
+      reference_timestamp: 0x0102030405060708
+      origin_timestamp: 0x1112131415161718
+      receive_timestamp: 0x2122232425262728
+      transmit_timestamp: 0x3132333435363738
+    checks:
+      - first_octet_0x24
+      - primary_reference_id_label_stable
+      - server_timestamp_fields_preserved
+  - name: kiss-o-death-response
+    summary: Stratum-0 server response carrying a Kiss-o'-Death reference code.
+    udp:
+      source_port: 123
+      destination_port: 49152
+    ntp:
+      leap_indicator: alarm_unsynchronized
+      version: ntp_v4
+      mode: server
+      stratum: unspecified_or_kod
+      poll: 6
+      precision: -20
+      reference_id: "52415445"
+      transmit_timestamp: 0x3132333435363738
+    checks:
+      - stratum_zero_preserved
+      - kiss_o_death_rate_label_stable
+      - alarm_unsynchronized_preserved
+  - name: ntpv3-sntp-compatible
+    summary: Version-3 client packet accepted as NTP/SNTP-shaped payload bytes.
+    udp:
+      source_port: 49152
+      destination_port: 123
+    ntp:
+      leap_indicator: no_warning
+      version: ntp_v3_sntp
+      mode: client
+      stratum: unspecified_or_kod
+      transmit_timestamp: 0x0102030405060708
+    checks:
+      - version_three_preserved
+      - sntp_shape_decodes_as_ntp
+      - recompile_matches_input
+  - name: raw-timestamp-values
+    summary: Boundary timestamp and fixed-point values remain raw packet fields.
+    ntp:
+      root_delay: 0xffff0001
+      root_dispersion: 0x80000002
+      reference_timestamp: 0x0000000000000000
+      origin_timestamp: 0xffffffffffffffff
+      receive_timestamp: 0x8000000000000001
+      transmit_timestamp: 0x3132333435363738
+    checks:
+      - root_delay_raw_bits_preserved
+      - root_dispersion_raw_bits_preserved
+      - timestamp_era_not_interpreted_by_oracle
+  - name: override-friendly-fixed-fields
+    summary: Caller-supplied unusual fixed-header values survive serialization.
+    ntp:
+      leap_indicator: last_minute_61_seconds
+      version: old_version_preserved
+      mode: private_use
+      stratum: reserved_preserved
+      poll: -8
+      precision: 127
+      reference_id: "deadbeef"
+    checks:
+      - explicit_first_octet_bits_preserved
+      - reserved_stratum_preserved
+      - unusual_poll_precision_preserved
+
+coverage_cases:
+  - ntp-header-client-request
+  - ntp-header-server-response
+  - ntp-header-kiss-o-death
+  - ntp-header-ntpv3-sntp
+  - ntp-header-raw-timestamps
+  - ntp-header-override-friendly-fields
+
+supported_cases:
+  - name: ntp-header-client-request
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      udp:
+        sport: 49152
+        dport: 123
+      ntp:
+        leap_indicator: no_warning
+        version: ntp_v4
+        mode: client
+        poll: 6
+        precision: -20
+        root_delay: 0x00010000
+        root_dispersion: 0x00020000
+        reference_id_hex: "4c4f434c"
+        transmit_timestamp: 0xecc0000012345678
+    expected:
+      payload_hex: "230006ec00010000000200004c4f434c000000000000000000000000000000000000000000000000ecc0000012345678"
+      summary_contains:
+        - "mode=client"
+        - "version=ntp-v4"
+  - name: ntp-header-server-response
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      udp:
+        sport: 123
+        dport: 49152
+      ntp:
+        leap_indicator: no_warning
+        version: ntp_v4
+        mode: server
+        stratum: primary
+        reference_id_hex: "47505300"
+        reference_timestamp: 0x0102030405060708
+        origin_timestamp: 0x1112131415161718
+        receive_timestamp: 0x2122232425262728
+        transmit_timestamp: 0x3132333435363738
+    expected:
+      first_octet: 0x24
+      reference_id_label: "Global Position System"
+  - name: ntp-header-kiss-o-death
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      udp:
+        sport: 123
+        dport: 49152
+      ntp:
+        leap_indicator: alarm_unsynchronized
+        version: ntp_v4
+        mode: server
+        stratum: unspecified_or_kod
+        reference_id_hex: "52415445"
+    expected:
+      first_octet: 0xe4
+      reference_id_label: "kiss-rate"
+  - name: ntp-header-ntpv3-sntp
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      udp:
+        sport: 49152
+        dport: 123
+      ntp:
+        version: ntp_v3_sntp
+        mode: client
+        transmit_timestamp: 0x0102030405060708
+    expected:
+      first_octet: 0x1b
+      version: ntp-v3
+  - name: ntp-header-raw-timestamps
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      ntp:
+        root_delay: 0xffff0001
+        root_dispersion: 0x80000002
+        reference_timestamp: 0x0000000000000000
+        origin_timestamp: 0xffffffffffffffff
+        receive_timestamp: 0x8000000000000001
+        transmit_timestamp: 0x3132333435363738
+    expected:
+      raw_timestamp_preservation: true
+  - name: ntp-header-override-friendly-fields
+    directions:
+      - roundtrip
+    byte_policy: normalized
+    contract_only: true
+    fields:
+      ntp:
+        leap_indicator: last_minute_61_seconds
+        version_raw: 2
+        mode: private_use
+        stratum_raw: 250
+        poll: -8
+        precision: 127
+        reference_id_hex: "deadbeef"
+    expected:
+      reason: >-
+        libcrafter preserves explicit unusual fixed-header values; reference
+        backends may normalize or reject some of these values, so this is a
+        contract-only roundtrip case until backend adapters opt in.
+
+case_groups:
+  - name: ntp-header-strict
+    summary: Fixed-header NTP packets that should compare byte-for-byte.
+    byte_policy: strict_bytes
+    cases:
+      - ntp-header-client-request
+      - ntp-header-server-response
+      - ntp-header-kiss-o-death
+      - ntp-header-ntpv3-sntp
+      - ntp-header-raw-timestamps
+  - name: ntp-header-contract-only
+    summary: Explicit unusual fixed fields preserved by libcrafter.
+    byte_policy: normalized
+    cases:
+      - ntp-header-override-friendly-fields
+
+normalized_model:
+  header:
+    - first_octet
+    - leap_indicator
+    - version
+    - mode
+    - stratum
+    - poll
+    - precision
+    - root_delay
+    - root_dispersion
+    - reference_id
+    - reference_timestamp
+    - origin_timestamp
+    - receive_timestamp
+    - transmit_timestamp
+  registry:
+    - leap_indicator_label
+    - version_label
+    - mode_label
+    - stratum_label
+    - reference_id_label
+
+source_refs:
+  - RFC 4330
+  - RFC 5905
+  - IANA NTP registries
+  - .agents/docs/ntp-wire-grammar.md
+  - .agents/docs/ntp-codepoints.md
+  - tools/oracle/specs/layers/ntp.yaml
+
+notes:
+  - >-
+    Timestamp values are raw 64-bit packet fields. Era conversion, clock
+    discipline, peer selection, and synchronization success are not oracle
+    responsibilities.
+  - >-
+    The override-friendly case documents libcrafter's explicit override
+    contract without forcing every reference backend to emit identical unusual
+    field combinations.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - NTP
+      - Raw
+    notes:
+      - A later Scapy backend step will materialize strict NTP header cases.
+  wireshark:
+    status: planned
+    native_layers:
+      - ntp
+    decode: true
+    notes:
+      - A later Wireshark backend step will normalize parser-only header fields.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - libcrafter builds, decodes, summarizes, shows, and round-trips these
+        fixed-header packet shapes while preserving explicit overrides.
