@@ -797,6 +797,11 @@ impl Ntp {
         Self::server_response()
     }
 
+    /// UDP header for the NTP service port.
+    pub fn udp() -> Udp {
+        Udp::ntp()
+    }
+
     /// Build a symmetric-active NTP packet shape.
     pub fn symmetric_active() -> Self {
         Self::new().mode(NtpMode::SymmetricActive)
@@ -1254,12 +1259,12 @@ pub fn append_ntp_packet(packet: Packet, payload: &[u8]) -> Result<Packet> {
 
 /// UDP header for an NTP client request.
 pub fn ntp_client_udp() -> Udp {
-    Udp::new().source_port(NTP_PORT).destination_port(NTP_PORT)
+    Ntp::udp()
 }
 
 /// UDP header for an NTP server response.
 pub fn ntp_server_udp() -> Udp {
-    Udp::new().source_port(NTP_PORT).destination_port(NTP_PORT)
+    Ntp::udp()
 }
 
 /// Documentation-safe IPv4/UDP/NTP client request packet.
@@ -2088,6 +2093,20 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn ntp_udp_helper_uses_service_port_and_allows_overrides() {
+        let udp = Ntp::udp();
+
+        assert_eq!(udp.source_port_value(), NTP_PORT);
+        assert_eq!(udp.destination_port_value(), NTP_PORT);
+        assert_eq!(udp, ntp_client_udp());
+        assert_eq!(udp, ntp_server_udp());
+
+        let udp = Ntp::udp().source_port(49_152).destination_port(12_345);
+        assert_eq!(udp.source_port_value(), 49_152);
+        assert_eq!(udp.destination_port_value(), 12_345);
     }
 
     #[test]
