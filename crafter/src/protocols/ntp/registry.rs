@@ -61,6 +61,14 @@ pub struct NtpReferenceCodeMeta {
     pub status: NtpRegistryStatus,
 }
 
+impl NtpReferenceCodeMeta {
+    /// ASCII registry code when the raw bytes are uppercase alphanumeric and
+    /// right-padded with NUL bytes.
+    pub fn ascii_label(&self) -> Option<String> {
+        ntp_reference_code_ascii_label(self.bytes)
+    }
+}
+
 /// Return registry metadata for an NTP Leap Indicator value.
 pub fn ntp_leap_indicator_meta(value: u8) -> NtpRegistryMeta {
     match value {
@@ -405,6 +413,25 @@ pub fn ntp_nts_extension_field_type_meta(field_type: u16) -> NtpRegistryMeta {
     }
 }
 
+pub(super) fn ntp_reference_code_ascii_label(
+    code: [u8; NTP_REFERENCE_ID_LEN],
+) -> Option<String> {
+    let mut len = 0;
+    while len < NTP_REFERENCE_ID_LEN && code[len] != 0 {
+        let byte = code[len];
+        if !(byte.is_ascii_uppercase() || byte.is_ascii_digit()) {
+            return None;
+        }
+        len += 1;
+    }
+
+    if len == 0 || code[len..].iter().any(|byte| *byte != 0) {
+        return None;
+    }
+
+    Some(core::str::from_utf8(&code[..len]).ok()?.to_string())
+}
+
 fn numeric_meta(value: impl Into<u32>, label: &str, status: NtpRegistryStatus) -> NtpRegistryMeta {
     NtpRegistryMeta {
         value: value.into(),
@@ -560,6 +587,30 @@ mod tests {
         let unknown_kod = ntp_kiss_o_death_code_meta([b'N', b'O', b'P', b'E']);
         assert_eq!(unknown_kod.label, "kod-0x4E4F5045");
         assert_eq!(unknown_kod.status, NtpRegistryStatus::Unassigned);
+    }
+
+    #[test]
+    fn ntp_stratum_refid_registry_ascii_labels_are_valid_uppercase_codes() {
+        let gps = ntp_reference_id_meta([b'G', b'P', b'S', 0]);
+        assert_eq!(gps.ascii_label().as_deref(), Some("GPS"));
+
+        let rate = ntp_kiss_o_death_code_meta([b'R', b'A', b'T', b'E']);
+        assert_eq!(rate.ascii_label().as_deref(), Some("RATE"));
+
+        assert_eq!(
+            ntp_reference_code_ascii_label([b'X', b'L', b'A', b'B']).as_deref(),
+            Some("XLAB")
+        );
+        assert_eq!(ntp_reference_code_ascii_label([0, 0, 0, 0]), None);
+        assert_eq!(
+            ntp_reference_code_ascii_label([b'G', 0, b'P', 0]),
+            None
+        );
+        assert_eq!(
+            ntp_reference_code_ascii_label([b'g', b'P', b'S', 0]),
+            None
+        );
+        assert_eq!(ntp_reference_code_ascii_label([0x80, 0, 0, 1]), None);
     }
 
     #[test]
