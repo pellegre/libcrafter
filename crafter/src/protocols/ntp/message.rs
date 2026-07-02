@@ -1051,7 +1051,7 @@ impl Ntp {
         len
     }
 
-    fn compile_fixed_header(&self, out: &mut Vec<u8>) {
+    fn serialize_header(&self, out: &mut Vec<u8>) {
         out.push(self.first_octet_value());
         out.push(self.stratum_value().wire_value());
         out.push(self.poll_value() as u8);
@@ -1145,7 +1145,7 @@ impl Layer for Ntp {
     }
 
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
-        self.compile_fixed_header(out);
+        self.serialize_header(out);
         for (index, field) in self.extension_fields.iter().enumerate() {
             let last_without_mac =
                 index + 1 == self.extension_fields.len() && self.legacy_mac.is_none();
@@ -1918,6 +1918,82 @@ mod tests {
         assert_eq!(&bytes[24..32], &0x1112_1314_1516_1718u64.to_be_bytes());
         assert_eq!(&bytes[32..40], &0x2122_2324_2526_2728u64.to_be_bytes());
         assert_eq!(&bytes[40..48], &0x3132_3334_3536_3738u64.to_be_bytes());
+
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_serialize_header_writes_default_fixed_header() {
+        let ntp = Ntp::new();
+        let mut bytes = vec![0xaa];
+
+        ntp.serialize_header(&mut bytes);
+
+        assert_eq!(bytes.len(), NTP_FIXED_HEADER_LEN + 1);
+        assert_eq!(bytes[0], 0xaa);
+
+        let header = &bytes[1..];
+        let mut expected = vec![
+            NTP_DEFAULT_FIRST_OCTET,
+            NTP_DEFAULT_STRATUM,
+            NTP_DEFAULT_POLL as u8,
+            NTP_DEFAULT_PRECISION as u8,
+        ];
+        expected.resize(NTP_FIXED_HEADER_LEN, 0);
+        assert_eq!(header, expected.as_slice());
+    }
+
+    #[test]
+    fn ntp_serialize_header_preserves_user_values_big_endian() {
+        let ntp = Ntp::new()
+            .leap_indicator(0xaa)
+            .version_value(0x0f)
+            .mode(0x2a)
+            .stratum(0xff)
+            .poll(i8::MIN)
+            .precision(i8::MAX)
+            .root_delay_raw(0xffff_0001)
+            .root_dispersion_raw(0x8000_0002)
+            .reference_id([0xde, 0xad, 0xbe, 0xef])
+            .reference_timestamp(0x0102_0304_0506_0708u64)
+            .origin_timestamp(0x1112_1314_1516_1718u64)
+            .receive_timestamp(0x2122_2324_2526_2728u64)
+            .transmit_timestamp(0x3132_3334_3536_3738u64);
+        let mut bytes = Vec::new();
+
+        ntp.serialize_header(&mut bytes);
+
+        assert_eq!(bytes.len(), NTP_FIXED_HEADER_LEN);
+        assert_eq!(bytes[0], 0xba);
+        assert_eq!(bytes[1], 0xff);
+        assert_eq!(bytes[2], 0x80);
+        assert_eq!(bytes[3], 0x7f);
+        assert_eq!(&bytes[4..8], &0xffff_0001u32.to_be_bytes());
+        assert_eq!(&bytes[8..12], &0x8000_0002u32.to_be_bytes());
+        assert_eq!(&bytes[12..16], &[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(&bytes[16..24], &0x0102_0304_0506_0708u64.to_be_bytes());
+        assert_eq!(&bytes[24..32], &0x1112_1314_1516_1718u64.to_be_bytes());
+        assert_eq!(&bytes[32..40], &0x2122_2324_2526_2728u64.to_be_bytes());
+        assert_eq!(&bytes[40..48], &0x3132_3334_3536_3738u64.to_be_bytes());
+    }
+
+    #[test]
+    fn ntp_serialize_header_excludes_extensions_and_mac() -> Result<()> {
+        let ntp = Ntp::new()
+            .transmit_timestamp(0x3132_3334_3536_3738u64)
+            .extension_field(NtpExtensionField::nts_cookie([0xaa, 0xbb]))
+            .legacy_mac(NtpLegacyMac::from_key_id_and_digest(
+                0x0102_0304,
+                [0xcc; 16],
+            ));
+        let mut header = Vec::new();
+
+        ntp.serialize_header(&mut header);
+        let compiled = Packet::from_layer(ntp).compile()?.into_bytes();
+
+        assert_eq!(header.len(), NTP_FIXED_HEADER_LEN);
+        assert!(compiled.len() > NTP_FIXED_HEADER_LEN);
+        assert_eq!(&compiled[..NTP_FIXED_HEADER_LEN], header.as_slice());
 
         Ok(())
     }
