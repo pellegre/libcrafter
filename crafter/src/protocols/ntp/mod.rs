@@ -10,6 +10,7 @@
 pub mod constants;
 pub mod decode;
 pub mod extension;
+pub mod mac;
 pub mod message;
 pub mod registry;
 pub mod time;
@@ -17,6 +18,7 @@ pub mod time;
 pub use self::constants::*;
 pub use self::decode::decode_ntp;
 pub use self::extension::NtpExtensionField;
+pub use self::mac::NtpMac;
 pub use self::message::{
     append_ntp_packet, decode_ntp_payload, looks_like_ntp_payload, ntp_client_udp,
     ntp_ipv4_client_request, ntp_ipv6_client_request, ntp_pack_first_octet, ntp_parse_first_octet,
