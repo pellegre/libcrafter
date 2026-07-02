@@ -143,6 +143,7 @@ _NTP_LIVE_CAPABLE_CASES = frozenset(
     for case in NTP_PROBE_CASES
     if case.metadata.get("live_capable") is True
 )
+_NTP_STIMULUS_ENDPOINT_CASES = _NTP_LIVE_CAPABLE_CASES
 
 
 def _ntp_probe_plan(
@@ -779,7 +780,7 @@ register(
         plan_builders=_NTP_PLAN_BUILDERS,
         planned_only_cases=_NTP_PLANNED_ONLY_CASES,
         profile_counts={},
-        stimulus_endpoint_cases=frozenset(),
+        stimulus_endpoint_cases=_NTP_STIMULUS_ENDPOINT_CASES,
         target_service=ntp_target_service_contribution,
         setup_script=None,
         rewrite_endpoint_addresses=ntp_rewrite_endpoint_addresses,

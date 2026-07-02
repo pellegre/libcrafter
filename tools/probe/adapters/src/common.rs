@@ -2,8 +2,8 @@
 //! stimulus endpoint.
 //!
 //! Case-specific packet construction, capture, and validation live in the
-//! per-protocol modules (`icmp`, `tcp`, `dns`, `mdns`, `udp`, `dhcpv4`, `arp`). This
-//! module owns everything those cases share: argument parsing, the JSON
+//! per-protocol modules (`icmp`, `tcp`, `dns`, `mdns`, `udp`, `dhcpv4`, `arp`,
+//! `ntp`). This module owns everything those cases share: argument parsing, the JSON
 //! request/plan contracts, the dry-run/live dispatch in [`run_endpoint`], and
 //! the response/artifact helpers.
 
@@ -18,7 +18,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::{
-    arp, dhcpv4, dhcpv6, dns, icmp, mdns, mqtt, ndp, ospf, quic, rip, snmp, ssdp, tcp, tls, udp,
+    arp, dhcpv4, dhcpv6, dns, icmp, mdns, mqtt, ndp, ntp, ospf, quic, rip, snmp, ssdp, tcp, tls,
+    udp,
 };
 
 pub type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
@@ -1237,6 +1238,12 @@ fn dispatch_case(
             | "snmp-notification-trap"
             | "snmpv3-engine-discovery-report",
         ) => snmp::run_snmp_live(request, plan),
+        (RunMode::DryRun, case) if ntp::is_live_capable_case(case) => {
+            ntp::run_ntp_dry_run(request, plan)
+        }
+        (RunMode::Live, case) if ntp::is_live_capable_case(case) => {
+            ntp::run_ntp_live(request, plan)
+        }
         (
             RunMode::DryRun,
             "ssdp-ipv4-search-exchange" | "ssdp-ipv6-search-exchange" | "ssdp-notify-capture",
@@ -1607,6 +1614,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
     let dhcpv4 = packet.layer::<Dhcpv4>();
     let dhcpv6 = packet.layer::<Dhcpv6>();
     let snmp_layer = packet.layer::<Snmp>();
+    let ntp_layer = packet.layer::<Ntp>();
     let quic_layer = packet.layer::<Quic>();
     let tls_layer = packet.layer::<Tls>();
     let udp_options = packet.layer::<UdpOptions>();
@@ -1664,6 +1672,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
         "dhcpv4": dhcpv4.map(dhcpv4::dhcpv4_json),
         "dhcpv6": dhcpv6.map(dhcpv6::dhcpv6_json),
         "snmp": snmp_layer.map(snmp::snmp_json),
+        "ntp": ntp_layer.map(ntp::ntp_json),
         "quic": quic_layer.map(quic::quic_json),
         "tls": tls_layer.map(tls::tls_json),
         "payload_hex": hex_bytes(raw_payload(packet)),
@@ -1744,6 +1753,7 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
                 plan.source_port.unwrap_or(0),
             )
         }
+        case if ntp::is_ntp_case(case) => ntp::capture_filter(plan),
         "ttl-expired" => format!(
             "icmp and src host {} and dst host {}",
             plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
@@ -1938,6 +1948,11 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "snmp-get-response" | "snmp-getbulk-response" => "snmp_response",
             "snmp-notification-trap" => "snmp_notification_observed",
             "snmpv3-engine-discovery-report" => "snmpv3_report",
+            "ntp-client-server-exchange" => "ntp_server_response",
+            "ntp-kod-response" => "ntp_kiss_o_death_response",
+            "ntp-extension-preservation" => "ntp_extension_response",
+            "ntp-nts-extension-plan" => "ntp_nts_extension_observed",
+            "ntp-malformed-observation" => "ntp_structured_error_or_raw_fallback",
             _ => "unknown",
         })
 }
@@ -2101,6 +2116,7 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "snmp_request": plan.snmp_request,
             "expected_snmp_response": plan.expected_snmp_response,
         }),
+        case if ntp::is_ntp_case(case) => ntp::target_service_json(plan),
         "dhcpv4-discover-offer" => json!({
             "required": true,
             "kind": "dhcpv4-responder",
@@ -2632,6 +2648,7 @@ pub fn validation_json(plan: &ProbePlan) -> Value {
             "destination_port": plan.source_port,
             "expected_snmp_response": plan.expected_snmp_response,
         }),
+        case if ntp::is_ntp_case(case) => ntp::validation_json(plan),
         "mdns-ipv4-multicast-browse"
         | "mdns-ipv6-multicast-browse"
         | "mdns-qu-unicast-response"
