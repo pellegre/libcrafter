@@ -2179,6 +2179,66 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn ntp_tail_compile_preserves_order_padding_and_mac_bytes() -> Result<()> {
+        let first_extension = NtpExtensionField::new(0xbeef, [0xaa, 0xbb])
+            .padding([0xcc, 0xdd])
+            .declared_length(NTP_EXTENSION_FIELD_MIN_LEN as u16);
+        let second_extension = NtpExtensionField::new(0x1234, [0x11, 0x22, 0x33, 0x44])
+            .declared_length(NTP_EXTENSION_FIELD_MIN_LEN as u16);
+        let mac_bytes = [0xde, 0xad, 0xbe, 0xef, 0x80, 0x81, 0x82];
+        let ntp = Ntp::new()
+            .extension_fields(vec![first_extension, second_extension])
+            .legacy_mac(NtpLegacyMac::from_bytes(mac_bytes));
+
+        let bytes = Packet::from_layer(ntp.clone()).compile()?.into_bytes();
+        let tail = &bytes[NTP_FIXED_HEADER_LEN..];
+
+        assert_eq!(bytes.len(), ntp.encoded_len());
+        assert_eq!(
+            ntp.encoded_len(),
+            NTP_FIXED_HEADER_LEN + (NTP_EXTENSION_FIELD_MIN_LEN * 2) + mac_bytes.len()
+        );
+        assert_eq!(
+            &tail[..NTP_EXTENSION_FIELD_MIN_LEN],
+            &[
+                0xbe, 0xef, 0x00, 0x10, 0xaa, 0xbb, 0xcc, 0xdd, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00
+            ]
+        );
+        assert_eq!(
+            &tail[NTP_EXTENSION_FIELD_MIN_LEN..NTP_EXTENSION_FIELD_MIN_LEN * 2],
+            &[
+                0x12, 0x34, 0x00, 0x10, 0x11, 0x22, 0x33, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00
+            ]
+        );
+        assert_eq!(&tail[NTP_EXTENSION_FIELD_MIN_LEN * 2..], &mac_bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_tail_compile_preserves_declared_length_override_and_encoded_len() -> Result<()> {
+        let ntp = Ntp::new().extension_field(
+            NtpExtensionField::new(0xabcd, [0x01, 0x02, 0x03, 0x04])
+                .padding([0xf0, 0xf1, 0xf2, 0xf3])
+                .declared_length(12),
+        );
+
+        let bytes = Packet::from_layer(ntp.clone()).compile()?.into_bytes();
+        let tail = &bytes[NTP_FIXED_HEADER_LEN..];
+
+        assert_eq!(ntp.encoded_len(), NTP_FIXED_HEADER_LEN + 12);
+        assert_eq!(bytes.len(), ntp.encoded_len());
+        assert_eq!(
+            tail,
+            &[0xab, 0xcd, 0x00, 0x0c, 0x01, 0x02, 0x03, 0x04, 0xf0, 0xf1, 0xf2, 0xf3]
+        );
+
+        Ok(())
+    }
+
     mod ntp_layer_impl {
         use super::*;
         use crate::packet::{Layer, Packet, Raw};
