@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use crafter::prelude::*;
 
 const IPV4_UDP_NTP_CLIENT_SUMMARY: &str = "summaries/ipv4-udp-ntp-client.summary.txt";
+const IPV4_UDP_NTP_CLIENT_SHOW: &str = "summaries/ipv4-udp-ntp-client-show.summary.txt";
 
 fn fixture_path(path: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -15,6 +16,16 @@ fn fixture_path(path: &str) -> PathBuf {
 fn read_summary_fixture(path: &str) -> String {
     fs::read_to_string(fixture_path(path))
         .unwrap_or_else(|err| panic!("summary fixture {path} should be readable: {err}"))
+}
+
+fn normalize_show_fixture(show: &str) -> String {
+    let mut normalized = show
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n");
+    normalized.push('\n');
+    normalized
 }
 
 fn ntp_summary_stack() -> Packet {
@@ -55,5 +66,49 @@ fn ntp_summary_golden_matches_ipv4_udp_ntp_client() -> crafter::Result<()> {
     assert!(!summary.contains("01020304"), "{summary}");
     assert!(!summary.contains("abababab"), "{summary}");
     assert!(!summary.contains("ab ab"), "{summary}");
+    Ok(())
+}
+
+#[test]
+fn ntp_show_golden_matches_ipv4_udp_ntp_client() -> crafter::Result<()> {
+    let packet = ntp_summary_packet()?;
+    let show = packet.show();
+    let expected = read_summary_fixture(IPV4_UDP_NTP_CLIENT_SHOW);
+
+    assert_eq!(
+        normalize_show_fixture(&show).trim_end(),
+        expected.trim_end()
+    );
+    assert!(show.contains("first_octet: 0x23"), "{show}");
+    assert!(show.contains("mode: client"), "{show}");
+    assert!(
+        show.contains("reference_id: Global Position System"),
+        "{show}"
+    );
+    assert!(show.contains("legacy_mac_len: 20"), "{show}");
+    assert!(
+        show.contains("mac_status: legacy-mac digest_len=16 total_len=20"),
+        "{show}"
+    );
+    assert!(!show.contains("01020304"), "{show}");
+    assert!(!show.contains("abababab"), "{show}");
+    assert!(!show.contains("ab ab"), "{show}");
+    Ok(())
+}
+
+#[test]
+#[ignore = "regenerates committed NTP summary fixtures"]
+fn ntp_summary_write_fixtures() -> crafter::Result<()> {
+    let packet = ntp_summary_packet()?;
+    fs::write(
+        fixture_path(IPV4_UDP_NTP_CLIENT_SUMMARY),
+        format!("{}\n", packet.summary()),
+    )
+    .expect("NTP summary fixture should write");
+    fs::write(
+        fixture_path(IPV4_UDP_NTP_CLIENT_SHOW),
+        normalize_show_fixture(&packet.show()),
+    )
+    .expect("NTP show fixture should write");
     Ok(())
 }
