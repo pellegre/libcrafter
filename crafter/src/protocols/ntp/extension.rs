@@ -13,6 +13,7 @@ use crate::field::Field;
 pub(super) const NTP_EXTENSION_CONTEXT: &str = "ntp.extension";
 pub(super) const NTP_EXTENSION_LENGTH_CONTEXT: &str = "ntp.extension.length";
 pub(super) const NTP_MAC_CONTEXT: &str = "ntp.mac";
+pub(super) const NTP_NTS_AUTHENTICATOR_CONTEXT: &str = "ntp.extension.nts_authenticator";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct NtpExtensionDecodeAll {
@@ -231,6 +232,238 @@ impl From<NtpNtsCookiePlaceholderExtension> for NtpExtensionField {
     }
 }
 
+/// Raw-preserving NTS Authenticator and Encrypted Extension Fields body.
+///
+/// RFC 8915 defines this NTP packet extension field at field type `0x0404`.
+/// This helper preserves the nonce, ciphertext, authentication-tag bytes, and
+/// padding carried by the body. It does not perform AEAD encryption,
+/// decryption, or verification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NtpNtsAuthenticatorExtension {
+    body: Vec<u8>,
+}
+
+impl NtpNtsAuthenticatorExtension {
+    /// NTP Extension Field Type for NTS Authenticator and Encrypted Extension Fields.
+    pub const FIELD_TYPE: u16 = 0x0404;
+
+    /// Build an NTS Authenticator body from raw packet bytes.
+    pub fn new(body: impl Into<Vec<u8>>) -> Self {
+        Self { body: body.into() }
+    }
+
+    /// Build an NTS Authenticator body from structured packet body parts.
+    ///
+    /// The RFC 8915 Ciphertext field is the AEAD output and can include a
+    /// trailing authentication tag. This builder accepts the encrypted bytes
+    /// and tag separately, then stores them contiguously in that field.
+    pub fn from_parts(
+        nonce: impl AsRef<[u8]>,
+        ciphertext: impl AsRef<[u8]>,
+        tag: impl AsRef<[u8]>,
+        additional_padding: impl AsRef<[u8]>,
+    ) -> Result<Self> {
+        let nonce = nonce.as_ref();
+        let ciphertext = ciphertext.as_ref();
+        let tag = tag.as_ref();
+        let additional_padding = additional_padding.as_ref();
+        let nonce_len = u16_len(
+            nonce.len(),
+            NTP_NTS_AUTHENTICATOR_CONTEXT,
+            "nonce length must fit in 16 bits",
+        )?;
+        let ciphertext_len = ciphertext
+            .len()
+            .checked_add(tag.len())
+            .and_then(|len| u16::try_from(len).ok())
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    NTP_NTS_AUTHENTICATOR_CONTEXT,
+                    "ciphertext length must fit in 16 bits",
+                )
+            })?;
+
+        let mut body = Vec::with_capacity(
+            NTP_EXTENSION_FIELD_HEADER_LEN
+                + align_4(nonce.len())
+                + align_4(usize::from(ciphertext_len))
+                + additional_padding.len(),
+        );
+        body.extend_from_slice(&nonce_len.to_be_bytes());
+        body.extend_from_slice(&ciphertext_len.to_be_bytes());
+        body.extend_from_slice(nonce);
+        body.resize(NTP_EXTENSION_FIELD_HEADER_LEN + align_4(nonce.len()), 0);
+        body.extend_from_slice(ciphertext);
+        body.extend_from_slice(tag);
+        body.resize(
+            NTP_EXTENSION_FIELD_HEADER_LEN
+                + align_4(nonce.len())
+                + align_4(usize::from(ciphertext_len)),
+            0,
+        );
+        body.extend_from_slice(additional_padding);
+        Ok(Self { body })
+    }
+
+    /// NTP Extension Field Type encoded for this body.
+    pub const fn field_type(&self) -> u16 {
+        Self::FIELD_TYPE
+    }
+
+    /// Raw extension body bytes, excluding the four-octet extension envelope.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// Split the RFC 8915 body into grammar fields when the lengths fit.
+    pub fn parts(&self) -> Option<NtpNtsAuthenticatorParts<'_>> {
+        NtpNtsAuthenticatorParts::parse(&self.body)
+    }
+
+    /// Borrow the nonce bytes when the body can be split.
+    pub fn nonce(&self) -> Option<&[u8]> {
+        Some(self.parts()?.nonce())
+    }
+
+    /// Borrow the RFC 8915 Ciphertext field, which may include an AEAD tag.
+    pub fn ciphertext(&self) -> Option<&[u8]> {
+        Some(self.parts()?.ciphertext())
+    }
+
+    /// Borrow the encrypted bytes before a caller-specified trailing tag.
+    pub fn ciphertext_without_tag(&self, tag_len: usize) -> Option<&[u8]> {
+        self.parts()?.ciphertext_without_tag(tag_len)
+    }
+
+    /// Borrow a caller-specified trailing authentication tag.
+    pub fn tag(&self, tag_len: usize) -> Option<&[u8]> {
+        self.parts()?.tag(tag_len)
+    }
+
+    /// Borrow padding after the nonce field when the body can be split.
+    pub fn nonce_padding(&self) -> Option<&[u8]> {
+        Some(self.parts()?.nonce_padding())
+    }
+
+    /// Borrow padding after the Ciphertext field when the body can be split.
+    pub fn ciphertext_padding(&self) -> Option<&[u8]> {
+        Some(self.parts()?.ciphertext_padding())
+    }
+
+    /// Borrow the Additional Padding field when the body can be split.
+    pub fn additional_padding(&self) -> Option<&[u8]> {
+        Some(self.parts()?.additional_padding())
+    }
+
+    /// Convert to the generic raw-preserving NTP extension field envelope.
+    pub fn into_extension_field(self) -> NtpExtensionField {
+        self.into()
+    }
+
+    /// Decode a generic extension field as NTS Authenticator when typed.
+    pub fn from_extension_field(field: &NtpExtensionField) -> Option<Self> {
+        if field.is_nts_authenticator() {
+            Some(Self::new(field.value().to_vec()))
+        } else {
+            None
+        }
+    }
+}
+
+impl From<NtpNtsAuthenticatorExtension> for NtpExtensionField {
+    fn from(extension: NtpNtsAuthenticatorExtension) -> Self {
+        Self::new(NtpNtsAuthenticatorExtension::FIELD_TYPE, extension.body)
+    }
+}
+
+/// Borrowed view of an RFC 8915 NTS Authenticator body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NtpNtsAuthenticatorParts<'a> {
+    nonce_len: usize,
+    ciphertext_len: usize,
+    nonce: &'a [u8],
+    nonce_padding: &'a [u8],
+    ciphertext: &'a [u8],
+    ciphertext_padding: &'a [u8],
+    additional_padding: &'a [u8],
+}
+
+impl<'a> NtpNtsAuthenticatorParts<'a> {
+    fn parse(body: &'a [u8]) -> Option<Self> {
+        let header = body.get(..NTP_EXTENSION_FIELD_HEADER_LEN)?;
+        let nonce_len = u16::from_be_bytes([header[0], header[1]]) as usize;
+        let ciphertext_len = u16::from_be_bytes([header[2], header[3]]) as usize;
+
+        let nonce_start = NTP_EXTENSION_FIELD_HEADER_LEN;
+        let nonce_end = nonce_start.checked_add(nonce_len)?;
+        let padded_nonce_end = nonce_start.checked_add(align_4(nonce_len))?;
+        let ciphertext_start = padded_nonce_end;
+        let ciphertext_end = ciphertext_start.checked_add(ciphertext_len)?;
+        let padded_ciphertext_end = ciphertext_start.checked_add(align_4(ciphertext_len))?;
+
+        if padded_ciphertext_end > body.len() {
+            return None;
+        }
+
+        Some(Self {
+            nonce_len,
+            ciphertext_len,
+            nonce: &body[nonce_start..nonce_end],
+            nonce_padding: &body[nonce_end..padded_nonce_end],
+            ciphertext: &body[ciphertext_start..ciphertext_end],
+            ciphertext_padding: &body[ciphertext_end..padded_ciphertext_end],
+            additional_padding: &body[padded_ciphertext_end..],
+        })
+    }
+
+    /// Declared nonce length in octets.
+    pub const fn nonce_len(&self) -> usize {
+        self.nonce_len
+    }
+
+    /// Declared Ciphertext field length in octets.
+    pub const fn ciphertext_len(&self) -> usize {
+        self.ciphertext_len
+    }
+
+    /// Nonce bytes, excluding nonce padding.
+    pub const fn nonce(&self) -> &'a [u8] {
+        self.nonce
+    }
+
+    /// Padding bytes after the nonce field.
+    pub const fn nonce_padding(&self) -> &'a [u8] {
+        self.nonce_padding
+    }
+
+    /// RFC 8915 Ciphertext field bytes, which may include an AEAD tag.
+    pub const fn ciphertext(&self) -> &'a [u8] {
+        self.ciphertext
+    }
+
+    /// Encrypted bytes before a caller-specified trailing tag.
+    pub fn ciphertext_without_tag(&self, tag_len: usize) -> Option<&'a [u8]> {
+        let ciphertext_len = self.ciphertext.len().checked_sub(tag_len)?;
+        Some(&self.ciphertext[..ciphertext_len])
+    }
+
+    /// Caller-specified trailing authentication tag bytes.
+    pub fn tag(&self, tag_len: usize) -> Option<&'a [u8]> {
+        let tag_start = self.ciphertext.len().checked_sub(tag_len)?;
+        Some(&self.ciphertext[tag_start..])
+    }
+
+    /// Padding bytes after the Ciphertext field.
+    pub const fn ciphertext_padding(&self) -> &'a [u8] {
+        self.ciphertext_padding
+    }
+
+    /// Additional Padding bytes after the padded Ciphertext field.
+    pub const fn additional_padding(&self) -> &'a [u8] {
+        self.additional_padding
+    }
+}
+
 /// Raw-preserving NTP extension field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NtpExtensionField {
@@ -271,9 +504,14 @@ impl NtpExtensionField {
         NtpNtsCookiePlaceholderExtension::new(value).into_extension_field()
     }
 
+    /// Build an NTS Authenticator and Encrypted Extension Fields extension field.
+    pub fn nts_authenticator(value: impl Into<Vec<u8>>) -> Self {
+        NtpNtsAuthenticatorExtension::new(value).into_extension_field()
+    }
+
     /// Build an NTS Authenticator and Encrypted Extension Fields wrapper.
     pub fn nts_authenticator_encrypted(value: impl Into<Vec<u8>>) -> Self {
-        Self::new(0x0404, value)
+        Self::nts_authenticator(value)
     }
 
     /// Build a UDP Checksum Complement extension field.
@@ -366,6 +604,11 @@ impl NtpExtensionField {
         self.field_type() == NtpNtsCookiePlaceholderExtension::FIELD_TYPE
     }
 
+    /// Return true when the field type is NTS Authenticator and Encrypted Extension Fields.
+    pub fn is_nts_authenticator(&self) -> bool {
+        self.field_type() == NtpNtsAuthenticatorExtension::FIELD_TYPE
+    }
+
     /// Return true when the field type is the UDP Checksum Complement extension.
     pub fn is_udp_checksum_complement(&self) -> bool {
         self.field_type() == NtpChecksumComplementExtension::FIELD_TYPE
@@ -384,6 +627,11 @@ impl NtpExtensionField {
     /// Borrow this field body through the typed NTS Cookie Placeholder helper.
     pub fn as_nts_cookie_placeholder(&self) -> Option<NtpNtsCookiePlaceholderExtension> {
         NtpNtsCookiePlaceholderExtension::from_extension_field(self)
+    }
+
+    /// Borrow this field body through the typed NTS Authenticator helper.
+    pub fn as_nts_authenticator(&self) -> Option<NtpNtsAuthenticatorExtension> {
+        NtpNtsAuthenticatorExtension::from_extension_field(self)
     }
 
     /// Borrow this field body through the typed UDP Checksum Complement helper.
@@ -582,6 +830,10 @@ fn can_partition_as_legacy_mac(no_extensions_seen: bool, len: usize) -> bool {
     } else {
         is_plausible_legacy_mac_len(len)
     }
+}
+
+fn u16_len(len: usize, field: &'static str, reason: &'static str) -> Result<u16> {
+    u16::try_from(len).map_err(|_| CrafterError::invalid_field_value(field, reason))
 }
 
 fn align_4(value: usize) -> usize {
@@ -880,6 +1132,135 @@ mod tests {
             placeholder_body.as_slice()
         );
         Ok(())
+    }
+
+    #[test]
+    fn ntp_nts_authenticator_extension_helper_encodes_type_body_parts_and_tag() -> Result<()> {
+        let nonce = [0x10, 0x11, 0x12];
+        let ciphertext = [0x20, 0x21, 0x22, 0x23, 0x24];
+        let tag = [0x30, 0x31, 0x32, 0x33];
+        let additional_padding = [0xa0, 0xa1, 0xa2, 0xa3];
+
+        let authenticator =
+            NtpNtsAuthenticatorExtension::from_parts(nonce, ciphertext, tag, additional_padding)?;
+        let field = authenticator.clone().into_extension_field();
+        let parts = authenticator
+            .parts()
+            .expect("structured NTS authenticator body splits");
+
+        assert_eq!(authenticator.field_type(), 0x0404);
+        assert_eq!(authenticator.body()[..4], [0x00, 0x03, 0x00, 0x09]);
+        assert_eq!(parts.nonce_len(), nonce.len());
+        assert_eq!(parts.ciphertext_len(), ciphertext.len() + tag.len());
+        assert_eq!(parts.nonce(), nonce.as_slice());
+        assert_eq!(parts.nonce_padding(), &[0x00]);
+        assert_eq!(
+            parts.ciphertext_without_tag(tag.len()),
+            Some(ciphertext.as_slice())
+        );
+        assert_eq!(parts.tag(tag.len()), Some(tag.as_slice()));
+        assert_eq!(
+            parts.ciphertext(),
+            [ciphertext.as_slice(), tag.as_slice()].concat().as_slice()
+        );
+        assert_eq!(parts.ciphertext_padding(), &[0x00, 0x00, 0x00]);
+        assert_eq!(parts.additional_padding(), additional_padding.as_slice());
+        assert_eq!(authenticator.nonce(), Some(nonce.as_slice()));
+        assert_eq!(
+            authenticator.ciphertext_without_tag(tag.len()),
+            Some(ciphertext.as_slice())
+        );
+        assert_eq!(authenticator.tag(tag.len()), Some(tag.as_slice()));
+        assert_eq!(
+            authenticator.additional_padding(),
+            Some(additional_padding.as_slice())
+        );
+
+        assert!(field.is_nts_extension());
+        assert!(field.is_nts_authenticator());
+        assert_eq!(
+            field.label(),
+            "NTS Authenticator and Encrypted Extension Fields"
+        );
+        assert_eq!(field.as_nts_authenticator(), Some(authenticator));
+        assert_eq!(field.as_nts_cookie(), None);
+        assert_eq!(
+            NtpExtensionField::nts_authenticator_encrypted(field.value().to_vec())
+                .as_nts_authenticator()
+                .expect("0x0404 helper preserves raw body")
+                .body(),
+            field.value()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_nts_authenticator_decode_preserves_raw_body_padding_ciphertext_and_tag() -> Result<()> {
+        let mut body = Vec::new();
+        body.extend_from_slice(&3u16.to_be_bytes());
+        body.extend_from_slice(&5u16.to_be_bytes());
+        body.extend_from_slice(&[0x10, 0x11, 0x12]);
+        body.extend_from_slice(&[0xf0]);
+        body.extend_from_slice(&[0x20, 0x21, 0x22]);
+        body.extend_from_slice(&[0x30, 0x31]);
+        body.extend_from_slice(&[0xe0, 0xe1, 0xe2]);
+        body.extend_from_slice(&[0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7]);
+        assert_eq!(body.len(), NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN - 4);
+
+        let mut encoded = Vec::new();
+        encoded.extend_from_slice(&NtpNtsAuthenticatorExtension::FIELD_TYPE.to_be_bytes());
+        encoded.extend_from_slice(
+            &(NTP_EXTENSION_FIELD_MIN_LAST_WITHOUT_MAC_LEN as u16).to_be_bytes(),
+        );
+        encoded.extend_from_slice(&body);
+
+        let decoded = decode_all(&encoded)?;
+
+        assert_eq!(decoded.legacy_mac, None);
+        assert_eq!(decoded.fields.len(), 1);
+        let field = &decoded.fields[0];
+        let authenticator = field
+            .as_nts_authenticator()
+            .expect("0x0404 decodes through NTS authenticator helper");
+        let parts = authenticator
+            .parts()
+            .expect("decoded body has a splitable NTS authenticator grammar");
+
+        assert_eq!(field.declared_length_value(), Some(28));
+        assert_eq!(field.value(), body.as_slice());
+        assert_eq!(field.padding_value(), None);
+        assert_eq!(authenticator.body(), body.as_slice());
+        assert_eq!(parts.nonce(), &[0x10, 0x11, 0x12]);
+        assert_eq!(parts.nonce_padding(), &[0xf0]);
+        assert_eq!(
+            parts.ciphertext_without_tag(2),
+            Some([0x20, 0x21, 0x22].as_slice())
+        );
+        assert_eq!(parts.tag(2), Some([0x30, 0x31].as_slice()));
+        assert_eq!(parts.ciphertext_padding(), &[0xe0, 0xe1, 0xe2]);
+        assert_eq!(
+            parts.additional_padding(),
+            &[0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_nts_authenticator_malformed_body_keeps_raw_access() {
+        let body = vec![0x00, 0x08, 0x00, 0x08, 0xaa, 0xbb, 0xcc];
+        let field = NtpExtensionField::nts_authenticator(body.clone());
+        let authenticator = field
+            .as_nts_authenticator()
+            .expect("typed helper is selected by field type, not body validity");
+
+        assert!(field.is_nts_authenticator());
+        assert_eq!(field.value(), body.as_slice());
+        assert_eq!(authenticator.body(), body.as_slice());
+        assert_eq!(authenticator.parts(), None);
+        assert_eq!(authenticator.nonce(), None);
+        assert_eq!(authenticator.ciphertext(), None);
+        assert_eq!(authenticator.tag(16), None);
+        assert_eq!(authenticator.additional_padding(), None);
     }
 
     #[test]
