@@ -295,14 +295,17 @@ notes:
 
 backend_support:
   scapy:
-    status: planned
+    status: supported
+    encode: true
+    decode: true
     native_layers:
       - NTP
       - Raw
     notes:
       - >-
-        A later Scapy backend step will materialize deterministic NTP UDP
-        payload bytes and normalize native or Raw decode output.
+        Scapy materializes deterministic NTP UDP payload bytes as Raw where
+        native NTP support cannot preserve extension, MAC, or NTS cases, and
+        normalizes native or Raw decode output to the oracle NTP field model.
   wireshark:
     status: planned
     native_layers:

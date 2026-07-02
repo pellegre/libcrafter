@@ -153,7 +153,9 @@ _SCAPY_DECODER_BY_ROOT: dict[str, str] = {
     "raw:tls": "Raw",
     "l2:ipv4": "IP",
     "l3:ipv4": "IP",
+    "l3:ipv4-ntp": "IP",
     "l3:ipv6": "IPv6",
+    "l3:ipv6-ntp": "IPv6",
 }
 _ROOT_FIRST_LAYERS: dict[str, set[str]] = {
     "link:bluetooth-le-ll-with-phdr": {"ble_radio"},
@@ -172,7 +174,9 @@ _ROOT_FIRST_LAYERS: dict[str, set[str]] = {
     "raw:tls": {"tls"},
     "l2:ipv4": {"ipv4"},
     "l3:ipv4": {"ipv4"},
+    "l3:ipv4-ntp": {"ipv4"},
     "l3:ipv6": {"ipv6"},
+    "l3:ipv6-ntp": {"ipv6"},
 }
 _SCAPY_MATERIALIZED_LAYERS = frozenset(_SCAPY_LAYER_BY_LAYER)
 
@@ -252,6 +256,9 @@ _SUPPORTED_FEATURES = {
     "mqtt_v5_auth",
     "mqtt_v5_properties",
     "mqtt_v5_reason_codes",
+    "ntp_extensions",
+    "ntp_header",
+    "ntp_nts",
     "pcap_contracts",
     "pcap_link_types",
     "radiotap_basic",
@@ -817,7 +824,7 @@ def _udp_layout(root: str, raw: bytes) -> dict[str, int]:
 
 
 def _l3_start_offset(root: str, raw: bytes) -> int:
-    if root in {"l3:ipv4", "l3:ipv6", "IP", "IPv6"}:
+    if root in {"l3:ipv4", "l3:ipv4-ntp", "l3:ipv6", "l3:ipv6-ntp", "IP", "IPv6"}:
         return 0
     if root in {"link:linux-cooked", "link:linux-sll", "CookedLinux"}:
         return 16

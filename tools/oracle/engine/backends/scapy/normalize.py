@@ -57,6 +57,7 @@ from .protocols.mdns import (
     mdns_dns_packet,
     mdns_metadata,
 )
+from .protocols.ntp import canonicalize_ntp_payload
 from .protocols.quic import canonicalize_quic_payload
 from .protocols.ssdp import canonicalize_ssdp_payload
 from .protocols.tls import canonicalize_tls_payload
@@ -156,6 +157,8 @@ _ROOT_ALIASES: dict[str, str] = {
     "raw:tls": "raw:tls",
     "link:bluetooth_le_ll_with_phdr": "link:bluetooth-le-ll-with-phdr",
     "l2:ipv4": "l3:ipv4",
+    "l3:ipv4-ntp": "l3:ipv4-ntp",
+    "l3:ipv6-ntp": "l3:ipv6-ntp",
     "link:ieee80211": "link:dot11",
     "link:ieee802154_tap": "link:ieee802154-tap",
     "link:linux-sll": "link:linux-cooked",
@@ -280,7 +283,9 @@ def decode_root(
         "raw:tls": "Raw",
         "l2:ipv4": "IP",
         "l3:ipv4": "IP",
+        "l3:ipv4-ntp": "IP",
         "l3:ipv6": "IPv6",
+        "l3:ipv6-ntp": "IPv6",
         "l3:raw": "Raw",
     }
     decoder_name = decoders.get(root)
@@ -418,6 +423,13 @@ def normalize_packet(
     )
     canonicalize_ssdp_payload(packet, normalized_layers, normalized_fields)
     canonicalize_mdns_payload(packet, normalized_layers, normalized_fields)
+    canonicalize_ntp_payload(
+        packet,
+        normalized_layers,
+        normalized_fields,
+        source_hex=source_hex,
+        root=_normalize_root_name(root),
+    )
     if source_hex is not None:
         _canonicalize_bgp_from_wire(source_hex, normalized_fields)
 
