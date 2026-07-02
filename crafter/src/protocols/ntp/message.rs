@@ -4,10 +4,8 @@
 //! `.agents/docs/ntp-codepoints.md`. This module only models packet field
 //! values; it does not add synchronization or peer workflow behavior.
 
-use core::any::Any;
 use core::fmt;
 use core::net::{Ipv4Addr, Ipv6Addr};
-use core::ops::Div;
 
 use super::constants::*;
 use super::registry::{
@@ -17,9 +15,10 @@ use super::registry::{
 };
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
-use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
+use crate::packet::{Layer, LayerContext, Packet};
 use crate::protocols::ip::v4::Ipv4;
 use crate::protocols::ip::v6::Ipv6;
+use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::protocols::transport::Udp;
 
 const NTP_HEADER_CONTEXT: &str = "ntp.header";
@@ -1162,33 +1161,10 @@ impl Layer for Ntp {
         Ok(())
     }
 
-    fn clone_layer(&self) -> Box<dyn Layer> {
-        Box::new(self.clone())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
+    impl_layer_object!(Ntp);
 }
 
-impl<R> Div<R> for Ntp
-where
-    R: IntoPacket,
-{
-    type Output = Packet;
-
-    fn div(self, rhs: R) -> Self::Output {
-        Packet::from_layer(self).concat(rhs)
-    }
-}
+impl_layer_div!(Ntp);
 
 /// Decode a standalone NTP UDP payload.
 pub fn decode_ntp_payload(bytes: &[u8]) -> Result<Ntp> {
@@ -2097,6 +2073,131 @@ mod tests {
         assert_eq!(&compiled[..NTP_FIXED_HEADER_LEN], header.as_slice());
 
         Ok(())
+    }
+
+    mod ntp_layer_impl {
+        use super::*;
+        use crate::packet::{Layer, Packet, Raw};
+        use crate::protocols::transport::Udp;
+
+        fn ntp_with_extension_and_mac() -> Ntp {
+            Ntp::new()
+                .extension_field(NtpExtensionField::nts_cookie([0xaa, 0xbb]))
+                .legacy_mac(NtpLegacyMac::from_key_id_and_digest(
+                    0x0102_0304,
+                    [0xcc; 16],
+                ))
+        }
+
+        #[test]
+        fn encoded_len_includes_fixed_header_extension_and_mac() -> Result<()> {
+            let ntp = ntp_with_extension_and_mac();
+            let packet = Packet::from_layer(ntp.clone());
+
+            assert_eq!(
+                ntp.encoded_len(),
+                NTP_FIXED_HEADER_LEN + NTP_EXTENSION_FIELD_MIN_LEN + 20
+            );
+            assert_eq!(packet.encoded_len(), ntp.encoded_len());
+
+            let bytes = packet.compile()?.into_bytes();
+            assert_eq!(bytes.len(), ntp.encoded_len());
+            assert_eq!(
+                &bytes[NTP_FIXED_HEADER_LEN..NTP_FIXED_HEADER_LEN + 2],
+                &[0x02, 0x04]
+            );
+            assert_eq!(
+                &bytes[NTP_FIXED_HEADER_LEN + 2..NTP_FIXED_HEADER_LEN + 4],
+                &[0x00, 0x10]
+            );
+            assert_eq!(
+                &bytes[NTP_FIXED_HEADER_LEN + 4..NTP_FIXED_HEADER_LEN + 6],
+                &[0xaa, 0xbb]
+            );
+            assert!(bytes
+                [NTP_FIXED_HEADER_LEN + 6..NTP_FIXED_HEADER_LEN + NTP_EXTENSION_FIELD_MIN_LEN]
+                .iter()
+                .all(|byte| *byte == 0));
+            assert_eq!(
+                &bytes[NTP_FIXED_HEADER_LEN + NTP_EXTENSION_FIELD_MIN_LEN
+                    ..NTP_FIXED_HEADER_LEN + NTP_EXTENSION_FIELD_MIN_LEN + 4],
+                &[0x01, 0x02, 0x03, 0x04]
+            );
+            assert_eq!(
+                &bytes[NTP_FIXED_HEADER_LEN + NTP_EXTENSION_FIELD_MIN_LEN + 4..],
+                &[0xcc; 16]
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn compile_emits_only_ntp_bytes_and_leaves_following_layers() -> Result<()> {
+            let ntp = ntp_with_extension_and_mac();
+            let ntp_len = ntp.encoded_len();
+            let standalone = Packet::from_layer(ntp.clone()).compile()?.into_bytes();
+            let packet = ntp / Raw::from_bytes([0xde, 0xad]);
+
+            assert_eq!(packet.encoded_len(), ntp_len + 2);
+            assert!(!packet
+                .layer::<Ntp>()
+                .expect("NTP layer")
+                .consumes_following());
+
+            let bytes = packet.compile()?.into_bytes();
+            assert_eq!(&bytes[..ntp_len], standalone.as_slice());
+            assert_eq!(&bytes[ntp_len..], &[0xde, 0xad]);
+
+            Ok(())
+        }
+
+        #[test]
+        fn clone_layer_and_any_downcasts_work() {
+            let mut boxed: Box<dyn Layer> =
+                Box::new(Ntp::client().transmit_timestamp(0x0102_0304_0506_0708u64));
+
+            assert!(boxed.as_any().downcast_ref::<Ntp>().is_some());
+
+            let ntp = boxed.as_any_mut().downcast_mut::<Ntp>().expect("boxed NTP");
+            *ntp = ntp.clone().mode(NtpMode::Server);
+
+            assert_eq!(
+                boxed
+                    .as_any()
+                    .downcast_ref::<Ntp>()
+                    .expect("boxed NTP")
+                    .mode_value(),
+                NtpMode::Server
+            );
+
+            let cloned = boxed.clone_layer();
+            assert_eq!(
+                cloned
+                    .as_any()
+                    .downcast_ref::<Ntp>()
+                    .expect("cloned NTP")
+                    .transmit_timestamp_value()
+                    .raw(),
+                0x0102_0304_0506_0708
+            );
+
+            let owned = cloned.into_any().downcast::<Ntp>().expect("owned NTP");
+            assert_eq!(owned.mode_value(), NtpMode::Server);
+        }
+
+        #[test]
+        fn div_composition_works_for_udp_application_layer_and_following_payload() {
+            let udp_packet =
+                Udp::new().source_port(49_152).destination_port(NTP_PORT) / Ntp::client();
+            assert_eq!(udp_packet.len(), 2);
+            assert!(udp_packet.layer::<Udp>().is_some());
+            assert!(udp_packet.layer::<Ntp>().is_some());
+
+            let ntp_packet = Ntp::client() / Raw::from_bytes([0xde, 0xad]);
+            assert_eq!(ntp_packet.len(), 2);
+            assert!(ntp_packet.layer::<Ntp>().is_some());
+            assert!(ntp_packet.layer::<Raw>().is_some());
+        }
     }
 
     #[test]
