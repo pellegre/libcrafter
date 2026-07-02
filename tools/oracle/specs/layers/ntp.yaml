@@ -307,15 +307,16 @@ backend_support:
         native NTP support cannot preserve extension, MAC, or NTS cases, and
         normalizes native or Raw decode output to the oracle NTP field model.
   wireshark:
-    status: planned
+    status: supported
     native_layers:
       - ntp
     decode: true
     pcap_read: true
     notes:
       - >-
-        A later Wireshark backend step will normalize stable tshark NTP fields
-        when tshark is available.
+        Wireshark parser-only support normalizes stable tshark NTP fields when
+        tshark is available, and prefers source-byte parsing for extension,
+        NTS, and legacy MAC packet data.
   libcrafter:
     status: supported
     encode: true
