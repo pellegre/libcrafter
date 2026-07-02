@@ -25,6 +25,12 @@ const NTP_HEADER_CONTEXT: &str = "ntp.header";
 const NTP_EXTENSION_CONTEXT: &str = "ntp.extension";
 const NTP_EXTENSION_LENGTH_CONTEXT: &str = "ntp.extension.length";
 const NTP_MAC_CONTEXT: &str = "ntp.mac";
+const NTP_DOCUMENTATION_IPV4_CLIENT: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 10);
+const NTP_DOCUMENTATION_IPV4_SERVER: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 123);
+const NTP_DOCUMENTATION_IPV6_CLIENT: Ipv6Addr =
+    Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0010);
+const NTP_DOCUMENTATION_IPV6_SERVER: Ipv6Addr =
+    Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0123);
 
 /// Source-backed NTP leap-indicator field value.
 ///
@@ -1272,9 +1278,19 @@ pub fn ntp_ipv4_client_request(source: Ipv4Addr, destination: Ipv4Addr) -> Packe
     Ipv4::new().src(source).dst(destination) / ntp_client_udp() / Ntp::client()
 }
 
+/// Documentation-safe IPv4/UDP/NTP client request packet using documentation addresses.
+pub fn ntp_ipv4_documentation_client_request() -> Packet {
+    ntp_ipv4_client_request(NTP_DOCUMENTATION_IPV4_CLIENT, NTP_DOCUMENTATION_IPV4_SERVER)
+}
+
 /// Documentation-safe IPv6/UDP/NTP client request packet.
 pub fn ntp_ipv6_client_request(source: Ipv6Addr, destination: Ipv6Addr) -> Packet {
     Ipv6::new().src(source).dst(destination) / ntp_client_udp() / Ntp::client()
+}
+
+/// Documentation-safe IPv6/UDP/NTP client request packet using documentation addresses.
+pub fn ntp_ipv6_documentation_client_request() -> Packet {
+    ntp_ipv6_client_request(NTP_DOCUMENTATION_IPV6_CLIENT, NTP_DOCUMENTATION_IPV6_SERVER)
 }
 
 fn field_value<T: Copy>(field: &Field<T>, default: T) -> T {
@@ -2107,6 +2123,62 @@ mod tests {
         let udp = Ntp::udp().source_port(49_152).destination_port(12_345);
         assert_eq!(udp.source_port_value(), 49_152);
         assert_eq!(udp.destination_port_value(), 12_345);
+    }
+
+    #[test]
+    fn ntp_packet_helpers_build_documentation_safe_ipv4_client_request() -> Result<()> {
+        let packet = ntp_ipv4_documentation_client_request();
+
+        let ipv4 = packet.layer::<Ipv4>().expect("IPv4 layer");
+        assert_eq!(ipv4.source(), NTP_DOCUMENTATION_IPV4_CLIENT);
+        assert_eq!(ipv4.destination(), NTP_DOCUMENTATION_IPV4_SERVER);
+        assert!(packet.layer::<Ipv6>().is_none());
+
+        let udp = packet.layer::<Udp>().expect("UDP layer");
+        assert_eq!(udp.source_port_value(), NTP_PORT);
+        assert_eq!(udp.destination_port_value(), NTP_PORT);
+
+        let ntp = packet.layer::<Ntp>().expect("NTP layer");
+        assert_eq!(ntp.mode_value(), NtpMode::Client);
+        assert_eq!(ntp.first_octet_value(), NTP_DEFAULT_FIRST_OCTET);
+
+        let compiled = packet.compile()?;
+        let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, compiled.as_bytes())?;
+        let decoded_ipv4 = decoded.layer::<Ipv4>().expect("decoded IPv4 layer");
+        assert_eq!(decoded_ipv4.source(), NTP_DOCUMENTATION_IPV4_CLIENT);
+        assert_eq!(decoded_ipv4.destination(), NTP_DOCUMENTATION_IPV4_SERVER);
+        let decoded_ntp = decoded.layer::<Ntp>().expect("decoded NTP layer");
+        assert_eq!(decoded_ntp.mode_value(), NtpMode::Client);
+
+        Ok(())
+    }
+
+    #[test]
+    fn ntp_packet_helpers_build_documentation_safe_ipv6_client_request() -> Result<()> {
+        let packet = ntp_ipv6_documentation_client_request();
+
+        let ipv6 = packet.layer::<Ipv6>().expect("IPv6 layer");
+        assert_eq!(ipv6.source(), NTP_DOCUMENTATION_IPV6_CLIENT);
+        assert_eq!(ipv6.destination(), NTP_DOCUMENTATION_IPV6_SERVER);
+        assert!(packet.layer::<Ipv4>().is_none());
+
+        let udp = packet.layer::<Udp>().expect("UDP layer");
+        assert_eq!(udp.source_port_value(), NTP_PORT);
+        assert_eq!(udp.destination_port_value(), NTP_PORT);
+
+        let ntp = packet.layer::<Ntp>().expect("NTP layer");
+        assert_eq!(ntp.mode_value(), NtpMode::Client);
+        assert_eq!(ntp.first_octet_value(), NTP_DEFAULT_FIRST_OCTET);
+
+        let compiled = packet.compile()?;
+        let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv6, compiled.as_bytes())?;
+        let decoded_ipv6 = decoded.layer::<Ipv6>().expect("decoded IPv6 layer");
+        assert_eq!(decoded_ipv6.source(), NTP_DOCUMENTATION_IPV6_CLIENT);
+        assert_eq!(decoded_ipv6.destination(), NTP_DOCUMENTATION_IPV6_SERVER);
+        let decoded_ntp = decoded.layer::<Ntp>().expect("decoded NTP layer");
+        assert_eq!(decoded_ntp.mode_value(), NtpMode::Client);
+
+        Ok(())
     }
 
     #[test]
