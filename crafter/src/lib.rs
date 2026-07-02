@@ -19,6 +19,26 @@
 //!
 //! Local examples use dry-run send plans or offline pcaps unless live behavior
 //! is explicitly requested.
+//! For example, an NTP client request can be built and decoded entirely
+//! offline with documentation addresses:
+//!
+//! ```rust
+//! use crafter::prelude::*;
+//! use std::net::Ipv4Addr;
+//!
+//! # fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+//! let packet = ntp_ipv4_client_request(
+//!     Ipv4Addr::new(192, 0, 2, 10),
+//!     Ipv4Addr::new(198, 51, 100, 123),
+//! );
+//! let compiled = packet.compile()?;
+//! let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+//!
+//! assert!(decoded.layer::<Udp>().is_some());
+//! assert!(decoded.layer::<Ntp>().is_some());
+//! # Ok(())
+//! # }
+//! ```
 //!
 //! ```rust
 //! use crafter::prelude::*;
