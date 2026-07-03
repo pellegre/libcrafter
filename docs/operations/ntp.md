@@ -16,8 +16,9 @@ Run the planning commands before any live action. They create no provider
 resources and send no packets.
 
 ```sh
+: "${LIBCRAFTER_ORACLE_BACKEND:?set the oracle backend for this run}"
 tools/lab/run plan --provider qemu --dry-run --profile ntp-smoke --seed 5908 --role stimulus --role target --workload-label ntp-live-validation --json
-tools/oracle/run live --backend scapy --provider local-dry-run --dry-run --family ntp --profile ntp-live-dry-run --seed 5908 --count 4 --direction live_exchange --out target/oracle/ntp-live-dry-run
+tools/oracle/run live --backend "$LIBCRAFTER_ORACLE_BACKEND" --provider local-dry-run --dry-run --family ntp --profile ntp-live-dry-run --seed 5908 --count 4 --direction live_exchange --out target/oracle/ntp-live-dry-run
 tools/probe/run --provider qemu --dry-run --profile ntp-smoke --seed 5908 --count 4 --out target/probe/ntp-dry-run
 tools/endpoint/run create --provider qemu --exposure private --private-group ntp-dry-run --dry-run --json
 ```
@@ -33,6 +34,8 @@ Every non-dry-run NTP validation run requires all of these gates:
 
 - Select the provider explicitly with `LIBCRAFTER_NTP_LIVE_PROVIDER`; do not let
   scripts choose a live provider implicitly.
+- Select the oracle backend explicitly with `LIBCRAFTER_ORACLE_BACKEND`; keep
+  backend-specific naming in oracle-owned files.
 - Set `LIBCRAFTER_NTP_LIVE_CONFIRM=yes` for the protocol-specific confirmation.
 - Pass the runner's `--confirm-live-run` flag.
 - Provide provider credentials only through the environment when the selected
@@ -51,8 +54,9 @@ A guarded shell wrapper should fail closed when either NTP gate is missing:
 ```sh
 if [ -n "${LIBCRAFTER_NTP_LIVE_PROVIDER:-}" ] &&
    [ "${LIBCRAFTER_NTP_LIVE_CONFIRM:-}" = "yes" ]; then
+  : "${LIBCRAFTER_ORACLE_BACKEND:?set the oracle backend for this run}"
   tools/oracle/run live \
-    --backend scapy \
+    --backend "$LIBCRAFTER_ORACLE_BACKEND" \
     --provider "$LIBCRAFTER_NTP_LIVE_PROVIDER" \
     --family ntp \
     --profile ntp-live-dry-run \
@@ -62,8 +66,9 @@ if [ -n "${LIBCRAFTER_NTP_LIVE_PROVIDER:-}" ] &&
     --confirm-live-run \
     --out target/oracle/ntp-live
 else
+  : "${LIBCRAFTER_ORACLE_BACKEND:?set the oracle backend for this run}"
   tools/oracle/run live \
-    --backend scapy \
+    --backend "$LIBCRAFTER_ORACLE_BACKEND" \
     --provider local-dry-run \
     --dry-run \
     --family ntp \
