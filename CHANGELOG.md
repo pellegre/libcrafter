@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.3 - 2026-07-03
+
+### Changed
+
+- Add TLS packet-layer coverage with record and handshake layers, ClientHello/ServerHello builders, the TLS 1.3 extension registry, alert/heartbeat/application-data/change-cipher-spec bodies, fragmented-handshake preservation, malformed-input decode, golden fixtures, and oracle/probe coverage.
+- Add SSDP packet-layer coverage with M-SEARCH, NOTIFY, and search-response builders over UDP/1900, header decode, fixtures, and oracle/probe coverage.
+- Add NTP packet-layer coverage with v3/v4 headers, SNTP compatibility, NTS and autokey extension fields, legacy MAC tails, timestamp and fixed-point helpers, fixtures, and oracle/probe coverage.
+- Add mDNS packet-layer coverage with Bonjour record builders, known-answer and goodbye-announcement helpers, UDP/5353 decode, fixtures, and oracle/probe coverage.
+- Add disposable endpoint and appliance provider substrate with VirtualBox appliance groups, SSH docker-host and local substrate plans, readiness checks, and asset-profile environments for provider-backed live packet work.
+
 ## 0.3.2 - 2026-06-27
 
 ### Changed
