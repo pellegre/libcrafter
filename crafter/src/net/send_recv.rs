@@ -4,6 +4,7 @@ use crate::wire::{PacketWire, Sniffer, WireError};
 use crate::Packet;
 
 use super::error::{NetError, Result};
+use super::packet_sender::{BackendPacketSender, PnetBackend, PnetIoBackend};
 use super::reply::{batch_reply_filter, combine_filters};
 pub use super::reply::{reply_filter, reply_matches, ReplyMatcher};
 use super::send::{validated_interface, SendMode, SendOptions, SendReport, SocketSender};
@@ -140,19 +141,49 @@ impl SendRecv {
 
     /// Send a packet and return the detailed send/receive report.
     pub fn send_recv_report(&self, packet: &Packet) -> Result<SendRecvReport> {
+        self.send_recv_report_with_pnet_backend(packet, PnetIoBackend, open_pcap_sniffer)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn send_recv_report_with_backend_and_sniffer<B, F>(
+        &self,
+        packet: &Packet,
+        backend: B,
+        open_sniffer: F,
+    ) -> Result<SendRecvReport>
+    where
+        B: PnetBackend,
+        F: FnMut(&str, Option<&str>, Duration, usize) -> Result<Sniffer>,
+    {
+        self.send_recv_report_with_pnet_backend(packet, backend, open_sniffer)
+    }
+
+    fn send_recv_report_with_pnet_backend<B, F>(
+        &self,
+        packet: &Packet,
+        backend: B,
+        mut open_sniffer: F,
+    ) -> Result<SendRecvReport>
+    where
+        B: PnetBackend,
+        F: FnMut(&str, Option<&str>, Duration, usize) -> Result<Sniffer>,
+    {
         let interface = validated_interface(&self.send_options)?;
         let matcher = ReplyMatcher::from_packet(packet);
         let effective_filter = combine_filters(matcher.reply_filter(), self.user_filter());
-        let sender = SocketSender::new(self.send_options.clone());
         let mut send_reports = Vec::new();
 
         if self.send_options.is_dry_run() {
+            let sender = SocketSender::new(self.send_options.clone());
             send_reports.push(sender.send(packet)?);
             return Ok(SendRecvReport::new(send_reports, None, effective_filter));
         }
 
+        let mut sender =
+            BackendPacketSender::open_with_backend(self.send_options.clone(), backend)?;
+
         for _ in 0..self.retries.max(1) {
-            let mut sniffer = open_pcap_sniffer(
+            let mut sniffer = open_sniffer(
                 &interface,
                 effective_filter.as_deref(),
                 self.timeout,

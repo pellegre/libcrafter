@@ -1754,6 +1754,83 @@ mod batch_send {
 }
 
 #[cfg(test)]
+mod send_recv_live {
+    use std::net::Ipv4Addr;
+    use std::time::Duration;
+
+    use crate::net::packet_sender::FakePnetBackend;
+    use crate::net::{SendMode, SendRecv, SendTarget};
+    use crate::wire::{Sniffer, VecPacketSource};
+    use crate::{Icmpv4, Ipv4, NetworkLayer, Packet, Raw};
+
+    fn echo_request(sequence: u16) -> Packet {
+        Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            / Icmpv4::echo_request().id(0x4242).seq(sequence)
+            / Raw::from_bytes(sequence.to_be_bytes())
+    }
+
+    #[test]
+    fn send_recv_live_reuses_packet_sender_for_retries() {
+        let backend = FakePnetBackend::default();
+        let request = echo_request(7);
+        let timeout = Duration::from_millis(10);
+        let expected_filter = "icmp and src host 198.51.100.20 and dst host 192.0.2.10";
+        let mut capture_opens = 0;
+
+        let report = SendRecv::new()
+            .iface("fake0")
+            .network_layer()
+            .live()
+            .retry(2)
+            .timeout(timeout)
+            .capture_limit(5)
+            .send_recv_report_with_backend_and_sniffer(
+                &request,
+                backend.clone(),
+                |interface, filter, capture_timeout, count| {
+                    capture_opens += 1;
+                    assert_eq!(interface, "fake0");
+                    assert_eq!(filter, Some(expected_filter));
+                    assert_eq!(capture_timeout, timeout);
+                    assert_eq!(count, 5);
+                    Ok(Sniffer::new(VecPacketSource::empty())
+                        .timeout(capture_timeout)
+                        .count(count))
+                },
+            )
+            .unwrap();
+
+        assert_eq!(capture_opens, 2);
+        assert_eq!(report.attempts(), 2);
+        assert!(report.timed_out());
+        assert!(report.reply().is_none());
+        assert_eq!(report.effective_filter(), Some(expected_filter));
+
+        for send_report in report.send_reports() {
+            assert!(!send_report.is_dry_run());
+            assert_eq!(send_report.bytes_sent(), send_report.plan().len());
+            assert_eq!(send_report.plan().interface(), "fake0");
+            assert_eq!(send_report.plan().requested_mode(), SendMode::NetworkLayer);
+            assert!(matches!(
+                send_report.plan().target(),
+                SendTarget::NetworkLayer {
+                    network_layer: NetworkLayer::Ipv4,
+                    ..
+                }
+            ));
+        }
+
+        let snapshot = backend.snapshot();
+        assert_eq!(snapshot.network_opens.len(), 1);
+        assert_eq!(snapshot.network_sends.len(), 2);
+        assert!(snapshot.link_opens.is_empty());
+        assert!(snapshot.link_sends.is_empty());
+    }
+}
+
+#[cfg(test)]
 mod batch_send_recv {
     use std::net::Ipv4Addr;
     use std::time::Duration;
