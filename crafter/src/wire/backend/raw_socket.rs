@@ -292,6 +292,18 @@ mod raw_socket_writer {
             / Tcp::new().sport(1234).dport(443)
     }
 
+    fn assert_raw_socket_wire_target(wire: &PacketWire, interface: &str) {
+        assert_eq!(
+            wire.target(),
+            &PacketWireTarget::RawSocketInterface {
+                interface: interface.to_string()
+            }
+        );
+        assert_eq!(wire.target().interface(), Some(interface));
+        assert!(!wire.has_source());
+        assert!(wire.has_writer());
+    }
+
     #[test]
     fn raw_socket_writer_dry_run_maps_socket_send_report() {
         let packet = ipv4_packet();
@@ -319,21 +331,43 @@ mod raw_socket_writer {
     }
 
     #[test]
+    fn raw_socket_writer_packet_wire_live_requires_explicit_mode() {
+        let auto_wire = PacketWire::raw_socket_interface("eth0").open().unwrap();
+        assert_raw_socket_wire_target(&auto_wire, "eth0");
+
+        let mut writer = auto_wire.writer().unwrap();
+        let report = writer
+            .write_record(&PacketRecord::new(ipv4_packet()))
+            .unwrap();
+        assert!(report.is_dry_run());
+        assert!(report.target_details().unwrap().contains("mode=auto"));
+
+        let result = PacketWire::raw_socket_interface("eth0").live().open();
+        let error = match result {
+            Ok(_) => panic!("expected live raw socket auto mode rejection"),
+            Err(error) => error,
+        };
+
+        match error {
+            WireError::Net(NetError::ExplicitSendModeRequired { mode, reason }) => {
+                assert_eq!(mode, SendMode::Auto);
+                assert_eq!(
+                    reason,
+                    "live raw socket packet wires require explicit link_layer() or network_layer() mode"
+                );
+            }
+            other => panic!("expected explicit send mode error, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn raw_socket_writer_packet_wire_builder_is_write_only_and_preserves_mode() {
         let wire = PacketWire::raw_socket_interface("eth0")
             .network_layer()
             .open()
             .unwrap();
 
-        assert_eq!(
-            wire.target(),
-            &PacketWireTarget::RawSocketInterface {
-                interface: "eth0".to_string()
-            }
-        );
-        assert_eq!(wire.target().interface(), Some("eth0"));
-        assert!(!wire.has_source());
-        assert!(wire.has_writer());
+        assert_raw_socket_wire_target(&wire, "eth0");
 
         let mut writer = wire.writer().unwrap();
         let report = writer
@@ -346,6 +380,20 @@ mod raw_socket_writer {
             .target_details()
             .unwrap()
             .contains("mode=network-layer"));
+
+        let live_network = PacketWire::raw_socket_interface("net-live0")
+            .network_layer()
+            .live()
+            .open()
+            .unwrap();
+        assert_raw_socket_wire_target(&live_network, "net-live0");
+
+        let live_link = PacketWire::raw_socket_interface("link-live0")
+            .link_layer()
+            .live()
+            .open()
+            .unwrap();
+        assert_raw_socket_wire_target(&live_link, "link-live0");
     }
 
     #[test]
