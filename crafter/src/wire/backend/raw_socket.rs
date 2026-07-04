@@ -1,5 +1,9 @@
 //! Raw socket packet writer adapter.
 
+use std::cell::RefCell;
+use std::fmt;
+
+use crate::net::packet_sender::{BackendPacketSender, PnetBackend, PnetIoBackend};
 use crate::net::{
     Result as NetResult, SendMode, SendOptions, SendPlan, SendReport, SendTarget, SocketSender,
 };
@@ -10,15 +14,13 @@ use super::super::record::{BackendKind, PacketRecord};
 use super::super::writer::{PacketWriter, WriteReport};
 use super::super::Result;
 
-/// Packet writer that adapts [`SocketSender`] into the [`PacketWriter`] API.
+/// Packet writer that adapts raw socket sending into the [`PacketWriter`] API.
 ///
-/// The adapter delegates planning, dry-run behavior, live transmission,
-/// interface validation, send-mode handling, and unsupported target checks to
-/// `SocketSender`. In particular, live radiotap injection is routed through the
-/// same Layer-2 datalink writer `SocketSender` uses for Ethernet frames.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The adapter keeps [`SocketSender`] inspection compatibility while routing
+/// actual writes through a stateful packet sender. Repeated live writes through
+/// one writer reuse the opened backend for the configured send class.
 pub struct RawSocketWriter {
-    sender: SocketSender,
+    inner: StatefulRawSocketWriter<PnetIoBackend>,
 }
 
 impl RawSocketWriter {
@@ -29,9 +31,7 @@ impl RawSocketWriter {
     /// when you want the packet-wire constructor that defaults to dry-run
     /// planning and requires `.live()` for live transmission.
     pub fn new(options: impl Into<SendOptions>) -> Self {
-        Self {
-            sender: SocketSender::new(options),
-        }
+        Self::from(SocketSender::new(options))
     }
 
     /// Create a compile-only raw socket writer for an interface.
@@ -46,35 +46,145 @@ impl RawSocketWriter {
 
     /// Borrow the adapted sender.
     pub const fn sender(&self) -> &SocketSender {
-        &self.sender
+        self.inner.sender()
     }
 
     /// Borrow the adapted sender options.
     pub const fn options(&self) -> &SendOptions {
-        self.sender.options()
+        self.inner.options()
     }
 
     /// Build the send plan this writer would use for a packet.
     pub fn plan_packet(&self, packet: &Packet) -> NetResult<SendPlan> {
-        self.sender.plan(packet)
+        self.inner.plan_packet(packet)
     }
 
     /// Send a packet through the adapted raw socket sender.
     pub fn send_packet(&self, packet: &Packet) -> NetResult<SendReport> {
-        self.sender.send(packet)
+        self.inner.send_packet(packet)
     }
 }
 
+impl fmt::Debug for RawSocketWriter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RawSocketWriter")
+            .field("sender", self.sender())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Clone for RawSocketWriter {
+    fn clone(&self) -> Self {
+        Self::from(self.sender().clone())
+    }
+}
+
+impl PartialEq for RawSocketWriter {
+    fn eq(&self, other: &Self) -> bool {
+        self.sender() == other.sender()
+    }
+}
+
+impl Eq for RawSocketWriter {}
+
 impl From<SocketSender> for RawSocketWriter {
     fn from(sender: SocketSender) -> Self {
-        Self { sender }
+        Self {
+            inner: StatefulRawSocketWriter::from_sender_with_backend(sender, PnetIoBackend),
+        }
     }
 }
 
 impl PacketWriter for RawSocketWriter {
     fn write_record(&mut self, record: &PacketRecord) -> Result<WriteReport> {
+        self.inner.write_record(record)
+    }
+}
+
+struct StatefulRawSocketWriter<B>
+where
+    B: PnetBackend + Clone,
+{
+    sender: SocketSender,
+    stateful_sender: RefCell<StatefulPacketSender<B>>,
+}
+
+impl<B> StatefulRawSocketWriter<B>
+where
+    B: PnetBackend + Clone,
+{
+    #[cfg(test)]
+    fn new_with_backend(options: impl Into<SendOptions>, backend: B) -> Self {
+        Self::from_sender_with_backend(SocketSender::new(options), backend)
+    }
+
+    fn from_sender_with_backend(sender: SocketSender, backend: B) -> Self {
+        Self {
+            sender,
+            stateful_sender: RefCell::new(StatefulPacketSender::new(backend)),
+        }
+    }
+
+    const fn sender(&self) -> &SocketSender {
+        &self.sender
+    }
+
+    const fn options(&self) -> &SendOptions {
+        self.sender.options()
+    }
+
+    fn plan_packet(&self, packet: &Packet) -> NetResult<SendPlan> {
+        self.sender.plan(packet)
+    }
+
+    fn send_packet(&self, packet: &Packet) -> NetResult<SendReport> {
+        self.stateful_sender
+            .borrow_mut()
+            .send(self.sender.options(), packet)
+    }
+}
+
+impl<B> PacketWriter for StatefulRawSocketWriter<B>
+where
+    B: PnetBackend + Clone,
+{
+    fn write_record(&mut self, record: &PacketRecord) -> Result<WriteReport> {
         let send_report = self.send_packet(record.packet())?;
         Ok(write_report_from_send_report(&send_report))
+    }
+}
+
+struct StatefulPacketSender<B>
+where
+    B: PnetBackend + Clone,
+{
+    backend: B,
+    sender: Option<BackendPacketSender<B>>,
+}
+
+impl<B> StatefulPacketSender<B>
+where
+    B: PnetBackend + Clone,
+{
+    fn new(backend: B) -> Self {
+        Self {
+            backend,
+            sender: None,
+        }
+    }
+
+    fn send(&mut self, options: &SendOptions, packet: &Packet) -> NetResult<SendReport> {
+        if self.sender.is_none() {
+            self.sender = Some(BackendPacketSender::open_with_backend(
+                options.clone(),
+                self.backend.clone(),
+            )?);
+        }
+
+        self.sender
+            .as_mut()
+            .expect("stateful raw socket sender is initialized before send")
+            .send(packet)
     }
 }
 
@@ -148,6 +258,7 @@ mod raw_socket_writer {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     use super::*;
+    use crate::net::packet_sender::{FakePnetBackend, IPPROTO_RAW_SOCKET};
     use crate::net::{NetError, SendMode, SendOptions, SendTarget};
     use crate::{
         Dot11, Ethernet, Ipv4, Ipv6, LlcSnap, MacAddr, Packet, PacketWire, PacketWireTarget,
@@ -356,8 +467,12 @@ mod raw_socket_writer {
 
     #[test]
     fn raw_socket_writer_live_radiotap_routes_to_layer2_via_socket_sender() {
-        let mut writer =
-            RawSocketWriter::new(SendOptions::new().interface("missing-crafter-wifi0").live());
+        let mut writer = RawSocketWriter::new(
+            SendOptions::new()
+                .interface("missing-crafter-wifi0")
+                .link_layer()
+                .live(),
+        );
         let error = writer
             .write_record(&PacketRecord::new(radiotap_dot11_packet()))
             .unwrap_err();
@@ -368,6 +483,63 @@ mod raw_socket_writer {
             }
             other => panic!("expected raw socket radiotap missing-interface error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn raw_socket_writer_live_network_layer_reuses_open_sender() {
+        let backend = FakePnetBackend::default();
+        let mut writer = StatefulRawSocketWriter::new_with_backend(
+            SendOptions::new()
+                .interface("lo")
+                .network_layer()
+                .live()
+                .write_buffer_size(8),
+            backend.clone(),
+        );
+        let packet = ipv4_packet();
+        let expected_len = packet.compile().unwrap().len();
+
+        let first_report = writer
+            .write_record(&PacketRecord::new(packet.clone()))
+            .unwrap();
+        let second_report = writer
+            .write_record(&PacketRecord::new(packet.clone()))
+            .unwrap();
+
+        for report in [&first_report, &second_report] {
+            assert_eq!(report.backend(), &BackendKind::RawSocket);
+            assert_eq!(report.bytes_requested(), expected_len);
+            assert_eq!(report.bytes_written(), expected_len);
+            assert!(!report.is_dry_run());
+            assert_eq!(
+                report.target_details(),
+                Some(
+                    "interface=lo mode=network-layer target=network-layer:ipv4 destination=198.51.100.20 protocol=17"
+                )
+            );
+        }
+
+        let snapshot = backend.snapshot();
+        assert_eq!(snapshot.link_opens.len(), 0);
+        assert_eq!(snapshot.link_sends.len(), 0);
+        assert_eq!(snapshot.network_opens.len(), 1);
+        assert_eq!(
+            snapshot.network_opens[0].socket_protocol,
+            IPPROTO_RAW_SOCKET
+        );
+        assert_eq!(snapshot.network_opens[0].write_buffer_size, expected_len);
+        assert_eq!(snapshot.network_sends.len(), 2);
+        assert_eq!(snapshot.network_sends[0].bytes.len(), expected_len);
+        assert_eq!(snapshot.network_sends[1].bytes.len(), expected_len);
+        assert_eq!(
+            snapshot.network_sends[0].destination,
+            IpAddr::V4(Ipv4Addr::new(198, 51, 100, 20))
+        );
+        assert_eq!(snapshot.network_sends[0].protocol, crate::IPPROTO_UDP);
+        assert_eq!(
+            snapshot.network_sends[0].target,
+            snapshot.network_sends[1].target
+        );
     }
 
     #[test]
