@@ -145,13 +145,13 @@ const fn network_layer_name(network_layer: NetworkLayer) -> &'static str {
 
 #[cfg(test)]
 mod raw_socket_writer {
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     use super::*;
-    use crate::net::{NetError, SendOptions, SendTarget};
+    use crate::net::{NetError, SendMode, SendOptions, SendTarget};
     use crate::{
-        Dot11, Ethernet, Ipv4, LlcSnap, MacAddr, Packet, PacketWire, PacketWireTarget, Radiotap,
-        Raw, Udp,
+        Dot11, Ethernet, Ipv4, Ipv6, LlcSnap, MacAddr, Packet, PacketWire, PacketWireTarget,
+        Radiotap, Raw, Tcp, Udp,
     };
     use crate::{PacketRecord, WireError};
 
@@ -172,6 +172,13 @@ mod raw_socket_writer {
 
     fn radiotap_dot11_packet() -> Packet {
         Radiotap::new() / Dot11::data() / LlcSnap::new() / ipv4_packet()
+    }
+
+    fn ipv6_packet() -> Packet {
+        Ipv6::new()
+            .src(Ipv6Addr::LOCALHOST)
+            .dst(Ipv6Addr::LOCALHOST)
+            / Tcp::new().sport(1234).dport(443)
     }
 
     #[test]
@@ -275,6 +282,79 @@ mod raw_socket_writer {
     }
 
     #[test]
+    fn raw_socket_writer_dry_run_radiotap_link_layer_report_keeps_target_shape() {
+        let packet = radiotap_dot11_packet();
+        let mut writer = RawSocketWriter::new(
+            SendOptions::new()
+                .interface("wifi-dryrun0")
+                .link_layer()
+                .dry_run(),
+        );
+
+        let report = writer.write_record(&PacketRecord::new(packet)).unwrap();
+
+        assert_eq!(report.backend(), &BackendKind::RawSocket);
+        assert!(report.is_dry_run());
+        assert_eq!(
+            report.target_details(),
+            Some("interface=wifi-dryrun0 mode=link-layer target=link-layer:radiotap")
+        );
+    }
+
+    #[test]
+    fn raw_socket_writer_dry_run_rejects_link_mode_for_ipv4_packet() {
+        let mut writer =
+            RawSocketWriter::new(SendOptions::new().interface("eth0").link_layer().dry_run());
+        let error = writer
+            .write_record(&PacketRecord::new(ipv4_packet()))
+            .unwrap_err();
+
+        match error {
+            WireError::Net(NetError::UnsupportedPacketShape {
+                mode,
+                summary: _,
+                reason,
+            }) => {
+                assert_eq!(mode, SendMode::LinkLayer);
+                assert_eq!(
+                    reason,
+                    "link-layer sends require Ethernet, LinuxSll, NullLoopback, or Radiotap / Dot11 Wi-Fi as the first layers"
+                );
+            }
+            other => panic!("expected link-layer shape rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn raw_socket_writer_dry_run_rejects_network_mode_for_ethernet_frame() {
+        let mut writer = RawSocketWriter::new(
+            SendOptions::new()
+                .interface("eth0")
+                .network_layer()
+                .dry_run(),
+        );
+        let error = writer
+            .write_record(&PacketRecord::new(ethernet_packet()))
+            .unwrap_err();
+
+        match error {
+            WireError::Net(NetError::UnsupportedPacketShape {
+                mode,
+                summary,
+                reason,
+            }) => {
+                assert_eq!(mode, SendMode::NetworkLayer);
+                assert!(summary.contains("Ethernet"));
+                assert_eq!(
+                    reason,
+                    "network-layer sends require IPv4 or IPv6 as the first layer"
+                );
+            }
+            other => panic!("expected network-layer shape rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn raw_socket_writer_live_radiotap_routes_to_layer2_via_socket_sender() {
         let mut writer =
             RawSocketWriter::new(SendOptions::new().interface("missing-crafter-wifi0").live());
@@ -318,6 +398,39 @@ mod raw_socket_writer {
                 assert_eq!(protocol, crate::IPPROTO_UDP);
             }
             other => panic!("expected network target, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn raw_socket_writer_dry_run_ipv6_network_layer_stays_plan_only() {
+        let mut writer =
+            RawSocketWriter::new(SendOptions::new().interface("lo").network_layer().dry_run());
+        let report = writer
+            .write_record(&PacketRecord::new(ipv6_packet()))
+            .unwrap();
+
+        assert_eq!(report.backend(), &BackendKind::RawSocket);
+        assert_eq!(report.bytes_requested(), report.bytes_written());
+        assert!(report.is_dry_run());
+        assert_eq!(
+            report.target_details(),
+            Some(
+                "interface=lo mode=network-layer target=network-layer:ipv6 destination=::1 protocol=6"
+            )
+        );
+
+        let plan = writer.plan_packet(&ipv6_packet()).unwrap();
+        match plan.target() {
+            SendTarget::NetworkLayer {
+                network_layer,
+                destination,
+                protocol,
+            } => {
+                assert_eq!(network_layer, NetworkLayer::Ipv6);
+                assert_eq!(destination, IpAddr::V6(Ipv6Addr::LOCALHOST));
+                assert_eq!(protocol, crate::IPPROTO_TCP);
+            }
+            other => panic!("expected IPv6 network target, got {other:?}"),
         }
     }
 }
