@@ -467,7 +467,9 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
 
-    use crate::{Ethernet, Ipv4, LinkType, NetworkLayer, Raw, Udp, IPPROTO_UDP};
+    use crate::{
+        Dot11, Ethernet, Ipv4, LinkType, LlcSnap, NetworkLayer, Radiotap, Raw, Udp, IPPROTO_UDP,
+    };
 
     use super::*;
 
@@ -477,6 +479,17 @@ mod tests {
 
     fn ethernet_packet_with_payload(payload: &'static str) -> crate::Packet {
         Ethernet::new()
+            / Ipv4::new()
+                .src(Ipv4Addr::new(192, 0, 2, 10))
+                .dst(Ipv4Addr::new(198, 51, 100, 20))
+            / Udp::new().sport(49152).dport(53)
+            / Raw::from(payload)
+    }
+
+    fn radiotap_packet_with_payload(payload: &'static str) -> crate::Packet {
+        Radiotap::new()
+            / Dot11::data()
+            / LlcSnap::new()
             / Ipv4::new()
                 .src(Ipv4Addr::new(192, 0, 2, 10))
                 .dst(Ipv4Addr::new(198, 51, 100, 20))
@@ -682,6 +695,63 @@ mod tests {
             snapshot.link_opens[0].target,
             SendTarget::LinkLayer {
                 link_type: LinkType::Ethernet,
+            }
+        );
+        assert_eq!(snapshot.link_sends.len(), 2);
+        assert_eq!(snapshot.link_sends[0].target, first_plan.target());
+        assert_eq!(snapshot.link_sends[0].bytes, first_plan.bytes());
+        assert_eq!(snapshot.link_sends[1].target, second_plan.target());
+        assert_eq!(snapshot.link_sends[1].bytes, second_plan.bytes());
+        assert!(snapshot.network_opens.is_empty());
+        assert!(snapshot.network_sends.is_empty());
+    }
+
+    #[test]
+    fn live_link_layer_sender_writes_radiotap_frames() {
+        let backend = FakePnetBackend::default();
+        let mut sender = PacketSender::open_with_backend(
+            SendOptions::new().iface("fake0").link_layer().live(),
+            backend.clone(),
+        )
+        .unwrap();
+
+        let first = radiotap_packet_with_payload("one");
+        let second = radiotap_packet_with_payload("two");
+        let first_plan = SendPlan::from_packet(
+            &first,
+            SendOptions::new().iface("fake0").link_layer().dry_run(),
+        )
+        .unwrap();
+        let second_plan = SendPlan::from_packet(
+            &second,
+            SendOptions::new().iface("fake0").link_layer().dry_run(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            first_plan.target(),
+            SendTarget::LinkLayer {
+                link_type: LinkType::Radiotap,
+            }
+        );
+        assert_eq!(
+            second_plan.target(),
+            SendTarget::LinkLayer {
+                link_type: LinkType::Radiotap,
+            }
+        );
+        assert_eq!(first_plan.bytes()[..8], [0, 0, 8, 0, 0, 0, 0, 0]);
+        assert_eq!(second_plan.bytes()[..8], [0, 0, 8, 0, 0, 0, 0, 0]);
+
+        sender.send(&first).unwrap();
+        sender.send(&second).unwrap();
+
+        let snapshot = backend.snapshot();
+        assert_eq!(snapshot.link_opens.len(), 1);
+        assert_eq!(
+            snapshot.link_opens[0].target,
+            SendTarget::LinkLayer {
+                link_type: LinkType::Radiotap,
             }
         );
         assert_eq!(snapshot.link_sends.len(), 2);
