@@ -963,11 +963,12 @@ pub(super) mod ipv6_planner {
 pub(super) mod ipv6_identification {
     #![allow(dead_code)]
 
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     const IPV6_IDENTIFICATION_GAMMA: u64 = 0x9e37_79b9_7f4a_7c15;
-    static IPV6_IDENTIFICATION_AUTO_SEED: AtomicU64 = AtomicU64::new(0x243f_6a88_85a3_08d3);
+    const IPV6_IDENTIFICATION_GAMMA_LOW: u32 = IPV6_IDENTIFICATION_GAMMA as u32;
+    static IPV6_IDENTIFICATION_AUTO_SEED: AtomicU32 = AtomicU32::new(0x85a3_08d3);
 
     /// Stateful IPv6 Fragment Header Identification generator.
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1007,8 +1008,10 @@ pub(super) mod ipv6_identification {
     }
 
     fn automatic_ipv6_identification_seed() -> u64 {
-        let counter =
-            IPV6_IDENTIFICATION_AUTO_SEED.fetch_add(IPV6_IDENTIFICATION_GAMMA, Ordering::Relaxed);
+        let counter = u64::from(
+            IPV6_IDENTIFICATION_AUTO_SEED
+                .fetch_add(IPV6_IDENTIFICATION_GAMMA_LOW, Ordering::Relaxed),
+        );
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|duration| {
