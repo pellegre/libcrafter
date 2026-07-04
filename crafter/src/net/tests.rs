@@ -1837,7 +1837,9 @@ mod batch_send_recv {
 
     use crate::{Icmpv4, Ipv4, NetworkLayer, Packet, Raw};
 
-    use crate::net::{BatchSendRecv, PacketBatchSendRecvExt};
+    use crate::net::packet_sender::FakePnetBackend;
+    use crate::net::{BatchSendRecv, NetError, PacketBatchSendRecvExt, SendMode, SendTarget};
+    use crate::wire::{Sniffer, VecPacketSource};
 
     fn echo_request(sequence: u16) -> Packet {
         Ipv4::new()
@@ -1888,6 +1890,106 @@ mod batch_send_recv {
             assert_eq!(entry.attempts(), 2);
             assert!(entry.timed_out());
         }
+    }
+
+    #[test]
+    fn batch_send_recv_live_reuses_packet_sender() {
+        let backend = FakePnetBackend::default();
+        let requests = vec![echo_request(1), echo_request(2), echo_request(3)];
+        let timeout = Duration::from_millis(10);
+        let expected_filter = "icmp and src host 198.51.100.20 and dst host 192.0.2.10";
+        let mut capture_opens = 0;
+        let mut capture_counts = Vec::new();
+
+        let report = BatchSendRecv::new()
+            .iface("fake0")
+            .network_layer()
+            .live()
+            .concurrency_limit(2)
+            .retry(2)
+            .timeout(timeout)
+            .capture_limit(2)
+            .send_recv_all_with_backend_and_sniffer(
+                &requests,
+                backend.clone(),
+                |interface, filter, capture_timeout, count| {
+                    capture_opens += 1;
+                    capture_counts.push(count);
+                    assert_eq!(interface, "fake0");
+                    assert_eq!(filter, Some(expected_filter));
+                    assert_eq!(capture_timeout, timeout);
+                    Ok(Sniffer::new(VecPacketSource::empty())
+                        .timeout(capture_timeout)
+                        .count(count))
+                },
+            )
+            .unwrap();
+
+        assert_eq!(capture_opens, 4);
+        assert_eq!(capture_counts, vec![4, 4, 2, 2]);
+        assert_eq!(report.len(), requests.len());
+        assert_eq!(report.concurrency_limit(), 2);
+        assert_eq!(report.retries(), 2);
+        assert_eq!(report.reply_count(), 0);
+        assert_eq!(report.timed_out_indices(), vec![0, 1, 2]);
+        assert_eq!(report.effective_filter(), Some(expected_filter));
+
+        for (index, entry) in report.entries().iter().enumerate() {
+            assert_eq!(entry.request_index(), index);
+            assert_eq!(entry.attempts(), 2);
+            assert!(entry.timed_out());
+            for send_report in entry.send_reports() {
+                assert!(!send_report.is_dry_run());
+                assert_eq!(send_report.bytes_sent(), send_report.plan().len());
+                assert_eq!(send_report.plan().interface(), "fake0");
+                assert_eq!(send_report.plan().requested_mode(), SendMode::NetworkLayer);
+                assert!(matches!(
+                    send_report.plan().target(),
+                    SendTarget::NetworkLayer {
+                        network_layer: NetworkLayer::Ipv4,
+                        ..
+                    }
+                ));
+            }
+        }
+
+        let snapshot = backend.snapshot();
+        assert_eq!(snapshot.network_opens.len(), 1);
+        assert_eq!(snapshot.network_sends.len(), requests.len() * 2);
+        assert!(snapshot.link_opens.is_empty());
+        assert!(snapshot.link_sends.is_empty());
+
+        let wrong_backend = FakePnetBackend::default();
+        let mut wrong_capture_opens = 0;
+        let wrong_error = BatchSendRecv::new()
+            .iface("fake0")
+            .link_layer()
+            .live()
+            .send_recv_all_with_backend_and_sniffer(
+                &[echo_request(9)],
+                wrong_backend.clone(),
+                |_, _, capture_timeout, count| {
+                    wrong_capture_opens += 1;
+                    Ok(Sniffer::new(VecPacketSource::empty())
+                        .timeout(capture_timeout)
+                        .count(count))
+                },
+            )
+            .unwrap_err();
+
+        match wrong_error {
+            NetError::UnsupportedPacketShape { mode, reason, .. } => {
+                assert_eq!(mode, SendMode::LinkLayer);
+                assert!(reason.contains("link-layer sends require"));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+        assert_eq!(wrong_capture_opens, 0);
+        let wrong_snapshot = wrong_backend.snapshot();
+        assert!(wrong_snapshot.link_opens.is_empty());
+        assert!(wrong_snapshot.link_sends.is_empty());
+        assert!(wrong_snapshot.network_opens.is_empty());
+        assert!(wrong_snapshot.network_sends.is_empty());
     }
 
     #[test]
