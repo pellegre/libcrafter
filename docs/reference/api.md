@@ -376,6 +376,41 @@ stack delivery are out of scope for the crate primitive.
 
 ## Send And Send-Receive
 
+The net API has both one-shot and reusable send surfaces:
+
+| API | Role |
+| --- | --- |
+| `send_packet` and `SocketSender` | Compatibility one-shot sends and dry-run plans for callers that send one packet at a time. |
+| `PacketSender` | Reusable sender that keeps one live backend open for an explicit homogeneous send class. |
+| `PacketWire::raw_socket_interface` | Packet-wire writer surface for `Transmitter`; live writers reuse `PacketSender` internally. |
+
+`PacketSender` is useful when a generated tool sends several packets through
+the same interface. Dry-run mode only compiles and plans packets:
+
+```rust
+let packet =
+    Ipv4::new().src("192.0.2.10")?.dst("198.51.100.20")?
+    / Udp::new().sport(40000).dport(33434)
+    / Raw::from("dry-run payload");
+
+let mut sender = PacketSender::open(
+    SendOptions::new()
+        .iface("eth0")
+        .network_layer()
+        .dry_run(),
+)?;
+
+let report = sender.send(&packet)?;
+assert!(report.is_dry_run());
+```
+
+Live reusable senders must use `.live()` with an explicit `.link_layer()` or
+`.network_layer()` mode. Link-layer live senders handle Ethernet and radiotap
+frames; network-layer live senders currently handle bare IPv4 packets.
+Full-header IPv6 network-layer live sends remain unsupported. A `PacketSender`
+is homogeneous, so tools that need both Ethernet/radiotap frames and bare IPv4
+packets should open separate senders.
+
 ```rust
 let report = packet.send_recv_report(
     SendRecv::new()
@@ -405,7 +440,11 @@ let report = send_recv_packets(
 ```
 
 Raw socket operations are exposed through typed wrappers rather than integer
-file descriptors in normal examples.
+file descriptors in normal examples. Use
+`PacketWire::raw_socket_interface("eth0").link_layer().live()` for live
+Ethernet or radiotap writer streams, and
+`PacketWire::raw_socket_interface("eth0").network_layer().live()` for live
+bare IPv4 writer streams.
 
 ## UDP Options
 
@@ -899,7 +938,7 @@ in the [ICMPv6 guide](../guide/icmpv6.md).
 | `decode_bytes` | Decode from link, network, and IPv4 entry points while preserving raw payloads. |
 | `custom_registry` | Protocol registry customization and default decode comparison. |
 | `send_plan` | Network-layer send planning, compiled bytes, targets, and derived reply filters. |
-| `send_packet` | Network-layer and link-layer send reports using dry-run options by default. |
+| `send_packet` | Network-layer and link-layer send reports using dry-run options by default; use `PacketSender` for repeated live sends through one explicit send class. |
 | `send_recv_icmp` | ICMP send/receive configuration, retry timing, filters, and dry-run reports. |
 | `network_ping` | Network-layer ICMP echo send/receive for disposable endpoint smoke tests. |
 | `reply_matching` | Synthetic request/reply matching and generated reply filters. |

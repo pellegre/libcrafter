@@ -398,7 +398,8 @@ the same interface target and is prepared to handle a typed capability error.
 
 For raw socket sends through the wire API, use the dedicated raw socket
 constructor. It defaults to dry-run planning; `.live()` is the explicit opt-in
-for live raw socket transmission.
+for live raw socket transmission, and live opens require an explicit
+`.link_layer()` or `.network_layer()` send class.
 
 ```rust
 use crafter::prelude::*;
@@ -418,8 +419,11 @@ assert!(reports.iter().all(|report| report.is_dry_run()));
 # Ok::<(), crafter::CrafterError>(())
 ```
 
-Live send requires `.live()` and the normal raw socket privileges for the
-selected platform:
+Dry-run raw socket writers still plan IPv4, IPv6, Ethernet, and radiotap
+records without opening a live backend.
+
+Live send requires `.live()`, an explicit send class, and the normal raw socket
+privileges for the selected platform:
 
 ```rust
 use crafter::prelude::*;
@@ -439,9 +443,13 @@ let _reports = tx.send(
 # Ok::<(), crafter::CrafterError>(())
 ```
 
-Unsupported radiotap Wi-Fi injection is not silently rerouted through this raw
-socket path. Monitor-mode Dot11 injection needs a backend that explicitly
-supports that medium.
+A live raw socket writer owns one reusable `PacketSender`, so repeated
+`Transmitter` writes reuse the opened backend for one homogeneous send class.
+Use `.link_layer()` for Ethernet and radiotap frames. Use `.network_layer()` for
+bare IPv4 packets; full-header IPv6 network-layer live sends remain unsupported.
+If a tool needs both Ethernet/radiotap frames and bare IPv4 packets, open
+separate writers or senders. A writer opened for one class fails with a typed
+error when given the other class instead of switching backends silently.
 
 ## Parallel Interfaces
 
