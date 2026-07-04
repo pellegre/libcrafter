@@ -23,8 +23,8 @@ use crate::common::{
     capture_filter, captured_data, decoded_packet_json, failed_outcome, hex_bytes,
     observed_response, open_capture_sniffer, plan_json, required_str, required_u16,
     send_report_json, target_service_json, ArpSend, ArpValidation, CandidateValidation,
-    ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest, FAILURE_DECODE_FAILED,
-    FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
+    ExampleResult, ProbeOutcome, ProbePacketSender, ProbePlan, StimulusEndpointRequest,
+    FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
 };
 
 /// Stable identifier for the ARP case module.
@@ -111,6 +111,23 @@ pub fn run_arp_live(
     if let Some(sends) = plan.arp_sends.as_deref() {
         return run_arp_multi_send_live(request, plan, sends);
     }
+    let mut sender = SocketSender::new(
+        SendOptions::new()
+            .iface(request.interface.clone())
+            .link_layer()
+            .live(),
+    );
+    run_arp_live_with_sender(request, plan, &mut sender)
+}
+
+fn run_arp_live_with_sender<S>(
+    request: &StimulusEndpointRequest,
+    plan: &ProbePlan,
+    sender: &mut S,
+) -> ExampleResult<ProbeOutcome>
+where
+    S: ProbePacketSender,
+{
     let packet = arp_who_has_packet(plan)?;
     let timeout = Duration::from_secs(request.timeout_seconds.max(1));
     let mut sniffer =
@@ -127,14 +144,7 @@ pub fn run_arp_live(
                 ));
             }
         };
-    let send_report = match SocketSender::new(
-        SendOptions::new()
-            .iface(request.interface.clone())
-            .link_layer()
-            .live(),
-    )
-    .send(&packet)
-    {
+    let send_report = match sender.send_probe_packet(&packet) {
         Ok(report) => report,
         Err(err) => {
             return Ok(failed_outcome(
@@ -398,10 +408,28 @@ fn run_arp_multi_send_live(
     let mut any_received = false;
     let mut failure_reason: Option<&'static str> = None;
     let mut errors: Vec<String> = Vec::new();
+    let mut sender = match PacketSender::open(
+        SendOptions::new()
+            .iface(request.interface.clone())
+            .link_layer()
+            .live(),
+    ) {
+        Ok(sender) => sender,
+        Err(err) => {
+            return Ok(failed_outcome(
+                plan,
+                FAILURE_DECODE_FAILED,
+                vec![format!("send failed: {err}")],
+                None,
+                false,
+                false,
+            ));
+        }
+    };
 
     for (offset, send) in sends.iter().enumerate() {
         let send_plan = send_as_plan(plan, send);
-        let outcome = run_arp_live(request, &send_plan)?;
+        let outcome = run_arp_live_with_sender(request, &send_plan, &mut sender)?;
         any_sent |= outcome.sent;
         any_received |= outcome.received;
         let status = outcome
@@ -1119,6 +1147,39 @@ mod tests {
         let arp = packet.layer::<Arp>().expect("arp layer");
         assert_eq!(arp.opcode_value(), u16::from(ArpOperation::Request));
         assert_eq!(arp.target_ipv4().unwrap().to_string(), "10.64.0.20");
+    }
+
+    #[test]
+    fn multi_send_packet_sender_preserves_link_send_report_fields() {
+        let parent = repeat_plan();
+        let sends = parent.arp_sends.clone().unwrap();
+        let mut sender = PacketSender::open(
+            SendOptions::new()
+                .iface("dry-run0")
+                .link_layer()
+                .dry_run(),
+        )
+        .unwrap();
+
+        for send in &sends {
+            let send_plan = send_as_plan(&parent, send);
+            let packet = arp_who_has_packet(&send_plan).unwrap();
+            let report = sender.send_probe_packet(&packet).unwrap();
+            let report_json = send_report_json(&report);
+
+            assert!(report.is_dry_run());
+            assert_eq!(report.plan().requested_mode(), SendMode::LinkLayer);
+            assert!(matches!(
+                report.plan().target(),
+                SendTarget::LinkLayer {
+                    link_type: LinkType::Ethernet
+                }
+            ));
+            assert_eq!(report_json["dry_run"], serde_json::json!(true));
+            assert!(report_json["target"]
+                .as_str()
+                .is_some_and(|target| target.contains("LinkLayer")));
+        }
     }
 
     /// Build an `arp-alias-address-reply` plan: the who-has resolves a *secondary*

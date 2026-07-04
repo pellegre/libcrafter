@@ -22,8 +22,8 @@ use crate::common::{
     capture_filter, captured_data, decode_hex, decoded_packet_json, failed_outcome, hex_bytes,
     observed_response, open_capture_sniffer, plan_json, raw_payload, required_str, required_u16,
     send_report_json, target_service_json, CandidateValidation, ExampleResult, ProbeOutcome,
-    ProbePlan, StimulusEndpointRequest, UdpSend, FAILURE_DECODE_FAILED, FAILURE_TIMEOUT,
-    FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
+    ProbePacketSender, ProbePlan, StimulusEndpointRequest, UdpSend, FAILURE_DECODE_FAILED,
+    FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
 };
 use crate::icmp;
 
@@ -107,6 +107,23 @@ pub fn run_udp_live(
     if let Some(sends) = plan.udp_sends.as_deref() {
         return run_udp_multi_send_live(request, plan, sends);
     }
+    let mut sender = SocketSender::new(
+        SendOptions::new()
+            .iface(request.interface.clone())
+            .network_layer()
+            .live(),
+    );
+    run_udp_live_with_sender(request, plan, &mut sender)
+}
+
+fn run_udp_live_with_sender<S>(
+    request: &StimulusEndpointRequest,
+    plan: &ProbePlan,
+    sender: &mut S,
+) -> ExampleResult<ProbeOutcome>
+where
+    S: ProbePacketSender,
+{
     let packet = udp_packet(plan)?;
     let timeout = Duration::from_secs(request.timeout_seconds.max(1));
     let mut sniffer =
@@ -123,14 +140,7 @@ pub fn run_udp_live(
                 ));
             }
         };
-    let send_report = match SocketSender::new(
-        SendOptions::new()
-            .iface(request.interface.clone())
-            .network_layer()
-            .live(),
-    )
-    .send(&packet)
-    {
+    let send_report = match sender.send_probe_packet(&packet) {
         Ok(report) => report,
         Err(err) => {
             return Ok(failed_outcome(
@@ -609,10 +619,28 @@ fn run_udp_multi_send_live(
     let mut any_received = false;
     let mut failure_reason: Option<&'static str> = None;
     let mut errors: Vec<String> = Vec::new();
+    let mut sender = match PacketSender::open(
+        SendOptions::new()
+            .iface(request.interface.clone())
+            .network_layer()
+            .live(),
+    ) {
+        Ok(sender) => sender,
+        Err(err) => {
+            return Ok(failed_outcome(
+                plan,
+                FAILURE_DECODE_FAILED,
+                vec![format!("send failed: {err}")],
+                None,
+                false,
+                false,
+            ));
+        }
+    };
 
     for (offset, send) in sends.iter().enumerate() {
         let send_plan = send_as_plan(plan, send);
-        let outcome = run_udp_live(request, &send_plan)?;
+        let outcome = run_udp_live_with_sender(request, &send_plan, &mut sender)?;
         any_sent |= outcome.sent;
         any_received |= outcome.received;
         let status = outcome
@@ -1225,6 +1253,89 @@ mod tests {
         plan.expected_udp_checksum_statuses =
             Some(vec!["valid".to_string(), "ipv4_no_checksum".to_string()]);
         plan
+    }
+
+    fn multi_shot_plan() -> ProbePlan {
+        let first = b"udp-multi:first";
+        let second = b"udp-multi:second";
+        let sends = vec![
+            UdpSend {
+                index: Some(0),
+                sequence_marker: Some("first".to_string()),
+                source_ipv4: Some("192.0.2.10".to_string()),
+                destination_ipv4: Some("192.0.2.20".to_string()),
+                expected_reply_source_ipv4: Some("192.0.2.20".to_string()),
+                expected_reply_destination_ipv4: Some("192.0.2.10".to_string()),
+                source_port: Some(46000),
+                destination_port: Some(30000),
+                payload_hex: Some(hex_bytes(first)),
+                payload_length: Some(first.len()),
+                expected_payload_hex: Some(hex_bytes(first)),
+                expected_payload_length: Some(first.len()),
+                expected_udp_length: Some((8 + first.len()) as u16),
+                expected_udp_checksum_present: Some(true),
+                expected_udp_checksum_statuses: Some(vec!["valid".to_string()]),
+                capture_filter: None,
+                validation: None,
+            },
+            UdpSend {
+                index: Some(1),
+                sequence_marker: Some("second".to_string()),
+                source_ipv4: Some("192.0.2.10".to_string()),
+                destination_ipv4: Some("192.0.2.20".to_string()),
+                expected_reply_source_ipv4: Some("192.0.2.20".to_string()),
+                expected_reply_destination_ipv4: Some("192.0.2.10".to_string()),
+                source_port: Some(46001),
+                destination_port: Some(30000),
+                payload_hex: Some(hex_bytes(second)),
+                payload_length: Some(second.len()),
+                expected_payload_hex: Some(hex_bytes(second)),
+                expected_payload_length: Some(second.len()),
+                expected_udp_length: Some((8 + second.len()) as u16),
+                expected_udp_checksum_present: Some(true),
+                expected_udp_checksum_statuses: Some(vec!["valid".to_string()]),
+                capture_filter: None,
+                validation: None,
+            },
+        ];
+        let mut plan = echo_plan("udp-multi-shot-order", first);
+        plan.send_count = Some(sends.len());
+        plan.udp_sends = Some(sends);
+        plan
+    }
+
+    #[test]
+    fn multi_send_packet_sender_preserves_send_report_fields() {
+        let plan = multi_shot_plan();
+        let sends = plan.udp_sends.clone().unwrap();
+        let mut sender = PacketSender::open(
+            SendOptions::new()
+                .iface("dry-run0")
+                .network_layer()
+                .dry_run(),
+        )
+        .unwrap();
+
+        for send in &sends {
+            let send_plan = send_as_plan(&plan, send);
+            let packet = udp_packet(&send_plan).unwrap();
+            let report = sender.send_probe_packet(&packet).unwrap();
+            let report_json = send_report_json(&report);
+
+            assert!(report.is_dry_run());
+            assert_eq!(report.plan().requested_mode(), SendMode::NetworkLayer);
+            assert!(matches!(
+                report.plan().target(),
+                SendTarget::NetworkLayer {
+                    network_layer: NetworkLayer::Ipv4,
+                    ..
+                }
+            ));
+            assert_eq!(report_json["dry_run"], serde_json::json!(true));
+            assert!(report_json["target"]
+                .as_str()
+                .is_some_and(|target| target.contains("NetworkLayer")));
+        }
     }
 
     #[test]

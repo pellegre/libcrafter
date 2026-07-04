@@ -11,8 +11,8 @@ use crate::common::{
     capture_filter, captured_data, decode_hex, decoded_packet_json, failed_outcome, hex_bytes,
     observed_response, open_capture_sniffer, plan_json, required_str, required_u16,
     send_report_json, target_service_json, CandidateValidation, DnsSend, EdnsOptionExpectation,
-    ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest, FAILURE_DECODE_FAILED,
-    FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
+    ExampleResult, ProbeOutcome, ProbePacketSender, ProbePlan, StimulusEndpointRequest,
+    FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
 };
 
 pub fn run_dns_dry_run(
@@ -75,6 +75,23 @@ pub fn run_dns_live(
     if let Some(sends) = plan.sends.as_deref() {
         return run_dns_multi_send_live(request, plan, sends);
     }
+    let mut sender = SocketSender::new(
+        SendOptions::new()
+            .iface(request.interface.clone())
+            .network_layer()
+            .live(),
+    );
+    run_dns_live_with_sender(request, plan, &mut sender)
+}
+
+fn run_dns_live_with_sender<S>(
+    request: &StimulusEndpointRequest,
+    plan: &ProbePlan,
+    sender: &mut S,
+) -> ExampleResult<ProbeOutcome>
+where
+    S: ProbePacketSender,
+{
     let packet = dns_packet(plan)?;
     let timeout = Duration::from_secs(request.timeout_seconds.max(1));
     let mut sniffer =
@@ -91,14 +108,7 @@ pub fn run_dns_live(
                 ));
             }
         };
-    let send_report = match SocketSender::new(
-        SendOptions::new()
-            .iface(request.interface.clone())
-            .network_layer()
-            .live(),
-    )
-    .send(&packet)
-    {
+    let send_report = match sender.send_probe_packet(&packet) {
         Ok(report) => report,
         Err(err) => {
             return Ok(failed_outcome(
@@ -377,10 +387,28 @@ fn run_dns_multi_send_live(
     let mut any_received = false;
     let mut failure_reason: Option<&'static str> = None;
     let mut errors: Vec<String> = Vec::new();
+    let mut sender = match PacketSender::open(
+        SendOptions::new()
+            .iface(request.interface.clone())
+            .network_layer()
+            .live(),
+    ) {
+        Ok(sender) => sender,
+        Err(err) => {
+            return Ok(failed_outcome(
+                plan,
+                FAILURE_DECODE_FAILED,
+                vec![format!("send failed: {err}")],
+                None,
+                false,
+                false,
+            ));
+        }
+    };
 
     for (offset, send) in sends.iter().enumerate() {
         let send_plan = send_as_plan(plan, send);
-        let outcome = run_dns_live(request, &send_plan)?;
+        let outcome = run_dns_live_with_sender(request, &send_plan, &mut sender)?;
         any_sent |= outcome.sent;
         any_received |= outcome.received;
         let status = outcome
@@ -2500,5 +2528,39 @@ mod tests {
             expected_responses[0]["answer"]["data"], expected_responses[1]["answer"]["data"],
             "each expected response carries its own answer"
         );
+    }
+
+    #[test]
+    fn multi_send_packet_sender_preserves_send_report_fields() {
+        let plan = repeat_transaction_plan();
+        let sends = plan.sends.clone().unwrap();
+        let mut sender = PacketSender::open(
+            SendOptions::new()
+                .iface("dry-run0")
+                .network_layer()
+                .dry_run(),
+        )
+        .unwrap();
+
+        for send in &sends {
+            let send_plan = send_as_plan(&plan, send);
+            let packet = dns_packet(&send_plan).unwrap();
+            let report = sender.send_probe_packet(&packet).unwrap();
+            let report_json = send_report_json(&report);
+
+            assert!(report.is_dry_run());
+            assert_eq!(report.plan().requested_mode(), SendMode::NetworkLayer);
+            assert!(matches!(
+                report.plan().target(),
+                SendTarget::NetworkLayer {
+                    network_layer: NetworkLayer::Ipv4,
+                    ..
+                }
+            ));
+            assert_eq!(report_json["dry_run"], serde_json::json!(true));
+            assert!(report_json["target"]
+                .as_str()
+                .is_some_and(|target| target.contains("NetworkLayer")));
+        }
     }
 }
