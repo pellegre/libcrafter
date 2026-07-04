@@ -157,8 +157,8 @@ pub use net::{
     send_plan, send_recv_packet, send_recv_packets, BatchSend, BatchSendEntry, BatchSendRecv,
     BatchSendRecvEntry, BatchSendRecvReport, BatchSendReport, InterfaceAddress, InterfaceInfo,
     Ipv4Range, NetError, PacketBatchSendExt, PacketBatchSendRecvExt, PacketSendExt,
-    PacketSendRecvExt, RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan, SendRecv,
-    SendRecvOptions, SendRecvReport, SendReport, SendTarget, SocketSend, SocketSender,
+    PacketSendRecvExt, PacketSender, RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan,
+    SendRecv, SendRecvOptions, SendRecvReport, SendReport, SendTarget, SocketSend, SocketSender,
 };
 pub use wire::Sniffer;
 pub use wire::{
@@ -218,11 +218,12 @@ pub mod prelude {
         send_packets, send_plan, send_recv_packet, send_recv_packets, BatchSend, BatchSendEntry,
         BatchSendRecv, BatchSendRecvEntry, BatchSendRecvReport, BatchSendReport, Dot11Metadata,
         InterfaceAddress, InterfaceInfo, Ipv4Range, NetError, PacketBatchSendExt,
-        PacketBatchSendRecvExt, PacketSendExt, PacketSendRecvExt, PairwiseTransientKey, Pmk,
-        RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan, SendRecv, SendRecvOptions,
-        SendRecvReport, SendReport, SendTarget, Sniffer, SocketSend, SocketSender, Transmitter,
-        VecPacketSource, WifiDecryptState, WifiMetadata, WifiProtectionStatus, WireError, WpaAkm,
-        WpaCipher, WpaCredentialStatus, WpaDecrypt, WpaDecryptConfig, WpaDecryptReason,
+        PacketBatchSendRecvExt, PacketSendExt, PacketSendRecvExt, PacketSender,
+        PairwiseTransientKey, Pmk, RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan,
+        SendRecv, SendRecvOptions, SendRecvReport, SendReport, SendTarget, Sniffer, SocketSend,
+        SocketSender, Transmitter, VecPacketSource, WifiDecryptState, WifiMetadata,
+        WifiProtectionStatus, WireError, WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecrypt,
+        WpaDecryptConfig, WpaDecryptReason,
         WpaHandshakeStatus, WpaKeyKind, WpaMetadata, WpaNetwork, WriteReport,
     };
     pub use crate::{

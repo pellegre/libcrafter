@@ -40,20 +40,54 @@ pub(crate) trait PnetBackend {
     ) -> Result<Self::NetworkSender>;
 }
 
-pub(crate) struct PacketSender<B: PnetBackend = PnetIoBackend> {
+/// Reusable packet sender for one explicit send class.
+///
+/// `PacketSender` keeps state across calls so repeated live sends can reuse the
+/// backend opened for a homogeneous link-layer or network-layer stream. Live
+/// senders must be opened with [`SendOptions::link_layer`] or
+/// [`SendOptions::network_layer`]; dry-run senders stay offline and only return
+/// inspectable send reports. [`crate::net::SocketSender`] remains the
+/// compatibility one-shot API for callers that do not need sender reuse.
+pub struct PacketSender {
+    inner: BackendPacketSender<PnetIoBackend>,
+}
+
+impl PacketSender {
+    /// Open a reusable packet sender from send options.
+    ///
+    /// Live senders require an explicit send class. Use
+    /// [`SendOptions::link_layer`] for Ethernet or radiotap frames, or
+    /// [`SendOptions::network_layer`] for supported network-layer packets.
+    /// Dry-run senders never open an OS raw socket.
+    pub fn open(options: impl Into<SendOptions>) -> Result<Self> {
+        BackendPacketSender::open_with_backend(options, PnetIoBackend)
+            .map(|inner| Self { inner })
+    }
+
+    /// Borrow this sender's options.
+    pub const fn options(&self) -> &SendOptions {
+        self.inner.options()
+    }
+
+    /// Compile a packet and return a send plan without transmitting bytes.
+    pub fn plan(&self, packet: &Packet) -> Result<SendPlan> {
+        self.inner.plan(packet)
+    }
+
+    /// Send a packet, or return a dry-run report when configured for dry-run.
+    pub fn send(&mut self, packet: &Packet) -> Result<SendReport> {
+        self.inner.send(packet)
+    }
+}
+
+pub(crate) struct BackendPacketSender<B: PnetBackend = PnetIoBackend> {
     options: SendOptions,
     backend: B,
     link_sender: Option<B::LinkSender>,
     network_sender: Option<B::NetworkSender>,
 }
 
-impl PacketSender<PnetIoBackend> {
-    pub(crate) fn open(options: impl Into<SendOptions>) -> Result<Self> {
-        Self::open_with_backend(options, PnetIoBackend)
-    }
-}
-
-impl<B> PacketSender<B>
+impl<B> BackendPacketSender<B>
 where
     B: PnetBackend,
 {
@@ -659,7 +693,7 @@ mod tests {
     fn packet_sender_requires_explicit_live_mode() {
         let backend = FakePnetBackend::default();
 
-        let error = match PacketSender::open_with_backend(
+        let error = match BackendPacketSender::open_with_backend(
             SendOptions::new().iface("fake0").live(),
             backend.clone(),
         ) {
@@ -686,7 +720,7 @@ mod tests {
     #[test]
     fn packet_sender_dry_run() {
         let backend = FakePnetBackend::default();
-        let mut sender = PacketSender::open_with_backend(
+        let mut sender = BackendPacketSender::open_with_backend(
             SendOptions::new().iface("fake0").dry_run(),
             backend.clone(),
         )
@@ -715,7 +749,7 @@ mod tests {
     #[test]
     fn live_link_layer_sender_opens_once() {
         let backend = FakePnetBackend::default();
-        let mut sender = PacketSender::open_with_backend(
+        let mut sender = BackendPacketSender::open_with_backend(
             SendOptions::new().iface("fake0").link_layer().live(),
             backend.clone(),
         )
@@ -741,7 +775,7 @@ mod tests {
     #[test]
     fn live_link_layer_sender_writes_ethernet_frames() {
         let backend = FakePnetBackend::default();
-        let mut sender = PacketSender::open_with_backend(
+        let mut sender = BackendPacketSender::open_with_backend(
             SendOptions::new().iface("fake0").link_layer().live(),
             backend.clone(),
         )
@@ -783,7 +817,7 @@ mod tests {
     #[test]
     fn live_link_layer_sender_writes_radiotap_frames() {
         let backend = FakePnetBackend::default();
-        let mut sender = PacketSender::open_with_backend(
+        let mut sender = BackendPacketSender::open_with_backend(
             SendOptions::new().iface("fake0").link_layer().live(),
             backend.clone(),
         )
@@ -840,7 +874,7 @@ mod tests {
     #[test]
     fn live_ipv4_network_sender_opens_once() {
         let backend = FakePnetBackend::default();
-        let mut sender = PacketSender::open_with_backend(
+        let mut sender = BackendPacketSender::open_with_backend(
             SendOptions::new().iface("fake0").network_layer().live(),
             backend.clone(),
         )
@@ -870,7 +904,7 @@ mod tests {
     #[test]
     fn live_ipv4_network_sender_preserves_destinations() {
         let backend = FakePnetBackend::default();
-        let mut sender = PacketSender::open_with_backend(
+        let mut sender = BackendPacketSender::open_with_backend(
             SendOptions::new().iface("fake0").network_layer().live(),
             backend.clone(),
         )
@@ -918,7 +952,7 @@ mod tests {
     #[test]
     fn packet_sender_rejects_mixed_send_classes() {
         let link_backend = FakePnetBackend::default();
-        let mut link_sender = PacketSender::open_with_backend(
+        let mut link_sender = BackendPacketSender::open_with_backend(
             SendOptions::new().iface("fake0").link_layer().live(),
             link_backend.clone(),
         )
@@ -948,7 +982,7 @@ mod tests {
         assert!(snapshot.network_sends.is_empty());
 
         let network_backend = FakePnetBackend::default();
-        let mut network_sender = PacketSender::open_with_backend(
+        let mut network_sender = BackendPacketSender::open_with_backend(
             SendOptions::new().iface("fake0").network_layer().live(),
             network_backend.clone(),
         )
@@ -983,7 +1017,7 @@ mod tests {
     #[test]
     fn packet_sender_rejects_unsupported_live_targets() {
         let link_backend = FakePnetBackend::default();
-        let mut link_sender = PacketSender::open_with_backend(
+        let mut link_sender = BackendPacketSender::open_with_backend(
             SendOptions::new().iface("fake0").link_layer().live(),
             link_backend.clone(),
         )
@@ -1013,7 +1047,7 @@ mod tests {
         assert!(snapshot.network_sends.is_empty());
 
         let network_backend = FakePnetBackend::default();
-        let mut network_sender = PacketSender::open_with_backend(
+        let mut network_sender = BackendPacketSender::open_with_backend(
             SendOptions::new().iface("fake0").network_layer().live(),
             network_backend.clone(),
         )
