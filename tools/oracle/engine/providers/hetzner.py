@@ -12,11 +12,13 @@ import shlex
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 
+from tools.appliance.engine.image import requested_appliance_image
 from tools.lab.engine.model import (
     LabCommandPlan,
     LabRequest,
     LabRole,
 )
+from tools.lab.engine.process import render_argv
 from tools.lab.engine.providers.common import validate_remote_dir
 from tools.lab.engine.providers.hetzner import HETZNER_LAB_PROVIDER_ADAPTER
 from tools.lab.engine import endpoint_client
@@ -50,6 +52,7 @@ REFERENCE_PRIVATE_ADDRESS = "10.42.19.20"
 LIBCRAFTER_PRIVATE_IPV6_ADDRESS = "fd42:19::10"
 REFERENCE_PRIVATE_IPV6_ADDRESS = "fd42:19::20"
 CAPABILITY_REPORT_ARTIFACT = "live-artifacts/oracle-live/capabilities.json"
+HETZNER_APPLIANCE_DOCKER_COMMAND = "docker"
 HETZNER_UNSUPPORTED_LIVE_CASE_REASON = (
     "hetzner_private_network_drops_icmpv4_source_quench"
 )
@@ -507,11 +510,12 @@ def hetzner_endpoint_remote_command(
     quoted_request = shlex.quote(request_path)
     quoted_out = shlex.quote(out_dir)
     if endpoint_role == "libcrafter":
-        script = "\n".join(
+        inner_script = "\n".join(
             [
                 "set -euo pipefail",
                 f"cd {quoted_remote_dir}",
                 'if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi',
+                'if [ -f "/usr/local/cargo/env" ]; then . "/usr/local/cargo/env"; fi',
                 (
                     "cargo run -q -p oracle-adapters --bin live_endpoint -- "
                     f"--live --input {quoted_request} --out {quoted_out}"
@@ -519,10 +523,14 @@ def hetzner_endpoint_remote_command(
             ]
         )
     else:
-        script = "\n".join(
+        inner_script = "\n".join(
             [
                 "set -euo pipefail",
                 f"cd {quoted_remote_dir}",
+                'if ! command -v uv >/dev/null 2>&1; then curl -LsSf https://astral.sh/uv/install.sh | sh; fi',
+                'if [ -f "$HOME/.local/bin/env" ]; then . "$HOME/.local/bin/env"; fi',
+                'export PATH="$HOME/.local/bin:$PATH"',
+                "command -v uv >/dev/null 2>&1",
                 'export PYTHONPATH="tools/oracle${PYTHONPATH:+:$PYTHONPATH}"',
                 (
                     "python3 -m engine.backends.scapy.live "
@@ -530,6 +538,46 @@ def hetzner_endpoint_remote_command(
                 ),
             ]
         )
+    return _hetzner_appliance_remote_command(
+        remote_dir=remote_dir,
+        out_dir=out_dir,
+        inner_script=inner_script,
+    )
+
+
+def _hetzner_appliance_remote_command(
+    *,
+    remote_dir: str,
+    out_dir: str,
+    inner_script: str,
+) -> list[str]:
+    image = requested_appliance_image()
+    docker_argv = [
+        HETZNER_APPLIANCE_DOCKER_COMMAND,
+        "run",
+        "--rm",
+        "--network",
+        "host",
+        "--workdir",
+        remote_dir,
+        "--mount",
+        f"type=bind,source={remote_dir},target={remote_dir}",
+        "--mount",
+        f"type=bind,source={out_dir},target={out_dir}",
+        "--cap-add",
+        "NET_RAW",
+        image,
+        "bash",
+        "-lc",
+        inner_script,
+    ]
+    script = "\n".join(
+        [
+            "set -euo pipefail",
+            f"mkdir -p {shlex.quote(out_dir)}",
+            f"exec {render_argv(docker_argv)}",
+        ]
+    )
     return ["bash", "-lc", script]
 
 

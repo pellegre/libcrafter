@@ -11,7 +11,7 @@ use crate::protocols::icmp::{Icmpv4, Icmpv4QuotedIp, Icmpv6, NeighborSolicitatio
 use crate::protocols::igmp::Igmp;
 use crate::protocols::ip::{v4::Ipv4, v6::Ipv6};
 use crate::protocols::link::{Arp, Ethernet, Vlan};
-use crate::protocols::transport::{Tcp, Udp};
+use crate::protocols::transport::{Sctp, Tcp, Udp};
 use crate::registry::ProtocolRegistry;
 
 /// Pseudo-header context used by transport layers when auto-filling checksums.
@@ -352,6 +352,7 @@ enum PacketLayer {
     Arp(Arp),
     Ipv4(Ipv4),
     Ipv6(Ipv6),
+    Sctp(Sctp),
     Tcp(Tcp),
     Udp(Udp),
     Icmpv4(Icmpv4),
@@ -371,6 +372,7 @@ impl PacketLayer {
             Self::Arp(layer) => layer,
             Self::Ipv4(layer) => layer,
             Self::Ipv6(layer) => layer,
+            Self::Sctp(layer) => layer,
             Self::Tcp(layer) => layer,
             Self::Udp(layer) => layer,
             Self::Icmpv4(layer) => layer,
@@ -390,6 +392,7 @@ impl PacketLayer {
             Self::Arp(layer) => layer,
             Self::Ipv4(layer) => layer,
             Self::Ipv6(layer) => layer,
+            Self::Sctp(layer) => layer,
             Self::Tcp(layer) => layer,
             Self::Udp(layer) => layer,
             Self::Icmpv4(layer) => layer,
@@ -409,6 +412,7 @@ impl PacketLayer {
             Self::Arp(layer) => Box::new(layer),
             Self::Ipv4(layer) => Box::new(layer),
             Self::Ipv6(layer) => Box::new(layer),
+            Self::Sctp(layer) => Box::new(layer),
             Self::Tcp(layer) => Box::new(layer),
             Self::Udp(layer) => Box::new(layer),
             Self::Icmpv4(layer) => Box::new(layer),
@@ -428,6 +432,7 @@ impl PacketLayer {
             Self::Arp(layer) => layer.encoded_len_with_context(ctx),
             Self::Ipv4(layer) => layer.encoded_len_with_context(ctx),
             Self::Ipv6(layer) => layer.encoded_len_with_context(ctx),
+            Self::Sctp(layer) => layer.encoded_len_with_context(ctx),
             Self::Tcp(layer) => layer.encoded_len_with_context(ctx),
             Self::Udp(layer) => layer.encoded_len_with_context(ctx),
             Self::Icmpv4(layer) => layer.encoded_len_with_context(ctx),
@@ -447,6 +452,7 @@ impl PacketLayer {
             Self::Arp(layer) => layer.compile(ctx, out),
             Self::Ipv4(layer) => layer.compile(ctx, out),
             Self::Ipv6(layer) => layer.compile(ctx, out),
+            Self::Sctp(layer) => layer.compile(ctx, out),
             Self::Tcp(layer) => layer.compile(ctx, out),
             Self::Udp(layer) => layer.compile(ctx, out),
             Self::Icmpv4(layer) => layer.compile(ctx, out),
@@ -466,6 +472,7 @@ impl PacketLayer {
             Self::Arp(layer) => layer.consumes_following(),
             Self::Ipv4(layer) => layer.consumes_following(),
             Self::Ipv6(layer) => layer.consumes_following(),
+            Self::Sctp(layer) => layer.consumes_following(),
             Self::Tcp(layer) => layer.consumes_following(),
             Self::Udp(layer) => layer.consumes_following(),
             Self::Icmpv4(layer) => layer.consumes_following(),
@@ -576,6 +583,17 @@ impl Packet {
 
     pub(crate) fn push_ipv6(mut self, layer: Ipv6) -> Self {
         self.layers.push(PacketLayer::Ipv6(layer));
+        self
+    }
+
+    pub(crate) fn push_sctp(mut self, layer: Sctp) -> Self {
+        self.layers.push(PacketLayer::Sctp(layer));
+        self
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn push_sctp_mut(&mut self, layer: Sctp) -> &mut Self {
+        self.layers.push(PacketLayer::Sctp(layer));
         self
     }
 
@@ -1152,6 +1170,72 @@ mod igmp_packet_storage {
                 .as_bytes(),
             &bytes
         );
+    }
+}
+
+#[cfg(test)]
+mod sctp_packet_storage {
+    use super::{Packet, Raw};
+    use crate::protocols::transport::Sctp;
+
+    #[test]
+    fn sctp_packet_layer_variant_clones_downcasts_inspects_encodes_and_pops() {
+        let mut packet = Packet::new().push_sctp(
+            Sctp::data(0x0102_0304, 7, 9, 3, b"payload".to_vec())
+                .sport(12_000)
+                .dport(12_001)
+                .vtag(0x1122_3344),
+        );
+
+        let sctp = packet.layer::<Sctp>().expect("typed SCTP layer");
+        assert_eq!(sctp.source_port_value(), 12_000);
+        assert_eq!(sctp.destination_port_value(), 12_001);
+        assert_eq!(sctp.verification_tag_value(), 0x1122_3344);
+        assert_eq!(sctp.chunk_count(), 1);
+        assert_eq!(packet.get(0).expect("first layer").name(), "Sctp");
+        assert_eq!(
+            packet.summary(),
+            "Sctp(sport=12000, dport=12001, vtag=0x11223344, chunks=1[DATA], checksum=auto)"
+        );
+
+        let shutdown_chunk = Sctp::shutdown(0x0102_0304)
+            .into_chunks()
+            .pop()
+            .expect("shutdown chunk");
+        packet
+            .layer_mut::<Sctp>()
+            .expect("mutable SCTP layer")
+            .push_chunk(shutdown_chunk);
+        assert_eq!(packet.layer::<Sctp>().unwrap().chunk_count(), 2);
+
+        let cloned = packet.clone();
+        assert_eq!(
+            cloned
+                .layer::<Sctp>()
+                .expect("cloned typed SCTP layer")
+                .chunk_count(),
+            2
+        );
+        assert!(packet.compile().expect("compile SCTP").as_bytes().len() > 12);
+
+        let popped = packet.pop_typed::<Sctp>().expect("pop typed SCTP");
+        assert_eq!(popped.chunk_count(), 2);
+        assert!(packet.is_empty());
+    }
+
+    #[test]
+    fn sctp_packet_layer_variant_compiles_before_following_raw_payload() {
+        let packet = Packet::new()
+            .push_sctp(Sctp::new().sport(10).dport(20).checksum(0x0102_0304))
+            .push(Raw::from_bytes([0xaa, 0xbb]));
+        let compiled = packet.compile().expect("compile SCTP plus raw");
+        let bytes = compiled.as_bytes();
+
+        assert_eq!(bytes.len(), 14);
+        assert_eq!(&bytes[0..2], &10u16.to_be_bytes());
+        assert_eq!(&bytes[2..4], &20u16.to_be_bytes());
+        assert_eq!(&bytes[8..12], &0x0102_0304u32.to_be_bytes());
+        assert_eq!(&bytes[12..], &[0xaa, 0xbb]);
     }
 }
 

@@ -146,6 +146,38 @@ class SpecLoaderTest(unittest.TestCase):
         self.assertIn("malformed-igmp-truncated-header", layer.coverage_cases)
         self.assertIn("tools/oracle/specs/layers/igmp.yaml", self.specs.source_paths)
 
+    def test_sctp_layer_spec_is_registered(self) -> None:
+        layer = self.specs.layers.get("sctp")
+        self.assertIsInstance(layer, LayerSpec)
+        assert layer is not None
+        self.assertEqual(layer.parents, ("ipv4", "ipv6", "udp"))
+        self.assertEqual(layer.children, ())
+        self.assertIn("l3:ipv4", layer.raw["allowed_roots"])
+        self.assertIn("l3:ipv6", layer.raw["allowed_roots"])
+        self.assertTrue(
+            any(
+                isinstance(parent, Mapping)
+                and parent.get("layer") == "ipv4"
+                and parent.get("protocol_number") == 132
+                for parent in layer.raw["supported_parents"]
+            )
+        )
+        self.assertTrue(
+            any(
+                isinstance(parent, Mapping)
+                and parent.get("layer") == "udp"
+                and parent.get("destination_port") == 9899
+                for parent in layer.raw["supported_parents"]
+            )
+        )
+        self.assertIn("sctp-native-ipv4-data", layer.coverage_cases)
+        self.assertIn("sctp-udp-encap-data", layer.coverage_cases)
+        self.assertIn(
+            "malformed-sctp-truncated-common-header",
+            layer.coverage_cases,
+        )
+        self.assertIn("tools/oracle/specs/layers/sctp.yaml", self.specs.source_paths)
+
     def test_igmp_feature_specs_are_registered(self) -> None:
         self.assertTrue(IGMP_FEATURE_NAMES.issubset(self.specs.features))
         for feature_name in IGMP_FEATURE_NAMES:

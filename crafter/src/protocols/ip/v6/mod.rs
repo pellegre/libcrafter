@@ -17,9 +17,11 @@ use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Layer, LayerContext};
 use crate::protocols::icmp::Icmpv6;
-use crate::protocols::ip::shared::{IPPROTO_ICMPV6, IPPROTO_OSPF, IPPROTO_TCP, IPPROTO_UDP};
+use crate::protocols::ip::shared::{
+    IPPROTO_ICMPV6, IPPROTO_OSPF, IPPROTO_SCTP, IPPROTO_TCP, IPPROTO_UDP,
+};
 use crate::protocols::ospf::Ospfv3;
-use crate::protocols::transport::{Tcp, Udp};
+use crate::protocols::transport::{Sctp, Tcp, Udp};
 
 pub use constants::{
     IPPROTO_IPV6_AH, IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_ESP, IPPROTO_IPV6_EXPERIMENTAL_1,
@@ -68,6 +70,8 @@ fn layer_ipv6_next_header(layer: &dyn Layer) -> Option<u8> {
         Some(IPPROTO_TCP)
     } else if layer.as_any().is::<Udp>() {
         Some(IPPROTO_UDP)
+    } else if layer.as_any().is::<Sctp>() {
+        Some(IPPROTO_SCTP)
     } else if layer.as_any().is::<Icmpv6>() {
         Some(IPPROTO_ICMPV6)
     } else if layer.as_any().is::<Ospfv3>() {

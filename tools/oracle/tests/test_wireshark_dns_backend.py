@@ -6,7 +6,51 @@ import shutil
 import unittest
 from collections.abc import Mapping
 
+from tools.oracle.engine.backends.scapy.protocols import sctp as sctp_scapy
 from tools.oracle.engine.backends.wireshark import normalize as wireshark
+from tools.oracle.engine.backends.wireshark.protocols import WIRESHARK_REGISTRY
+
+
+def _ipv4_sctp_source_hex(sctp_bytes: bytes) -> str:
+    total_length = 20 + len(sctp_bytes)
+    header = bytearray()
+    header.extend(b"\x45\x00")
+    header.extend(total_length.to_bytes(2, "big"))
+    header.extend(b"\x12\x34\x00\x00")
+    header.extend(bytes([64, 132]))
+    header.extend(b"\x00\x00")
+    header.extend(bytes([192, 0, 2, 1]))
+    header.extend(bytes([198, 51, 100, 1]))
+    return bytes(header + sctp_bytes).hex()
+
+
+def _synthetic_sctp_packet(fields: Mapping[str, object]) -> tuple[dict, str]:
+    sctp_bytes = sctp_scapy._sctp_packet_bytes(fields)
+    source_hex = _ipv4_sctp_source_hex(sctp_bytes)
+    return (
+        {
+            "_source": {
+                "layers": {
+                    "frame": {"frame.protocols": "ip:sctp"},
+                    "ip": {
+                        "ip.version": "4",
+                        "ip.hdr_len": "20",
+                        "ip.src": "192.0.2.1",
+                        "ip.dst": "198.51.100.1",
+                        "ip.proto": "132",
+                        "ip.ttl": "64",
+                        "ip.len": str(20 + len(sctp_bytes)),
+                        "ip.id": "0x1234",
+                        "ip.checksum": "0x0000",
+                        "ip.flags": "0x00",
+                        "ip.frag_offset": "0",
+                    },
+                    "sctp": {},
+                }
+            }
+        },
+        source_hex,
+    )
 
 
 def _synthetic_mdns_packet(*, protocol: str = "dns") -> dict:
@@ -151,6 +195,77 @@ class WiresharkDnsMdnsNormalizationTest(unittest.TestCase):
 
     def test_mdns_layer_is_recognized_as_a_layer(self) -> None:
         self.assertEqual(wireshark._PROTOCOL_LAYER_ALIASES.get("mdns"), "mdns")
+
+
+class WiresharkSctpNormalizationTest(unittest.TestCase):
+    """Pure-Python SCTP normalizer coverage; no ``tshark`` executable is required."""
+
+    def test_sctp_layer_is_recognized_and_registered(self) -> None:
+        self.assertEqual(wireshark._PROTOCOL_LAYER_ALIASES.get("sctp"), "sctp")
+        plugin = WIRESHARK_REGISTRY.require("sctp")
+        self.assertIn("src_port", plugin.tshark_aliases)
+
+    def test_sctp_data_chunk_normalizes_from_source_hex(self) -> None:
+        packet, source_hex = _synthetic_sctp_packet(
+            {
+                "src_port": 49152,
+                "dst_port": 5000,
+                "verification_tag": 0x11223344,
+                "chunks": ["data"],
+                "payload_protocol_identifier": "webrtc_string",
+                "user_data_text": "crafter-sctp-fixture",
+            }
+        )
+
+        model = wireshark.normalize_packet_json(
+            packet,
+            root="l3:ipv4",
+            source_hex=source_hex,
+        )
+
+        self.assertEqual(model.layers, ["ipv4", "sctp"])
+        self.assertEqual(model.fields["ipv4"]["protocol"], 132)
+        self.assertEqual(model.fields["sctp"]["src_port"], 49152)
+        self.assertEqual(model.fields["sctp"]["chunk_count"], 1)
+        self.assertEqual(model.fields["sctp"]["chunks"][0]["type_name"], "data")
+        self.assertEqual(
+            model.fields["sctp"]["chunks"][0]["user_data_ascii"],
+            "crafter-sctp-fixture",
+        )
+
+    def test_sctp_init_parameters_and_unknown_chunk_fields_are_preserved(self) -> None:
+        init_value_hex = (
+            "11223344"
+            "00001000"
+            "0002"
+            "0003"
+            "01020304"
+            "00050008c0000201"
+            "40010007aabbcc00"
+        )
+        packet, source_hex = _synthetic_sctp_packet(
+            {
+                "chunks": [
+                    {"type": "init", "chunk_value_hex": init_value_hex},
+                    {"type": "unknown", "chunk_value_hex": "aabbcc"},
+                ],
+            }
+        )
+
+        model = wireshark.normalize_packet_json(
+            packet,
+            root="l3:ipv4",
+            source_hex=source_hex,
+        )
+        chunks = model.fields["sctp"]["chunks"]
+
+        self.assertEqual(chunks[0]["type_name"], "init")
+        self.assertEqual(chunks[0]["parameter_count"], 2)
+        self.assertEqual(chunks[0]["parameters"][0]["type_name"], "ipv4_address")
+        self.assertEqual(chunks[0]["parameters"][1]["type_name"], "unknown")
+        self.assertEqual(chunks[1]["type"], 0x83)
+        self.assertEqual(chunks[1]["type_name"], "unknown")
+        self.assertEqual(chunks[1]["padding_length"], 1)
 
 
 @unittest.skipUnless(

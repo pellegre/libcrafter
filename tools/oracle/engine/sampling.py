@@ -472,7 +472,7 @@ def _ipv6_next_header_for_stack(stack: Sequence[str], layer: str) -> str:
         return "hop-by-hop"
     if next_layer == "ipv6_routing":
         return "routing"
-    if next_layer in {"icmpv6", "tcp", "udp"}:
+    if next_layer in {"icmpv6", "sctp", "tcp", "udp"}:
         return next_layer
     return "unknown"
 

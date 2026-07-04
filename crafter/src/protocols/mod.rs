@@ -624,6 +624,7 @@ pub mod exports {
     pub use tls::record::*;
     pub use tls::signature_scheme::*;
     pub use tls::version::*;
+    pub use transport::*;
     pub use transport::{
         tcp_option_kind_class, tcp_option_kind_is_assigned, tcp_option_kind_is_experimental,
         udp_option_kind_class, udp_option_kind_is_unsafe, udp_option_kind_is_unsupported, Tcp,

@@ -645,6 +645,55 @@ fn next_header_override_default_auto_and_aliases_are_preserved() -> crafter::Res
 }
 
 #[test]
+fn sctp_ipv6_autofill_sets_base_and_extension_next_headers() -> crafter::Result<()> {
+    let base = (Ipv6::with_addresses(doc_src(), doc_dst())
+        / Sctp::new().sport(5_000).dport(5_001).vtag(0x1122_3344))
+    .compile()?;
+    assert_ipv6_wire_base_header(base.as_bytes(), 12, IPPROTO_SCTP, 64);
+
+    let extension_chain = (base_ipv6(73)
+        / Ipv6HopByHopOptionsHeader::new()
+        / Ipv6DestinationOptionsHeader::new()
+        / Ipv6FragmentHeader::new()
+            .identification(0x0102_0304)
+            .fragment_offset(0)
+            .more_fragments(false)
+        / Sctp::new().sport(5_002).dport(5_003))
+    .compile()?;
+    let bytes = extension_chain.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 36, IPPROTO_IPV6_HOPOPTS, 73);
+    assert_eq!(bytes[40], IPPROTO_IPV6_DSTOPTS, "hop-by-hop next header");
+    assert_eq!(bytes[48], IPPROTO_IPV6_FRAGMENT, "destination next header");
+    assert_eq!(bytes[56], IPPROTO_SCTP, "fragment next header");
+
+    let base_override = (Ipv6::with_addresses(doc_src(), doc_dst())
+        .nh(IPPROTO_IPV6_EXPERIMENTAL_1)
+        / Sctp::new().sport(5_004).dport(5_005))
+    .compile()?;
+    assert_ipv6_wire_base_header(
+        base_override.as_bytes(),
+        12,
+        IPPROTO_IPV6_EXPERIMENTAL_1,
+        64,
+    );
+
+    let extension_override = (base_ipv6(74)
+        / Ipv6HopByHopOptionsHeader::new().next_header(IPPROTO_IPV6_EXPERIMENTAL_2)
+        / Sctp::new().sport(5_006).dport(5_007))
+    .compile()?;
+    let override_bytes = extension_override.as_bytes();
+
+    assert_ipv6_wire_base_header(override_bytes, 20, IPPROTO_IPV6_HOPOPTS, 74);
+    assert_eq!(
+        override_bytes[40], IPPROTO_IPV6_EXPERIMENTAL_2,
+        "explicit extension next-header override"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn next_header_names_are_public_and_used_in_summaries() {
     let cases = [
         (IPPROTO_IPV6_HOPOPTS, "hop-by-hop-options(0)"),

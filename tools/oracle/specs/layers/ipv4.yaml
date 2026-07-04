@@ -13,6 +13,7 @@ parents:
 children:
   - udp
   - tcp
+  - sctp
   - icmp
   - dns
   - payload

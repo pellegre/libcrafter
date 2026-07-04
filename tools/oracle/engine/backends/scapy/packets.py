@@ -267,6 +267,7 @@ _SUPPORTED_FEATURES = {
     "rip_header",
     "ripng_rtes",
     "rsn_foundations",
+    "sctp_core",
     "snmp_basic",
     "snmp_pdu_matrix",
     "snmp_v3",

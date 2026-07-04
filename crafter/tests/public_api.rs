@@ -24,6 +24,27 @@ fn prelude_builds_and_compiles_packet() -> crafter::Result<()> {
 }
 
 #[test]
+fn sctp_protocol_display_labels_ipv4_and_ipv6_summary_and_show() {
+    let ipv4 = Packet::from_layer(
+        Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            .protocol(IPPROTO_SCTP),
+    );
+    let ipv6 = Packet::from_layer(
+        Ipv6::new()
+            .src(Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 1))
+            .dst(Ipv6Addr::new(0x2001, 0xdb8, 2, 0, 0, 0, 0, 2))
+            .nh(IPPROTO_SCTP),
+    );
+
+    assert!(ipv4.summary().contains("proto=sctp(132)"));
+    assert!(ipv4.show().contains("protocol: sctp(132)"));
+    assert!(ipv6.summary().contains("next=sctp(132)"));
+    assert!(ipv6.show().contains("next_header: sctp(132)"));
+}
+
+#[test]
 fn ble_prelude_reexports_compile() {
     use crafter::prelude::{AdStructure, BleLlAdv, BleRadio};
 
@@ -1227,6 +1248,63 @@ fn udp_options_prelude_typed_packet_builds_and_inspects() -> crafter::Result<()>
         Some((0x1122_3344, 0x5566_7788))
     );
 
+    Ok(())
+}
+
+#[test]
+fn sctp_public_prelude_exports_layer_models_constants_and_helpers() -> crafter::Result<()> {
+    let prelude_sctp: Sctp = sctp_data(
+        0x0102_0304,
+        7,
+        9,
+        SCTP_PPID_WEBRTC_STRING,
+        b"hello".to_vec(),
+    )
+    .sport(12_000)
+    .dport(12_001);
+    let core_sctp = crafter::core::sctp_init(0x1122_3344, 65_535, 10, 20, 0xaabb_ccdd);
+    let root_sctp = crafter::sctp_shutdown(0x5566_7788);
+    let protocols_sctp = crafter::protocols::sctp_heartbeat([0xde, 0xad])?;
+    let transport_sctp = crafter::protocols::transport::sctp_sack(
+        0x1000_0000,
+        4_096,
+        [SctpSackGapAckBlock::new(1, 1)],
+        [0x1000_0001],
+    )?;
+
+    let _prelude_parameter: Option<SctpParameter> = None;
+    let _core_parameter: Option<crafter::core::SctpParameter> = None;
+    let _root_cause: Option<crafter::SctpErrorCause> = None;
+    let _protocols_cause: Option<crafter::protocols::SctpErrorCause> = None;
+    let _transport_status: crafter::protocols::transport::SctpChecksumStatus =
+        SctpChecksumStatus::NotChecked;
+    let root_chunk = crafter::SctpChunk::unknown(SCTP_CHUNK_TYPE_IETF_DEFINED_EXTENSION_4, 0, []);
+
+    assert_eq!(SCTP_COMMON_HEADER_LEN, 12);
+    assert_eq!(
+        crafter::core::SCTP_COMMON_HEADER_LEN,
+        SCTP_COMMON_HEADER_LEN
+    );
+    assert_eq!(crafter::SCTP_IP_PROTOCOL, 132);
+    assert_eq!(crafter::protocols::SCTP_CHUNK_TYPE_DATA, 0);
+    assert_eq!(
+        crafter::protocols::transport::SCTP_PARAMETER_TYPE_HEARTBEAT_INFO,
+        1
+    );
+    assert_eq!(crafter::SCTP_CAUSE_CODE_INVALID_STREAM_IDENTIFIER, 1);
+    assert_eq!(
+        root_chunk.chunk_type_value(),
+        SCTP_CHUNK_TYPE_IETF_DEFINED_EXTENSION_4
+    );
+    assert_eq!(prelude_sctp.chunk_count(), 1);
+    assert_eq!(core_sctp.chunk_count(), 1);
+    assert_eq!(root_sctp.chunk_count(), 1);
+    assert_eq!(protocols_sctp.chunk_count(), 1);
+    assert_eq!(transport_sctp.chunk_count(), 1);
+
+    let compiled = (prelude_sctp / Raw::from("tail")).compile()?;
+    assert_eq!(&compiled.as_bytes()[0..2], &12_000u16.to_be_bytes());
+    assert_eq!(&compiled.as_bytes()[2..4], &12_001u16.to_be_bytes());
     Ok(())
 }
 

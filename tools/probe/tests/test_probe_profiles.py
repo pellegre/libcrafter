@@ -151,6 +151,7 @@ class ProbeProfileMembershipTest(unittest.TestCase):
                 "ospf-smoke",
                 "quic-smoke",
                 "rip-smoke",
+                "sctp-smoke",
                 "smoke",
                 "snmp-smoke",
                 "ssdp-smoke",

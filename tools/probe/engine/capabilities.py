@@ -58,6 +58,7 @@ SKIP_REQUIRES_IGMP_PEER = "requires_igmp_peer"
 SKIP_REQUIRES_IPSEC_PEER = "requires_ipsec_peer"
 SKIP_REQUIRES_IKEV2_RESPONDER = "requires_ikev2_responder"
 SKIP_REQUIRES_SNMP_PEER = "requires_snmp_peer"
+SKIP_REQUIRES_SCTP_CONTROLLED_PEER = "requires_sctp_controlled_peer"
 
 
 # Capabilities that imply a link-layer (Ethernet/ARP/broadcast) substrate. A
@@ -112,6 +113,7 @@ _CAPABILITY_SKIP_REASONS = {
     "ipsec_ah": SKIP_REQUIRES_IPSEC_PEER,
     "ikev2": SKIP_REQUIRES_IKEV2_RESPONDER,
     "snmp_peer": SKIP_REQUIRES_SNMP_PEER,
+    "sctp_controlled_peer": SKIP_REQUIRES_SCTP_CONTROLLED_PEER,
 }
 
 

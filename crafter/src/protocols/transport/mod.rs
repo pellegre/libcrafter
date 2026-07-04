@@ -1,9 +1,11 @@
-//! UDP and TCP protocol implementations.
+//! UDP, TCP, and SCTP protocol implementations.
 
 pub(crate) mod common;
+mod sctp;
 mod tcp;
 mod udp;
 
+pub use self::sctp::*;
 pub(crate) use self::tcp::append_tcp_packet_with_registry;
 pub use self::tcp::{
     effective_mss, effective_mss_ipv4, effective_mss_ipv6, has_fin, has_syn, max_tcp_payload,
@@ -159,5 +161,36 @@ mod transport_checksums {
 
         assert_eq!(&udp.as_bytes()[6..8], &[0, 0]);
         assert_eq!(&tcp.as_bytes()[16..18], &[0, 0]);
+    }
+}
+
+#[cfg(test)]
+mod sctp_transport_exports {
+    use super::*;
+
+    #[test]
+    fn sctp_transport_exports_include_layer_models_constants_and_helpers() {
+        let _parameter: Option<SctpParameter> = None;
+        let _cause: Option<SctpErrorCause> = None;
+        let _status = SctpChecksumStatus::NotChecked;
+
+        assert_eq!(SCTP_COMMON_HEADER_LEN, 12);
+        assert_eq!(SCTP_IP_PROTOCOL, 132);
+        assert_eq!(SCTP_CHUNK_TYPE_DATA, 0);
+        assert_eq!(SCTP_PARAMETER_TYPE_HEARTBEAT_INFO, 1);
+        assert_eq!(SCTP_CAUSE_CODE_INVALID_STREAM_IDENTIFIER, 1);
+
+        let sctp = sctp_data(1, 2, 3, SCTP_PPID_WEBRTC_STRING, b"hello".to_vec());
+        assert_eq!(sctp.chunk_count(), 1);
+        let SctpChunk::Data(data) = &sctp.chunks()[0] else {
+            panic!("expected exported DATA chunk");
+        };
+        assert_eq!(data.ppid().expect("DATA PPID"), SCTP_PPID_WEBRTC_STRING);
+
+        let unknown = SctpChunk::unknown(SCTP_CHUNK_TYPE_IETF_DEFINED_EXTENSION_4, 0, []);
+        assert_eq!(
+            unknown.chunk_type_value(),
+            SCTP_CHUNK_TYPE_IETF_DEFINED_EXTENSION_4
+        );
     }
 }

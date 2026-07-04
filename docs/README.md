@@ -28,6 +28,10 @@ Per-protocol wire coverage for building and decoding packets.
   checksums, decode, inspection, and sizing helpers.
 - [UDP wire coverage](guide/udp.md) — UDP datagram construction, length and
   checksum auto-fill, decode dispatch, and the implemented RFCs.
+- [SCTP wire coverage](guide/sctp.md) — native IPv4/IPv6 SCTP, RFC 6951 UDP
+  encapsulation, CRC32c status, chunk/parameter/cause preservation, pcap
+  fixtures, and the dry-run/live boundary. SCTP support is not an association
+  stack or socket API.
 - [DHCPv4 wire coverage](guide/dhcpv4.md) — BOOTP/DHCPv4 packet construction,
   named message constructors, typed options, option overload, RFC 3396 long
   options, relay agent information (option 82), client identifiers,

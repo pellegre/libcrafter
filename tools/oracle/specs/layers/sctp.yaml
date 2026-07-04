@@ -1,0 +1,448 @@
+version: 1
+kind: layer
+name: sctp
+summary: >-
+  Stream Control Transmission Protocol packets over IPv4/IPv6 protocol number
+  132 and RFC 6951 UDP encapsulation on port 9899, covering the common header,
+  CRC32c checksum status, typed and unknown chunks, parameter and error-cause
+  TLVs, padding preservation, malformed-length errors, and conservative raw
+  fallback. This is a packet-layer primitive only; association state,
+  retransmission, congestion control, socket behavior, and endpoint scanning
+  are out of scope.
+
+roots: []
+parents:
+  - ipv4
+  - ipv6
+  - udp
+children: []
+
+allowed_roots:
+  - "l3:ipv4"
+  - "l3:ipv6"
+  - "link:ethernet"
+  - "link:linux-cooked"
+  - "link:null-loopback"
+supported_parents:
+  - layer: ipv4
+    protocol_number: 132
+    service: native_sctp
+  - layer: ipv6
+    next_header: 132
+    service: native_sctp
+  - layer: udp
+    destination_port: 9899
+    service: rfc6951_sctp
+  - layer: udp
+    source_port: 9899
+    service: rfc6951_sctp
+unsupported_parents:
+  - tcp
+  - tls
+  - quic
+  - raw_udp_without_shape_gate
+supported_directions:
+  - backend_to_libcrafter
+  - libcrafter_to_backend
+  - roundtrip
+  - live_exchange
+live_eligibility: provider_gated
+live_gate: confirm_live_run_provider_lab_only
+live_defaults:
+  default_mode: dry_run
+  allowed_without_confirmation: false
+  developer_host_raw_send: false
+  provider_required: true
+default_values:
+  ipv4_protocol: 132
+  ipv6_next_header: 132
+  udp_encapsulation_port: 9899
+  checksum: derived_crc32c
+
+fields:
+  - name: src_port
+    type: uint16
+    required: true
+    domains:
+      - dynamic
+      - zero_explicit_preserved
+      - boundary
+  - name: dst_port
+    type: uint16
+    required: true
+    domains:
+      - dynamic
+      - zero_explicit_preserved
+      - boundary
+  - name: verification_tag
+    type: uint32
+    required: true
+    domains:
+      - zero_init
+      - deterministic
+      - explicit_preserved
+      - boundary
+  - name: checksum
+    type: uint32
+    required: true
+    domains:
+      - derived_crc32c
+      - explicit_valid
+      - explicit_invalid
+      - explicit_zero
+      - boundary
+  - name: checksum_status
+    type: enum
+    required: false
+    domains:
+      - valid
+      - invalid
+      - zero_checksum
+      - not_checked
+  - name: chunks
+    type: sctp_chunk_list
+    required: true
+    domains:
+      - data
+      - init
+      - init_ack
+      - sack
+      - heartbeat
+      - shutdown
+      - abort_error
+      - cookie
+      - control
+      - extension_preserved
+      - unknown_preserved
+      - padding_preserved
+  - name: chunk_type
+    type: uint8
+    required: false
+    domains:
+      - data
+      - init
+      - init_ack
+      - sack
+      - heartbeat
+      - heartbeat_ack
+      - abort
+      - shutdown
+      - shutdown_ack
+      - error
+      - cookie_echo
+      - cookie_ack
+      - ecne
+      - cwr
+      - shutdown_complete
+      - auth
+      - i_data
+      - asconf_ack
+      - re_config
+      - pad
+      - forward_tsn
+      - asconf
+      - i_forward_tsn
+      - temporary_dtls
+      - unknown_action_preserved
+      - reserved_preserved
+  - name: chunk_flags
+    type: flags
+    required: false
+    domains:
+      - zero
+      - data_ube_bits
+      - data_i_bit
+      - abort_t_bit
+      - shutdown_complete_t_bit
+      - unassigned_preserved
+      - boundary
+  - name: chunk_length
+    type: uint16
+    required: false
+    domains:
+      - derived
+      - minimum
+      - explicit_preserved
+      - malformed_short
+      - malformed_overrun
+  - name: tsn
+    type: uint32
+    required: false
+    domains:
+      - deterministic
+  - name: stream_id
+    type: uint16
+    required: false
+    domains:
+      - deterministic
+  - name: stream_sequence
+    type: uint16
+    required: false
+    domains:
+      - deterministic
+  - name: parameters
+    type: sctp_parameter_list
+    required: false
+    domains:
+      - empty
+      - ipv4_address
+      - ipv6_address
+      - state_cookie
+      - heartbeat_info
+      - supported_address_types
+      - supported_extensions
+      - ecn_capable
+      - auth
+      - reconfiguration
+      - addip
+      - zero_checksum_acceptable
+      - unknown_preserved
+      - padding_preserved
+  - name: parameter_type
+    type: uint16
+    required: false
+    domains:
+      - heartbeat_info
+      - ipv4_address
+      - ipv6_address
+      - state_cookie
+      - unrecognized_parameter
+      - cookie_preservative
+      - host_name_address
+      - supported_address_types
+      - ecn_capable
+      - zero_checksum_acceptable
+      - auth_hmac_algorithm
+      - auth_random
+      - auth_chunk_list
+      - supported_extensions
+      - unknown_action_preserved
+  - name: parameter_length
+    type: uint16
+    required: false
+    domains:
+      - derived
+      - minimum
+      - explicit_preserved
+      - malformed_short
+      - malformed_overrun
+  - name: causes
+    type: sctp_error_cause_list
+    required: false
+    domains:
+      - empty
+      - invalid_stream_identifier
+      - missing_mandatory_parameter
+      - stale_cookie
+      - out_of_resource
+      - unresolvable_address
+      - unrecognized_chunk_type
+      - unrecognized_parameters
+      - no_user_data
+      - protocol_violation
+      - unknown_preserved
+      - padding_preserved
+  - name: cause_length
+    type: uint16
+    required: false
+    domains:
+      - derived
+      - minimum
+      - explicit_preserved
+      - malformed_short
+      - malformed_overrun
+  - name: payload_protocol_identifier
+    type: uint32
+    required: false
+    domains:
+      - reserved
+      - webrtc_string
+      - webrtc_binary
+      - user_defined
+      - unknown_preserved
+  - name: user_data
+    type: bytes
+    required: false
+    domains:
+      - empty
+      - ascii
+      - binary
+      - padding_boundary
+      - opaque_preserved
+  - name: udp_encapsulation
+    type: enum
+    required: false
+    domains:
+      - absent_native_ip
+      - rfc6951_port_9899
+      - raw_fallback_unrelated_payload
+      - shape_gate_rejected
+
+normalized_fields:
+  common_header:
+    - src_port
+    - dst_port
+    - verification_tag
+    - checksum
+    - checksum_status
+  chunk:
+    - chunk_type
+    - chunk_flags
+    - chunk_length
+    - semantic_value_length
+    - padding_length
+  parameter:
+    - parameter_type
+    - parameter_length
+    - semantic_value_length
+    - padding_length
+  cause:
+    - cause_code
+    - cause_length
+    - semantic_value_length
+    - padding_length
+  registry:
+    - chunk_type_status
+    - parameter_type_status
+    - cause_code_status
+    - ppid_status
+
+malformed_behavior:
+  - label: truncated_common_header
+    byte_policy: structured_error
+    context: sctp common header
+  - label: truncated_chunk_header
+    byte_policy: structured_error
+    context: sctp chunk header
+  - label: chunk_length_under_minimum
+    byte_policy: structured_error
+    context: sctp chunk length
+  - label: chunk_length_overrun
+    byte_policy: structured_error
+    context: sctp chunk length
+  - label: parameter_length_under_minimum
+    byte_policy: structured_error
+    context: sctp parameter length
+  - label: parameter_length_overrun
+    byte_policy: structured_error
+    context: sctp parameter length
+  - label: cause_length_under_minimum
+    byte_policy: structured_error
+    context: sctp cause length
+  - label: cause_length_overrun
+    byte_policy: structured_error
+    context: sctp cause length
+  - label: invalid_checksum
+    byte_policy: inspectable_status
+    context: sctp checksum
+  - label: udp_9899_unrelated_payload
+    byte_policy: raw_preserved
+    context: udp payload
+
+coverage_cases:
+  - sctp-native-ipv4-data
+  - sctp-native-ipv6-data
+  - sctp-udp-encap-data
+  - sctp-udp-encap-raw-reject
+  - sctp-init-parameters
+  - sctp-init-ack-cookie
+  - sctp-sack-gaps
+  - sctp-heartbeat-pair
+  - sctp-abort-error-causes
+  - sctp-shutdown-controls
+  - sctp-extension-chunks-preserved
+  - sctp-unknown-chunk
+  - sctp-unknown-parameter
+  - sctp-unknown-cause
+  - sctp-padding-roundtrip
+  - sctp-checksum-auto
+  - sctp-checksum-explicit-invalid
+  - sctp-zero-checksum-status
+  - sctp-pcap-native-ipv4
+  - sctp-pcap-native-ipv6
+  - sctp-pcap-udp-encap
+  - malformed-sctp-truncated-common-header
+  - malformed-sctp-chunk-length
+  - malformed-sctp-parameter-length
+  - malformed-sctp-cause-length
+
+source_refs:
+  - RFC 9260
+  - RFC 6951
+  - RFC 9653
+  - IANA Stream Control Transmission Protocol Parameters
+  - .agents/docs/sctp-rfc-manifest.md
+  - .agents/docs/sctp-codepoints.md
+  - .agents/docs/sctp-wire-grammar.md
+  - .agents/docs/sctp-scope.md
+  - .agents/docs/sctp-validation-safety.md
+
+notes:
+  - >-
+    Native SCTP is selected by IPv4 protocol or IPv6 next-header 132. RFC 6951
+    UDP encapsulation is selected only when UDP source or destination port 9899
+    and the payload passes the conservative SCTP shape gate; unrelated UDP/9899
+    payloads remain raw data.
+  - >-
+    The checksum is the SCTP CRC32c over the complete SCTP packet with the
+    common-header checksum field zeroed for calculation. Compile fills an unset
+    checksum and preserves explicit valid, invalid, or zero checksum values.
+  - >-
+    Unknown but structurally valid chunks, parameters, causes, flags, PPIDs,
+    temporary registrations, and reserved values remain byte-preserving.
+    Padding contributes to checksum and round trips but is not semantic value
+    data for typed helpers.
+  - >-
+    Live SCTP validation is provider-gated and dry-run by default. Specs and
+    generated artifacts must use documentation address space and must not record
+    provider credentials, public endpoints, live host identifiers, or sensitive
+    captures.
+
+backend_support:
+  scapy:
+    status: partial
+    encode: true
+    decode: true
+    native_layers:
+      - SCTP
+      - SCTPChunkData
+      - SCTPChunkInit
+      - SCTPChunkSACK
+      - Raw
+    notes:
+      - >-
+        The Scapy oracle adapter materializes and normalizes SCTP DATA smoke
+        packets with raw-byte fallback so native Scapy SCTP availability is not
+        required. Broader chunk, malformed, pcap, and live coverage remain
+        assigned to later SCTP oracle steps.
+  wireshark:
+    status: partial
+    decode: true
+    pcap_read: true
+    native_layers:
+      - sctp
+      - data
+    notes:
+      - >-
+        Wireshark/tshark SCTP coverage is parser-only. The oracle normalizer
+        prefers source-hex SCTP parsing for deterministic common-header,
+        chunk, and parameter fields and falls back to tshark common-header
+        aliases when source bytes are unavailable.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    pcap_read: true
+    pcap_write: true
+    native_layers:
+      - Sctp
+      - SctpChunk
+      - SctpParameter
+      - SctpErrorCause
+      - Raw
+    notes:
+      - >-
+        The crate builds, decodes, inspects, and round-trips native IPv4/IPv6
+        SCTP and guarded RFC 6951 UDP-encapsulated SCTP through the Packet
+        abstraction while preserving explicit overrides and malformed decode
+        errors.

@@ -178,6 +178,7 @@ def rust_toolchain_lines(
         )
     if load_env:
         lines.append('if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi')
+        lines.append('if [ -f "/usr/local/cargo/env" ]; then . "/usr/local/cargo/env"; fi')
     return lines
 
 

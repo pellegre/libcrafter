@@ -1,0 +1,681 @@
+version: 1
+kind: feature
+name: sctp_core
+summary: >-
+  SCTP packet-layer behavior for common-header fields, CRC32c checksum handling,
+  typed and unknown chunks, INIT parameters, ERROR/ABORT causes, padding,
+  malformed decode, pcap fixtures, and RFC 6951 UDP encapsulation.
+
+layers:
+  - sctp
+directions:
+  - backend_to_libcrafter
+  - libcrafter_to_backend
+  - roundtrip
+  - live
+strict_bytes: true
+malformed: false
+categories:
+  - baseline
+  - boundary
+  - malformed
+  - pcap
+  - live
+
+behaviors:
+  - name: native-ipv4-data
+    summary: Native IPv4 SCTP DATA packet using IP protocol 132.
+    stack:
+      root: "l3:ipv4"
+      layers:
+        - ipv4
+        - sctp
+    sctp:
+      src_port: 49152
+      dst_port: 5000
+      verification_tag: 0x11223344
+      chunks:
+        - type: data
+          flags:
+            beginning: true
+            ending: true
+          tsn: 0x01020304
+          stream_id: 1
+          stream_sequence: 2
+          payload_protocol_identifier: webrtc_string
+          user_data:
+            text: crafter-sctp-fixture
+    checks:
+      - ipv4_protocol_132
+      - checksum_autofill_crc32c
+      - data_chunk_payload_preserved
+  - name: native-ipv6-data
+    summary: Native IPv6 SCTP DATA packet using next-header 132.
+    stack:
+      root: "l3:ipv6"
+      layers:
+        - ipv6
+        - sctp
+    checks:
+      - ipv6_next_header_132
+      - verification_tag_preserved
+      - checksum_status_valid
+  - name: udp-encap-data
+    summary: RFC 6951 SCTP over UDP/9899 with separate UDP and SCTP checksums.
+    stack:
+      root: "l3:ipv4"
+      layers:
+        - ipv4
+        - udp
+        - sctp
+    udp:
+      src_port: 9899
+      dst_port: 9899
+    checks:
+      - udp_port_9899_shape_gate
+      - complete_sctp_packet_is_udp_payload
+      - udp_and_sctp_checksums_separate
+  - name: udp-encap-raw-reject
+    summary: Unrelated UDP/9899 bytes remain Raw rather than becoming SCTP.
+    stack:
+      root: "l3:ipv4"
+      layers:
+        - ipv4
+        - udp
+        - payload
+    udp:
+      src_port: 9899
+      dst_port: 9899
+    payload:
+      text: not an sctp packet
+    expected_layers:
+      - ipv4
+      - udp
+      - raw
+    checks:
+      - rfc6951_shape_gate_rejects_unrelated_payload
+      - raw_payload_preserved
+  - name: init-parameters
+    summary: INIT chunk with source-backed parameter TLVs and derived lengths.
+    chunk_type: init
+    parameters:
+      - ipv4_address
+      - ipv6_address
+      - supported_address_types
+      - ecn_capable
+    checks:
+      - init_fixed_fields_preserved
+      - parameter_lengths_derived
+      - parameter_padding_not_semantic_value
+  - name: init-ack-cookie
+    summary: INIT ACK preserving a state cookie parameter and supported extensions.
+    chunk_type: init_ack
+    parameters:
+      - state_cookie
+      - supported_extensions
+    checks:
+      - state_cookie_bytes_preserved
+      - supported_extensions_labels_preserved
+  - name: sack-gaps
+    summary: SACK gap acknowledgement blocks and duplicate TSNs remain ordered.
+    chunk_type: sack
+    checks:
+      - cumulative_tsn_ack_preserved
+      - gap_ack_blocks_ordered
+      - duplicate_tsns_preserved
+  - name: heartbeat-pair
+    summary: HEARTBEAT and HEARTBEAT ACK chunks preserve heartbeat-info bytes.
+    chunk_type: heartbeat
+    checks:
+      - heartbeat_info_parameter_preserved
+      - heartbeat_ack_label_stable
+  - name: abort-error-causes
+    summary: ABORT and ERROR chunks preserve known and unknown error causes.
+    chunk_type: abort_error
+    checks:
+      - abort_t_bit_preserved
+      - error_cause_lengths_derived
+      - unknown_cause_preserved
+  - name: shutdown-controls
+    summary: SHUTDOWN, SHUTDOWN ACK, SHUTDOWN COMPLETE, COOKIE, ECNE, and CWR controls.
+    chunk_type: control
+    checks:
+      - control_chunk_labels_stable
+      - shutdown_complete_t_bit_preserved
+      - no_association_state_required
+  - name: extension-chunks-preserved
+    summary: AUTH, I-DATA, ASCONF, RE-CONFIG, PAD, FORWARD TSN, and temporary chunks remain byte-preserving.
+    chunk_type: extension_preserved
+    checks:
+      - assigned_extension_labels_present
+      - extension_values_preserved_as_packet_data
+      - no_endpoint_semantics
+  - name: unknown-chunk
+    summary: Unknown chunk types in all action-bit classes remain structurally valid and byte-preserving.
+    chunk_type: unknown
+    checks:
+      - unknown_action_bits_preserved
+      - unknown_chunk_value_preserved
+      - padding_preserved
+  - name: unknown-parameter
+    summary: Unknown parameter types remain byte-preserving inside typed chunks.
+    parameter_type: unknown
+    checks:
+      - parameter_action_bits_preserved
+      - parameter_value_preserved
+  - name: unknown-cause
+    summary: Unknown error cause codes remain byte-preserving inside ERROR or ABORT.
+    cause_code: unknown
+    checks:
+      - cause_code_preserved
+      - cause_value_preserved
+  - name: padding-roundtrip
+    summary: Chunk, parameter, and cause padding bytes participate in checksums and byte round trips.
+    checks:
+      - semantic_value_excludes_padding
+      - nonzero_padding_preserved
+      - checksum_covers_padding
+  - name: checksum-auto
+    summary: Unset checksum compiles to CRC32c over the complete SCTP packet.
+    checksum: derived_crc32c
+    checks:
+      - checksum_field_zeroed_for_calculation
+      - checksum_autofill_matches_crc32c
+  - name: checksum-explicit-invalid
+    summary: Explicit invalid checksum is preserved and reported as invalid instead of dropping the layer.
+    checksum: 0x01020304
+    checks:
+      - explicit_checksum_preserved
+      - invalid_checksum_status_inspectable
+  - name: zero-checksum-status
+    summary: Explicit zero checksum remains visible with caller-facing status.
+    checksum: 0
+    checks:
+      - zero_checksum_preserved
+      - zero_checksum_status_not_silently_valid
+  - name: malformed-decode
+    summary: Malformed SCTP envelopes return structured errors with context, required, and available.
+    malformed: true
+    checks:
+      - truncated_common_header_structured_error
+      - chunk_length_structured_error
+      - parameter_length_structured_error
+      - cause_length_structured_error
+
+coverage_cases:
+  - sctp-native-ipv4-data
+  - sctp-native-ipv6-data
+  - sctp-udp-encap-data
+  - sctp-udp-encap-raw-reject
+  - sctp-init-parameters
+  - sctp-init-ack-cookie
+  - sctp-sack-gaps
+  - sctp-heartbeat-pair
+  - sctp-abort-error-causes
+  - sctp-shutdown-controls
+  - sctp-extension-chunks-preserved
+  - sctp-unknown-chunk
+  - sctp-unknown-parameter
+  - sctp-unknown-cause
+  - sctp-padding-roundtrip
+  - sctp-checksum-auto
+  - sctp-checksum-explicit-invalid
+  - sctp-zero-checksum-status
+  - sctp-pcap-native-ipv4
+  - sctp-pcap-native-ipv6
+  - sctp-pcap-udp-encap
+  - malformed-sctp-truncated-common-header
+  - malformed-sctp-chunk-length
+  - malformed-sctp-parameter-length
+  - malformed-sctp-cause-length
+
+supported_cases:
+  - name: sctp-native-ipv4-data
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+      - live
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+    fields:
+      ipv4:
+        protocol: sctp
+      sctp:
+        src_port: 49152
+        dst_port: 5000
+        verification_tag: 0x11223344
+        chunk: data
+        payload_protocol_identifier: webrtc_string
+        user_data_text: crafter-sctp-fixture
+  - name: sctp-native-ipv6-data
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+      - live
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv6"
+    fields:
+      ipv6:
+        next_header: sctp
+      sctp:
+        src_port: 49152
+        dst_port: 5001
+        verification_tag: 0x55667788
+        chunk: data
+  - name: sctp-udp-encap-data
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+      - live
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      udp:
+        src_port: 9899
+        dst_port: 9899
+      sctp:
+        src_port: 5000
+        dst_port: 5001
+        verification_tag: 0x0a0b0c0d
+        chunk: data
+  - name: sctp-udp-encap-raw-reject
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+    byte_policy: normalized
+    contract_only: true
+    fields:
+      udp:
+        src_port: 9899
+        dst_port: 9899
+      payload:
+        text: not an sctp packet
+    expected_layers:
+      - udp
+      - raw
+  - name: sctp-init-parameters
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      sctp:
+        chunk: init
+        initiate_tag: 0x10203040
+        parameters:
+          - ipv4_address
+          - ipv6_address
+          - supported_address_types
+          - ecn_capable
+  - name: sctp-init-ack-cookie
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      sctp:
+        chunk: init_ack
+        parameters:
+          - state_cookie
+          - supported_extensions
+  - name: sctp-sack-gaps
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      sctp:
+        chunk: sack
+        cumulative_tsn_ack: 0x01020304
+        gap_ack_blocks:
+          - start: 1
+            end: 2
+        duplicate_tsns:
+          - 0x01020308
+  - name: sctp-heartbeat-pair
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      sctp:
+        chunks:
+          - heartbeat
+          - heartbeat_ack
+        heartbeat_info_hex: deadbeef
+  - name: sctp-abort-error-causes
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      sctp:
+        chunks:
+          - abort
+          - error
+        causes:
+          - invalid_stream_identifier
+          - unrecognized_chunk_type
+          - unknown_preserved
+  - name: sctp-shutdown-controls
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      sctp:
+        chunks:
+          - shutdown
+          - shutdown_ack
+          - shutdown_complete
+          - cookie_echo
+          - cookie_ack
+          - ecne
+          - cwr
+  - name: sctp-extension-chunks-preserved
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: normalized
+    contract_only: true
+    fields:
+      sctp:
+        chunks:
+          - auth
+          - i_data
+          - asconf_ack
+          - re_config
+          - pad
+          - forward_tsn
+          - asconf
+          - i_forward_tsn
+          - temporary_dtls
+  - name: sctp-unknown-chunk
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      sctp:
+        chunk: unknown
+        chunk_type: 0x83
+        chunk_value_hex: aabbcc
+  - name: sctp-unknown-parameter
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      sctp:
+        chunk: init
+        parameter_type: 0x8001
+        parameter_value_hex: aabbccdd
+  - name: sctp-unknown-cause
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      sctp:
+        chunk: error
+        cause_code: 0x8001
+        cause_value_hex: aabbccdd
+  - name: sctp-padding-roundtrip
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      sctp:
+        chunk: data
+        user_data_hex: 010203
+        nonzero_padding_hex: a0
+  - name: sctp-checksum-auto
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      sctp:
+        checksum: derived_crc32c
+  - name: sctp-checksum-explicit-invalid
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      sctp:
+        checksum: 0x01020304
+        checksum_status: invalid
+  - name: sctp-zero-checksum-status
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    fields:
+      sctp:
+        checksum: 0
+        checksum_status: zero_checksum
+  - name: sctp-pcap-native-ipv4
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    file_format: pcap
+    contract_only: true
+    fixture: crafter/tests/fixtures/pcaps/raw-ipv4-sctp-data.pcap
+  - name: sctp-pcap-native-ipv6
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    file_format: pcap
+    contract_only: true
+    fixture: crafter/tests/fixtures/pcaps/raw-ipv6-sctp-data.pcap
+  - name: sctp-pcap-udp-encap
+    directions:
+      - backend_to_libcrafter
+      - libcrafter_to_backend
+      - roundtrip
+    byte_policy: strict_bytes
+    file_format: pcap
+    contract_only: true
+    fixture: crafter/tests/fixtures/pcaps/raw-ipv4-udp-sctp-data.pcap
+  - name: malformed-sctp-truncated-common-header
+    directions:
+      - backend_to_libcrafter
+    byte_policy: structured_error
+    expected_error:
+      context: sctp common header
+      required: 12
+  - name: malformed-sctp-chunk-length
+    directions:
+      - backend_to_libcrafter
+    byte_policy: structured_error
+    expected_error:
+      context: sctp chunk length
+      required: 4
+  - name: malformed-sctp-parameter-length
+    directions:
+      - backend_to_libcrafter
+    byte_policy: structured_error
+    expected_error:
+      context: sctp parameter length
+      required: 4
+  - name: malformed-sctp-cause-length
+    directions:
+      - backend_to_libcrafter
+    byte_policy: structured_error
+    expected_error:
+      context: sctp cause length
+      required: 4
+
+case_groups:
+  - name: sctp-header-checksum
+    summary: Common header, verification tag, CRC32c autofill, and explicit checksum status.
+    byte_policy: strict_bytes
+    cases:
+      - sctp-native-ipv4-data
+      - sctp-native-ipv6-data
+      - sctp-checksum-auto
+      - sctp-checksum-explicit-invalid
+      - sctp-zero-checksum-status
+  - name: sctp-chunks-parameters-causes
+    summary: Typed chunks, TLV parameters, error causes, unknown values, and padding.
+    byte_policy: strict_bytes
+    cases:
+      - sctp-init-parameters
+      - sctp-init-ack-cookie
+      - sctp-sack-gaps
+      - sctp-heartbeat-pair
+      - sctp-abort-error-causes
+      - sctp-shutdown-controls
+      - sctp-unknown-chunk
+      - sctp-unknown-parameter
+      - sctp-unknown-cause
+      - sctp-padding-roundtrip
+  - name: sctp-udp-encapsulation
+    summary: RFC 6951 UDP/9899 typed SCTP admission and unrelated raw fallback.
+    byte_policy: strict_bytes
+    cases:
+      - sctp-udp-encap-data
+      - sctp-udp-encap-raw-reject
+  - name: sctp-pcap-contracts
+    summary: Pcap fixture coverage declared for later pcap-mode oracle runs.
+    byte_policy: strict_bytes
+    cases:
+      - sctp-pcap-native-ipv4
+      - sctp-pcap-native-ipv6
+      - sctp-pcap-udp-encap
+  - name: sctp-malformed-structured-errors
+    summary: Structured malformed decode contracts excluded from strict-byte offline comparison.
+    byte_policy: structured_error
+    cases:
+      - malformed-sctp-truncated-common-header
+      - malformed-sctp-chunk-length
+      - malformed-sctp-parameter-length
+      - malformed-sctp-cause-length
+
+normalized_model:
+  sctp:
+    - src_port
+    - dst_port
+    - verification_tag
+    - checksum
+    - checksum_status
+    - chunks
+  chunk:
+    - type
+    - flags
+    - length
+    - value
+    - padding
+  parameter:
+    - type
+    - length
+    - value
+    - padding
+  cause:
+    - code
+    - length
+    - value
+    - padding
+  udp_encapsulation:
+    - src_port
+    - dst_port
+    - payload_kind
+    - raw_fallback
+
+source_refs:
+  - RFC 9260
+  - RFC 6951
+  - RFC 9653
+  - IANA Stream Control Transmission Protocol Parameters
+  - .agents/docs/sctp-rfc-manifest.md
+  - .agents/docs/sctp-codepoints.md
+  - .agents/docs/sctp-wire-grammar.md
+  - .agents/docs/sctp-fixtures.md
+  - .agents/docs/sctp-validation-safety.md
+
+notes:
+  - >-
+    Runnable SCTP oracle cases are packet primitives. They compare packet bytes
+    and normalized layer fields, not association state, retransmission behavior,
+    congestion control, or socket semantics.
+  - >-
+    Malformed cases are declared with byte_policy structured_error so the specs
+    suite reports them as source-backed coverage but does not emit strict-byte
+    offline comparison commands for them.
+  - >-
+    Pcap cases are contract-only here. The later pcap oracle step owns runnable
+    pcap mode and artifact generation from the synthetic fixtures already stored
+    under crafter/tests/fixtures/pcaps/.
+  - >-
+    Live eligibility is limited to provider-backed dry-run planning until an
+    explicit live run is confirmed outside these default offline specs.
+
+backend_support:
+  scapy:
+    status: partial
+    encode: true
+    decode: true
+    native_layers:
+      - SCTP
+      - SCTPChunkData
+      - SCTPChunkInit
+      - SCTPChunkSACK
+      - Raw
+    notes:
+      - >-
+        The Scapy oracle adapter supports strict-byte SCTP DATA smoke cases
+        using raw-byte materialization and canonical wire normalization. The
+        remaining chunk matrix, malformed cases, pcap fixtures, and live
+        exchange stay declared for later SCTP oracle steps.
+  wireshark:
+    status: partial
+    decode: true
+    pcap_read: true
+    native_layers:
+      - sctp
+      - data
+    notes:
+      - >-
+        Parser-only SCTP normalization is available through source-hex packet
+        parsing with tshark common-header alias fallback. Runs skip
+        deterministically when `tshark` is absent.
+  libcrafter:
+    status: supported
+    native_layers:
+      - Sctp
+      - SctpChunk
+      - SctpParameter
+      - SctpErrorCause
+      - Raw
+    notes:
+      - >-
+        The crate builds, decodes, inspects, and round-trips the declared SCTP
+        packet shapes through the Packet abstraction, preserving explicit
+        overrides and structured malformed errors.

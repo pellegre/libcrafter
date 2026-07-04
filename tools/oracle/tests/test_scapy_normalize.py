@@ -26,6 +26,7 @@ import unittest
 from tools.oracle.engine.backends.scapy import normalize
 from tools.oracle.engine.backends.scapy.bootstrap import import_scapy
 from tools.oracle.engine.backends.scapy.protocols import ipv4 as ipv4_scapy
+from tools.oracle.engine.backends.scapy.protocols import sctp as sctp_scapy
 
 
 def _scapy():
@@ -62,6 +63,94 @@ class ScapyIpv4FlagNormalizeTest(unittest.TestCase):
             ipv4_scapy._normalize_ipv4_flags("MF+DF+evil"),
             "mf|df|reserved",
         )
+
+
+def _normalize_sctp_packet(sctp_bytes: bytes):
+    scapy = _scapy()
+    packet = _base_ip() / scapy.Raw(sctp_bytes)
+    packet.proto = 132
+    raw = bytes(scapy.raw(packet))
+    return normalize.decode_bytes(raw, root="l2:ipv4", source_hex=raw.hex())
+
+
+class SctpNormalizedModelTest(unittest.TestCase):
+    def test_sctp_data_chunk_checksum_status_and_user_data(self) -> None:
+        sctp_bytes = sctp_scapy._sctp_packet_bytes(
+            {
+                "src_port": 49152,
+                "dst_port": 5000,
+                "verification_tag": 0x11223344,
+                "chunks": ["data"],
+                "payload_protocol_identifier": "webrtc_string",
+                "user_data_text": "crafter-sctp-fixture",
+            }
+        )
+
+        decoded = _normalize_sctp_packet(sctp_bytes)
+        sctp = decoded.fields["sctp"]
+
+        self.assertEqual(decoded.layers, ["ipv4", "sctp"])
+        self.assertEqual(sctp["checksum_status"], "valid")
+        self.assertEqual(sctp["chunk_count"], 1)
+        self.assertEqual(sctp["chunks"][0]["type_name"], "data")
+        self.assertEqual(sctp["chunks"][0]["user_data_ascii"], "crafter-sctp-fixture")
+
+    def test_sctp_invalid_checksum_and_unknown_chunk_are_inspectable(self) -> None:
+        sctp_bytes = sctp_scapy._sctp_packet_bytes(
+            {
+                "checksum": "explicit_invalid",
+                "chunks": [
+                    {
+                        "type": "unknown",
+                        "chunk_value_hex": "aabbcc",
+                    }
+                ],
+            }
+        )
+
+        decoded = _normalize_sctp_packet(sctp_bytes)
+        sctp = decoded.fields["sctp"]
+        chunk = sctp["chunks"][0]
+
+        self.assertEqual(sctp["checksum_status"], "invalid")
+        self.assertEqual(chunk["type"], 0x83)
+        self.assertEqual(chunk["type_name"], "unknown")
+        self.assertEqual(chunk["value_hex"], "aabbcc")
+        self.assertEqual(chunk["padding_length"], 1)
+
+    def test_sctp_init_parameters_normalize_as_tlvs(self) -> None:
+        init_value_hex = (
+            "11223344"
+            "00001000"
+            "0002"
+            "0003"
+            "01020304"
+            "00050008c0000201"
+            "40010007aabbcc00"
+        )
+        sctp_bytes = sctp_scapy._sctp_packet_bytes(
+            {
+                "chunks": [
+                    {
+                        "type": "init",
+                        "chunk_value_hex": init_value_hex,
+                    }
+                ],
+            }
+        )
+
+        decoded = _normalize_sctp_packet(sctp_bytes)
+        chunk = decoded.fields["sctp"]["chunks"][0]
+
+        self.assertEqual(chunk["type_name"], "init")
+        self.assertEqual(chunk["initiate_tag"], 0x11223344)
+        self.assertEqual(chunk["outbound_streams"], 2)
+        self.assertEqual(chunk["inbound_streams"], 3)
+        self.assertEqual(chunk["parameter_count"], 2)
+        self.assertEqual(chunk["parameters"][0]["type_name"], "ipv4_address")
+        self.assertEqual(chunk["parameters"][0]["value_hex"], "c0000201")
+        self.assertEqual(chunk["parameters"][1]["type_name"], "unknown")
+        self.assertEqual(chunk["parameters"][1]["padding_length"], 1)
 
 
 # Native Scapy ICMP rest-of-header field names that must never survive

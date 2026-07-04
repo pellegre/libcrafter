@@ -669,6 +669,27 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertFalse(plan["live_endpoints"]["libcrafter"].metadata["bridged_lan"])
         self.assertTrue(plan["live_endpoints"]["libcrafter"].metadata["private_network"])
 
+    def test_docker_adapter_exposes_remote_command_env_prelude(self) -> None:
+        adapter = resolve_live_provider("docker")
+        libcrafter_command = adapter.endpoint_remote_command(
+            endpoint_role="libcrafter",
+            remote_dir="/work/libcrafter",
+            request_path="/tmp/request.json",
+            out_dir="/tmp/out",
+        )
+        reference_command = adapter.endpoint_remote_command(
+            endpoint_role="reference_backend",
+            remote_dir="/work/libcrafter",
+            request_path="/tmp/request.json",
+            out_dir="/tmp/out",
+        )
+
+        self.assertEqual(libcrafter_command[:2], ["bash", "-lc"])
+        self.assertIn("cargo run", libcrafter_command[2])
+        self.assertEqual(reference_command[:2], ["bash", "-lc"])
+        self.assertIn("python3 -m engine.backends.scapy.live", reference_command[2])
+        _assert_remote_command_env_prelude(self, libcrafter_command, reference_command)
+
     def test_hetzner_adapter_exposes_execution_policy_hooks(self) -> None:
         adapter = resolve_live_provider("hetzner")
         plan = PacketPlan(
@@ -704,8 +725,18 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertEqual(transit_plan.fields["ipv4"]["ttl"], 64)
         self.assertEqual(transit_plan.metadata["wire"]["provider"], "hetzner")
         self.assertEqual(libcrafter_command[:2], ["bash", "-lc"])
+        self.assertIn("docker run", libcrafter_command[2])
+        self.assertIn("libcrafter/appliance:local", libcrafter_command[2])
+        self.assertIn(
+            "--mount type=bind,source=/root/libcrafter,target=/root/libcrafter",
+            libcrafter_command[2],
+        )
         self.assertIn("cargo run", libcrafter_command[2])
+        _assert_remote_command_env_prelude(self, libcrafter_command, reference_command)
         self.assertEqual(reference_command[:2], ["bash", "-lc"])
+        self.assertIn("docker run", reference_command[2])
+        self.assertIn("curl -LsSf https://astral.sh/uv/install.sh", reference_command[2])
+        self.assertIn("command -v uv", reference_command[2])
         self.assertIn("python3 -m engine.backends.scapy.live", reference_command[2])
 
     def test_qemu_adapter_exposes_execution_policy_hooks_without_transit_mutation(self) -> None:
@@ -758,6 +789,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertIn("LIBCRAFTER_PEER_PRIVATE_IPV4=10.77.0.20", bootstrap_command[2])
         self.assertEqual(libcrafter_command[:2], ["bash", "-lc"])
         self.assertIn("cargo run", libcrafter_command[2])
+        _assert_remote_command_env_prelude(self, libcrafter_command, reference_command)
         self.assertEqual(reference_command[:2], ["bash", "-lc"])
         self.assertIn("python3 -m engine.backends.scapy.live", reference_command[2])
 
@@ -811,6 +843,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertIn("LIBCRAFTER_PEER_PRIVATE_IPV4=10.78.0.20", bootstrap_command[2])
         self.assertEqual(libcrafter_command[:2], ["bash", "-lc"])
         self.assertIn("cargo run", libcrafter_command[2])
+        _assert_remote_command_env_prelude(self, libcrafter_command, reference_command)
         self.assertEqual(reference_command[:2], ["bash", "-lc"])
         self.assertIn("python3 -m engine.backends.scapy.live", reference_command[2])
 
@@ -1519,6 +1552,17 @@ def _assert_wire_plan_runtime(
     testcase.assertEqual(runtime["container_policy"]["execution_mode"], execution_mode)
     live_endpoint = plan["live_endpoints"]["libcrafter"]
     testcase.assertEqual(live_endpoint.metadata["appliance_runtime"], runtime)
+
+
+def _assert_remote_command_env_prelude(
+    testcase: unittest.TestCase,
+    libcrafter_command: list[str],
+    reference_command: list[str],
+) -> None:
+    testcase.assertIn('if [ -f "$HOME/.cargo/env" ]', libcrafter_command[2])
+    testcase.assertIn('if [ -f "/usr/local/cargo/env" ]', libcrafter_command[2])
+    testcase.assertIn('if [ -f "$HOME/.local/bin/env" ]', reference_command[2])
+    testcase.assertIn('export PATH="$HOME/.local/bin:$PATH"', reference_command[2])
 
 
 def _live_args(provider: str) -> SimpleNamespace:

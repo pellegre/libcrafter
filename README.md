@@ -47,6 +47,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 untouched — including values that are wrong on purpose — so the same builder
 emits both protocol-correct packets and deliberately malformed ones.
 
+SCTP uses the same stack shape. This example builds one DATA chunk, compiles it
+offline, decodes the bare IPv4 datagram, and inspects the typed SCTP layer:
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+fn sctp_data_packet() -> Result<(), Box<dyn std::error::Error>> {
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 44))
+        .dst(Ipv4Addr::new(198, 51, 100, 44))
+        / Sctp::data(
+            0x0102_0304,
+            1,
+            1,
+            SCTP_PPID_WEBRTC_STRING,
+            b"hello-sctp".to_vec(),
+        )
+        .sport(5_000)
+        .dport(5_001)
+        .vtag(0x1122_3344);
+
+    let compiled = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+    let sctp = decoded.layer::<Sctp>().expect("SCTP layer");
+
+    println!("{}", decoded.summary());
+    println!("SCTP checksum status: {}", sctp.checksum_status());
+    Ok(())
+}
+```
+
 ## Inspect and decode
 
 Reach into a packet by layer type, and decode raw bytes from an explicit link
@@ -225,6 +257,7 @@ preserved as `Raw` payloads when the enclosing header is valid.
 | TCP | Segment construction, typed options, checksums | [tcp](docs/guide/tcp.md) |
 | TLS | TLS-over-TCP record layer with typed records, handshakes, extensions, alerts, ChangeCipherSpec, heartbeat, opaque application data, and unknown preservation; not a TLS endpoint, scanner, certificate validator, or TCP stream reassembler | [tls](docs/guide/tls.md) |
 | UDP | UDP with options (RFC 9868) and checksum status | [udp](docs/guide/udp.md) |
+| SCTP | Native IPv4/IPv6 SCTP and RFC 6951 UDP encapsulation, CRC32c checksum status, DATA/INIT/SACK/control chunks, parameters, causes, padding, pcap fixtures, and unknown-codepoint preservation; not an association stack or socket API | [sctp](docs/guide/sctp.md) |
 | QUIC | UDP-carried QUIC datagrams, long/short headers, Version Negotiation, Retry, Initial/Handshake/0-RTT packets, frames, transport parameters, protected-payload preservation, and probe dry-run/lab planning; not a QUIC endpoint stack | [quic](docs/guide/quic.md) |
 | DNS | EDNS(0), SVCB/HTTPS, DNSSEC record types | [dns](docs/guide/dns.md) |
 | mDNS / DNS-SD | UDP/5353 DNS message construction and decode, multicast constants and stack builders, QU/cache-flush class-bit helpers, DNS-SD service names, PTR/SRV/TXT/A/AAAA packet shapes, known answers, probes, announcements, and goodbyes; not a resolver, responder, cache, scanner, or service registry | [mdns](docs/guide/mdns.md) |
@@ -283,9 +316,9 @@ The full annotated table, with safety modes and commands, is in
 
 - [docs/README.md](docs/README.md) is the documentation index.
 - [docs/guide/](docs/guide/) — per-protocol wire coverage for everyday packet
-  work (IPv4, IGMP, IPv6, TCP, UDP, ARP, ICMPv6, DHCPv6, DNS, mDNS/DNS-SD,
+  work (IPv4, IGMP, IPv6, TCP, UDP, SCTP, ARP, ICMPv6, DHCPv6, DNS, mDNS/DNS-SD,
   BGP, MQTT, NTP, SNMP, OSPF, 802.11, IPsec); UDP, ARP, ICMPv6, IGMP, DHCPv6,
-  DNS, mDNS, NTP, SNMP, and OSPF now have their own guides.
+  DNS, mDNS, NTP, SNMP, OSPF, and SCTP now have their own guides.
 - [docs/reference/](docs/reference/) — the public API
   ([api.md](docs/reference/api.md)), the wire I/O layer
   ([wire.md](docs/reference/wire.md)), and the example catalog

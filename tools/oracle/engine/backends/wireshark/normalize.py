@@ -96,6 +96,7 @@ _PROTOCOL_LAYER_ALIASES: dict[str, str | None] = {
     "ripng": "ripng",
     "sll": "linux_sll",
     "snmp": "snmp",
+    "sctp": "sctp",
     "wlan": "dot11",
     "wlan_radio": None,
     "wlan_mgt": None,

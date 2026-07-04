@@ -671,6 +671,8 @@ class PacketGenerator:
                 )
                 if not _layers_cover_feature(stack_layers, feature_layers):
                     continue
+                if not _feature_stack_compatible(feature, stack_layers):
+                    continue
                 if direction not in feature_directions and "roundtrip" not in feature_directions:
                     continue
             if (
@@ -700,6 +702,9 @@ class PacketGenerator:
                     "bgp-smoke",
                     "dhcpv6-smoke",
                     "ospf-smoke",
+                    "sctp-boundary",
+                    "sctp-pcap",
+                    "sctp-smoke",
                     *_IPSEC_SMOKE_PROFILES,
                 }
             ):
@@ -773,6 +778,20 @@ class PacketGenerator:
                 and case is None
                 and self.profile == "ospf-smoke"
                 and not _has_ospf_smoke_case(coverage_cases)
+            ):
+                continue
+            if (
+                feature is None
+                and case is None
+                and self.profile == "sctp-smoke"
+                and not _has_sctp_smoke_case(coverage_cases)
+            ):
+                continue
+            if (
+                feature is None
+                and case is None
+                and self.profile == "sctp-pcap"
+                and not _has_sctp_pcap_case(coverage_cases)
             ):
                 continue
             if (
@@ -1017,6 +1036,15 @@ class PacketGenerator:
             # packet-type cases so a default/raw payload case is never paired
             # with the ipv4/ospf stack.
             coverage_cases = [case for case in coverage_cases if _is_ospf_smoke_case(case)]
+        if feature is None and self.profile == "sctp-smoke":
+            # Focused SCTP smoke set: keep case selection on the currently
+            # executable SCTP DATA cases so later chunk/pcap contracts do not
+            # enter this first Scapy parity run.
+            coverage_cases = [case for case in coverage_cases if _is_sctp_smoke_case(case)]
+        if feature is None and self.profile == "sctp-pcap":
+            # Focused SCTP pcap set: keep case selection on stack-declared pcap
+            # cases so pcap planning does not draw the DATA smoke cases.
+            coverage_cases = [case for case in coverage_cases if _is_sctp_pcap_case(case)]
         if feature is None and self.profile in _DHCPV6_SMOKE_PROFILES:
             # Focused DHCPv6 smoke set: keep selection on DHCPv6 packet cases
             # so unrelated IPv6/UDP features never attach to the same stack.
@@ -1100,6 +1128,16 @@ class PacketGenerator:
         # cases and skip the generic cross-feature expansion below so an
         # unrelated case is never paired with the ipv4/ospf stack.
         if feature is None and self.profile == "ospf-smoke":
+            if not choices:
+                return "default"
+            return weighted_choice(rng, choices)
+        # SCTP smoke profile: select only the stack-declared executable DATA
+        # cases and skip the generic cross-feature expansion below.
+        if feature is None and self.profile == "sctp-smoke":
+            if not choices:
+                return "default"
+            return weighted_choice(rng, choices)
+        if feature is None and self.profile == "sctp-pcap":
             if not choices:
                 return "default"
             return weighted_choice(rng, choices)
@@ -1283,6 +1321,9 @@ class PacketGenerator:
             # smoke body injection drives the packet.
             if self.profile == "ospf-smoke":
                 continue
+            # SCTP focused profiles auto-sample only the SCTP core feature.
+            if self.profile in _SCTP_FOCUSED_PROFILES and name != "sctp_core":
+                continue
             # IGMP profiles are IPv4-only packet-layer runs. Keep the automatic
             # feature sampler on IGMP specs so unrelated IPv4 features never
             # attach to the ipv4/igmp stack.
@@ -1323,6 +1364,8 @@ class PacketGenerator:
             directions = _string_list(feature.get("directions"), f"features.{name}.directions")
             if not _layers_cover_feature(stack, layers):
                 continue
+            if not _feature_stack_compatible(name, stack):
+                continue
             if direction not in directions and "roundtrip" not in directions:
                 continue
             output.append((name, feature))
@@ -1339,6 +1382,8 @@ class PacketGenerator:
         layers = _string_list(feature_spec.get("layers"), "feature.layers")
         directions = _string_list(feature_spec.get("directions"), "feature.directions")
         if not _layers_cover_feature(stack, layers):
+            return []
+        if not _feature_stack_compatible(feature, stack):
             return []
         if direction not in directions and "roundtrip" not in directions:
             return []
@@ -2255,6 +2300,34 @@ def _has_ospf_smoke_case(cases: Sequence[str]) -> bool:
     return any(_is_ospf_smoke_case(case) for case in cases)
 
 
+def _is_sctp_smoke_case(case: str) -> bool:
+    """Whether ``case`` is sampled by the focused sctp-smoke profile."""
+
+    return case.replace("_", "-") in {
+        "sctp-native-ipv4-data",
+        "sctp-native-ipv6-data",
+        "sctp-udp-encap-data",
+    }
+
+
+def _has_sctp_smoke_case(cases: Sequence[str]) -> bool:
+    """Whether ``cases`` contains an executable SCTP smoke coverage case."""
+
+    return any(_is_sctp_smoke_case(case) for case in cases)
+
+
+def _is_sctp_pcap_case(case: str) -> bool:
+    """Whether ``case`` is sampled by the focused sctp-pcap profile."""
+
+    return case.replace("_", "-").startswith("sctp-pcap-")
+
+
+def _has_sctp_pcap_case(cases: Sequence[str]) -> bool:
+    """Whether ``cases`` contains an SCTP pcap coverage case."""
+
+    return any(_is_sctp_pcap_case(case) for case in cases)
+
+
 def _ipv4_enrichment_cases(cases: Sequence[str], grammar: Mapping[str, object]) -> list[str]:
     declared = _layer_coverage_cases(grammar, "ipv4")
     return [case for case in cases if case in declared]
@@ -2313,6 +2386,7 @@ _IP_FRAGMENT_SMOKE_PROFILES = frozenset(
     }
 )
 _DHCPV6_SMOKE_PROFILES = frozenset({"dhcpv6-smoke"})
+_SCTP_FOCUSED_PROFILES = frozenset({"sctp-smoke", "sctp-boundary", "sctp-pcap"})
 # Focused IPSec offline profiles. Like the dot11/rsn smoke profiles they keep the
 # stack and case selection on their own IPSec families (esp/ah/ikev2) rather than
 # letting the generic cross-feature case expansion draw unrelated cases onto the
@@ -2587,6 +2661,17 @@ def _layers_cover_feature(stack: Sequence[str], feature_layers: Sequence[str]) -
     if "ipv6" in feature_set and feature_set.intersection(ipv6_extension_layers):
         return "ipv6" in stack_set and bool(stack_set.intersection(ipv6_extension_layers))
     return all(layer in stack_set for layer in feature_layers)
+
+
+def _feature_stack_compatible(feature: str | None, stack: Sequence[str]) -> bool:
+    if feature != "tcp_header":
+        return True
+    try:
+        tcp_index = list(stack).index("tcp")
+    except ValueError:
+        return False
+    next_index = tcp_index + 1
+    return next_index < len(stack) and stack[next_index] == "payload"
 
 
 def _ipv6_extension_cases_for_stack(stack: Sequence[str], cases: Sequence[str]) -> list[str]:
