@@ -487,10 +487,8 @@ impl BatchSendRecv {
         }
 
         let interface = validated_interface(self.send_recv.send_options())?;
-        let mut sender = BackendPacketSender::open_with_backend(
-            self.send_recv.send_options().clone(),
-            backend,
-        )?;
+        let mut sender =
+            BackendPacketSender::open_with_backend(self.send_recv.send_options().clone(), backend)?;
         for packet in packets {
             sender.plan(packet)?;
         }
