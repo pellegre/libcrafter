@@ -1156,6 +1156,8 @@ fn normalize_layer_name(name: &str) -> &str {
         "Tcp" => "tcp",
         "UDP" => "udp",
         "Udp" => "udp",
+        "SCTP" => "sctp",
+        "Sctp" => "sctp",
         "IcmpAddressMask" => "payload",
         "IcmpQuotedIpv4" => "payload",
         "IcmpTimestamp" => "payload",
@@ -1171,7 +1173,9 @@ fn typed_layer_fields(layer: &dyn Layer, name: &str) -> Option<Map<String, Value
             .downcast_ref::<Ethernet>()
             .map(ethernet_fields),
         "ipv6" => layer.as_any().downcast_ref::<Ipv6>().map(ipv6_fields),
+        "udp" => layer.as_any().downcast_ref::<Udp>().map(udp_fields),
         "tcp" => layer.as_any().downcast_ref::<Tcp>().map(tcp_fields),
+        "sctp" => layer.as_any().downcast_ref::<Sctp>().map(sctp_fields),
         "icmp" => layer.as_any().downcast_ref::<Icmpv4>().map(icmp_fields),
         "icmpv6" => layer.as_any().downcast_ref::<Icmpv6>().map(icmpv6_fields),
         "dns" => layer.as_any().downcast_ref::<Dns>().map(dns_fields),
@@ -1271,6 +1275,199 @@ fn tcp_fields(layer: &Tcp) -> Map<String, Value> {
         fields.insert("checksum".to_string(), json!(value));
     }
     fields
+}
+
+fn udp_fields(layer: &Udp) -> Map<String, Value> {
+    let mut fields = Map::new();
+    fields.insert("src_port".to_string(), json!(layer.source_port_value()));
+    fields.insert(
+        "dst_port".to_string(),
+        json!(layer.destination_port_value()),
+    );
+    if let Some(value) = layer.length_value() {
+        fields.insert("length".to_string(), json!(value));
+    }
+    if let Some(value) = layer.checksum_value() {
+        fields.insert("checksum".to_string(), json!(value));
+    }
+    fields
+}
+
+fn sctp_fields(layer: &Sctp) -> Map<String, Value> {
+    let mut fields = Map::new();
+    fields.insert("src_port".to_string(), json!(layer.source_port_value()));
+    fields.insert(
+        "dst_port".to_string(),
+        json!(layer.destination_port_value()),
+    );
+    fields.insert(
+        "verification_tag".to_string(),
+        json!(layer.verification_tag_value()),
+    );
+    fields.insert(
+        "checksum_status".to_string(),
+        json!(layer.checksum_status().label()),
+    );
+    fields.insert("chunk_count".to_string(), json!(layer.chunks().len()));
+    fields.insert(
+        "chunks".to_string(),
+        Value::Array(layer.chunks().iter().map(sctp_chunk_fields).collect()),
+    );
+    if let Some(value) = layer.checksum_value() {
+        fields.insert("checksum".to_string(), json!(value));
+    }
+    fields
+}
+
+fn sctp_chunk_fields(chunk: &SctpChunk) -> Value {
+    let value = chunk.value();
+    let mut fields = Map::new();
+    fields.insert("type".to_string(), json!(chunk.chunk_type_value()));
+    fields.insert(
+        "type_name".to_string(),
+        json!(sctp_chunk_type_name(chunk.chunk_type_value())),
+    );
+    fields.insert("flags".to_string(), json!(chunk.flags()));
+    fields.insert("length".to_string(), json!(chunk.declared_length()));
+    fields.insert("value_hex".to_string(), json!(hex_bytes(value)));
+    fields.insert("padding_hex".to_string(), json!(hex_bytes(chunk.padding())));
+    fields.insert("padding_length".to_string(), json!(chunk.padding_len()));
+    if chunk.chunk_type_value() == 0 && value.len() >= 12 {
+        let user_data = &value[12..];
+        fields.insert(
+            "tsn".to_string(),
+            json!(u32::from_be_bytes([value[0], value[1], value[2], value[3]])),
+        );
+        fields.insert(
+            "stream_id".to_string(),
+            json!(u16::from_be_bytes([value[4], value[5]])),
+        );
+        fields.insert(
+            "stream_sequence".to_string(),
+            json!(u16::from_be_bytes([value[6], value[7]])),
+        );
+        fields.insert(
+            "payload_protocol_identifier".to_string(),
+            json!(u32::from_be_bytes([
+                value[8], value[9], value[10], value[11]
+            ])),
+        );
+        fields.insert("user_data_hex".to_string(), json!(hex_bytes(user_data)));
+        fields.insert(
+            "user_data_ascii".to_string(),
+            json!(String::from_utf8_lossy(user_data).into_owned()),
+        );
+    }
+    if matches!(chunk.chunk_type_value(), 1 | 2) && value.len() >= 16 {
+        let parameters = sctp_parameter_fields(&value[16..]).unwrap_or_default();
+        fields.insert(
+            "initiate_tag".to_string(),
+            json!(u32::from_be_bytes([value[0], value[1], value[2], value[3]])),
+        );
+        fields.insert(
+            "advertised_receiver_window_credit".to_string(),
+            json!(u32::from_be_bytes([value[4], value[5], value[6], value[7]])),
+        );
+        fields.insert(
+            "outbound_streams".to_string(),
+            json!(u16::from_be_bytes([value[8], value[9]])),
+        );
+        fields.insert(
+            "inbound_streams".to_string(),
+            json!(u16::from_be_bytes([value[10], value[11]])),
+        );
+        fields.insert(
+            "initial_tsn".to_string(),
+            json!(u32::from_be_bytes([
+                value[12], value[13], value[14], value[15]
+            ])),
+        );
+        fields.insert("parameter_count".to_string(), json!(parameters.len()));
+        fields.insert("parameters".to_string(), Value::Array(parameters));
+    }
+    Value::Object(fields)
+}
+
+fn sctp_parameter_fields(raw: &[u8]) -> Option<Vec<Value>> {
+    let mut parameters = Vec::new();
+    let mut offset = 0;
+    while offset < raw.len() {
+        if raw.len() - offset < 4 {
+            return None;
+        }
+        let parameter_type = u16::from_be_bytes([raw[offset], raw[offset + 1]]);
+        let declared_length = usize::from(u16::from_be_bytes([raw[offset + 2], raw[offset + 3]]));
+        if declared_length < 4 {
+            return None;
+        }
+        let padded_length = declared_length + ((4 - (declared_length % 4)) % 4);
+        if offset + padded_length > raw.len() {
+            return None;
+        }
+        let value = &raw[offset + 4..offset + declared_length];
+        let padding = &raw[offset + declared_length..offset + padded_length];
+        parameters.push(json!({
+            "type": parameter_type,
+            "type_name": sctp_parameter_type_name(parameter_type),
+            "length": declared_length,
+            "value_hex": hex_bytes(value),
+            "padding_hex": hex_bytes(padding),
+            "padding_length": padding.len(),
+        }));
+        offset += padded_length;
+    }
+    Some(parameters)
+}
+
+fn sctp_parameter_type_name(value: u16) -> &'static str {
+    match value {
+        5 => "ipv4_address",
+        6 => "ipv6_address",
+        7 => "state_cookie",
+        8 => "unrecognized_parameter",
+        9 => "cookie_preservative",
+        11 => "host_name_address",
+        12 => "supported_address_types",
+        0x8000 => "ecn_capable",
+        0x8001 => "zero_checksum_acceptable",
+        0x8002 => "random",
+        0x8003 => "chunk_list",
+        0x8004 => "requested_hmac_algorithm",
+        0x8005 => "padding",
+        0x8006 => "dtls_key_management",
+        0x8008 => "supported_extensions",
+        0xC000 => "forward_tsn_supported",
+        _ => "unknown",
+    }
+}
+
+fn sctp_chunk_type_name(value: u8) -> &'static str {
+    match value {
+        0 => "data",
+        1 => "init",
+        2 => "init_ack",
+        3 => "sack",
+        4 => "heartbeat",
+        5 => "heartbeat_ack",
+        6 => "abort",
+        7 => "shutdown",
+        8 => "shutdown_ack",
+        9 => "error",
+        10 => "cookie_echo",
+        11 => "cookie_ack",
+        12 => "ecne",
+        13 => "cwr",
+        14 => "shutdown_complete",
+        15 => "auth",
+        64 => "i_data",
+        128 => "asconf_ack",
+        130 => "re_config",
+        132 => "pad",
+        192 => "forward_tsn",
+        193 => "asconf",
+        194 => "i_forward_tsn",
+        _ => "unknown",
+    }
 }
 
 fn icmp_fields(layer: &Icmpv4) -> Map<String, Value> {
@@ -3164,6 +3361,53 @@ mod l2_ipv4_root {
         assert_eq!(model["fields"]["payload"]["hex"], json!(body_hex));
         assert_eq!(model["fields"]["payload"]["length"], json!(52));
         assert!(model["fields"].get("IcmpQuotedIpv4").is_none());
+    }
+
+    #[test]
+    fn decoded_udp_encapsulated_sctp_uses_oracle_layer_contract() {
+        let packet = Ipv4::new()
+            .src_str("10.42.19.20")
+            .expect("valid source")
+            .dst_str("10.42.19.10")
+            .expect("valid destination")
+            .id(0xffff)
+            .tos(184)
+            .ttl(64)
+            .ipv4_protocol(Ipv4Protocol::Udp)
+            / Udp::new().sport(9899).dport(9899).chksum(0)
+            / Sctp::data(0x0102_0304, 1, 2, 53, [0, 1, 2, 3])
+                .sport(5000)
+                .dport(5001)
+                .vtag(0x0a0b_0c0d);
+        let compiled = packet.compile().expect("packet compiles");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())
+            .expect("packet decodes");
+        let model = decoded_model(&decoded, Some("l3:ipv4"), compiled.as_bytes(), vec![])
+            .expect("model builds");
+
+        assert_eq!(
+            model["layers"],
+            json!(["ipv4", "udp", "sctp"]),
+            "libcrafter display names should not leak into oracle comparison"
+        );
+        assert!(model["fields"].get("Sctp").is_none());
+        assert!(model["fields"]["udp"].get("checksum_status").is_none());
+        assert_eq!(model["fields"]["udp"]["src_port"], json!(9899));
+        assert_eq!(model["fields"]["udp"]["dst_port"], json!(9899));
+        assert_eq!(model["fields"]["udp"]["checksum"], json!(0));
+
+        let sctp = &model["fields"]["sctp"];
+        assert_eq!(sctp["src_port"], json!(5000));
+        assert_eq!(sctp["dst_port"], json!(5001));
+        assert_eq!(sctp["verification_tag"], json!(0x0a0b_0c0d));
+        assert_eq!(sctp["chunk_count"], json!(1));
+        assert_eq!(sctp["checksum_status"], json!("valid"));
+        assert_eq!(sctp["chunks"][0]["type_name"], json!("data"));
+        assert_eq!(
+            sctp["chunks"][0]["value_hex"],
+            json!("01020304000100020000003500010203")
+        );
+        assert_eq!(sctp["chunks"][0]["user_data_hex"], json!("00010203"));
     }
 
     #[test]

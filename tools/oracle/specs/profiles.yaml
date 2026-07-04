@@ -257,6 +257,62 @@ profiles:
       malformed: 0
       pcap: 0
       live: 0
+  # sctp-smoke: focused offline SCTP packet-layer smoke coverage. It samples
+  # only the executable DATA chunk cases over native IPv4, native IPv6, and RFC
+  # 6951 UDP encapsulation; broader chunk matrices, pcap fixtures, and live
+  # exchange remain explicit later profiles/steps.
+  - name: sctp-smoke
+    purpose: focused offline SCTP DATA smoke coverage
+    default_count: 10
+    family_weights:
+      - name: sctp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 32
+    feature_weights:
+      baseline: 10
+      boundary: 2
+      malformed: 0
+      pcap: 0
+      live: 0
+  # sctp-boundary: focused SCTP packet-layer boundary planning. It keeps the
+  # SCTP family weighted alone and disables live traffic; executable smoke
+  # cases remain available while later SCTP steps can promote checksum,
+  # unknown-codepoint, padding, and malformed contracts into runnable coverage.
+  - name: sctp-boundary
+    purpose: focused offline SCTP boundary and preservation coverage
+    default_count: 20
+    family_weights:
+      - name: sctp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 256
+    feature_weights:
+      baseline: 6
+      boundary: 10
+      malformed: 2
+      pcap: 0
+      live: 0
+  # sctp-pcap: focused classic pcap planning for native IPv4/IPv6 SCTP and RFC
+  # 6951 UDP-encapsulated SCTP. Live traffic remains disabled; provider-backed
+  # live validation is a separate dry-run/live step.
+  - name: sctp-pcap
+    purpose: focused classic pcap SCTP link/root coverage
+    default_count: 10
+    family_weights:
+      - name: sctp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 128
+    feature_weights:
+      baseline: 1
+      boundary: 1
+      malformed: 0
+      pcap: 10
+      live: 0
   # ipv4-enrichment: focused offline coverage of the enriched IPv4 header
   # domains declared in layers/ipv4.yaml. The generator narrows stack/case and
   # feature selection to that layer's coverage cases when this profile is active,

@@ -26,6 +26,7 @@ use crafter::protocols::rip::ripng::{Ripng, RipngRte};
 use crafter::protocols::rip::{Rip, RipAuth, RipAuthPayload, RipEntry, RIP_AFI_AUTH};
 use crafter::protocols::ssdp::{Ssdp, SsdpHeaderNameKind, SsdpMethod, SsdpStartLine};
 use crafter::protocols::tls::{Tls, TlsRecord};
+use crafter::protocols::transport::{Sctp, SctpChunk};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -466,6 +467,8 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "UdpOptions"
     } else if layer.as_any().is::<Tcp>() {
         "tcp"
+    } else if layer.as_any().is::<Sctp>() {
+        "sctp"
     } else if layer.as_any().is::<Bgp>() {
         "bgp"
     } else if layer.as_any().is::<Mqtt>() {
@@ -604,6 +607,9 @@ fn normalized_layer_fields(
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Tcp>() {
         return tcp_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<Sctp>() {
+        return sctp_fields(layer);
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Bgp>() {
         return bgp_fields(layer);
@@ -2104,6 +2110,175 @@ fn tcp_fields(layer: &Tcp) -> BTreeMap<String, Value> {
         fields.insert("checksum".to_string(), json!(value));
     }
     fields
+}
+
+fn sctp_fields(layer: &Sctp) -> BTreeMap<String, Value> {
+    let mut fields = map([
+        ("src_port", json!(layer.source_port_value())),
+        ("dst_port", json!(layer.destination_port_value())),
+        ("verification_tag", json!(layer.verification_tag_value())),
+        ("checksum_status", json!(layer.checksum_status().label())),
+        ("chunk_count", json!(layer.chunks().len())),
+        (
+            "chunks",
+            Value::Array(layer.chunks().iter().map(sctp_chunk_fields).collect()),
+        ),
+    ]);
+    if let Some(value) = layer.checksum_value() {
+        fields.insert("checksum".to_string(), json!(value));
+    }
+    fields
+}
+
+fn sctp_chunk_fields(chunk: &SctpChunk) -> Value {
+    let value = chunk.value();
+    let mut fields = BTreeMap::new();
+    fields.insert("type".to_string(), json!(chunk.chunk_type_value()));
+    fields.insert(
+        "type_name".to_string(),
+        json!(sctp_chunk_type_name(chunk.chunk_type_value())),
+    );
+    fields.insert("flags".to_string(), json!(chunk.flags()));
+    fields.insert("length".to_string(), json!(chunk.declared_length()));
+    fields.insert("value_hex".to_string(), json!(hex_bytes(value)));
+    fields.insert("padding_hex".to_string(), json!(hex_bytes(chunk.padding())));
+    fields.insert("padding_length".to_string(), json!(chunk.padding_len()));
+    if chunk.chunk_type_value() == 0 && value.len() >= 12 {
+        let user_data = &value[12..];
+        fields.insert(
+            "tsn".to_string(),
+            json!(u32::from_be_bytes([value[0], value[1], value[2], value[3]])),
+        );
+        fields.insert(
+            "stream_id".to_string(),
+            json!(u16::from_be_bytes([value[4], value[5]])),
+        );
+        fields.insert(
+            "stream_sequence".to_string(),
+            json!(u16::from_be_bytes([value[6], value[7]])),
+        );
+        fields.insert(
+            "payload_protocol_identifier".to_string(),
+            json!(u32::from_be_bytes([
+                value[8], value[9], value[10], value[11]
+            ])),
+        );
+        fields.insert("user_data_hex".to_string(), json!(hex_bytes(user_data)));
+        fields.insert(
+            "user_data_ascii".to_string(),
+            json!(String::from_utf8_lossy(user_data).into_owned()),
+        );
+    }
+    if matches!(chunk.chunk_type_value(), 1 | 2) && value.len() >= 16 {
+        let parameters = sctp_parameter_fields(&value[16..]).unwrap_or_default();
+        fields.insert(
+            "initiate_tag".to_string(),
+            json!(u32::from_be_bytes([value[0], value[1], value[2], value[3]])),
+        );
+        fields.insert(
+            "advertised_receiver_window_credit".to_string(),
+            json!(u32::from_be_bytes([value[4], value[5], value[6], value[7]])),
+        );
+        fields.insert(
+            "outbound_streams".to_string(),
+            json!(u16::from_be_bytes([value[8], value[9]])),
+        );
+        fields.insert(
+            "inbound_streams".to_string(),
+            json!(u16::from_be_bytes([value[10], value[11]])),
+        );
+        fields.insert(
+            "initial_tsn".to_string(),
+            json!(u32::from_be_bytes([
+                value[12], value[13], value[14], value[15]
+            ])),
+        );
+        fields.insert("parameter_count".to_string(), json!(parameters.len()));
+        fields.insert("parameters".to_string(), Value::Array(parameters));
+    }
+    Value::Object(fields.into_iter().collect())
+}
+
+fn sctp_parameter_fields(raw: &[u8]) -> Option<Vec<Value>> {
+    let mut parameters = Vec::new();
+    let mut offset = 0;
+    while offset < raw.len() {
+        if raw.len() - offset < 4 {
+            return None;
+        }
+        let parameter_type = u16::from_be_bytes([raw[offset], raw[offset + 1]]);
+        let declared_length = usize::from(u16::from_be_bytes([raw[offset + 2], raw[offset + 3]]));
+        if declared_length < 4 {
+            return None;
+        }
+        let padded_length = declared_length + ((4 - (declared_length % 4)) % 4);
+        if offset + padded_length > raw.len() {
+            return None;
+        }
+        let value = &raw[offset + 4..offset + declared_length];
+        let padding = &raw[offset + declared_length..offset + padded_length];
+        parameters.push(json!({
+            "type": parameter_type,
+            "type_name": sctp_parameter_type_name(parameter_type),
+            "length": declared_length,
+            "value_hex": hex_bytes(value),
+            "padding_hex": hex_bytes(padding),
+            "padding_length": padding.len(),
+        }));
+        offset += padded_length;
+    }
+    Some(parameters)
+}
+
+fn sctp_parameter_type_name(value: u16) -> &'static str {
+    match value {
+        5 => "ipv4_address",
+        6 => "ipv6_address",
+        7 => "state_cookie",
+        8 => "unrecognized_parameter",
+        9 => "cookie_preservative",
+        11 => "host_name_address",
+        12 => "supported_address_types",
+        0x8000 => "ecn_capable",
+        0x8001 => "zero_checksum_acceptable",
+        0x8002 => "random",
+        0x8003 => "chunk_list",
+        0x8004 => "requested_hmac_algorithm",
+        0x8005 => "padding",
+        0x8006 => "dtls_key_management",
+        0x8008 => "supported_extensions",
+        0xC000 => "forward_tsn_supported",
+        _ => "unknown",
+    }
+}
+
+fn sctp_chunk_type_name(value: u8) -> &'static str {
+    match value {
+        0 => "data",
+        1 => "init",
+        2 => "init_ack",
+        3 => "sack",
+        4 => "heartbeat",
+        5 => "heartbeat_ack",
+        6 => "abort",
+        7 => "shutdown",
+        8 => "shutdown_ack",
+        9 => "error",
+        10 => "cookie_echo",
+        11 => "cookie_ack",
+        12 => "ecne",
+        13 => "cwr",
+        14 => "shutdown_complete",
+        15 => "auth",
+        64 => "i_data",
+        128 => "asconf_ack",
+        130 => "re_config",
+        132 => "pad",
+        192 => "forward_tsn",
+        193 => "asconf",
+        194 => "i_forward_tsn",
+        _ => "unknown",
+    }
 }
 
 fn bgp_fields(layer: &Bgp) -> BTreeMap<String, Value> {

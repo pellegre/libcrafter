@@ -74,7 +74,7 @@ class WireTransferEndpointTest(unittest.TestCase):
                         "-o",
                         "ServerAliveInterval=5",
                         "-o",
-                        "ServerAliveCountMax=2",
+                        "ServerAliveCountMax=36",
                         str(local_path),
                         "ubuntu@198.51.100.20:/tmp/request.json",
                     )
@@ -147,7 +147,7 @@ class WireTransferEndpointTest(unittest.TestCase):
                         "-o",
                         "ServerAliveInterval=5",
                         "-o",
-                        "ServerAliveCountMax=2",
+                        "ServerAliveCountMax=36",
                         str(local_path),
                         "ubuntu@127.0.0.1:/tmp/request.json",
                     )
@@ -199,7 +199,7 @@ class WireTransferEndpointTest(unittest.TestCase):
                         "-o",
                         "ServerAliveInterval=5",
                         "-o",
-                        "ServerAliveCountMax=2",
+                        "ServerAliveCountMax=36",
                         "ubuntu@198.51.100.20:/tmp/response.json",
                         str(local_path),
                     )
@@ -267,7 +267,7 @@ class WireTransferEndpointTest(unittest.TestCase):
                         "-o",
                         "ServerAliveInterval=5",
                         "-o",
-                        "ServerAliveCountMax=2",
+                        "ServerAliveCountMax=36",
                         "ubuntu@127.0.0.1:/tmp/response.json",
                         str(local_path),
                     )
@@ -335,7 +335,7 @@ class WireTransferEndpointTest(unittest.TestCase):
                     "-o",
                     "ServerAliveInterval=5",
                     "-o",
-                    "ServerAliveCountMax=2",
+                    "ServerAliveCountMax=36",
                     "ubuntu@198.51.100.20:/var/tmp/wire/report.tar.gz",
                     str(artifact_dir / "report.tar.gz"),
                 ),
@@ -412,7 +412,7 @@ class WireTransferEndpointTest(unittest.TestCase):
                         "-o",
                         "ServerAliveInterval=5",
                         "-o",
-                        "ServerAliveCountMax=2",
+                        "ServerAliveCountMax=36",
                         "ubuntu@127.0.0.1",
                     ],
                 )

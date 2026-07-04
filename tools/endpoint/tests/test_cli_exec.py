@@ -59,7 +59,7 @@ class WireExecEndpointTest(unittest.TestCase):
                         "-o",
                         "ServerAliveInterval=5",
                         "-o",
-                        "ServerAliveCountMax=2",
+                        "ServerAliveCountMax=36",
                         "ubuntu@198.51.100.20",
                         "printf hello",
                     )
@@ -121,7 +121,7 @@ class WireExecEndpointTest(unittest.TestCase):
                         "-o",
                         "ServerAliveInterval=5",
                         "-o",
-                        "ServerAliveCountMax=2",
+                        "ServerAliveCountMax=36",
                         "ubuntu@127.0.0.1",
                         "ip -brief addr",
                     )

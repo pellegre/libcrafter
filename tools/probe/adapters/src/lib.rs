@@ -31,6 +31,7 @@ pub mod ntp;
 pub mod ospf;
 pub mod quic;
 pub mod rip;
+pub mod sctp;
 pub mod snmp;
 pub mod ssdp;
 pub mod tcp;
@@ -163,6 +164,7 @@ pub(crate) mod test_support {
             protocol: None,
             documentation_prefixes: None,
             packet: None,
+            sctp: None,
             tls: None,
             expected_records: None,
             capture: None,

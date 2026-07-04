@@ -90,10 +90,9 @@ PROBE_CAPABILITY_NAMES = (
     # rides the IPv4-unicast + controlled-services substrate and is not required
     # for a dry-run, which plans the OSPF exchange without provisioning the peer.
     "ospf_neighbor_peer",
-    # SNMP peer behavior is a controlled UDP/161 or UDP/162 service on the target
-    # endpoint. Dry-runs render the exchange and target-service setup without
-    # sending traffic; live runs require provider-backed controlled services.
+    # SNMP/SCTP peer behavior is plugin-derived controlled-service metadata.
     "snmp_peer",
+    "sctp_controlled_peer",
     # SSDP live-capable probe cases need a provider-backed controlled UDP/1900
     # responder, multicast delivery/capture on the relevant address family, and
     # for IPv6 link-local multicast, provider MAC metadata so live address
@@ -396,6 +395,7 @@ def probe_capabilities_from_lab_capabilities(
                 "ospf_peer",
             ],
             "snmp_peer": ["ipv4_unicast", "controlled_services", "snmp_peer"],
+            "sctp_controlled_peer": ["ipv4_unicast", "controlled_services", "sctp_controlled_peer"],
             "ssdp_offline_plan": ["offline_plan"],
             "ssdp_controlled_responder": [
                 "controlled_services",

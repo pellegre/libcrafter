@@ -460,6 +460,32 @@ class MqttGeneratorTest(unittest.TestCase):
                     self.assertIn(packet_type, {"pingreq", "pingresp", "disconnect"})
                     self.assertEqual(mqtt.get("flags"), "default")
 
+    def test_ci_profile_keeps_tcp_feature_cases_off_mqtt_stacks(self) -> None:
+        plans = generate_plans(
+            seed=12345,
+            profile="ci",
+            count=100,
+            backend=_BACKEND,
+        )
+
+        mqtt_plans = [plan for plan in plans if "mqtt" in plan.stack]
+        self.assertTrue(mqtt_plans)
+        for plan in mqtt_plans:
+            with self.subTest(case=plan.case, stack=plan.stack):
+                self.assertNotIn("tcp_header", plan.feature_tags)
+                self.assertFalse(plan.case.startswith("tcp-header-"))
+
+    def test_explicit_tcp_feature_rejects_mqtt_family_stacks(self) -> None:
+        with self.assertRaisesRegex(ValueError, "no stack specs match"):
+            generate_plans(
+                seed=1,
+                profile="ci",
+                count=1,
+                backend=_BACKEND,
+                family="mqtt",
+                feature="tcp_header",
+            )
+
 
 class ContractOnlyGeneratorTest(unittest.TestCase):
     def test_ci_profile_does_not_emit_contract_only_ble_cases(self) -> None:

@@ -14,6 +14,7 @@ from tools.oracle.engine.backends.scapy.protocols import ipv6 as ipv6_scapy
 from tools.oracle.engine.backends.scapy.protocols import mdns as mdns_scapy
 from tools.oracle.engine.backends.scapy.protocols import rip as rip_scapy
 from tools.oracle.engine.backends.scapy.protocols import ripng as ripng_scapy
+from tools.oracle.engine.backends.scapy.protocols import sctp as sctp_scapy
 from tools.oracle.engine.backends.scapy.protocols import udp as udp_scapy
 from tools.oracle.engine.generator import generate_plans
 from tools.oracle.engine.model import PacketPlan
@@ -135,6 +136,58 @@ class ScapyL2Ipv4EncodeDecodeTest(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual(packets._ipv4_flags(value), expected)
         self.assertEqual(packets._ipv4_flags(["reserved", "mf"]), 0b101)
+
+
+class ScapySctpBackendTest(unittest.TestCase):
+    def test_sctp_plugin_registers_raw_fallback(self) -> None:
+        plugin = SCAPY_REGISTRY.get("sctp")
+
+        self.assertIsNotNone(plugin)
+        self.assertEqual(plugin.scapy_class, "Raw")
+        self.assertIn("verification_tag", plugin.supported_fields)
+        self.assertIn(("SCTP", "sctp"), plugin.layer_aliases)
+
+    def test_sctp_raw_packet_uses_valid_crc32c(self) -> None:
+        raw = sctp_scapy._sctp_packet_bytes(
+            {
+                "src_port": 49152,
+                "dst_port": 5000,
+                "verification_tag": 0x11223344,
+                "chunks": ["data"],
+                "payload_protocol_identifier": "webrtc_string",
+                "user_data_text": "crafter-sctp-fixture",
+            }
+        )
+
+        parsed = sctp_scapy._parse_sctp_fields(raw)
+
+        self.assertEqual(parsed["checksum_status"], "valid")
+        self.assertEqual(parsed["chunk_count"], 1)
+        self.assertEqual(parsed["chunks"][0]["type_name"], "data")
+        self.assertEqual(parsed["chunks"][0]["user_data_ascii"], "crafter-sctp-fixture")
+
+    def test_generated_sctp_smoke_plan_normalizes_sctp_layer(self) -> None:
+        plan = generate_plans(
+            seed=132,
+            profile="sctp-smoke",
+            count=1,
+            backend="scapy",
+            family="sctp",
+            case="sctp-native-ipv4-data",
+        )[0]
+
+        vector = packets.encode_packet_plan(plan)
+        decoded = normalize.decode_bytes(
+            vector.to_bytes(),
+            root=vector.root,
+            source_hex=vector.raw_hex,
+            feature_tags=plan.feature_tags,
+        )
+
+        self.assertEqual(decoded.layers, ["ipv4", "sctp"])
+        self.assertEqual(decoded.fields["ipv4"]["protocol"], 132)
+        self.assertEqual(decoded.fields["sctp"]["checksum_status"], "valid")
+        self.assertEqual(decoded.fields["sctp"]["chunks"][0]["type_name"], "data")
 
 
 class _MdnsFakeScapy:

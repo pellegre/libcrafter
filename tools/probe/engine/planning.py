@@ -208,6 +208,13 @@ from .protocols.rip import (  # noqa: F401  (re-exported for identity/back-compa
 from .protocols.snmp import (  # noqa: F401  (re-exported for identity/back-compat)
     _snmp_probe_plan,
 )
+# The SCTP planning surface (planned-only SCTP behavior cases and their shared
+# builder) lives in the SCTP plugin module. Re-import the moved builder so
+# ``planning._sctp_probe_plan`` resolves to the same function object the plugin
+# registered and the merged ``PLAN_BUILDERS`` exposes.
+from .protocols.sctp import (  # noqa: F401  (re-exported for identity)
+    _sctp_probe_plan,
+)
 # The SSDP planning surface (the planned-only SSDP discovery cases' shared
 # ``_ssdp_probe_plan`` builder) lives in the SSDP plugin module. Re-import the
 # moved builder so ``planning._ssdp_probe_plan`` resolves to the same function

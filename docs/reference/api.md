@@ -466,6 +466,75 @@ because full UDP fragmentation/reassembly is not in scope.
 `requires_ipv6_zero_checksum_exception()` when a tool explicitly supports the
 RFC 6935/RFC 6936 tunnel exception model.
 
+## SCTP Packets
+
+SCTP support is exported through `crafter::prelude::*` as typed packet-layer
+values such as `Sctp`, `SctpChunk`, `SctpParameter`, `SctpErrorCause`,
+`SctpChecksumStatus`, and the SCTP codepoint constants. It composes directly
+under IPv4 or IPv6, and `compile()` fills IP protocol / next-header `132`, SCTP
+chunk lengths, padding, and CRC32c checksum values when those fields are unset.
+
+```rust
+let packet =
+    Ipv4::new().src("192.0.2.10")?.dst("198.51.100.20")?
+    / Sctp::data(
+        0x0102_0304,
+        1,
+        1,
+        SCTP_PPID_WEBRTC_STRING,
+        b"payload".to_vec(),
+    )
+    .sport(5_000)
+    .dport(5_001)
+    .vtag(0x1122_3344);
+
+let bytes = packet.compile()?;
+let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+let sctp = decoded.layer::<Sctp>().ok_or("missing SCTP")?;
+
+assert_eq!(sctp.checksum_status(), SctpChecksumStatus::Valid);
+assert_eq!(sctp.chunk_count(), 1);
+```
+
+Native SCTP decode is selected from IPv4 protocol or IPv6 next-header value
+`132`. RFC 6951 UDP encapsulation is also supported on
+`SCTP_UDP_ENCAPSULATION_PORT` (`9899`) after a conservative payload shape
+check:
+
+```rust
+let packet =
+    Ipv4::new().src("192.0.2.30")?.dst("198.51.100.30")?
+    / Udp::new().sport(49_152).dport(SCTP_UDP_ENCAPSULATION_PORT)
+    / Sctp::data(0x1111_2222, 1, 2, SCTP_PPID_WEBRTC_STRING, b"udp-sctp".to_vec())
+        .sport(5_010)
+        .dport(5_011)
+        .vtag(0x1020_3040);
+
+let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, packet.compile()?.as_bytes())?;
+assert!(decoded.layer::<Udp>().is_some());
+assert!(decoded.layer::<Sctp>().is_some());
+```
+
+UDP/9899 payloads that do not have SCTP structure remain `Raw`, and custom
+registries with application decoding disabled keep SCTP bytes raw behind UDP.
+
+Unknown SCTP chunk types, parameter types, error causes, PPIDs, flags, and
+extension values remain inspectable packet data when structurally valid.
+Use raw-preserving helpers such as `SctpChunk::unknown`,
+`SctpParameter::unknown`, `SctpUnknownParameter`, and
+`SctpErrorCause::unknown` when a generated tool needs future, private,
+reserved, or malformed codepoints. Truncated common headers and bad chunk,
+parameter, or cause lengths return structured errors with context rather than
+panicking.
+
+`Sctp::checksum(value)` preserves explicit checksums, including intentionally
+wrong values. Decode reports `SctpChecksumStatus::Valid`,
+`SctpChecksumStatus::Invalid`, `SctpChecksumStatus::ZeroChecksum`, or
+`SctpChecksumStatus::NotChecked`; invalid or zero checksums do not discard the
+packet. See [SCTP wire coverage](../guide/sctp.md) for the full chunk,
+parameter, fixture, and live-safety boundary. SCTP is a packet primitive, not
+an association stack or socket API.
+
 ## DHCPv4 Packets
 
 `Dhcpv4` is a packet primitive: it crafts and inspects BOOTP/DHCPv4 frames but
@@ -645,6 +714,7 @@ let targets = Ipv4Range::parse("192.0.2.1-20")?;
 | TCP | `Tcp` |
 | UDP | `Udp` |
 | UDP surplus options | `UdpOptions`, `UdpOption` |
+| SCTP | `Sctp`, `SctpChunk`, `SctpParameter`, `SctpErrorCause` |
 | ICMPv4 | `Icmpv4` |
 | ICMPv6 | `Icmpv6`, `Icmpv6Body` |
 | ICMPv6 Neighbor Discovery options | `NdpOptions`, `NdpOption` |

@@ -60,6 +60,7 @@ from .protocols.mdns import (
 from .protocols.ntp import canonicalize_ntp_payload
 from .protocols.quic import canonicalize_quic_payload
 from .protocols.ssdp import canonicalize_ssdp_payload
+from .protocols.sctp import canonicalize_sctp_payload
 from .protocols.tls import canonicalize_tls_payload
 
 
@@ -429,6 +430,13 @@ def normalize_packet(
         normalized_fields,
         source_hex=source_hex,
         root=_normalize_root_name(root),
+    )
+    canonicalize_sctp_payload(
+        packet,
+        normalized_layers,
+        normalized_fields,
+        root=_normalize_root_name(root),
+        source_hex=source_hex,
     )
     if source_hex is not None:
         _canonicalize_bgp_from_wire(source_hex, normalized_fields)

@@ -694,6 +694,38 @@ fn ipv4_protocol_autofill_preserves_explicit_compile_overrides() -> crafter::Res
 }
 
 #[test]
+fn sctp_ipv4_autofill_sets_protocol_and_preserves_explicit_override() -> crafter::Result<()> {
+    let packet = Ipv4::new().src(DOC_SRC).dst(DOC_DST)
+        / Sctp::new().sport(5_000).dport(5_001).vtag(0x1122_3344);
+
+    let compiled = packet.compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_eq!(bytes[9], IPPROTO_SCTP, "SCTP protocol autofill");
+    assert_eq!(read_u16_at(bytes, 2), 32, "IPv4 total length");
+    assert_eq!(
+        ones_complement_checksum(&bytes[..20]),
+        0,
+        "IPv4 header checksum"
+    );
+
+    let explicit = (Ipv4::new()
+        .src(DOC_SRC)
+        .dst(DOC_DST)
+        .protocol(IPPROTO_EXPERIMENTAL_1)
+        / Sctp::new().sport(5_002).dport(5_003))
+    .compile()?;
+
+    assert_eq!(
+        explicit.as_bytes()[9],
+        IPPROTO_EXPERIMENTAL_1,
+        "explicit IPv4 protocol override"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn ipv4_length_boundaries_accept_header_payload_and_trailing_bytes() -> crafter::Result<()> {
     let header_only =
         Packet::from_layer(Ipv4::new().src(DOC_SRC).dst(DOC_DST).ttl(32)).compile()?;

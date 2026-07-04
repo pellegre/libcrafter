@@ -518,6 +518,27 @@ def _offline_required_capabilities(
     return ()
 
 
+def _optional_wireshark_offline_skip(
+    args: argparse.Namespace,
+    required: Sequence[BackendCapabilityName],
+) -> bool:
+    """Return true for parser-optional Wireshark SCTP offline skips.
+
+    SCTP Wireshark coverage is parser-only and optional: when `tshark` is not
+    installed, the capability gate has already written a structured unsupported
+    report. Return success for this focused SCTP offline profile so CI machines
+    without tshark record a deterministic skip instead of a hard failure.
+    """
+
+    return (
+        getattr(args, "backend", None) == "wireshark"
+        and getattr(args, "family", None) == "sctp"
+        and normalize_direction(getattr(args, "direction", "backend_to_libcrafter"))
+        in {"backend_to_libcrafter", "libcrafter_to_backend"}
+        and tuple(required) == ("decode",)
+    )
+
+
 def _offline_corpus_plans(
     args: argparse.Namespace,
 ) -> tuple[list[PacketPlan], list[str], JSONObject]:
@@ -5588,6 +5609,8 @@ def _offline(args: argparse.Namespace) -> int:
             selected_specs=GENERATOR_SELECTED_SPECS,
         )
         if unsupported is not None:
+            if _optional_wireshark_offline_skip(args, required_capabilities):
+                return 0
             return unsupported
         if args.backend not in {"scapy", "wireshark"}:
             return _backend_not_implemented_report(
@@ -7076,6 +7099,7 @@ def _canonical_pcap_layers(value: object) -> list[str]:
         "Ipv6DestinationOptionsHeader": "ipv6_destination_options",
         "Ipv6HopByHopOptionsHeader": "ipv6_hop_by_hop",
         "SSDP": "ssdp",
+        "Sctp": "sctp",
         "Snmp": "snmp",
     }
     layers = [aliases.get(layer, layer) for layer in _string_values(value)]
@@ -8425,11 +8449,12 @@ _SUITE_FEATURE_BY_FAMILY = {
     "ip": "ip_fragment_transforms",
     "ipv6": "ipv6_fragment_routing",
     "quic": "quic_behavior",
+    "sctp": "sctp_core",
     "snmp": ("snmp_basic", "snmp_pdu_matrix", "snmp_v3"),
     "ssdp": "ssdp_core",
     "tls": ("tls_records", "tls_handshake", "tls_extensions"),
 }
-_LAYER_ONLY_SUITE_FAMILIES = frozenset({"igmp", "ssdp"})
+_LAYER_ONLY_SUITE_FAMILIES = frozenset({"igmp", "sctp", "ssdp"})
 _SUITE_OFFLINE_DIRECTIONS = (
     "backend_to_libcrafter",
     "libcrafter_to_backend",

@@ -9,13 +9,16 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TypeAlias
 
+from tools.appliance.engine.image import (
+    APPLIANCE_IMAGE_CONTEXT_LABEL,
+    appliance_image_context_digest,
+)
 from tools.appliance.engine.profiles import resolve_profile
 from tools.appliance.engine.runtime import (
-    CONTAINER_ARTIFACT_DIR,
-    CONTAINER_WORK_DIR,
     DockerRunPlan,
     render_docker_run_plan,
 )
+from tools.endpoint.engine.appliance import DEFAULT_DOCKER_INSTALL_SCRIPT
 
 from .model import (
     JSONObject,
@@ -49,6 +52,12 @@ DEFAULT_BOOTSTRAP_TIMEOUT_SECONDS = 1800.0
 DEFAULT_REMOTE_COMMAND_TIMEOUT_SECONDS = 900.0
 WIRE_ENTRYPOINT = "tools/endpoint/run"
 BOOTSTRAP_ARTIFACT_DIR_ENV = "LIBCRAFTER_BOOTSTRAP_ARTIFACT_DIR"
+APPLIANCE_PREPARE_TIMEOUT_SECONDS = 1800.0
+CLOUD_INIT_WAIT_LINE = (
+    "if command -v cloud-init >/dev/null 2>&1; then "
+    "timeout \"${LIBCRAFTER_CLOUD_INIT_WAIT_SECONDS:-180}\" "
+    "cloud-init status --wait >/dev/null 2>&1 || true; fi"
+)
 
 
 class RepoArchiveError(RuntimeError):
@@ -430,6 +439,48 @@ def push_repository_to_session(
 
         bootstrap = _bootstrap_command_for(hooks, context)
         if bootstrap is not None:
+            prepare = _appliance_prepare_command(context)
+            workload_artifact_label = "04-workload-bootstrap"
+            if prepare is not None:
+                prepare_metadata = {
+                    "endpoint_id": endpoint.endpoint_id,
+                    "remote_archive": remote_archive,
+                    "remote_dir": target_dir,
+                    "remote_artifact_root": target_artifact_root,
+                    "phase": "appliance-prepare",
+                    "context": context.to_dict(),
+                }
+                prepare_metadata.update(prepare.metadata)
+                _run_endpoint_step(
+                    endpoint_cli.exec,
+                    endpoint.endpoint_id,
+                    prepare.argv,
+                    purpose="prepare appliance host",
+                    role=endpoint.role,
+                    operation="endpoint.exec",
+                    fallback_argv=[
+                        WIRE_ENTRYPOINT,
+                        "exec",
+                        endpoint.endpoint_id,
+                        "--",
+                        *prepare.argv,
+                    ],
+                    timeout=APPLIANCE_PREPARE_TIMEOUT_SECONDS,
+                    metadata=prepare_metadata,
+                    command_records=command_records,
+                    endpoint_commands=endpoint_commands,
+                    endpoint_errors=endpoint_errors,
+                    artifact_dir=endpoint_artifact_dir,
+                    artifact_label="04-appliance-prepare",
+                )
+                workload_artifact_label = "05-workload-bootstrap"
+                if endpoint_errors:
+                    endpoint_results.append(
+                        _endpoint_result(endpoint, endpoint_commands, endpoint_errors)
+                    )
+                    errors.extend(endpoint_errors)
+                    continue
+
             execution = _bootstrap_execution_command(context, bootstrap)
             metadata = {
                 "endpoint_id": endpoint.endpoint_id,
@@ -461,7 +512,7 @@ def push_repository_to_session(
                 endpoint_commands=endpoint_commands,
                 endpoint_errors=endpoint_errors,
                 artifact_dir=endpoint_artifact_dir,
-                artifact_label="04-workload-bootstrap",
+                artifact_label=workload_artifact_label,
             )
 
         endpoint_results.append(_endpoint_result(endpoint, endpoint_commands, endpoint_errors))
@@ -789,13 +840,15 @@ def _bootstrap_execution_command(
 
     env = _appliance_bootstrap_env(
         context,
-        work_dir=CONTAINER_WORK_DIR,
-        artifact_dir=CONTAINER_ARTIFACT_DIR,
+        work_dir=context.remote_dir,
+        artifact_dir=artifact_dir,
     )
     run_plan = _appliance_bootstrap_run_plan(
         runtime,
         context=context,
         artifact_dir=artifact_dir,
+        container_work_dir=context.remote_dir,
+        container_artifact_dir=artifact_dir,
         bootstrap=bootstrap,
         env=env,
     )
@@ -811,13 +864,136 @@ def _bootstrap_execution_command(
                 "original_argv": list(bootstrap.argv),
                 "work_dir": context.remote_dir,
                 "artifact_dir": artifact_dir,
-                "container_work_dir": CONTAINER_WORK_DIR,
-                "container_artifact_dir": CONTAINER_ARTIFACT_DIR,
+                "container_work_dir": run_plan.container_work_dir,
+                "container_artifact_dir": run_plan.container_artifact_dir,
                 "environment": env,
                 "docker_run_plan": run_plan.to_dict(),
             }
         },
     )
+
+
+def _appliance_prepare_command(context: RepoBootstrapContext) -> _BootstrapExecutionCommand | None:
+    runtime = _appliance_runtime_for(context)
+    if runtime is None:
+        return None
+    if _appliance_runtime_execution_mode(runtime) == "endpoint-container":
+        return None
+    if not _appliance_runtime_requests_docker_setup(runtime):
+        return None
+
+    artifact_dir = _appliance_role_artifact_dir(context)
+    docker_command = _appliance_docker_command(runtime)
+    remote_context_dir = posixpath.join(context.remote_dir, "tools", "appliance")
+    remote_dockerfile = posixpath.join(remote_context_dir, "Dockerfile")
+    context_digest = appliance_image_context_digest()
+    command = _appliance_prepare_shell_command(
+        artifact_dir=artifact_dir,
+        remote_dir=context.remote_dir,
+        remote_context_dir=remote_context_dir,
+        remote_dockerfile=remote_dockerfile,
+        docker_command=docker_command,
+        image_tag=runtime.image_tag,
+        context_digest=context_digest,
+    )
+    return _BootstrapExecutionCommand(
+        argv=command,
+        metadata={
+            "appliance": {
+                "prepare": True,
+                "runtime": runtime.to_dict(),
+                "profile": runtime.profile,
+                "image_tag": runtime.image_tag,
+                "docker_command": docker_command,
+                "docker_setup": _appliance_runtime_metadata_string(
+                    runtime,
+                    "docker_setup",
+                ),
+                "docker_host_readiness": _appliance_runtime_metadata_string(
+                    runtime,
+                    "docker_host_readiness",
+                ),
+                "work_dir": context.remote_dir,
+                "artifact_dir": artifact_dir,
+                "remote_context_dir": remote_context_dir,
+                "remote_dockerfile": remote_dockerfile,
+                "context_label": APPLIANCE_IMAGE_CONTEXT_LABEL,
+                "context_digest": context_digest,
+            }
+        },
+    )
+
+
+def _appliance_prepare_shell_command(
+    *,
+    artifact_dir: str,
+    remote_dir: str,
+    remote_context_dir: str,
+    remote_dockerfile: str,
+    docker_command: str,
+    image_tag: str,
+    context_digest: str,
+) -> list[str]:
+    docker = shlex.quote(docker_command)
+    image = shlex.quote(image_tag)
+    context_dir = shlex.quote(remote_context_dir)
+    dockerfile = shlex.quote(remote_dockerfile)
+    context_label = shlex.quote(f"{APPLIANCE_IMAGE_CONTEXT_LABEL}={context_digest}")
+    lines = [
+        "set -euo pipefail",
+        CLOUD_INIT_WAIT_LINE,
+        f"mkdir -p {shlex.quote(artifact_dir)}",
+        f"cd {shlex.quote(remote_dir)}",
+    ]
+    if docker_command == "docker":
+        lines.extend(
+            [
+                "if ! command -v docker >/dev/null 2>&1; then",
+                DEFAULT_DOCKER_INSTALL_SCRIPT,
+                "fi",
+                "command -v docker >/dev/null 2>&1",
+            ]
+        )
+    else:
+        lines.append(f"command -v {docker} >/dev/null 2>&1")
+    lines.extend(
+        [
+            f"{docker} info >/dev/null",
+            f"if ! {docker} image inspect {image} >/dev/null 2>&1; then",
+            f"  {docker} build -t {image} --label {context_label} "
+            f"-f {dockerfile} {context_dir}",
+            "fi",
+        ]
+    )
+    return ["bash", "-lc", "\n".join(lines)]
+
+
+def _appliance_runtime_requests_docker_setup(runtime: LabApplianceRuntime) -> bool:
+    return _appliance_runtime_metadata_string(runtime, "docker_setup") == "install-or-verify"
+
+
+def _appliance_docker_command(runtime: LabApplianceRuntime) -> str:
+    return (
+        _optional_policy_string(runtime.container_policy, "docker_command")
+        or _appliance_runtime_metadata_string(runtime, "docker_command")
+        or "docker"
+    )
+
+
+def _appliance_runtime_metadata_string(
+    runtime: LabApplianceRuntime,
+    key: str,
+) -> str | None:
+    for metadata in (runtime.container_policy, runtime.check_metadata, runtime.metadata):
+        value = metadata.get(key)
+        if isinstance(value, str) and value:
+            return value
+    endpoint_appliance = runtime.metadata.get("endpoint_appliance")
+    if isinstance(endpoint_appliance, Mapping):
+        value = endpoint_appliance.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
 
 
 def _appliance_runtime_for(context: RepoBootstrapContext) -> LabApplianceRuntime | None:
@@ -851,6 +1027,8 @@ def _appliance_bootstrap_run_plan(
     *,
     context: RepoBootstrapContext,
     artifact_dir: str,
+    container_work_dir: str,
+    container_artifact_dir: str,
     bootstrap: RepoBootstrapCommand,
     env: Mapping[str, str],
 ) -> DockerRunPlan:
@@ -858,7 +1036,7 @@ def _appliance_bootstrap_run_plan(
     policy_env = _policy_environment(policy, "environment")
     policy_env.update(_policy_environment(policy, "env"))
     profile = resolve_profile(runtime.profile)
-    return render_docker_run_plan(
+    run_plan = render_docker_run_plan(
         profile,
         image_tag=runtime.image_tag,
         work_dir=context.remote_dir,
@@ -872,6 +1050,12 @@ def _appliance_bootstrap_run_plan(
         devices=_policy_object_list(policy, "devices"),
         mounts=_policy_object_list(policy, "mounts"),
         docker_command=_optional_policy_string(policy, "docker_command") or "docker",
+    )
+    return replace(
+        run_plan,
+        container_work_dir=container_work_dir,
+        container_artifact_dir=container_artifact_dir,
+        docker_argv=[],
     )
 
 

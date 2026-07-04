@@ -128,15 +128,16 @@ mod ipv4_protocol {
 
     #[test]
     fn ip_protocol_source_backed_unsupported_values_decode_as_raw_payload() {
-        // ESP (protocol 50), AH (protocol 51), and OSPF (protocol 89) are
+        // ESP (protocol 50), AH (protocol 51), OSPF (protocol 89), and SCTP
+        // (protocol 132) are
         // intentionally absent: the built-in registry now decodes them to typed
         // layers (an opaque `Esp` with an 8-octet minimum, an `Ah` with its
         // 12-octet fixed header, an `Ospfv2` with a 24-octet common header that
-        // surfaces a structured truncation error on short input), not a `Raw`
-        // fallback. Their decode is covered by the ESP/AH and OSPF registry tests.
+        // surfaces a structured truncation error on short input, and an `Sctp`
+        // with a 12-octet common header), not a `Raw` fallback. Their decode is
+        // covered by protocol-specific registry tests.
         let cases = [
             Ipv4Protocol::Gre,
-            Ipv4Protocol::Sctp,
             Ipv4Protocol::Experimental1,
             Ipv4Protocol::Experimental2,
         ];

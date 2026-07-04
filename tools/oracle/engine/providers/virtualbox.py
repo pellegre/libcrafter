@@ -470,6 +470,7 @@ def virtualbox_endpoint_remote_command(
                 "set -euo pipefail",
                 f"cd {quoted_remote_dir}",
                 'if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi',
+                'if [ -f "/usr/local/cargo/env" ]; then . "/usr/local/cargo/env"; fi',
                 (
                     "cargo run -q -p oracle-adapters --bin live_endpoint -- "
                     f"--live --input {quoted_request} --out {quoted_out}"
@@ -481,6 +482,8 @@ def virtualbox_endpoint_remote_command(
             [
                 "set -euo pipefail",
                 f"cd {quoted_remote_dir}",
+                'if [ -f "$HOME/.local/bin/env" ]; then . "$HOME/.local/bin/env"; fi',
+                'export PATH="$HOME/.local/bin:$PATH"',
                 'export PYTHONPATH="tools/oracle${PYTHONPATH:+:$PYTHONPATH}"',
                 (
                     "python3 -m engine.backends.scapy.live "

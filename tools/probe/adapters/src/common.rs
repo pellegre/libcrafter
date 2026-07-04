@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::{
-    arp, dhcpv4, dhcpv6, dns, icmp, mdns, mqtt, ndp, ntp, ospf, quic, rip, snmp, ssdp, tcp, tls,
-    udp,
+    arp, dhcpv4, dhcpv6, dns, icmp, mdns, mqtt, ndp, ntp, ospf, quic, rip, sctp, snmp, ssdp, tcp,
+    tls, udp,
 };
 
 pub type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
@@ -372,6 +372,8 @@ pub struct ProbePlan {
     pub documentation_prefixes: Option<Vec<String>>,
     #[serde(default)]
     pub packet: Option<Value>,
+    #[serde(default)]
+    pub sctp: Option<Value>,
     #[serde(default)]
     pub tls: Option<Value>,
     #[serde(default)]
@@ -1231,6 +1233,9 @@ fn dispatch_case(
             | "snmp-notification-trap"
             | "snmpv3-engine-discovery-report",
         ) => snmp::run_snmp_dry_run(request, plan),
+        (RunMode::DryRun, case) if sctp::is_sctp_case(case) => {
+            sctp::run_sctp_dry_run(request, plan)
+        }
         (
             RunMode::Live,
             "snmp-get-response"
@@ -1475,6 +1480,7 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "protocol": plan.protocol,
         "documentation_prefixes": plan.documentation_prefixes,
         "packet": plan.packet,
+        "sctp": plan.sctp,
         "tls": plan.tls,
         "expected_records": plan.expected_records,
         "capture": plan.capture,
@@ -1753,6 +1759,7 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
                 plan.source_port.unwrap_or(0),
             )
         }
+        case if sctp::is_sctp_case(case) => sctp::capture_filter(plan),
         case if ntp::is_ntp_case(case) => ntp::capture_filter(plan),
         "ttl-expired" => format!(
             "icmp and src host {} and dst host {}",
@@ -2116,6 +2123,7 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "snmp_request": plan.snmp_request,
             "expected_snmp_response": plan.expected_snmp_response,
         }),
+        case if sctp::is_sctp_case(case) => sctp::target_service_json(plan),
         case if ntp::is_ntp_case(case) => ntp::target_service_json(plan),
         "dhcpv4-discover-offer" => json!({
             "required": true,
@@ -2648,6 +2656,7 @@ pub fn validation_json(plan: &ProbePlan) -> Value {
             "destination_port": plan.source_port,
             "expected_snmp_response": plan.expected_snmp_response,
         }),
+        case if sctp::is_sctp_case(case) => sctp::validation_json(plan),
         case if ntp::is_ntp_case(case) => ntp::validation_json(plan),
         "mdns-ipv4-multicast-browse"
         | "mdns-ipv6-multicast-browse"

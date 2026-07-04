@@ -25,7 +25,7 @@ use crate::protocols::ipsec::natt::{is_non_esp_marker, NatTraversal, NON_ESP_MAR
 use crate::protocols::ipsec::sa::SecurityAssociation;
 use crate::protocols::ipv4::{
     append_ipv4_packet_with_registry, IPPROTO_AH, IPPROTO_ESP, IPPROTO_ICMP, IPPROTO_ICMPV6,
-    IPPROTO_OSPF, IPPROTO_TCP, IPPROTO_UDP,
+    IPPROTO_OSPF, IPPROTO_SCTP, IPPROTO_TCP, IPPROTO_UDP,
 };
 use crate::protocols::ipv6::{append_ipv6_packet_with_registry, IPPROTO_IPV6_AH, IPPROTO_IPV6_ESP};
 use crate::protocols::mqtt::{decode::append_mqtt_packet_with_registry, MQTT_PORT};
@@ -60,7 +60,8 @@ use crate::protocols::tls::{
     decode::{append_tls_packet_with_registry, looks_like_tls_payload},
 };
 use crate::protocols::transport::{
-    append_tcp_packet_with_registry, append_udp_packet_with_registry,
+    append_sctp_packet_with_registry, append_tcp_packet_with_registry,
+    append_udp_packet_with_registry, looks_like_sctp_udp_encapsulation,
 };
 
 /// UDP port for IKEv2 (RFC 7296 §2; IANA "isakmp" 500). An IKE message on this
@@ -254,6 +255,9 @@ impl ProtocolRegistry {
         registry.bind_ipv4_protocol_with_registry(IPPROTO_UDP, |registry, packet, payload| {
             append_udp_packet_with_registry(registry, packet, payload)
         });
+        registry.bind_ipv4_protocol_with_registry(IPPROTO_SCTP, |registry, packet, payload| {
+            append_sctp_packet_with_registry(registry, packet, payload)
+        });
         registry.bind_ipv4_protocol_with_registry(IPPROTO_IGMP, |_registry, packet, payload| {
             append_igmp_packet(packet, payload)
         });
@@ -297,6 +301,9 @@ impl ProtocolRegistry {
         });
         registry.bind_ipv6_next_header_with_registry(IPPROTO_UDP, |registry, packet, payload| {
             append_udp_packet_with_registry(registry, packet, payload)
+        });
+        registry.bind_ipv6_next_header_with_registry(IPPROTO_SCTP, |registry, packet, payload| {
+            append_sctp_packet_with_registry(registry, packet, payload)
         });
         // ESP as an IPv6 next-header (RFC 4303); same SA-lookup behavior as IPv4.
         registry
@@ -380,6 +387,16 @@ impl ProtocolRegistry {
                     decode_esp_with_registry_sa(registry, packet, payload)
                 }
             },
+        );
+        registry.bind_udp_with_registry(
+            |ctx| {
+                looks_like_sctp_udp_encapsulation(
+                    ctx.source_port,
+                    ctx.destination_port,
+                    ctx.payload,
+                )
+            },
+            |registry, packet, payload| append_sctp_packet_with_registry(registry, packet, payload),
         );
         // DHCPv4 decode stays deliberately conservative to avoid false
         // positives: it binds only when the UDP pair is the standard client/
@@ -514,6 +531,9 @@ impl ProtocolRegistry {
         });
         registry.bind_ipv4_protocol_with_registry(IPPROTO_UDP, |registry, packet, payload| {
             append_udp_packet_with_registry(registry, packet, payload)
+        });
+        registry.bind_ipv4_protocol_with_registry(IPPROTO_SCTP, |registry, packet, payload| {
+            append_sctp_packet_with_registry(registry, packet, payload)
         });
 
         registry
@@ -817,6 +837,7 @@ impl ProtocolRegistry {
                 ),
                 IPPROTO_TCP => append_tcp_packet_with_registry(self, packet, payload),
                 IPPROTO_UDP => append_udp_packet_with_registry(self, packet, payload),
+                IPPROTO_SCTP => append_sctp_packet_with_registry(self, packet, payload),
                 IPPROTO_IGMP => append_igmp_packet(packet, payload),
                 IPPROTO_ESP => decode_esp_with_registry_sa(self, packet, payload),
                 IPPROTO_AH => decode_ah_with_registry_sa(self, packet, payload),
@@ -852,6 +873,7 @@ impl ProtocolRegistry {
                 IPPROTO_ICMPV6 => append_icmpv6_packet(packet, payload),
                 IPPROTO_TCP => append_tcp_packet_with_registry(self, packet, payload),
                 IPPROTO_UDP => append_udp_packet_with_registry(self, packet, payload),
+                IPPROTO_SCTP => append_sctp_packet_with_registry(self, packet, payload),
                 IPPROTO_IPV6_ESP => decode_esp_with_registry_sa(self, packet, payload),
                 IPPROTO_IPV6_AH => decode_ah_with_registry_sa(self, packet, payload),
                 IPPROTO_OSPF => append_ospfv3_packet_with_checksum_validation(
@@ -948,6 +970,10 @@ impl ProtocolRegistry {
 
             if source_port == IKEV2_UDP_PORT || destination_port == IKEV2_UDP_PORT {
                 return append_ikev2_packet_with_registry(self, packet, payload);
+            }
+
+            if looks_like_sctp_udp_encapsulation(source_port, destination_port, payload) {
+                return append_sctp_packet_with_registry(self, packet, payload);
             }
 
             if source_port == DNS_PORT
@@ -1249,7 +1275,10 @@ mod protocol_registry {
     use super::ProtocolRegistry;
     use crate::protocols::igmp::Igmp;
     use crate::protocols::ip::shared::IPPROTO_IGMP;
-    use crate::{Ipv4, Ipv4ChecksumStatus, NetworkLayer, Packet, Raw, Udp, UdpChecksumStatus};
+    use crate::{
+        Ipv4, Ipv4ChecksumStatus, Ipv6, NetworkLayer, Packet, Raw, Sctp, SctpChecksumStatus, Udp,
+        UdpChecksumStatus, IPPROTO_SCTP, SCTP_UDP_ENCAPSULATION_PORT,
+    };
 
     #[test]
     fn custom_ipv4_protocol_binding_decodes_without_global_state() {
@@ -1389,6 +1418,149 @@ mod protocol_registry {
                 .checksum_status(),
             UdpChecksumStatus::Valid
         );
+    }
+
+    #[test]
+    fn sctp_registry_ipv4_decodes_builtin_fast_path_and_binding_fallback() {
+        let bytes = (Ipv4::new() / Sctp::new().sport(5_000).dport(5_001).vtag(0x1122_3344))
+            .compile()
+            .unwrap();
+
+        let fast = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let fast_ipv4 = fast.layer::<Ipv4>().expect("IPv4 layer");
+        let fast_sctp = fast.layer::<Sctp>().expect("SCTP layer");
+
+        assert_eq!(fast_ipv4.protocol_value(), IPPROTO_SCTP);
+        assert_eq!(fast_sctp.source_port_value(), 5_000);
+        assert_eq!(fast_sctp.destination_port_value(), 5_001);
+        assert_eq!(fast_sctp.verification_tag_value(), 0x1122_3344);
+        assert_eq!(fast_sctp.checksum_status(), SctpChecksumStatus::Valid);
+        assert!(fast.layer::<Raw>().is_none());
+
+        let mut registry = ProtocolRegistry::new();
+        registry.bind_ipv4_protocol(253, |packet, payload| {
+            Ok(packet.push(Raw::from_bytes(payload)))
+        });
+        let fallback = registry
+            .decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())
+            .unwrap();
+
+        assert!(fallback.layer::<Sctp>().is_some());
+        assert!(fallback.layer::<Raw>().is_none());
+    }
+
+    #[test]
+    fn sctp_registry_ipv6_decodes_builtin_fast_path_and_binding_fallback() {
+        let bytes = (Ipv6::new() / Sctp::new().sport(5_100).dport(5_101).vtag(0x5566_7788))
+            .compile()
+            .unwrap();
+
+        let fast = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
+        let fast_ipv6 = fast.layer::<Ipv6>().expect("IPv6 layer");
+        let fast_sctp = fast.layer::<Sctp>().expect("SCTP layer");
+
+        assert_eq!(fast_ipv6.next_header_value(), IPPROTO_SCTP);
+        assert_eq!(fast_sctp.source_port_value(), 5_100);
+        assert_eq!(fast_sctp.destination_port_value(), 5_101);
+        assert_eq!(fast_sctp.verification_tag_value(), 0x5566_7788);
+        assert_eq!(fast_sctp.checksum_status(), SctpChecksumStatus::Valid);
+        assert!(fast.layer::<Raw>().is_none());
+
+        let mut registry = ProtocolRegistry::new();
+        registry.bind_ipv6_next_header(253, |packet, payload| {
+            Ok(packet.push(Raw::from_bytes(payload)))
+        });
+        let fallback = registry
+            .decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes())
+            .unwrap();
+
+        assert!(fallback.layer::<Sctp>().is_some());
+        assert!(fallback.layer::<Raw>().is_none());
+    }
+
+    #[test]
+    fn sctp_registry_udp_encap_decodes_port_9899_only_after_shape_gate() {
+        let admitted = (Ipv4::new()
+            / Udp::new().sport(49_152).dport(SCTP_UDP_ENCAPSULATION_PORT)
+            / Sctp::data(1, 2, 3, 4, b"payload".to_vec()))
+        .compile()
+        .unwrap();
+
+        let fast = Packet::decode_from_l3(NetworkLayer::Ipv4, admitted.as_bytes()).unwrap();
+        let fast_udp = fast.layer::<Udp>().expect("UDP layer");
+        let fast_sctp = fast.layer::<Sctp>().expect("SCTP layer");
+
+        assert_eq!(
+            fast_udp.destination_port_value(),
+            SCTP_UDP_ENCAPSULATION_PORT
+        );
+        assert_eq!(fast_udp.checksum_status(), UdpChecksumStatus::Valid);
+        assert_eq!(fast_sctp.checksum_status(), SctpChecksumStatus::Valid);
+        assert_eq!(fast_sctp.chunk_count(), 1);
+        assert!(fast.layer::<Raw>().is_none());
+
+        let mut registry = ProtocolRegistry::new();
+        registry.bind_udp_port(1, |packet, payload| {
+            Ok(packet.push(Raw::from_bytes(payload)))
+        });
+        let fallback = registry
+            .decode_from_l3(NetworkLayer::Ipv4, admitted.as_bytes())
+            .unwrap();
+        assert!(fallback.layer::<Sctp>().is_some());
+        assert!(fallback.layer::<Raw>().is_none());
+
+        let rejected = (Ipv4::new()
+            / Udp::new().sport(49_153).dport(SCTP_UDP_ENCAPSULATION_PORT)
+            / Raw::from("not sctp"))
+        .compile()
+        .unwrap();
+        let raw = Packet::decode_from_l3(NetworkLayer::Ipv4, rejected.as_bytes()).unwrap();
+
+        assert!(raw.layer::<Sctp>().is_none());
+        assert_eq!(raw.layer::<Raw>().unwrap().as_bytes(), b"not sctp");
+    }
+
+    #[test]
+    fn sctp_udp_application_decoding_optout_preserves_udp_payload_but_not_direct_ip_sctp() {
+        let registry = ProtocolRegistry::new().application_decoding(false);
+        let encapsulated_sctp = Sctp::data(10, 20, 30, 40, b"encapsulated".to_vec());
+        let encapsulated_payload = Packet::from_layer(encapsulated_sctp.clone())
+            .compile()
+            .unwrap();
+        let udp_encap = (Ipv4::new()
+            / Udp::new().sport(49_154).dport(SCTP_UDP_ENCAPSULATION_PORT)
+            / encapsulated_sctp)
+            .compile()
+            .unwrap();
+
+        let decoded_udp = registry
+            .decode_from_l3(NetworkLayer::Ipv4, udp_encap.as_bytes())
+            .unwrap();
+
+        assert!(decoded_udp.layer::<Udp>().is_some());
+        assert!(decoded_udp.layer::<Sctp>().is_none());
+        assert_eq!(
+            decoded_udp.layer::<Raw>().unwrap().as_bytes(),
+            encapsulated_payload.as_bytes()
+        );
+
+        let direct_v4 = (Ipv4::new() / Sctp::data(11, 21, 31, 41, b"ipv4".to_vec()))
+            .compile()
+            .unwrap();
+        let decoded_v4 = registry
+            .decode_from_l3(NetworkLayer::Ipv4, direct_v4.as_bytes())
+            .unwrap();
+        assert!(decoded_v4.layer::<Sctp>().is_some());
+        assert!(decoded_v4.layer::<Raw>().is_none());
+
+        let direct_v6 = (Ipv6::new() / Sctp::data(12, 22, 32, 42, b"ipv6".to_vec()))
+            .compile()
+            .unwrap();
+        let decoded_v6 = registry
+            .decode_from_l3(NetworkLayer::Ipv6, direct_v6.as_bytes())
+            .unwrap();
+        assert!(decoded_v6.layer::<Sctp>().is_some());
+        assert!(decoded_v6.layer::<Raw>().is_none());
     }
 
     #[test]

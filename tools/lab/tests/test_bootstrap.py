@@ -253,6 +253,68 @@ class LabBootstrapApiTest(unittest.TestCase):
             self.assertEqual(stimulus.argv[5], "-lc")
             self.assertIn("exec docker run", stimulus.argv[6])
 
+    def test_appliance_prepare_runs_before_workload_when_runtime_requests_docker_setup(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            archive = root / "repo.tar.gz"
+            archive.write_bytes(b"archive")
+            runtime = _appliance_runtime(
+                image_tag="libcrafter/appliance:hetzner-smoke",
+                check_metadata={
+                    "docker_setup": "install-or-verify",
+                    "docker_host_readiness": "check-before-use",
+                },
+            )
+            client = _FakeEndpointClient()
+
+            result = bootstrap_lab_session(
+                _session(stimulus_appliance_runtime=runtime),
+                {"stimulus": ["bash", "-lc", "printf stimulus"]},
+                remote_dir="/opt/libcrafter-lab/session",
+                archive=archive,
+                output_dir=root / "bootstrap",
+                client=client,
+            )
+
+            self.assertTrue(result.ok)
+            stimulus_phases = [
+                record.metadata["phase"]
+                for record in result.command_records
+                if record.role == "stimulus"
+            ]
+            self.assertEqual(
+                stimulus_phases,
+                [
+                    "prepare-archive-directory",
+                    "upload-repository",
+                    "unpack-repository",
+                    "appliance-prepare",
+                    "workload-bootstrap",
+                ],
+            )
+            prepare = _phase_record(result, "stimulus", "appliance-prepare")
+            script = prepare.argv[6]
+            self.assertIn("cloud-init status --wait", script)
+            self.assertIn("apt-get install -y docker.io", script)
+            self.assertIn("docker info >/dev/null", script)
+            self.assertIn(
+                "docker build -t libcrafter/appliance:hetzner-smoke",
+                script,
+            )
+            self.assertIn(
+                "-f /opt/libcrafter-lab/session/tools/appliance/Dockerfile "
+                "/opt/libcrafter-lab/session/tools/appliance",
+                script,
+            )
+            self.assertEqual(
+                prepare.metadata["appliance"]["docker_setup"],
+                "install-or-verify",
+            )
+            workload = _workload_record(result, "stimulus")
+            self.assertIn("exec docker run", workload.argv[6])
+
     def test_appliance_bootstrap_propagates_env_artifacts_and_avoids_docker_socket(
         self,
     ) -> None:
@@ -285,19 +347,24 @@ class LabBootstrapApiTest(unittest.TestCase):
                 appliance["artifact_dir"],
                 "/opt/libcrafter-lab/session/artifacts/bootstrap/stimulus",
             )
-            self.assertEqual(appliance["container_work_dir"], "/work")
-            self.assertEqual(appliance["container_artifact_dir"], "/artifacts")
+            self.assertEqual(appliance["container_work_dir"], "/opt/libcrafter-lab/session")
+            self.assertEqual(
+                appliance["container_artifact_dir"],
+                "/opt/libcrafter-lab/session/artifacts/bootstrap/stimulus",
+            )
 
             plan = appliance["docker_run_plan"]
             docker_argv = [str(part) for part in plan["docker_argv"]]
             mount_args = _option_values(docker_argv, "--mount")
             self.assertIn(
-                "type=bind,source=/opt/libcrafter-lab/session,target=/work",
+                "type=bind,source=/opt/libcrafter-lab/session,"
+                "target=/opt/libcrafter-lab/session",
                 mount_args,
             )
             self.assertIn(
                 "type=bind,source=/opt/libcrafter-lab/session/artifacts/"
-                "bootstrap/stimulus,target=/artifacts",
+                "bootstrap/stimulus,target=/opt/libcrafter-lab/session/"
+                "artifacts/bootstrap/stimulus",
                 mount_args,
             )
             self.assertEqual(plan["work_dir"], "/opt/libcrafter-lab/session")
@@ -313,8 +380,12 @@ class LabBootstrapApiTest(unittest.TestCase):
             self.assertIn("LIBCRAFTER_PRIVATE_IPV4=10.77.0.10", env_args)
             self.assertIn("LIBCRAFTER_PEER_PRIVATE_IPV4=10.77.0.20", env_args)
             self.assertIn("LIBCRAFTER_PRIVATE_INTERFACE=eth1", env_args)
-            self.assertIn("LIBCRAFTER_BOOTSTRAP_ARTIFACT_DIR=/artifacts", env_args)
-            self.assertIn("LIBCRAFTER_WORK_DIR=/work", env_args)
+            self.assertIn(
+                "LIBCRAFTER_BOOTSTRAP_ARTIFACT_DIR="
+                "/opt/libcrafter-lab/session/artifacts/bootstrap/stimulus",
+                env_args,
+            )
+            self.assertIn("LIBCRAFTER_WORK_DIR=/opt/libcrafter-lab/session", env_args)
             self.assertIn("LIBCRAFTER_IFACE=eth1", env_args)
             self.assertIn("POLICY_ENV=from-policy", env_args)
             self.assertNotIn("docker.sock", " ".join(docker_argv))
@@ -433,6 +504,10 @@ class WorkloadBootstrapScriptHelperTest(unittest.TestCase):
             lines,
         )
         self.assertIn(
+            'if [ -f "/usr/local/cargo/env" ]; then . "/usr/local/cargo/env"; fi',
+            lines,
+        )
+        self.assertIn(
             "cargo build -p probe-adapters --bin stimulus_endpoint",
             lines,
         )
@@ -500,13 +575,17 @@ class WorkloadBootstrapScriptHelperTest(unittest.TestCase):
 
 
 def _workload_record(result: Any, role: str) -> LabCommandPlan:
+    return _phase_record(result, role, "workload-bootstrap")
+
+
+def _phase_record(result: Any, role: str, phase: str) -> LabCommandPlan:
     matches = [
         record
         for record in result.command_records
-        if record.role == role and record.metadata["phase"] == "workload-bootstrap"
+        if record.role == role and record.metadata["phase"] == phase
     ]
     if len(matches) != 1:
-        raise AssertionError(f"expected one workload bootstrap record for {role}")
+        raise AssertionError(f"expected one {phase} record for {role}")
     return matches[0]
 
 
@@ -636,6 +715,7 @@ def _appliance_runtime(
     *,
     image_tag: str = "registry.example.invalid/libcrafter/appliance:bootstrap",
     container_policy: dict[str, object] | None = None,
+    check_metadata: dict[str, object] | None = None,
     metadata: dict[str, object] | None = None,
 ) -> LabApplianceRuntime:
     return LabApplianceRuntime(
@@ -644,6 +724,7 @@ def _appliance_runtime(
         remote_work_root="/srv/libcrafter/work",
         remote_artifact_root="/srv/libcrafter/artifacts",
         container_policy=container_policy or {"network_mode": "host"},
+        check_metadata=check_metadata or {},
         metadata=metadata or {},
     )
 

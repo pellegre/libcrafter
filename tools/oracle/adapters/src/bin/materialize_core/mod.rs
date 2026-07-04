@@ -30,6 +30,9 @@ use crafter::protocols::mqtt::{
 };
 use crafter::protocols::rip::ripng::{Ripng, RipngRte};
 use crafter::protocols::rip::{RipAuth, RipDigestAlgorithm};
+use crafter::protocols::transport::{
+    Sctp, SctpChunk, SctpDataChunk, SCTP_PPID_WEBRTC_BINARY, SCTP_PPID_WEBRTC_STRING,
+};
 use serde_json::{json, Map, Value};
 use std::env;
 use std::error::Error;
@@ -265,6 +268,7 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "udp" => Ok(Box::new(udp_layer(plan)?)),
         "udp_options" => Ok(Box::new(udp_options_layer(plan)?)),
         "tcp" => Ok(Box::new(tcp_layer(plan, None)?)),
+        "sctp" => Ok(Box::new(sctp_layer(plan)?)),
         "icmp" => Ok(Box::new(icmp_layer(plan)?)),
         "icmpv6" => Ok(Box::new(icmpv6_layer(plan)?)),
         "igmp" => Ok(Box::new(igmp_layer(plan)?)),
@@ -1427,6 +1431,197 @@ fn udp_layer(plan: &Value) -> ExampleResult<Udp> {
         layer = layer.len(u16_value(value)?);
     }
     Ok(layer)
+}
+
+fn sctp_layer(plan: &Value) -> ExampleResult<Sctp> {
+    let fields = layer_fields(plan, "sctp")?;
+    let mut layer = Sctp::new();
+    if let Some(value) = optional(fields, &["src_port", "sport"]) {
+        layer = layer.sport(u16_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["dst_port", "dport"]) {
+        layer = layer.dport(u16_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["verification_tag", "vtag", "tag"]) {
+        layer = layer.vtag(u32_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["checksum", "chksum"]) {
+        if let Some(checksum) = sctp_checksum_override(value)? {
+            layer = layer.checksum(checksum);
+        }
+    }
+
+    let chunks = sctp_chunks(fields)?;
+    if chunks.is_empty() {
+        layer = layer.chunk(sctp_data_chunk(fields)?);
+    } else {
+        for chunk in chunks {
+            layer = layer.chunk(chunk);
+        }
+    }
+    Ok(layer)
+}
+
+fn sctp_chunks(fields: &Map<String, Value>) -> ExampleResult<Vec<SctpChunk>> {
+    let Some(value) = optional(fields, &["chunks"]) else {
+        if let Some(value) = optional(fields, &["chunk", "chunk_type"]) {
+            return Ok(vec![sctp_chunk(fields, value)?]);
+        }
+        return Ok(Vec::new());
+    };
+    if let Some(items) = value.as_array() {
+        let mut chunks = Vec::with_capacity(items.len());
+        for item in items {
+            chunks.push(sctp_chunk(fields, item)?);
+        }
+        return Ok(chunks);
+    }
+    Ok(vec![sctp_chunk(fields, value)?])
+}
+
+fn sctp_chunk(fields: &Map<String, Value>, value: &Value) -> ExampleResult<SctpChunk> {
+    if let Some(object) = value.as_object() {
+        let chunk_value = optional(object, &["type", "chunk", "chunk_type"]).unwrap_or(value);
+        if sctp_chunk_kind(chunk_value)? == 0 {
+            return Ok(sctp_data_chunk(object)?.into());
+        }
+        return Ok(SctpChunk::unknown(
+            sctp_chunk_kind(chunk_value)?,
+            sctp_chunk_flags(optional(object, &["chunk_flags", "flags"]))?,
+            sctp_chunk_value(object)?,
+        ));
+    }
+    if sctp_chunk_kind(value)? == 0 {
+        return Ok(sctp_data_chunk(fields)?.into());
+    }
+    Ok(SctpChunk::unknown(
+        sctp_chunk_kind(value)?,
+        sctp_chunk_flags(optional(fields, &["chunk_flags", "flags"]))?,
+        sctp_chunk_value(fields)?,
+    ))
+}
+
+fn sctp_data_chunk(fields: &Map<String, Value>) -> ExampleResult<SctpDataChunk> {
+    Ok(SctpDataChunk::from_data_parts(
+        sctp_chunk_flags(optional(fields, &["chunk_flags", "flags"]))?,
+        optional(fields, &["tsn"])
+            .map(u32_value)
+            .transpose()?
+            .unwrap_or(0x0102_0304),
+        optional(fields, &["stream_id"])
+            .map(u16_value)
+            .transpose()?
+            .unwrap_or(1),
+        optional(fields, &["stream_sequence", "stream_sequence_number"])
+            .map(u16_value)
+            .transpose()?
+            .unwrap_or(2),
+        optional(fields, &["payload_protocol_identifier", "ppid"])
+            .map(sctp_ppid)
+            .transpose()?
+            .unwrap_or(SCTP_PPID_WEBRTC_STRING),
+        sctp_user_data(fields)?,
+    ))
+}
+
+fn sctp_checksum_override(value: &Value) -> ExampleResult<Option<u32>> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('-', "_").as_str() {
+            "derived_crc32c" | "auto" | "explicit_valid" => Ok(None),
+            "explicit_invalid" => Ok(Some(0x0102_0304)),
+            "explicit_zero" => Ok(Some(0)),
+            "boundary" => Ok(Some(u32::MAX)),
+            _ => Ok(Some(u32_text(text)?)),
+        };
+    }
+    Ok(Some(u32_value(value)?))
+}
+
+fn sctp_chunk_kind(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('-', "_").as_str() {
+            "data" => Ok(0),
+            "init" => Ok(1),
+            "init_ack" => Ok(2),
+            "sack" => Ok(3),
+            "heartbeat" => Ok(4),
+            "heartbeat_ack" => Ok(5),
+            "abort" => Ok(6),
+            "shutdown" => Ok(7),
+            "shutdown_ack" => Ok(8),
+            "error" => Ok(9),
+            "cookie_echo" => Ok(10),
+            "cookie_ack" => Ok(11),
+            "ecne" => Ok(12),
+            "cwr" => Ok(13),
+            "shutdown_complete" => Ok(14),
+            "auth" => Ok(15),
+            "i_data" => Ok(64),
+            "asconf_ack" => Ok(128),
+            "re_config" => Ok(130),
+            "pad" => Ok(132),
+            "forward_tsn" => Ok(192),
+            "asconf" => Ok(193),
+            "i_forward_tsn" => Ok(194),
+            "unknown" => Ok(0x83),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn sctp_chunk_flags(value: Option<&Value>) -> ExampleResult<u8> {
+    let Some(value) = value else {
+        return Ok(0x03);
+    };
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('-', "_").as_str() {
+            "zero" => Ok(0),
+            "data_ube_bits" => Ok(0x07),
+            "data_i_bit" => Ok(0x08),
+            "boundary" | "unassigned_preserved" => Ok(u8::MAX),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn sctp_ppid(value: &Value) -> ExampleResult<u32> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('-', "_").as_str() {
+            "reserved" => Ok(0),
+            "webrtc_string" | "web_rtc_string" => Ok(SCTP_PPID_WEBRTC_STRING),
+            "webrtc_binary" | "web_rtc_binary" => Ok(SCTP_PPID_WEBRTC_BINARY),
+            "user_defined" => Ok(0x8000_0000),
+            _ => u32_text(text),
+        };
+    }
+    u32_value(value)
+}
+
+fn sctp_user_data(fields: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    if let Some(value) = optional(fields, &["user_data_hex"]) {
+        return option_bytes(value);
+    }
+    if let Some(text) = text_optional(fields, &["user_data_text"]) {
+        return Ok(text.as_bytes().to_vec());
+    }
+    if let Some(value) = optional(fields, &["user_data"]) {
+        if let Some(object) = value.as_object() {
+            if let Some(text) = object.get("text").and_then(Value::as_str) {
+                return Ok(text.as_bytes().to_vec());
+            }
+        }
+        return option_bytes(value);
+    }
+    Ok(b"crafter-sctp-fixture".to_vec())
+}
+
+fn sctp_chunk_value(fields: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    optional(fields, &["chunk_value_hex", "value"])
+        .map(option_bytes)
+        .transpose()
+        .map(|value| value.unwrap_or_default())
 }
 
 fn mdns_default_ipv4_source() -> Ipv4Addr {
@@ -7598,6 +7793,7 @@ fn ip_protocol(value: &Value) -> ExampleResult<u8> {
         return match text.to_ascii_lowercase().as_str() {
             "icmp" => Ok(IPPROTO_ICMP),
             "igmp" => Ok(IPPROTO_IGMP),
+            "sctp" => Ok(IPPROTO_SCTP),
             "tcp" => Ok(IPPROTO_TCP),
             "udp" => Ok(IPPROTO_UDP),
             "payload" | "raw" | "unknown" => Ok(253),
@@ -7618,6 +7814,7 @@ fn ipv6_next_header(value: &Value) -> ExampleResult<u8> {
             "no-next" | "no_next" => Ok(IPPROTO_IPV6_NO_NEXT),
             "payload" | "raw" | "unknown" => Ok(253),
             "routing" => Ok(IPPROTO_IPV6_ROUTE),
+            "sctp" => Ok(IPPROTO_SCTP),
             "tcp" => Ok(IPPROTO_TCP),
             "udp" => Ok(IPPROTO_UDP),
             _ => u8_text(text),
@@ -7632,6 +7829,7 @@ fn ipv4_flags(value: &Value) -> ExampleResult<u8> {
             "none" | "0" => Ok(0),
             "df" | "dont-fragment" => Ok(IPV4_FLAG_DONT_FRAGMENT),
             "mf" | "more-fragments" => Ok(IPV4_FLAG_MORE_FRAGMENTS),
+            "reserved" => Ok(IPV4_FLAG_RESERVED),
             _ => u8_text(text),
         };
     }
@@ -7979,6 +8177,10 @@ fn u8_text(value: &str) -> ExampleResult<u8> {
 
 fn u16_text(value: &str) -> ExampleResult<u16> {
     Ok(u16::try_from(u64_text(value)?)?)
+}
+
+fn u32_text(value: &str) -> ExampleResult<u32> {
+    Ok(u32::try_from(u64_text(value)?)?)
 }
 
 fn u64_text(value: &str) -> ExampleResult<u64> {

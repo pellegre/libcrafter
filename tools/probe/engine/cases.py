@@ -54,11 +54,6 @@ UDP_ECHO_LARGE_PAYLOAD_LENGTH = 1200
 # RIP's capability constant (``_RIP_CAPABILITIES``) and case tuple now live in
 # the RIP plugin module (``protocols/rip.py``); the merged catalog/profile tables
 # below pick the RIP/RIPng cases up from the registry.
-# MQTT's capability constant (``_MQTT_CAPABILITIES``) and case tuple now live in
-# the MQTT plugin module (``protocols/mqtt.py``); the merged catalog/profile
-# tables below pick the MQTT cases up from the registry. ``MQTT_SMOKE_CASES`` is
-# re-imported above so ``cases.MQTT_SMOKE_CASES`` stays resolvable for the catalog
-# tests.
 # IGMP's capability constant (``_IGMP_CAPABILITIES``) and case tuple now live in
 # the IGMP plugin module (``protocols/igmp.py``); the merged catalog/profile
 # tables below pick the IGMP cases up from the registry. ``IGMP_PROBE_CASES`` is
@@ -196,6 +191,7 @@ IGMP_PROFILE = "igmp"
 IPSEC_PROFILE = "ipsec"
 QUIC_SMOKE_PROFILE = "quic-smoke"
 SNMP_SMOKE_PROFILE = "snmp-smoke"
+SCTP_SMOKE_PROFILE = "sctp-smoke"
 DHCPV6_SMOKE_PROFILE = "dhcpv6-smoke"
 DHCPV6_RELAY_PROFILE = "dhcpv6-relay"
 DHCPV6_ADVANCED_PROFILE = "dhcpv6-advanced"
@@ -455,6 +451,7 @@ SSDP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _re
 MDNS_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "mdns")
 TLS_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "tls")
 NTP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "ntp")
+SCTP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "sctp")
 
 # Explicit profile case subsets; profiles not listed select the full catalog.
 # ``smoke`` stays pinned to the historical ICMP/TCP/DNS/TTL/ARP set, and the
@@ -479,6 +476,7 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     MDNS_SMOKE_PROFILE: MDNS_SMOKE_PROFILE_CASE_NAMES,
     TLS_SMOKE_PROFILE: TLS_SMOKE_PROFILE_CASE_NAMES,
     NTP_SMOKE_PROFILE: NTP_SMOKE_PROFILE_CASE_NAMES,
+    SCTP_SMOKE_PROFILE: SCTP_SMOKE_PROFILE_CASE_NAMES,
 }
 
 # Per-profile default counts used when no explicit ``--count`` is supplied. The
@@ -501,6 +499,7 @@ _PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     MDNS_SMOKE_PROFILE: len(MDNS_SMOKE_PROFILE_CASE_NAMES),
     TLS_SMOKE_PROFILE: len(TLS_SMOKE_PROFILE_CASE_NAMES),
     NTP_SMOKE_PROFILE: len(NTP_SMOKE_PROFILE_CASE_NAMES),
+    SCTP_SMOKE_PROFILE: len(SCTP_SMOKE_PROFILE_CASE_NAMES),
 }
 
 

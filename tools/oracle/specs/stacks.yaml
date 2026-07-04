@@ -96,6 +96,7 @@ roots:
       - transport
       - icmp
       - igmp
+      - sctp
       - dns
       - esp
       - ah
@@ -120,6 +121,7 @@ roots:
       - udp
       - transport
       - icmp
+      - sctp
       - esp
       - ah
       - ikev2
@@ -215,6 +217,15 @@ families:
       - ipv6
       - ospf
       - payload
+  - name: sctp
+    default_stack:
+      - ipv4
+      - sctp
+    feature_tags:
+      - ipv4
+      - ipv6
+      - udp
+      - sctp
   # esp / ah / ikev2: IPSec families. ESP and AH ride directly over IPv4 and
   # IPv6 (IP protocol 50 / 51); IKEv2 rides over UDP (UDP/500, and UDP/4500
   # after the non-ESP marker). These families let the deterministic generator
@@ -694,6 +705,27 @@ stacks:
       - mqtt-publish
       - mqtt-subscribe
       - mqtt-ping-disconnect
+  # SCTP (RFC 9260) rides directly over IP protocol / IPv6 next-header 132.
+  # These focused smoke stacks are executable Scapy/libcrafter byte-parity
+  # coverage for DATA chunks only; broader chunks, pcap fixtures, and live
+  # exchange remain assigned to later SCTP plan steps.
+  - name: ipv4_sctp
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - sctp
+    coverage_cases:
+      - sctp-native-ipv4-data
+      - sctp-pcap-native-ipv4
+  - name: ipv4_udp_sctp
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - udp
+      - sctp
+    coverage_cases:
+      - sctp-udp-encap-data
+      - sctp-pcap-udp-encap
   # OSPFv2 (RFC 2328) rides directly over IPv4 (IP protocol 89). The five
   # OSPFv2 packet types are sampled by the focused ospf-smoke profile; the
   # generator narrows case selection to these ospf-* cases when that profile is
@@ -770,6 +802,23 @@ stacks:
       - mqtt-publish
       - mqtt-subscribe
       - mqtt-ping-disconnect
+  - name: ipv6_sctp
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - sctp
+    coverage_cases:
+      - sctp-native-ipv6-data
+      - sctp-pcap-native-ipv6
+  - name: ipv6_udp_sctp
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - udp
+      - sctp
+    coverage_cases:
+      - sctp-udp-encap-data
+      - sctp-pcap-udp-encap
   - name: ipv4_icmp_payload
     root: "l3:ipv4"
     layers:

@@ -14,6 +14,7 @@ children:
   - ipv6_destination_options
   - udp
   - tcp
+  - sctp
   - icmpv6
   - ipv6_fragment
   - ipv6_routing

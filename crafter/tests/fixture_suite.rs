@@ -19,26 +19,27 @@ use crafter::core::{
     Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll, LlcSnap, MacAddr, NetworkLayer, Ntp,
     NtpMode, NtpTimestamp, NtpVersion, NullByteOrder, NullLoopback, OptionOverload,
     OspfChecksumStatus, Ospfv2, Ospfv3, Packet, Quic, QuicFrame, QuicPacket,
-    QuicTransportParameter, QuicUnknownFrame, QuicVarInt, Radiotap, Raw, Rip, Ripng, Snmp, Tcp,
-    TcpOption, TcpSackBlock, Tls, TlsAlert, TlsContentType, TlsRecord, Udp, UdpChecksumStatus,
-    UdpOption, UdpOptionStatus, UdpOptions, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST,
-    DHCPV4_CLIENT_PORT, DHCPV4_SERVER_PORT, DNS_CLASS_IN, DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE,
-    DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE,
-    DNS_FLAG_RECURSION_DESIRED, DNS_SVCB_KEY_ALPN, DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT,
-    DNS_SVCB_KEY_PORT, DNS_TYPE_A, DNS_TYPE_AAAA, DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS,
-    DNS_TYPE_HTTPS, DNS_TYPE_NS, DNS_TYPE_NSEC, DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_PTR,
-    DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB, DNS_TYPE_TXT, ETHERTYPE_ARP,
-    ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST,
-    ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IGMP_FIXED_HEADER_LEN,
-    IGMP_QUERY_CODE_V1, IGMP_TYPE_UNASSIGNED_FIRST, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IGMP,
-    IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS,
-    IPPROTO_IPV6_ROUTE, IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT,
-    IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED, IPV6_ROUTING_TYPE_MOBILE,
-    IPV6_ROUTING_TYPE_SEGMENT, MDNS_CLASS_BIT, MDNS_GOODBYE_TTL, MDNS_IPV4_ETHERNET_MULTICAST,
-    MDNS_IPV4_MULTICAST, MDNS_IPV6_ETHERNET_MULTICAST, MDNS_IPV6_LINK_LOCAL_MULTICAST, MDNS_PORT,
-    NTP_EXTENSION_FIELD_HEADER_LEN, NTP_FIXED_HEADER_LEN, NTP_PORT, QUIC_VERSION_1, QUIC_VERSION_2,
-    SNMP_PORT, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, TLS_PORT_HTTPS, UDP_HEADER_LEN,
-    UDP_OPTION_EOL, UDP_OPTION_NOP,
+    QuicTransportParameter, QuicUnknownFrame, QuicVarInt, Radiotap, Raw, Rip, Ripng, Sctp,
+    SctpChecksumStatus, SctpChunk, SctpPpidStatus, Snmp, Tcp, TcpOption, TcpSackBlock, Tls,
+    TlsAlert, TlsContentType, TlsRecord, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus,
+    UdpOptions, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCPV4_CLIENT_PORT, DHCPV4_SERVER_PORT,
+    DNS_CLASS_IN, DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
+    DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_SVCB_KEY_ALPN,
+    DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A, DNS_TYPE_AAAA,
+    DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NS, DNS_TYPE_NSEC,
+    DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_PTR, DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV,
+    DNS_TYPE_SVCB, DNS_TYPE_TXT, ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_IPV6,
+    ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE,
+    ICMP_ECHO_REQUEST, IGMP_FIXED_HEADER_LEN, IGMP_QUERY_CODE_V1, IGMP_TYPE_UNASSIGNED_FIRST,
+    IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IGMP, IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1,
+    IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_ROUTE, IPPROTO_SCTP, IPPROTO_TCP,
+    IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED,
+    IPV6_ROUTING_TYPE_MOBILE, IPV6_ROUTING_TYPE_SEGMENT, MDNS_CLASS_BIT, MDNS_GOODBYE_TTL,
+    MDNS_IPV4_ETHERNET_MULTICAST, MDNS_IPV4_MULTICAST, MDNS_IPV6_ETHERNET_MULTICAST,
+    MDNS_IPV6_LINK_LOCAL_MULTICAST, MDNS_PORT, NTP_EXTENSION_FIELD_HEADER_LEN,
+    NTP_FIXED_HEADER_LEN, NTP_PORT, QUIC_VERSION_1, QUIC_VERSION_2, SCTP_PPID_WEBRTC_BINARY,
+    SCTP_PPID_WEBRTC_STRING, SCTP_UDP_ENCAPSULATION_PORT, SNMP_PORT, TCP_FLAG_ACK, TCP_FLAG_PSH,
+    TCP_FLAG_SYN, TLS_PORT_HTTPS, UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
 use crafter::protocols::dhcp::{
     Dhcpv6, Dhcpv6IaAddr, Dhcpv6IaNa, Dhcpv6IaPd, Dhcpv6IaPrefix, Dhcpv6Option, Dhcpv6StatusCode,
@@ -114,6 +115,7 @@ enum ExpectedLayer {
     Tls,
     Udp,
     UdpOptions,
+    Sctp,
     Ntp,
     Snmp,
     Bgp,
@@ -166,6 +168,8 @@ enum CoverageFamily {
     Ipv4UdpMdns,
     Ipv4UdpDhcpv4,
     Ipv4UdpSnmp,
+    Ipv4Sctp,
+    Ipv6Sctp,
     Ipv4Ospf,
     Ipv6Ospfv3,
     Ipv4UdpOptions,
@@ -987,6 +991,51 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: None,
     },
     ValidFixtureCase {
+        name: "ipv4-sctp-init",
+        path: "bytes/ipv4-sctp-init.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-sctp-init.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Sctp],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-sctp-init-ack",
+        path: "bytes/ipv4-sctp-init-ack.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-sctp-init-ack.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Sctp],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-sctp-data",
+        path: "bytes/ipv4-sctp-data.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-sctp-data.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Sctp],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-sctp-sack",
+        path: "bytes/ipv4-sctp-sack.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-sctp-sack.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Sctp],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-sctp-control-chunks",
+        path: "bytes/ipv4-sctp-control-chunks.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-sctp-control-chunks.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Sctp],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
         name: "ipv4-fragment-noninitial-raw",
         path: "bytes/ipv4-fragment-noninitial-raw.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-fragment-noninitial-raw.hex")),
@@ -1756,6 +1805,15 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: None,
     },
     ValidFixtureCase {
+        name: "ipv6-sctp-init",
+        path: "bytes/ipv6-sctp-init.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-sctp-init.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[ExpectedLayer::Ipv6, ExpectedLayer::Sctp],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
         name: "ipv6-options-hop-destination-udp",
         path: "bytes/ipv6-options-hop-destination-udp.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-options-hop-destination-udp.hex")),
@@ -2389,6 +2447,48 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
         }],
     },
     PcapFixtureCase {
+        name: "raw-ipv4-sctp-data",
+        path: "pcaps/raw-ipv4-sctp-data.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv4-sctp-data.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv4,
+        records: &[PcapFixtureRecord {
+            seconds: 91,
+            fractional: 100,
+            fixture_name: SCTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME,
+        }],
+    },
+    PcapFixtureCase {
+        name: "raw-ipv6-sctp-data",
+        path: "pcaps/raw-ipv6-sctp-data.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv6-sctp-data.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv6,
+        records: &[PcapFixtureRecord {
+            seconds: 91,
+            fractional: 200,
+            fixture_name: SCTP_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME,
+        }],
+    },
+    PcapFixtureCase {
+        name: "raw-ipv4-udp-sctp-data",
+        path: "pcaps/raw-ipv4-udp-sctp-data.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv4-udp-sctp-data.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv4,
+        records: &[PcapFixtureRecord {
+            seconds: 91,
+            fractional: 300,
+            fixture_name: SCTP_PCAP_RAW_IPV4_UDP_RECORD_FIXTURE_NAME,
+        }],
+    },
+    PcapFixtureCase {
         name: "raw-ipv4-udp-mdns-query",
         path: "pcaps/raw-ipv4-udp-mdns-query.pcap",
         contents: fixture_bytes!("pcaps/raw-ipv4-udp-mdns-query.pcap"),
@@ -2996,6 +3096,7 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
     ),
     (CoverageFamily::Ipv4UdpDhcpv4, "IPv4 UDP DHCPv4 message"),
     (CoverageFamily::Ipv4UdpSnmp, "IPv4 UDP SNMP message"),
+    (CoverageFamily::Ipv4Sctp, "IPv4 SCTP packets"),
     (
         CoverageFamily::Ipv4UdpOptions,
         "IPv4 UDP options surplus decode",
@@ -3003,6 +3104,7 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
     (CoverageFamily::Ipv6IcmpEcho, "IPv6 ICMPv6 echo"),
     (CoverageFamily::Ipv6IcmpError, "IPv6 ICMPv6 error message"),
     (CoverageFamily::Ipv6Udp, "IPv6 UDP payload"),
+    (CoverageFamily::Ipv6Sctp, "IPv6 SCTP packets"),
     (CoverageFamily::Ipv6UdpDhcpv6, "IPv6 UDP DHCPv6 messages"),
     (
         CoverageFamily::Ipv6UdpOptions,
@@ -3209,6 +3311,11 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ethernet-ipv4-udp-snmp-get-request" | "ipv4-udp-snmp-response" => {
             &[CoverageFamily::Ipv4UdpSnmp]
         }
+        "ipv4-sctp-init"
+        | "ipv4-sctp-init-ack"
+        | "ipv4-sctp-data"
+        | "ipv4-sctp-sack"
+        | "ipv4-sctp-control-chunks" => &[CoverageFamily::Ipv4Sctp],
         "ospf-hello-single-neighbor"
         | "ospf-database-description"
         | "ospf-link-state-request"
@@ -3231,6 +3338,7 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv6-icmp-echo-request" => &[CoverageFamily::Ipv6IcmpEcho],
         "ipv6-icmpv6-time-exceeded" => &[CoverageFamily::Ipv6IcmpError],
         "ipv6-udp-raw" | "ipv6-base-traffic-flow-udp-raw" => &[CoverageFamily::Ipv6Udp],
+        "ipv6-sctp-init" => &[CoverageFamily::Ipv6Sctp],
         "ipv6-udp-mdns-query" => &[CoverageFamily::Ipv6UdpMdns],
         "ipv6-udp-dhcpv6-solicit"
         | "ethernet-ipv6-udp-dhcpv6-solicit"
@@ -3735,6 +3843,9 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             ExpectedLayer::UdpOptions => {
                 let _ = expect_layer::<UdpOptions>(case, packet);
             }
+            ExpectedLayer::Sctp => {
+                let _ = expect_layer::<Sctp>(case, packet);
+            }
             ExpectedLayer::Ntp => {
                 let _ = expect_layer::<Ntp>(case, packet);
             }
@@ -3845,6 +3956,7 @@ fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
         ExpectedLayer::Tls => "TLS",
         ExpectedLayer::Udp => "Udp",
         ExpectedLayer::UdpOptions => "UdpOptions",
+        ExpectedLayer::Sctp => "Sctp",
         ExpectedLayer::Ntp => "Ntp",
         ExpectedLayer::Snmp => "Snmp",
         ExpectedLayer::Bgp => "BGP",
@@ -4894,6 +5006,166 @@ fn assert_tls_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     }
 }
 
+fn assert_sctp_ipv4_transport<'a>(
+    case: &ValidFixtureCase,
+    packet: &'a Packet,
+    host_octet: u8,
+    identification: u16,
+    source_port: u16,
+    destination_port: u16,
+    verification_tag: u32,
+    chunk_count: usize,
+) -> &'a Sctp {
+    let ipv4 = expect_layer::<Ipv4>(case, packet);
+    assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, host_octet));
+    assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, host_octet));
+    assert_eq!(ipv4.identification_value(), identification);
+    assert_eq!(ipv4.ttl_value(), 64);
+    assert_eq!(ipv4.protocol_value(), IPPROTO_SCTP);
+
+    let sctp = expect_layer::<Sctp>(case, packet);
+    assert_eq!(sctp.source_port_value(), source_port);
+    assert_eq!(sctp.destination_port_value(), destination_port);
+    assert_eq!(sctp.verification_tag_value(), verification_tag);
+    assert_eq!(sctp.checksum_status(), SctpChecksumStatus::Valid);
+    assert_eq!(sctp.chunk_count(), chunk_count);
+    sctp
+}
+
+fn assert_sctp_ipv6_transport<'a>(
+    case: &ValidFixtureCase,
+    packet: &'a Packet,
+    source_port: u16,
+    destination_port: u16,
+    verification_tag: u32,
+    chunk_count: usize,
+) -> &'a Sctp {
+    let ipv6 = expect_layer::<Ipv6>(case, packet);
+    assert_eq!(
+        ipv6.source(),
+        Ipv6Addr::new(0x2001, 0xdb8, 0x86, 0, 0, 0, 0, 1)
+    );
+    assert_eq!(
+        ipv6.destination(),
+        Ipv6Addr::new(0x2001, 0xdb8, 0x86, 0, 0, 0, 0, 2)
+    );
+    assert_eq!(ipv6.hop_limit_value(), 64);
+    assert_eq!(ipv6.next_header_value(), IPPROTO_SCTP);
+
+    let sctp = expect_layer::<Sctp>(case, packet);
+    assert_eq!(sctp.source_port_value(), source_port);
+    assert_eq!(sctp.destination_port_value(), destination_port);
+    assert_eq!(sctp.verification_tag_value(), verification_tag);
+    assert_eq!(sctp.checksum_status(), SctpChecksumStatus::Valid);
+    assert_eq!(sctp.chunk_count(), chunk_count);
+    sctp
+}
+
+fn assert_sctp_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
+    match case.name {
+        "ipv4-sctp-init" => {
+            let sctp = assert_sctp_ipv4_transport(case, packet, 86, 0x5086, 16_086, 16_087, 0, 1);
+            let SctpChunk::Init(init) = &sctp.chunks()[0] else {
+                panic!("fixture {} expected SCTP INIT chunk", case.path);
+            };
+            assert_eq!(init.initiate_tag().unwrap(), 0x1122_3386);
+            assert_eq!(init.outbound_streams().unwrap(), 10);
+            assert_eq!(init.inbound_streams().unwrap(), 10);
+            assert_eq!(init.initial_tsn().unwrap(), 0x0102_0386);
+        }
+        "ipv6-sctp-init" => {
+            let sctp = assert_sctp_ipv6_transport(case, packet, 16_086, 16_087, 0, 1);
+            let SctpChunk::Init(init) = &sctp.chunks()[0] else {
+                panic!("fixture {} expected SCTP INIT chunk", case.path);
+            };
+            assert_eq!(init.initiate_tag().unwrap(), 0x1122_3386);
+            assert_eq!(init.initial_tsn().unwrap(), 0x0102_0386);
+        }
+        "ipv4-sctp-init-ack" => {
+            let sctp = assert_sctp_ipv4_transport(
+                case,
+                packet,
+                87,
+                0x5087,
+                17_087,
+                17_088,
+                0x1122_3387,
+                1,
+            );
+            let SctpChunk::InitAck(init_ack) = &sctp.chunks()[0] else {
+                panic!("fixture {} expected SCTP INIT ACK chunk", case.path);
+            };
+            assert_eq!(init_ack.initiate_tag().unwrap(), 0x5566_7787);
+            assert_eq!(init_ack.initial_tsn().unwrap(), 0x0102_0387);
+            assert!(!init_ack.parameters().unwrap().is_empty());
+        }
+        "ipv4-sctp-data" => {
+            let sctp = assert_sctp_ipv4_transport(
+                case,
+                packet,
+                88,
+                0x5088,
+                18_088,
+                18_089,
+                0x1122_3388,
+                2,
+            );
+            let SctpChunk::Data(data) = &sctp.chunks()[0] else {
+                panic!("fixture {} expected SCTP DATA chunk", case.path);
+            };
+            assert_eq!(data.user_data().unwrap(), b"abc");
+            assert_eq!(data.ppid().unwrap(), SCTP_PPID_WEBRTC_STRING);
+            assert_eq!(data.ppid_status().unwrap(), SctpPpidStatus::Assigned);
+            assert!(matches!(&sctp.chunks()[1], SctpChunk::IData(_)));
+        }
+        "ipv4-sctp-sack" => {
+            let sctp = assert_sctp_ipv4_transport(
+                case,
+                packet,
+                89,
+                0x5089,
+                19_089,
+                19_090,
+                0x1122_3389,
+                1,
+            );
+            let SctpChunk::Sack(sack) = &sctp.chunks()[0] else {
+                panic!("fixture {} expected SCTP SACK chunk", case.path);
+            };
+            assert_eq!(sack.cumulative_tsn_ack().unwrap(), 0x1122_3389);
+            assert_eq!(sack.gap_ack_block_count().unwrap(), 2);
+            assert_eq!(sack.duplicate_tsn_count().unwrap(), 2);
+        }
+        "ipv4-sctp-control-chunks" => {
+            let sctp = assert_sctp_ipv4_transport(
+                case,
+                packet,
+                90,
+                0x5090,
+                20_090,
+                20_091,
+                0x1122_3390,
+                13,
+            );
+            let chunks = sctp.chunks();
+            assert!(matches!(&chunks[0], SctpChunk::Heartbeat(_)));
+            assert!(matches!(&chunks[1], SctpChunk::HeartbeatAck(_)));
+            assert!(matches!(&chunks[2], SctpChunk::Abort(_)));
+            assert!(matches!(&chunks[3], SctpChunk::Error(_)));
+            assert!(matches!(&chunks[4], SctpChunk::CookieEcho(_)));
+            assert!(matches!(&chunks[5], SctpChunk::CookieAck(_)));
+            assert!(matches!(&chunks[6], SctpChunk::Auth(_)));
+            assert!(matches!(&chunks[7], SctpChunk::Asconf(_)));
+            assert!(matches!(&chunks[8], SctpChunk::AsconfAck(_)));
+            assert!(matches!(&chunks[9], SctpChunk::ReConfig(_)));
+            assert!(matches!(&chunks[10], SctpChunk::ForwardTsn(_)));
+            assert!(matches!(&chunks[11], SctpChunk::IForwardTsn(_)));
+            assert!(matches!(&chunks[12], SctpChunk::Pad(_)));
+        }
+        other => panic!("SCTP fixture {other} is missing typed field assertions"),
+    }
+}
+
 fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     match case.name {
         name if name.starts_with("ble-") => assert_ble_fixture_fields(case, packet),
@@ -4905,6 +5177,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
         "ethernet-ipv4-udp-snmp-get-request" | "ipv4-udp-snmp-response" => {
             assert_snmp_fixture_fields(case, packet)
         }
+        name if name.contains("sctp") => assert_sctp_fixture_fields(case, packet),
         name if name.starts_with("ipv4-fragment-defrag-") => {
             assert_ipv4_fragment_defrag_fixture_fields(case, packet)
         }
@@ -9512,6 +9785,133 @@ fn pcap_fixture_case(name: &str) -> &'static PcapFixtureCase {
 }
 
 #[test]
+fn sctp_fixture_suite_decodes_byte_and_pcap_fixtures() {
+    for name in [
+        "ipv4-sctp-init",
+        "ipv6-sctp-init",
+        "ipv4-sctp-init-ack",
+        "ipv4-sctp-data",
+        "ipv4-sctp-sack",
+        "ipv4-sctp-control-chunks",
+    ] {
+        let case = valid_fixture_case(name);
+        ensure_fixture_exists(case.path);
+        let bytes = fixture_bytes_for_case(case);
+        let target = packet_target_for_case(case);
+        let packet = decode_packet(target, &bytes)
+            .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+
+        assert_packet_surface(case, &packet);
+        assert_exact_layer_stack(case, &packet);
+        assert_fixture_fields(case, &packet);
+        assert_compile_decode_compile(case, target, &packet, &bytes);
+    }
+
+    for name in [
+        "raw-ipv4-sctp-data",
+        "raw-ipv6-sctp-data",
+        "raw-ipv4-udp-sctp-data",
+    ] {
+        let case = pcap_fixture_case(name);
+        assert_eq!(case.records.len(), 1);
+        assert_eq!(case.contents, sctp_pcap_expected_bytes(name).as_slice());
+
+        let expected = case.records[0];
+        let expected_record_bytes = pcap_record_expected_bytes(expected.fixture_name);
+        let expected_timestamp = sctp_pcap_timestamp(expected.fixture_name);
+
+        let reader = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| panic!("pcap fixture {} should parse: {err}", case.path));
+        assert_eq!(reader.pcap_link_type(), PcapLinkType::RawIp);
+        assert_eq!(reader.link_type(), LinkType::Raw);
+        assert_eq!(
+            reader.header().precision(),
+            TimestampPrecision::Microseconds
+        );
+
+        let records = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} should parse header for records: {err}",
+                    case.path
+                )
+            })
+            .collect_records()
+            .unwrap_or_else(|err| panic!("pcap fixture {} should read records: {err}", case.path));
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.timestamp(), expected_timestamp);
+        assert_eq!(record.pcap_link_type(), case.pcap_link_type);
+        assert_eq!(record.link_type(), case.link_type);
+        assert_eq!(record.captured_len(), expected_record_bytes.len() as u32);
+        assert_eq!(record.original_len(), expected_record_bytes.len() as u32);
+        assert_eq!(record.data(), expected_record_bytes.as_slice());
+
+        let packets = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} should parse header for packets: {err}",
+                    case.path
+                )
+            })
+            .collect_packets()
+            .unwrap_or_else(|err| {
+                panic!("pcap fixture {} should decode packets: {err}", case.path)
+            });
+        assert_eq!(packets.len(), 1);
+        let packet = &packets[0];
+        assert_eq!(packet.timestamp(), expected_timestamp);
+        assert_eq!(packet.original_len(), expected_record_bytes.len() as u32);
+        assert_eq!(packet.pcap_link_type(), case.pcap_link_type);
+        assert_eq!(packet.link_type(), case.link_type);
+        assert_eq!(packet.data(), expected_record_bytes.as_slice());
+        assert_sctp_pcap_packet_surface(expected.fixture_name, packet.packet());
+
+        let mut rewritten_packet = Vec::new();
+        {
+            let options =
+                PcapWriterOptions::new(case.pcap_link_type).precision(case.timestamp_precision);
+            let mut writer = PcapWriter::from_writer_with_options(&mut rewritten_packet, options)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "pcap fixture {} packet writer should initialize: {err}",
+                        case.path
+                    )
+                });
+            writer
+                .write_packet_with_timestamp(packet.packet(), expected_timestamp)
+                .unwrap_or_else(|err| {
+                    panic!("pcap fixture {} packet should write: {err}", case.path)
+                });
+            writer.flush().unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} packet writer should flush: {err}",
+                    case.path
+                )
+            });
+        }
+        assert_eq!(rewritten_packet, case.contents);
+
+        let mut rewritten_record = Vec::new();
+        {
+            let options =
+                PcapWriterOptions::new(case.pcap_link_type).precision(case.timestamp_precision);
+            let mut writer = PcapWriter::from_writer_with_options(&mut rewritten_record, options)
+                .unwrap_or_else(|err| {
+                    panic!("pcap fixture {} writer should initialize: {err}", case.path)
+                });
+            writer.write_record(record).unwrap_or_else(|err| {
+                panic!("pcap fixture {} record should write: {err}", case.path)
+            });
+            writer.flush().unwrap_or_else(|err| {
+                panic!("pcap fixture {} writer should flush: {err}", case.path)
+            });
+        }
+        assert_eq!(rewritten_record, case.contents);
+    }
+}
+
+#[test]
 fn snmp_fixture_suite_pcap_decodes_records() {
     for name in [
         "ethernet-ipv4-udp-snmp-get-request",
@@ -9814,6 +10214,15 @@ const NTP_ETHERNET_EXPECTED_LAYERS: &[ExpectedLayer] = &[
     ExpectedLayer::Udp,
     ExpectedLayer::Ntp,
 ];
+const SCTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME: &str = "sctp-pcap-raw-ipv4-record";
+const SCTP_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME: &str = "sctp-pcap-raw-ipv6-record";
+const SCTP_PCAP_RAW_IPV4_UDP_RECORD_FIXTURE_NAME: &str = "sctp-pcap-raw-ipv4-udp-record";
+const SCTP_PCAP_RAW_IPV4_EXPECTED_LAYERS: &[ExpectedLayer] =
+    &[ExpectedLayer::Ipv4, ExpectedLayer::Sctp];
+const SCTP_PCAP_RAW_IPV6_EXPECTED_LAYERS: &[ExpectedLayer] =
+    &[ExpectedLayer::Ipv6, ExpectedLayer::Sctp];
+const SCTP_PCAP_RAW_IPV4_UDP_EXPECTED_LAYERS: &[ExpectedLayer] =
+    &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Sctp];
 
 fn pcap_record_expected_bytes(fixture_name: &str) -> Vec<u8> {
     match fixture_name {
@@ -9827,6 +10236,9 @@ fn pcap_record_expected_bytes(fixture_name: &str) -> Vec<u8> {
         MDNS_PCAP_ETHERNET_IPV6_RECORD_FIXTURE_NAME => mdns_pcap_ethernet_ipv6_record_bytes(),
         NTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME => ntp_pcap_raw_ipv4_record_bytes(),
         NTP_PCAP_ETHERNET_RECORD_FIXTURE_NAME => ntp_pcap_ethernet_record_bytes(),
+        SCTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME => sctp_pcap_raw_ipv4_record_bytes(),
+        SCTP_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME => sctp_pcap_raw_ipv6_record_bytes(),
+        SCTP_PCAP_RAW_IPV4_UDP_RECORD_FIXTURE_NAME => sctp_pcap_raw_ipv4_udp_record_bytes(),
         _ => fixture_bytes_for_case(valid_fixture_case(fixture_name)),
     }
 }
@@ -9842,7 +10254,10 @@ fn pcap_record_valid_fixture(fixture_name: &str) -> Option<&'static ValidFixture
         | MDNS_PCAP_ETHERNET_IPV4_RECORD_FIXTURE_NAME
         | MDNS_PCAP_ETHERNET_IPV6_RECORD_FIXTURE_NAME
         | NTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME
-        | NTP_PCAP_ETHERNET_RECORD_FIXTURE_NAME => None,
+        | NTP_PCAP_ETHERNET_RECORD_FIXTURE_NAME
+        | SCTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME
+        | SCTP_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME
+        | SCTP_PCAP_RAW_IPV4_UDP_RECORD_FIXTURE_NAME => None,
         _ => Some(valid_fixture_case(fixture_name)),
     }
 }
@@ -10006,6 +10421,224 @@ fn assert_ntp_pcap_packet_surface(label: &'static str, packet: &Packet) {
         }
         other => panic!("unknown NTP pcap fixture {other}"),
     }
+}
+
+fn sctp_pcap_raw_ipv4_packet() -> Packet {
+    Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 91))
+        .dst(Ipv4Addr::new(198, 51, 100, 91))
+        .id(0x5091)
+        .ttl(64)
+        / Sctp::data(
+            0x0102_0391,
+            0x0091,
+            0x0001,
+            SCTP_PPID_WEBRTC_STRING,
+            b"pcap-v4".to_vec(),
+        )
+        .sport(21_091)
+        .dport(21_092)
+        .vtag(0x1122_3391)
+}
+
+fn sctp_pcap_raw_ipv6_packet() -> Packet {
+    Ipv6::new()
+        .src(Ipv6Addr::new(0x2001, 0xdb8, 0x91, 0, 0, 0, 0, 1))
+        .dst(Ipv6Addr::new(0x2001, 0xdb8, 0x91, 0, 0, 0, 0, 2))
+        .hlim(64)
+        / Sctp::data(
+            0x0102_0691,
+            0x0092,
+            0x0002,
+            SCTP_PPID_WEBRTC_BINARY,
+            b"pcap-v6".to_vec(),
+        )
+        .sport(21_093)
+        .dport(21_094)
+        .vtag(0x1122_6691)
+}
+
+fn sctp_pcap_raw_ipv4_udp_packet() -> Packet {
+    Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 191))
+        .dst(Ipv4Addr::new(198, 51, 100, 191))
+        .id(0x5191)
+        .ttl(64)
+        / Udp::new().sport(49_191).dport(SCTP_UDP_ENCAPSULATION_PORT)
+        / Sctp::data(
+            0x0102_1991,
+            0x0093,
+            0x0003,
+            SCTP_PPID_WEBRTC_STRING,
+            b"pcap-udp-v4".to_vec(),
+        )
+        .sport(21_095)
+        .dport(21_096)
+        .vtag(0x1122_9991)
+}
+
+fn sctp_pcap_record_bytes(packet: &Packet) -> Vec<u8> {
+    packet
+        .compile()
+        .expect("SCTP pcap fixture packet should compile")
+        .as_bytes()
+        .to_vec()
+}
+
+fn sctp_pcap_raw_ipv4_record_bytes() -> Vec<u8> {
+    sctp_pcap_record_bytes(&sctp_pcap_raw_ipv4_packet())
+}
+
+fn sctp_pcap_raw_ipv6_record_bytes() -> Vec<u8> {
+    sctp_pcap_record_bytes(&sctp_pcap_raw_ipv6_packet())
+}
+
+fn sctp_pcap_raw_ipv4_udp_record_bytes() -> Vec<u8> {
+    sctp_pcap_record_bytes(&sctp_pcap_raw_ipv4_udp_packet())
+}
+
+fn sctp_pcap_timestamp(record_fixture_name: &str) -> PcapTimestamp {
+    match record_fixture_name {
+        SCTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME => PcapTimestamp::micros(91, 100),
+        SCTP_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME => PcapTimestamp::micros(91, 200),
+        SCTP_PCAP_RAW_IPV4_UDP_RECORD_FIXTURE_NAME => PcapTimestamp::micros(91, 300),
+        other => panic!("unknown SCTP pcap record fixture {other}"),
+    }
+    .expect("SCTP pcap timestamp should be valid")
+}
+
+fn sctp_pcap_bytes(record_fixture_name: &str, packet: &Packet) -> Vec<u8> {
+    let mut pcap = Vec::new();
+    {
+        let options =
+            PcapWriterOptions::new(PcapLinkType::RawIp).precision(TimestampPrecision::Microseconds);
+        let mut writer = PcapWriter::from_writer_with_options(&mut pcap, options)
+            .expect("SCTP pcap writer should initialize");
+        writer
+            .write_packet_with_timestamp(packet, sctp_pcap_timestamp(record_fixture_name))
+            .expect("SCTP pcap packet should write");
+        writer.flush().expect("SCTP pcap writer should flush");
+    }
+    pcap
+}
+
+fn sctp_pcap_expected_bytes(case_name: &str) -> Vec<u8> {
+    match case_name {
+        "raw-ipv4-sctp-data" => sctp_pcap_bytes(
+            SCTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME,
+            &sctp_pcap_raw_ipv4_packet(),
+        ),
+        "raw-ipv6-sctp-data" => sctp_pcap_bytes(
+            SCTP_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME,
+            &sctp_pcap_raw_ipv6_packet(),
+        ),
+        "raw-ipv4-udp-sctp-data" => sctp_pcap_bytes(
+            SCTP_PCAP_RAW_IPV4_UDP_RECORD_FIXTURE_NAME,
+            &sctp_pcap_raw_ipv4_udp_packet(),
+        ),
+        other => panic!("unknown SCTP pcap fixture {other}"),
+    }
+}
+
+fn sctp_pcap_surface_case(label: &'static str) -> ValidFixtureCase {
+    match label {
+        "raw-ipv4-sctp-data" | SCTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME => ValidFixtureCase {
+            name: "raw-ipv4-sctp-data",
+            path: "pcaps/raw-ipv4-sctp-data.pcap",
+            contents: FixtureContents::Bytes(&[]),
+            target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+            expected_layers: SCTP_PCAP_RAW_IPV4_EXPECTED_LAYERS,
+            preserve_exact_bytes: false,
+            summary_path: None,
+        },
+        "raw-ipv6-sctp-data" | SCTP_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME => ValidFixtureCase {
+            name: "raw-ipv6-sctp-data",
+            path: "pcaps/raw-ipv6-sctp-data.pcap",
+            contents: FixtureContents::Bytes(&[]),
+            target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+            expected_layers: SCTP_PCAP_RAW_IPV6_EXPECTED_LAYERS,
+            preserve_exact_bytes: false,
+            summary_path: None,
+        },
+        "raw-ipv4-udp-sctp-data" | SCTP_PCAP_RAW_IPV4_UDP_RECORD_FIXTURE_NAME => ValidFixtureCase {
+            name: "raw-ipv4-udp-sctp-data",
+            path: "pcaps/raw-ipv4-udp-sctp-data.pcap",
+            contents: FixtureContents::Bytes(&[]),
+            target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+            expected_layers: SCTP_PCAP_RAW_IPV4_UDP_EXPECTED_LAYERS,
+            preserve_exact_bytes: false,
+            summary_path: None,
+        },
+        other => panic!("unknown SCTP pcap fixture {other}"),
+    }
+}
+
+fn assert_sctp_pcap_packet_surface(label: &'static str, packet: &Packet) {
+    let surface_case = sctp_pcap_surface_case(label);
+    assert_packet_surface(&surface_case, packet);
+    assert_exact_layer_stack(&surface_case, packet);
+
+    match label {
+        "raw-ipv4-sctp-data" | SCTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME => {
+            let ipv4 = packet.layer::<Ipv4>().expect("SCTP RawIp IPv4 packet");
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 91));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, 91));
+            assert_eq!(ipv4.protocol_value(), IPPROTO_SCTP);
+
+            let sctp = packet.layer::<Sctp>().expect("SCTP RawIp IPv4 layer");
+            assert_eq!(sctp.source_port_value(), 21_091);
+            assert_eq!(sctp.destination_port_value(), 21_092);
+            assert_eq!(sctp.checksum_status(), SctpChecksumStatus::Valid);
+            let SctpChunk::Data(data) = &sctp.chunks()[0] else {
+                panic!("expected SCTP RawIp IPv4 DATA chunk");
+            };
+            assert_eq!(data.user_data().unwrap(), b"pcap-v4");
+        }
+        "raw-ipv6-sctp-data" | SCTP_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME => {
+            let ipv6 = packet.layer::<Ipv6>().expect("SCTP RawIp IPv6 packet");
+            assert_eq!(
+                ipv6.source(),
+                Ipv6Addr::new(0x2001, 0xdb8, 0x91, 0, 0, 0, 0, 1)
+            );
+            assert_eq!(
+                ipv6.destination(),
+                Ipv6Addr::new(0x2001, 0xdb8, 0x91, 0, 0, 0, 0, 2)
+            );
+            assert_eq!(ipv6.next_header_value(), IPPROTO_SCTP);
+
+            let sctp = packet.layer::<Sctp>().expect("SCTP RawIp IPv6 layer");
+            assert_eq!(sctp.source_port_value(), 21_093);
+            assert_eq!(sctp.destination_port_value(), 21_094);
+            assert_eq!(sctp.checksum_status(), SctpChecksumStatus::Valid);
+            let SctpChunk::Data(data) = &sctp.chunks()[0] else {
+                panic!("expected SCTP RawIp IPv6 DATA chunk");
+            };
+            assert_eq!(data.user_data().unwrap(), b"pcap-v6");
+        }
+        "raw-ipv4-udp-sctp-data" | SCTP_PCAP_RAW_IPV4_UDP_RECORD_FIXTURE_NAME => {
+            let ipv4 = packet.layer::<Ipv4>().expect("SCTP UDP RawIp IPv4 packet");
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 191));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, 191));
+            assert_eq!(ipv4.protocol_value(), IPPROTO_UDP);
+
+            let udp = packet.layer::<Udp>().expect("SCTP UDP encapsulation layer");
+            assert_eq!(udp.source_port_value(), 49_191);
+            assert_eq!(udp.destination_port_value(), SCTP_UDP_ENCAPSULATION_PORT);
+            assert_eq!(udp.checksum_status(), UdpChecksumStatus::Valid);
+
+            let sctp = packet.layer::<Sctp>().expect("UDP-encapsulated SCTP layer");
+            assert_eq!(sctp.source_port_value(), 21_095);
+            assert_eq!(sctp.destination_port_value(), 21_096);
+            assert_eq!(sctp.checksum_status(), SctpChecksumStatus::Valid);
+            let SctpChunk::Data(data) = &sctp.chunks()[0] else {
+                panic!("expected UDP-encapsulated SCTP DATA chunk");
+            };
+            assert_eq!(data.user_data().unwrap(), b"pcap-udp-v4");
+        }
+        other => panic!("unknown SCTP pcap fixture {other}"),
+    }
+
+    assert!(packet.layer::<Raw>().is_none());
 }
 
 fn mdns_pcap_source_mac() -> MacAddr {
@@ -11405,6 +12038,11 @@ fn pcap_fixture_corpus_decodes_supported_link_types() {
                     NTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME
                     | NTP_PCAP_ETHERNET_RECORD_FIXTURE_NAME => {
                         assert_ntp_pcap_packet_surface(expected.fixture_name, packet.packet())
+                    }
+                    SCTP_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME
+                    | SCTP_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME
+                    | SCTP_PCAP_RAW_IPV4_UDP_RECORD_FIXTURE_NAME => {
+                        assert_sctp_pcap_packet_surface(expected.fixture_name, packet.packet())
                     }
                     other => panic!("pcap sentinel record {other} has no surface assertion"),
                 }

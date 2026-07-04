@@ -1222,6 +1222,100 @@ user data. Use `additional_payload_checksum_value(...)`,
 or explicit `Udp::checksum(...)` only when a test or generated tool is
 deliberately emitting fixed or malformed bytes.
 
+## Build SCTP Packet Primitives
+
+SCTP is a packet primitive, not an association stack, socket API, scanner,
+stream reassembler, retransmission engine, congestion controller, or AUTH
+cryptography implementation. Generated tools should build SCTP bytes through
+`Sctp`, `SctpChunk`, `SctpParameter`, and `SctpErrorCause`, then compile,
+decode, summarize, and validate them offline or through dry-run plans first.
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+fn main() -> crafter::Result<()> {
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 132))
+        .dst(Ipv4Addr::new(198, 51, 100, 132))
+        / Sctp::data(
+            0x0102_0392,
+            1,
+            1,
+            SCTP_PPID_WEBRTC_STRING,
+            b"agent-sctp".to_vec(),
+        )
+        .sport(5_000)
+        .dport(5_001)
+        .vtag(0x1122_3392);
+
+    let plan = packet.send_dry_run(
+        SendOptions::new().iface("dry-run0").network_layer(),
+    )?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, plan.bytes())?;
+    let sctp = decoded.layer::<Sctp>().expect("SCTP layer");
+
+    println!("mode=dry-run");
+    println!("checksum_status={}", sctp.checksum_status().label());
+    println!("{}", decoded.summary());
+    Ok(())
+}
+```
+
+Let `compile()` fill the IPv4 protocol / IPv6 next-header value, SCTP chunk
+lengths, padding, and CRC32c checksum unless the tool intentionally needs a
+fixed or malformed value. Preserve explicit checksums, verification tags,
+ports, flags, lengths, PPIDs, chunk types, parameter types, and cause codes;
+surface `SctpChecksumStatus` and unknown-codepoint details to the caller
+instead of treating them as panics.
+
+Use typed SCTP layers for RFC 6951 UDP encapsulation too. Do not append SCTP
+bytes as an opaque `Raw` payload when the tool needs SCTP decode, checksum
+status, oracle normalization, or fixture round trips:
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+let packet = Ipv4::new()
+    .src(Ipv4Addr::new(192, 0, 2, 133))
+    .dst(Ipv4Addr::new(198, 51, 100, 133))
+    / Udp::new().sport(49_152).dport(SCTP_UDP_ENCAPSULATION_PORT)
+    / Sctp::data(0x1111_2233, 1, 2, SCTP_PPID_WEBRTC_STRING, b"udp-sctp".to_vec())
+        .sport(5_010)
+        .dport(5_011)
+        .vtag(0x1020_3040);
+
+let bytes = packet.compile()?;
+let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+assert!(decoded.layer::<Sctp>().is_some());
+# Ok::<(), crafter::CrafterError>(())
+```
+
+For future, private, reserved, or malformed codepoints, use raw-preserving
+helpers such as `SctpChunk::unknown`, `SctpParameter::unknown`,
+`SctpUnknownParameter`, and `SctpErrorCause::unknown`. Keep the packet data
+inside `Packet` or typed SCTP values so `summary()`, `show()`, pcap fixtures,
+and oracle/probe artifacts remain inspectable.
+
+Start SCTP validation with offline byte fixtures, pcap fixtures, and dry-run
+oracle/probe/lab plans. The planned SCTP oracle profile uses a reference
+backend and documentation-safe packet bytes:
+
+```sh
+tools/oracle/run live --backend <reference-backend> --provider local-dry-run --dry-run --family sctp --profile sctp-smoke --seed 9262 --count 5 --out target/oracle/sctp-live-local-dry-run
+tools/oracle/run live --backend <reference-backend> --provider qemu --dry-run --family sctp --profile sctp-smoke --seed 9262 --count 5 --out target/oracle/sctp-live-qemu-dry-run
+tools/lab/run plan --provider qemu --dry-run --profile sctp-smoke --seed 9262 --role stimulus --role target --json
+tools/probe/run --provider qemu --dry-run --profile sctp-smoke --seed 9262 --count 5 --out target/probe/sctp-dry-run
+```
+
+Real SCTP traffic must be provider-backed and explicitly authorized. Do not add
+a generated `--live` path that sends from the developer host. Require
+`--confirm-live-run`, controlled stimulus and target endpoints, bounded
+captures, artifact output below ignored `target/` paths, and teardown in the
+same runbook. Never commit provider credentials, public endpoint addresses,
+provider instance IDs, live host identifiers, or pcaps from sensitive networks.
+
 ## Build TCP Segments
 
 Generated tools should build TCP segments with the typed `Tcp` builder and add

@@ -109,6 +109,7 @@ pub(crate) const fn ipv6_next_header_label(next_header: u8) -> Option<&'static s
         IPPROTO_ICMPV6 => Some("icmpv6"),
         IPPROTO_IPV6_NO_NEXT => Some("no-next"),
         IPPROTO_IPV6_DSTOPTS => Some("destination-options"),
+        IPPROTO_SCTP => Some("sctp"),
         IPPROTO_IPV6_MOBILITY => Some("mobility"),
         IPPROTO_IPV6_HIP => Some("hip"),
         IPPROTO_IPV6_SHIM6 => Some("shim6"),

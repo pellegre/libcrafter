@@ -10,6 +10,7 @@ parents:
 children:
   - dns
   - dhcpv4
+  - sctp
   - payload
 
 fields:

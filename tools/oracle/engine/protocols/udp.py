@@ -63,6 +63,8 @@ def _sample_udp_field(ctx: _SamplingContext, field_name: str, domain: object) ->
             return 520
         if "ripng" in ctx.stack:
             return 521
+        if "sctp" in ctx.stack:
+            return 9899
         if domain in {"bootpc", "dns_client", "dynamic"}:
             return _integer_domain_value(ctx, domain, field_name, bits=16)
         return ctx.src_port
@@ -79,6 +81,8 @@ def _sample_udp_field(ctx: _SamplingContext, field_name: str, domain: object) ->
             return 520
         if "ripng" in ctx.stack:
             return 521
+        if "sctp" in ctx.stack:
+            return 9899
         if domain in {"bootps", "dns_server"}:
             return ctx.dst_port
         if domain == "dynamic":
