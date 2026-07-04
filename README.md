@@ -201,6 +201,33 @@ Live raw sends and captures require platform privileges, and you must be
 authorized to send and capture on the target network. Keep live work off the
 developer host — provision a disposable endpoint instead.
 
+For repeated raw sends, open a reusable `PacketSender` or a raw socket
+`PacketWire` writer instead of calling the one-shot `send_packet` path in a
+loop. Dry-run planning stays offline:
+
+```rust
+use crafter::prelude::*;
+
+fn plan_many(packet: &Packet) -> Result<(), Box<dyn std::error::Error>> {
+    let mut sender = PacketSender::open(
+        SendOptions::new()
+            .iface("eth0")
+            .network_layer()
+            .dry_run(),
+    )?;
+
+    let report = sender.send(packet)?;
+    assert!(report.is_dry_run());
+    Ok(())
+}
+```
+
+Live reusable senders must choose one send class with `.link_layer()` or
+`.network_layer()` before `.live()`. A link-layer sender handles Ethernet and
+radiotap frames through one opened backend; a network-layer sender currently
+handles bare IPv4 packets. Mixed link/network traffic needs separate senders,
+and full-header IPv6 network-layer live sends remain unsupported.
+
 ## Tools: endpoint, lab, oracle, probe
 
 The live path does not have to originate from your machine. Four modules under
