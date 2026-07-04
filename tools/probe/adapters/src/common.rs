@@ -50,6 +50,22 @@ pub fn captured_data(record: &PacketRecord) -> &[u8] {
     record.metadata().captured_bytes().unwrap_or(&[])
 }
 
+pub trait ProbePacketSender {
+    fn send_probe_packet(&mut self, packet: &Packet) -> crafter::net::Result<SendReport>;
+}
+
+impl ProbePacketSender for PacketSender {
+    fn send_probe_packet(&mut self, packet: &Packet) -> crafter::net::Result<SendReport> {
+        self.send(packet)
+    }
+}
+
+impl ProbePacketSender for SocketSender {
+    fn send_probe_packet(&mut self, packet: &Packet) -> crafter::net::Result<SendReport> {
+        self.send(packet)
+    }
+}
+
 #[derive(Debug)]
 pub struct Args {
     pub input: Option<PathBuf>,
