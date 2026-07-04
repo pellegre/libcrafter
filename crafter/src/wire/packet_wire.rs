@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::net::send::validated_interface;
-use crate::net::{SendMode, SendOptions};
+use crate::net::{NetError, SendMode, SendOptions};
 use crate::wire::backend::pcap::PcapLinkType;
 use crate::wire::backend::whad::{WhadBleMode, WhadDot15d4Mode};
 
@@ -575,6 +575,15 @@ impl RawSocketWireBuilder {
     /// Open this write-only raw socket target as one packet wire.
     pub fn open(self) -> Result<PacketWire> {
         let interface = validated_interface(&self.options)?;
+        if !self.options.is_dry_run() && self.options.send_mode() == SendMode::Auto {
+            return Err(NetError::ExplicitSendModeRequired {
+                mode: self.options.send_mode(),
+                reason:
+                    "live raw socket packet wires require explicit link_layer() or network_layer() mode",
+            }
+            .into());
+        }
+
         let writer = RawSocketWriter::new(self.options);
 
         Ok(PacketWire {
