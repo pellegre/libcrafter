@@ -44,6 +44,7 @@ pub(crate) struct PacketSender<B: PnetBackend = PnetIoBackend> {
     options: SendOptions,
     backend: B,
     link_sender: Option<B::LinkSender>,
+    network_sender: Option<B::NetworkSender>,
 }
 
 impl PacketSender<PnetIoBackend> {
@@ -70,6 +71,7 @@ where
             options,
             backend,
             link_sender: None,
+            network_sender: None,
         })
     }
 
@@ -99,14 +101,7 @@ where
                 network_layer,
                 destination,
                 protocol,
-            } => transmit_network_with_backend(
-                &self.backend,
-                plan,
-                &self.options,
-                network_layer,
-                destination,
-                protocol,
-            ),
+            } => self.transmit_network_target(plan, network_layer, destination, protocol),
         }
     }
 
@@ -129,6 +124,46 @@ where
             .as_mut()
             .expect("link sender is initialized before send")
             .send_link(plan.target(), plan.bytes())
+    }
+
+    fn transmit_network_target(
+        &mut self,
+        plan: &SendPlan,
+        network_layer: NetworkLayer,
+        destination: IpAddr,
+        protocol: u8,
+    ) -> Result<usize> {
+        match network_layer {
+            NetworkLayer::Ipv4 => self.transmit_ipv4(plan, destination, protocol),
+            NetworkLayer::Ipv6 => Err(NetError::UnsupportedSendTarget {
+                target: plan.target(),
+                reason: "the selected safe backend does not support full IPv6-header Layer3 sends",
+            }),
+            NetworkLayer::Raw => Err(NetError::UnsupportedSendTarget {
+                target: plan.target(),
+                reason: "raw network-layer sends require an IPv4 or IPv6 header",
+            }),
+        }
+    }
+
+    fn transmit_ipv4(
+        &mut self,
+        plan: &SendPlan,
+        destination: IpAddr,
+        protocol: u8,
+    ) -> Result<usize> {
+        if self.network_sender.is_none() {
+            self.network_sender = Some(self.backend.open_network_sender(
+                &self.options,
+                IPPROTO_RAW_SOCKET,
+                plan.len(),
+            )?);
+        }
+
+        self.network_sender
+            .as_mut()
+            .expect("network sender is initialized before send")
+            .send_ipv4(plan.target(), plan.bytes(), destination, protocol)
     }
 }
 
@@ -498,11 +533,15 @@ mod tests {
     }
 
     fn ipv4_packet() -> crate::Packet {
+        ipv4_packet_to(Ipv4Addr::new(198, 51, 100, 20), "payload")
+    }
+
+    fn ipv4_packet_to(destination: Ipv4Addr, payload: &'static str) -> crate::Packet {
         Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 10))
-            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            .dst(destination)
             / Udp::new().sport(49152).dport(53)
-            / Raw::from("payload")
+            / Raw::from(payload)
     }
 
     #[test]
@@ -761,5 +800,83 @@ mod tests {
         assert_eq!(snapshot.link_sends[1].bytes, second_plan.bytes());
         assert!(snapshot.network_opens.is_empty());
         assert!(snapshot.network_sends.is_empty());
+    }
+
+    #[test]
+    fn live_ipv4_network_sender_opens_once() {
+        let backend = FakePnetBackend::default();
+        let mut sender = PacketSender::open_with_backend(
+            SendOptions::new().iface("fake0").network_layer().live(),
+            backend.clone(),
+        )
+        .unwrap();
+
+        let first = ipv4_packet_to(Ipv4Addr::new(198, 51, 100, 20), "one");
+        let second = ipv4_packet_to(Ipv4Addr::new(203, 0, 113, 30), "two");
+        let first_report = sender.send(&first).unwrap();
+        let second_report = sender.send(&second).unwrap();
+
+        assert!(!first_report.is_dry_run());
+        assert!(!second_report.is_dry_run());
+        assert_eq!(first_report.bytes_sent(), first_report.plan().len());
+        assert_eq!(second_report.bytes_sent(), second_report.plan().len());
+
+        let snapshot = backend.snapshot();
+        assert_eq!(snapshot.network_opens.len(), 1);
+        assert_eq!(
+            snapshot.network_opens[0].socket_protocol,
+            IPPROTO_RAW_SOCKET
+        );
+        assert_eq!(snapshot.network_sends.len(), 2);
+        assert!(snapshot.link_opens.is_empty());
+        assert!(snapshot.link_sends.is_empty());
+    }
+
+    #[test]
+    fn live_ipv4_network_sender_preserves_destinations() {
+        let backend = FakePnetBackend::default();
+        let mut sender = PacketSender::open_with_backend(
+            SendOptions::new().iface("fake0").network_layer().live(),
+            backend.clone(),
+        )
+        .unwrap();
+
+        let first_destination = Ipv4Addr::new(198, 51, 100, 20);
+        let second_destination = Ipv4Addr::new(203, 0, 113, 30);
+        let first = ipv4_packet_to(first_destination, "first");
+        let second = ipv4_packet_to(second_destination, "second");
+        let first_plan = SendPlan::from_packet(
+            &first,
+            SendOptions::new().iface("fake0").network_layer().dry_run(),
+        )
+        .unwrap();
+        let second_plan = SendPlan::from_packet(
+            &second,
+            SendOptions::new().iface("fake0").network_layer().dry_run(),
+        )
+        .unwrap();
+
+        sender.send(&first).unwrap();
+        sender.send(&second).unwrap();
+
+        let snapshot = backend.snapshot();
+        assert_eq!(snapshot.network_opens.len(), 1);
+        assert_eq!(snapshot.network_sends.len(), 2);
+        assert_eq!(snapshot.network_sends[0].target, first_plan.target());
+        assert_eq!(snapshot.network_sends[0].bytes, first_plan.bytes());
+        assert_eq!(
+            snapshot.network_sends[0].destination,
+            IpAddr::V4(first_destination)
+        );
+        assert_eq!(snapshot.network_sends[0].protocol, IPPROTO_UDP);
+        assert_eq!(snapshot.network_sends[1].target, second_plan.target());
+        assert_eq!(snapshot.network_sends[1].bytes, second_plan.bytes());
+        assert_eq!(
+            snapshot.network_sends[1].destination,
+            IpAddr::V4(second_destination)
+        );
+        assert_eq!(snapshot.network_sends[1].protocol, IPPROTO_UDP);
+        assert!(snapshot.link_opens.is_empty());
+        assert!(snapshot.link_sends.is_empty());
     }
 }
