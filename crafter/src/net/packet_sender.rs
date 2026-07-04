@@ -43,6 +43,7 @@ pub(crate) trait PnetBackend {
 pub(crate) struct PacketSender<B: PnetBackend = PnetIoBackend> {
     options: SendOptions,
     backend: B,
+    link_sender: Option<B::LinkSender>,
 }
 
 impl PacketSender<PnetIoBackend> {
@@ -65,7 +66,11 @@ where
             });
         }
 
-        Ok(Self { options, backend })
+        Ok(Self {
+            options,
+            backend,
+            link_sender: None,
+        })
     }
 
     pub(crate) const fn options(&self) -> &SendOptions {
@@ -83,35 +88,47 @@ where
             return Ok(SendReport::new(plan, len, true));
         }
 
-        let bytes_sent = transmit_plan_with_backend(&self.backend, &plan, &self.options)?;
+        let bytes_sent = self.transmit_plan(&plan)?;
         Ok(SendReport::new(plan, bytes_sent, false))
     }
-}
 
-fn transmit_plan_with_backend<B>(
-    backend: &B,
-    plan: &SendPlan,
-    options: &SendOptions,
-) -> Result<usize>
-where
-    B: PnetBackend,
-{
-    match plan.target() {
-        SendTarget::LinkLayer { link_type } => {
-            transmit_link_target_with_backend(backend, plan, options, link_type)
+    fn transmit_plan(&mut self, plan: &SendPlan) -> Result<usize> {
+        match plan.target() {
+            SendTarget::LinkLayer { link_type } => self.transmit_link_target(plan, link_type),
+            SendTarget::NetworkLayer {
+                network_layer,
+                destination,
+                protocol,
+            } => transmit_network_with_backend(
+                &self.backend,
+                plan,
+                &self.options,
+                network_layer,
+                destination,
+                protocol,
+            ),
         }
-        SendTarget::NetworkLayer {
-            network_layer,
-            destination,
-            protocol,
-        } => transmit_network_with_backend(
-            backend,
-            plan,
-            options,
-            network_layer,
-            destination,
-            protocol,
-        ),
+    }
+
+    fn transmit_link_target(&mut self, plan: &SendPlan, link_type: LinkType) -> Result<usize> {
+        match link_type {
+            LinkType::Ethernet | LinkType::Radiotap => self.transmit_link(plan),
+            _ => Err(NetError::UnsupportedSendTarget {
+                target: plan.target(),
+                reason: "live link-layer send supports Ethernet and radiotap Wi-Fi frames only",
+            }),
+        }
+    }
+
+    fn transmit_link(&mut self, plan: &SendPlan) -> Result<usize> {
+        if self.link_sender.is_none() {
+            self.link_sender = Some(self.backend.open_link_sender(plan, &self.options)?);
+        }
+
+        self.link_sender
+            .as_mut()
+            .expect("link sender is initialized before send")
+            .send_link(plan.target(), plan.bytes())
     }
 }
 
@@ -455,12 +472,16 @@ mod tests {
     use super::*;
 
     fn ethernet_packet() -> crate::Packet {
+        ethernet_packet_with_payload("payload")
+    }
+
+    fn ethernet_packet_with_payload(payload: &'static str) -> crate::Packet {
         Ethernet::new()
             / Ipv4::new()
                 .src(Ipv4Addr::new(192, 0, 2, 10))
                 .dst(Ipv4Addr::new(198, 51, 100, 20))
             / Udp::new().sport(49152).dport(53)
-            / Raw::from("payload")
+            / Raw::from(payload)
     }
 
     fn ipv4_packet() -> crate::Packet {
@@ -601,6 +622,74 @@ mod tests {
         assert!(snapshot.link_opens.is_empty());
         assert!(snapshot.network_opens.is_empty());
         assert!(snapshot.link_sends.is_empty());
+        assert!(snapshot.network_sends.is_empty());
+    }
+
+    #[test]
+    fn live_link_layer_sender_opens_once() {
+        let backend = FakePnetBackend::default();
+        let mut sender = PacketSender::open_with_backend(
+            SendOptions::new().iface("fake0").link_layer().live(),
+            backend.clone(),
+        )
+        .unwrap();
+
+        let first = ethernet_packet_with_payload("first");
+        let second = ethernet_packet_with_payload("second");
+        let first_report = sender.send(&first).unwrap();
+        let second_report = sender.send(&second).unwrap();
+
+        assert!(!first_report.is_dry_run());
+        assert!(!second_report.is_dry_run());
+        assert_eq!(first_report.bytes_sent(), first_report.plan().len());
+        assert_eq!(second_report.bytes_sent(), second_report.plan().len());
+
+        let snapshot = backend.snapshot();
+        assert_eq!(snapshot.link_opens.len(), 1);
+        assert_eq!(snapshot.link_sends.len(), 2);
+        assert!(snapshot.network_opens.is_empty());
+        assert!(snapshot.network_sends.is_empty());
+    }
+
+    #[test]
+    fn live_link_layer_sender_writes_ethernet_frames() {
+        let backend = FakePnetBackend::default();
+        let mut sender = PacketSender::open_with_backend(
+            SendOptions::new().iface("fake0").link_layer().live(),
+            backend.clone(),
+        )
+        .unwrap();
+
+        let first = ethernet_packet_with_payload("one");
+        let second = ethernet_packet_with_payload("two");
+        let first_plan = SendPlan::from_packet(
+            &first,
+            SendOptions::new().iface("fake0").link_layer().dry_run(),
+        )
+        .unwrap();
+        let second_plan = SendPlan::from_packet(
+            &second,
+            SendOptions::new().iface("fake0").link_layer().dry_run(),
+        )
+        .unwrap();
+
+        sender.send(&first).unwrap();
+        sender.send(&second).unwrap();
+
+        let snapshot = backend.snapshot();
+        assert_eq!(snapshot.link_opens.len(), 1);
+        assert_eq!(
+            snapshot.link_opens[0].target,
+            SendTarget::LinkLayer {
+                link_type: LinkType::Ethernet,
+            }
+        );
+        assert_eq!(snapshot.link_sends.len(), 2);
+        assert_eq!(snapshot.link_sends[0].target, first_plan.target());
+        assert_eq!(snapshot.link_sends[0].bytes, first_plan.bytes());
+        assert_eq!(snapshot.link_sends[1].target, second_plan.target());
+        assert_eq!(snapshot.link_sends[1].bytes, second_plan.bytes());
+        assert!(snapshot.network_opens.is_empty());
         assert!(snapshot.network_sends.is_empty());
     }
 }
