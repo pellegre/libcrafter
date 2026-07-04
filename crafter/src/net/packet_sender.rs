@@ -60,8 +60,7 @@ impl PacketSender {
     /// [`SendOptions::network_layer`] for supported network-layer packets.
     /// Dry-run senders never open an OS raw socket.
     pub fn open(options: impl Into<SendOptions>) -> Result<Self> {
-        BackendPacketSender::open_with_backend(options, PnetIoBackend)
-            .map(|inner| Self { inner })
+        BackendPacketSender::open_with_backend(options, PnetIoBackend).map(|inner| Self { inner })
     }
 
     /// Borrow this sender's options.
@@ -221,30 +220,7 @@ where
     }
 }
 
-fn transmit_link_target_with_backend<B>(
-    backend: &B,
-    plan: &SendPlan,
-    options: &SendOptions,
-    link_type: LinkType,
-) -> Result<usize>
-where
-    B: PnetBackend,
-{
-    match link_type {
-        LinkType::Ethernet | LinkType::Radiotap => {
-            transmit_link_with_backend(backend, plan, options)
-        }
-        _ => Err(NetError::UnsupportedSendTarget {
-            target: plan.target(),
-            reason: "live link-layer send supports Ethernet and radiotap Wi-Fi frames only",
-        }),
-    }
-}
-
-pub(crate) fn transmit_link_once(plan: &SendPlan, options: &SendOptions) -> Result<usize> {
-    transmit_link_with_backend(&PnetIoBackend, plan, options)
-}
-
+#[cfg(test)]
 pub(crate) fn transmit_link_with_backend<B>(
     backend: &B,
     plan: &SendPlan,
@@ -257,23 +233,7 @@ where
     sender.send_link(plan.target(), plan.bytes())
 }
 
-pub(crate) fn transmit_network_once(
-    plan: &SendPlan,
-    options: &SendOptions,
-    network_layer: NetworkLayer,
-    destination: IpAddr,
-    protocol: u8,
-) -> Result<usize> {
-    transmit_network_with_backend(
-        &PnetIoBackend,
-        plan,
-        options,
-        network_layer,
-        destination,
-        protocol,
-    )
-}
-
+#[cfg(test)]
 pub(crate) fn transmit_network_with_backend<B>(
     backend: &B,
     plan: &SendPlan,

@@ -310,7 +310,7 @@ impl SocketSender {
             return Ok(SendReport::new(plan, len, true));
         }
 
-        let bytes_sent = transmit_plan(&plan, &self.options)?;
+        let bytes_sent = transmit_packet_once(packet, &plan, &self.options)?;
         Ok(SendReport::new(plan, bytes_sent, false))
     }
 }
@@ -343,13 +343,13 @@ impl PacketSendExt for Packet {
     }
 
     fn send(&self, options: impl Into<SendOptions>) -> Result<SendReport> {
-        send_packet(self, options)
+        SocketSender::new(options).send(self)
     }
 }
 
 /// Compile and send a packet in one call.
 pub fn send_packet(packet: &Packet, options: impl Into<SendOptions>) -> Result<SendReport> {
-    RawSocketWriter::new(options).send_packet(packet)
+    SocketSender::new(options).send(packet)
 }
 
 /// Build a dry-run send plan in one call.
@@ -506,33 +506,20 @@ fn layer_protocol(layer: &dyn Layer) -> u8 {
     }
 }
 
-fn transmit_plan(plan: &SendPlan, options: &SendOptions) -> Result<usize> {
-    match plan.target {
-        SendTarget::LinkLayer { link_type } => transmit_link(plan, options, link_type),
-        SendTarget::NetworkLayer {
-            network_layer,
-            destination,
-            protocol,
-        } => transmit_network(plan, options, network_layer, destination, protocol),
-    }
+fn transmit_packet_once(packet: &Packet, plan: &SendPlan, options: &SendOptions) -> Result<usize> {
+    let mut sender =
+        packet_sender::PacketSender::open(one_shot_stateful_options(options, plan.target()))?;
+    let report = sender.send(packet)?;
+    Ok(report.bytes_sent())
 }
 
-fn transmit_link(plan: &SendPlan, options: &SendOptions, link_type: LinkType) -> Result<usize> {
-    match link_type {
-        LinkType::Ethernet | LinkType::Radiotap => packet_sender::transmit_link_once(plan, options),
-        _ => Err(NetError::UnsupportedSendTarget {
-            target: plan.target,
-            reason: "live link-layer send supports Ethernet and radiotap Wi-Fi frames only",
-        }),
+fn one_shot_stateful_options(options: &SendOptions, target: SendTarget) -> SendOptions {
+    if options.send_mode() != SendMode::Auto {
+        return options.clone();
     }
-}
 
-fn transmit_network(
-    plan: &SendPlan,
-    options: &SendOptions,
-    network_layer: NetworkLayer,
-    destination: IpAddr,
-    protocol: u8,
-) -> Result<usize> {
-    packet_sender::transmit_network_once(plan, options, network_layer, destination, protocol)
+    match target {
+        SendTarget::LinkLayer { .. } => options.clone().link_layer(),
+        SendTarget::NetworkLayer { .. } => options.clone().network_layer(),
+    }
 }

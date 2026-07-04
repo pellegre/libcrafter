@@ -396,6 +396,45 @@ mod send_plan {
             one_shot_report.plan().target(),
             extension_report.plan().target()
         );
+
+        let ethernet_packet = Ethernet::new() / ipv4_packet();
+        let ethernet_report = SocketSender::dry_run("veth0")
+            .send(&ethernet_packet)
+            .unwrap();
+        assert!(ethernet_report.is_dry_run());
+        assert_eq!(ethernet_report.bytes_sent(), ethernet_report.plan().len());
+        assert_eq!(ethernet_report.plan().requested_mode(), SendMode::Auto);
+        assert_eq!(
+            ethernet_report.plan().target(),
+            SendTarget::LinkLayer {
+                link_type: crate::LinkType::Ethernet
+            }
+        );
+
+        let ipv6_packet = Ipv6::new()
+            .src(Ipv6Addr::LOCALHOST)
+            .dst(Ipv6Addr::LOCALHOST)
+            / Tcp::new().sport(1234).dport(443);
+        let error = SocketSender::new(SendOptions::new().iface("lo").network_layer().live())
+            .send(&ipv6_packet)
+            .unwrap_err();
+        match error {
+            NetError::UnsupportedSendTarget { target, reason } => {
+                assert_eq!(
+                    target,
+                    SendTarget::NetworkLayer {
+                        network_layer: NetworkLayer::Ipv6,
+                        destination: IpAddr::V6(Ipv6Addr::LOCALHOST),
+                        protocol: crate::IPPROTO_TCP
+                    }
+                );
+                assert_eq!(
+                    reason,
+                    "the selected safe backend does not support full IPv6-header Layer3 sends"
+                );
+            }
+            other => panic!("expected unsupported IPv6 live network-layer send, got {other}"),
+        }
     }
 
     #[test]
@@ -422,6 +461,21 @@ mod send_plan {
                 assert_eq!(name, "missing-crafter-wifi0");
             }
             other => panic!("expected radiotap live send to report missing interface, got {other}"),
+        }
+
+        let error = one_shot_send_packet(
+            &packet,
+            SendOptions::new().iface("missing-crafter-wifi0").live(),
+        )
+        .unwrap_err();
+
+        match error {
+            NetError::InterfaceNotFound { name } => {
+                assert_eq!(name, "missing-crafter-wifi0");
+            }
+            other => {
+                panic!("expected one-shot radiotap send to report missing interface, got {other}")
+            }
         }
     }
 
