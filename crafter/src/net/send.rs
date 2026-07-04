@@ -1,4 +1,3 @@
-use std::io;
 use std::net::IpAddr;
 use std::time::Duration;
 
@@ -7,13 +6,9 @@ use crate::{
     CompiledPacket, Ethernet, Icmpv4, Icmpv6, Ipv4, Ipv6, Layer, LinkType, NetworkLayer, Packet,
     Radiotap, Tcp, Udp, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP,
 };
-use pnet_datalink::{self as datalink, Channel, ChannelType};
-use pnet_packet::ip::IpNextHeaderProtocol;
-use pnet_transport::{transport_channel, TransportChannelType};
 
 use super::error::{NetError, Result};
-
-const IPPROTO_RAW_SOCKET: u8 = 255;
+use super::packet_sender;
 
 /// Caller intent for selecting a send path.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -150,6 +145,14 @@ impl SendOptions {
     /// Return true when send calls should only compile and plan.
     pub const fn is_dry_run(&self) -> bool {
         self.dry_run
+    }
+
+    pub(crate) const fn write_timeout_hint(&self) -> Option<Duration> {
+        self.write_timeout
+    }
+
+    pub(crate) const fn write_buffer_size_hint(&self) -> usize {
+        self.write_buffer_size
     }
 }
 
@@ -372,14 +375,6 @@ pub(crate) fn validated_interface(options: &SendOptions) -> Result<String> {
     Ok(interface)
 }
 
-fn net_io_error(operation: &'static str, source: io::Error) -> NetError {
-    if source.kind() == io::ErrorKind::PermissionDenied {
-        NetError::PermissionDenied { operation, source }
-    } else {
-        NetError::Io { operation, source }
-    }
-}
-
 fn infer_send_target(packet: &Packet, bytes: &[u8], mode: SendMode) -> Result<SendTarget> {
     let Some(first) = packet.get(0) else {
         return Err(NetError::UnsupportedPacketShape {
@@ -520,45 +515,10 @@ fn transmit_plan(plan: &SendPlan, options: &SendOptions) -> Result<usize> {
 
 fn transmit_link(plan: &SendPlan, options: &SendOptions, link_type: LinkType) -> Result<usize> {
     match link_type {
-        LinkType::Ethernet | LinkType::Radiotap => transmit_layer2(plan, options),
+        LinkType::Ethernet | LinkType::Radiotap => packet_sender::transmit_link_once(plan, options),
         _ => Err(NetError::UnsupportedSendTarget {
             target: plan.target,
             reason: "live link-layer send supports Ethernet and radiotap Wi-Fi frames only",
-        }),
-    }
-}
-
-fn transmit_layer2(plan: &SendPlan, options: &SendOptions) -> Result<usize> {
-    let interface = datalink::interfaces()
-        .into_iter()
-        .find(|candidate| candidate.name == plan.interface)
-        .ok_or_else(|| NetError::InterfaceNotFound {
-            name: plan.interface.clone(),
-        })?;
-
-    let config = datalink::Config {
-        channel_type: ChannelType::Layer2,
-        write_timeout: options.write_timeout,
-        write_buffer_size: options.write_buffer_size.max(plan.len()),
-        ..Default::default()
-    };
-
-    let channel = datalink::channel(&interface, config)
-        .map_err(|source| net_io_error("open datalink channel", source))?;
-
-    match channel {
-        Channel::Ethernet(mut tx, _) => {
-            let result =
-                tx.send_to(plan.bytes(), None)
-                    .ok_or_else(|| NetError::SendBufferUnavailable {
-                        interface: plan.interface.clone(),
-                        len: plan.len(),
-                    })?;
-            result.map_err(|source| net_io_error("send datalink frame", source))?;
-            Ok(plan.len())
-        }
-        _ => Err(NetError::UnsupportedDatalinkChannel {
-            interface: plan.interface.clone(),
         }),
     }
 }
@@ -570,36 +530,5 @@ fn transmit_network(
     destination: IpAddr,
     protocol: u8,
 ) -> Result<usize> {
-    // IPv4 Layer3 sends include a complete caller-compiled IP header. Opening
-    // the socket as IPPROTO_RAW keeps the header's protocol byte authoritative
-    // and avoids protocol-specific raw socket filtering of newer ICMP types.
-    let socket_protocol = match network_layer {
-        NetworkLayer::Ipv4 => IPPROTO_RAW_SOCKET,
-        NetworkLayer::Ipv6 | NetworkLayer::Raw => protocol,
-    };
-    let channel_type = TransportChannelType::Layer3(IpNextHeaderProtocol::new(socket_protocol));
-    let buffer_size = options.write_buffer_size.max(plan.len());
-    let (mut tx, _) = transport_channel(buffer_size, channel_type)
-        .map_err(|source| net_io_error("open raw network socket", source))?;
-
-    match network_layer {
-        NetworkLayer::Ipv4 => {
-            let packet = pnet_packet::ipv4::Ipv4Packet::new(plan.bytes()).ok_or({
-                NetError::UnsupportedSendTarget {
-                    target: plan.target,
-                    reason: "compiled bytes are not a complete IPv4 packet",
-                }
-            })?;
-            tx.send_to(packet, destination)
-                .map_err(|source| net_io_error("send IPv4 packet", source))
-        }
-        NetworkLayer::Ipv6 => Err(NetError::UnsupportedSendTarget {
-            target: plan.target,
-            reason: "the selected safe backend does not support full IPv6-header Layer3 sends",
-        }),
-        NetworkLayer::Raw => Err(NetError::UnsupportedSendTarget {
-            target: plan.target,
-            reason: "raw network-layer sends require an IPv4 or IPv6 header",
-        }),
-    }
+    packet_sender::transmit_network_once(plan, options, network_layer, destination, protocol)
 }
