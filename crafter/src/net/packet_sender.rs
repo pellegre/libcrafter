@@ -5,10 +5,10 @@ use pnet_datalink::{self as datalink, Channel, ChannelType, DataLinkSender};
 use pnet_packet::ip::IpNextHeaderProtocol;
 use pnet_transport::{transport_channel, TransportChannelType, TransportSender};
 
-use crate::NetworkLayer;
+use crate::{LinkType, NetworkLayer, Packet};
 
 use super::error::{NetError, Result};
-use super::send::{SendOptions, SendPlan, SendTarget};
+use super::send::{validated_interface, SendMode, SendOptions, SendPlan, SendReport, SendTarget};
 
 pub(crate) const IPPROTO_RAW_SOCKET: u8 = 255;
 
@@ -38,6 +38,101 @@ pub(crate) trait PnetBackend {
         socket_protocol: u8,
         min_packet_len: usize,
     ) -> Result<Self::NetworkSender>;
+}
+
+pub(crate) struct PacketSender<B: PnetBackend = PnetIoBackend> {
+    options: SendOptions,
+    backend: B,
+}
+
+impl PacketSender<PnetIoBackend> {
+    pub(crate) fn open(options: impl Into<SendOptions>) -> Result<Self> {
+        Self::open_with_backend(options, PnetIoBackend)
+    }
+}
+
+impl<B> PacketSender<B>
+where
+    B: PnetBackend,
+{
+    pub(crate) fn open_with_backend(options: impl Into<SendOptions>, backend: B) -> Result<Self> {
+        let options = options.into();
+        let _interface = validated_interface(&options)?;
+        if !options.is_dry_run() && options.send_mode() == SendMode::Auto {
+            return Err(NetError::ExplicitSendModeRequired {
+                mode: options.send_mode(),
+                reason: "stateful live packet senders require explicit link_layer() or network_layer() mode",
+            });
+        }
+
+        Ok(Self { options, backend })
+    }
+
+    pub(crate) const fn options(&self) -> &SendOptions {
+        &self.options
+    }
+
+    pub(crate) fn plan(&self, packet: &Packet) -> Result<SendPlan> {
+        SendPlan::from_packet(packet, self.options.clone())
+    }
+
+    pub(crate) fn send(&mut self, packet: &Packet) -> Result<SendReport> {
+        let plan = self.plan(packet)?;
+        if self.options.is_dry_run() {
+            let len = plan.len();
+            return Ok(SendReport::new(plan, len, true));
+        }
+
+        let bytes_sent = transmit_plan_with_backend(&self.backend, &plan, &self.options)?;
+        Ok(SendReport::new(plan, bytes_sent, false))
+    }
+}
+
+fn transmit_plan_with_backend<B>(
+    backend: &B,
+    plan: &SendPlan,
+    options: &SendOptions,
+) -> Result<usize>
+where
+    B: PnetBackend,
+{
+    match plan.target() {
+        SendTarget::LinkLayer { link_type } => {
+            transmit_link_target_with_backend(backend, plan, options, link_type)
+        }
+        SendTarget::NetworkLayer {
+            network_layer,
+            destination,
+            protocol,
+        } => transmit_network_with_backend(
+            backend,
+            plan,
+            options,
+            network_layer,
+            destination,
+            protocol,
+        ),
+    }
+}
+
+fn transmit_link_target_with_backend<B>(
+    backend: &B,
+    plan: &SendPlan,
+    options: &SendOptions,
+    link_type: LinkType,
+) -> Result<usize>
+where
+    B: PnetBackend,
+{
+    match link_type {
+        LinkType::Ethernet | LinkType::Radiotap => {
+            transmit_link_with_backend(backend, plan, options)
+        }
+        _ => Err(NetError::UnsupportedSendTarget {
+            target: plan.target(),
+            reason: "live link-layer send supports Ethernet and radiotap Wi-Fi frames only",
+        }),
+    }
 }
 
 pub(crate) fn transmit_link_once(plan: &SendPlan, options: &SendOptions) -> Result<usize> {
@@ -355,7 +450,7 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
 
-    use crate::{Ethernet, Ipv4, NetworkLayer, Raw, Udp, IPPROTO_UDP};
+    use crate::{Ethernet, Ipv4, LinkType, NetworkLayer, Raw, Udp, IPPROTO_UDP};
 
     use super::*;
 
@@ -450,5 +545,62 @@ mod tests {
         assert_eq!(snapshot.network_sends[0].protocol, IPPROTO_UDP);
         assert!(snapshot.link_opens.is_empty());
         assert!(snapshot.link_sends.is_empty());
+    }
+
+    #[test]
+    fn packet_sender_requires_explicit_live_mode() {
+        let backend = FakePnetBackend::default();
+
+        let error = match PacketSender::open_with_backend(
+            SendOptions::new().iface("fake0").live(),
+            backend.clone(),
+        ) {
+            Ok(_) => panic!("stateful live sender should reject auto mode"),
+            Err(error) => error,
+        };
+
+        match error {
+            NetError::ExplicitSendModeRequired { mode, reason } => {
+                assert_eq!(mode, SendMode::Auto);
+                assert!(reason.contains("link_layer()"));
+                assert!(reason.contains("network_layer()"));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+
+        let snapshot = backend.snapshot();
+        assert!(snapshot.link_opens.is_empty());
+        assert!(snapshot.network_opens.is_empty());
+        assert!(snapshot.link_sends.is_empty());
+        assert!(snapshot.network_sends.is_empty());
+    }
+
+    #[test]
+    fn packet_sender_dry_run() {
+        let backend = FakePnetBackend::default();
+        let mut sender = PacketSender::open_with_backend(
+            SendOptions::new().iface("fake0").dry_run(),
+            backend.clone(),
+        )
+        .unwrap();
+
+        let report = sender.send(&ethernet_packet()).unwrap();
+
+        assert!(report.is_dry_run());
+        assert_eq!(report.bytes_sent(), report.plan().len());
+        assert_eq!(report.plan().interface(), "fake0");
+        assert_eq!(report.plan().requested_mode(), SendMode::Auto);
+        assert_eq!(
+            report.plan().target(),
+            SendTarget::LinkLayer {
+                link_type: LinkType::Ethernet,
+            }
+        );
+
+        let snapshot = backend.snapshot();
+        assert!(snapshot.link_opens.is_empty());
+        assert!(snapshot.network_opens.is_empty());
+        assert!(snapshot.link_sends.is_empty());
+        assert!(snapshot.network_sends.is_empty());
     }
 }
