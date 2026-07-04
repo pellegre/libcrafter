@@ -261,6 +261,7 @@ mod send_plan {
             .unwrap();
 
         assert_eq!(plan.interface(), "veth0");
+        assert_eq!(plan.requested_mode(), SendMode::Auto);
         assert!(plan.target().is_link_layer());
         assert_eq!(
             plan.target(),
@@ -269,6 +270,26 @@ mod send_plan {
             }
         );
         assert_eq!(plan.bytes()[12..14], crate::ETHERTYPE_IPV4.to_be_bytes());
+    }
+
+    #[test]
+    fn send_plan_explicit_link_layer_preserves_ethernet_target() {
+        let packet = Ethernet::new() / ipv4_packet();
+        let plan = packet
+            .send_dry_run(SendOptions::new().iface("veth0").link_layer())
+            .unwrap();
+
+        assert_eq!(plan.interface(), "veth0");
+        assert_eq!(plan.requested_mode(), SendMode::LinkLayer);
+        assert!(plan.target().is_link_layer());
+        assert_eq!(
+            plan.target(),
+            SendTarget::LinkLayer {
+                link_type: crate::LinkType::Ethernet
+            }
+        );
+        assert_eq!(plan.bytes()[12..14], crate::ETHERTYPE_IPV4.to_be_bytes());
+        assert_eq!(plan.len(), packet.compile().unwrap().len());
     }
 
     #[test]
@@ -331,6 +352,15 @@ mod send_plan {
 
         assert_eq!(plan.requested_mode(), SendMode::NetworkLayer);
         assert!(plan.target().is_network_layer());
+        assert_eq!(plan.bytes(), packet.compile().unwrap().as_bytes());
+        assert_eq!(
+            plan.target(),
+            SendTarget::NetworkLayer {
+                network_layer: NetworkLayer::Ipv4,
+                destination: IpAddr::V4(Ipv4Addr::new(198, 51, 100, 20)),
+                protocol: crate::IPPROTO_UDP
+            }
+        );
     }
 
     #[test]
@@ -450,6 +480,9 @@ mod send_plan {
             .send_dry_run(SendOptions::new().iface("lo").network_layer())
             .unwrap();
 
+        assert_eq!(plan.interface(), "lo");
+        assert_eq!(plan.requested_mode(), SendMode::NetworkLayer);
+        assert_eq!(plan.bytes(), packet.compile().unwrap().as_bytes());
         match plan.target() {
             SendTarget::NetworkLayer {
                 network_layer,
@@ -462,6 +495,13 @@ mod send_plan {
             }
             _ => panic!("expected IPv6 network-layer send target"),
         }
+
+        let report = SocketSender::new(SendOptions::new().iface("lo").network_layer().dry_run())
+            .send(&packet)
+            .unwrap();
+        assert!(report.is_dry_run());
+        assert_eq!(report.bytes_sent(), plan.len());
+        assert_eq!(report.plan().target(), plan.target());
     }
 }
 
@@ -469,7 +509,7 @@ mod send_plan {
 mod send_errors {
     use crate::{Ethernet, Ipv4, Packet, Raw};
 
-    use crate::net::{NetError, PacketSendExt, SendOptions, SocketSender};
+    use crate::net::{NetError, PacketSendExt, SendMode, SendOptions, SocketSender};
 
     #[test]
     fn send_plan_requires_interface() {
@@ -500,23 +540,50 @@ mod send_errors {
     }
 
     #[test]
-    fn link_layer_intent_rejects_network_packet() {
+    fn send_plan_link_layer_intent_rejects_bare_ipv4_packet() {
         let packet = Ipv4::new() / Raw::from("payload");
         let error = packet
             .send_plan(SendOptions::new().iface("eth0").link_layer().dry_run())
             .unwrap_err();
 
-        assert!(matches!(error, NetError::UnsupportedPacketShape { .. }));
+        match error {
+            NetError::UnsupportedPacketShape {
+                mode,
+                summary: _,
+                reason,
+            } => {
+                assert_eq!(mode, SendMode::LinkLayer);
+                assert_eq!(
+                    reason,
+                    "link-layer sends require Ethernet, LinuxSll, NullLoopback, or Radiotap / Dot11 Wi-Fi as the first layers"
+                );
+            }
+            other => panic!("expected unsupported packet shape, got {other}"),
+        }
     }
 
     #[test]
-    fn network_layer_intent_rejects_link_packet() {
+    fn send_plan_network_layer_intent_rejects_ethernet_frame() {
         let packet = Ethernet::new() / Ipv4::new() / Raw::from("payload");
         let error = packet
             .send_plan(SendOptions::new().iface("eth0").network_layer().dry_run())
             .unwrap_err();
 
-        assert!(matches!(error, NetError::UnsupportedPacketShape { .. }));
+        match error {
+            NetError::UnsupportedPacketShape {
+                mode,
+                summary,
+                reason,
+            } => {
+                assert_eq!(mode, SendMode::NetworkLayer);
+                assert!(summary.contains("Ethernet"));
+                assert_eq!(
+                    reason,
+                    "network-layer sends require IPv4 or IPv6 as the first layer"
+                );
+            }
+            other => panic!("expected unsupported packet shape, got {other}"),
+        }
     }
 
     #[test]
