@@ -1153,13 +1153,9 @@ mod tests {
     fn multi_send_packet_sender_preserves_link_send_report_fields() {
         let parent = repeat_plan();
         let sends = parent.arp_sends.clone().unwrap();
-        let mut sender = PacketSender::open(
-            SendOptions::new()
-                .iface("dry-run0")
-                .link_layer()
-                .dry_run(),
-        )
-        .unwrap();
+        let mut sender =
+            PacketSender::open(SendOptions::new().iface("dry-run0").link_layer().dry_run())
+                .unwrap();
 
         for send in &sends {
             let send_plan = send_as_plan(&parent, send);

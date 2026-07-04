@@ -223,8 +223,8 @@ pub mod prelude {
         SendRecv, SendRecvOptions, SendRecvReport, SendReport, SendTarget, Sniffer, SocketSend,
         SocketSender, Transmitter, VecPacketSource, WifiDecryptState, WifiMetadata,
         WifiProtectionStatus, WireError, WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecrypt,
-        WpaDecryptConfig, WpaDecryptReason,
-        WpaHandshakeStatus, WpaKeyKind, WpaMetadata, WpaNetwork, WriteReport,
+        WpaDecryptConfig, WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind, WpaMetadata,
+        WpaNetwork, WriteReport,
     };
     pub use crate::{
         BackendKind, BluetoothMetadata, Dot15d4Metadata, DropAllTransform, DuplicateTransform,

@@ -1504,9 +1504,7 @@ mod batch_send {
     use crate::{Dot11, Ethernet, Ipv4, LinkType, LlcSnap, Packet, Radiotap, Raw, Udp};
 
     use crate::net::packet_sender::FakePnetBackend;
-    use crate::net::{
-        send_packets, BatchSend, NetError, PacketBatchSendExt, SendMode, SendTarget,
-    };
+    use crate::net::{send_packets, BatchSend, NetError, PacketBatchSendExt, SendMode, SendTarget};
 
     fn udp_request(index: u8) -> Packet {
         Ipv4::new()
