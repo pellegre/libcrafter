@@ -57,6 +57,13 @@ pub enum NetError {
         /// Stable diagnostic reason.
         reason: &'static str,
     },
+    /// Stateful live senders require callers to select a send class explicitly.
+    ExplicitSendModeRequired {
+        /// Requested send mode.
+        mode: SendMode,
+        /// Stable diagnostic reason.
+        reason: &'static str,
+    },
     /// The live backend cannot transmit the planned packet target.
     UnsupportedSendTarget {
         /// Planned send target.
@@ -129,6 +136,12 @@ impl fmt::Display for NetError {
                 f,
                 "cannot build {mode:?} send plan for packet '{summary}': {reason}"
             ),
+            Self::ExplicitSendModeRequired { mode, reason } => {
+                write!(
+                    f,
+                    "cannot open stateful live packet sender in {mode:?} mode: {reason}"
+                )
+            }
             Self::UnsupportedSendTarget { target, reason } => {
                 write!(f, "cannot transmit {target:?}: {reason}")
             }
