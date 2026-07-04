@@ -3,6 +3,7 @@ use std::time::Duration;
 use crate::Packet;
 
 use super::error::Result;
+use super::packet_sender::{BackendPacketSender, PnetBackend, PnetIoBackend};
 use super::send::{send_packet, SendMode, SendOptions, SendReport};
 use super::send_recv::SendRecv;
 pub use super::send_recv::{
@@ -129,17 +130,68 @@ impl BatchSend {
 
     /// Send every packet and return reports aligned with the request order.
     pub fn send_all(&self, packets: &[Packet]) -> Result<BatchSendReport> {
+        self.send_all_with_pnet_backend(packets, PnetIoBackend)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn send_all_with_backend<B>(
+        &self,
+        packets: &[Packet],
+        backend: B,
+    ) -> Result<BatchSendReport>
+    where
+        B: PnetBackend,
+    {
+        self.send_all_with_pnet_backend(packets, backend)
+    }
+
+    fn send_all_with_pnet_backend<B>(
+        &self,
+        packets: &[Packet],
+        backend: B,
+    ) -> Result<BatchSendReport>
+    where
+        B: PnetBackend,
+    {
         let mut entries = (0..packets.len())
             .map(BatchSendEntry::new)
             .collect::<Vec<_>>();
+
+        if self.send_options.is_dry_run() {
+            self.collect_send_reports(packets, &mut entries, |packet| {
+                send_packet(packet, self.send_options.clone())
+            })?;
+        } else if !packets.is_empty() {
+            // Live batches use the stateful sender contract: repeated sends must
+            // choose link_layer() or network_layer(); Auto remains a dry-run and
+            // one-shot SocketSender compatibility mode.
+            let mut sender =
+                BackendPacketSender::open_with_backend(self.send_options.clone(), backend)?;
+            self.collect_send_reports(packets, &mut entries, |packet| sender.send(packet))?;
+        }
+
+        Ok(BatchSendReport::new(
+            entries,
+            self.concurrency_limit,
+            self.retries,
+            self.retry_timeout,
+            self.send_options.is_dry_run(),
+        ))
+    }
+
+    fn collect_send_reports(
+        &self,
+        packets: &[Packet],
+        entries: &mut [BatchSendEntry],
+        mut send_one: impl FnMut(&Packet) -> Result<SendReport>,
+    ) -> Result<()> {
         for chunk_start in (0..packets.len()).step_by(self.concurrency_limit) {
             let chunk_end = (chunk_start + self.concurrency_limit).min(packets.len());
             for attempt in 0..self.retries {
                 for request_index in chunk_start..chunk_end {
-                    entries[request_index].send_reports.push(send_packet(
-                        &packets[request_index],
-                        self.send_options.clone(),
-                    )?);
+                    entries[request_index]
+                        .send_reports
+                        .push(send_one(&packets[request_index])?);
                 }
                 maybe_wait_between_live_retries(
                     self.send_options.is_dry_run(),
@@ -150,13 +202,7 @@ impl BatchSend {
             }
         }
 
-        Ok(BatchSendReport::new(
-            entries,
-            self.concurrency_limit,
-            self.retries,
-            self.retry_timeout,
-            self.send_options.is_dry_run(),
-        ))
+        Ok(())
     }
 }
 

@@ -1503,7 +1503,10 @@ mod batch_send {
 
     use crate::{Ipv4, Packet, Raw, Udp};
 
-    use crate::net::{send_packets, BatchSend, PacketBatchSendExt, SendTarget};
+    use crate::net::packet_sender::FakePnetBackend;
+    use crate::net::{
+        send_packets, BatchSend, NetError, PacketBatchSendExt, SendMode, SendTarget,
+    };
 
     fn udp_request(index: u8) -> Packet {
         Ipv4::new()
@@ -1545,6 +1548,70 @@ mod batch_send {
                 ));
             }
         }
+    }
+
+    #[test]
+    fn batch_send_live_network_layer_reuses_packet_sender() {
+        let backend = FakePnetBackend::default();
+        let packets = vec![udp_request(10), udp_request(11)];
+
+        let report = BatchSend::new()
+            .iface("fake0")
+            .network_layer()
+            .live()
+            .concurrency_limit(2)
+            .retry(3)
+            .send_all_with_backend(&packets, backend.clone())
+            .unwrap();
+
+        assert!(!report.is_dry_run());
+        assert_eq!(report.len(), 2);
+        assert_eq!(report.retries(), 3);
+        for (index, entry) in report.entries().iter().enumerate() {
+            assert_eq!(entry.request_index(), index);
+            assert_eq!(entry.attempts(), 3);
+            for send_report in entry.send_reports() {
+                assert!(!send_report.is_dry_run());
+                assert_eq!(send_report.bytes_sent(), send_report.plan().len());
+                assert!(matches!(
+                    send_report.plan().target(),
+                    SendTarget::NetworkLayer { .. }
+                ));
+            }
+        }
+
+        let snapshot = backend.snapshot();
+        assert_eq!(snapshot.network_opens.len(), 1);
+        assert_eq!(snapshot.network_sends.len(), packets.len() * 3);
+        assert!(snapshot.link_opens.is_empty());
+        assert!(snapshot.link_sends.is_empty());
+    }
+
+    #[test]
+    fn batch_send_live_auto_requires_explicit_mode() {
+        let backend = FakePnetBackend::default();
+        let packets = vec![udp_request(9)];
+
+        let error = BatchSend::new()
+            .iface("fake0")
+            .live()
+            .send_all_with_backend(&packets, backend.clone())
+            .unwrap_err();
+
+        match error {
+            NetError::ExplicitSendModeRequired { mode, reason } => {
+                assert_eq!(mode, SendMode::Auto);
+                assert!(reason.contains("link_layer()"));
+                assert!(reason.contains("network_layer()"));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+
+        let snapshot = backend.snapshot();
+        assert!(snapshot.link_opens.is_empty());
+        assert!(snapshot.network_opens.is_empty());
+        assert!(snapshot.link_sends.is_empty());
+        assert!(snapshot.network_sends.is_empty());
     }
 
     #[test]
