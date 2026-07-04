@@ -309,14 +309,31 @@ fn run_sender(
     } else {
         send_options.live()
     };
-    let sender = SocketSender::new(send_options);
+    let mut packet_sender = match send_mode {
+        SendMode::LinkLayer | SendMode::NetworkLayer if !packets.is_empty() => {
+            Some(PacketSender::open(send_options.clone())?)
+        }
+        _ => None,
+    };
+    let socket_sender = if packet_sender.is_none() {
+        Some(SocketSender::new(send_options))
+    } else {
+        None
+    };
 
     let mut statuses = Vec::with_capacity(prepared.len());
     let mut send_reports = Vec::with_capacity(prepared.len());
     let mut live_sent_count = 0usize;
 
     for (offset, prepared_packet) in prepared.iter().enumerate() {
-        let report = sender.send(&packets[offset])?;
+        let report = if let Some(sender) = packet_sender.as_mut() {
+            sender.send(&packets[offset])?
+        } else {
+            socket_sender
+                .as_ref()
+                .expect("one-shot sender is available when packet sender is not used")
+                .send(&packets[offset])?
+        };
         if !mode.is_dry_run() {
             std::thread::sleep(LIVE_SEND_INTERVAL);
         }
@@ -2694,6 +2711,144 @@ mod live_capture_polling {
 
         assert_eq!(captured.len(), 1);
         assert!(source.emitted);
+    }
+}
+
+#[cfg(test)]
+mod live_endpoint_sender_modes {
+    use super::*;
+    use serde_json::json;
+
+    fn ipv4_packet(index: usize, root: &str) -> PreparedPacket {
+        let packet = Ipv4::new()
+            .src_str("192.0.2.10")
+            .expect("valid source")
+            .dst_str("198.51.100.20")
+            .expect("valid destination")
+            .id(index as u16)
+            .ttl(64)
+            .ipv4_protocol(Ipv4Protocol::Udp)
+            / Udp::new().sport(49152 + index as u16).dport(9)
+            / Raw::from_bytes(b"oracle-live-endpoint");
+        let raw_hex = hex_bytes(packet.compile().expect("packet compiles").as_bytes());
+        PreparedPacket {
+            index,
+            packet,
+            root: root.to_string(),
+            raw_hex,
+            feature_tags: Vec::new(),
+        }
+    }
+
+    fn ethernet_packet(index: usize) -> PreparedPacket {
+        let inner = ipv4_packet(index, "l3:ipv4").packet;
+        let packet = Packet::from_layer(
+            Ethernet::new()
+                .src(MacAddr::from([0x00, 0x00, 0x5e, 0x00, 0x53, 0x10]))
+                .dst(MacAddr::from([0x00, 0x00, 0x5e, 0x00, 0x53, 0x20]))
+                .ethertype(ETHERTYPE_IPV4),
+        )
+        .concat(inner);
+        let raw_hex = hex_bytes(packet.compile().expect("packet compiles").as_bytes());
+        PreparedPacket {
+            index,
+            packet,
+            root: "link:ethernet".to_string(),
+            raw_hex,
+            feature_tags: Vec::new(),
+        }
+    }
+
+    fn sender_request(local_addresses: Value, peer_addresses: Value) -> EndpointRequest {
+        EndpointRequest {
+            provider: "local-dry-run".to_string(),
+            backend: BACKEND_NAME.to_string(),
+            seed: 17,
+            profile: "smoke".to_string(),
+            packet_plans: Vec::new(),
+            direction: "libcrafter_to_backend".to_string(),
+            endpoint_id: "local-dry-run-libcrafter".to_string(),
+            endpoint_role: "libcrafter".to_string(),
+            peer_role: "reference_backend".to_string(),
+            local_addresses,
+            peer_addresses,
+            interface: "dry-run0".to_string(),
+            timeout_seconds: 1,
+            artifact_paths: json!({}),
+            metadata: json!({ "phase_role": "sender" }),
+        }
+    }
+
+    #[test]
+    fn live_endpoint_common_send_mode_rejects_mixed_roots() {
+        let prepared = vec![ipv4_packet(1, "l3:ipv4"), ethernet_packet(2)];
+
+        let error = common_send_mode(&prepared)
+            .expect_err("mixed network and link roots must be rejected")
+            .to_string();
+
+        assert!(
+            error.contains("mixed link-layer and network-layer"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn live_endpoint_ethernet_wrapping_forces_link_layer_mode() {
+        let request = sender_request(
+            json!({ "mac": "00:00:5e:00:53:01" }),
+            json!({ "mac": "00:00:5e:00:53:02" }),
+        );
+        let prepared = vec![ipv4_packet(1, "l3:ipv4"), ethernet_packet(2)];
+
+        let response =
+            run_sender(&request, RunMode::DryRun, &prepared).expect("sender dry-run succeeds");
+
+        assert_eq!(
+            response.pointer("/metadata/detail/send_mode"),
+            Some(&json!("LinkLayer"))
+        );
+        let statuses = response
+            .get("per_index_status")
+            .and_then(Value::as_array)
+            .expect("statuses");
+        assert_eq!(statuses.len(), 2);
+        for status in statuses {
+            assert_eq!(status.get("send_mode"), Some(&json!("link-layer")));
+            assert_eq!(status.get("send_root"), Some(&json!("link:ethernet")));
+        }
+    }
+
+    #[test]
+    fn live_endpoint_sender_reports_explicit_network_mode() {
+        let request = sender_request(json!({}), json!({}));
+        let prepared = vec![ipv4_packet(1, "l3:ipv4"), ipv4_packet(2, "l3:ipv4")];
+
+        let response =
+            run_sender(&request, RunMode::DryRun, &prepared).expect("sender dry-run succeeds");
+
+        assert_eq!(
+            response.pointer("/metadata/detail/send_mode"),
+            Some(&json!("NetworkLayer"))
+        );
+        let reports = response
+            .pointer("/metadata/detail/send_reports")
+            .and_then(Value::as_array)
+            .expect("send reports");
+        assert_eq!(reports.len(), 2);
+        for report in reports {
+            let attempt = report
+                .get("reports")
+                .and_then(Value::as_array)
+                .and_then(|attempts| attempts.first())
+                .expect("one send report attempt");
+            assert_eq!(attempt.get("send_mode"), Some(&json!("NetworkLayer")));
+            assert_eq!(
+                attempt.get("send_mode_label"),
+                Some(&json!("network-layer"))
+            );
+            assert_eq!(attempt.get("dry_run"), Some(&json!(true)));
+        }
     }
 }
 
