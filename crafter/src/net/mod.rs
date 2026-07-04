@@ -12,6 +12,7 @@
 pub mod batch;
 mod error;
 pub mod interface;
+pub(crate) mod packet_sender;
 pub mod range;
 pub mod reply;
 pub mod send;
