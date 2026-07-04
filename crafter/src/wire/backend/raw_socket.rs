@@ -264,7 +264,7 @@ mod raw_socket_writer {
         Dot11, Ethernet, Ipv4, Ipv6, LlcSnap, MacAddr, Packet, PacketWire, PacketWireTarget,
         Radiotap, Raw, Tcp, Udp,
     };
-    use crate::{PacketRecord, WireError};
+    use crate::{DuplicateTransform, PacketRecord, Transmitter, WireError};
 
     fn ipv4_packet() -> Packet {
         Ipv4::new()
@@ -555,6 +555,62 @@ mod raw_socket_writer {
             .unwrap();
 
         for report in [&first_report, &second_report] {
+            assert_eq!(report.backend(), &BackendKind::RawSocket);
+            assert_eq!(report.bytes_requested(), expected_len);
+            assert_eq!(report.bytes_written(), expected_len);
+            assert!(!report.is_dry_run());
+            assert_eq!(
+                report.target_details(),
+                Some(
+                    "interface=lo mode=network-layer target=network-layer:ipv4 destination=198.51.100.20 protocol=17"
+                )
+            );
+        }
+
+        let snapshot = backend.snapshot();
+        assert_eq!(snapshot.link_opens.len(), 0);
+        assert_eq!(snapshot.link_sends.len(), 0);
+        assert_eq!(snapshot.network_opens.len(), 1);
+        assert_eq!(
+            snapshot.network_opens[0].socket_protocol,
+            IPPROTO_RAW_SOCKET
+        );
+        assert_eq!(snapshot.network_opens[0].write_buffer_size, expected_len);
+        assert_eq!(snapshot.network_sends.len(), 2);
+        assert_eq!(snapshot.network_sends[0].bytes.len(), expected_len);
+        assert_eq!(snapshot.network_sends[1].bytes.len(), expected_len);
+        assert_eq!(
+            snapshot.network_sends[0].destination,
+            IpAddr::V4(Ipv4Addr::new(198, 51, 100, 20))
+        );
+        assert_eq!(snapshot.network_sends[0].protocol, crate::IPPROTO_UDP);
+        assert_eq!(
+            snapshot.network_sends[0].target,
+            snapshot.network_sends[1].target
+        );
+    }
+
+    #[test]
+    fn transmitter_live_raw_socket_writer_reuses_sender() {
+        let backend = FakePnetBackend::default();
+        let writer = StatefulRawSocketWriter::new_with_backend(
+            SendOptions::new()
+                .interface("lo")
+                .network_layer()
+                .live()
+                .write_buffer_size(8),
+            backend.clone(),
+        );
+        let packet = ipv4_packet();
+        let expected_len = packet.compile().unwrap().len();
+        let mut transmitter = Transmitter::new(writer).with(DuplicateTransform::new());
+
+        let reports = transmitter
+            .send_record(PacketRecord::new(packet.clone()))
+            .unwrap();
+
+        assert_eq!(reports.len(), 2);
+        for report in &reports {
             assert_eq!(report.backend(), &BackendKind::RawSocket);
             assert_eq!(report.bytes_requested(), expected_len);
             assert_eq!(report.bytes_written(), expected_len);
