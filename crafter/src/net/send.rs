@@ -269,7 +269,11 @@ impl SendReport {
     }
 }
 
-/// Raw packet sender with explicit options.
+/// One-shot raw packet sender with explicit options.
+///
+/// `SocketSender` keeps the original compatibility API for callers that send
+/// or plan one packet at a time. Use [`crate::net::PacketSender`] when repeated
+/// live sends should reuse one opened backend for an explicit send class.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SocketSender {
     options: SendOptions,

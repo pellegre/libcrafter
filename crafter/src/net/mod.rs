@@ -25,6 +25,7 @@ pub use interface::{
     find_interface_in, get_my_ip, get_my_ip_in, get_my_ipv6, get_my_ipv6_in, get_my_mac,
     get_my_mac_in, interface_for, interface_for_in, interfaces, InterfaceAddress, InterfaceInfo,
 };
+pub use packet_sender::PacketSender;
 pub use range::{get_ip_strings, get_ips, parse_ip_range, parse_numbers, Ipv4Range};
 pub use reply::{reply_filter, reply_matches, ReplyMatcher};
 pub use send::{
@@ -49,9 +50,9 @@ pub mod socket {
         reply_filter, reply_matches, send_packet, send_packets, send_plan, send_recv_packet,
         send_recv_packets, BatchSend, BatchSendEntry, BatchSendRecv, BatchSendRecvEntry,
         BatchSendRecvReport, BatchSendReport, NetError, PacketBatchSendExt, PacketBatchSendRecvExt,
-        PacketSendExt, PacketSendRecvExt, RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan,
-        SendRecv, SendRecvOptions, SendRecvReport, SendReport, SendTarget, SocketSend,
-        SocketSender,
+        PacketSendExt, PacketSendRecvExt, PacketSender, RawSender, ReplyMatcher, SendMode,
+        SendOptions, SendPlan, SendRecv, SendRecvOptions, SendRecvReport, SendReport, SendTarget,
+        SocketSend, SocketSender,
     };
 }
 

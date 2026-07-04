@@ -45,6 +45,51 @@ fn sctp_protocol_display_labels_ipv4_and_ipv6_summary_and_show() {
 }
 
 #[test]
+fn packet_sender_public_api() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        / Udp::new().sport(49152).dport(53)
+        / Raw::from("query");
+    let _root_sender = crafter::PacketSender::open(
+        SendOptions::new()
+            .iface("root-dry-run0")
+            .network_layer()
+            .dry_run(),
+    )?;
+    let _net_sender = crafter::net::PacketSender::open(
+        SendOptions::new()
+            .iface("net-dry-run0")
+            .network_layer()
+            .dry_run(),
+    )?;
+    let mut sender = PacketSender::open(
+        SendOptions::new()
+            .iface("prelude-dry-run0")
+            .network_layer()
+            .dry_run(),
+    )?;
+
+    let report = sender.send(&packet)?;
+
+    assert!(report.is_dry_run());
+    assert_eq!(report.bytes_sent(), report.plan().len());
+    assert_eq!(report.plan().interface(), "prelude-dry-run0");
+    assert_eq!(report.plan().requested_mode(), SendMode::NetworkLayer);
+    assert_eq!(report.plan().bytes(), packet.compile()?.as_bytes());
+    assert_eq!(
+        report.plan().target(),
+        SendTarget::NetworkLayer {
+            network_layer: NetworkLayer::Ipv4,
+            destination: Ipv4Addr::new(198, 51, 100, 20).into(),
+            protocol: IPPROTO_UDP
+        }
+    );
+
+    Ok(())
+}
+
+#[test]
 fn ble_prelude_reexports_compile() {
     use crafter::prelude::{AdStructure, BleLlAdv, BleRadio};
 
