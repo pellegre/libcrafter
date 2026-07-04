@@ -423,6 +423,33 @@ impl BatchSendRecv {
 
     /// Send every request and collect matching replies in request order.
     pub fn send_recv_all(&self, packets: &[Packet]) -> Result<BatchSendRecvReport> {
+        self.send_recv_all_with_pnet_backend(packets, PnetIoBackend, open_pcap_sniffer)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn send_recv_all_with_backend_and_sniffer<B, F>(
+        &self,
+        packets: &[Packet],
+        backend: B,
+        open_sniffer: F,
+    ) -> Result<BatchSendRecvReport>
+    where
+        B: PnetBackend,
+        F: FnMut(&str, Option<&str>, Duration, usize) -> Result<Sniffer>,
+    {
+        self.send_recv_all_with_pnet_backend(packets, backend, open_sniffer)
+    }
+
+    fn send_recv_all_with_pnet_backend<B, F>(
+        &self,
+        packets: &[Packet],
+        backend: B,
+        mut open_sniffer: F,
+    ) -> Result<BatchSendRecvReport>
+    where
+        B: PnetBackend,
+        F: FnMut(&str, Option<&str>, Duration, usize) -> Result<Sniffer>,
+    {
         let mut entries = (0..packets.len())
             .map(BatchSendRecvEntry::new)
             .collect::<Vec<_>>();
@@ -438,9 +465,8 @@ impl BatchSendRecv {
             ));
         }
 
-        let sender = SocketSender::new(self.send_recv.send_options().clone());
-
         if self.send_recv.send_options().is_dry_run() {
+            let sender = SocketSender::new(self.send_recv.send_options().clone());
             for chunk_start in (0..packets.len()).step_by(self.concurrency_limit) {
                 let chunk_end = (chunk_start + self.concurrency_limit).min(packets.len());
                 for _ in 0..self.send_recv.retries_value().max(1) {
@@ -461,6 +487,14 @@ impl BatchSendRecv {
         }
 
         let interface = validated_interface(self.send_recv.send_options())?;
+        let mut sender = BackendPacketSender::open_with_backend(
+            self.send_recv.send_options().clone(),
+            backend,
+        )?;
+        for packet in packets {
+            sender.plan(packet)?;
+        }
+
         for chunk_start in (0..packets.len()).step_by(self.concurrency_limit) {
             let chunk_end = (chunk_start + self.concurrency_limit).min(packets.len());
             for _ in 0..self.send_recv.retries_value().max(1) {
@@ -471,7 +505,7 @@ impl BatchSendRecv {
                     break;
                 }
 
-                let mut sniffer = open_pcap_sniffer(
+                let mut sniffer = open_sniffer(
                     &interface,
                     effective_filter.as_deref(),
                     self.send_recv.timeout_value(),
