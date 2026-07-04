@@ -95,6 +95,8 @@ where
     }
 
     fn transmit_plan(&mut self, plan: &SendPlan) -> Result<usize> {
+        self.validate_target_class(plan)?;
+
         match plan.target() {
             SendTarget::LinkLayer { link_type } => self.transmit_link_target(plan, link_type),
             SendTarget::NetworkLayer {
@@ -102,6 +104,24 @@ where
                 destination,
                 protocol,
             } => self.transmit_network_target(plan, network_layer, destination, protocol),
+        }
+    }
+
+    fn validate_target_class(&self, plan: &SendPlan) -> Result<()> {
+        match (self.options.send_mode(), plan.target()) {
+            (SendMode::LinkLayer, target) if target.is_network_layer() => {
+                Err(NetError::UnsupportedSendTarget {
+                    target,
+                    reason: "stateful link-layer sender cannot transmit network-layer packets; open a network_layer() sender for this packet",
+                })
+            }
+            (SendMode::NetworkLayer, target) if target.is_link_layer() => {
+                Err(NetError::UnsupportedSendTarget {
+                    target,
+                    reason: "stateful network-layer sender cannot transmit link-layer frames; open a link_layer() sender for this packet",
+                })
+            }
+            _ => Ok(()),
         }
     }
 
@@ -231,14 +251,12 @@ pub(crate) fn transmit_network_with_backend<B>(
 where
     B: PnetBackend,
 {
-    let socket_protocol = match network_layer {
-        NetworkLayer::Ipv4 => IPPROTO_RAW_SOCKET,
-        NetworkLayer::Ipv6 | NetworkLayer::Raw => protocol,
-    };
-    let mut sender = backend.open_network_sender(options, socket_protocol, plan.len())?;
-
     match network_layer {
-        NetworkLayer::Ipv4 => sender.send_ipv4(plan.target(), plan.bytes(), destination, protocol),
+        NetworkLayer::Ipv4 => {
+            let mut sender =
+                backend.open_network_sender(options, IPPROTO_RAW_SOCKET, plan.len())?;
+            sender.send_ipv4(plan.target(), plan.bytes(), destination, protocol)
+        }
         NetworkLayer::Ipv6 => Err(NetError::UnsupportedSendTarget {
             target: plan.target(),
             reason: "the selected safe backend does not support full IPv6-header Layer3 sends",
@@ -499,11 +517,12 @@ impl NetworkSenderBackend for FakeNetworkSender {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use std::time::Duration;
 
     use crate::{
-        Dot11, Ethernet, Ipv4, LinkType, LlcSnap, NetworkLayer, Radiotap, Raw, Udp, IPPROTO_UDP,
+        Dot11, Ethernet, Ipv4, Ipv6, LinkType, LinuxSll, LlcSnap, NetworkLayer, NullLoopback,
+        Radiotap, Raw, Udp, IPPROTO_UDP,
     };
 
     use super::*;
@@ -542,6 +561,22 @@ mod tests {
             .dst(destination)
             / Udp::new().sport(49152).dport(53)
             / Raw::from(payload)
+    }
+
+    fn ipv6_packet() -> crate::Packet {
+        Ipv6::new()
+            .src(Ipv6Addr::new(2001, 0xdb8, 0, 0, 0, 0, 0, 10))
+            .dst(Ipv6Addr::new(2001, 0xdb8, 0, 0, 0, 0, 0, 20))
+            / Udp::new().sport(49152).dport(53)
+            / Raw::from("payload")
+    }
+
+    fn linux_sll_packet() -> crate::Packet {
+        LinuxSll::new() / ipv4_packet()
+    }
+
+    fn null_loopback_packet() -> crate::Packet {
+        NullLoopback::ipv4() / ipv4_packet()
     }
 
     #[test]
@@ -878,5 +913,166 @@ mod tests {
         assert_eq!(snapshot.network_sends[1].protocol, IPPROTO_UDP);
         assert!(snapshot.link_opens.is_empty());
         assert!(snapshot.link_sends.is_empty());
+    }
+
+    #[test]
+    fn packet_sender_rejects_mixed_send_classes() {
+        let link_backend = FakePnetBackend::default();
+        let mut link_sender = PacketSender::open_with_backend(
+            SendOptions::new().iface("fake0").link_layer().live(),
+            link_backend.clone(),
+        )
+        .unwrap();
+
+        link_sender.send(&ethernet_packet()).unwrap();
+        let ipv4_error = link_sender.send(&ipv4_packet()).unwrap_err();
+        let ipv6_error = link_sender.send(&ipv6_packet()).unwrap_err();
+        let ipv4_plan = SendPlan::from_packet(
+            &ipv4_packet(),
+            SendOptions::new().iface("fake0").network_layer().dry_run(),
+        )
+        .unwrap();
+        let boundary_error = link_sender.transmit_plan(&ipv4_plan).unwrap_err();
+
+        assert_unsupported_shape(ipv4_error, SendMode::LinkLayer);
+        assert_unsupported_shape(ipv6_error, SendMode::LinkLayer);
+        assert_mode_boundary_error(
+            boundary_error,
+            ipv4_plan.target(),
+            "stateful link-layer sender cannot transmit network-layer packets",
+        );
+        let snapshot = link_backend.snapshot();
+        assert_eq!(snapshot.link_opens.len(), 1);
+        assert_eq!(snapshot.link_sends.len(), 1);
+        assert!(snapshot.network_opens.is_empty());
+        assert!(snapshot.network_sends.is_empty());
+
+        let network_backend = FakePnetBackend::default();
+        let mut network_sender = PacketSender::open_with_backend(
+            SendOptions::new().iface("fake0").network_layer().live(),
+            network_backend.clone(),
+        )
+        .unwrap();
+
+        network_sender.send(&ipv4_packet()).unwrap();
+        let ethernet_error = network_sender.send(&ethernet_packet()).unwrap_err();
+        let radiotap_error = network_sender
+            .send(&radiotap_packet_with_payload("wifi"))
+            .unwrap_err();
+        let ethernet_plan = SendPlan::from_packet(
+            &ethernet_packet(),
+            SendOptions::new().iface("fake0").link_layer().dry_run(),
+        )
+        .unwrap();
+        let boundary_error = network_sender.transmit_plan(&ethernet_plan).unwrap_err();
+
+        assert_unsupported_shape(ethernet_error, SendMode::NetworkLayer);
+        assert_unsupported_shape(radiotap_error, SendMode::NetworkLayer);
+        assert_mode_boundary_error(
+            boundary_error,
+            ethernet_plan.target(),
+            "stateful network-layer sender cannot transmit link-layer frames",
+        );
+        let snapshot = network_backend.snapshot();
+        assert!(snapshot.link_opens.is_empty());
+        assert!(snapshot.link_sends.is_empty());
+        assert_eq!(snapshot.network_opens.len(), 1);
+        assert_eq!(snapshot.network_sends.len(), 1);
+    }
+
+    #[test]
+    fn packet_sender_rejects_unsupported_live_targets() {
+        let link_backend = FakePnetBackend::default();
+        let mut link_sender = PacketSender::open_with_backend(
+            SendOptions::new().iface("fake0").link_layer().live(),
+            link_backend.clone(),
+        )
+        .unwrap();
+
+        let linux_sll_error = link_sender.send(&linux_sll_packet()).unwrap_err();
+        let null_loopback_error = link_sender.send(&null_loopback_packet()).unwrap_err();
+
+        assert_unsupported_target(
+            linux_sll_error,
+            SendTarget::LinkLayer {
+                link_type: LinkType::LinuxSll,
+            },
+            "live link-layer send supports Ethernet and radiotap Wi-Fi frames only",
+        );
+        assert_unsupported_target(
+            null_loopback_error,
+            SendTarget::LinkLayer {
+                link_type: LinkType::NullLoopback,
+            },
+            "live link-layer send supports Ethernet and radiotap Wi-Fi frames only",
+        );
+        let snapshot = link_backend.snapshot();
+        assert!(snapshot.link_opens.is_empty());
+        assert!(snapshot.link_sends.is_empty());
+        assert!(snapshot.network_opens.is_empty());
+        assert!(snapshot.network_sends.is_empty());
+
+        let network_backend = FakePnetBackend::default();
+        let mut network_sender = PacketSender::open_with_backend(
+            SendOptions::new().iface("fake0").network_layer().live(),
+            network_backend.clone(),
+        )
+        .unwrap();
+
+        let ipv6_error = network_sender.send(&ipv6_packet()).unwrap_err();
+
+        assert_unsupported_target(
+            ipv6_error,
+            SendPlan::from_packet(
+                &ipv6_packet(),
+                SendOptions::new().iface("fake0").network_layer().dry_run(),
+            )
+            .unwrap()
+            .target(),
+            "the selected safe backend does not support full IPv6-header Layer3 sends",
+        );
+        let snapshot = network_backend.snapshot();
+        assert!(snapshot.link_opens.is_empty());
+        assert!(snapshot.link_sends.is_empty());
+        assert!(snapshot.network_opens.is_empty());
+        assert!(snapshot.network_sends.is_empty());
+    }
+
+    fn assert_unsupported_shape(error: NetError, mode: SendMode) {
+        match error {
+            NetError::UnsupportedPacketShape {
+                mode: actual_mode, ..
+            } => {
+                assert_eq!(actual_mode, mode);
+            }
+            other => panic!("expected unsupported packet shape, got {other}"),
+        }
+    }
+
+    fn assert_mode_boundary_error(error: NetError, target: SendTarget, expected_reason: &str) {
+        match error {
+            NetError::UnsupportedSendTarget {
+                target: actual,
+                reason,
+            } => {
+                assert_eq!(actual, target);
+                assert!(reason.contains(expected_reason));
+            }
+            other => panic!("expected unsupported send target, got {other}"),
+        }
+    }
+
+    fn assert_unsupported_target(
+        error: NetError,
+        expected_target: SendTarget,
+        expected_reason: &str,
+    ) {
+        match error {
+            NetError::UnsupportedSendTarget { target, reason } => {
+                assert_eq!(target, expected_target);
+                assert_eq!(reason, expected_reason);
+            }
+            other => panic!("expected unsupported send target, got {other}"),
+        }
     }
 }
