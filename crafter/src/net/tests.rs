@@ -1501,7 +1501,7 @@ mod batch_send {
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
-    use crate::{Ipv4, Packet, Raw, Udp};
+    use crate::{Dot11, Ethernet, Ipv4, LinkType, LlcSnap, Packet, Radiotap, Raw, Udp};
 
     use crate::net::packet_sender::FakePnetBackend;
     use crate::net::{
@@ -1514,6 +1514,14 @@ mod batch_send {
             .dst(Ipv4Addr::new(198, 51, 100, index))
             / Udp::new().sport(40_000 + u16::from(index)).dport(3_344)
             / Raw::from_bytes([index, index + 1])
+    }
+
+    fn ethernet_request(index: u8) -> Packet {
+        Ethernet::new() / udp_request(index)
+    }
+
+    fn radiotap_request(index: u8) -> Packet {
+        Radiotap::new() / Dot11::data() / LlcSnap::new() / udp_request(index)
     }
 
     #[test]
@@ -1585,6 +1593,114 @@ mod batch_send {
         assert_eq!(snapshot.network_sends.len(), packets.len() * 3);
         assert!(snapshot.link_opens.is_empty());
         assert!(snapshot.link_sends.is_empty());
+    }
+
+    #[test]
+    fn batch_send_live_link_layer_reuses_packet_sender() {
+        let ethernet_backend = FakePnetBackend::default();
+        let ethernet_packets = vec![ethernet_request(20), ethernet_request(21)];
+
+        let ethernet_report = BatchSend::new()
+            .iface("fake0")
+            .link_layer()
+            .live()
+            .send_all_with_backend(&ethernet_packets, ethernet_backend.clone())
+            .unwrap();
+
+        assert!(!ethernet_report.is_dry_run());
+        assert_eq!(ethernet_report.len(), ethernet_packets.len());
+        for (index, entry) in ethernet_report.entries().iter().enumerate() {
+            assert_eq!(entry.request_index(), index);
+            assert_eq!(entry.attempts(), 1);
+            assert_eq!(entry.send_reports().len(), 1);
+            let send_report = &entry.send_reports()[0];
+            assert!(!send_report.is_dry_run());
+            assert_eq!(send_report.bytes_sent(), send_report.plan().len());
+            assert_eq!(
+                send_report.plan().target(),
+                SendTarget::LinkLayer {
+                    link_type: LinkType::Ethernet,
+                }
+            );
+        }
+
+        let snapshot = ethernet_backend.snapshot();
+        assert_eq!(snapshot.link_opens.len(), 1);
+        assert_eq!(
+            snapshot.link_opens[0].target,
+            SendTarget::LinkLayer {
+                link_type: LinkType::Ethernet,
+            }
+        );
+        assert_eq!(snapshot.link_sends.len(), ethernet_packets.len());
+        assert!(snapshot.network_opens.is_empty());
+        assert!(snapshot.network_sends.is_empty());
+
+        let radiotap_backend = FakePnetBackend::default();
+        let radiotap_packets = vec![radiotap_request(30), radiotap_request(31)];
+
+        let radiotap_report = BatchSend::new()
+            .iface("fake0")
+            .link_layer()
+            .live()
+            .send_all_with_backend(&radiotap_packets, radiotap_backend.clone())
+            .unwrap();
+
+        assert!(!radiotap_report.is_dry_run());
+        assert_eq!(radiotap_report.len(), radiotap_packets.len());
+        for (index, entry) in radiotap_report.entries().iter().enumerate() {
+            assert_eq!(entry.request_index(), index);
+            assert_eq!(entry.attempts(), 1);
+            assert_eq!(entry.send_reports().len(), 1);
+            let send_report = &entry.send_reports()[0];
+            assert!(!send_report.is_dry_run());
+            assert_eq!(send_report.bytes_sent(), send_report.plan().len());
+            assert_eq!(
+                send_report.plan().target(),
+                SendTarget::LinkLayer {
+                    link_type: LinkType::Radiotap,
+                }
+            );
+        }
+
+        let snapshot = radiotap_backend.snapshot();
+        assert_eq!(snapshot.link_opens.len(), 1);
+        assert_eq!(
+            snapshot.link_opens[0].target,
+            SendTarget::LinkLayer {
+                link_type: LinkType::Radiotap,
+            }
+        );
+        assert_eq!(snapshot.link_sends.len(), radiotap_packets.len());
+        assert!(snapshot.network_opens.is_empty());
+        assert!(snapshot.network_sends.is_empty());
+    }
+
+    #[test]
+    fn batch_send_live_link_layer_rejects_network_packet() {
+        let backend = FakePnetBackend::default();
+        let packets = vec![udp_request(40)];
+
+        let error = BatchSend::new()
+            .iface("fake0")
+            .link_layer()
+            .live()
+            .send_all_with_backend(&packets, backend.clone())
+            .unwrap_err();
+
+        match error {
+            NetError::UnsupportedPacketShape { mode, reason, .. } => {
+                assert_eq!(mode, SendMode::LinkLayer);
+                assert!(reason.contains("link-layer sends require"));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+
+        let snapshot = backend.snapshot();
+        assert!(snapshot.link_opens.is_empty());
+        assert!(snapshot.link_sends.is_empty());
+        assert!(snapshot.network_opens.is_empty());
+        assert!(snapshot.network_sends.is_empty());
     }
 
     #[test]
