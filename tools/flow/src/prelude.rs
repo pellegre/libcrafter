@@ -20,6 +20,7 @@ pub use crate::matcher::{
 pub use crate::PacketContext;
 pub use crate::RunOptions;
 pub use crate::Role;
+pub use crate::{Step, StepGotoExt};
 
 #[cfg(test)]
 mod tests {
@@ -79,5 +80,17 @@ mod tests {
 
         let matcher = PredicateMatcher::new("any packet", |_packet, _ctx| true).not();
         assert_eq!(matcher.describe(), "not(any packet)");
+    }
+
+    #[test]
+    fn prelude_exports_step() {
+        use crafter_flow::prelude::*;
+
+        let packet =
+            crafter::Packet::decode_raw([0xde, 0xad, 0xbe, 0xef]).expect("raw packet decodes");
+        let step = Step::send(packet).goto("next");
+
+        assert!(step.outgoing().is_some());
+        assert_eq!(step.target(), Some("next"));
     }
 }
