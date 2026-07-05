@@ -20,7 +20,7 @@ pub use crate::matcher::{
 pub use crate::PacketContext;
 pub use crate::RunOptions;
 pub use crate::Role;
-pub use crate::{Step, StepGotoExt};
+pub use crate::{Step, StepGotoExt, Transition};
 
 #[cfg(test)]
 mod tests {

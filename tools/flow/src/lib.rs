@@ -10,6 +10,7 @@ pub mod options;
 pub mod prelude;
 pub mod role;
 pub mod step;
+pub mod transition;
 
 pub use bound::Bound;
 pub use binding::{BindMode, BindSendClass, BindTarget, Binding};
@@ -19,3 +20,4 @@ pub use matcher::{Matcher, PredicateMatcher};
 pub use options::RunOptions;
 pub use role::Role;
 pub use step::{Step, StepGotoExt};
+pub use transition::Transition;
