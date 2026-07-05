@@ -100,6 +100,27 @@ mod tests {
     }
 
     #[test]
+    fn arp_injector_flow_validates_and_show_lists_emission_and_reaction() {
+        let flow = injector_flow(docaddr::SERVER_IPV4, docaddr::LOCAL_MAC);
+
+        flow.validate().expect("ARP injector flow validates");
+        assert_eq!(flow.role(), Role::Injector);
+
+        let show = flow.show();
+        for expected in [
+            ANNOUNCE,
+            "Injector",
+            "gratuitous ARP is-at",
+            "who-has target protocol address",
+        ] {
+            assert!(
+                show.contains(expected),
+                "flow show should contain {expected}: {show}"
+            );
+        }
+    }
+
+    #[test]
     fn arp_announce_entry_emits_gratuitous_arp() {
         let bind_ip = docaddr::SERVER_IPV4;
         let bind_mac = docaddr::LOCAL_MAC;
