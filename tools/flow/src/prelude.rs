@@ -1,7 +1,7 @@
 //! Common imports for flow tools.
 //!
-//! Later engine types (`PacketContext`, `Matcher`, `Transition`, `FlowState`,
-//! `Flow`, `Runner`, and `FlowReport`) are added here as they are implemented.
+//! Later engine types (`Matcher`, `Transition`, `FlowState`, `Flow`, `Runner`,
+//! and `FlowReport`) are added here as they are implemented.
 //!
 //! ```
 //! use crafter_flow::prelude::*;
@@ -14,6 +14,7 @@ pub use crate::Bound;
 pub use crate::binding::{BindMode, BindSendClass, BindTarget, Binding};
 pub use crate::docaddr;
 pub use crate::error::{FlowError, Result};
+pub use crate::PacketContext;
 pub use crate::RunOptions;
 pub use crate::Role;
 
@@ -49,5 +50,15 @@ mod tests {
         use crafter_flow::prelude::*;
 
         assert_eq!(RunOptions::default().retries(2).retries, 2);
+    }
+
+    #[test]
+    fn prelude_exports_packet_context() {
+        use crafter_flow::prelude::*;
+
+        let mut context = PacketContext::new();
+        context.set_transaction_id(7);
+
+        assert_eq!(context.get_transaction_id(), Some(7));
     }
 }
