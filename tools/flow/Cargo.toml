@@ -1,0 +1,8 @@
+[package]
+name = "crafter-flow"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+crafter = { path = "../../crafter" }
