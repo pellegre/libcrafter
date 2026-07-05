@@ -14,6 +14,7 @@ pub use crate::Bound;
 pub use crate::binding::{BindMode, BindSendClass, BindTarget, Binding};
 pub use crate::docaddr;
 pub use crate::error::{FlowError, Result};
+pub use crate::Flow;
 pub use crate::matcher::{
     all, any, not, And, LayerMatcher, Matcher, MatcherExt, Not, Or, PredicateMatcher, ReplyMatcher,
 };
@@ -101,5 +102,14 @@ mod tests {
         let state = FlowState::new("idle");
 
         assert_eq!(state.name(), "idle");
+    }
+
+    #[test]
+    fn prelude_exports_flow() {
+        use crafter_flow::prelude::*;
+
+        let flow = Flow::new("empty");
+
+        assert_eq!(flow.role(), Role::Initiator);
     }
 }
