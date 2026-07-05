@@ -2,6 +2,7 @@
 
 pub mod bound;
 pub mod binding;
+pub mod capture;
 pub mod context;
 pub mod docaddr;
 pub mod error;
@@ -17,6 +18,7 @@ pub mod transition;
 
 pub use bound::Bound;
 pub use binding::{BindMode, BindSendClass, BindTarget, Binding};
+pub use capture::{CaptureSource, MemoryCaptureSource};
 pub use context::PacketContext;
 pub use error::{FlowError, Result};
 pub use flow::{Flow, FlowBuilderExt};
