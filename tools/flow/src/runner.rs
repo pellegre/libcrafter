@@ -1,5 +1,7 @@
 //! Flow runner core loop.
 
+use crafter::net::SendReport;
+
 use crate::{
     Binding, CaptureSource, Conversation, Flow, FlowError, FlowState, MemoryCaptureSource,
     Matcher, PacketContext, Result, RunOptions, Step,
@@ -67,6 +69,7 @@ impl Matcher for StateTransitionsMatcher<'_> {
 pub struct Runner {
     options: RunOptions,
     conversation: Conversation,
+    send_reports: Vec<SendReport>,
 }
 
 impl Runner {
@@ -90,6 +93,7 @@ impl Runner {
         Ok(Self {
             options,
             conversation,
+            send_reports: Vec::new(),
         })
     }
 
@@ -101,6 +105,11 @@ impl Runner {
     /// Returns true when this runner was opened for offline dry-run operation.
     pub fn is_dry_run(&self) -> bool {
         self.conversation.is_dry_run()
+    }
+
+    /// Reports for packets sent or planned by this runner.
+    pub fn send_reports(&self) -> &[SendReport] {
+        &self.send_reports
     }
 
     /// Run a flow until it reaches a terminal step.
@@ -166,7 +175,8 @@ impl Runner {
 
     fn apply_step(&mut self, flow: &Flow, current_state: &str, step: Step) -> Result<StepAction> {
         if let Some(packet) = step.outgoing() {
-            self.conversation.send(packet)?;
+            let report = self.conversation.send(packet)?;
+            self.send_reports.push(report);
         }
 
         let target = step.target().map(str::to_string);
@@ -349,5 +359,70 @@ mod tests {
 
         assert!(outcome.is_completed());
         assert_eq!(outcome.state(), "Done");
+    }
+
+    #[test]
+    fn runner_threads_context_from_transition_to_later_entry_send() {
+        let offered = Ipv4Addr::new(192, 0, 2, 44);
+        let offer = raw_packet([0x32, 0x01]);
+        let offer_bytes = compiled_bytes(&offer);
+        let offer_match = offer_bytes.clone();
+        let selecting_transition = Transition::on(
+            PredicateMatcher::new("offer packet", move |packet, _ctx| {
+                packet
+                    .compile()
+                    .map(|bytes| bytes.as_ref() == offer_match.as_slice())
+                    .unwrap_or(false)
+            }),
+            move |_packet, ctx| {
+                ctx.set_offered_ipv4(offered);
+                Ok(Step::goto("Requesting"))
+            },
+        )
+        .targets(["Requesting"]);
+        let selecting = FlowState::new("Selecting").on(selecting_transition);
+        let requesting = FlowState::new("Requesting")
+            .on_entry(|ctx| {
+                let destination = ctx
+                    .get_offered_ipv4()
+                    .expect("offered address should be carried into Requesting");
+                let packet = crafter::Ipv4::new()
+                    .src(Ipv4Addr::new(192, 0, 2, 10))
+                    .dst(destination)
+                    / crafter::Udp::new().sport(68).dport(67)
+                    / crafter::Raw::from("request");
+
+                Ok(Step::send(packet).goto("Done"))
+            })
+            .entry_targets(["Done"]);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-context-threading")
+            .state(selecting)
+            .state(requesting)
+            .state(done)
+            .initial("Selecting");
+        let mut runner =
+            Runner::with_source(RunOptions::default(), MemoryCaptureSource::new(vec![offer]))
+                .expect("runner opens with injected source");
+
+        let outcome = runner.run(&mut flow).expect("runner completes flow");
+        let sent = runner
+            .send_reports()
+            .last()
+            .expect("request packet should be sent");
+        let decoded = crafter::Packet::decode_from_l3(
+            crafter::NetworkLayer::Ipv4,
+            sent.plan().bytes(),
+        )
+        .expect("dry-run send plan decodes as IPv4");
+        let ipv4 = decoded
+            .layer::<crafter::Ipv4>()
+            .expect("sent packet has IPv4 layer");
+
+        assert!(outcome.is_completed());
+        assert_eq!(outcome.state(), "Done");
+        assert_eq!(ipv4.destination(), offered);
     }
 }
