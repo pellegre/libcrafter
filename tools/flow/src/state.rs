@@ -8,6 +8,8 @@ type EntryHandler = dyn FnMut(&mut PacketContext) -> Result<Step>;
 pub struct FlowState {
     name: String,
     on_entry: Option<Box<EntryHandler>>,
+    entry_target_hints: Option<Vec<String>>,
+    entry_terminal_path: bool,
     transitions: Vec<Transition>,
 }
 
@@ -17,6 +19,8 @@ impl FlowState {
         Self {
             name: name.into(),
             on_entry: None,
+            entry_target_hints: None,
+            entry_terminal_path: false,
             transitions: Vec::new(),
         }
     }
@@ -45,6 +49,22 @@ impl FlowState {
         self
     }
 
+    /// Declare the state names this state's entry handler may target.
+    pub fn entry_targets<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.entry_target_hints = Some(names.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Declare that this state's entry handler may end the flow with `Step::done`.
+    pub fn entry_terminal(mut self) -> Self {
+        self.entry_terminal_path = true;
+        self
+    }
+
     /// Add a transition to this state.
     pub fn on(mut self, transition: Transition) -> Self {
         self.transitions.push(transition);
@@ -54,6 +74,26 @@ impl FlowState {
     /// Add a transition to this state.
     pub fn transition(self, transition: Transition) -> Self {
         self.on(transition)
+    }
+
+    /// Return declared entry target state names for static graph validation.
+    pub fn declared_entry_targets(&self) -> &[String] {
+        self.entry_target_hints.as_deref().unwrap_or(&[])
+    }
+
+    /// Return true when this state has explicit entry target hints.
+    pub fn has_entry_target_hints(&self) -> bool {
+        self.entry_target_hints.is_some()
+    }
+
+    /// Return true when this state's entry handler declares a terminal path.
+    pub fn declares_entry_terminal_path(&self) -> bool {
+        self.entry_terminal_path
+    }
+
+    /// Return true when this state has an entry handler.
+    pub fn has_entry(&self) -> bool {
+        self.on_entry.is_some()
     }
 
     /// Run the on-entry action, if this state has one.

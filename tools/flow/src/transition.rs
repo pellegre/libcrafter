@@ -8,6 +8,8 @@ type TransitionHandler = dyn FnMut(&crafter::Packet, &mut PacketContext) -> Resu
 pub struct Transition {
     matcher: Box<dyn Matcher>,
     handler: Box<TransitionHandler>,
+    target_hints: Option<Vec<String>>,
+    terminal_path: bool,
 }
 
 impl Transition {
@@ -20,12 +22,45 @@ impl Transition {
         Self {
             matcher: Box::new(matcher),
             handler: Box::new(handler),
+            target_hints: None,
+            terminal_path: false,
         }
+    }
+
+    /// Declare the state names this transition handler may target.
+    pub fn targets<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.target_hints = Some(names.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Declare that this transition handler may end the flow with `Step::done`.
+    pub fn terminal(mut self) -> Self {
+        self.terminal_path = true;
+        self
     }
 
     /// Return a human-readable description of the transition matcher.
     pub fn describe(&self) -> String {
         self.matcher.describe()
+    }
+
+    /// Return declared target state names for static graph validation.
+    pub fn declared_targets(&self) -> &[String] {
+        self.target_hints.as_deref().unwrap_or(&[])
+    }
+
+    /// Return true when this transition has explicit target hints.
+    pub fn has_target_hints(&self) -> bool {
+        self.target_hints.is_some()
+    }
+
+    /// Return true when this transition declares a possible terminal path.
+    pub fn declares_terminal_path(&self) -> bool {
+        self.terminal_path
     }
 
     /// Return true when this transition should fire for `packet`.
