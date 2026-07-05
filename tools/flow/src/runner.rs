@@ -6,7 +6,7 @@ use crafter::net::SendReport;
 
 use crate::{
     Binding, CaptureSource, Conversation, Flow, FlowError, FlowOutcome, FlowReport, FlowState,
-    Matcher, MemoryCaptureSource, PacketContext, Result, RunOptions, Step,
+    Matcher, MemoryCaptureSource, PacketContext, Result, Role, RunOptions, Step,
 };
 
 struct TerminalStep {
@@ -167,9 +167,10 @@ impl Runner {
         ctx: &mut PacketContext,
         trace: &mut RunTrace,
     ) -> Result<IterationResult> {
-        if self
-            .settle_entry(flow, current_state, ctx, trace)?
-            .is_some()
+        if matches!(flow.role(), Role::Initiator)
+            && self
+                .settle_entry(flow, current_state, ctx, trace)?
+                .is_some()
         {
             return Ok(IterationResult::Terminal);
         }
@@ -330,7 +331,7 @@ mod tests {
     use super::Runner;
     use crate::{
         Binding, Bound, Flow, FlowBuilderExt, FlowOutcome, FlowState, MemoryCaptureSource,
-        PredicateMatcher, RunOptions, Step, StepGotoExt, Transition,
+        PredicateMatcher, Role, RunOptions, Step, StepGotoExt, Transition,
     };
     use std::cell::Cell;
     use std::net::Ipv4Addr;
@@ -414,6 +415,54 @@ mod tests {
             ]
         );
         assert_eq!(report.transitions_taken(), &["expected reply".to_string()]);
+        assert!(report.sent_count() >= 1);
+        assert_eq!(report.received_count(), 1);
+    }
+
+    #[test]
+    fn runner_initiator_sends_entry_packet_before_receiving_reply() {
+        let entry_ran = Rc::new(Cell::new(false));
+        let entry_seen_by_transition = Rc::clone(&entry_ran);
+        let request = request_packet();
+        let reply = raw_packet([0x1a, 0x35]);
+        let expected_reply = compiled_bytes(&reply);
+        let transition = Transition::on(
+            PredicateMatcher::new("initiator reply", move |packet, _ctx| {
+                packet
+                    .compile()
+                    .map(|bytes| bytes.as_ref() == expected_reply.as_slice())
+                    .unwrap_or(false)
+            }),
+            move |_packet, _ctx| {
+                assert!(entry_seen_by_transition.get());
+                Ok(Step::goto("Done"))
+            },
+        )
+        .targets(["Done"]);
+        let selecting = FlowState::new("Selecting")
+            .on_entry(move |_ctx| {
+                entry_ran.set(true);
+                Ok(Step::send(request.clone()).goto("Waiting"))
+            })
+            .entry_targets(["Waiting"]);
+        let waiting = FlowState::new("Waiting").on(transition);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-initiator")
+            .role(Role::Initiator)
+            .state(selecting)
+            .state(waiting)
+            .state(done)
+            .initial("Selecting");
+        let mut runner =
+            Runner::with_source(RunOptions::default(), MemoryCaptureSource::new(vec![reply]))
+                .expect("runner opens with injected source");
+
+        let report = runner.run(&mut flow).expect("runner completes flow");
+
+        assert_eq!(report.role(), Role::Initiator);
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
         assert!(report.sent_count() >= 1);
         assert_eq!(report.received_count(), 1);
     }
