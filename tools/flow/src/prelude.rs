@@ -14,6 +14,7 @@ pub use crate::Bound;
 pub use crate::binding::{BindMode, BindSendClass, BindTarget, Binding};
 pub use crate::docaddr;
 pub use crate::error::{FlowError, Result};
+pub use crate::RunOptions;
 pub use crate::Role;
 
 #[cfg(test)]
@@ -41,5 +42,12 @@ mod tests {
         use crafter_flow::prelude::*;
 
         assert_eq!(Bound::default(), Bound::Count(1));
+    }
+
+    #[test]
+    fn prelude_exports_run_options() {
+        use crafter_flow::prelude::*;
+
+        assert_eq!(RunOptions::default().retries(2).retries, 2);
     }
 }
