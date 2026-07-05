@@ -2,6 +2,10 @@
 
 use crate::PacketContext;
 
+mod reply;
+
+pub use reply::ReplyMatcher;
+
 /// Decides whether a received packet advances a flow transition.
 pub trait Matcher {
     /// Return true when `packet` satisfies this matcher in the current context.
