@@ -25,6 +25,12 @@ enum StepAction {
     Terminal(TerminalStep),
 }
 
+#[derive(Clone, Copy)]
+enum StepMode {
+    Active,
+    PassiveSetup,
+}
+
 #[derive(Default)]
 struct RunTrace {
     visited_states: Vec<String>,
@@ -167,12 +173,19 @@ impl Runner {
         ctx: &mut PacketContext,
         trace: &mut RunTrace,
     ) -> Result<IterationResult> {
-        if matches!(flow.role(), Role::Initiator)
-            && self
-                .settle_entry(flow, current_state, ctx, trace)?
-                .is_some()
-        {
-            return Ok(IterationResult::Terminal);
+        match flow.role() {
+            Role::Initiator => {
+                if self
+                    .settle_entry(flow, current_state, ctx, trace)?
+                    .is_some()
+                {
+                    return Ok(IterationResult::Terminal);
+                }
+            }
+            Role::Responder => {
+                self.run_passive_entry_setup(flow, current_state, ctx)?;
+            }
+            Role::Injector => {}
         }
 
         loop {
@@ -200,7 +213,7 @@ impl Runner {
             };
             trace.take_transition(description);
 
-            match self.apply_step(flow, current_state.as_str(), step)? {
+            match self.apply_step(flow, current_state.as_str(), step, StepMode::Active)? {
                 StepAction::Settled => {}
                 StepAction::Enter(target) => {
                     *current_state = target;
@@ -234,7 +247,7 @@ impl Runner {
                 return Ok(None);
             };
 
-            match self.apply_step(flow, current_state, step)? {
+            match self.apply_step(flow, current_state, step, StepMode::Active)? {
                 StepAction::Settled => return Ok(None),
                 StepAction::Enter(target) => {
                     *current_state = target;
@@ -250,10 +263,36 @@ impl Runner {
         }
     }
 
-    fn apply_step(&mut self, flow: &Flow, current_state: &str, step: Step) -> Result<StepAction> {
-        if let Some(packet) = step.outgoing() {
-            let report = self.conversation.send(packet)?;
-            self.send_reports.push(report);
+    fn run_passive_entry_setup(
+        &mut self,
+        flow: &mut Flow,
+        current_state: &str,
+        ctx: &mut PacketContext,
+    ) -> Result<()> {
+        let Some(step) = Self::state_mut(flow, current_state)?.run_entry(ctx)? else {
+            return Ok(());
+        };
+
+        let _ = self.apply_step(flow, current_state, step, StepMode::PassiveSetup)?;
+        Ok(())
+    }
+
+    fn apply_step(
+        &mut self,
+        flow: &Flow,
+        current_state: &str,
+        step: Step,
+        mode: StepMode,
+    ) -> Result<StepAction> {
+        if matches!(mode, StepMode::Active) {
+            if let Some(packet) = step.outgoing() {
+                let report = self.conversation.send(packet)?;
+                self.send_reports.push(report);
+            }
+        }
+
+        if matches!(mode, StepMode::PassiveSetup) {
+            return Ok(StepAction::Settled);
         }
 
         let target = step.target().map(str::to_string);
@@ -465,6 +504,66 @@ mod tests {
         assert_eq!(report.outcome(), &FlowOutcome::Completed);
         assert!(report.sent_count() >= 1);
         assert_eq!(report.received_count(), 1);
+    }
+
+    #[test]
+    fn runner_responder_receives_before_sending_first_packet() {
+        let passive_entry_ran = Rc::new(Cell::new(false));
+        let passive_entry_seen_by_transition = Rc::clone(&passive_entry_ran);
+        let blocked_initial_send = request_packet();
+        let request = raw_packet([0x36, 0x01]);
+        let expected_request = compiled_bytes(&request);
+        let reply = request_packet();
+        let transition = Transition::on(
+            PredicateMatcher::new("responder request", move |packet, _ctx| {
+                packet
+                    .compile()
+                    .map(|bytes| bytes.as_ref() == expected_request.as_slice())
+                    .unwrap_or(false)
+            }),
+            move |_packet, ctx| {
+                assert!(passive_entry_seen_by_transition.get());
+                assert_eq!(ctx.get_transaction_id(), Some(0x3600_0001));
+                Ok(Step::send(reply.clone()).goto("Done"))
+            },
+        )
+        .targets(["Done"]);
+        let listening = FlowState::new("Listening")
+            .on_entry(move |ctx| {
+                passive_entry_ran.set(true);
+                ctx.set_transaction_id(0x3600_0001);
+                Ok(Step::send(blocked_initial_send.clone()).goto("Unreachable"))
+            })
+            .on(transition);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-responder")
+            .role(Role::Responder)
+            .state(listening)
+            .state(done)
+            .initial("Listening");
+        let mut runner = Runner::with_source(
+            RunOptions::default(),
+            MemoryCaptureSource::new(vec![request]),
+        )
+        .expect("runner opens with injected source");
+
+        let report = runner.run(&mut flow).expect("runner completes flow");
+
+        assert_eq!(report.role(), Role::Responder);
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(
+            report.visited_states(),
+            &["Listening".to_string(), "Done".to_string()]
+        );
+        assert_eq!(report.sent_count(), 1);
+        assert_eq!(runner.send_reports().len(), 1);
+        assert_eq!(report.received_count(), 1);
+        assert_eq!(
+            report.context_snapshot(),
+            "PacketContext keys=[transaction_id]"
+        );
     }
 
     #[test]
