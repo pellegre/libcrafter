@@ -2,9 +2,11 @@
 
 use crate::PacketContext;
 
+mod combinators;
 mod layer;
 mod reply;
 
+pub use combinators::{all, any, not, And, MatcherExt, Not, Or};
 pub use layer::LayerMatcher;
 pub use reply::ReplyMatcher;
 
