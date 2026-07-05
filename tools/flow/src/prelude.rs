@@ -14,7 +14,9 @@ pub use crate::Bound;
 pub use crate::binding::{BindMode, BindSendClass, BindTarget, Binding};
 pub use crate::docaddr;
 pub use crate::error::{FlowError, Result};
-pub use crate::matcher::{LayerMatcher, Matcher, PredicateMatcher, ReplyMatcher};
+pub use crate::matcher::{
+    all, any, not, And, LayerMatcher, Matcher, MatcherExt, Not, Or, PredicateMatcher, ReplyMatcher,
+};
 pub use crate::PacketContext;
 pub use crate::RunOptions;
 pub use crate::Role;
@@ -69,5 +71,13 @@ mod tests {
 
         let matcher = PredicateMatcher::new("any packet", |_packet, _ctx| true);
         assert_eq!(matcher.describe(), "any packet");
+    }
+
+    #[test]
+    fn prelude_exports_matcher_combinators() {
+        use crafter_flow::prelude::*;
+
+        let matcher = PredicateMatcher::new("any packet", |_packet, _ctx| true).not();
+        assert_eq!(matcher.describe(), "not(any packet)");
     }
 }
