@@ -15,6 +15,12 @@ pub const SELECTING: &str = "Selecting";
 pub const REQUESTING: &str = "Requesting";
 /// Terminal client state after ACK.
 pub const BOUND: &str = "Bound";
+/// Initial server state: wait for DISCOVER.
+pub const WAIT_DISCOVER: &str = "WaitDiscover";
+/// Server state after OFFER: wait for REQUEST.
+pub const WAIT_REQUEST: &str = "WaitRequest";
+/// Terminal server state after ACK.
+pub const DONE: &str = "Done";
 
 const INITIAL_TRANSACTION_ID: u32 = 0x3903_f326;
 
@@ -43,6 +49,28 @@ pub fn client_flow(client_mac: MacAddr) -> Flow {
         .state(requesting)
         .state(bound)
         .initial(SELECTING)
+}
+
+/// Build the DHCPv4 responder flow scaffold.
+///
+/// This is the server-side shape of the same DISCOVER/OFFER/REQUEST/ACK
+/// conversation modeled by [`client_flow`], with the role flipped to
+/// [`Role::Responder`]. Packet actions are filled in by the subsequent server
+/// flow steps.
+pub fn server_flow(server_mac: MacAddr, server_ip: Ipv4Addr, pool_base: Ipv4Addr) -> Flow {
+    let _ = (server_mac, server_ip, pool_base);
+    let wait_discover = FlowState::new(WAIT_DISCOVER);
+    let wait_request = FlowState::new(WAIT_REQUEST);
+    let done = FlowState::new(DONE)
+        .on_entry(|_ctx| Ok(Step::done()))
+        .entry_terminal();
+
+    Flow::new("dhcpv4-server")
+        .role(Role::Responder)
+        .state(wait_discover)
+        .state(wait_request)
+        .state(done)
+        .initial(WAIT_DISCOVER)
 }
 
 fn discover_packet(client_mac: MacAddr, transaction_id: u32) -> crafter::Packet {
@@ -172,7 +200,9 @@ fn ack_matches_context(packet: &crafter::Packet, ctx: &PacketContext) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{client_flow, BOUND, REQUESTING, SELECTING};
+    use super::{
+        client_flow, server_flow, BOUND, DONE, REQUESTING, SELECTING, WAIT_DISCOVER, WAIT_REQUEST,
+    };
     use crate::{docaddr, FlowError, PacketContext, Role};
     use std::net::Ipv4Addr;
 
@@ -217,6 +247,17 @@ mod tests {
         assert!(flow.state(SELECTING).is_some());
         assert!(flow.state(REQUESTING).is_some());
         assert!(flow.state(BOUND).is_some());
+    }
+
+    #[test]
+    fn dhcpv4_server_flow_scaffold_has_responder_states() {
+        let flow = server_flow(docaddr::LOCAL_MAC, docaddr::SERVER_IPV4, docaddr::CLIENT_IPV4);
+
+        assert_eq!(flow.role(), Role::Responder);
+        assert_eq!(flow.initial(), WAIT_DISCOVER);
+        assert!(flow.state(WAIT_DISCOVER).is_some());
+        assert!(flow.state(WAIT_REQUEST).is_some());
+        assert!(flow.state(DONE).is_some());
     }
 
     #[test]
