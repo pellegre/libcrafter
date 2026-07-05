@@ -6,7 +6,7 @@ use crafter::net::SendReport;
 
 use crate::{
     Binding, CaptureSource, Conversation, Flow, FlowError, FlowOutcome, FlowReport, FlowState,
-    Matcher, MemoryCaptureSource, PacketContext, Result, Role, RunOptions, Step,
+    Identity, Matcher, MemoryCaptureSource, Mutator, PacketContext, Result, Role, RunOptions, Step,
 };
 
 struct TerminalStep {
@@ -68,6 +68,7 @@ impl Matcher for StateTransitionsMatcher<'_> {
 pub struct Runner {
     options: RunOptions,
     conversation: Conversation,
+    mutator: Box<dyn Mutator>,
     send_reports: Vec<SendReport>,
 }
 
@@ -92,6 +93,7 @@ impl Runner {
         Ok(Self {
             options,
             conversation,
+            mutator: Box::new(Identity),
             send_reports: Vec::new(),
         })
     }
@@ -109,6 +111,15 @@ impl Runner {
     /// Reports for packets sent or planned by this runner.
     pub fn send_reports(&self) -> &[SendReport] {
         &self.send_reports
+    }
+
+    /// Set the outgoing packet mutator used immediately before each send.
+    pub fn mutator<M>(mut self, mutator: M) -> Self
+    where
+        M: Mutator + 'static,
+    {
+        self.mutator = Box::new(mutator);
+        self
     }
 
     /// Run a flow and return an inspectable execution report.
@@ -135,7 +146,7 @@ impl Runner {
 
             let mut current_state = flow.initial().to_string();
             trace.enter(&current_state);
-            match self.run_iteration(flow, &mut current_state, &mut ctx, &mut trace)? {
+            match self.run_iteration(flow, &mut current_state, &mut ctx, &mut trace, iterations)? {
                 IterationResult::Terminal => {
                     iterations += 1;
                     let elapsed = started.elapsed();
@@ -172,11 +183,12 @@ impl Runner {
         current_state: &mut String,
         ctx: &mut PacketContext,
         trace: &mut RunTrace,
+        iteration: u64,
     ) -> Result<IterationResult> {
         match flow.role() {
             Role::Initiator | Role::Injector => {
                 if self
-                    .settle_entry(flow, current_state, ctx, trace)?
+                    .settle_entry(flow, current_state, ctx, trace, iteration)?
                     .is_some()
                 {
                     return Ok(IterationResult::Terminal);
@@ -212,13 +224,20 @@ impl Runner {
             };
             trace.take_transition(description);
 
-            match self.apply_step(flow, current_state.as_str(), step, StepMode::Active)? {
+            match self.apply_step(
+                flow,
+                current_state.as_str(),
+                step,
+                StepMode::Active,
+                iteration,
+                ctx,
+            )? {
                 StepAction::Settled => {}
                 StepAction::Enter(target) => {
                     *current_state = target;
                     trace.enter(current_state);
                     if self
-                        .settle_entry(flow, current_state, ctx, trace)?
+                        .settle_entry(flow, current_state, ctx, trace, iteration)?
                         .is_some()
                     {
                         return Ok(IterationResult::Terminal);
@@ -240,13 +259,14 @@ impl Runner {
         current_state: &mut String,
         ctx: &mut PacketContext,
         trace: &mut RunTrace,
+        iteration: u64,
     ) -> Result<Option<TerminalStep>> {
         loop {
             let Some(step) = Self::state_mut(flow, current_state)?.run_entry(ctx)? else {
                 return Ok(None);
             };
 
-            match self.apply_step(flow, current_state, step, StepMode::Active)? {
+            match self.apply_step(flow, current_state, step, StepMode::Active, iteration, ctx)? {
                 StepAction::Settled => return Ok(None),
                 StepAction::Enter(target) => {
                     *current_state = target;
@@ -272,7 +292,7 @@ impl Runner {
             return Ok(());
         };
 
-        let _ = self.apply_step(flow, current_state, step, StepMode::PassiveSetup)?;
+        let _ = self.apply_step(flow, current_state, step, StepMode::PassiveSetup, 0, ctx)?;
         Ok(())
     }
 
@@ -282,10 +302,13 @@ impl Runner {
         current_state: &str,
         step: Step,
         mode: StepMode,
+        iteration: u64,
+        ctx: &mut PacketContext,
     ) -> Result<StepAction> {
         if matches!(mode, StepMode::Active) {
             if let Some(packet) = step.outgoing() {
-                let report = self.conversation.send(packet)?;
+                let packet = self.mutator.mutate(packet.clone(), iteration, ctx)?;
+                let report = self.conversation.send(&packet)?;
                 self.send_reports.push(report);
             }
         }
@@ -368,8 +391,8 @@ impl Runner {
 mod tests {
     use super::Runner;
     use crate::{
-        Binding, Bound, Flow, FlowBuilderExt, FlowOutcome, FlowState, MemoryCaptureSource,
-        PredicateMatcher, Role, RunOptions, Step, StepGotoExt, Transition,
+        Binding, Bound, Flow, FlowBuilderExt, FlowOutcome, FlowState, FnMutator, Identity,
+        MemoryCaptureSource, PredicateMatcher, Role, RunOptions, Step, StepGotoExt, Transition,
     };
     use std::cell::Cell;
     use std::net::Ipv4Addr;
@@ -409,6 +432,75 @@ mod tests {
 
         assert!(runner.is_dry_run());
         assert_eq!(runner.options(), &options);
+    }
+
+    #[test]
+    fn runner_identity_mutator_sends_packet_unchanged() {
+        let request = request_packet();
+        let expected = compiled_bytes(&request);
+        let start = FlowState::new("Start")
+            .on_entry(move |_ctx| Ok(Step::emit(request.clone()).goto("Done")))
+            .entry_targets(["Done"]);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-identity-mutator")
+            .role(Role::Injector)
+            .state(start)
+            .state(done)
+            .initial("Start");
+        let mut runner = Runner::with_options(RunOptions::default())
+            .expect("runner opens")
+            .mutator(Identity);
+
+        let report = runner.run(&mut flow).expect("runner completes flow");
+
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(report.sent_count(), 1);
+        assert_eq!(runner.send_reports()[0].plan().bytes(), expected.as_slice());
+    }
+
+    #[test]
+    fn runner_mutator_stamps_iteration_into_each_looped_send() {
+        let base = raw_packet([0xff]);
+        let start = FlowState::new("Start")
+            .on_entry(move |_ctx| Ok(Step::emit(base.clone()).goto("Done")))
+            .entry_targets(["Done"]);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-iteration-mutator")
+            .role(Role::Injector)
+            .state(start)
+            .state(done)
+            .initial("Start");
+        let options = RunOptions::default().bound(Bound::Count(3));
+        let mut runner = Runner::with_options(options)
+            .expect("runner opens")
+            .mutator(FnMutator::new("stamp-iteration", |_packet, iteration, _ctx| {
+                Ok(crafter::Ipv4::new()
+                    .src(Ipv4Addr::new(192, 0, 2, 10))
+                    .dst(Ipv4Addr::new(198, 51, 100, 53))
+                    / crafter::Udp::new().sport(49152).dport(9)
+                    / crafter::Raw::from_bytes([iteration as u8]))
+            }));
+
+        let report = runner.run(&mut flow).expect("runner completes flow");
+        let sent = runner
+            .send_reports()
+            .iter()
+            .map(|report| {
+                *report
+                    .plan()
+                    .bytes()
+                    .last()
+                    .expect("mutated packet has a payload byte")
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(report.iterations(), 3);
+        assert_eq!(sent, vec![0, 1, 2]);
     }
 
     #[test]
