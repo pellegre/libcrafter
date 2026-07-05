@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crafter",
+    "tools/flow",
     "tools/oracle/adapters",
     "tools/probe/adapters",
 ]
