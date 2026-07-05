@@ -11,6 +11,7 @@ pub mod flow;
 pub mod flows;
 pub mod matcher;
 pub mod mutator;
+pub mod netns;
 pub mod options;
 pub mod prelude;
 pub mod report;
