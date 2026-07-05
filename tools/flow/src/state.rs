@@ -8,6 +8,7 @@ type EntryHandler = dyn FnMut(&mut PacketContext) -> Result<Step>;
 pub struct FlowState {
     name: String,
     on_entry: Option<Box<EntryHandler>>,
+    entry_description: Option<String>,
     entry_target_hints: Option<Vec<String>>,
     entry_terminal_path: bool,
     transitions: Vec<Transition>,
@@ -19,6 +20,7 @@ impl FlowState {
         Self {
             name: name.into(),
             on_entry: None,
+            entry_description: None,
             entry_target_hints: None,
             entry_terminal_path: false,
             transitions: Vec::new(),
@@ -46,6 +48,12 @@ impl FlowState {
         H: FnMut(&mut PacketContext) -> Result<Step> + 'static,
     {
         self.on_entry = Some(Box::new(handler));
+        self
+    }
+
+    /// Set a human-readable description for this state's entry action.
+    pub fn entry_description(mut self, description: impl Into<String>) -> Self {
+        self.entry_description = Some(description.into());
         self
     }
 
@@ -79,6 +87,11 @@ impl FlowState {
     /// Return declared entry target state names for static graph validation.
     pub fn declared_entry_targets(&self) -> &[String] {
         self.entry_target_hints.as_deref().unwrap_or(&[])
+    }
+
+    /// Return the human-readable entry action description, if present.
+    pub fn entry_description_text(&self) -> Option<&str> {
+        self.entry_description.as_deref()
     }
 
     /// Return true when this state has explicit entry target hints.
@@ -136,6 +149,13 @@ mod tests {
         assert_eq!(state.name(), "Selecting");
         assert_eq!(context.get_transaction_id(), Some(0x1234_5678));
         assert_eq!(step.target(), Some("Waiting"));
+    }
+
+    #[test]
+    fn state_entry_description_is_inspectable() {
+        let state = FlowState::new("Selecting").entry_description("DHCPv4 DISCOVER");
+
+        assert_eq!(state.entry_description_text(), Some("DHCPv4 DISCOVER"));
     }
 
     #[test]
