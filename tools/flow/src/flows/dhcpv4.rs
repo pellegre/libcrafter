@@ -6,8 +6,9 @@ use crafter::MacAddr;
 
 use crate::{
     Flow, FlowBuilderExt, FlowError, FlowState, PacketContext, PredicateMatcher, Role, Step,
-    Transition,
+    StepGotoExt, Transition,
 };
+use crate::matcher::LayerMatcher;
 
 /// Initial client state: send DISCOVER and wait for OFFER.
 pub const SELECTING: &str = "Selecting";
@@ -58,8 +59,9 @@ pub fn client_flow(client_mac: MacAddr) -> Flow {
 /// [`Role::Responder`]. Packet actions are filled in by the subsequent server
 /// flow steps.
 pub fn server_flow(server_mac: MacAddr, server_ip: Ipv4Addr, pool_base: Ipv4Addr) -> Flow {
-    let _ = (server_mac, server_ip, pool_base);
-    let wait_discover = FlowState::new(WAIT_DISCOVER);
+    let wait_discover = FlowState::new(WAIT_DISCOVER).on(discover_transition(
+        server_mac, server_ip, pool_base,
+    ));
     let wait_request = FlowState::new(WAIT_REQUEST);
     let done = FlowState::new(DONE)
         .on_entry(|_ctx| Ok(Step::done()))
@@ -126,6 +128,56 @@ fn request_packet(
             .dst(Ipv4Addr::BROADCAST)
         / crafter::Udp::dhcpv4_client()
         / crafter::Dhcpv4::request(client_mac, offered_ip, server_identifier).xid(transaction_id)
+}
+
+fn discover_transition(server_mac: MacAddr, server_ip: Ipv4Addr, pool_base: Ipv4Addr) -> Transition {
+    Transition::on(
+        LayerMatcher::where_layer::<crafter::Dhcpv4>("message type DISCOVER", |dhcp| {
+            dhcp.message_type_value() == Some(crafter::Dhcpv4MessageType::Discover)
+        }),
+        move |packet, ctx| {
+            let dhcp = packet.layer::<crafter::Dhcpv4>().ok_or_else(|| {
+                FlowError::Capture("matched DHCPv4 DISCOVER packet has no DHCPv4 layer".to_string())
+            })?;
+            let client_mac = dhcp.client_mac_value().ok_or_else(|| {
+                FlowError::Capture("matched DHCPv4 DISCOVER has no client MAC".to_string())
+            })?;
+            let transaction_id = dhcp.transaction_id_value();
+            let offered_ip = pool_base;
+
+            ctx.set_client_mac(client_mac);
+            ctx.set_transaction_id(transaction_id);
+            ctx.set_offered_ipv4(offered_ip);
+            ctx.set_server_identifier(server_ip);
+
+            Ok(Step::send(server_offer_packet(
+                server_mac,
+                server_ip,
+                client_mac,
+                transaction_id,
+                offered_ip,
+            ))
+            .goto(WAIT_REQUEST))
+        },
+    )
+    .targets([WAIT_REQUEST])
+}
+
+fn server_offer_packet(
+    server_mac: MacAddr,
+    server_ip: Ipv4Addr,
+    client_mac: MacAddr,
+    transaction_id: u32,
+    offered_ip: Ipv4Addr,
+) -> crafter::Packet {
+    crafter::Ethernet::new().src(server_mac).dst(client_mac)
+        / crafter::Ipv4::new().src(server_ip).dst(Ipv4Addr::BROADCAST)
+        / crafter::Udp::dhcpv4_server()
+        / crafter::Dhcpv4::offer(client_mac, offered_ip, server_ip)
+            .xid(transaction_id)
+            .siaddr(server_ip)
+            .router([server_ip])
+            .domain_name_server([server_ip])
 }
 
 fn offer_transition() -> Transition {
@@ -206,6 +258,17 @@ mod tests {
     use crate::{docaddr, FlowError, PacketContext, Role};
     use std::net::Ipv4Addr;
 
+    fn discover_from_client(client_mac: crafter::MacAddr, transaction_id: u32) -> crafter::Packet {
+        crafter::Ethernet::new()
+            .src(client_mac)
+            .dst(crafter::MacAddr::BROADCAST)
+            / crafter::Ipv4::new()
+                .src(Ipv4Addr::UNSPECIFIED)
+                .dst(Ipv4Addr::BROADCAST)
+            / crafter::Udp::dhcpv4_client()
+            / crafter::Dhcpv4::discover(client_mac).xid(transaction_id)
+    }
+
     fn offer_packet(
         transaction_id: u32,
         offered_ip: Ipv4Addr,
@@ -258,6 +321,55 @@ mod tests {
         assert!(flow.state(WAIT_DISCOVER).is_some());
         assert!(flow.state(WAIT_REQUEST).is_some());
         assert!(flow.state(DONE).is_some());
+    }
+
+    #[test]
+    fn dhcpv4_wait_discover_transition_builds_offer_and_records_context() {
+        let transaction_id = 0x5000_0001;
+        let offered_ip = docaddr::CLIENT_IPV4;
+        let server_id = docaddr::SERVER_IPV4;
+        let mut flow = server_flow(docaddr::LOCAL_MAC, server_id, offered_ip);
+        let mut context = PacketContext::new();
+        let discover = discover_from_client(docaddr::CLIENT_MAC, transaction_id);
+
+        let wait_discover = flow
+            .state(WAIT_DISCOVER)
+            .expect("WaitDiscover state exists");
+        assert!(wait_discover.transitions()[0].matches(&discover, &context));
+
+        let step = flow
+            .state_mut(WAIT_DISCOVER)
+            .expect("WaitDiscover state exists")
+            .find_transition(&discover, &context)
+            .expect("matching DISCOVER transition")
+            .fire(&discover, &mut context)
+            .expect("DISCOVER handler succeeds");
+        let offer = step.outgoing().expect("DISCOVER response sends OFFER");
+        let ethernet = offer.layer::<crafter::Ethernet>().expect("OFFER has Ethernet");
+        let ipv4 = offer.layer::<crafter::Ipv4>().expect("OFFER has IPv4");
+        let udp = offer.layer::<crafter::Udp>().expect("OFFER has UDP");
+        let dhcp = offer
+            .layer::<crafter::Dhcpv4>()
+            .expect("OFFER has DHCPv4");
+
+        assert_eq!(step.target(), Some(WAIT_REQUEST));
+        assert_eq!(context.get_client_mac(), Some(docaddr::CLIENT_MAC));
+        assert_eq!(context.get_transaction_id(), Some(transaction_id));
+        assert_eq!(context.get_offered_ipv4(), Some(offered_ip));
+        assert_eq!(ethernet.destination(), Some(docaddr::CLIENT_MAC));
+        assert_eq!(ipv4.source(), server_id);
+        assert_eq!(udp.destination_port_value(), crafter::DHCPV4_CLIENT_PORT);
+        assert_eq!(
+            dhcp.message_type_value(),
+            Some(crafter::Dhcpv4MessageType::Offer)
+        );
+        assert_eq!(dhcp.client_mac_value(), Some(docaddr::CLIENT_MAC));
+        assert_eq!(dhcp.transaction_id_value(), transaction_id);
+        assert_eq!(dhcp.offered_ip_address(), Some(offered_ip));
+        assert_eq!(dhcp.server_identifier_value(), Some(server_id));
+        assert_eq!(dhcp.server_ip_address_value(), server_id);
+        assert_eq!(dhcp.routers(), vec![server_id]);
+        assert_eq!(dhcp.domain_name_servers(), vec![server_id]);
     }
 
     #[test]
