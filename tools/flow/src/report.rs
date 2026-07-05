@@ -23,6 +23,7 @@ pub enum FlowOutcome {
 pub struct FlowReport {
     flow_name: String,
     role: Role,
+    dry_run: bool,
     visited_states: Vec<String>,
     sent_count: usize,
     received_count: usize,
@@ -38,6 +39,7 @@ impl FlowReport {
     pub fn new(
         flow_name: impl Into<String>,
         role: Role,
+        dry_run: bool,
         visited_states: Vec<String>,
         sent_count: usize,
         received_count: usize,
@@ -50,6 +52,7 @@ impl FlowReport {
         Self {
             flow_name: flow_name.into(),
             role,
+            dry_run,
             visited_states,
             sent_count,
             received_count,
@@ -69,6 +72,11 @@ impl FlowReport {
     /// Return the executed flow role.
     pub const fn role(&self) -> Role {
         self.role
+    }
+
+    /// Return true when this run used an offline dry-run binding.
+    pub const fn is_dry_run(&self) -> bool {
+        self.dry_run
     }
 
     /// Return state names in the order the runner entered them.
@@ -114,9 +122,10 @@ impl FlowReport {
     /// Return a compact one-line description of this run.
     pub fn summary(&self) -> String {
         format!(
-            "FlowReport '{}' ({:?}): {:?}, states={}, sent={}, received={}, transitions={}, iterations={}, elapsed={:?}",
+            "FlowReport '{}' ({:?}, dry_run={}): {:?}, states={}, sent={}, received={}, transitions={}, iterations={}, elapsed={:?}",
             self.flow_name,
             self.role,
+            self.dry_run,
             self.outcome,
             self.visited_states.len(),
             self.sent_count,
@@ -133,6 +142,7 @@ impl FlowReport {
 
         let _ = writeln!(output, "FlowReport '{}'", self.flow_name);
         let _ = writeln!(output, "  role: {:?}", self.role);
+        let _ = writeln!(output, "  dry-run: {}", self.dry_run);
         let _ = writeln!(output, "  outcome: {:?}", self.outcome);
         let _ = writeln!(output, "  iterations: {}", self.iterations);
         let _ = writeln!(output, "  elapsed: {:?}", self.elapsed);
@@ -174,6 +184,7 @@ mod tests {
         let report = FlowReport::new(
             "example-flow",
             Role::Initiator,
+            true,
             vec!["Start".to_string(), "Done".to_string()],
             1,
             2,
@@ -186,6 +197,7 @@ mod tests {
 
         assert_eq!(report.flow_name(), "example-flow");
         assert_eq!(report.role(), Role::Initiator);
+        assert!(report.is_dry_run());
         assert_eq!(
             report.visited_states(),
             &["Start".to_string(), "Done".to_string()]
@@ -201,6 +213,8 @@ mod tests {
             "PacketContext keys=[transaction_id]"
         );
         assert!(report.summary().contains("example-flow"));
+        assert!(report.summary().contains("dry_run=true"));
+        assert!(report.show().contains("dry-run: true"));
         assert!(report.show().contains("reply packet"));
     }
 }

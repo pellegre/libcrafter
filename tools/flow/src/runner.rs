@@ -108,6 +108,11 @@ impl Runner {
         self.conversation.is_dry_run()
     }
 
+    /// Number of live sender handles opened by this runner.
+    pub fn live_sender_open_count(&self) -> usize {
+        self.conversation.live_sender_open_count()
+    }
+
     /// Reports for packets sent or planned by this runner.
     pub fn send_reports(&self) -> &[SendReport] {
         &self.send_reports
@@ -349,6 +354,7 @@ impl Runner {
         FlowReport::new(
             flow.name(),
             flow.role(),
+            self.is_dry_run(),
             trace.visited_states,
             self.conversation.sent_count(),
             self.conversation.received_count(),
@@ -432,6 +438,48 @@ mod tests {
 
         assert!(runner.is_dry_run());
         assert_eq!(runner.options(), &options);
+    }
+
+    #[test]
+    fn runner_default_run_reports_dry_run_and_opens_no_live_sender() {
+        let packet = request_packet();
+        let start = FlowState::new("Start")
+            .on_entry(move |_ctx| Ok(Step::emit(packet.clone()).goto("Done")))
+            .entry_targets(["Done"]);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-safe-default")
+            .role(Role::Injector)
+            .state(start)
+            .state(done)
+            .initial("Start");
+        let mut runner = Runner::bind(Binding::default()).expect("default runner binds");
+
+        let report = runner.run(&mut flow).expect("default runner completes flow");
+
+        assert!(runner.is_dry_run());
+        assert!(report.is_dry_run());
+        assert_eq!(runner.live_sender_open_count(), 0);
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(report.sent_count(), 1);
+        assert!(runner
+            .send_reports()
+            .iter()
+            .all(crafter::net::SendReport::is_dry_run));
+    }
+
+    #[test]
+    fn runner_live_binding_is_reachable_through_public_builder() {
+        let runner = Runner::bind(Binding::interface("flowlive0").network_layer().live())
+            .expect("explicit live network-layer runner opens");
+
+        assert!(!runner.is_dry_run());
+        assert_eq!(runner.live_sender_open_count(), 1);
+        assert_eq!(
+            runner.options().binding,
+            Binding::interface("flowlive0").network_layer().live()
+        );
     }
 
     #[test]
