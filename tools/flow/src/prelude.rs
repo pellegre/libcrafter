@@ -12,6 +12,7 @@
 
 pub use crate::Bound;
 pub use crate::binding::{BindMode, BindSendClass, BindTarget, Binding};
+pub use crate::capture::{CaptureSource, MemoryCaptureSource};
 pub use crate::docaddr;
 pub use crate::error::{FlowError, Result};
 pub use crate::Flow;
@@ -127,5 +128,20 @@ mod tests {
 
         assert_eq!(mutator.name(), "identity");
         assert_eq!(mutated.summary(), "Raw(len=2)");
+    }
+
+    #[test]
+    fn prelude_exports_capture_source() {
+        use crafter_flow::prelude::*;
+        use std::time::Duration;
+
+        let packet = crafter::Packet::decode_raw([0xde, 0xad]).expect("raw packet decodes");
+        let mut source = MemoryCaptureSource::new(vec![packet]);
+
+        assert!(source.describe().contains("memory capture source"));
+        assert!(source
+            .next_packet(Duration::from_millis(1))
+            .expect("capture succeeds")
+            .is_some());
     }
 }
