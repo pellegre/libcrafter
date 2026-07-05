@@ -28,7 +28,7 @@ pub fn client_flow(client_mac: MacAddr) -> Flow {
             Ok(Step::send(discover_packet(client_mac, transaction_id)))
         })
         .on(offer_transition());
-    let requesting = FlowState::new(REQUESTING);
+    let requesting = FlowState::new(REQUESTING).on_entry(request_action);
     let bound = FlowState::new(BOUND)
         .on_entry(|_ctx| Ok(Step::done()))
         .entry_terminal();
@@ -50,6 +50,50 @@ fn discover_packet(client_mac: MacAddr, transaction_id: u32) -> crafter::Packet 
             .dst(Ipv4Addr::BROADCAST)
         / crafter::Udp::dhcpv4_client()
         / crafter::Dhcpv4::discover(client_mac).xid(transaction_id)
+}
+
+fn request_action(ctx: &mut PacketContext) -> crate::Result<Step> {
+    let client_mac = ctx
+        .get_client_mac()
+        .ok_or_else(|| missing_request_context("client_mac"))?;
+    let transaction_id = ctx
+        .get_transaction_id()
+        .ok_or_else(|| missing_request_context("transaction_id"))?;
+    let offered_ip = ctx
+        .get_offered_ipv4()
+        .ok_or_else(|| missing_request_context("offered_ipv4"))?;
+    let server_identifier = ctx
+        .get_server_identifier()
+        .ok_or_else(|| missing_request_context("server_identifier"))?;
+
+    Ok(Step::send(request_packet(
+        client_mac,
+        transaction_id,
+        offered_ip,
+        server_identifier,
+    )))
+}
+
+fn missing_request_context(key: &str) -> FlowError {
+    FlowError::Build(format!(
+        "DHCPv4 REQUEST requires {key} in PacketContext"
+    ))
+}
+
+fn request_packet(
+    client_mac: MacAddr,
+    transaction_id: u32,
+    offered_ip: Ipv4Addr,
+    server_identifier: Ipv4Addr,
+) -> crafter::Packet {
+    crafter::Ethernet::new()
+        .src(client_mac)
+        .dst(MacAddr::BROADCAST)
+        / crafter::Ipv4::new()
+            .src(Ipv4Addr::UNSPECIFIED)
+            .dst(Ipv4Addr::BROADCAST)
+        / crafter::Udp::dhcpv4_client()
+        / crafter::Dhcpv4::request(client_mac, offered_ip, server_identifier).xid(transaction_id)
 }
 
 fn offer_transition() -> Transition {
@@ -88,7 +132,7 @@ fn offer_matches_context(packet: &crafter::Packet, ctx: &PacketContext) -> bool 
 #[cfg(test)]
 mod tests {
     use super::{client_flow, BOUND, REQUESTING, SELECTING};
-    use crate::{docaddr, PacketContext, Role};
+    use crate::{docaddr, FlowError, PacketContext, Role};
     use std::net::Ipv4Addr;
 
     fn offer_packet(
@@ -189,5 +233,55 @@ mod tests {
         assert_eq!(step.target(), Some(REQUESTING));
         assert_eq!(context.get_offered_ipv4(), Some(offered_ip));
         assert_eq!(context.get_server_identifier(), Some(server_id));
+    }
+
+    #[test]
+    fn dhcpv4_requesting_entry_builds_request_from_context() {
+        let offered_ip = Ipv4Addr::new(192, 0, 2, 44);
+        let server_id = docaddr::SERVER_IPV4;
+        let transaction_id = 0x4100_002b;
+        let mut flow = client_flow(docaddr::CLIENT_MAC);
+        let mut context = PacketContext::new();
+        context.set_client_mac(docaddr::CLIENT_MAC);
+        context.set_transaction_id(transaction_id);
+        context.set_offered_ipv4(offered_ip);
+        context.set_server_identifier(server_id);
+
+        let step = flow
+            .state_mut(REQUESTING)
+            .expect("Requesting state exists")
+            .run_entry(&mut context)
+            .expect("entry succeeds")
+            .expect("entry returns REQUEST");
+        let packet = step.outgoing().expect("Requesting sends REQUEST");
+        let udp = packet.layer::<crafter::Udp>().expect("REQUEST has UDP");
+        let dhcp = packet
+            .layer::<crafter::Dhcpv4>()
+            .expect("REQUEST has DHCPv4");
+
+        assert_eq!(udp.destination_port_value(), crafter::DHCPV4_SERVER_PORT);
+        assert_eq!(
+            dhcp.message_type_value(),
+            Some(crafter::Dhcpv4MessageType::Request)
+        );
+        assert_eq!(dhcp.transaction_id_value(), transaction_id);
+        assert_eq!(dhcp.requested_ip_address_value(), Some(offered_ip));
+        assert_eq!(dhcp.server_identifier_value(), Some(server_id));
+        assert!(step.target().is_none());
+    }
+
+    #[test]
+    fn dhcpv4_requesting_entry_reports_missing_context() {
+        let mut flow = client_flow(docaddr::CLIENT_MAC);
+        let mut context = PacketContext::new();
+
+        let error = flow
+            .state_mut(REQUESTING)
+            .expect("Requesting state exists")
+            .run_entry(&mut context)
+            .expect_err("missing context should fail");
+
+        assert!(matches!(error, FlowError::Build(_)));
+        assert!(error.to_string().contains("client_mac"));
     }
 }
