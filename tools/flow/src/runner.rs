@@ -174,7 +174,7 @@ impl Runner {
         trace: &mut RunTrace,
     ) -> Result<IterationResult> {
         match flow.role() {
-            Role::Initiator => {
+            Role::Initiator | Role::Injector => {
                 if self
                     .settle_entry(flow, current_state, ctx, trace)?
                     .is_some()
@@ -185,7 +185,6 @@ impl Runner {
             Role::Responder => {
                 self.run_passive_entry_setup(flow, current_state, ctx)?;
             }
-            Role::Injector => {}
         }
 
         loop {
@@ -564,6 +563,76 @@ mod tests {
             report.context_snapshot(),
             "PacketContext keys=[transaction_id]"
         );
+    }
+
+    #[test]
+    fn runner_injector_reemits_entry_packet_for_bounded_iterations() {
+        let emit_count = Rc::new(Cell::new(0));
+        let emit_counter = Rc::clone(&emit_count);
+        let announcement = request_packet();
+        let announce = FlowState::new("Announce")
+            .on_entry(move |_ctx| {
+                emit_counter.set(emit_counter.get() + 1);
+                Ok(Step::emit(announcement.clone()).goto("Done"))
+            })
+            .entry_targets(["Done"]);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-injector-entry")
+            .role(Role::Injector)
+            .state(announce)
+            .state(done)
+            .initial("Announce");
+        let options = RunOptions::default().bound(Bound::Count(3));
+        let mut runner = Runner::with_options(options).expect("runner opens");
+
+        let report = runner.run(&mut flow).expect("runner completes flow");
+
+        assert_eq!(report.role(), Role::Injector);
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(report.iterations(), 3);
+        assert_eq!(report.sent_count(), 3);
+        assert_eq!(runner.send_reports().len(), 3);
+        assert_eq!(report.received_count(), 0);
+        assert_eq!(emit_count.get(), 3);
+    }
+
+    #[test]
+    fn runner_injector_reacts_to_observed_packet_with_emit() {
+        let observed = raw_packet([0x37, 0x01]);
+        let expected_observed = compiled_bytes(&observed);
+        let forged = request_packet();
+        let transition = Transition::on(
+            PredicateMatcher::new("observed request", move |packet, _ctx| {
+                packet
+                    .compile()
+                    .map(|bytes| bytes.as_ref() == expected_observed.as_slice())
+                    .unwrap_or(false)
+            }),
+            move |_packet, _ctx| Ok(Step::emit(forged.clone()).goto("Done")),
+        )
+        .targets(["Done"]);
+        let watch = FlowState::new("Watch").on(transition);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-injector-reactive")
+            .role(Role::Injector)
+            .state(watch)
+            .state(done)
+            .initial("Watch");
+        let mut runner =
+            Runner::with_source(RunOptions::default(), MemoryCaptureSource::new(vec![observed]))
+                .expect("runner opens with injected source");
+
+        let report = runner.run(&mut flow).expect("runner completes flow");
+
+        assert_eq!(report.role(), Role::Injector);
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(report.transitions_taken(), &["observed request".to_string()]);
+        assert_eq!(report.sent_count(), 1);
+        assert_eq!(report.received_count(), 1);
     }
 
     #[test]
