@@ -1,6 +1,7 @@
 //! Top-level protocol flow graph definitions.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use crate::{FlowError, FlowState, Result, Role};
 
@@ -51,6 +52,76 @@ impl Flow {
     /// Return state names in deterministic order.
     pub fn state_names(&self) -> impl Iterator<Item = &str> {
         self.states.keys().map(String::as_str)
+    }
+
+    /// Return a compact one-line description of this flow graph.
+    pub fn summary(&self) -> String {
+        format!(
+            "Flow '{}' ({:?}, {} states, initial '{}')",
+            self.name,
+            self.role,
+            self.states.len(),
+            self.initial
+        )
+    }
+
+    /// Return a multi-line inspectable view of states and transitions.
+    pub fn show(&self) -> String {
+        let mut output = String::new();
+
+        let _ = writeln!(output, "Flow '{}'", self.name);
+        let _ = writeln!(output, "  role: {:?}", self.role);
+        let _ = writeln!(output, "  initial: {}", self.initial);
+        let _ = writeln!(output, "  states:");
+
+        for state in self.states.values() {
+            let mut markers = Vec::new();
+            if state.name() == self.initial {
+                markers.push("initial");
+            }
+            if state.declares_entry_terminal_path() {
+                markers.push("terminal");
+            }
+
+            if markers.is_empty() {
+                let _ = writeln!(output, "    - {}", state.name());
+            } else {
+                let _ = writeln!(output, "    - {} [{}]", state.name(), markers.join(", "));
+            }
+
+            let entry = if state.has_entry() { "present" } else { "none" };
+            let _ = writeln!(
+                output,
+                "      entry: {}{}{}",
+                entry,
+                self.format_declared_targets(state.declared_entry_targets()),
+                if state.declares_entry_terminal_path() {
+                    " [terminal]"
+                } else {
+                    ""
+                }
+            );
+
+            if state.transitions().is_empty() {
+                let _ = writeln!(output, "      transitions: none");
+            } else {
+                let _ = writeln!(output, "      transitions:");
+                for transition in state.transitions() {
+                    let _ = write!(
+                        output,
+                        "        - {}{}",
+                        transition.describe(),
+                        self.format_declared_targets(transition.declared_targets())
+                    );
+                    if transition.declares_terminal_path() {
+                        output.push_str(" [terminal]");
+                    }
+                    output.push('\n');
+                }
+            }
+        }
+
+        output
     }
 
     /// Validate the statically knowable shape of this flow graph.
@@ -146,6 +217,30 @@ impl Flow {
                     !transition.has_target_hints() && !transition.declares_terminal_path()
                 })
         })
+    }
+
+    fn format_declared_targets(&self, targets: &[String]) -> String {
+        if targets.is_empty() {
+            return String::new();
+        }
+
+        let rendered = targets
+            .iter()
+            .map(|target| {
+                if self
+                    .states
+                    .get(target)
+                    .map_or(false, FlowState::declares_entry_terminal_path)
+                {
+                    format!("{target} [terminal]")
+                } else {
+                    target.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        format!(" -> {rendered}")
     }
 }
 
@@ -248,6 +343,41 @@ mod tests {
 
         flow.validate()
             .expect("well-formed flow should pass validation");
+    }
+
+    #[test]
+    fn summary_includes_name_role_state_count_and_initial() {
+        let flow = two_state_flow();
+        let summary = flow.summary();
+
+        assert!(summary.contains("two-state"));
+        assert!(summary.contains("Responder"));
+        assert!(summary.contains("2 states"));
+        assert!(summary.contains("Waiting"));
+    }
+
+    #[test]
+    fn summary_show_lists_states_and_transition_description() {
+        let flow = two_state_flow();
+        let show = flow.show();
+
+        assert!(show.contains("Waiting"));
+        assert!(show.contains("Done"));
+        assert!(show.contains("any packet"));
+    }
+
+    fn two_state_flow() -> Flow {
+        let transition = Transition::on(
+            PredicateMatcher::new("any packet", |_packet, _ctx| true),
+            |_packet, _ctx| Ok(Step::goto("Done")),
+        )
+        .targets(["Done"]);
+
+        Flow::new("two-state")
+            .role(Role::Responder)
+            .state(FlowState::new("Waiting").on(transition))
+            .state(terminal_state("Done"))
+            .initial("Waiting")
     }
 
     fn terminal_state(name: &str) -> FlowState {
