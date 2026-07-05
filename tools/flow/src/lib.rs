@@ -1,9 +1,11 @@
 //! Stateful protocol-flow engine built on `crafter`.
 
+pub mod binding;
 pub mod docaddr;
 pub mod error;
 pub mod prelude;
 pub mod role;
 
+pub use binding::{BindMode, BindSendClass, BindTarget, Binding};
 pub use error::{FlowError, Result};
 pub use role::Role;

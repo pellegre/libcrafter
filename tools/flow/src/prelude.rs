@@ -1,8 +1,8 @@
 //! Common imports for flow tools.
 //!
-//! Later engine types (`Binding`, `Bound`, `PacketContext`, `Matcher`,
-//! `Transition`, `FlowState`, `Flow`, `Runner`, and `FlowReport`) are added here
-//! as they are implemented.
+//! Later engine types (`Bound`, `PacketContext`, `Matcher`, `Transition`,
+//! `FlowState`, `Flow`, `Runner`, and `FlowReport`) are added here as they are
+//! implemented.
 //!
 //! ```
 //! use crafter_flow::prelude::*;
@@ -11,6 +11,7 @@
 //! assert!(error.to_string().contains("unsupported flow feature"));
 //! ```
 
+pub use crate::binding::{BindMode, BindSendClass, BindTarget, Binding};
 pub use crate::error::{FlowError, Result};
 pub use crate::docaddr;
 pub use crate::Role;
@@ -25,5 +26,13 @@ mod tests {
 
         let error = FlowError::Unsupported("pending engine type".to_string());
         assert!(error.to_string().contains("unsupported flow feature"));
+    }
+
+    #[test]
+    fn prelude_exports_binding() {
+        use crafter_flow::prelude::*;
+
+        let binding = Binding::default().live();
+        assert_eq!(binding.mode(), BindMode::Live);
     }
 }
