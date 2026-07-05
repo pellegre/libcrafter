@@ -14,7 +14,7 @@ pub use crate::Bound;
 pub use crate::binding::{BindMode, BindSendClass, BindTarget, Binding};
 pub use crate::docaddr;
 pub use crate::error::{FlowError, Result};
-pub use crate::{Matcher, PredicateMatcher};
+pub use crate::matcher::{Matcher, PredicateMatcher, ReplyMatcher};
 pub use crate::PacketContext;
 pub use crate::RunOptions;
 pub use crate::Role;
