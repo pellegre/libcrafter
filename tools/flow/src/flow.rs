@@ -90,10 +90,15 @@ impl Flow {
             }
 
             let entry = if state.has_entry() { "present" } else { "none" };
+            let entry_description = state
+                .entry_description_text()
+                .map(|description| format!(" ({description})"))
+                .unwrap_or_default();
             let _ = writeln!(
                 output,
-                "      entry: {}{}{}",
+                "      entry: {}{}{}{}",
                 entry,
+                entry_description,
                 self.format_declared_targets(state.declared_entry_targets()),
                 if state.declares_entry_terminal_path() {
                     " [terminal]"

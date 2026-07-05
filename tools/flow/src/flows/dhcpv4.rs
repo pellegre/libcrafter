@@ -27,9 +27,11 @@ pub fn client_flow(client_mac: MacAddr) -> Flow {
             ctx.set_transaction_id(transaction_id);
             Ok(Step::send(discover_packet(client_mac, transaction_id)))
         })
+        .entry_description("DHCPv4 DISCOVER")
         .on(offer_transition());
     let requesting = FlowState::new(REQUESTING)
         .on_entry(request_action)
+        .entry_description("DHCPv4 REQUEST")
         .on(ack_transition());
     let bound = FlowState::new(BOUND)
         .on_entry(|_ctx| Ok(Step::done()))
@@ -215,6 +217,29 @@ mod tests {
         assert!(flow.state(SELECTING).is_some());
         assert!(flow.state(REQUESTING).is_some());
         assert!(flow.state(BOUND).is_some());
+    }
+
+    #[test]
+    fn dhcpv4_client_flow_validates_and_show_lists_conversation() {
+        let flow = client_flow(docaddr::CLIENT_MAC);
+
+        flow.validate().expect("DHCPv4 client flow validates");
+        let show = flow.show();
+
+        for expected in [
+            SELECTING,
+            REQUESTING,
+            BOUND,
+            "DHCPv4 DISCOVER",
+            "DHCPv4 OFFER",
+            "DHCPv4 REQUEST",
+            "DHCPv4 ACK",
+        ] {
+            assert!(
+                show.contains(expected),
+                "flow show should contain {expected}: {show}"
+            );
+        }
     }
 
     #[test]
