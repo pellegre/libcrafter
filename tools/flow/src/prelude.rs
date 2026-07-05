@@ -21,7 +21,7 @@ pub use crate::matcher::{
 pub use crate::PacketContext;
 pub use crate::RunOptions;
 pub use crate::Role;
-pub use crate::{FlowState, Step, StepGotoExt, Transition};
+pub use crate::{FlowState, FnMutator, Identity, Mutator, Step, StepGotoExt, Transition};
 
 #[cfg(test)]
 mod tests {
@@ -111,5 +111,21 @@ mod tests {
         let flow = Flow::new("empty");
 
         assert_eq!(flow.role(), Role::Initiator);
+    }
+
+    #[test]
+    fn prelude_exports_mutator() {
+        use crafter_flow::prelude::*;
+
+        let mut context = PacketContext::new();
+        let packet = crafter::Packet::decode_raw([0xde, 0xad]).expect("raw packet decodes");
+        let mut mutator: Box<dyn Mutator> = Box::new(Identity);
+
+        let mutated = mutator
+            .mutate(packet, 0, &mut context)
+            .expect("identity mutation succeeds");
+
+        assert_eq!(mutator.name(), "identity");
+        assert_eq!(mutated.summary(), "Raw(len=2)");
     }
 }
