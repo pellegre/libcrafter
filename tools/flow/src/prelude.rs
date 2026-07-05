@@ -1,7 +1,7 @@
 //! Common imports for flow tools.
 //!
-//! Later engine types (`Matcher`, `Transition`, `FlowState`, `Flow`, `Runner`,
-//! and `FlowReport`) are added here as they are implemented.
+//! Later engine types (`Flow`, `Runner`, and `FlowReport`) are added here as
+//! they are implemented.
 //!
 //! ```
 //! use crafter_flow::prelude::*;
@@ -20,7 +20,7 @@ pub use crate::matcher::{
 pub use crate::PacketContext;
 pub use crate::RunOptions;
 pub use crate::Role;
-pub use crate::{Step, StepGotoExt, Transition};
+pub use crate::{FlowState, Step, StepGotoExt, Transition};
 
 #[cfg(test)]
 mod tests {
@@ -92,5 +92,14 @@ mod tests {
 
         assert!(step.outgoing().is_some());
         assert_eq!(step.target(), Some("next"));
+    }
+
+    #[test]
+    fn prelude_exports_flow_state() {
+        use crafter_flow::prelude::*;
+
+        let state = FlowState::new("idle");
+
+        assert_eq!(state.name(), "idle");
     }
 }

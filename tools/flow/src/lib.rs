@@ -9,6 +9,7 @@ pub mod matcher;
 pub mod options;
 pub mod prelude;
 pub mod role;
+pub mod state;
 pub mod step;
 pub mod transition;
 
@@ -19,5 +20,6 @@ pub use error::{FlowError, Result};
 pub use matcher::{Matcher, PredicateMatcher};
 pub use options::RunOptions;
 pub use role::Role;
+pub use state::FlowState;
 pub use step::{Step, StepGotoExt};
 pub use transition::Transition;
