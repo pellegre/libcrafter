@@ -19,7 +19,9 @@ pub mod transition;
 
 pub use bound::Bound;
 pub use binding::{BindMode, BindSendClass, BindTarget, Binding};
-pub use capture::{CaptureSource, MemoryCaptureSource};
+pub use capture::{
+    derive_capture_filter, derive_capture_filter_for_packets, CaptureSource, MemoryCaptureSource,
+};
 pub use context::PacketContext;
 pub use conversation::Conversation;
 pub use error::{FlowError, Result};

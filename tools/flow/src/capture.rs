@@ -9,6 +9,27 @@ use std::time::Duration;
 
 use crate::Result;
 
+/// Derive an advisory BPF capture filter for likely replies to a seed request packet.
+///
+/// Flow dry-runs can report this filter for inspection. Once live pcap capture
+/// is wired, the same derived filter is expected to be applied to the live
+/// capture source. Unsupported packet shapes return an empty string.
+pub fn derive_capture_filter(packet: &crafter::Packet) -> String {
+    crafter::net::reply_filter(packet).unwrap_or_default()
+}
+
+/// Derive an advisory BPF capture filter for likely replies to seed request packets.
+///
+/// Flow dry-runs can report this filter for inspection. Once live pcap capture
+/// is wired, the same derived filter is expected to be applied to the live
+/// capture source. Unsupported packet shapes are skipped; if no filter can be
+/// derived, this returns an empty string.
+pub fn derive_capture_filter_for_packets(packets: &[crafter::Packet]) -> String {
+    crafter::net::BatchSendRecv::new()
+        .effective_filter(packets)
+        .unwrap_or_default()
+}
+
 /// Source of packets received while a flow is running.
 pub trait CaptureSource {
     /// Return the next received packet, or `Ok(None)` when `timeout` elapses.
@@ -57,7 +78,11 @@ impl CaptureSource for MemoryCaptureSource {
 
 #[cfg(test)]
 mod tests {
-    use super::{CaptureSource, MemoryCaptureSource};
+    use super::{
+        derive_capture_filter, derive_capture_filter_for_packets, CaptureSource,
+        MemoryCaptureSource,
+    };
+    use std::net::Ipv4Addr;
     use std::time::Duration;
 
     fn raw_packet(bytes: impl AsRef<[u8]>) -> crafter::Packet {
@@ -91,5 +116,27 @@ mod tests {
         assert_eq!(compiled_bytes(&first), [0xde, 0xad]);
         assert_eq!(compiled_bytes(&second), [0xbe, 0xef, 0x00]);
         assert!(empty.is_none());
+    }
+
+    #[test]
+    fn derive_capture_filter_for_ipv4_udp_dns_request_uses_reply_filter() {
+        let request = crafter::Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 53))
+            / crafter::Udp::new().sport(53000).dport(53)
+            / crafter::Dns::a_query("example.com").id(0x1234);
+
+        let filter = derive_capture_filter(&request);
+
+        assert!(!filter.is_empty());
+        assert!(filter.contains("udp"), "filter was {filter:?}");
+        assert!(filter.contains("src port 53"), "filter was {filter:?}");
+    }
+
+    #[test]
+    fn derive_capture_filter_for_packets_skips_unsupported_packets() {
+        let unsupported = raw_packet([0xde, 0xad]);
+
+        assert_eq!(derive_capture_filter_for_packets(&[unsupported]), "");
     }
 }
