@@ -1,7 +1,6 @@
 //! Common imports for flow tools.
 //!
-//! Later engine types (`Flow`, `Runner`, and `FlowReport`) are added here as
-//! they are implemented.
+//! Later engine types (`FlowReport`) are added here as they are implemented.
 //!
 //! ```
 //! use crafter_flow::prelude::*;
@@ -24,6 +23,7 @@ pub use crate::matcher::{
 };
 pub use crate::PacketContext;
 pub use crate::RunOptions;
+pub use crate::Runner;
 pub use crate::Role;
 pub use crate::{FlowState, FnMutator, Identity, Mutator, Step, StepGotoExt, Transition};
 
@@ -155,5 +155,14 @@ mod tests {
         let conversation = Conversation::open(&Binding::default()).expect("conversation opens");
 
         assert!(conversation.is_dry_run());
+    }
+
+    #[test]
+    fn prelude_exports_runner() {
+        use crafter_flow::prelude::*;
+
+        let runner = Runner::bind(Binding::default()).expect("runner binds");
+
+        assert!(runner.is_dry_run());
     }
 }
