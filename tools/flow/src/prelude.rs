@@ -14,6 +14,7 @@ pub use crate::Bound;
 pub use crate::binding::{BindMode, BindSendClass, BindTarget, Binding};
 pub use crate::docaddr;
 pub use crate::error::{FlowError, Result};
+pub use crate::{Matcher, PredicateMatcher};
 pub use crate::PacketContext;
 pub use crate::RunOptions;
 pub use crate::Role;
@@ -60,5 +61,13 @@ mod tests {
         context.set_transaction_id(7);
 
         assert_eq!(context.get_transaction_id(), Some(7));
+    }
+
+    #[test]
+    fn prelude_exports_matcher() {
+        use crafter_flow::prelude::*;
+
+        let matcher = PredicateMatcher::new("any packet", |_packet, _ctx| true);
+        assert_eq!(matcher.describe(), "any packet");
     }
 }
