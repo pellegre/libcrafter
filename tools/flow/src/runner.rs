@@ -1,116 +1,44 @@
 //! Flow runner core loop.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crafter::net::SendReport;
 
 use crate::{
-    Binding, CaptureSource, Conversation, Flow, FlowError, FlowState, MemoryCaptureSource,
-    Matcher, PacketContext, Result, RunOptions, Step,
+    Binding, CaptureSource, Conversation, Flow, FlowError, FlowOutcome, FlowReport, FlowState,
+    Matcher, MemoryCaptureSource, PacketContext, Result, RunOptions, Step,
 };
-
-/// Minimal execution result returned by the runner.
-///
-/// A fuller report type is introduced by a later flow-engine step.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RunnerOutcome {
-    /// The flow reached a terminal step.
-    Completed {
-        /// State where the flow completed.
-        state: String,
-        /// Optional terminal outcome label.
-        outcome: Option<String>,
-        /// Number of completed flow iterations.
-        iterations: u64,
-        /// Elapsed run time.
-        elapsed: Duration,
-    },
-    /// The current state did not receive a matching packet before the step timeout.
-    TimedOut {
-        /// State that timed out.
-        state: String,
-        /// Number of completed flow iterations before the timeout.
-        iterations: u64,
-        /// Elapsed run time.
-        elapsed: Duration,
-    },
-    /// The configured bound did not allow another iteration.
-    BoundExhausted {
-        /// State where bound exhaustion was observed.
-        state: String,
-        /// Number of completed flow iterations.
-        iterations: u64,
-        /// Elapsed run time.
-        elapsed: Duration,
-    },
-}
-
-impl RunnerOutcome {
-    /// Return true when the run reached a terminal step.
-    pub const fn is_completed(&self) -> bool {
-        matches!(self, Self::Completed { .. })
-    }
-
-    /// Return true when the run timed out waiting for a matching packet.
-    pub const fn is_timed_out(&self) -> bool {
-        matches!(self, Self::TimedOut { .. })
-    }
-
-    /// Return true when the run stopped because its bound was exhausted.
-    pub const fn is_bound_exhausted(&self) -> bool {
-        matches!(self, Self::BoundExhausted { .. })
-    }
-
-    /// Return the outcome state name.
-    pub fn state(&self) -> &str {
-        match self {
-            Self::Completed { state, .. }
-            | Self::TimedOut { state, .. }
-            | Self::BoundExhausted { state, .. } => state,
-        }
-    }
-
-    /// Return the optional terminal outcome label.
-    pub fn outcome(&self) -> Option<&str> {
-        match self {
-            Self::Completed { outcome, .. } => outcome.as_deref(),
-            Self::TimedOut { .. } | Self::BoundExhausted { .. } => None,
-        }
-    }
-
-    /// Return the number of completed iterations.
-    pub const fn iterations(&self) -> u64 {
-        match self {
-            Self::Completed { iterations, .. }
-            | Self::TimedOut { iterations, .. }
-            | Self::BoundExhausted { iterations, .. } => *iterations,
-        }
-    }
-
-    /// Return elapsed run time.
-    pub const fn elapsed(&self) -> Duration {
-        match self {
-            Self::Completed { elapsed, .. }
-            | Self::TimedOut { elapsed, .. }
-            | Self::BoundExhausted { elapsed, .. } => *elapsed,
-        }
-    }
-}
 
 struct TerminalStep {
     state: String,
-    outcome: Option<String>,
+    entered_state: bool,
 }
 
 enum IterationResult {
-    Terminal(TerminalStep),
-    TimedOut(String),
+    Terminal,
+    TimedOut,
 }
 
 enum StepAction {
     Settled,
     Enter(String),
     Terminal(TerminalStep),
+}
+
+#[derive(Default)]
+struct RunTrace {
+    visited_states: Vec<String>,
+    transitions_taken: Vec<String>,
+}
+
+impl RunTrace {
+    fn enter(&mut self, state: &str) {
+        self.visited_states.push(state.to_string());
+    }
+
+    fn take_transition(&mut self, description: String) {
+        self.transitions_taken.push(description);
+    }
 }
 
 struct StateTransitionsMatcher<'a> {
@@ -177,47 +105,56 @@ impl Runner {
         &self.send_reports
     }
 
-    /// Run a flow until it reaches a terminal step.
-    pub fn run(&mut self, flow: &mut Flow) -> Result<RunnerOutcome> {
+    /// Run a flow and return an inspectable execution report.
+    pub fn run(&mut self, flow: &mut Flow) -> Result<FlowReport> {
         flow.validate()?;
 
         let started = Instant::now();
         let mut iterations = 0;
         let mut ctx = PacketContext::new();
-        let mut current_state = flow.initial().to_string();
+        let mut trace = RunTrace::default();
 
         loop {
             let elapsed = started.elapsed();
             if !self.options.bound.should_continue(iterations, elapsed) {
-                return Ok(RunnerOutcome::BoundExhausted {
-                    state: current_state,
+                return Ok(self.build_report(
+                    flow,
+                    trace,
                     iterations,
                     elapsed,
-                });
+                    FlowOutcome::BoundExhausted,
+                    &ctx,
+                ));
             }
 
-            current_state = flow.initial().to_string();
-            match self.run_iteration(flow, &mut current_state, &mut ctx)? {
-                IterationResult::Terminal(terminal) => {
+            let mut current_state = flow.initial().to_string();
+            trace.enter(&current_state);
+            match self.run_iteration(flow, &mut current_state, &mut ctx, &mut trace)? {
+                IterationResult::Terminal => {
                     iterations += 1;
                     let elapsed = started.elapsed();
                     if self.options.bound.should_continue(iterations, elapsed) {
                         continue;
                     }
 
-                    return Ok(RunnerOutcome::Completed {
-                        state: terminal.state,
-                        outcome: terminal.outcome,
+                    return Ok(self.build_report(
+                        flow,
+                        trace,
                         iterations,
                         elapsed,
-                    });
+                        FlowOutcome::Completed,
+                        &ctx,
+                    ));
                 }
-                IterationResult::TimedOut(state) => {
-                    return Ok(RunnerOutcome::TimedOut {
-                        state,
+                IterationResult::TimedOut => {
+                    return Ok(self.build_report(
+                        flow,
+                        trace,
                         iterations,
-                        elapsed: started.elapsed(),
-                    });
+                        started.elapsed(),
+                        FlowOutcome::TimedOut,
+                        &ctx,
+                    ));
                 }
             }
         }
@@ -228,9 +165,13 @@ impl Runner {
         flow: &mut Flow,
         current_state: &mut String,
         ctx: &mut PacketContext,
+        trace: &mut RunTrace,
     ) -> Result<IterationResult> {
-        if let Some(terminal) = self.settle_entry(flow, current_state, ctx)? {
-            return Ok(IterationResult::Terminal(terminal));
+        if self
+            .settle_entry(flow, current_state, ctx, trace)?
+            .is_some()
+        {
+            return Ok(IterationResult::Terminal);
         }
 
         loop {
@@ -241,29 +182,41 @@ impl Runner {
                     self.conversation
                         .recv_matching(&matcher, ctx, self.options.step_timeout)?
                 else {
-                    return Ok(IterationResult::TimedOut(current_state.clone()));
+                    return Ok(IterationResult::TimedOut);
                 };
                 packet
             };
 
-            let step = {
+            let (description, step) = {
                 let state = Self::state_mut(flow, current_state.as_str())?;
                 let Some(transition) = state.find_transition(&packet, ctx) else {
                     continue;
                 };
 
-                transition.fire(&packet, ctx)?
+                let description = transition.describe();
+                let step = transition.fire(&packet, ctx)?;
+                (description, step)
             };
+            trace.take_transition(description);
 
             match self.apply_step(flow, current_state.as_str(), step)? {
                 StepAction::Settled => {}
                 StepAction::Enter(target) => {
                     *current_state = target;
-                    if let Some(terminal) = self.settle_entry(flow, current_state, ctx)? {
-                        return Ok(IterationResult::Terminal(terminal));
+                    trace.enter(current_state);
+                    if self
+                        .settle_entry(flow, current_state, ctx, trace)?
+                        .is_some()
+                    {
+                        return Ok(IterationResult::Terminal);
                     }
                 }
-                StepAction::Terminal(terminal) => return Ok(IterationResult::Terminal(terminal)),
+                StepAction::Terminal(terminal) => {
+                    if terminal.entered_state {
+                        trace.enter(&terminal.state);
+                    }
+                    return Ok(IterationResult::Terminal);
+                }
             }
         }
     }
@@ -273,6 +226,7 @@ impl Runner {
         flow: &mut Flow,
         current_state: &mut String,
         ctx: &mut PacketContext,
+        trace: &mut RunTrace,
     ) -> Result<Option<TerminalStep>> {
         loop {
             let Some(step) = Self::state_mut(flow, current_state)?.run_entry(ctx)? else {
@@ -281,8 +235,16 @@ impl Runner {
 
             match self.apply_step(flow, current_state, step)? {
                 StepAction::Settled => return Ok(None),
-                StepAction::Enter(target) => *current_state = target,
-                StepAction::Terminal(terminal) => return Ok(Some(terminal)),
+                StepAction::Enter(target) => {
+                    *current_state = target;
+                    trace.enter(current_state);
+                }
+                StepAction::Terminal(terminal) => {
+                    if terminal.entered_state {
+                        trace.enter(&terminal.state);
+                    }
+                    return Ok(Some(terminal));
+                }
             }
         }
     }
@@ -294,6 +256,7 @@ impl Runner {
         }
 
         let target = step.target().map(str::to_string);
+        let entered_state = target.is_some();
         if let Some(target) = target.as_deref() {
             Self::ensure_state(flow, target)?;
         }
@@ -302,7 +265,7 @@ impl Runner {
             let state = target.unwrap_or_else(|| current_state.to_string());
             return Ok(StepAction::Terminal(TerminalStep {
                 state,
-                outcome: step.outcome().map(str::to_string),
+                entered_state,
             }));
         }
 
@@ -310,6 +273,29 @@ impl Runner {
             Some(target) => Ok(StepAction::Enter(target)),
             None => Ok(StepAction::Settled),
         }
+    }
+
+    fn build_report(
+        &self,
+        flow: &Flow,
+        trace: RunTrace,
+        iterations: u64,
+        elapsed: std::time::Duration,
+        outcome: FlowOutcome,
+        ctx: &PacketContext,
+    ) -> FlowReport {
+        FlowReport::new(
+            flow.name(),
+            flow.role(),
+            trace.visited_states,
+            self.conversation.sent_count(),
+            self.conversation.received_count(),
+            trace.transitions_taken,
+            iterations,
+            elapsed,
+            outcome,
+            ctx.summary(),
+        )
     }
 
     fn state_mut<'a>(flow: &'a mut Flow, state: &str) -> Result<&'a mut FlowState> {
@@ -343,8 +329,8 @@ impl Runner {
 mod tests {
     use super::Runner;
     use crate::{
-        Binding, Bound, Flow, FlowBuilderExt, FlowState, MemoryCaptureSource, PredicateMatcher,
-        RunOptions, Step, StepGotoExt, Transition,
+        Binding, Bound, Flow, FlowBuilderExt, FlowOutcome, FlowState, MemoryCaptureSource,
+        PredicateMatcher, RunOptions, Step, StepGotoExt, Transition,
     };
     use std::cell::Cell;
     use std::net::Ipv4Addr;
@@ -415,12 +401,59 @@ mod tests {
             Runner::with_source(RunOptions::default(), MemoryCaptureSource::new(vec![reply]))
                 .expect("runner opens with injected source");
 
-        let outcome = runner.run(&mut flow).expect("runner completes flow");
+        let report = runner.run(&mut flow).expect("runner completes flow");
 
-        assert!(outcome.is_completed());
-        assert_eq!(outcome.state(), "Done");
-        assert_eq!(outcome.outcome(), None);
-        assert!(runner.conversation.sent_count() >= 1);
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(report.flow_name(), "runner-core-loop");
+        assert_eq!(
+            report.visited_states(),
+            &[
+                "Selecting".to_string(),
+                "Waiting".to_string(),
+                "Done".to_string()
+            ]
+        );
+        assert_eq!(report.transitions_taken(), &["expected reply".to_string()]);
+        assert!(report.sent_count() >= 1);
+        assert_eq!(report.received_count(), 1);
+    }
+
+    #[test]
+    fn runner_report_completed_two_state_flow_lists_states_and_counts_sent_packets() {
+        let request = request_packet();
+        let reply = raw_packet([0xc0, 0xff, 0xee]);
+        let expected_reply = compiled_bytes(&reply);
+        let transition = Transition::on(
+            PredicateMatcher::new("coffee reply", move |packet, _ctx| {
+                packet
+                    .compile()
+                    .map(|bytes| bytes.as_ref() == expected_reply.as_slice())
+                    .unwrap_or(false)
+            }),
+            |_packet, _ctx| Ok(Step::done().goto("Done")),
+        )
+        .targets(["Done"])
+        .terminal();
+        let start = FlowState::new("Start")
+            .on_entry(move |_ctx| Ok(Step::send(request.clone())))
+            .on(transition);
+        let done = FlowState::new("Done");
+        let mut flow = Flow::new("runner-report-two-state")
+            .state(start)
+            .state(done)
+            .initial("Start");
+        let mut runner =
+            Runner::with_source(RunOptions::default(), MemoryCaptureSource::new(vec![reply]))
+                .expect("runner opens with injected source");
+
+        let report = runner.run(&mut flow).expect("runner returns report");
+
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(
+            report.visited_states(),
+            &["Start".to_string(), "Done".to_string()]
+        );
+        assert!(report.sent_count() >= 1);
     }
 
     #[test]
@@ -472,10 +505,18 @@ mod tests {
         )
         .expect("runner opens with injected source");
 
-        let outcome = runner.run(&mut flow).expect("runner completes flow");
+        let report = runner.run(&mut flow).expect("runner completes flow");
 
-        assert!(outcome.is_completed());
-        assert_eq!(outcome.state(), "Done");
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(
+            report.visited_states(),
+            &[
+                "Selecting".to_string(),
+                "Waiting".to_string(),
+                "Next".to_string(),
+                "Done".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -524,22 +565,23 @@ mod tests {
             Runner::with_source(RunOptions::default(), MemoryCaptureSource::new(vec![offer]))
                 .expect("runner opens with injected source");
 
-        let outcome = runner.run(&mut flow).expect("runner completes flow");
+        let report = runner.run(&mut flow).expect("runner completes flow");
         let sent = runner
             .send_reports()
             .last()
             .expect("request packet should be sent");
-        let decoded = crafter::Packet::decode_from_l3(
-            crafter::NetworkLayer::Ipv4,
-            sent.plan().bytes(),
-        )
-        .expect("dry-run send plan decodes as IPv4");
+        let decoded =
+            crafter::Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, sent.plan().bytes())
+                .expect("dry-run send plan decodes as IPv4");
         let ipv4 = decoded
             .layer::<crafter::Ipv4>()
             .expect("sent packet has IPv4 layer");
 
-        assert!(outcome.is_completed());
-        assert_eq!(outcome.state(), "Done");
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(
+            report.context_snapshot(),
+            "PacketContext keys=[offered_ipv4]"
+        );
         assert_eq!(ipv4.destination(), offered);
     }
 
@@ -562,11 +604,13 @@ mod tests {
         let mut runner = Runner::with_source(options, MemoryCaptureSource::default())
             .expect("runner opens with empty source");
 
-        let outcome = runner.run(&mut flow).expect("runner returns timeout outcome");
+        let report = runner
+            .run(&mut flow)
+            .expect("runner returns timeout report");
 
-        assert!(outcome.is_timed_out());
-        assert_eq!(outcome.state(), "Waiting");
-        assert_eq!(outcome.iterations(), 0);
+        assert_eq!(report.outcome(), &FlowOutcome::TimedOut);
+        assert_eq!(report.visited_states(), &["Waiting".to_string()]);
+        assert_eq!(report.iterations(), 0);
     }
 
     #[test]
@@ -579,17 +623,20 @@ mod tests {
                 Ok(Step::done())
             })
             .entry_terminal();
-        let mut flow = Flow::new("runner-count-bound")
-            .state(done)
-            .initial("Done");
+        let mut flow = Flow::new("runner-count-bound").state(done).initial("Done");
         let options = RunOptions::default().bound(Bound::Count(3));
         let mut runner = Runner::with_options(options).expect("runner opens");
 
-        let outcome = runner.run(&mut flow).expect("runner completes bounded flow");
+        let report = runner
+            .run(&mut flow)
+            .expect("runner completes bounded flow");
 
-        assert!(outcome.is_completed());
-        assert_eq!(outcome.state(), "Done");
-        assert_eq!(outcome.iterations(), 3);
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(report.iterations(), 3);
+        assert_eq!(
+            report.visited_states(),
+            &["Done".to_string(), "Done".to_string(), "Done".to_string()]
+        );
         assert_eq!(terminal_count.get(), 3);
     }
 }

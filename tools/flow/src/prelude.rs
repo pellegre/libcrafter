@@ -1,12 +1,9 @@
 //! Common imports for flow tools.
 //!
-//! Later engine types (`FlowReport`) are added here as they are implemented.
-//!
 //! ```
 //! use crafter_flow::prelude::*;
 //!
-//! let error = FlowError::Unsupported("pending engine type".to_string());
-//! assert!(error.to_string().contains("unsupported flow feature"));
+//! assert_eq!(FlowOutcome::Completed, FlowOutcome::Completed);
 //! ```
 
 pub use crate::Bound;
@@ -21,6 +18,7 @@ pub use crate::Flow;
 pub use crate::matcher::{
     all, any, not, And, LayerMatcher, Matcher, MatcherExt, Not, Or, PredicateMatcher, ReplyMatcher,
 };
+pub use crate::report::{FlowOutcome, FlowReport};
 pub use crate::PacketContext;
 pub use crate::RunOptions;
 pub use crate::Runner;
@@ -164,5 +162,27 @@ mod tests {
         let runner = Runner::bind(Binding::default()).expect("runner binds");
 
         assert!(runner.is_dry_run());
+    }
+
+    #[test]
+    fn prelude_exports_flow_report() {
+        use crafter_flow::prelude::*;
+        use std::time::Duration;
+
+        let report = FlowReport::new(
+            "prelude-flow",
+            Role::Initiator,
+            vec!["Done".to_string()],
+            0,
+            0,
+            Vec::new(),
+            1,
+            Duration::ZERO,
+            FlowOutcome::Completed,
+            "PacketContext keys=[]",
+        );
+
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(report.flow_name(), "prelude-flow");
     }
 }
