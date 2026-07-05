@@ -1,6 +1,6 @@
 //! Persistent send and receive position for one flow run.
 
-use crafter::net::PacketSender;
+use crafter::net::{PacketSender, SendPlan, SendReport};
 
 use crate::{Binding, CaptureSource, FlowError, MemoryCaptureSource, Result};
 
@@ -9,6 +9,7 @@ pub struct Conversation {
     binding: Binding,
     sender: Option<PacketSender>,
     source: Box<dyn CaptureSource>,
+    sent_count: usize,
 }
 
 impl Conversation {
@@ -35,6 +36,7 @@ impl Conversation {
             binding: binding.clone(),
             sender,
             source: Box::new(source),
+            sent_count: 0,
         })
     }
 
@@ -46,6 +48,30 @@ impl Conversation {
     /// Borrow the binding used to open this conversation.
     pub const fn binding(&self) -> &Binding {
         &self.binding
+    }
+
+    /// Number of packets successfully sent or planned by this conversation.
+    pub const fn sent_count(&self) -> usize {
+        self.sent_count
+    }
+
+    /// Send or plan one packet through this conversation's persistent send half.
+    pub fn send(&mut self, packet: &crafter::Packet) -> Result<SendReport> {
+        let report = if self.binding.is_dry_run() {
+            let plan = SendPlan::from_packet(packet, self.binding.send_options())
+                .map_err(|error| FlowError::Send(error.to_string()))?;
+            let len = plan.len();
+            SendReport::new(plan, len, true)
+        } else {
+            self.sender
+                .as_mut()
+                .ok_or_else(|| FlowError::Send("live conversation has no packet sender".into()))?
+                .send(packet)
+                .map_err(|error| FlowError::Send(error.to_string()))?
+        };
+
+        self.sent_count += 1;
+        Ok(report)
     }
 
     /// Return an inspectable one-line description of this conversation.
@@ -71,10 +97,21 @@ impl Conversation {
 mod tests {
     use super::Conversation;
     use crate::{Binding, MemoryCaptureSource};
+    use crafter::{Dhcpv4, Ipv4, MacAddr, Udp};
+    use std::net::Ipv4Addr;
     use std::time::Duration;
 
     fn raw_packet(bytes: impl AsRef<[u8]>) -> crafter::Packet {
         crafter::Packet::decode_raw(bytes).expect("raw packet decodes")
+    }
+
+    fn dhcp_discover_packet() -> crafter::Packet {
+        let mac = MacAddr::new([0x02, 0x00, 0x00, 0x00, 0x00, 0x25]);
+        Ipv4::new()
+            .src(Ipv4Addr::UNSPECIFIED)
+            .dst(Ipv4Addr::BROADCAST)
+            / Udp::dhcpv4_client()
+            / Dhcpv4::discover(mac).xid(0x2500_0001)
     }
 
     #[test]
@@ -85,6 +122,7 @@ mod tests {
         assert!(conversation.is_dry_run());
         assert_eq!(conversation.binding(), &binding);
         assert!(conversation.sender.is_none());
+        assert_eq!(conversation.sent_count(), 0);
         assert!(conversation.describe().contains("DryRun"));
         assert!(conversation.describe().contains("no sender"));
     }
@@ -105,5 +143,26 @@ mod tests {
             .next_packet(Duration::from_millis(1))
             .expect("capture succeeds")
             .is_some());
+    }
+
+    #[test]
+    fn conversation_send_default_dry_run_reports_without_sender_and_counts_packet() {
+        let binding = Binding::default();
+        let mut conversation = Conversation::open(&binding).expect("dry-run conversation opens");
+        let packet = dhcp_discover_packet();
+
+        assert!(conversation.sender.is_none());
+        assert_eq!(conversation.sent_count(), 0);
+
+        let report = conversation
+            .send(&packet)
+            .expect("dry-run conversation send succeeds");
+
+        assert!(report.is_dry_run());
+        assert_eq!(report.plan().interface(), "flow0");
+        assert_eq!(report.bytes_sent(), report.plan().len());
+        assert!(report.bytes_sent() > 0);
+        assert!(conversation.sender.is_none());
+        assert_eq!(conversation.sent_count(), 1);
     }
 }
