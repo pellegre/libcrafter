@@ -12,6 +12,7 @@
 //! ```
 
 pub use crate::error::{FlowError, Result};
+pub use crate::docaddr;
 
 #[cfg(test)]
 mod tests {
