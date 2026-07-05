@@ -1,8 +1,12 @@
 //! Persistent send and receive position for one flow run.
 
+use std::time::{Duration, Instant};
+
 use crafter::net::{PacketSender, SendPlan, SendReport};
 
-use crate::{Binding, CaptureSource, FlowError, MemoryCaptureSource, Result};
+use crate::{
+    Binding, CaptureSource, FlowError, Matcher, MemoryCaptureSource, PacketContext, Result,
+};
 
 /// A single flow execution position with one send half and one capture source.
 pub struct Conversation {
@@ -10,6 +14,7 @@ pub struct Conversation {
     sender: Option<PacketSender>,
     source: Box<dyn CaptureSource>,
     sent_count: usize,
+    received_count: usize,
 }
 
 impl Conversation {
@@ -37,6 +42,7 @@ impl Conversation {
             sender,
             source: Box::new(source),
             sent_count: 0,
+            received_count: 0,
         })
     }
 
@@ -53,6 +59,11 @@ impl Conversation {
     /// Number of packets successfully sent or planned by this conversation.
     pub const fn sent_count(&self) -> usize {
         self.sent_count
+    }
+
+    /// Number of packets received from this conversation's persistent capture source.
+    pub const fn received_count(&self) -> usize {
+        self.received_count
     }
 
     /// Send or plan one packet through this conversation's persistent send half.
@@ -72,6 +83,33 @@ impl Conversation {
 
         self.sent_count += 1;
         Ok(report)
+    }
+
+    /// Receive packets from the persistent capture source until one matches or timeout elapses.
+    pub fn recv_matching(
+        &mut self,
+        matcher: &dyn Matcher,
+        ctx: &PacketContext,
+        timeout: Duration,
+    ) -> Result<Option<crafter::Packet>> {
+        let started = Instant::now();
+
+        loop {
+            let elapsed = started.elapsed();
+            if elapsed >= timeout {
+                return Ok(None);
+            }
+
+            let remaining = timeout.saturating_sub(elapsed);
+            let Some(packet) = self.source.next_packet(remaining)? else {
+                return Ok(None);
+            };
+
+            self.received_count += 1;
+            if matcher.matches(&packet, ctx) {
+                return Ok(Some(packet));
+            }
+        }
     }
 
     /// Return an inspectable one-line description of this conversation.
@@ -96,13 +134,17 @@ impl Conversation {
 #[cfg(test)]
 mod tests {
     use super::Conversation;
-    use crate::{Binding, MemoryCaptureSource};
+    use crate::{Binding, MemoryCaptureSource, PacketContext, PredicateMatcher};
     use crafter::{Dhcpv4, Ipv4, MacAddr, Udp};
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
     fn raw_packet(bytes: impl AsRef<[u8]>) -> crafter::Packet {
         crafter::Packet::decode_raw(bytes).expect("raw packet decodes")
+    }
+
+    fn compiled_bytes(packet: &crafter::Packet) -> Vec<u8> {
+        packet.compile().expect("packet compiles").as_ref().to_vec()
     }
 
     fn dhcp_discover_packet() -> crafter::Packet {
@@ -123,6 +165,7 @@ mod tests {
         assert_eq!(conversation.binding(), &binding);
         assert!(conversation.sender.is_none());
         assert_eq!(conversation.sent_count(), 0);
+        assert_eq!(conversation.received_count(), 0);
         assert!(conversation.describe().contains("DryRun"));
         assert!(conversation.describe().contains("no sender"));
     }
@@ -164,5 +207,50 @@ mod tests {
         assert!(report.bytes_sent() > 0);
         assert!(conversation.sender.is_none());
         assert_eq!(conversation.sent_count(), 1);
+    }
+
+    #[test]
+    fn conversation_recv_matching_skips_non_matching_packets_and_counts_received() {
+        let binding = Binding::default();
+        let first = raw_packet([0xde, 0xad]);
+        let second = raw_packet([0xbe, 0xef, 0x00]);
+        let expected = compiled_bytes(&second);
+        let expected_for_match = expected.clone();
+        let matcher = PredicateMatcher::new("expected raw bytes", move |packet, _ctx| {
+            packet
+                .compile()
+                .map(|bytes| bytes.as_ref() == expected_for_match.as_slice())
+                .unwrap_or(false)
+        });
+        let ctx = PacketContext::new();
+        let mut conversation =
+            Conversation::open_with_source(&binding, MemoryCaptureSource::new(vec![first, second]))
+                .expect("conversation opens with injected source");
+
+        let received = conversation
+            .recv_matching(&matcher, &ctx, Duration::from_secs(1))
+            .expect("receive succeeds")
+            .expect("matching packet is returned");
+
+        assert_eq!(compiled_bytes(&received), expected);
+        assert_eq!(conversation.received_count(), 2);
+    }
+
+    #[test]
+    fn conversation_recv_matching_returns_none_when_no_packet_matches() {
+        let binding = Binding::default();
+        let packet = raw_packet([0xde, 0xad]);
+        let matcher = PredicateMatcher::new("never matches", |_packet, _ctx| false);
+        let ctx = PacketContext::new();
+        let mut conversation =
+            Conversation::open_with_source(&binding, MemoryCaptureSource::new(vec![packet]))
+                .expect("conversation opens with injected source");
+
+        let received = conversation
+            .recv_matching(&matcher, &ctx, Duration::from_secs(1))
+            .expect("receive succeeds");
+
+        assert!(received.is_none());
+        assert_eq!(conversation.received_count(), 1);
     }
 }
