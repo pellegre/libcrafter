@@ -1,5 +1,6 @@
 //! Persistent send and receive position for one flow run.
 
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crafter::net::{PacketSender, SendPlan, SendReport};
@@ -13,6 +14,7 @@ pub struct Conversation {
     binding: Binding,
     sender: Option<PacketSender>,
     source: Box<dyn CaptureSource>,
+    pending: VecDeque<crafter::Packet>,
     sent_count: usize,
     received_count: usize,
 }
@@ -41,6 +43,7 @@ impl Conversation {
             binding: binding.clone(),
             sender,
             source: Box::new(source),
+            pending: VecDeque::new(),
             sent_count: 0,
             received_count: 0,
         })
@@ -95,6 +98,14 @@ impl Conversation {
         let started = Instant::now();
 
         loop {
+            if let Some(index) = self
+                .pending
+                .iter()
+                .position(|packet| matcher.matches(packet, ctx))
+            {
+                return Ok(self.pending.remove(index));
+            }
+
             let elapsed = started.elapsed();
             if elapsed >= timeout {
                 return Ok(None);
@@ -109,6 +120,8 @@ impl Conversation {
             if matcher.matches(&packet, ctx) {
                 return Ok(Some(packet));
             }
+
+            self.pending.push_back(packet);
         }
     }
 
@@ -233,6 +246,52 @@ mod tests {
             .expect("matching packet is returned");
 
         assert_eq!(compiled_bytes(&received), expected);
+        assert_eq!(conversation.received_count(), 2);
+    }
+
+    #[test]
+    fn conversation_persistence_retains_packet_for_later_step() {
+        let binding = Binding::default();
+        let packet_for_second_step = raw_packet([0xa2, 0x02]);
+        let packet_for_first_step = raw_packet([0xb1, 0x01]);
+        let second_step_bytes = compiled_bytes(&packet_for_second_step);
+        let first_step_bytes = compiled_bytes(&packet_for_first_step);
+        let first_step_match = first_step_bytes.clone();
+        let second_step_match = second_step_bytes.clone();
+        let matcher_for_first_step = PredicateMatcher::new("first step packet", move |packet, _ctx| {
+            packet
+                .compile()
+                .map(|bytes| bytes.as_ref() == first_step_match.as_slice())
+                .unwrap_or(false)
+        });
+        let matcher_for_second_step =
+            PredicateMatcher::new("second step packet", move |packet, _ctx| {
+                packet
+                    .compile()
+                    .map(|bytes| bytes.as_ref() == second_step_match.as_slice())
+                    .unwrap_or(false)
+            });
+        let ctx = PacketContext::new();
+        let mut conversation = Conversation::open_with_source(
+            &binding,
+            MemoryCaptureSource::new(vec![packet_for_second_step, packet_for_first_step]),
+        )
+        .expect("conversation opens with injected source");
+
+        let first_received = conversation
+            .recv_matching(&matcher_for_first_step, &ctx, Duration::from_secs(1))
+            .expect("first receive succeeds")
+            .expect("first step packet is returned");
+        // This is the persistent-capture guarantee that SendRecv cannot provide:
+        // the earlier packet remains available for the next step instead of
+        // being dropped while scanning for the current step's match.
+        let second_received = conversation
+            .recv_matching(&matcher_for_second_step, &ctx, Duration::from_secs(1))
+            .expect("second receive succeeds")
+            .expect("second step packet is returned");
+
+        assert_eq!(compiled_bytes(&first_received), first_step_bytes);
+        assert_eq!(compiled_bytes(&second_received), second_step_bytes);
         assert_eq!(conversation.received_count(), 2);
     }
 
