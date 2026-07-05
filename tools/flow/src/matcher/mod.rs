@@ -2,8 +2,10 @@
 
 use crate::PacketContext;
 
+mod layer;
 mod reply;
 
+pub use layer::LayerMatcher;
 pub use reply::ReplyMatcher;
 
 /// Decides whether a received packet advances a flow transition.
