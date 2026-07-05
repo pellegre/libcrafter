@@ -13,6 +13,7 @@
 pub use crate::Bound;
 pub use crate::binding::{BindMode, BindSendClass, BindTarget, Binding};
 pub use crate::capture::{CaptureSource, MemoryCaptureSource};
+pub use crate::Conversation;
 pub use crate::docaddr;
 pub use crate::error::{FlowError, Result};
 pub use crate::Flow;
@@ -143,5 +144,14 @@ mod tests {
             .next_packet(Duration::from_millis(1))
             .expect("capture succeeds")
             .is_some());
+    }
+
+    #[test]
+    fn prelude_exports_conversation() {
+        use crafter_flow::prelude::*;
+
+        let conversation = Conversation::open(&Binding::default()).expect("conversation opens");
+
+        assert!(conversation.is_dry_run());
     }
 }
