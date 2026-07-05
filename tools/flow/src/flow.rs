@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::{FlowState, Role};
+use crate::{FlowError, FlowState, Result, Role};
 
 /// A named state graph that a runner can execute for one participant role.
 pub struct Flow {
@@ -52,6 +52,101 @@ impl Flow {
     pub fn state_names(&self) -> impl Iterator<Item = &str> {
         self.states.keys().map(String::as_str)
     }
+
+    /// Validate the statically knowable shape of this flow graph.
+    ///
+    /// Handler closures reach terminality at run time by returning
+    /// [`Step::done`](crate::Step::done). Validation checks explicit terminal
+    /// hints and validates any declared target state names without executing
+    /// those handlers.
+    pub fn validate(&self) -> Result<()> {
+        if self.states.is_empty() {
+            return Err(FlowError::Build(format!(
+                "flow '{}' has no states",
+                self.name
+            )));
+        }
+
+        if self.initial.is_empty() {
+            return Err(FlowError::Build(format!(
+                "flow '{}' has no initial state",
+                self.name
+            )));
+        }
+
+        if !self.states.contains_key(&self.initial) {
+            return Err(FlowError::Build(format!(
+                "flow '{}' initial state '{}' does not exist",
+                self.name, self.initial
+            )));
+        }
+
+        self.validate_declared_targets()?;
+
+        if !self.has_terminal_path_declaration() && !self.has_dynamic_terminal_candidate() {
+            return Err(FlowError::Build(format!(
+                "flow '{}' declares no terminal path; mark handlers that can return Step::done with terminal hints",
+                self.name
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn validate_declared_targets(&self) -> Result<()> {
+        for state in self.states.values() {
+            for target in state.declared_entry_targets() {
+                self.validate_target(target, format!("state '{}' entry handler", state.name()))?;
+            }
+
+            for transition in state.transitions() {
+                for target in transition.declared_targets() {
+                    self.validate_target(
+                        target,
+                        format!(
+                            "state '{}' transition '{}'",
+                            state.name(),
+                            transition.describe()
+                        ),
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_target(&self, target: &str, origin: String) -> Result<()> {
+        if self.states.contains_key(target) {
+            return Ok(());
+        }
+
+        Err(FlowError::Build(format!(
+            "flow '{}' {} declares missing target state '{}'",
+            self.name, origin, target
+        )))
+    }
+
+    fn has_terminal_path_declaration(&self) -> bool {
+        self.states.values().any(|state| {
+            state.declares_entry_terminal_path()
+                || state
+                    .transitions()
+                    .iter()
+                    .any(|transition| transition.declares_terminal_path())
+        })
+    }
+
+    fn has_dynamic_terminal_candidate(&self) -> bool {
+        self.states.values().any(|state| {
+            (state.has_entry()
+                && !state.has_entry_target_hints()
+                && !state.declares_entry_terminal_path())
+                || state.transitions().iter().any(|transition| {
+                    !transition.has_target_hints() && !transition.declares_terminal_path()
+                })
+        })
+    }
 }
 
 /// Fluent builder methods for [`Flow`].
@@ -88,7 +183,9 @@ impl FlowBuilderExt for Flow {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Flow, FlowBuilderExt, FlowState, Role};
+    use crate::{
+        Flow, FlowBuilderExt, FlowError, FlowState, PredicateMatcher, Role, Step, Transition,
+    };
 
     #[test]
     fn flow_builder_tracks_role_initial_and_states() {
@@ -103,5 +200,69 @@ mod tests {
         assert_eq!(Flow::initial(&flow), "Selecting");
         assert!(Flow::state(&flow, "Selecting").is_some());
         assert!(Flow::state(&flow, "Bound").is_some());
+    }
+
+    #[test]
+    fn validate_rejects_missing_initial_state() {
+        let flow = Flow::new("bad-initial")
+            .state(terminal_state("Ready"))
+            .initial("Missing");
+
+        let error = flow
+            .validate()
+            .expect_err("missing initial state should fail validation");
+
+        assert_build_error_contains(error, "initial state 'Missing' does not exist");
+    }
+
+    #[test]
+    fn validate_rejects_missing_transition_target_hint() {
+        let transition = Transition::on(
+            PredicateMatcher::new("any packet", |_packet, _ctx| true),
+            |_packet, _ctx| Ok(Step::goto("Missing")),
+        )
+        .targets(["Missing"])
+        .terminal();
+        let flow = Flow::new("bad-target")
+            .state(FlowState::new("Waiting").on(transition))
+            .initial("Waiting");
+
+        let error = flow
+            .validate()
+            .expect_err("missing transition target should fail validation");
+
+        assert_build_error_contains(error, "declares missing target state 'Missing'");
+    }
+
+    #[test]
+    fn validate_accepts_well_formed_flow() {
+        let transition = Transition::on(
+            PredicateMatcher::new("any packet", |_packet, _ctx| true),
+            |_packet, _ctx| Ok(Step::goto("Done")),
+        )
+        .targets(["Done"]);
+        let flow = Flow::new("well-formed")
+            .state(FlowState::new("Waiting").on(transition))
+            .state(terminal_state("Done"))
+            .initial("Waiting");
+
+        flow.validate()
+            .expect("well-formed flow should pass validation");
+    }
+
+    fn terminal_state(name: &str) -> FlowState {
+        FlowState::new(name)
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal()
+    }
+
+    fn assert_build_error_contains(error: FlowError, expected: &str) {
+        match error {
+            FlowError::Build(message) => assert!(
+                message.contains(expected),
+                "expected build error containing '{expected}', got '{message}'"
+            ),
+            other => panic!("expected build error containing '{expected}', got {other:?}"),
+        }
     }
 }
