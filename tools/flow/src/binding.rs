@@ -32,8 +32,10 @@ pub enum BindMode {
 /// Selects the packet class expected by the send half.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum BindSendClass {
-    /// Send network-layer packets, such as IPv4 or IPv6 datagrams.
+    /// Infer packet class from the packet when planning offline traffic.
     #[default]
+    Auto,
+    /// Send network-layer packets, such as IPv4 or IPv6 datagrams.
     NetworkLayer,
     /// Send link-layer frames, such as Ethernet.
     LinkLayer,
@@ -113,6 +115,7 @@ impl Binding {
     pub fn send_options(&self) -> SendOptions {
         let options = SendOptions::new().iface(self.target.send_name());
         let options = match self.send_class {
+            BindSendClass::Auto => options,
             BindSendClass::NetworkLayer => options.network_layer(),
             BindSendClass::LinkLayer => options.link_layer(),
         };
@@ -142,7 +145,7 @@ mod tests {
         assert!(binding.is_dry_run());
         assert!(!binding.is_live());
         assert_eq!(binding.mode(), BindMode::DryRun);
-        assert_eq!(binding.send_class(), BindSendClass::NetworkLayer);
+        assert_eq!(binding.send_class(), BindSendClass::Auto);
         assert_eq!(binding.target(), &BindTarget::Netns("flow0".to_string()));
     }
 

@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 use crafter::net::{PacketSender, SendPlan, SendReport};
 
 use crate::{
-    Binding, CaptureSource, FlowError, Matcher, MemoryCaptureSource, PacketContext, Result,
+    BindSendClass, Binding, CaptureSource, FlowError, Matcher, MemoryCaptureSource, PacketContext,
+    Result,
 };
 
 /// A single flow execution position with one send half and one capture source.
@@ -17,6 +18,7 @@ pub struct Conversation {
     pending: VecDeque<crafter::Packet>,
     sent_count: usize,
     received_count: usize,
+    live_sender_open_count: usize,
 }
 
 impl Conversation {
@@ -30,11 +32,13 @@ impl Conversation {
     where
         S: CaptureSource + 'static,
     {
+        let mut live_sender_open_count = 0;
         let sender = if binding.is_live() {
-            Some(
-                PacketSender::open(binding.send_options())
-                    .map_err(|error| FlowError::Send(error.to_string()))?,
-            )
+            Self::guard_live_send_class(binding)?;
+            let sender = PacketSender::open(binding.send_options())
+                .map_err(|error| FlowError::Send(error.to_string()))?;
+            live_sender_open_count += 1;
+            Some(sender)
         } else {
             None
         };
@@ -46,7 +50,21 @@ impl Conversation {
             pending: VecDeque::new(),
             sent_count: 0,
             received_count: 0,
+            live_sender_open_count,
         })
+    }
+
+    fn guard_live_send_class(binding: &Binding) -> Result<()> {
+        if binding.send_class() == BindSendClass::Auto {
+            // This is intentional friction against accidental live traffic, not
+            // a capability block: real live tools opt in with an explicit class.
+            return Err(FlowError::Binding(
+                "live conversations require an explicit send class; call .link_layer() or .network_layer() on the binding before opening"
+                    .to_string(),
+            ));
+        }
+
+        Ok(())
     }
 
     /// Returns true when this conversation is offline and holds no live sender.
@@ -67,6 +85,11 @@ impl Conversation {
     /// Number of packets received from this conversation's persistent capture source.
     pub const fn received_count(&self) -> usize {
         self.received_count
+    }
+
+    /// Number of live sender handles opened by this conversation.
+    pub const fn live_sender_open_count(&self) -> usize {
+        self.live_sender_open_count
     }
 
     /// Send or plan one packet through this conversation's persistent send half.
@@ -147,7 +170,7 @@ impl Conversation {
 #[cfg(test)]
 mod tests {
     use super::Conversation;
-    use crate::{Binding, MemoryCaptureSource, PacketContext, PredicateMatcher};
+    use crate::{Binding, FlowError, MemoryCaptureSource, PacketContext, PredicateMatcher};
     use crafter::{Dhcpv4, Ipv4, MacAddr, Udp};
     use std::net::Ipv4Addr;
     use std::time::Duration;
@@ -179,6 +202,7 @@ mod tests {
         assert!(conversation.sender.is_none());
         assert_eq!(conversation.sent_count(), 0);
         assert_eq!(conversation.received_count(), 0);
+        assert_eq!(conversation.live_sender_open_count(), 0);
         assert!(conversation.describe().contains("DryRun"));
         assert!(conversation.describe().contains("no sender"));
     }
@@ -193,6 +217,7 @@ mod tests {
 
         assert!(conversation.is_dry_run());
         assert!(conversation.sender.is_none());
+        assert_eq!(conversation.live_sender_open_count(), 0);
         assert!(conversation.describe().contains("memory capture source"));
         assert!(conversation
             .source
@@ -208,6 +233,7 @@ mod tests {
         let packet = dhcp_discover_packet();
 
         assert!(conversation.sender.is_none());
+        assert_eq!(conversation.live_sender_open_count(), 0);
         assert_eq!(conversation.sent_count(), 0);
 
         let report = conversation
@@ -219,7 +245,45 @@ mod tests {
         assert_eq!(report.bytes_sent(), report.plan().len());
         assert!(report.bytes_sent() > 0);
         assert!(conversation.sender.is_none());
+        assert_eq!(conversation.live_sender_open_count(), 0);
         assert_eq!(conversation.sent_count(), 1);
+    }
+
+    #[test]
+    fn conversation_default_dry_run_opens_zero_live_senders_after_several_sends() {
+        let binding = Binding::default();
+        let mut conversation = Conversation::open(&binding).expect("dry-run conversation opens");
+        let packet = dhcp_discover_packet();
+
+        for _ in 0..3 {
+            let report = conversation
+                .send(&packet)
+                .expect("dry-run conversation send succeeds");
+            assert!(report.is_dry_run());
+        }
+
+        assert!(conversation.is_dry_run());
+        assert!(conversation.sender.is_none());
+        assert_eq!(conversation.live_sender_open_count(), 0);
+        assert_eq!(conversation.sent_count(), 3);
+    }
+
+    #[test]
+    fn conversation_live_auto_binding_returns_explicit_send_class_guidance() {
+        let binding = Binding::default().live();
+
+        let error = match Conversation::open(&binding) {
+            Ok(_) => panic!("live auto binding should be guarded"),
+            Err(error) => error,
+        };
+
+        match error {
+            FlowError::Binding(message) => {
+                assert!(message.contains("link_layer()"));
+                assert!(message.contains("network_layer()"));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
     }
 
     #[test]
@@ -258,12 +322,13 @@ mod tests {
         let first_step_bytes = compiled_bytes(&packet_for_first_step);
         let first_step_match = first_step_bytes.clone();
         let second_step_match = second_step_bytes.clone();
-        let matcher_for_first_step = PredicateMatcher::new("first step packet", move |packet, _ctx| {
-            packet
-                .compile()
-                .map(|bytes| bytes.as_ref() == first_step_match.as_slice())
-                .unwrap_or(false)
-        });
+        let matcher_for_first_step =
+            PredicateMatcher::new("first step packet", move |packet, _ctx| {
+                packet
+                    .compile()
+                    .map(|bytes| bytes.as_ref() == first_step_match.as_slice())
+                    .unwrap_or(false)
+            });
         let matcher_for_second_step =
             PredicateMatcher::new("second step packet", move |packet, _ctx| {
                 packet
