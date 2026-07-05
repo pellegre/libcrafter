@@ -8,6 +8,7 @@ pub mod conversation;
 pub mod docaddr;
 pub mod error;
 pub mod flow;
+pub mod flows;
 pub mod matcher;
 pub mod mutator;
 pub mod options;
