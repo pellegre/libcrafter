@@ -172,6 +172,7 @@ mod tests {
         let report = FlowReport::new(
             "prelude-flow",
             Role::Initiator,
+            true,
             vec!["Done".to_string()],
             0,
             0,
@@ -184,5 +185,6 @@ mod tests {
 
         assert_eq!(report.outcome(), &FlowOutcome::Completed);
         assert_eq!(report.flow_name(), "prelude-flow");
+        assert!(report.is_dry_run());
     }
 }
