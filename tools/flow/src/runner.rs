@@ -1,5 +1,7 @@
 //! Flow runner core loop.
 
+use std::time::{Duration, Instant};
+
 use crafter::net::SendReport;
 
 use crate::{
@@ -18,6 +20,28 @@ pub enum RunnerOutcome {
         state: String,
         /// Optional terminal outcome label.
         outcome: Option<String>,
+        /// Number of completed flow iterations.
+        iterations: u64,
+        /// Elapsed run time.
+        elapsed: Duration,
+    },
+    /// The current state did not receive a matching packet before the step timeout.
+    TimedOut {
+        /// State that timed out.
+        state: String,
+        /// Number of completed flow iterations before the timeout.
+        iterations: u64,
+        /// Elapsed run time.
+        elapsed: Duration,
+    },
+    /// The configured bound did not allow another iteration.
+    BoundExhausted {
+        /// State where bound exhaustion was observed.
+        state: String,
+        /// Number of completed flow iterations.
+        iterations: u64,
+        /// Elapsed run time.
+        elapsed: Duration,
     },
 }
 
@@ -27,10 +51,22 @@ impl RunnerOutcome {
         matches!(self, Self::Completed { .. })
     }
 
-    /// Return the completion state name.
+    /// Return true when the run timed out waiting for a matching packet.
+    pub const fn is_timed_out(&self) -> bool {
+        matches!(self, Self::TimedOut { .. })
+    }
+
+    /// Return true when the run stopped because its bound was exhausted.
+    pub const fn is_bound_exhausted(&self) -> bool {
+        matches!(self, Self::BoundExhausted { .. })
+    }
+
+    /// Return the outcome state name.
     pub fn state(&self) -> &str {
         match self {
-            Self::Completed { state, .. } => state,
+            Self::Completed { state, .. }
+            | Self::TimedOut { state, .. }
+            | Self::BoundExhausted { state, .. } => state,
         }
     }
 
@@ -38,14 +74,43 @@ impl RunnerOutcome {
     pub fn outcome(&self) -> Option<&str> {
         match self {
             Self::Completed { outcome, .. } => outcome.as_deref(),
+            Self::TimedOut { .. } | Self::BoundExhausted { .. } => None,
         }
     }
+
+    /// Return the number of completed iterations.
+    pub const fn iterations(&self) -> u64 {
+        match self {
+            Self::Completed { iterations, .. }
+            | Self::TimedOut { iterations, .. }
+            | Self::BoundExhausted { iterations, .. } => *iterations,
+        }
+    }
+
+    /// Return elapsed run time.
+    pub const fn elapsed(&self) -> Duration {
+        match self {
+            Self::Completed { elapsed, .. }
+            | Self::TimedOut { elapsed, .. }
+            | Self::BoundExhausted { elapsed, .. } => *elapsed,
+        }
+    }
+}
+
+struct TerminalStep {
+    state: String,
+    outcome: Option<String>,
+}
+
+enum IterationResult {
+    Terminal(TerminalStep),
+    TimedOut(String),
 }
 
 enum StepAction {
     Settled,
     Enter(String),
-    Completed(RunnerOutcome),
+    Terminal(TerminalStep),
 }
 
 struct StateTransitionsMatcher<'a> {
@@ -116,40 +181,89 @@ impl Runner {
     pub fn run(&mut self, flow: &mut Flow) -> Result<RunnerOutcome> {
         flow.validate()?;
 
+        let started = Instant::now();
+        let mut iterations = 0;
         let mut ctx = PacketContext::new();
         let mut current_state = flow.initial().to_string();
 
-        if let Some(outcome) = self.settle_entry(flow, &mut current_state, &mut ctx)? {
-            return Ok(outcome);
+        loop {
+            let elapsed = started.elapsed();
+            if !self.options.bound.should_continue(iterations, elapsed) {
+                return Ok(RunnerOutcome::BoundExhausted {
+                    state: current_state,
+                    iterations,
+                    elapsed,
+                });
+            }
+
+            current_state = flow.initial().to_string();
+            match self.run_iteration(flow, &mut current_state, &mut ctx)? {
+                IterationResult::Terminal(terminal) => {
+                    iterations += 1;
+                    let elapsed = started.elapsed();
+                    if self.options.bound.should_continue(iterations, elapsed) {
+                        continue;
+                    }
+
+                    return Ok(RunnerOutcome::Completed {
+                        state: terminal.state,
+                        outcome: terminal.outcome,
+                        iterations,
+                        elapsed,
+                    });
+                }
+                IterationResult::TimedOut(state) => {
+                    return Ok(RunnerOutcome::TimedOut {
+                        state,
+                        iterations,
+                        elapsed: started.elapsed(),
+                    });
+                }
+            }
+        }
+    }
+
+    fn run_iteration(
+        &mut self,
+        flow: &mut Flow,
+        current_state: &mut String,
+        ctx: &mut PacketContext,
+    ) -> Result<IterationResult> {
+        if let Some(terminal) = self.settle_entry(flow, current_state, ctx)? {
+            return Ok(IterationResult::Terminal(terminal));
         }
 
         loop {
             let packet = {
-                let state = Self::state(flow, &current_state)?;
+                let state = Self::state(flow, current_state.as_str())?;
                 let matcher = StateTransitionsMatcher { state };
-                self.conversation
-                    .recv_matching(&matcher, &ctx, self.options.step_timeout)?
-                    .ok_or(FlowError::Timeout)?
+                let Some(packet) =
+                    self.conversation
+                        .recv_matching(&matcher, ctx, self.options.step_timeout)?
+                else {
+                    return Ok(IterationResult::TimedOut(current_state.clone()));
+                };
+                packet
             };
 
             let step = {
-                let state = Self::state_mut(flow, &current_state)?;
-                let Some(transition) = state.find_transition(&packet, &ctx) else {
+                let state = Self::state_mut(flow, current_state.as_str())?;
+                let Some(transition) = state.find_transition(&packet, ctx) else {
                     continue;
                 };
 
-                transition.fire(&packet, &mut ctx)?
+                transition.fire(&packet, ctx)?
             };
 
-            match self.apply_step(flow, &current_state, step)? {
+            match self.apply_step(flow, current_state.as_str(), step)? {
                 StepAction::Settled => {}
                 StepAction::Enter(target) => {
-                    current_state = target;
-                    if let Some(outcome) = self.settle_entry(flow, &mut current_state, &mut ctx)? {
-                        return Ok(outcome);
+                    *current_state = target;
+                    if let Some(terminal) = self.settle_entry(flow, current_state, ctx)? {
+                        return Ok(IterationResult::Terminal(terminal));
                     }
                 }
-                StepAction::Completed(outcome) => return Ok(outcome),
+                StepAction::Terminal(terminal) => return Ok(IterationResult::Terminal(terminal)),
             }
         }
     }
@@ -159,7 +273,7 @@ impl Runner {
         flow: &mut Flow,
         current_state: &mut String,
         ctx: &mut PacketContext,
-    ) -> Result<Option<RunnerOutcome>> {
+    ) -> Result<Option<TerminalStep>> {
         loop {
             let Some(step) = Self::state_mut(flow, current_state)?.run_entry(ctx)? else {
                 return Ok(None);
@@ -168,7 +282,7 @@ impl Runner {
             match self.apply_step(flow, current_state, step)? {
                 StepAction::Settled => return Ok(None),
                 StepAction::Enter(target) => *current_state = target,
-                StepAction::Completed(outcome) => return Ok(Some(outcome)),
+                StepAction::Terminal(terminal) => return Ok(Some(terminal)),
             }
         }
     }
@@ -186,7 +300,7 @@ impl Runner {
 
         if step.is_terminal() {
             let state = target.unwrap_or_else(|| current_state.to_string());
-            return Ok(StepAction::Completed(RunnerOutcome::Completed {
+            return Ok(StepAction::Terminal(TerminalStep {
                 state,
                 outcome: step.outcome().map(str::to_string),
             }));
@@ -229,10 +343,13 @@ impl Runner {
 mod tests {
     use super::Runner;
     use crate::{
-        Binding, Flow, FlowBuilderExt, FlowState, MemoryCaptureSource, PredicateMatcher,
+        Binding, Bound, Flow, FlowBuilderExt, FlowState, MemoryCaptureSource, PredicateMatcher,
         RunOptions, Step, StepGotoExt, Transition,
     };
+    use std::cell::Cell;
     use std::net::Ipv4Addr;
+    use std::rc::Rc;
+    use std::time::Duration;
 
     fn raw_packet(bytes: impl AsRef<[u8]>) -> crafter::Packet {
         crafter::Packet::decode_raw(bytes).expect("raw packet decodes")
@@ -424,5 +541,55 @@ mod tests {
         assert!(outcome.is_completed());
         assert_eq!(outcome.state(), "Done");
         assert_eq!(ipv4.destination(), offered);
+    }
+
+    #[test]
+    fn runner_times_out_when_no_matching_reply_arrives() {
+        let transition = Transition::on(
+            PredicateMatcher::new("any packet", |_packet, _ctx| true),
+            |_packet, _ctx| Ok(Step::goto("Done")),
+        )
+        .targets(["Done"]);
+        let waiting = FlowState::new("Waiting").on(transition);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-timeout")
+            .state(waiting)
+            .state(done)
+            .initial("Waiting");
+        let options = RunOptions::default().step_timeout(Duration::from_millis(1));
+        let mut runner = Runner::with_source(options, MemoryCaptureSource::default())
+            .expect("runner opens with empty source");
+
+        let outcome = runner.run(&mut flow).expect("runner returns timeout outcome");
+
+        assert!(outcome.is_timed_out());
+        assert_eq!(outcome.state(), "Waiting");
+        assert_eq!(outcome.iterations(), 0);
+    }
+
+    #[test]
+    fn runner_count_bound_restarts_terminal_path_exactly_three_times() {
+        let terminal_count = Rc::new(Cell::new(0));
+        let count_for_entry = Rc::clone(&terminal_count);
+        let done = FlowState::new("Done")
+            .on_entry(move |_ctx| {
+                count_for_entry.set(count_for_entry.get() + 1);
+                Ok(Step::done())
+            })
+            .entry_terminal();
+        let mut flow = Flow::new("runner-count-bound")
+            .state(done)
+            .initial("Done");
+        let options = RunOptions::default().bound(Bound::Count(3));
+        let mut runner = Runner::with_options(options).expect("runner opens");
+
+        let outcome = runner.run(&mut flow).expect("runner completes bounded flow");
+
+        assert!(outcome.is_completed());
+        assert_eq!(outcome.state(), "Done");
+        assert_eq!(outcome.iterations(), 3);
+        assert_eq!(terminal_count.get(), 3);
     }
 }
