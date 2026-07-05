@@ -28,7 +28,9 @@ pub fn client_flow(client_mac: MacAddr) -> Flow {
             Ok(Step::send(discover_packet(client_mac, transaction_id)))
         })
         .on(offer_transition());
-    let requesting = FlowState::new(REQUESTING).on_entry(request_action);
+    let requesting = FlowState::new(REQUESTING)
+        .on_entry(request_action)
+        .on(ack_transition());
     let bound = FlowState::new(BOUND)
         .on_entry(|_ctx| Ok(Step::done()))
         .entry_terminal();
@@ -129,6 +131,43 @@ fn offer_matches_context(packet: &crafter::Packet, ctx: &PacketContext) -> bool 
     })
 }
 
+fn ack_transition() -> Transition {
+    Transition::on(
+        PredicateMatcher::new("DHCPv4 ACK for stored xid", ack_matches_context),
+        |packet, ctx| {
+            let dhcp = packet.layer::<crafter::Dhcpv4>().ok_or_else(|| {
+                FlowError::Capture("matched DHCPv4 ACK packet has no DHCPv4 layer".to_string())
+            })?;
+            let assigned_ip = dhcp.offered_ip_address().ok_or_else(|| {
+                FlowError::Capture("matched DHCPv4 ACK has no assigned address".to_string())
+            })?;
+
+            ctx.set_assigned_ipv4(assigned_ip);
+            Ok(Step::goto(BOUND))
+        },
+    )
+    .targets([BOUND])
+}
+
+fn ack_matches_context(packet: &crafter::Packet, ctx: &PacketContext) -> bool {
+    let Some(expected_xid) = ctx.get_transaction_id() else {
+        return false;
+    };
+
+    packet.layer::<crafter::Dhcpv4>().is_some_and(|dhcp| {
+        if dhcp.message_type_value() != Some(crafter::Dhcpv4MessageType::Ack)
+            || dhcp.transaction_id_value() != expected_xid
+        {
+            return false;
+        }
+
+        match ctx.get_offered_ipv4() {
+            Some(offered_ip) => dhcp.offered_ip_address() == Some(offered_ip),
+            None => true,
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{client_flow, BOUND, REQUESTING, SELECTING};
@@ -148,6 +187,22 @@ mod tests {
                 .dst(Ipv4Addr::BROADCAST)
             / crafter::Udp::dhcpv4_server()
             / crafter::Dhcpv4::offer(docaddr::CLIENT_MAC, offered_ip, server_id)
+                .xid(transaction_id)
+    }
+
+    fn ack_packet(
+        transaction_id: u32,
+        assigned_ip: Ipv4Addr,
+        server_id: Ipv4Addr,
+    ) -> crafter::Packet {
+        crafter::Ethernet::new()
+            .src(crafter::MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x02]))
+            .dst(crafter::MacAddr::BROADCAST)
+            / crafter::Ipv4::new()
+                .src(server_id)
+                .dst(Ipv4Addr::BROADCAST)
+            / crafter::Udp::dhcpv4_server()
+            / crafter::Dhcpv4::ack(docaddr::CLIENT_MAC, assigned_ip, server_id)
                 .xid(transaction_id)
     }
 
@@ -283,5 +338,38 @@ mod tests {
 
         assert!(matches!(error, FlowError::Build(_)));
         assert!(error.to_string().contains("client_mac"));
+    }
+
+    #[test]
+    fn dhcpv4_ack_transition_records_assigned_address_and_targets_bound() {
+        let assigned_ip = Ipv4Addr::new(192, 0, 2, 44);
+        let server_id = docaddr::SERVER_IPV4;
+        let transaction_id = 0x4400_0001;
+        let mut flow = client_flow(docaddr::CLIENT_MAC);
+        let mut context = PacketContext::new();
+        context.set_transaction_id(transaction_id);
+        context.set_offered_ipv4(assigned_ip);
+        let ack = ack_packet(transaction_id, assigned_ip, server_id);
+
+        let requesting = flow.state(REQUESTING).expect("Requesting state exists");
+        assert!(requesting.transitions()[0].matches(&ack, &context));
+
+        let step = flow
+            .state_mut(REQUESTING)
+            .expect("Requesting state exists")
+            .find_transition(&ack, &context)
+            .expect("matching ACK transition")
+            .fire(&ack, &mut context)
+            .expect("ACK handler succeeds");
+        let terminal_step = flow
+            .state_mut(BOUND)
+            .expect("Bound state exists")
+            .run_entry(&mut context)
+            .expect("Bound entry succeeds")
+            .expect("Bound entry returns terminal step");
+
+        assert_eq!(step.target(), Some(BOUND));
+        assert_eq!(context.get_assigned_ipv4(), Some(assigned_ip));
+        assert!(terminal_step.is_terminal());
     }
 }
