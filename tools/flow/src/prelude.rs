@@ -1,6 +1,6 @@
 //! Common imports for flow tools.
 //!
-//! Later engine types (`Role`, `Binding`, `Bound`, `PacketContext`, `Matcher`,
+//! Later engine types (`Binding`, `Bound`, `PacketContext`, `Matcher`,
 //! `Transition`, `FlowState`, `Flow`, `Runner`, and `FlowReport`) are added here
 //! as they are implemented.
 //!
@@ -13,6 +13,7 @@
 
 pub use crate::error::{FlowError, Result};
 pub use crate::docaddr;
+pub use crate::Role;
 
 #[cfg(test)]
 mod tests {
