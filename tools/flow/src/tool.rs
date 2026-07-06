@@ -2,10 +2,7 @@
 
 use crafter::net::SendReport;
 
-use crate::{
-    CaptureSource, Flow, FlowReport, Identity, MemoryCaptureSource, Mutator, Result, RunOptions,
-    Runner,
-};
+use crate::{CaptureSource, Flow, FlowReport, Identity, Mutator, Result, RunOptions, Runner};
 
 /// Completed run plus the send reports produced by its runner.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,19 +26,20 @@ impl ToolRunReport {
 /// Declarative runner configuration for a generated tool.
 pub struct ToolRun {
     options: RunOptions,
-    source: Box<dyn CaptureSource>,
+    source: Option<Box<dyn CaptureSource>>,
     mutator: Box<dyn Mutator>,
 }
 
 impl ToolRun {
     /// Create a tool run from explicit runner options.
     ///
-    /// The default source is empty memory capture and the default mutator is
-    /// identity, so the safe dry-run path is available without extra setup.
+    /// The default mutator is identity, and the runner selects the binding's
+    /// default capture source so dry-run stays offline while live bindings open
+    /// live capture.
     pub fn new(options: RunOptions) -> Self {
         Self {
             options,
-            source: Box::<MemoryCaptureSource>::default(),
+            source: None,
             mutator: Box::new(Identity),
         }
     }
@@ -51,7 +49,7 @@ impl ToolRun {
     where
         S: CaptureSource + 'static,
     {
-        self.source = Box::new(source);
+        self.source = Some(Box::new(source));
         self
     }
 
@@ -66,7 +64,11 @@ impl ToolRun {
 
     /// Run the flow and collect its report and send reports.
     pub fn run(self, flow: &mut Flow) -> Result<ToolRunReport> {
-        let mut runner = Runner::with_source(self.options, self.source)?.mutator(self.mutator);
+        let runner = match self.source {
+            Some(source) => Runner::with_source(self.options, source)?,
+            None => Runner::with_options(self.options)?,
+        };
+        let mut runner = runner.mutator(self.mutator);
         let report = runner.run(flow)?;
         let send_reports = runner.send_reports().to_vec();
 
@@ -94,7 +96,8 @@ mod tests {
     use std::time::Duration;
 
     use crate::{
-        run_tool, Bound, Flow, FlowBuilderExt, FlowOutcome, FlowState, Role, Step, ToolRun,
+        run_tool, Binding, Bound, Flow, FlowBuilderExt, FlowOutcome, FlowState,
+        MemoryCaptureSource, Role, RunOptions, Step, ToolRun,
     };
 
     fn packet() -> crafter::Packet {
@@ -126,5 +129,71 @@ mod tests {
         assert_eq!(result.report().sent_count(), 1);
         assert_eq!(result.send_reports().len(), 1);
         assert!(result.send_reports()[0].is_dry_run());
+    }
+
+    #[test]
+    fn tool_run_helper_live_binding_reaches_runner_capture_open() {
+        let mut flow = Flow::new("tool-live-binding")
+            .role(Role::Injector)
+            .state(
+                FlowState::new("Done")
+                    .on_entry(|_ctx| Ok(Step::done()))
+                    .entry_terminal(),
+            )
+            .initial("Done");
+        let options = RunOptions::default().binding(
+            Binding::interface("nonexistent-iface-zzz")
+                .network_layer()
+                .live(),
+        );
+
+        let error = run_tool(&mut flow, ToolRun::new(options))
+            .expect_err("missing live interface should fail during capture open");
+
+        match error {
+            crate::FlowError::Capture(message) => {
+                assert!(message.contains("nonexistent-iface-zzz"));
+                assert!(message.contains("pcap capture"));
+            }
+            other => panic!("expected capture error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_run_helper_keeps_runner_injected_source_for_offline_flow() {
+        let observed = crafter::Packet::decode_raw([0x41]).expect("raw packet decodes");
+        let expected = observed.compile().expect("packet compiles").as_ref().to_vec();
+        let mut flow = Flow::new("tool-injected-source")
+            .state(
+                FlowState::new("Waiting").on(crate::Transition::on(
+                    crate::PredicateMatcher::new("observed packet", move |packet, _ctx| {
+                        packet
+                            .compile()
+                            .map(|bytes| bytes.as_ref() == expected.as_slice())
+                            .unwrap_or(false)
+                    }),
+                    |_packet, _ctx| Ok(Step::goto("Done")),
+                )),
+            )
+            .state(
+                FlowState::new("Done")
+                    .on_entry(|_ctx| Ok(Step::done()))
+                    .entry_terminal(),
+            )
+            .initial("Waiting");
+
+        let result = run_tool(
+            &mut flow,
+            ToolRun::new(RunOptions::default())
+                .source(MemoryCaptureSource::new(vec![observed])),
+        )
+        .expect("tool helper runs with injected source");
+
+        assert_eq!(result.report().outcome(), &FlowOutcome::Completed);
+        assert_eq!(result.report().received_count(), 1);
+        assert_eq!(
+            result.report().transitions_taken(),
+            &["observed packet".to_string()]
+        );
     }
 }

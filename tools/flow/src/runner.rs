@@ -7,7 +7,7 @@ use crafter::net::SendReport;
 
 use crate::{
     Binding, CaptureSource, Conversation, Flow, FlowError, FlowOutcome, FlowReport, FlowState,
-    Identity, Matcher, MemoryCaptureSource, Mutator, PacketContext, Result, Role, RunOptions, Step,
+    Identity, Matcher, Mutator, PacketContext, Result, Role, RunOptions, Step,
 };
 
 struct TerminalStep {
@@ -112,7 +112,8 @@ impl Runner {
 
     /// Create a runner using an empty offline capture source.
     pub fn with_options(options: RunOptions) -> Result<Self> {
-        Self::with_source(options, MemoryCaptureSource::default())
+        let conversation = Conversation::open(&options.binding)?;
+        Self::from_conversation(options, conversation)
     }
 
     /// Create a runner with an injected capture source.
@@ -121,7 +122,10 @@ impl Runner {
         S: CaptureSource + 'static,
     {
         let conversation = Conversation::open_with_source(&options.binding, source)?;
+        Self::from_conversation(options, conversation)
+    }
 
+    fn from_conversation(options: RunOptions, conversation: Conversation) -> Result<Self> {
         Ok(Self {
             options,
             conversation,
@@ -474,8 +478,8 @@ mod tests {
     use super::Runner;
     use crate::{
         Binding, Bound, CaptureSource, Flow, FlowBuilderExt, FlowOutcome, FlowState, FnMutator,
-        Identity, MemoryCaptureSource, PredicateMatcher, Role, RunOptions, Step, StepGotoExt,
-        Transition,
+        FlowError, Identity, MemoryCaptureSource, PredicateMatcher, Role, RunOptions, Step,
+        StepGotoExt, Transition,
     };
     use std::cell::Cell;
     use std::net::Ipv4Addr;
@@ -565,16 +569,24 @@ mod tests {
     }
 
     #[test]
-    fn runner_live_binding_is_reachable_through_public_builder() {
-        let runner = Runner::bind(Binding::interface("flowlive0").network_layer().live())
-            .expect("explicit live network-layer runner opens");
-
-        assert!(!runner.is_dry_run());
-        assert_eq!(runner.live_sender_open_count(), 1);
-        assert_eq!(
-            runner.options().binding,
-            Binding::interface("flowlive0").network_layer().live()
+    fn runner_live_binding_attempts_capture_open_on_configured_interface() {
+        let result = Runner::bind(
+            Binding::interface("nonexistent-iface-zzz")
+                .network_layer()
+                .live(),
         );
+
+        let error = match result {
+            Ok(_) => panic!("missing live interface should fail during capture open"),
+            Err(error) => error,
+        };
+        match error {
+            FlowError::Capture(message) => {
+                assert!(message.contains("nonexistent-iface-zzz"));
+                assert!(message.contains("pcap capture"));
+            }
+            other => panic!("expected capture error, got {other:?}"),
+        }
     }
 
     #[test]
