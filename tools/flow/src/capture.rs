@@ -39,6 +39,16 @@ pub trait CaptureSource {
     fn describe(&self) -> String;
 }
 
+impl CaptureSource for Box<dyn CaptureSource> {
+    fn next_packet(&mut self, timeout: Duration) -> Result<Option<crafter::Packet>> {
+        self.as_mut().next_packet(timeout)
+    }
+
+    fn describe(&self) -> String {
+        self.as_ref().describe()
+    }
+}
+
 /// In-memory capture source for offline tests and dry-run conversations.
 #[derive(Debug, Clone, Default)]
 pub struct MemoryCaptureSource {

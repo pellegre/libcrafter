@@ -23,6 +23,7 @@ pub use crate::PacketContext;
 pub use crate::RunOptions;
 pub use crate::Runner;
 pub use crate::Role;
+pub use crate::{run_tool, ToolRun, ToolRunReport};
 pub use crate::{FlowState, FnMutator, Identity, Mutator, Step, StepGotoExt, Transition};
 
 #[cfg(test)]

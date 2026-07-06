@@ -18,6 +18,21 @@ pub trait Mutator {
     fn name(&self) -> &str;
 }
 
+impl Mutator for Box<dyn Mutator> {
+    fn mutate(
+        &mut self,
+        packet: crafter::Packet,
+        iteration: u64,
+        ctx: &mut PacketContext,
+    ) -> Result<crafter::Packet> {
+        self.as_mut().mutate(packet, iteration, ctx)
+    }
+
+    fn name(&self) -> &str {
+        self.as_ref().name()
+    }
+}
+
 /// Mutator that leaves outgoing packets unchanged.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Identity;

@@ -19,6 +19,7 @@ pub mod role;
 pub mod runner;
 pub mod state;
 pub mod step;
+pub mod tool;
 pub mod transition;
 
 pub use bound::Bound;
@@ -38,4 +39,5 @@ pub use role::Role;
 pub use runner::Runner;
 pub use state::FlowState;
 pub use step::{Step, StepGotoExt};
+pub use tool::{run_tool, ToolRun, ToolRunReport};
 pub use transition::Transition;
