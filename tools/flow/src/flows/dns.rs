@@ -217,4 +217,59 @@ mod tests {
         assert_eq!(answer.record_type(), crafter::DNS_TYPE_A);
         assert_eq!(answer.data(), &crafter::DnsRecordData::A(answer_ip));
     }
+
+    #[test]
+    fn dns_echo_forged_response_matches_observed_query_exactly() {
+        let transaction_id = 0x6e7f;
+        let answer_ip = docaddr::GATEWAY_IPV4;
+        let query = decoded_dns_message(
+            crafter::Dns::query("www.example.test.", crafter::DNS_TYPE_A).id(transaction_id),
+            53123,
+            crafter::DNS_PORT,
+        );
+        let other_query = decoded_dns_message(
+            crafter::Dns::query("other.example.test.", crafter::DNS_TYPE_A).id(transaction_id),
+            53124,
+            crafter::DNS_PORT,
+        );
+        let query_dns = query.layer::<crafter::Dns>().expect("query has DNS layer");
+        let expected_questions = query_dns.questions().to_vec();
+        let mut flow = spoof_flow("www.example.test.", answer_ip);
+        let mut context = PacketContext::new();
+
+        assert!(flow
+            .state_mut(WATCH)
+            .expect("Watch state exists")
+            .find_transition(&other_query, &context)
+            .is_none());
+
+        let step = flow
+            .state_mut(WATCH)
+            .expect("Watch state exists")
+            .find_transition(&query, &context)
+            .expect("spoofed query transition matches")
+            .fire(&query, &mut context)
+            .expect("DNS forged response handler succeeds");
+        let response = step.outgoing().expect("transition emits a response");
+        let compiled = response.compile().expect("forged response should compile");
+        let decoded = crafter::Packet::decode_from_l3(
+            crafter::NetworkLayer::Ipv4,
+            compiled.as_bytes(),
+        )
+        .expect("forged response should decode");
+        let response_dns = decoded
+            .layer::<crafter::Dns>()
+            .expect("response has DNS layer");
+        let answer = response_dns
+            .answers()
+            .first()
+            .expect("response has an answer");
+
+        assert!(response_dns.is_response());
+        assert_eq!(response_dns.id_value(), transaction_id);
+        assert_eq!(response_dns.questions(), expected_questions.as_slice());
+        assert_eq!(answer.name(), expected_questions[0].name());
+        assert_eq!(answer.record_type(), crafter::DNS_TYPE_A);
+        assert_eq!(answer.data(), &crafter::DnsRecordData::A(answer_ip));
+    }
 }
