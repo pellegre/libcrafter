@@ -1,5 +1,6 @@
 //! Flow runner core loop.
 
+use std::thread;
 use std::time::{Duration, Instant};
 
 use crafter::net::SendReport;
@@ -331,9 +332,18 @@ impl Runner {
     ) -> Result<StepAction> {
         if matches!(mode, StepMode::Active) {
             if let Some(packet) = step.outgoing() {
-                let packet = self.mutator.mutate(packet.clone(), iteration, ctx)?;
-                let report = self.conversation.send(&packet)?;
-                self.send_reports.push(report);
+                for repeat in 0..self.options.send_repeat.count() {
+                    if repeat > 0 {
+                        let interval = self.options.send_repeat.interval();
+                        if !interval.is_zero() {
+                            thread::sleep(interval);
+                        }
+                    }
+
+                    let packet = self.mutator.mutate(packet.clone(), iteration, ctx)?;
+                    let report = self.conversation.send(&packet)?;
+                    self.send_reports.push(report);
+                }
             }
         }
 
@@ -561,6 +571,57 @@ mod tests {
         assert_eq!(report.outcome(), &FlowOutcome::Completed);
         assert_eq!(report.sent_count(), 1);
         assert_eq!(runner.send_reports()[0].plan().bytes(), expected.as_slice());
+    }
+
+    #[test]
+    fn runner_default_send_repeat_emits_once() {
+        let request = request_packet();
+        let start = FlowState::new("Start")
+            .on_entry(move |_ctx| Ok(Step::emit(request.clone()).goto("Done")))
+            .entry_targets(["Done"]);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-default-repeat")
+            .role(Role::Injector)
+            .state(start)
+            .state(done)
+            .initial("Start");
+        let mut runner = Runner::with_options(RunOptions::default()).expect("runner opens");
+
+        let report = runner.run(&mut flow).expect("runner completes");
+
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(report.sent_count(), 1);
+        assert_eq!(runner.send_reports().len(), 1);
+    }
+
+    #[test]
+    fn runner_send_repeat_policy_emits_bounded_copies() {
+        let request = request_packet();
+        let start = FlowState::new("Start")
+            .on_entry(move |_ctx| Ok(Step::emit(request.clone()).goto("Done")))
+            .entry_targets(["Done"]);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-repeat-policy")
+            .role(Role::Injector)
+            .state(start)
+            .state(done)
+            .initial("Start");
+        let options = RunOptions::default().send_repeat(3, Duration::ZERO);
+        let mut runner = Runner::with_options(options).expect("runner opens");
+
+        let report = runner.run(&mut flow).expect("runner completes");
+
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(report.sent_count(), 3);
+        assert_eq!(runner.send_reports().len(), 3);
+        assert!(runner
+            .send_reports()
+            .iter()
+            .all(crafter::net::SendReport::is_dry_run));
     }
 
     #[test]

@@ -4,6 +4,39 @@ use std::time::Duration;
 
 use crate::{Binding, Bound};
 
+/// Bounded repeat policy for each outgoing packet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SendRepeat {
+    count: u32,
+    interval: Duration,
+}
+
+impl SendRepeat {
+    /// Create a repeat policy with at least one send.
+    pub fn new(count: u32, interval: Duration) -> Self {
+        Self {
+            count: count.max(1),
+            interval,
+        }
+    }
+
+    /// Number of copies to send for each outgoing packet.
+    pub const fn count(self) -> u32 {
+        self.count
+    }
+
+    /// Delay between repeated copies.
+    pub const fn interval(self) -> Duration {
+        self.interval
+    }
+}
+
+impl Default for SendRepeat {
+    fn default() -> Self {
+        Self::new(1, Duration::ZERO)
+    }
+}
+
 /// Bundles the binding, loop bound, timeout, and retry knobs for one run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunOptions {
@@ -11,6 +44,7 @@ pub struct RunOptions {
     pub bound: Bound,
     pub step_timeout: Duration,
     pub run_timeout: Option<Duration>,
+    pub send_repeat: SendRepeat,
     pub retries: u32,
 }
 
@@ -39,6 +73,12 @@ impl RunOptions {
         self
     }
 
+    /// Set the repeat policy used for every outgoing packet.
+    pub fn send_repeat(mut self, count: u32, interval: Duration) -> Self {
+        self.send_repeat = SendRepeat::new(count, interval);
+        self
+    }
+
     /// Set the number of retry attempts.
     pub fn retries(mut self, retries: u32) -> Self {
         self.retries = retries;
@@ -53,6 +93,7 @@ impl Default for RunOptions {
             bound: Bound::default(),
             step_timeout: Duration::from_millis(250),
             run_timeout: None,
+            send_repeat: SendRepeat::default(),
             retries: 1,
         }
     }
@@ -60,7 +101,7 @@ impl Default for RunOptions {
 
 #[cfg(test)]
 mod tests {
-    use super::RunOptions;
+    use super::{RunOptions, SendRepeat};
     use crate::{Binding, Bound};
     use std::time::Duration;
 
@@ -72,6 +113,7 @@ mod tests {
         assert_eq!(options.bound, Bound::default());
         assert_eq!(options.step_timeout, Duration::from_millis(250));
         assert_eq!(options.run_timeout, None);
+        assert_eq!(options.send_repeat, SendRepeat::default());
         assert_eq!(options.retries, 1);
     }
 
@@ -105,6 +147,22 @@ mod tests {
         let options = RunOptions::default().run_timeout(timeout);
 
         assert_eq!(options.run_timeout, Some(timeout));
+    }
+
+    #[test]
+    fn run_options_builder_updates_send_repeat() {
+        let interval = Duration::from_millis(25);
+        let options = RunOptions::default().send_repeat(3, interval);
+
+        assert_eq!(options.send_repeat.count(), 3);
+        assert_eq!(options.send_repeat.interval(), interval);
+    }
+
+    #[test]
+    fn send_repeat_keeps_at_least_one_copy() {
+        let repeat = SendRepeat::new(0, Duration::from_millis(1));
+
+        assert_eq!(repeat.count(), 1);
     }
 
     #[test]

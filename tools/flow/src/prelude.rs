@@ -20,7 +20,7 @@ pub use crate::matcher::{
 };
 pub use crate::report::{FlowOutcome, FlowReport};
 pub use crate::PacketContext;
-pub use crate::RunOptions;
+pub use crate::{RunOptions, SendRepeat};
 pub use crate::Runner;
 pub use crate::Role;
 pub use crate::{run_tool, ToolRun, ToolRunReport};
