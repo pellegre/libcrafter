@@ -10,6 +10,7 @@ pub struct RunOptions {
     pub binding: Binding,
     pub bound: Bound,
     pub step_timeout: Duration,
+    pub run_timeout: Option<Duration>,
     pub retries: u32,
 }
 
@@ -32,6 +33,12 @@ impl RunOptions {
         self
     }
 
+    /// Set an optional deadline for the whole run.
+    pub fn run_timeout(mut self, run_timeout: Duration) -> Self {
+        self.run_timeout = Some(run_timeout);
+        self
+    }
+
     /// Set the number of retry attempts.
     pub fn retries(mut self, retries: u32) -> Self {
         self.retries = retries;
@@ -45,6 +52,7 @@ impl Default for RunOptions {
             binding: Binding::default(),
             bound: Bound::default(),
             step_timeout: Duration::from_millis(250),
+            run_timeout: None,
             retries: 1,
         }
     }
@@ -63,6 +71,7 @@ mod tests {
         assert_eq!(options.binding, Binding::default());
         assert_eq!(options.bound, Bound::default());
         assert_eq!(options.step_timeout, Duration::from_millis(250));
+        assert_eq!(options.run_timeout, None);
         assert_eq!(options.retries, 1);
     }
 
@@ -88,6 +97,14 @@ mod tests {
         let options = RunOptions::default().step_timeout(timeout);
 
         assert_eq!(options.step_timeout, timeout);
+    }
+
+    #[test]
+    fn run_options_builder_updates_run_timeout() {
+        let timeout = Duration::from_secs(2);
+        let options = RunOptions::default().run_timeout(timeout);
+
+        assert_eq!(options.run_timeout, Some(timeout));
     }
 
     #[test]

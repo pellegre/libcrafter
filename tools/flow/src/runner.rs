@@ -1,6 +1,6 @@
 //! Flow runner core loop.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crafter::net::SendReport;
 
@@ -138,6 +138,17 @@ impl Runner {
 
         loop {
             let elapsed = started.elapsed();
+            if self.run_timeout_elapsed(elapsed) {
+                return Ok(self.build_report(
+                    flow,
+                    trace,
+                    iterations,
+                    elapsed,
+                    FlowOutcome::TimedOut,
+                    &ctx,
+                ));
+            }
+
             if !self.options.bound.should_continue(iterations, elapsed) {
                 return Ok(self.build_report(
                     flow,
@@ -151,7 +162,14 @@ impl Runner {
 
             let mut current_state = flow.initial().to_string();
             trace.enter(&current_state);
-            match self.run_iteration(flow, &mut current_state, &mut ctx, &mut trace, iterations)? {
+            match self.run_iteration(
+                flow,
+                &mut current_state,
+                &mut ctx,
+                &mut trace,
+                iterations,
+                started,
+            )? {
                 IterationResult::Terminal => {
                     iterations += 1;
                     let elapsed = started.elapsed();
@@ -189,6 +207,7 @@ impl Runner {
         ctx: &mut PacketContext,
         trace: &mut RunTrace,
         iteration: u64,
+        run_started: Instant,
     ) -> Result<IterationResult> {
         match flow.role() {
             Role::Initiator | Role::Injector => {
@@ -208,10 +227,10 @@ impl Runner {
             let packet = {
                 let state = Self::state(flow, current_state.as_str())?;
                 let matcher = StateTransitionsMatcher { state };
-                let Some(packet) =
-                    self.conversation
-                        .recv_matching(&matcher, ctx, self.options.step_timeout)?
-                else {
+                let Some(timeout) = self.effective_step_timeout(run_started) else {
+                    return Ok(IterationResult::TimedOut);
+                };
+                let Some(packet) = self.conversation.recv_matching(&matcher, ctx, timeout)? else {
                     return Ok(IterationResult::TimedOut);
                 };
                 packet
@@ -366,6 +385,22 @@ impl Runner {
         )
     }
 
+    fn run_timeout_elapsed(&self, elapsed: Duration) -> bool {
+        self.options
+            .run_timeout
+            .is_some_and(|timeout| elapsed >= timeout)
+    }
+
+    fn effective_step_timeout(&self, run_started: Instant) -> Option<Duration> {
+        match self.options.run_timeout {
+            Some(run_timeout) => run_timeout
+                .checked_sub(run_started.elapsed())
+                .map(|remaining| remaining.min(self.options.step_timeout))
+                .filter(|timeout| !timeout.is_zero()),
+            None => Some(self.options.step_timeout),
+        }
+    }
+
     fn state_mut<'a>(flow: &'a mut Flow, state: &str) -> Result<&'a mut FlowState> {
         Self::ensure_state(flow, state)?;
         Ok(flow
@@ -397,8 +432,9 @@ impl Runner {
 mod tests {
     use super::Runner;
     use crate::{
-        Binding, Bound, Flow, FlowBuilderExt, FlowOutcome, FlowState, FnMutator, Identity,
-        MemoryCaptureSource, PredicateMatcher, Role, RunOptions, Step, StepGotoExt, Transition,
+        Binding, Bound, CaptureSource, Flow, FlowBuilderExt, FlowOutcome, FlowState, FnMutator,
+        Identity, MemoryCaptureSource, PredicateMatcher, Role, RunOptions, Step, StepGotoExt,
+        Transition,
     };
     use std::cell::Cell;
     use std::net::Ipv4Addr;
@@ -419,6 +455,25 @@ mod tests {
             .dst(Ipv4Addr::new(198, 51, 100, 53))
             / crafter::Udp::new().sport(53000).dport(53)
             / crafter::Dns::a_query("example.com").id(0x1234)
+    }
+
+    struct RecordingTimeoutSource {
+        seen_timeout: Rc<Cell<Option<Duration>>>,
+    }
+
+    impl CaptureSource for RecordingTimeoutSource {
+        fn next_packet(
+            &mut self,
+            timeout: Duration,
+        ) -> crate::Result<Option<crafter::Packet>> {
+            self.seen_timeout.set(Some(timeout));
+            std::thread::sleep(timeout);
+            Ok(None)
+        }
+
+        fn describe(&self) -> String {
+            "recording timeout source".to_string()
+        }
     }
 
     #[test]
@@ -968,6 +1023,83 @@ mod tests {
         assert_eq!(report.outcome(), &FlowOutcome::TimedOut);
         assert_eq!(report.visited_states(), &["Waiting".to_string()]);
         assert_eq!(report.iterations(), 0);
+    }
+
+    #[test]
+    fn runner_run_timeout_caps_step_receive_timeout() {
+        let seen_timeout = Rc::new(Cell::new(None));
+        let source = RecordingTimeoutSource {
+            seen_timeout: Rc::clone(&seen_timeout),
+        };
+        let transition = Transition::on(
+            PredicateMatcher::new("any packet", |_packet, _ctx| true),
+            |_packet, _ctx| Ok(Step::goto("Done")),
+        )
+        .targets(["Done"]);
+        let waiting = FlowState::new("Waiting").on(transition);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-run-timeout")
+            .state(waiting)
+            .state(done)
+            .initial("Waiting");
+        let options = RunOptions::default()
+            .step_timeout(Duration::from_secs(1))
+            .run_timeout(Duration::from_millis(5));
+        let mut runner = Runner::with_source(options, source).expect("runner opens");
+
+        let report = runner.run(&mut flow).expect("runner returns timeout");
+
+        assert_eq!(report.outcome(), &FlowOutcome::TimedOut);
+        assert_eq!(report.visited_states(), &["Waiting".to_string()]);
+        assert!(seen_timeout
+            .get()
+            .expect("source saw a timeout")
+            <= Duration::from_millis(5));
+    }
+
+    #[test]
+    fn runner_handles_non_matching_burst_before_match() {
+        let expected = raw_packet([0xaa, 0xbb, 0xcc]);
+        let expected_bytes = compiled_bytes(&expected);
+        let transition = Transition::on(
+            PredicateMatcher::new("expected packet", move |packet, _ctx| {
+                packet
+                    .compile()
+                    .map(|bytes| bytes.as_ref() == expected_bytes.as_slice())
+                    .unwrap_or(false)
+            }),
+            |_packet, _ctx| Ok(Step::goto("Done")),
+        )
+        .targets(["Done"]);
+        let waiting = FlowState::new("Waiting").on(transition);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-burst-before-match")
+            .state(waiting)
+            .state(done)
+            .initial("Waiting");
+        let packets = vec![
+            raw_packet([0x01]),
+            raw_packet([0x02]),
+            raw_packet([0x03]),
+            expected,
+        ];
+        let options = RunOptions::default().step_timeout(Duration::from_millis(50));
+        let mut runner =
+            Runner::with_source(options, MemoryCaptureSource::new(packets)).expect("runner opens");
+
+        let report = runner.run(&mut flow).expect("runner completes");
+
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(report.received_count(), 4);
+        assert_eq!(report.transitions_taken(), &["expected packet".to_string()]);
+        assert_eq!(
+            report.visited_states(),
+            &["Waiting".to_string(), "Done".to_string()]
+        );
     }
 
     #[test]
