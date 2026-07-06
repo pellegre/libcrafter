@@ -14,7 +14,7 @@ pub use crate::capture::{
 pub use crate::Conversation;
 pub use crate::docaddr;
 pub use crate::error::{FlowError, Result};
-pub use crate::Flow;
+pub use crate::{Flow, FlowBuilderExt};
 pub use crate::matcher::{
     all, any, not, And, LayerMatcher, Matcher, MatcherExt, Not, Or, PredicateMatcher, ReplyMatcher,
 };

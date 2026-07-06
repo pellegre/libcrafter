@@ -1,6 +1,17 @@
 //! Participant role for a protocol flow.
 
 /// Selects which side of a conversation the engine drives.
+///
+/// ```
+/// use crafter_flow::prelude::*;
+///
+/// let client = docaddr::CLIENT_IPV4;
+/// let role = Role::Responder;
+///
+/// assert_eq!(client.octets()[0..3], [192, 0, 2]);
+/// assert!(role.waits_first());
+/// assert!(!Role::Initiator.waits_first());
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     /// Acts first, such as a client starting a conversation.

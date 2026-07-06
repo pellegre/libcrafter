@@ -42,6 +42,18 @@ pub enum BindSendClass {
 }
 
 /// Describes where and how a flow runs.
+///
+/// ```
+/// use crafter_flow::prelude::*;
+///
+/// let target = docaddr::DNS_IPV4;
+/// let binding = Binding::default();
+///
+/// assert_eq!(target.octets()[0..3], [198, 51, 100]);
+/// assert!(binding.is_dry_run());
+/// assert!(!binding.is_live());
+/// assert_eq!(binding.target(), &BindTarget::Netns("flow0".to_string()));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Binding {
     target: BindTarget,
