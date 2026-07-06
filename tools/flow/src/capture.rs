@@ -5,9 +5,11 @@
 //! between live packet capture and offline scripted packets.
 
 use std::collections::VecDeque;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::{FlowError, Result};
+
+const PCAP_CAPTURE_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
 /// Derive an advisory BPF capture filter for likely replies to a seed request packet.
 ///
@@ -41,7 +43,7 @@ pub trait CaptureSource {
 
 /// Live pcap-backed capture source.
 pub struct PcapCaptureSource {
-    sniffer: crafter::Sniffer,
+    sniffer: Option<crafter::Sniffer>,
     interface: String,
     filter: Option<String>,
 }
@@ -49,7 +51,9 @@ pub struct PcapCaptureSource {
 impl PcapCaptureSource {
     /// Open a live pcap capture on `interface`.
     pub fn open(interface: &str, filter: Option<&str>, timeout: Duration) -> Result<Self> {
-        let mut builder = crafter::PacketWire::pcap_interface(interface.to_owned()).timeout(timeout);
+        let mut builder = crafter::PacketWire::pcap_interface(interface.to_owned())
+            .timeout(timeout)
+            .nonblock();
         if let Some(filter) = filter {
             builder = builder.filter(filter);
         }
@@ -64,7 +68,7 @@ impl PcapCaptureSource {
             })?;
 
         Ok(Self {
-            sniffer: crafter::Sniffer::new(source).timeout(timeout),
+            sniffer: Some(crafter::Sniffer::new(source).timeout(timeout)),
             interface: interface.to_owned(),
             filter: filter.map(str::to_owned),
         })
@@ -73,25 +77,58 @@ impl PcapCaptureSource {
 
 impl CaptureSource for PcapCaptureSource {
     fn next_packet(&mut self, timeout: Duration) -> Result<Option<crafter::Packet>> {
-        let _ = timeout;
-        let _ = self.sniffer.timeout_limit();
-        Err(FlowError::Unsupported(
-            "pcap capture next_packet is not wired yet".to_string(),
-        ))
+        if timeout.is_zero() {
+            return Ok(None);
+        }
+
+        let Some(sniffer) = self.sniffer.take() else {
+            return Err(FlowError::Capture(
+                "pcap capture source is not available".to_string(),
+            ));
+        };
+
+        let deadline = Instant::now().checked_add(timeout);
+        let mut sniffer = sniffer;
+        let result = loop {
+            let remaining =
+                deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
+            if remaining.is_some_and(|remaining| remaining.is_zero()) {
+                break Ok(None);
+            }
+
+            sniffer = sniffer.timeout(remaining.unwrap_or(timeout));
+            match sniffer.next_record() {
+                Ok(Some(record)) => break Ok(Some(record.into_packet())),
+                Ok(None) => {
+                    let remaining =
+                        deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
+                    if remaining.is_some_and(|remaining| remaining.is_zero()) {
+                        break Ok(None);
+                    }
+                    let sleep = remaining
+                        .map(|remaining| remaining.min(PCAP_CAPTURE_POLL_INTERVAL))
+                        .unwrap_or(PCAP_CAPTURE_POLL_INTERVAL);
+                    std::thread::sleep(sleep);
+                }
+                Err(err) => {
+                    break Err(FlowError::Capture(format!(
+                        "pcap capture read failed on interface '{}': {err}",
+                        self.interface
+                    )));
+                }
+            }
+        };
+        self.sniffer = Some(sniffer);
+        result
     }
 
     fn describe(&self) -> String {
         match self.filter.as_deref() {
-            Some(filter) if !filter.is_empty() => {
-                format!(
-                    "pcap capture source on interface '{}' with filter '{}'",
-                    self.interface, filter
-                )
-            }
-            _ => format!(
-                "pcap capture source on interface '{}' with no filter",
-                self.interface
+            Some(filter) if !filter.is_empty() => format!(
+                "pcap capture on {} filter={}",
+                self.interface, filter
             ),
+            _ => format!("pcap capture on {} filter=<none>", self.interface),
         }
     }
 }
@@ -191,6 +228,15 @@ mod tests {
     fn pcap_capture_source_open_missing_interface_returns_capture_error() {
         let result =
             PcapCaptureSource::open("nonexistent-iface-zzz", None, Duration::from_millis(10));
+
+        assert!(matches!(result, Err(FlowError::Capture(_))));
+    }
+
+    #[test]
+    fn pcap_capture_source_can_be_boxed_as_capture_source() {
+        let result: Result<Box<dyn CaptureSource>, FlowError> =
+            PcapCaptureSource::open("nonexistent-iface-zzz", None, Duration::from_millis(10))
+                .map(|source| Box::new(source) as Box<dyn CaptureSource>);
 
         assert!(matches!(result, Err(FlowError::Capture(_))));
     }
