@@ -171,6 +171,92 @@ impl FlowReport {
 
         output
     }
+
+    /// Return a compact JSON artifact for this run.
+    ///
+    /// Field names are stable for artifact consumers:
+    /// `flow_name`, `role`, `dry_run`, `visited_states`, `sent_count`,
+    /// `received_count`, `transitions_taken`, `iterations`, `elapsed_nanos`,
+    /// `outcome`, optional `error`, and `context_snapshot`.
+    pub fn to_json(&self) -> String {
+        let mut output = String::new();
+
+        output.push('{');
+        write_json_field(&mut output, "flow_name", &self.flow_name);
+        output.push(',');
+        write_json_field(&mut output, "role", &format!("{:?}", self.role));
+        let _ = write!(output, ",\"dry_run\":{}", self.dry_run);
+        output.push_str(",\"visited_states\":");
+        write_json_string_array(&mut output, &self.visited_states);
+        let _ = write!(
+            output,
+            ",\"sent_count\":{},\"received_count\":{}",
+            self.sent_count, self.received_count
+        );
+        output.push_str(",\"transitions_taken\":");
+        write_json_string_array(&mut output, &self.transitions_taken);
+        let _ = write!(
+            output,
+            ",\"iterations\":{},\"elapsed_nanos\":{}",
+            self.iterations,
+            self.elapsed.as_nanos()
+        );
+        output.push(',');
+        write_json_field(&mut output, "outcome", flow_outcome_name(&self.outcome));
+        if let FlowOutcome::Error(error) = &self.outcome {
+            output.push(',');
+            write_json_field(&mut output, "error", error);
+        }
+        output.push(',');
+        write_json_field(&mut output, "context_snapshot", &self.context_snapshot);
+        output.push('}');
+
+        output
+    }
+}
+
+fn flow_outcome_name(outcome: &FlowOutcome) -> &'static str {
+    match outcome {
+        FlowOutcome::Completed => "Completed",
+        FlowOutcome::TimedOut => "TimedOut",
+        FlowOutcome::BoundExhausted => "BoundExhausted",
+        FlowOutcome::Error(_) => "Error",
+    }
+}
+
+fn write_json_field(output: &mut String, name: &str, value: &str) {
+    write_json_string(output, name);
+    output.push(':');
+    write_json_string(output, value);
+}
+
+fn write_json_string_array(output: &mut String, values: &[String]) {
+    output.push('[');
+    for (index, value) in values.iter().enumerate() {
+        if index > 0 {
+            output.push(',');
+        }
+        write_json_string(output, value);
+    }
+    output.push(']');
+}
+
+fn write_json_string(output: &mut String, value: &str) {
+    output.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => output.push_str("\\\""),
+            '\\' => output.push_str("\\\\"),
+            '\n' => output.push_str("\\n"),
+            '\r' => output.push_str("\\r"),
+            '\t' => output.push_str("\\t"),
+            ch if ch.is_control() => {
+                let _ = write!(output, "\\u{:04x}", ch as u32);
+            }
+            ch => output.push(ch),
+        }
+    }
+    output.push('"');
 }
 
 #[cfg(test)]
@@ -216,5 +302,58 @@ mod tests {
         assert!(report.summary().contains("dry_run=true"));
         assert!(report.show().contains("dry-run: true"));
         assert!(report.show().contains("reply packet"));
+    }
+
+    #[test]
+    fn report_json_contains_stable_core_fields() {
+        let report = FlowReport::new(
+            "json-flow",
+            Role::Responder,
+            true,
+            vec!["Wait".to_string(), "Done".to_string()],
+            2,
+            3,
+            vec!["matched packet".to_string()],
+            1,
+            Duration::from_micros(2),
+            FlowOutcome::Completed,
+            "PacketContext keys=[client_mac]",
+        );
+
+        let json = report.to_json();
+
+        assert!(json.starts_with('{'));
+        assert!(json.ends_with('}'));
+        assert!(json.contains("\"flow_name\":\"json-flow\""));
+        assert!(json.contains("\"role\":\"Responder\""));
+        assert!(json.contains("\"outcome\":\"Completed\""));
+        assert!(json.contains("\"visited_states\":[\"Wait\",\"Done\"]"));
+        assert!(json.contains("\"elapsed_nanos\":2000"));
+        assert!(json.contains("\"context_snapshot\":\"PacketContext keys=[client_mac]\""));
+    }
+
+    #[test]
+    fn report_json_escapes_strings() {
+        let report = FlowReport::new(
+            "quoted \"flow\"",
+            Role::Injector,
+            false,
+            vec!["Line\nOne".to_string()],
+            0,
+            0,
+            vec!["slash\\match".to_string()],
+            0,
+            Duration::ZERO,
+            FlowOutcome::Error("bad\tpacket".to_string()),
+            "PacketContext keys=[]",
+        );
+
+        let json = report.to_json();
+
+        assert!(json.contains("\"flow_name\":\"quoted \\\"flow\\\"\""));
+        assert!(json.contains("\"visited_states\":[\"Line\\nOne\"]"));
+        assert!(json.contains("\"transitions_taken\":[\"slash\\\\match\"]"));
+        assert!(json.contains("\"outcome\":\"Error\""));
+        assert!(json.contains("\"error\":\"bad\\tpacket\""));
     }
 }
