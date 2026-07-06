@@ -7,7 +7,7 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use crate::Result;
+use crate::{FlowError, Result};
 
 /// Derive an advisory BPF capture filter for likely replies to a seed request packet.
 ///
@@ -37,6 +37,63 @@ pub trait CaptureSource {
 
     /// Return a human-readable description for reports and diagnostics.
     fn describe(&self) -> String;
+}
+
+/// Live pcap-backed capture source.
+pub struct PcapCaptureSource {
+    sniffer: crafter::Sniffer,
+    interface: String,
+    filter: Option<String>,
+}
+
+impl PcapCaptureSource {
+    /// Open a live pcap capture on `interface`.
+    pub fn open(interface: &str, filter: Option<&str>, timeout: Duration) -> Result<Self> {
+        let mut builder = crafter::PacketWire::pcap_interface(interface.to_owned()).timeout(timeout);
+        if let Some(filter) = filter {
+            builder = builder.filter(filter);
+        }
+
+        let source = builder
+            .open()
+            .and_then(crafter::PacketWire::source)
+            .map_err(|err| {
+                FlowError::Capture(format!(
+                    "failed to open pcap capture on interface '{interface}': {err}"
+                ))
+            })?;
+
+        Ok(Self {
+            sniffer: crafter::Sniffer::new(source).timeout(timeout),
+            interface: interface.to_owned(),
+            filter: filter.map(str::to_owned),
+        })
+    }
+}
+
+impl CaptureSource for PcapCaptureSource {
+    fn next_packet(&mut self, timeout: Duration) -> Result<Option<crafter::Packet>> {
+        let _ = timeout;
+        let _ = self.sniffer.timeout_limit();
+        Err(FlowError::Unsupported(
+            "pcap capture next_packet is not wired yet".to_string(),
+        ))
+    }
+
+    fn describe(&self) -> String {
+        match self.filter.as_deref() {
+            Some(filter) if !filter.is_empty() => {
+                format!(
+                    "pcap capture source on interface '{}' with filter '{}'",
+                    self.interface, filter
+                )
+            }
+            _ => format!(
+                "pcap capture source on interface '{}' with no filter",
+                self.interface
+            ),
+        }
+    }
 }
 
 impl CaptureSource for Box<dyn CaptureSource> {
@@ -93,8 +150,9 @@ impl CaptureSource for MemoryCaptureSource {
 mod tests {
     use super::{
         derive_capture_filter, derive_capture_filter_for_packets, CaptureSource,
-        MemoryCaptureSource,
+        MemoryCaptureSource, PcapCaptureSource,
     };
+    use crate::FlowError;
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
@@ -127,6 +185,14 @@ mod tests {
         assert_eq!(compiled_bytes(&first), [0xde, 0xad]);
         assert_eq!(compiled_bytes(&second), [0xbe, 0xef, 0x00]);
         assert!(empty.is_none());
+    }
+
+    #[test]
+    fn pcap_capture_source_open_missing_interface_returns_capture_error() {
+        let result =
+            PcapCaptureSource::open("nonexistent-iface-zzz", None, Duration::from_millis(10));
+
+        assert!(matches!(result, Err(FlowError::Capture(_))));
     }
 
     #[test]

@@ -9,6 +9,7 @@
 pub use crate::binding::{BindMode, BindSendClass, BindTarget, Binding};
 pub use crate::capture::{
     derive_capture_filter, derive_capture_filter_for_packets, CaptureSource, MemoryCaptureSource,
+    PcapCaptureSource,
 };
 pub use crate::docaddr;
 pub use crate::error::{FlowError, Result};
