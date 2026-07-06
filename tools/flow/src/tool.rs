@@ -53,6 +53,12 @@ impl ToolRun {
         self
     }
 
+    /// Set the live capture BPF filter used when the runner opens its default source.
+    pub fn capture_filter(mut self, capture_filter: impl Into<String>) -> Self {
+        self.options = self.options.capture_filter(capture_filter);
+        self
+    }
+
     /// Replace the outgoing packet mutator used by the run.
     pub fn mutator<M>(mut self, mutator: M) -> Self
     where

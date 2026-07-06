@@ -112,7 +112,10 @@ impl Runner {
 
     /// Create a runner using an empty offline capture source.
     pub fn with_options(options: RunOptions) -> Result<Self> {
-        let conversation = Conversation::open(&options.binding)?;
+        let conversation = Conversation::open_with_capture_filter(
+            &options.binding,
+            options.capture_filter.as_deref(),
+        )?;
         Self::from_conversation(options, conversation)
     }
 
@@ -121,7 +124,11 @@ impl Runner {
     where
         S: CaptureSource + 'static,
     {
-        let conversation = Conversation::open_with_source(&options.binding, source)?;
+        let conversation = Conversation::open_with_source_and_capture_filter(
+            &options.binding,
+            source,
+            options.capture_filter.as_deref(),
+        )?;
         Self::from_conversation(options, conversation)
     }
 
