@@ -37,6 +37,87 @@ Use documentation addresses such as `192.0.2.0/24`, `198.51.100.0/24`, and
 `2001:db8::/32` in examples and tests. Do not use real targets in generated
 defaults.
 
+## Build A Protocol Flow
+
+Use `crafter-flow` when a generated tool needs a stateful packet conversation
+instead of a single packet. Keep the default path offline: build the `Flow`,
+feed deterministic documentation-space input through a memory source when the
+flow needs observed traffic, run it with default `RunOptions`, and print the
+`FlowReport` for inspection.
+
+```rust
+use crafter::prelude::*;
+use crafter_flow::prelude::*;
+use std::net::Ipv4Addr;
+
+fn doc_udp(
+    src: Ipv4Addr,
+    dst: Ipv4Addr,
+    sport: u16,
+    dport: u16,
+    body: &'static str,
+) -> crafter::Packet {
+    Ipv4::new()
+        .src(src)
+        .dst(dst)
+        .ipv4_protocol(Ipv4Protocol::Udp)
+        / Udp::new().source_port(sport).destination_port(dport)
+        / Raw::from(body)
+}
+
+fn main() -> crafter_flow::Result<()> {
+    let client = Ipv4Addr::new(192, 0, 2, 10);
+    let service = Ipv4Addr::new(198, 51, 100, 20);
+    let probe = doc_udp(client, service, 49_200, 5353, "probe");
+    let followup = doc_udp(client, service, 49_200, 5353, "follow-up");
+    let reply = doc_udp(service, client, 5353, 49_200, "ack");
+
+    let mut flow = Flow::new("documentation-protocol")
+        .role(Role::Responder)
+        .state(FlowState::new("WaitProbe").on(
+            Transition::on(
+                PredicateMatcher::new("documentation UDP probe", |packet, _ctx| {
+                    packet.layer::<Udp>().is_some()
+                }),
+                move |_packet, _ctx| Ok(Step::send(reply.clone()).goto("WaitFollowup")),
+            )
+            .targets(["WaitFollowup"]),
+        ))
+        .state(FlowState::new("WaitFollowup").on(
+            Transition::on(
+                PredicateMatcher::new("documentation follow-up payload", |packet, _ctx| {
+                    packet.layer::<Raw>().is_some()
+                }),
+                |_packet, _ctx| Ok(Step::goto("Done")),
+            )
+            .targets(["Done"]),
+        ))
+        .state(
+            FlowState::new("Done")
+                .on_entry(|_ctx| Ok(Step::done()))
+                .entry_terminal(),
+        )
+        .initial("WaitProbe");
+
+    let mut runner = Runner::with_source(
+        RunOptions::default(),
+        MemoryCaptureSource::new(vec![probe, followup]),
+    )?;
+    let report = runner.run(&mut flow)?;
+
+    println!("{}", report.show());
+    Ok(())
+}
+```
+
+Choose the role deliberately: `Role::Initiator` sends first, `Role::Responder`
+waits for another party, and `Role::Injector` observes traffic and emits from
+its position. The default binding is dry-run and bounded; live traffic must be a
+separate opt-in such as
+`RunOptions::default().binding(Binding::interface("lab0").link_layer().live())`
+inside an authorized lab or provider-backed run. See
+[`tools/flow/README.md`](../../tools/flow/README.md) for the full model.
+
 ## Build IPv4 Datagrams
 
 Keep generated IPv4 tools offline or dry-run by default: compile and hexdump the
