@@ -1,9 +1,7 @@
 use std::time::Duration;
 
 use crafter_flow::flows::arp::{injector_flow, ANNOUNCE};
-use crafter_flow::{
-    docaddr, Bound, FlowOutcome, MemoryCaptureSource, Role, RunOptions, Runner,
-};
+use crafter_flow::{docaddr, Bound, FlowOutcome, MemoryCaptureSource, Role, RunOptions, Runner};
 
 fn who_has(
     requester_ip: std::net::Ipv4Addr,

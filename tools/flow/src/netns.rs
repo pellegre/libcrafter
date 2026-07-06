@@ -77,7 +77,10 @@ mod tests {
     fn netns_binding_uses_requested_class_and_stays_dry_run() {
         let binding = link_layer("flow-client").expect("binding builds");
 
-        assert_eq!(binding.target(), &BindTarget::Netns("flow-client".to_string()));
+        assert_eq!(
+            binding.target(),
+            &BindTarget::Netns("flow-client".to_string())
+        );
         assert_eq!(binding.send_class(), BindSendClass::LinkLayer);
         assert!(binding.is_dry_run());
         assert!(binding.clone().live().is_live());

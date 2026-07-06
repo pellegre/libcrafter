@@ -266,7 +266,7 @@ impl Flow {
                 if self
                     .states
                     .get(target)
-                    .map_or(false, FlowState::declares_entry_terminal_path)
+                    .is_some_and(FlowState::declares_entry_terminal_path)
                 {
                     format!("{target} [terminal]")
                 } else {

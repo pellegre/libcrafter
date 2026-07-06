@@ -27,7 +27,8 @@ impl PacketContext {
 
     /// Insert raw bytes for a key without a typed accessor.
     pub fn insert(&mut self, key: &str, value: Vec<u8>) {
-        self.values.insert(key.to_string(), ContextValue::Bytes(value));
+        self.values
+            .insert(key.to_string(), ContextValue::Bytes(value));
     }
 
     /// Return raw bytes for a key inserted with [`PacketContext::insert`].

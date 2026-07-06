@@ -157,8 +157,7 @@ mod tests {
     use crate::{Matcher, PacketContext, PredicateMatcher};
 
     fn packet() -> crafter::Packet {
-        crafter::Packet::decode_raw([0xde, 0xad, 0xbe, 0xef])
-            .expect("raw packet should decode")
+        crafter::Packet::decode_raw([0xde, 0xad, 0xbe, 0xef]).expect("raw packet should decode")
     }
 
     fn constant(desc: &'static str, value: bool) -> Box<dyn Matcher> {
@@ -167,7 +166,10 @@ mod tests {
 
     #[test]
     fn combinators_and_of_two_true_predicates_is_true() {
-        let matcher = all(vec![constant("first true", true), constant("second true", true)]);
+        let matcher = all(vec![
+            constant("first true", true),
+            constant("second true", true),
+        ]);
         let packet = packet();
         let ctx = PacketContext::new();
 
@@ -177,7 +179,10 @@ mod tests {
 
     #[test]
     fn combinators_and_with_one_false_predicate_is_false() {
-        let matcher = all(vec![constant("first true", true), constant("second false", false)]);
+        let matcher = all(vec![
+            constant("first true", true),
+            constant("second false", false),
+        ]);
         let packet = packet();
         let ctx = PacketContext::new();
 
@@ -187,7 +192,10 @@ mod tests {
 
     #[test]
     fn combinators_or_is_true_when_either_predicate_is_true() {
-        let matcher = any(vec![constant("first false", false), constant("second true", true)]);
+        let matcher = any(vec![
+            constant("first false", false),
+            constant("second true", true),
+        ]);
         let packet = packet();
         let ctx = PacketContext::new();
 
@@ -209,7 +217,9 @@ mod tests {
     fn combinators_extension_methods_compose_matchers() {
         let matcher = PredicateMatcher::new("first true", |_packet, _ctx| true)
             .and(PredicateMatcher::new("second true", |_packet, _ctx| true))
-            .or(PredicateMatcher::new("fallback false", |_packet, _ctx| false))
+            .or(PredicateMatcher::new("fallback false", |_packet, _ctx| {
+                false
+            }))
             .not();
         let packet = packet();
         let ctx = PacketContext::new();

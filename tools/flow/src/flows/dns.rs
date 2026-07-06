@@ -216,7 +216,9 @@ mod tests {
             .fire(&query, &mut context)
             .expect("DNS forged response handler succeeds");
         let response = step.outgoing().expect("transition emits a response");
-        let ipv4 = response.layer::<crafter::Ipv4>().expect("response has IPv4");
+        let ipv4 = response
+            .layer::<crafter::Ipv4>()
+            .expect("response has IPv4");
         let udp = response.layer::<crafter::Udp>().expect("response has UDP");
         let dns = response.layer::<crafter::Dns>().expect("response has DNS");
         let answer = dns.answers().first().expect("response has an answer");
@@ -269,11 +271,9 @@ mod tests {
             .expect("DNS forged response handler succeeds");
         let response = step.outgoing().expect("transition emits a response");
         let compiled = response.compile().expect("forged response should compile");
-        let decoded = crafter::Packet::decode_from_l3(
-            crafter::NetworkLayer::Ipv4,
-            compiled.as_bytes(),
-        )
-        .expect("forged response should decode");
+        let decoded =
+            crafter::Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, compiled.as_bytes())
+                .expect("forged response should decode");
         let response_dns = decoded
             .layer::<crafter::Dns>()
             .expect("response has DNS layer");

@@ -1,9 +1,7 @@
 use std::time::Duration;
 
 use crafter_flow::flows::dns::{spoof_flow, WATCH};
-use crafter_flow::{
-    docaddr, Bound, FlowOutcome, MemoryCaptureSource, Role, RunOptions, Runner,
-};
+use crafter_flow::{docaddr, Bound, FlowOutcome, MemoryCaptureSource, Role, RunOptions, Runner};
 
 fn dns_query_packet(name: &str, transaction_id: u16, source_port: u16) -> crafter::Packet {
     let packet = crafter::Ipv4::new()
@@ -60,7 +58,9 @@ fn dns_spoof_flow_emits_forged_response_to_matching_query_offline() {
     assert!(runner.send_reports()[0].is_dry_run());
 
     let response = decode_send_plan(&runner.send_reports()[0]);
-    let ipv4 = response.layer::<crafter::Ipv4>().expect("response has IPv4");
+    let ipv4 = response
+        .layer::<crafter::Ipv4>()
+        .expect("response has IPv4");
     let udp = response.layer::<crafter::Udp>().expect("response has UDP");
     let dns = response.layer::<crafter::Dns>().expect("response has DNS");
     let answer = dns.answers().first().expect("response has an answer");

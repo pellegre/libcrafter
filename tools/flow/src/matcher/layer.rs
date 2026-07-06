@@ -21,10 +21,7 @@ impl LayerMatcher {
     }
 
     /// Match packets that contain layer `L` and satisfy `predicate`.
-    pub fn where_layer<L>(
-        desc: impl Into<String>,
-        predicate: impl Fn(&L) -> bool + 'static,
-    ) -> Self
+    pub fn where_layer<L>(desc: impl Into<String>, predicate: impl Fn(&L) -> bool + 'static) -> Self
     where
         L: crafter::Layer,
     {
@@ -82,10 +79,9 @@ mod tests {
     #[test]
     fn layer_matcher_matches_udp_layer_and_rejects_absent_layer() {
         let present = LayerMatcher::present::<crafter::Udp>();
-        let source_port = LayerMatcher::where_layer::<crafter::Udp>(
-            "source port 40000",
-            |udp| udp.source_port_value() == 40000,
-        );
+        let source_port = LayerMatcher::where_layer::<crafter::Udp>("source port 40000", |udp| {
+            udp.source_port_value() == 40000
+        });
         let udp_packet = decoded_udp_packet();
         let raw_packet = crafter::Packet::decode_raw([0xde, 0xad, 0xbe, 0xef])
             .expect("raw packet should decode");

@@ -6,25 +6,25 @@
 //! assert_eq!(FlowOutcome::Completed, FlowOutcome::Completed);
 //! ```
 
-pub use crate::Bound;
 pub use crate::binding::{BindMode, BindSendClass, BindTarget, Binding};
 pub use crate::capture::{
     derive_capture_filter, derive_capture_filter_for_packets, CaptureSource, MemoryCaptureSource,
 };
-pub use crate::Conversation;
 pub use crate::docaddr;
 pub use crate::error::{FlowError, Result};
-pub use crate::{Flow, FlowBuilderExt};
 pub use crate::matcher::{
     all, any, not, And, LayerMatcher, Matcher, MatcherExt, Not, Or, PredicateMatcher, ReplyMatcher,
 };
 pub use crate::report::{FlowOutcome, FlowReport};
+pub use crate::Bound;
+pub use crate::Conversation;
 pub use crate::PacketContext;
-pub use crate::{RunOptions, SendRepeat};
-pub use crate::Runner;
 pub use crate::Role;
+pub use crate::Runner;
 pub use crate::{run_tool, ToolRun, ToolRunReport};
+pub use crate::{Flow, FlowBuilderExt};
 pub use crate::{FlowState, FnMutator, Identity, Mutator, Step, StepGotoExt, Transition};
+pub use crate::{RunOptions, SendRepeat};
 
 #[cfg(test)]
 mod tests {
@@ -113,7 +113,7 @@ mod tests {
 
         let flow = Flow::new("empty");
 
-        assert_eq!(flow.role(), Role::Initiator);
+        assert_eq!(Flow::role(&flow), Role::Initiator);
     }
 
     #[test]
