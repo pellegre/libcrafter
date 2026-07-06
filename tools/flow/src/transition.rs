@@ -5,6 +5,38 @@ use crate::{Matcher, PacketContext, Result, Step};
 type TransitionHandler = dyn FnMut(&crafter::Packet, &mut PacketContext) -> Result<Step>;
 
 /// A state-graph edge triggered by a packet matcher.
+///
+/// ```
+/// use crafter_flow::prelude::*;
+///
+/// let received = crafter::Ipv4::new()
+///     .src(docaddr::DNS_IPV4)
+///     .dst(docaddr::CLIENT_IPV4)
+///     / crafter::Udp::new().sport(53).dport(53000)
+///     / crafter::Dns::a_query("example.com").id(0x1234);
+///
+/// let transition = Transition::on(
+///     PredicateMatcher::new("documentation DNS packet", |_packet, _ctx| true),
+///     |_packet, ctx| {
+///         ctx.set_dns_transaction_id(0x1234);
+///         Ok(Step::done())
+///     },
+/// )
+/// .terminal();
+///
+/// let mut flow = Flow::new("single-transition")
+///     .role(Role::Responder)
+///     .state(FlowState::new("Wait").on(transition))
+///     .initial("Wait");
+/// let options = RunOptions::default().binding(Binding::default());
+/// let mut runner = Runner::with_source(options, MemoryCaptureSource::new(vec![received]))?;
+/// let report = runner.run(&mut flow)?;
+///
+/// println!("{}", report.show());
+/// assert_eq!(report.received_count(), 1);
+/// assert_eq!(report.outcome(), &FlowOutcome::Completed);
+/// # Ok::<(), FlowError>(())
+/// ```
 pub struct Transition {
     matcher: Box<dyn Matcher>,
     handler: Box<TransitionHandler>,

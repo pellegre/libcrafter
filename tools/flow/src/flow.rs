@@ -6,6 +6,37 @@ use std::fmt::Write as _;
 use crate::{FlowError, FlowState, Result, Role};
 
 /// A named state graph that a runner can execute for one participant role.
+///
+/// ```
+/// use crafter_flow::prelude::*;
+///
+/// let query = crafter::Ipv4::new()
+///     .src(docaddr::CLIENT_IPV4)
+///     .dst(docaddr::DNS_IPV4)
+///     / crafter::Udp::new().sport(53000).dport(53)
+///     / crafter::Dns::a_query("example.com").id(0x1234);
+///
+/// let start = FlowState::new("Start")
+///     .on_entry(move |_ctx| Ok(Step::emit(query.clone()).goto("Done")))
+///     .entry_targets(["Done"]);
+/// let done = FlowState::new("Done")
+///     .on_entry(|_ctx| Ok(Step::done()))
+///     .entry_terminal();
+///
+/// let mut flow = Flow::new("dns-dry-run")
+///     .role(Role::Injector)
+///     .state(start)
+///     .state(done)
+///     .initial("Start");
+///
+/// let mut runner = Runner::bind(Binding::default())?;
+/// let report = runner.run(&mut flow)?;
+///
+/// println!("{}", report.show());
+/// assert!(report.is_dry_run());
+/// assert_eq!(report.sent_count(), 1);
+/// # Ok::<(), FlowError>(())
+/// ```
 pub struct Flow {
     name: String,
     role: Role,

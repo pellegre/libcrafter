@@ -75,6 +75,37 @@ pub struct Runner {
 
 impl Runner {
     /// Create a runner from a binding and default run options.
+    ///
+    /// ```
+    /// use crafter_flow::prelude::*;
+    ///
+    /// let packet = crafter::Ipv4::new()
+    ///     .src(docaddr::CLIENT_IPV4)
+    ///     .dst(docaddr::DNS_IPV4)
+    ///     / crafter::Udp::new().sport(53000).dport(53)
+    ///     / crafter::Dns::a_query("example.com").id(0x4321);
+    ///
+    /// let start = FlowState::new("Start")
+    ///     .on_entry(move |_ctx| Ok(Step::emit(packet.clone()).goto("Done")))
+    ///     .entry_targets(["Done"]);
+    /// let done = FlowState::new("Done")
+    ///     .on_entry(|_ctx| Ok(Step::done()))
+    ///     .entry_terminal();
+    /// let mut flow = Flow::new("runner-bind-example")
+    ///     .role(Role::Injector)
+    ///     .state(start)
+    ///     .state(done)
+    ///     .initial("Start");
+    ///
+    /// let mut runner = Runner::bind(Binding::default())?;
+    /// let report = runner.run(&mut flow)?;
+    ///
+    /// println!("{}", report.summary());
+    /// assert!(runner.is_dry_run());
+    /// assert_eq!(runner.live_sender_open_count(), 0);
+    /// assert_eq!(report.outcome(), &FlowOutcome::Completed);
+    /// # Ok::<(), FlowError>(())
+    /// ```
     pub fn bind(binding: Binding) -> Result<Self> {
         Self::with_options(RunOptions::default().binding(binding))
     }
