@@ -3,7 +3,7 @@
 use std::net::Ipv4Addr;
 
 use crate::matcher::LayerMatcher;
-use crate::{Flow, FlowBuilderExt, FlowState, Role};
+use crate::{Flow, FlowBuilderExt, FlowError, FlowState, Role, Step, Transition};
 
 /// Initial injector state: watch for the spoofed DNS query.
 pub const WATCH: &str = "Watch";
@@ -20,16 +20,64 @@ pub struct DnsQuery {
 /// Build a DNS spoofing injector flow scaffold.
 ///
 /// Tracked examples and tests should pass an `answer_ip` from `192.0.2.0/24`.
-/// The query matcher lives in this module; forged response emission is filled in
-/// by the next DNS flow step.
 pub fn spoof_flow(spoof_name: &str, answer_ip: Ipv4Addr) -> Flow {
-    let _ = (spoof_name, answer_ip);
-    let watch = FlowState::new(WATCH);
+    let watch = FlowState::new(WATCH).on(forged_response_transition(spoof_name, answer_ip));
 
     Flow::new("dns-spoof")
         .role(Role::Injector)
         .state(watch)
         .initial(WATCH)
+}
+
+fn forged_response_transition(spoof_name: &str, answer_ip: Ipv4Addr) -> Transition {
+    Transition::on(query_matcher(spoof_name), move |packet, _ctx| {
+        let ipv4 = packet.layer::<crafter::Ipv4>().ok_or_else(|| {
+            FlowError::Capture("matched DNS query packet has no IPv4 layer".to_string())
+        })?;
+        let udp = packet.layer::<crafter::Udp>().ok_or_else(|| {
+            FlowError::Capture("matched DNS query packet has no UDP layer".to_string())
+        })?;
+        let dns = packet.layer::<crafter::Dns>().ok_or_else(|| {
+            FlowError::Capture("matched DNS query packet has no DNS layer".to_string())
+        })?;
+        let query = extract_query(dns).ok_or_else(|| {
+            FlowError::Capture("matched DNS query did not contain a question".to_string())
+        })?;
+        let question = dns.questions().first().cloned().ok_or_else(|| {
+            FlowError::Capture("matched DNS query did not contain a question".to_string())
+        })?;
+
+        Ok(Step::emit(forged_response_packet(
+            ipv4.destination(),
+            ipv4.source(),
+            udp.source_port_value(),
+            query.transaction_id,
+            question,
+            query.question_name,
+            answer_ip,
+        )))
+    })
+}
+
+fn forged_response_packet(
+    source_ip: Ipv4Addr,
+    querier_ip: Ipv4Addr,
+    querier_port: u16,
+    transaction_id: u16,
+    question: crafter::DnsQuestion,
+    question_name: String,
+    answer_ip: Ipv4Addr,
+) -> crafter::Packet {
+    crafter::Ipv4::new().src(source_ip).dst(querier_ip)
+        / crafter::Udp::new()
+            .source_port(crafter::DNS_PORT)
+            .destination_port(querier_port)
+        / crafter::Dns::new()
+            .id(transaction_id)
+            .response(true)
+            .authoritative(true)
+            .question(question)
+            .answer(crafter::DnsRecord::a(question_name, answer_ip, 60))
 }
 
 /// Match DNS queries whose first question name equals `spoof_name`.
@@ -124,5 +172,49 @@ mod tests {
 
         assert_eq!(extracted.transaction_id, transaction_id);
         assert_eq!(extracted.question_name, "WWW.Example.Test.");
+    }
+
+    #[test]
+    fn dns_spoof_transition_emits_forged_response_echoing_query() {
+        let transaction_id = 0x5c6d;
+        let answer_ip = docaddr::GATEWAY_IPV4;
+        let query = decoded_dns_message(
+            crafter::Dns::query("www.example.test.", crafter::DNS_TYPE_A).id(transaction_id),
+            53000,
+            crafter::DNS_PORT,
+        );
+        let expected_question = query
+            .layer::<crafter::Dns>()
+            .expect("query has DNS layer")
+            .questions()[0]
+            .clone();
+        let mut flow = spoof_flow("www.example.test.", answer_ip);
+        let mut context = PacketContext::new();
+
+        let step = flow
+            .state_mut(WATCH)
+            .expect("Watch state exists")
+            .find_transition(&query, &context)
+            .expect("spoofed query transition matches")
+            .fire(&query, &mut context)
+            .expect("DNS forged response handler succeeds");
+        let response = step.outgoing().expect("transition emits a response");
+        let ipv4 = response.layer::<crafter::Ipv4>().expect("response has IPv4");
+        let udp = response.layer::<crafter::Udp>().expect("response has UDP");
+        let dns = response.layer::<crafter::Dns>().expect("response has DNS");
+        let answer = dns.answers().first().expect("response has an answer");
+
+        assert!(!step.expects_reply());
+        assert_eq!(step.target(), None);
+        assert_eq!(ipv4.source(), docaddr::SERVER_IPV4);
+        assert_eq!(ipv4.destination(), docaddr::CLIENT_IPV4);
+        assert_eq!(udp.source_port_value(), crafter::DNS_PORT);
+        assert_eq!(udp.destination_port_value(), 53000);
+        assert!(dns.is_response());
+        assert_eq!(dns.id_value(), transaction_id);
+        assert_eq!(dns.questions(), std::slice::from_ref(&expected_question));
+        assert_eq!(answer.name(), "www.example.test.");
+        assert_eq!(answer.record_type(), crafter::DNS_TYPE_A);
+        assert_eq!(answer.data(), &crafter::DnsRecordData::A(answer_ip));
     }
 }
