@@ -15,6 +15,7 @@ pub struct Conversation {
     binding: Binding,
     sender: Option<PacketSender>,
     source: Box<dyn CaptureSource>,
+    capture_filter: Option<String>,
     pending: VecDeque<crafter::Packet>,
     sent_count: usize,
     received_count: usize,
@@ -24,22 +25,54 @@ pub struct Conversation {
 impl Conversation {
     /// Open a conversation for the binding using the binding's default capture source.
     pub fn open(binding: &Binding) -> Result<Self> {
+        Self::open_with_capture_filter(binding, None)
+    }
+
+    /// Open a conversation with an optional live capture BPF filter.
+    pub fn open_with_capture_filter(
+        binding: &Binding,
+        capture_filter: Option<&str>,
+    ) -> Result<Self> {
+        let capture_filter = normalize_capture_filter(capture_filter);
         let source: Box<dyn CaptureSource> = if binding.is_live() {
             Self::guard_live_send_class(binding)?;
             Box::new(PcapCaptureSource::open(
                 binding.target().send_name(),
-                None,
+                capture_filter.as_deref(),
                 Duration::from_millis(250),
             )?)
         } else {
             Box::new(MemoryCaptureSource::default())
         };
 
-        Self::open_with_source(binding, source)
+        Self::open_with_source_inner(binding, source, capture_filter)
     }
 
     /// Open a conversation for the binding using the provided capture source.
     pub fn open_with_source<S>(binding: &Binding, source: S) -> Result<Self>
+    where
+        S: CaptureSource + 'static,
+    {
+        Self::open_with_source_and_capture_filter(binding, source, None)
+    }
+
+    /// Open a conversation with an injected capture source while recording the intended filter.
+    pub fn open_with_source_and_capture_filter<S>(
+        binding: &Binding,
+        source: S,
+        capture_filter: Option<&str>,
+    ) -> Result<Self>
+    where
+        S: CaptureSource + 'static,
+    {
+        Self::open_with_source_inner(binding, source, normalize_capture_filter(capture_filter))
+    }
+
+    fn open_with_source_inner<S>(
+        binding: &Binding,
+        source: S,
+        capture_filter: Option<String>,
+    ) -> Result<Self>
     where
         S: CaptureSource + 'static,
     {
@@ -58,10 +91,36 @@ impl Conversation {
             binding: binding.clone(),
             sender,
             source: Box::new(source),
+            capture_filter,
             pending: VecDeque::new(),
             sent_count: 0,
             received_count: 0,
             live_sender_open_count,
+        })
+    }
+
+    #[cfg(test)]
+    fn open_with_source_without_live_sender_for_test<S>(
+        binding: &Binding,
+        source: S,
+        capture_filter: Option<&str>,
+    ) -> Result<Self>
+    where
+        S: CaptureSource + 'static,
+    {
+        if binding.is_live() {
+            Self::guard_live_send_class(binding)?;
+        }
+
+        Ok(Self {
+            binding: binding.clone(),
+            sender: None,
+            source: Box::new(source),
+            capture_filter: normalize_capture_filter(capture_filter),
+            pending: VecDeque::new(),
+            sent_count: 0,
+            received_count: 0,
+            live_sender_open_count: 0,
         })
     }
 
@@ -101,6 +160,11 @@ impl Conversation {
     /// Number of live sender handles opened by this conversation.
     pub const fn live_sender_open_count(&self) -> usize {
         self.live_sender_open_count
+    }
+
+    /// Intended BPF capture filter for this conversation, if one was configured.
+    pub fn capture_filter(&self) -> Option<&str> {
+        self.capture_filter.as_deref()
     }
 
     /// Send or plan one packet through this conversation's persistent send half.
@@ -176,6 +240,13 @@ impl Conversation {
             self.source.describe()
         )
     }
+}
+
+fn normalize_capture_filter(capture_filter: Option<&str>) -> Option<String> {
+    capture_filter
+        .map(str::trim)
+        .filter(|filter| !filter.is_empty())
+        .map(str::to_string)
 }
 
 #[cfg(test)]
@@ -311,6 +382,25 @@ mod tests {
         };
 
         assert!(matches!(error, FlowError::Capture(_)));
+    }
+
+    #[test]
+    fn conversation_live_capture_filter_seam_records_filter_without_opening_capture() {
+        let binding = Binding::interface("eth0").network_layer().live();
+
+        let conversation = Conversation::open_with_source_without_live_sender_for_test(
+            &binding,
+            MemoryCaptureSource::default(),
+            Some(" arp "),
+        )
+        .expect("test seam opens without live resources");
+
+        assert_eq!(conversation.capture_filter(), Some("arp"));
+        assert_eq!(conversation.binding(), &binding);
+        assert!(conversation.sender.is_none());
+        assert_eq!(conversation.live_sender_open_count(), 0);
+        assert!(conversation.describe().contains("Live"));
+        assert!(conversation.describe().contains("memory capture source"));
     }
 
     #[test]

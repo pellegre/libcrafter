@@ -46,6 +46,7 @@ pub struct RunOptions {
     pub run_timeout: Option<Duration>,
     pub send_repeat: SendRepeat,
     pub retries: u32,
+    pub capture_filter: Option<String>,
 }
 
 impl RunOptions {
@@ -84,6 +85,22 @@ impl RunOptions {
         self.retries = retries;
         self
     }
+
+    /// Set the live capture BPF filter.
+    ///
+    /// Empty and whitespace-only filters clear the filter so callers can pass
+    /// the result of advisory filter derivation directly.
+    pub fn capture_filter(mut self, capture_filter: impl Into<String>) -> Self {
+        let capture_filter = capture_filter.into();
+        self.capture_filter = normalize_capture_filter(&capture_filter);
+        self
+    }
+
+    /// Clear any configured live capture BPF filter.
+    pub fn clear_capture_filter(mut self) -> Self {
+        self.capture_filter = None;
+        self
+    }
 }
 
 impl Default for RunOptions {
@@ -95,7 +112,17 @@ impl Default for RunOptions {
             run_timeout: None,
             send_repeat: SendRepeat::default(),
             retries: 1,
+            capture_filter: None,
         }
+    }
+}
+
+fn normalize_capture_filter(capture_filter: &str) -> Option<String> {
+    let capture_filter = capture_filter.trim();
+    if capture_filter.is_empty() {
+        None
+    } else {
+        Some(capture_filter.to_string())
     }
 }
 
@@ -115,6 +142,7 @@ mod tests {
         assert_eq!(options.run_timeout, None);
         assert_eq!(options.send_repeat, SendRepeat::default());
         assert_eq!(options.retries, 1);
+        assert_eq!(options.capture_filter, None);
     }
 
     #[test]
@@ -170,5 +198,21 @@ mod tests {
         let options = RunOptions::default().retries(3);
 
         assert_eq!(options.retries, 3);
+    }
+
+    #[test]
+    fn run_options_builder_updates_capture_filter() {
+        let options = RunOptions::default().capture_filter(" arp ");
+
+        assert_eq!(options.capture_filter.as_deref(), Some("arp"));
+    }
+
+    #[test]
+    fn run_options_empty_capture_filter_clears_filter() {
+        let options = RunOptions::default()
+            .capture_filter("arp")
+            .capture_filter("   ");
+
+        assert_eq!(options.capture_filter, None);
     }
 }
