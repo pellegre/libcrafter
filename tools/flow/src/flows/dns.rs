@@ -17,7 +17,7 @@ pub struct DnsQuery {
     pub question_name: String,
 }
 
-/// Build a DNS spoofing injector flow scaffold.
+/// Build a DNS spoofing injector flow.
 ///
 /// Tracked examples and tests should pass an `answer_ip` from `192.0.2.0/24`.
 pub fn spoof_flow(spoof_name: &str, answer_ip: Ipv4Addr) -> Flow {
@@ -83,8 +83,9 @@ fn forged_response_packet(
 /// Match DNS queries whose first question name equals `spoof_name`.
 pub fn query_matcher(spoof_name: &str) -> LayerMatcher {
     let spoof_name = canonical_dns_name(spoof_name);
+    let description = format!("query for {spoof_name}");
 
-    LayerMatcher::where_layer::<crafter::Dns>("query for spoofed name", move |dns| {
+    LayerMatcher::where_layer::<crafter::Dns>(description, move |dns| {
         extract_query(dns)
             .is_some_and(|query| query.question_name.eq_ignore_ascii_case(&spoof_name))
     })
@@ -138,6 +139,22 @@ mod tests {
         assert_eq!(flow.role(), Role::Injector);
         assert_eq!(flow.initial(), WATCH);
         assert!(flow.state(WATCH).is_some());
+    }
+
+    #[test]
+    fn dns_spoof_flow_validates_and_show_references_spoofed_name() {
+        let flow = spoof_flow("www.example.test", docaddr::GATEWAY_IPV4);
+
+        flow.validate().expect("DNS spoof flow validates");
+        assert_eq!(flow.role(), Role::Injector);
+
+        let show = flow.show();
+        for expected in [WATCH, "Injector", "query for www.example.test."] {
+            assert!(
+                show.contains(expected),
+                "flow show should contain {expected}: {show}"
+            );
+        }
     }
 
     #[test]
