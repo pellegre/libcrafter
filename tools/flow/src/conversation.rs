@@ -7,7 +7,7 @@ use crafter::net::{PacketSender, SendPlan, SendReport};
 
 use crate::{
     BindSendClass, Binding, CaptureSource, FlowError, Matcher, MemoryCaptureSource, PacketContext,
-    Result,
+    PcapCaptureSource, Result,
 };
 
 /// A single flow execution position with one send half and one capture source.
@@ -22,9 +22,20 @@ pub struct Conversation {
 }
 
 impl Conversation {
-    /// Open a conversation for the binding using an empty offline capture source.
+    /// Open a conversation for the binding using the binding's default capture source.
     pub fn open(binding: &Binding) -> Result<Self> {
-        Self::open_with_source(binding, MemoryCaptureSource::default())
+        let source: Box<dyn CaptureSource> = if binding.is_live() {
+            Self::guard_live_send_class(binding)?;
+            Box::new(PcapCaptureSource::open(
+                binding.target().send_name(),
+                None,
+                Duration::from_millis(250),
+            )?)
+        } else {
+            Box::new(MemoryCaptureSource::default())
+        };
+
+        Self::open_with_source(binding, source)
     }
 
     /// Open a conversation for the binding using the provided capture source.
@@ -205,6 +216,8 @@ mod tests {
         assert_eq!(conversation.live_sender_open_count(), 0);
         assert!(conversation.describe().contains("DryRun"));
         assert!(conversation.describe().contains("no sender"));
+        assert!(conversation.describe().contains("memory capture source"));
+        assert!(!conversation.describe().contains("pcap capture"));
     }
 
     #[test]
@@ -284,6 +297,20 @@ mod tests {
             }
             other => panic!("unexpected error: {other}"),
         }
+    }
+
+    #[test]
+    fn conversation_live_missing_interface_returns_capture_error() {
+        let binding = Binding::interface("nonexistent-iface-zzz")
+            .network_layer()
+            .live();
+
+        let error = match Conversation::open(&binding) {
+            Ok(_) => panic!("live binding on nonexistent interface should fail"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, FlowError::Capture(_)));
     }
 
     #[test]
