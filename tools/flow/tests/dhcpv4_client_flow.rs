@@ -22,32 +22,20 @@ fn discover_transaction_id(client_mac: crafter::MacAddr) -> u32 {
         .expect("Selecting entry stores transaction id")
 }
 
-fn offer_packet(
-    transaction_id: u32,
-    offered_ip: Ipv4Addr,
-    server_id: Ipv4Addr,
-) -> crafter::Packet {
+fn offer_packet(transaction_id: u32, offered_ip: Ipv4Addr, server_id: Ipv4Addr) -> crafter::Packet {
     crafter::Ethernet::new()
         .src(server_mac())
         .dst(crafter::MacAddr::BROADCAST)
-        / crafter::Ipv4::new()
-            .src(server_id)
-            .dst(Ipv4Addr::BROADCAST)
+        / crafter::Ipv4::new().src(server_id).dst(Ipv4Addr::BROADCAST)
         / crafter::Udp::dhcpv4_server()
         / crafter::Dhcpv4::offer(docaddr::CLIENT_MAC, offered_ip, server_id).xid(transaction_id)
 }
 
-fn ack_packet(
-    transaction_id: u32,
-    assigned_ip: Ipv4Addr,
-    server_id: Ipv4Addr,
-) -> crafter::Packet {
+fn ack_packet(transaction_id: u32, assigned_ip: Ipv4Addr, server_id: Ipv4Addr) -> crafter::Packet {
     crafter::Ethernet::new()
         .src(server_mac())
         .dst(crafter::MacAddr::BROADCAST)
-        / crafter::Ipv4::new()
-            .src(server_id)
-            .dst(Ipv4Addr::BROADCAST)
+        / crafter::Ipv4::new().src(server_id).dst(Ipv4Addr::BROADCAST)
         / crafter::Udp::dhcpv4_server()
         / crafter::Dhcpv4::ack(docaddr::CLIENT_MAC, assigned_ip, server_id).xid(transaction_id)
 }

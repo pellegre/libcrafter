@@ -93,7 +93,9 @@ mod tests {
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
-    use crate::{run_tool, Bound, Flow, FlowBuilderExt, FlowOutcome, FlowState, Role, Step, ToolRun};
+    use crate::{
+        run_tool, Bound, Flow, FlowBuilderExt, FlowOutcome, FlowState, Role, Step, ToolRun,
+    };
 
     fn packet() -> crafter::Packet {
         crafter::Ipv4::new()

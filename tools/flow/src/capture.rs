@@ -82,7 +82,10 @@ impl CaptureSource for MemoryCaptureSource {
     }
 
     fn describe(&self) -> String {
-        format!("memory capture source ({} queued packets)", self.packets.len())
+        format!(
+            "memory capture source ({} queued packets)",
+            self.packets.len()
+        )
     }
 }
 
@@ -119,9 +122,7 @@ mod tests {
             .next_packet(timeout)
             .expect("second receive succeeds")
             .expect("second packet is queued");
-        let empty = source
-            .next_packet(timeout)
-            .expect("empty receive succeeds");
+        let empty = source.next_packet(timeout).expect("empty receive succeeds");
 
         assert_eq!(compiled_bytes(&first), [0xde, 0xad]);
         assert_eq!(compiled_bytes(&second), [0xbe, 0xef, 0x00]);

@@ -53,9 +53,7 @@ fn icmp_echo_request(identifier: u16, sequence: u16) -> crafter::Packet {
     crafter::Ipv4::new()
         .src(docaddr::CLIENT_IPV4)
         .dst(docaddr::SERVER_IPV4)
-        / crafter::Icmpv4::echo_request()
-            .id(identifier)
-            .seq(sequence)
+        / crafter::Icmpv4::echo_request().id(identifier).seq(sequence)
         / crafter::Raw::from("flow matcher ping")
 }
 
@@ -63,9 +61,7 @@ fn icmp_echo_reply(identifier: u16, sequence: u16) -> crafter::Packet {
     crafter::Ipv4::new()
         .src(docaddr::SERVER_IPV4)
         .dst(docaddr::CLIENT_IPV4)
-        / crafter::Icmpv4::echo_reply()
-            .id(identifier)
-            .seq(sequence)
+        / crafter::Icmpv4::echo_reply().id(identifier).seq(sequence)
         / crafter::Raw::from("flow matcher ping")
 }
 
@@ -122,16 +118,13 @@ fn arp_who_has_matcher(target_ip: Ipv4Addr) -> LayerMatcher {
 fn dns_query_name_matcher(name: &str) -> LayerMatcher {
     let name = name.to_string();
 
-    LayerMatcher::where_layer::<crafter::Dns>(
-        format!("DNS query for {name}"),
-        move |dns| {
-            !dns.is_response()
-                && dns
-                    .questions()
-                    .first()
-                    .is_some_and(|question| question.name().eq_ignore_ascii_case(&name))
-        },
-    )
+    LayerMatcher::where_layer::<crafter::Dns>(format!("DNS query for {name}"), move |dns| {
+        !dns.is_response()
+            && dns
+                .questions()
+                .first()
+                .is_some_and(|question| question.name().eq_ignore_ascii_case(&name))
+    })
 }
 
 #[test]

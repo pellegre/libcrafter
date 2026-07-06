@@ -503,10 +503,7 @@ mod tests {
     }
 
     impl CaptureSource for RecordingTimeoutSource {
-        fn next_packet(
-            &mut self,
-            timeout: Duration,
-        ) -> crate::Result<Option<crafter::Packet>> {
+        fn next_packet(&mut self, timeout: Duration) -> crate::Result<Option<crafter::Packet>> {
             self.seen_timeout.set(Some(timeout));
             std::thread::sleep(timeout);
             Ok(None)
@@ -552,7 +549,9 @@ mod tests {
             .initial("Start");
         let mut runner = Runner::bind(Binding::default()).expect("default runner binds");
 
-        let report = runner.run(&mut flow).expect("default runner completes flow");
+        let report = runner
+            .run(&mut flow)
+            .expect("default runner completes flow");
 
         assert!(runner.is_dry_run());
         assert!(report.is_dry_run());
@@ -672,13 +671,16 @@ mod tests {
         let options = RunOptions::default().bound(Bound::Count(3));
         let mut runner = Runner::with_options(options)
             .expect("runner opens")
-            .mutator(FnMutator::new("stamp-iteration", |_packet, iteration, _ctx| {
-                Ok(crafter::Ipv4::new()
-                    .src(Ipv4Addr::new(192, 0, 2, 10))
-                    .dst(Ipv4Addr::new(198, 51, 100, 53))
-                    / crafter::Udp::new().sport(49152).dport(9)
-                    / crafter::Raw::from_bytes([iteration as u8]))
-            }));
+            .mutator(FnMutator::new(
+                "stamp-iteration",
+                |_packet, iteration, _ctx| {
+                    Ok(crafter::Ipv4::new()
+                        .src(Ipv4Addr::new(192, 0, 2, 10))
+                        .dst(Ipv4Addr::new(198, 51, 100, 53))
+                        / crafter::Udp::new().sport(49152).dport(9)
+                        / crafter::Raw::from_bytes([iteration as u8]))
+                },
+            ));
 
         let report = runner.run(&mut flow).expect("runner completes flow");
         let sent = runner
@@ -909,15 +911,20 @@ mod tests {
             .state(watch)
             .state(done)
             .initial("Watch");
-        let mut runner =
-            Runner::with_source(RunOptions::default(), MemoryCaptureSource::new(vec![observed]))
-                .expect("runner opens with injected source");
+        let mut runner = Runner::with_source(
+            RunOptions::default(),
+            MemoryCaptureSource::new(vec![observed]),
+        )
+        .expect("runner opens with injected source");
 
         let report = runner.run(&mut flow).expect("runner completes flow");
 
         assert_eq!(report.role(), Role::Injector);
         assert_eq!(report.outcome(), &FlowOutcome::Completed);
-        assert_eq!(report.transitions_taken(), &["observed request".to_string()]);
+        assert_eq!(
+            report.transitions_taken(),
+            &["observed request".to_string()]
+        );
         assert_eq!(report.sent_count(), 1);
         assert_eq!(report.received_count(), 1);
     }
@@ -1145,10 +1152,7 @@ mod tests {
 
         assert_eq!(report.outcome(), &FlowOutcome::TimedOut);
         assert_eq!(report.visited_states(), &["Waiting".to_string()]);
-        assert!(seen_timeout
-            .get()
-            .expect("source saw a timeout")
-            <= Duration::from_millis(5));
+        assert!(seen_timeout.get().expect("source saw a timeout") <= Duration::from_millis(5));
     }
 
     #[test]

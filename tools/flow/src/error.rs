@@ -66,11 +66,7 @@ mod tests {
             FlowError::Capture("capture source closed".to_string()),
             FlowError::Timeout,
             FlowError::Unsupported("role is not implemented".to_string()),
-            FlowError::Crafter(crafter::CrafterError::buffer_too_short(
-                "packet",
-                4,
-                2,
-            )),
+            FlowError::Crafter(crafter::CrafterError::buffer_too_short("packet", 4, 2)),
         ];
 
         for error in errors {

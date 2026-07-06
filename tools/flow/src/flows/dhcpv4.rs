@@ -4,11 +4,11 @@ use std::net::Ipv4Addr;
 
 use crafter::MacAddr;
 
+use crate::matcher::LayerMatcher;
 use crate::{
     Flow, FlowBuilderExt, FlowError, FlowState, PacketContext, PredicateMatcher, Role, Step,
     StepGotoExt, Transition,
 };
-use crate::matcher::LayerMatcher;
 
 /// Initial client state: send DISCOVER and wait for OFFER.
 pub const SELECTING: &str = "Selecting";
@@ -59,9 +59,8 @@ pub fn client_flow(client_mac: MacAddr) -> Flow {
 /// [`Role::Responder`]. Packet actions are filled in by the subsequent server
 /// flow steps.
 pub fn server_flow(server_mac: MacAddr, server_ip: Ipv4Addr, pool_base: Ipv4Addr) -> Flow {
-    let wait_discover = FlowState::new(WAIT_DISCOVER).on(discover_transition(
-        server_mac, server_ip, pool_base,
-    ));
+    let wait_discover =
+        FlowState::new(WAIT_DISCOVER).on(discover_transition(server_mac, server_ip, pool_base));
     let wait_request = FlowState::new(WAIT_REQUEST).on(request_transition(server_mac));
     let done = FlowState::new(DONE)
         .on_entry(|_ctx| Ok(Step::done()))
@@ -109,9 +108,7 @@ fn request_action(ctx: &mut PacketContext) -> crate::Result<Step> {
 }
 
 fn missing_request_context(key: &str) -> FlowError {
-    FlowError::Build(format!(
-        "DHCPv4 REQUEST requires {key} in PacketContext"
-    ))
+    FlowError::Build(format!("DHCPv4 REQUEST requires {key} in PacketContext"))
 }
 
 fn request_packet(
@@ -130,7 +127,11 @@ fn request_packet(
         / crafter::Dhcpv4::request(client_mac, offered_ip, server_identifier).xid(transaction_id)
 }
 
-fn discover_transition(server_mac: MacAddr, server_ip: Ipv4Addr, pool_base: Ipv4Addr) -> Transition {
+fn discover_transition(
+    server_mac: MacAddr,
+    server_ip: Ipv4Addr,
+    pool_base: Ipv4Addr,
+) -> Transition {
     Transition::on(
         LayerMatcher::where_layer::<crafter::Dhcpv4>("message type DISCOVER", |dhcp| {
             dhcp.message_type_value() == Some(crafter::Dhcpv4MessageType::Discover)
@@ -182,7 +183,10 @@ fn server_offer_packet(
 
 fn request_transition(server_mac: MacAddr) -> Transition {
     Transition::on(
-        PredicateMatcher::new("DHCPv4 REQUEST for stored xid and offer", request_matches_context),
+        PredicateMatcher::new(
+            "DHCPv4 REQUEST for stored xid and offer",
+            request_matches_context,
+        ),
         move |_packet, ctx| {
             let client_mac = ctx
                 .get_client_mac()
@@ -348,12 +352,9 @@ mod tests {
         crafter::Ethernet::new()
             .src(crafter::MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x02]))
             .dst(crafter::MacAddr::BROADCAST)
-            / crafter::Ipv4::new()
-                .src(server_id)
-                .dst(Ipv4Addr::BROADCAST)
+            / crafter::Ipv4::new().src(server_id).dst(Ipv4Addr::BROADCAST)
             / crafter::Udp::dhcpv4_server()
-            / crafter::Dhcpv4::offer(docaddr::CLIENT_MAC, offered_ip, server_id)
-                .xid(transaction_id)
+            / crafter::Dhcpv4::offer(docaddr::CLIENT_MAC, offered_ip, server_id).xid(transaction_id)
     }
 
     fn ack_packet(
@@ -364,12 +365,9 @@ mod tests {
         crafter::Ethernet::new()
             .src(crafter::MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x02]))
             .dst(crafter::MacAddr::BROADCAST)
-            / crafter::Ipv4::new()
-                .src(server_id)
-                .dst(Ipv4Addr::BROADCAST)
+            / crafter::Ipv4::new().src(server_id).dst(Ipv4Addr::BROADCAST)
             / crafter::Udp::dhcpv4_server()
-            / crafter::Dhcpv4::ack(docaddr::CLIENT_MAC, assigned_ip, server_id)
-                .xid(transaction_id)
+            / crafter::Dhcpv4::ack(docaddr::CLIENT_MAC, assigned_ip, server_id).xid(transaction_id)
     }
 
     fn request_from_client(
@@ -385,8 +383,7 @@ mod tests {
                 .src(Ipv4Addr::UNSPECIFIED)
                 .dst(Ipv4Addr::BROADCAST)
             / crafter::Udp::dhcpv4_client()
-            / crafter::Dhcpv4::request(client_mac, requested_ip, server_id)
-                .xid(transaction_id)
+            / crafter::Dhcpv4::request(client_mac, requested_ip, server_id).xid(transaction_id)
     }
 
     #[test]
@@ -402,7 +399,11 @@ mod tests {
 
     #[test]
     fn dhcpv4_server_flow_scaffold_has_responder_states() {
-        let flow = server_flow(docaddr::LOCAL_MAC, docaddr::SERVER_IPV4, docaddr::CLIENT_IPV4);
+        let flow = server_flow(
+            docaddr::LOCAL_MAC,
+            docaddr::SERVER_IPV4,
+            docaddr::CLIENT_IPV4,
+        );
 
         assert_eq!(flow.role(), Role::Responder);
         assert_eq!(flow.initial(), WAIT_DISCOVER);
@@ -433,12 +434,12 @@ mod tests {
             .fire(&discover, &mut context)
             .expect("DISCOVER handler succeeds");
         let offer = step.outgoing().expect("DISCOVER response sends OFFER");
-        let ethernet = offer.layer::<crafter::Ethernet>().expect("OFFER has Ethernet");
+        let ethernet = offer
+            .layer::<crafter::Ethernet>()
+            .expect("OFFER has Ethernet");
         let ipv4 = offer.layer::<crafter::Ipv4>().expect("OFFER has IPv4");
         let udp = offer.layer::<crafter::Udp>().expect("OFFER has UDP");
-        let dhcp = offer
-            .layer::<crafter::Dhcpv4>()
-            .expect("OFFER has DHCPv4");
+        let dhcp = offer.layer::<crafter::Dhcpv4>().expect("OFFER has DHCPv4");
 
         assert_eq!(step.target(), Some(WAIT_REQUEST));
         assert_eq!(context.get_client_mac(), Some(docaddr::CLIENT_MAC));

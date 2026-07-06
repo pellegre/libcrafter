@@ -10,6 +10,8 @@ pub use combinators::{all, any, not, And, MatcherExt, Not, Or};
 pub use layer::LayerMatcher;
 pub use reply::ReplyMatcher;
 
+type PacketPredicate = dyn Fn(&crafter::Packet, &PacketContext) -> bool;
+
 /// Decides whether a received packet advances a flow transition.
 pub trait Matcher {
     /// Return true when `packet` satisfies this matcher in the current context.
@@ -22,7 +24,7 @@ pub trait Matcher {
 /// Matcher backed by a caller-provided predicate closure.
 pub struct PredicateMatcher {
     description: String,
-    predicate: Box<dyn Fn(&crafter::Packet, &PacketContext) -> bool>,
+    predicate: Box<PacketPredicate>,
 }
 
 impl PredicateMatcher {

@@ -36,6 +36,7 @@ pub struct FlowReport {
 
 impl FlowReport {
     /// Create a flow report from collected runner state.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         flow_name: impl Into<String>,
         role: Role,
