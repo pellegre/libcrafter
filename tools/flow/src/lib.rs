@@ -26,6 +26,7 @@ pub use binding::{BindMode, BindSendClass, BindTarget, Binding};
 pub use bound::Bound;
 pub use capture::{
     derive_capture_filter, derive_capture_filter_for_packets, CaptureSource, MemoryCaptureSource,
+    PcapCaptureSource,
 };
 pub use context::PacketContext;
 pub use conversation::Conversation;
