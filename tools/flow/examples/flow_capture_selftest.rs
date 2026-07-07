@@ -101,15 +101,12 @@ fn run(args: Args) -> Result<usize, String> {
 
         let remaining = deadline.saturating_duration_since(now);
         let poll_timeout = remaining.min(Duration::from_millis(CAPTURE_POLL_MS));
-        match source
+        if let Some(packet) = source
             .next_packet(poll_timeout)
             .map_err(|err| err.to_string())?
         {
-            Some(packet) => {
-                captured += 1;
-                println!("#{captured}: {}", packet.summary());
-            }
-            None => {}
+            captured += 1;
+            println!("#{captured}: {}", packet.summary());
         }
     }
 

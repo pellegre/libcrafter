@@ -124,10 +124,9 @@ impl CaptureSource for PcapCaptureSource {
 
     fn describe(&self) -> String {
         match self.filter.as_deref() {
-            Some(filter) if !filter.is_empty() => format!(
-                "pcap capture on {} filter={}",
-                self.interface, filter
-            ),
+            Some(filter) if !filter.is_empty() => {
+                format!("pcap capture on {} filter={}", self.interface, filter)
+            }
             _ => format!("pcap capture on {} filter=<none>", self.interface),
         }
     }
