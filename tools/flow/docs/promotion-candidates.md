@@ -63,8 +63,9 @@ Why it is wire-level enough:
 
 What must stabilize first:
 
-- Live capture backing, resource lifetime, pending-packet buffering, timeout
-  semantics, and error reporting.
+- Live capture backing is implemented in `crafter-flow`; the public shape for
+  resource lifetime, pending-packet buffering, timeout semantics, and error
+  reporting must still settle.
 - The relationship to `SendOptions`, `PacketSender`, `Sniffer`, dry-run plans,
   and explicit live opt-in.
 - Inspectable counters and reports, including what dry-run means for receive
@@ -82,6 +83,40 @@ API-contract implications:
   already fills and must not reject intentionally malformed packets.
 - Errors should carry enough context to be inspectable without forcing callers to
   parse logs.
+
+## PcapCaptureSource And Live Conversation Receive Path
+
+Why it is wire-level enough:
+
+- `PcapCaptureSource` is now implemented in `crafter-flow` and proven live in the
+  isolated lab through the wired `Conversation` receive path.
+- It adapts `crafter`'s pcap/sniffer primitives into a reusable capture source
+  that can keep observing real packets across multiple send/receive steps.
+- The capability sits below tool orchestration: generated packet tools can use
+  live observation without adopting `Flow`, roles, or attack-specific runners.
+
+What must stabilize first:
+
+- Timeout polling, nonblocking behavior, BPF filter handling, interface
+  assumptions, and error context across platforms and providers.
+- Resource lifetime, drop behavior, and how callers choose between dry-run,
+  memory-backed, and explicit live capture.
+- More repeated lab/provider evidence, including privilege failures,
+  malformed-packet handling, and quiet timeouts.
+- Whether it promotes as a standalone source, part of a future `Conversation`
+  primitive, or both.
+
+API-contract implications:
+
+- Live capture must remain explicit opt-in; promotion must not make opening pcap
+  a default side effect.
+- A public source type would freeze timeout semantics, ownership, thread-safety,
+  filter behavior, and error shapes.
+- The receive path must preserve `crafter`'s decode contract: valid unknown
+  payloads remain `Raw`, malformed buffers produce structured errors, and
+  truncation never panics.
+- Promotion must not pull the flow engine into `crafter`; state machines and
+  attack workflows stay in tools.
 
 ## Capture-Filter Derivation
 
