@@ -168,19 +168,21 @@ mod tests {
     #[test]
     fn tool_run_helper_keeps_runner_injected_source_for_offline_flow() {
         let observed = crafter::Packet::decode_raw([0x41]).expect("raw packet decodes");
-        let expected = observed.compile().expect("packet compiles").as_ref().to_vec();
+        let expected = observed
+            .compile()
+            .expect("packet compiles")
+            .as_ref()
+            .to_vec();
         let mut flow = Flow::new("tool-injected-source")
-            .state(
-                FlowState::new("Waiting").on(crate::Transition::on(
-                    crate::PredicateMatcher::new("observed packet", move |packet, _ctx| {
-                        packet
-                            .compile()
-                            .map(|bytes| bytes.as_ref() == expected.as_slice())
-                            .unwrap_or(false)
-                    }),
-                    |_packet, _ctx| Ok(Step::goto("Done")),
-                )),
-            )
+            .state(FlowState::new("Waiting").on(crate::Transition::on(
+                crate::PredicateMatcher::new("observed packet", move |packet, _ctx| {
+                    packet
+                        .compile()
+                        .map(|bytes| bytes.as_ref() == expected.as_slice())
+                        .unwrap_or(false)
+                }),
+                |_packet, _ctx| Ok(Step::goto("Done")),
+            )))
             .state(
                 FlowState::new("Done")
                     .on_entry(|_ctx| Ok(Step::done()))
@@ -190,8 +192,7 @@ mod tests {
 
         let result = run_tool(
             &mut flow,
-            ToolRun::new(RunOptions::default())
-                .source(MemoryCaptureSource::new(vec![observed])),
+            ToolRun::new(RunOptions::default()).source(MemoryCaptureSource::new(vec![observed])),
         )
         .expect("tool helper runs with injected source");
 
