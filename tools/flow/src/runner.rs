@@ -484,8 +484,8 @@ impl Runner {
 mod tests {
     use super::Runner;
     use crate::{
-        Binding, Bound, CaptureSource, Flow, FlowBuilderExt, FlowOutcome, FlowState, FnMutator,
-        FlowError, Identity, MemoryCaptureSource, PredicateMatcher, Role, RunOptions, Step,
+        Binding, Bound, CaptureSource, Flow, FlowBuilderExt, FlowError, FlowOutcome, FlowState,
+        FnMutator, Identity, MemoryCaptureSource, PredicateMatcher, Role, RunOptions, Step,
         StepGotoExt, Transition,
     };
     use std::cell::Cell;
@@ -507,6 +507,34 @@ mod tests {
             .dst(Ipv4Addr::new(198, 51, 100, 53))
             / crafter::Udp::new().sport(53000).dport(53)
             / crafter::Dns::a_query("example.com").id(0x1234)
+    }
+
+    fn arp_frame() -> crafter::Packet {
+        let sender_mac = crafter::MacAddr::new([0x02, 0x00, 0x00, 0x00, 0x00, 0x31]);
+
+        crafter::Ethernet::new()
+            .src(sender_mac)
+            .dst(crafter::MacAddr::BROADCAST)
+            / crafter::Arp::who_has(
+                Ipv4Addr::new(192, 0, 2, 10),
+                Ipv4Addr::new(192, 0, 2, 1),
+                sender_mac,
+            )
+    }
+
+    fn emit_once_flow(name: &str, packet: crafter::Packet) -> Flow {
+        let emit = FlowState::new("Emit")
+            .on_entry(move |_ctx| Ok(Step::emit(packet.clone()).goto("Done")))
+            .entry_targets(["Done"]);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+
+        Flow::new(name)
+            .role(Role::Injector)
+            .state(emit)
+            .state(done)
+            .initial("Emit")
     }
 
     struct RecordingTimeoutSource {
@@ -542,6 +570,26 @@ mod tests {
 
         assert!(runner.is_dry_run());
         assert_eq!(runner.options(), &options);
+    }
+
+    #[test]
+    fn runner_with_source_threads_capture_filter_to_conversation() {
+        let options = RunOptions::default().capture_filter(" udp and port 53 ");
+        let runner = Runner::with_source(options, MemoryCaptureSource::default())
+            .expect("runner opens with injected source");
+
+        assert_eq!(
+            runner.options().capture_filter.as_deref(),
+            Some("udp and port 53")
+        );
+        assert_eq!(
+            runner.conversation.capture_filter(),
+            Some("udp and port 53")
+        );
+        assert!(runner
+            .conversation
+            .describe()
+            .contains("memory capture source"));
     }
 
     #[test]
@@ -594,6 +642,54 @@ mod tests {
             }
             other => panic!("expected capture error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn runner_dry_run_respects_explicit_link_and_network_bindings() {
+        let mut link_flow = emit_once_flow("runner-link-binding", arp_frame());
+        let link_options =
+            RunOptions::default().binding(Binding::interface("flow-lab0").link_layer());
+        let mut link_runner = Runner::with_options(link_options).expect("link runner opens");
+
+        let link_report = link_runner.run(&mut link_flow).expect("link flow runs");
+        let link_plan = link_runner.send_reports()[0].plan();
+        let decoded_link =
+            crafter::Packet::decode_from_link(crafter::LinkType::Ethernet, link_plan.bytes())
+                .expect("link-layer dry-run plan decodes as Ethernet");
+
+        assert_eq!(link_report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(link_plan.interface(), "flow-lab0");
+        assert_eq!(
+            link_plan.requested_mode(),
+            crafter::net::SendMode::LinkLayer
+        );
+        assert!(link_plan.target().is_link_layer());
+        assert!(decoded_link.layer::<crafter::Ethernet>().is_some());
+        assert!(decoded_link.layer::<crafter::Arp>().is_some());
+
+        let mut network_flow = emit_once_flow("runner-network-binding", request_packet());
+        let network_options =
+            RunOptions::default().binding(Binding::interface("flow-lab0").network_layer());
+        let mut network_runner =
+            Runner::with_options(network_options).expect("network runner opens");
+
+        let network_report = network_runner
+            .run(&mut network_flow)
+            .expect("network flow runs");
+        let network_plan = network_runner.send_reports()[0].plan();
+        let decoded_network =
+            crafter::Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, network_plan.bytes())
+                .expect("network-layer dry-run plan decodes as IPv4");
+
+        assert_eq!(network_report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(network_plan.interface(), "flow-lab0");
+        assert_eq!(
+            network_plan.requested_mode(),
+            crafter::net::SendMode::NetworkLayer
+        );
+        assert!(network_plan.target().is_network_layer());
+        assert!(decoded_network.layer::<crafter::Ipv4>().is_some());
+        assert!(decoded_network.layer::<crafter::Udp>().is_some());
     }
 
     #[test]
@@ -717,6 +813,69 @@ mod tests {
         assert_eq!(report.outcome(), &FlowOutcome::Completed);
         assert_eq!(report.iterations(), 3);
         assert_eq!(sent, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn runner_mutator_stamps_iteration_into_each_transition_send() {
+        let observed = raw_packet([0x47, 0x01]);
+        let observed_bytes = compiled_bytes(&observed);
+        let transition = Transition::on(
+            PredicateMatcher::new("observed trigger", move |packet, _ctx| {
+                packet
+                    .compile()
+                    .map(|bytes| bytes.as_ref() == observed_bytes.as_slice())
+                    .unwrap_or(false)
+            }),
+            |_packet, _ctx| Ok(Step::emit(raw_packet([0xff])).goto("Done")),
+        )
+        .targets(["Done"]);
+        let watch = FlowState::new("Watch").on(transition);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-transition-iteration-mutator")
+            .role(Role::Injector)
+            .state(watch)
+            .state(done)
+            .initial("Watch");
+        let options = RunOptions::default().bound(Bound::Count(3));
+        let mut runner = Runner::with_source(
+            options,
+            MemoryCaptureSource::new(vec![observed.clone(), observed.clone(), observed]),
+        )
+        .expect("runner opens")
+        .mutator(FnMutator::new(
+            "stamp-transition-iteration",
+            |_packet, iteration, _ctx| {
+                Ok(crafter::Ipv4::new()
+                    .src(Ipv4Addr::new(192, 0, 2, 10))
+                    .dst(Ipv4Addr::new(198, 51, 100, 53))
+                    / crafter::Udp::new().sport(49152).dport(9)
+                    / crafter::Raw::from_bytes([iteration as u8]))
+            },
+        ));
+
+        let report = runner.run(&mut flow).expect("runner completes flow");
+        let sent = runner
+            .send_reports()
+            .iter()
+            .map(|report| {
+                *report
+                    .plan()
+                    .bytes()
+                    .last()
+                    .expect("mutated packet has a payload byte")
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(report.iterations(), 3);
+        assert_eq!(report.received_count(), 3);
+        assert_eq!(sent, vec![0, 1, 2]);
+        assert_eq!(
+            report.transitions_taken(),
+            &vec!["observed trigger".to_string(); 3]
+        );
     }
 
     #[test]
