@@ -44,7 +44,7 @@ sha2 = "0.10"
 subtle = "2"
 
 [build-dependencies]
-prost-build = { version = "0.13", optional = true }
+prost-build = { version = "0.14", optional = true }
 
 [dev-dependencies]
 proptest = "1"
