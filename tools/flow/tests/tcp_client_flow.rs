@@ -394,11 +394,7 @@ fn tcp_client_ignores_wrong_ack_syn_ack_until_correct_one_arrives() {
     let peer_data_end = peer_data_seq.wrapping_add(peer_payload.len() as u32);
     let client_fin_end = client_data_end.wrapping_add(1);
     let source = MemoryCaptureSource::new(vec![
-        syn_ack_from_peer(
-            local_port,
-            wrong_peer_iss,
-            client_snd_nxt.wrapping_add(1),
-        ),
+        syn_ack_from_peer(local_port, wrong_peer_iss, client_snd_nxt.wrapping_add(1)),
         syn_ack_from_peer(local_port, PEER_ISS, client_snd_nxt),
         data_from_peer(local_port, peer_data_seq, client_data_end, &peer_payload),
         ack_from_peer(local_port, peer_data_end, client_fin_end),

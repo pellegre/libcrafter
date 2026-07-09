@@ -153,11 +153,7 @@ fn tcp_server_flow_completes_offline_with_client_data_response_and_graceful_clos
         fin_ack_from_client(client_data_end, server_response_end),
         ack_from_client(client_fin_end, server_fin_end),
     ]);
-    let mut flow = server_flow(
-        server_ipv4(),
-        LISTEN_PORT,
-        Some(response_payload.clone()),
-    );
+    let mut flow = server_flow(server_ipv4(), LISTEN_PORT, Some(response_payload.clone()));
     let mut runner = Runner::with_source(RunOptions::default(), source)
         .expect("offline runner opens with scripted TCP client");
 
