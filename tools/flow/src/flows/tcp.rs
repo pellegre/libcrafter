@@ -16,6 +16,7 @@ const TCP_WINDOW: u16 = 64_240;
 const TCP_MSS: u16 = 1_460;
 const TCP_CLIENT_ISS: u32 = 0x1020_3040;
 const TCP_CLIENT_LOCAL_PORT: u16 = 49_152;
+const TCP_SERVER_ISS: u32 = 0x5060_7080;
 
 /// Initial client state: active open has sent or will send SYN.
 pub const SYN_SENT: &str = "SynSent";
@@ -229,12 +230,13 @@ pub fn client_flow(
 
 /// Build the TCP server flow scaffold.
 ///
-/// The address and port arguments are placeholders for the real TCP actions
-/// added by later steps. This scaffold only declares the lifecycle.
-pub fn server_flow(_local_ip: Ipv4Addr, _listen_port: u16) -> Flow {
+/// The server starts in passive-open Listen and answers the first matching SYN.
+/// Later steps add the final handshake ACK and established-state payload
+/// handling.
+pub fn server_flow(local_ip: Ipv4Addr, listen_port: u16) -> Flow {
     let flow = Flow::new("tcp-server")
         .role(Role::Responder)
-        .state(server_listen_state())
+        .state(server_listen_state(local_ip, listen_port))
         .state(stub_state(SYN_RECEIVED, ESTABLISHED))
         .state(stub_state(ESTABLISHED, CLOSE_WAIT))
         .state(stub_state(CLOSE_WAIT, LAST_ACK))
@@ -558,8 +560,56 @@ fn acknowledge_peer_fin(packet: &crafter::Packet, ctx: &mut PacketContext) {
     ctx.set_tcp_rcv_nxt(tcp.sequence_number_value().wrapping_add(1));
 }
 
-fn server_listen_state() -> FlowState {
-    FlowState::new(LISTEN)
+fn server_listen_state(local_ip: Ipv4Addr, listen_port: u16) -> FlowState {
+    FlowState::new(LISTEN).on(server_syn_transition(local_ip, listen_port))
+}
+
+fn server_syn_transition(local_ip: Ipv4Addr, listen_port: u16) -> Transition {
+    let matcher = predicate("tcp SYN to listen port", move |packet, _ctx| {
+        let Some(ipv4) = packet.layer::<crafter::Ipv4>() else {
+            return false;
+        };
+        if ipv4.destination() != local_ip {
+            return false;
+        }
+
+        packet.layer::<crafter::Tcp>().is_some_and(|tcp| {
+            tcp.destination_port_value() == listen_port
+                && tcp.flags_value() == crafter::TCP_FLAG_SYN
+        })
+    });
+
+    Transition::on(matcher, move |packet, ctx| {
+        let ipv4 = packet.layer::<crafter::Ipv4>().ok_or_else(|| {
+            FlowError::Capture("matched TCP SYN packet has no IPv4 layer".to_string())
+        })?;
+        let tcp = packet.layer::<crafter::Tcp>().ok_or_else(|| {
+            FlowError::Capture("matched TCP SYN packet has no TCP layer".to_string())
+        })?;
+        let remote_ip = ipv4.source();
+        let remote_port = tcp.source_port_value();
+        let iss = TCP_SERVER_ISS;
+
+        ctx.set_tcp_local_port(listen_port);
+        ctx.set_tcp_remote_port(remote_port);
+        ctx.set_tcp_remote_ipv4(remote_ip);
+        ctx.set_tcp_rcv_nxt(tcp.sequence_number_value().wrapping_add(1));
+        if let Some(peer_mss) = tcp
+            .parsed_options()?
+            .iter()
+            .find_map(crafter::TcpOption::maximum_segment_size_value)
+        {
+            ctx.set_tcp_peer_mss(peer_mss);
+        }
+        ctx.set_tcp_peer_window(tcp.window_value());
+        ctx.set_tcp_iss(iss);
+        ctx.set_tcp_snd_nxt(iss.wrapping_add(1));
+
+        let syn_ack = syn_ack_segment(ctx, local_ip, listen_port, remote_ip, remote_port);
+
+        Ok(Step::send(syn_ack).goto(SYN_RECEIVED))
+    })
+    .targets([SYN_RECEIVED])
 }
 
 fn stub_state(name: &'static str, next: &'static str) -> FlowState {
@@ -615,7 +665,8 @@ mod tests {
     use super::{
         ack_segment, client_flow, data_segment, fin_segment, server_flow, syn_ack_segment,
         syn_segment, CLOSED, CLOSE_WAIT, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, LAST_ACK, LISTEN,
-        SYN_RECEIVED, SYN_SENT, TCP_CLIENT_ISS, TCP_CLIENT_LOCAL_PORT, TCP_MSS, TCP_WINDOW,
+        SYN_RECEIVED, SYN_SENT, TCP_CLIENT_ISS, TCP_CLIENT_LOCAL_PORT, TCP_MSS, TCP_SERVER_ISS,
+        TCP_WINDOW,
     };
     use std::net::Ipv4Addr;
 
@@ -683,11 +734,85 @@ mod tests {
         );
         let listen = flow.state(LISTEN).expect("Listen state exists");
         assert!(!listen.has_entry(), "Listen must not send on entry");
+        assert_eq!(listen.transitions().len(), 1);
+        let show = flow.show();
         assert!(
-            listen.transitions().is_empty(),
-            "SYN transition is added in the next step"
+            show.contains("tcp SYN to listen port"),
+            "show() missing server SYN transition detail:\n{show}"
+        );
+        assert!(
+            show.contains("-> SynReceived"),
+            "show() missing server SYN transition target:\n{show}"
         );
         flow.validate().expect("TCP server scaffold is valid");
+    }
+
+    #[test]
+    fn tcp_server_listen_transition_records_client_and_sends_syn_ack() {
+        const CLIENT_ISS: u32 = 0x5152_5354;
+        const CLIENT_PORT: u16 = 49_153;
+        const LISTEN_PORT: u16 = 8080;
+        const CLIENT_WINDOW: u16 = 32_768;
+        const CLIENT_MSS: u16 = 1_200;
+
+        let mut flow = server_flow(local_ipv4(), LISTEN_PORT);
+        let mut context = PacketContext::new();
+        let syn = syn_to_server(
+            CLIENT_ISS,
+            CLIENT_PORT,
+            LISTEN_PORT,
+            CLIENT_WINDOW,
+            CLIENT_MSS,
+        );
+        let syn_ack_from_client = syn_ack_to_server(CLIENT_ISS, CLIENT_PORT, LISTEN_PORT);
+
+        {
+            let listen = flow.state(LISTEN).expect("Listen state exists");
+            let transition = &listen.transitions()[0];
+            assert!(transition.matches(&syn, &context));
+            assert!(
+                !transition.matches(&syn_ack_from_client, &context),
+                "Listen transition must require SYN with no ACK"
+            );
+        }
+
+        let step = flow
+            .state_mut(LISTEN)
+            .expect("Listen state exists")
+            .find_transition(&syn, &context)
+            .expect("SYN transition matches")
+            .fire(&syn, &mut context)
+            .expect("SYN transition should fire");
+        let syn_ack = step.outgoing().expect("SYN transition sends SYN-ACK");
+        let ipv4 = syn_ack.layer::<crafter::Ipv4>().expect("IPv4 layer");
+        let tcp = syn_ack.layer::<crafter::Tcp>().expect("TCP layer");
+
+        assert_eq!(context.get_tcp_local_port(), Some(LISTEN_PORT));
+        assert_eq!(context.get_tcp_remote_port(), Some(CLIENT_PORT));
+        assert_eq!(context.get_tcp_remote_ipv4(), Some(remote_ipv4()));
+        assert_eq!(
+            context.get_tcp_rcv_nxt(),
+            Some(CLIENT_ISS.wrapping_add(1))
+        );
+        assert_eq!(context.get_tcp_peer_mss(), Some(CLIENT_MSS));
+        assert_eq!(context.get_tcp_peer_window(), Some(CLIENT_WINDOW));
+        assert_eq!(context.get_tcp_iss(), Some(TCP_SERVER_ISS));
+        assert_eq!(
+            context.get_tcp_snd_nxt(),
+            Some(TCP_SERVER_ISS.wrapping_add(1))
+        );
+        assert_eq!(ipv4.source(), local_ipv4());
+        assert_eq!(ipv4.destination(), remote_ipv4());
+        assert_eq!(tcp.source_port_value(), LISTEN_PORT);
+        assert_eq!(tcp.destination_port_value(), CLIENT_PORT);
+        assert_eq!(tcp.sequence_number_value(), TCP_SERVER_ISS);
+        assert_eq!(
+            tcp.acknowledgment_number_value(),
+            CLIENT_ISS.wrapping_add(1)
+        );
+        assert_eq!(tcp.flags_value(), TCP_FLAG_SYN | TCP_FLAG_ACK);
+        assert_has_mss(tcp);
+        assert_eq!(step.target(), Some(SYN_RECEIVED));
     }
 
     #[test]
@@ -1108,6 +1233,49 @@ mod tests {
             .syn_ack_segment()
             .tcp_option(TcpOption::maximum_segment_size(mss))
             .expect("fixed peer TCP MSS option encodes");
+
+        compiled_ipv4(
+            crafter::Ipv4::new()
+                .src(remote_ipv4())
+                .dst(local_ipv4())
+                .protocol(crafter::IPPROTO_TCP)
+                / tcp,
+        )
+    }
+
+    fn syn_to_server(
+        client_seq: u32,
+        client_port: u16,
+        listen_port: u16,
+        window: u16,
+        mss: u16,
+    ) -> Packet {
+        let tcp = crafter::Tcp::new()
+            .sport(client_port)
+            .dport(listen_port)
+            .seq(client_seq)
+            .window(window)
+            .syn_segment()
+            .tcp_option(TcpOption::maximum_segment_size(mss))
+            .expect("fixed client TCP MSS option encodes");
+
+        compiled_ipv4(
+            crafter::Ipv4::new()
+                .src(remote_ipv4())
+                .dst(local_ipv4())
+                .protocol(crafter::IPPROTO_TCP)
+                / tcp,
+        )
+    }
+
+    fn syn_ack_to_server(client_seq: u32, client_port: u16, listen_port: u16) -> Packet {
+        let tcp = crafter::Tcp::new()
+            .sport(client_port)
+            .dport(listen_port)
+            .seq(client_seq)
+            .ack(TCP_SERVER_ISS.wrapping_add(1))
+            .window(TCP_WINDOW)
+            .syn_ack_segment();
 
         compiled_ipv4(
             crafter::Ipv4::new()
