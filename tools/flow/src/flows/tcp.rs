@@ -208,7 +208,7 @@ pub fn client_flow(
     remote_port: u16,
     payload: Option<Vec<u8>>,
 ) -> Flow {
-    Flow::new("tcp-client")
+    let flow = Flow::new("tcp-client")
         .role(Role::Initiator)
         .state(client_syn_sent_state(local_ip, remote_ip, remote_port))
         .state(client_established_state(
@@ -220,7 +220,11 @@ pub fn client_flow(
         .state(client_fin_wait_1_state(local_ip, remote_ip, remote_port))
         .state(client_fin_wait_2_state(local_ip, remote_ip, remote_port))
         .state(terminal_state(CLOSED))
-        .initial(SYN_SENT)
+        .initial(SYN_SENT);
+
+    flow.validate()
+        .expect("TCP client flow shape should validate");
+    flow
 }
 
 /// Build the TCP server flow scaffold.
@@ -611,7 +615,29 @@ mod tests {
             &flow,
             &[SYN_SENT, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, CLOSED],
         );
-        flow.validate().expect("TCP client scaffold is valid");
+        assert!(flow.validate().is_ok());
+
+        let show = flow.show();
+        for expected in [SYN_SENT, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, CLOSED] {
+            assert!(show.contains(expected), "show() missing state {expected}");
+        }
+        for expected in [
+            "TCP SYN",
+            "flags include 0x012",
+            "-> Established",
+            "TCP PSH-ACK data",
+            "tcp data seq == tcp_rcv_nxt",
+            "-> FinWait1",
+            "TCP FIN-ACK active close",
+            "-> FinWait2",
+            "tcp FIN seq == tcp_rcv_nxt",
+            "-> Closed [terminal]",
+        ] {
+            assert!(
+                show.contains(expected),
+                "show() missing client transition detail {expected:?}:\n{show}"
+            );
+        }
     }
 
     #[test]
