@@ -7,7 +7,10 @@
 
 use std::net::Ipv4Addr;
 
-use crate::{Flow, FlowBuilderExt, FlowState, Role, Step};
+use crate::{Flow, FlowBuilderExt, FlowState, PacketContext, Role, Step};
+
+const TCP_WINDOW: u16 = 64_240;
+const TCP_MSS: u16 = 1_460;
 
 /// Initial client state: active open has sent or will send SYN.
 pub const SYN_SENT: &str = "SynSent";
@@ -29,6 +32,96 @@ pub const CLOSE_WAIT: &str = "CloseWait";
 pub const LAST_ACK: &str = "LastAck";
 /// Terminal server state after graceful close completes.
 pub const CLOSED_SRV: &str = "ClosedSrv";
+
+fn syn_segment(
+    ctx: &PacketContext,
+    local_ip: Ipv4Addr,
+    local_port: u16,
+    remote_ip: Ipv4Addr,
+    remote_port: u16,
+) -> crafter::Packet {
+    ipv4_tcp_packet(
+        local_ip,
+        remote_ip,
+        tcp_with_mss(
+            tcp_header(local_port, remote_port)
+                .seq(tcp_iss(ctx))
+                .syn_segment(),
+        ),
+    )
+}
+
+fn syn_ack_segment(
+    ctx: &PacketContext,
+    local_ip: Ipv4Addr,
+    local_port: u16,
+    remote_ip: Ipv4Addr,
+    remote_port: u16,
+) -> crafter::Packet {
+    ipv4_tcp_packet(
+        local_ip,
+        remote_ip,
+        tcp_with_mss(
+            tcp_header(local_port, remote_port)
+                .seq(tcp_iss(ctx))
+                .ack(tcp_rcv_nxt(ctx))
+                .syn_ack_segment(),
+        ),
+    )
+}
+
+fn ack_segment(
+    ctx: &PacketContext,
+    local_ip: Ipv4Addr,
+    local_port: u16,
+    remote_ip: Ipv4Addr,
+    remote_port: u16,
+) -> crafter::Packet {
+    ipv4_tcp_packet(
+        local_ip,
+        remote_ip,
+        tcp_header(local_port, remote_port)
+            .seq(tcp_snd_nxt(ctx))
+            .ack(tcp_rcv_nxt(ctx))
+            .ack_segment(),
+    )
+}
+
+fn data_segment(
+    ctx: &PacketContext,
+    local_ip: Ipv4Addr,
+    local_port: u16,
+    remote_ip: Ipv4Addr,
+    remote_port: u16,
+    payload: impl AsRef<[u8]>,
+) -> crafter::Packet {
+    ipv4_tcp_packet(
+        local_ip,
+        remote_ip,
+        tcp_header(local_port, remote_port)
+            .seq(tcp_snd_nxt(ctx))
+            .ack(tcp_rcv_nxt(ctx))
+            .ack_segment()
+            .psh(),
+    ) / crafter::Raw::from_bytes(payload)
+}
+
+fn fin_segment(
+    ctx: &PacketContext,
+    local_ip: Ipv4Addr,
+    local_port: u16,
+    remote_ip: Ipv4Addr,
+    remote_port: u16,
+) -> crafter::Packet {
+    ipv4_tcp_packet(
+        local_ip,
+        remote_ip,
+        tcp_header(local_port, remote_port)
+            .seq(tcp_snd_nxt(ctx))
+            .ack(tcp_rcv_nxt(ctx))
+            .fin_ack_segment(),
+    )
+}
 
 /// Build the TCP client flow scaffold.
 ///
@@ -79,13 +172,61 @@ fn terminal_state(name: &'static str) -> FlowState {
         .entry_terminal()
 }
 
+fn ipv4_tcp_packet(local_ip: Ipv4Addr, remote_ip: Ipv4Addr, tcp: crafter::Tcp) -> crafter::Packet {
+    crafter::Ipv4::new()
+        .src(local_ip)
+        .dst(remote_ip)
+        .protocol(crafter::IPPROTO_TCP)
+        / tcp
+}
+
+fn tcp_header(local_port: u16, remote_port: u16) -> crafter::Tcp {
+    crafter::Tcp::new()
+        .sport(local_port)
+        .dport(remote_port)
+        .window(TCP_WINDOW)
+}
+
+fn tcp_with_mss(tcp: crafter::Tcp) -> crafter::Tcp {
+    tcp.tcp_option(crafter::TcpOption::maximum_segment_size(TCP_MSS))
+        .expect("fixed TCP MSS option encodes")
+}
+
+fn tcp_iss(ctx: &PacketContext) -> u32 {
+    ctx.get_tcp_iss()
+        .expect("TCP segment build requires tcp_iss in PacketContext")
+}
+
+fn tcp_snd_nxt(ctx: &PacketContext) -> u32 {
+    ctx.get_tcp_snd_nxt()
+        .expect("TCP segment build requires tcp_snd_nxt in PacketContext")
+}
+
+fn tcp_rcv_nxt(ctx: &PacketContext) -> u32 {
+    ctx.get_tcp_rcv_nxt()
+        .expect("TCP segment build requires tcp_rcv_nxt in PacketContext")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        client_flow, server_flow, CLOSED, CLOSED_SRV, CLOSE_WAIT, ESTABLISHED, FIN_WAIT_1,
-        FIN_WAIT_2, LAST_ACK, LISTEN, SYN_RECEIVED, SYN_SENT,
+        ack_segment, client_flow, data_segment, fin_segment, server_flow, syn_ack_segment,
+        syn_segment, CLOSED, CLOSED_SRV, CLOSE_WAIT, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, LAST_ACK,
+        LISTEN, SYN_RECEIVED, SYN_SENT, TCP_MSS, TCP_WINDOW,
     };
-    use crate::{docaddr, Role};
+    use std::net::Ipv4Addr;
+
+    use crafter::{
+        NetworkLayer, Packet, TcpOption, TCP_FLAG_ACK, TCP_FLAG_FIN, TCP_FLAG_PSH, TCP_FLAG_SYN,
+    };
+
+    use crate::{docaddr, PacketContext, Role};
+
+    const ISS: u32 = 0x2122_2324;
+    const SND_NXT: u32 = 0x3132_3334;
+    const RCV_NXT: u32 = 0x4142_4344;
+    const LOCAL_PORT: u16 = 49_152;
+    const REMOTE_PORT: u16 = 443;
 
     #[test]
     fn tcp_client_flow_exposes_initial_and_named_states() {
@@ -98,7 +239,10 @@ mod tests {
 
         assert_eq!(flow.role(), Role::Initiator);
         assert_eq!(flow.initial(), SYN_SENT);
-        assert_named_states(&flow, &[SYN_SENT, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, CLOSED]);
+        assert_named_states(
+            &flow,
+            &[SYN_SENT, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, CLOSED],
+        );
         flow.validate().expect("TCP client scaffold is valid");
     }
 
@@ -126,5 +270,138 @@ mod tests {
         for name in expected {
             assert!(flow.state(name).is_some(), "missing {name} state");
         }
+    }
+
+    #[test]
+    fn tcp_syn_segment_uses_context_iss_and_mss_option() {
+        let context = tcp_context();
+        let packet = syn_segment(
+            &context,
+            local_ipv4(),
+            LOCAL_PORT,
+            remote_ipv4(),
+            REMOTE_PORT,
+        );
+        let tcp = packet.layer::<crafter::Tcp>().expect("TCP layer");
+
+        assert_eq!(tcp.source_port_value(), LOCAL_PORT);
+        assert_eq!(tcp.destination_port_value(), REMOTE_PORT);
+        assert_eq!(tcp.sequence_number_value(), ISS);
+        assert_eq!(tcp.acknowledgment_number_value(), 0);
+        assert_eq!(tcp.flags_value(), TCP_FLAG_SYN);
+        assert_eq!(tcp.window_value(), TCP_WINDOW);
+        assert_has_mss(tcp);
+    }
+
+    #[test]
+    fn tcp_syn_ack_segment_uses_context_iss_rcv_nxt_and_mss_option() {
+        let context = tcp_context();
+        let packet = syn_ack_segment(
+            &context,
+            local_ipv4(),
+            LOCAL_PORT,
+            remote_ipv4(),
+            REMOTE_PORT,
+        );
+        let tcp = packet.layer::<crafter::Tcp>().expect("TCP layer");
+
+        assert_eq!(tcp.sequence_number_value(), ISS);
+        assert_eq!(tcp.acknowledgment_number_value(), RCV_NXT);
+        assert_eq!(tcp.flags_value(), TCP_FLAG_SYN | TCP_FLAG_ACK);
+        assert_eq!(tcp.window_value(), TCP_WINDOW);
+        assert_has_mss(tcp);
+    }
+
+    #[test]
+    fn tcp_ack_segment_uses_context_snd_nxt_and_rcv_nxt() {
+        let context = tcp_context();
+        let packet = ack_segment(
+            &context,
+            local_ipv4(),
+            LOCAL_PORT,
+            remote_ipv4(),
+            REMOTE_PORT,
+        );
+        let tcp = packet.layer::<crafter::Tcp>().expect("TCP layer");
+
+        assert_eq!(tcp.sequence_number_value(), SND_NXT);
+        assert_eq!(tcp.acknowledgment_number_value(), RCV_NXT);
+        assert_eq!(tcp.flags_value(), TCP_FLAG_ACK);
+        assert_eq!(tcp.window_value(), TCP_WINDOW);
+        assert!(packet.layer::<crafter::Raw>().is_none());
+    }
+
+    #[test]
+    fn tcp_data_segment_uses_context_numbers_and_carries_payload() {
+        let context = tcp_context();
+        let payload = b"hello over tcp";
+        let packet = data_segment(
+            &context,
+            local_ipv4(),
+            LOCAL_PORT,
+            remote_ipv4(),
+            REMOTE_PORT,
+            payload,
+        );
+        let decoded = compiled_ipv4(packet);
+        let ipv4 = decoded.layer::<crafter::Ipv4>().expect("IPv4 layer");
+        let tcp = decoded.layer::<crafter::Tcp>().expect("TCP layer");
+        let raw = decoded.layer::<crafter::Raw>().expect("Raw payload");
+
+        assert_eq!(tcp.sequence_number_value(), SND_NXT);
+        assert_eq!(tcp.acknowledgment_number_value(), RCV_NXT);
+        assert_eq!(tcp.flags_value(), TCP_FLAG_PSH | TCP_FLAG_ACK);
+        assert_eq!(raw.as_bytes(), payload);
+        assert_eq!(
+            ipv4.total_length_value(),
+            Some((ipv4.header_len() + tcp.header_len() + payload.len()) as u16)
+        );
+    }
+
+    #[test]
+    fn tcp_fin_segment_uses_context_snd_nxt_and_rcv_nxt() {
+        let context = tcp_context();
+        let packet = fin_segment(
+            &context,
+            local_ipv4(),
+            LOCAL_PORT,
+            remote_ipv4(),
+            REMOTE_PORT,
+        );
+        let tcp = packet.layer::<crafter::Tcp>().expect("TCP layer");
+
+        assert_eq!(tcp.sequence_number_value(), SND_NXT);
+        assert_eq!(tcp.acknowledgment_number_value(), RCV_NXT);
+        assert_eq!(tcp.flags_value(), TCP_FLAG_FIN | TCP_FLAG_ACK);
+        assert_eq!(tcp.window_value(), TCP_WINDOW);
+    }
+
+    fn tcp_context() -> PacketContext {
+        let mut context = PacketContext::new();
+        context.set_tcp_iss(ISS);
+        context.set_tcp_snd_nxt(SND_NXT);
+        context.set_tcp_rcv_nxt(RCV_NXT);
+        context
+    }
+
+    fn local_ipv4() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn remote_ipv4() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    fn compiled_ipv4(packet: crafter::Packet) -> Packet {
+        let compiled = packet.compile().expect("TCP packet should compile");
+
+        Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())
+            .expect("TCP packet should decode")
+    }
+
+    fn assert_has_mss(tcp: &crafter::Tcp) {
+        let options = tcp.parsed_options().expect("TCP options should decode");
+
+        assert_eq!(options, [TcpOption::maximum_segment_size(TCP_MSS)]);
     }
 }
