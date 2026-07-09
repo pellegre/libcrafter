@@ -36,7 +36,7 @@ pub const CLOSE_WAIT: &str = "CloseWait";
 /// Server passive-close state after sending FIN and awaiting its ACK.
 pub const LAST_ACK: &str = "LastAck";
 /// Terminal server state after graceful close completes.
-pub const CLOSED_SRV: &str = "ClosedSrv";
+pub const CLOSED_SRV: &str = CLOSED;
 
 fn syn_segment(
     ctx: &PacketContext,
@@ -232,15 +232,19 @@ pub fn client_flow(
 /// The address and port arguments are placeholders for the real TCP actions
 /// added by later steps. This scaffold only declares the lifecycle.
 pub fn server_flow(_local_ip: Ipv4Addr, _listen_port: u16) -> Flow {
-    Flow::new("tcp-server")
+    let flow = Flow::new("tcp-server")
         .role(Role::Responder)
-        .state(stub_state(LISTEN, SYN_RECEIVED))
+        .state(server_listen_state())
         .state(stub_state(SYN_RECEIVED, ESTABLISHED))
         .state(stub_state(ESTABLISHED, CLOSE_WAIT))
         .state(stub_state(CLOSE_WAIT, LAST_ACK))
-        .state(stub_state(LAST_ACK, CLOSED_SRV))
-        .state(terminal_state(CLOSED_SRV))
-        .initial(LISTEN)
+        .state(stub_state(LAST_ACK, CLOSED))
+        .state(terminal_state(CLOSED))
+        .initial(LISTEN);
+
+    flow.validate()
+        .expect("TCP server flow shape should validate");
+    flow
 }
 
 fn client_syn_sent_state(local_ip: Ipv4Addr, remote_ip: Ipv4Addr, remote_port: u16) -> FlowState {
@@ -554,6 +558,10 @@ fn acknowledge_peer_fin(packet: &crafter::Packet, ctx: &mut PacketContext) {
     ctx.set_tcp_rcv_nxt(tcp.sequence_number_value().wrapping_add(1));
 }
 
+fn server_listen_state() -> FlowState {
+    FlowState::new(LISTEN)
+}
+
 fn stub_state(name: &'static str, next: &'static str) -> FlowState {
     FlowState::new(name)
         .on_entry(move |_ctx| Ok(Step::goto(next)))
@@ -606,8 +614,8 @@ fn tcp_rcv_nxt(ctx: &PacketContext) -> u32 {
 mod tests {
     use super::{
         ack_segment, client_flow, data_segment, fin_segment, server_flow, syn_ack_segment,
-        syn_segment, CLOSED, CLOSED_SRV, CLOSE_WAIT, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, LAST_ACK,
-        LISTEN, SYN_RECEIVED, SYN_SENT, TCP_CLIENT_ISS, TCP_CLIENT_LOCAL_PORT, TCP_MSS, TCP_WINDOW,
+        syn_segment, CLOSED, CLOSE_WAIT, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, LAST_ACK, LISTEN,
+        SYN_RECEIVED, SYN_SENT, TCP_CLIENT_ISS, TCP_CLIENT_LOCAL_PORT, TCP_MSS, TCP_WINDOW,
     };
     use std::net::Ipv4Addr;
 
@@ -671,14 +679,13 @@ mod tests {
         assert_eq!(flow.initial(), LISTEN);
         assert_named_states(
             &flow,
-            &[
-                LISTEN,
-                SYN_RECEIVED,
-                ESTABLISHED,
-                CLOSE_WAIT,
-                LAST_ACK,
-                CLOSED_SRV,
-            ],
+            &[LISTEN, SYN_RECEIVED, ESTABLISHED, CLOSE_WAIT, LAST_ACK, CLOSED],
+        );
+        let listen = flow.state(LISTEN).expect("Listen state exists");
+        assert!(!listen.has_entry(), "Listen must not send on entry");
+        assert!(
+            listen.transitions().is_empty(),
+            "SYN transition is added in the next step"
         );
         flow.validate().expect("TCP server scaffold is valid");
     }
