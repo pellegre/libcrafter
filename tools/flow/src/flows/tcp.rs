@@ -266,6 +266,7 @@ fn client_syn_sent_state(local_ip: Ipv4Addr, remote_ip: Ipv4Addr, remote_port: u
         })
         .entry_description("TCP SYN")
         .on(client_syn_ack_transition(local_ip, remote_ip, remote_port))
+        .on(client_rst_transition(local_ip, remote_ip, remote_port))
 }
 
 fn client_syn_ack_transition(
@@ -339,6 +340,7 @@ fn client_established_state(
         .entry_description("TCP PSH-ACK data")
         .entry_targets([FIN_WAIT_1])
         .on(client_data_transition(local_ip, remote_ip, remote_port))
+        .on(client_rst_transition(local_ip, remote_ip, remote_port))
 }
 
 fn client_data_transition(
@@ -422,6 +424,7 @@ fn client_fin_wait_1_state(
             remote_ip,
             remote_port,
         ))
+        .on(client_rst_transition(local_ip, remote_ip, remote_port))
 }
 
 fn client_fin_wait_1_ack_transition(
@@ -437,10 +440,10 @@ fn client_fin_wait_1_ack_transition(
         crafter::TCP_FLAG_ACK,
     )
     .ack_matches_tcp_snd_nxt()
-    .and(predicate("tcp ACK segment has no FIN", |packet, _ctx| {
-        packet
-            .layer::<crafter::Tcp>()
-            .is_some_and(|tcp| !tcp.has_fin())
+    .and(predicate("tcp ACK segment has no FIN or RST", |packet, _ctx| {
+        packet.layer::<crafter::Tcp>().is_some_and(|tcp| {
+            !tcp.has_fin() && !tcp.has_flag(crafter::TCP_FLAG_RST)
+        })
     }));
 
     Transition::on(matcher, |_packet, _ctx| Ok(Step::goto(FIN_WAIT_2))).targets([FIN_WAIT_2])
@@ -479,6 +482,26 @@ fn client_fin_wait_2_state(
         remote_ip,
         remote_port,
     ))
+    .on(client_rst_transition(local_ip, remote_ip, remote_port))
+}
+
+fn client_rst_transition(
+    local_ip: Ipv4Addr,
+    remote_ip: Ipv4Addr,
+    remote_port: u16,
+) -> Transition {
+    Transition::on(
+        tcp_segment_for_ipv4(
+            local_ip,
+            TCP_CLIENT_LOCAL_PORT,
+            remote_ip,
+            remote_port,
+            crafter::TCP_FLAG_RST,
+        )
+        .ack_matches_tcp_snd_nxt(),
+        |_packet, _ctx| Ok(Step::goto(CLOSED)),
+    )
+    .targets([CLOSED])
 }
 
 fn client_fin_wait_2_fin_transition(

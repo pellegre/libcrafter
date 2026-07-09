@@ -109,6 +109,22 @@ fn fin_ack_from_peer(local_port: u16, peer_seq: u32, ack: u32) -> crafter::Packe
     )
 }
 
+fn rst_ack_from_peer(local_port: u16, peer_seq: u32, ack: u32) -> crafter::Packet {
+    decode_ipv4(
+        crafter::Ipv4::new()
+            .src(remote_ipv4())
+            .dst(local_ipv4())
+            .protocol(crafter::IPPROTO_TCP)
+            / crafter::Tcp::new()
+                .sport(REMOTE_PORT)
+                .dport(local_port)
+                .seq(peer_seq)
+                .ack(ack)
+                .window(PEER_WINDOW)
+                .rst_ack_segment(),
+    )
+}
+
 fn sent_packet(report: &crafter::net::SendReport) -> crafter::Packet {
     assert!(report.is_dry_run());
     crafter::Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, report.plan().bytes())
@@ -272,6 +288,150 @@ fn tcp_client_flow_completes_offline_with_peer_data_and_graceful_close() {
         peer_data_end.wrapping_add(1)
     );
     assert_eq!(final_ack.flags_value(), crafter::TCP_FLAG_ACK);
+}
+
+#[test]
+fn tcp_client_ignores_stray_segment_for_different_port() {
+    let client_payload = b"client payload".to_vec();
+    let peer_payload = b"server reply".to_vec();
+    let (local_port, _client_iss, client_snd_nxt) = client_syn_numbers(&client_payload);
+    let client_data_end = client_snd_nxt.wrapping_add(client_payload.len() as u32);
+    let peer_data_seq = PEER_ISS.wrapping_add(1);
+    let peer_data_end = peer_data_seq.wrapping_add(peer_payload.len() as u32);
+    let client_fin_end = client_data_end.wrapping_add(1);
+    let source = MemoryCaptureSource::new(vec![
+        data_from_peer(
+            local_port.wrapping_add(1),
+            peer_data_seq,
+            client_data_end,
+            b"stray data",
+        ),
+        syn_ack_from_peer(local_port, PEER_ISS, client_snd_nxt),
+        data_from_peer(local_port, peer_data_seq, client_data_end, &peer_payload),
+        ack_from_peer(local_port, peer_data_end, client_fin_end),
+        fin_ack_from_peer(local_port, peer_data_end, client_fin_end),
+    ]);
+    let mut flow = client_flow(
+        local_ipv4(),
+        remote_ipv4(),
+        REMOTE_PORT,
+        Some(client_payload),
+    );
+    let mut runner = Runner::with_source(RunOptions::default(), source)
+        .expect("offline runner opens with scripted TCP peer");
+
+    let report = runner.run(&mut flow).expect("TCP client flow runs");
+
+    assert_eq!(report.outcome(), &FlowOutcome::Completed);
+    assert_eq!(report.final_state(), Some(CLOSED));
+    assert_eq!(report.received_count(), 5);
+    assert_eq!(
+        report.visited_states(),
+        &[
+            SYN_SENT.to_string(),
+            ESTABLISHED.to_string(),
+            FIN_WAIT_1.to_string(),
+            FIN_WAIT_2.to_string(),
+            CLOSED.to_string(),
+        ]
+    );
+
+    let sent = runner
+        .send_reports()
+        .iter()
+        .map(sent_packet)
+        .collect::<Vec<_>>();
+    assert_eq!(sent.len(), 6);
+    assert_eq!(
+        tcp(&sent[1]).acknowledgment_number_value(),
+        PEER_ISS.wrapping_add(1)
+    );
+}
+
+#[test]
+fn tcp_client_rst_after_handshake_closes_cleanly() {
+    let client_payload = b"client payload before reset".to_vec();
+    let (local_port, _client_iss, client_snd_nxt) = client_syn_numbers(&client_payload);
+    let client_data_end = client_snd_nxt.wrapping_add(client_payload.len() as u32);
+    let source = MemoryCaptureSource::new(vec![
+        syn_ack_from_peer(local_port, PEER_ISS, client_snd_nxt),
+        rst_ack_from_peer(local_port, PEER_ISS.wrapping_add(1), client_data_end),
+    ]);
+    let mut flow = client_flow(
+        local_ipv4(),
+        remote_ipv4(),
+        REMOTE_PORT,
+        Some(client_payload),
+    );
+    let mut runner = Runner::with_source(RunOptions::default(), source)
+        .expect("offline runner opens with scripted TCP peer");
+
+    let report = runner.run(&mut flow).expect("TCP client flow runs");
+
+    assert_eq!(report.outcome(), &FlowOutcome::Completed);
+    assert_eq!(report.final_state(), Some(CLOSED));
+    assert_eq!(report.received_count(), 2);
+    assert_eq!(
+        report.visited_states(),
+        &[
+            SYN_SENT.to_string(),
+            ESTABLISHED.to_string(),
+            CLOSED.to_string(),
+        ]
+    );
+    assert_eq!(report.received_payload(), b"");
+    assert_eq!(runner.send_reports().len(), 3);
+}
+
+#[test]
+fn tcp_client_ignores_wrong_ack_syn_ack_until_correct_one_arrives() {
+    let client_payload = b"client payload".to_vec();
+    let peer_payload = b"server reply".to_vec();
+    let wrong_peer_iss = 0x1112_1314;
+    let (local_port, _client_iss, client_snd_nxt) = client_syn_numbers(&client_payload);
+    let client_data_end = client_snd_nxt.wrapping_add(client_payload.len() as u32);
+    let peer_data_seq = PEER_ISS.wrapping_add(1);
+    let peer_data_end = peer_data_seq.wrapping_add(peer_payload.len() as u32);
+    let client_fin_end = client_data_end.wrapping_add(1);
+    let source = MemoryCaptureSource::new(vec![
+        syn_ack_from_peer(
+            local_port,
+            wrong_peer_iss,
+            client_snd_nxt.wrapping_add(1),
+        ),
+        syn_ack_from_peer(local_port, PEER_ISS, client_snd_nxt),
+        data_from_peer(local_port, peer_data_seq, client_data_end, &peer_payload),
+        ack_from_peer(local_port, peer_data_end, client_fin_end),
+        fin_ack_from_peer(local_port, peer_data_end, client_fin_end),
+    ]);
+    let mut flow = client_flow(
+        local_ipv4(),
+        remote_ipv4(),
+        REMOTE_PORT,
+        Some(client_payload),
+    );
+    let mut runner = Runner::with_source(RunOptions::default(), source)
+        .expect("offline runner opens with scripted TCP peer");
+
+    let report = runner.run(&mut flow).expect("TCP client flow runs");
+
+    assert_eq!(report.outcome(), &FlowOutcome::Completed);
+    assert_eq!(report.final_state(), Some(CLOSED));
+    assert_eq!(report.received_count(), 5);
+
+    let sent = runner
+        .send_reports()
+        .iter()
+        .map(sent_packet)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tcp(&sent[1]).acknowledgment_number_value(),
+        PEER_ISS.wrapping_add(1)
+    );
+    assert_ne!(
+        tcp(&sent[1]).acknowledgment_number_value(),
+        wrong_peer_iss.wrapping_add(1)
+    );
 }
 
 #[test]
