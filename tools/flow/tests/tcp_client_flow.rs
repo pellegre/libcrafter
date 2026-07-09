@@ -1,4 +1,5 @@
 use std::net::Ipv4Addr;
+use std::time::Duration;
 
 use crafter_flow::flows::tcp::{
     client_flow, CLOSED, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, SYN_SENT,
@@ -486,4 +487,51 @@ fn tcp_client_seq_ack_tracks_arbitrary_peer_iss() {
             .wrapping_add(1)
             .wrapping_add(peer_payload.len() as u32)
     );
+}
+
+#[test]
+fn tcp_client_retransmits_syn_bounded_when_no_syn_ack_arrives() {
+    let mut flow = client_flow(
+        local_ipv4(),
+        remote_ipv4(),
+        REMOTE_PORT,
+        Some(b"client".to_vec()),
+    );
+    let options = RunOptions::default()
+        .step_timeout(Duration::from_millis(1))
+        .retransmit(2, Duration::ZERO);
+    let mut runner = Runner::with_source(options, MemoryCaptureSource::default())
+        .expect("offline runner opens with empty TCP peer");
+
+    let report = runner.run(&mut flow).expect("TCP client flow runs");
+
+    assert_eq!(report.outcome(), &FlowOutcome::TimedOut);
+    assert_eq!(report.final_state(), Some(SYN_SENT));
+    assert_eq!(report.received_count(), 0);
+    assert_eq!(report.sent_count(), 3);
+    assert_eq!(runner.send_reports().len(), 3);
+
+    let sent = runner
+        .send_reports()
+        .iter()
+        .map(sent_packet)
+        .collect::<Vec<_>>();
+    let first_syn = tcp(&sent[0]);
+    assert_eq!(first_syn.destination_port_value(), REMOTE_PORT);
+    assert_eq!(first_syn.acknowledgment_number_value(), 0);
+    assert_eq!(first_syn.flags_value(), crafter::TCP_FLAG_SYN);
+    let initial_syn = sent[0]
+        .compile()
+        .expect("initial SYN compiles")
+        .as_ref()
+        .to_vec();
+    for retransmitted in &sent[1..] {
+        assert_eq!(
+            retransmitted
+                .compile()
+                .expect("retransmitted SYN compiles")
+                .as_ref(),
+            initial_syn.as_slice()
+        );
+    }
 }
