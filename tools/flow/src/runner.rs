@@ -524,6 +524,7 @@ impl Runner {
             self.tcp_payload_bytes_sent,
             ctx.tcp_received_payload().to_vec(),
         )
+        .with_tcp_state(ctx.get_tcp_snd_nxt(), ctx.get_tcp_rcv_nxt())
     }
 
     fn run_timeout_elapsed(&self, elapsed: Duration) -> bool {

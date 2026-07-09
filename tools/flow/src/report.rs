@@ -30,6 +30,8 @@ pub struct FlowReport {
     bytes_sent: usize,
     bytes_received: usize,
     received_payload: Vec<u8>,
+    tcp_snd_nxt: Option<u32>,
+    tcp_rcv_nxt: Option<u32>,
     transitions_taken: Vec<String>,
     iterations: u64,
     elapsed: Duration,
@@ -63,6 +65,8 @@ impl FlowReport {
             bytes_sent: 0,
             bytes_received: 0,
             received_payload: Vec::new(),
+            tcp_snd_nxt: None,
+            tcp_rcv_nxt: None,
             transitions_taken,
             iterations,
             elapsed,
@@ -81,6 +85,17 @@ impl FlowReport {
         self.bytes_sent = bytes_sent;
         self.bytes_received = received_payload.len();
         self.received_payload = received_payload;
+        self
+    }
+
+    /// Return a report with final TCP sequence tracking attached.
+    pub const fn with_tcp_state(
+        mut self,
+        tcp_snd_nxt: Option<u32>,
+        tcp_rcv_nxt: Option<u32>,
+    ) -> Self {
+        self.tcp_snd_nxt = tcp_snd_nxt;
+        self.tcp_rcv_nxt = tcp_rcv_nxt;
         self
     }
 
@@ -132,6 +147,16 @@ impl FlowReport {
     /// Return received TCP payload accumulated by this run.
     pub fn received_payload(&self) -> &[u8] {
         &self.received_payload
+    }
+
+    /// Return the final TCP send-next value, if this run tracked one.
+    pub const fn tcp_snd_nxt(&self) -> Option<u32> {
+        self.tcp_snd_nxt
+    }
+
+    /// Return the final TCP receive-next value, if this run tracked one.
+    pub const fn tcp_rcv_nxt(&self) -> Option<u32> {
+        self.tcp_rcv_nxt
     }
 
     /// Return transition descriptions in the order they fired.
@@ -196,9 +221,22 @@ impl FlowReport {
         );
         let _ = writeln!(
             output,
+            "  final state: {}",
+            self.final_state().unwrap_or("none")
+        );
+        let _ = writeln!(
+            output,
             "  payload bytes: sent={}, received={}",
             self.bytes_sent, self.bytes_received
         );
+        if self.tcp_snd_nxt.is_some() || self.tcp_rcv_nxt.is_some() {
+            let _ = writeln!(
+                output,
+                "  tcp state: snd_nxt={}, rcv_nxt={}",
+                format_tcp_number(self.tcp_snd_nxt),
+                format_tcp_number(self.tcp_rcv_nxt)
+            );
+        }
         let _ = writeln!(
             output,
             "  state trace: {} (final={}, bytes_sent={}, bytes_received={})",
@@ -277,6 +315,12 @@ impl FlowReport {
 
         output
     }
+}
+
+fn format_tcp_number(value: Option<u32>) -> String {
+    value
+        .map(|value| format!("0x{value:08x}"))
+        .unwrap_or_else(|| "n/a".to_string())
 }
 
 fn flow_outcome_name(outcome: &FlowOutcome) -> &'static str {
@@ -405,6 +449,41 @@ mod tests {
         assert!(report
             .show()
             .contains("payload bytes: sent=12, received=10"));
+    }
+
+    #[test]
+    fn report_show_includes_tcp_trace_counts_and_final_sequence_state() {
+        let report = FlowReport::new(
+            "tcp-client",
+            Role::Initiator,
+            true,
+            vec![
+                "SynSent".to_string(),
+                "Established".to_string(),
+                "FinWait1".to_string(),
+                "FinWait2".to_string(),
+                "Closed".to_string(),
+            ],
+            5,
+            4,
+            vec!["tcp SYN-ACK".to_string(), "tcp FIN".to_string()],
+            5,
+            Duration::from_millis(9),
+            FlowOutcome::Completed,
+            "PacketContext keys=[tcp_snd_nxt, tcp_rcv_nxt]",
+        )
+        .with_tcp_payload(17, b"server reply".to_vec())
+        .with_tcp_state(Some(0x1020_3052), Some(0x5060_708d));
+
+        let show = report.show();
+
+        assert!(show.contains("role: Initiator"));
+        assert!(
+            show.contains("state trace: SynSent -> Established -> FinWait1 -> FinWait2 -> Closed")
+        );
+        assert!(show.contains("final state: Closed"));
+        assert!(show.contains("payload bytes: sent=17, received=12"));
+        assert!(show.contains("tcp state: snd_nxt=0x10203052, rcv_nxt=0x5060708d"));
     }
 
     #[test]
