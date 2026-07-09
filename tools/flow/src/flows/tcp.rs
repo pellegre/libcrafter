@@ -239,7 +239,7 @@ pub fn server_flow(local_ip: Ipv4Addr, listen_port: u16) -> Flow {
         .role(Role::Responder)
         .state(server_listen_state(local_ip, listen_port))
         .state(server_syn_received_state(local_ip, listen_port))
-        .state(stub_state(ESTABLISHED, CLOSE_WAIT))
+        .state(server_established_state(local_ip, listen_port))
         .state(stub_state(CLOSE_WAIT, LAST_ACK))
         .state(stub_state(LAST_ACK, CLOSED))
         .state(terminal_state(CLOSED))
@@ -569,6 +569,10 @@ fn server_syn_received_state(local_ip: Ipv4Addr, listen_port: u16) -> FlowState 
     FlowState::new(SYN_RECEIVED).on(server_final_ack_transition(local_ip, listen_port))
 }
 
+fn server_established_state(local_ip: Ipv4Addr, listen_port: u16) -> FlowState {
+    FlowState::new(ESTABLISHED).on(server_data_transition(local_ip, listen_port))
+}
+
 fn server_syn_transition(local_ip: Ipv4Addr, listen_port: u16) -> Transition {
     let matcher = predicate("tcp SYN to listen port", move |packet, _ctx| {
         let Some(ipv4) = packet.layer::<crafter::Ipv4>() else {
@@ -650,6 +654,65 @@ fn server_final_ack_matcher(local_ip: Ipv4Addr, listen_port: u16) -> impl crate:
             packet.layer::<crafter::Tcp>().is_some_and(|tcp| {
                 ctx.get_tcp_rcv_nxt() == Some(tcp.sequence_number_value())
             })
+        },
+    )
+}
+
+fn server_data_transition(local_ip: Ipv4Addr, listen_port: u16) -> Transition {
+    Transition::on(server_data_matcher(local_ip, listen_port), move |packet, ctx| {
+        let raw = packet.layer::<crafter::Raw>().ok_or_else(|| {
+            FlowError::Capture("matched TCP server data packet has no Raw payload".to_string())
+        })?;
+        let payload = raw.as_bytes();
+        let rcv_nxt = tcp_rcv_nxt(ctx).wrapping_add(payload.len() as u32);
+
+        ctx.append_tcp_payload(payload);
+        ctx.set_tcp_rcv_nxt(rcv_nxt);
+
+        let remote_ip = ctx.get_tcp_remote_ipv4().ok_or_else(|| {
+            FlowError::Capture("matched TCP server data packet has no remote IPv4".to_string())
+        })?;
+        let remote_port = ctx.get_tcp_remote_port().ok_or_else(|| {
+            FlowError::Capture("matched TCP server data packet has no remote port".to_string())
+        })?;
+        let ack = ack_segment(ctx, local_ip, listen_port, remote_ip, remote_port);
+
+        Ok(Step::send(ack))
+    })
+}
+
+fn server_data_matcher(local_ip: Ipv4Addr, listen_port: u16) -> impl crate::Matcher {
+    predicate(
+        "tcp server data seq == tcp_rcv_nxt and payload length > 0",
+        move |packet, ctx| {
+            let Some(remote_ip) = ctx.get_tcp_remote_ipv4() else {
+                return false;
+            };
+            let Some(remote_port) = ctx.get_tcp_remote_port() else {
+                return false;
+            };
+
+            let matcher = tcp_segment_for_ipv4(
+                local_ip,
+                listen_port,
+                remote_ip,
+                remote_port,
+                crafter::TCP_FLAG_ACK,
+            )
+            .ack_matches_tcp_snd_nxt();
+            if !matcher.matches(packet, ctx) {
+                return false;
+            }
+
+            let Some(tcp) = packet.layer::<crafter::Tcp>() else {
+                return false;
+            };
+            let Some(raw) = packet.layer::<crafter::Raw>() else {
+                return false;
+            };
+
+            !raw.as_bytes().is_empty()
+                && ctx.get_tcp_rcv_nxt() == Some(tcp.sequence_number_value())
         },
     )
 }
@@ -924,6 +987,64 @@ mod tests {
         assert_eq!(step.target(), Some(ESTABLISHED));
         assert_eq!(context.get_tcp_snd_nxt(), Some(server_snd_nxt));
         assert_eq!(context.get_tcp_rcv_nxt(), Some(client_rcv_nxt));
+    }
+
+    #[test]
+    fn tcp_server_established_transition_stores_client_data_and_sends_ack() {
+        const CLIENT_PORT: u16 = 49_153;
+        const LISTEN_PORT: u16 = 8080;
+
+        let payload = b"client request";
+        let mut flow = server_flow(local_ipv4(), LISTEN_PORT);
+        let mut context = tcp_context();
+        context.set_tcp_local_port(LISTEN_PORT);
+        context.set_tcp_remote_port(CLIENT_PORT);
+        context.set_tcp_remote_ipv4(remote_ipv4());
+
+        let client_data = data_to_server(RCV_NXT, SND_NXT, CLIENT_PORT, LISTEN_PORT, payload);
+        let wrong_seq = data_to_server(
+            RCV_NXT.wrapping_add(1),
+            SND_NXT,
+            CLIENT_PORT,
+            LISTEN_PORT,
+            payload,
+        );
+        let client_ack = ack_to_server(RCV_NXT, SND_NXT, CLIENT_PORT, LISTEN_PORT);
+
+        {
+            let established = flow.state(ESTABLISHED).expect("Established state exists");
+            let transition = &established.transitions()[0];
+            assert!(transition.matches(&client_data, &context));
+            assert!(
+                !transition.matches(&wrong_seq, &context),
+                "Established transition must reject out-of-order client data"
+            );
+            assert!(
+                !transition.matches(&client_ack, &context),
+                "Established transition must reject payload-free ACKs"
+            );
+        }
+
+        let step = flow
+            .state_mut(ESTABLISHED)
+            .expect("Established state exists")
+            .find_transition(&client_data, &context)
+            .expect("client data transition matches")
+            .fire(&client_data, &mut context)
+            .expect("client data transition should fire");
+        let ack = step.outgoing().expect("client data transition sends ACK");
+        let tcp = ack.layer::<crafter::Tcp>().expect("TCP layer");
+        let expected_rcv_nxt = RCV_NXT.wrapping_add(payload.len() as u32);
+
+        assert_eq!(context.tcp_received_payload(), payload);
+        assert_eq!(context.get_tcp_rcv_nxt(), Some(expected_rcv_nxt));
+        assert_eq!(tcp.source_port_value(), LISTEN_PORT);
+        assert_eq!(tcp.destination_port_value(), CLIENT_PORT);
+        assert_eq!(tcp.sequence_number_value(), SND_NXT);
+        assert_eq!(tcp.acknowledgment_number_value(), expected_rcv_nxt);
+        assert_eq!(tcp.flags_value(), TCP_FLAG_ACK);
+        assert_eq!(step.target(), None);
+        assert!(step.expects_reply());
     }
 
     #[test]
@@ -1412,6 +1533,32 @@ mod tests {
                 .dst(local_ipv4())
                 .protocol(crafter::IPPROTO_TCP)
                 / tcp,
+        )
+    }
+
+    fn data_to_server(
+        client_seq: u32,
+        ack: u32,
+        client_port: u16,
+        listen_port: u16,
+        payload: impl AsRef<[u8]>,
+    ) -> Packet {
+        let tcp = crafter::Tcp::new()
+            .sport(client_port)
+            .dport(listen_port)
+            .seq(client_seq)
+            .ack(ack)
+            .window(TCP_WINDOW)
+            .ack_segment()
+            .psh();
+
+        compiled_ipv4(
+            crafter::Ipv4::new()
+                .src(remote_ipv4())
+                .dst(local_ipv4())
+                .protocol(crafter::IPPROTO_TCP)
+                / tcp
+                / crafter::Raw::from_bytes(payload),
         )
     }
 
