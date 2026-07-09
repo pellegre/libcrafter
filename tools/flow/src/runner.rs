@@ -65,6 +65,11 @@ impl Matcher for StateTransitionsMatcher<'_> {
     }
 }
 
+struct OutstandingSegment {
+    awaiting_state: String,
+    packet: crafter::Packet,
+}
+
 /// Owns the run options and single conversation for one flow run.
 pub struct Runner {
     options: RunOptions,
@@ -72,6 +77,7 @@ pub struct Runner {
     mutator: Box<dyn Mutator>,
     send_reports: Vec<SendReport>,
     tcp_payload_bytes_sent: usize,
+    outstanding_segment: Option<OutstandingSegment>,
 }
 
 impl Runner {
@@ -140,6 +146,7 @@ impl Runner {
             mutator: Box::new(Identity),
             send_reports: Vec::new(),
             tcp_payload_bytes_sent: 0,
+            outstanding_segment: None,
         })
     }
 
@@ -275,7 +282,9 @@ impl Runner {
                 let Some(timeout) = self.effective_step_timeout(run_started) else {
                     return Ok(IterationResult::TimedOut);
                 };
-                let Some(packet) = self.conversation.recv_matching(&matcher, ctx, timeout)? else {
+                let Some(packet) =
+                    self.recv_matching_with_retransmit(&matcher, current_state, ctx, timeout)?
+                else {
                     return Ok(IterationResult::TimedOut);
                 };
                 packet
@@ -374,8 +383,16 @@ impl Runner {
         iteration: u64,
         ctx: &mut PacketContext,
     ) -> Result<StepAction> {
+        let target = step.target().map(str::to_string);
+        let entered_state = target.is_some();
+        let awaiting_state = target.clone().unwrap_or_else(|| current_state.to_string());
+        let expects_reply = step.expects_reply();
+        let is_terminal = step.is_terminal();
+        let outgoing = step.outgoing().cloned();
+
         if matches!(mode, StepMode::Active) {
-            if let Some(packet) = step.outgoing() {
+            if let Some(packet) = outgoing.as_ref() {
+                let mut last_sent = None;
                 for repeat in 0..self.options.send_repeat.count() {
                     if repeat > 0 {
                         let interval = self.options.send_repeat.interval();
@@ -385,11 +402,20 @@ impl Runner {
                     }
 
                     let packet = self.mutator.mutate(packet.clone(), iteration, ctx)?;
-                    let tcp_payload_bytes = tcp_payload_len(&packet);
-                    let report = self.conversation.send(&packet)?;
-                    self.tcp_payload_bytes_sent += tcp_payload_bytes;
-                    self.send_reports.push(report);
+                    self.send_packet(&packet)?;
+                    last_sent = Some(packet);
                 }
+
+                self.outstanding_segment = if expects_reply {
+                    last_sent.map(|packet| OutstandingSegment {
+                        awaiting_state,
+                        packet,
+                    })
+                } else {
+                    None
+                };
+            } else if target.is_some() || is_terminal {
+                self.outstanding_segment = None;
             }
         }
 
@@ -397,13 +423,11 @@ impl Runner {
             return Ok(StepAction::Settled);
         }
 
-        let target = step.target().map(str::to_string);
-        let entered_state = target.is_some();
         if let Some(target) = target.as_deref() {
             Self::ensure_state(flow, target)?;
         }
 
-        if step.is_terminal() {
+        if is_terminal {
             let state = target.unwrap_or_else(|| current_state.to_string());
             return Ok(StepAction::Terminal(TerminalStep {
                 state,
@@ -415,6 +439,63 @@ impl Runner {
             Some(target) => Ok(StepAction::Enter(target)),
             None => Ok(StepAction::Settled),
         }
+    }
+
+    fn recv_matching_with_retransmit(
+        &mut self,
+        matcher: &dyn Matcher,
+        current_state: &str,
+        ctx: &PacketContext,
+        timeout: Duration,
+    ) -> Result<Option<crafter::Packet>> {
+        let mut retransmits = 0;
+
+        loop {
+            if let Some(packet) = self.conversation.recv_matching(matcher, ctx, timeout)? {
+                return Ok(Some(packet));
+            }
+
+            if !self.retransmit_outstanding(current_state, retransmits)? {
+                return Ok(None);
+            }
+
+            retransmits += 1;
+        }
+    }
+
+    fn retransmit_outstanding(&mut self, current_state: &str, retransmits: u32) -> Result<bool> {
+        let Some(policy) = self.options.retransmit else {
+            return Ok(false);
+        };
+
+        if retransmits >= policy.count() {
+            return Ok(false);
+        }
+
+        let Some(outstanding) = self.outstanding_segment.as_ref() else {
+            return Ok(false);
+        };
+
+        if outstanding.awaiting_state != current_state {
+            return Ok(false);
+        }
+
+        let interval = policy.interval();
+        if !interval.is_zero() {
+            thread::sleep(interval);
+        }
+
+        let packet = outstanding.packet.clone();
+        self.send_packet(&packet)?;
+        Ok(true)
+    }
+
+    fn send_packet(&mut self, packet: &crafter::Packet) -> Result<()> {
+        let tcp_payload_bytes = tcp_payload_len(packet);
+        let report = self.conversation.send(packet)?;
+        self.tcp_payload_bytes_sent += tcp_payload_bytes;
+        self.send_reports.push(report);
+        Ok(())
     }
 
     fn build_report(
@@ -570,6 +651,25 @@ mod tests {
             .state(emit)
             .state(done)
             .initial("Emit")
+    }
+
+    fn waiting_reply_flow(name: &str, packet: crafter::Packet) -> Flow {
+        let transition = Transition::on(
+            PredicateMatcher::new("never matches", |_packet, _ctx| false),
+            |_packet, _ctx| Ok(Step::goto("Done")),
+        )
+        .targets(["Done"]);
+        let waiting = FlowState::new("Waiting")
+            .on_entry(move |_ctx| Ok(Step::send(packet.clone())))
+            .on(transition);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+
+        Flow::new(name)
+            .state(waiting)
+            .state(done)
+            .initial("Waiting")
     }
 
     struct RecordingTimeoutSource {
@@ -1346,6 +1446,44 @@ mod tests {
         assert_eq!(report.outcome(), &FlowOutcome::TimedOut);
         assert_eq!(report.visited_states(), &["Waiting".to_string()]);
         assert_eq!(report.iterations(), 0);
+    }
+
+    #[test]
+    fn runner_without_retransmit_sends_outstanding_segment_once_before_timeout() {
+        let mut flow = waiting_reply_flow("runner-no-retransmit", request_packet());
+        let options = RunOptions::default().step_timeout(Duration::from_millis(1));
+        let mut runner = Runner::with_source(options, MemoryCaptureSource::default())
+            .expect("runner opens with empty source");
+
+        let report = runner
+            .run(&mut flow)
+            .expect("runner returns timeout report");
+
+        assert_eq!(report.outcome(), &FlowOutcome::TimedOut);
+        assert_eq!(report.sent_count(), 1);
+        assert_eq!(runner.send_reports().len(), 1);
+    }
+
+    #[test]
+    fn runner_retransmit_policy_reemits_outstanding_segment_before_timeout() {
+        let mut flow = waiting_reply_flow("runner-retransmit", request_packet());
+        let options = RunOptions::default()
+            .step_timeout(Duration::from_millis(1))
+            .retransmit(2, Duration::ZERO);
+        let mut runner = Runner::with_source(options, MemoryCaptureSource::default())
+            .expect("runner opens with empty source");
+
+        let report = runner
+            .run(&mut flow)
+            .expect("runner returns timeout report");
+
+        assert_eq!(report.outcome(), &FlowOutcome::TimedOut);
+        assert_eq!(report.sent_count(), 3);
+        assert_eq!(runner.send_reports().len(), 3);
+        assert!(runner
+            .send_reports()
+            .iter()
+            .all(crafter::net::SendReport::is_dry_run));
     }
 
     #[test]

@@ -37,6 +37,30 @@ impl Default for SendRepeat {
     }
 }
 
+/// Bounded retransmit policy for an outstanding segment awaiting a reply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetransmitPolicy {
+    count: u32,
+    interval: Duration,
+}
+
+impl RetransmitPolicy {
+    /// Create a policy with `count` re-sends after the initial send.
+    pub const fn new(count: u32, interval: Duration) -> Self {
+        Self { count, interval }
+    }
+
+    /// Number of re-sends after the initial outgoing segment.
+    pub const fn count(self) -> u32 {
+        self.count
+    }
+
+    /// Delay before each re-send.
+    pub const fn interval(self) -> Duration {
+        self.interval
+    }
+}
+
 /// Bundles the binding, loop bound, timeout, and retry knobs for one run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunOptions {
@@ -45,6 +69,7 @@ pub struct RunOptions {
     pub step_timeout: Duration,
     pub run_timeout: Option<Duration>,
     pub send_repeat: SendRepeat,
+    pub retransmit: Option<RetransmitPolicy>,
     pub retries: u32,
     pub capture_filter: Option<String>,
 }
@@ -80,6 +105,18 @@ impl RunOptions {
         self
     }
 
+    /// Re-send an outstanding segment up to `count` times when a receive step times out.
+    pub fn retransmit(mut self, count: u32, interval: Duration) -> Self {
+        self.retransmit = Some(RetransmitPolicy::new(count, interval));
+        self
+    }
+
+    /// Disable outstanding-segment retransmission.
+    pub fn clear_retransmit(mut self) -> Self {
+        self.retransmit = None;
+        self
+    }
+
     /// Set the number of retry attempts.
     pub fn retries(mut self, retries: u32) -> Self {
         self.retries = retries;
@@ -111,6 +148,7 @@ impl Default for RunOptions {
             step_timeout: Duration::from_millis(250),
             run_timeout: None,
             send_repeat: SendRepeat::default(),
+            retransmit: None,
             retries: 1,
             capture_filter: None,
         }
@@ -128,7 +166,7 @@ fn normalize_capture_filter(capture_filter: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{RunOptions, SendRepeat};
+    use super::{RetransmitPolicy, RunOptions, SendRepeat};
     use crate::{Binding, Bound};
     use std::time::Duration;
 
@@ -141,6 +179,7 @@ mod tests {
         assert_eq!(options.step_timeout, Duration::from_millis(250));
         assert_eq!(options.run_timeout, None);
         assert_eq!(options.send_repeat, SendRepeat::default());
+        assert_eq!(options.retransmit, None);
         assert_eq!(options.retries, 1);
         assert_eq!(options.capture_filter, None);
     }
@@ -191,6 +230,25 @@ mod tests {
         let repeat = SendRepeat::new(0, Duration::from_millis(1));
 
         assert_eq!(repeat.count(), 1);
+    }
+
+    #[test]
+    fn run_options_builder_updates_retransmit() {
+        let interval = Duration::from_millis(25);
+        let options = RunOptions::default().retransmit(2, interval);
+
+        assert_eq!(options.retransmit, Some(RetransmitPolicy::new(2, interval)));
+        assert_eq!(options.retransmit.unwrap().count(), 2);
+        assert_eq!(options.retransmit.unwrap().interval(), interval);
+    }
+
+    #[test]
+    fn run_options_builder_clears_retransmit() {
+        let options = RunOptions::default()
+            .retransmit(2, Duration::from_millis(25))
+            .clear_retransmit();
+
+        assert_eq!(options.retransmit, None);
     }
 
     #[test]
