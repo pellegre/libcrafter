@@ -12,6 +12,14 @@ const ASSIGNED_IPV4: &str = "assigned_ipv4";
 const SERVER_IDENTIFIER: &str = "server_identifier";
 const DNS_TRANSACTION_ID: &str = "dns_transaction_id";
 const DNS_QUESTION_NAME: &str = "dns_question_name";
+const TCP_SND_NXT: &str = "tcp_snd_nxt";
+const TCP_RCV_NXT: &str = "tcp_rcv_nxt";
+const TCP_ISS: &str = "tcp_iss";
+const TCP_LOCAL_PORT: &str = "tcp_local_port";
+const TCP_REMOTE_PORT: &str = "tcp_remote_port";
+const TCP_REMOTE_IPV4: &str = "tcp_remote_ipv4";
+const TCP_PEER_MSS: &str = "tcp_peer_mss";
+const TCP_PEER_WINDOW: &str = "tcp_peer_window";
 
 /// Typed in-memory values carried through one flow run.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -139,6 +147,118 @@ impl PacketContext {
         }
     }
 
+    /// Store the next TCP sequence number to send.
+    pub fn set_tcp_snd_nxt(&mut self, value: u32) {
+        self.values
+            .insert(TCP_SND_NXT.to_string(), ContextValue::U32(value));
+    }
+
+    /// Return the next TCP sequence number to send.
+    pub fn get_tcp_snd_nxt(&self) -> Option<u32> {
+        match self.values.get(TCP_SND_NXT) {
+            Some(ContextValue::U32(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Store the next expected peer TCP sequence number.
+    pub fn set_tcp_rcv_nxt(&mut self, value: u32) {
+        self.values
+            .insert(TCP_RCV_NXT.to_string(), ContextValue::U32(value));
+    }
+
+    /// Return the next expected peer TCP sequence number.
+    pub fn get_tcp_rcv_nxt(&self) -> Option<u32> {
+        match self.values.get(TCP_RCV_NXT) {
+            Some(ContextValue::U32(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Store our initial TCP send sequence number.
+    pub fn set_tcp_iss(&mut self, value: u32) {
+        self.values
+            .insert(TCP_ISS.to_string(), ContextValue::U32(value));
+    }
+
+    /// Return our initial TCP send sequence number.
+    pub fn get_tcp_iss(&self) -> Option<u32> {
+        match self.values.get(TCP_ISS) {
+            Some(ContextValue::U32(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Store the local TCP port for the current connection.
+    pub fn set_tcp_local_port(&mut self, value: u16) {
+        self.values
+            .insert(TCP_LOCAL_PORT.to_string(), ContextValue::U16(value));
+    }
+
+    /// Return the local TCP port for the current connection.
+    pub fn get_tcp_local_port(&self) -> Option<u16> {
+        match self.values.get(TCP_LOCAL_PORT) {
+            Some(ContextValue::U16(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Store the remote TCP port for the current connection.
+    pub fn set_tcp_remote_port(&mut self, value: u16) {
+        self.values
+            .insert(TCP_REMOTE_PORT.to_string(), ContextValue::U16(value));
+    }
+
+    /// Return the remote TCP port for the current connection.
+    pub fn get_tcp_remote_port(&self) -> Option<u16> {
+        match self.values.get(TCP_REMOTE_PORT) {
+            Some(ContextValue::U16(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Store the remote IPv4 address for the current TCP connection.
+    pub fn set_tcp_remote_ipv4(&mut self, value: Ipv4Addr) {
+        self.values
+            .insert(TCP_REMOTE_IPV4.to_string(), ContextValue::Ipv4(value));
+    }
+
+    /// Return the remote IPv4 address for the current TCP connection.
+    pub fn get_tcp_remote_ipv4(&self) -> Option<Ipv4Addr> {
+        match self.values.get(TCP_REMOTE_IPV4) {
+            Some(ContextValue::Ipv4(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Store the peer's advertised TCP MSS.
+    pub fn set_tcp_peer_mss(&mut self, value: u16) {
+        self.values
+            .insert(TCP_PEER_MSS.to_string(), ContextValue::U16(value));
+    }
+
+    /// Return the peer's advertised TCP MSS.
+    pub fn get_tcp_peer_mss(&self) -> Option<u16> {
+        match self.values.get(TCP_PEER_MSS) {
+            Some(ContextValue::U16(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Store the peer's advertised TCP window.
+    pub fn set_tcp_peer_window(&mut self, value: u16) {
+        self.values
+            .insert(TCP_PEER_WINDOW.to_string(), ContextValue::U16(value));
+    }
+
+    /// Return the peer's advertised TCP window.
+    pub fn get_tcp_peer_window(&self) -> Option<u16> {
+        match self.values.get(TCP_PEER_WINDOW) {
+            Some(ContextValue::U16(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
     /// Return a compact inspectable list of currently set keys.
     pub fn summary(&self) -> String {
         let keys = self.values.keys().cloned().collect::<Vec<_>>().join(", ");
@@ -186,6 +306,14 @@ mod tests {
 
         assert_eq!(context.get_transaction_id(), None);
         assert_eq!(context.get_offered_ipv4(), None);
+        assert_eq!(context.get_tcp_snd_nxt(), None);
+        assert_eq!(context.get_tcp_rcv_nxt(), None);
+        assert_eq!(context.get_tcp_iss(), None);
+        assert_eq!(context.get_tcp_local_port(), None);
+        assert_eq!(context.get_tcp_remote_port(), None);
+        assert_eq!(context.get_tcp_remote_ipv4(), None);
+        assert_eq!(context.get_tcp_peer_mss(), None);
+        assert_eq!(context.get_tcp_peer_window(), None);
     }
 
     #[test]
@@ -198,5 +326,53 @@ mod tests {
         let summary = context.summary();
         assert!(summary.contains("transaction_id"));
         assert!(summary.contains("offered_ipv4"));
+    }
+
+    #[test]
+    fn context_round_trips_tcp_fields() {
+        let mut context = PacketContext::new();
+        let remote = Ipv4Addr::new(198, 51, 100, 20);
+
+        context.set_tcp_snd_nxt(0x0102_0304);
+        context.set_tcp_rcv_nxt(0x1112_1314);
+        context.set_tcp_iss(0x2122_2324);
+        context.set_tcp_local_port(49_152);
+        context.set_tcp_remote_port(443);
+        context.set_tcp_remote_ipv4(remote);
+        context.set_tcp_peer_mss(1_460);
+        context.set_tcp_peer_window(65_535);
+
+        assert_eq!(context.get_tcp_snd_nxt(), Some(0x0102_0304));
+        assert_eq!(context.get_tcp_rcv_nxt(), Some(0x1112_1314));
+        assert_eq!(context.get_tcp_iss(), Some(0x2122_2324));
+        assert_eq!(context.get_tcp_local_port(), Some(49_152));
+        assert_eq!(context.get_tcp_remote_port(), Some(443));
+        assert_eq!(context.get_tcp_remote_ipv4(), Some(remote));
+        assert_eq!(context.get_tcp_peer_mss(), Some(1_460));
+        assert_eq!(context.get_tcp_peer_window(), Some(65_535));
+    }
+
+    #[test]
+    fn context_summary_lists_set_tcp_keys() {
+        let mut context = PacketContext::new();
+
+        context.set_tcp_snd_nxt(1);
+        context.set_tcp_rcv_nxt(2);
+        context.set_tcp_iss(3);
+        context.set_tcp_local_port(4);
+        context.set_tcp_remote_port(5);
+        context.set_tcp_remote_ipv4(Ipv4Addr::new(203, 0, 113, 9));
+        context.set_tcp_peer_mss(6);
+        context.set_tcp_peer_window(7);
+
+        let summary = context.summary();
+        assert!(summary.contains("tcp_snd_nxt"));
+        assert!(summary.contains("tcp_rcv_nxt"));
+        assert!(summary.contains("tcp_iss"));
+        assert!(summary.contains("tcp_local_port"));
+        assert!(summary.contains("tcp_remote_port"));
+        assert!(summary.contains("tcp_remote_ipv4"));
+        assert!(summary.contains("tcp_peer_mss"));
+        assert!(summary.contains("tcp_peer_window"));
     }
 }
