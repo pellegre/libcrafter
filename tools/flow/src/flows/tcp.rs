@@ -11,6 +11,8 @@ use crate::{Flow, FlowBuilderExt, FlowState, PacketContext, Role, Step};
 
 const TCP_WINDOW: u16 = 64_240;
 const TCP_MSS: u16 = 1_460;
+const TCP_CLIENT_ISS: u32 = 0x1020_3040;
+const TCP_CLIENT_LOCAL_PORT: u16 = 49_152;
 
 /// Initial client state: active open has sent or will send SYN.
 pub const SYN_SENT: &str = "SynSent";
@@ -195,17 +197,17 @@ fn fin_segment(
 
 /// Build the TCP client flow scaffold.
 ///
-/// The address, port, and payload arguments are placeholders for the real TCP
-/// actions added by later steps. This scaffold only declares the lifecycle.
+/// The client starts with an active-open SYN. Later steps add the reply
+/// transitions and payload handling for the rest of the lifecycle.
 pub fn client_flow(
-    _local_ip: Ipv4Addr,
-    _remote_ip: Ipv4Addr,
-    _remote_port: u16,
+    local_ip: Ipv4Addr,
+    remote_ip: Ipv4Addr,
+    remote_port: u16,
     _payload: Option<Vec<u8>>,
 ) -> Flow {
     Flow::new("tcp-client")
         .role(Role::Initiator)
-        .state(stub_state(SYN_SENT, ESTABLISHED))
+        .state(client_syn_sent_state(local_ip, remote_ip, remote_port))
         .state(stub_state(ESTABLISHED, FIN_WAIT_1))
         .state(stub_state(FIN_WAIT_1, FIN_WAIT_2))
         .state(stub_state(FIN_WAIT_2, CLOSED))
@@ -227,6 +229,30 @@ pub fn server_flow(_local_ip: Ipv4Addr, _listen_port: u16) -> Flow {
         .state(stub_state(LAST_ACK, CLOSED_SRV))
         .state(terminal_state(CLOSED_SRV))
         .initial(LISTEN)
+}
+
+fn client_syn_sent_state(local_ip: Ipv4Addr, remote_ip: Ipv4Addr, remote_port: u16) -> FlowState {
+    FlowState::new(SYN_SENT)
+        .on_entry(move |ctx| {
+            let iss = TCP_CLIENT_ISS;
+
+            ctx.set_tcp_iss(iss);
+            ctx.set_tcp_snd_nxt(iss.wrapping_add(1));
+            ctx.set_tcp_local_port(TCP_CLIENT_LOCAL_PORT);
+            ctx.set_tcp_remote_port(remote_port);
+            ctx.set_tcp_remote_ipv4(remote_ip);
+
+            let syn = syn_segment(
+                ctx,
+                local_ip,
+                TCP_CLIENT_LOCAL_PORT,
+                remote_ip,
+                remote_port,
+            );
+
+            Ok(Step::send(syn))
+        })
+        .entry_description("TCP SYN")
 }
 
 fn stub_state(name: &'static str, next: &'static str) -> FlowState {
@@ -282,7 +308,7 @@ mod tests {
     use super::{
         ack_segment, client_flow, data_segment, fin_segment, server_flow, syn_ack_segment,
         syn_segment, CLOSED, CLOSED_SRV, CLOSE_WAIT, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, LAST_ACK,
-        LISTEN, SYN_RECEIVED, SYN_SENT, TCP_MSS, TCP_WINDOW,
+        LISTEN, SYN_RECEIVED, SYN_SENT, TCP_CLIENT_ISS, TCP_CLIENT_LOCAL_PORT, TCP_MSS, TCP_WINDOW,
     };
     use std::net::Ipv4Addr;
 
@@ -334,6 +360,40 @@ mod tests {
             ],
         );
         flow.validate().expect("TCP server scaffold is valid");
+    }
+
+    #[test]
+    fn tcp_client_syn_sent_entry_sends_syn_and_records_initial_state() {
+        let mut flow = client_flow(local_ipv4(), remote_ipv4(), REMOTE_PORT, None);
+        let mut context = PacketContext::new();
+
+        let step = flow
+            .state_mut(SYN_SENT)
+            .expect("SynSent state exists")
+            .run_entry(&mut context)
+            .expect("SynSent entry should run")
+            .expect("SynSent entry should return a step");
+        let packet = step.outgoing().expect("SynSent entry sends SYN");
+        let ipv4 = packet.layer::<crafter::Ipv4>().expect("IPv4 layer");
+        let tcp = packet.layer::<crafter::Tcp>().expect("TCP layer");
+
+        assert_eq!(step.target(), None);
+        assert!(step.expects_reply());
+        assert_eq!(ipv4.source(), local_ipv4());
+        assert_eq!(ipv4.destination(), remote_ipv4());
+        assert_eq!(tcp.source_port_value(), TCP_CLIENT_LOCAL_PORT);
+        assert_eq!(tcp.destination_port_value(), REMOTE_PORT);
+        assert_eq!(tcp.sequence_number_value(), TCP_CLIENT_ISS);
+        assert_eq!(tcp.flags_value(), TCP_FLAG_SYN);
+        assert_has_mss(tcp);
+        assert_eq!(context.get_tcp_iss(), Some(TCP_CLIENT_ISS));
+        assert_eq!(
+            context.get_tcp_snd_nxt(),
+            Some(TCP_CLIENT_ISS.wrapping_add(1))
+        );
+        assert_eq!(context.get_tcp_local_port(), Some(TCP_CLIENT_LOCAL_PORT));
+        assert_eq!(context.get_tcp_remote_port(), Some(REMOTE_PORT));
+        assert_eq!(context.get_tcp_remote_ipv4(), Some(remote_ipv4()));
     }
 
     fn assert_named_states(flow: &crate::Flow, expected: &[&str]) {
