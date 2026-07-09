@@ -25,7 +25,7 @@ pub use crate::Runner;
 pub use crate::{run_tool, ToolRun, ToolRunReport};
 pub use crate::{Flow, FlowBuilderExt};
 pub use crate::{FlowState, FnMutator, Identity, Mutator, Step, StepGotoExt, Transition};
-pub use crate::{RunOptions, SendRepeat};
+pub use crate::{RetransmitPolicy, RunOptions, SendRepeat};
 
 #[cfg(test)]
 mod tests {

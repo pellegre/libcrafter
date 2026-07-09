@@ -34,7 +34,7 @@ pub use error::{FlowError, Result};
 pub use flow::{Flow, FlowBuilderExt};
 pub use matcher::{Matcher, PredicateMatcher};
 pub use mutator::{FnMutator, Identity, Mutator};
-pub use options::{RunOptions, SendRepeat};
+pub use options::{RetransmitPolicy, RunOptions, SendRepeat};
 pub use report::{FlowOutcome, FlowReport};
 pub use role::Role;
 pub use runner::Runner;
