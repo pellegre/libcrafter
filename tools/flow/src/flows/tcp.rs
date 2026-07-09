@@ -229,7 +229,7 @@ pub fn client_flow(
     flow
 }
 
-/// Build the TCP server flow scaffold.
+/// Build the TCP server flow.
 ///
 /// The server starts in passive-open Listen and answers the first matching SYN.
 /// When `response` is set, received client data is answered with that payload.
@@ -975,6 +975,7 @@ mod tests {
 
         assert_eq!(flow.role(), Role::Responder);
         assert_eq!(flow.initial(), LISTEN);
+        assert!(flow.validate().is_ok());
         assert_named_states(
             &flow,
             &[LISTEN, SYN_RECEIVED, ESTABLISHED, CLOSE_WAIT, LAST_ACK, CLOSED],
@@ -983,15 +984,27 @@ mod tests {
         assert!(!listen.has_entry(), "Listen must not send on entry");
         assert_eq!(listen.transitions().len(), 1);
         let show = flow.show();
-        assert!(
-            show.contains("tcp SYN to listen port"),
-            "show() missing server SYN transition detail:\n{show}"
-        );
-        assert!(
-            show.contains("-> SynReceived"),
-            "show() missing server SYN transition target:\n{show}"
-        );
-        flow.validate().expect("TCP server scaffold is valid");
+        for expected in [LISTEN, SYN_RECEIVED, ESTABLISHED, CLOSE_WAIT, LAST_ACK, CLOSED] {
+            assert!(show.contains(expected), "show() missing state {expected}");
+        }
+        for expected in [
+            "tcp SYN to listen port",
+            "-> SynReceived",
+            "tcp final ACK for stored four-tuple",
+            "-> Established",
+            "tcp server data seq == tcp_rcv_nxt",
+            "tcp server FIN seq == tcp_rcv_nxt",
+            "-> CloseWait",
+            "TCP FIN-ACK passive close",
+            "-> LastAck",
+            "tcp server final ACK seq == tcp_rcv_nxt",
+            "-> Closed [terminal]",
+        ] {
+            assert!(
+                show.contains(expected),
+                "show() missing server transition detail {expected:?}:\n{show}"
+            );
+        }
     }
 
     #[test]
