@@ -206,12 +206,17 @@ pub fn client_flow(
     local_ip: Ipv4Addr,
     remote_ip: Ipv4Addr,
     remote_port: u16,
-    _payload: Option<Vec<u8>>,
+    payload: Option<Vec<u8>>,
 ) -> Flow {
     Flow::new("tcp-client")
         .role(Role::Initiator)
         .state(client_syn_sent_state(local_ip, remote_ip, remote_port))
-        .state(stub_state(ESTABLISHED, FIN_WAIT_1))
+        .state(client_established_state(
+            local_ip,
+            remote_ip,
+            remote_port,
+            payload,
+        ))
         .state(stub_state(FIN_WAIT_1, FIN_WAIT_2))
         .state(stub_state(FIN_WAIT_2, CLOSED))
         .state(terminal_state(CLOSED))
@@ -300,6 +305,35 @@ fn client_syn_ack_transition(
         },
     )
     .targets([ESTABLISHED])
+}
+
+fn client_established_state(
+    local_ip: Ipv4Addr,
+    remote_ip: Ipv4Addr,
+    remote_port: u16,
+    payload: Option<Vec<u8>>,
+) -> FlowState {
+    FlowState::new(ESTABLISHED)
+        .on_entry(move |ctx| {
+            let Some(payload) = payload.as_deref() else {
+                return Ok(Step::goto(FIN_WAIT_1));
+            };
+
+            let data = data_segment(
+                ctx,
+                local_ip,
+                TCP_CLIENT_LOCAL_PORT,
+                remote_ip,
+                remote_port,
+                payload,
+            );
+            let snd_nxt = tcp_snd_nxt(ctx).wrapping_add(payload.len() as u32);
+            ctx.set_tcp_snd_nxt(snd_nxt);
+
+            Ok(Step::send(data))
+        })
+        .entry_description("TCP PSH-ACK data")
+        .entry_targets([FIN_WAIT_1])
 }
 
 fn stub_state(name: &'static str, next: &'static str) -> FlowState {
@@ -494,6 +528,47 @@ mod tests {
         assert_eq!(tcp.acknowledgment_number_value(), PEER_ISS.wrapping_add(1));
         assert_eq!(tcp.flags_value(), TCP_FLAG_ACK);
         assert_eq!(step.target(), Some(ESTABLISHED));
+    }
+
+    #[test]
+    fn tcp_client_established_entry_sends_payload_and_advances_snd_nxt() {
+        let payload = b"hello over tcp".to_vec();
+        let mut flow = client_flow(
+            local_ipv4(),
+            remote_ipv4(),
+            REMOTE_PORT,
+            Some(payload.clone()),
+        );
+        let mut context = tcp_context();
+
+        let step = flow
+            .state_mut(ESTABLISHED)
+            .expect("Established state exists")
+            .run_entry(&mut context)
+            .expect("Established entry should run")
+            .expect("Established entry should return a step");
+        let packet = step
+            .outgoing()
+            .expect("Established entry sends payload data");
+        let decoded = compiled_ipv4(packet.clone());
+        let ipv4 = decoded.layer::<crafter::Ipv4>().expect("IPv4 layer");
+        let tcp = decoded.layer::<crafter::Tcp>().expect("TCP layer");
+        let raw = decoded.layer::<crafter::Raw>().expect("Raw payload");
+
+        assert_eq!(step.target(), None);
+        assert!(step.expects_reply());
+        assert_eq!(ipv4.source(), local_ipv4());
+        assert_eq!(ipv4.destination(), remote_ipv4());
+        assert_eq!(tcp.source_port_value(), TCP_CLIENT_LOCAL_PORT);
+        assert_eq!(tcp.destination_port_value(), REMOTE_PORT);
+        assert_eq!(tcp.sequence_number_value(), SND_NXT);
+        assert_eq!(tcp.acknowledgment_number_value(), RCV_NXT);
+        assert_eq!(tcp.flags_value(), TCP_FLAG_PSH | TCP_FLAG_ACK);
+        assert_eq!(raw.as_bytes(), payload.as_slice());
+        assert_eq!(
+            context.get_tcp_snd_nxt(),
+            Some(SND_NXT.wrapping_add(payload.len() as u32))
+        );
     }
 
     fn assert_named_states(flow: &crate::Flow, expected: &[&str]) {
