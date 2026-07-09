@@ -7,7 +7,10 @@
 
 use std::net::Ipv4Addr;
 
-use crate::{Flow, FlowBuilderExt, FlowState, PacketContext, Role, Step};
+use crate::matcher::tcp_segment_for_ipv4;
+use crate::{
+    Flow, FlowBuilderExt, FlowError, FlowState, PacketContext, Role, Step, StepGotoExt, Transition,
+};
 
 const TCP_WINDOW: u16 = 64_240;
 const TCP_MSS: u16 = 1_460;
@@ -253,6 +256,50 @@ fn client_syn_sent_state(local_ip: Ipv4Addr, remote_ip: Ipv4Addr, remote_port: u
             Ok(Step::send(syn))
         })
         .entry_description("TCP SYN")
+        .on(client_syn_ack_transition(local_ip, remote_ip, remote_port))
+}
+
+fn client_syn_ack_transition(
+    local_ip: Ipv4Addr,
+    remote_ip: Ipv4Addr,
+    remote_port: u16,
+) -> Transition {
+    Transition::on(
+        tcp_segment_for_ipv4(
+            local_ip,
+            TCP_CLIENT_LOCAL_PORT,
+            remote_ip,
+            remote_port,
+            crafter::TCP_FLAG_SYN | crafter::TCP_FLAG_ACK,
+        )
+        .ack_matches_tcp_snd_nxt(),
+        move |packet, ctx| {
+            let tcp = packet.layer::<crafter::Tcp>().ok_or_else(|| {
+                FlowError::Capture("matched TCP SYN-ACK packet has no TCP layer".to_string())
+            })?;
+
+            ctx.set_tcp_rcv_nxt(tcp.sequence_number_value().wrapping_add(1));
+            if let Some(peer_mss) = tcp
+                .parsed_options()?
+                .iter()
+                .find_map(crafter::TcpOption::maximum_segment_size_value)
+            {
+                ctx.set_tcp_peer_mss(peer_mss);
+            }
+            ctx.set_tcp_peer_window(tcp.window_value());
+
+            let ack = ack_segment(
+                ctx,
+                local_ip,
+                TCP_CLIENT_LOCAL_PORT,
+                remote_ip,
+                remote_port,
+            );
+
+            Ok(Step::send(ack).goto(ESTABLISHED))
+        },
+    )
+    .targets([ESTABLISHED])
 }
 
 fn stub_state(name: &'static str, next: &'static str) -> FlowState {
@@ -396,6 +443,59 @@ mod tests {
         assert_eq!(context.get_tcp_remote_ipv4(), Some(remote_ipv4()));
     }
 
+    #[test]
+    fn tcp_client_syn_ack_transition_records_peer_and_sends_handshake_ack() {
+        const PEER_ISS: u32 = 0x5152_5354;
+        const PEER_WINDOW: u16 = 32_768;
+        const PEER_MSS: u16 = 1_200;
+
+        let mut flow = client_flow(local_ipv4(), remote_ipv4(), REMOTE_PORT, None);
+        let mut context = PacketContext::new();
+
+        flow.state_mut(SYN_SENT)
+            .expect("SynSent state exists")
+            .run_entry(&mut context)
+            .expect("SynSent entry should run")
+            .expect("SynSent entry should return a step");
+        let client_snd_nxt = context
+            .get_tcp_snd_nxt()
+            .expect("SynSent entry records snd_nxt");
+        let syn_ack = syn_ack_from_peer(PEER_ISS, client_snd_nxt, PEER_WINDOW, PEER_MSS);
+        let wrong_ack = syn_ack_from_peer(
+            PEER_ISS,
+            client_snd_nxt.wrapping_add(1),
+            PEER_WINDOW,
+            PEER_MSS,
+        );
+
+        {
+            let syn_sent = flow.state(SYN_SENT).expect("SynSent state exists");
+            let transition = &syn_sent.transitions()[0];
+            assert!(transition.matches(&syn_ack, &context));
+            assert!(!transition.matches(&wrong_ack, &context));
+        }
+
+        let step = flow
+            .state_mut(SYN_SENT)
+            .expect("SynSent state exists")
+            .find_transition(&syn_ack, &context)
+            .expect("SYN-ACK transition matches")
+            .fire(&syn_ack, &mut context)
+            .expect("SYN-ACK transition should fire");
+        let ack = step.outgoing().expect("SYN-ACK transition sends ACK");
+        let tcp = ack.layer::<crafter::Tcp>().expect("TCP layer");
+
+        assert_eq!(context.get_tcp_rcv_nxt(), Some(PEER_ISS.wrapping_add(1)));
+        assert_eq!(context.get_tcp_peer_mss(), Some(PEER_MSS));
+        assert_eq!(context.get_tcp_peer_window(), Some(PEER_WINDOW));
+        assert_eq!(tcp.source_port_value(), TCP_CLIENT_LOCAL_PORT);
+        assert_eq!(tcp.destination_port_value(), REMOTE_PORT);
+        assert_eq!(tcp.sequence_number_value(), client_snd_nxt);
+        assert_eq!(tcp.acknowledgment_number_value(), PEER_ISS.wrapping_add(1));
+        assert_eq!(tcp.flags_value(), TCP_FLAG_ACK);
+        assert_eq!(step.target(), Some(ESTABLISHED));
+    }
+
     fn assert_named_states(flow: &crate::Flow, expected: &[&str]) {
         for name in expected {
             assert!(flow.state(name).is_some(), "missing {name} state");
@@ -527,6 +627,26 @@ mod tests {
 
         Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())
             .expect("TCP packet should decode")
+    }
+
+    fn syn_ack_from_peer(peer_seq: u32, ack: u32, window: u16, mss: u16) -> Packet {
+        let tcp = crafter::Tcp::new()
+            .sport(REMOTE_PORT)
+            .dport(TCP_CLIENT_LOCAL_PORT)
+            .seq(peer_seq)
+            .ack(ack)
+            .window(window)
+            .syn_ack_segment()
+            .tcp_option(TcpOption::maximum_segment_size(mss))
+            .expect("fixed peer TCP MSS option encodes");
+
+        compiled_ipv4(
+            crafter::Ipv4::new()
+                .src(remote_ipv4())
+                .dst(local_ipv4())
+                .protocol(crafter::IPPROTO_TCP)
+                / tcp,
+        )
     }
 
     fn assert_has_mss(tcp: &crafter::Tcp) {
