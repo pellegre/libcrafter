@@ -594,7 +594,7 @@ fn server_final_ack_transition(local_ip: Ipv4Addr, listen_port: u16) -> Transiti
 
 fn server_final_ack_matcher(local_ip: Ipv4Addr, listen_port: u16) -> impl crate::Matcher {
     predicate(
-        "tcp final ACK for stored four-tuple and seq == tcp_rcv_nxt",
+        "tcp final ACK for stored four-tuple and seq == tcp_rcv_nxt (ACK)",
         move |packet, ctx| {
             let Some(remote_ip) = ctx.get_tcp_remote_ipv4() else {
                 return false;
@@ -726,30 +726,33 @@ fn server_fin_transition(local_ip: Ipv4Addr, listen_port: u16) -> Transition {
 }
 
 fn server_fin_matcher(local_ip: Ipv4Addr, listen_port: u16) -> impl crate::Matcher {
-    predicate("tcp server FIN seq == tcp_rcv_nxt", move |packet, ctx| {
-        let Some(remote_ip) = ctx.get_tcp_remote_ipv4() else {
-            return false;
-        };
-        let Some(remote_port) = ctx.get_tcp_remote_port() else {
-            return false;
-        };
+    predicate(
+        "tcp server FIN seq == tcp_rcv_nxt (FIN|ACK)",
+        move |packet, ctx| {
+            let Some(remote_ip) = ctx.get_tcp_remote_ipv4() else {
+                return false;
+            };
+            let Some(remote_port) = ctx.get_tcp_remote_port() else {
+                return false;
+            };
 
-        let matcher = tcp_segment_for_ipv4(
-            local_ip,
-            listen_port,
-            remote_ip,
-            remote_port,
-            crafter::TCP_FLAG_FIN | crafter::TCP_FLAG_ACK,
-        )
-        .ack_matches_tcp_snd_nxt();
-        if !matcher.matches(packet, ctx) {
-            return false;
-        }
+            let matcher = tcp_segment_for_ipv4(
+                local_ip,
+                listen_port,
+                remote_ip,
+                remote_port,
+                crafter::TCP_FLAG_FIN | crafter::TCP_FLAG_ACK,
+            )
+            .ack_matches_tcp_snd_nxt();
+            if !matcher.matches(packet, ctx) {
+                return false;
+            }
 
-        packet
-            .layer::<crafter::Tcp>()
-            .is_some_and(|tcp| ctx.get_tcp_rcv_nxt() == Some(tcp.sequence_number_value()))
-    })
+            packet
+                .layer::<crafter::Tcp>()
+                .is_some_and(|tcp| ctx.get_tcp_rcv_nxt() == Some(tcp.sequence_number_value()))
+        },
+    )
 }
 
 fn acknowledge_server_peer_fin(packet: &crafter::Packet, ctx: &mut PacketContext) {
@@ -806,7 +809,7 @@ fn server_last_ack_transition(local_ip: Ipv4Addr, listen_port: u16) -> Transitio
 
 fn server_last_ack_matcher(local_ip: Ipv4Addr, listen_port: u16) -> impl crate::Matcher {
     predicate(
-        "tcp server final ACK seq == tcp_rcv_nxt and ack == tcp_snd_nxt",
+        "tcp server final ACK seq == tcp_rcv_nxt and ack == tcp_snd_nxt (ACK)",
         move |packet, ctx| {
             let Some(remote_ip) = ctx.get_tcp_remote_ipv4() else {
                 return false;
@@ -938,6 +941,7 @@ mod tests {
         for expected in [
             "TCP SYN",
             "flags include 0x012",
+            "(SYN|ACK)",
             "-> Established",
             "TCP PSH-ACK data",
             "tcp data seq == tcp_rcv_nxt",
@@ -945,6 +949,7 @@ mod tests {
             "TCP FIN-ACK active close",
             "-> FinWait2",
             "tcp FIN seq == tcp_rcv_nxt",
+            "(FIN|ACK)",
             "-> Closed [terminal]",
         ] {
             assert!(
@@ -990,9 +995,11 @@ mod tests {
             "tcp SYN to listen port",
             "-> SynReceived",
             "tcp final ACK for stored four-tuple",
+            "(ACK)",
             "-> Established",
             "tcp server data seq == tcp_rcv_nxt",
             "tcp server FIN seq == tcp_rcv_nxt",
+            "(FIN|ACK)",
             "-> CloseWait",
             "TCP FIN-ACK passive close",
             "-> LastAck",

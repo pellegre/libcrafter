@@ -104,9 +104,7 @@ impl Matcher for TcpSegmentMatcher {
         }
 
         match &self.ack_predicate {
-            Some(predicate) => {
-                (predicate.predicate)(tcp.acknowledgment_number_value(), ctx)
-            }
+            Some(predicate) => (predicate.predicate)(tcp.acknowledgment_number_value(), ctx),
             None => true,
         }
     }
@@ -117,8 +115,12 @@ impl Matcher for TcpSegmentMatcher {
             None => format!("*:{}", self.local_port),
         };
         let mut description = format!(
-            "tcp segment {}:{} -> {} flags include 0x{:03x}",
-            self.remote_ipv4, self.remote_port, local, self.required_flags
+            "tcp segment {}:{} -> {} flags include 0x{:03x} ({})",
+            self.remote_ipv4,
+            self.remote_port,
+            local,
+            self.required_flags,
+            flag_names(self.required_flags),
         );
 
         if let Some(predicate) = &self.ack_predicate {
@@ -127,6 +129,41 @@ impl Matcher for TcpSegmentMatcher {
         }
 
         description
+    }
+}
+
+fn flag_names(flags: u16) -> String {
+    let known_flags = [
+        (crafter::TCP_FLAG_FIN, "FIN"),
+        (crafter::TCP_FLAG_SYN, "SYN"),
+        (crafter::TCP_FLAG_RST, "RST"),
+        (crafter::TCP_FLAG_PSH, "PSH"),
+        (crafter::TCP_FLAG_ACK, "ACK"),
+        (crafter::TCP_FLAG_URG, "URG"),
+        (crafter::TCP_FLAG_ECE, "ECE"),
+        (crafter::TCP_FLAG_CWR, "CWR"),
+        (crafter::TCP_FLAG_NS, "NS"),
+        (crafter::TCP_FLAG_AE, "AE"),
+    ];
+    let mut names = Vec::new();
+    let mut known_bits = 0;
+
+    for (flag, name) in known_flags {
+        known_bits |= flag;
+        if flags & flag != 0 {
+            names.push(name.to_string());
+        }
+    }
+
+    let unknown_bits = flags & !known_bits;
+    if unknown_bits != 0 {
+        names.push(format!("0x{unknown_bits:03x}"));
+    }
+
+    if names.is_empty() {
+        "none".to_string()
+    } else {
+        names.join("|")
     }
 }
 
@@ -219,6 +256,7 @@ mod tests {
 
         assert!(matcher.matches(&packet, &context));
         assert!(matcher.describe().contains("flags include 0x012"));
+        assert!(matcher.describe().contains("(SYN|ACK)"));
     }
 
     #[test]
