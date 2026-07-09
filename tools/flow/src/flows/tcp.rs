@@ -51,6 +51,76 @@ fn syn_segment(
     )
 }
 
+#[cfg(test)]
+mod api_check {
+    use std::net::Ipv4Addr;
+
+    use crafter::{
+        Ipv4, NetworkLayer, Packet, Tcp, TcpOption, IPPROTO_TCP, TCP_FLAG_ACK, TCP_FLAG_FIN,
+        TCP_FLAG_PSH, TCP_FLAG_RST, TCP_FLAG_SYN,
+    };
+
+    use super::{TCP_MSS, TCP_WINDOW};
+
+    #[test]
+    fn tcp_builder_and_accessor_surface_round_trips() {
+        const LOCAL_PORT: u16 = 49_152;
+        const REMOTE_PORT: u16 = 443;
+        const SEQ: u32 = 0x1020_3040;
+        const ACK: u32 = 0x5060_7080;
+
+        assert_eq!(Tcp::new().syn_segment().flags_value(), TCP_FLAG_SYN);
+        assert_eq!(
+            Tcp::new().syn_ack_segment().flags_value(),
+            TCP_FLAG_SYN | TCP_FLAG_ACK
+        );
+        assert_eq!(Tcp::new().fin_ack_segment().flags_value(), TCP_FLAG_FIN | TCP_FLAG_ACK);
+
+        let tcp = Tcp::new()
+            .sport(LOCAL_PORT)
+            .dport(REMOTE_PORT)
+            .seq(SEQ)
+            .ack(ACK)
+            .window(TCP_WINDOW)
+            .syn_segment()
+            .ack_segment()
+            .syn()
+            .fin()
+            .psh()
+            .rst()
+            .tcp_option(TcpOption::maximum_segment_size(TCP_MSS))
+            .expect("fixed TCP MSS option encodes");
+
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            .protocol(IPPROTO_TCP)
+            / tcp;
+        let compiled = packet.compile().expect("TCP packet should compile");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())
+            .expect("TCP packet should decode");
+        let tcp = decoded.layer::<Tcp>().expect("TCP layer");
+
+        let expected_flags =
+            TCP_FLAG_SYN | TCP_FLAG_ACK | TCP_FLAG_FIN | TCP_FLAG_PSH | TCP_FLAG_RST;
+        assert_eq!(tcp.source_port_value(), LOCAL_PORT);
+        assert_eq!(tcp.destination_port_value(), REMOTE_PORT);
+        assert_eq!(tcp.sequence_number_value(), SEQ);
+        assert_eq!(tcp.acknowledgment_number_value(), ACK);
+        assert_eq!(tcp.window_value(), TCP_WINDOW);
+        assert_eq!(tcp.flags_value(), expected_flags);
+        assert!(tcp.has_syn());
+        assert!(tcp.has_fin());
+        assert!(tcp.has_flag(TCP_FLAG_ACK));
+        assert!(tcp.has_flag(TCP_FLAG_PSH));
+        assert!(tcp.has_flag(TCP_FLAG_RST));
+        assert_eq!(
+            tcp.parsed_options().expect("TCP options should decode"),
+            [TcpOption::maximum_segment_size(TCP_MSS)]
+        );
+    }
+}
+
 fn syn_ack_segment(
     ctx: &PacketContext,
     local_ip: Ipv4Addr,
