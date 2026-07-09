@@ -71,6 +71,7 @@ pub struct Runner {
     conversation: Conversation,
     mutator: Box<dyn Mutator>,
     send_reports: Vec<SendReport>,
+    tcp_payload_bytes_sent: usize,
 }
 
 impl Runner {
@@ -138,6 +139,7 @@ impl Runner {
             conversation,
             mutator: Box::new(Identity),
             send_reports: Vec::new(),
+            tcp_payload_bytes_sent: 0,
         })
     }
 
@@ -383,7 +385,9 @@ impl Runner {
                     }
 
                     let packet = self.mutator.mutate(packet.clone(), iteration, ctx)?;
+                    let tcp_payload_bytes = tcp_payload_len(&packet);
                     let report = self.conversation.send(&packet)?;
+                    self.tcp_payload_bytes_sent += tcp_payload_bytes;
                     self.send_reports.push(report);
                 }
             }
@@ -435,6 +439,10 @@ impl Runner {
             outcome,
             ctx.summary(),
         )
+        .with_tcp_payload(
+            self.tcp_payload_bytes_sent,
+            ctx.tcp_received_payload().to_vec(),
+        )
     }
 
     fn run_timeout_elapsed(&self, elapsed: Duration) -> bool {
@@ -478,6 +486,18 @@ impl Runner {
             state
         )))
     }
+}
+
+fn tcp_payload_len(packet: &crafter::Packet) -> usize {
+    if packet.layer::<crafter::Tcp>().is_none() {
+        return 0;
+    }
+
+    packet
+        .layers::<crafter::Raw>()
+        .map(crafter::Raw::as_bytes)
+        .map(<[u8]>::len)
+        .sum()
 }
 
 #[cfg(test)]

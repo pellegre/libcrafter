@@ -20,6 +20,7 @@ const TCP_REMOTE_PORT: &str = "tcp_remote_port";
 const TCP_REMOTE_IPV4: &str = "tcp_remote_ipv4";
 const TCP_PEER_MSS: &str = "tcp_peer_mss";
 const TCP_PEER_WINDOW: &str = "tcp_peer_window";
+const TCP_RECEIVED_PAYLOAD: &str = "tcp_received_payload";
 
 /// Typed in-memory values carried through one flow run.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -259,6 +260,27 @@ impl PacketContext {
         }
     }
 
+    /// Append received TCP payload bytes for the current connection.
+    pub fn append_tcp_payload(&mut self, bytes: &[u8]) {
+        match self.values.get_mut(TCP_RECEIVED_PAYLOAD) {
+            Some(ContextValue::Bytes(value)) => value.extend_from_slice(bytes),
+            Some(_) | None => {
+                self.values.insert(
+                    TCP_RECEIVED_PAYLOAD.to_string(),
+                    ContextValue::Bytes(bytes.to_vec()),
+                );
+            }
+        }
+    }
+
+    /// Return received TCP payload bytes accumulated for the current connection.
+    pub fn tcp_received_payload(&self) -> &[u8] {
+        match self.values.get(TCP_RECEIVED_PAYLOAD) {
+            Some(ContextValue::Bytes(value)) => value.as_slice(),
+            _ => &[],
+        }
+    }
+
     /// Return a compact inspectable list of currently set keys.
     pub fn summary(&self) -> String {
         let keys = self.values.keys().cloned().collect::<Vec<_>>().join(", ");
@@ -314,6 +336,7 @@ mod tests {
         assert_eq!(context.get_tcp_remote_ipv4(), None);
         assert_eq!(context.get_tcp_peer_mss(), None);
         assert_eq!(context.get_tcp_peer_window(), None);
+        assert_eq!(context.tcp_received_payload(), b"");
     }
 
     #[test]
@@ -353,6 +376,16 @@ mod tests {
     }
 
     #[test]
+    fn context_appends_tcp_payload_chunks() {
+        let mut context = PacketContext::new();
+
+        context.append_tcp_payload(b"hello ");
+        context.append_tcp_payload(b"peer");
+
+        assert_eq!(context.tcp_received_payload(), b"hello peer");
+    }
+
+    #[test]
     fn context_summary_lists_set_tcp_keys() {
         let mut context = PacketContext::new();
 
@@ -364,6 +397,7 @@ mod tests {
         context.set_tcp_remote_ipv4(Ipv4Addr::new(203, 0, 113, 9));
         context.set_tcp_peer_mss(6);
         context.set_tcp_peer_window(7);
+        context.append_tcp_payload(b"abc");
 
         let summary = context.summary();
         assert!(summary.contains("tcp_snd_nxt"));
@@ -374,5 +408,6 @@ mod tests {
         assert!(summary.contains("tcp_remote_ipv4"));
         assert!(summary.contains("tcp_peer_mss"));
         assert!(summary.contains("tcp_peer_window"));
+        assert!(summary.contains("tcp_received_payload"));
     }
 }
