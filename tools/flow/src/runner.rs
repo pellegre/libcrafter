@@ -529,6 +529,21 @@ mod tests {
             / crafter::Dns::a_query("example.com").id(0x1234)
     }
 
+    fn tcp_payload_packet(payload: impl AsRef<[u8]>) -> crafter::Packet {
+        crafter::Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            .protocol(crafter::IPPROTO_TCP)
+            / crafter::Tcp::new()
+                .sport(49_152)
+                .dport(443)
+                .seq(0x1000)
+                .ack(0x2000)
+                .ack_segment()
+                .psh()
+            / crafter::Raw::from_bytes(payload)
+    }
+
     fn arp_frame() -> crafter::Packet {
         let sender_mac = crafter::MacAddr::new([0x02, 0x00, 0x00, 0x00, 0x00, 0x31]);
 
@@ -1129,8 +1144,8 @@ mod tests {
 
     #[test]
     fn runner_report_completed_two_state_flow_lists_states_and_counts_sent_packets() {
-        let request = request_packet();
-        let reply = raw_packet([0xc0, 0xff, 0xee]);
+        let request = tcp_payload_packet(b"client");
+        let reply = tcp_payload_packet(b"peer");
         let expected_reply = compiled_bytes(&reply);
         let transition = Transition::on(
             PredicateMatcher::new("coffee reply", move |packet, _ctx| {
@@ -1139,7 +1154,12 @@ mod tests {
                     .map(|bytes| bytes.as_ref() == expected_reply.as_slice())
                     .unwrap_or(false)
             }),
-            |_packet, _ctx| Ok(Step::done().goto("Done")),
+            |packet, ctx| {
+                for raw in packet.layers::<crafter::Raw>() {
+                    ctx.append_tcp_payload(raw.as_bytes());
+                }
+                Ok(Step::done().goto("Done"))
+            },
         )
         .targets(["Done"])
         .terminal();
@@ -1162,7 +1182,13 @@ mod tests {
             report.visited_states(),
             &["Start".to_string(), "Done".to_string()]
         );
+        assert_eq!(report.final_state(), Some("Done"));
         assert!(report.sent_count() >= 1);
+        assert_eq!(report.bytes_sent(), 6);
+        assert_eq!(report.bytes_received(), 4);
+        assert_eq!(report.received_payload(), b"peer");
+        assert!(report.summary().contains("state_trace=Start -> Done"));
+        assert!(report.show().contains("state trace: Start -> Done"));
     }
 
     #[test]

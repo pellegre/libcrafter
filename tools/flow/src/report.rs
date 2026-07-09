@@ -104,6 +104,11 @@ impl FlowReport {
         &self.visited_states
     }
 
+    /// Return the final state name recorded by the runner.
+    pub fn final_state(&self) -> Option<&str> {
+        self.visited_states.last().map(String::as_str)
+    }
+
     /// Return the number of packets sent or planned.
     pub const fn sent_count(&self) -> usize {
         self.sent_count
@@ -157,12 +162,13 @@ impl FlowReport {
     /// Return a compact one-line description of this run.
     pub fn summary(&self) -> String {
         format!(
-            "FlowReport '{}' ({:?}, dry_run={}): {:?}, states={}, sent={}, received={}, bytes_sent={}, bytes_received={}, transitions={}, iterations={}, elapsed={:?}",
+            "FlowReport '{}' ({:?}, dry_run={}): {:?}, state_trace={}, final_state={}, sent={}, received={}, bytes_sent={}, bytes_received={}, transitions={}, iterations={}, elapsed={:?}",
             self.flow_name,
             self.role,
             self.dry_run,
             self.outcome,
-            self.visited_states.len(),
+            self.state_trace(),
+            self.final_state().unwrap_or("none"),
             self.sent_count,
             self.received_count,
             self.bytes_sent,
@@ -193,6 +199,14 @@ impl FlowReport {
             "  payload bytes: sent={}, received={}",
             self.bytes_sent, self.bytes_received
         );
+        let _ = writeln!(
+            output,
+            "  state trace: {} (final={}, bytes_sent={}, bytes_received={})",
+            self.state_trace(),
+            self.final_state().unwrap_or("none"),
+            self.bytes_sent,
+            self.bytes_received
+        );
         let _ = writeln!(output, "  visited states:");
         if self.visited_states.is_empty() {
             let _ = writeln!(output, "    none");
@@ -212,6 +226,14 @@ impl FlowReport {
         let _ = writeln!(output, "  context: {}", self.context_snapshot);
 
         output
+    }
+
+    fn state_trace(&self) -> String {
+        if self.visited_states.is_empty() {
+            "none".to_string()
+        } else {
+            self.visited_states.join(" -> ")
+        }
     }
 
     /// Return a compact JSON artifact for this run.
@@ -335,6 +357,7 @@ mod tests {
         assert_eq!(report.bytes_sent(), 0);
         assert_eq!(report.bytes_received(), 0);
         assert_eq!(report.received_payload(), b"");
+        assert_eq!(report.final_state(), Some("Done"));
         assert_eq!(report.transitions_taken(), &["reply packet".to_string()]);
         assert_eq!(report.iterations(), 1);
         assert_eq!(report.elapsed(), Duration::from_millis(7));
@@ -345,9 +368,14 @@ mod tests {
         );
         assert!(report.summary().contains("example-flow"));
         assert!(report.summary().contains("dry_run=true"));
+        assert!(report.summary().contains("state_trace=Start -> Done"));
+        assert!(report.summary().contains("final_state=Done"));
         assert!(report.summary().contains("bytes_sent=0"));
         assert!(report.show().contains("dry-run: true"));
         assert!(report.show().contains("payload bytes: sent=0, received=0"));
+        assert!(report
+            .show()
+            .contains("state trace: Start -> Done (final=Done"));
         assert!(report.show().contains("reply packet"));
     }
 
@@ -371,6 +399,7 @@ mod tests {
         assert_eq!(report.bytes_sent(), 12);
         assert_eq!(report.bytes_received(), 10);
         assert_eq!(report.received_payload(), b"peer-bytes");
+        assert_eq!(report.final_state(), Some("Established"));
         assert!(report.summary().contains("bytes_sent=12"));
         assert!(report.summary().contains("bytes_received=10"));
         assert!(report
