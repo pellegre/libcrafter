@@ -11,14 +11,34 @@ lab or provider endpoint.
 ## Client Lifecycle
 
 The client template performs an active open and carries the connection through
-these states:
+this state machine:
 
-- `SynSent`: send the initial SYN with the local initial sequence number.
-- `Established`: accept the peer SYN-ACK, acknowledge it, send configured data,
-  and acknowledge peer data.
-- `FinWait1`: send the active-close FIN and wait for the peer acknowledgement.
-- `FinWait2`: wait for the peer FIN after the local FIN is acknowledged.
-- `Closed`: send the final ACK and finish the flow report.
+```text
+SynSent
+  entry: send SYN, store local ISS, local port, remote port, remote IPv4
+  SYN|ACK with ack == snd_nxt -> store peer rcv_nxt, send ACK -> Established
+  RST with ack == snd_nxt -> Closed
+
+Established
+  entry: optionally send one PSH|ACK data segment and advance snd_nxt
+  ACK with payload, seq == rcv_nxt, ack == snd_nxt
+    -> store payload, advance rcv_nxt, send ACK -> FinWait1
+  no configured payload or zero send window -> FinWait1
+  RST with ack == snd_nxt -> Closed
+
+FinWait1
+  entry: send FIN|ACK and advance snd_nxt
+  ACK of local FIN -> FinWait2
+  FIN|ACK from peer -> advance rcv_nxt, send final ACK -> Closed
+  RST with ack == snd_nxt -> Closed
+
+FinWait2
+  FIN|ACK from peer -> advance rcv_nxt, send final ACK -> Closed
+  RST with ack == snd_nxt -> Closed
+
+Closed
+  terminal report state
+```
 
 The client only advances when the received TCP segment belongs to the learned
 four-tuple and acknowledges the current local send-next value. Peer data updates
@@ -27,15 +47,34 @@ the receive-next value before the next acknowledgement is emitted.
 ## Server Lifecycle
 
 The server template performs a passive open and carries the connection through
-these states:
+this state machine:
 
-- `Listen`: wait for a SYN on the configured local address and port.
-- `SynReceived`: answer with SYN-ACK and wait for the final handshake ACK.
-- `Established`: receive client data, acknowledge it, and optionally emit one
-  configured response segment.
-- `CloseWait`: acknowledge the peer FIN after the peer starts the close.
-- `LastAck`: send the server FIN and wait for the peer ACK.
-- `Closed`: finish after the server FIN is acknowledged.
+```text
+Listen
+  SYN to local address and listen port
+    -> store remote IPv4/port, peer rcv_nxt, local ISS, send SYN|ACK
+    -> SynReceived
+
+SynReceived
+  ACK with seq == rcv_nxt and ack == snd_nxt -> Established
+
+Established
+  ACK with payload, seq == rcv_nxt, ack == snd_nxt
+    -> store payload, advance rcv_nxt, send ACK or one PSH|ACK response
+    -> Established
+  FIN|ACK with seq == rcv_nxt, ack == snd_nxt
+    -> store any FIN payload, advance rcv_nxt, send ACK -> CloseWait
+
+CloseWait
+  entry: send FIN|ACK and advance snd_nxt -> LastAck
+
+LastAck
+  ACK with seq == rcv_nxt, ack == snd_nxt, no payload, no FIN, no RST
+    -> Closed
+
+Closed
+  terminal report state
+```
 
 The server learns the remote address and port from the SYN. Later segments must
 match that connection tuple and the current sequence/acknowledgement state before
@@ -57,6 +96,26 @@ Outgoing ACK, data, and FIN segments are built from that carried state. Values
 set explicitly by the flow remain visible in the emitted packets, while normal
 packet compilation still fills lower-level lengths and checksums.
 
+The peer's initial sequence number is not assumed. Each acknowledgement is
+derived from the latest accepted peer SYN, payload, or FIN, and every later
+outgoing sequence number is derived from the local send-next carried across
+earlier SYN, data, and FIN sends.
+
+## Validation Status
+
+The TCP client and TCP server were validated offline with scripted in-memory
+packets, with the client and server flows driving each other without a network,
+and live against real `netcat` peers in an isolated lab:
+
+- `crafter-flow` TCP client to a `netcat` server: handshake, payload send,
+  payload receive, and graceful close.
+- `netcat` client to `crafter-flow` TCP server: passive handshake, payload
+  receive, response send, and graceful close.
+
+The live validation used isolated lab artifacts and scratch runners that are not
+tracked. The tracked documentation keeps examples neutral and documentation-space
+only.
+
 ## First-Cut Scope
 
 This is a small, single-connection TCP model:
@@ -77,8 +136,7 @@ Userspace-crafted TCP competes with the host kernel. During live runs, the kerne
 can send a RST for SYNs or data segments that do not belong to a kernel socket,
 which tears down the userspace connection before the flow can finish.
 
-Live operation therefore requires scoped kernel RST suppression in the isolated
-TCP lab. Keep the tracked flow documentation neutral and use the untracked lab
-under `tools/flow/.scratch/lab/tcp/` for the concrete guard, verification, and
-rollback commands. The guard must be limited to the lab ports and removed after
-the run.
+Live operation therefore requires the scoped kernel RST-drop guard from the
+isolated TCP lab. The concrete guard, verification, and rollback commands belong
+to the untracked lab under `tools/flow/.scratch/lab/tcp/`, not tracked code. The
+guard must be limited to the lab ports and removed after the run.
