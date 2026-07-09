@@ -5,10 +5,12 @@ use crate::PacketContext;
 mod combinators;
 mod layer;
 mod reply;
+mod tcp;
 
 pub use combinators::{all, any, not, And, MatcherExt, Not, Or};
 pub use layer::LayerMatcher;
 pub use reply::ReplyMatcher;
+pub use tcp::{tcp_segment, tcp_segment_for_ipv4, TcpSegmentMatcher};
 
 type PacketPredicate = dyn Fn(&crafter::Packet, &PacketContext) -> bool;
 
