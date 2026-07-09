@@ -27,6 +27,9 @@ pub struct FlowReport {
     visited_states: Vec<String>,
     sent_count: usize,
     received_count: usize,
+    bytes_sent: usize,
+    bytes_received: usize,
+    received_payload: Vec<u8>,
     transitions_taken: Vec<String>,
     iterations: u64,
     elapsed: Duration,
@@ -57,12 +60,28 @@ impl FlowReport {
             visited_states,
             sent_count,
             received_count,
+            bytes_sent: 0,
+            bytes_received: 0,
+            received_payload: Vec::new(),
             transitions_taken,
             iterations,
             elapsed,
             outcome,
             context_snapshot: context_snapshot.into(),
         }
+    }
+
+    /// Return a report with TCP payload byte counters attached.
+    pub fn with_tcp_payload(
+        mut self,
+        bytes_sent: usize,
+        received_payload: impl Into<Vec<u8>>,
+    ) -> Self {
+        let received_payload = received_payload.into();
+        self.bytes_sent = bytes_sent;
+        self.bytes_received = received_payload.len();
+        self.received_payload = received_payload;
+        self
     }
 
     /// Return the executed flow name.
@@ -95,6 +114,21 @@ impl FlowReport {
         self.received_count
     }
 
+    /// Return TCP payload bytes sent by this run.
+    pub const fn bytes_sent(&self) -> usize {
+        self.bytes_sent
+    }
+
+    /// Return TCP payload bytes received by this run.
+    pub const fn bytes_received(&self) -> usize {
+        self.bytes_received
+    }
+
+    /// Return received TCP payload accumulated by this run.
+    pub fn received_payload(&self) -> &[u8] {
+        &self.received_payload
+    }
+
     /// Return transition descriptions in the order they fired.
     pub fn transitions_taken(&self) -> &[String] {
         &self.transitions_taken
@@ -123,7 +157,7 @@ impl FlowReport {
     /// Return a compact one-line description of this run.
     pub fn summary(&self) -> String {
         format!(
-            "FlowReport '{}' ({:?}, dry_run={}): {:?}, states={}, sent={}, received={}, transitions={}, iterations={}, elapsed={:?}",
+            "FlowReport '{}' ({:?}, dry_run={}): {:?}, states={}, sent={}, received={}, bytes_sent={}, bytes_received={}, transitions={}, iterations={}, elapsed={:?}",
             self.flow_name,
             self.role,
             self.dry_run,
@@ -131,6 +165,8 @@ impl FlowReport {
             self.visited_states.len(),
             self.sent_count,
             self.received_count,
+            self.bytes_sent,
+            self.bytes_received,
             self.transitions_taken.len(),
             self.iterations,
             self.elapsed,
@@ -151,6 +187,11 @@ impl FlowReport {
             output,
             "  packets: sent={}, received={}",
             self.sent_count, self.received_count
+        );
+        let _ = writeln!(
+            output,
+            "  payload bytes: sent={}, received={}",
+            self.bytes_sent, self.bytes_received
         );
         let _ = writeln!(output, "  visited states:");
         if self.visited_states.is_empty() {
@@ -291,6 +332,9 @@ mod tests {
         );
         assert_eq!(report.sent_count(), 1);
         assert_eq!(report.received_count(), 2);
+        assert_eq!(report.bytes_sent(), 0);
+        assert_eq!(report.bytes_received(), 0);
+        assert_eq!(report.received_payload(), b"");
         assert_eq!(report.transitions_taken(), &["reply packet".to_string()]);
         assert_eq!(report.iterations(), 1);
         assert_eq!(report.elapsed(), Duration::from_millis(7));
@@ -301,8 +345,37 @@ mod tests {
         );
         assert!(report.summary().contains("example-flow"));
         assert!(report.summary().contains("dry_run=true"));
+        assert!(report.summary().contains("bytes_sent=0"));
         assert!(report.show().contains("dry-run: true"));
+        assert!(report.show().contains("payload bytes: sent=0, received=0"));
         assert!(report.show().contains("reply packet"));
+    }
+
+    #[test]
+    fn report_reflects_tcp_payload_byte_counts() {
+        let report = FlowReport::new(
+            "payload-flow",
+            Role::Initiator,
+            true,
+            vec!["Established".to_string()],
+            1,
+            1,
+            vec!["tcp data".to_string()],
+            1,
+            Duration::from_millis(3),
+            FlowOutcome::Completed,
+            "PacketContext keys=[tcp_received_payload]",
+        )
+        .with_tcp_payload(12, b"peer-bytes".to_vec());
+
+        assert_eq!(report.bytes_sent(), 12);
+        assert_eq!(report.bytes_received(), 10);
+        assert_eq!(report.received_payload(), b"peer-bytes");
+        assert!(report.summary().contains("bytes_sent=12"));
+        assert!(report.summary().contains("bytes_received=10"));
+        assert!(report
+            .show()
+            .contains("payload bytes: sent=12, received=10"));
     }
 
     #[test]
