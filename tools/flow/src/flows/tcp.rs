@@ -7,7 +7,7 @@
 
 use std::net::Ipv4Addr;
 
-use crate::matcher::tcp_segment_for_ipv4;
+use crate::matcher::{predicate, tcp_segment_for_ipv4, MatcherExt};
 use crate::{
     Flow, FlowBuilderExt, FlowError, FlowState, PacketContext, Role, Step, StepGotoExt, Transition,
 };
@@ -334,6 +334,57 @@ fn client_established_state(
         })
         .entry_description("TCP PSH-ACK data")
         .entry_targets([FIN_WAIT_1])
+        .on(client_data_transition(local_ip, remote_ip, remote_port))
+}
+
+fn client_data_transition(
+    local_ip: Ipv4Addr,
+    remote_ip: Ipv4Addr,
+    remote_port: u16,
+) -> Transition {
+    let matcher = tcp_segment_for_ipv4(
+        local_ip,
+        TCP_CLIENT_LOCAL_PORT,
+        remote_ip,
+        remote_port,
+        crafter::TCP_FLAG_ACK,
+    )
+    .ack_matches_tcp_snd_nxt()
+    .and(predicate(
+        "tcp data seq == tcp_rcv_nxt and payload length > 0",
+        |packet, ctx| {
+            let Some(tcp) = packet.layer::<crafter::Tcp>() else {
+                return false;
+            };
+            let Some(raw) = packet.layer::<crafter::Raw>() else {
+                return false;
+            };
+
+            !raw.as_bytes().is_empty()
+                && ctx.get_tcp_rcv_nxt() == Some(tcp.sequence_number_value())
+        },
+    ));
+
+    Transition::on(matcher, move |packet, ctx| {
+        let raw = packet.layer::<crafter::Raw>().ok_or_else(|| {
+            FlowError::Capture("matched TCP data packet has no Raw payload".to_string())
+        })?;
+        let payload = raw.as_bytes();
+        let rcv_nxt = tcp_rcv_nxt(ctx).wrapping_add(payload.len() as u32);
+
+        ctx.append_tcp_payload(payload);
+        ctx.set_tcp_rcv_nxt(rcv_nxt);
+
+        let ack = ack_segment(
+            ctx,
+            local_ip,
+            TCP_CLIENT_LOCAL_PORT,
+            remote_ip,
+            remote_port,
+        );
+
+        Ok(Step::send(ack))
+    })
 }
 
 fn stub_state(name: &'static str, next: &'static str) -> FlowState {
@@ -571,6 +622,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tcp_client_established_transition_stores_peer_data_and_sends_ack() {
+        let payload = b"server reply";
+        let mut flow = client_flow(local_ipv4(), remote_ipv4(), REMOTE_PORT, None);
+        let mut context = tcp_context();
+        let peer_data = data_from_peer(RCV_NXT, SND_NXT, payload);
+        let wrong_seq = data_from_peer(RCV_NXT.wrapping_add(1), SND_NXT, payload);
+        let peer_ack = ack_from_peer(RCV_NXT, SND_NXT);
+
+        {
+            let established = flow.state(ESTABLISHED).expect("Established state exists");
+            let transition = &established.transitions()[0];
+            assert!(transition.matches(&peer_data, &context));
+            assert!(!transition.matches(&wrong_seq, &context));
+            assert!(!transition.matches(&peer_ack, &context));
+        }
+
+        let step = flow
+            .state_mut(ESTABLISHED)
+            .expect("Established state exists")
+            .find_transition(&peer_data, &context)
+            .expect("TCP peer data transition matches")
+            .fire(&peer_data, &mut context)
+            .expect("TCP peer data transition should fire");
+        let ack = step.outgoing().expect("peer data transition sends ACK");
+        let tcp = ack.layer::<crafter::Tcp>().expect("TCP layer");
+        let expected_rcv_nxt = RCV_NXT.wrapping_add(payload.len() as u32);
+
+        assert_eq!(context.tcp_received_payload(), payload);
+        assert_eq!(context.get_tcp_rcv_nxt(), Some(expected_rcv_nxt));
+        assert_eq!(tcp.source_port_value(), TCP_CLIENT_LOCAL_PORT);
+        assert_eq!(tcp.destination_port_value(), REMOTE_PORT);
+        assert_eq!(tcp.sequence_number_value(), SND_NXT);
+        assert_eq!(tcp.acknowledgment_number_value(), expected_rcv_nxt);
+        assert_eq!(tcp.flags_value(), TCP_FLAG_ACK);
+        assert_eq!(step.target(), None);
+    }
+
     fn assert_named_states(flow: &crate::Flow, expected: &[&str]) {
         for name in expected {
             assert!(flow.state(name).is_some(), "missing {name} state");
@@ -714,6 +803,44 @@ mod tests {
             .syn_ack_segment()
             .tcp_option(TcpOption::maximum_segment_size(mss))
             .expect("fixed peer TCP MSS option encodes");
+
+        compiled_ipv4(
+            crafter::Ipv4::new()
+                .src(remote_ipv4())
+                .dst(local_ipv4())
+                .protocol(crafter::IPPROTO_TCP)
+                / tcp,
+        )
+    }
+
+    fn data_from_peer(peer_seq: u32, ack: u32, payload: impl AsRef<[u8]>) -> Packet {
+        let tcp = crafter::Tcp::new()
+            .sport(REMOTE_PORT)
+            .dport(TCP_CLIENT_LOCAL_PORT)
+            .seq(peer_seq)
+            .ack(ack)
+            .window(TCP_WINDOW)
+            .ack_segment()
+            .psh();
+
+        compiled_ipv4(
+            crafter::Ipv4::new()
+                .src(remote_ipv4())
+                .dst(local_ipv4())
+                .protocol(crafter::IPPROTO_TCP)
+                / tcp
+                / crafter::Raw::from_bytes(payload),
+        )
+    }
+
+    fn ack_from_peer(peer_seq: u32, ack: u32) -> Packet {
+        let tcp = crafter::Tcp::new()
+            .sport(REMOTE_PORT)
+            .dport(TCP_CLIENT_LOCAL_PORT)
+            .seq(peer_seq)
+            .ack(ack)
+            .window(TCP_WINDOW)
+            .ack_segment();
 
         compiled_ipv4(
             crafter::Ipv4::new()
