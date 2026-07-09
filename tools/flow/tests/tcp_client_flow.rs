@@ -1,9 +1,9 @@
 use std::net::Ipv4Addr;
 
-use crafter_flow::flows::tcp::{client_flow, CLOSED, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, SYN_SENT};
-use crafter_flow::{
-    docaddr, FlowOutcome, MemoryCaptureSource, PacketContext, RunOptions, Runner,
+use crafter_flow::flows::tcp::{
+    client_flow, CLOSED, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, SYN_SENT,
 };
+use crafter_flow::{docaddr, FlowOutcome, MemoryCaptureSource, PacketContext, RunOptions, Runner};
 
 const REMOTE_PORT: u16 = 443;
 const PEER_ISS: u32 = 0x5152_5354;
@@ -126,6 +126,47 @@ fn tcp(packet: &crafter::Packet) -> &crafter::Tcp {
     packet.layer::<crafter::Tcp>().expect("packet has TCP")
 }
 
+fn run_client_exchange(
+    peer_iss: u32,
+    client_payload: &[u8],
+    peer_payload: &[u8],
+) -> (u32, u32, Vec<crafter::Packet>) {
+    let (local_port, client_iss, client_snd_nxt) = client_syn_numbers(client_payload);
+    let client_data_end = client_snd_nxt.wrapping_add(client_payload.len() as u32);
+    let peer_data_seq = peer_iss.wrapping_add(1);
+    let peer_data_end = peer_data_seq.wrapping_add(peer_payload.len() as u32);
+    let client_fin_end = client_data_end.wrapping_add(1);
+    let source = MemoryCaptureSource::new(vec![
+        syn_ack_from_peer(local_port, peer_iss, client_snd_nxt),
+        data_from_peer(local_port, peer_data_seq, client_data_end, peer_payload),
+        ack_from_peer(local_port, peer_data_end, client_fin_end),
+        fin_ack_from_peer(local_port, peer_data_end, client_fin_end),
+    ]);
+    let mut flow = client_flow(
+        local_ipv4(),
+        remote_ipv4(),
+        REMOTE_PORT,
+        Some(client_payload.to_vec()),
+    );
+    let mut runner = Runner::with_source(RunOptions::default(), source)
+        .expect("offline runner opens with scripted TCP peer");
+
+    let report = runner.run(&mut flow).expect("TCP client flow runs");
+
+    assert_eq!(report.outcome(), &FlowOutcome::Completed);
+    assert_eq!(report.final_state(), Some(CLOSED));
+    assert_eq!(report.received_payload(), peer_payload);
+
+    let sent = runner
+        .send_reports()
+        .iter()
+        .map(sent_packet)
+        .collect::<Vec<_>>();
+    assert_eq!(sent.len(), 6);
+
+    (client_iss, client_snd_nxt, sent)
+}
+
 fn local_ipv4() -> Ipv4Addr {
     docaddr::CLIENT_IPV4
 }
@@ -200,12 +241,11 @@ fn tcp_client_flow_completes_offline_with_peer_data_and_graceful_close() {
     assert_eq!(handshake_ack.flags_value(), crafter::TCP_FLAG_ACK);
 
     let data = tcp(&sent[2]);
-    let raw = sent[2].layer::<crafter::Raw>().expect("client data has Raw");
+    let raw = sent[2]
+        .layer::<crafter::Raw>()
+        .expect("client data has Raw");
     assert_eq!(data.sequence_number_value(), client_snd_nxt);
-    assert_eq!(
-        data.acknowledgment_number_value(),
-        PEER_ISS.wrapping_add(1)
-    );
+    assert_eq!(data.acknowledgment_number_value(), PEER_ISS.wrapping_add(1));
     assert_eq!(
         data.flags_value(),
         crafter::TCP_FLAG_PSH | crafter::TCP_FLAG_ACK
@@ -232,4 +272,62 @@ fn tcp_client_flow_completes_offline_with_peer_data_and_graceful_close() {
         peer_data_end.wrapping_add(1)
     );
     assert_eq!(final_ack.flags_value(), crafter::TCP_FLAG_ACK);
+}
+
+#[test]
+fn tcp_client_seq_ack_tracks_arbitrary_peer_iss() {
+    let client_payload = b"client bytes proving carry-forward";
+    let peer_payload = b"reply-from-large-peer-iss";
+    let peer_iss = 0x9F00_0000;
+    let alternate_peer_iss = 0xA500_1234;
+    let (client_iss, client_snd_nxt, sent) =
+        run_client_exchange(peer_iss, client_payload, peer_payload);
+    let (_, _, alternate_sent) =
+        run_client_exchange(alternate_peer_iss, client_payload, peer_payload);
+    let expected_peer_ack = peer_iss.wrapping_add(1);
+    let expected_peer_data_end = expected_peer_ack.wrapping_add(peer_payload.len() as u32);
+    let expected_client_data_end = client_iss
+        .wrapping_add(1)
+        .wrapping_add(client_payload.len() as u32);
+
+    let handshake_ack = tcp(&sent[1]);
+    assert_eq!(
+        handshake_ack.sequence_number_value(),
+        client_iss.wrapping_add(1)
+    );
+    assert_eq!(
+        handshake_ack.acknowledgment_number_value(),
+        expected_peer_ack
+    );
+
+    let data = tcp(&sent[2]);
+    assert_eq!(data.sequence_number_value(), client_iss.wrapping_add(1));
+    assert_eq!(data.sequence_number_value(), client_snd_nxt);
+    assert_eq!(data.acknowledgment_number_value(), expected_peer_ack);
+
+    let data_ack = tcp(&sent[3]);
+    assert_eq!(data_ack.sequence_number_value(), expected_client_data_end);
+    assert_eq!(
+        data_ack.acknowledgment_number_value(),
+        expected_peer_data_end
+    );
+
+    let fin = tcp(&sent[4]);
+    assert_eq!(fin.sequence_number_value(), expected_client_data_end);
+    assert_eq!(fin.acknowledgment_number_value(), expected_peer_data_end);
+
+    let alternate_handshake_ack = tcp(&alternate_sent[1]).acknowledgment_number_value();
+    let alternate_data_ack = tcp(&alternate_sent[3]).acknowledgment_number_value();
+    assert_ne!(
+        handshake_ack.acknowledgment_number_value(),
+        alternate_handshake_ack
+    );
+    assert_ne!(data_ack.acknowledgment_number_value(), alternate_data_ack);
+    assert_eq!(alternate_handshake_ack, alternate_peer_iss.wrapping_add(1));
+    assert_eq!(
+        alternate_data_ack,
+        alternate_peer_iss
+            .wrapping_add(1)
+            .wrapping_add(peer_payload.len() as u32)
+    );
 }
