@@ -13,6 +13,10 @@ pub use crate::capture::{
 };
 pub use crate::docaddr;
 pub use crate::error::{FlowError, Result};
+pub use crate::flows::tcp::{
+    client_flow, server_flow, CLOSED, CLOSED_SRV, CLOSE_WAIT, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2,
+    LAST_ACK, LISTEN, SYN_RECEIVED, SYN_SENT,
+};
 pub use crate::matcher::{
     all, any, not, And, LayerMatcher, Matcher, MatcherExt, Not, Or, PredicateMatcher, ReplyMatcher,
 };
@@ -69,6 +73,52 @@ mod tests {
         context.set_transaction_id(7);
 
         assert_eq!(context.get_transaction_id(), Some(7));
+    }
+
+    #[test]
+    fn prelude_exports_tcp_flows_and_context_helpers() {
+        use crafter_flow::prelude::*;
+        use std::net::Ipv4Addr;
+
+        let _client_flow: fn(Ipv4Addr, Ipv4Addr, u16, Option<Vec<u8>>) -> Flow = client_flow;
+        let _server_flow: fn(Ipv4Addr, u16, Option<Vec<u8>>) -> Flow = server_flow;
+        let states = [
+            SYN_SENT,
+            ESTABLISHED,
+            FIN_WAIT_1,
+            FIN_WAIT_2,
+            CLOSED,
+            LISTEN,
+            SYN_RECEIVED,
+            CLOSE_WAIT,
+            LAST_ACK,
+            CLOSED_SRV,
+        ];
+        assert!(states.contains(&SYN_SENT));
+
+        let mut context = PacketContext::new();
+        context.set_tcp_snd_nxt(1);
+        context.set_tcp_rcv_nxt(2);
+        context.set_tcp_iss(3);
+        context.set_tcp_local_port(49_152);
+        context.set_tcp_remote_port(443);
+        context.set_tcp_remote_ipv4(Ipv4Addr::new(198, 51, 100, 20));
+        context.set_tcp_peer_mss(1_460);
+        context.set_tcp_peer_window(32_768);
+        context.append_tcp_payload(b"tcp");
+
+        assert_eq!(context.get_tcp_snd_nxt(), Some(1));
+        assert_eq!(context.get_tcp_rcv_nxt(), Some(2));
+        assert_eq!(context.get_tcp_iss(), Some(3));
+        assert_eq!(context.get_tcp_local_port(), Some(49_152));
+        assert_eq!(context.get_tcp_remote_port(), Some(443));
+        assert_eq!(
+            context.get_tcp_remote_ipv4(),
+            Some(Ipv4Addr::new(198, 51, 100, 20))
+        );
+        assert_eq!(context.get_tcp_peer_mss(), Some(1_460));
+        assert_eq!(context.get_tcp_peer_window(), Some(32_768));
+        assert_eq!(context.tcp_received_payload(), b"tcp");
     }
 
     #[test]
