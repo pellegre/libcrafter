@@ -74,16 +74,10 @@ impl StepDriver {
     }
 
     fn apply_step(&mut self, step: Step) -> bool {
-        let Step {
-            outgoing,
-            target,
-            terminal,
-            ..
-        } = step;
-
-        if let Some(packet) = outgoing {
-            self.sent.push(packet);
-        }
+        self.sent
+            .extend(step.outputs().iter().map(|output| output.packet().clone()));
+        let target = step.target().map(str::to_owned);
+        let terminal = step.is_terminal();
 
         if let Some(target) = target {
             self.state = target;

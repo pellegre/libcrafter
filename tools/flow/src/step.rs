@@ -1,10 +1,33 @@
 //! Transition outcomes for protocol flows.
 
+/// One ordered packet output produced by a flow step.
+#[derive(Debug, Clone)]
+pub struct StepOutput {
+    packet: crafter::Packet,
+}
+
+impl StepOutput {
+    /// Create an output from a packet.
+    pub const fn new(packet: crafter::Packet) -> Self {
+        Self { packet }
+    }
+
+    /// Borrow the packet carried by this output.
+    pub const fn packet(&self) -> &crafter::Packet {
+        &self.packet
+    }
+
+    /// Consume this output and return its packet.
+    pub fn into_packet(self) -> crafter::Packet {
+        self.packet
+    }
+}
+
 /// Instruction returned by a transition after it fires.
 #[derive(Debug, Clone)]
 pub struct Step {
-    /// Packet to send or emit before applying the state change.
-    pub outgoing: Option<crafter::Packet>,
+    /// Packets to send or emit, in insertion order, before applying the state change.
+    outputs: Vec<StepOutput>,
     /// Target state. `None` means stay in the current state.
     pub target: Option<String>,
     /// Whether this step ends the flow successfully.
@@ -18,8 +41,13 @@ pub struct Step {
 impl Step {
     /// Send a packet and stay in the current state unless a target is added.
     pub fn send(packet: crafter::Packet) -> Self {
+        Self::send_batch([packet])
+    }
+
+    /// Send an ordered batch of packets and stay in the current state unless a target is added.
+    pub fn send_batch(packets: impl IntoIterator<Item = crafter::Packet>) -> Self {
         Self {
-            outgoing: Some(packet),
+            outputs: packets.into_iter().map(StepOutput::new).collect(),
             target: None,
             terminal: false,
             outcome: None,
@@ -29,8 +57,13 @@ impl Step {
 
     /// Emit a packet without expecting a direct reply.
     pub fn emit(packet: crafter::Packet) -> Self {
+        Self::emit_batch([packet])
+    }
+
+    /// Emit an ordered batch of packets without expecting a direct reply.
+    pub fn emit_batch(packets: impl IntoIterator<Item = crafter::Packet>) -> Self {
         Self {
-            outgoing: Some(packet),
+            outputs: packets.into_iter().map(StepOutput::new).collect(),
             target: None,
             terminal: false,
             outcome: None,
@@ -41,7 +74,7 @@ impl Step {
     /// Move to another state without sending a packet.
     pub fn goto(state: impl Into<String>) -> Self {
         Self {
-            outgoing: None,
+            outputs: Vec::new(),
             target: Some(state.into()),
             terminal: false,
             outcome: None,
@@ -52,7 +85,7 @@ impl Step {
     /// Stay in the current state without sending a packet.
     pub fn stay() -> Self {
         Self {
-            outgoing: None,
+            outputs: Vec::new(),
             target: None,
             terminal: false,
             outcome: None,
@@ -63,7 +96,7 @@ impl Step {
     /// Finish the flow successfully without a label.
     pub fn done() -> Self {
         Self {
-            outgoing: None,
+            outputs: Vec::new(),
             target: None,
             terminal: true,
             outcome: None,
@@ -79,9 +112,21 @@ impl Step {
         }
     }
 
-    /// Return the outgoing packet, if any.
+    /// Return the first outgoing packet, if any.
+    ///
+    /// Single-packet steps return their sole packet. Batch steps return their
+    /// first packet for compatibility; use [`Self::outputs`] to inspect the
+    /// complete ordered batch.
     pub const fn outgoing(&self) -> Option<&crafter::Packet> {
-        self.outgoing.as_ref()
+        match self.outputs.as_slice().first() {
+            Some(output) => Some(output.packet()),
+            None => None,
+        }
+    }
+
+    /// Borrow every output in deterministic insertion order.
+    pub fn outputs(&self) -> &[StepOutput] {
+        &self.outputs
     }
 
     /// Return the target state name, if any.
@@ -132,6 +177,37 @@ mod tests {
         assert!(step.outgoing().is_some());
         assert_eq!(step.target(), Some("s"));
         assert!(!step.is_terminal());
+        assert!(step.expects_reply());
+    }
+
+    #[test]
+    fn step_batch_preserves_packet_order() {
+        let first = crafter::Packet::decode_raw([0x01]).expect("first raw packet decodes");
+        let second = crafter::Packet::decode_raw([0x02]).expect("second raw packet decodes");
+        let third = crafter::Packet::decode_raw([0x03]).expect("third raw packet decodes");
+
+        let step = Step::send_batch([first, second, third]).goto("next");
+        let bytes = step
+            .outputs()
+            .iter()
+            .map(|output| {
+                output
+                    .packet()
+                    .layer::<crafter::Raw>()
+                    .expect("output has raw layer")
+                    .as_bytes()[0]
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(bytes, [0x01, 0x02, 0x03]);
+        assert_eq!(
+            step.outgoing()
+                .and_then(|packet| packet.layer::<crafter::Raw>())
+                .expect("compatibility accessor returns first output")
+                .as_bytes(),
+            [0x01]
+        );
+        assert_eq!(step.target(), Some("next"));
         assert!(step.expects_reply());
     }
 
