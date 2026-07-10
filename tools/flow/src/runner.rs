@@ -388,11 +388,15 @@ impl Runner {
         let awaiting_state = target.clone().unwrap_or_else(|| current_state.to_string());
         let expects_reply = step.expects_reply();
         let is_terminal = step.is_terminal();
-        let outgoing = step.outgoing().cloned();
+        let outputs = step.outputs().to_vec();
 
         if matches!(mode, StepMode::Active) {
-            if let Some(packet) = outgoing.as_ref() {
+            if !outputs.is_empty() {
                 let mut last_sent = None;
+                // Repeat the complete batch in stored order: A, B, C, A, B, C.
+                // Protected QUIC output uses regeneration-only recovery and must
+                // not be configured with `send_repeat`, which replays generated
+                // output rather than asking the protocol driver for fresh bytes.
                 for repeat in 0..self.options.send_repeat.count() {
                     if repeat > 0 {
                         let interval = self.options.send_repeat.interval();
@@ -401,9 +405,13 @@ impl Runner {
                         }
                     }
 
-                    let packet = self.mutator.mutate(packet.clone(), iteration, ctx)?;
-                    self.send_packet(&packet)?;
-                    last_sent = Some(packet);
+                    for output in &outputs {
+                        let packet =
+                            self.mutator
+                                .mutate(output.packet().clone(), iteration, ctx)?;
+                        self.send_packet(&packet)?;
+                        last_sent = Some(packet);
+                    }
                 }
 
                 self.outstanding_segment = if expects_reply {
@@ -875,6 +883,45 @@ mod tests {
         assert_eq!(report.outcome(), &FlowOutcome::Completed);
         assert_eq!(report.sent_count(), 1);
         assert_eq!(runner.send_reports().len(), 1);
+    }
+
+    #[test]
+    fn runner_sends_step_batches_in_order() {
+        let packets = [1_u8, 2, 3].map(|marker| {
+            crafter::Ipv4::new()
+                .src(Ipv4Addr::new(192, 0, 2, 10))
+                .dst(Ipv4Addr::new(198, 51, 100, 53))
+                / crafter::Udp::new()
+                    .sport(49_152 + u16::from(marker))
+                    .dport(9)
+                / crafter::Raw::from_bytes([marker])
+        });
+        let expected = packets.iter().map(compiled_bytes).collect::<Vec<_>>();
+        let start = FlowState::new("Start")
+            .on_entry(move |_ctx| Ok(Step::emit_batch(packets.clone()).goto("Done")))
+            .entry_targets(["Done"]);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-step-batch-order")
+            .role(Role::Injector)
+            .state(start)
+            .state(done)
+            .initial("Start");
+        let mut runner = Runner::with_source(RunOptions::default(), MemoryCaptureSource::default())
+            .expect("runner opens with memory source");
+
+        let report = runner.run(&mut flow).expect("runner completes");
+        let actual = runner
+            .send_reports()
+            .iter()
+            .map(|report| report.plan().bytes().to_vec())
+            .collect::<Vec<_>>();
+
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(report.sent_count(), 3);
+        assert_eq!(runner.send_reports().len(), 3);
+        assert_eq!(actual, expected);
     }
 
     #[test]
