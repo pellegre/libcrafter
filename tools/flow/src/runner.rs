@@ -78,6 +78,10 @@ pub struct Runner {
     send_reports: Vec<SendReport>,
     tcp_payload_bytes_sent: usize,
     outstanding_segment: Option<OutstandingSegment>,
+    #[cfg(test)]
+    fail_send_at: Option<usize>,
+    #[cfg(test)]
+    send_attempts: usize,
 }
 
 impl Runner {
@@ -147,6 +151,10 @@ impl Runner {
             send_reports: Vec::new(),
             tcp_payload_bytes_sent: 0,
             outstanding_segment: None,
+            #[cfg(test)]
+            fail_send_at: None,
+            #[cfg(test)]
+            send_attempts: 0,
         })
     }
 
@@ -214,14 +222,29 @@ impl Runner {
 
             let mut current_state = flow.initial().to_string();
             trace.enter(&current_state);
-            match self.run_iteration(
+            let iteration_result = self.run_iteration(
                 flow,
                 &mut current_state,
                 &mut ctx,
                 &mut trace,
                 iterations,
                 started,
-            )? {
+            );
+            let iteration_result = match iteration_result {
+                Ok(result) => result,
+                Err(error @ FlowError::BatchSend { .. }) => {
+                    return Ok(self.build_report(
+                        flow,
+                        trace,
+                        iterations,
+                        started.elapsed(),
+                        FlowOutcome::Error(error.to_string()),
+                        &ctx,
+                    ));
+                }
+                Err(error) => return Err(error),
+            };
+            match iteration_result {
                 IterationResult::Terminal => {
                     iterations += 1;
                     let elapsed = started.elapsed();
@@ -400,6 +423,7 @@ impl Runner {
                 // Protected QUIC output uses regeneration-only recovery and must
                 // not be configured with `send_repeat`, which replays generated
                 // output rather than asking the protocol driver for fresh bytes.
+                let reports_before_batch = self.send_reports.len();
                 for repeat in 0..self.options.send_repeat.count() {
                     if repeat > 0 {
                         let interval = self.options.send_repeat.interval();
@@ -408,8 +432,14 @@ impl Runner {
                         }
                     }
 
-                    for packet in &mutated_outputs {
-                        self.send_packet(packet)?;
+                    for (output_index, packet) in mutated_outputs.iter().enumerate() {
+                        if let Err(error) = self.send_packet(packet) {
+                            return Err(FlowError::BatchSend {
+                                output_index,
+                                sent_count: self.send_reports.len() - reports_before_batch,
+                                error: error.to_string(),
+                            });
+                        }
                     }
                 }
 
@@ -501,11 +531,25 @@ impl Runner {
     }
 
     fn send_packet(&mut self, packet: &crafter::Packet) -> Result<()> {
+        #[cfg(test)]
+        {
+            let attempt = self.send_attempts;
+            self.send_attempts += 1;
+            if self.fail_send_at == Some(attempt) {
+                return Err(FlowError::Send("injected test send failure".to_string()));
+            }
+        }
+
         let tcp_payload_bytes = tcp_payload_len(packet);
         let report = self.conversation.send(packet)?;
         self.tcp_payload_bytes_sent += tcp_payload_bytes;
         self.send_reports.push(report);
         Ok(())
+    }
+
+    #[cfg(test)]
+    fn fail_send_at_for_test(&mut self, attempt: usize) {
+        self.fail_send_at = Some(attempt);
     }
 
     fn build_report(
@@ -924,6 +968,44 @@ mod tests {
         assert_eq!(report.sent_count(), 3);
         assert_eq!(runner.send_reports().len(), 3);
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn runner_reports_partial_batch_failure_without_state_advance() {
+        let packets = [1_u8, 2, 3].map(|marker| {
+            crafter::Ipv4::new()
+                .src(Ipv4Addr::new(192, 0, 2, 10))
+                .dst(Ipv4Addr::new(198, 51, 100, 53))
+                / crafter::Udp::new()
+                    .sport(49_152 + u16::from(marker))
+                    .dport(9)
+                / crafter::Raw::from_bytes([marker])
+        });
+        let start = FlowState::new("Start")
+            .on_entry(move |_ctx| Ok(Step::send_batch(packets.clone()).goto("Done")))
+            .entry_targets(["Done"]);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-partial-batch-failure")
+            .role(Role::Initiator)
+            .state(start)
+            .state(done)
+            .initial("Start");
+        let mut runner = Runner::with_options(RunOptions::default()).expect("runner opens");
+        runner.fail_send_at_for_test(1);
+
+        let report = runner.run(&mut flow).expect("send failure is reportable");
+
+        assert_eq!(report.final_state(), Some("Start"));
+        assert_eq!(report.visited_states(), &["Start".to_string()]);
+        assert_eq!(report.sent_count(), 1);
+        assert_eq!(runner.send_reports().len(), 1);
+        assert!(runner.outstanding_segment.is_none());
+        let error = report.error().expect("report records the batch failure");
+        assert!(error.contains("output 1"));
+        assert!(error.contains("after 1 successful sends"));
+        assert!(error.contains("injected test send failure"));
     }
 
     #[test]

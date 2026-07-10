@@ -11,6 +11,15 @@ pub enum FlowError {
     Binding(String),
     /// Sending a packet failed.
     Send(String),
+    /// Sending an ordered output batch failed after zero or more earlier sends.
+    BatchSend {
+        /// Zero-based index of the output that failed within the batch.
+        output_index: usize,
+        /// Number of outputs successfully sent before the failure.
+        sent_count: usize,
+        /// Non-packet diagnostic from the underlying send failure.
+        error: String,
+    },
     /// Receiving or capturing packets failed.
     Capture(String),
     /// A flow step exceeded its deadline.
@@ -37,6 +46,14 @@ impl fmt::Display for FlowError {
             Self::Build(message) => write!(f, "flow build error: {message}"),
             Self::Binding(message) => write!(f, "flow binding error: {message}"),
             Self::Send(message) => write!(f, "flow send error: {message}"),
+            Self::BatchSend {
+                output_index,
+                sent_count,
+                error,
+            } => write!(
+                f,
+                "flow batch send failed at output {output_index} after {sent_count} successful sends: {error}"
+            ),
             Self::Capture(message) => write!(f, "flow capture error: {message}"),
             Self::Timeout => f.write_str("flow step timed out"),
             Self::Unsupported(message) => write!(f, "unsupported flow feature: {message}"),
@@ -73,6 +90,11 @@ mod tests {
             FlowError::Build("missing initial state".to_string()),
             FlowError::Binding("interface not selected".to_string()),
             FlowError::Send("packet sender failed".to_string()),
+            FlowError::BatchSend {
+                output_index: 1,
+                sent_count: 1,
+                error: "packet sender failed".to_string(),
+            },
             FlowError::Capture("capture source closed".to_string()),
             FlowError::Timeout,
             FlowError::Unsupported("role is not implemented".to_string()),

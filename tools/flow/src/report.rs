@@ -277,6 +277,14 @@ impl FlowReport {
         &self.outcome
     }
 
+    /// Return the reportable execution error, if the run stopped on one.
+    pub fn error(&self) -> Option<&str> {
+        match &self.outcome {
+            FlowOutcome::Error(error) => Some(error),
+            _ => None,
+        }
+    }
+
     /// Return the final packet-context summary captured by the runner.
     pub fn context_snapshot(&self) -> &str {
         &self.context_snapshot
@@ -557,6 +565,7 @@ mod tests {
         assert_eq!(report.iterations(), 1);
         assert_eq!(report.elapsed(), Duration::from_millis(7));
         assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(report.error(), None);
         assert_eq!(
             report.context_snapshot(),
             "PacketContext keys=[transaction_id]"
@@ -741,6 +750,7 @@ mod tests {
 
         let json = report.to_json();
 
+        assert_eq!(report.error(), Some("bad\tpacket"));
         assert!(json.contains("\"flow_name\":\"quoted \\\"flow\\\"\""));
         assert!(json.contains("\"visited_states\":[\"Line\\nOne\"]"));
         assert!(json.contains("\"transitions_taken\":[\"slash\\\\match\"]"));
