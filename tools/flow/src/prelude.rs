@@ -20,7 +20,7 @@ pub use crate::flows::tcp::{
 pub use crate::matcher::{
     all, any, not, And, LayerMatcher, Matcher, MatcherExt, Not, Or, PredicateMatcher, ReplyMatcher,
 };
-pub use crate::report::{FlowOutcome, FlowReport};
+pub use crate::report::{FlowOutcome, FlowReport, RecoveryMetrics};
 pub use crate::Bound;
 pub use crate::Conversation;
 pub use crate::PacketContext;
