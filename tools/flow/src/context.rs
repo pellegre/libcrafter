@@ -26,10 +26,49 @@ const TCP_PEER_MSS: &str = "tcp_peer_mss";
 const TCP_PEER_WINDOW: &str = "tcp_peer_window";
 const TCP_RECEIVED_PAYLOAD: &str = "tcp_received_payload";
 
+/// Non-secret protocol lifecycle facts retained for inspection and reporting.
+///
+/// Connection identifiers are stored as bytes so callers cannot accidentally
+/// attach endpoint objects or traffic secrets to the snapshot. They may be
+/// rendered as hexadecimal by report consumers when needed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProtocolContextSnapshot {
+    /// Protocol name, such as `quic`.
+    pub protocol: String,
+    /// Current protocol lifecycle label, such as `handshaking`.
+    pub lifecycle: String,
+    /// Non-secret local connection identifier bytes.
+    pub local_connection_id: Option<Vec<u8>>,
+    /// Non-secret peer connection identifier bytes.
+    pub peer_connection_id: Option<Vec<u8>>,
+    /// Stable protocol outcome label, when one is known.
+    pub outcome: Option<String>,
+    /// Stable close category, when the protocol is closing or closed.
+    pub close_category: Option<String>,
+    /// Protocol close code, when one was supplied.
+    pub close_code: Option<u64>,
+}
+
+impl ProtocolContextSnapshot {
+    /// Create a snapshot with no connection, outcome, or close observations.
+    pub fn new(protocol: impl Into<String>, lifecycle: impl Into<String>) -> Self {
+        Self {
+            protocol: protocol.into(),
+            lifecycle: lifecycle.into(),
+            local_connection_id: None,
+            peer_connection_id: None,
+            outcome: None,
+            close_category: None,
+            close_code: None,
+        }
+    }
+}
+
 /// Typed in-memory values carried through one flow run.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PacketContext {
     values: BTreeMap<String, ContextValue>,
+    protocol_snapshot: Option<ProtocolContextSnapshot>,
 }
 
 impl PacketContext {
@@ -157,6 +196,36 @@ impl PacketContext {
             Some(ContextValue::String(value)) => Some(value.as_str()),
             _ => None,
         })
+    }
+
+    /// Set the current non-secret protocol lifecycle snapshot.
+    pub fn set_protocol_snapshot(&mut self, snapshot: ProtocolContextSnapshot) {
+        self.protocol_snapshot = Some(snapshot);
+    }
+
+    /// Update the current protocol lifecycle snapshot when one is present.
+    ///
+    /// Returns `true` when the update callback ran and `false` when no snapshot
+    /// was set.
+    pub fn update_protocol_snapshot(
+        &mut self,
+        update: impl FnOnce(&mut ProtocolContextSnapshot),
+    ) -> bool {
+        let Some(snapshot) = self.protocol_snapshot.as_mut() else {
+            return false;
+        };
+        update(snapshot);
+        true
+    }
+
+    /// Clear and return the current protocol lifecycle snapshot.
+    pub fn clear_protocol_snapshot(&mut self) -> Option<ProtocolContextSnapshot> {
+        self.protocol_snapshot.take()
+    }
+
+    /// Borrow the current protocol lifecycle snapshot.
+    pub fn protocol_snapshot(&self) -> Option<&ProtocolContextSnapshot> {
+        self.protocol_snapshot.as_ref()
     }
 
     /// Store a DHCPv4 transaction id.
@@ -395,7 +464,13 @@ impl PacketContext {
     /// Return a compact inspectable list of currently set keys.
     pub fn summary(&self) -> String {
         let keys = self.values.keys().cloned().collect::<Vec<_>>().join(", ");
-        format!("PacketContext keys=[{keys}]")
+        match self.protocol_snapshot.as_ref() {
+            Some(snapshot) => format!(
+                "PacketContext protocol={} lifecycle={} keys=[{keys}]",
+                snapshot.protocol, snapshot.lifecycle
+            ),
+            None => format!("PacketContext keys=[{keys}]"),
+        }
     }
 }
 
@@ -436,7 +511,7 @@ enum ContextValue {
 
 #[cfg(test)]
 mod tests {
-    use super::PacketContext;
+    use super::{PacketContext, ProtocolContextSnapshot};
     use crate::FlowError;
     use std::net::Ipv4Addr;
 
@@ -548,6 +623,55 @@ mod tests {
             context.get_namespaced_bool("quic", "bad:key"),
             Err(FlowError::Build(_))
         ));
+        assert_eq!(context.summary(), "PacketContext keys=[]");
+    }
+
+    #[test]
+    fn protocol_lifecycle_snapshot_is_cloneable_and_inspectable() {
+        let mut context = PacketContext::new();
+        assert!(!context.update_protocol_snapshot(|_| unreachable!()));
+
+        let mut snapshot = ProtocolContextSnapshot::new("quic", "initial-sent");
+        snapshot.local_connection_id = Some(vec![0xde, 0xad, 0xbe, 0xef]);
+        snapshot.peer_connection_id = Some(vec![0xca, 0xfe]);
+        context.set_protocol_snapshot(snapshot);
+
+        assert!(context.update_protocol_snapshot(|snapshot| {
+            snapshot.lifecycle = "closing".to_string();
+            snapshot.outcome = Some("peer-close".to_string());
+            snapshot.close_category = Some("transport".to_string());
+            snapshot.close_code = Some(0x0a);
+        }));
+
+        let borrowed = context.protocol_snapshot().expect("snapshot is set");
+        assert_eq!(borrowed.protocol, "quic");
+        assert_eq!(borrowed.lifecycle, "closing");
+        assert_eq!(
+            borrowed.local_connection_id.as_deref(),
+            Some(&[0xde, 0xad, 0xbe, 0xef][..])
+        );
+        assert_eq!(
+            borrowed.peer_connection_id.as_deref(),
+            Some(&[0xca, 0xfe][..])
+        );
+        assert_eq!(borrowed.outcome.as_deref(), Some("peer-close"));
+        assert_eq!(borrowed.close_category.as_deref(), Some("transport"));
+        assert_eq!(borrowed.close_code, Some(0x0a));
+
+        let cloned = context.clone();
+        assert_eq!(cloned, context);
+        assert_eq!(
+            context.summary(),
+            "PacketContext protocol=quic lifecycle=closing keys=[]"
+        );
+        assert!(!context.summary().contains("deadbeef"));
+        assert!(!context.summary().contains("cafe"));
+        assert!(!context.summary().contains("peer-close"));
+        assert!(!context.summary().contains("transport"));
+
+        let cleared = context.clear_protocol_snapshot();
+        assert_eq!(cleared, cloned.protocol_snapshot().cloned());
+        assert_eq!(context.protocol_snapshot(), None);
         assert_eq!(context.summary(), "PacketContext keys=[]");
     }
 
