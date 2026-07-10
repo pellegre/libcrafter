@@ -14,6 +14,7 @@ pub mod mutator;
 pub mod netns;
 pub mod options;
 pub mod prelude;
+mod quic_endpoint;
 pub mod report;
 pub mod role;
 pub mod runner;
@@ -35,6 +36,10 @@ pub use flow::{Flow, FlowBuilderExt};
 pub use matcher::{Matcher, PredicateMatcher};
 pub use mutator::{FnMutator, Identity, Mutator};
 pub use options::{RetransmitPolicy, RunOptions, SendRepeat};
+pub use quic_endpoint::{
+    QuicEndpointAddresses, QuicEndpointErrorCategory, QuicPeerConfig, QuicSyntheticIdentity,
+    QuicTransportLimits,
+};
 pub use report::{FlowOutcome, FlowReport};
 pub use role::Role;
 pub use runner::Runner;
