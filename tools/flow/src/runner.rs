@@ -392,7 +392,10 @@ impl Runner {
 
         if matches!(mode, StepMode::Active) {
             if !outputs.is_empty() {
-                let mut last_sent = None;
+                let mutated_outputs = outputs
+                    .into_iter()
+                    .map(|output| self.mutator.mutate(output.into_packet(), iteration, ctx))
+                    .collect::<Result<Vec<_>>>()?;
                 // Repeat the complete batch in stored order: A, B, C, A, B, C.
                 // Protected QUIC output uses regeneration-only recovery and must
                 // not be configured with `send_repeat`, which replays generated
@@ -405,20 +408,19 @@ impl Runner {
                         }
                     }
 
-                    for output in &outputs {
-                        let packet =
-                            self.mutator
-                                .mutate(output.packet().clone(), iteration, ctx)?;
-                        self.send_packet(&packet)?;
-                        last_sent = Some(packet);
+                    for packet in &mutated_outputs {
+                        self.send_packet(packet)?;
                     }
                 }
 
                 self.outstanding_segment = if expects_reply {
-                    last_sent.map(|packet| OutstandingSegment {
-                        awaiting_state,
-                        packet,
-                    })
+                    mutated_outputs
+                        .last()
+                        .cloned()
+                        .map(|packet| OutstandingSegment {
+                            awaiting_state,
+                            packet,
+                        })
                 } else {
                     None
                 };
@@ -598,7 +600,7 @@ mod tests {
         FnMutator, Identity, MemoryCaptureSource, PredicateMatcher, Role, RunOptions, Step,
         StepGotoExt, Transition,
     };
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::net::Ipv4Addr;
     use std::rc::Rc;
     use std::time::Duration;
@@ -922,6 +924,84 @@ mod tests {
         assert_eq!(report.sent_count(), 3);
         assert_eq!(runner.send_reports().len(), 3);
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn runner_mutates_each_new_batch_packet_once() {
+        let packets = [1_u8, 2, 3].map(|marker| {
+            crafter::Ipv4::new()
+                .src(Ipv4Addr::new(192, 0, 2, 10))
+                .dst(Ipv4Addr::new(198, 51, 100, 53))
+                / crafter::Udp::new()
+                    .sport(49_152 + u16::from(marker))
+                    .dport(9)
+                / crafter::Raw::from_bytes([marker])
+        });
+        let start = FlowState::new("Start")
+            .on_entry(move |_ctx| Ok(Step::emit_batch(packets.clone()).goto("Done")))
+            .entry_targets(["Done"]);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-mutate-step-batch")
+            .role(Role::Injector)
+            .state(start)
+            .state(done)
+            .initial("Start");
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let calls_for_mutator = Rc::clone(&calls);
+        let options = RunOptions::default().send_repeat(2, Duration::ZERO);
+        let mut runner = Runner::with_options(options)
+            .expect("runner opens")
+            .mutator(FnMutator::new(
+                "record-batch-entry",
+                move |packet, iteration, ctx| {
+                    let marker = *packet
+                        .compile()?
+                        .as_ref()
+                        .last()
+                        .expect("batch packet has a marker");
+                    calls_for_mutator.borrow_mut().push((
+                        marker,
+                        iteration,
+                        ctx.get_transaction_id(),
+                    ));
+                    ctx.set_transaction_id(u32::from(marker));
+
+                    Ok(crafter::Ipv4::new()
+                        .src(Ipv4Addr::new(192, 0, 2, 10))
+                        .dst(Ipv4Addr::new(198, 51, 100, 53))
+                        / crafter::Udp::new()
+                            .sport(49_152 + u16::from(marker))
+                            .dport(9)
+                        / crafter::Raw::from_bytes([marker, marker + 10]))
+                },
+            ));
+
+        let report = runner.run(&mut flow).expect("runner completes");
+        let sent_markers = runner
+            .send_reports()
+            .iter()
+            .map(|report| report.plan().bytes()[report.plan().bytes().len() - 2..].to_vec())
+            .collect::<Vec<_>>();
+
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(report.sent_count(), 6);
+        assert_eq!(
+            calls.borrow().as_slice(),
+            &[(1, 0, None), (2, 0, Some(1)), (3, 0, Some(2))]
+        );
+        assert_eq!(
+            sent_markers,
+            vec![
+                vec![1, 11],
+                vec![2, 12],
+                vec![3, 13],
+                vec![1, 11],
+                vec![2, 12],
+                vec![3, 13],
+            ]
+        );
     }
 
     #[test]
