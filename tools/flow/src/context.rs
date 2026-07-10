@@ -48,6 +48,34 @@ impl PacketContext {
         }
     }
 
+    /// Insert an unsigned 64-bit value under a caller-supplied key.
+    pub fn insert_u64(&mut self, key: &str, value: u64) {
+        self.values
+            .insert(key.to_string(), ContextValue::U64(value));
+    }
+
+    /// Return an unsigned 64-bit value stored under a caller-supplied key.
+    pub fn get_u64(&self, key: &str) -> Option<u64> {
+        match self.values.get(key) {
+            Some(ContextValue::U64(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Insert a boolean value under a caller-supplied key.
+    pub fn insert_bool(&mut self, key: &str, value: bool) {
+        self.values
+            .insert(key.to_string(), ContextValue::Bool(value));
+    }
+
+    /// Return a boolean value stored under a caller-supplied key.
+    pub fn get_bool(&self, key: &str) -> Option<bool> {
+        match self.values.get(key) {
+            Some(ContextValue::Bool(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
     /// Store a DHCPv4 transaction id.
     pub fn set_transaction_id(&mut self, value: u32) {
         self.values
@@ -290,8 +318,10 @@ impl PacketContext {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ContextValue {
+    U64(u64),
     U32(u32),
     U16(u16),
+    Bool(bool),
     Mac(MacAddr),
     Ipv4(Ipv4Addr),
     String(String),
@@ -310,6 +340,40 @@ mod tests {
         context.set_transaction_id(0x1234_5678);
 
         assert_eq!(context.get_transaction_id(), Some(0x1234_5678));
+    }
+
+    #[test]
+    fn context_round_trips_generic_u64_and_bool() {
+        let mut context = PacketContext::new();
+
+        context.insert_u64("quic.packet_number", u64::MAX - 1);
+        context.insert_bool("quic.handshake_complete", true);
+
+        assert_eq!(context.get_u64("quic.packet_number"), Some(u64::MAX - 1));
+        assert_eq!(context.get_bool("quic.handshake_complete"), Some(true));
+        assert_eq!(
+            context.summary(),
+            "PacketContext keys=[quic.handshake_complete, quic.packet_number]"
+        );
+    }
+
+    #[test]
+    fn context_generic_scalar_unset_values_return_none() {
+        let context = PacketContext::new();
+
+        assert_eq!(context.get_u64("missing"), None);
+        assert_eq!(context.get_bool("missing"), None);
+    }
+
+    #[test]
+    fn context_generic_scalar_type_mismatches_return_none() {
+        let mut context = PacketContext::new();
+
+        context.insert_u64("shared", 42);
+        assert_eq!(context.get_bool("shared"), None);
+
+        context.insert_bool("shared", false);
+        assert_eq!(context.get_u64("shared"), None);
     }
 
     #[test]
