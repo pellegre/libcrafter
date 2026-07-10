@@ -5,7 +5,7 @@ use std::net::Ipv4Addr;
 
 use crafter::MacAddr;
 
-use crate::{FlowError, Result};
+use crate::{FlowError, RecoveryMetrics, Result};
 
 const NAMESPACE_SEPARATOR: &str = "::";
 
@@ -69,6 +69,7 @@ impl ProtocolContextSnapshot {
 pub struct PacketContext {
     values: BTreeMap<String, ContextValue>,
     protocol_snapshot: Option<ProtocolContextSnapshot>,
+    recovery: RecoveryMetrics,
 }
 
 impl PacketContext {
@@ -226,6 +227,36 @@ impl PacketContext {
     /// Borrow the current protocol lifecycle snapshot.
     pub fn protocol_snapshot(&self) -> Option<&ProtocolContextSnapshot> {
         self.protocol_snapshot.as_ref()
+    }
+
+    /// Add protocol timeout events, saturating at [`u64::MAX`].
+    pub fn add_timeout_events(&mut self, count: u64) {
+        self.recovery.add_timeout_events(count);
+    }
+
+    /// Add probe-timeout firings, saturating at [`u64::MAX`].
+    pub fn add_pto_firings(&mut self, count: u64) {
+        self.recovery.add_pto_firings(count);
+    }
+
+    /// Add packets declared lost, saturating at [`u64::MAX`].
+    pub fn add_packets_declared_lost(&mut self, count: u64) {
+        self.recovery.add_packets_declared_lost(count);
+    }
+
+    /// Add freshly regenerated transmits, saturating at [`u64::MAX`].
+    pub fn add_regenerated_transmits(&mut self, count: u64) {
+        self.recovery.add_regenerated_transmits(count);
+    }
+
+    /// Add exact-byte replay transmits, saturating at [`u64::MAX`].
+    pub fn add_exact_replay_transmits(&mut self, count: u64) {
+        self.recovery.add_exact_replay_transmits(count);
+    }
+
+    /// Clone the current protocol-neutral recovery observations for a report.
+    pub fn recovery_metrics(&self) -> RecoveryMetrics {
+        self.recovery.clone()
     }
 
     /// Store a DHCPv4 transaction id.
@@ -772,5 +803,38 @@ mod tests {
         assert!(summary.contains("tcp_peer_mss"));
         assert!(summary.contains("tcp_peer_window"));
         assert!(summary.contains("tcp_received_payload"));
+    }
+
+    #[test]
+    fn recovery_counters_saturate() {
+        let mut context = PacketContext::new();
+        let empty = context.recovery_metrics();
+        assert_eq!(empty.timeout_events(), 0);
+        assert_eq!(empty.pto_firings(), 0);
+        assert_eq!(empty.packets_declared_lost(), 0);
+        assert_eq!(empty.regenerated_transmits(), 0);
+        assert_eq!(empty.exact_replay_transmits(), 0);
+
+        context.add_timeout_events(u64::MAX);
+        context.add_pto_firings(u64::MAX - 1);
+        context.add_packets_declared_lost(u64::MAX - 2);
+        context.add_regenerated_transmits(u64::MAX - 3);
+        context.add_exact_replay_transmits(u64::MAX - 4);
+        context.add_timeout_events(1);
+        context.add_pto_firings(2);
+        context.add_packets_declared_lost(3);
+        context.add_regenerated_transmits(4);
+        context.add_exact_replay_transmits(5);
+
+        let saturated = context.recovery_metrics();
+        assert_eq!(saturated.timeout_events(), u64::MAX);
+        assert_eq!(saturated.pto_firings(), u64::MAX);
+        assert_eq!(saturated.packets_declared_lost(), u64::MAX);
+        assert_eq!(saturated.regenerated_transmits(), u64::MAX);
+        assert_eq!(saturated.exact_replay_transmits(), u64::MAX);
+
+        let cloned = context.clone();
+        assert_eq!(cloned.recovery_metrics(), saturated);
+        assert_eq!(context.summary(), "PacketContext keys=[]");
     }
 }

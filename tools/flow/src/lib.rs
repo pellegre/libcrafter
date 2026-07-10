@@ -40,7 +40,7 @@ pub use quic_endpoint::{
     QuicEndpointAddresses, QuicEndpointErrorCategory, QuicPeerConfig, QuicSyntheticIdentity,
     QuicTransportLimits,
 };
-pub use report::{FlowOutcome, FlowReport};
+pub use report::{FlowOutcome, FlowReport, RecoveryMetrics};
 pub use role::Role;
 pub use runner::Runner;
 pub use state::FlowState;
