@@ -34,7 +34,10 @@ use aes_gcm::aead::AeadInPlace;
 use aes_gcm::Aes128Gcm;
 use ccm::consts::{U11, U8};
 use ccm::Ccm;
-use chacha20poly1305::ChaCha20Poly1305;
+use chacha20poly1305::{
+    AeadInOut as ChaChaAeadInOut, ChaCha20Poly1305, KeyInit as ChaChaKeyInit, Nonce as ChaChaNonce,
+    Tag as ChaChaTag,
+};
 use cipher::generic_array::GenericArray;
 use cipher::KeyInit;
 
@@ -167,9 +170,10 @@ impl AeadTransform {
             Self::ChaCha20Poly1305 => {
                 let cipher =
                     ChaCha20Poly1305::new_from_slice(key).map_err(|_| Self::key_err(self))?;
+                let nonce = ChaChaNonce::try_from(nonce).map_err(|_| Self::nonce_err(self))?;
                 let mut buf = plaintext.to_vec();
                 let tag = cipher
-                    .encrypt_in_place_detached(GenericArray::from_slice(nonce), aad, &mut buf)
+                    .encrypt_inout_detached(&nonce, aad, buf.as_mut_slice().into())
                     .map_err(|_| Self::seal_err(self))?;
                 Ok((buf, tag.to_vec()))
             }
@@ -225,14 +229,11 @@ impl AeadTransform {
             Self::ChaCha20Poly1305 => {
                 let cipher =
                     ChaCha20Poly1305::new_from_slice(key).map_err(|_| Self::key_err(self))?;
+                let nonce = ChaChaNonce::try_from(nonce).map_err(|_| Self::nonce_err(self))?;
+                let tag = ChaChaTag::try_from(tag).map_err(|_| Self::tag_len_err(self))?;
                 let mut buf = ciphertext.to_vec();
                 cipher
-                    .decrypt_in_place_detached(
-                        GenericArray::from_slice(nonce),
-                        aad,
-                        &mut buf,
-                        GenericArray::from_slice(tag),
-                    )
+                    .decrypt_inout_detached(&nonce, aad, buf.as_mut_slice().into(), &tag)
                     .map_err(|_| Self::integrity_err(self))?;
                 Ok(buf)
             }
