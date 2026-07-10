@@ -18,6 +18,12 @@ struct TerminalStep {
 enum IterationResult {
     Terminal,
     TimedOut,
+    BoundExhausted,
+}
+
+enum ReceiveCompletion {
+    Packet(crafter::Packet),
+    TimedOut,
 }
 
 enum StepAction {
@@ -271,6 +277,16 @@ impl Runner {
                         &ctx,
                     ));
                 }
+                IterationResult::BoundExhausted => {
+                    return Ok(self.build_report(
+                        flow,
+                        trace,
+                        iterations,
+                        started.elapsed(),
+                        FlowOutcome::BoundExhausted,
+                        &ctx,
+                    ));
+                }
             }
         }
     }
@@ -299,18 +315,61 @@ impl Runner {
         }
 
         loop {
-            let packet = {
+            let receive = {
                 let state = Self::state(flow, current_state.as_str())?;
                 let matcher = StateTransitionsMatcher { state };
                 let Some(timeout) = self.effective_step_timeout(run_started) else {
                     return Ok(IterationResult::TimedOut);
                 };
-                let Some(packet) =
-                    self.recv_matching_with_retransmit(&matcher, current_state, ctx, timeout)?
-                else {
-                    return Ok(IterationResult::TimedOut);
-                };
-                packet
+                self.recv_matching_with_retransmit(&matcher, current_state, ctx, timeout)?
+            };
+
+            let packet = match receive {
+                ReceiveCompletion::Packet(packet) => packet,
+                ReceiveCompletion::TimedOut => {
+                    let elapsed = run_started.elapsed();
+                    if self.run_timeout_elapsed(elapsed) {
+                        return Ok(IterationResult::TimedOut);
+                    }
+                    if !self.options.bound.should_continue(iteration, elapsed) {
+                        return Ok(IterationResult::BoundExhausted);
+                    }
+                    if !Self::state(flow, current_state.as_str())?.has_timeout() {
+                        return Ok(IterationResult::TimedOut);
+                    }
+
+                    ctx.add_timeout_events(1);
+                    let step = Self::state_mut(flow, current_state.as_str())?
+                        .run_timeout(ctx)?
+                        .expect("timeout handler presence was checked before dispatch");
+                    match self.apply_step(
+                        flow,
+                        current_state.as_str(),
+                        step,
+                        StepMode::Active,
+                        iteration,
+                        ctx,
+                    )? {
+                        StepAction::Settled => continue,
+                        StepAction::Enter(target) => {
+                            *current_state = target;
+                            trace.enter(current_state);
+                            if self
+                                .settle_entry(flow, current_state, ctx, trace, iteration)?
+                                .is_some()
+                            {
+                                return Ok(IterationResult::Terminal);
+                            }
+                            continue;
+                        }
+                        StepAction::Terminal(terminal) => {
+                            if terminal.entered_state {
+                                trace.enter(&terminal.state);
+                            }
+                            return Ok(IterationResult::Terminal);
+                        }
+                    }
+                }
             };
 
             let (description, step) = {
@@ -487,16 +546,16 @@ impl Runner {
         current_state: &str,
         ctx: &PacketContext,
         timeout: Duration,
-    ) -> Result<Option<crafter::Packet>> {
+    ) -> Result<ReceiveCompletion> {
         let mut retransmits = 0;
 
         loop {
             if let Some(packet) = self.conversation.recv_matching(matcher, ctx, timeout)? {
-                return Ok(Some(packet));
+                return Ok(ReceiveCompletion::Packet(packet));
             }
 
             if !self.retransmit_outstanding(current_state, retransmits)? {
-                return Ok(None);
+                return Ok(ReceiveCompletion::TimedOut);
             }
 
             retransmits += 1;
@@ -578,6 +637,7 @@ impl Runner {
             self.tcp_payload_bytes_sent,
             ctx.tcp_received_payload().to_vec(),
         )
+        .with_recovery_metrics(ctx.recovery_metrics())
         .with_tcp_state(ctx.get_tcp_snd_nxt(), ctx.get_tcp_rcv_nxt())
     }
 
@@ -1631,7 +1691,7 @@ mod tests {
     }
 
     #[test]
-    fn runner_times_out_when_no_matching_reply_arrives() {
+    fn runner_without_timeout_action_still_times_out() {
         let transition = Transition::on(
             PredicateMatcher::new("any packet", |_packet, _ctx| true),
             |_packet, _ctx| Ok(Step::goto("Done")),
@@ -1656,6 +1716,43 @@ mod tests {
         assert_eq!(report.outcome(), &FlowOutcome::TimedOut);
         assert_eq!(report.visited_states(), &["Waiting".to_string()]);
         assert_eq!(report.iterations(), 0);
+        assert_eq!(report.recovery_metrics().timeout_events(), 0);
+    }
+
+    #[test]
+    fn runner_dispatches_state_timeout_action() {
+        let initial = request_packet();
+        let recovery_packets = [request_packet(), request_packet()];
+        let waiting = FlowState::new("Waiting")
+            .on_entry(move |_ctx| Ok(Step::send(initial.clone())))
+            .on_timeout(
+                move |_ctx| Ok(Step::send_batch(recovery_packets.clone()).goto("Recovered")),
+            )
+            .timeout_targets(["Recovered"]);
+        let recovered = FlowState::new("Recovered")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-state-timeout-action")
+            .state(waiting)
+            .state(recovered)
+            .initial("Waiting");
+        let options = RunOptions::default().step_timeout(Duration::from_millis(1));
+        let mut runner = Runner::with_source(options, MemoryCaptureSource::default())
+            .expect("runner opens with empty source");
+
+        let report = runner
+            .run(&mut flow)
+            .expect("runner dispatches the timeout action");
+
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(
+            report.visited_states(),
+            &["Waiting".to_string(), "Recovered".to_string()]
+        );
+        assert_eq!(report.sent_count(), 3);
+        assert_eq!(runner.send_reports().len(), 3);
+        assert_eq!(report.recovery_metrics().timeout_events(), 1);
+        assert!(runner.outstanding_segment.is_none());
     }
 
     #[test]
