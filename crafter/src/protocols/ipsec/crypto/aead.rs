@@ -30,14 +30,13 @@
 //! on mismatch — it never panics and never returns unauthenticated plaintext.
 
 use aes::Aes128;
-use aes_gcm::aead::AeadInPlace;
-use aes_gcm::Aes128Gcm;
-use ccm::consts::{U11, U8};
-use ccm::Ccm;
-use chacha20poly1305::{
-    AeadInOut as ChaChaAeadInOut, ChaCha20Poly1305, KeyInit as ChaChaKeyInit, Nonce as ChaChaNonce,
-    Tag as ChaChaTag,
+use aes_gcm::{
+    AeadInOut as AesGcmAeadInOut, Aes128Gcm, KeyInit as AesGcmKeyInit, Nonce as AesGcmNonce,
+    Tag as AesGcmTag,
 };
+use ccm::consts::{U11, U8};
+use ccm::{AeadInPlace as CcmAeadInPlace, Ccm};
+use chacha20poly1305::{ChaCha20Poly1305, Nonce as ChaChaNonce, Tag as ChaChaTag};
 use cipher::generic_array::GenericArray;
 use cipher::KeyInit;
 
@@ -67,6 +66,8 @@ const ICV_LEN_8: usize = 8;
 
 /// AES-128-CCM with an 8-octet tag and an 11-octet nonce (RFC 4309: `L = 4`).
 type AesCcm8 = Ccm<Aes128, U8, U11>;
+/// AES-GCM nonce with the RFC 4106 12-octet nonce size.
+type AesGcmNonce12 = AesGcmNonce<aes_gcm::aead::consts::U12>;
 
 /// IPSec AEAD transforms, identified by their IKEv2 transform names.
 ///
@@ -153,9 +154,10 @@ impl AeadTransform {
         match self {
             Self::AesGcm16 => {
                 let cipher = Aes128Gcm::new_from_slice(key).map_err(|_| Self::key_err(self))?;
+                let nonce = AesGcmNonce12::try_from(nonce).map_err(|_| Self::nonce_err(self))?;
                 let mut buf = plaintext.to_vec();
                 let tag = cipher
-                    .encrypt_in_place_detached(GenericArray::from_slice(nonce), aad, &mut buf)
+                    .encrypt_inout_detached(&nonce, aad, buf.as_mut_slice().into())
                     .map_err(|_| Self::seal_err(self))?;
                 Ok((buf, tag.to_vec()))
             }
@@ -202,14 +204,11 @@ impl AeadTransform {
         match self {
             Self::AesGcm16 => {
                 let cipher = Aes128Gcm::new_from_slice(key).map_err(|_| Self::key_err(self))?;
+                let nonce = AesGcmNonce12::try_from(nonce).map_err(|_| Self::nonce_err(self))?;
+                let tag = AesGcmTag::try_from(tag).map_err(|_| Self::tag_len_err(self))?;
                 let mut buf = ciphertext.to_vec();
                 cipher
-                    .decrypt_in_place_detached(
-                        GenericArray::from_slice(nonce),
-                        aad,
-                        &mut buf,
-                        GenericArray::from_slice(tag),
-                    )
+                    .decrypt_inout_detached(&nonce, aad, buf.as_mut_slice().into(), &tag)
                     .map_err(|_| Self::integrity_err(self))?;
                 Ok(buf)
             }

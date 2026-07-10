@@ -18,15 +18,15 @@
 use aes::cipher::generic_array::GenericArray;
 use aes::cipher::{BlockEncrypt, KeyInit as AesKeyInit};
 use aes::Aes128;
-use aes_gcm::aead::AeadInPlace;
-use aes_gcm::{AesGcm, KeyInit as GcmKeyInit};
-use cipher::consts::U12;
+use aes_gcm::{AeadInOut as GcmAeadInOut, Aes128Gcm, KeyInit as GcmKeyInit, Nonce as GcmNonce};
 use hmac::{Hmac, Mac};
 use sha1::Sha1;
 use sha2::{Sha256, Sha384, Sha512};
 use subtle::ConstantTimeEq;
 
 use crate::{CrafterError, Result};
+
+type GcmNonce12 = GcmNonce<aes_gcm::aead::consts::U12>;
 
 /// AES block size in octets.
 const AES_BLOCK_LEN: usize = 16;
@@ -268,10 +268,18 @@ fn aes_gmac(key: &[u8], message: &[u8]) -> Result<Vec<u8>> {
     let aes_key = &key[..AES128_KEY_LEN];
     let nonce = &key[AES128_KEY_LEN..]; // salt(4) || iv(8) = 12 octets
 
-    type Gmac128 = AesGcm<Aes128, U12>;
-    let gmac = <Gmac128 as GcmKeyInit>::new(GenericArray::from_slice(aes_key));
+    let gmac = Aes128Gcm::new_from_slice(aes_key).map_err(|_| {
+        CrafterError::invalid_field_value("ipsec.integrity.aes_gmac.key", "AES-GMAC key is invalid")
+    })?;
+    let nonce = GcmNonce12::try_from(nonce).map_err(|_| {
+        CrafterError::invalid_field_value(
+            "ipsec.integrity.aes_gmac.nonce",
+            "AES-GMAC nonce must be 12 octets",
+        )
+    })?;
+    let mut empty = [];
     let tag = gmac
-        .encrypt_in_place_detached(GenericArray::from_slice(nonce), message, &mut [])
+        .encrypt_inout_detached(&nonce, message, empty.as_mut_slice().into())
         .map_err(|_| {
             CrafterError::invalid_field_value("ipsec.integrity.aes_gmac", "GMAC computation failed")
         })?;
