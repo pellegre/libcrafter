@@ -5,6 +5,10 @@ use std::net::Ipv4Addr;
 
 use crafter::MacAddr;
 
+use crate::{FlowError, Result};
+
+const NAMESPACE_SEPARATOR: &str = "::";
+
 const TRANSACTION_ID: &str = "transaction_id";
 const CLIENT_MAC: &str = "client_mac";
 const OFFERED_IPV4: &str = "offered_ipv4";
@@ -74,6 +78,85 @@ impl PacketContext {
             Some(ContextValue::Bool(value)) => Some(*value),
             _ => None,
         }
+    }
+
+    /// Insert an unsigned 64-bit value under `namespace::key`.
+    pub fn insert_namespaced_u64(&mut self, namespace: &str, key: &str, value: u64) -> Result<()> {
+        let key = namespaced_key(namespace, key)?;
+        self.values.insert(key, ContextValue::U64(value));
+        Ok(())
+    }
+
+    /// Return an unsigned 64-bit value stored under `namespace::key`.
+    pub fn get_namespaced_u64(&self, namespace: &str, key: &str) -> Result<Option<u64>> {
+        let key = namespaced_key(namespace, key)?;
+        Ok(match self.values.get(&key) {
+            Some(ContextValue::U64(value)) => Some(*value),
+            _ => None,
+        })
+    }
+
+    /// Insert a boolean value under `namespace::key`.
+    pub fn insert_namespaced_bool(
+        &mut self,
+        namespace: &str,
+        key: &str,
+        value: bool,
+    ) -> Result<()> {
+        let key = namespaced_key(namespace, key)?;
+        self.values.insert(key, ContextValue::Bool(value));
+        Ok(())
+    }
+
+    /// Return a boolean value stored under `namespace::key`.
+    pub fn get_namespaced_bool(&self, namespace: &str, key: &str) -> Result<Option<bool>> {
+        let key = namespaced_key(namespace, key)?;
+        Ok(match self.values.get(&key) {
+            Some(ContextValue::Bool(value)) => Some(*value),
+            _ => None,
+        })
+    }
+
+    /// Insert bytes under `namespace::key`.
+    pub fn insert_namespaced_bytes(
+        &mut self,
+        namespace: &str,
+        key: &str,
+        value: Vec<u8>,
+    ) -> Result<()> {
+        let key = namespaced_key(namespace, key)?;
+        self.values.insert(key, ContextValue::Bytes(value));
+        Ok(())
+    }
+
+    /// Return bytes stored under `namespace::key`.
+    pub fn get_namespaced_bytes(&self, namespace: &str, key: &str) -> Result<Option<&[u8]>> {
+        let key = namespaced_key(namespace, key)?;
+        Ok(match self.values.get(&key) {
+            Some(ContextValue::Bytes(value)) => Some(value.as_slice()),
+            _ => None,
+        })
+    }
+
+    /// Insert a string under `namespace::key`.
+    pub fn insert_namespaced_string(
+        &mut self,
+        namespace: &str,
+        key: &str,
+        value: impl Into<String>,
+    ) -> Result<()> {
+        let key = namespaced_key(namespace, key)?;
+        self.values.insert(key, ContextValue::String(value.into()));
+        Ok(())
+    }
+
+    /// Return a string stored under `namespace::key`.
+    pub fn get_namespaced_string(&self, namespace: &str, key: &str) -> Result<Option<&str>> {
+        let key = namespaced_key(namespace, key)?;
+        Ok(match self.values.get(&key) {
+            Some(ContextValue::String(value)) => Some(value.as_str()),
+            _ => None,
+        })
     }
 
     /// Store a DHCPv4 transaction id.
@@ -316,6 +399,29 @@ impl PacketContext {
     }
 }
 
+fn namespaced_key(namespace: &str, key: &str) -> Result<String> {
+    validate_key_component("namespace", namespace)?;
+    validate_key_component("local key", key)?;
+    Ok(format!("{namespace}{NAMESPACE_SEPARATOR}{key}"))
+}
+
+fn validate_key_component(label: &str, value: &str) -> Result<()> {
+    if value.is_empty() {
+        return Err(FlowError::Build(format!(
+            "context {label} must not be empty"
+        )));
+    }
+    if !value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+    {
+        return Err(FlowError::Build(format!(
+            "context {label} contains an invalid character"
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ContextValue {
     U64(u64),
@@ -331,6 +437,7 @@ enum ContextValue {
 #[cfg(test)]
 mod tests {
     use super::PacketContext;
+    use crate::FlowError;
     use std::net::Ipv4Addr;
 
     #[test]
@@ -374,6 +481,74 @@ mod tests {
 
         context.insert_bool("shared", false);
         assert_eq!(context.get_u64("shared"), None);
+    }
+
+    #[test]
+    fn context_namespaces_isolate_protocol_values() {
+        let mut context = PacketContext::new();
+
+        context
+            .insert_namespaced_u64("tcp", "packet_number", 7)
+            .unwrap();
+        context
+            .insert_namespaced_u64("quic", "packet_number", 11)
+            .unwrap();
+        context
+            .insert_namespaced_bool("quic", "established", true)
+            .unwrap();
+        context
+            .insert_namespaced_bytes("quic", "connection_id", vec![0xde, 0xad])
+            .unwrap();
+        context
+            .insert_namespaced_string("quic", "lifecycle", "handshaking")
+            .unwrap();
+
+        assert_eq!(
+            context.get_namespaced_u64("tcp", "packet_number"),
+            Ok(Some(7))
+        );
+        assert_eq!(
+            context.get_namespaced_u64("quic", "packet_number"),
+            Ok(Some(11))
+        );
+        assert_eq!(
+            context.get_namespaced_bool("quic", "established"),
+            Ok(Some(true))
+        );
+        assert_eq!(
+            context.get_namespaced_bytes("quic", "connection_id"),
+            Ok(Some(&[0xde, 0xad][..]))
+        );
+        assert_eq!(
+            context.get_namespaced_string("quic", "lifecycle"),
+            Ok(Some("handshaking"))
+        );
+        assert_eq!(
+            context.summary(),
+            "PacketContext keys=[quic::connection_id, quic::established, quic::lifecycle, quic::packet_number, tcp::packet_number]"
+        );
+        assert!(!context.summary().contains("dead"));
+    }
+
+    #[test]
+    fn context_namespaces_reject_ambiguous_keys() {
+        let mut context = PacketContext::new();
+
+        for result in [
+            context.insert_namespaced_u64("", "packet_number", 1),
+            context.insert_namespaced_u64("quic", "", 1),
+            context.insert_namespaced_u64("quic::peer", "packet_number", 1),
+            context.insert_namespaced_u64("quic", "peer::packet_number", 1),
+            context.insert_namespaced_u64(" quic", "packet_number", 1),
+        ] {
+            assert!(matches!(result, Err(FlowError::Build(_))));
+        }
+
+        assert!(matches!(
+            context.get_namespaced_bool("quic", "bad:key"),
+            Err(FlowError::Build(_))
+        ));
+        assert_eq!(context.summary(), "PacketContext keys=[]");
     }
 
     #[test]
