@@ -6,8 +6,8 @@
 
 use aes::cipher::{BlockEncrypt, KeyInit as AesKeyInit};
 use aes::Aes128;
-use aes_gcm::aead::{Aead, Payload};
-use aes_gcm::{Aes128Gcm, Nonce};
+use aes_gcm::aead::{consts::U12 as AesGcmU12, Aead, Payload};
+use aes_gcm::{Aes128Gcm, KeyInit as AesGcmKeyInit, Nonce as AesGcmNonce};
 use chacha20::cipher::{KeyIvInit as ChaChaKeyIvInit, StreamCipher, StreamCipherSeek};
 use chacha20::ChaCha20;
 use cipher::generic_array::GenericArray;
@@ -25,6 +25,7 @@ use super::varint::{encoded_len_from_prefix, QuicVarInt};
 use crate::error::{CrafterError, Result};
 
 type HmacSha256 = Hmac<Sha256>;
+type AesGcmNonce12 = AesGcmNonce<AesGcmU12>;
 
 /// Length of a QUIC Initial secret derived with SHA-256.
 pub const QUIC_INITIAL_SECRET_LEN: usize = 32;
@@ -563,10 +564,10 @@ pub fn quic_initial_aes128gcm_protect_payload(
             "invalid AES-128-GCM Initial key length",
         )
     })?;
-    let nonce = quic_initial_payload_nonce(keys.iv(), packet_number);
+    let nonce = AesGcmNonce12::from(quic_initial_payload_nonce(keys.iv(), packet_number));
     cipher
         .encrypt(
-            Nonce::from_slice(&nonce),
+            &nonce,
             Payload {
                 msg: plaintext.as_ref(),
                 aad: associated_data.as_ref(),
@@ -605,10 +606,10 @@ pub fn quic_initial_aes128gcm_unprotect_payload(
             "invalid AES-128-GCM Initial key length",
         )
     })?;
-    let nonce = quic_initial_payload_nonce(keys.iv(), packet_number);
+    let nonce = AesGcmNonce12::from(quic_initial_payload_nonce(keys.iv(), packet_number));
     cipher
         .decrypt(
-            Nonce::from_slice(&nonce),
+            &nonce,
             Payload {
                 msg: ciphertext_and_tag,
                 aad: associated_data.as_ref(),
@@ -738,9 +739,10 @@ fn retry_integrity_tag_with_key(
             "invalid AES-128-GCM Retry integrity key length",
         )
     })?;
+    let nonce = AesGcmNonce12::from(*nonce);
     let tag = cipher
         .encrypt(
-            Nonce::from_slice(nonce),
+            &nonce,
             Payload {
                 msg: &[],
                 aad: pseudo_packet,
