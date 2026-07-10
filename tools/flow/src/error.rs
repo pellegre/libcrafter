@@ -17,6 +17,13 @@ pub enum FlowError {
     Timeout,
     /// The requested flow feature is not supported.
     Unsupported(String),
+    /// A private QUIC endpoint driver operation failed.
+    QuicEndpoint {
+        /// Stable failure category independent of the selected provider.
+        category: crate::QuicEndpointErrorCategory,
+        /// Non-secret description of the operation that failed.
+        context: String,
+    },
     /// A lower-level `crafter` operation failed.
     Crafter(crafter::CrafterError),
 }
@@ -33,6 +40,9 @@ impl fmt::Display for FlowError {
             Self::Capture(message) => write!(f, "flow capture error: {message}"),
             Self::Timeout => f.write_str("flow step timed out"),
             Self::Unsupported(message) => write!(f, "unsupported flow feature: {message}"),
+            Self::QuicEndpoint { category, context } => {
+                write!(f, "QUIC endpoint {category} error: {context}")
+            }
             Self::Crafter(error) => write!(f, "crafter error: {error}"),
         }
     }
@@ -66,6 +76,10 @@ mod tests {
             FlowError::Capture("capture source closed".to_string()),
             FlowError::Timeout,
             FlowError::Unsupported("role is not implemented".to_string()),
+            FlowError::QuicEndpoint {
+                category: crate::QuicEndpointErrorCategory::Configuration,
+                context: "missing peer name".to_string(),
+            },
             FlowError::Crafter(crafter::CrafterError::buffer_too_short("packet", 4, 2)),
         ];
 
