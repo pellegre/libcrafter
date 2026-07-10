@@ -13,7 +13,9 @@ pub struct FlowState {
     on_timeout: Option<Box<TimeoutHandler>>,
     timeout_description: Option<String>,
     entry_target_hints: Option<Vec<String>>,
+    timeout_target_hints: Option<Vec<String>>,
     entry_terminal_path: bool,
+    timeout_terminal_path: bool,
     transitions: Vec<Transition>,
 }
 
@@ -27,7 +29,9 @@ impl FlowState {
             on_timeout: None,
             timeout_description: None,
             entry_target_hints: None,
+            timeout_target_hints: None,
             entry_terminal_path: false,
+            timeout_terminal_path: false,
             transitions: Vec::new(),
         }
     }
@@ -93,6 +97,22 @@ impl FlowState {
         self
     }
 
+    /// Declare the state names this state's timeout handler may target.
+    pub fn timeout_targets<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.timeout_target_hints = Some(names.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Declare that this state's timeout handler may end the flow with `Step::done`.
+    pub fn timeout_terminal(mut self) -> Self {
+        self.timeout_terminal_path = true;
+        self
+    }
+
     /// Add a transition to this state.
     pub fn on(mut self, transition: Transition) -> Self {
         self.transitions.push(transition);
@@ -107,6 +127,11 @@ impl FlowState {
     /// Return declared entry target state names for static graph validation.
     pub fn declared_entry_targets(&self) -> &[String] {
         self.entry_target_hints.as_deref().unwrap_or(&[])
+    }
+
+    /// Return declared timeout target state names for static graph validation.
+    pub fn declared_timeout_targets(&self) -> &[String] {
+        self.timeout_target_hints.as_deref().unwrap_or(&[])
     }
 
     /// Return the human-readable entry action description, if present.
@@ -124,9 +149,24 @@ impl FlowState {
         self.entry_target_hints.is_some()
     }
 
+    /// Return true when this state has explicit timeout target hints.
+    pub fn has_timeout_target_hints(&self) -> bool {
+        self.timeout_target_hints.is_some()
+    }
+
     /// Return true when this state's entry handler declares a terminal path.
     pub fn declares_entry_terminal_path(&self) -> bool {
         self.entry_terminal_path
+    }
+
+    /// Return true when this state's timeout handler declares a terminal path.
+    pub fn declares_timeout_terminal_path(&self) -> bool {
+        self.timeout_terminal_path
+    }
+
+    /// Return true when an entry or timeout handler declares a terminal path.
+    pub fn declares_terminal_path(&self) -> bool {
+        self.entry_terminal_path || self.timeout_terminal_path
     }
 
     /// Return true when this state has an entry handler.

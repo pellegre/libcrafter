@@ -110,7 +110,7 @@ impl Flow {
             if state.name() == self.initial {
                 markers.push("initial");
             }
-            if state.declares_entry_terminal_path() {
+            if state.declares_terminal_path() {
                 markers.push("terminal");
             }
 
@@ -132,6 +132,28 @@ impl Flow {
                 entry_description,
                 self.format_declared_targets(state.declared_entry_targets()),
                 if state.declares_entry_terminal_path() {
+                    " [terminal]"
+                } else {
+                    ""
+                }
+            );
+
+            let timeout = if state.has_timeout() {
+                "present"
+            } else {
+                "none"
+            };
+            let timeout_description = state
+                .timeout_description_text()
+                .map(|description| format!(" ({description})"))
+                .unwrap_or_default();
+            let _ = writeln!(
+                output,
+                "      timeout: {}{}{}{}",
+                timeout,
+                timeout_description,
+                self.format_declared_targets(state.declared_timeout_targets()),
+                if state.declares_timeout_terminal_path() {
                     " [terminal]"
                 } else {
                     ""
@@ -206,6 +228,10 @@ impl Flow {
                 self.validate_target(target, format!("state '{}' entry handler", state.name()))?;
             }
 
+            for target in state.declared_timeout_targets() {
+                self.validate_target(target, format!("state '{}' timeout handler", state.name()))?;
+            }
+
             for transition in state.transitions() {
                 for target in transition.declared_targets() {
                     self.validate_target(
@@ -236,7 +262,7 @@ impl Flow {
 
     fn has_terminal_path_declaration(&self) -> bool {
         self.states.values().any(|state| {
-            state.declares_entry_terminal_path()
+            state.declares_terminal_path()
                 || state
                     .transitions()
                     .iter()
@@ -249,6 +275,9 @@ impl Flow {
             (state.has_entry()
                 && !state.has_entry_target_hints()
                 && !state.declares_entry_terminal_path())
+                || (state.has_timeout()
+                    && !state.has_timeout_target_hints()
+                    && !state.declares_timeout_terminal_path())
                 || state.transitions().iter().any(|transition| {
                     !transition.has_target_hints() && !transition.declares_terminal_path()
                 })
@@ -266,7 +295,7 @@ impl Flow {
                 if self
                     .states
                     .get(target)
-                    .is_some_and(FlowState::declares_entry_terminal_path)
+                    .is_some_and(FlowState::declares_terminal_path)
                 {
                     format!("{target} [terminal]")
                 } else {
@@ -379,6 +408,60 @@ mod tests {
 
         flow.validate()
             .expect("well-formed flow should pass validation");
+    }
+
+    #[test]
+    fn flow_validates_timeout_targets() {
+        let valid = Flow::new("valid-timeout-target")
+            .state(
+                FlowState::new("Waiting")
+                    .on_timeout(|_ctx| Ok(Step::goto("Recovering")))
+                    .timeout_description("regenerate output")
+                    .timeout_targets(["Recovering"]),
+            )
+            .state(terminal_state("Recovering"))
+            .initial("Waiting");
+
+        valid
+            .validate()
+            .expect("declared timeout target should validate");
+        let show = valid.show();
+        assert!(show.contains("timeout: present (regenerate output) -> Recovering [terminal]"));
+
+        let missing = Flow::new("missing-timeout-target")
+            .state(
+                FlowState::new("Waiting")
+                    .on_timeout(|_ctx| Ok(Step::goto("Missing")))
+                    .timeout_targets(["Missing"])
+                    .timeout_terminal(),
+            )
+            .initial("Waiting");
+
+        let error = missing
+            .validate()
+            .expect_err("missing timeout target should fail validation");
+        assert_build_error_contains(
+            error,
+            "state 'Waiting' timeout handler declares missing target state 'Missing'",
+        );
+    }
+
+    #[test]
+    fn flow_accepts_timeout_only_terminal_path() {
+        let flow = Flow::new("timeout-terminal")
+            .state(
+                FlowState::new("Waiting")
+                    .on_timeout(|_ctx| Ok(Step::done()))
+                    .timeout_description("idle timeout")
+                    .timeout_terminal(),
+            )
+            .initial("Waiting");
+
+        flow.validate()
+            .expect("timeout-only terminal path should validate");
+        let show = flow.show();
+        assert!(show.contains("Waiting [initial, terminal]"));
+        assert!(show.contains("timeout: present (idle timeout) [terminal]"));
     }
 
     #[test]
