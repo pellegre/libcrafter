@@ -1,15 +1,71 @@
 //! Transition outcomes for protocol flows.
 
+/// Delivery behavior attached to one packet output.
+///
+/// The three values make reply expectation and exact-replay safety a single,
+/// non-contradictory choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendIntent {
+    /// Send the packet without waiting for a direct reply.
+    FireAndForget,
+    /// Wait for a reply and permit retransmission of the exact packet bytes.
+    ReplyExpectedReplaySafe,
+    /// Wait for a reply, but regenerate fresh packet bytes after loss.
+    ReplyExpectedRegenerationOnly,
+}
+
+impl SendIntent {
+    /// Return true when this output expects a direct reply.
+    pub const fn expects_reply(self) -> bool {
+        !matches!(self, Self::FireAndForget)
+    }
+
+    /// Return true when retransmission may replay the exact packet bytes.
+    pub const fn allows_exact_replay(self) -> bool {
+        matches!(self, Self::ReplyExpectedReplaySafe)
+    }
+
+    /// Return true when recovery must produce newly generated packet bytes.
+    pub const fn requires_regeneration(self) -> bool {
+        matches!(self, Self::ReplyExpectedRegenerationOnly)
+    }
+}
+
 /// One ordered packet output produced by a flow step.
 #[derive(Debug, Clone)]
 pub struct StepOutput {
     packet: crafter::Packet,
+    intent: SendIntent,
 }
 
 impl StepOutput {
-    /// Create an output from a packet.
+    /// Create a legacy reply-expected output whose exact bytes may be replayed.
     pub const fn new(packet: crafter::Packet) -> Self {
-        Self { packet }
+        Self::replay_safe(packet)
+    }
+
+    /// Create an output that does not expect a direct reply.
+    pub const fn fire_and_forget(packet: crafter::Packet) -> Self {
+        Self {
+            packet,
+            intent: SendIntent::FireAndForget,
+        }
+    }
+
+    /// Create a reply-expected output whose exact bytes may be replayed.
+    pub const fn replay_safe(packet: crafter::Packet) -> Self {
+        Self {
+            packet,
+            intent: SendIntent::ReplyExpectedReplaySafe,
+        }
+    }
+
+    /// Create a reply-expected output that must be regenerated after loss.
+    pub const fn regeneration_only(packet: crafter::Packet) -> Self {
+        Self {
+            packet,
+            intent: SendIntent::ReplyExpectedRegenerationOnly,
+        }
     }
 
     /// Borrow the packet carried by this output.
@@ -20,6 +76,26 @@ impl StepOutput {
     /// Consume this output and return its packet.
     pub fn into_packet(self) -> crafter::Packet {
         self.packet
+    }
+
+    /// Return this output's delivery intent.
+    pub const fn intent(&self) -> SendIntent {
+        self.intent
+    }
+
+    /// Return true when this output expects a direct reply.
+    pub const fn expects_reply(&self) -> bool {
+        self.intent.expects_reply()
+    }
+
+    /// Return true when retransmission may replay the exact packet bytes.
+    pub const fn allows_exact_replay(&self) -> bool {
+        self.intent.allows_exact_replay()
+    }
+
+    /// Return true when recovery must produce newly generated packet bytes.
+    pub const fn requires_regeneration(&self) -> bool {
+        self.intent.requires_regeneration()
     }
 }
 
@@ -47,7 +123,7 @@ impl Step {
     /// Send an ordered batch of packets and stay in the current state unless a target is added.
     pub fn send_batch(packets: impl IntoIterator<Item = crafter::Packet>) -> Self {
         Self {
-            outputs: packets.into_iter().map(StepOutput::new).collect(),
+            outputs: packets.into_iter().map(StepOutput::replay_safe).collect(),
             target: None,
             terminal: false,
             outcome: None,
@@ -63,11 +139,35 @@ impl Step {
     /// Emit an ordered batch of packets without expecting a direct reply.
     pub fn emit_batch(packets: impl IntoIterator<Item = crafter::Packet>) -> Self {
         Self {
-            outputs: packets.into_iter().map(StepOutput::new).collect(),
+            outputs: packets
+                .into_iter()
+                .map(StepOutput::fire_and_forget)
+                .collect(),
             target: None,
             terminal: false,
             outcome: None,
             expects_reply: false,
+        }
+    }
+
+    /// Send a packet that must be regenerated rather than replayed after loss.
+    pub fn send_regeneration_only(packet: crafter::Packet) -> Self {
+        Self::send_regeneration_only_batch([packet])
+    }
+
+    /// Send an ordered batch whose packets must be regenerated after loss.
+    pub fn send_regeneration_only_batch(
+        packets: impl IntoIterator<Item = crafter::Packet>,
+    ) -> Self {
+        Self {
+            outputs: packets
+                .into_iter()
+                .map(StepOutput::regeneration_only)
+                .collect(),
+            target: None,
+            terminal: false,
+            outcome: None,
+            expects_reply: true,
         }
     }
 
@@ -165,7 +265,7 @@ impl StepGotoExt for Step {
 
 #[cfg(test)]
 mod tests {
-    use super::{Step, StepGotoExt};
+    use super::{SendIntent, Step, StepGotoExt};
 
     #[test]
     fn step_send_then_goto_carries_packet_and_target() {
@@ -209,6 +309,48 @@ mod tests {
         );
         assert_eq!(step.target(), Some("next"));
         assert!(step.expects_reply());
+    }
+
+    #[test]
+    fn step_output_intents_distinguish_replay_safety() {
+        let replay_safe =
+            Step::send(crafter::Packet::decode_raw([0x01]).expect("replay-safe packet decodes"));
+        let fire_and_forget = Step::emit(
+            crafter::Packet::decode_raw([0x02]).expect("fire-and-forget packet decodes"),
+        );
+        let regeneration_only = Step::send_regeneration_only_batch([
+            crafter::Packet::decode_raw([0x03]).expect("first regeneration packet decodes"),
+            crafter::Packet::decode_raw([0x04]).expect("second regeneration packet decodes"),
+        ]);
+
+        let replay_safe = &replay_safe.outputs()[0];
+        assert_eq!(replay_safe.intent(), SendIntent::ReplyExpectedReplaySafe);
+        assert!(replay_safe.expects_reply());
+        assert!(replay_safe.allows_exact_replay());
+        assert!(!replay_safe.requires_regeneration());
+
+        let fire_and_forget = &fire_and_forget.outputs()[0];
+        assert_eq!(fire_and_forget.intent(), SendIntent::FireAndForget);
+        assert!(!fire_and_forget.expects_reply());
+        assert!(!fire_and_forget.allows_exact_replay());
+        assert!(!fire_and_forget.requires_regeneration());
+
+        assert!(regeneration_only.expects_reply());
+        assert_eq!(regeneration_only.outputs().len(), 2);
+        for output in regeneration_only.outputs() {
+            assert_eq!(output.intent(), SendIntent::ReplyExpectedRegenerationOnly);
+            assert!(output.expects_reply());
+            assert!(!output.allows_exact_replay());
+            assert!(output.requires_regeneration());
+        }
+
+        let regeneration_single = Step::send_regeneration_only(
+            crafter::Packet::decode_raw([0x05]).expect("single regeneration packet decodes"),
+        );
+        assert_eq!(
+            regeneration_single.outputs()[0].intent(),
+            SendIntent::ReplyExpectedRegenerationOnly
+        );
     }
 
     #[test]
