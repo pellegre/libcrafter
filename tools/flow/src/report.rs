@@ -27,6 +27,7 @@ pub struct FlowReport {
     visited_states: Vec<String>,
     sent_count: usize,
     received_count: usize,
+    payload_protocol: Option<String>,
     bytes_sent: usize,
     bytes_received: usize,
     received_payload: Vec<u8>,
@@ -62,6 +63,7 @@ impl FlowReport {
             visited_states,
             sent_count,
             received_count,
+            payload_protocol: None,
             bytes_sent: 0,
             bytes_received: 0,
             received_payload: Vec::new(),
@@ -75,17 +77,30 @@ impl FlowReport {
         }
     }
 
-    /// Return a report with TCP payload byte counters attached.
-    pub fn with_tcp_payload(
+    /// Return a report with protocol-neutral application payload observations attached.
+    ///
+    /// Callers should supply payload bytes and counts recorded by their flow context. In
+    /// particular, protected protocols must not derive these observations by inspecting wire
+    /// payloads.
+    pub fn with_protocol_payload(
         mut self,
+        protocol: impl Into<String>,
         bytes_sent: usize,
         received_payload: impl Into<Vec<u8>>,
     ) -> Self {
         let received_payload = received_payload.into();
+        self.payload_protocol = Some(protocol.into());
         self.bytes_sent = bytes_sent;
         self.bytes_received = received_payload.len();
         self.received_payload = received_payload;
         self
+    }
+
+    /// Return a report with TCP payload byte counters attached.
+    ///
+    /// This compatibility builder delegates to the protocol-neutral payload builder.
+    pub fn with_tcp_payload(self, bytes_sent: usize, received_payload: impl Into<Vec<u8>>) -> Self {
+        self.with_protocol_payload("tcp", bytes_sent, received_payload)
     }
 
     /// Return a report with final TCP sequence tracking attached.
@@ -134,17 +149,22 @@ impl FlowReport {
         self.received_count
     }
 
-    /// Return TCP payload bytes sent by this run.
+    /// Return the protocol label associated with application payload accounting.
+    pub fn payload_protocol(&self) -> Option<&str> {
+        self.payload_protocol.as_deref()
+    }
+
+    /// Return application payload bytes sent by this run.
     pub const fn bytes_sent(&self) -> usize {
         self.bytes_sent
     }
 
-    /// Return TCP payload bytes received by this run.
+    /// Return application payload bytes received by this run.
     pub const fn bytes_received(&self) -> usize {
         self.bytes_received
     }
 
-    /// Return received TCP payload accumulated by this run.
+    /// Return received application payload accumulated by this run.
     pub fn received_payload(&self) -> &[u8] {
         &self.received_payload
     }
@@ -186,7 +206,7 @@ impl FlowReport {
 
     /// Return a compact one-line description of this run.
     pub fn summary(&self) -> String {
-        format!(
+        let mut summary = format!(
             "FlowReport '{}' ({:?}, dry_run={}): {:?}, state_trace={}, final_state={}, sent={}, received={}, bytes_sent={}, bytes_received={}, transitions={}, iterations={}, elapsed={:?}",
             self.flow_name,
             self.role,
@@ -201,7 +221,11 @@ impl FlowReport {
             self.transitions_taken.len(),
             self.iterations,
             self.elapsed,
-        )
+        );
+        if let Some(protocol) = self.payload_protocol() {
+            let _ = write!(summary, ", payload_protocol={protocol}");
+        }
+        summary
     }
 
     /// Return a multi-line inspectable view of this run.
@@ -229,6 +253,9 @@ impl FlowReport {
             "  payload bytes: sent={}, received={}",
             self.bytes_sent, self.bytes_received
         );
+        if let Some(protocol) = self.payload_protocol() {
+            let _ = writeln!(output, "  payload protocol: {protocol}");
+        }
         if self.tcp_snd_nxt.is_some() || self.tcp_rcv_nxt.is_some() {
             let _ = writeln!(
                 output,
@@ -279,7 +306,8 @@ impl FlowReport {
     /// Field names are stable for artifact consumers:
     /// `flow_name`, `role`, `dry_run`, `visited_states`, `sent_count`,
     /// `received_count`, `transitions_taken`, `iterations`, `elapsed_nanos`,
-    /// `outcome`, optional `error`, and `context_snapshot`.
+    /// `outcome`, optional `error`, optional `payload_protocol`, and
+    /// `context_snapshot`.
     pub fn to_json(&self) -> String {
         let mut output = String::new();
 
@@ -308,6 +336,10 @@ impl FlowReport {
         if let FlowOutcome::Error(error) = &self.outcome {
             output.push(',');
             write_json_field(&mut output, "error", error);
+        }
+        if let Some(protocol) = self.payload_protocol() {
+            output.push(',');
+            write_json_field(&mut output, "payload_protocol", protocol);
         }
         output.push(',');
         write_json_field(&mut output, "context_snapshot", &self.context_snapshot);
@@ -398,6 +430,7 @@ mod tests {
         );
         assert_eq!(report.sent_count(), 1);
         assert_eq!(report.received_count(), 2);
+        assert_eq!(report.payload_protocol(), None);
         assert_eq!(report.bytes_sent(), 0);
         assert_eq!(report.bytes_received(), 0);
         assert_eq!(report.received_payload(), b"");
@@ -443,12 +476,70 @@ mod tests {
         assert_eq!(report.bytes_sent(), 12);
         assert_eq!(report.bytes_received(), 10);
         assert_eq!(report.received_payload(), b"peer-bytes");
+        assert_eq!(report.payload_protocol(), Some("tcp"));
         assert_eq!(report.final_state(), Some("Established"));
         assert!(report.summary().contains("bytes_sent=12"));
         assert!(report.summary().contains("bytes_received=10"));
         assert!(report
             .show()
             .contains("payload bytes: sent=12, received=10"));
+    }
+
+    #[test]
+    fn protocol_payload_metrics_preserve_tcp_compatibility() {
+        let report = FlowReport::new(
+            "tcp-payload-flow",
+            Role::Initiator,
+            true,
+            vec!["Established".to_string()],
+            1,
+            1,
+            vec!["tcp data".to_string()],
+            1,
+            Duration::from_millis(3),
+            FlowOutcome::Completed,
+            "PacketContext keys=[tcp_received_payload]",
+        )
+        .with_tcp_payload(12, b"peer-bytes".to_vec());
+
+        assert_eq!(report.payload_protocol(), Some("tcp"));
+        assert_eq!(report.bytes_sent(), 12);
+        assert_eq!(report.bytes_received(), 10);
+        assert_eq!(report.received_payload(), b"peer-bytes");
+        assert!(report.summary().contains("bytes_sent=12"));
+        assert!(report.summary().contains("bytes_received=10"));
+        assert!(report.summary().contains("payload_protocol=tcp"));
+        assert!(report
+            .show()
+            .contains("payload bytes: sent=12, received=10"));
+        assert!(report.show().contains("payload protocol: tcp"));
+        assert!(report.to_json().contains("\"payload_protocol\":\"tcp\""));
+    }
+
+    #[test]
+    fn protocol_payload_metrics_label_quic() {
+        let report = FlowReport::new(
+            "quic-payload-flow",
+            Role::Responder,
+            true,
+            vec!["Established".to_string()],
+            2,
+            2,
+            vec!["quic stream data".to_string()],
+            1,
+            Duration::from_millis(4),
+            FlowOutcome::Completed,
+            "PacketContext keys=[quic::application_bytes_sent, quic::received_payload]",
+        )
+        .with_protocol_payload("quic", 14, b"opaque response".to_vec());
+
+        assert_eq!(report.payload_protocol(), Some("quic"));
+        assert_eq!(report.bytes_sent(), 14);
+        assert_eq!(report.bytes_received(), 15);
+        assert_eq!(report.received_payload(), b"opaque response");
+        assert!(report.summary().contains("payload_protocol=quic"));
+        assert!(report.show().contains("payload protocol: quic"));
+        assert!(report.to_json().contains("\"payload_protocol\":\"quic\""));
     }
 
     #[test]
