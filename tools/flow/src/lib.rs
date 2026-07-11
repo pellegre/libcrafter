@@ -15,6 +15,8 @@ pub mod netns;
 pub mod options;
 pub mod prelude;
 mod quic_endpoint;
+#[allow(dead_code)] // Consumed by the endpoint driver added in later QUIC flow steps.
+mod quic_wire;
 pub mod report;
 pub mod role;
 pub mod runner;
