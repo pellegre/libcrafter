@@ -3466,7 +3466,27 @@ pub(crate) trait QuicEndpointDriver {
         // is freshly protected and is marked regeneration-only by the shared
         // transmit wrapper. An empty batch remains an inspectable timer-
         // maintenance step and still carries the provider's next wakeup.
-        self.drain_transmit_step(now, addresses, context)
+        let step = self.drain_transmit_step(now, addresses, context)?;
+        let regenerated = step
+            .outputs()
+            .iter()
+            .filter(|output| output.requires_regeneration())
+            .count() as u64;
+        if regenerated > 0 {
+            increment_quic_counter(context, "recovery.regenerated_transmits", regenerated)?;
+            // quinn-proto does not expose the timer-wheel slot that fired. A
+            // live connection producing freshly protected output directly
+            // from its provider timeout callback is the provider-observable
+            // signal that this deadline was a recovery probe. Idle expiry is
+            // already terminal and cannot reach this branch with output.
+            if timeout_kind != QuicEndpointTimeoutKind::IdleTimeout {
+                if timeout_kind != QuicEndpointTimeoutKind::ProbeTimeout {
+                    increment_quic_counter(context, "recovery.pto_firings", 1)?;
+                }
+                context.add_pto_firings(1);
+            }
+        }
+        Ok(step)
     }
     fn poll_events(&mut self) -> Result<Vec<QuicEndpointEvent>>;
     fn open_bidirectional_stream(&mut self) -> Result<QuicEndpointStreamId>;

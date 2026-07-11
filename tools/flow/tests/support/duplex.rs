@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::Duration;
 
 use crafter_flow::{Flow, FlowError, PacketContext, Result, Step};
@@ -101,6 +101,8 @@ pub struct DuplexReport {
     pub left_completion: Option<Completion>,
     pub right_completion: Option<Completion>,
     pub trace: Vec<TraceEvent>,
+    /// Protected QUIC UDP payload bytes keyed by deterministic datagram ordinal.
+    pub protected_payloads: BTreeMap<usize, Vec<u8>>,
 }
 
 struct PendingDatagram {
@@ -142,6 +144,7 @@ pub struct DuplexHarness {
     next_datagram: usize,
     alternate_next: Side,
     trace: Vec<TraceEvent>,
+    protected_payloads: BTreeMap<usize, Vec<u8>>,
 }
 
 impl DuplexHarness {
@@ -155,6 +158,7 @@ impl DuplexHarness {
             next_datagram: 0,
             alternate_next: Side::Left,
             trace: Vec::new(),
+            protected_payloads: BTreeMap::new(),
         })
     }
 
@@ -194,6 +198,7 @@ impl DuplexHarness {
             left_completion: self.left.completion,
             right_completion: self.right.completion,
             trace: self.trace,
+            protected_payloads: self.protected_payloads,
         })
     }
 
@@ -236,7 +241,7 @@ impl DuplexHarness {
             state.run_entry(&mut party.context)?
         };
         if let Some(step) = step {
-            self.apply_step(side, step)?;
+            self.apply_step(side, step, false)?;
         }
         Ok(())
     }
@@ -255,6 +260,7 @@ impl DuplexHarness {
             },
         });
         self.steps += 1;
+        self.party_mut(side).context.add_timeout_events(1);
         let step = {
             let party = self.party_mut(side);
             let state = party.flow.state_mut(&state_name).ok_or_else(|| {
@@ -263,7 +269,7 @@ impl DuplexHarness {
             state.run_timeout(&mut party.context)?
         };
         if let Some(step) = step {
-            self.apply_step(side, step)?;
+            self.apply_step(side, step, true)?;
         }
         Ok(())
     }
@@ -329,15 +335,24 @@ impl DuplexHarness {
             kind,
         });
         if let Some(step) = step {
-            self.apply_step(peer, step)?;
+            self.apply_step(peer, step, false)?;
         }
         Ok(())
     }
 
-    fn apply_step(&mut self, side: Side, step: Step) -> Result<()> {
+    fn apply_step(&mut self, side: Side, step: Step, recovery: bool) -> Result<()> {
+        let regenerated = step
+            .outputs()
+            .iter()
+            .filter(|output| recovery && output.requires_regeneration())
+            .count() as u64;
         for (batch_index, output) in step.outputs().iter().enumerate() {
             let ordinal = self.next_datagram;
             self.next_datagram += 1;
+            if let Some(quic) = output.packet().layer::<crafter::Quic>() {
+                self.protected_payloads
+                    .insert(ordinal, quic.payload_bytes().to_vec());
+            }
             self.party_mut(side).pending.push_back(PendingDatagram {
                 ordinal,
                 packet: output.packet().clone(),
@@ -350,6 +365,11 @@ impl DuplexHarness {
                     batch_index,
                 },
             });
+        }
+        if regenerated > 0 {
+            self.party_mut(side)
+                .context
+                .add_regenerated_transmits(regenerated);
         }
 
         if step.is_terminal() {
