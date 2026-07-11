@@ -319,6 +319,8 @@ def _quic_probe_plan(
 def _protected_flow_contract(digest: bytes, capture_filter: str) -> JSONObject:
     request = b"crafter-quic-request:" + digest[:8]
     response = b"crafter-quic-response:" + digest[8:16]
+    request_bound = len(request)
+    response_bound = len(response)
     artifacts = [
         "target/probe/artifacts/quic/protected-flow-plan.json",
         "target/probe/artifacts/quic/protected-flow-capture.pcap",
@@ -344,8 +346,10 @@ def _protected_flow_contract(digest: bytes, capture_filter: str) -> JSONObject:
             "stream_exchange": {
                 "bidirectional_streams": 1,
                 "request_length": len(request),
+                "max_request_bytes": request_bound,
                 "request_sha256": hashlib.sha256(request).hexdigest(),
                 "response_length": len(response),
+                "max_response_bytes": response_bound,
                 "response_sha256": hashlib.sha256(response).hexdigest(),
                 "payload_bytes_in_artifacts": False,
             },
@@ -368,6 +372,62 @@ def _protected_flow_contract(digest: bytes, capture_filter: str) -> JSONObject:
             "artifacts": artifacts,
         },
         "artifact_outputs": artifacts,
+        "provider_action_plan": {
+            "default_mode": "planned",
+            "live_confirmation_required": True,
+            "developer_host_fallback": False,
+            "actions": [
+                {
+                    "name": "build-feature-enabled-flow",
+                    "roles": ["stimulus", "target"],
+                    "mode": "planned",
+                    "command": [
+                        "cargo",
+                        "build",
+                        "-p",
+                        "crafter-flow",
+                        "--features",
+                        "quic-endpoint",
+                    ],
+                },
+                {
+                    "name": "generate-synthetic-identity",
+                    "roles": ["target"],
+                    "mode": "planned",
+                    "secrets_in_plan": False,
+                },
+                {
+                    "name": "start-controlled-server",
+                    "roles": ["target"],
+                    "mode": "planned",
+                },
+                {
+                    "name": "run-bounded-client-request",
+                    "roles": ["stimulus"],
+                    "mode": "planned",
+                    "max_request_bytes": request_bound,
+                    "max_response_bytes": response_bound,
+                },
+                {
+                    "name": "capture-protected-udp",
+                    "roles": ["stimulus", "target"],
+                    "mode": "planned",
+                    "filter": capture_filter,
+                },
+                {
+                    "name": "collect-artifacts",
+                    "roles": ["stimulus", "target"],
+                    "mode": "planned",
+                    "before_teardown": True,
+                },
+                {
+                    "name": "teardown-endpoints",
+                    "roles": ["stimulus", "target"],
+                    "mode": "planned",
+                    "always": True,
+                },
+            ],
+        },
         "flow_validation": {
             "client_state_trace": [
                 "Initial",
