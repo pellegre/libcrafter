@@ -14,12 +14,12 @@ use crafter::protocols::quic::header::{
 use crafter::{
     derive_quic_initial_secrets, quic_decode_initial_protected_payload_with_keys, CrafterError,
     QuicAckFrame, QuicAckRange, QuicConnectionCloseFrame, QuicConnectionId, QuicCryptoFrame,
-    QuicFrame, QuicLongHeaderPacket, QuicPacket, QuicPacketNumber, QuicRetryPacket,
-    QuicVersionNegotiationPacket, QUIC_VERSION_1, QUIC_VERSION_2,
+    QuicFrame, QuicLongHeaderPacket, QuicPacket, QuicPacketNumber, QuicRetryIntegrityStatus,
+    QuicRetryPacket, QuicVersionNegotiationPacket, QUIC_VERSION_1, QUIC_VERSION_2,
 };
 
 use crate::context::ProtocolContextSnapshot;
-use crate::flows::quic::{CLOSED, INITIAL_OBSERVED, INITIAL_SENT, LISTEN};
+use crate::flows::quic::{CLOSED, INITIAL_OBSERVED, INITIAL_SENT, LISTEN, RETRY_RECEIVED};
 use crate::matcher::UdpDatagramMatcher;
 use crate::quic_wire::{
     assemble_initial_datagram, extract_quic_udp_ingress, wrap_quic_udp_datagram,
@@ -99,6 +99,15 @@ pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow>
         .to_vec();
     let version_negotiation_crypto = config.crypto.clone();
     let version_negotiation_active_version = Rc::clone(&active_version);
+    let retry_identifiers = Rc::new(RefCell::new(identifiers.clone()));
+    let retry_state = Rc::clone(&retry_identifiers);
+    let retry_active_version = Rc::clone(&active_version);
+    let retry_policy = config.retry_policy;
+    let max_retries = config.bounds.max_retries;
+    let retry_crypto = config.crypto.clone();
+    let retry_original_destination_connection_id = original_destination_connection_id.clone();
+    let retry_local_connection_id = local_connection_id.clone();
+    let retry_peer_connection_id = peer_connection_id.clone();
     let max_crypto_bytes = config.bounds.max_crypto_bytes;
     let max_ack_ranges = config.bounds.max_datagrams;
     let ack_state = Rc::new(RefCell::new(QuicInitialAckState::from_sent([
@@ -106,6 +115,7 @@ pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow>
     ])?));
     let initial_ack_state = Rc::clone(&ack_state);
     let version_negotiation_ack_state = Rc::clone(&ack_state);
+    let retry_ack_state = Rc::clone(&ack_state);
     let matcher = UdpDatagramMatcher::inbound(*local.ip(), local.port(), *peer.ip(), peer.port())
         .payload_where(
             "one protected QUIC v1 server Initial with the expected connection identifiers",
@@ -231,6 +241,82 @@ pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow>
             },
         )
         .terminal())
+        .on(Transition::on(
+            UdpDatagramMatcher::inbound(*local.ip(), local.port(), *peer.ip(), peer.port())
+                .payload_where("one QUIC Retry packet", |payload, _context| {
+                    matches!(
+                        classify_quic_header(payload),
+                        Ok(QuicHeaderClassification::LongHeader {
+                            packet_kind: QuicLongPacketKind::Retry,
+                            ..
+                        })
+                    )
+                }),
+            move |packet, context| {
+                let ingress =
+                    extract_quic_udp_ingress(packet, local, peer, context).ok_or_else(|| {
+                        FlowError::Build(
+                            "matched Retry no longer satisfies its IPv4/UDP tuple".to_string(),
+                        )
+                    })?;
+                let retry = match QuicRetryPacket::decode(ingress.payload()) {
+                    Ok(retry) => retry,
+                    Err(_) => return Ok(Step::stay()),
+                };
+                let observed = context
+                    .get_namespaced_u64("quic", "retry_count")?
+                    .unwrap_or(0);
+                let authenticated = context
+                    .get_namespaced_bool("quic", "initial_authenticated_server_traffic")?
+                    .unwrap_or(false);
+                let identifiers_match = retry.destination_connection_id().as_bytes()
+                    == retry_local_connection_id
+                    && retry.source_connection_id().as_bytes() == retry_peer_connection_id;
+                let integrity_valid = retry
+                    .integrity_status(&retry_original_destination_connection_id)
+                    .is_ok_and(|status| status == QuicRetryIntegrityStatus::Valid);
+                if retry_policy != QuicInitialRetryPolicy::AcceptValid
+                    || retry.version() != retry_active_version.get()
+                    || !identifiers_match
+                    || !integrity_valid
+                    || authenticated
+                    || observed >= max_retries as u64
+                {
+                    return Ok(Step::stay());
+                }
+
+                let mut identifiers = retry_state.borrow_mut();
+                identifiers.apply_valid_retry(
+                    retry.source_connection_id().clone(),
+                    retry.token().to_vec(),
+                )?;
+                let (restart, restart_packet_number) = build_client_initial_datagram(
+                    retry_active_version.get(),
+                    &mut identifiers,
+                    &retry_crypto,
+                    local,
+                    peer,
+                    max_crypto_bytes,
+                )?;
+                *retry_ack_state.borrow_mut() =
+                    QuicInitialAckState::from_sent([restart_packet_number])?;
+                context.insert_namespaced_u64("quic", "retry_count", observed + 1)?;
+                context.insert_namespaced_bool("quic", "retry_token_present", true)?;
+                context.insert_namespaced_u64(
+                    "quic",
+                    "initial_packet_number_sent",
+                    restart_packet_number,
+                )?;
+
+                let mut snapshot = ProtocolContextSnapshot::new("quic", RETRY_RECEIVED);
+                snapshot.local_connection_id = Some(retry_local_connection_id.clone());
+                snapshot.peer_connection_id =
+                    Some(retry.source_connection_id().as_bytes().to_vec());
+                context.set_protocol_snapshot(snapshot);
+
+                Ok(Step::send_regeneration_only(restart).wake_after(INITIAL_CLIENT_TIMEOUT))
+            },
+        ))
         .on(Transition::on(matcher, move |packet, context| {
             let ingress =
                 extract_quic_udp_ingress(packet, local, peer, context).ok_or_else(|| {
@@ -2128,6 +2214,120 @@ mod tests {
         assert!(repeated.outputs().is_empty());
         assert_eq!(repeated.outcome(), Some(INITIAL_ONLY_RETRY_LIMIT_OUTCOME));
         assert_eq!(context.get_namespaced_u64("quic", "retry_count")?, Some(1));
+        Ok(())
+    }
+
+    #[test]
+    fn initial_client_valid_retry_rebuilds_fresh_token_initial() -> crate::Result<()> {
+        let client_config = QuicInitialClientConfig::default();
+        let original_destination_connection_id = client_config
+            .identifiers
+            .original_destination_connection_id()
+            .clone();
+        let client_source_connection_id = client_config
+            .identifiers
+            .local_source_connection_id()
+            .clone();
+        let mut client = quic_initial_client_flow(client_config)?;
+        let mut client_context = crate::PacketContext::new();
+        let first_initial = client
+            .state_mut(INITIAL_SENT)
+            .expect("InitialSent state exists")
+            .run_entry(&mut client_context)?
+            .expect("client emits its first Initial")
+            .outputs()[0]
+            .packet()
+            .clone();
+
+        let mut server_config = QuicInitialServerConfig::default();
+        server_config.retry_policy = QuicInitialRetryPolicy::Require;
+        let retry_source_connection_id = server_config
+            .identifiers
+            .local_source_connection_id()
+            .clone();
+        let retry_token = server_config.identifiers.retry_token().to_vec();
+        let mut server = quic_initial_server_flow(server_config)?;
+        let mut server_context = crate::PacketContext::new();
+        let retry_transition = server
+            .state_mut(LISTEN)
+            .expect("Listen state exists")
+            .find_transition(&first_initial, &server_context)
+            .expect("server matches the first Initial");
+        let retry_step = retry_transition.fire(&first_initial, &mut server_context)?;
+        let retry_packet = retry_step.outputs()[0].packet().clone();
+
+        let client_state = client
+            .state_mut(INITIAL_SENT)
+            .expect("InitialSent state exists");
+        let retry_transition = client_state
+            .find_transition(&retry_packet, &client_context)
+            .expect("client matches the valid Retry");
+        let restarted = retry_transition.fire(&retry_packet, &mut client_context)?;
+
+        assert_eq!(restarted.target(), None);
+        assert_eq!(restarted.outputs().len(), 1);
+        assert!(restarted.outputs()[0].requires_regeneration());
+        assert_eq!(restarted.wakeup(), Some(INITIAL_CLIENT_TIMEOUT));
+        let fresh_initial = restarted.outputs()[0].packet();
+        let fresh_quic = fresh_initial
+            .layer::<Quic>()
+            .expect("fresh Initial retains a typed QUIC layer");
+        let fresh_bytes = fresh_quic.packets()[0].as_bytes();
+        assert_ne!(
+            fresh_bytes,
+            first_initial
+                .layer::<Quic>()
+                .expect("first Initial has a QUIC layer")
+                .packets()[0]
+                .as_bytes()
+        );
+        assert!(fresh_bytes
+            .windows(retry_token.len())
+            .any(|window| window == retry_token));
+        assert!(matches!(
+            classify_quic_header(fresh_bytes)?,
+            QuicHeaderClassification::LongHeader {
+                version: QUIC_VERSION_1,
+                destination_connection_id,
+                source_connection_id,
+                packet_kind: QuicLongPacketKind::Initial,
+                ..
+            } if destination_connection_id == retry_source_connection_id
+                && source_connection_id == client_source_connection_id
+        ));
+
+        let keys = derive_quic_initial_secrets(
+            QUIC_VERSION_1,
+            original_destination_connection_id.as_bytes(),
+        )?
+        .client_packet_keys()?;
+        let decoded = quic_decode_initial_protected_payload_with_keys(fresh_bytes, &keys)?;
+        assert_eq!(decoded.packet_number().value(), 1);
+        assert!(fresh_bytes.len() >= 1200);
+        assert_eq!(
+            client_context.get_namespaced_u64("quic", "retry_count")?,
+            Some(1)
+        );
+        assert_eq!(
+            client_context.get_namespaced_bool("quic", "retry_token_present")?,
+            Some(true)
+        );
+        assert_eq!(
+            client_context.get_namespaced_bytes("quic", "retry_token")?,
+            None
+        );
+        assert!(!client_context
+            .summary()
+            .contains("deterministic server Retry fixture"));
+        let snapshot = client_context
+            .protocol_snapshot()
+            .expect("valid Retry records a lifecycle snapshot");
+        assert_eq!(snapshot.lifecycle, RETRY_RECEIVED);
+        assert_ne!(snapshot.lifecycle, "Established");
+        assert_eq!(
+            snapshot.peer_connection_id.as_deref(),
+            Some(retry_source_connection_id.as_bytes())
+        );
         Ok(())
     }
 
