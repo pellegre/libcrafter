@@ -93,16 +93,21 @@ cargo run -p crafter-flow --features quic-endpoint --example quic_server_flow
 Each example prints the flow shape, dry-run send plans where packets are
 emitted, and the final `FlowReport`.
 
-The QUIC examples exchange deterministic protected Initial fixtures entirely
-in memory. They inspect Initial packets only and do not establish a QUIC
-connection. See [QUIC Initial-only flows](docs/quic-flow.md) for the state
-graphs, inputs, inspection results, and safety limits.
+The Initial-only QUIC examples exchange deterministic protected fixtures
+entirely in memory. They inspect Initial packets only and do not establish a
+QUIC connection. See [QUIC flows](docs/quic-flow.md) for both the Initial-only
+and authenticated state graphs, configuration, reports, and safety limits.
 
-The feature-gated full QUIC examples authenticate with a conspicuously
-synthetic test identity and exchange one opaque request and response entirely
-through the deterministic in-memory driver. They print only safe configuration,
-packet-plan, lifecycle, payload-count, and recovery-count observations. Live use
-requires explicit provider-backed authorization and separate tooling.
+The `quic-endpoint` feature-gated full QUIC examples call the explicit
+`quic_client_flow` and `quic_server_flow` entrypoints. They authenticate with a
+conspicuously synthetic test identity and exchange one bounded opaque request
+and response entirely through the deterministic in-memory driver. The provider
+owns TLS, ACKs, packet numbers, PTO/loss recovery, congestion, and streams;
+every transmit is still wrapped as a typed packet for flow planning and
+reporting. They print only safe configuration, packet-plan, lifecycle,
+payload-count, and recovery-count observations. The fixture is not a production
+identity. Live use requires a dry-run first, explicit authorization, disposable
+provider-backed isolation, and separate tooling.
 
 ## Safety Model
 
