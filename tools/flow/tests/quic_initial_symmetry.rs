@@ -5,21 +5,15 @@ use std::time::Duration;
 use crafter::{QUIC_VERSION_1, QUIC_VERSION_2};
 use crafter_flow::flows::quic::{
     quic_initial_client_flow, quic_initial_server_flow, QuicInitialClientConfig,
-    QuicInitialRetryPolicy, QuicInitialServerConfig, QuicInitialVersionPolicy,
-    INITIAL_OBSERVED,
+    QuicInitialRetryPolicy, QuicInitialServerConfig, QuicInitialVersionPolicy, INITIAL_OBSERVED,
 };
 
-use support::duplex::{
-    DuplexConfig, DuplexHarness, DuplexReport, StopReason, TraceEventKind,
-};
+use support::duplex::{DuplexConfig, DuplexHarness, DuplexReport, StopReason, TraceEventKind};
 
 const STEP_LIMIT: usize = 16;
 const TIME_LIMIT: Duration = Duration::from_secs(2);
 
-fn run_pair(
-    client: QuicInitialClientConfig,
-    server: QuicInitialServerConfig,
-) -> DuplexReport {
+fn run_pair(client: QuicInitialClientConfig, server: QuicInitialServerConfig) -> DuplexReport {
     let client = quic_initial_client_flow(client).expect("client flow builds");
     let server = quic_initial_server_flow(server).expect("server flow builds");
     DuplexHarness::new(
@@ -44,9 +38,10 @@ fn assert_bounded_offline(report: &DuplexReport) {
 
     // The duplex harness exchanges owned Packet values directly. Its trace has
     // no sender or capture backend, so every emitted datagram remains in memory.
-    assert!(report.trace.iter().any(|event| {
-        matches!(event.kind, TraceEventKind::Emitted { .. })
-    }));
+    assert!(report
+        .trace
+        .iter()
+        .any(|event| { matches!(event.kind, TraceEventKind::Emitted { .. }) }));
 }
 
 fn assert_initial_only(report: &DuplexReport) {
