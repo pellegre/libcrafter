@@ -2,8 +2,8 @@
 //!
 //! QUIC packet headers encode only the low 1, 2, 3, or 4 bytes of a packet
 //! number. The header packet-number length bits carry `encoded_len - 1`.
-//! Endpoint-state reconstruction of the full packet number is intentionally out
-//! of scope for these packet-layer helpers.
+//! Full packet-number reconstruction remains explicit because it requires the
+//! endpoint's expected next packet number.
 
 use crate::error::{CrafterError, Result};
 
@@ -15,6 +15,7 @@ pub const QUIC_PACKET_NUMBER_TWO_BYTE_MAX: u64 = 0xffff;
 pub const QUIC_PACKET_NUMBER_THREE_BYTE_MAX: u64 = 0xff_ffff;
 /// Maximum packet number value encoded in four bytes.
 pub const QUIC_PACKET_NUMBER_FOUR_BYTE_MAX: u64 = 0xffff_ffff;
+const QUIC_PACKET_NUMBER_LIMIT: u64 = 1 << 62;
 
 /// Packet-number value and optional encoded length override.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +85,46 @@ impl QuicPacketNumber {
             ));
         }
         decode(bytes, bytes.len())
+    }
+
+    /// Reconstruct the full packet number closest to `expected_next`.
+    ///
+    /// This implements the RFC 9000 Appendix A.3 decoding window after header
+    /// protection has been removed. The preserved value is treated as the
+    /// truncated packet number and the effective encoded length supplies the
+    /// one-, two-, three-, or four-byte window width.
+    pub fn reconstruct(self, expected_next: u64) -> Result<u64> {
+        if expected_next >= QUIC_PACKET_NUMBER_LIMIT {
+            return Err(CrafterError::invalid_field_value(
+                "quic.packet_number.expected_next",
+                "expected next QUIC packet number exceeds the 62-bit limit",
+            ));
+        }
+
+        let encoded_len = self.effective_encoded_len()?;
+        let window = 1u64 << (encoded_len * 8);
+        let half_window = window / 2;
+        let mask = window - 1;
+        let mut candidate = (expected_next & !mask) | self.value;
+
+        // Write the RFC's lower-bound comparison without subtracting when the
+        // mathematical bound is negative.
+        if expected_next >= half_window
+            && candidate <= expected_next - half_window
+            && candidate < QUIC_PACKET_NUMBER_LIMIT - window
+        {
+            candidate += window;
+        } else if candidate > expected_next + half_window && candidate >= window {
+            candidate -= window;
+        }
+
+        if candidate >= QUIC_PACKET_NUMBER_LIMIT {
+            return Err(CrafterError::invalid_field_value(
+                "quic.packet_number",
+                "reconstructed QUIC packet number exceeds the 62-bit limit",
+            ));
+        }
+        Ok(candidate)
     }
 
     /// Stable summary for packet inspection.
