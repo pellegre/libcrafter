@@ -954,6 +954,54 @@ pub(crate) struct QuicEndpointTransmitPacketCounts {
     pub(crate) application: u64,
 }
 
+#[cfg(feature = "quic-endpoint")]
+impl QuicEndpointTransmitPacketCounts {
+    /// Classify a single protected QUIC packet without recovering its packet
+    /// number. Long-header packet types are not header-protected. A short
+    /// header is Application data only when the endpoint context has already
+    /// accepted it for this connection.
+    fn classify_single(payload: &[u8], endpoint_accepts_short_header: bool) -> Self {
+        let Some(first) = payload.first().copied() else {
+            return Self::default();
+        };
+        let space = if first & 0x80 == 0 {
+            endpoint_accepts_short_header.then_some(QuicEndpointPacketSpace::Application)
+        } else if payload.len() >= 5 && payload[1..5] == [0, 0, 0, 1] {
+            match first & 0x30 {
+                0x00 => Some(QuicEndpointPacketSpace::Initial),
+                0x20 => Some(QuicEndpointPacketSpace::Handshake),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        match space {
+            Some(QuicEndpointPacketSpace::Initial) => Self {
+                initial: 1,
+                ..Self::default()
+            },
+            Some(QuicEndpointPacketSpace::Handshake) => Self {
+                handshake: 1,
+                ..Self::default()
+            },
+            Some(QuicEndpointPacketSpace::Application) => Self {
+                application: 1,
+                ..Self::default()
+            },
+            None => Self::default(),
+        }
+    }
+}
+
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuicEndpointPacketSpace {
+    Initial,
+    Handshake,
+    Application,
+}
+
 /// Provider-independent identifier for the one bounded application stream.
 #[cfg(feature = "quic-endpoint")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1220,6 +1268,9 @@ impl QuicEndpointEventMapper {
         snapshot.local_connection_id = Some(provider_snapshot.local_connection_id);
         snapshot.peer_connection_id = Some(provider_snapshot.peer_connection_id);
         context.set_protocol_snapshot(snapshot);
+        render_quic_packet_space(context, "initial", provider_snapshot.initial)?;
+        render_quic_packet_space(context, "handshake", provider_snapshot.handshake)?;
+        render_quic_packet_space(context, "application", provider_snapshot.application)?;
         Ok(normalized)
     }
 
@@ -1263,6 +1314,45 @@ pub(crate) struct QuicEndpointPacketSpaceCounts {
     pub(crate) received: u64,
     pub(crate) acknowledged: u64,
     pub(crate) lost: u64,
+    pub(crate) discarded: u64,
+    pub(crate) state: QuicEndpointPacketSpaceState,
+}
+
+/// Whether provider keys and recovery state for a packet-number space remain
+/// active. Counters remain intact after discard.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum QuicEndpointPacketSpaceState {
+    #[default]
+    Active,
+    Discarded,
+}
+
+#[cfg(feature = "quic-endpoint")]
+fn render_quic_packet_space(
+    context: &mut PacketContext,
+    name: &str,
+    counts: QuicEndpointPacketSpaceCounts,
+) -> Result<()> {
+    for (field, value) in [
+        ("sent", counts.sent),
+        ("received", counts.received),
+        ("acknowledged", counts.acknowledged),
+        ("lost", counts.lost),
+        ("discarded", counts.discarded),
+    ] {
+        context.insert_namespaced_u64("quic", &format!("packet_spaces.{name}.{field}"), value)?;
+    }
+    context.insert_namespaced_bool(
+        "quic",
+        &format!("packet_spaces.{name}.active"),
+        counts.state == QuicEndpointPacketSpaceState::Active,
+    )?;
+    context.insert_namespaced_bool(
+        "quic",
+        &format!("packet_spaces.{name}.discarded_state"),
+        counts.state == QuicEndpointPacketSpaceState::Discarded,
+    )
 }
 
 /// Recovery observations retained without provider-internal state.
@@ -1367,9 +1457,19 @@ pub(crate) trait QuicEndpointDriver {
         let packets = transmits
             .into_iter()
             .map(|transmit| {
-                initial = initial.saturating_add(transmit.packet_counts.initial);
-                handshake = handshake.saturating_add(transmit.packet_counts.handshake);
-                application = application.saturating_add(transmit.packet_counts.application);
+                // Provider metadata is authoritative for coalesced datagrams.
+                // For a single packet without metadata, classify only the
+                // invariant packet form. These bytes came from the endpoint,
+                // so its connection context has accepted a short header.
+                let packet_counts =
+                    if transmit.packet_counts == QuicEndpointTransmitPacketCounts::default() {
+                        QuicEndpointTransmitPacketCounts::classify_single(&transmit.payload, true)
+                    } else {
+                        transmit.packet_counts
+                    };
+                initial = initial.saturating_add(packet_counts.initial);
+                handshake = handshake.saturating_add(packet_counts.handshake);
+                application = application.saturating_add(packet_counts.application);
                 wrap_opaque_quic_udp_datagram(local, peer, transmit.payload)
             })
             .collect::<Vec<_>>();
@@ -2878,6 +2978,244 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[cfg(feature = "quic-endpoint")]
+    #[test]
+    fn driver_tracks_three_packet_number_spaces_separately() {
+        use std::{collections::VecDeque, time::Instant};
+
+        use super::{
+            QuicEndpointDatagram, QuicEndpointDriver, QuicEndpointEvent, QuicEndpointEventMapper,
+            QuicEndpointLifecycle, QuicEndpointPacketSpaceCounts, QuicEndpointPacketSpaceState,
+            QuicEndpointRecoveryCounts, QuicEndpointSnapshot, QuicEndpointStreamId,
+            QuicEndpointStreamRead, QuicEndpointTransmit, QuicEndpointTransmitPacketCounts,
+        };
+        use crate::{PacketContext, Result};
+
+        struct PacketSpaceDriver {
+            snapshots: VecDeque<(QuicEndpointEvent, QuicEndpointSnapshot)>,
+            current: QuicEndpointSnapshot,
+        }
+
+        impl QuicEndpointDriver for PacketSpaceDriver {
+            fn start(&mut self, _: Instant) -> Result<()> {
+                Ok(())
+            }
+            fn handle_datagram(&mut self, _: QuicEndpointDatagram) -> Result<()> {
+                Ok(())
+            }
+            fn drain_transmits(&mut self, _: Instant) -> Result<Vec<QuicEndpointTransmit>> {
+                Ok(Vec::new())
+            }
+            fn next_timeout(&self) -> Option<Instant> {
+                None
+            }
+            fn handle_timeout(&mut self, _: Instant) -> Result<()> {
+                Ok(())
+            }
+            fn poll_events(&mut self) -> Result<Vec<QuicEndpointEvent>> {
+                let Some((event, snapshot)) = self.snapshots.pop_front() else {
+                    return Ok(Vec::new());
+                };
+                self.current = snapshot;
+                Ok(vec![event])
+            }
+            fn open_bidirectional_stream(&mut self) -> Result<QuicEndpointStreamId> {
+                Ok(QuicEndpointStreamId(0))
+            }
+            fn write_stream(&mut self, _: QuicEndpointStreamId, bytes: &[u8]) -> Result<usize> {
+                Ok(bytes.len())
+            }
+            fn finish_stream(&mut self, _: QuicEndpointStreamId) -> Result<()> {
+                Ok(())
+            }
+            fn read_stream(
+                &mut self,
+                _: QuicEndpointStreamId,
+                _: usize,
+            ) -> Result<QuicEndpointStreamRead> {
+                Ok(QuicEndpointStreamRead {
+                    bytes: Vec::new(),
+                    finished: false,
+                })
+            }
+            fn snapshot(&self) -> QuicEndpointSnapshot {
+                self.current.clone()
+            }
+            fn close(&mut self, _: Instant, _: u64, _: &[u8]) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        fn snapshot(
+            lifecycle: QuicEndpointLifecycle,
+            initial: QuicEndpointPacketSpaceCounts,
+            handshake: QuicEndpointPacketSpaceCounts,
+            application: QuicEndpointPacketSpaceCounts,
+        ) -> QuicEndpointSnapshot {
+            QuicEndpointSnapshot {
+                lifecycle,
+                local_connection_id: vec![0x11; 8],
+                peer_connection_id: vec![0x22; 8],
+                initial,
+                handshake,
+                application,
+                stream_bytes_sent: 0,
+                stream_bytes_received: 0,
+                recovery: QuicEndpointRecoveryCounts::default(),
+            }
+        }
+
+        let initial = QuicEndpointPacketSpaceCounts {
+            sent: 1,
+            received: 1,
+            ..QuicEndpointPacketSpaceCounts::default()
+        };
+        let initial_discarded = QuicEndpointPacketSpaceCounts {
+            acknowledged: 1,
+            discarded: 1,
+            state: QuicEndpointPacketSpaceState::Discarded,
+            ..initial
+        };
+        let handshake = QuicEndpointPacketSpaceCounts {
+            sent: 2,
+            received: 1,
+            acknowledged: 1,
+            lost: 1,
+            ..QuicEndpointPacketSpaceCounts::default()
+        };
+        let handshake_discarded = QuicEndpointPacketSpaceCounts {
+            discarded: 1,
+            state: QuicEndpointPacketSpaceState::Discarded,
+            ..handshake
+        };
+        let application = QuicEndpointPacketSpaceCounts {
+            sent: 3,
+            received: 2,
+            acknowledged: 1,
+            lost: 1,
+            ..QuicEndpointPacketSpaceCounts::default()
+        };
+
+        let starting = snapshot(
+            QuicEndpointLifecycle::InitialSent,
+            initial,
+            QuicEndpointPacketSpaceCounts::default(),
+            QuicEndpointPacketSpaceCounts::default(),
+        );
+        let mut driver = PacketSpaceDriver {
+            current: starting.clone(),
+            snapshots: VecDeque::from([
+                (QuicEndpointEvent::HandshakeProgress, starting),
+                (
+                    QuicEndpointEvent::HandshakeProgress,
+                    snapshot(
+                        QuicEndpointLifecycle::Handshaking,
+                        initial_discarded,
+                        handshake,
+                        QuicEndpointPacketSpaceCounts::default(),
+                    ),
+                ),
+                (
+                    QuicEndpointEvent::Established,
+                    snapshot(
+                        QuicEndpointLifecycle::Established,
+                        initial_discarded,
+                        handshake_discarded,
+                        application,
+                    ),
+                ),
+            ]),
+        };
+        let mut mapper = QuicEndpointEventMapper::new(QuicEndpointLifecycle::InitialSent);
+        let mut context = PacketContext::new();
+
+        mapper.poll(&mut driver, &mut context).unwrap();
+        assert_eq!(
+            context
+                .get_namespaced_u64("quic", "packet_spaces.initial.sent")
+                .unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_u64("quic", "packet_spaces.handshake.sent")
+                .unwrap(),
+            Some(0)
+        );
+
+        mapper.poll(&mut driver, &mut context).unwrap();
+        assert_eq!(
+            context
+                .get_namespaced_bool("quic", "packet_spaces.initial.discarded_state")
+                .unwrap(),
+            Some(true)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_u64("quic", "packet_spaces.handshake.lost")
+                .unwrap(),
+            Some(1)
+        );
+
+        mapper.poll(&mut driver, &mut context).unwrap();
+        assert_eq!(
+            context
+                .get_namespaced_u64("quic", "packet_spaces.initial.acknowledged")
+                .unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_u64("quic", "packet_spaces.handshake.discarded")
+                .unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_u64("quic", "packet_spaces.application.sent")
+                .unwrap(),
+            Some(3)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_bool("quic", "packet_spaces.application.active")
+                .unwrap(),
+            Some(true)
+        );
+
+        assert_eq!(
+            QuicEndpointTransmitPacketCounts::classify_single(&[0xc0, 0, 0, 0, 1], false),
+            QuicEndpointTransmitPacketCounts {
+                initial: 1,
+                ..QuicEndpointTransmitPacketCounts::default()
+            }
+        );
+        assert_eq!(
+            QuicEndpointTransmitPacketCounts::classify_single(&[0xe0, 0, 0, 0, 1], false),
+            QuicEndpointTransmitPacketCounts {
+                handshake: 1,
+                ..QuicEndpointTransmitPacketCounts::default()
+            }
+        );
+        assert_eq!(
+            QuicEndpointTransmitPacketCounts::classify_single(&[0x40], false),
+            QuicEndpointTransmitPacketCounts::default()
+        );
+        assert_eq!(
+            QuicEndpointTransmitPacketCounts::classify_single(&[0x40], true),
+            QuicEndpointTransmitPacketCounts {
+                application: 1,
+                ..QuicEndpointTransmitPacketCounts::default()
+            }
+        );
+        assert!(context
+            .summary()
+            .contains("quic::packet_spaces.initial.discarded_state"));
+        assert!(context
+            .summary()
+            .contains("quic::packet_spaces.application.sent"));
     }
 
     #[cfg(feature = "quic-endpoint")]
