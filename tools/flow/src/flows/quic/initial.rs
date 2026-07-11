@@ -6,9 +6,9 @@ use crafter::protocols::quic::header::{
     classify_quic_header, QuicHeaderClassification, QuicLongPacketKind,
 };
 use crafter::{
-    derive_quic_initial_secrets, QuicAckFrame, QuicAckRange, QuicConnectionCloseFrame,
-    QuicConnectionId, QuicCryptoFrame, QuicFrame, QuicLongHeaderPacket, QuicPacket,
-    QuicPacketNumber, QUIC_VERSION_1,
+    derive_quic_initial_secrets, quic_decode_initial_protected_payload_with_keys, CrafterError,
+    QuicAckFrame, QuicAckRange, QuicConnectionCloseFrame, QuicConnectionId, QuicCryptoFrame,
+    QuicFrame, QuicLongHeaderPacket, QuicPacketNumber, QUIC_VERSION_1,
 };
 
 use crate::context::ProtocolContextSnapshot;
@@ -26,6 +26,12 @@ const QUIC_PACKET_NUMBER_LIMIT: u64 = 1 << 62;
 const INITIAL_CLIENT_TIMEOUT: Duration = Duration::from_secs(1);
 const INITIAL_SERVER_TIMEOUT: Duration = Duration::from_secs(1);
 const INITIAL_ONLY_TIMEOUT_OUTCOME: &str = "initial-only-timeout";
+const INITIAL_AUTHENTICATION_FAILED_OUTCOME: &str = "initial-authentication-failed";
+const INITIAL_TRUNCATED_OUTCOME: &str = "initial-truncated-protected-payload";
+const INITIAL_INVALID_PACKET_NUMBER_OUTCOME: &str = "initial-invalid-packet-number";
+const INITIAL_DISALLOWED_FRAME_OUTCOME: &str = "initial-disallowed-frame";
+const INITIAL_CRYPTO_LIMIT_OUTCOME: &str = "initial-crypto-limit-exceeded";
+const INITIAL_ACK_RANGE_LIMIT_OUTCOME: &str = "initial-ack-range-limit-exceeded";
 
 /// Build the deterministic, bounded QUIC v1 Initial-only client flow.
 pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow> {
@@ -110,10 +116,12 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
     let local = config.local;
     let peer = config.peer;
     let version = config.version;
+    let max_crypto_bytes = config.bounds.max_crypto_bytes;
+    let max_ack_ranges = config.bounds.max_datagrams;
     let matcher = UdpDatagramMatcher::inbound(*local.ip(), local.port(), *peer.ip(), peer.port())
         .payload_where(
             "one structurally valid QUIC v1 Initial with a nonempty destination connection ID",
-            move |payload, _context| matching_client_initial(payload, version).is_some(),
+            move |payload, _context| matching_client_initial_header(payload, version).is_some(),
         );
 
     let listen = FlowState::new(LISTEN)
@@ -126,14 +134,91 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
                         "matched QUIC Initial no longer satisfies its IPv4/UDP tuple".to_string(),
                     )
                 })?;
-            let initial = matching_client_initial(ingress.payload(), version).ok_or_else(|| {
-                FlowError::Build(
-                    "matched QUIC Initial no longer has a valid version 1 long header".to_string(),
-                )
-            })?;
+            let (original_destination_connection_id, peer_source_connection_id) =
+                matching_client_initial_header(ingress.payload(), version).ok_or_else(|| {
+                    FlowError::Build(
+                        "matched QUIC Initial no longer has a valid version 1 long header"
+                            .to_string(),
+                    )
+                })?;
             let original_destination_connection_id =
-                initial.destination_connection_id().as_bytes().to_vec();
-            let peer_source_connection_id = initial.source_connection_id().as_bytes().to_vec();
+                original_destination_connection_id.as_bytes().to_vec();
+            let peer_source_connection_id = peer_source_connection_id.as_bytes().to_vec();
+
+            let keys = derive_quic_initial_secrets(version, &original_destination_connection_id)?
+                .client_packet_keys()?;
+            let decoded =
+                match quic_decode_initial_protected_payload_with_keys(ingress.payload(), &keys) {
+                    Ok(decoded) => decoded,
+                    Err(error) => return Ok(initial_decode_error_step(context, &error)),
+                };
+            let expected_packet_number = context
+                .get_namespaced_u64("quic", "initial_expected_peer_packet_number")?
+                .unwrap_or(0);
+            let full_packet_number =
+                match decoded.packet_number().reconstruct(expected_packet_number) {
+                    Ok(packet_number) => packet_number,
+                    Err(_) => {
+                        return Ok(initial_error_step(
+                            context,
+                            INITIAL_INVALID_PACKET_NUMBER_OUTCOME,
+                        ))
+                    }
+                };
+            let next_expected_packet_number = match full_packet_number.checked_add(1) {
+                Some(packet_number) if packet_number < QUIC_PACKET_NUMBER_LIMIT => packet_number,
+                _ => {
+                    return Ok(initial_error_step(
+                        context,
+                        INITIAL_INVALID_PACKET_NUMBER_OUTCOME,
+                    ))
+                }
+            };
+            let observations = match inspect_initial_frames(decoded.frames(), max_crypto_bytes) {
+                Ok(observations) => observations,
+                Err(_) => {
+                    return Ok(initial_error_step(
+                        context,
+                        INITIAL_DISALLOWED_FRAME_OUTCOME,
+                    ))
+                }
+            };
+            if !observations.unexpected_frames.is_empty() {
+                return Ok(initial_error_step(
+                    context,
+                    INITIAL_DISALLOWED_FRAME_OUTCOME,
+                ));
+            }
+
+            let mut crypto_bytes = context
+                .get_namespaced_bytes("quic", "initial_crypto_bytes")?
+                .unwrap_or_default()
+                .to_vec();
+            for crypto in &observations.crypto_chunks {
+                crypto_bytes.extend_from_slice(crypto.data());
+            }
+            if crypto_bytes.len() > max_crypto_bytes {
+                return Ok(initial_error_step(context, INITIAL_CRYPTO_LIMIT_OUTCOME));
+            }
+            let observed_ack_ranges = observations
+                .acknowledgements
+                .iter()
+                .flat_map(|ack| ack.packet_number_ranges.iter())
+                .map(|(low, high)| format!("{low}-{high}"))
+                .collect::<Vec<_>>();
+            let prior_ack_ranges = context
+                .get_namespaced_string("quic", "initial_ack_ranges")?
+                .filter(|ranges| !ranges.is_empty())
+                .map(|ranges| ranges.split(',').map(str::to_string).collect::<Vec<_>>())
+                .unwrap_or_default();
+            if prior_ack_ranges.len() + observed_ack_ranges.len() > max_ack_ranges {
+                return Ok(initial_error_step(context, INITIAL_ACK_RANGE_LIMIT_OUTCOME));
+            }
+            let ack_ranges = prior_ack_ranges
+                .into_iter()
+                .chain(observed_ack_ranges)
+                .collect::<Vec<_>>()
+                .join(",");
 
             context.insert_namespaced_string("quic", "local_tuple", ingress.local().to_string())?;
             context.insert_namespaced_string("quic", "peer_tuple", ingress.peer().to_string())?;
@@ -147,6 +232,18 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
                 "peer_source_connection_id",
                 peer_source_connection_id.clone(),
             )?;
+            context.insert_namespaced_u64(
+                "quic",
+                "initial_packet_number_received",
+                full_packet_number,
+            )?;
+            context.insert_namespaced_u64(
+                "quic",
+                "initial_expected_peer_packet_number",
+                next_expected_packet_number,
+            )?;
+            context.insert_namespaced_bytes("quic", "initial_crypto_bytes", crypto_bytes)?;
+            context.insert_namespaced_string("quic", "initial_ack_ranges", ack_ranges)?;
 
             let mut snapshot = ProtocolContextSnapshot::new("quic", INITIAL_OBSERVED);
             snapshot.local_connection_id = Some(original_destination_connection_id);
@@ -155,7 +252,8 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
 
             Ok(Step::goto(INITIAL_OBSERVED))
         })
-        .targets([INITIAL_OBSERVED]))
+        .targets([INITIAL_OBSERVED])
+        .terminal())
         .on_timeout(|context| {
             let mut snapshot = ProtocolContextSnapshot::new("quic", CLOSED);
             snapshot.outcome = Some(INITIAL_ONLY_TIMEOUT_OUTCOME.to_string());
@@ -175,26 +273,53 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
     Ok(flow)
 }
 
-fn matching_client_initial(payload: &[u8], version: u32) -> Option<QuicLongHeaderPacket> {
+fn initial_decode_error_step(context: &mut crate::PacketContext, error: &CrafterError) -> Step {
+    let outcome = match error {
+        CrafterError::BufferTooShort { .. } => INITIAL_TRUNCATED_OUTCOME,
+        CrafterError::InvalidFieldValue { field, reason }
+            if *field == "quic.crypto.initial.ciphertext_tag"
+                && reason.contains("authentication failed") =>
+        {
+            INITIAL_AUTHENTICATION_FAILED_OUTCOME
+        }
+        CrafterError::InvalidFieldValue { field, .. } if field.contains("packet_number") => {
+            INITIAL_INVALID_PACKET_NUMBER_OUTCOME
+        }
+        CrafterError::InvalidFieldValue { .. } | CrafterError::InvalidMacAddress { .. } => {
+            INITIAL_TRUNCATED_OUTCOME
+        }
+    };
+    initial_error_step(context, outcome)
+}
+
+fn initial_error_step(context: &mut crate::PacketContext, outcome: &'static str) -> Step {
+    let mut snapshot = ProtocolContextSnapshot::new("quic", CLOSED);
+    snapshot.outcome = Some(outcome.to_string());
+    snapshot.close_category = Some("initial-error".to_string());
+    context.set_protocol_snapshot(snapshot);
+    Step::done_with(outcome)
+}
+
+fn matching_client_initial_header(
+    payload: &[u8],
+    version: u32,
+) -> Option<(QuicConnectionId, QuicConnectionId)> {
     match classify_quic_header(payload).ok()? {
         QuicHeaderClassification::LongHeader {
             version: observed_version,
             destination_connection_id,
+            source_connection_id,
             packet_kind: QuicLongPacketKind::Initial,
             remaining_len,
             ..
         } if observed_version == version
             && !destination_connection_id.is_empty()
-            && remaining_len > 0 => {}
+            && remaining_len > 0 =>
+        {
+            Some((destination_connection_id, source_connection_id))
+        }
         _ => return None,
     }
-
-    let packet = QuicPacket::decode(payload).ok()?;
-    let initial = packet.long_header()?;
-    (initial.version() == version
-        && initial.packet_kind() == QuicLongPacketKind::Initial
-        && !initial.destination_connection_id().is_empty())
-    .then(|| initial.clone())
 }
 
 /// One parsed ACK together with the packet numbers represented by its ranges.
@@ -951,6 +1076,56 @@ mod tests {
             snapshot.outcome.as_deref(),
             Some(INITIAL_ONLY_TIMEOUT_OUTCOME)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn initial_server_decrypts_and_records_client_crypto() -> crate::Result<()> {
+        let client_config = QuicInitialClientConfig::default();
+        let expected_crypto = client_config.crypto.clone();
+        let mut client = quic_initial_client_flow(client_config)?;
+        let mut client_context = crate::PacketContext::new();
+        let client_initial = client
+            .state_mut(INITIAL_SENT)
+            .expect("InitialSent state exists")
+            .run_entry(&mut client_context)?
+            .expect("client emits its protected Initial")
+            .outputs()[0]
+            .packet()
+            .clone();
+
+        let mut server = quic_initial_server_flow(QuicInitialServerConfig::default())?;
+        let mut server_context = crate::PacketContext::new();
+        let listen = server.state_mut(LISTEN).expect("Listen state exists");
+        let transition = listen
+            .find_transition(&client_initial, &server_context)
+            .expect("server matches the protected client Initial");
+        let observed = transition.fire(&client_initial, &mut server_context)?;
+
+        assert_eq!(observed.target(), Some(INITIAL_OBSERVED));
+        assert!(!observed.is_terminal());
+        assert_eq!(
+            server_context.get_namespaced_u64("quic", "initial_packet_number_received")?,
+            Some(0)
+        );
+        assert_eq!(
+            server_context.get_namespaced_u64("quic", "initial_expected_peer_packet_number")?,
+            Some(1)
+        );
+        assert_eq!(
+            server_context.get_namespaced_bytes("quic", "initial_crypto_bytes")?,
+            Some(expected_crypto.as_slice())
+        );
+        assert_eq!(
+            server_context.get_namespaced_string("quic", "initial_ack_ranges")?,
+            Some("")
+        );
+        let snapshot = server_context
+            .protocol_snapshot()
+            .expect("server records an Initial observation snapshot");
+        assert_eq!(snapshot.lifecycle, INITIAL_OBSERVED);
+        assert_ne!(snapshot.lifecycle, "Handshaking");
+        assert_ne!(snapshot.lifecycle, "Established");
         Ok(())
     }
 
