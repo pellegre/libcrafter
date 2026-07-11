@@ -20,14 +20,14 @@ use crafter::{
 
 use crate::context::ProtocolContextSnapshot;
 use crate::flows::quic::{CLOSED, INITIAL_OBSERVED, INITIAL_SENT, LISTEN, RETRY_RECEIVED};
-use crate::matcher::UdpDatagramMatcher;
+use crate::matcher::{udp_payload, UdpDatagramMatcher};
 use crate::quic_wire::{
     assemble_initial_datagram, extract_quic_udp_ingress, wrap_quic_udp_datagram,
     QuicInitialPadding, QuicUdpPayload,
 };
 use crate::{
-    docaddr, Flow, FlowBuilderExt, FlowError, FlowState, Result, Role, Step, StepGotoExt,
-    Transition,
+    docaddr, Flow, FlowBuilderExt, FlowError, FlowState, PredicateMatcher, Result, Role, Step,
+    StepGotoExt, Transition,
 };
 
 const DEFAULT_CLIENT_PORT: u16 = 49_152;
@@ -51,6 +51,14 @@ const INITIAL_ONLY_VERSION_NEGOTIATION_UNSUPPORTED_OUTCOME: &str =
     "initial-only-version-negotiation-unsupported";
 const INITIAL_ONLY_RETRY_SENT_OUTCOME: &str = "initial-only-retry-sent";
 const INITIAL_ONLY_RETRY_LIMIT_OUTCOME: &str = "initial-only-retry-limit-exceeded";
+const INITIAL_ONLY_RETRY_INTEGRITY_OUTCOME: &str = "initial-only-retry-invalid-integrity";
+const INITIAL_ONLY_RETRY_VERSION_OUTCOME: &str = "initial-only-retry-wrong-version";
+const INITIAL_ONLY_RETRY_CONNECTION_ID_OUTCOME: &str = "initial-only-retry-connection-id-mismatch";
+const INITIAL_ONLY_RETRY_TUPLE_OUTCOME: &str = "initial-only-retry-tuple-mismatch";
+const INITIAL_ONLY_RETRY_EMPTY_TOKEN_OUTCOME: &str = "initial-only-retry-empty-token";
+const INITIAL_ONLY_RETRY_REPEATED_OUTCOME: &str = "initial-only-retry-repeated";
+const INITIAL_ONLY_RETRY_LATE_OUTCOME: &str = "initial-only-retry-after-authentication";
+const INITIAL_ONLY_RETRY_POLICY_OUTCOME: &str = "initial-only-retry-policy-rejected";
 const INITIAL_AUTHENTICATION_FAILED_OUTCOME: &str = "initial-authentication-failed";
 const INITIAL_TRUNCATED_OUTCOME: &str = "initial-truncated-protected-payload";
 const INITIAL_INVALID_PACKET_NUMBER_OUTCOME: &str = "initial-invalid-packet-number";
@@ -261,7 +269,9 @@ pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow>
                     })?;
                 let retry = match QuicRetryPacket::decode(ingress.payload()) {
                     Ok(retry) => retry,
-                    Err(_) => return Ok(Step::stay()),
+                    Err(_) => {
+                        return retry_rejected_step(context, INITIAL_ONLY_RETRY_INTEGRITY_OUTCOME)
+                    }
                 };
                 let observed = context
                     .get_namespaced_u64("quic", "retry_count")?
@@ -275,14 +285,25 @@ pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow>
                 let integrity_valid = retry
                     .integrity_status(&retry_original_destination_connection_id)
                     .is_ok_and(|status| status == QuicRetryIntegrityStatus::Valid);
-                if retry_policy != QuicInitialRetryPolicy::AcceptValid
-                    || retry.version() != retry_active_version.get()
-                    || !identifiers_match
-                    || !integrity_valid
-                    || authenticated
-                    || observed >= max_retries as u64
-                {
-                    return Ok(Step::stay());
+                let rejection = if retry_policy != QuicInitialRetryPolicy::AcceptValid {
+                    Some(INITIAL_ONLY_RETRY_POLICY_OUTCOME)
+                } else if retry.version() != retry_active_version.get() {
+                    Some(INITIAL_ONLY_RETRY_VERSION_OUTCOME)
+                } else if !identifiers_match {
+                    Some(INITIAL_ONLY_RETRY_CONNECTION_ID_OUTCOME)
+                } else if retry.token().is_empty() {
+                    Some(INITIAL_ONLY_RETRY_EMPTY_TOKEN_OUTCOME)
+                } else if authenticated {
+                    Some(INITIAL_ONLY_RETRY_LATE_OUTCOME)
+                } else if observed >= max_retries as u64 {
+                    Some(INITIAL_ONLY_RETRY_REPEATED_OUTCOME)
+                } else if !integrity_valid {
+                    Some(INITIAL_ONLY_RETRY_INTEGRITY_OUTCOME)
+                } else {
+                    None
+                };
+                if let Some(outcome) = rejection {
+                    return retry_rejected_step(context, outcome);
                 }
 
                 let mut identifiers = retry_state.borrow_mut();
@@ -301,6 +322,7 @@ pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow>
                 *retry_ack_state.borrow_mut() =
                     QuicInitialAckState::from_sent([restart_packet_number])?;
                 context.insert_namespaced_u64("quic", "retry_count", observed + 1)?;
+                context.insert_namespaced_bool("quic", "retry_accepted", true)?;
                 context.insert_namespaced_bool("quic", "retry_token_present", true)?;
                 context.insert_namespaced_u64(
                     "quic",
@@ -317,6 +339,21 @@ pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow>
                 Ok(Step::send_regeneration_only(restart).wake_after(INITIAL_CLIENT_TIMEOUT))
             },
         ))
+        .on(Transition::on(
+            PredicateMatcher::new("one QUIC Retry packet on the wrong tuple", |packet, _| {
+                udp_payload(packet).is_some_and(|payload| {
+                    matches!(
+                        classify_quic_header(&payload),
+                        Ok(QuicHeaderClassification::LongHeader {
+                            packet_kind: QuicLongPacketKind::Retry,
+                            ..
+                        })
+                    )
+                })
+            }),
+            |_packet, context| retry_rejected_step(context, INITIAL_ONLY_RETRY_TUPLE_OUTCOME),
+        )
+        .terminal())
         .on(Transition::on(matcher, move |packet, context| {
             let ingress =
                 extract_quic_udp_ingress(packet, local, peer, context).ok_or_else(|| {
@@ -521,6 +558,21 @@ fn version_negotiation_terminal_step(
     snapshot.close_category = Some("version-negotiation".to_string());
     context.set_protocol_snapshot(snapshot);
     Step::done_with(outcome)
+}
+
+fn retry_rejected_step(context: &mut crate::PacketContext, outcome: &'static str) -> Result<Step> {
+    context.insert_namespaced_bool("quic", "retry_accepted", false)?;
+    if !context.update_protocol_snapshot(|snapshot| {
+        snapshot.lifecycle = CLOSED.to_string();
+        snapshot.outcome = Some(outcome.to_string());
+        snapshot.close_category = Some("retry".to_string());
+    }) {
+        let mut snapshot = ProtocolContextSnapshot::new("quic", CLOSED);
+        snapshot.outcome = Some(outcome.to_string());
+        snapshot.close_category = Some("retry".to_string());
+        context.set_protocol_snapshot(snapshot);
+    }
+    Ok(Step::done_with(outcome))
 }
 
 /// Build the passive, bounded QUIC v1 Initial-only server flow.
@@ -2328,6 +2380,217 @@ mod tests {
             snapshot.peer_connection_id.as_deref(),
             Some(retry_source_connection_id.as_bytes())
         );
+        Ok(())
+    }
+
+    #[test]
+    fn initial_client_invalid_retry_emits_no_followup() -> crate::Result<()> {
+        fn retry_for(
+            config: &QuicInitialClientConfig,
+            version: u32,
+            destination_connection_id: QuicConnectionId,
+            source_connection_id: QuicConnectionId,
+            token: &[u8],
+        ) -> crate::Result<QuicRetryPacket> {
+            Ok(QuicRetryPacket::builder()
+                .version(version)
+                .destination_connection_id(destination_connection_id)
+                .source_connection_id(source_connection_id)
+                .token(token)
+                .compute_integrity_tag(
+                    config
+                        .identifiers
+                        .original_destination_connection_id()
+                        .as_bytes(),
+                )
+                .build()?)
+        }
+
+        fn inbound_retry(
+            config: &QuicInitialClientConfig,
+            retry: QuicRetryPacket,
+        ) -> crafter::Packet {
+            wrap_quic_udp_datagram(
+                config.peer,
+                config.local,
+                QuicUdpPayload::packets([QuicPacket::from_retry(retry)]),
+            )
+        }
+
+        fn inbound_retry_bytes(
+            config: &QuicInitialClientConfig,
+            bytes: Vec<u8>,
+        ) -> crafter::Packet {
+            wrap_quic_udp_datagram(config.peer, config.local, QuicUdpPayload::opaque(bytes))
+        }
+
+        fn assert_rejected(
+            config: QuicInitialClientConfig,
+            packet: crafter::Packet,
+            expected_outcome: &'static str,
+            prepare: impl FnOnce(&mut crate::PacketContext) -> crate::Result<()>,
+        ) -> crate::Result<()> {
+            let expected_packet_number = config.identifiers.next_initial_packet_number();
+            let mut flow = quic_initial_client_flow(config)?;
+            let mut context = crate::PacketContext::new();
+            let state = flow
+                .state_mut(INITIAL_SENT)
+                .expect("InitialSent state exists");
+            let entry = state
+                .run_entry(&mut context)?
+                .expect("client emits its first Initial");
+            assert_eq!(entry.outputs().len(), 1);
+            let connection_ids = context
+                .protocol_snapshot()
+                .map(|snapshot| {
+                    (
+                        snapshot.local_connection_id.clone(),
+                        snapshot.peer_connection_id.clone(),
+                    )
+                })
+                .expect("entry records the valid connection snapshot");
+            prepare(&mut context)?;
+
+            let transition = state
+                .find_transition(&packet, &context)
+                .expect("invalid Retry remains inspectable");
+            let rejected = transition.fire(&packet, &mut context)?;
+            assert!(rejected.is_terminal());
+            assert!(rejected.outputs().is_empty());
+            assert_eq!(rejected.outcome(), Some(expected_outcome));
+            assert_eq!(
+                context.get_namespaced_u64("quic", "initial_packet_number_sent")?,
+                Some(expected_packet_number)
+            );
+            assert_eq!(
+                context.get_namespaced_bool("quic", "retry_accepted")?,
+                Some(false)
+            );
+            assert_eq!(
+                context.get_namespaced_bool("quic", "retry_token_present")?,
+                None
+            );
+            assert_eq!(context.get_namespaced_bytes("quic", "retry_token")?, None);
+            let snapshot = context
+                .protocol_snapshot()
+                .expect("rejection records a terminal snapshot");
+            assert_eq!(snapshot.lifecycle, CLOSED);
+            assert_eq!(snapshot.outcome.as_deref(), Some(expected_outcome));
+            assert_eq!(snapshot.close_category.as_deref(), Some("retry"));
+            assert_eq!(
+                (
+                    snapshot.local_connection_id.clone(),
+                    snapshot.peer_connection_id.clone(),
+                ),
+                connection_ids
+            );
+            Ok(())
+        }
+
+        let config = QuicInitialClientConfig::default();
+        let destination_connection_id = config.identifiers.local_source_connection_id().clone();
+        let source_connection_id = config.identifiers.peer_source_connection_id().clone();
+        let token = b"bounded Retry token";
+        let valid = retry_for(
+            &config,
+            QUIC_VERSION_1,
+            destination_connection_id.clone(),
+            source_connection_id.clone(),
+            token,
+        )?;
+        let invariant_len =
+            1 + 4 + 1 + destination_connection_id.len() + 1 + source_connection_id.len();
+
+        for (name, byte_index) in [
+            ("header", 0),
+            ("token", invariant_len),
+            ("tag", valid.len() - 1),
+        ] {
+            let mut tampered = valid.as_bytes().to_vec();
+            tampered[byte_index] ^= 0x01;
+            assert_rejected(
+                config.clone(),
+                inbound_retry_bytes(&config, tampered),
+                INITIAL_ONLY_RETRY_INTEGRITY_OUTCOME,
+                |_| Ok(()),
+            )
+            .unwrap_or_else(|error| panic!("{name} tamper was not rejected: {error}"));
+        }
+
+        let wrong_version = retry_for(
+            &config,
+            QUIC_VERSION_2,
+            destination_connection_id.clone(),
+            source_connection_id.clone(),
+            token,
+        )?;
+        assert_rejected(
+            config.clone(),
+            inbound_retry(&config, wrong_version),
+            INITIAL_ONLY_RETRY_VERSION_OUTCOME,
+            |_| Ok(()),
+        )?;
+
+        for (destination, source) in [
+            (
+                QuicConnectionId::from_bytes([0x31; 8]),
+                source_connection_id.clone(),
+            ),
+            (
+                destination_connection_id.clone(),
+                QuicConnectionId::from_bytes([0x42; 8]),
+            ),
+        ] {
+            let wrong_identifiers = retry_for(&config, QUIC_VERSION_1, destination, source, token)?;
+            assert_rejected(
+                config.clone(),
+                inbound_retry(&config, wrong_identifiers),
+                INITIAL_ONLY_RETRY_CONNECTION_ID_OUTCOME,
+                |_| Ok(()),
+            )?;
+        }
+
+        let empty_token = retry_for(
+            &config,
+            QUIC_VERSION_1,
+            destination_connection_id.clone(),
+            source_connection_id.clone(),
+            &[],
+        )?;
+        assert_rejected(
+            config.clone(),
+            inbound_retry(&config, empty_token),
+            INITIAL_ONLY_RETRY_EMPTY_TOKEN_OUTCOME,
+            |_| Ok(()),
+        )?;
+
+        assert_rejected(
+            config.clone(),
+            inbound_retry(&config, valid.clone()),
+            INITIAL_ONLY_RETRY_REPEATED_OUTCOME,
+            |context| context.insert_namespaced_u64("quic", "retry_count", 1),
+        )?;
+        assert_rejected(
+            config.clone(),
+            inbound_retry(&config, valid.clone()),
+            INITIAL_ONLY_RETRY_LATE_OUTCOME,
+            |context| {
+                context.insert_namespaced_bool("quic", "initial_authenticated_server_traffic", true)
+            },
+        )?;
+
+        let wrong_peer = SocketAddrV4::new(*config.peer.ip(), config.peer.port() + 1);
+        let wrong_tuple = wrap_quic_udp_datagram(
+            wrong_peer,
+            config.local,
+            QuicUdpPayload::packets([QuicPacket::from_retry(valid)]),
+        );
+        assert_rejected(
+            config,
+            wrong_tuple,
+            INITIAL_ONLY_RETRY_TUPLE_OUTCOME,
+            |_| Ok(()),
+        )?;
         Ok(())
     }
 
