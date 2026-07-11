@@ -35,6 +35,10 @@ pub use context::PacketContext;
 pub use conversation::Conversation;
 pub use error::{FlowError, Result};
 pub use flow::{Flow, FlowBuilderExt};
+#[cfg(feature = "quic-endpoint")]
+pub use flows::quic::{
+    quic_client_flow, quic_server_flow, QuicClientFlowConfig, QuicServerFlowConfig,
+};
 pub use matcher::{Matcher, PredicateMatcher};
 pub use mutator::{FnMutator, Identity, Mutator};
 pub use options::{RetransmitPolicy, RunOptions, SendRepeat};
@@ -42,8 +46,6 @@ pub use quic_endpoint::{
     QuicEndpointAddresses, QuicEndpointErrorCategory, QuicPeerConfig, QuicSyntheticIdentity,
     QuicTransportLimits,
 };
-#[cfg(feature = "quic-endpoint")]
-pub use flows::quic::{quic_client_flow, QuicClientFlowConfig};
 pub use report::{FlowOutcome, FlowReport, RecoveryMetrics};
 pub use role::Role;
 pub use runner::Runner;

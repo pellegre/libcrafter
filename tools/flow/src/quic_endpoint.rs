@@ -2611,6 +2611,369 @@ impl QuicEndpointDriver for QuinnProtoClientDriver {
     }
 }
 
+/// Production, socket-free passive adapter for `quinn-proto`.
+///
+/// The adapter accepts at most one connection on the configured documentation
+/// tuple. It owns no socket and exposes all provider output through the same
+/// regeneration-only datagram boundary as the client adapter.
+#[cfg(feature = "quic-endpoint")]
+pub(crate) struct QuinnProtoServerDriver {
+    endpoint: quinn_proto::Endpoint,
+    handle: Option<quinn_proto::ConnectionHandle>,
+    connection: Option<quinn_proto::Connection>,
+    addresses: QuicEndpointAddresses,
+    pending_events: std::collections::VecDeque<QuicEndpointEvent>,
+    pending_responses: std::collections::VecDeque<QuicEndpointTransmit>,
+    snapshot: QuicEndpointSnapshot,
+    next_timeout: Option<Instant>,
+    started: bool,
+}
+
+#[cfg(feature = "quic-endpoint")]
+impl QuinnProtoServerDriver {
+    pub(crate) fn new(
+        tls: QuicEndpointServerTls,
+        addresses: QuicEndpointAddresses,
+    ) -> Result<Self> {
+        use std::sync::Arc;
+
+        let endpoint = quinn_proto::Endpoint::new(
+            Arc::new(tls.endpoint),
+            Some(Arc::new(tls.server)),
+            false,
+            Some([0x72; 32]),
+        );
+        Ok(Self {
+            endpoint,
+            handle: None,
+            connection: None,
+            addresses,
+            pending_events: std::collections::VecDeque::new(),
+            pending_responses: std::collections::VecDeque::new(),
+            snapshot: QuicEndpointSnapshot {
+                lifecycle: QuicEndpointLifecycle::Listen,
+                local_connection_id: Vec::new(),
+                peer_connection_id: Vec::new(),
+                initial: QuicEndpointPacketSpaceCounts::default(),
+                handshake: QuicEndpointPacketSpaceCounts::default(),
+                application: QuicEndpointPacketSpaceCounts::default(),
+                stream_bytes_sent: 0,
+                stream_bytes_received: 0,
+                recovery: QuicEndpointRecoveryCounts::default(),
+            },
+            next_timeout: None,
+            started: false,
+        })
+    }
+
+    fn connection_mut(&mut self, operation: &'static str) -> Result<&mut quinn_proto::Connection> {
+        self.connection
+            .as_mut()
+            .ok_or_else(|| stream_state_error(operation))
+    }
+
+    fn service_endpoint_events(&mut self) {
+        let (Some(handle), Some(connection)) = (self.handle, self.connection.as_mut()) else {
+            return;
+        };
+        while let Some(event) = connection.poll_endpoint_events() {
+            if let Some(connection_event) = self.endpoint.handle_event(handle, event) {
+                connection.handle_event(connection_event);
+            }
+        }
+    }
+
+    fn collect_connection_events(&mut self) {
+        use quinn_proto::{Event, StreamEvent};
+
+        let Some(connection) = self.connection.as_mut() else {
+            return;
+        };
+        while let Some(event) = connection.poll() {
+            match event {
+                Event::HandshakeDataReady => self
+                    .pending_events
+                    .push_back(QuicEndpointEvent::HandshakeProgress),
+                Event::Connected => {
+                    self.snapshot.lifecycle = QuicEndpointLifecycle::Established;
+                    self.pending_events
+                        .push_back(QuicEndpointEvent::Established);
+                }
+                Event::ConnectionLost { .. } => {
+                    self.snapshot.lifecycle = QuicEndpointLifecycle::Closed;
+                    self.pending_events
+                        .push_back(QuicEndpointEvent::PeerClose { code: 0 });
+                }
+                Event::Stream(StreamEvent::Readable { id }) => {
+                    self.pending_events
+                        .push_back(QuicEndpointEvent::StreamReadable(QuicEndpointStreamId(
+                            id.into(),
+                        )))
+                }
+                Event::Stream(StreamEvent::Writable { id }) => {
+                    self.pending_events
+                        .push_back(QuicEndpointEvent::StreamWritable(QuicEndpointStreamId(
+                            id.into(),
+                        )))
+                }
+                Event::Stream(StreamEvent::Finished { id })
+                | Event::Stream(StreamEvent::Stopped { id, .. }) => {
+                    self.pending_events
+                        .push_back(QuicEndpointEvent::StreamFinished(QuicEndpointStreamId(
+                            id.into(),
+                        )))
+                }
+                Event::Stream(StreamEvent::Opened { .. })
+                | Event::Stream(StreamEvent::Available { .. })
+                | Event::DatagramReceived
+                | Event::DatagramsUnblocked => {}
+            }
+        }
+        self.next_timeout = connection.poll_timeout();
+    }
+
+    fn provider_stream_id(stream: QuicEndpointStreamId) -> Result<quinn_proto::StreamId> {
+        quinn_proto::VarInt::from_u64(stream.0)
+            .map(Into::into)
+            .map_err(|error| {
+                provider_error(
+                    QuicEndpointErrorCategory::StreamState,
+                    "converting bounded QUIC server stream identifier",
+                    error,
+                )
+            })
+    }
+}
+
+#[cfg(feature = "quic-endpoint")]
+impl QuicEndpointDriver for QuinnProtoServerDriver {
+    fn start(&mut self, _now: Instant) -> Result<()> {
+        self.started = true;
+        self.snapshot.lifecycle = QuicEndpointLifecycle::Listen;
+        Ok(())
+    }
+
+    fn handle_datagram(&mut self, datagram: QuicEndpointDatagram) -> Result<()> {
+        use bytes::BytesMut;
+        use quinn_proto::DatagramEvent;
+
+        if !self.started {
+            return Err(provider_error(
+                QuicEndpointErrorCategory::DatagramIngress,
+                "receiving QUIC server datagram before listen",
+                (),
+            ));
+        }
+        let mut response = Vec::new();
+        if let Some(event) = self.endpoint.handle(
+            datagram.timestamp,
+            SocketAddr::new(datagram.remote_ip.into(), datagram.remote_port),
+            Some(datagram.local_ip.into()),
+            None,
+            BytesMut::from(datagram.payload.as_slice()),
+            &mut response,
+        ) {
+            match event {
+                DatagramEvent::NewConnection(incoming) if self.connection.is_none() => {
+                    let (handle, connection) = self
+                        .endpoint
+                        .accept(incoming, datagram.timestamp, &mut response, None)
+                        .map_err(|error| {
+                            provider_error(
+                                QuicEndpointErrorCategory::DatagramIngress,
+                                "accepting bounded QUIC server connection",
+                                error,
+                            )
+                        })?;
+                    self.handle = Some(handle);
+                    self.connection = Some(connection);
+                    self.snapshot.lifecycle = QuicEndpointLifecycle::Handshaking;
+                    self.pending_events
+                        .push_back(QuicEndpointEvent::HandshakeProgress);
+                }
+                DatagramEvent::NewConnection(incoming) => {
+                    let transmit = self.endpoint.refuse(incoming, &mut response);
+                    let payload = response[..transmit.size].to_vec();
+                    self.pending_responses.push_back(QuicEndpointTransmit {
+                        source_ip: datagram.local_ip,
+                        source_port: datagram.local_port,
+                        destination_ip: datagram.remote_ip,
+                        destination_port: datagram.remote_port,
+                        payload,
+                        packet_counts: QuicEndpointTransmitPacketCounts::default(),
+                    });
+                }
+                DatagramEvent::ConnectionEvent(handle, event) if Some(handle) == self.handle => {
+                    if let Some(connection) = self.connection.as_mut() {
+                        connection.handle_event(event);
+                    }
+                }
+                DatagramEvent::Response(transmit) => {
+                    let payload = response[..transmit.size].to_vec();
+                    self.pending_responses.push_back(QuicEndpointTransmit {
+                        source_ip: datagram.local_ip,
+                        source_port: datagram.local_port,
+                        destination_ip: datagram.remote_ip,
+                        destination_port: datagram.remote_port,
+                        payload,
+                        packet_counts: QuicEndpointTransmitPacketCounts::default(),
+                    });
+                }
+                DatagramEvent::ConnectionEvent(_, _) => {}
+            }
+        }
+        self.service_endpoint_events();
+        self.collect_connection_events();
+        Ok(())
+    }
+
+    fn drain_transmits(&mut self, now: Instant) -> Result<Vec<QuicEndpointTransmit>> {
+        let mut output = self.pending_responses.drain(..).collect::<Vec<_>>();
+        if let Some(connection) = self.connection.as_mut() {
+            loop {
+                let mut payload = Vec::new();
+                let Some(transmit) = connection.poll_transmit(now, 1, &mut payload) else {
+                    break;
+                };
+                payload.truncate(transmit.size);
+                let (SocketAddr::V4(local), SocketAddr::V4(peer)) =
+                    (self.addresses.local, self.addresses.peer)
+                else {
+                    return Err(configuration_error("draining IPv4 QUIC server transmit"));
+                };
+                output.push(QuicEndpointTransmit {
+                    source_ip: *local.ip(),
+                    source_port: local.port(),
+                    destination_ip: *peer.ip(),
+                    destination_port: peer.port(),
+                    packet_counts: QuicEndpointTransmitPacketCounts::classify_single(
+                        &payload, true,
+                    ),
+                    payload,
+                });
+            }
+        }
+        self.service_endpoint_events();
+        self.collect_connection_events();
+        Ok(output)
+    }
+
+    fn next_timeout(&self) -> Option<Instant> {
+        self.next_timeout
+    }
+
+    fn handle_timeout(&mut self, now: Instant) -> Result<()> {
+        self.connection_mut("handling server timeout before connection")?
+            .handle_timeout(now);
+        self.service_endpoint_events();
+        self.collect_connection_events();
+        Ok(())
+    }
+
+    fn poll_events(&mut self) -> Result<Vec<QuicEndpointEvent>> {
+        self.collect_connection_events();
+        Ok(self.pending_events.drain(..).collect())
+    }
+
+    fn open_bidirectional_stream(&mut self) -> Result<QuicEndpointStreamId> {
+        Err(stream_state_error(
+            "rejecting server-initiated application stream",
+        ))
+    }
+
+    fn write_stream(&mut self, stream: QuicEndpointStreamId, bytes: &[u8]) -> Result<usize> {
+        let id = Self::provider_stream_id(stream)?;
+        self.connection_mut("writing server response before connection")?
+            .send_stream(id)
+            .write(bytes)
+            .map_err(|error| {
+                provider_error(
+                    QuicEndpointErrorCategory::StreamState,
+                    "writing bounded server response",
+                    error,
+                )
+            })
+    }
+
+    fn finish_stream(&mut self, stream: QuicEndpointStreamId) -> Result<()> {
+        let id = Self::provider_stream_id(stream)?;
+        self.connection_mut("finishing server response before connection")?
+            .send_stream(id)
+            .finish()
+            .map_err(|error| {
+                provider_error(
+                    QuicEndpointErrorCategory::StreamState,
+                    "finishing bounded server response",
+                    error,
+                )
+            })
+    }
+
+    fn read_stream(
+        &mut self,
+        stream: QuicEndpointStreamId,
+        max_bytes: usize,
+    ) -> Result<QuicEndpointStreamRead> {
+        let id = Self::provider_stream_id(stream)?;
+        let mut receive = self
+            .connection_mut("reading server request before connection")?
+            .recv_stream(id);
+        let mut chunks = match receive.read(true) {
+            Ok(chunks) => chunks,
+            Err(_) => {
+                return Ok(QuicEndpointStreamRead {
+                    bytes: Vec::new(),
+                    status: QuicEndpointStreamReadStatus::Blocked,
+                })
+            }
+        };
+        let mut bytes = Vec::new();
+        while bytes.len() < max_bytes {
+            match chunks.next(max_bytes - bytes.len()) {
+                Ok(Some(chunk)) => bytes.extend_from_slice(&chunk.bytes),
+                Ok(None) => {
+                    return Ok(QuicEndpointStreamRead {
+                        bytes,
+                        status: QuicEndpointStreamReadStatus::Finished,
+                    })
+                }
+                Err(_) => {
+                    return Ok(QuicEndpointStreamRead {
+                        bytes,
+                        status: QuicEndpointStreamReadStatus::Reset,
+                    })
+                }
+            }
+        }
+        Ok(QuicEndpointStreamRead {
+            bytes,
+            status: QuicEndpointStreamReadStatus::Open,
+        })
+    }
+
+    fn snapshot(&self) -> QuicEndpointSnapshot {
+        self.snapshot.clone()
+    }
+
+    fn close(&mut self, now: Instant, code: u64, reason: &[u8]) -> Result<()> {
+        let code = quinn_proto::VarInt::from_u64(code).map_err(|error| {
+            provider_error(
+                QuicEndpointErrorCategory::StreamState,
+                "encoding QUIC server close code",
+                error,
+            )
+        })?;
+        self.connection_mut("closing server before connection")?
+            .close(now, code, bytes::Bytes::copy_from_slice(reason));
+        self.snapshot.lifecycle = QuicEndpointLifecycle::Closing;
+        self.pending_events
+            .push_back(QuicEndpointEvent::LocalClose {
+                code: code.into_inner(),
+            });
+        Ok(())
+    }
+}
+
 /// Socket-free boundary around the selected QUIC protocol provider.
 ///
 /// Implementations own TLS, packet-number, recovery, congestion, and stream
