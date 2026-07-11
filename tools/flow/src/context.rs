@@ -240,6 +240,11 @@ impl PacketContext {
         self.recovery.add_timeout_events(count);
     }
 
+    /// Add acknowledgements processed by a protocol driver, saturating at [`u64::MAX`].
+    pub fn add_acknowledgements_processed(&mut self, count: u64) {
+        self.recovery.add_acknowledgements_processed(count);
+    }
+
     /// Add probe-timeout firings, saturating at [`u64::MAX`].
     pub fn add_pto_firings(&mut self, count: u64) {
         self.recovery.add_pto_firings(count);

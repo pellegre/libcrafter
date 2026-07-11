@@ -1129,6 +1129,7 @@ pub(crate) struct QuicEndpointEventMapper {
     authenticated_handshake: bool,
     readable: BTreeSet<QuicEndpointStreamId>,
     writable: BTreeSet<QuicEndpointStreamId>,
+    recovery: QuicEndpointRecoveryCounts,
 }
 
 #[cfg(feature = "quic-endpoint")]
@@ -1140,6 +1141,7 @@ impl QuicEndpointEventMapper {
             authenticated_handshake: false,
             readable: BTreeSet::new(),
             writable: BTreeSet::new(),
+            recovery: QuicEndpointRecoveryCounts::default(),
         }
     }
 
@@ -1271,6 +1273,7 @@ impl QuicEndpointEventMapper {
         render_quic_packet_space(context, "initial", provider_snapshot.initial)?;
         render_quic_packet_space(context, "handshake", provider_snapshot.handshake)?;
         render_quic_packet_space(context, "application", provider_snapshot.application)?;
+        render_quic_recovery(context, &mut self.recovery, provider_snapshot.recovery)?;
         Ok(normalized)
     }
 
@@ -1360,9 +1363,154 @@ fn render_quic_packet_space(
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct QuicEndpointRecoveryCounts {
     pub(crate) timeout_events: u64,
+    pub(crate) acknowledgements_processed: u64,
     pub(crate) pto_firings: u64,
     pub(crate) packets_declared_lost: u64,
     pub(crate) regenerated_transmits: u64,
+    pub(crate) initial: QuicEndpointRecoverySpaceCounts,
+    pub(crate) handshake: QuicEndpointRecoverySpaceCounts,
+    pub(crate) application: QuicEndpointRecoverySpaceCounts,
+}
+
+/// Provider-owned recovery observations for one packet-number space.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct QuicEndpointRecoverySpaceCounts {
+    pub(crate) acknowledgements_processed: u64,
+    pub(crate) pto_firings: u64,
+    pub(crate) packets_declared_lost: u64,
+    pub(crate) regenerated_transmits: u64,
+}
+
+/// Packet-number space attached to an endpoint recovery observation.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuicEndpointPacketNumberSpace {
+    Initial,
+    Handshake,
+    Application,
+}
+
+/// Safe observation emitted by a provider adapter or deterministic test observer.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuicEndpointRecoveryEvent {
+    AcknowledgementProcessed(Option<QuicEndpointPacketNumberSpace>),
+    PacketDeclaredLost(Option<QuicEndpointPacketNumberSpace>),
+    PtoFired(Option<QuicEndpointPacketNumberSpace>),
+    FreshTransmitGenerated(Option<QuicEndpointPacketNumberSpace>),
+}
+
+#[cfg(feature = "quic-endpoint")]
+impl QuicEndpointRecoveryCounts {
+    pub(crate) fn observe(&mut self, event: QuicEndpointRecoveryEvent) {
+        let (aggregate, space) = match event {
+            QuicEndpointRecoveryEvent::AcknowledgementProcessed(space) => {
+                self.acknowledgements_processed = self.acknowledgements_processed.saturating_add(1);
+                (0, space)
+            }
+            QuicEndpointRecoveryEvent::PacketDeclaredLost(space) => {
+                self.packets_declared_lost = self.packets_declared_lost.saturating_add(1);
+                (1, space)
+            }
+            QuicEndpointRecoveryEvent::PtoFired(space) => {
+                self.pto_firings = self.pto_firings.saturating_add(1);
+                (2, space)
+            }
+            QuicEndpointRecoveryEvent::FreshTransmitGenerated(space) => {
+                self.regenerated_transmits = self.regenerated_transmits.saturating_add(1);
+                (3, space)
+            }
+        };
+        let Some(space) = space else { return };
+        let counts = match space {
+            QuicEndpointPacketNumberSpace::Initial => &mut self.initial,
+            QuicEndpointPacketNumberSpace::Handshake => &mut self.handshake,
+            QuicEndpointPacketNumberSpace::Application => &mut self.application,
+        };
+        match aggregate {
+            0 => {
+                counts.acknowledgements_processed =
+                    counts.acknowledgements_processed.saturating_add(1)
+            }
+            1 => counts.packets_declared_lost = counts.packets_declared_lost.saturating_add(1),
+            2 => counts.pto_firings = counts.pto_firings.saturating_add(1),
+            _ => counts.regenerated_transmits = counts.regenerated_transmits.saturating_add(1),
+        }
+    }
+}
+
+#[cfg(feature = "quic-endpoint")]
+fn render_quic_recovery(
+    context: &mut PacketContext,
+    prior: &mut QuicEndpointRecoveryCounts,
+    current: QuicEndpointRecoveryCounts,
+) -> Result<()> {
+    context.add_timeout_events(current.timeout_events.saturating_sub(prior.timeout_events));
+    context.add_acknowledgements_processed(
+        current
+            .acknowledgements_processed
+            .saturating_sub(prior.acknowledgements_processed),
+    );
+    context.add_pto_firings(current.pto_firings.saturating_sub(prior.pto_firings));
+    context.add_packets_declared_lost(
+        current
+            .packets_declared_lost
+            .saturating_sub(prior.packets_declared_lost),
+    );
+    context.add_regenerated_transmits(
+        current
+            .regenerated_transmits
+            .saturating_sub(prior.regenerated_transmits),
+    );
+
+    for (name, counts) in [
+        ("initial", current.initial),
+        ("handshake", current.handshake),
+        ("application", current.application),
+    ] {
+        for (field, value) in [
+            (
+                "acknowledgements_processed",
+                counts.acknowledgements_processed,
+            ),
+            ("packets_declared_lost", counts.packets_declared_lost),
+            ("pto_firings", counts.pto_firings),
+            ("regenerated_transmits", counts.regenerated_transmits),
+        ] {
+            let key = format!("recovery.packet_spaces.{name}.{field}");
+            let observed = context.get_namespaced_u64("quic", &key)?.unwrap_or(0);
+            context.insert_namespaced_u64("quic", &key, observed.max(value))?;
+        }
+    }
+    prior.timeout_events = prior.timeout_events.max(current.timeout_events);
+    prior.acknowledgements_processed = prior
+        .acknowledgements_processed
+        .max(current.acknowledgements_processed);
+    prior.pto_firings = prior.pto_firings.max(current.pto_firings);
+    prior.packets_declared_lost = prior
+        .packets_declared_lost
+        .max(current.packets_declared_lost);
+    prior.regenerated_transmits = prior
+        .regenerated_transmits
+        .max(current.regenerated_transmits);
+    for (retained, observed) in [
+        (&mut prior.initial, current.initial),
+        (&mut prior.handshake, current.handshake),
+        (&mut prior.application, current.application),
+    ] {
+        retained.acknowledgements_processed = retained
+            .acknowledgements_processed
+            .max(observed.acknowledgements_processed);
+        retained.pto_firings = retained.pto_firings.max(observed.pto_firings);
+        retained.packets_declared_lost = retained
+            .packets_declared_lost
+            .max(observed.packets_declared_lost);
+        retained.regenerated_transmits = retained
+            .regenerated_transmits
+            .max(observed.regenerated_transmits);
+    }
+    Ok(())
 }
 
 /// Provider-owned classification for the next endpoint deadline.
@@ -2797,6 +2945,103 @@ mod tests {
                 .unwrap(),
             Some(2)
         );
+    }
+
+    #[cfg(feature = "quic-endpoint")]
+    #[test]
+    fn driver_reports_provider_owned_recovery_events() {
+        use super::{
+            render_quic_recovery, QuicEndpointPacketNumberSpace as Space,
+            QuicEndpointRecoveryCounts, QuicEndpointRecoveryEvent as Event,
+        };
+        use crate::{FlowOutcome, FlowReport, PacketContext, Role};
+        use std::time::Duration;
+
+        let script = [
+            Event::AcknowledgementProcessed(Some(Space::Initial)),
+            Event::AcknowledgementProcessed(Some(Space::Handshake)),
+            Event::AcknowledgementProcessed(Some(Space::Application)),
+            Event::PacketDeclaredLost(Some(Space::Handshake)),
+            Event::PtoFired(Some(Space::Application)),
+            Event::FreshTransmitGenerated(Some(Space::Application)),
+            Event::FreshTransmitGenerated(None),
+        ];
+        let mut provider = QuicEndpointRecoveryCounts::default();
+        for event in script {
+            provider.observe(event);
+        }
+
+        let mut prior = QuicEndpointRecoveryCounts::default();
+        let mut context = PacketContext::new();
+        render_quic_recovery(&mut context, &mut prior, provider).unwrap();
+        // Re-rendering an unchanged absolute provider snapshot must not double count.
+        render_quic_recovery(&mut context, &mut prior, provider).unwrap();
+
+        let metrics = context.recovery_metrics();
+        assert_eq!(metrics.acknowledgements_processed(), 3);
+        assert_eq!(metrics.packets_declared_lost(), 1);
+        assert_eq!(metrics.pto_firings(), 1);
+        assert_eq!(metrics.regenerated_transmits(), 2);
+        assert_eq!(
+            context
+                .get_namespaced_u64(
+                    "quic",
+                    "recovery.packet_spaces.initial.acknowledgements_processed",
+                )
+                .unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_u64(
+                    "quic",
+                    "recovery.packet_spaces.handshake.packets_declared_lost",
+                )
+                .unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_u64("quic", "recovery.packet_spaces.application.pto_firings")
+                .unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_u64(
+                    "quic",
+                    "recovery.packet_spaces.application.regenerated_transmits",
+                )
+                .unwrap(),
+            Some(1)
+        );
+
+        let report = FlowReport::new(
+            "provider recovery",
+            Role::Initiator,
+            true,
+            vec!["Handshaking".to_string()],
+            2,
+            1,
+            Vec::new(),
+            1,
+            Duration::ZERO,
+            FlowOutcome::Completed,
+            context.summary(),
+        )
+        .with_recovery_metrics(metrics);
+        assert!(report.summary().contains("acknowledgements_processed=3"));
+        assert!(report.summary().contains("packets_declared_lost=1"));
+        assert!(report.show().contains("    pto_firings: 1"));
+        assert!(report.to_json().contains("\"regenerated_transmits\":2"));
+
+        let mut saturated = QuicEndpointRecoveryCounts {
+            acknowledgements_processed: u64::MAX,
+            ..Default::default()
+        };
+        saturated.observe(Event::AcknowledgementProcessed(Some(Space::Initial)));
+        assert_eq!(saturated.acknowledgements_processed, u64::MAX);
+        assert_eq!(saturated.initial.acknowledgements_processed, 1);
     }
 
     #[cfg(feature = "quic-endpoint")]
