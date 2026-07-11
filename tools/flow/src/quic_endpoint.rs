@@ -3,7 +3,14 @@
 use std::{fmt, net::SocketAddr, time::Duration};
 
 #[cfg(feature = "quic-endpoint")]
-use std::{collections::BTreeSet, net::Ipv4Addr, time::Instant};
+use std::{
+    cell::RefCell,
+    collections::BTreeSet,
+    io::{self, Write},
+    net::Ipv4Addr,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use crate::FlowError;
 #[cfg(feature = "quic-endpoint")]
@@ -13,6 +20,129 @@ use crate::{
     step::{SendIntent, Step},
     PacketContext, Result,
 };
+
+/// Test-only, non-secret packet metadata retained from the provider's qlog hook.
+///
+/// This observer is opt-in and is never included in flow context, reports, or
+/// debug output. Offline tests extract only packet type and packet number.
+#[cfg(feature = "quic-endpoint")]
+#[doc(hidden)]
+#[derive(Clone, Default)]
+pub struct QuicEndpointTestObserver(Arc<Mutex<QuicEndpointTestObserverState>>);
+
+#[cfg(feature = "quic-endpoint")]
+#[derive(Default)]
+struct QuicEndpointTestObserverState {
+    partial_record: Vec<u8>,
+    sent_packets: Vec<QuicEndpointObservedPacket>,
+}
+
+#[cfg(feature = "quic-endpoint")]
+thread_local! {
+    static NEXT_TEST_OBSERVER: RefCell<Option<QuicEndpointTestObserver>> = const { RefCell::new(None) };
+}
+
+#[cfg(feature = "quic-endpoint")]
+impl fmt::Debug for QuicEndpointTestObserver {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("QuicEndpointTestObserver(<redacted test metadata>)")
+    }
+}
+
+#[cfg(feature = "quic-endpoint")]
+impl Write for QuicEndpointTestObserver {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let mut state = self.0.lock().expect("qlog observer lock");
+        state.partial_record.extend_from_slice(bytes);
+        while let Some(end) = state.partial_record.iter().position(|byte| *byte == b'\n') {
+            let record = state.partial_record.drain(..=end).collect::<Vec<_>>();
+            if let Some(packet) = parse_qlog_sent_packet(&record) {
+                state.sent_packets.push(packet);
+            }
+        }
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// QUIC packet-number space reported by the test-only provider observer.
+#[cfg(feature = "quic-endpoint")]
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum QuicEndpointObservedPacketSpace {
+    Initial,
+    Handshake,
+    Application,
+}
+
+/// One non-secret sent-packet observation from the provider's supported qlog hook.
+#[cfg(feature = "quic-endpoint")]
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuicEndpointObservedPacket {
+    pub space: QuicEndpointObservedPacketSpace,
+    pub packet_number: u64,
+}
+
+#[cfg(feature = "quic-endpoint")]
+impl QuicEndpointTestObserver {
+    /// Install this observer on the next endpoint configured on this test thread.
+    pub fn install_for_next_endpoint(&self) {
+        NEXT_TEST_OBSERVER.with(|slot| {
+            assert!(slot.borrow().is_none(), "test observer already installed");
+            *slot.borrow_mut() = Some(self.clone());
+        });
+    }
+
+    /// Extract sent packet type and number without exposing qlog frames or payloads.
+    pub fn sent_packets(&self) -> Vec<QuicEndpointObservedPacket> {
+        self.0
+            .lock()
+            .expect("qlog observer lock")
+            .sent_packets
+            .clone()
+    }
+}
+
+#[cfg(feature = "quic-endpoint")]
+fn take_test_packet_observer() -> Option<QuicEndpointTestObserver> {
+    NEXT_TEST_OBSERVER.with(|slot| slot.borrow_mut().take())
+}
+
+#[cfg(feature = "quic-endpoint")]
+fn parse_qlog_sent_packet(record: &[u8]) -> Option<QuicEndpointObservedPacket> {
+    let record = std::str::from_utf8(record).ok()?;
+    if !record.contains("\"name\":\"transport:packet_sent\"") {
+        return None;
+    }
+    let packet_type = value_after(record, "\"packet_type\":\"")?;
+    let space = match packet_type {
+        "initial" => QuicEndpointObservedPacketSpace::Initial,
+        "handshake" => QuicEndpointObservedPacketSpace::Handshake,
+        "1RTT" => QuicEndpointObservedPacketSpace::Application,
+        _ => return None,
+    };
+    let number = record.split("\"packet_number\":").nth(1)?;
+    let digits = number
+        .as_bytes()
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    let packet_number = number[..digits].parse().ok()?;
+    Some(QuicEndpointObservedPacket {
+        space,
+        packet_number,
+    })
+}
+
+#[cfg(feature = "quic-endpoint")]
+fn value_after<'a>(input: &'a str, marker: &str) -> Option<&'a str> {
+    let value = input.split(marker).nth(1)?;
+    value.split('"').next()
+}
 
 /// Local and peer address metadata carried with a QUIC UDP datagram.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -475,6 +605,11 @@ pub(crate) fn configure_endpoint_client_tls(
         .datagram_receive_buffer_size(None)
         .datagram_send_buffer_size(0)
         .enable_segmentation_offload(false);
+    attach_test_packet_observer(
+        &mut transport,
+        take_test_packet_observer(),
+        "crafter-flow client test",
+    );
 
     let mut client = quinn_proto::ClientConfig::new(Arc::new(crypto));
     client.transport_config(Arc::new(transport)).version(1);
@@ -621,6 +756,11 @@ pub(crate) fn configure_endpoint_server_tls(
         .datagram_receive_buffer_size(None)
         .datagram_send_buffer_size(0)
         .enable_segmentation_offload(false);
+    attach_test_packet_observer(
+        &mut transport,
+        take_test_packet_observer(),
+        "crafter-flow server test",
+    );
 
     let mut server = quinn_proto::ServerConfig::with_crypto(Arc::new(crypto));
     server
@@ -644,6 +784,22 @@ pub(crate) fn configure_endpoint_server_tls(
         server,
         limits,
     })
+}
+
+#[cfg(feature = "quic-endpoint")]
+fn attach_test_packet_observer(
+    transport: &mut quinn_proto::TransportConfig,
+    observer: Option<QuicEndpointTestObserver>,
+    title: &'static str,
+) {
+    let Some(observer) = observer else {
+        return;
+    };
+    let mut qlog = quinn_proto::QlogConfig::default();
+    qlog.writer(Box::new(observer))
+        .title(Some(title.to_string()))
+        .start_time(Instant::now());
+    transport.qlog_stream(qlog.into_stream());
 }
 
 /// Stable, provider-independent endpoint failure categories.

@@ -2,10 +2,13 @@
 
 mod support;
 
-use std::{net::SocketAddr, time::Duration};
+use std::{collections::BTreeMap, net::SocketAddr, time::Duration};
 
 use crafter_flow::prelude::*;
-use crafter_flow::{docaddr, QuicEndpointAddresses, QuicPeerConfig, QuicSyntheticIdentity};
+use crafter_flow::{
+    docaddr, QuicEndpointAddresses, QuicEndpointObservedPacketSpace, QuicEndpointTestObserver,
+    QuicPeerConfig, QuicSyntheticIdentity,
+};
 use support::duplex::{DuplexConfig, DuplexHarness, Side, StopReason, TraceEventKind};
 
 const PRIVATE_KEY_HEX: &str = concat!(
@@ -43,6 +46,16 @@ fn decode_hex(input: &str) -> Vec<u8> {
 }
 
 fn flow_pair() -> (Flow, Flow) {
+    let (client, server, _, _) = observed_flow_pair();
+    (client, server)
+}
+
+fn observed_flow_pair() -> (
+    Flow,
+    Flow,
+    QuicEndpointTestObserver,
+    QuicEndpointTestObserver,
+) {
     let client_addresses = QuicEndpointAddresses::new(
         SocketAddr::from((docaddr::CLIENT_IPV4, 44_300)),
         SocketAddr::from((docaddr::SERVER_IPV4, 443)),
@@ -50,6 +63,9 @@ fn flow_pair() -> (Flow, Flow) {
     let server_addresses =
         QuicEndpointAddresses::new(client_addresses.peer, client_addresses.local);
     let certificate = decode_hex(CERTIFICATE_HEX);
+    let client_observer = QuicEndpointTestObserver::default();
+    let server_observer = QuicEndpointTestObserver::default();
+    client_observer.install_for_next_endpoint();
     let client = quic_client_flow(QuicClientFlowConfig::new(
         client_addresses,
         QuicPeerConfig::new("quic.example", [b"crafter-flow".to_vec()]),
@@ -57,13 +73,122 @@ fn flow_pair() -> (Flow, Flow) {
         REQUEST.to_vec(),
     ))
     .unwrap();
+    server_observer.install_for_next_endpoint();
     let server = quic_server_flow(QuicServerFlowConfig::new(
         server_addresses,
         QuicSyntheticIdentity::new(vec![certificate], decode_hex(PRIVATE_KEY_HEX), Vec::new()),
         RESPONSE.to_vec(),
     ))
     .unwrap();
-    (client, server)
+    (client, server, client_observer, server_observer)
+}
+
+#[test]
+fn protected_recovery_never_reuses_packet_number() {
+    const DROPPED_DATAGRAM: usize = 3;
+    let (client, server, client_observer, server_observer) = observed_flow_pair();
+    let report = DuplexHarness::new(
+        client,
+        server,
+        DuplexConfig {
+            step_limit: 2_048,
+            time_limit: Duration::from_secs(60),
+            ..DuplexConfig::default().drop_datagram(DROPPED_DATAGRAM)
+        },
+    )
+    .unwrap()
+    .run()
+    .expect("one protected loss remains recoverable");
+
+    assert_eq!(report.stop_reason, StopReason::BothCompleted);
+    let dropped_at = report
+        .trace
+        .iter()
+        .position(|event| {
+            event.side == Side::Right
+                && matches!(
+                    event.kind,
+                    TraceEventKind::Dropped {
+                        datagram: DROPPED_DATAGRAM
+                    }
+                )
+        })
+        .expect("selected protected datagram was dropped");
+    let recovery_timeout = report
+        .trace
+        .iter()
+        .enumerate()
+        .skip(dropped_at + 1)
+        .find(|(_, event)| {
+            event.side == Side::Right
+                && event.at > Duration::ZERO
+                && matches!(event.kind, TraceEventKind::Timeout { .. })
+        })
+        .map(|(index, event)| (index, event.at))
+        .expect("server provider recovery deadline fired");
+    let recovery_ordinals = report
+        .trace
+        .iter()
+        .skip(recovery_timeout.0 + 1)
+        .take_while(|event| event.at == recovery_timeout.1)
+        .filter_map(|event| match event.kind {
+            TraceEventKind::Emitted { datagram, .. } if event.side == Side::Right => Some(datagram),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !recovery_ordinals.is_empty(),
+        "PTO emitted protected output"
+    );
+    let lost_ciphertext = report
+        .protected_payloads
+        .get(&DROPPED_DATAGRAM)
+        .expect("lost protected ciphertext retained by test harness");
+    for ordinal in recovery_ordinals {
+        assert_ne!(
+            report
+                .protected_payloads
+                .get(&ordinal)
+                .expect("recovery ciphertext retained by test harness"),
+            lost_ciphertext,
+            "recovery must not replay identical protected bytes"
+        );
+    }
+
+    let mut observed_spaces = BTreeMap::new();
+    for (side, observer) in [("client", client_observer), ("server", server_observer)] {
+        let packets = observer.sent_packets();
+        assert!(!packets.is_empty(), "{side} qlog recorded sent packets");
+        let mut by_space: BTreeMap<QuicEndpointObservedPacketSpace, Vec<u64>> = BTreeMap::new();
+        for packet in packets {
+            by_space
+                .entry(packet.space)
+                .or_default()
+                .push(packet.packet_number);
+            observed_spaces.insert(packet.space, true);
+        }
+        for (space, numbers) in by_space {
+            assert!(
+                numbers.windows(2).all(|pair| pair[0] < pair[1]),
+                "{side} {space:?} packet numbers must be strictly fresh: {numbers:?}"
+            );
+        }
+    }
+    for space in [
+        QuicEndpointObservedPacketSpace::Initial,
+        QuicEndpointObservedPacketSpace::Handshake,
+        QuicEndpointObservedPacketSpace::Application,
+    ] {
+        assert_eq!(
+            observed_spaces.get(&space),
+            Some(&true),
+            "qlog must observe the {space:?} packet-number space"
+        );
+    }
+
+    for context in [&report.left_context, &report.right_context] {
+        assert_eq!(context.recovery_metrics().exact_replay_transmits(), 0);
+    }
 }
 
 #[test]
