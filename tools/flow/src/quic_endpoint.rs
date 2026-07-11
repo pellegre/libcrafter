@@ -3,11 +3,12 @@
 use std::{fmt, net::SocketAddr, time::Duration};
 
 #[cfg(feature = "quic-endpoint")]
-use std::{net::Ipv4Addr, time::Instant};
+use std::{collections::BTreeSet, net::Ipv4Addr, time::Instant};
 
 use crate::FlowError;
 #[cfg(feature = "quic-endpoint")]
 use crate::{
+    context::ProtocolContextSnapshot,
     quic_wire::{wrap_opaque_quic_udp_datagram, QuicCaptureRepresentation, QuicIngress},
     step::{SendIntent, Step},
     PacketContext, Result,
@@ -812,12 +813,31 @@ pub(crate) struct QuicEndpointStreamRead {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum QuicEndpointLifecycle {
     Starting,
+    InitialSent,
+    Listen,
     Handshaking,
     Established,
     Closing,
     Draining,
     Closed,
     Failed,
+}
+
+#[cfg(feature = "quic-endpoint")]
+impl QuicEndpointLifecycle {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::InitialSent => "initial-sent",
+            Self::Listen => "listen",
+            Self::Handshaking => "handshaking",
+            Self::Established => "established",
+            Self::Closing => "closing",
+            Self::Draining => "draining",
+            Self::Closed => "closed",
+            Self::Failed => "failed",
+        }
+    }
 }
 
 /// A stable, non-secret endpoint event.
@@ -841,6 +861,155 @@ pub(crate) enum QuicEndpointEvent {
         category: QuicEndpointErrorCategory,
         context: &'static str,
     },
+}
+
+/// Flow-owned normalization state for provider lifecycle notifications.
+///
+/// Readiness is edge-triggered at this boundary: a provider may report the
+/// same readable or writable stream repeatedly until the flow services it, but
+/// the state graph only needs one pending observation. Stream completion and
+/// close events are never deduplicated because they carry final protocol facts.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug)]
+pub(crate) struct QuicEndpointEventMapper {
+    lifecycle: QuicEndpointLifecycle,
+    handshake_started: bool,
+    authenticated_handshake: bool,
+    readable: BTreeSet<QuicEndpointStreamId>,
+    writable: BTreeSet<QuicEndpointStreamId>,
+}
+
+#[cfg(feature = "quic-endpoint")]
+impl QuicEndpointEventMapper {
+    pub(crate) fn new(lifecycle: QuicEndpointLifecycle) -> Self {
+        Self {
+            lifecycle,
+            handshake_started: false,
+            authenticated_handshake: false,
+            readable: BTreeSet::new(),
+            writable: BTreeSet::new(),
+        }
+    }
+
+    pub(crate) fn poll<D: QuicEndpointDriver + ?Sized>(
+        &mut self,
+        driver: &mut D,
+        context: &mut PacketContext,
+    ) -> Result<Vec<QuicEndpointEvent>> {
+        let events = driver.poll_events()?;
+        let provider_snapshot = driver.snapshot();
+        let mut normalized = Vec::with_capacity(events.len());
+
+        if !matches!(context.protocol_snapshot(), Some(snapshot) if snapshot.protocol == "quic") {
+            context.set_protocol_snapshot(ProtocolContextSnapshot::new(
+                "quic",
+                self.lifecycle.label(),
+            ));
+        }
+
+        for event in events {
+            match &event {
+                QuicEndpointEvent::HandshakeProgress => {
+                    self.handshake_started = true;
+                    self.lifecycle = QuicEndpointLifecycle::Handshaking;
+                }
+                QuicEndpointEvent::Established => {
+                    if !self.handshake_started {
+                        return Err(provider_error(
+                            QuicEndpointErrorCategory::TlsAuthentication,
+                            "rejecting established lifecycle before authenticated handshake",
+                            (),
+                        ));
+                    }
+                    self.authenticated_handshake = true;
+                    self.lifecycle = QuicEndpointLifecycle::Established;
+                    context.insert_namespaced_bool("quic", "handshake.authenticated", true)?;
+                }
+                QuicEndpointEvent::StreamReadable(stream) => {
+                    if !self.readable.insert(*stream) {
+                        continue;
+                    }
+                    context.insert_namespaced_bool("quic", "stream.readable", true)?;
+                    context.insert_namespaced_u64("quic", "stream.id", stream.0)?;
+                }
+                QuicEndpointEvent::StreamWritable(stream) => {
+                    if !self.writable.insert(*stream) {
+                        continue;
+                    }
+                    context.insert_namespaced_bool("quic", "stream.writable", true)?;
+                    context.insert_namespaced_u64("quic", "stream.id", stream.0)?;
+                }
+                QuicEndpointEvent::StreamFinished(stream) => {
+                    self.readable.remove(stream);
+                    self.writable.remove(stream);
+                    context.insert_namespaced_bool("quic", "stream.readable", false)?;
+                    context.insert_namespaced_bool("quic", "stream.writable", false)?;
+                    context.insert_namespaced_bool("quic", "stream.finished", true)?;
+                    context.insert_namespaced_u64("quic", "stream.id", stream.0)?;
+                }
+                QuicEndpointEvent::PeerClose { code } => {
+                    self.lifecycle = QuicEndpointLifecycle::Closing;
+                    update_quic_protocol_snapshot(context, |snapshot| {
+                        snapshot.close_category = Some("peer".to_string());
+                        snapshot.close_code = Some(*code);
+                    });
+                }
+                QuicEndpointEvent::LocalClose { code } => {
+                    self.lifecycle = QuicEndpointLifecycle::Closing;
+                    update_quic_protocol_snapshot(context, |snapshot| {
+                        snapshot.close_category = Some("local".to_string());
+                        snapshot.close_code = Some(*code);
+                    });
+                }
+                QuicEndpointEvent::Draining => {
+                    self.lifecycle = QuicEndpointLifecycle::Draining;
+                }
+                QuicEndpointEvent::IdleTimeout => {
+                    self.lifecycle = QuicEndpointLifecycle::Closed;
+                    update_quic_protocol_snapshot(context, |snapshot| {
+                        snapshot.outcome = Some("idle-timeout".to_string());
+                        snapshot.close_category = Some("idle-timeout".to_string());
+                    });
+                }
+                QuicEndpointEvent::FatalError {
+                    category,
+                    context: operation,
+                } => {
+                    self.lifecycle = QuicEndpointLifecycle::Failed;
+                    update_quic_protocol_snapshot(context, |snapshot| {
+                        snapshot.outcome = Some("endpoint-error".to_string());
+                        snapshot.error_category = Some(category.to_string());
+                        snapshot.error_context = Some((*operation).to_string());
+                    });
+                }
+            }
+            normalized.push(event);
+        }
+
+        let mut snapshot = context
+            .protocol_snapshot()
+            .cloned()
+            .unwrap_or_else(|| ProtocolContextSnapshot::new("quic", self.lifecycle.label()));
+        snapshot.protocol = "quic".to_string();
+        snapshot.lifecycle = self.lifecycle.label().to_string();
+        snapshot.local_connection_id = Some(provider_snapshot.local_connection_id);
+        snapshot.peer_connection_id = Some(provider_snapshot.peer_connection_id);
+        context.set_protocol_snapshot(snapshot);
+        Ok(normalized)
+    }
+
+    pub(crate) fn authenticated_handshake(&self) -> bool {
+        self.authenticated_handshake
+    }
+}
+
+#[cfg(feature = "quic-endpoint")]
+fn update_quic_protocol_snapshot(
+    context: &mut PacketContext,
+    update: impl FnOnce(&mut ProtocolContextSnapshot),
+) {
+    let updated = context.update_protocol_snapshot(update);
+    debug_assert!(updated, "QUIC event polling installs a snapshot first");
 }
 
 /// Packet observations for one QUIC packet-number space.
@@ -2083,5 +2252,186 @@ mod tests {
                 .unwrap(),
             Some(2)
         );
+    }
+
+    #[cfg(feature = "quic-endpoint")]
+    #[test]
+    fn provider_events_map_to_stable_lifecycle() {
+        use std::{collections::VecDeque, time::Instant};
+
+        use super::{
+            QuicEndpointDatagram, QuicEndpointDriver, QuicEndpointErrorCategory, QuicEndpointEvent,
+            QuicEndpointEventMapper, QuicEndpointLifecycle, QuicEndpointPacketSpaceCounts,
+            QuicEndpointRecoveryCounts, QuicEndpointSnapshot, QuicEndpointStreamId,
+            QuicEndpointStreamRead, QuicEndpointTransmit,
+        };
+        use crate::{FlowError, PacketContext, Result};
+
+        struct ScriptedDriver {
+            events: VecDeque<QuicEndpointEvent>,
+            snapshot: QuicEndpointSnapshot,
+        }
+
+        impl QuicEndpointDriver for ScriptedDriver {
+            fn start(&mut self, _: Instant) -> Result<()> {
+                Ok(())
+            }
+
+            fn handle_datagram(&mut self, _: QuicEndpointDatagram) -> Result<()> {
+                Ok(())
+            }
+
+            fn drain_transmits(&mut self, _: Instant) -> Result<Vec<QuicEndpointTransmit>> {
+                Ok(Vec::new())
+            }
+
+            fn next_timeout(&self) -> Option<Instant> {
+                None
+            }
+
+            fn handle_timeout(&mut self, _: Instant) -> Result<()> {
+                Ok(())
+            }
+
+            fn poll_events(&mut self) -> Result<Vec<QuicEndpointEvent>> {
+                Ok(self.events.drain(..).collect())
+            }
+
+            fn open_bidirectional_stream(&mut self) -> Result<QuicEndpointStreamId> {
+                Ok(QuicEndpointStreamId(0))
+            }
+
+            fn write_stream(&mut self, _: QuicEndpointStreamId, bytes: &[u8]) -> Result<usize> {
+                Ok(bytes.len())
+            }
+
+            fn finish_stream(&mut self, _: QuicEndpointStreamId) -> Result<()> {
+                Ok(())
+            }
+
+            fn read_stream(
+                &mut self,
+                _: QuicEndpointStreamId,
+                _: usize,
+            ) -> Result<QuicEndpointStreamRead> {
+                Ok(QuicEndpointStreamRead {
+                    bytes: Vec::new(),
+                    finished: false,
+                })
+            }
+
+            fn snapshot(&self) -> QuicEndpointSnapshot {
+                self.snapshot.clone()
+            }
+
+            fn close(&mut self, _: Instant, _: u64, _: &[u8]) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let snapshot = QuicEndpointSnapshot {
+            lifecycle: QuicEndpointLifecycle::Established,
+            local_connection_id: vec![0x11; 8],
+            peer_connection_id: vec![0x22; 8],
+            initial: QuicEndpointPacketSpaceCounts::default(),
+            handshake: QuicEndpointPacketSpaceCounts::default(),
+            application: QuicEndpointPacketSpaceCounts::default(),
+            stream_bytes_sent: 7,
+            stream_bytes_received: 8,
+            recovery: QuicEndpointRecoveryCounts::default(),
+        };
+        let stream = QuicEndpointStreamId(0);
+        let script = [
+            QuicEndpointEvent::HandshakeProgress,
+            QuicEndpointEvent::Established,
+            QuicEndpointEvent::StreamReadable(stream),
+            QuicEndpointEvent::StreamReadable(stream),
+            QuicEndpointEvent::StreamWritable(stream),
+            QuicEndpointEvent::StreamWritable(stream),
+            QuicEndpointEvent::StreamFinished(stream),
+            QuicEndpointEvent::LocalClose { code: 0 },
+            QuicEndpointEvent::PeerClose { code: 42 },
+            QuicEndpointEvent::Draining,
+            QuicEndpointEvent::IdleTimeout,
+            QuicEndpointEvent::FatalError {
+                category: QuicEndpointErrorCategory::ProviderInternal,
+                context: "polling endpoint lifecycle",
+            },
+        ];
+        let mut driver = ScriptedDriver {
+            events: script.clone().into(),
+            snapshot: snapshot.clone(),
+        };
+        let mut mapper = QuicEndpointEventMapper::new(QuicEndpointLifecycle::InitialSent);
+        let mut context = PacketContext::new();
+
+        let events = mapper.poll(&mut driver, &mut context).unwrap();
+
+        assert_eq!(events.len(), script.len() - 2);
+        assert_eq!(events[0], QuicEndpointEvent::HandshakeProgress);
+        assert_eq!(events[1], QuicEndpointEvent::Established);
+        assert!(mapper.authenticated_handshake());
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| **event == QuicEndpointEvent::StreamReadable(stream))
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| **event == QuicEndpointEvent::StreamWritable(stream))
+                .count(),
+            1
+        );
+        assert!(events.contains(&QuicEndpointEvent::LocalClose { code: 0 }));
+        assert!(events.contains(&QuicEndpointEvent::PeerClose { code: 42 }));
+        assert_eq!(
+            context
+                .get_namespaced_bool("quic", "handshake.authenticated")
+                .unwrap(),
+            Some(true)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_bool("quic", "stream.finished")
+                .unwrap(),
+            Some(true)
+        );
+        let observed = context.protocol_snapshot().unwrap();
+        assert_eq!(observed.lifecycle, "failed");
+        assert_eq!(
+            observed.local_connection_id.as_deref(),
+            Some(&[0x11; 8][..])
+        );
+        assert_eq!(observed.peer_connection_id.as_deref(), Some(&[0x22; 8][..]));
+        assert_eq!(observed.close_category.as_deref(), Some("idle-timeout"));
+        assert_eq!(observed.close_code, Some(42));
+        assert_eq!(observed.outcome.as_deref(), Some("endpoint-error"));
+        assert_eq!(
+            observed.error_category.as_deref(),
+            Some("provider internal")
+        );
+        assert_eq!(
+            observed.error_context.as_deref(),
+            Some("polling endpoint lifecycle")
+        );
+
+        let mut illegal = ScriptedDriver {
+            events: VecDeque::from([QuicEndpointEvent::Established]),
+            snapshot,
+        };
+        let mut illegal_mapper = QuicEndpointEventMapper::new(QuicEndpointLifecycle::Listen);
+        let error = illegal_mapper
+            .poll(&mut illegal, &mut PacketContext::new())
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            FlowError::QuicEndpoint {
+                category: QuicEndpointErrorCategory::TlsAuthentication,
+                ..
+            }
+        ));
     }
 }
