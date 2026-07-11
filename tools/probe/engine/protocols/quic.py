@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping, Sequence
 
 from ..capability_derivation import capability
@@ -20,6 +21,14 @@ QUIC_SERVICE_KIND = "quic-controlled-udp"
 QUIC_SERVICE_PORT = 4433
 QUIC_ADAPTER_MODULE = "tools/probe/adapters/src/quic.rs"
 _QUIC_CAPABILITIES = ["udp_service"]
+_QUIC_STATEFUL_CAPABILITIES = [
+    "two_endpoints",
+    "controlled_service_startup",
+    "udp_capture",
+    "artifact_collection",
+    "endpoint_teardown",
+]
+_QUIC_ALPN = "crafter-flow"
 _QUIC_V1_INITIAL_HEX = "c000000001048394c8f001aa000301beef"
 _QUIC_VERSION_NEGOTIATION_HEX = "c000000000048394c8f001aa000000016b3343cf"
 _QUIC_RETRY_HEX = "f000000001048394c8f001aa010203000102030405060708090a0b0c0d0e0f"
@@ -93,18 +102,24 @@ QUIC_SMOKE_CASES: tuple[ProbeCase, ...] = (
     _behavior_case(
         name="quic-protected-flow-plan",
         description=(
-            "Plan an encrypted/protected QUIC flow shape while preserving the "
-            "opaque payload bytes and avoiding endpoint state-machine claims."
+            "Plan a stateful QUIC v1 client/server exchange with authenticated "
+            "endpoint state, one bidirectional stream, graceful close, capture, "
+            "validation, artifact collection, and teardown."
         ),
-        stimulus="quic_protected_flow",
-        expected_response="quic_encrypted_flow_observation",
-        required_capabilities=_QUIC_CAPABILITIES,
+        stimulus="quic_authenticated_client_flow",
+        expected_response="quic_authenticated_stream_response_and_close",
+        required_capabilities=_QUIC_STATEFUL_CAPABILITIES,
         protocol="quic",
         metadata={
-            "service": QUIC_SERVICE_KIND,
+            "service": "quic-controlled-endpoint",
             "packet_type": "protected_initial",
             "planned_only": True,
             "encrypted": True,
+            "stateful_endpoint_flow": True,
+            "distinct_from_udp_echo": True,
+            "requires_controlled_quic_service": True,
+            "quic_version": 1,
+            "alpn": _QUIC_ALPN,
         },
     ),
 )
@@ -211,6 +226,16 @@ def _quic_probe_plan(
     packet_count = 1
     planned_only = case_name in _QUIC_PLANNED_ONLY_CASES
     target_behavior = _target_behavior_for_case(case_name)
+    stateful_endpoint_flow = case_name == "quic-protected-flow-plan"
+    capture_filter = (
+        f"udp and host {stimulus_ipv4} and host {target_ipv4} "
+        f"and port {QUIC_SERVICE_PORT}"
+        if stateful_endpoint_flow
+        else (
+            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
+            f"and src port {QUIC_SERVICE_PORT} and dst port {source_port}"
+        )
+    )
     plan: JSONObject = {
         "schema_version": 1,
         "case": case.name,
@@ -245,7 +270,7 @@ def _quic_probe_plan(
         },
         "target_service": {
             "required": True,
-            "kind": QUIC_SERVICE_KIND,
+            "kind": str(case.metadata.get("service", QUIC_SERVICE_KIND)),
             "protocol": "udp",
             "port": QUIC_SERVICE_PORT,
             "bind_ipv4": target_ipv4,
@@ -262,10 +287,7 @@ def _quic_probe_plan(
             "state": "planned-only" if planned_only else "adapter-ready",
             "planned_only": planned_only,
         },
-        "capture_filter": (
-            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
-            f"and src port {QUIC_SERVICE_PORT} and dst port {source_port}"
-        ),
+        "capture_filter": capture_filter,
         "validation": {
             "source_ipv4": target_ipv4,
             "destination_ipv4": stimulus_ipv4,
@@ -289,7 +311,105 @@ def _quic_probe_plan(
     }
     if planned_only:
         plan["planned_only"] = True
+    if stateful_endpoint_flow:
+        plan.update(_protected_flow_contract(digest, capture_filter))
     return plan
+
+
+def _protected_flow_contract(digest: bytes, capture_filter: str) -> JSONObject:
+    request = b"crafter-quic-request:" + digest[:8]
+    response = b"crafter-quic-response:" + digest[8:16]
+    artifacts = [
+        "target/probe/artifacts/quic/protected-flow-plan.json",
+        "target/probe/artifacts/quic/protected-flow-capture.pcap",
+        "target/probe/artifacts/quic/protected-flow-report.json",
+        "target/probe/artifacts/quic/protected-flow-teardown.json",
+    ]
+    return {
+        "conversation": {
+            "kind": "stateful_authenticated_quic_endpoint_flow",
+            "distinct_from": "quic-initial-udp-observation",
+            "version": 1,
+            "alpn": _QUIC_ALPN,
+            "identity": {
+                "kind": "synthetic_test_identity",
+                "provisioned_by": "controlled_target_service",
+                "trust_installed_on": "stimulus_client",
+                "secrets_in_plan": False,
+            },
+            "roles": {
+                "stimulus": "authenticated_quic_client",
+                "target": "controlled_quic_server",
+            },
+            "stream_exchange": {
+                "bidirectional_streams": 1,
+                "request_length": len(request),
+                "request_sha256": hashlib.sha256(request).hexdigest(),
+                "response_length": len(response),
+                "response_sha256": hashlib.sha256(response).hexdigest(),
+                "payload_bytes_in_artifacts": False,
+            },
+            "close": "graceful_application_close",
+        },
+        "provider_requirements": {
+            "endpoint_count": 2,
+            "roles": ["stimulus", "target"],
+            "capabilities": list(_QUIC_STATEFUL_CAPABILITIES),
+            "controlled_service_startup": True,
+            "udp_capture": True,
+            "collect_artifacts_before_teardown": True,
+            "always_teardown": True,
+            "live_requires_explicit_target_and_adapter": True,
+        },
+        "capture": {
+            "protocol": "udp",
+            "points": ["stimulus", "target"],
+            "filter": capture_filter,
+            "artifacts": artifacts,
+        },
+        "artifact_outputs": artifacts,
+        "flow_validation": {
+            "client_state_trace": [
+                "Initial",
+                "Handshaking",
+                "Established",
+                "Closing",
+                "Draining",
+                "Closed",
+            ],
+            "server_state_trace": [
+                "Listen",
+                "Handshaking",
+                "Established",
+                "Closing",
+                "Draining",
+                "Closed",
+            ],
+            "stream_exchange": {
+                "request_length": len(request),
+                "request_sha256": hashlib.sha256(request).hexdigest(),
+                "response_length": len(response),
+                "response_sha256": hashlib.sha256(response).hexdigest(),
+            },
+            "required_packet_spaces": ["Initial", "Handshake", "Application"],
+            "recovery_counters": [
+                "timeout_events",
+                "pto_firings",
+                "declared_losses",
+                "regenerated_transmits",
+            ],
+            "close_outcome": "graceful_application_close",
+            "reject_secrets": True,
+        },
+        "safety": {
+            "default_mode": "dry_run",
+            "documentation_addresses": True,
+            "deterministic_seed": True,
+            "live_requires_provider": True,
+            "live_requires_explicit_authorization": True,
+            "developer_host_raw_send": False,
+        },
+    }
 
 
 def _payload_hex_for_case(case_name: str) -> str:
@@ -318,7 +438,7 @@ def _target_behavior_for_case(case_name: str) -> str:
         "quic-version-negotiation-observation": "observe_version_negotiation",
         "quic-retry-observation": "emit_retry",
         "quic-stateless-reset-observation": "emit_stateless_reset_candidate",
-        "quic-protected-flow-plan": "observe_encrypted_flow",
+        "quic-protected-flow-plan": "run_authenticated_client_server_flow",
     }[case_name]
 
 

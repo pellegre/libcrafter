@@ -412,9 +412,11 @@ SNMP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     if case.metadata.get("protocol") == "snmp"
 )
 
-# The QUIC smoke profile carries focused UDP/QUIC datagram planning cases. It is
-# isolated from the general behavior profile so adding QUIC does not disturb the
-# existing behavior profile's protocol order.
+# The QUIC smoke profile carries focused UDP/QUIC datagram planning plus one
+# planned-only stateful authenticated endpoint conversation. The latter requires
+# two controlled endpoints, capture, artifacts, and teardown and is explicitly
+# distinct from the UDP echo observation. The profile remains isolated from the
+# general behavior profile so QUIC does not disturb its protocol order.
 QUIC_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     case.name
     for case in _registry_cases()
