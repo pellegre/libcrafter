@@ -29,6 +29,7 @@ const QUIC_PACKET_NUMBER_LIMIT: u64 = 1 << 62;
 const INITIAL_CLIENT_TIMEOUT: Duration = Duration::from_secs(1);
 const INITIAL_SERVER_TIMEOUT: Duration = Duration::from_secs(1);
 const INITIAL_ONLY_TIMEOUT_OUTCOME: &str = "initial-only-timeout";
+const INITIAL_ONLY_SERVER_INITIAL_OBSERVED_OUTCOME: &str = "initial-only-server-initial-observed";
 const INITIAL_AUTHENTICATION_FAILED_OUTCOME: &str = "initial-authentication-failed";
 const INITIAL_TRUNCATED_OUTCOME: &str = "initial-truncated-protected-payload";
 const INITIAL_INVALID_PACKET_NUMBER_OUTCOME: &str = "initial-invalid-packet-number";
@@ -76,6 +77,29 @@ pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow>
     let peer = config.peer;
     let local_connection_id = identifiers.local_source_connection_id().as_bytes().to_vec();
     let peer_connection_id = identifiers.peer_source_connection_id().as_bytes().to_vec();
+    let original_destination_connection_id = identifiers
+        .original_destination_connection_id()
+        .as_bytes()
+        .to_vec();
+    let expected_destination_connection_id = local_connection_id.clone();
+    let expected_source_connection_id = peer_connection_id.clone();
+    let entry_local_connection_id = local_connection_id.clone();
+    let entry_peer_connection_id = peer_connection_id.clone();
+    let version = config.version;
+    let max_crypto_bytes = config.bounds.max_crypto_bytes;
+    let max_ack_ranges = config.bounds.max_datagrams;
+    let matcher = UdpDatagramMatcher::inbound(*local.ip(), local.port(), *peer.ip(), peer.port())
+        .payload_where(
+            "one protected QUIC v1 server Initial with the expected connection identifiers",
+            move |payload, _context| {
+                matching_server_initial_header(
+                    payload,
+                    version,
+                    &expected_destination_connection_id,
+                    &expected_source_connection_id,
+                )
+            },
+        );
     let initial_sent = FlowState::new(INITIAL_SENT)
         .on_entry(move |context| {
             context.insert_namespaced_string("quic", "local_tuple", local.to_string())?;
@@ -87,13 +111,116 @@ pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow>
             )?;
 
             let mut snapshot = ProtocolContextSnapshot::new("quic", INITIAL_SENT);
-            snapshot.local_connection_id = Some(local_connection_id.clone());
-            snapshot.peer_connection_id = Some(peer_connection_id.clone());
+            snapshot.local_connection_id = Some(entry_local_connection_id.clone());
+            snapshot.peer_connection_id = Some(entry_peer_connection_id.clone());
             context.set_protocol_snapshot(snapshot);
 
             Ok(Step::send_regeneration_only(packet.clone()).wake_after(INITIAL_CLIENT_TIMEOUT))
         })
         .entry_description("emit one protected minimum-size client Initial")
+        .on(Transition::on(matcher, move |packet, context| {
+            let ingress =
+                extract_quic_udp_ingress(packet, local, peer, context).ok_or_else(|| {
+                    FlowError::Build(
+                        "matched server Initial no longer satisfies its IPv4/UDP tuple".to_string(),
+                    )
+                })?;
+            if !matching_server_initial_header(
+                ingress.payload(),
+                version,
+                &local_connection_id,
+                &peer_connection_id,
+            ) {
+                return Err(FlowError::Build(
+                    "matched server Initial no longer has the expected connection identifiers"
+                        .to_string(),
+                ));
+            }
+
+            let keys = derive_quic_initial_secrets(version, &original_destination_connection_id)?
+                .server_packet_keys()?;
+            let decoded =
+                match quic_decode_initial_protected_payload_with_keys(ingress.payload(), &keys) {
+                    Ok(decoded) => decoded,
+                    Err(error) => return Ok(initial_decode_error_step(context, &error)),
+                };
+            let expected_packet_number = context
+                .get_namespaced_u64("quic", "initial_expected_peer_packet_number")?
+                .unwrap_or(0);
+            let full_packet_number =
+                match decoded.packet_number().reconstruct(expected_packet_number) {
+                    Ok(packet_number) => packet_number,
+                    Err(_) => {
+                        return Ok(initial_error_step(
+                            context,
+                            INITIAL_INVALID_PACKET_NUMBER_OUTCOME,
+                        ))
+                    }
+                };
+            let next_expected_packet_number = match full_packet_number.checked_add(1) {
+                Some(packet_number) if packet_number < QUIC_PACKET_NUMBER_LIMIT => packet_number,
+                _ => {
+                    return Ok(initial_error_step(
+                        context,
+                        INITIAL_INVALID_PACKET_NUMBER_OUTCOME,
+                    ))
+                }
+            };
+            let observations = match inspect_initial_frames(decoded.frames(), max_crypto_bytes) {
+                Ok(observations) => observations,
+                Err(_) => {
+                    return Ok(initial_error_step(
+                        context,
+                        INITIAL_DISALLOWED_FRAME_OUTCOME,
+                    ))
+                }
+            };
+            if !observations.unexpected_frames.is_empty() || !observations.close_frames.is_empty() {
+                return Ok(initial_error_step(
+                    context,
+                    INITIAL_DISALLOWED_FRAME_OUTCOME,
+                ));
+            }
+
+            let crypto_bytes = observations
+                .crypto_chunks
+                .iter()
+                .flat_map(|crypto| crypto.data().iter().copied())
+                .collect::<Vec<_>>();
+            let ack_ranges = observations
+                .acknowledgements
+                .iter()
+                .flat_map(|ack| ack.packet_number_ranges.iter())
+                .map(|(low, high)| format!("{low}-{high}"))
+                .collect::<Vec<_>>();
+            if ack_ranges.len() > max_ack_ranges {
+                return Ok(initial_error_step(context, INITIAL_ACK_RANGE_LIMIT_OUTCOME));
+            }
+
+            context.insert_namespaced_u64(
+                "quic",
+                "initial_packet_number_received",
+                full_packet_number,
+            )?;
+            context.insert_namespaced_u64(
+                "quic",
+                "initial_expected_peer_packet_number",
+                next_expected_packet_number,
+            )?;
+            context.insert_namespaced_bytes("quic", "initial_crypto_bytes", crypto_bytes)?;
+            context.insert_namespaced_string("quic", "initial_ack_ranges", ack_ranges.join(","))?;
+
+            let mut snapshot = ProtocolContextSnapshot::new("quic", INITIAL_OBSERVED);
+            snapshot.local_connection_id = Some(local_connection_id.clone());
+            snapshot.peer_connection_id = Some(peer_connection_id.clone());
+            snapshot.outcome = Some(INITIAL_ONLY_SERVER_INITIAL_OBSERVED_OUTCOME.to_string());
+            context.set_protocol_snapshot(snapshot);
+
+            Ok(Step::done_with(
+                INITIAL_ONLY_SERVER_INITIAL_OBSERVED_OUTCOME,
+            ))
+        })
+        .terminal())
         .on_timeout(|context| {
             context.update_protocol_snapshot(|snapshot| {
                 snapshot.lifecycle = CLOSED.to_string();
@@ -111,6 +238,28 @@ pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow>
         .initial(INITIAL_SENT);
     flow.validate()?;
     Ok(flow)
+}
+
+fn matching_server_initial_header(
+    payload: &[u8],
+    version: u32,
+    expected_destination_connection_id: &[u8],
+    expected_source_connection_id: &[u8],
+) -> bool {
+    matches!(
+        classify_quic_header(payload),
+        Ok(QuicHeaderClassification::LongHeader {
+            version: observed_version,
+            destination_connection_id,
+            source_connection_id,
+            packet_kind: QuicLongPacketKind::Initial,
+            remaining_len,
+            ..
+        }) if observed_version == version
+            && destination_connection_id.as_bytes() == expected_destination_connection_id
+            && source_connection_id.as_bytes() == expected_source_connection_id
+            && remaining_len > 0
+    )
 }
 
 /// Build the passive, bounded QUIC v1 Initial-only server flow.
@@ -1317,6 +1466,96 @@ mod tests {
         );
         assert!(response_bytes <= received_bytes * 3);
         assert_eq!(response_bytes as usize, quic.packets()[0].as_bytes().len());
+        Ok(())
+    }
+
+    #[test]
+    fn initial_client_records_server_ack_and_crypto_without_establishment() -> crate::Result<()> {
+        let client_config = QuicInitialClientConfig::default();
+        let server_config = QuicInitialServerConfig::default();
+        let expected_crypto = server_config.crypto.clone();
+        let expected_local_connection_id = client_config
+            .identifiers
+            .local_source_connection_id()
+            .as_bytes()
+            .to_vec();
+        let expected_peer_connection_id = server_config
+            .identifiers
+            .local_source_connection_id()
+            .as_bytes()
+            .to_vec();
+
+        let mut client = quic_initial_client_flow(client_config)?;
+        let mut client_context = crate::PacketContext::new();
+        let client_initial = client
+            .state_mut(INITIAL_SENT)
+            .expect("InitialSent state exists")
+            .run_entry(&mut client_context)?
+            .expect("client emits its protected Initial")
+            .outputs()[0]
+            .packet()
+            .clone();
+
+        let mut server = quic_initial_server_flow(server_config)?;
+        let mut server_context = crate::PacketContext::new();
+        let server_listen = server.state_mut(LISTEN).expect("Listen state exists");
+        let server_transition = server_listen
+            .find_transition(&client_initial, &server_context)
+            .expect("server accepts the protected client Initial");
+        let server_response = server_transition
+            .fire(&client_initial, &mut server_context)?
+            .outputs()[0]
+            .packet()
+            .clone();
+
+        let client_initial_sent = client
+            .state_mut(INITIAL_SENT)
+            .expect("InitialSent state exists");
+        let client_transition = client_initial_sent
+            .find_transition(&server_response, &client_context)
+            .expect("client matches the reversed tuple and expected connection IDs");
+        let observed = client_transition.fire(&server_response, &mut client_context)?;
+
+        assert!(observed.is_terminal());
+        assert_eq!(
+            observed.outcome(),
+            Some(INITIAL_ONLY_SERVER_INITIAL_OBSERVED_OUTCOME)
+        );
+        assert_eq!(
+            client_context.get_namespaced_u64("quic", "initial_packet_number_received")?,
+            Some(0)
+        );
+        assert_eq!(
+            client_context.get_namespaced_u64("quic", "initial_expected_peer_packet_number")?,
+            Some(1)
+        );
+        assert_eq!(
+            client_context.get_namespaced_bytes("quic", "initial_crypto_bytes")?,
+            Some(expected_crypto.as_slice())
+        );
+        assert_eq!(
+            client_context.get_namespaced_string("quic", "initial_ack_ranges")?,
+            Some("0-0")
+        );
+
+        let snapshot = client_context
+            .protocol_snapshot()
+            .expect("client records an Initial observation snapshot");
+        assert_eq!(snapshot.lifecycle, INITIAL_OBSERVED);
+        assert_eq!(
+            snapshot.outcome.as_deref(),
+            Some(INITIAL_ONLY_SERVER_INITIAL_OBSERVED_OUTCOME)
+        );
+        assert_eq!(
+            snapshot.local_connection_id.as_deref(),
+            Some(expected_local_connection_id.as_slice())
+        );
+        assert_eq!(
+            snapshot.peer_connection_id.as_deref(),
+            Some(expected_peer_connection_id.as_slice())
+        );
+        assert_ne!(snapshot.lifecycle, "Handshaking");
+        assert_ne!(snapshot.lifecycle, "Established");
         Ok(())
     }
 
