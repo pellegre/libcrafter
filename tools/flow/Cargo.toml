@@ -13,3 +13,13 @@ bytes = { version = "1", optional = true }
 crafter = { path = "../../crafter" }
 quinn-proto = { version = "=0.11.14", default-features = false, features = ["qlog", "rustls-ring"], optional = true }
 rustls = { version = "=0.23.5", default-features = false, features = ["ring", "std"], optional = true }
+
+[[example]]
+name = "quic_client_flow"
+path = "examples/quic_client_flow.rs"
+required-features = ["quic-endpoint"]
+
+[[example]]
+name = "quic_server_flow"
+path = "examples/quic_server_flow.rs"
+required-features = ["quic-endpoint"]
