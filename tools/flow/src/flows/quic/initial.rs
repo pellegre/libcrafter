@@ -1,13 +1,17 @@
 //! Deterministic configuration for bounded QUIC Initial-only flows.
 
-use std::{collections::BTreeSet, net::SocketAddrV4};
+use std::{collections::BTreeSet, net::SocketAddrV4, time::Duration};
 
 use crafter::{
-    QuicAckFrame, QuicAckRange, QuicConnectionCloseFrame, QuicConnectionId, QuicCryptoFrame,
-    QuicFrame, QuicPacketNumber, QUIC_VERSION_1,
+    derive_quic_initial_secrets, QuicAckFrame, QuicAckRange, QuicConnectionCloseFrame,
+    QuicConnectionId, QuicCryptoFrame, QuicFrame, QuicLongHeaderPacket, QuicPacketNumber,
+    QUIC_VERSION_1,
 };
 
-use crate::{docaddr, FlowError, Result};
+use crate::context::ProtocolContextSnapshot;
+use crate::flows::quic::{CLOSED, INITIAL_SENT};
+use crate::quic_wire::{assemble_initial_datagram, QuicInitialPadding};
+use crate::{docaddr, Flow, FlowBuilderExt, FlowError, FlowState, Result, Role, Step};
 
 const DEFAULT_CLIENT_PORT: u16 = 49_152;
 const DEFAULT_SERVER_PORT: u16 = 443;
@@ -15,6 +19,84 @@ const MIN_INITIAL_CONNECTION_ID_LEN: usize = 8;
 const MAX_INITIAL_CONNECTION_ID_LEN: usize = 20;
 const MAX_CONFIGURED_CRYPTO_BYTES: usize = 64 * 1024;
 const QUIC_PACKET_NUMBER_LIMIT: u64 = 1 << 62;
+const INITIAL_CLIENT_TIMEOUT: Duration = Duration::from_secs(1);
+const INITIAL_ONLY_TIMEOUT_OUTCOME: &str = "initial-only-timeout";
+
+/// Build the deterministic, bounded QUIC v1 Initial-only client flow.
+pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow> {
+    config.validate()?;
+
+    let mut identifiers = config.identifiers.clone();
+    let (full_packet_number, encoded_packet_number) =
+        identifiers.take_next_initial_packet_number()?;
+    let frames = build_initial_frames(
+        &config.crypto,
+        config.bounds.max_crypto_bytes,
+        &BTreeSet::new(),
+    )?;
+    let initial = QuicLongHeaderPacket::initial_builder()
+        .version(config.version)
+        .destination_connection_id(identifiers.current_destination_connection_id().clone())
+        .source_connection_id(identifiers.local_source_connection_id().clone())
+        .token(identifiers.retry_token())
+        .packet_number(encoded_packet_number)
+        .frames(frames)
+        .build()?;
+    let keys = derive_quic_initial_secrets(
+        config.version,
+        identifiers.original_destination_connection_id().as_bytes(),
+    )?
+    .client_packet_keys()?;
+    let packet = assemble_initial_datagram(
+        config.local,
+        config.peer,
+        &initial,
+        full_packet_number,
+        &keys,
+        identifiers.packet_number_encoded_len(),
+        QuicInitialPadding::ClientMinimum,
+    )?;
+
+    let local = config.local;
+    let peer = config.peer;
+    let local_connection_id = identifiers.local_source_connection_id().as_bytes().to_vec();
+    let peer_connection_id = identifiers.peer_source_connection_id().as_bytes().to_vec();
+    let initial_sent = FlowState::new(INITIAL_SENT)
+        .on_entry(move |context| {
+            context.insert_namespaced_string("quic", "local_tuple", local.to_string())?;
+            context.insert_namespaced_string("quic", "peer_tuple", peer.to_string())?;
+            context.insert_namespaced_u64(
+                "quic",
+                "initial_packet_number_sent",
+                full_packet_number,
+            )?;
+
+            let mut snapshot = ProtocolContextSnapshot::new("quic", INITIAL_SENT);
+            snapshot.local_connection_id = Some(local_connection_id.clone());
+            snapshot.peer_connection_id = Some(peer_connection_id.clone());
+            context.set_protocol_snapshot(snapshot);
+
+            Ok(Step::send_regeneration_only(packet.clone()).wake_after(INITIAL_CLIENT_TIMEOUT))
+        })
+        .entry_description("emit one protected minimum-size client Initial")
+        .on_timeout(|context| {
+            context.update_protocol_snapshot(|snapshot| {
+                snapshot.lifecycle = CLOSED.to_string();
+                snapshot.outcome = Some(INITIAL_ONLY_TIMEOUT_OUTCOME.to_string());
+                snapshot.close_category = Some("timeout".to_string());
+            });
+            Ok(Step::done_with(INITIAL_ONLY_TIMEOUT_OUTCOME))
+        })
+        .timeout_description("close the bounded Initial-only exchange on timeout")
+        .timeout_terminal();
+
+    let flow = Flow::new("quic-initial-client")
+        .role(Role::Initiator)
+        .state(initial_sent)
+        .initial(INITIAL_SENT);
+    flow.validate()?;
+    Ok(flow)
+}
 
 /// One parsed ACK together with the packet numbers represented by its ranges.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -540,7 +622,118 @@ fn validate_common(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crafter::QuicVarInt;
+    use crafter::{quic_decode_initial_protected_payload_with_keys, Ipv4, Quic, QuicVarInt, Udp};
+
+    #[test]
+    fn initial_client_starts_with_protected_minimum_datagram() -> crate::Result<()> {
+        let config = QuicInitialClientConfig::default();
+        let original_destination_connection_id = config
+            .identifiers
+            .original_destination_connection_id()
+            .clone();
+        let expected_crypto = config.crypto.clone();
+        let local_connection_id = config
+            .identifiers
+            .local_source_connection_id()
+            .as_bytes()
+            .to_vec();
+        let peer_connection_id = config
+            .identifiers
+            .peer_source_connection_id()
+            .as_bytes()
+            .to_vec();
+        let local = config.local;
+        let peer = config.peer;
+        let mut flow = quic_initial_client_flow(config)?;
+
+        assert_eq!(Flow::role(&flow), Role::Initiator);
+        assert_eq!(Flow::initial(&flow), INITIAL_SENT);
+        flow.validate()?;
+
+        let mut context = crate::PacketContext::new();
+        let state = flow
+            .state_mut(INITIAL_SENT)
+            .expect("InitialSent state exists");
+        let step = state
+            .run_entry(&mut context)?
+            .expect("InitialSent has an entry action");
+
+        assert_eq!(step.outputs().len(), 1);
+        assert!(step.outputs()[0].requires_regeneration());
+        assert!(step.expects_reply());
+        assert_eq!(step.wakeup(), Some(INITIAL_CLIENT_TIMEOUT));
+
+        let packet = step.outputs()[0].packet();
+        let ipv4 = packet.layer::<Ipv4>().expect("typed IPv4 layer");
+        let udp = packet.layer::<Udp>().expect("typed UDP layer");
+        let quic = packet.layer::<Quic>().expect("typed QUIC layer");
+        assert_eq!(ipv4.source(), *local.ip());
+        assert_eq!(ipv4.destination(), *peer.ip());
+        assert_eq!(udp.source_port_value(), local.port());
+        assert_eq!(udp.destination_port_value(), peer.port());
+        assert_eq!(quic.packets().len(), 1);
+        let quic_payload_len = quic.packets()[0].as_bytes().len();
+        assert!(quic_payload_len >= 1200);
+        assert_eq!(
+            packet.compile()?.as_bytes().len(),
+            20 + 8 + quic_payload_len
+        );
+
+        let keys = derive_quic_initial_secrets(
+            QUIC_VERSION_1,
+            original_destination_connection_id.as_bytes(),
+        )?
+        .client_packet_keys()?;
+        let decoded =
+            quic_decode_initial_protected_payload_with_keys(quic.packets()[0].as_bytes(), &keys)?;
+        assert_eq!(decoded.packet_number().value(), 0);
+        assert!(!decoded
+            .frames()
+            .iter()
+            .any(|frame| frame.ack_frame().is_ok_and(|ack| ack.is_some())));
+        let crypto = decoded
+            .frames()
+            .iter()
+            .find_map(|frame| frame.crypto_frame().ok().flatten())
+            .expect("Initial includes a CRYPTO frame");
+        assert_eq!(crypto.data(), expected_crypto);
+
+        assert_eq!(
+            context.get_namespaced_string("quic", "local_tuple")?,
+            Some(local.to_string().as_str())
+        );
+        assert_eq!(
+            context.get_namespaced_string("quic", "peer_tuple")?,
+            Some(peer.to_string().as_str())
+        );
+        assert_eq!(
+            context.get_namespaced_u64("quic", "initial_packet_number_sent")?,
+            Some(0)
+        );
+        let snapshot = context.protocol_snapshot().expect("QUIC snapshot exists");
+        assert_eq!(snapshot.lifecycle, INITIAL_SENT);
+        assert_eq!(
+            snapshot.local_connection_id.as_deref(),
+            Some(local_connection_id.as_slice())
+        );
+        assert_eq!(
+            snapshot.peer_connection_id.as_deref(),
+            Some(peer_connection_id.as_slice())
+        );
+
+        let timeout = state
+            .run_timeout(&mut context)?
+            .expect("InitialSent has a timeout action");
+        assert!(timeout.is_terminal());
+        assert_eq!(timeout.outcome(), Some(INITIAL_ONLY_TIMEOUT_OUTCOME));
+        let snapshot = context.protocol_snapshot().expect("timeout keeps snapshot");
+        assert_eq!(snapshot.lifecycle, CLOSED);
+        assert_eq!(
+            snapshot.outcome.as_deref(),
+            Some(INITIAL_ONLY_TIMEOUT_OUTCOME)
+        );
+        Ok(())
+    }
 
     #[test]
     fn initial_frame_sequence_is_bounded_and_deterministic() {
