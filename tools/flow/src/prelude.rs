@@ -13,6 +13,10 @@ pub use crate::capture::{
 };
 pub use crate::docaddr;
 pub use crate::error::{FlowError, Result};
+#[cfg(feature = "quic-endpoint")]
+pub use crate::flows::quic::{
+    quic_client_flow, quic_server_flow, QuicClientFlowConfig, QuicServerFlowConfig,
+};
 pub use crate::flows::tcp::{
     client_flow, server_flow, CLOSED, CLOSED_SRV, CLOSE_WAIT, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2,
     LAST_ACK, LISTEN, SYN_RECEIVED, SYN_SENT,
@@ -30,8 +34,6 @@ pub use crate::{run_tool, ToolRun, ToolRunReport};
 pub use crate::{Flow, FlowBuilderExt};
 pub use crate::{FlowState, FnMutator, Identity, Mutator, Step, StepGotoExt, Transition};
 pub use crate::{RetransmitPolicy, RunOptions, SendRepeat};
-#[cfg(feature = "quic-endpoint")]
-pub use crate::flows::quic::{quic_client_flow, QuicClientFlowConfig};
 
 #[cfg(test)]
 mod tests {
