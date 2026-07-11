@@ -23,7 +23,20 @@ enum IterationResult {
 
 enum ReceiveCompletion {
     Packet(crafter::Packet),
-    TimedOut,
+    TimedOut(DeadlineKind),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DeadlineKind {
+    Run,
+    Protocol,
+    Step,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct EffectiveDeadline {
+    duration: Duration,
+    kind: DeadlineKind,
 }
 
 enum StepAction {
@@ -329,14 +342,28 @@ impl Runner {
             let receive = if self.take_due_wakeup(current_state) {
                 // The request is consumed before dispatch, so a zero-duration
                 // timeout action cannot spin by repeatedly requesting it.
-                ReceiveCompletion::TimedOut
+                ReceiveCompletion::TimedOut(DeadlineKind::Protocol)
             } else {
                 let state = Self::state(flow, current_state.as_str())?;
                 let matcher = StateTransitionsMatcher { state };
-                let Some(timeout) = self.effective_step_timeout(run_started, current_state) else {
+                let Some(deadline) = self.effective_step_timeout(run_started, current_state) else {
                     return Ok(IterationResult::TimedOut);
                 };
-                self.recv_matching_with_retransmit(&matcher, current_state, ctx, timeout)?
+                if deadline.duration.is_zero() {
+                    ReceiveCompletion::TimedOut(deadline.kind)
+                } else {
+                    match self.recv_matching_with_retransmit(
+                        &matcher,
+                        current_state,
+                        ctx,
+                        deadline.duration,
+                    )? {
+                        ReceiveCompletion::Packet(packet) => ReceiveCompletion::Packet(packet),
+                        ReceiveCompletion::TimedOut(_) => {
+                            ReceiveCompletion::TimedOut(deadline.kind)
+                        }
+                    }
+                }
             };
 
             let packet = match receive {
@@ -344,9 +371,9 @@ impl Runner {
                     self.immediate_wakeup_dispatched = false;
                     packet
                 }
-                ReceiveCompletion::TimedOut => {
+                ReceiveCompletion::TimedOut(deadline_kind) => {
                     let elapsed = run_started.elapsed();
-                    if self.run_timeout_elapsed(elapsed) {
+                    if deadline_kind == DeadlineKind::Run || self.run_timeout_elapsed(elapsed) {
                         return Ok(IterationResult::TimedOut);
                     }
                     if !self.options.bound.should_continue(iteration, elapsed) {
@@ -354,6 +381,10 @@ impl Runner {
                     }
                     if !Self::state(flow, current_state.as_str())?.has_timeout() {
                         return Ok(IterationResult::TimedOut);
+                    }
+
+                    if deadline_kind == DeadlineKind::Protocol {
+                        self.scheduled_wakeup = None;
                     }
 
                     ctx.add_timeout_events(1);
@@ -584,7 +615,7 @@ impl Runner {
             }
 
             if !self.retransmit_outstanding(current_state, retransmits)? {
-                return Ok(ReceiveCompletion::TimedOut);
+                return Ok(ReceiveCompletion::TimedOut(DeadlineKind::Step));
             }
 
             retransmits += 1;
@@ -680,22 +711,58 @@ impl Runner {
         &self,
         run_started: Instant,
         current_state: &str,
-    ) -> Option<Duration> {
-        let base = match self.options.run_timeout {
-            Some(run_timeout) => run_timeout
-                .checked_sub(run_started.elapsed())
-                .map(|remaining| remaining.min(self.options.step_timeout))
-                .filter(|timeout| !timeout.is_zero()),
-            None => Some(self.options.step_timeout),
-        }?;
+    ) -> Option<EffectiveDeadline> {
+        let elapsed = run_started.elapsed();
+        let run_remaining = self
+            .options
+            .run_timeout
+            .map(|run_timeout| run_timeout.saturating_sub(elapsed));
+        if run_remaining.is_some_and(|remaining| remaining.is_zero()) {
+            return None;
+        }
 
-        let wakeup = self
+        let wakeup_remaining = self
             .scheduled_wakeup
             .as_ref()
             .filter(|wakeup| wakeup.state == current_state)
             .map(|wakeup| wakeup.deadline.saturating_duration_since(Instant::now()));
 
-        Some(wakeup.map_or(base, |remaining| remaining.min(base)))
+        Some(Self::select_deadline(
+            self.options.step_timeout,
+            run_remaining,
+            wakeup_remaining,
+        ))
+    }
+
+    fn select_deadline(
+        step: Duration,
+        run: Option<Duration>,
+        protocol: Option<Duration>,
+    ) -> EffectiveDeadline {
+        // Equal deadlines use run > protocol > step precedence. This keeps the
+        // whole-run bound authoritative and treats a coincident protocol
+        // wakeup as recoverable rather than a generic step expiry.
+        let mut selected = EffectiveDeadline {
+            duration: step,
+            kind: DeadlineKind::Step,
+        };
+        if let Some(protocol) = protocol {
+            if protocol <= selected.duration {
+                selected = EffectiveDeadline {
+                    duration: protocol,
+                    kind: DeadlineKind::Protocol,
+                };
+            }
+        }
+        if let Some(run) = run {
+            if run <= selected.duration {
+                selected = EffectiveDeadline {
+                    duration: run,
+                    kind: DeadlineKind::Run,
+                };
+            }
+        }
+        selected
     }
 
     fn schedule_wakeup(&mut self, state: &str, delay: Duration, scheduled_at: Instant) {
@@ -774,7 +841,7 @@ fn tcp_payload_len(packet: &crafter::Packet) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::Runner;
+    use super::{DeadlineKind, EffectiveDeadline, Runner};
     use crate::{
         Binding, Bound, CaptureSource, Flow, FlowBuilderExt, FlowError, FlowOutcome, FlowState,
         FnMutator, Identity, MemoryCaptureSource, PredicateMatcher, Role, RunOptions, Step,
@@ -1867,6 +1934,76 @@ mod tests {
             seen_timeout.get().expect("source saw a timeout") < Duration::from_secs(1),
             "dynamic wakeup should cap the configured step timeout"
         );
+    }
+
+    #[test]
+    fn runner_uses_earliest_deadline() {
+        let millis = Duration::from_millis;
+
+        assert_eq!(
+            Runner::select_deadline(millis(10), Some(millis(20)), Some(millis(30))),
+            EffectiveDeadline {
+                duration: millis(10),
+                kind: DeadlineKind::Step,
+            }
+        );
+        assert_eq!(
+            Runner::select_deadline(millis(20), Some(millis(30)), Some(millis(10))),
+            EffectiveDeadline {
+                duration: millis(10),
+                kind: DeadlineKind::Protocol,
+            }
+        );
+        assert_eq!(
+            Runner::select_deadline(millis(30), Some(millis(10)), Some(millis(20))),
+            EffectiveDeadline {
+                duration: millis(10),
+                kind: DeadlineKind::Run,
+            }
+        );
+        assert_eq!(
+            Runner::select_deadline(millis(10), None, Some(millis(10))).kind,
+            DeadlineKind::Protocol
+        );
+        assert_eq!(
+            Runner::select_deadline(millis(20), Some(millis(10)), Some(millis(10))).kind,
+            DeadlineKind::Run
+        );
+        assert_eq!(
+            Runner::select_deadline(millis(10), Some(millis(10)), Some(millis(10))).kind,
+            DeadlineKind::Run
+        );
+    }
+
+    #[test]
+    fn run_deadline_remains_authoritative() {
+        let seen_timeout = Rc::new(Cell::new(None));
+        let source = RecordingTimeoutSource {
+            seen_timeout: Rc::clone(&seen_timeout),
+        };
+        let waiting = FlowState::new("Waiting")
+            .on_timeout(|_ctx| Ok(Step::goto("Recovered")))
+            .timeout_targets(["Recovered"]);
+        let recovered = FlowState::new("Recovered")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("authoritative-run-deadline")
+            .state(waiting)
+            .state(recovered)
+            .initial("Waiting");
+        let options = RunOptions::default()
+            .step_timeout(Duration::from_secs(1))
+            .run_timeout(Duration::from_millis(5));
+        let mut runner = Runner::with_source(options, source).expect("runner opens");
+
+        let report = runner.run(&mut flow).expect("runner returns timeout");
+
+        assert_eq!(report.outcome(), &FlowOutcome::TimedOut);
+        assert_eq!(report.visited_states(), &["Waiting".to_string()]);
+        assert_eq!(report.recovery_metrics().timeout_events(), 0);
+        let timeout = seen_timeout.get().expect("source saw a timeout");
+        assert!(!timeout.is_zero());
+        assert!(timeout <= Duration::from_millis(5));
     }
 
     #[test]
