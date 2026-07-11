@@ -9,6 +9,17 @@ It is not a QUIC endpoint stack. There is no connection state machine, loss
 recovery, congestion controller, TLS transcript engine, stream reassembler, or
 application protocol implementation in this crate.
 
+The optional `quic-endpoint` feature belongs to the separate `crafter-flow`
+tool, not to the public packet crate. Its bounded `quic_client_flow` and
+`quic_server_flow` entrypoints delegate TLS, packet numbers, recovery,
+congestion, and one opaque request/response stream to a private socket-free
+provider. Provider transmits return through typed `Ipv4 / Udp / Quic::raw`
+packets, while generic short-header ingress remains `Raw` until interpreted by
+connection-aware provider state. See the
+[crafter-flow QUIC guide](../../tools/flow/docs/quic-flow.md) for configuration,
+state graphs, reports, non-goals, and its dry-run-first disposable-provider
+safety contract.
+
 ## Packet Primitive Scope
 
 Use QUIC support when a tool needs packet-layer bytes:
