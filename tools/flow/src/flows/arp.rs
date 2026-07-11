@@ -145,7 +145,10 @@ mod tests {
         assert_eq!(step.target(), None);
         assert_eq!(ethernet.source(), Some(bind_mac));
         assert_eq!(ethernet.destination(), Some(crafter::MacAddr::BROADCAST));
-        assert_eq!(arp.opcode_value(), crafter::ArpOperation::Reply.into());
+        assert_eq!(
+            arp.opcode_value(),
+            u16::from(crafter::ArpOperation::Reply)
+        );
         assert_eq!(arp.sender_ipv4(), Some(bind_ip));
         assert_eq!(arp.sender_mac(), Some(bind_mac));
         assert_eq!(arp.target_ipv4(), Some(bind_ip));
@@ -184,7 +187,10 @@ mod tests {
         assert_eq!(step.target(), None);
         assert_eq!(ethernet.source(), Some(bind_mac));
         assert_eq!(ethernet.destination(), Some(requester_mac));
-        assert_eq!(arp.opcode_value(), crafter::ArpOperation::Reply.into());
+        assert_eq!(
+            arp.opcode_value(),
+            u16::from(crafter::ArpOperation::Reply)
+        );
         assert_eq!(arp.sender_ipv4(), Some(bind_ip));
         assert_eq!(arp.sender_mac(), Some(bind_mac));
         assert_eq!(arp.target_ipv4(), Some(requester_ip));
