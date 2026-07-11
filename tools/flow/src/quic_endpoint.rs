@@ -3854,7 +3854,7 @@ mod tests {
 
     #[cfg(feature = "quic-endpoint")]
     #[test]
-    fn driver_drains_all_transmits_as_typed_ordered_packets() {
+    fn coalesced_packets_and_transmit_batches_keep_boundaries() {
         use std::{
             collections::VecDeque,
             net::SocketAddrV4,
@@ -3944,8 +3944,10 @@ mod tests {
         let now = Instant::now();
         let local = SocketAddrV4::new("192.0.2.10".parse().unwrap(), 49_152);
         let peer = SocketAddrV4::new("198.51.100.20".parse().unwrap(), 443);
-        let first_payload = vec![0xc0, 0, 0, 0, 1, 0xaa];
-        let second_payload = vec![0xe0, 0, 0, 0, 1, 0xbb, 0x40, 0xcc];
+        let initial_packet = [0xc0, 0, 0, 0, 1, 0xaa];
+        let handshake_packet = [0xe0, 0, 0, 0, 1, 0xbb];
+        let first_payload = [initial_packet.as_slice(), handshake_packet.as_slice()].concat();
+        let second_payload = vec![0x40, 0xcc];
         let transmit = |payload, packet_counts| QuicEndpointTransmit {
             source_ip: *local.ip(),
             source_port: local.port(),
@@ -3960,13 +3962,13 @@ mod tests {
                     first_payload.clone(),
                     QuicEndpointTransmitPacketCounts {
                         initial: 1,
+                        handshake: 1,
                         ..Default::default()
                     },
                 ),
                 transmit(
                     second_payload.clone(),
                     QuicEndpointTransmitPacketCounts {
-                        handshake: 1,
                         application: 1,
                         ..Default::default()
                     },
