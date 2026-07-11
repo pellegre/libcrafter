@@ -277,6 +277,84 @@ class QuicProbePlanTest(unittest.TestCase):
         self.assertTrue(plan["safety"]["deterministic_seed"])
         self.assertFalse(plan["safety"]["developer_host_raw_send"])
 
+    def test_reference_interop_contract_is_pinned_bounded_and_redacted(self) -> None:
+        plan = _plan("quic-protected-flow-plan")
+        interop = plan["reference_interoperability"]
+
+        self.assertEqual(
+            interop["reference"],
+            {
+                "implementation": "aioquic",
+                "version": "1.2.0",
+                "package_pin": "aioquic==1.2.0",
+                "independent_from_flow_provider": True,
+            },
+        )
+        self.assertEqual(interop["alpn"], "crafter-flow")
+        self.assertEqual(
+            interop["cases"],
+            [
+                {
+                    "name": "crafter-client-reference-server",
+                    "client": "crafter-flow",
+                    "server": "aioquic",
+                },
+                {
+                    "name": "reference-client-crafter-server",
+                    "client": "aioquic",
+                    "server": "crafter-flow",
+                },
+            ],
+        )
+        self.assertEqual(interop["stream_exchange"]["bidirectional_streams"], 1)
+        self.assertFalse(interop["stream_exchange"]["payload_bytes_collected"])
+        self.assertTrue(interop["identity"]["generated_on_disposable_provider"])
+        guard = interop["execution_guard"]
+        self.assertTrue(guard["confirm_live_run_required"])
+        self.assertTrue(guard["explicit_authorization_required"])
+        self.assertTrue(guard["disposable_provider_endpoints_required"])
+        self.assertFalse(guard["developer_host_execution"])
+        self.assertTrue(guard["teardown_always"])
+        actions = interop["provider_action_plan"]["actions"]
+        self.assertEqual(
+            [action["name"] for action in actions],
+            [
+                "provision-disposable-endpoints",
+                "install-pinned-reference",
+                "generate-short-lived-identity",
+                "run-crafter-client-reference-server",
+                "run-reference-client-crafter-server",
+                "collect-and-redact-artifacts",
+                "teardown-disposable-endpoints",
+            ],
+        )
+        self.assertTrue(all(action["mode"] == "planned" for action in actions))
+        self.assertTrue(actions[-2]["before_teardown"])
+        self.assertTrue(actions[-1]["always"])
+        artifacts = interop["artifacts"]
+        self.assertEqual(
+            set(artifacts),
+            {
+                "crafter_client_log",
+                "crafter_server_log",
+                "reference_client_log",
+                "reference_server_log",
+                "client_against_reference_pcap",
+                "reference_against_server_pcap",
+                "decoded_summaries",
+                "state_traces",
+                "command_manifest",
+                "provider_metadata",
+                "teardown_status",
+                "structured_skip",
+            },
+        )
+        self.assertTrue(all(path.startswith("target/") for path in artifacts.values()))
+        self.assertIn("credentials", interop["redaction"]["fields"])
+        self.assertIn("public_addresses", interop["redaction"]["fields"])
+        self.assertIn("private_keys", interop["redaction"]["fields"])
+        self.assertFalse(interop["skip"]["developer_host_fallback"])
+
     def test_protected_flow_catalog_metadata_is_stateful_not_udp_echo(self) -> None:
         case = cases.PROBE_CASE_BY_NAME["quic-protected-flow-plan"]
 
@@ -344,6 +422,11 @@ class QuicProviderDryRunTest(unittest.TestCase):
             )
             self.assertIn("status=dry-run", completed.stdout)
             report = json.loads((out / "report.json").read_text())
+            skip_artifact_path = (
+                out / "artifacts/quic/reference-interop/skip.json"
+            )
+            self.assertTrue(skip_artifact_path.is_file())
+            skip_artifact = json.loads(skip_artifact_path.read_text())
 
         self.assertEqual(report["status"], "dry-run")
         self.assertTrue(report["request"]["dry_run"])
@@ -369,6 +452,16 @@ class QuicProviderDryRunTest(unittest.TestCase):
                 "developer_host_fallback"
             ]
         )
+        self.assertEqual(skip_artifact["status"], "skipped")
+        self.assertEqual(skip_artifact["reason"], "provider_capability_unavailable")
+        self.assertEqual(skip_artifact["reference"]["implementation"], "aioquic")
+        self.assertEqual(skip_artifact["reference"]["version"], "1.2.0")
+        self.assertEqual(skip_artifact["alpn"], "crafter-flow")
+        self.assertTrue(skip_artifact["redacted"])
+        self.assertFalse(skip_artifact["contains_credentials"])
+        self.assertFalse(skip_artifact["contains_endpoint_identity"])
+        self.assertFalse(skip_artifact["developer_host_fallback"])
+        self.assertEqual(skip_artifact["teardown_status"], "not_started")
 
     def test_documented_lab_plan_keeps_every_command_non_live(self) -> None:
         completed = subprocess.run(
