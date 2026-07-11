@@ -17,6 +17,79 @@ fn public_api_initial(payload: impl AsRef<[u8]>) -> crafter::Result<QuicLongHead
 }
 
 #[test]
+fn quic_packet_number_reconstructs_full_values() -> crafter::Result<()> {
+    // RFC 9000 Appendix A.3 example: largest authenticated packet is
+    // 0xa82f30ea, so the expected next value is 0xa82f30eb.
+    let example = QuicPacketNumber::new(0x9b32).with_encoded_len(2);
+    assert_eq!(example.reconstruct(0xa82f30eb)?, 0xa82f9b32);
+
+    let width_vectors = [
+        (1, 0xabu64, 0x1234u64, 0x12abu64),
+        (2, 0xcdef, 0x12_d000, 0x12_cdef),
+        (3, 0x12_3456, 0x1234_5678, 0x1212_3456),
+        (4, 0x1234_5678, 0x1234_5678_9abc, 0x1234_1234_5678),
+    ];
+    for (encoded_len, truncated, expected, reconstructed) in width_vectors {
+        assert_eq!(
+            QuicPacketNumber::new(truncated)
+                .with_encoded_len(encoded_len)
+                .reconstruct(expected)?,
+            reconstructed
+        );
+    }
+
+    // The lower edge is inclusive and moves to the next window; the upper
+    // edge is inclusive in the current window and moves only when exceeded.
+    assert_eq!(
+        QuicPacketNumber::new(0x02)
+            .with_encoded_len(1)
+            .reconstruct(0xaa82)?,
+        0xab02
+    );
+    assert_eq!(
+        QuicPacketNumber::new(0x80)
+            .with_encoded_len(1)
+            .reconstruct(0xaa00)?,
+        0xaa80
+    );
+    assert_eq!(
+        QuicPacketNumber::new(0x81)
+            .with_encoded_len(1)
+            .reconstruct(0xaa00)?,
+        0xa981
+    );
+    assert_eq!(
+        QuicPacketNumber::new(0xff)
+            .with_encoded_len(1)
+            .reconstruct(0)?,
+        0xff
+    );
+    assert_eq!(
+        QuicPacketNumber::new(0)
+            .with_encoded_len(1)
+            .reconstruct((1u64 << 62) - 2)?,
+        (1u64 << 62) - 256
+    );
+
+    assert!(matches!(
+        QuicPacketNumber::new(0).reconstruct(1u64 << 62),
+        Err(CrafterError::InvalidFieldValue {
+            field: "quic.packet_number.expected_next",
+            ..
+        })
+    ));
+    assert!(matches!(
+        QuicPacketNumber::new(0).with_encoded_len(0).reconstruct(0),
+        Err(CrafterError::InvalidFieldValue {
+            field: "quic.packet_number.length",
+            ..
+        })
+    ));
+
+    Ok(())
+}
+
+#[test]
 fn exports_quic_symbols() -> crafter::Result<()> {
     assert_eq!(QUIC_VERSION_NEGOTIATION, 0x0000_0000);
     assert_eq!(QUIC_VERSION_1, 0x0000_0001);

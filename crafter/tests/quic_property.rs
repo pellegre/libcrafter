@@ -96,6 +96,32 @@ proptest! {
     }
 
     #[test]
+    fn packet_number_reconstruction_respects_window(
+        encoded_len in 1usize..=4,
+        expected_next in 0u64..(1u64 << 62),
+        raw_truncated in any::<u32>(),
+    ) {
+        let window = 1u64 << (encoded_len * 8);
+        let mask = window - 1;
+        let truncated = u64::from(raw_truncated) & mask;
+        let reconstructed = QuicPacketNumber::new(truncated)
+            .with_encoded_len(encoded_len)
+            .reconstruct(expected_next)
+            .expect("generated packet number inputs are valid");
+
+        prop_assert!(reconstructed < (1u64 << 62));
+        prop_assert_eq!(reconstructed & mask, truncated);
+
+        let distance = reconstructed.abs_diff(expected_next);
+        if reconstructed >= window {
+            prop_assert!(distance <= (reconstructed - window).abs_diff(expected_next));
+        }
+        if reconstructed < (1u64 << 62) - window {
+            prop_assert!(distance <= (reconstructed + window).abs_diff(expected_next));
+        }
+    }
+
+    #[test]
     fn quic_property_connection_ids_preserve_generated_bytes(bytes in small_bytes(20)) {
         let cid = QuicConnectionId::try_from_bytes(&bytes)
             .expect("generated connection ID fits QUIC v1/v2 length limit");
