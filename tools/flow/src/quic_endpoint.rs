@@ -1074,6 +1074,7 @@ pub(crate) enum QuicEndpointEvent {
     StreamReadable(QuicEndpointStreamId),
     StreamWritable(QuicEndpointStreamId),
     StreamFinished(QuicEndpointStreamId),
+    ApplicationComplete,
     PeerClose {
         code: u64,
     },
@@ -1218,6 +1219,9 @@ impl QuicEndpointEventMapper {
                     context.insert_namespaced_bool("quic", "stream.writable", false)?;
                     context.insert_namespaced_bool("quic", "stream.finished", true)?;
                     context.insert_namespaced_u64("quic", "stream.id", stream.0)?;
+                }
+                QuicEndpointEvent::ApplicationComplete => {
+                    context.insert_namespaced_bool("quic", "application.complete", true)?;
                 }
                 QuicEndpointEvent::PeerClose { code } => {
                     self.lifecycle = QuicEndpointLifecycle::Closing;
@@ -2101,6 +2105,174 @@ impl QuicEndpointServerResponse {
         context.insert_namespaced_bool("quic", "application.response_waiting_writable", false)?;
         context.insert_namespaced_bool("quic", "application.response_complete", true)?;
         Ok(true)
+    }
+}
+
+/// The local role of one bounded bidirectional application exchange.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuicEndpointExchangeRole {
+    Client,
+    Server,
+}
+
+/// One independently completed direction of the bounded stream.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuicEndpointExchangeDirection {
+    Send,
+    Receive,
+}
+
+/// A provider-neutral terminal observation for one stream direction.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuicEndpointStreamFinalState {
+    Finished { final_size: u64 },
+    Reset { final_size: Option<u64> },
+    FinalSizeError,
+}
+
+/// Completion guard for the single bounded bidirectional exchange.
+///
+/// Send and receive FINs remain independent because QUIC streams are
+/// independently closed in each direction. The guard projects generic
+/// payload facts only after both directions have a consistent final size.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug)]
+pub(crate) struct QuicEndpointExchangeCompletion {
+    role: QuicEndpointExchangeRole,
+    max_send_bytes: u64,
+    max_receive_bytes: u64,
+    send_final_size: Option<u64>,
+    receive_final_size: Option<u64>,
+    emitted: bool,
+}
+
+#[cfg(feature = "quic-endpoint")]
+impl QuicEndpointExchangeCompletion {
+    pub(crate) fn new(
+        role: QuicEndpointExchangeRole,
+        max_send_bytes: u64,
+        max_receive_bytes: u64,
+    ) -> Self {
+        Self {
+            role,
+            max_send_bytes,
+            max_receive_bytes,
+            send_final_size: None,
+            receive_final_size: None,
+            emitted: false,
+        }
+    }
+
+    /// Observe one provider terminal notification. Repeated matching FINs are
+    /// harmless, while resets, final-size errors, and changed final sizes are
+    /// stable stream-state failures.
+    pub(crate) fn observe(
+        &mut self,
+        direction: QuicEndpointExchangeDirection,
+        state: QuicEndpointStreamFinalState,
+        context: &mut PacketContext,
+    ) -> Result<Option<QuicEndpointEvent>> {
+        let final_size = match state {
+            QuicEndpointStreamFinalState::Finished { final_size } => final_size,
+            QuicEndpointStreamFinalState::Reset { final_size } => {
+                let detail = if final_size.is_some() {
+                    "rejecting stream reset after final-size observation"
+                } else {
+                    "rejecting stream reset before exchange completion"
+                };
+                return Err(stream_state_error(detail));
+            }
+            QuicEndpointStreamFinalState::FinalSizeError => {
+                return Err(stream_state_error(
+                    "rejecting contradictory application stream final size",
+                ));
+            }
+        };
+
+        let (counter_key, complete_key, bound, retained) = match (self.role, direction) {
+            (QuicEndpointExchangeRole::Client, QuicEndpointExchangeDirection::Send) => (
+                "application.request_bytes_sent",
+                "application.request_complete",
+                self.max_send_bytes,
+                &mut self.send_final_size,
+            ),
+            (QuicEndpointExchangeRole::Client, QuicEndpointExchangeDirection::Receive) => (
+                "application.response_bytes_received",
+                "application.response_complete",
+                self.max_receive_bytes,
+                &mut self.receive_final_size,
+            ),
+            (QuicEndpointExchangeRole::Server, QuicEndpointExchangeDirection::Send) => (
+                "application.response_bytes_sent",
+                "application.response_complete",
+                self.max_send_bytes,
+                &mut self.send_final_size,
+            ),
+            (QuicEndpointExchangeRole::Server, QuicEndpointExchangeDirection::Receive) => (
+                "application.request_bytes_received",
+                "application.request_complete",
+                self.max_receive_bytes,
+                &mut self.receive_final_size,
+            ),
+        };
+        let accumulated = context
+            .get_namespaced_u64("quic", counter_key)?
+            .ok_or_else(|| stream_state_error("missing accumulated application byte count"))?;
+        if final_size > bound || accumulated > bound {
+            return Err(stream_state_error(
+                "application stream final size exceeds configured bound",
+            ));
+        }
+        if final_size != accumulated {
+            return Err(stream_state_error(
+                "application stream final size does not match accumulated bytes",
+            ));
+        }
+        if let Some(previous) = *retained {
+            if previous != final_size {
+                return Err(stream_state_error(
+                    "contradictory duplicate application stream final size",
+                ));
+            }
+        } else {
+            *retained = Some(final_size);
+            context.insert_namespaced_bool("quic", complete_key, true)?;
+        }
+
+        if self.emitted || self.send_final_size.is_none() || self.receive_final_size.is_none() {
+            context.insert_namespaced_bool("quic", "application.complete", self.emitted)?;
+            return Ok(None);
+        }
+
+        let sent = self.send_final_size.expect("checked above");
+        let received = self.receive_final_size.expect("checked above");
+        let received_key = match self.role {
+            QuicEndpointExchangeRole::Client => "application.response",
+            QuicEndpointExchangeRole::Server => "application.request",
+        };
+        let received_payload = context
+            .get_namespaced_bytes("quic", received_key)?
+            .unwrap_or_default()
+            .to_vec();
+        if received_payload.len() as u64 != received {
+            return Err(stream_state_error(
+                "received application payload does not match final size",
+            ));
+        }
+
+        context.insert_namespaced_u64("quic", "application.bytes_sent", sent)?;
+        context.insert_namespaced_u64("quic", "application.bytes_received", received)?;
+        context.insert_namespaced_bytes(
+            "quic",
+            "application.received_payload",
+            received_payload,
+        )?;
+        context.insert_namespaced_bool("quic", "application.complete", true)?;
+        self.emitted = true;
+        Ok(Some(QuicEndpointEvent::ApplicationComplete))
     }
 }
 
@@ -5026,5 +5198,172 @@ mod tests {
                 .unwrap_err();
             assert!(error.to_string().contains(expected));
         }
+    }
+
+    #[cfg(feature = "quic-endpoint")]
+    #[test]
+    fn bidi_exchange_completes_once_after_both_fins() {
+        use super::{
+            QuicEndpointEvent, QuicEndpointExchangeCompletion, QuicEndpointExchangeDirection,
+            QuicEndpointExchangeRole, QuicEndpointStreamFinalState,
+        };
+        use crate::PacketContext;
+
+        fn client_context() -> PacketContext {
+            let mut context = PacketContext::new();
+            context
+                .insert_namespaced_u64("quic", "application.request_bytes_sent", 7)
+                .unwrap();
+            context
+                .insert_namespaced_u64("quic", "application.response_bytes_received", 8)
+                .unwrap();
+            context
+                .insert_namespaced_bytes("quic", "application.response", b"response".to_vec())
+                .unwrap();
+            context
+        }
+
+        let finished = |final_size| QuicEndpointStreamFinalState::Finished { final_size };
+
+        // Client completion requires the request send FIN and response receive
+        // FIN, regardless of the order in which the provider reports them.
+        let mut client =
+            QuicEndpointExchangeCompletion::new(QuicEndpointExchangeRole::Client, 16, 16);
+        let mut context = client_context();
+        assert_eq!(
+            client
+                .observe(
+                    QuicEndpointExchangeDirection::Receive,
+                    finished(8),
+                    &mut context,
+                )
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            context
+                .get_namespaced_bool("quic", "application.complete")
+                .unwrap(),
+            Some(false)
+        );
+        assert_eq!(
+            client
+                .observe(
+                    QuicEndpointExchangeDirection::Send,
+                    finished(7),
+                    &mut context,
+                )
+                .unwrap(),
+            Some(QuicEndpointEvent::ApplicationComplete)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_u64("quic", "application.bytes_sent")
+                .unwrap(),
+            Some(7)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_bytes("quic", "application.received_payload")
+                .unwrap(),
+            Some(&b"response"[..])
+        );
+
+        // Matching duplicate FIN notifications neither emit a second event
+        // nor update the already finalized generic payload observations.
+        assert_eq!(
+            client
+                .observe(
+                    QuicEndpointExchangeDirection::Send,
+                    finished(7),
+                    &mut context,
+                )
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            client
+                .observe(
+                    QuicEndpointExchangeDirection::Receive,
+                    finished(8),
+                    &mut context,
+                )
+                .unwrap(),
+            None
+        );
+
+        // The server reverses the request/response directions when deriving
+        // its generic payload report.
+        let mut server_context = PacketContext::new();
+        server_context
+            .insert_namespaced_u64("quic", "application.response_bytes_sent", 8)
+            .unwrap();
+        server_context
+            .insert_namespaced_u64("quic", "application.request_bytes_received", 7)
+            .unwrap();
+        server_context
+            .insert_namespaced_bytes("quic", "application.request", b"request".to_vec())
+            .unwrap();
+        let mut server =
+            QuicEndpointExchangeCompletion::new(QuicEndpointExchangeRole::Server, 16, 16);
+        assert!(server
+            .observe(
+                QuicEndpointExchangeDirection::Receive,
+                finished(7),
+                &mut server_context,
+            )
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            server
+                .observe(
+                    QuicEndpointExchangeDirection::Send,
+                    finished(8),
+                    &mut server_context,
+                )
+                .unwrap(),
+            Some(QuicEndpointEvent::ApplicationComplete)
+        );
+        assert_eq!(
+            server_context
+                .get_namespaced_u64("quic", "application.bytes_sent")
+                .unwrap(),
+            Some(8)
+        );
+        assert_eq!(
+            server_context
+                .get_namespaced_bytes("quic", "application.received_payload")
+                .unwrap(),
+            Some(&b"request"[..])
+        );
+
+        // A changed duplicate final size, reset, provider final-size error,
+        // or a FIN inconsistent with accumulated bytes is contradictory.
+        let error = client
+            .observe(
+                QuicEndpointExchangeDirection::Send,
+                finished(6),
+                &mut context,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("accumulated bytes"));
+        let error = client
+            .observe(
+                QuicEndpointExchangeDirection::Receive,
+                QuicEndpointStreamFinalState::Reset {
+                    final_size: Some(8),
+                },
+                &mut context,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("stream reset"));
+        let error = client
+            .observe(
+                QuicEndpointExchangeDirection::Receive,
+                QuicEndpointStreamFinalState::FinalSizeError,
+                &mut context,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("final size"));
     }
 }
