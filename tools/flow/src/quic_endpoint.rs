@@ -8,9 +8,9 @@ use std::{net::Ipv4Addr, time::Instant};
 use crate::FlowError;
 #[cfg(feature = "quic-endpoint")]
 use crate::{
-    quic_wire::{QuicCaptureRepresentation, QuicIngress},
-    step::SendIntent,
-    Result,
+    quic_wire::{wrap_opaque_quic_udp_datagram, QuicCaptureRepresentation, QuicIngress},
+    step::{SendIntent, Step},
+    PacketContext, Result,
 };
 
 /// Local and peer address metadata carried with a QUIC UDP datagram.
@@ -772,6 +772,10 @@ pub(crate) struct QuicEndpointTransmit {
     pub(crate) destination_ip: Ipv4Addr,
     pub(crate) destination_port: u16,
     pub(crate) payload: Vec<u8>,
+    /// Provider-observed packets in each packet-number space carried by this
+    /// datagram. These counts are metadata; protected bytes are never copied
+    /// into flow context.
+    pub(crate) packet_counts: QuicEndpointTransmitPacketCounts,
 }
 
 #[cfg(feature = "quic-endpoint")]
@@ -779,6 +783,15 @@ impl QuicEndpointTransmit {
     pub(crate) const fn send_intent(&self) -> SendIntent {
         SendIntent::ReplyExpectedRegenerationOnly
     }
+}
+
+/// Non-secret packet-space metadata for one provider transmit.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct QuicEndpointTransmitPacketCounts {
+    pub(crate) initial: u64,
+    pub(crate) handshake: u64,
+    pub(crate) application: u64,
 }
 
 /// Provider-independent identifier for the one bounded application stream.
@@ -891,6 +904,63 @@ pub(crate) trait QuicEndpointDriver {
         Ok(QuicEndpointIngressDisposition::Accepted(representation))
     }
     fn drain_transmits(&mut self, now: Instant) -> Result<Vec<QuicEndpointTransmit>>;
+    fn drain_transmit_step(
+        &mut self,
+        now: Instant,
+        addresses: QuicEndpointAddresses,
+        context: &mut PacketContext,
+    ) -> Result<Step> {
+        let (SocketAddr::V4(local), SocketAddr::V4(peer)) = (addresses.local, addresses.peer)
+        else {
+            return Err(configuration_error("wrapping IPv4 QUIC endpoint transmits"));
+        };
+        let transmits = self.drain_transmits(now)?;
+
+        // Validate the complete provider batch before exposing any packet or
+        // updating context, so a bad later transmit cannot leave partial facts.
+        for transmit in &transmits {
+            if transmit.source_ip != *local.ip()
+                || transmit.source_port != local.port()
+                || transmit.destination_ip != *peer.ip()
+                || transmit.destination_port != peer.port()
+                || transmit.payload.is_empty()
+            {
+                return Err(provider_error(
+                    QuicEndpointErrorCategory::DatagramIngress,
+                    "validating provider transmit metadata",
+                    (),
+                ));
+            }
+        }
+
+        let mut initial = 0_u64;
+        let mut handshake = 0_u64;
+        let mut application = 0_u64;
+        let packets = transmits
+            .into_iter()
+            .map(|transmit| {
+                initial = initial.saturating_add(transmit.packet_counts.initial);
+                handshake = handshake.saturating_add(transmit.packet_counts.handshake);
+                application = application.saturating_add(transmit.packet_counts.application);
+                wrap_opaque_quic_udp_datagram(local, peer, transmit.payload)
+            })
+            .collect::<Vec<_>>();
+
+        increment_quic_counter(context, "datagrams.sent", packets.len() as u64)?;
+        increment_quic_counter(context, "packets.initial.sent", initial)?;
+        increment_quic_counter(context, "packets.handshake.sent", handshake)?;
+        increment_quic_counter(context, "packets.application.sent", application)?;
+
+        let mut step = if packets.is_empty() {
+            Step::stay()
+        } else {
+            Step::send_regeneration_only_batch(packets)
+        };
+        if let Some(wakeup) = self.next_wakeup(now) {
+            step = step.wake_after(wakeup);
+        }
+        Ok(step)
+    }
     fn next_timeout(&self) -> Option<Instant>;
     fn next_wakeup(&self, now: Instant) -> Option<Duration> {
         self.next_timeout().map(|deadline| {
@@ -911,6 +981,12 @@ pub(crate) trait QuicEndpointDriver {
     ) -> Result<QuicEndpointStreamRead>;
     fn snapshot(&self) -> QuicEndpointSnapshot;
     fn close(&mut self, now: Instant, code: u64, reason: &[u8]) -> Result<()>;
+}
+
+#[cfg(feature = "quic-endpoint")]
+fn increment_quic_counter(context: &mut PacketContext, key: &str, count: u64) -> Result<()> {
+    let current = context.get_namespaced_u64("quic", key)?.unwrap_or(0);
+    context.insert_namespaced_u64("quic", key, current.saturating_add(count))
 }
 
 #[cfg(test)]
@@ -1182,6 +1258,7 @@ mod tests {
             QuicEndpointDatagram, QuicEndpointDriver, QuicEndpointEvent, QuicEndpointLifecycle,
             QuicEndpointPacketSpaceCounts, QuicEndpointRecoveryCounts, QuicEndpointSnapshot,
             QuicEndpointStreamId, QuicEndpointStreamRead, QuicEndpointTransmit,
+            QuicEndpointTransmitPacketCounts,
         };
         use crate::{step::SendIntent, Result};
 
@@ -1209,6 +1286,7 @@ mod tests {
                     destination_ip: datagram.remote_ip,
                     destination_port: datagram.remote_port,
                     payload: datagram.payload,
+                    packet_counts: QuicEndpointTransmitPacketCounts::default(),
                 });
                 Ok(())
             }
@@ -1328,6 +1406,186 @@ mod tests {
         assert_eq!(snapshot.stream_bytes_sent, 7);
         assert_eq!(snapshot.stream_bytes_received, 5);
         assert_eq!(snapshot.recovery.timeout_events, 1);
+    }
+
+    #[cfg(feature = "quic-endpoint")]
+    #[test]
+    fn driver_drains_all_transmits_as_typed_ordered_packets() {
+        use std::{
+            collections::VecDeque,
+            net::SocketAddrV4,
+            time::{Duration, Instant},
+        };
+
+        use super::{
+            QuicEndpointAddresses, QuicEndpointDatagram, QuicEndpointDriver, QuicEndpointEvent,
+            QuicEndpointLifecycle, QuicEndpointPacketSpaceCounts, QuicEndpointRecoveryCounts,
+            QuicEndpointSnapshot, QuicEndpointStreamId, QuicEndpointStreamRead,
+            QuicEndpointTransmit, QuicEndpointTransmitPacketCounts,
+        };
+        use crate::{PacketContext, Result};
+
+        struct TransmitDriver {
+            transmits: VecDeque<QuicEndpointTransmit>,
+            timeout: Instant,
+        }
+
+        impl QuicEndpointDriver for TransmitDriver {
+            fn start(&mut self, _: Instant) -> Result<()> {
+                Ok(())
+            }
+
+            fn handle_datagram(&mut self, _: QuicEndpointDatagram) -> Result<()> {
+                Ok(())
+            }
+
+            fn drain_transmits(&mut self, _: Instant) -> Result<Vec<QuicEndpointTransmit>> {
+                Ok(self.transmits.drain(..).collect())
+            }
+
+            fn next_timeout(&self) -> Option<Instant> {
+                Some(self.timeout)
+            }
+
+            fn handle_timeout(&mut self, _: Instant) -> Result<()> {
+                Ok(())
+            }
+
+            fn poll_events(&mut self) -> Result<Vec<QuicEndpointEvent>> {
+                Ok(Vec::new())
+            }
+
+            fn open_bidirectional_stream(&mut self) -> Result<QuicEndpointStreamId> {
+                Ok(QuicEndpointStreamId(0))
+            }
+
+            fn write_stream(&mut self, _: QuicEndpointStreamId, _: &[u8]) -> Result<usize> {
+                Ok(0)
+            }
+
+            fn finish_stream(&mut self, _: QuicEndpointStreamId) -> Result<()> {
+                Ok(())
+            }
+
+            fn read_stream(
+                &mut self,
+                _: QuicEndpointStreamId,
+                _: usize,
+            ) -> Result<QuicEndpointStreamRead> {
+                Ok(QuicEndpointStreamRead {
+                    bytes: Vec::new(),
+                    finished: false,
+                })
+            }
+
+            fn snapshot(&self) -> QuicEndpointSnapshot {
+                QuicEndpointSnapshot {
+                    lifecycle: QuicEndpointLifecycle::Handshaking,
+                    local_connection_id: Vec::new(),
+                    peer_connection_id: Vec::new(),
+                    initial: QuicEndpointPacketSpaceCounts::default(),
+                    handshake: QuicEndpointPacketSpaceCounts::default(),
+                    application: QuicEndpointPacketSpaceCounts::default(),
+                    stream_bytes_sent: 0,
+                    stream_bytes_received: 0,
+                    recovery: QuicEndpointRecoveryCounts::default(),
+                }
+            }
+
+            fn close(&mut self, _: Instant, _: u64, _: &[u8]) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let now = Instant::now();
+        let local = SocketAddrV4::new("192.0.2.10".parse().unwrap(), 49_152);
+        let peer = SocketAddrV4::new("198.51.100.20".parse().unwrap(), 443);
+        let first_payload = vec![0xc0, 0, 0, 0, 1, 0xaa];
+        let second_payload = vec![0xe0, 0, 0, 0, 1, 0xbb, 0x40, 0xcc];
+        let transmit = |payload, packet_counts| QuicEndpointTransmit {
+            source_ip: *local.ip(),
+            source_port: local.port(),
+            destination_ip: *peer.ip(),
+            destination_port: peer.port(),
+            payload,
+            packet_counts,
+        };
+        let mut driver = TransmitDriver {
+            transmits: VecDeque::from([
+                transmit(
+                    first_payload.clone(),
+                    QuicEndpointTransmitPacketCounts {
+                        initial: 1,
+                        ..Default::default()
+                    },
+                ),
+                transmit(
+                    second_payload.clone(),
+                    QuicEndpointTransmitPacketCounts {
+                        handshake: 1,
+                        application: 1,
+                        ..Default::default()
+                    },
+                ),
+            ]),
+            timeout: now + Duration::from_millis(17),
+        };
+        let mut context = PacketContext::new();
+
+        let step = driver
+            .drain_transmit_step(
+                now,
+                QuicEndpointAddresses::new(local.into(), peer.into()),
+                &mut context,
+            )
+            .unwrap();
+
+        assert_eq!(step.outputs().len(), 2);
+        assert_eq!(step.wakeup(), Some(Duration::from_millis(17)));
+        assert!(driver.transmits.is_empty());
+        for output in step.outputs() {
+            assert!(output.requires_regeneration());
+            let ipv4 = output.packet().layer::<crafter::Ipv4>().unwrap();
+            let udp = output.packet().layer::<crafter::Udp>().unwrap();
+            assert_eq!(ipv4.source(), *local.ip());
+            assert_eq!(ipv4.destination(), *peer.ip());
+            assert_eq!(udp.source_port_value(), local.port());
+            assert_eq!(udp.destination_port_value(), peer.port());
+        }
+        let payloads = step
+            .outputs()
+            .iter()
+            .map(|output| {
+                let quic = output.packet().layer::<crafter::Quic>().unwrap();
+                assert!(quic.packets().is_empty());
+                quic.payload_bytes().to_vec()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(payloads, [first_payload, second_payload]);
+        assert_eq!(
+            context
+                .get_namespaced_u64("quic", "datagrams.sent")
+                .unwrap(),
+            Some(2)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_u64("quic", "packets.initial.sent")
+                .unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_u64("quic", "packets.handshake.sent")
+                .unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_u64("quic", "packets.application.sent")
+                .unwrap(),
+            Some(1)
+        );
     }
 
     #[cfg(feature = "quic-endpoint")]
