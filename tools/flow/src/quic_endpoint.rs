@@ -139,6 +139,66 @@ impl fmt::Debug for QuicSyntheticIdentity {
     }
 }
 
+/// Server-side protocol policy for the bounded endpoint flow.
+///
+/// Setters intentionally allow unsupported values to be represented so flow
+/// construction can reject them with a stable, redacted configuration error.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct QuicEndpointServerPolicy {
+    alpn_protocols: Vec<Vec<u8>>,
+    enable_zero_rtt: bool,
+    enable_datagrams: bool,
+    enable_migration: bool,
+    server_initiated_bidirectional_streams: u64,
+}
+
+#[cfg(feature = "quic-endpoint")]
+impl Default for QuicEndpointServerPolicy {
+    fn default() -> Self {
+        Self {
+            alpn_protocols: vec![QUIC_FLOW_ALPN.to_vec()],
+            enable_zero_rtt: false,
+            enable_datagrams: false,
+            enable_migration: false,
+            server_initiated_bidirectional_streams: 0,
+        }
+    }
+}
+
+#[cfg(feature = "quic-endpoint")]
+impl QuicEndpointServerPolicy {
+    #[cfg(test)]
+    fn with_alpn_protocols(mut self, protocols: impl IntoIterator<Item = Vec<u8>>) -> Self {
+        self.alpn_protocols = protocols.into_iter().collect();
+        self
+    }
+
+    #[cfg(test)]
+    fn with_zero_rtt(mut self, enabled: bool) -> Self {
+        self.enable_zero_rtt = enabled;
+        self
+    }
+
+    #[cfg(test)]
+    fn with_datagrams(mut self, enabled: bool) -> Self {
+        self.enable_datagrams = enabled;
+        self
+    }
+
+    #[cfg(test)]
+    fn with_migration(mut self, enabled: bool) -> Self {
+        self.enable_migration = enabled;
+        self
+    }
+
+    #[cfg(test)]
+    fn with_server_initiated_bidirectional_streams(mut self, streams: u64) -> Self {
+        self.server_initiated_bidirectional_streams = streams;
+        self
+    }
+}
+
 #[cfg(feature = "quic-endpoint")]
 const QUIC_FLOW_ALPN: &[u8] = b"crafter-flow";
 
@@ -149,6 +209,29 @@ pub(crate) struct QuicEndpointClientTls {
     pub(crate) endpoint: quinn_proto::EndpointConfig,
     pub(crate) client: quinn_proto::ClientConfig,
     pub(crate) limits: QuicTransportLimits,
+}
+
+/// TLS and transport configuration for the socket-free server provider.
+#[cfg(feature = "quic-endpoint")]
+pub(crate) struct QuicEndpointServerTls {
+    pub(crate) endpoint: quinn_proto::EndpointConfig,
+    pub(crate) server: quinn_proto::ServerConfig,
+    pub(crate) limits: QuicTransportLimits,
+}
+
+#[cfg(feature = "quic-endpoint")]
+impl fmt::Debug for QuicEndpointServerTls {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("QuicEndpointServerTls")
+            .field("limits", &self.limits)
+            .field("alpn", &"crafter-flow")
+            .field("identity", &"<redacted>")
+            .field("zero_rtt", &false)
+            .field("datagrams", &false)
+            .field("migration", &false)
+            .field("server_initiated_streams", &0)
+            .finish_non_exhaustive()
+    }
 }
 
 #[cfg(feature = "quic-endpoint")]
@@ -308,6 +391,155 @@ pub(crate) fn configure_endpoint_client_tls(
         peer_name: peer.server_name.clone(),
         endpoint,
         client,
+        limits,
+    })
+}
+
+/// Builds a TLS-1.3-only QUIC server with explicit identity and bounded transport.
+#[cfg(feature = "quic-endpoint")]
+pub(crate) fn configure_endpoint_server_tls(
+    policy: &QuicEndpointServerPolicy,
+    identity: &QuicSyntheticIdentity,
+    limits: QuicTransportLimits,
+) -> Result<QuicEndpointServerTls> {
+    use std::sync::Arc;
+
+    use quinn_proto::{crypto::rustls::QuicServerConfig, IdleTimeout, TransportConfig, VarInt};
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+
+    if policy.alpn_protocols.as_slice() != [QUIC_FLOW_ALPN] {
+        return Err(configuration_error("validating crafter-flow ALPN"));
+    }
+    if policy.enable_zero_rtt {
+        return Err(configuration_error("0-RTT is not supported"));
+    }
+    if policy.enable_datagrams {
+        return Err(configuration_error(
+            "application datagrams are not supported",
+        ));
+    }
+    if policy.enable_migration {
+        return Err(configuration_error("connection migration is not supported"));
+    }
+    if policy.server_initiated_bidirectional_streams != 0 {
+        return Err(configuration_error(
+            "server-initiated application streams are not supported",
+        ));
+    }
+    if identity.certificate_chain_der.is_empty() || identity.private_key_der.is_empty() {
+        return Err(configuration_error("loading non-empty server identity"));
+    }
+    if limits.max_idle_timeout.is_zero()
+        || limits.max_idle_timeout > Duration::from_secs(60)
+        || !(1_200..=1_472).contains(&limits.max_udp_payload_size)
+        || limits.max_bidirectional_streams != 1
+        || limits.max_stream_bytes == 0
+        || limits.max_stream_bytes > 64 * 1024
+        || limits.max_connection_bytes < limits.max_stream_bytes
+        || limits.max_connection_bytes > 128 * 1024
+    {
+        return Err(configuration_error("validating bounded transport limits"));
+    }
+
+    let certificates = identity
+        .certificate_chain_der
+        .iter()
+        .cloned()
+        .map(CertificateDer::from)
+        .collect::<Vec<_>>();
+    let private_key =
+        PrivateKeyDer::try_from(identity.private_key_der.clone()).map_err(|error| {
+            provider_error(
+                QuicEndpointErrorCategory::Configuration,
+                "loading server private key",
+                error,
+            )
+        })?;
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let mut tls = rustls::ServerConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .map_err(|error| {
+            provider_error(
+                QuicEndpointErrorCategory::Configuration,
+                "selecting TLS 1.3",
+                error,
+            )
+        })?
+        .with_no_client_auth()
+        .with_single_cert(certificates, private_key)
+        .map_err(|error| {
+            provider_error(
+                QuicEndpointErrorCategory::Configuration,
+                "loading server identity",
+                error,
+            )
+        })?;
+    tls.alpn_protocols = vec![QUIC_FLOW_ALPN.to_vec()];
+    tls.max_early_data_size = 0;
+
+    let crypto = QuicServerConfig::try_from(tls).map_err(|error| {
+        provider_error(
+            QuicEndpointErrorCategory::Configuration,
+            "configuring QUIC server crypto",
+            error,
+        )
+    })?;
+    let mut transport = TransportConfig::default();
+    let idle_timeout = IdleTimeout::try_from(limits.max_idle_timeout).map_err(|error| {
+        provider_error(
+            QuicEndpointErrorCategory::Configuration,
+            "configuring idle timeout",
+            error,
+        )
+    })?;
+    let stream_window = VarInt::from_u64(limits.max_stream_bytes).map_err(|error| {
+        provider_error(
+            QuicEndpointErrorCategory::Configuration,
+            "configuring stream receive window",
+            error,
+        )
+    })?;
+    let connection_window = VarInt::from_u64(limits.max_connection_bytes).map_err(|error| {
+        provider_error(
+            QuicEndpointErrorCategory::Configuration,
+            "configuring connection receive window",
+            error,
+        )
+    })?;
+    transport
+        .max_idle_timeout(Some(idle_timeout))
+        .max_concurrent_bidi_streams(VarInt::from_u32(1))
+        .max_concurrent_uni_streams(VarInt::from_u32(0))
+        .stream_receive_window(stream_window)
+        .receive_window(connection_window)
+        .send_window(limits.max_connection_bytes)
+        .initial_mtu(limits.max_udp_payload_size)
+        .min_mtu(1_200)
+        .mtu_discovery_config(None)
+        .datagram_receive_buffer_size(None)
+        .datagram_send_buffer_size(0)
+        .enable_segmentation_offload(false);
+
+    let mut server = quinn_proto::ServerConfig::with_crypto(Arc::new(crypto));
+    server
+        .transport_config(Arc::new(transport))
+        .migration(false)
+        .max_incoming(1);
+    let mut endpoint = quinn_proto::EndpointConfig::default();
+    endpoint
+        .supported_versions(vec![1])
+        .max_udp_payload_size(limits.max_udp_payload_size)
+        .map_err(|error| {
+            provider_error(
+                QuicEndpointErrorCategory::Configuration,
+                "configuring maximum UDP payload",
+                error,
+            )
+        })?;
+
+    Ok(QuicEndpointServerTls {
+        endpoint,
+        server,
         limits,
     })
 }
@@ -657,6 +889,109 @@ mod tests {
         assert_configuration_error(configure_endpoint_client_tls(
             &peer,
             &malformed_trust,
+            QuicTransportLimits::default(),
+        ));
+    }
+
+    #[cfg(feature = "quic-endpoint")]
+    #[test]
+    fn server_tls_is_bounded_and_redacts_identity() {
+        use super::{
+            configure_endpoint_server_tls, QuicEndpointServerPolicy, QuicEndpointServerTls,
+            QuicTransportLimits,
+        };
+        use crate::FlowError;
+
+        fn decode_hex(input: &str) -> Vec<u8> {
+            let bytes = input.trim().as_bytes();
+            assert_eq!(bytes.len() % 2, 0);
+            bytes
+                .chunks_exact(2)
+                .map(|pair| {
+                    let text = std::str::from_utf8(pair).unwrap();
+                    u8::from_str_radix(text, 16).unwrap()
+                })
+                .collect()
+        }
+
+        fn assert_configuration_error(result: crate::Result<QuicEndpointServerTls>) {
+            let error = result.unwrap_err();
+            assert!(matches!(
+                error,
+                FlowError::QuicEndpoint {
+                    category: Category::Configuration,
+                    ..
+                }
+            ));
+            let rendered = format!("{error:?}\n{error}");
+            assert!(!rendered.contains("3082019c"));
+            assert!(!rendered.contains("30818702"));
+        }
+
+        const PRIVATE_KEY_HEX: &str = concat!(
+            "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420",
+            "4a1c7377037c53181de9d3ef2c3bb7364ae1f4fa48164e85b06c919b67b803dba144",
+            "03420004c8634a405397699a827e0f5af382c6b53023f9b0c79a322cc96dbf366a9b943",
+            "a0a4a74aed42c0321e76f7881fa1ae5d8b064cf696e6b918cfade1f4dbcbad3d0",
+        );
+        let certificate = decode_hex(include_str!(
+            "../tests/fixtures/quic/quic.example.cert.der.hex"
+        ));
+        let private_key = decode_hex(PRIVATE_KEY_HEX);
+        let identity =
+            QuicSyntheticIdentity::new(vec![certificate.clone()], private_key.clone(), Vec::new());
+        let policy = QuicEndpointServerPolicy::default();
+        let configured =
+            configure_endpoint_server_tls(&policy, &identity, QuicTransportLimits::default())
+                .unwrap();
+
+        assert_eq!(configured.limits, QuicTransportLimits::default());
+        assert_eq!(configured.endpoint.get_max_udp_payload_size(), 1_472);
+        let _provider_server = &configured.server;
+        let rendered = format!("{identity:?}\n{configured:?}");
+        assert!(rendered.contains("crafter-flow"));
+        assert!(rendered.contains("<redacted>"));
+        assert!(!rendered.contains("3082019c"));
+        assert!(!rendered.contains("30818702"));
+
+        assert_configuration_error(configure_endpoint_server_tls(
+            &policy.clone().with_alpn_protocols([b"h3".to_vec()]),
+            &identity,
+            QuicTransportLimits::default(),
+        ));
+        assert_configuration_error(configure_endpoint_server_tls(
+            &policy.clone().with_zero_rtt(true),
+            &identity,
+            QuicTransportLimits::default(),
+        ));
+        assert_configuration_error(configure_endpoint_server_tls(
+            &policy.clone().with_datagrams(true),
+            &identity,
+            QuicTransportLimits::default(),
+        ));
+        assert_configuration_error(configure_endpoint_server_tls(
+            &policy.clone().with_migration(true),
+            &identity,
+            QuicTransportLimits::default(),
+        ));
+        assert_configuration_error(configure_endpoint_server_tls(
+            &policy
+                .clone()
+                .with_server_initiated_bidirectional_streams(1),
+            &identity,
+            QuicTransportLimits::default(),
+        ));
+        let mut excessive = QuicTransportLimits::default();
+        excessive.max_bidirectional_streams = 2;
+        assert_configuration_error(configure_endpoint_server_tls(&policy, &identity, excessive));
+        assert_configuration_error(configure_endpoint_server_tls(
+            &policy,
+            &QuicSyntheticIdentity::new(Vec::new(), Vec::new(), Vec::new()),
+            QuicTransportLimits::default(),
+        ));
+        assert_configuration_error(configure_endpoint_server_tls(
+            &policy,
+            &QuicSyntheticIdentity::new(vec![certificate], b"not DER".to_vec(), Vec::new()),
             QuicTransportLimits::default(),
         ));
     }
