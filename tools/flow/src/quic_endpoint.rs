@@ -696,6 +696,165 @@ pub(crate) fn provider_error<E>(
     }
 }
 
+/// Non-secret peer transport parameters after the endpoint provider has
+/// decoded and wire-validated them.
+///
+/// Provider adapters construct this summary from their connection state. It
+/// deliberately excludes stateless-reset tokens, preferred-address contents,
+/// and connection identifiers.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct QuicPeerTransportParameters {
+    pub(crate) max_idle_timeout_ms: u64,
+    pub(crate) max_udp_payload_size: u64,
+    pub(crate) initial_max_data: u64,
+    pub(crate) initial_max_stream_data_bidi_local: u64,
+    pub(crate) initial_max_stream_data_bidi_remote: u64,
+    pub(crate) initial_max_stream_data_uni: u64,
+    pub(crate) initial_max_streams_bidi: u64,
+    pub(crate) initial_max_streams_uni: u64,
+    pub(crate) ack_delay_exponent: u64,
+    pub(crate) max_ack_delay_ms: u64,
+    pub(crate) active_connection_id_limit: u64,
+    pub(crate) max_datagram_frame_size: Option<u64>,
+    pub(crate) disable_active_migration: bool,
+    pub(crate) has_preferred_address: bool,
+}
+
+/// Provider transport-parameter decoding failures, kept distinct from local
+/// bounded-flow policy rejections.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuicPeerTransportParameterWireError {
+    Duplicate,
+    Malformed,
+}
+
+#[cfg(feature = "quic-endpoint")]
+impl QuicPeerTransportParameterWireError {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Duplicate => "provider-wire-duplicate",
+            Self::Malformed => "provider-wire-malformed",
+        }
+    }
+}
+
+#[cfg(feature = "quic-endpoint")]
+fn reject_peer_transport_parameters(
+    context: &mut PacketContext,
+    rejection: &'static str,
+) -> Result<QuicPeerTransportParameters> {
+    context.insert_namespaced_string("quic", "transport.rejection", rejection)?;
+    Err(provider_error(
+        QuicEndpointErrorCategory::TransportParameters,
+        "validating peer transport parameters",
+        (),
+    ))
+}
+
+/// Enforces the single-stream, no-datagram, no-migration full-flow contract.
+///
+/// The provider remains responsible for parsing the wire format and detecting
+/// duplicate parameters. This boundary only validates the resulting numeric
+/// summary against RFC limits and the local resource policy.
+#[cfg(feature = "quic-endpoint")]
+pub(crate) fn validate_peer_transport_parameters(
+    decoded: std::result::Result<QuicPeerTransportParameters, QuicPeerTransportParameterWireError>,
+    limits: QuicTransportLimits,
+    context: &mut PacketContext,
+) -> Result<QuicPeerTransportParameters> {
+    let parameters = match decoded {
+        Ok(parameters) => parameters,
+        Err(error) => return reject_peer_transport_parameters(context, error.label()),
+    };
+
+    let rejection = if parameters.max_idle_timeout_ms == 0
+        || parameters.max_idle_timeout_ms > limits.max_idle_timeout.as_millis() as u64
+    {
+        Some("policy-idle-timeout")
+    } else if !(1_200..=65_527).contains(&parameters.max_udp_payload_size) {
+        Some("illegal-max-udp-payload")
+    } else if parameters.max_udp_payload_size > u64::from(limits.max_udp_payload_size) {
+        Some("policy-max-udp-payload")
+    } else if parameters.initial_max_data > limits.max_connection_bytes
+        || parameters.initial_max_stream_data_bidi_local > limits.max_stream_bytes
+        || parameters.initial_max_stream_data_bidi_remote > limits.max_stream_bytes
+        || parameters.initial_max_stream_data_uni > limits.max_stream_bytes
+    {
+        Some("policy-flow-control")
+    } else if parameters.initial_max_streams_bidi > limits.max_bidirectional_streams
+        || parameters.initial_max_streams_bidi > 1
+        || parameters.initial_max_streams_uni != 0
+    {
+        Some("policy-stream-count")
+    } else if parameters.ack_delay_exponent > 20 || parameters.max_ack_delay_ms >= (1 << 14) {
+        Some("illegal-ack-delay")
+    } else if !(2..=8).contains(&parameters.active_connection_id_limit) {
+        Some("policy-connection-id-limit")
+    } else if parameters.max_datagram_frame_size.unwrap_or(0) != 0 {
+        Some("policy-application-datagram")
+    } else if !parameters.disable_active_migration || parameters.has_preferred_address {
+        Some("policy-migration")
+    } else {
+        None
+    };
+
+    if let Some(rejection) = rejection {
+        return reject_peer_transport_parameters(context, rejection);
+    }
+
+    for (key, value) in [
+        (
+            "transport.max_idle_timeout_ms",
+            parameters.max_idle_timeout_ms,
+        ),
+        (
+            "transport.max_udp_payload_size",
+            parameters.max_udp_payload_size,
+        ),
+        ("transport.initial_max_data", parameters.initial_max_data),
+        (
+            "transport.initial_max_stream_data_bidi_local",
+            parameters.initial_max_stream_data_bidi_local,
+        ),
+        (
+            "transport.initial_max_stream_data_bidi_remote",
+            parameters.initial_max_stream_data_bidi_remote,
+        ),
+        (
+            "transport.initial_max_stream_data_uni",
+            parameters.initial_max_stream_data_uni,
+        ),
+        (
+            "transport.initial_max_streams_bidi",
+            parameters.initial_max_streams_bidi,
+        ),
+        (
+            "transport.initial_max_streams_uni",
+            parameters.initial_max_streams_uni,
+        ),
+        (
+            "transport.ack_delay_exponent",
+            parameters.ack_delay_exponent,
+        ),
+        ("transport.max_ack_delay_ms", parameters.max_ack_delay_ms),
+        (
+            "transport.active_connection_id_limit",
+            parameters.active_connection_id_limit,
+        ),
+        (
+            "transport.max_datagram_frame_size",
+            parameters.max_datagram_frame_size.unwrap_or(0),
+        ),
+    ] {
+        context.insert_namespaced_u64("quic", key, value)?;
+    }
+    context.insert_namespaced_string("quic", "transport.validation", "validated")?;
+
+    Ok(parameters)
+}
+
 /// One opaque UDP datagram delivered to a socket-free QUIC endpoint.
 #[cfg(feature = "quic-endpoint")]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1360,6 +1519,208 @@ mod tests {
             "QUIC endpoint configuration error: configuring peer name"
         );
         assert!(!format!("{error:?}").contains("secret"));
+    }
+
+    #[cfg(feature = "quic-endpoint")]
+    #[test]
+    fn peer_transport_parameters_enforce_bounded_contract() {
+        use super::{
+            validate_peer_transport_parameters, QuicPeerTransportParameterWireError as WireError,
+            QuicPeerTransportParameters as Parameters, QuicTransportLimits,
+        };
+        use crate::{FlowError, PacketContext};
+
+        let limits = QuicTransportLimits::default();
+        let valid = Parameters {
+            max_idle_timeout_ms: 5_000,
+            max_udp_payload_size: 1_400,
+            initial_max_data: 96 * 1024,
+            initial_max_stream_data_bidi_local: 32 * 1024,
+            initial_max_stream_data_bidi_remote: 32 * 1024,
+            initial_max_stream_data_uni: 0,
+            initial_max_streams_bidi: 1,
+            initial_max_streams_uni: 0,
+            ack_delay_exponent: 3,
+            max_ack_delay_ms: 25,
+            active_connection_id_limit: 2,
+            max_datagram_frame_size: None,
+            disable_active_migration: true,
+            has_preferred_address: false,
+        };
+        let boundary = Parameters {
+            max_idle_timeout_ms: limits.max_idle_timeout.as_millis() as u64,
+            max_udp_payload_size: u64::from(limits.max_udp_payload_size),
+            initial_max_data: limits.max_connection_bytes,
+            initial_max_stream_data_bidi_local: limits.max_stream_bytes,
+            initial_max_stream_data_bidi_remote: limits.max_stream_bytes,
+            initial_max_stream_data_uni: limits.max_stream_bytes,
+            ack_delay_exponent: 20,
+            max_ack_delay_ms: (1 << 14) - 1,
+            active_connection_id_limit: 8,
+            max_datagram_frame_size: Some(0),
+            ..valid
+        };
+
+        let cases = [
+            ("valid", Ok(valid), None),
+            ("boundary", Ok(boundary), None),
+            (
+                "duplicate",
+                Err(WireError::Duplicate),
+                Some("provider-wire-duplicate"),
+            ),
+            (
+                "malformed",
+                Err(WireError::Malformed),
+                Some("provider-wire-malformed"),
+            ),
+            (
+                "idle timeout disabled",
+                Ok(Parameters {
+                    max_idle_timeout_ms: 0,
+                    ..valid
+                }),
+                Some("policy-idle-timeout"),
+            ),
+            (
+                "UDP payload below protocol minimum",
+                Ok(Parameters {
+                    max_udp_payload_size: 1_199,
+                    ..valid
+                }),
+                Some("illegal-max-udp-payload"),
+            ),
+            (
+                "UDP payload above local bound",
+                Ok(Parameters {
+                    max_udp_payload_size: u64::from(limits.max_udp_payload_size) + 1,
+                    ..valid
+                }),
+                Some("policy-max-udp-payload"),
+            ),
+            (
+                "flow control above local bound",
+                Ok(Parameters {
+                    initial_max_data: limits.max_connection_bytes + 1,
+                    ..valid
+                }),
+                Some("policy-flow-control"),
+            ),
+            (
+                "excessive bidirectional streams",
+                Ok(Parameters {
+                    initial_max_streams_bidi: 2,
+                    ..valid
+                }),
+                Some("policy-stream-count"),
+            ),
+            (
+                "unidirectional streams unsupported",
+                Ok(Parameters {
+                    initial_max_streams_uni: 1,
+                    ..valid
+                }),
+                Some("policy-stream-count"),
+            ),
+            (
+                "illegal acknowledgement delay",
+                Ok(Parameters {
+                    ack_delay_exponent: 21,
+                    ..valid
+                }),
+                Some("illegal-ack-delay"),
+            ),
+            (
+                "excessive connection identifiers",
+                Ok(Parameters {
+                    active_connection_id_limit: 9,
+                    ..valid
+                }),
+                Some("policy-connection-id-limit"),
+            ),
+            (
+                "application datagrams unsupported",
+                Ok(Parameters {
+                    max_datagram_frame_size: Some(1),
+                    ..valid
+                }),
+                Some("policy-application-datagram"),
+            ),
+            (
+                "migration unsupported",
+                Ok(Parameters {
+                    disable_active_migration: false,
+                    ..valid
+                }),
+                Some("policy-migration"),
+            ),
+            (
+                "preferred address unsupported",
+                Ok(Parameters {
+                    has_preferred_address: true,
+                    ..valid
+                }),
+                Some("policy-migration"),
+            ),
+        ];
+
+        for (name, decoded, expected_rejection) in cases {
+            let mut context = PacketContext::new();
+            let result = validate_peer_transport_parameters(decoded, limits, &mut context);
+
+            match expected_rejection {
+                None => {
+                    let accepted = result.unwrap_or_else(|error| panic!("{name}: {error}"));
+                    assert_eq!(
+                        context
+                            .get_namespaced_string("quic", "transport.validation")
+                            .unwrap(),
+                        Some("validated"),
+                        "{name}"
+                    );
+                    assert_eq!(
+                        context
+                            .get_namespaced_u64("quic", "transport.max_udp_payload_size")
+                            .unwrap(),
+                        Some(accepted.max_udp_payload_size),
+                        "{name}"
+                    );
+                    assert_eq!(
+                        context
+                            .get_namespaced_string("quic", "transport.rejection")
+                            .unwrap(),
+                        None,
+                        "{name}"
+                    );
+                }
+                Some(rejection) => {
+                    assert!(
+                        matches!(
+                            result,
+                            Err(FlowError::QuicEndpoint {
+                                category: Category::TransportParameters,
+                                ..
+                            })
+                        ),
+                        "{name}"
+                    );
+                    assert_eq!(
+                        context
+                            .get_namespaced_string("quic", "transport.rejection")
+                            .unwrap(),
+                        Some(rejection),
+                        "{name}"
+                    );
+                    assert_eq!(
+                        context
+                            .get_namespaced_u64("quic", "transport.max_udp_payload_size")
+                            .unwrap(),
+                        None,
+                        "{name}"
+                    );
+                }
+            }
+        }
     }
 
     #[cfg(feature = "quic-endpoint")]
