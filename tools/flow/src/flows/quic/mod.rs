@@ -8,7 +8,7 @@ mod initial;
 mod state;
 
 pub use initial::{
-    QuicInitialBounds, QuicInitialClientConfig, QuicInitialRetryPolicy, QuicInitialServerConfig,
-    QuicInitialVersionPolicy,
+    quic_initial_client_flow, QuicInitialBounds, QuicInitialClientConfig, QuicInitialRetryPolicy,
+    QuicInitialServerConfig, QuicInitialVersionPolicy,
 };
 pub use state::{QuicInitialState, CLOSED, INITIAL_OBSERVED, INITIAL_SENT, LISTEN, RETRY_RECEIVED};
