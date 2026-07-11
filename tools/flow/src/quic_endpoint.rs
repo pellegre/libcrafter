@@ -2789,7 +2789,13 @@ impl QuicEndpointDriver for QuinnProtoClientDriver {
                         status: QuicEndpointStreamReadStatus::Finished,
                     })
                 }
-                Err(_) => {
+                Err(quinn_proto::ReadError::Blocked) => {
+                    return Ok(QuicEndpointStreamRead {
+                        bytes,
+                        status: QuicEndpointStreamReadStatus::Blocked,
+                    })
+                }
+                Err(quinn_proto::ReadError::Reset(_)) => {
                     return Ok(QuicEndpointStreamRead {
                         bytes,
                         status: QuicEndpointStreamReadStatus::Reset,
@@ -2961,6 +2967,16 @@ impl QuinnProtoServerDriver {
                         .push_back(QuicEndpointEvent::StreamFinished(QuicEndpointStreamId(
                             id.into(),
                         )))
+                }
+                Event::Stream(StreamEvent::Opened {
+                    dir: quinn_proto::Dir::Bi,
+                }) => {
+                    if let Some(id) = connection.streams().accept(quinn_proto::Dir::Bi) {
+                        self.pending_events
+                            .push_back(QuicEndpointEvent::StreamReadable(QuicEndpointStreamId(
+                                id.into(),
+                            )));
+                    }
                 }
                 Event::Stream(StreamEvent::Opened { .. })
                 | Event::Stream(StreamEvent::Available { .. })
@@ -3248,7 +3264,13 @@ impl QuicEndpointDriver for QuinnProtoServerDriver {
                         status: QuicEndpointStreamReadStatus::Finished,
                     })
                 }
-                Err(_) => {
+                Err(quinn_proto::ReadError::Blocked) => {
+                    return Ok(QuicEndpointStreamRead {
+                        bytes,
+                        status: QuicEndpointStreamReadStatus::Blocked,
+                    })
+                }
+                Err(quinn_proto::ReadError::Reset(_)) => {
                     return Ok(QuicEndpointStreamRead {
                         bytes,
                         status: QuicEndpointStreamReadStatus::Reset,

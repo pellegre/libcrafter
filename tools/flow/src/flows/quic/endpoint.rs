@@ -5,11 +5,11 @@ use std::{cell::RefCell, net::SocketAddr, rc::Rc};
 use crate::{
     quic_endpoint::{
         configure_endpoint_client_tls, configure_endpoint_server_tls, QuicEndpointAddresses,
-        QuicEndpointClientRequest, QuicEndpointClock, QuicEndpointDriver, QuicEndpointEvent,
-        QuicEndpointEventMapper, QuicEndpointLifecycle, QuicEndpointServerPolicy,
-        QuicEndpointServerRequest, QuicEndpointServerResponse, QuicEndpointStreamId,
-        QuicEndpointSystemClock, QuicPeerConfig, QuicSyntheticIdentity, QuicTransportLimits,
-        QuinnProtoClientDriver, QuinnProtoServerDriver,
+        QuicEndpointClientRequest, QuicEndpointClientResponse, QuicEndpointClock,
+        QuicEndpointDriver, QuicEndpointEvent, QuicEndpointEventMapper, QuicEndpointLifecycle,
+        QuicEndpointServerPolicy, QuicEndpointServerRequest, QuicEndpointServerResponse,
+        QuicEndpointStreamId, QuicEndpointSystemClock, QuicPeerConfig, QuicSyntheticIdentity,
+        QuicTransportLimits, QuinnProtoClientDriver, QuinnProtoServerDriver,
     },
     quic_wire::extract_quic_udp_ingress,
     Flow, FlowBuilderExt, FlowState, PacketContext, PredicateMatcher, Result, Role, Step,
@@ -103,6 +103,7 @@ struct ClientRuntime {
     driver: QuinnProtoClientDriver,
     mapper: QuicEndpointEventMapper,
     request: QuicEndpointClientRequest,
+    response: QuicEndpointClientResponse,
     clock: QuicEndpointSystemClock,
     addresses: QuicEndpointAddresses,
     max_udp_payload_size: u16,
@@ -135,8 +136,13 @@ impl ClientRuntime {
     }
 
     fn timeout(&mut self, context: &mut PacketContext) -> Result<Step> {
-        let now = self.clock.now();
-        self.driver.handle_timeout(now)?;
+        let now = self
+            .driver
+            .next_timeout()
+            .unwrap_or_else(|| self.clock.now());
+        if self.driver.next_timeout().is_some() {
+            self.driver.handle_timeout(now)?;
+        }
         self.after_provider_action(now, context)
     }
 
@@ -145,15 +151,50 @@ impl ClientRuntime {
         now: std::time::Instant,
         context: &mut PacketContext,
     ) -> Result<Step> {
-        self.mapper.poll(&mut self.driver, context)?;
-        if matches!(
+        let events = self.mapper.poll(&mut self.driver, context)?;
+        let application_open = matches!(
             self.driver.snapshot().lifecycle,
             QuicEndpointLifecycle::Established
-        ) {
+        );
+        if application_open {
             // The provider has authenticated and decoded its peer parameters;
             // later policy steps enrich this observation with the decoded values.
             context.insert_namespaced_string("quic", "transport.validation", "validated")?;
-            let _ = self.request.drive(&mut self.driver, context)?;
+            if context.get_namespaced_bool("quic", "application.request_complete")? != Some(true) {
+                let _ = self.request.drive(&mut self.driver, context)?;
+            }
+
+            if context.get_namespaced_bool("quic", "application.request_complete")? == Some(true) {
+                for event in events {
+                    if let QuicEndpointEvent::StreamReadable(stream) = event {
+                        let _ = self.response.drive(&mut self.driver, stream, context)?;
+                    }
+                }
+
+                // A stream can remain readable across provider actions after
+                // the mapper has reported its first readiness edge. Drive the
+                // bounded response again so fragmented delivery makes progress.
+                if context.get_namespaced_bool("quic", "application.response_complete")?
+                    != Some(true)
+                {
+                    let _ =
+                        self.response
+                            .drive(&mut self.driver, QuicEndpointStreamId(0), context)?;
+                }
+            }
+        }
+        if context.get_namespaced_bool("quic", "application.request_complete")? == Some(true)
+            && context.get_namespaced_bool("quic", "application.response_complete")? == Some(true)
+        {
+            let sent = context
+                .get_namespaced_u64("quic", "application.request_bytes_sent")?
+                .unwrap_or(0);
+            let received = context
+                .get_namespaced_u64("quic", "application.response_bytes_received")?
+                .unwrap_or(0);
+            context.insert_namespaced_u64("quic", "application.bytes_sent", sent)?;
+            context.insert_namespaced_u64("quic", "application.bytes_received", received)?;
+            context.insert_namespaced_bool("quic", "application.complete", true)?;
         }
         if context.get_namespaced_bool("quic", "application.complete")? == Some(true)
             && self.driver.snapshot().lifecycle == QuicEndpointLifecycle::Established
@@ -162,10 +203,16 @@ impl ClientRuntime {
             self.mapper.poll(&mut self.driver, context)?;
         }
         let target = lifecycle_state(self.driver.snapshot().lifecycle);
-        Ok(self
+        let mut step = self
             .driver
             .drain_transmit_step(now, self.addresses, context)?
-            .goto(target))
+            .goto(target);
+        if self.driver.snapshot().lifecycle == QuicEndpointLifecycle::Draining
+            && step.wakeup().is_none()
+        {
+            step = step.wake_after(std::time::Duration::ZERO);
+        }
+        Ok(step)
     }
 }
 
@@ -208,11 +255,18 @@ fn active_state(
     addresses: QuicEndpointAddresses,
 ) -> FlowState {
     let timeout_runtime = Rc::clone(&runtime);
-    FlowState::new(name)
+    let state = FlowState::new(name)
         .on(datagram_transition(runtime, addresses))
         .on_timeout(move |context| timeout_runtime.borrow_mut().timeout(context))
         .timeout_description("drive provider-owned QUIC deadline")
-        .timeout_targets(ACTIVE_TARGETS)
+        .timeout_targets(ACTIVE_TARGETS);
+    if matches!(name, CLOSING | DRAINING) {
+        state
+            .on_entry(|_| Ok(Step::stay().wake_after(std::time::Duration::ZERO)))
+            .entry_description("poll closing client endpoint to bounded closure")
+    } else {
+        state
+    }
 }
 
 /// Build one socket-free, bounded authenticated QUIC client flow.
@@ -224,6 +278,7 @@ pub fn quic_client_flow(config: QuicClientFlowConfig) -> Result<Flow> {
         driver: QuinnProtoClientDriver::new(tls, config.addresses, now)?,
         mapper: QuicEndpointEventMapper::new(QuicEndpointLifecycle::InitialSent),
         request: QuicEndpointClientRequest::new(config.request, config.limits.max_stream_bytes),
+        response: QuicEndpointClientResponse::new(config.limits.max_stream_bytes),
         clock,
         addresses: config.addresses,
         max_udp_payload_size: config.limits.max_udp_payload_size,
@@ -307,7 +362,10 @@ impl ServerRuntime {
     }
 
     fn timeout(&mut self, context: &mut PacketContext) -> Result<Step> {
-        let now = self.clock.now();
+        let now = self
+            .driver
+            .next_timeout()
+            .unwrap_or_else(|| self.clock.now());
         if self.driver.next_timeout().is_some() {
             self.driver.handle_timeout(now)?;
         }
@@ -361,20 +419,23 @@ impl ServerRuntime {
         if context.get_namespaced_bool("quic", "application.response_complete")? == Some(true) {
             context.insert_namespaced_bool("quic", "application.complete", true)?;
         }
-        if context.get_namespaced_bool("quic", "application.complete")? == Some(true)
-            && self.driver.snapshot().lifecycle == QuicEndpointLifecycle::Established
-        {
-            self.driver.close(now, 0, b"bounded exchange complete")?;
-            self.mapper.poll(&mut self.driver, context)?;
-        }
+        // The client initiates graceful transport close after it has consumed
+        // the response FIN. Closing here would discard unread response bytes
+        // from the peer's stream view.
         let target = match self.driver.snapshot().lifecycle {
             QuicEndpointLifecycle::Listen => LISTEN,
             lifecycle => lifecycle_state(lifecycle),
         };
-        Ok(self
+        let mut step = self
             .driver
             .drain_transmit_step(now, self.addresses, context)?
-            .goto(target))
+            .goto(target);
+        if self.driver.snapshot().lifecycle == QuicEndpointLifecycle::Draining
+            && step.wakeup().is_none()
+        {
+            step = step.wake_after(std::time::Duration::ZERO);
+        }
+        Ok(step)
     }
 }
 
@@ -405,11 +466,18 @@ fn server_active_state(
     addresses: QuicEndpointAddresses,
 ) -> FlowState {
     let timeout_runtime = Rc::clone(&runtime);
-    FlowState::new(name)
+    let state = FlowState::new(name)
         .on(server_datagram_transition(runtime, addresses))
         .on_timeout(move |context| timeout_runtime.borrow_mut().timeout(context))
         .timeout_description("drive passive provider-owned QUIC deadline")
-        .timeout_targets([HANDSHAKING, ESTABLISHED, CLOSING, DRAINING, CLOSED])
+        .timeout_targets([HANDSHAKING, ESTABLISHED, CLOSING, DRAINING, CLOSED]);
+    if matches!(name, CLOSING | DRAINING) {
+        state
+            .on_entry(|_| Ok(Step::stay().wake_after(std::time::Duration::ZERO)))
+            .entry_description("poll closing server endpoint to bounded closure")
+    } else {
+        state
+    }
 }
 
 /// Build one socket-free, bounded authenticated QUIC server flow.
