@@ -1007,12 +1007,30 @@ enum QuicEndpointPacketSpace {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct QuicEndpointStreamId(pub(crate) u64);
 
-/// Bytes read from one stream together with its final-size observation.
+/// Provider-independent result of one bounded stream read.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuicEndpointStreamReadStatus {
+    /// More bytes may be available without another readiness notification.
+    Open,
+    /// No bytes are currently readable; the flow must wait for readiness.
+    Blocked,
+    /// The peer's FIN and final size were accepted.
+    Finished,
+    /// The peer reset the receive side of the stream.
+    Reset,
+    /// The peer requested that transmission on the stream stop.
+    StopSending,
+    /// The provider rejected an inconsistent final size.
+    FinalSizeError,
+}
+
+/// Bytes read from one stream together with its read-state observation.
 #[cfg(feature = "quic-endpoint")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct QuicEndpointStreamRead {
     pub(crate) bytes: Vec<u8>,
-    pub(crate) finished: bool,
+    pub(crate) status: QuicEndpointStreamReadStatus,
 }
 
 /// Inspectable lifecycle labels shared by endpoint adapters and full flows.
@@ -1662,6 +1680,149 @@ impl QuicEndpointClientRequest {
     }
 }
 
+/// Private state for the server's one bounded opaque request stream.
+///
+/// Stream state stays behind the endpoint boundary. Context receives only the
+/// accumulated request bytes, their count, and whether a clean FIN fixed the
+/// final size.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug)]
+pub(crate) struct QuicEndpointServerRequest {
+    max_request_bytes: u64,
+    stream: Option<QuicEndpointStreamId>,
+    request: Vec<u8>,
+    final_size: Option<u64>,
+}
+
+#[cfg(feature = "quic-endpoint")]
+impl QuicEndpointServerRequest {
+    pub(crate) fn new(max_request_bytes: u64) -> Self {
+        Self {
+            max_request_bytes,
+            stream: None,
+            request: Vec::new(),
+            final_size: None,
+        }
+    }
+
+    /// Drain the first client-initiated bidirectional stream until the
+    /// provider blocks or reports a final condition.
+    pub(crate) fn drive<D: QuicEndpointDriver + ?Sized>(
+        &mut self,
+        driver: &mut D,
+        stream: QuicEndpointStreamId,
+        context: &mut PacketContext,
+    ) -> Result<bool> {
+        let established = matches!(
+            context.protocol_snapshot(),
+            Some(snapshot) if snapshot.protocol == "quic" && snapshot.lifecycle == "established"
+        ) && context.get_namespaced_bool("quic", "handshake.authenticated")?
+            == Some(true);
+        if !established {
+            return Err(stream_state_error(
+                "reading server request stream before authenticated establishment",
+            ));
+        }
+        if context.get_namespaced_string("quic", "transport.validation")? != Some("validated") {
+            return Err(stream_state_error(
+                "reading server request stream before transport parameter validation",
+            ));
+        }
+
+        if stream.0 & 0x03 != 0 {
+            return Err(stream_state_error(
+                "rejecting non-client bidirectional request stream",
+            ));
+        }
+        match self.stream {
+            Some(accepted) if accepted != stream => {
+                return Err(stream_state_error(
+                    "rejecting additional server application stream",
+                ));
+            }
+            None if stream != QuicEndpointStreamId(0) => {
+                return Err(stream_state_error(
+                    "rejecting non-first client bidirectional request stream",
+                ));
+            }
+            None => self.stream = Some(stream),
+            Some(_) => {}
+        }
+
+        if self.final_size.is_some() {
+            return Ok(true);
+        }
+
+        loop {
+            let remaining = self
+                .max_request_bytes
+                .saturating_sub(self.request.len() as u64);
+            // Ask for one byte beyond the configured bound so an open stream
+            // at the exact boundary cannot disguise an oversized request.
+            let max_read = remaining.saturating_add(1).min(usize::MAX as u64) as usize;
+            let read = driver.read_stream(stream, max_read)?;
+            if read.bytes.len() > max_read {
+                return Err(provider_error(
+                    QuicEndpointErrorCategory::ProviderInternal,
+                    "rejecting invalid server stream read count",
+                    (),
+                ));
+            }
+            if matches!(
+                read.status,
+                QuicEndpointStreamReadStatus::Reset
+                    | QuicEndpointStreamReadStatus::StopSending
+                    | QuicEndpointStreamReadStatus::FinalSizeError
+            ) && !read.bytes.is_empty()
+            {
+                return Err(provider_error(
+                    QuicEndpointErrorCategory::ProviderInternal,
+                    "rejecting bytes attached to terminal server stream error",
+                    (),
+                ));
+            }
+
+            let next_size = (self.request.len() as u64).saturating_add(read.bytes.len() as u64);
+            if next_size > self.max_request_bytes {
+                return Err(stream_state_error("rejecting oversized client request"));
+            }
+            self.request.extend_from_slice(&read.bytes);
+            context.insert_namespaced_bytes("quic", "application.request", self.request.clone())?;
+            context.insert_namespaced_u64(
+                "quic",
+                "application.request_bytes_received",
+                self.request.len() as u64,
+            )?;
+
+            match read.status {
+                QuicEndpointStreamReadStatus::Open if !read.bytes.is_empty() => continue,
+                QuicEndpointStreamReadStatus::Open | QuicEndpointStreamReadStatus::Blocked => {
+                    context.insert_namespaced_bool(
+                        "quic",
+                        "application.request_complete",
+                        false,
+                    )?;
+                    return Ok(false);
+                }
+                QuicEndpointStreamReadStatus::Finished => {
+                    self.final_size = Some(self.request.len() as u64);
+                    context.insert_namespaced_bool("quic", "application.request_complete", true)?;
+                    return Ok(true);
+                }
+                QuicEndpointStreamReadStatus::Reset => {
+                    return Err(stream_state_error("client request stream reset"));
+                }
+                QuicEndpointStreamReadStatus::StopSending => {
+                    return Err(stream_state_error("client request stream stop-sending"));
+                }
+                QuicEndpointStreamReadStatus::FinalSizeError => {
+                    return Err(stream_state_error("client request stream final-size error"));
+                }
+            }
+        }
+    }
+}
+
 #[cfg(feature = "quic-endpoint")]
 fn stream_state_error(context: &'static str) -> FlowError {
     provider_error(QuicEndpointErrorCategory::StreamState, context, ())
@@ -1823,6 +1984,8 @@ fn increment_quic_counter(context: &mut PacketContext, key: &str, count: u64) ->
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "quic-endpoint")]
+    use super::QuicEndpointStreamReadStatus;
     use super::{provider_error, QuicEndpointErrorCategory as Category, QuicSyntheticIdentity};
 
     #[test]
@@ -2366,7 +2529,7 @@ mod tests {
             ) -> Result<QuicEndpointStreamRead> {
                 Ok(QuicEndpointStreamRead {
                     bytes: b"response"[..max_bytes.min(8)].to_vec(),
-                    finished: true,
+                    status: QuicEndpointStreamReadStatus::Finished,
                 })
             }
 
@@ -2508,7 +2671,7 @@ mod tests {
             ) -> Result<QuicEndpointStreamRead> {
                 Ok(QuicEndpointStreamRead {
                     bytes: Vec::new(),
-                    finished: false,
+                    status: QuicEndpointStreamReadStatus::Blocked,
                 })
             }
 
@@ -2772,7 +2935,7 @@ mod tests {
             ) -> Result<QuicEndpointStreamRead> {
                 Ok(QuicEndpointStreamRead {
                     bytes: Vec::new(),
-                    finished: false,
+                    status: QuicEndpointStreamReadStatus::Blocked,
                 })
             }
 
@@ -2976,7 +3139,7 @@ mod tests {
             ) -> Result<QuicEndpointStreamRead> {
                 Ok(QuicEndpointStreamRead {
                     bytes: Vec::new(),
-                    finished: false,
+                    status: QuicEndpointStreamReadStatus::Blocked,
                 })
             }
             fn snapshot(&self) -> QuicEndpointSnapshot {
@@ -3229,7 +3392,7 @@ mod tests {
             ) -> Result<QuicEndpointStreamRead> {
                 Ok(QuicEndpointStreamRead {
                     bytes: Vec::new(),
-                    finished: false,
+                    status: QuicEndpointStreamReadStatus::Blocked,
                 })
             }
 
@@ -3405,7 +3568,7 @@ mod tests {
             ) -> Result<QuicEndpointStreamRead> {
                 Ok(QuicEndpointStreamRead {
                     bytes: Vec::new(),
-                    finished: false,
+                    status: QuicEndpointStreamReadStatus::Blocked,
                 })
             }
             fn snapshot(&self) -> QuicEndpointSnapshot {
@@ -3879,7 +4042,7 @@ mod tests {
             ) -> Result<QuicEndpointStreamRead> {
                 Ok(QuicEndpointStreamRead {
                     bytes: Vec::new(),
-                    finished: false,
+                    status: QuicEndpointStreamReadStatus::Blocked,
                 })
             }
 
@@ -3969,5 +4132,201 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("oversized client request"));
         assert_eq!(driver.opened, 0);
+    }
+
+    #[cfg(feature = "quic-endpoint")]
+    #[test]
+    fn server_reads_one_bounded_request_stream() {
+        use std::{collections::VecDeque, time::Instant};
+
+        use super::{
+            QuicEndpointDatagram, QuicEndpointDriver, QuicEndpointEvent, QuicEndpointLifecycle,
+            QuicEndpointPacketSpaceCounts, QuicEndpointRecoveryCounts, QuicEndpointServerRequest,
+            QuicEndpointSnapshot, QuicEndpointStreamId, QuicEndpointStreamRead,
+            QuicEndpointStreamReadStatus, QuicEndpointTransmit,
+        };
+        use crate::{context::ProtocolContextSnapshot, PacketContext, Result};
+
+        struct ServerStreamDriver {
+            reads: VecDeque<QuicEndpointStreamRead>,
+        }
+
+        impl ServerStreamDriver {
+            fn new(reads: impl IntoIterator<Item = QuicEndpointStreamRead>) -> Self {
+                Self {
+                    reads: reads.into_iter().collect(),
+                }
+            }
+        }
+
+        impl QuicEndpointDriver for ServerStreamDriver {
+            fn start(&mut self, _: Instant) -> Result<()> {
+                Ok(())
+            }
+
+            fn handle_datagram(&mut self, _: QuicEndpointDatagram) -> Result<()> {
+                Ok(())
+            }
+
+            fn drain_transmits(&mut self, _: Instant) -> Result<Vec<QuicEndpointTransmit>> {
+                Ok(Vec::new())
+            }
+
+            fn next_timeout(&self) -> Option<Instant> {
+                None
+            }
+
+            fn handle_timeout(&mut self, _: Instant) -> Result<()> {
+                Ok(())
+            }
+
+            fn poll_events(&mut self) -> Result<Vec<QuicEndpointEvent>> {
+                Ok(Vec::new())
+            }
+
+            fn open_bidirectional_stream(&mut self) -> Result<QuicEndpointStreamId> {
+                unreachable!("server does not open the client request stream")
+            }
+
+            fn write_stream(&mut self, _: QuicEndpointStreamId, _: &[u8]) -> Result<usize> {
+                Ok(0)
+            }
+
+            fn finish_stream(&mut self, _: QuicEndpointStreamId) -> Result<()> {
+                Ok(())
+            }
+
+            fn read_stream(
+                &mut self,
+                _: QuicEndpointStreamId,
+                max_bytes: usize,
+            ) -> Result<QuicEndpointStreamRead> {
+                let read = self.reads.pop_front().unwrap_or(QuicEndpointStreamRead {
+                    bytes: Vec::new(),
+                    status: QuicEndpointStreamReadStatus::Blocked,
+                });
+                assert!(read.bytes.len() <= max_bytes);
+                Ok(read)
+            }
+
+            fn snapshot(&self) -> QuicEndpointSnapshot {
+                QuicEndpointSnapshot {
+                    lifecycle: QuicEndpointLifecycle::Established,
+                    local_connection_id: Vec::new(),
+                    peer_connection_id: Vec::new(),
+                    initial: QuicEndpointPacketSpaceCounts::default(),
+                    handshake: QuicEndpointPacketSpaceCounts::default(),
+                    application: QuicEndpointPacketSpaceCounts::default(),
+                    stream_bytes_sent: 0,
+                    stream_bytes_received: 0,
+                    recovery: QuicEndpointRecoveryCounts::default(),
+                }
+            }
+
+            fn close(&mut self, _: Instant, _: u64, _: &[u8]) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        fn read(bytes: &[u8], status: QuicEndpointStreamReadStatus) -> QuicEndpointStreamRead {
+            QuicEndpointStreamRead {
+                bytes: bytes.to_vec(),
+                status,
+            }
+        }
+
+        fn established_context() -> PacketContext {
+            let mut context = PacketContext::new();
+            context.set_protocol_snapshot(ProtocolContextSnapshot::new("quic", "established"));
+            context
+                .insert_namespaced_bool("quic", "handshake.authenticated", true)
+                .unwrap();
+            context
+                .insert_namespaced_string("quic", "transport.validation", "validated")
+                .unwrap();
+            context
+        }
+
+        let mut driver = ServerStreamDriver::new([
+            read(b"frag", QuicEndpointStreamReadStatus::Open),
+            read(&[], QuicEndpointStreamReadStatus::Blocked),
+            read(b"mented", QuicEndpointStreamReadStatus::Finished),
+        ]);
+        let mut operation = QuicEndpointServerRequest::new(32);
+        let mut context = established_context();
+        assert!(!operation
+            .drive(&mut driver, QuicEndpointStreamId(0), &mut context)
+            .unwrap());
+        assert_eq!(
+            context
+                .get_namespaced_bytes("quic", "application.request")
+                .unwrap(),
+            Some(&b"frag"[..])
+        );
+        assert!(operation
+            .drive(&mut driver, QuicEndpointStreamId(0), &mut context)
+            .unwrap());
+        assert_eq!(
+            context
+                .get_namespaced_bytes("quic", "application.request")
+                .unwrap(),
+            Some(&b"fragmented"[..])
+        );
+        assert_eq!(
+            context
+                .get_namespaced_u64("quic", "application.request_bytes_received")
+                .unwrap(),
+            Some(10)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_bool("quic", "application.request_complete")
+                .unwrap(),
+            Some(true)
+        );
+
+        let mut driver =
+            ServerStreamDriver::new([read(b"first", QuicEndpointStreamReadStatus::Blocked)]);
+        let mut operation = QuicEndpointServerRequest::new(32);
+        let mut context = established_context();
+        operation
+            .drive(&mut driver, QuicEndpointStreamId(0), &mut context)
+            .unwrap();
+        let error = operation
+            .drive(&mut driver, QuicEndpointStreamId(4), &mut context)
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("additional server application stream"));
+
+        for (status, expected) in [
+            (QuicEndpointStreamReadStatus::Reset, "stream reset"),
+            (QuicEndpointStreamReadStatus::StopSending, "stop-sending"),
+            (
+                QuicEndpointStreamReadStatus::FinalSizeError,
+                "final-size error",
+            ),
+        ] {
+            let mut driver = ServerStreamDriver::new([read(&[], status)]);
+            let error = QuicEndpointServerRequest::new(32)
+                .drive(
+                    &mut driver,
+                    QuicEndpointStreamId(0),
+                    &mut established_context(),
+                )
+                .unwrap_err();
+            assert!(error.to_string().contains(expected));
+        }
+
+        let mut driver =
+            ServerStreamDriver::new([read(b"oversized", QuicEndpointStreamReadStatus::Open)]);
+        let error = QuicEndpointServerRequest::new(8)
+            .drive(
+                &mut driver,
+                QuicEndpointStreamId(0),
+                &mut established_context(),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("oversized client request"));
     }
 }
