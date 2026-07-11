@@ -1132,6 +1132,10 @@ fn bounded_close_reason_summary(reason: &[u8]) -> String {
 pub(crate) fn map_quinn_peer_close(reason: quinn_proto::ConnectionError) -> QuicEndpointEvent {
     use quinn_proto::ConnectionError;
 
+    if reason == ConnectionError::TimedOut {
+        return QuicEndpointEvent::IdleTimeout;
+    }
+
     let (kind, code, reason_summary) = match reason {
         ConnectionError::ConnectionClosed(close) => {
             let code = u64::from(close.error_code);
@@ -1152,11 +1156,7 @@ pub(crate) fn map_quinn_peer_close(reason: quinn_proto::ConnectionError) -> Quic
             error.code.into(),
             bounded_close_reason_summary(error.reason.as_bytes()),
         ),
-        ConnectionError::TimedOut => (
-            QuicEndpointPeerCloseKind::TransportError,
-            0,
-            "idle-timeout".to_string(),
-        ),
+        ConnectionError::TimedOut => unreachable!("idle timeout handled above"),
         ConnectionError::Reset => (
             QuicEndpointPeerCloseKind::TransportError,
             0,
@@ -1389,6 +1389,11 @@ impl QuicEndpointEventMapper {
                 }
                 QuicEndpointEvent::IdleTimeout => {
                     self.lifecycle = QuicEndpointLifecycle::Closed;
+                    let idle_timeouts = context
+                        .get_namespaced_u64("quic", "timeouts.idle")?
+                        .unwrap_or(0)
+                        .max(1);
+                    context.insert_namespaced_u64("quic", "timeouts.idle", idle_timeouts)?;
                     update_quic_protocol_snapshot(context, |snapshot| {
                         snapshot.outcome = Some("idle-timeout".to_string());
                         snapshot.close_category = Some("idle-timeout".to_string());
@@ -1439,6 +1444,16 @@ impl QuicEndpointEventMapper {
         snapshot.local_connection_id = Some(provider_snapshot.local_connection_id);
         snapshot.peer_connection_id = Some(provider_snapshot.peer_connection_id);
         context.set_protocol_snapshot(snapshot);
+        for (key, observed) in [
+            ("stream.bytes_sent", provider_snapshot.stream_bytes_sent),
+            (
+                "stream.bytes_received",
+                provider_snapshot.stream_bytes_received,
+            ),
+        ] {
+            let retained = context.get_namespaced_u64("quic", key)?.unwrap_or(0);
+            context.insert_namespaced_u64("quic", key, retained.max(observed))?;
+        }
         render_quic_packet_space(context, "initial", provider_snapshot.initial)?;
         render_quic_packet_space(context, "handshake", provider_snapshot.handshake)?;
         render_quic_packet_space(context, "application", provider_snapshot.application)?;

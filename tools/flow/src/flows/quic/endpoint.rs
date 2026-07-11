@@ -1074,4 +1074,209 @@ mod tests {
             false,
         );
     }
+
+    #[test]
+    fn idle_timeout_is_distinct_from_pto_and_run_deadline() {
+        use std::{
+            collections::VecDeque,
+            time::{Duration, Instant},
+        };
+
+        use crate::{
+            quic_endpoint::{
+                map_quinn_peer_close, QuicEndpointDatagram, QuicEndpointManualClock,
+                QuicEndpointPacketSpaceCounts, QuicEndpointRecoveryCounts, QuicEndpointSnapshot,
+                QuicEndpointStreamRead, QuicEndpointStreamReadStatus, QuicEndpointTimeoutKind,
+                QuicEndpointTransmit,
+            },
+            Binding, FlowOutcome, MemoryCaptureSource, RunOptions, Runner,
+        };
+
+        struct IdleDriver {
+            deadline: Instant,
+            events: VecDeque<QuicEndpointEvent>,
+            snapshot: QuicEndpointSnapshot,
+        }
+
+        impl QuicEndpointDriver for IdleDriver {
+            fn start(&mut self, _: Instant) -> Result<()> {
+                Ok(())
+            }
+
+            fn handle_datagram(&mut self, _: QuicEndpointDatagram) -> Result<()> {
+                Ok(())
+            }
+
+            fn drain_transmits(&mut self, _: Instant) -> Result<Vec<QuicEndpointTransmit>> {
+                Ok(Vec::new())
+            }
+
+            fn next_timeout(&self) -> Option<Instant> {
+                Some(self.deadline)
+            }
+
+            fn next_timeout_kind(&self) -> QuicEndpointTimeoutKind {
+                QuicEndpointTimeoutKind::IdleTimeout
+            }
+
+            fn handle_timeout(&mut self, _: Instant) -> Result<()> {
+                self.snapshot.lifecycle = QuicEndpointLifecycle::Closed;
+                self.events.push_back(QuicEndpointEvent::IdleTimeout);
+                Ok(())
+            }
+
+            fn poll_events(&mut self) -> Result<Vec<QuicEndpointEvent>> {
+                Ok(self.events.drain(..).collect())
+            }
+
+            fn open_bidirectional_stream(&mut self) -> Result<QuicEndpointStreamId> {
+                unreachable!("idle timeout cannot open a stream")
+            }
+
+            fn write_stream(&mut self, _: QuicEndpointStreamId, _: &[u8]) -> Result<usize> {
+                unreachable!("idle timeout cannot write a stream")
+            }
+
+            fn finish_stream(&mut self, _: QuicEndpointStreamId) -> Result<()> {
+                unreachable!("idle timeout cannot finish a stream")
+            }
+
+            fn read_stream(
+                &mut self,
+                _: QuicEndpointStreamId,
+                _: usize,
+            ) -> Result<QuicEndpointStreamRead> {
+                Ok(QuicEndpointStreamRead {
+                    bytes: Vec::new(),
+                    status: QuicEndpointStreamReadStatus::Blocked,
+                })
+            }
+
+            fn snapshot(&self) -> QuicEndpointSnapshot {
+                self.snapshot.clone()
+            }
+
+            fn close(&mut self, _: Instant, _: u64, _: &[u8]) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        fn run_case(provider_after: Duration, run_after: Duration) -> crate::FlowReport {
+            let origin = Instant::now();
+            let clock = Rc::new(RefCell::new(QuicEndpointManualClock::new(origin)));
+            let driver = Rc::new(RefCell::new(IdleDriver {
+                deadline: origin + provider_after,
+                events: VecDeque::new(),
+                snapshot: QuicEndpointSnapshot {
+                    lifecycle: QuicEndpointLifecycle::Established,
+                    local_connection_id: vec![0x11; 8],
+                    peer_connection_id: vec![0x22; 8],
+                    initial: QuicEndpointPacketSpaceCounts {
+                        sent: 2,
+                        received: 1,
+                        ..QuicEndpointPacketSpaceCounts::default()
+                    },
+                    handshake: QuicEndpointPacketSpaceCounts {
+                        sent: 3,
+                        received: 2,
+                        ..QuicEndpointPacketSpaceCounts::default()
+                    },
+                    application: QuicEndpointPacketSpaceCounts {
+                        sent: 5,
+                        received: 4,
+                        ..QuicEndpointPacketSpaceCounts::default()
+                    },
+                    stream_bytes_sent: 7,
+                    stream_bytes_received: 8,
+                    recovery: QuicEndpointRecoveryCounts {
+                        pto_firings: 2,
+                        packets_declared_lost: 1,
+                        ..QuicEndpointRecoveryCounts::default()
+                    },
+                },
+            }));
+            let mapper = Rc::new(RefCell::new(QuicEndpointEventMapper::new(
+                QuicEndpointLifecycle::Established,
+            )));
+
+            let entry_driver = Rc::clone(&driver);
+            let entry_mapper = Rc::clone(&mapper);
+            let active = FlowState::new("Established")
+                .on_entry(move |context| {
+                    entry_mapper
+                        .borrow_mut()
+                        .poll(&mut *entry_driver.borrow_mut(), context)?;
+                    Ok(Step::stay().wake_after(provider_after))
+                })
+                .entry_description("schedule deterministic provider idle deadline")
+                .on_timeout({
+                    let driver = Rc::clone(&driver);
+                    let mapper = Rc::clone(&mapper);
+                    let clock = Rc::clone(&clock);
+                    move |context| {
+                        let now = clock.borrow_mut().advance(provider_after);
+                        driver.borrow_mut().handle_timeout_step(
+                            now,
+                            QuicEndpointAddresses::new(
+                                SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 10), 44_300).into(),
+                                SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 20), 443).into(),
+                            ),
+                            context,
+                        )?;
+                        mapper
+                            .borrow_mut()
+                            .poll(&mut *driver.borrow_mut(), context)?;
+                        Ok(Step::done_with("endpoint-idle-timeout"))
+                    }
+                })
+                .timeout_description("terminate on provider idle timeout")
+                .timeout_terminal();
+            let mut flow = Flow::new("idle-timeout-precedence")
+                .role(Role::Initiator)
+                .state(active)
+                .initial("Established");
+            let options = RunOptions::default()
+                .binding(Binding::default())
+                .step_timeout(Duration::from_secs(1))
+                .run_timeout(run_after);
+            Runner::with_source(options, MemoryCaptureSource::default())
+                .unwrap()
+                .run(&mut flow)
+                .unwrap()
+        }
+
+        assert_eq!(
+            map_quinn_peer_close(quinn_proto::ConnectionError::TimedOut),
+            QuicEndpointEvent::IdleTimeout
+        );
+
+        let provider_first = run_case(Duration::from_millis(1), Duration::from_millis(10));
+        assert_eq!(provider_first.outcome(), &FlowOutcome::Completed);
+        assert_eq!(provider_first.final_state(), Some("Established"));
+        assert!(provider_first.summary().contains("outcome=idle-timeout"));
+        assert!(provider_first
+            .context_snapshot()
+            .contains("quic::stream.bytes_sent"));
+        assert!(provider_first
+            .context_snapshot()
+            .contains("quic::packet_spaces.application.sent"));
+        assert_eq!(provider_first.recovery_metrics().timeout_events(), 1);
+        assert_eq!(provider_first.recovery_metrics().pto_firings(), 2);
+        assert_eq!(provider_first.recovery_metrics().packets_declared_lost(), 1);
+        assert_eq!(
+            provider_first.recovery_metrics().exact_replay_transmits(),
+            0
+        );
+
+        let run_first = run_case(Duration::from_millis(10), Duration::from_millis(1));
+        assert_eq!(run_first.outcome(), &FlowOutcome::TimedOut);
+        assert!(!run_first.summary().contains("outcome=idle-timeout"));
+        assert!(run_first
+            .context_snapshot()
+            .contains("quic::stream.bytes_received"));
+
+        let equal = run_case(Duration::from_millis(5), Duration::from_millis(5));
+        assert_eq!(equal.outcome(), &FlowOutcome::TimedOut);
+        assert!(!equal.summary().contains("outcome=idle-timeout"));
+    }
 }
