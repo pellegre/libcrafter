@@ -54,6 +54,19 @@ pub(crate) fn wrap_quic_udp_datagram(
         / payload.into_layer()
 }
 
+/// Wrap one provider-produced protected payload without decoding it.
+///
+/// Endpoint providers retain the connection context required to interpret
+/// protected short headers and coalesced packets. The packet layer therefore
+/// preserves the complete UDP payload as one opaque [`Quic`] layer.
+pub(crate) fn wrap_opaque_quic_udp_datagram(
+    local: SocketAddrV4,
+    peer: SocketAddrV4,
+    payload: impl AsRef<[u8]>,
+) -> Packet {
+    wrap_quic_udp_datagram(local, peer, QuicUdpPayload::opaque(payload))
+}
+
 /// Extract one inbound QUIC datagram after verifying the reversed tuple.
 pub(crate) fn extract_quic_udp_ingress(
     packet: &Packet,
