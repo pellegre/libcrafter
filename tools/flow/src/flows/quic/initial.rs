@@ -2,16 +2,20 @@
 
 use std::{collections::BTreeSet, net::SocketAddrV4, time::Duration};
 
+use crafter::protocols::quic::header::{
+    classify_quic_header, QuicHeaderClassification, QuicLongPacketKind,
+};
 use crafter::{
     derive_quic_initial_secrets, QuicAckFrame, QuicAckRange, QuicConnectionCloseFrame,
-    QuicConnectionId, QuicCryptoFrame, QuicFrame, QuicLongHeaderPacket, QuicPacketNumber,
-    QUIC_VERSION_1,
+    QuicConnectionId, QuicCryptoFrame, QuicFrame, QuicLongHeaderPacket, QuicPacket,
+    QuicPacketNumber, QUIC_VERSION_1,
 };
 
 use crate::context::ProtocolContextSnapshot;
-use crate::flows::quic::{CLOSED, INITIAL_SENT};
-use crate::quic_wire::{assemble_initial_datagram, QuicInitialPadding};
-use crate::{docaddr, Flow, FlowBuilderExt, FlowError, FlowState, Result, Role, Step};
+use crate::flows::quic::{CLOSED, INITIAL_OBSERVED, INITIAL_SENT, LISTEN};
+use crate::matcher::UdpDatagramMatcher;
+use crate::quic_wire::{assemble_initial_datagram, extract_quic_udp_ingress, QuicInitialPadding};
+use crate::{docaddr, Flow, FlowBuilderExt, FlowError, FlowState, Result, Role, Step, Transition};
 
 const DEFAULT_CLIENT_PORT: u16 = 49_152;
 const DEFAULT_SERVER_PORT: u16 = 443;
@@ -20,6 +24,7 @@ const MAX_INITIAL_CONNECTION_ID_LEN: usize = 20;
 const MAX_CONFIGURED_CRYPTO_BYTES: usize = 64 * 1024;
 const QUIC_PACKET_NUMBER_LIMIT: u64 = 1 << 62;
 const INITIAL_CLIENT_TIMEOUT: Duration = Duration::from_secs(1);
+const INITIAL_SERVER_TIMEOUT: Duration = Duration::from_secs(1);
 const INITIAL_ONLY_TIMEOUT_OUTCOME: &str = "initial-only-timeout";
 
 /// Build the deterministic, bounded QUIC v1 Initial-only client flow.
@@ -96,6 +101,100 @@ pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow>
         .initial(INITIAL_SENT);
     flow.validate()?;
     Ok(flow)
+}
+
+/// Build the passive, bounded QUIC v1 Initial-only server flow.
+pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow> {
+    config.validate()?;
+
+    let local = config.local;
+    let peer = config.peer;
+    let version = config.version;
+    let matcher = UdpDatagramMatcher::inbound(*local.ip(), local.port(), *peer.ip(), peer.port())
+        .payload_where(
+            "one structurally valid QUIC v1 Initial with a nonempty destination connection ID",
+            move |payload, _context| matching_client_initial(payload, version).is_some(),
+        );
+
+    let listen = FlowState::new(LISTEN)
+        .on_entry(|_context| Ok(Step::stay().wake_after(INITIAL_SERVER_TIMEOUT)))
+        .entry_description("listen for one matching protected client Initial")
+        .on(Transition::on(matcher, move |packet, context| {
+            let ingress =
+                extract_quic_udp_ingress(packet, local, peer, context).ok_or_else(|| {
+                    FlowError::Build(
+                        "matched QUIC Initial no longer satisfies its IPv4/UDP tuple".to_string(),
+                    )
+                })?;
+            let initial = matching_client_initial(ingress.payload(), version).ok_or_else(|| {
+                FlowError::Build(
+                    "matched QUIC Initial no longer has a valid version 1 long header".to_string(),
+                )
+            })?;
+            let original_destination_connection_id =
+                initial.destination_connection_id().as_bytes().to_vec();
+            let peer_source_connection_id = initial.source_connection_id().as_bytes().to_vec();
+
+            context.insert_namespaced_string("quic", "local_tuple", ingress.local().to_string())?;
+            context.insert_namespaced_string("quic", "peer_tuple", ingress.peer().to_string())?;
+            context.insert_namespaced_bytes(
+                "quic",
+                "original_destination_connection_id",
+                original_destination_connection_id.clone(),
+            )?;
+            context.insert_namespaced_bytes(
+                "quic",
+                "peer_source_connection_id",
+                peer_source_connection_id.clone(),
+            )?;
+
+            let mut snapshot = ProtocolContextSnapshot::new("quic", INITIAL_OBSERVED);
+            snapshot.local_connection_id = Some(original_destination_connection_id);
+            snapshot.peer_connection_id = Some(peer_source_connection_id);
+            context.set_protocol_snapshot(snapshot);
+
+            Ok(Step::goto(INITIAL_OBSERVED))
+        })
+        .targets([INITIAL_OBSERVED]))
+        .on_timeout(|context| {
+            let mut snapshot = ProtocolContextSnapshot::new("quic", CLOSED);
+            snapshot.outcome = Some(INITIAL_ONLY_TIMEOUT_OUTCOME.to_string());
+            snapshot.close_category = Some("timeout".to_string());
+            context.set_protocol_snapshot(snapshot);
+            Ok(Step::done_with(INITIAL_ONLY_TIMEOUT_OUTCOME))
+        })
+        .timeout_description("close the bounded Initial-only listener on timeout")
+        .timeout_terminal();
+
+    let flow = Flow::new("quic-initial-server")
+        .role(Role::Responder)
+        .state(listen)
+        .state(FlowState::new(INITIAL_OBSERVED))
+        .initial(LISTEN);
+    flow.validate()?;
+    Ok(flow)
+}
+
+fn matching_client_initial(payload: &[u8], version: u32) -> Option<QuicLongHeaderPacket> {
+    match classify_quic_header(payload).ok()? {
+        QuicHeaderClassification::LongHeader {
+            version: observed_version,
+            destination_connection_id,
+            packet_kind: QuicLongPacketKind::Initial,
+            remaining_len,
+            ..
+        } if observed_version == version
+            && !destination_connection_id.is_empty()
+            && remaining_len > 0 => {}
+        _ => return None,
+    }
+
+    let packet = QuicPacket::decode(payload).ok()?;
+    let initial = packet.long_header()?;
+    (initial.version() == version
+        && initial.packet_kind() == QuicLongPacketKind::Initial
+        && !initial.destination_connection_id().is_empty())
+    .then(|| initial.clone())
 }
 
 /// One parsed ACK together with the packet numbers represented by its ranges.
@@ -727,6 +826,126 @@ mod tests {
         assert!(timeout.is_terminal());
         assert_eq!(timeout.outcome(), Some(INITIAL_ONLY_TIMEOUT_OUTCOME));
         let snapshot = context.protocol_snapshot().expect("timeout keeps snapshot");
+        assert_eq!(snapshot.lifecycle, CLOSED);
+        assert_eq!(
+            snapshot.outcome.as_deref(),
+            Some(INITIAL_ONLY_TIMEOUT_OUTCOME)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn initial_server_listens_for_matching_client_initial() -> crate::Result<()> {
+        let client_config = QuicInitialClientConfig::default();
+        let server_config = QuicInitialServerConfig::default();
+        let expected_local = server_config.local;
+        let expected_peer = server_config.peer;
+        let expected_original_destination_connection_id = client_config
+            .identifiers
+            .original_destination_connection_id()
+            .as_bytes()
+            .to_vec();
+        let expected_peer_source_connection_id = client_config
+            .identifiers
+            .local_source_connection_id()
+            .as_bytes()
+            .to_vec();
+
+        let mut client = quic_initial_client_flow(client_config)?;
+        let mut client_context = crate::PacketContext::new();
+        let client_step = client
+            .state_mut(INITIAL_SENT)
+            .expect("InitialSent state exists")
+            .run_entry(&mut client_context)?
+            .expect("client emits its Initial");
+        let valid_initial = client_step.outputs()[0].packet().clone();
+        let valid_payload = valid_initial
+            .layer::<Quic>()
+            .expect("typed QUIC layer")
+            .packets()[0]
+            .as_bytes()
+            .to_vec();
+
+        let mut server = quic_initial_server_flow(server_config.clone())?;
+        assert_eq!(Flow::role(&server), Role::Responder);
+        assert_eq!(Flow::initial(&server), LISTEN);
+        server.validate()?;
+
+        let mut context = crate::PacketContext::new();
+        let listen = server.state_mut(LISTEN).expect("Listen state exists");
+        let entry = listen
+            .run_entry(&mut context)?
+            .expect("Listen schedules its bound");
+        assert!(entry.outputs().is_empty());
+        assert_eq!(entry.wakeup(), Some(INITIAL_SERVER_TIMEOUT));
+
+        let wrong_tuple = Ipv4::new().src(docaddr::DNS_IPV4).dst(*expected_local.ip())
+            / Udp::new()
+                .source_port(expected_peer.port())
+                .destination_port(expected_local.port())
+            / Quic::from_bytes(valid_payload.clone());
+        assert!(listen.find_transition(&wrong_tuple, &context).is_none());
+        assert!(context.protocol_snapshot().is_none());
+        assert_eq!(context.get_namespaced_string("quic", "peer_tuple")?, None);
+
+        let mut non_initial_payload = valid_payload;
+        non_initial_payload[0] = (non_initial_payload[0] & !0x30) | 0x20;
+        let non_initial = Ipv4::new()
+            .src(*expected_peer.ip())
+            .dst(*expected_local.ip())
+            / Udp::new()
+                .source_port(expected_peer.port())
+                .destination_port(expected_local.port())
+            / Quic::from_bytes(non_initial_payload);
+        assert!(listen.find_transition(&non_initial, &context).is_none());
+        assert!(context.protocol_snapshot().is_none());
+
+        let transition = listen
+            .find_transition(&valid_initial, &context)
+            .expect("matching client Initial is accepted");
+        let accepted = transition.fire(&valid_initial, &mut context)?;
+        assert_eq!(accepted.target(), Some(INITIAL_OBSERVED));
+        assert!(accepted.outputs().is_empty());
+        assert_eq!(
+            context.get_namespaced_string("quic", "local_tuple")?,
+            Some(expected_local.to_string().as_str())
+        );
+        assert_eq!(
+            context.get_namespaced_string("quic", "peer_tuple")?,
+            Some(expected_peer.to_string().as_str())
+        );
+        assert_eq!(
+            context.get_namespaced_bytes("quic", "original_destination_connection_id")?,
+            Some(expected_original_destination_connection_id.as_slice())
+        );
+        assert_eq!(
+            context.get_namespaced_bytes("quic", "peer_source_connection_id")?,
+            Some(expected_peer_source_connection_id.as_slice())
+        );
+        let snapshot = context.protocol_snapshot().expect("QUIC snapshot exists");
+        assert_eq!(snapshot.lifecycle, INITIAL_OBSERVED);
+        assert_eq!(
+            snapshot.local_connection_id.as_deref(),
+            Some(expected_original_destination_connection_id.as_slice())
+        );
+        assert_eq!(
+            snapshot.peer_connection_id.as_deref(),
+            Some(expected_peer_source_connection_id.as_slice())
+        );
+
+        let mut timeout_server = quic_initial_server_flow(server_config)?;
+        let mut timeout_context = crate::PacketContext::new();
+        let timeout = timeout_server
+            .state_mut(LISTEN)
+            .expect("Listen state exists")
+            .run_timeout(&mut timeout_context)?
+            .expect("Listen has a timeout action");
+        assert!(timeout.is_terminal());
+        assert!(timeout.outputs().is_empty());
+        assert_eq!(timeout.outcome(), Some(INITIAL_ONLY_TIMEOUT_OUTCOME));
+        let snapshot = timeout_context
+            .protocol_snapshot()
+            .expect("timeout records a snapshot");
         assert_eq!(snapshot.lifecycle, CLOSED);
         assert_eq!(
             snapshot.outcome.as_deref(),
