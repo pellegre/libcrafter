@@ -130,7 +130,119 @@ class QuicProbePlanTest(unittest.TestCase):
 
         self.assertTrue(plan["planned_only"])
         self.assertTrue(plan["quic"]["encrypted_payload_opaque"])
-        self.assertEqual(plan["target_service"]["behavior"], "observe_encrypted_flow")
+        self.assertEqual(
+            plan["target_service"]["kind"], "quic-controlled-endpoint"
+        )
+        self.assertEqual(
+            plan["target_service"]["behavior"],
+            "run_authenticated_client_server_flow",
+        )
+        self.assertEqual(
+            plan["conversation"]["kind"],
+            "stateful_authenticated_quic_endpoint_flow",
+        )
+        self.assertEqual(
+            plan["conversation"]["distinct_from"],
+            "quic-initial-udp-observation",
+        )
+        self.assertEqual(plan["conversation"]["version"], 1)
+        self.assertEqual(plan["conversation"]["alpn"], "crafter-flow")
+        self.assertEqual(
+            plan["conversation"]["roles"],
+            {
+                "stimulus": "authenticated_quic_client",
+                "target": "controlled_quic_server",
+            },
+        )
+        self.assertEqual(
+            plan["conversation"]["identity"],
+            {
+                "kind": "synthetic_test_identity",
+                "provisioned_by": "controlled_target_service",
+                "trust_installed_on": "stimulus_client",
+                "secrets_in_plan": False,
+            },
+        )
+        stream = plan["conversation"]["stream_exchange"]
+        self.assertEqual(stream["bidirectional_streams"], 1)
+        self.assertGreater(stream["request_length"], 0)
+        self.assertEqual(len(stream["request_sha256"]), 64)
+        self.assertGreater(stream["response_length"], 0)
+        self.assertEqual(len(stream["response_sha256"]), 64)
+        self.assertFalse(stream["payload_bytes_in_artifacts"])
+
+    def test_protected_flow_plan_declares_provider_artifact_and_validation_contract(
+        self,
+    ) -> None:
+        plan = _plan("quic-protected-flow-plan")
+
+        self.assertEqual(
+            plan["provider_requirements"],
+            {
+                "endpoint_count": 2,
+                "roles": ["stimulus", "target"],
+                "capabilities": [
+                    "two_endpoints",
+                    "controlled_service_startup",
+                    "udp_capture",
+                    "artifact_collection",
+                    "endpoint_teardown",
+                ],
+                "controlled_service_startup": True,
+                "udp_capture": True,
+                "collect_artifacts_before_teardown": True,
+                "always_teardown": True,
+                "live_requires_explicit_target_and_adapter": True,
+            },
+        )
+        self.assertIn("udp", plan["capture"]["filter"])
+        self.assertEqual(plan["capture"]["points"], ["stimulus", "target"])
+        self.assertEqual(plan["capture"]["artifacts"], plan["artifact_outputs"])
+        self.assertTrue(
+            all(path.startswith("target/") for path in plan["artifact_outputs"])
+        )
+        validation = plan["flow_validation"]
+        self.assertIn("Established", validation["client_state_trace"])
+        self.assertIn("Established", validation["server_state_trace"])
+        self.assertEqual(
+            validation["required_packet_spaces"],
+            ["Initial", "Handshake", "Application"],
+        )
+        self.assertEqual(
+            validation["recovery_counters"],
+            [
+                "timeout_events",
+                "pto_firings",
+                "declared_losses",
+                "regenerated_transmits",
+            ],
+        )
+        self.assertEqual(
+            validation["close_outcome"], "graceful_application_close"
+        )
+        self.assertTrue(validation["reject_secrets"])
+        self.assertTrue(plan["safety"]["documentation_addresses"])
+        self.assertTrue(plan["safety"]["deterministic_seed"])
+        self.assertFalse(plan["safety"]["developer_host_raw_send"])
+
+    def test_protected_flow_catalog_metadata_is_stateful_not_udp_echo(self) -> None:
+        case = cases.PROBE_CASE_BY_NAME["quic-protected-flow-plan"]
+
+        self.assertTrue(case.metadata["stateful_endpoint_flow"])
+        self.assertTrue(case.metadata["distinct_from_udp_echo"])
+        self.assertTrue(case.metadata["requires_controlled_quic_service"])
+        self.assertEqual(case.metadata["quic_version"], 1)
+        self.assertEqual(case.metadata["alpn"], "crafter-flow")
+        self.assertEqual(
+            list(case.required_capabilities),
+            [
+                "two_endpoints",
+                "controlled_service_startup",
+                "udp_capture",
+                "artifact_collection",
+                "endpoint_teardown",
+            ],
+        )
 
     def test_plans_are_deterministic(self) -> None:
         self.assertEqual(
