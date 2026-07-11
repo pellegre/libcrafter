@@ -47,6 +47,10 @@ pub struct ProtocolContextSnapshot {
     pub close_category: Option<String>,
     /// Protocol close code, when one was supplied.
     pub close_code: Option<u64>,
+    /// Stable short error category suitable for reports and metrics.
+    pub error_category: Option<String>,
+    /// Bounded non-secret context describing where the error occurred.
+    pub error_context: Option<String>,
 }
 
 impl ProtocolContextSnapshot {
@@ -60,6 +64,8 @@ impl ProtocolContextSnapshot {
             outcome: None,
             close_category: None,
             close_code: None,
+            error_category: None,
+            error_context: None,
         }
     }
 }

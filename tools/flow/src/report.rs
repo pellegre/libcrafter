@@ -3,6 +3,7 @@
 use std::fmt::Write as _;
 use std::time::Duration;
 
+use crate::context::ProtocolContextSnapshot;
 use crate::Role;
 
 /// Protocol-neutral recovery observations collected during one flow run.
@@ -104,6 +105,7 @@ pub struct FlowReport {
     elapsed: Duration,
     outcome: FlowOutcome,
     context_snapshot: String,
+    protocol_snapshot: Option<ProtocolContextSnapshot>,
 }
 
 impl FlowReport {
@@ -141,7 +143,14 @@ impl FlowReport {
             elapsed,
             outcome,
             context_snapshot: context_snapshot.into(),
+            protocol_snapshot: None,
         }
+    }
+
+    /// Return a report with a final non-secret protocol lifecycle snapshot attached.
+    pub fn with_protocol_snapshot(mut self, snapshot: Option<ProtocolContextSnapshot>) -> Self {
+        self.protocol_snapshot = snapshot;
+        self
     }
 
     /// Return a report with protocol-neutral application payload observations attached.
@@ -312,6 +321,7 @@ impl FlowReport {
             let _ = write!(summary, ", payload_protocol={protocol}");
         }
         write_recovery_summary(&mut summary, &self.recovery);
+        write_protocol_summary(&mut summary, self.protocol_snapshot.as_ref());
         summary
     }
 
@@ -347,6 +357,7 @@ impl FlowReport {
             let _ = writeln!(output, "  recovery:");
             write_recovery_show(&mut output, &self.recovery);
         }
+        write_protocol_show(&mut output, self.protocol_snapshot.as_ref());
         if self.tcp_snd_nxt.is_some() || self.tcp_rcv_nxt.is_some() {
             let _ = writeln!(
                 output,
@@ -433,11 +444,65 @@ impl FlowReport {
             write_json_field(&mut output, "payload_protocol", protocol);
         }
         write_recovery_json(&mut output, &self.recovery);
+        write_protocol_json(&mut output, self.protocol_snapshot.as_ref());
         output.push(',');
         write_json_field(&mut output, "context_snapshot", &self.context_snapshot);
         output.push('}');
 
         output
+    }
+}
+
+fn write_protocol_summary(output: &mut String, snapshot: Option<&ProtocolContextSnapshot>) {
+    let Some(snapshot) = snapshot else { return };
+    let _ = write!(
+        output,
+        ", protocol={}, lifecycle={}",
+        snapshot.protocol, snapshot.lifecycle
+    );
+    if let Some(outcome) = &snapshot.outcome {
+        let _ = write!(output, ", protocol_outcome={outcome}");
+    }
+    if let Some(category) = &snapshot.error_category {
+        let _ = write!(output, ", error_category={category}");
+    }
+    if let Some(context) = &snapshot.error_context {
+        let _ = write!(output, ", error_context={context}");
+    }
+}
+
+fn write_protocol_show(output: &mut String, snapshot: Option<&ProtocolContextSnapshot>) {
+    let Some(snapshot) = snapshot else { return };
+    let _ = writeln!(output, "  protocol: {}", snapshot.protocol);
+    let _ = writeln!(output, "  protocol lifecycle: {}", snapshot.lifecycle);
+    if let Some(outcome) = &snapshot.outcome {
+        let _ = writeln!(output, "  protocol outcome: {outcome}");
+    }
+    if let Some(category) = &snapshot.error_category {
+        let _ = writeln!(output, "  error category: {category}");
+    }
+    if let Some(context) = &snapshot.error_context {
+        let _ = writeln!(output, "  error context: {context}");
+    }
+}
+
+fn write_protocol_json(output: &mut String, snapshot: Option<&ProtocolContextSnapshot>) {
+    let Some(snapshot) = snapshot else { return };
+    output.push(',');
+    write_json_field(output, "protocol", &snapshot.protocol);
+    output.push(',');
+    write_json_field(output, "protocol_lifecycle", &snapshot.lifecycle);
+    if let Some(outcome) = &snapshot.outcome {
+        output.push(',');
+        write_json_field(output, "protocol_outcome", outcome);
+    }
+    if let Some(category) = &snapshot.error_category {
+        output.push(',');
+        write_json_field(output, "error_category", category);
+    }
+    if let Some(context) = &snapshot.error_context {
+        output.push(',');
+        write_json_field(output, "error_context", context);
     }
 }
 

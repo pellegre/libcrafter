@@ -60,10 +60,11 @@ const INITIAL_ONLY_RETRY_EMPTY_TOKEN_OUTCOME: &str = "initial-only-retry-empty-t
 const INITIAL_ONLY_RETRY_REPEATED_OUTCOME: &str = "initial-only-retry-repeated";
 const INITIAL_ONLY_RETRY_LATE_OUTCOME: &str = "initial-only-retry-after-authentication";
 const INITIAL_ONLY_RETRY_POLICY_OUTCOME: &str = "initial-only-retry-policy-rejected";
-const INITIAL_AUTHENTICATION_FAILED_OUTCOME: &str = "initial-authentication-failed";
-const INITIAL_TRUNCATED_OUTCOME: &str = "initial-truncated-protected-payload";
+const INITIAL_WRONG_TUPLE_OUTCOME: &str = "initial-wrong-tuple";
+const INITIAL_MALFORMED_HEADER_OUTCOME: &str = "initial-malformed-header";
+const INITIAL_PROTECTION_FAILURE_OUTCOME: &str = "initial-protection-failure";
 const INITIAL_INVALID_PACKET_NUMBER_OUTCOME: &str = "initial-invalid-packet-number";
-const INITIAL_DISALLOWED_FRAME_OUTCOME: &str = "initial-disallowed-frame";
+const INITIAL_UNEXPECTED_FRAME_OUTCOME: &str = "initial-unexpected-frame";
 const INITIAL_CRYPTO_LIMIT_OUTCOME: &str = "initial-crypto-limit-exceeded";
 const INITIAL_ACK_RANGE_LIMIT_OUTCOME: &str = "initial-ack-range-limit-exceeded";
 const INITIAL_INVALID_ACK_OUTCOME: &str = "initial-invalid-ack";
@@ -414,14 +415,14 @@ pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow>
                 Err(_) => {
                     return Ok(initial_error_step(
                         context,
-                        INITIAL_DISALLOWED_FRAME_OUTCOME,
+                        INITIAL_UNEXPECTED_FRAME_OUTCOME,
                     ))
                 }
             };
             if !observations.unexpected_frames.is_empty() {
                 return Ok(initial_error_step(
                     context,
-                    INITIAL_DISALLOWED_FRAME_OUTCOME,
+                    INITIAL_UNEXPECTED_FRAME_OUTCOME,
                 ));
             }
             if let Some(close) = observations.close_frames.first() {
@@ -489,6 +490,7 @@ pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow>
                 snapshot.lifecycle = CLOSED.to_string();
                 snapshot.outcome = Some(INITIAL_ONLY_TIMEOUT_OUTCOME.to_string());
                 snapshot.close_category = Some("timeout".to_string());
+                set_initial_error_details(snapshot, INITIAL_ONLY_TIMEOUT_OUTCOME);
             });
             Ok(Step::done_with(INITIAL_ONLY_TIMEOUT_OUTCOME))
         })
@@ -568,6 +570,7 @@ fn version_negotiation_terminal_step(
     let mut snapshot = ProtocolContextSnapshot::new("quic", CLOSED);
     snapshot.outcome = Some(outcome.to_string());
     snapshot.close_category = Some("version-negotiation".to_string());
+    set_initial_error_details(&mut snapshot, outcome);
     context.set_protocol_snapshot(snapshot);
     Step::done_with(outcome)
 }
@@ -578,10 +581,12 @@ fn retry_rejected_step(context: &mut crate::PacketContext, outcome: &'static str
         snapshot.lifecycle = CLOSED.to_string();
         snapshot.outcome = Some(outcome.to_string());
         snapshot.close_category = Some("retry".to_string());
+        set_initial_error_details(snapshot, outcome);
     }) {
         let mut snapshot = ProtocolContextSnapshot::new("quic", CLOSED);
         snapshot.outcome = Some(outcome.to_string());
         snapshot.close_category = Some("retry".to_string());
+        set_initial_error_details(&mut snapshot, outcome);
         context.set_protocol_snapshot(snapshot);
     }
     Ok(Step::done_with(outcome))
@@ -743,14 +748,14 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
                 Err(_) => {
                     return Ok(initial_error_step(
                         context,
-                        INITIAL_DISALLOWED_FRAME_OUTCOME,
+                        INITIAL_UNEXPECTED_FRAME_OUTCOME,
                     ))
                 }
             };
             if !observations.unexpected_frames.is_empty() {
                 return Ok(initial_error_step(
                     context,
-                    INITIAL_DISALLOWED_FRAME_OUTCOME,
+                    INITIAL_UNEXPECTED_FRAME_OUTCOME,
                 ));
             }
             if let Some(close) = observations.close_frames.first() {
@@ -936,6 +941,7 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
             let mut snapshot = ProtocolContextSnapshot::new("quic", CLOSED);
             snapshot.outcome = Some(INITIAL_ONLY_TIMEOUT_OUTCOME.to_string());
             snapshot.close_category = Some("timeout".to_string());
+            set_initial_error_details(&mut snapshot, INITIAL_ONLY_TIMEOUT_OUTCOME);
             context.set_protocol_snapshot(snapshot);
             Ok(Step::done_with(INITIAL_ONLY_TIMEOUT_OUTCOME))
         })
@@ -967,18 +973,18 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
 
 fn initial_decode_error_step(context: &mut crate::PacketContext, error: &CrafterError) -> Step {
     let outcome = match error {
-        CrafterError::BufferTooShort { .. } => INITIAL_TRUNCATED_OUTCOME,
+        CrafterError::BufferTooShort { .. } => INITIAL_MALFORMED_HEADER_OUTCOME,
         CrafterError::InvalidFieldValue { field, reason }
             if *field == "quic.crypto.initial.ciphertext_tag"
                 && reason.contains("authentication failed") =>
         {
-            INITIAL_AUTHENTICATION_FAILED_OUTCOME
+            INITIAL_PROTECTION_FAILURE_OUTCOME
         }
         CrafterError::InvalidFieldValue { field, .. } if field.contains("packet_number") => {
             INITIAL_INVALID_PACKET_NUMBER_OUTCOME
         }
         CrafterError::InvalidFieldValue { .. } | CrafterError::InvalidMacAddress { .. } => {
-            INITIAL_TRUNCATED_OUTCOME
+            INITIAL_MALFORMED_HEADER_OUTCOME
         }
     };
     initial_error_step(context, outcome)
@@ -988,8 +994,52 @@ fn initial_error_step(context: &mut crate::PacketContext, outcome: &'static str)
     let mut snapshot = ProtocolContextSnapshot::new("quic", CLOSED);
     snapshot.outcome = Some(outcome.to_string());
     snapshot.close_category = Some("initial-error".to_string());
+    set_initial_error_details(&mut snapshot, outcome);
     context.set_protocol_snapshot(snapshot);
     Step::done_with(outcome)
+}
+
+fn set_initial_error_details(snapshot: &mut ProtocolContextSnapshot, outcome: &'static str) {
+    let (category, safe_context) = match outcome {
+        INITIAL_ONLY_TIMEOUT_OUTCOME => ("timeout", "bounded Initial wait expired"),
+        INITIAL_WRONG_TUPLE_OUTCOME | INITIAL_ONLY_RETRY_TUPLE_OUTCOME => {
+            ("wrong-tuple", "IPv4/UDP tuple did not match")
+        }
+        INITIAL_MALFORMED_HEADER_OUTCOME => ("malformed-header", "Initial header was invalid"),
+        INITIAL_PROTECTION_FAILURE_OUTCOME => {
+            ("protection-failure", "Initial authentication failed")
+        }
+        INITIAL_INVALID_PACKET_NUMBER_OUTCOME => {
+            ("invalid-packet-number", "Initial packet number was invalid")
+        }
+        INITIAL_INVALID_ACK_OUTCOME => ("invalid-ack", "Initial ACK was invalid"),
+        INITIAL_UNEXPECTED_FRAME_OUTCOME => ("unexpected-frame", "frame is not allowed in Initial"),
+        INITIAL_ONLY_VERSION_NEGOTIATION_REJECTED_OUTCOME
+        | INITIAL_ONLY_VERSION_NEGOTIATION_UNSUPPORTED_OUTCOME => (
+            "version-negotiation-rejection",
+            "Version Negotiation policy rejected the packet",
+        ),
+        INITIAL_ONLY_RETRY_LIMIT_OUTCOME
+        | INITIAL_ONLY_RETRY_INTEGRITY_OUTCOME
+        | INITIAL_ONLY_RETRY_VERSION_OUTCOME
+        | INITIAL_ONLY_RETRY_CONNECTION_ID_OUTCOME
+        | INITIAL_ONLY_RETRY_EMPTY_TOKEN_OUTCOME
+        | INITIAL_ONLY_RETRY_REPEATED_OUTCOME
+        | INITIAL_ONLY_RETRY_LATE_OUTCOME
+        | INITIAL_ONLY_RETRY_POLICY_OUTCOME => {
+            ("retry-rejection", "Retry validation rejected the packet")
+        }
+        INITIAL_ONLY_PEER_CLOSE_OUTCOME => ("peer-close", "peer closed during Initial"),
+        INITIAL_CRYPTO_LIMIT_OUTCOME => ("crypto-limit", "CRYPTO observation exceeded bound"),
+        INITIAL_ACK_RANGE_LIMIT_OUTCOME => ("ack-range-limit", "ACK ranges exceeded bound"),
+        INITIAL_AMPLIFICATION_LIMIT_OUTCOME => (
+            "amplification-limit",
+            "response exceeded amplification bound",
+        ),
+        _ => ("initial-error", "Initial-only flow rejected input"),
+    };
+    snapshot.error_category = Some(category.to_string());
+    snapshot.error_context = Some(safe_context.to_string());
 }
 
 fn initial_peer_close_step(
@@ -1068,6 +1118,9 @@ fn record_initial_close(
     snapshot.outcome = Some(outcome.to_string());
     snapshot.close_category = Some(format!("{origin}-{close_kind}"));
     snapshot.close_code = Some(close.error_code().value());
+    if origin == "peer" {
+        set_initial_error_details(&mut snapshot, INITIAL_ONLY_PEER_CLOSE_OUTCOME);
+    }
     context.set_protocol_snapshot(snapshot);
     Ok(())
 }
@@ -1923,10 +1976,85 @@ fn validate_common(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::report::{FlowOutcome, FlowReport};
     use crafter::{
         quic_decode_initial_protected_payload_with_keys, Ipv4, Quic, QuicRetryIntegrityStatus,
         QuicVarInt, Udp,
     };
+
+    #[test]
+    fn initial_error_outcomes_are_stable_and_redacted() {
+        let cases = [
+            (INITIAL_ONLY_TIMEOUT_OUTCOME, "timeout"),
+            (INITIAL_WRONG_TUPLE_OUTCOME, "wrong-tuple"),
+            (INITIAL_MALFORMED_HEADER_OUTCOME, "malformed-header"),
+            (INITIAL_PROTECTION_FAILURE_OUTCOME, "protection-failure"),
+            (
+                INITIAL_INVALID_PACKET_NUMBER_OUTCOME,
+                "invalid-packet-number",
+            ),
+            (INITIAL_INVALID_ACK_OUTCOME, "invalid-ack"),
+            (INITIAL_UNEXPECTED_FRAME_OUTCOME, "unexpected-frame"),
+            (
+                INITIAL_ONLY_VERSION_NEGOTIATION_REJECTED_OUTCOME,
+                "version-negotiation-rejection",
+            ),
+            (INITIAL_ONLY_RETRY_INTEGRITY_OUTCOME, "retry-rejection"),
+            (INITIAL_ONLY_PEER_CLOSE_OUTCOME, "peer-close"),
+        ];
+        let forbidden = [
+            "traffic-secret-deadbeef",
+            "retry-token-cafebabe",
+            "full-crypto-client-hello",
+            "protected-packet-dump",
+        ];
+
+        for (outcome, expected_category) in cases {
+            let mut snapshot = ProtocolContextSnapshot::new("quic", CLOSED);
+            snapshot.outcome = Some(outcome.to_string());
+            snapshot.close_category = Some("initial-error".to_string());
+            set_initial_error_details(&mut snapshot, outcome);
+
+            assert_eq!(snapshot.lifecycle, CLOSED);
+            assert_eq!(snapshot.outcome.as_deref(), Some(outcome));
+            assert_eq!(snapshot.error_category.as_deref(), Some(expected_category));
+            assert!(snapshot.error_context.as_ref().is_some_and(|value| {
+                !value.is_empty() && value.len() <= 64 && value.is_ascii()
+            }));
+
+            let report = FlowReport::new(
+                "quic-initial-redaction",
+                Role::Initiator,
+                true,
+                vec![INITIAL_SENT.to_string(), CLOSED.to_string()],
+                1,
+                1,
+                Vec::new(),
+                1,
+                Duration::ZERO,
+                FlowOutcome::Completed,
+                "PacketContext protocol=quic lifecycle=Closed keys=[]",
+            )
+            .with_protocol_snapshot(Some(snapshot));
+            for artifact in [report.summary(), report.show(), report.to_json()] {
+                assert!(artifact.contains(outcome), "missing outcome in {artifact}");
+                assert!(artifact.contains(expected_category));
+                for secret in forbidden {
+                    assert!(!artifact.contains(secret));
+                }
+            }
+        }
+
+        let original = CrafterError::buffer_too_short("protected-packet-dump", 1_200, 17);
+        let preserved = original.clone();
+        let mut context = crate::PacketContext::new();
+        let terminal = initial_decode_error_step(&mut context, &original);
+        assert_eq!(
+            original, preserved,
+            "classification must not consume the error"
+        );
+        assert_eq!(terminal.outcome(), Some(INITIAL_MALFORMED_HEADER_OUTCOME));
+    }
 
     #[test]
     fn initial_ack_ranges_only_cover_sent_packets() -> crate::Result<()> {
