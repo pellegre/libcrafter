@@ -48,6 +48,7 @@ enum StepAction {
 #[derive(Clone, Copy)]
 enum StepMode {
     Active,
+    Recovery,
     PassiveSetup,
 }
 
@@ -86,7 +87,7 @@ impl Matcher for StateTransitionsMatcher<'_> {
 
 struct OutstandingSegment {
     awaiting_state: String,
-    packet: crafter::Packet,
+    packets: Vec<crafter::Packet>,
 }
 
 struct ScheduledWakeup {
@@ -395,7 +396,7 @@ impl Runner {
                         flow,
                         current_state.as_str(),
                         step,
-                        StepMode::Active,
+                        StepMode::Recovery,
                         iteration,
                         ctx,
                     )? {
@@ -523,11 +524,17 @@ impl Runner {
         let wake_after = step.wakeup();
         let outputs = step.outputs().to_vec();
 
-        if matches!(mode, StepMode::Active) {
+        if matches!(mode, StepMode::Active | StepMode::Recovery) {
             if !outputs.is_empty() {
                 let mutated_outputs = outputs
                     .into_iter()
-                    .map(|output| self.mutator.mutate(output.into_packet(), iteration, ctx))
+                    .map(|output| {
+                        let allows_exact_replay = output.allows_exact_replay();
+                        let requires_regeneration = output.requires_regeneration();
+                        self.mutator
+                            .mutate(output.into_packet(), iteration, ctx)
+                            .map(|packet| (packet, allows_exact_replay, requires_regeneration))
+                    })
                     .collect::<Result<Vec<_>>>()?;
                 // Repeat the complete batch in stored order: A, B, C, A, B, C.
                 // Protected QUIC output uses regeneration-only recovery and must
@@ -542,7 +549,9 @@ impl Runner {
                         }
                     }
 
-                    for (output_index, packet) in mutated_outputs.iter().enumerate() {
+                    for (output_index, (packet, _, requires_regeneration)) in
+                        mutated_outputs.iter().enumerate()
+                    {
                         if let Err(error) = self.send_packet(packet) {
                             return Err(FlowError::BatchSend {
                                 output_index,
@@ -550,17 +559,27 @@ impl Runner {
                                 error: error.to_string(),
                             });
                         }
+                        if matches!(mode, StepMode::Recovery) && *requires_regeneration {
+                            ctx.add_regenerated_transmits(1);
+                        }
                     }
                 }
 
                 self.outstanding_segment = if expects_reply {
-                    mutated_outputs
-                        .last()
-                        .cloned()
-                        .map(|packet| OutstandingSegment {
-                            awaiting_state,
-                            packet,
+                    let packets = mutated_outputs
+                        .into_iter()
+                        .filter_map(|(packet, allows_exact_replay, _)| {
+                            allows_exact_replay.then_some(packet)
                         })
+                        .collect::<Vec<_>>();
+                    if packets.is_empty() {
+                        None
+                    } else {
+                        Some(OutstandingSegment {
+                            awaiting_state,
+                            packets,
+                        })
+                    }
                 } else {
                     None
                 };
@@ -604,7 +623,7 @@ impl Runner {
         &mut self,
         matcher: &dyn Matcher,
         current_state: &str,
-        ctx: &PacketContext,
+        ctx: &mut PacketContext,
         timeout: Duration,
     ) -> Result<ReceiveCompletion> {
         let mut retransmits = 0;
@@ -614,7 +633,7 @@ impl Runner {
                 return Ok(ReceiveCompletion::Packet(packet));
             }
 
-            if !self.retransmit_outstanding(current_state, retransmits)? {
+            if !self.retransmit_outstanding(current_state, retransmits, ctx)? {
                 return Ok(ReceiveCompletion::TimedOut(DeadlineKind::Step));
             }
 
@@ -622,7 +641,12 @@ impl Runner {
         }
     }
 
-    fn retransmit_outstanding(&mut self, current_state: &str, retransmits: u32) -> Result<bool> {
+    fn retransmit_outstanding(
+        &mut self,
+        current_state: &str,
+        retransmits: u32,
+        ctx: &mut PacketContext,
+    ) -> Result<bool> {
         let Some(policy) = self.options.retransmit else {
             return Ok(false);
         };
@@ -644,8 +668,11 @@ impl Runner {
             thread::sleep(interval);
         }
 
-        let packet = outstanding.packet.clone();
-        self.send_packet(&packet)?;
+        let packets = outstanding.packets.clone();
+        for packet in packets {
+            self.send_packet(&packet)?;
+            ctx.add_exact_replay_transmits(1);
+        }
         Ok(true)
     }
 
@@ -2038,10 +2065,85 @@ mod tests {
         assert_eq!(report.outcome(), &FlowOutcome::TimedOut);
         assert_eq!(report.sent_count(), 3);
         assert_eq!(runner.send_reports().len(), 3);
+        assert_eq!(report.recovery_metrics().exact_replay_transmits(), 2);
+        assert_eq!(report.recovery_metrics().regenerated_transmits(), 0);
         assert!(runner
             .send_reports()
             .iter()
             .all(crafter::net::SendReport::is_dry_run));
+    }
+
+    #[test]
+    fn runner_never_replays_regeneration_only_output() {
+        let protected_looking = crafter::Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 53))
+            / crafter::Udp::new().sport(49_152).dport(443)
+            / crafter::Raw::from_bytes([0xc3, 0x00, 0x00, 0x00, 0x01, 0xa5, 0x7e, 0x91]);
+        let transition = Transition::on(
+            PredicateMatcher::new("never matches", |_packet, _ctx| false),
+            |_packet, _ctx| Ok(Step::goto("Done")),
+        )
+        .targets(["Done"]);
+        let waiting = FlowState::new("Waiting")
+            .on_entry(move |_ctx| Ok(Step::send_regeneration_only(protected_looking.clone())))
+            .on(transition);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-regeneration-only")
+            .state(waiting)
+            .state(done)
+            .initial("Waiting");
+        let options = RunOptions::default()
+            .step_timeout(Duration::from_millis(1))
+            .retransmit(2, Duration::ZERO);
+        let mut runner = Runner::with_source(options, MemoryCaptureSource::default())
+            .expect("runner opens with empty source");
+
+        let report = runner
+            .run(&mut flow)
+            .expect("runner returns timeout without replaying protected output");
+
+        assert_eq!(report.outcome(), &FlowOutcome::TimedOut);
+        assert_eq!(report.sent_count(), 1);
+        assert_eq!(runner.send_reports().len(), 1);
+        assert!(runner.outstanding_segment.is_none());
+        assert_eq!(report.recovery_metrics().exact_replay_transmits(), 0);
+        assert_eq!(report.recovery_metrics().regenerated_transmits(), 0);
+    }
+
+    #[test]
+    fn runner_counts_timeout_regeneration_separately_from_exact_replay() {
+        let initial = request_packet();
+        let regenerated = request_packet();
+        let waiting = FlowState::new("Waiting")
+            .on_entry(move |_ctx| Ok(Step::send_regeneration_only(initial.clone())))
+            .on_timeout(move |_ctx| {
+                Ok(Step::send_regeneration_only(regenerated.clone()).goto("Recovered"))
+            })
+            .timeout_targets(["Recovered"]);
+        let recovered = FlowState::new("Recovered")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-timeout-regeneration-metrics")
+            .state(waiting)
+            .state(recovered)
+            .initial("Waiting");
+        let options = RunOptions::default()
+            .step_timeout(Duration::from_millis(1))
+            .retransmit(2, Duration::ZERO);
+        let mut runner = Runner::with_source(options, MemoryCaptureSource::default())
+            .expect("runner opens with empty source");
+
+        let report = runner
+            .run(&mut flow)
+            .expect("runner regenerates output from timeout action");
+
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(report.sent_count(), 2);
+        assert_eq!(report.recovery_metrics().regenerated_transmits(), 1);
+        assert_eq!(report.recovery_metrics().exact_replay_transmits(), 0);
     }
 
     #[test]
