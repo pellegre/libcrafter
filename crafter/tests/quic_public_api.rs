@@ -90,6 +90,32 @@ fn quic_packet_number_reconstructs_full_values() -> crafter::Result<()> {
 }
 
 #[test]
+fn quic_complete_initial_protection_returns_typed_packet() -> crafter::Result<()> {
+    let destination_connection_id = QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]);
+    let plaintext = QuicFrame::crypto(QuicVarInt::from_u64_unchecked(0), [0x42; 24])?;
+    let initial = QuicLongHeaderPacket::initial_builder()
+        .first_byte(0xc1)
+        .destination_connection_id(destination_connection_id.clone())
+        .source_connection_id(QuicConnectionId::from_bytes([0xaa]))
+        .token([0xde, 0xad])
+        .packet_number(QuicPacketNumber::new(0x1234).with_encoded_len(2))
+        .frame(plaintext.clone())
+        .build()?;
+    let keys = derive_quic_initial_secrets(QUIC_VERSION_1, destination_connection_id.as_bytes())?
+        .client_packet_keys()?;
+
+    let protected = quic_protect_complete_initial_packet(&initial, 0x1234, &keys, 2)?;
+
+    assert!(protected.long_header().is_none());
+    assert_ne!(protected.as_bytes(), initial.as_bytes());
+    let decoded = quic_decode_initial_protected_payload_with_keys(protected.as_bytes(), &keys)?;
+    assert_eq!(decoded.packet_number().value(), 0x1234);
+    assert_eq!(decoded.packet_number_len(), 2);
+    assert_eq!(decoded.decrypted_payload(), plaintext.as_bytes());
+    Ok(())
+}
+
+#[test]
 fn exports_quic_symbols() -> crafter::Result<()> {
     assert_eq!(QUIC_VERSION_NEGOTIATION, 0x0000_0000);
     assert_eq!(QUIC_VERSION_1, 0x0000_0001);
