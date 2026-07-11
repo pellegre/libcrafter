@@ -857,10 +857,55 @@ pub(crate) enum QuicEndpointEvent {
     },
     Draining,
     IdleTimeout,
+    TlsAuthenticationFailed {
+        failure: QuicTlsAuthenticationFailure,
+        transport_close: Option<u64>,
+    },
     FatalError {
         category: QuicEndpointErrorCategory,
         context: &'static str,
     },
+}
+
+/// Stable classification of TLS failures observed before establishment.
+///
+/// Provider-controlled certificate and alert text is deliberately excluded.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum QuicTlsAuthenticationFailure {
+    PeerNameMismatch,
+    UnknownIssuer,
+    CertificateExpired,
+    MalformedCertificate,
+    AlpnMismatch,
+    HandshakeAlert,
+}
+
+#[cfg(feature = "quic-endpoint")]
+impl QuicTlsAuthenticationFailure {
+    fn label(self) -> &'static str {
+        match self {
+            Self::PeerNameMismatch => "peer-name-mismatch",
+            Self::UnknownIssuer => "unknown-issuer",
+            Self::CertificateExpired => "certificate-expired",
+            Self::MalformedCertificate => "malformed-certificate",
+            Self::AlpnMismatch => "alpn-mismatch",
+            Self::HandshakeAlert => "handshake-alert",
+        }
+    }
+}
+
+/// Convert a provider TLS error into a bounded event without retaining its text.
+#[cfg(feature = "quic-endpoint")]
+pub(crate) fn map_provider_tls_authentication_failure<E>(
+    failure: QuicTlsAuthenticationFailure,
+    transport_close: Option<u64>,
+    _provider_error: E,
+) -> QuicEndpointEvent {
+    QuicEndpointEvent::TlsAuthenticationFailed {
+        failure,
+        transport_close,
+    }
 }
 
 /// Flow-owned normalization state for provider lifecycle notifications.
@@ -971,6 +1016,27 @@ impl QuicEndpointEventMapper {
                         snapshot.close_category = Some("idle-timeout".to_string());
                     });
                 }
+                QuicEndpointEvent::TlsAuthenticationFailed {
+                    failure,
+                    transport_close,
+                } => {
+                    self.authenticated_handshake = false;
+                    self.lifecycle = if transport_close.is_some() {
+                        QuicEndpointLifecycle::Closing
+                    } else {
+                        QuicEndpointLifecycle::Closed
+                    };
+                    context.insert_namespaced_bool("quic", "handshake.authenticated", false)?;
+                    context.insert_namespaced_bool("quic", "handshake.established", false)?;
+                    update_quic_protocol_snapshot(context, |snapshot| {
+                        snapshot.outcome = Some("tls-authentication-failed".to_string());
+                        snapshot.close_category =
+                            transport_close.map(|_| "tls-authentication".to_string());
+                        snapshot.close_code = *transport_close;
+                        snapshot.error_category = Some(failure.label().to_string());
+                        snapshot.error_context = Some("authenticating QUIC peer".to_string());
+                    });
+                }
                 QuicEndpointEvent::FatalError {
                     category,
                     context: operation,
@@ -1000,6 +1066,24 @@ impl QuicEndpointEventMapper {
 
     pub(crate) fn authenticated_handshake(&self) -> bool {
         self.authenticated_handshake
+    }
+
+    /// Normalize provider events and drain any resulting close datagrams.
+    ///
+    /// The shared transmit wrapper marks every protected datagram as
+    /// regeneration-only and retains the configured tuple in the typed packet.
+    pub(crate) fn poll_and_drain_transmits<D: QuicEndpointDriver + ?Sized>(
+        &mut self,
+        driver: &mut D,
+        now: Instant,
+        addresses: QuicEndpointAddresses,
+        context: &mut PacketContext,
+    ) -> Result<(Vec<QuicEndpointEvent>, Step)> {
+        context.insert_namespaced_string("quic", "tuple.local", addresses.local.to_string())?;
+        context.insert_namespaced_string("quic", "tuple.peer", addresses.peer.to_string())?;
+        let events = self.poll(driver, context)?;
+        let transmits = driver.drain_transmit_step(now, addresses, context)?;
+        Ok((events, transmits))
     }
 }
 
@@ -2433,5 +2517,218 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[cfg(feature = "quic-endpoint")]
+    #[test]
+    fn tls_authentication_failures_are_bounded_and_redacted() {
+        use std::{collections::VecDeque, net::SocketAddr, time::Instant};
+
+        use super::{
+            map_provider_tls_authentication_failure, QuicEndpointAddresses, QuicEndpointDatagram,
+            QuicEndpointDriver, QuicEndpointEvent, QuicEndpointEventMapper, QuicEndpointLifecycle,
+            QuicEndpointPacketSpaceCounts, QuicEndpointRecoveryCounts, QuicEndpointSnapshot,
+            QuicEndpointStreamId, QuicEndpointStreamRead, QuicEndpointTransmit,
+            QuicEndpointTransmitPacketCounts, QuicTlsAuthenticationFailure,
+        };
+        use crate::{step::SendIntent, FlowOutcome, FlowReport, PacketContext, Result, Role};
+
+        struct AuthenticationFailureDriver {
+            events: VecDeque<QuicEndpointEvent>,
+            transmits: Vec<QuicEndpointTransmit>,
+            snapshot: QuicEndpointSnapshot,
+        }
+
+        impl QuicEndpointDriver for AuthenticationFailureDriver {
+            fn start(&mut self, _: Instant) -> Result<()> {
+                Ok(())
+            }
+
+            fn handle_datagram(&mut self, _: QuicEndpointDatagram) -> Result<()> {
+                Ok(())
+            }
+
+            fn drain_transmits(&mut self, _: Instant) -> Result<Vec<QuicEndpointTransmit>> {
+                Ok(std::mem::take(&mut self.transmits))
+            }
+
+            fn next_timeout(&self) -> Option<Instant> {
+                None
+            }
+
+            fn handle_timeout(&mut self, _: Instant) -> Result<()> {
+                Ok(())
+            }
+
+            fn poll_events(&mut self) -> Result<Vec<QuicEndpointEvent>> {
+                Ok(self.events.drain(..).collect())
+            }
+
+            fn open_bidirectional_stream(&mut self) -> Result<QuicEndpointStreamId> {
+                unreachable!("authentication failed before stream creation")
+            }
+
+            fn write_stream(&mut self, _: QuicEndpointStreamId, _: &[u8]) -> Result<usize> {
+                unreachable!("authentication failed before stream creation")
+            }
+
+            fn finish_stream(&mut self, _: QuicEndpointStreamId) -> Result<()> {
+                unreachable!("authentication failed before stream creation")
+            }
+
+            fn read_stream(
+                &mut self,
+                _: QuicEndpointStreamId,
+                _: usize,
+            ) -> Result<QuicEndpointStreamRead> {
+                unreachable!("authentication failed before stream creation")
+            }
+
+            fn snapshot(&self) -> QuicEndpointSnapshot {
+                self.snapshot.clone()
+            }
+
+            fn close(&mut self, _: Instant, _: u64, _: &[u8]) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let local: SocketAddr = "192.0.2.10:4433".parse().unwrap();
+        let peer: SocketAddr = "198.51.100.20:4433".parse().unwrap();
+        let addresses = QuicEndpointAddresses::new(local, peer);
+        let cases = [
+            (
+                QuicTlsAuthenticationFailure::PeerNameMismatch,
+                "peer-name-mismatch",
+            ),
+            (
+                QuicTlsAuthenticationFailure::UnknownIssuer,
+                "unknown-issuer",
+            ),
+            (
+                QuicTlsAuthenticationFailure::CertificateExpired,
+                "certificate-expired",
+            ),
+            (
+                QuicTlsAuthenticationFailure::MalformedCertificate,
+                "malformed-certificate",
+            ),
+            (QuicTlsAuthenticationFailure::AlpnMismatch, "alpn-mismatch"),
+            (
+                QuicTlsAuthenticationFailure::HandshakeAlert,
+                "handshake-alert",
+            ),
+        ];
+        let secret = "certificate=deadbeef private-key=feedface alert=attacker-controlled";
+
+        for (index, (failure, expected_category)) in cases.into_iter().enumerate() {
+            let emits_close = index % 2 == 0;
+            let event = map_provider_tls_authentication_failure(
+                failure,
+                emits_close.then_some(0x12a),
+                secret.to_string(),
+            );
+            assert!(!format!("{event:?}").contains(secret));
+
+            let transmits = if emits_close {
+                vec![QuicEndpointTransmit {
+                    source_ip: "192.0.2.10".parse().unwrap(),
+                    source_port: 4433,
+                    destination_ip: "198.51.100.20".parse().unwrap(),
+                    destination_port: 4433,
+                    payload: vec![0x40, index as u8, 0xaa],
+                    packet_counts: QuicEndpointTransmitPacketCounts {
+                        application: 1,
+                        ..Default::default()
+                    },
+                }]
+            } else {
+                Vec::new()
+            };
+            let snapshot = QuicEndpointSnapshot {
+                lifecycle: QuicEndpointLifecycle::Handshaking,
+                local_connection_id: vec![0x11; 8],
+                peer_connection_id: vec![0x22; 8],
+                initial: QuicEndpointPacketSpaceCounts::default(),
+                handshake: QuicEndpointPacketSpaceCounts::default(),
+                application: QuicEndpointPacketSpaceCounts::default(),
+                stream_bytes_sent: 0,
+                stream_bytes_received: 0,
+                recovery: QuicEndpointRecoveryCounts::default(),
+            };
+            let mut driver = AuthenticationFailureDriver {
+                events: VecDeque::from([QuicEndpointEvent::HandshakeProgress, event]),
+                transmits,
+                snapshot,
+            };
+            let mut mapper = QuicEndpointEventMapper::new(QuicEndpointLifecycle::InitialSent);
+            let mut context = PacketContext::new();
+
+            let (_, step) = mapper
+                .poll_and_drain_transmits(&mut driver, Instant::now(), addresses, &mut context)
+                .unwrap();
+
+            assert!(!mapper.authenticated_handshake());
+            assert_eq!(
+                context
+                    .get_namespaced_bool("quic", "handshake.established")
+                    .unwrap(),
+                Some(false)
+            );
+            assert_eq!(
+                context
+                    .get_namespaced_string("quic", "tuple.local")
+                    .unwrap(),
+                Some(local.to_string().as_str())
+            );
+            assert_eq!(
+                context.get_namespaced_string("quic", "tuple.peer").unwrap(),
+                Some(peer.to_string().as_str())
+            );
+            let observed = context.protocol_snapshot().unwrap();
+            assert_eq!(
+                observed.lifecycle,
+                if emits_close { "closing" } else { "closed" }
+            );
+            assert_eq!(
+                observed.outcome.as_deref(),
+                Some("tls-authentication-failed")
+            );
+            assert_eq!(observed.error_category.as_deref(), Some(expected_category));
+            assert_eq!(
+                observed.error_context.as_deref(),
+                Some("authenticating QUIC peer")
+            );
+            assert_eq!(
+                observed.local_connection_id.as_deref(),
+                Some(&[0x11; 8][..])
+            );
+            assert_eq!(observed.peer_connection_id.as_deref(), Some(&[0x22; 8][..]));
+            assert_eq!(step.outputs().len(), usize::from(emits_close));
+            for output in step.outputs() {
+                assert_eq!(output.intent(), SendIntent::ReplyExpectedRegenerationOnly);
+            }
+
+            let report = FlowReport::new(
+                "quic authentication failure",
+                Role::Initiator,
+                true,
+                vec!["Handshaking".to_string(), observed.lifecycle.clone()],
+                step.outputs().len(),
+                1,
+                Vec::new(),
+                1,
+                std::time::Duration::ZERO,
+                FlowOutcome::Completed,
+                context.summary(),
+            )
+            .with_protocol_snapshot(Some(observed.clone()));
+            for rendered in [report.summary(), report.show(), report.to_json()] {
+                assert!(rendered.contains(expected_category));
+                assert!(!rendered.contains("deadbeef"));
+                assert!(!rendered.contains("feedface"));
+                assert!(!rendered.contains("attacker-controlled"));
+            }
+        }
     }
 }
