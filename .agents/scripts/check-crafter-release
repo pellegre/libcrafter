@@ -142,11 +142,12 @@ inspect_package_contents() {
 
 create_and_inspect_package() {
   local crate_file
+  local package_dir="${CARGO_TARGET_DIR:-target}/package"
 
-  rm -f "target/package/${crate_name}-"*.crate
+  rm -f "${package_dir}/${crate_name}-"*.crate
   run cargo package -p "$crate_name" --allow-dirty --no-verify "${cargo_offline_flags[@]}"
 
-  crate_file="$(find target/package -maxdepth 1 -type f -name "${crate_name}-*.crate" -printf '%T@ %p\n' | sort -nr | awk 'NR == 1 { print $2 }')"
+  crate_file="$(find "$package_dir" -maxdepth 1 -type f -name "${crate_name}-*.crate" -printf '%T@ %p\n' | sort -nr | awk 'NR == 1 { print $2 }')"
   [[ -n "$crate_file" ]] || die "cargo package did not create a ${crate_name} archive"
 
   inspect_package_contents "$crate_file"

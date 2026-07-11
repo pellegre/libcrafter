@@ -35,7 +35,7 @@ fn assert_is_at(
 
     assert_eq!(ethernet.source(), Some(ethernet_src));
     assert_eq!(ethernet.destination(), Some(ethernet_dst));
-    assert_eq!(arp.opcode_value(), crafter::ArpOperation::Reply.into());
+    assert_eq!(arp.opcode_value(), u16::from(crafter::ArpOperation::Reply));
     assert_eq!(arp.sender_ipv4(), Some(sender_ip));
     assert_eq!(arp.sender_mac(), Some(sender_mac));
     assert_eq!(arp.target_ipv4(), Some(target_ip));
