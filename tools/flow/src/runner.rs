@@ -869,6 +869,7 @@ fn tcp_payload_len(packet: &crafter::Packet) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{DeadlineKind, EffectiveDeadline, Runner};
+    use crate::step::SendIntent;
     use crate::{
         Binding, Bound, CaptureSource, Flow, FlowBuilderExt, FlowError, FlowOutcome, FlowState,
         FnMutator, Identity, MemoryCaptureSource, PredicateMatcher, Role, RunOptions, Step,
@@ -2050,19 +2051,36 @@ mod tests {
     }
 
     #[test]
-    fn runner_retransmit_policy_reemits_outstanding_segment_before_timeout() {
-        let mut flow = waiting_reply_flow("runner-retransmit", request_packet());
+    fn runner_retransmits_outstanding_segment() {
+        let request = request_packet();
+        let legacy_step = Step::send(request.clone());
+        assert_eq!(legacy_step.outputs().len(), 1);
+        assert_eq!(
+            legacy_step.outputs()[0].intent(),
+            SendIntent::ReplyExpectedReplaySafe
+        );
+
+        let mut flow = waiting_reply_flow("runner-retransmit", request);
+        let retransmit_interval = Duration::from_millis(2);
         let options = RunOptions::default()
             .step_timeout(Duration::from_millis(1))
-            .retransmit(2, Duration::ZERO);
+            .retransmit(2, retransmit_interval);
         let mut runner = Runner::with_source(options, MemoryCaptureSource::default())
             .expect("runner opens with empty source");
+
+        let policy = runner
+            .options()
+            .retransmit
+            .expect("legacy retransmit policy is configured");
+        assert_eq!(policy.count(), 2);
+        assert_eq!(policy.interval(), retransmit_interval);
 
         let report = runner
             .run(&mut flow)
             .expect("runner returns timeout report");
 
         assert_eq!(report.outcome(), &FlowOutcome::TimedOut);
+        assert!(report.elapsed() >= retransmit_interval * 2);
         assert_eq!(report.sent_count(), 3);
         assert_eq!(runner.send_reports().len(), 3);
         assert_eq!(report.recovery_metrics().exact_replay_transmits(), 2);
@@ -2071,6 +2089,41 @@ mod tests {
             .send_reports()
             .iter()
             .all(crafter::net::SendReport::is_dry_run));
+
+        let transition = Transition::on(
+            PredicateMatcher::new("any packet", |_packet, _ctx| true),
+            |_packet, _ctx| Ok(Step::goto("Done")),
+        )
+        .targets(["Done"]);
+        let request = request_packet();
+        let waiting = FlowState::new("Waiting")
+            .on_entry(move |_ctx| Ok(Step::send(request.clone())))
+            .on(transition);
+        let done = FlowState::new("Done")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut matched_flow = Flow::new("runner-clears-outstanding")
+            .state(waiting)
+            .state(done)
+            .initial("Waiting");
+        let mut matched_runner = Runner::with_source(
+            RunOptions::default().retransmit(2, retransmit_interval),
+            MemoryCaptureSource::new(vec![request_packet()]),
+        )
+        .expect("runner opens with matching reply");
+
+        let matched_report = matched_runner
+            .run(&mut matched_flow)
+            .expect("runner completes after matching reply");
+
+        assert_eq!(matched_report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(matched_report.sent_count(), 1);
+        assert_eq!(matched_runner.send_reports().len(), 1);
+        assert_eq!(
+            matched_report.recovery_metrics().exact_replay_transmits(),
+            0
+        );
+        assert!(matched_runner.outstanding_segment.is_none());
     }
 
     #[test]
