@@ -408,7 +408,7 @@ class ProbePlanningRegistryTest(unittest.TestCase):
                     self.assertIn("quic", plan, name)
                     self.assertEqual(
                         plan["target_service"]["kind"],
-                        "quic-controlled-udp",
+                        case.metadata["service"],
                         name,
                     )
                 elif case.metadata.get("protocol") == "snmp":

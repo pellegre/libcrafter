@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import ipaddress
+import json
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
 from tools.probe.engine import cases, cli, planning, target_services
 from tools.probe.engine.model import ProbeRunRequest
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _request(
@@ -166,10 +173,55 @@ class QuicProbePlanTest(unittest.TestCase):
         stream = plan["conversation"]["stream_exchange"]
         self.assertEqual(stream["bidirectional_streams"], 1)
         self.assertGreater(stream["request_length"], 0)
+        self.assertEqual(stream["max_request_bytes"], stream["request_length"])
         self.assertEqual(len(stream["request_sha256"]), 64)
         self.assertGreater(stream["response_length"], 0)
+        self.assertEqual(
+            stream["max_response_bytes"], stream["response_length"]
+        )
         self.assertEqual(len(stream["response_sha256"]), 64)
         self.assertFalse(stream["payload_bytes_in_artifacts"])
+
+    def test_protected_flow_actions_are_bounded_planned_and_provider_only(self) -> None:
+        plan = _plan("quic-protected-flow-plan")
+        action_plan = plan["provider_action_plan"]
+
+        self.assertEqual(action_plan["default_mode"], "planned")
+        self.assertTrue(action_plan["live_confirmation_required"])
+        self.assertFalse(action_plan["developer_host_fallback"])
+        actions = action_plan["actions"]
+        self.assertTrue(actions)
+        self.assertTrue(
+            all(action["mode"] in {"planned", "dry-run"} for action in actions)
+        )
+        by_name = {action["name"]: action for action in actions}
+        self.assertEqual(
+            by_name["build-feature-enabled-flow"]["command"],
+            [
+                "cargo",
+                "build",
+                "-p",
+                "crafter-flow",
+                "--features",
+                "quic-endpoint",
+            ],
+        )
+        self.assertEqual(
+            by_name["build-feature-enabled-flow"]["roles"],
+            ["stimulus", "target"],
+        )
+        self.assertFalse(
+            by_name["generate-synthetic-identity"]["secrets_in_plan"]
+        )
+        exchange = by_name["run-bounded-client-request"]
+        stream = plan["conversation"]["stream_exchange"]
+        self.assertEqual(exchange["max_request_bytes"], stream["request_length"])
+        self.assertEqual(exchange["max_response_bytes"], stream["response_length"])
+        self.assertEqual(
+            by_name["capture-protected-udp"]["filter"], plan["capture_filter"]
+        )
+        self.assertTrue(by_name["collect-artifacts"]["before_teardown"])
+        self.assertTrue(by_name["teardown-endpoints"]["always"])
 
     def test_protected_flow_plan_declares_provider_artifact_and_validation_contract(
         self,
@@ -262,6 +314,105 @@ class QuicProbePlanTest(unittest.TestCase):
         self.assertEqual(services[0]["protocol"], "udp")
         self.assertEqual(services[0]["port"], 4433)
         self.assertFalse(setup["starts_services"])
+
+
+class QuicProviderDryRunTest(unittest.TestCase):
+    def test_documented_probe_dry_run_is_non_live_and_structurally_skips_gaps(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "quic-smoke-dry-run"
+            completed = subprocess.run(
+                [
+                    str(_REPO_ROOT / "tools/probe/run"),
+                    "--provider",
+                    "qemu",
+                    "--dry-run",
+                    "--profile",
+                    "quic-smoke",
+                    "--seed",
+                    "1",
+                    "--count",
+                    "5",
+                    "--out",
+                    str(out),
+                ],
+                cwd=_REPO_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("status=dry-run", completed.stdout)
+            report = json.loads((out / "report.json").read_text())
+
+        self.assertEqual(report["status"], "dry-run")
+        self.assertTrue(report["request"]["dry_run"])
+        self.assertFalse(report["request"]["confirm_live_run"])
+        self.assertEqual(report["metadata"]["executed"], 0)
+        self.assertTrue(
+            all(
+                record["dry_run"]
+                for record in report["metadata"]["command_records"]
+            )
+        )
+        protected = next(
+            item
+            for item in report["results"]
+            if item["case"] == "quic-protected-flow-plan"
+        )
+        self.assertEqual(protected["status"], "skipped")
+        skip = protected["skip"]
+        self.assertEqual(skip["reason"], "provider_capability_unavailable")
+        self.assertTrue(skip["metadata"]["missing_capabilities"])
+        self.assertFalse(
+            skip["metadata"]["probe_plan"]["provider_action_plan"][
+                "developer_host_fallback"
+            ]
+        )
+
+    def test_documented_lab_plan_keeps_every_command_non_live(self) -> None:
+        completed = subprocess.run(
+            [
+                str(_REPO_ROOT / "tools/lab/run"),
+                "plan",
+                "--provider",
+                "qemu",
+                "--dry-run",
+                "--profile",
+                "quic-smoke",
+                "--seed",
+                "1",
+                "--role",
+                "stimulus",
+                "--role",
+                "target",
+                "--json",
+            ],
+            cwd=_REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        session = json.loads(completed.stdout)
+
+        self.assertTrue(session["dry_run"])
+        self.assertEqual(
+            [role["name"] for role in session["roles"]], ["stimulus", "target"]
+        )
+        self.assertEqual(session["created_endpoint_ids"], [])
+        self.assertEqual(session["cleanup_state"]["status"], "not_started")
+        self.assertTrue(session["provider_workflow"])
+        self.assertTrue(
+            all(
+                command["dry_run"] and not command["live_mutation"]
+                for command in session["provider_workflow"]
+            )
+        )
+        operations = {
+            command["operation"] for command in session["provider_workflow"]
+        }
+        self.assertIn("endpoint.collect_artifacts", operations)
+        self.assertIn("endpoint.destroy", operations)
 
 
 if __name__ == "__main__":
