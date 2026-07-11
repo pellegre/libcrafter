@@ -155,8 +155,11 @@ impl ClientRuntime {
             context.insert_namespaced_string("quic", "transport.validation", "validated")?;
             let _ = self.request.drive(&mut self.driver, context)?;
         }
-        if context.get_namespaced_bool("quic", "application.complete")? == Some(true) {
+        if context.get_namespaced_bool("quic", "application.complete")? == Some(true)
+            && self.driver.snapshot().lifecycle == QuicEndpointLifecycle::Established
+        {
             self.driver.close(now, 0, b"bounded exchange complete")?;
+            self.mapper.poll(&mut self.driver, context)?;
         }
         let target = lifecycle_state(self.driver.snapshot().lifecycle);
         Ok(self
@@ -351,7 +354,12 @@ impl ServerRuntime {
         }
         if context.get_namespaced_bool("quic", "application.response_complete")? == Some(true) {
             context.insert_namespaced_bool("quic", "application.complete", true)?;
+        }
+        if context.get_namespaced_bool("quic", "application.complete")? == Some(true)
+            && self.driver.snapshot().lifecycle == QuicEndpointLifecycle::Established
+        {
             self.driver.close(now, 0, b"bounded exchange complete")?;
+            self.mapper.poll(&mut self.driver, context)?;
         }
         let target = match self.driver.snapshot().lifecycle {
             QuicEndpointLifecycle::Listen => LISTEN,
@@ -693,5 +701,183 @@ mod tests {
             Some(1),
             "the server permits only one Retry"
         );
+    }
+
+    #[test]
+    fn full_flows_close_gracefully_after_exchange() {
+        use std::time::Instant;
+
+        use crate::quic_endpoint::{
+            QuicEndpointDatagram, QuicEndpointPacketSpaceCounts, QuicEndpointRecoveryCounts,
+            QuicEndpointSnapshot, QuicEndpointStreamRead, QuicEndpointStreamReadStatus,
+            QuicEndpointTransmit, QuicEndpointTransmitPacketCounts,
+        };
+
+        struct GracefulDriver {
+            addresses: QuicEndpointAddresses,
+            snapshot: QuicEndpointSnapshot,
+            events: Vec<QuicEndpointEvent>,
+            transmits: Vec<QuicEndpointTransmit>,
+            close_calls: u64,
+            marker: u8,
+        }
+
+        impl QuicEndpointDriver for GracefulDriver {
+            fn start(&mut self, _: Instant) -> Result<()> {
+                Ok(())
+            }
+
+            fn handle_datagram(&mut self, _: QuicEndpointDatagram) -> Result<()> {
+                Ok(())
+            }
+
+            fn drain_transmits(&mut self, _: Instant) -> Result<Vec<QuicEndpointTransmit>> {
+                Ok(self.transmits.drain(..).collect())
+            }
+
+            fn next_timeout(&self) -> Option<Instant> {
+                None
+            }
+
+            fn handle_timeout(&mut self, _: Instant) -> Result<()> {
+                Ok(())
+            }
+
+            fn poll_events(&mut self) -> Result<Vec<QuicEndpointEvent>> {
+                Ok(self.events.drain(..).collect())
+            }
+
+            fn open_bidirectional_stream(&mut self) -> Result<QuicEndpointStreamId> {
+                Ok(QuicEndpointStreamId(0))
+            }
+
+            fn write_stream(&mut self, _: QuicEndpointStreamId, bytes: &[u8]) -> Result<usize> {
+                Ok(bytes.len())
+            }
+
+            fn finish_stream(&mut self, _: QuicEndpointStreamId) -> Result<()> {
+                Ok(())
+            }
+
+            fn read_stream(
+                &mut self,
+                _: QuicEndpointStreamId,
+                _: usize,
+            ) -> Result<QuicEndpointStreamRead> {
+                Ok(QuicEndpointStreamRead {
+                    bytes: Vec::new(),
+                    status: QuicEndpointStreamReadStatus::Blocked,
+                })
+            }
+
+            fn snapshot(&self) -> QuicEndpointSnapshot {
+                self.snapshot.clone()
+            }
+
+            fn close(&mut self, _: Instant, code: u64, _: &[u8]) -> Result<()> {
+                if self.snapshot.lifecycle != QuicEndpointLifecycle::Established {
+                    return Ok(());
+                }
+                self.close_calls += 1;
+                self.snapshot.lifecycle = QuicEndpointLifecycle::Closing;
+                self.events.push(QuicEndpointEvent::LocalClose { code });
+                let (SocketAddr::V4(local), SocketAddr::V4(peer)) =
+                    (self.addresses.local, self.addresses.peer)
+                else {
+                    unreachable!("test uses documentation IPv4 tuples")
+                };
+                self.transmits.push(QuicEndpointTransmit {
+                    source_ip: *local.ip(),
+                    source_port: local.port(),
+                    destination_ip: *peer.ip(),
+                    destination_port: peer.port(),
+                    payload: vec![0x40, self.marker, 0xcc],
+                    packet_counts: QuicEndpointTransmitPacketCounts {
+                        application: 1,
+                        ..QuicEndpointTransmitPacketCounts::default()
+                    },
+                });
+                Ok(())
+            }
+        }
+
+        fn trace_for(initiator: &str, marker: u8) {
+            let addresses = QuicEndpointAddresses::new(
+                SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, marker), 44_300).into(),
+                SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 20), 443).into(),
+            );
+            let mut driver = GracefulDriver {
+                addresses,
+                snapshot: QuicEndpointSnapshot {
+                    lifecycle: QuicEndpointLifecycle::Established,
+                    local_connection_id: vec![marker],
+                    peer_connection_id: vec![marker.wrapping_add(1)],
+                    initial: QuicEndpointPacketSpaceCounts::default(),
+                    handshake: QuicEndpointPacketSpaceCounts::default(),
+                    application: QuicEndpointPacketSpaceCounts::default(),
+                    stream_bytes_sent: 0,
+                    stream_bytes_received: 0,
+                    recovery: QuicEndpointRecoveryCounts::default(),
+                },
+                events: vec![
+                    QuicEndpointEvent::HandshakeProgress,
+                    QuicEndpointEvent::Established,
+                ],
+                transmits: Vec::new(),
+                close_calls: 0,
+                marker,
+            };
+            let mut mapper = QuicEndpointEventMapper::new(QuicEndpointLifecycle::Handshaking);
+            let mut context = PacketContext::new();
+            mapper.poll(&mut driver, &mut context).unwrap();
+            context
+                .insert_namespaced_bool("quic", "application.complete", true)
+                .unwrap();
+
+            driver
+                .close(Instant::now(), 0, b"bounded exchange complete")
+                .unwrap();
+            driver
+                .close(Instant::now(), 7, b"must not replace first close")
+                .unwrap();
+            mapper.poll(&mut driver, &mut context).unwrap();
+            let close_step = driver
+                .drain_transmit_step(Instant::now(), addresses, &mut context)
+                .unwrap();
+            assert_eq!(driver.close_calls, 1, "{initiator} closes once");
+            assert_eq!(close_step.outputs().len(), 1);
+            assert!(close_step.outputs()[0].requires_regeneration());
+            assert_eq!(context.protocol_snapshot().unwrap().lifecycle, "closing");
+
+            driver.snapshot.lifecycle = QuicEndpointLifecycle::Draining;
+            driver.events.extend([
+                QuicEndpointEvent::StreamReadable(QuicEndpointStreamId(0)),
+                QuicEndpointEvent::Draining,
+            ]);
+            mapper.poll(&mut driver, &mut context).unwrap();
+            assert_eq!(context.protocol_snapshot().unwrap().lifecycle, "draining");
+            assert_eq!(
+                context
+                    .get_namespaced_bool("quic", "stream.readable")
+                    .unwrap(),
+                None,
+                "late application data is ignored"
+            );
+
+            driver.snapshot.lifecycle = QuicEndpointLifecycle::Closed;
+            driver.events.extend([
+                QuicEndpointEvent::PeerClose { code: 99 },
+                QuicEndpointEvent::Closed,
+            ]);
+            mapper.poll(&mut driver, &mut context).unwrap();
+            let report = context.protocol_snapshot().unwrap();
+            assert_eq!(report.lifecycle, "closed");
+            assert_eq!(report.outcome.as_deref(), Some("closed"));
+            assert_eq!(report.close_category.as_deref(), Some("local"));
+            assert_eq!(report.close_code, Some(0), "first close reason is retained");
+        }
+
+        trace_for("client", 10);
+        trace_for("server", 11);
     }
 }

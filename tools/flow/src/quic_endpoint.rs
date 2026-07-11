@@ -1082,6 +1082,7 @@ pub(crate) enum QuicEndpointEvent {
         code: u64,
     },
     Draining,
+    Closed,
     IdleTimeout,
     TlsAuthenticationFailed {
         failure: QuicTlsAuthenticationFailure,
@@ -1181,6 +1182,20 @@ impl QuicEndpointEventMapper {
         }
 
         for event in events {
+            if matches!(
+                self.lifecycle,
+                QuicEndpointLifecycle::Closing
+                    | QuicEndpointLifecycle::Draining
+                    | QuicEndpointLifecycle::Closed
+            ) && matches!(
+                event,
+                QuicEndpointEvent::StreamReadable(_)
+                    | QuicEndpointEvent::StreamWritable(_)
+                    | QuicEndpointEvent::StreamFinished(_)
+                    | QuicEndpointEvent::ApplicationComplete
+            ) {
+                continue;
+            }
             match &event {
                 QuicEndpointEvent::HandshakeProgress => {
                     self.handshake_started = true;
@@ -1224,21 +1239,41 @@ impl QuicEndpointEventMapper {
                     context.insert_namespaced_bool("quic", "application.complete", true)?;
                 }
                 QuicEndpointEvent::PeerClose { code } => {
-                    self.lifecycle = QuicEndpointLifecycle::Closing;
+                    if !matches!(
+                        self.lifecycle,
+                        QuicEndpointLifecycle::Draining | QuicEndpointLifecycle::Closed
+                    ) {
+                        self.lifecycle = QuicEndpointLifecycle::Closing;
+                    }
                     update_quic_protocol_snapshot(context, |snapshot| {
-                        snapshot.close_category = Some("peer".to_string());
-                        snapshot.close_code = Some(*code);
+                        if snapshot.close_category.is_none() {
+                            snapshot.close_category = Some("peer".to_string());
+                            snapshot.close_code = Some(*code);
+                        }
                     });
                 }
                 QuicEndpointEvent::LocalClose { code } => {
-                    self.lifecycle = QuicEndpointLifecycle::Closing;
+                    if !matches!(
+                        self.lifecycle,
+                        QuicEndpointLifecycle::Draining | QuicEndpointLifecycle::Closed
+                    ) {
+                        self.lifecycle = QuicEndpointLifecycle::Closing;
+                    }
                     update_quic_protocol_snapshot(context, |snapshot| {
-                        snapshot.close_category = Some("local".to_string());
-                        snapshot.close_code = Some(*code);
+                        if snapshot.close_category.is_none() {
+                            snapshot.close_category = Some("local".to_string());
+                            snapshot.close_code = Some(*code);
+                        }
                     });
                 }
                 QuicEndpointEvent::Draining => {
                     self.lifecycle = QuicEndpointLifecycle::Draining;
+                }
+                QuicEndpointEvent::Closed => {
+                    self.lifecycle = QuicEndpointLifecycle::Closed;
+                    update_quic_protocol_snapshot(context, |snapshot| {
+                        snapshot.outcome.get_or_insert_with(|| "closed".to_string());
+                    });
                 }
                 QuicEndpointEvent::IdleTimeout => {
                     self.lifecycle = QuicEndpointLifecycle::Closed;
@@ -2299,6 +2334,7 @@ pub(crate) struct QuinnProtoClientDriver {
     retry_count: u64,
     pending_retry_candidate: bool,
     retry_observation: Option<QuicEndpointRetryObservation>,
+    close_datagram_drained: bool,
 }
 
 #[cfg(feature = "quic-endpoint")]
@@ -2344,6 +2380,7 @@ impl QuinnProtoClientDriver {
             retry_count: 0,
             pending_retry_candidate: false,
             retry_observation: None,
+            close_datagram_drained: false,
         })
     }
 
@@ -2371,7 +2408,7 @@ impl QuinnProtoClientDriver {
                         .push_back(QuicEndpointEvent::Established);
                 }
                 Event::ConnectionLost { .. } => {
-                    self.snapshot.lifecycle = QuicEndpointLifecycle::Closed;
+                    self.snapshot.lifecycle = QuicEndpointLifecycle::Closing;
                     self.pending_events
                         .push_back(QuicEndpointEvent::PeerClose { code: 0 });
                 }
@@ -2404,6 +2441,17 @@ impl QuinnProtoClientDriver {
                 | Event::DatagramReceived
                 | Event::DatagramsUnblocked => {}
             }
+        }
+        if self.connection.is_drained() && self.snapshot.lifecycle != QuicEndpointLifecycle::Closed
+        {
+            self.snapshot.lifecycle = QuicEndpointLifecycle::Closed;
+            self.pending_events.push_back(QuicEndpointEvent::Closed);
+        } else if self.connection.is_closed()
+            && self.close_datagram_drained
+            && self.snapshot.lifecycle == QuicEndpointLifecycle::Closing
+        {
+            self.snapshot.lifecycle = QuicEndpointLifecycle::Draining;
+            self.pending_events.push_back(QuicEndpointEvent::Draining);
         }
     }
 
@@ -2493,6 +2541,9 @@ impl QuicEndpointDriver for QuinnProtoClientDriver {
                 packet_counts: QuicEndpointTransmitPacketCounts::classify_single(&payload, true),
                 payload,
             });
+        }
+        if self.snapshot.lifecycle == QuicEndpointLifecycle::Closing && !output.is_empty() {
+            self.close_datagram_drained = true;
         }
         self.service_endpoint_events();
         self.next_timeout = self.connection.poll_timeout();
@@ -2614,6 +2665,14 @@ impl QuicEndpointDriver for QuinnProtoClientDriver {
     }
 
     fn close(&mut self, now: Instant, code: u64, reason: &[u8]) -> Result<()> {
+        if matches!(
+            self.snapshot.lifecycle,
+            QuicEndpointLifecycle::Closing
+                | QuicEndpointLifecycle::Draining
+                | QuicEndpointLifecycle::Closed
+        ) {
+            return Ok(());
+        }
         let code = quinn_proto::VarInt::from_u64(code).map_err(|error| {
             provider_error(
                 QuicEndpointErrorCategory::StreamState,
@@ -2661,6 +2720,7 @@ pub(crate) struct QuinnProtoServerDriver {
     started: bool,
     retry_count: u64,
     retry_observation: Option<QuicEndpointRetryObservation>,
+    close_datagram_drained: bool,
 }
 
 #[cfg(feature = "quic-endpoint")]
@@ -2699,6 +2759,7 @@ impl QuinnProtoServerDriver {
             started: false,
             retry_count: 0,
             retry_observation: None,
+            close_datagram_drained: false,
         })
     }
 
@@ -2736,7 +2797,7 @@ impl QuinnProtoServerDriver {
                         .push_back(QuicEndpointEvent::Established);
                 }
                 Event::ConnectionLost { .. } => {
-                    self.snapshot.lifecycle = QuicEndpointLifecycle::Closed;
+                    self.snapshot.lifecycle = QuicEndpointLifecycle::Closing;
                     self.pending_events
                         .push_back(QuicEndpointEvent::PeerClose { code: 0 });
                 }
@@ -2764,6 +2825,16 @@ impl QuinnProtoServerDriver {
                 | Event::DatagramReceived
                 | Event::DatagramsUnblocked => {}
             }
+        }
+        if connection.is_drained() && self.snapshot.lifecycle != QuicEndpointLifecycle::Closed {
+            self.snapshot.lifecycle = QuicEndpointLifecycle::Closed;
+            self.pending_events.push_back(QuicEndpointEvent::Closed);
+        } else if connection.is_closed()
+            && self.close_datagram_drained
+            && self.snapshot.lifecycle == QuicEndpointLifecycle::Closing
+        {
+            self.snapshot.lifecycle = QuicEndpointLifecycle::Draining;
+            self.pending_events.push_back(QuicEndpointEvent::Draining);
         }
         self.next_timeout = connection.poll_timeout();
     }
@@ -2936,6 +3007,9 @@ impl QuicEndpointDriver for QuinnProtoServerDriver {
                 });
             }
         }
+        if self.snapshot.lifecycle == QuicEndpointLifecycle::Closing && !output.is_empty() {
+            self.close_datagram_drained = true;
+        }
         self.service_endpoint_events();
         self.collect_connection_events();
         Ok(output)
@@ -3039,6 +3113,14 @@ impl QuicEndpointDriver for QuinnProtoServerDriver {
     }
 
     fn close(&mut self, now: Instant, code: u64, reason: &[u8]) -> Result<()> {
+        if matches!(
+            self.snapshot.lifecycle,
+            QuicEndpointLifecycle::Closing
+                | QuicEndpointLifecycle::Draining
+                | QuicEndpointLifecycle::Closed
+        ) {
+            return Ok(());
+        }
         let code = quinn_proto::VarInt::from_u64(code).map_err(|error| {
             provider_error(
                 QuicEndpointErrorCategory::StreamState,
