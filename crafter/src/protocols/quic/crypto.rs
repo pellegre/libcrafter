@@ -19,8 +19,10 @@ use super::connection_id::QUIC_CONNECTION_ID_MAX_LEN;
 use super::constants::{QUIC_VERSION_1, QUIC_VERSION_2};
 use super::frame::QuicFrame;
 use super::header::{classify_quic_header, QuicHeaderClassification, QuicLongPacketKind};
-use super::packet::{QuicRetryPacket, QUIC_RETRY_INTEGRITY_TAG_LEN};
-use super::packet_number::{len_from_header_bits, QuicPacketNumber};
+use super::packet::{
+    QuicLongHeaderPacket, QuicPacket, QuicRetryPacket, QUIC_RETRY_INTEGRITY_TAG_LEN,
+};
+use super::packet_number::{header_bits_for_len, len_from_header_bits, QuicPacketNumber};
 use super::varint::{encoded_len_from_prefix, QuicVarInt};
 use crate::error::{CrafterError, Result};
 
@@ -374,6 +376,119 @@ pub fn derive_quic_initial_secrets(
         client_initial_secret,
         server_initial_secret,
     })
+}
+
+/// Protect one complete, explicitly constructed QUIC Initial packet.
+///
+/// The input packet's payload is treated as plaintext. The caller supplies the
+/// full packet number used for the AEAD nonce and selects the truncated
+/// packet-number width carried on the wire. This helper corrects the QUIC
+/// Length field for the authentication tag, but otherwise preserves the
+/// caller's header values and encoded varint widths. It does not add padding,
+/// connection IDs, tokens, or endpoint policy.
+pub fn quic_protect_complete_initial_packet(
+    packet: &QuicLongHeaderPacket,
+    full_packet_number: u64,
+    keys: &QuicInitialPacketKeys,
+    packet_number_len: usize,
+) -> Result<QuicPacket> {
+    if packet.packet_kind() != QuicLongPacketKind::Initial {
+        return Err(CrafterError::invalid_field_value(
+            "quic.crypto.initial.packet",
+            "packet is not a QUIC Initial long-header packet",
+        ));
+    }
+    quic_initial_salt(packet.version())?;
+    let packet_number_bits = header_bits_for_len(packet_number_len)?;
+    if full_packet_number >= (1u64 << 62) {
+        return Err(CrafterError::invalid_field_value(
+            "quic.crypto.initial.packet_number",
+            "full QUIC packet number exceeds the 62-bit limit",
+        ));
+    }
+
+    let packet_number_mask = (1u64 << (packet_number_len * 8)) - 1;
+    let truncated_packet_number = full_packet_number & packet_number_mask;
+    if packet.packet_number().value() != truncated_packet_number {
+        return Err(CrafterError::invalid_field_value(
+            "quic.crypto.initial.packet_number",
+            "unprotected packet number does not match the supplied full packet number",
+        ));
+    }
+
+    let protected_payload_len = packet
+        .protected_payload()
+        .len()
+        .checked_add(QUIC_INITIAL_AEAD_TAG_LEN)
+        .ok_or_else(initial_decode_length_overflow_error)?;
+    let length_value = packet_number_len
+        .checked_add(protected_payload_len)
+        .ok_or_else(initial_decode_length_overflow_error)?;
+    let length = QuicVarInt::new(
+        u64::try_from(length_value).map_err(|_| initial_decode_length_overflow_error())?,
+    )?;
+
+    // Header protection changes only the low four bits of the long-header
+    // first byte. Set the selected packet-number length before using the
+    // serialized header as AEAD associated data.
+    let first_byte = (packet.first_byte() & !0x03) | packet_number_bits;
+    let unprotected = QuicLongHeaderPacket::initial_builder()
+        .first_byte(first_byte)
+        .version(packet.version())
+        .destination_connection_id(packet.destination_connection_id().clone())
+        .source_connection_id(packet.source_connection_id().clone())
+        .token_length(
+            packet
+                .token_length()
+                .expect("Initial packets carry token length"),
+        )
+        .token_length_encoded_len(
+            packet
+                .token_length_encoded_len()
+                .expect("Initial packets carry token length width"),
+        )
+        .token(packet.token())
+        .length(length)
+        .length_encoded_len(packet.length_encoded_len())
+        .packet_number(
+            QuicPacketNumber::new(truncated_packet_number).with_encoded_len(packet_number_len),
+        )
+        .protected_payload(packet.protected_payload())
+        .build()?;
+
+    let header_len = unprotected
+        .as_bytes()
+        .len()
+        .checked_sub(packet.protected_payload().len())
+        .ok_or_else(initial_decode_length_overflow_error)?;
+    let mut protected = unprotected.as_bytes()[..header_len].to_vec();
+    let ciphertext =
+        keys.protect_payload(full_packet_number, &protected, packet.protected_payload())?;
+    protected.extend_from_slice(&ciphertext);
+
+    let packet_number_offset = header_len
+        .checked_sub(packet_number_len)
+        .ok_or_else(initial_decode_length_overflow_error)?;
+    let sample_start = packet_number_offset
+        .checked_add(4)
+        .ok_or_else(initial_decode_length_overflow_error)?;
+    let sample_end = sample_start
+        .checked_add(QUIC_HEADER_PROTECTION_SAMPLE_LEN)
+        .ok_or_else(initial_decode_length_overflow_error)?;
+    if protected.len() < sample_end {
+        return Err(CrafterError::buffer_too_short(
+            "quic.crypto.header_protection.sample",
+            sample_end,
+            protected.len(),
+        ));
+    }
+    let mask = keys.header_protection_mask(&protected[sample_start..sample_end])?;
+    protected[0] ^= mask[0] & 0x0f;
+    for index in 0..packet_number_len {
+        protected[packet_number_offset + index] ^= mask[index + 1];
+    }
+
+    Ok(QuicPacket::from_bytes(protected))
 }
 
 /// Explicitly remove Initial protection and decode the payload as frames.
