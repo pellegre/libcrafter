@@ -1076,7 +1076,9 @@ pub(crate) enum QuicEndpointEvent {
     StreamFinished(QuicEndpointStreamId),
     ApplicationComplete,
     PeerClose {
+        kind: QuicEndpointPeerCloseKind,
         code: u64,
+        reason_summary: String,
     },
     LocalClose {
         code: u64,
@@ -1092,6 +1094,90 @@ pub(crate) enum QuicEndpointEvent {
         category: QuicEndpointErrorCategory,
         context: &'static str,
     },
+}
+
+/// Stable peer-close classifications that do not expose provider diagnostics.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuicEndpointPeerCloseKind {
+    NoError,
+    TransportError,
+    ApplicationError,
+}
+
+#[cfg(feature = "quic-endpoint")]
+impl QuicEndpointPeerCloseKind {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::NoError => "no-error",
+            Self::TransportError => "transport-error",
+            Self::ApplicationError => "application-error",
+        }
+    }
+}
+
+#[cfg(feature = "quic-endpoint")]
+fn bounded_close_reason_summary(reason: &[u8]) -> String {
+    const MAX_OBSERVED_REASON_BYTES: usize = 64;
+    if reason.is_empty() {
+        "none".to_string()
+    } else if reason.len() <= MAX_OBSERVED_REASON_BYTES {
+        format!("redacted:{}-bytes", reason.len())
+    } else {
+        format!("redacted:{MAX_OBSERVED_REASON_BYTES}+-bytes")
+    }
+}
+
+#[cfg(feature = "quic-endpoint")]
+pub(crate) fn map_quinn_peer_close(reason: quinn_proto::ConnectionError) -> QuicEndpointEvent {
+    use quinn_proto::ConnectionError;
+
+    let (kind, code, reason_summary) = match reason {
+        ConnectionError::ConnectionClosed(close) => {
+            let code = u64::from(close.error_code);
+            let kind = if code == 0 {
+                QuicEndpointPeerCloseKind::NoError
+            } else {
+                QuicEndpointPeerCloseKind::TransportError
+            };
+            (kind, code, bounded_close_reason_summary(&close.reason))
+        }
+        ConnectionError::ApplicationClosed(close) => (
+            QuicEndpointPeerCloseKind::ApplicationError,
+            close.error_code.into_inner(),
+            bounded_close_reason_summary(&close.reason),
+        ),
+        ConnectionError::TransportError(error) => (
+            QuicEndpointPeerCloseKind::TransportError,
+            error.code.into(),
+            bounded_close_reason_summary(error.reason.as_bytes()),
+        ),
+        ConnectionError::TimedOut => (
+            QuicEndpointPeerCloseKind::TransportError,
+            0,
+            "idle-timeout".to_string(),
+        ),
+        ConnectionError::Reset => (
+            QuicEndpointPeerCloseKind::TransportError,
+            0,
+            "stateless-reset".to_string(),
+        ),
+        ConnectionError::VersionMismatch => (
+            QuicEndpointPeerCloseKind::TransportError,
+            0,
+            "version-mismatch".to_string(),
+        ),
+        ConnectionError::LocallyClosed | ConnectionError::CidsExhausted => (
+            QuicEndpointPeerCloseKind::TransportError,
+            0,
+            "provider-close".to_string(),
+        ),
+    };
+    QuicEndpointEvent::PeerClose {
+        kind,
+        code,
+        reason_summary,
+    }
 }
 
 /// Stable classification of TLS failures observed before establishment.
@@ -1238,19 +1324,45 @@ impl QuicEndpointEventMapper {
                 QuicEndpointEvent::ApplicationComplete => {
                     context.insert_namespaced_bool("quic", "application.complete", true)?;
                 }
-                QuicEndpointEvent::PeerClose { code } => {
+                QuicEndpointEvent::PeerClose {
+                    kind,
+                    code,
+                    reason_summary,
+                } => {
+                    let close_was_already_terminal = matches!(
+                        self.lifecycle,
+                        QuicEndpointLifecycle::Draining | QuicEndpointLifecycle::Closed
+                    );
                     if !matches!(
                         self.lifecycle,
                         QuicEndpointLifecycle::Draining | QuicEndpointLifecycle::Closed
                     ) {
                         self.lifecycle = QuicEndpointLifecycle::Closing;
                     }
-                    update_quic_protocol_snapshot(context, |snapshot| {
-                        if snapshot.close_category.is_none() {
+                    let first_peer_close = !close_was_already_terminal
+                        && context.get_namespaced_bool("quic", "close.peer_recorded")?
+                            != Some(true);
+                    if first_peer_close {
+                        let exchange_complete = context
+                            .get_namespaced_bool("quic", "application.complete")?
+                            .unwrap_or(false);
+                        context.insert_namespaced_bool("quic", "close.peer_recorded", true)?;
+                        context.insert_namespaced_string("quic", "close.kind", kind.label())?;
+                        context.insert_namespaced_string(
+                            "quic",
+                            "close.reason_summary",
+                            reason_summary.clone(),
+                        )?;
+                        context.insert_namespaced_bool(
+                            "quic",
+                            "close.exchange_completed_before_close",
+                            exchange_complete,
+                        )?;
+                        update_quic_protocol_snapshot(context, |snapshot| {
                             snapshot.close_category = Some("peer".to_string());
                             snapshot.close_code = Some(*code);
-                        }
-                    });
+                        });
+                    }
                 }
                 QuicEndpointEvent::LocalClose { code } => {
                     if !matches!(
@@ -2407,10 +2519,9 @@ impl QuinnProtoClientDriver {
                     self.pending_events
                         .push_back(QuicEndpointEvent::Established);
                 }
-                Event::ConnectionLost { .. } => {
+                Event::ConnectionLost { reason } => {
                     self.snapshot.lifecycle = QuicEndpointLifecycle::Closing;
-                    self.pending_events
-                        .push_back(QuicEndpointEvent::PeerClose { code: 0 });
+                    self.pending_events.push_back(map_quinn_peer_close(reason));
                 }
                 Event::Stream(StreamEvent::Readable { id }) => {
                     self.pending_events
@@ -2521,6 +2632,13 @@ impl QuicEndpointDriver for QuinnProtoClientDriver {
     }
 
     fn drain_transmits(&mut self, now: Instant) -> Result<Vec<QuicEndpointTransmit>> {
+        if matches!(
+            self.snapshot.lifecycle,
+            QuicEndpointLifecycle::Draining | QuicEndpointLifecycle::Closed
+        ) {
+            self.pending_responses.clear();
+            return Ok(Vec::new());
+        }
         let mut output = self.pending_responses.drain(..).collect::<Vec<_>>();
         loop {
             let mut payload = Vec::new();
@@ -2588,6 +2706,11 @@ impl QuicEndpointDriver for QuinnProtoClientDriver {
     }
 
     fn open_bidirectional_stream(&mut self) -> Result<QuicEndpointStreamId> {
+        if self.snapshot.lifecycle != QuicEndpointLifecycle::Established {
+            return Err(stream_state_error(
+                "opening client request stream after peer close",
+            ));
+        }
         self.connection
             .streams()
             .open(quinn_proto::Dir::Bi)
@@ -2596,6 +2719,11 @@ impl QuicEndpointDriver for QuinnProtoClientDriver {
     }
 
     fn write_stream(&mut self, stream: QuicEndpointStreamId, bytes: &[u8]) -> Result<usize> {
+        if self.snapshot.lifecycle != QuicEndpointLifecycle::Established {
+            return Err(stream_state_error(
+                "writing client request stream after peer close",
+            ));
+        }
         let id = Self::provider_stream_id(stream)?;
         self.connection
             .send_stream(id)
@@ -2796,10 +2924,9 @@ impl QuinnProtoServerDriver {
                     self.pending_events
                         .push_back(QuicEndpointEvent::Established);
                 }
-                Event::ConnectionLost { .. } => {
+                Event::ConnectionLost { reason } => {
                     self.snapshot.lifecycle = QuicEndpointLifecycle::Closing;
-                    self.pending_events
-                        .push_back(QuicEndpointEvent::PeerClose { code: 0 });
+                    self.pending_events.push_back(map_quinn_peer_close(reason));
                 }
                 Event::Stream(StreamEvent::Readable { id }) => {
                     self.pending_events
@@ -2982,6 +3109,13 @@ impl QuicEndpointDriver for QuinnProtoServerDriver {
     }
 
     fn drain_transmits(&mut self, now: Instant) -> Result<Vec<QuicEndpointTransmit>> {
+        if matches!(
+            self.snapshot.lifecycle,
+            QuicEndpointLifecycle::Draining | QuicEndpointLifecycle::Closed
+        ) {
+            self.pending_responses.clear();
+            return Ok(Vec::new());
+        }
         let mut output = self.pending_responses.drain(..).collect::<Vec<_>>();
         if let Some(connection) = self.connection.as_mut() {
             loop {
@@ -3039,6 +3173,11 @@ impl QuicEndpointDriver for QuinnProtoServerDriver {
     }
 
     fn write_stream(&mut self, stream: QuicEndpointStreamId, bytes: &[u8]) -> Result<usize> {
+        if self.snapshot.lifecycle != QuicEndpointLifecycle::Established {
+            return Err(stream_state_error(
+                "writing server response stream after peer close",
+            ));
+        }
         let id = Self::provider_stream_id(stream)?;
         self.connection_mut("writing server response before connection")?
             .send_stream(id)
@@ -3313,9 +3452,9 @@ fn increment_quic_counter(context: &mut PacketContext, key: &str, count: u64) ->
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "quic-endpoint")]
-    use super::QuicEndpointStreamReadStatus;
     use super::{provider_error, QuicEndpointErrorCategory as Category, QuicSyntheticIdentity};
+    #[cfg(feature = "quic-endpoint")]
+    use super::{QuicEndpointPeerCloseKind, QuicEndpointStreamReadStatus};
 
     #[test]
     fn endpoint_error_categories_are_stable() {
@@ -4757,7 +4896,11 @@ mod tests {
             QuicEndpointEvent::StreamWritable(stream),
             QuicEndpointEvent::StreamFinished(stream),
             QuicEndpointEvent::LocalClose { code: 0 },
-            QuicEndpointEvent::PeerClose { code: 42 },
+            QuicEndpointEvent::PeerClose {
+                kind: QuicEndpointPeerCloseKind::TransportError,
+                code: 42,
+                reason_summary: "redacted:4-bytes".to_string(),
+            },
             QuicEndpointEvent::Draining,
             QuicEndpointEvent::IdleTimeout,
             QuicEndpointEvent::FatalError {
@@ -4793,7 +4936,11 @@ mod tests {
             1
         );
         assert!(events.contains(&QuicEndpointEvent::LocalClose { code: 0 }));
-        assert!(events.contains(&QuicEndpointEvent::PeerClose { code: 42 }));
+        assert!(events.contains(&QuicEndpointEvent::PeerClose {
+            kind: QuicEndpointPeerCloseKind::TransportError,
+            code: 42,
+            reason_summary: "redacted:4-bytes".to_string(),
+        }));
         assert_eq!(
             context
                 .get_namespaced_bool("quic", "handshake.authenticated")
