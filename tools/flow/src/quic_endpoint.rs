@@ -30,6 +30,8 @@ impl QuicEndpointAddresses {
 pub struct QuicPeerConfig {
     server_name: String,
     alpn_protocols: Vec<Vec<u8>>,
+    verify_peer: bool,
+    enable_zero_rtt: bool,
 }
 
 impl QuicPeerConfig {
@@ -41,6 +43,8 @@ impl QuicPeerConfig {
         Self {
             server_name: server_name.into(),
             alpn_protocols: alpn_protocols.into_iter().collect(),
+            verify_peer: true,
+            enable_zero_rtt: false,
         }
     }
 
@@ -52,6 +56,24 @@ impl QuicPeerConfig {
     /// Returns ALPN identifiers in caller preference order.
     pub fn alpn_protocols(&self) -> &[Vec<u8>] {
         &self.alpn_protocols
+    }
+
+    /// Selects whether TLS authenticates the configured peer.
+    ///
+    /// Endpoint construction rejects `false`; this setter exists so invalid
+    /// caller configuration can be represented and diagnosed explicitly.
+    pub fn with_peer_verification(mut self, enabled: bool) -> Self {
+        self.verify_peer = enabled;
+        self
+    }
+
+    /// Selects whether TLS 0-RTT is enabled.
+    ///
+    /// Bounded endpoint flows reject `true` because resumption and 0-RTT are
+    /// outside their protocol contract.
+    pub fn with_zero_rtt(mut self, enabled: bool) -> Self {
+        self.enable_zero_rtt = enabled;
+        self
     }
 }
 
@@ -115,6 +137,179 @@ impl fmt::Debug for QuicSyntheticIdentity {
             .field("trusted_certificates_der", &"<redacted>")
             .finish()
     }
+}
+
+#[cfg(feature = "quic-endpoint")]
+const QUIC_FLOW_ALPN: &[u8] = b"crafter-flow";
+
+/// Fully authenticated client configuration for the socket-free provider.
+#[cfg(feature = "quic-endpoint")]
+pub(crate) struct QuicEndpointClientTls {
+    pub(crate) peer_name: String,
+    pub(crate) endpoint: quinn_proto::EndpointConfig,
+    pub(crate) client: quinn_proto::ClientConfig,
+    pub(crate) limits: QuicTransportLimits,
+}
+
+#[cfg(feature = "quic-endpoint")]
+impl fmt::Debug for QuicEndpointClientTls {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("QuicEndpointClientTls")
+            .field("peer_name", &self.peer_name)
+            .field("limits", &self.limits)
+            .field("trust_anchors", &"<redacted>")
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(feature = "quic-endpoint")]
+fn configuration_error(context: &'static str) -> FlowError {
+    FlowError::QuicEndpoint {
+        category: QuicEndpointErrorCategory::Configuration,
+        context: context.to_string(),
+    }
+}
+
+/// Builds a TLS-1.3-only QUIC client with explicit trust and bounded transport.
+#[cfg(feature = "quic-endpoint")]
+pub(crate) fn configure_endpoint_client_tls(
+    peer: &QuicPeerConfig,
+    identity: &QuicSyntheticIdentity,
+    limits: QuicTransportLimits,
+) -> Result<QuicEndpointClientTls> {
+    use std::sync::Arc;
+
+    use quinn_proto::{crypto::rustls::QuicClientConfig, IdleTimeout, TransportConfig, VarInt};
+    use rustls::{client::Resumption, pki_types::CertificateDer, RootCertStore};
+
+    if peer.server_name.is_empty()
+        || rustls::pki_types::DnsName::try_from(peer.server_name.clone()).is_err()
+    {
+        return Err(configuration_error("validating authenticated peer name"));
+    }
+    if !peer.verify_peer {
+        return Err(configuration_error("peer verification must remain enabled"));
+    }
+    if peer.enable_zero_rtt {
+        return Err(configuration_error("0-RTT is not supported"));
+    }
+    if peer.alpn_protocols.as_slice() != [QUIC_FLOW_ALPN] {
+        return Err(configuration_error("validating crafter-flow ALPN"));
+    }
+    if identity.trusted_certificates_der.is_empty() {
+        return Err(configuration_error("loading non-empty trust anchors"));
+    }
+    if limits.max_idle_timeout.is_zero()
+        || limits.max_idle_timeout > Duration::from_secs(60)
+        || !(1_200..=1_472).contains(&limits.max_udp_payload_size)
+        || limits.max_bidirectional_streams > 1
+        || limits.max_stream_bytes == 0
+        || limits.max_stream_bytes > 64 * 1024
+        || limits.max_connection_bytes < limits.max_stream_bytes
+        || limits.max_connection_bytes > 128 * 1024
+    {
+        return Err(configuration_error("validating bounded transport limits"));
+    }
+
+    let mut roots = RootCertStore::empty();
+    for certificate in &identity.trusted_certificates_der {
+        roots
+            .add(CertificateDer::from(certificate.clone()))
+            .map_err(|error| {
+                provider_error(
+                    QuicEndpointErrorCategory::Configuration,
+                    "loading trust anchor",
+                    error,
+                )
+            })?;
+    }
+
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let mut tls = rustls::ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .map_err(|error| {
+            provider_error(
+                QuicEndpointErrorCategory::Configuration,
+                "selecting TLS 1.3",
+                error,
+            )
+        })?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    tls.alpn_protocols = vec![QUIC_FLOW_ALPN.to_vec()];
+    tls.enable_early_data = false;
+    tls.resumption = Resumption::disabled();
+
+    let crypto = QuicClientConfig::try_from(tls).map_err(|error| {
+        provider_error(
+            QuicEndpointErrorCategory::Configuration,
+            "configuring QUIC client crypto",
+            error,
+        )
+    })?;
+    let mut transport = TransportConfig::default();
+    let idle_timeout = IdleTimeout::try_from(limits.max_idle_timeout).map_err(|error| {
+        provider_error(
+            QuicEndpointErrorCategory::Configuration,
+            "configuring idle timeout",
+            error,
+        )
+    })?;
+    let bidirectional_streams =
+        VarInt::from_u64(limits.max_bidirectional_streams).map_err(|error| {
+            provider_error(
+                QuicEndpointErrorCategory::Configuration,
+                "configuring bidirectional stream limit",
+                error,
+            )
+        })?;
+    let stream_window = VarInt::from_u64(limits.max_stream_bytes).map_err(|error| {
+        provider_error(
+            QuicEndpointErrorCategory::Configuration,
+            "configuring stream receive window",
+            error,
+        )
+    })?;
+    let connection_window = VarInt::from_u64(limits.max_connection_bytes).map_err(|error| {
+        provider_error(
+            QuicEndpointErrorCategory::Configuration,
+            "configuring connection receive window",
+            error,
+        )
+    })?;
+    transport
+        .max_idle_timeout(Some(idle_timeout))
+        .max_concurrent_bidi_streams(bidirectional_streams)
+        .max_concurrent_uni_streams(VarInt::from_u32(0))
+        .stream_receive_window(stream_window)
+        .receive_window(connection_window)
+        .send_window(limits.max_connection_bytes)
+        .initial_mtu(limits.max_udp_payload_size)
+        .min_mtu(1_200)
+        .mtu_discovery_config(None)
+        .datagram_receive_buffer_size(None)
+        .datagram_send_buffer_size(0)
+        .enable_segmentation_offload(false);
+
+    let mut client = quinn_proto::ClientConfig::new(Arc::new(crypto));
+    client.transport_config(Arc::new(transport)).version(1);
+    let mut endpoint = quinn_proto::EndpointConfig::default();
+    endpoint
+        .max_udp_payload_size(limits.max_udp_payload_size)
+        .map_err(|error| {
+            provider_error(
+                QuicEndpointErrorCategory::Configuration,
+                "configuring maximum UDP payload",
+                error,
+            )
+        })?;
+
+    Ok(QuicEndpointClientTls {
+        peer_name: peer.server_name.clone(),
+        endpoint,
+        client,
+        limits,
+    })
 }
 
 /// Stable, provider-independent endpoint failure categories.
@@ -378,6 +573,92 @@ mod tests {
             "QUIC endpoint configuration error: configuring peer name"
         );
         assert!(!format!("{error:?}").contains("secret"));
+    }
+
+    #[cfg(feature = "quic-endpoint")]
+    #[test]
+    fn client_tls_requires_authenticated_peer() {
+        use super::{
+            configure_endpoint_client_tls, QuicPeerConfig, QuicTransportLimits, QUIC_FLOW_ALPN,
+        };
+        use crate::FlowError;
+
+        fn decode_hex(input: &str) -> Vec<u8> {
+            let bytes = input.trim().as_bytes();
+            assert_eq!(bytes.len() % 2, 0);
+            bytes
+                .chunks_exact(2)
+                .map(|pair| {
+                    let text = std::str::from_utf8(pair).unwrap();
+                    u8::from_str_radix(text, 16).unwrap()
+                })
+                .collect()
+        }
+
+        fn assert_configuration_error(result: crate::Result<super::QuicEndpointClientTls>) {
+            assert!(matches!(
+                result,
+                Err(FlowError::QuicEndpoint {
+                    category: Category::Configuration,
+                    ..
+                })
+            ));
+        }
+
+        let certificate = decode_hex(include_str!(
+            "../tests/fixtures/quic/quic.example.cert.der.hex"
+        ));
+        let identity =
+            QuicSyntheticIdentity::new(Vec::new(), Vec::new(), vec![certificate.clone()]);
+        let peer = QuicPeerConfig::new("quic.example", [QUIC_FLOW_ALPN.to_vec()]);
+        let configured =
+            configure_endpoint_client_tls(&peer, &identity, QuicTransportLimits::default())
+                .unwrap();
+
+        assert_eq!(configured.peer_name, "quic.example");
+        assert_eq!(configured.limits, QuicTransportLimits::default());
+        assert_eq!(configured.endpoint.get_max_udp_payload_size(), 1_472);
+        let _provider_client = &configured.client;
+        let rendered = format!("{configured:?}");
+        assert!(rendered.contains("quic.example"));
+        assert!(rendered.contains("<redacted>"));
+        assert!(!rendered.contains("3082019c"));
+
+        let empty_name = QuicPeerConfig::new("", [QUIC_FLOW_ALPN.to_vec()]);
+        assert_configuration_error(configure_endpoint_client_tls(
+            &empty_name,
+            &identity,
+            QuicTransportLimits::default(),
+        ));
+        let wrong_alpn = QuicPeerConfig::new("quic.example", [b"h3".to_vec()]);
+        assert_configuration_error(configure_endpoint_client_tls(
+            &wrong_alpn,
+            &identity,
+            QuicTransportLimits::default(),
+        ));
+        assert_configuration_error(configure_endpoint_client_tls(
+            &peer.clone().with_peer_verification(false),
+            &identity,
+            QuicTransportLimits::default(),
+        ));
+        assert_configuration_error(configure_endpoint_client_tls(
+            &peer.clone().with_zero_rtt(true),
+            &identity,
+            QuicTransportLimits::default(),
+        ));
+        let empty_trust = QuicSyntheticIdentity::new(Vec::new(), Vec::new(), Vec::new());
+        assert_configuration_error(configure_endpoint_client_tls(
+            &peer,
+            &empty_trust,
+            QuicTransportLimits::default(),
+        ));
+        let malformed_trust =
+            QuicSyntheticIdentity::new(Vec::new(), Vec::new(), vec![b"not DER".to_vec()]);
+        assert_configuration_error(configure_endpoint_client_tls(
+            &peer,
+            &malformed_trust,
+            QuicTransportLimits::default(),
+        ));
     }
 
     #[cfg(feature = "quic-endpoint")]
