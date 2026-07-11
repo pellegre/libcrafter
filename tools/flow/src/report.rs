@@ -10,6 +10,7 @@ use crate::Role;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecoveryMetrics {
     timeout_events: u64,
+    acknowledgements_processed: u64,
     pto_firings: u64,
     packets_declared_lost: u64,
     regenerated_transmits: u64,
@@ -20,6 +21,11 @@ impl RecoveryMetrics {
     /// Return the number of protocol timeout events handled by the flow.
     pub const fn timeout_events(&self) -> u64 {
         self.timeout_events
+    }
+
+    /// Return the number of acknowledgements processed by a protocol driver.
+    pub const fn acknowledgements_processed(&self) -> u64 {
+        self.acknowledgements_processed
     }
 
     /// Return the number of probe-timeout firings reported by a protocol driver.
@@ -46,6 +52,10 @@ impl RecoveryMetrics {
         self.timeout_events = self.timeout_events.saturating_add(count);
     }
 
+    pub(crate) fn add_acknowledgements_processed(&mut self, count: u64) {
+        self.acknowledgements_processed = self.acknowledgements_processed.saturating_add(count);
+    }
+
     pub(crate) fn add_pto_firings(&mut self, count: u64) {
         self.pto_firings = self.pto_firings.saturating_add(count);
     }
@@ -64,6 +74,7 @@ impl RecoveryMetrics {
 
     const fn is_empty(&self) -> bool {
         self.timeout_events == 0
+            && self.acknowledgements_processed == 0
             && self.pto_firings == 0
             && self.packets_declared_lost == 0
             && self.regenerated_transmits == 0
@@ -530,9 +541,13 @@ fn write_recovery_json(output: &mut String, recovery: &RecoveryMetrics) {
     }
 }
 
-fn recovery_fields(recovery: &RecoveryMetrics) -> [(&'static str, u64); 5] {
+fn recovery_fields(recovery: &RecoveryMetrics) -> [(&'static str, u64); 6] {
     [
         ("timeout_events", recovery.timeout_events()),
+        (
+            "acknowledgements_processed",
+            recovery.acknowledgements_processed(),
+        ),
         ("pto_firings", recovery.pto_firings()),
         ("packets_declared_lost", recovery.packets_declared_lost()),
         ("regenerated_transmits", recovery.regenerated_transmits()),
@@ -845,6 +860,7 @@ mod tests {
 
         let mut context = PacketContext::new();
         context.add_timeout_events(2);
+        context.add_acknowledgements_processed(4);
         context.add_pto_firings(3);
         context.add_packets_declared_lost(5);
         context.add_regenerated_transmits(7);
@@ -867,6 +883,7 @@ mod tests {
 
         let metrics = report.recovery_metrics();
         assert_eq!(metrics.timeout_events(), 2);
+        assert_eq!(metrics.acknowledgements_processed(), 4);
         assert_eq!(metrics.pto_firings(), 3);
         assert_eq!(metrics.packets_declared_lost(), 5);
         assert_eq!(metrics.regenerated_transmits(), 7);
@@ -876,7 +893,7 @@ mod tests {
         assert!(report.show().contains("    pto_firings: 3"));
         assert!(report.show().contains("    packets_declared_lost: 5"));
         assert!(report.to_json().contains(
-            "\"timeout_events\":2,\"pto_firings\":3,\"packets_declared_lost\":5,\"regenerated_transmits\":7,\"exact_replay_transmits\":11"
+            "\"timeout_events\":2,\"acknowledgements_processed\":4,\"pto_firings\":3,\"packets_declared_lost\":5,\"regenerated_transmits\":7,\"exact_replay_transmits\":11"
         ));
     }
 }
