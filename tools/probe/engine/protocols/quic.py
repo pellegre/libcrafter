@@ -29,6 +29,8 @@ _QUIC_STATEFUL_CAPABILITIES = [
     "endpoint_teardown",
 ]
 _QUIC_ALPN = "crafter-flow"
+_QUIC_REFERENCE_IMPLEMENTATION = "aioquic"
+_QUIC_REFERENCE_VERSION = "1.2.0"
 _QUIC_V1_INITIAL_HEX = "c000000001048394c8f001aa000301beef"
 _QUIC_VERSION_NEGOTIATION_HEX = "c000000000048394c8f001aa000000016b3343cf"
 _QUIC_RETRY_HEX = "f000000001048394c8f001aa010203000102030405060708090a0b0c0d0e0f"
@@ -327,6 +329,25 @@ def _protected_flow_contract(digest: bytes, capture_filter: str) -> JSONObject:
         "target/probe/artifacts/quic/protected-flow-report.json",
         "target/probe/artifacts/quic/protected-flow-teardown.json",
     ]
+    reference_artifact_root = "target/probe/artifacts/quic/reference-interop"
+    reference_artifacts = {
+        "crafter_client_log": f"{reference_artifact_root}/crafter-client.log.json",
+        "crafter_server_log": f"{reference_artifact_root}/crafter-server.log.json",
+        "reference_client_log": f"{reference_artifact_root}/reference-client.log.json",
+        "reference_server_log": f"{reference_artifact_root}/reference-server.log.json",
+        "client_against_reference_pcap": (
+            f"{reference_artifact_root}/crafter-client-reference-server.pcap"
+        ),
+        "reference_against_server_pcap": (
+            f"{reference_artifact_root}/reference-client-crafter-server.pcap"
+        ),
+        "decoded_summaries": f"{reference_artifact_root}/decoded-summaries.json",
+        "state_traces": f"{reference_artifact_root}/state-traces.json",
+        "command_manifest": f"{reference_artifact_root}/commands.json",
+        "provider_metadata": f"{reference_artifact_root}/provider.json",
+        "teardown_status": f"{reference_artifact_root}/teardown.json",
+        "structured_skip": f"{reference_artifact_root}/skip.json",
+    }
     return {
         "conversation": {
             "kind": "stateful_authenticated_quic_endpoint_flow",
@@ -460,6 +481,166 @@ def _protected_flow_contract(digest: bytes, capture_filter: str) -> JSONObject:
             ],
             "close_outcome": "graceful_application_close",
             "reject_secrets": True,
+        },
+        "reference_interoperability": {
+            "schema_version": 1,
+            "reference": {
+                "implementation": _QUIC_REFERENCE_IMPLEMENTATION,
+                "version": _QUIC_REFERENCE_VERSION,
+                "package_pin": (
+                    f"{_QUIC_REFERENCE_IMPLEMENTATION}=={_QUIC_REFERENCE_VERSION}"
+                ),
+                "independent_from_flow_provider": True,
+            },
+            "quic_version": 1,
+            "alpn": _QUIC_ALPN,
+            "cases": [
+                {
+                    "name": "crafter-client-reference-server",
+                    "client": "crafter-flow",
+                    "server": _QUIC_REFERENCE_IMPLEMENTATION,
+                },
+                {
+                    "name": "reference-client-crafter-server",
+                    "client": _QUIC_REFERENCE_IMPLEMENTATION,
+                    "server": "crafter-flow",
+                },
+            ],
+            "identity": {
+                "kind": "synthetic_short_lived",
+                "generated_on_disposable_provider": True,
+                "private_key_collected": False,
+                "certificate_public_fields_redacted": True,
+            },
+            "stream_exchange": {
+                "bidirectional_streams": 1,
+                "request_length": len(request),
+                "request_sha256": hashlib.sha256(request).hexdigest(),
+                "response_length": len(response),
+                "response_sha256": hashlib.sha256(response).hexdigest(),
+                "payload_bytes_collected": False,
+            },
+            "execution_guard": {
+                "default_mode": "dry_run",
+                "confirm_live_run_required": True,
+                "explicit_authorization_required": True,
+                "disposable_provider_endpoints_required": True,
+                "developer_host_execution": False,
+                "teardown_always": True,
+            },
+            "provider_requirements": {
+                "capabilities": [
+                    "two_endpoints",
+                    "controlled_service_startup",
+                    "udp_capture",
+                    "artifact_collection",
+                    "endpoint_teardown",
+                    "reference_quic_runtime",
+                ],
+                "network_origin": "disposable_provider_only",
+                "host_privilege_escalation": False,
+            },
+            "adapter_contract": {
+                "input": [
+                    "provider_endpoint_roles",
+                    "synthetic_identity_paths",
+                    "opaque_request_length_and_sha256",
+                    "opaque_response_length_and_sha256",
+                    "bounded_deadline",
+                ],
+                "output": [
+                    "role_exit_statuses",
+                    "safe_state_traces",
+                    "bounded_capture_paths",
+                    "decoded_summary_paths",
+                    "teardown_status",
+                ],
+                "secret_output_forbidden": True,
+            },
+            "provider_action_plan": {
+                "default_mode": "planned",
+                "actions": [
+                    {
+                        "name": "provision-disposable-endpoints",
+                        "roles": ["crafter", "reference"],
+                        "mode": "planned",
+                    },
+                    {
+                        "name": "install-pinned-reference",
+                        "roles": ["reference"],
+                        "mode": "planned",
+                        "package": (
+                            f"{_QUIC_REFERENCE_IMPLEMENTATION}=="
+                            f"{_QUIC_REFERENCE_VERSION}"
+                        ),
+                    },
+                    {
+                        "name": "generate-short-lived-identity",
+                        "roles": ["reference"],
+                        "mode": "planned",
+                        "collect_private_key": False,
+                    },
+                    {
+                        "name": "run-crafter-client-reference-server",
+                        "roles": ["crafter", "reference"],
+                        "mode": "planned",
+                        "request_length": len(request),
+                        "response_length": len(response),
+                    },
+                    {
+                        "name": "run-reference-client-crafter-server",
+                        "roles": ["reference", "crafter"],
+                        "mode": "planned",
+                        "request_length": len(request),
+                        "response_length": len(response),
+                    },
+                    {
+                        "name": "collect-and-redact-artifacts",
+                        "roles": ["crafter", "reference"],
+                        "mode": "planned",
+                        "before_teardown": True,
+                    },
+                    {
+                        "name": "teardown-disposable-endpoints",
+                        "roles": ["crafter", "reference"],
+                        "mode": "planned",
+                        "always": True,
+                    },
+                ],
+            },
+            "capture": {
+                "format": "pcap",
+                "bounded": True,
+                "filter": capture_filter,
+                "payloads_redacted_before_promotion": True,
+            },
+            "artifacts": reference_artifacts,
+            "redaction": {
+                "required_before_promotion": True,
+                "fields": [
+                    "credentials",
+                    "public_addresses",
+                    "endpoint_identifiers",
+                    "hostnames",
+                    "private_keys",
+                    "sensitive_payloads",
+                ],
+                "retain_only_payload_lengths_and_sha256": True,
+            },
+            "skip": {
+                "when": [
+                    "live_authorization_absent",
+                    "provider_capability_unavailable",
+                ],
+                "status": "skipped",
+                "artifact": reference_artifacts["structured_skip"],
+                "developer_host_fallback": False,
+            },
+        },
+        "structured_skip_artifact": {
+            "relative_path": "artifacts/quic/reference-interop/skip.json",
+            "schema_version": 1,
+            "redacted": True,
         },
         "safety": {
             "default_mode": "dry_run",

@@ -418,6 +418,7 @@ def _build_report(
     skips: list[ProbeSkip] = []
     observed_responses: list[ObservedResponse] = []
     skip_counts: dict[str, int] = {}
+    structured_skip_artifact_paths: list[str] = []
 
     for sequence, case in enumerate(planned_cases):
         probe_plan = probe_plans_by_sequence.get(sequence, {})
@@ -434,6 +435,14 @@ def _build_report(
             skips.append(skip)
             skip_counts[skip.reason] = skip_counts.get(skip.reason, 0) + 1
             results.append(result)
+            skip_artifact = _write_structured_skip_artifact(
+                report_path=report_path,
+                request=request,
+                probe_plan=probe_plan,
+                skip=skip,
+            )
+            if skip_artifact is not None:
+                structured_skip_artifact_paths.append(str(skip_artifact))
             continue
 
         if not dry_run and not request.confirm_live_run:
@@ -460,6 +469,14 @@ def _build_report(
                     metadata={"dry_run": dry_run, "probe_plan": probe_plan},
                 )
             )
+            skip_artifact = _write_structured_skip_artifact(
+                report_path=report_path,
+                request=request,
+                probe_plan=probe_plan,
+                skip=skip,
+            )
+            if skip_artifact is not None:
+                structured_skip_artifact_paths.append(str(skip_artifact))
             continue
 
         observed = ObservedResponse(
@@ -499,6 +516,7 @@ def _build_report(
     artifact_paths = [str(report_path)]
     if endpoint_request_path is not None:
         artifact_paths.append(str(endpoint_request_path))
+    artifact_paths.extend(structured_skip_artifact_paths)
 
     # Separate provider skips from real outcomes. A dry run executes nothing, so
     # executed/passed/failed stay zero; the skip total is split by class so a
@@ -561,6 +579,66 @@ def _build_report(
         artifact_paths=artifact_paths,
         metadata=metadata,
     )
+
+
+def _write_structured_skip_artifact(
+    *,
+    report_path: Path,
+    request: ProbeRunRequest,
+    probe_plan: Mapping[str, JSONValue],
+    skip: ProbeSkip,
+) -> Path | None:
+    """Write an explicitly requested, redacted per-case skip artifact."""
+
+    raw_contract = probe_plan.get("structured_skip_artifact")
+    if not isinstance(raw_contract, Mapping):
+        return None
+    contract = json_object(raw_contract, "probe_plan.structured_skip_artifact")
+    relative_path = contract.get("relative_path")
+    if not isinstance(relative_path, str) or not relative_path:
+        return None
+    relative = Path(relative_path)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError("structured skip artifact path must stay under the report root")
+
+    reference: JSONObject = {}
+    raw_interop = probe_plan.get("reference_interoperability")
+    if isinstance(raw_interop, Mapping):
+        interop = json_object(raw_interop, "probe_plan.reference_interoperability")
+        raw_reference = interop.get("reference")
+        if isinstance(raw_reference, Mapping):
+            reference = json_object(raw_reference, "reference_interoperability.reference")
+        alpn = interop.get("alpn")
+        cases = interop.get("cases")
+    else:
+        alpn = None
+        cases = None
+
+    missing = skip.metadata.get("missing_capabilities", [])
+    if not isinstance(missing, Sequence) or isinstance(missing, (str, bytes, bytearray)):
+        missing = []
+    artifact: JSONObject = {
+        "schema_version": int(contract.get("schema_version", 1)),
+        "status": "skipped",
+        "case": skip.case,
+        "sequence": skip.sequence,
+        "reason": skip.reason,
+        "provider": request.provider,
+        "dry_run": request.dry_run,
+        "confirm_live_run": request.confirm_live_run,
+        "missing_capabilities": [str(item) for item in missing],
+        "reference": reference,
+        "alpn": alpn if isinstance(alpn, str) else None,
+        "interop_cases": cases if isinstance(cases, list) else [],
+        "redacted": True,
+        "contains_credentials": False,
+        "contains_endpoint_identity": False,
+        "developer_host_fallback": False,
+        "teardown_status": "not_started",
+    }
+    output_path = report_path.parent / relative
+    write_json(output_path, artifact)
+    return output_path
 
 
 def _write_stimulus_endpoint_request_artifact(
