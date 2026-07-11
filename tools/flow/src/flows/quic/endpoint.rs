@@ -382,7 +382,7 @@ fn server_datagram_transition(
         ),
         move |packet, context| runtime.borrow_mut().packet(packet, context),
     )
-    .targets([HANDSHAKING, ESTABLISHED, CLOSING, DRAINING, CLOSED])
+    .targets([LISTEN, HANDSHAKING, ESTABLISHED, CLOSING, DRAINING, CLOSED])
 }
 
 fn server_active_state(
@@ -554,5 +554,144 @@ mod tests {
             .expect("entry emits a step");
         assert!(step.outputs().is_empty());
         assert_eq!(step.target(), Some(LISTEN));
+    }
+
+    fn fire_packet(
+        flow: &mut Flow,
+        state: &str,
+        packet: &crafter::Packet,
+        context: &mut PacketContext,
+    ) -> Step {
+        let transition = Flow::state_mut(flow, state)
+            .expect("flow state exists")
+            .find_transition(packet, context)
+            .expect("packet matches the bounded endpoint tuple");
+        transition
+            .fire(packet, context)
+            .expect("provider accepts datagram")
+    }
+
+    fn opaque_quic_payload(packet: &crafter::Packet) -> Vec<u8> {
+        packet
+            .layer::<crafter::Quic>()
+            .expect("typed QUIC layer")
+            .payload_bytes()
+            .to_vec()
+    }
+
+    fn initial_destination_connection_id(payload: &[u8]) -> Vec<u8> {
+        assert_eq!(payload[0] & 0xf0, 0xc0, "QUIC v1 Initial packet");
+        let length = payload[5] as usize;
+        payload[6..6 + length].to_vec()
+    }
+
+    #[test]
+    fn full_flow_retry_restarts_with_fresh_initial() {
+        const PRIVATE_KEY_HEX: &str = concat!(
+            "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b0201010420",
+            "4a1c7377037c53181de9d3ef2c3bb7364ae1f4fa48164e85b06c919b67b803dba144",
+            "03420004c8634a405397699a827e0f5af382c6b53023f9b0c79a322cc96dbf366a9b943",
+            "a0a4a74aed42c0321e76f7881fa1ae5d8b064cf696e6b918cfade1f4dbcbad3d0",
+        );
+        let certificate = decode_hex(include_str!(
+            "../../../tests/fixtures/quic/quic.example.cert.der.hex"
+        ));
+        let client_addresses = QuicEndpointAddresses::new(
+            SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 10), 44_300).into(),
+            SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 20), 443).into(),
+        );
+        let server_addresses =
+            QuicEndpointAddresses::new(client_addresses.peer, client_addresses.local);
+        let mut client = quic_client_flow(QuicClientFlowConfig::new(
+            client_addresses,
+            QuicPeerConfig::new("quic.example", [b"crafter-flow".to_vec()]),
+            QuicSyntheticIdentity::new(Vec::new(), Vec::new(), vec![certificate.clone()]),
+            b"request".to_vec(),
+        ))
+        .expect("client graph builds");
+        let mut server = quic_server_flow(QuicServerFlowConfig::new(
+            server_addresses,
+            QuicSyntheticIdentity::new(vec![certificate], decode_hex(PRIVATE_KEY_HEX), Vec::new()),
+            b"response".to_vec(),
+        ))
+        .expect("server graph builds");
+        let mut client_context = PacketContext::new();
+        let mut server_context = PacketContext::new();
+
+        let first_step = Flow::state_mut(&mut client, INITIAL_SENT)
+            .unwrap()
+            .run_entry(&mut client_context)
+            .expect("client entry succeeds")
+            .expect("client entry emits Initial");
+        Flow::state_mut(&mut server, LISTEN)
+            .unwrap()
+            .run_entry(&mut server_context)
+            .expect("server entry succeeds");
+        let first_initial = first_step.outputs()[0].packet().clone();
+        let first_payload = opaque_quic_payload(&first_initial);
+        let original_destination_id = initial_destination_connection_id(&first_payload);
+
+        let retry_step = fire_packet(&mut server, LISTEN, &first_initial, &mut server_context);
+        assert_eq!(retry_step.target(), Some(LISTEN));
+        assert_eq!(retry_step.outputs().len(), 1);
+        assert_eq!(
+            server_context
+                .get_namespaced_u64("quic", "retry.count")
+                .unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            server_context
+                .get_namespaced_string("quic", "retry.lifecycle")
+                .unwrap(),
+            Some("retry-sent")
+        );
+
+        let retry = retry_step.outputs()[0].packet().clone();
+        let fresh_step = fire_packet(&mut client, HANDSHAKING, &retry, &mut client_context);
+        assert_eq!(fresh_step.target(), Some(HANDSHAKING));
+        assert!(fresh_step
+            .outputs()
+            .iter()
+            .all(|output| output.requires_regeneration()));
+        let fresh_initial = fresh_step
+            .outputs()
+            .iter()
+            .map(|output| output.packet())
+            .find(|packet| opaque_quic_payload(packet)[0] & 0xf0 == 0xc0)
+            .expect("provider emits token-bearing Initial")
+            .clone();
+        let fresh_payload = opaque_quic_payload(&fresh_initial);
+        assert_ne!(
+            fresh_payload, first_payload,
+            "protected Initial is regenerated"
+        );
+        assert_ne!(
+            initial_destination_connection_id(&fresh_payload),
+            original_destination_id,
+            "Retry replaces the destination connection identifier"
+        );
+        assert_eq!(
+            client_context
+                .get_namespaced_u64("quic", "retry.count")
+                .unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            client_context
+                .get_namespaced_string("quic", "retry.lifecycle")
+                .unwrap(),
+            Some("retry-received")
+        );
+
+        let accepted = fire_packet(&mut server, LISTEN, &fresh_initial, &mut server_context);
+        assert_eq!(accepted.target(), Some(HANDSHAKING));
+        assert_eq!(
+            server_context
+                .get_namespaced_u64("quic", "retry.count")
+                .unwrap(),
+            Some(1),
+            "the server permits only one Retry"
+        );
     }
 }

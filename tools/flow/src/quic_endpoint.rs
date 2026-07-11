@@ -2296,6 +2296,9 @@ pub(crate) struct QuinnProtoClientDriver {
     snapshot: QuicEndpointSnapshot,
     next_timeout: Option<Instant>,
     started: bool,
+    retry_count: u64,
+    pending_retry_candidate: bool,
+    retry_observation: Option<QuicEndpointRetryObservation>,
 }
 
 #[cfg(feature = "quic-endpoint")]
@@ -2307,8 +2310,7 @@ impl QuinnProtoClientDriver {
     ) -> Result<Self> {
         use std::sync::Arc;
 
-        let mut endpoint =
-            quinn_proto::Endpoint::new(Arc::new(tls.endpoint), None, false, Some([0x71; 32]));
+        let mut endpoint = quinn_proto::Endpoint::new(Arc::new(tls.endpoint), None, false, None);
         let (handle, mut connection) = endpoint
             .connect(now, tls.client, addresses.peer, &tls.peer_name)
             .map_err(|error| {
@@ -2339,6 +2341,9 @@ impl QuinnProtoClientDriver {
             },
             next_timeout,
             started: false,
+            retry_count: 0,
+            pending_retry_candidate: false,
+            retry_observation: None,
         })
     }
 
@@ -2432,6 +2437,7 @@ impl QuicEndpointDriver for QuinnProtoClientDriver {
         use bytes::BytesMut;
         use quinn_proto::DatagramEvent;
 
+        let retry_candidate = is_quic_v1_retry(&datagram.payload);
         let mut response = Vec::new();
         if let Some(event) = self.endpoint.handle(
             datagram.timestamp,
@@ -2461,6 +2467,7 @@ impl QuicEndpointDriver for QuinnProtoClientDriver {
         }
         self.service_endpoint_events();
         self.collect_connection_events();
+        self.pending_retry_candidate = retry_candidate;
         self.next_timeout = self.connection.poll_timeout();
         Ok(())
     }
@@ -2489,6 +2496,20 @@ impl QuicEndpointDriver for QuinnProtoClientDriver {
         }
         self.service_endpoint_events();
         self.next_timeout = self.connection.poll_timeout();
+        if self.pending_retry_candidate {
+            let emitted_fresh_initial = output.iter().any(|transmit| {
+                QuicEndpointTransmitPacketCounts::classify_single(&transmit.payload, true).initial
+                    > 0
+            });
+            if emitted_fresh_initial {
+                self.retry_count = self.retry_count.saturating_add(1);
+                self.retry_observation = Some(QuicEndpointRetryObservation {
+                    count: self.retry_count,
+                    lifecycle: "retry-received",
+                });
+            }
+            self.pending_retry_candidate = false;
+        }
         if self.started
             && self.snapshot.lifecycle == QuicEndpointLifecycle::InitialSent
             && !output.is_empty()
@@ -2609,6 +2630,17 @@ impl QuicEndpointDriver for QuinnProtoClientDriver {
             });
         Ok(())
     }
+
+    fn take_retry_observation(&mut self) -> Option<QuicEndpointRetryObservation> {
+        self.retry_observation.take()
+    }
+}
+
+#[cfg(feature = "quic-endpoint")]
+fn is_quic_v1_retry(payload: &[u8]) -> bool {
+    payload.len() >= 1 + 4 + 1 + 1 + 16
+        && payload[0] & 0xf0 == 0xf0
+        && payload[1..5] == 1_u32.to_be_bytes()
 }
 
 /// Production, socket-free passive adapter for `quinn-proto`.
@@ -2627,6 +2659,8 @@ pub(crate) struct QuinnProtoServerDriver {
     snapshot: QuicEndpointSnapshot,
     next_timeout: Option<Instant>,
     started: bool,
+    retry_count: u64,
+    retry_observation: Option<QuicEndpointRetryObservation>,
 }
 
 #[cfg(feature = "quic-endpoint")]
@@ -2641,7 +2675,7 @@ impl QuinnProtoServerDriver {
             Arc::new(tls.endpoint),
             Some(Arc::new(tls.server)),
             false,
-            Some([0x72; 32]),
+            None,
         );
         Ok(Self {
             endpoint,
@@ -2663,6 +2697,8 @@ impl QuinnProtoServerDriver {
             },
             next_timeout: None,
             started: false,
+            retry_count: 0,
+            retry_observation: None,
         })
     }
 
@@ -2774,6 +2810,53 @@ impl QuicEndpointDriver for QuinnProtoServerDriver {
             &mut response,
         ) {
             match event {
+                DatagramEvent::NewConnection(incoming)
+                    if self.connection.is_none()
+                        && self.retry_count == 0
+                        && incoming.may_retry() =>
+                {
+                    let transmit =
+                        self.endpoint
+                            .retry(incoming, &mut response)
+                            .map_err(|error| {
+                                provider_error(
+                                    QuicEndpointErrorCategory::DatagramIngress,
+                                    "issuing bounded QUIC Retry",
+                                    error,
+                                )
+                            })?;
+                    let payload = response[..transmit.size].to_vec();
+                    self.pending_responses.push_back(QuicEndpointTransmit {
+                        source_ip: datagram.local_ip,
+                        source_port: datagram.local_port,
+                        destination_ip: datagram.remote_ip,
+                        destination_port: datagram.remote_port,
+                        payload,
+                        packet_counts: QuicEndpointTransmitPacketCounts::default(),
+                    });
+                    self.retry_count = 1;
+                    self.retry_observation = Some(QuicEndpointRetryObservation {
+                        count: self.retry_count,
+                        lifecycle: "retry-sent",
+                    });
+                }
+                DatagramEvent::NewConnection(incoming)
+                    if self.connection.is_none()
+                        && self.retry_count == 1
+                        && incoming.may_retry() =>
+                {
+                    let transmit = self.endpoint.refuse(incoming, &mut response);
+                    let payload = response[..transmit.size].to_vec();
+                    self.pending_responses.push_back(QuicEndpointTransmit {
+                        source_ip: datagram.local_ip,
+                        source_port: datagram.local_port,
+                        destination_ip: datagram.remote_ip,
+                        destination_port: datagram.remote_port,
+                        payload,
+                        packet_counts: QuicEndpointTransmitPacketCounts::default(),
+                    });
+                    self.snapshot.lifecycle = QuicEndpointLifecycle::Closing;
+                }
                 DatagramEvent::NewConnection(incoming) if self.connection.is_none() => {
                     let (handle, connection) = self
                         .endpoint
@@ -2972,6 +3055,17 @@ impl QuicEndpointDriver for QuinnProtoServerDriver {
             });
         Ok(())
     }
+
+    fn take_retry_observation(&mut self) -> Option<QuicEndpointRetryObservation> {
+        self.retry_observation.take()
+    }
+}
+
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct QuicEndpointRetryObservation {
+    count: u64,
+    lifecycle: &'static str,
 }
 
 /// Socket-free boundary around the selected QUIC protocol provider.
@@ -3056,6 +3150,10 @@ pub(crate) trait QuicEndpointDriver {
         increment_quic_counter(context, "packets.initial.sent", initial)?;
         increment_quic_counter(context, "packets.handshake.sent", handshake)?;
         increment_quic_counter(context, "packets.application.sent", application)?;
+        if let Some(retry) = self.take_retry_observation() {
+            context.insert_namespaced_u64("quic", "retry.count", retry.count)?;
+            context.insert_namespaced_string("quic", "retry.lifecycle", retry.lifecycle)?;
+        }
 
         let mut step = if packets.is_empty() {
             Step::stay()
@@ -3068,6 +3166,9 @@ pub(crate) trait QuicEndpointDriver {
         Ok(step)
     }
     fn next_timeout(&self) -> Option<Instant>;
+    fn take_retry_observation(&mut self) -> Option<QuicEndpointRetryObservation> {
+        None
+    }
     fn next_timeout_kind(&self) -> QuicEndpointTimeoutKind {
         QuicEndpointTimeoutKind::Maintenance
     }
