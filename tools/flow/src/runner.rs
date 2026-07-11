@@ -726,6 +726,7 @@ impl Runner {
         )
         .with_recovery_metrics(ctx.recovery_metrics())
         .with_tcp_state(ctx.get_tcp_snd_nxt(), ctx.get_tcp_rcv_nxt())
+        .with_protocol_snapshot(ctx.protocol_snapshot().cloned())
     }
 
     fn run_timeout_elapsed(&self, elapsed: Duration) -> bool {
