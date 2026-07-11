@@ -84,10 +84,16 @@ cargo run -p crafter-flow --example dhcp_client_flow
 cargo run -p crafter-flow --example dhcp_responder_flow
 cargo run -p crafter-flow --example arp_injector_flow
 cargo run -p crafter-flow --example dns_spoof_flow
+cargo run -p crafter-flow --example quic_initial_client_flow
+cargo run -p crafter-flow --example quic_initial_server_flow
 ```
 
 Each example prints the flow shape, dry-run send plans where packets are
 emitted, and the final `FlowReport`.
+
+The QUIC examples exchange deterministic protected Initial fixtures entirely
+in memory. They inspect Initial packets only and do not establish a QUIC
+connection.
 
 ## Safety Model
 
