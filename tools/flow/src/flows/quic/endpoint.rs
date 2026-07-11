@@ -132,7 +132,7 @@ impl ClientRuntime {
         let now = self.clock.now();
         self.driver
             .handle_ingress(&ingress, self.addresses, self.max_udp_payload_size, now)?;
-        self.after_provider_action(now, context)
+        self.after_provider_action(now, context, None)
     }
 
     fn timeout(&mut self, context: &mut PacketContext) -> Result<Step> {
@@ -140,16 +140,18 @@ impl ClientRuntime {
             .driver
             .next_timeout()
             .unwrap_or_else(|| self.clock.now());
-        if self.driver.next_timeout().is_some() {
-            self.driver.handle_timeout(now)?;
-        }
-        self.after_provider_action(now, context)
+        let recovery = self.driver.next_timeout().is_some().then(|| {
+            self.driver
+                .handle_timeout_step(now, self.addresses, context)
+        });
+        self.after_provider_action(now, context, recovery.transpose()?)
     }
 
     fn after_provider_action(
         &mut self,
         now: std::time::Instant,
         context: &mut PacketContext,
+        recovery: Option<Step>,
     ) -> Result<Step> {
         let events = self.mapper.poll(&mut self.driver, context)?;
         let application_open = matches!(
@@ -203,10 +205,13 @@ impl ClientRuntime {
             self.mapper.poll(&mut self.driver, context)?;
         }
         let target = lifecycle_state(self.driver.snapshot().lifecycle);
-        let mut step = self
-            .driver
-            .drain_transmit_step(now, self.addresses, context)?
-            .goto(target);
+        let mut step = match recovery {
+            Some(step) => step,
+            None => self
+                .driver
+                .drain_transmit_step(now, self.addresses, context)?,
+        }
+        .goto(target);
         if self.driver.snapshot().lifecycle == QuicEndpointLifecycle::Draining
             && step.wakeup().is_none()
         {
@@ -358,7 +363,7 @@ impl ServerRuntime {
         let now = self.clock.now();
         self.driver
             .handle_ingress(&ingress, self.addresses, self.max_udp_payload_size, now)?;
-        self.after_provider_action(now, context)
+        self.after_provider_action(now, context, None)
     }
 
     fn timeout(&mut self, context: &mut PacketContext) -> Result<Step> {
@@ -366,16 +371,18 @@ impl ServerRuntime {
             .driver
             .next_timeout()
             .unwrap_or_else(|| self.clock.now());
-        if self.driver.next_timeout().is_some() {
-            self.driver.handle_timeout(now)?;
-        }
-        self.after_provider_action(now, context)
+        let recovery = self.driver.next_timeout().is_some().then(|| {
+            self.driver
+                .handle_timeout_step(now, self.addresses, context)
+        });
+        self.after_provider_action(now, context, recovery.transpose()?)
     }
 
     fn after_provider_action(
         &mut self,
         now: std::time::Instant,
         context: &mut PacketContext,
+        recovery: Option<Step>,
     ) -> Result<Step> {
         let events = self.mapper.poll(&mut self.driver, context)?;
         if matches!(
@@ -426,10 +433,13 @@ impl ServerRuntime {
             QuicEndpointLifecycle::Listen => LISTEN,
             lifecycle => lifecycle_state(lifecycle),
         };
-        let mut step = self
-            .driver
-            .drain_transmit_step(now, self.addresses, context)?
-            .goto(target);
+        let mut step = match recovery {
+            Some(step) => step,
+            None => self
+                .driver
+                .drain_transmit_step(now, self.addresses, context)?,
+        }
+        .goto(target);
         if self.driver.snapshot().lifecycle == QuicEndpointLifecycle::Draining
             && step.wakeup().is_none()
         {
