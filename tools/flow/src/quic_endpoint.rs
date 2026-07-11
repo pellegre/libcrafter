@@ -1823,6 +1823,121 @@ impl QuicEndpointServerRequest {
     }
 }
 
+/// Private state for the server's bounded response on the accepted request
+/// stream.
+///
+/// Response bytes and the provider stream identifier stay behind the endpoint
+/// boundary. Context receives only the accepted byte count, writable-wait
+/// state, and completion flag.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug)]
+pub(crate) struct QuicEndpointServerResponse {
+    response: Vec<u8>,
+    max_response_bytes: u64,
+    stream: Option<QuicEndpointStreamId>,
+    accepted: usize,
+    finished: bool,
+}
+
+#[cfg(feature = "quic-endpoint")]
+impl QuicEndpointServerResponse {
+    pub(crate) fn new(response: Vec<u8>, max_response_bytes: u64) -> Self {
+        Self {
+            response,
+            max_response_bytes,
+            stream: None,
+            accepted: 0,
+            finished: false,
+        }
+    }
+
+    /// Incrementally write the response on the request stream. A `false`
+    /// result means the provider accepted only part of the response (possibly
+    /// zero bytes), so the caller must wait for a stream-writable event or the
+    /// provider's next scheduled wakeup before calling again.
+    pub(crate) fn drive<D: QuicEndpointDriver + ?Sized>(
+        &mut self,
+        driver: &mut D,
+        stream: QuicEndpointStreamId,
+        context: &mut PacketContext,
+    ) -> Result<bool> {
+        let established = matches!(
+            context.protocol_snapshot(),
+            Some(snapshot) if snapshot.protocol == "quic" && snapshot.lifecycle == "established"
+        ) && context.get_namespaced_bool("quic", "handshake.authenticated")?
+            == Some(true);
+        if !established {
+            return Err(stream_state_error(
+                "writing server response before authenticated establishment",
+            ));
+        }
+        if context.get_namespaced_string("quic", "transport.validation")? != Some("validated") {
+            return Err(stream_state_error(
+                "writing server response before transport parameter validation",
+            ));
+        }
+        if context.get_namespaced_bool("quic", "application.request_complete")? != Some(true) {
+            return Err(stream_state_error(
+                "writing server response before complete client request",
+            ));
+        }
+        if self.response.len() as u64 > self.max_response_bytes {
+            return Err(stream_state_error("rejecting oversized server response"));
+        }
+        if stream != QuicEndpointStreamId(0) {
+            return Err(stream_state_error(
+                "rejecting non-request server response stream",
+            ));
+        }
+        match self.stream {
+            Some(accepted) if accepted != stream => {
+                return Err(stream_state_error(
+                    "rejecting changed server response stream",
+                ));
+            }
+            None => self.stream = Some(stream),
+            Some(_) => {}
+        }
+        if self.finished {
+            return Err(stream_state_error("rejecting repeated server response"));
+        }
+
+        if self.accepted < self.response.len() {
+            let remaining = &self.response[self.accepted..];
+            let accepted = driver.write_stream(stream, remaining)?;
+            if accepted > remaining.len() {
+                return Err(provider_error(
+                    QuicEndpointErrorCategory::ProviderInternal,
+                    "rejecting invalid server stream write count",
+                    (),
+                ));
+            }
+            self.accepted += accepted;
+        }
+
+        context.insert_namespaced_u64(
+            "quic",
+            "application.response_bytes_sent",
+            self.accepted as u64,
+        )?;
+        if self.accepted != self.response.len() {
+            context.insert_namespaced_bool("quic", "application.response_complete", false)?;
+            context.insert_namespaced_bool(
+                "quic",
+                "application.response_waiting_writable",
+                true,
+            )?;
+            return Ok(false);
+        }
+
+        driver.finish_stream(stream)?;
+        self.finished = true;
+        context.insert_namespaced_bool("quic", "application.response_waiting_writable", false)?;
+        context.insert_namespaced_bool("quic", "application.response_complete", true)?;
+        Ok(true)
+    }
+}
+
 #[cfg(feature = "quic-endpoint")]
 fn stream_state_error(context: &'static str) -> FlowError {
     provider_error(QuicEndpointErrorCategory::StreamState, context, ())
@@ -4328,5 +4443,216 @@ mod tests {
             )
             .unwrap_err();
         assert!(error.to_string().contains("oversized client request"));
+    }
+
+    #[cfg(feature = "quic-endpoint")]
+    #[test]
+    fn server_writes_and_finishes_bounded_response() {
+        use std::{collections::VecDeque, time::Instant};
+
+        use super::{
+            stream_state_error, QuicEndpointDatagram, QuicEndpointDriver, QuicEndpointEvent,
+            QuicEndpointLifecycle, QuicEndpointPacketSpaceCounts, QuicEndpointRecoveryCounts,
+            QuicEndpointServerResponse, QuicEndpointSnapshot, QuicEndpointStreamId,
+            QuicEndpointStreamRead, QuicEndpointStreamReadStatus, QuicEndpointTransmit,
+        };
+        use crate::{context::ProtocolContextSnapshot, PacketContext, Result};
+
+        struct ResponseDriver {
+            capacities: VecDeque<usize>,
+            failure: Option<&'static str>,
+            accepted: Vec<u8>,
+            finished: usize,
+        }
+
+        impl ResponseDriver {
+            fn new(capacities: impl IntoIterator<Item = usize>) -> Self {
+                Self {
+                    capacities: capacities.into_iter().collect(),
+                    failure: None,
+                    accepted: Vec::new(),
+                    finished: 0,
+                }
+            }
+
+            fn failing(failure: &'static str) -> Self {
+                Self {
+                    capacities: VecDeque::new(),
+                    failure: Some(failure),
+                    accepted: Vec::new(),
+                    finished: 0,
+                }
+            }
+        }
+
+        impl QuicEndpointDriver for ResponseDriver {
+            fn start(&mut self, _: Instant) -> Result<()> {
+                Ok(())
+            }
+
+            fn handle_datagram(&mut self, _: QuicEndpointDatagram) -> Result<()> {
+                Ok(())
+            }
+
+            fn drain_transmits(&mut self, _: Instant) -> Result<Vec<QuicEndpointTransmit>> {
+                Ok(Vec::new())
+            }
+
+            fn next_timeout(&self) -> Option<Instant> {
+                None
+            }
+
+            fn handle_timeout(&mut self, _: Instant) -> Result<()> {
+                Ok(())
+            }
+
+            fn poll_events(&mut self) -> Result<Vec<QuicEndpointEvent>> {
+                Ok(Vec::new())
+            }
+
+            fn open_bidirectional_stream(&mut self) -> Result<QuicEndpointStreamId> {
+                unreachable!("server responds on the accepted request stream")
+            }
+
+            fn write_stream(&mut self, _: QuicEndpointStreamId, bytes: &[u8]) -> Result<usize> {
+                if let Some(failure) = self.failure {
+                    return Err(stream_state_error(failure));
+                }
+                let accepted = self.capacities.pop_front().unwrap_or(0).min(bytes.len());
+                self.accepted.extend_from_slice(&bytes[..accepted]);
+                Ok(accepted)
+            }
+
+            fn finish_stream(&mut self, _: QuicEndpointStreamId) -> Result<()> {
+                self.finished += 1;
+                Ok(())
+            }
+
+            fn read_stream(
+                &mut self,
+                _: QuicEndpointStreamId,
+                _: usize,
+            ) -> Result<QuicEndpointStreamRead> {
+                Ok(QuicEndpointStreamRead {
+                    bytes: Vec::new(),
+                    status: QuicEndpointStreamReadStatus::Blocked,
+                })
+            }
+
+            fn snapshot(&self) -> QuicEndpointSnapshot {
+                QuicEndpointSnapshot {
+                    lifecycle: QuicEndpointLifecycle::Established,
+                    local_connection_id: Vec::new(),
+                    peer_connection_id: Vec::new(),
+                    initial: QuicEndpointPacketSpaceCounts::default(),
+                    handshake: QuicEndpointPacketSpaceCounts::default(),
+                    application: QuicEndpointPacketSpaceCounts::default(),
+                    stream_bytes_sent: self.accepted.len() as u64,
+                    stream_bytes_received: 0,
+                    recovery: QuicEndpointRecoveryCounts::default(),
+                }
+            }
+
+            fn close(&mut self, _: Instant, _: u64, _: &[u8]) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        fn ready_context() -> PacketContext {
+            let mut context = PacketContext::new();
+            context.set_protocol_snapshot(ProtocolContextSnapshot::new("quic", "established"));
+            context
+                .insert_namespaced_bool("quic", "handshake.authenticated", true)
+                .unwrap();
+            context
+                .insert_namespaced_string("quic", "transport.validation", "validated")
+                .unwrap();
+            context
+                .insert_namespaced_bool("quic", "application.request_complete", true)
+                .unwrap();
+            context
+        }
+
+        let response = b"opaque response bytes".to_vec();
+        let mut driver = ResponseDriver::new([4, 0, 7, usize::MAX]);
+        let mut context = ready_context();
+        let mut operation = QuicEndpointServerResponse::new(response.clone(), 64);
+        assert!(!operation
+            .drive(&mut driver, QuicEndpointStreamId(0), &mut context)
+            .unwrap());
+        assert!(!operation
+            .drive(&mut driver, QuicEndpointStreamId(0), &mut context)
+            .unwrap());
+        assert_eq!(driver.accepted, &response[..4]);
+        assert_eq!(driver.finished, 0);
+        assert!(!operation
+            .drive(&mut driver, QuicEndpointStreamId(0), &mut context)
+            .unwrap());
+        assert!(operation
+            .drive(&mut driver, QuicEndpointStreamId(0), &mut context)
+            .unwrap());
+        assert_eq!(driver.accepted, response);
+        assert_eq!(driver.finished, 1);
+        assert_eq!(
+            context
+                .get_namespaced_u64("quic", "application.response_bytes_sent")
+                .unwrap(),
+            Some(response.len() as u64)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_bool("quic", "application.response_complete")
+                .unwrap(),
+            Some(true)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_bool("quic", "application.response_waiting_writable")
+                .unwrap(),
+            Some(false)
+        );
+        assert!(context
+            .get_namespaced_bytes("quic", "application.response")
+            .unwrap()
+            .is_none());
+
+        let repeat = operation
+            .drive(&mut driver, QuicEndpointStreamId(0), &mut context)
+            .unwrap_err();
+        assert!(repeat.to_string().contains("repeated server response"));
+        assert_eq!(driver.finished, 1);
+
+        let mut incomplete = ready_context();
+        incomplete
+            .insert_namespaced_bool("quic", "application.request_complete", false)
+            .unwrap();
+        let error = QuicEndpointServerResponse::new(b"early".to_vec(), 64)
+            .drive(
+                &mut ResponseDriver::new([usize::MAX]),
+                QuicEndpointStreamId(0),
+                &mut incomplete,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("before complete client request"));
+
+        let error = QuicEndpointServerResponse::new(vec![0; 65], 64)
+            .drive(
+                &mut ResponseDriver::new([usize::MAX]),
+                QuicEndpointStreamId(0),
+                &mut ready_context(),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("oversized server response"));
+
+        for expected in ["stream reset", "stop-sending", "closed stream"] {
+            let error = QuicEndpointServerResponse::new(b"response".to_vec(), 64)
+                .drive(
+                    &mut ResponseDriver::failing(expected),
+                    QuicEndpointStreamId(0),
+                    &mut ready_context(),
+                )
+                .unwrap_err();
+            assert!(error.to_string().contains(expected));
+        }
     }
 }
