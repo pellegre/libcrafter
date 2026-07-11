@@ -86,6 +86,8 @@ cargo run -p crafter-flow --example arp_injector_flow
 cargo run -p crafter-flow --example dns_spoof_flow
 cargo run -p crafter-flow --example quic_initial_client_flow
 cargo run -p crafter-flow --example quic_initial_server_flow
+cargo run -p crafter-flow --features quic-endpoint --example quic_client_flow
+cargo run -p crafter-flow --features quic-endpoint --example quic_server_flow
 ```
 
 Each example prints the flow shape, dry-run send plans where packets are
@@ -95,6 +97,12 @@ The QUIC examples exchange deterministic protected Initial fixtures entirely
 in memory. They inspect Initial packets only and do not establish a QUIC
 connection. See [QUIC Initial-only flows](docs/quic-flow.md) for the state
 graphs, inputs, inspection results, and safety limits.
+
+The feature-gated full QUIC examples authenticate with a conspicuously
+synthetic test identity and exchange one opaque request and response entirely
+through the deterministic in-memory driver. They print only safe configuration,
+packet-plan, lifecycle, payload-count, and recovery-count observations. Live use
+requires explicit provider-backed authorization and separate tooling.
 
 ## Safety Model
 
