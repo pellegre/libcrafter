@@ -76,6 +76,12 @@ struct OutstandingSegment {
     packet: crafter::Packet,
 }
 
+struct ScheduledWakeup {
+    state: String,
+    deadline: Instant,
+    immediate: bool,
+}
+
 /// Owns the run options and single conversation for one flow run.
 pub struct Runner {
     options: RunOptions,
@@ -84,6 +90,8 @@ pub struct Runner {
     send_reports: Vec<SendReport>,
     tcp_payload_bytes_sent: usize,
     outstanding_segment: Option<OutstandingSegment>,
+    scheduled_wakeup: Option<ScheduledWakeup>,
+    immediate_wakeup_dispatched: bool,
     #[cfg(test)]
     fail_send_at: Option<usize>,
     #[cfg(test)]
@@ -157,6 +165,8 @@ impl Runner {
             send_reports: Vec::new(),
             tcp_payload_bytes_sent: 0,
             outstanding_segment: None,
+            scheduled_wakeup: None,
+            immediate_wakeup_dispatched: false,
             #[cfg(test)]
             fail_send_at: None,
             #[cfg(test)]
@@ -300,6 +310,7 @@ impl Runner {
         iteration: u64,
         run_started: Instant,
     ) -> Result<IterationResult> {
+        self.clear_scheduled_wakeup();
         match flow.role() {
             Role::Initiator | Role::Injector => {
                 if self
@@ -315,17 +326,24 @@ impl Runner {
         }
 
         loop {
-            let receive = {
+            let receive = if self.take_due_wakeup(current_state) {
+                // The request is consumed before dispatch, so a zero-duration
+                // timeout action cannot spin by repeatedly requesting it.
+                ReceiveCompletion::TimedOut
+            } else {
                 let state = Self::state(flow, current_state.as_str())?;
                 let matcher = StateTransitionsMatcher { state };
-                let Some(timeout) = self.effective_step_timeout(run_started) else {
+                let Some(timeout) = self.effective_step_timeout(run_started, current_state) else {
                     return Ok(IterationResult::TimedOut);
                 };
                 self.recv_matching_with_retransmit(&matcher, current_state, ctx, timeout)?
             };
 
             let packet = match receive {
-                ReceiveCompletion::Packet(packet) => packet,
+                ReceiveCompletion::Packet(packet) => {
+                    self.immediate_wakeup_dispatched = false;
+                    packet
+                }
                 ReceiveCompletion::TimedOut => {
                     let elapsed = run_started.elapsed();
                     if self.run_timeout_elapsed(elapsed) {
@@ -465,11 +483,13 @@ impl Runner {
         iteration: u64,
         ctx: &mut PacketContext,
     ) -> Result<StepAction> {
+        let action_completed_at = Instant::now();
         let target = step.target().map(str::to_string);
         let entered_state = target.is_some();
         let awaiting_state = target.clone().unwrap_or_else(|| current_state.to_string());
         let expects_reply = step.expects_reply();
         let is_terminal = step.is_terminal();
+        let wake_after = step.wakeup();
         let outputs = step.outputs().to_vec();
 
         if matches!(mode, StepMode::Active) {
@@ -519,11 +539,20 @@ impl Runner {
         }
 
         if matches!(mode, StepMode::PassiveSetup) {
+            if let Some(delay) = wake_after {
+                self.schedule_wakeup(current_state, delay, action_completed_at);
+            }
             return Ok(StepAction::Settled);
         }
 
         if let Some(target) = target.as_deref() {
             Self::ensure_state(flow, target)?;
+        }
+
+        if target.is_some() || is_terminal {
+            self.clear_scheduled_wakeup();
+        } else if let Some(delay) = wake_after {
+            self.schedule_wakeup(current_state, delay, action_completed_at);
         }
 
         if is_terminal {
@@ -647,14 +676,61 @@ impl Runner {
             .is_some_and(|timeout| elapsed >= timeout)
     }
 
-    fn effective_step_timeout(&self, run_started: Instant) -> Option<Duration> {
-        match self.options.run_timeout {
+    fn effective_step_timeout(
+        &self,
+        run_started: Instant,
+        current_state: &str,
+    ) -> Option<Duration> {
+        let base = match self.options.run_timeout {
             Some(run_timeout) => run_timeout
                 .checked_sub(run_started.elapsed())
                 .map(|remaining| remaining.min(self.options.step_timeout))
                 .filter(|timeout| !timeout.is_zero()),
             None => Some(self.options.step_timeout),
+        }?;
+
+        let wakeup = self
+            .scheduled_wakeup
+            .as_ref()
+            .filter(|wakeup| wakeup.state == current_state)
+            .map(|wakeup| wakeup.deadline.saturating_duration_since(Instant::now()));
+
+        Some(wakeup.map_or(base, |remaining| remaining.min(base)))
+    }
+
+    fn schedule_wakeup(&mut self, state: &str, delay: Duration, scheduled_at: Instant) {
+        if delay.is_zero() && self.immediate_wakeup_dispatched {
+            self.scheduled_wakeup = None;
+            return;
         }
+
+        self.scheduled_wakeup = Some(ScheduledWakeup {
+            state: state.to_string(),
+            deadline: scheduled_at.checked_add(delay).unwrap_or(scheduled_at),
+            immediate: delay.is_zero(),
+        });
+    }
+
+    fn take_due_wakeup(&mut self, current_state: &str) -> bool {
+        let Some(wakeup) = self.scheduled_wakeup.as_ref() else {
+            return false;
+        };
+        if wakeup.state != current_state {
+            self.clear_scheduled_wakeup();
+            return false;
+        }
+        if wakeup.deadline > Instant::now() {
+            return false;
+        }
+
+        let wakeup = self.scheduled_wakeup.take().expect("wakeup was present");
+        self.immediate_wakeup_dispatched = wakeup.immediate;
+        true
+    }
+
+    fn clear_scheduled_wakeup(&mut self) {
+        self.scheduled_wakeup = None;
+        self.immediate_wakeup_dispatched = false;
     }
 
     fn state_mut<'a>(flow: &'a mut Flow, state: &str) -> Result<&'a mut FlowState> {
@@ -1753,6 +1829,44 @@ mod tests {
         assert_eq!(runner.send_reports().len(), 3);
         assert_eq!(report.recovery_metrics().timeout_events(), 1);
         assert!(runner.outstanding_segment.is_none());
+    }
+
+    #[test]
+    fn runner_honors_dynamic_wakeup_before_step_timeout() {
+        let seen_timeout = Rc::new(Cell::new(None));
+        let source = RecordingTimeoutSource {
+            seen_timeout: Rc::clone(&seen_timeout),
+        };
+        let waiting = FlowState::new("Waiting")
+            .on_entry(|_ctx| Ok(Step::stay().wake_after(Duration::from_millis(5))))
+            .on_timeout(|_ctx| Ok(Step::goto("Recovered")))
+            .timeout_targets(["Recovered"]);
+        let recovered = FlowState::new("Recovered")
+            .on_entry(|_ctx| Ok(Step::done()))
+            .entry_terminal();
+        let mut flow = Flow::new("runner-dynamic-wakeup")
+            .state(waiting)
+            .state(recovered)
+            .initial("Waiting");
+        let options = RunOptions::default()
+            .step_timeout(Duration::from_secs(1))
+            .run_timeout(Duration::from_millis(100));
+        let mut runner = Runner::with_source(options, source).expect("runner opens");
+
+        let report = runner
+            .run(&mut flow)
+            .expect("runner dispatches the dynamic wakeup");
+
+        assert_eq!(report.outcome(), &FlowOutcome::Completed);
+        assert_eq!(
+            report.visited_states(),
+            &["Waiting".to_string(), "Recovered".to_string()]
+        );
+        assert_eq!(report.recovery_metrics().timeout_events(), 1);
+        assert!(
+            seen_timeout.get().expect("source saw a timeout") < Duration::from_secs(1),
+            "dynamic wakeup should cap the configured step timeout"
+        );
     }
 
     #[test]

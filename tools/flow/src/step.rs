@@ -1,5 +1,7 @@
 //! Transition outcomes for protocol flows.
 
+use std::time::Duration;
+
 /// Delivery behavior attached to one packet output.
 ///
 /// The three values make reply expectation and exact-replay safety a single,
@@ -112,6 +114,8 @@ pub struct Step {
     pub outcome: Option<String>,
     /// Whether the runner should expect a reply after sending the packet.
     pub expects_reply: bool,
+    /// Optional relative delay before the current state's timeout action should run.
+    wake_after: Option<Duration>,
 }
 
 impl Step {
@@ -128,6 +132,7 @@ impl Step {
             terminal: false,
             outcome: None,
             expects_reply: true,
+            wake_after: None,
         }
     }
 
@@ -147,6 +152,7 @@ impl Step {
             terminal: false,
             outcome: None,
             expects_reply: false,
+            wake_after: None,
         }
     }
 
@@ -168,6 +174,7 @@ impl Step {
             terminal: false,
             outcome: None,
             expects_reply: true,
+            wake_after: None,
         }
     }
 
@@ -179,6 +186,7 @@ impl Step {
             terminal: false,
             outcome: None,
             expects_reply: false,
+            wake_after: None,
         }
     }
 
@@ -190,6 +198,7 @@ impl Step {
             terminal: false,
             outcome: None,
             expects_reply: false,
+            wake_after: None,
         }
     }
 
@@ -201,6 +210,7 @@ impl Step {
             terminal: true,
             outcome: None,
             expects_reply: false,
+            wake_after: None,
         }
     }
 
@@ -248,6 +258,17 @@ impl Step {
     pub const fn expects_reply(&self) -> bool {
         self.expects_reply
     }
+
+    /// Request that the current state's timeout action run after `delay`.
+    pub fn wake_after(mut self, delay: Duration) -> Self {
+        self.wake_after = Some(delay);
+        self
+    }
+
+    /// Return the requested relative wakeup delay, if any.
+    pub const fn wakeup(&self) -> Option<Duration> {
+        self.wake_after
+    }
 }
 
 /// Adds a target state to a step built by another constructor.
@@ -266,6 +287,7 @@ impl StepGotoExt for Step {
 #[cfg(test)]
 mod tests {
     use super::{SendIntent, Step, StepGotoExt};
+    use std::time::Duration;
 
     #[test]
     fn step_send_then_goto_carries_packet_and_target() {
@@ -278,6 +300,13 @@ mod tests {
         assert_eq!(step.target(), Some("s"));
         assert!(!step.is_terminal());
         assert!(step.expects_reply());
+    }
+
+    #[test]
+    fn step_records_relative_wakeup_request() {
+        let step = Step::stay().wake_after(Duration::from_millis(25));
+
+        assert_eq!(step.wakeup(), Some(Duration::from_millis(25)));
     }
 
     #[test]
