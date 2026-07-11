@@ -202,6 +202,103 @@ impl QuicEndpointServerPolicy {
 #[cfg(feature = "quic-endpoint")]
 const QUIC_FLOW_ALPN: &[u8] = b"crafter-flow";
 
+/// Monotonic time source used by the socket-free endpoint adapter.
+///
+/// The flow runner samples the clock once for an endpoint operation and passes
+/// that instant through to the provider. This keeps a complete provider action
+/// on one explicit time line and lets offline harnesses substitute deterministic
+/// time without changing the process clock.
+#[cfg(feature = "quic-endpoint")]
+pub(crate) trait QuicEndpointClock {
+    fn now(&self) -> Instant;
+
+    fn wakeup_after(&self, deadline: Instant) -> Duration {
+        deadline
+            .checked_duration_since(self.now())
+            .unwrap_or(Duration::ZERO)
+    }
+}
+
+/// Production monotonic clock. Reading it has no wall-clock or system-time side
+/// effects.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct QuicEndpointSystemClock;
+
+#[cfg(feature = "quic-endpoint")]
+impl QuicEndpointClock for QuicEndpointSystemClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+
+/// Deterministic monotonic clock for tests and the in-memory duplex harness.
+#[cfg(all(feature = "quic-endpoint", test))]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct QuicEndpointManualClock {
+    now: Instant,
+}
+
+#[cfg(all(feature = "quic-endpoint", test))]
+impl QuicEndpointManualClock {
+    pub(crate) const fn new(now: Instant) -> Self {
+        Self { now }
+    }
+
+    pub(crate) fn advance(&mut self, duration: Duration) -> Instant {
+        self.now = saturating_instant_add(self.now, duration);
+        self.now
+    }
+
+    pub(crate) fn advance_to(&mut self, now: Instant) -> Result<()> {
+        if now < self.now {
+            return Err(FlowError::QuicEndpoint {
+                category: QuicEndpointErrorCategory::TimeoutHandling,
+                context: "advancing deterministic endpoint clock".to_string(),
+            });
+        }
+        self.now = now;
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "quic-endpoint", test))]
+impl QuicEndpointClock for QuicEndpointManualClock {
+    fn now(&self) -> Instant {
+        self.now
+    }
+}
+
+/// Adds a duration without allowing platform-specific `Instant` overflow to
+/// panic. If the requested duration is not representable, return the latest
+/// representable instant at or before it.
+#[cfg(all(feature = "quic-endpoint", test))]
+fn saturating_instant_add(base: Instant, duration: Duration) -> Instant {
+    if let Some(instant) = base.checked_add(duration) {
+        return instant;
+    }
+
+    let requested = duration.as_nanos();
+    let mut low = 0_u128;
+    let mut high = requested;
+    while low < high {
+        let middle = low + (high - low + 1) / 2;
+        if base.checked_add(duration_from_nanos(middle)).is_some() {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    base.checked_add(duration_from_nanos(low)).unwrap_or(base)
+}
+
+#[cfg(all(feature = "quic-endpoint", test))]
+fn duration_from_nanos(nanos: u128) -> Duration {
+    let seconds = (nanos / 1_000_000_000) as u64;
+    let subsecond_nanos = (nanos % 1_000_000_000) as u32;
+    Duration::new(seconds, subsecond_nanos)
+}
+
 /// Fully authenticated client configuration for the socket-free provider.
 #[cfg(feature = "quic-endpoint")]
 pub(crate) struct QuicEndpointClientTls {
@@ -720,8 +817,15 @@ pub(crate) struct QuicEndpointSnapshot {
 pub(crate) trait QuicEndpointDriver {
     fn start(&mut self, now: Instant) -> Result<()>;
     fn handle_datagram(&mut self, datagram: QuicEndpointDatagram) -> Result<()>;
-    fn drain_transmits(&mut self) -> Result<Vec<QuicEndpointTransmit>>;
+    fn drain_transmits(&mut self, now: Instant) -> Result<Vec<QuicEndpointTransmit>>;
     fn next_timeout(&self) -> Option<Instant>;
+    fn next_wakeup(&self, now: Instant) -> Option<Duration> {
+        self.next_timeout().map(|deadline| {
+            deadline
+                .checked_duration_since(now)
+                .unwrap_or(Duration::ZERO)
+        })
+    }
     fn handle_timeout(&mut self, now: Instant) -> Result<()>;
     fn poll_events(&mut self) -> Result<Vec<QuicEndpointEvent>>;
     fn open_bidirectional_stream(&mut self) -> Result<QuicEndpointStreamId>;
@@ -1036,7 +1140,8 @@ mod tests {
                 Ok(())
             }
 
-            fn drain_transmits(&mut self) -> Result<Vec<QuicEndpointTransmit>> {
+            fn drain_transmits(&mut self, now: Instant) -> Result<Vec<QuicEndpointTransmit>> {
+                self.now = Some(now);
                 Ok(std::mem::take(&mut self.transmits))
             }
 
@@ -1122,7 +1227,7 @@ mod tests {
                 payload: vec![0xc0, 0, 0, 0, 1],
             })
             .unwrap();
-        let output = driver.drain_transmits().unwrap();
+        let output = driver.drain_transmits(now).unwrap();
         assert_eq!(output.len(), 1);
         assert_eq!(
             output[0].send_intent(),
@@ -1150,5 +1255,88 @@ mod tests {
         assert_eq!(snapshot.stream_bytes_sent, 7);
         assert_eq!(snapshot.stream_bytes_received, 5);
         assert_eq!(snapshot.recovery.timeout_events, 1);
+    }
+
+    #[cfg(feature = "quic-endpoint")]
+    #[test]
+    fn manual_clock_drives_provider_time_deterministically() {
+        use std::time::{Duration, Instant};
+
+        use super::{QuicEndpointClock, QuicEndpointManualClock, QuicEndpointSystemClock};
+
+        #[derive(Default)]
+        struct ProviderTimeline {
+            construction: Option<Instant>,
+            datagram: Option<Instant>,
+            transmit: Option<Instant>,
+            timeout: Option<Instant>,
+        }
+
+        impl ProviderTimeline {
+            fn construct(&mut self, now: Instant) {
+                self.construction = Some(now);
+            }
+
+            fn handle_datagram(&mut self, now: Instant) {
+                self.datagram = Some(now);
+            }
+
+            fn poll_transmit(&mut self, now: Instant) {
+                self.transmit = Some(now);
+            }
+
+            fn handle_timeout(&mut self, now: Instant) {
+                self.timeout = Some(now);
+            }
+        }
+
+        let origin = Instant::now();
+        let mut clock = QuicEndpointManualClock::new(origin);
+        let mut provider = ProviderTimeline::default();
+
+        provider.construct(clock.now());
+        assert_eq!(provider.construction, Some(origin));
+        assert_eq!(
+            clock.advance(Duration::from_millis(7)),
+            origin + Duration::from_millis(7)
+        );
+        provider.handle_datagram(clock.now());
+        assert_eq!(
+            clock.advance(Duration::from_millis(5)),
+            origin + Duration::from_millis(12)
+        );
+        provider.poll_transmit(clock.now());
+        assert_eq!(
+            clock.advance(Duration::from_millis(3)),
+            origin + Duration::from_millis(15)
+        );
+        provider.handle_timeout(clock.now());
+
+        assert_eq!(provider.datagram, Some(origin + Duration::from_millis(7)));
+        assert_eq!(provider.transmit, Some(origin + Duration::from_millis(12)));
+        assert_eq!(provider.timeout, Some(origin + Duration::from_millis(15)));
+        assert_eq!(
+            clock.wakeup_after(origin + Duration::from_millis(20)),
+            Duration::from_millis(5)
+        );
+        assert_eq!(
+            clock.wakeup_after(origin + Duration::from_millis(14)),
+            Duration::ZERO
+        );
+
+        let before_backward_attempt = clock.now();
+        assert!(clock.advance_to(origin).is_err());
+        assert_eq!(clock.now(), before_backward_attempt);
+
+        let before_overflow = clock.now();
+        let saturated = clock.advance(Duration::MAX);
+        assert!(saturated >= before_overflow);
+        assert_eq!(clock.now(), saturated);
+        assert_eq!(clock.wakeup_after(before_overflow), Duration::ZERO);
+
+        let production = QuicEndpointSystemClock;
+        let first = production.now();
+        let second = production.now();
+        assert!(second >= first);
     }
 }
