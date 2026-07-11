@@ -93,7 +93,8 @@ emitted, and the final `FlowReport`.
 
 The QUIC examples exchange deterministic protected Initial fixtures entirely
 in memory. They inspect Initial packets only and do not establish a QUIC
-connection.
+connection. See [QUIC Initial-only flows](docs/quic-flow.md) for the state
+graphs, inputs, inspection results, and safety limits.
 
 ## Safety Model
 
