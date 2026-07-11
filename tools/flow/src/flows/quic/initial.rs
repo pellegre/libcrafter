@@ -8,13 +8,17 @@ use crafter::protocols::quic::header::{
 use crafter::{
     derive_quic_initial_secrets, quic_decode_initial_protected_payload_with_keys, CrafterError,
     QuicAckFrame, QuicAckRange, QuicConnectionCloseFrame, QuicConnectionId, QuicCryptoFrame,
-    QuicFrame, QuicLongHeaderPacket, QuicPacketNumber, QUIC_VERSION_1,
+    QuicFrame, QuicLongHeaderPacket, QuicPacket, QuicPacketNumber, QuicVersionNegotiationPacket,
+    QUIC_VERSION_1,
 };
 
 use crate::context::ProtocolContextSnapshot;
 use crate::flows::quic::{CLOSED, INITIAL_OBSERVED, INITIAL_SENT, LISTEN};
 use crate::matcher::UdpDatagramMatcher;
-use crate::quic_wire::{assemble_initial_datagram, extract_quic_udp_ingress, QuicInitialPadding};
+use crate::quic_wire::{
+    assemble_initial_datagram, extract_quic_udp_ingress, wrap_quic_udp_datagram,
+    QuicInitialPadding, QuicUdpPayload,
+};
 use crate::{
     docaddr, Flow, FlowBuilderExt, FlowError, FlowState, Result, Role, Step, StepGotoExt,
     Transition,
@@ -30,6 +34,8 @@ const INITIAL_CLIENT_TIMEOUT: Duration = Duration::from_secs(1);
 const INITIAL_SERVER_TIMEOUT: Duration = Duration::from_secs(1);
 const INITIAL_ONLY_TIMEOUT_OUTCOME: &str = "initial-only-timeout";
 const INITIAL_ONLY_SERVER_INITIAL_OBSERVED_OUTCOME: &str = "initial-only-server-initial-observed";
+const VERSION_NEGOTIATION_SENT: &str = "VersionNegotiationSent";
+const INITIAL_ONLY_VERSION_NEGOTIATION_SENT_OUTCOME: &str = "initial-only-version-negotiation-sent";
 const INITIAL_AUTHENTICATION_FAILED_OUTCOME: &str = "initial-authentication-failed";
 const INITIAL_TRUNCATED_OUTCOME: &str = "initial-truncated-protected-payload";
 const INITIAL_INVALID_PACKET_NUMBER_OUTCOME: &str = "initial-invalid-packet-number";
@@ -287,13 +293,15 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
     let local = config.local;
     let peer = config.peer;
     let version = config.version;
+    let supported_versions = config.supported_versions.clone();
+    let version_negotiation_grease_versions = config.version_negotiation_grease_versions.clone();
     let max_crypto_bytes = config.bounds.max_crypto_bytes;
     let max_ack_ranges = config.bounds.max_datagrams;
     let mut ack_state = QuicInitialAckState::default();
     let matcher = UdpDatagramMatcher::inbound(*local.ip(), local.port(), *peer.ip(), peer.port())
         .payload_where(
-            "one structurally valid QUIC v1 Initial with a nonempty destination connection ID",
-            move |payload, _context| matching_client_initial_header(payload, version).is_some(),
+            "one structurally valid nonzero-version QUIC Initial with a nonempty destination connection ID",
+            move |payload, _context| classify_client_initial_header(payload).is_some(),
         );
 
     let listen = FlowState::new(LISTEN)
@@ -306,13 +314,50 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
                         "matched QUIC Initial no longer satisfies its IPv4/UDP tuple".to_string(),
                     )
                 })?;
-            let (original_destination_connection_id, peer_source_connection_id) =
-                matching_client_initial_header(ingress.payload(), version).ok_or_else(|| {
+            let (
+                observed_version,
+                original_destination_connection_id,
+                peer_source_connection_id,
+            ) = classify_client_initial_header(ingress.payload()).ok_or_else(|| {
                     FlowError::Build(
-                        "matched QUIC Initial no longer has a valid version 1 long header"
+                        "matched QUIC Initial no longer has a structurally valid nonzero-version long header"
                             .to_string(),
                     )
                 })?;
+
+            if !supported_versions.contains(&observed_version) {
+                let advertised_versions = supported_versions
+                    .iter()
+                    .copied()
+                    .chain(version_negotiation_grease_versions.iter().copied());
+                let negotiation = QuicVersionNegotiationPacket::new(
+                    peer_source_connection_id.clone(),
+                    original_destination_connection_id.clone(),
+                    advertised_versions,
+                )?;
+                let response = wrap_quic_udp_datagram(
+                    local,
+                    peer,
+                    QuicUdpPayload::packets([QuicPacket::from_version_negotiation(negotiation)]),
+                );
+
+                let mut snapshot =
+                    ProtocolContextSnapshot::new("quic", VERSION_NEGOTIATION_SENT);
+                snapshot.local_connection_id =
+                    Some(original_destination_connection_id.as_bytes().to_vec());
+                snapshot.peer_connection_id =
+                    Some(peer_source_connection_id.as_bytes().to_vec());
+                snapshot.outcome =
+                    Some(INITIAL_ONLY_VERSION_NEGOTIATION_SENT_OUTCOME.to_string());
+                context.set_protocol_snapshot(snapshot);
+
+                return Ok(Step::emit(response).goto(VERSION_NEGOTIATION_SENT));
+            }
+            if observed_version != version {
+                return Err(FlowError::Build(format!(
+                    "configured QUIC Initial server cannot protect supported version 0x{observed_version:08x}"
+                )));
+            }
             let original_destination_connection_id =
                 original_destination_connection_id.as_bytes().to_vec();
             let peer_source_connection_id = peer_source_connection_id.as_bytes().to_vec();
@@ -502,7 +547,7 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
 
             Ok(Step::send_regeneration_only(response).goto(INITIAL_OBSERVED))
         })
-        .targets([INITIAL_OBSERVED])
+        .targets([INITIAL_OBSERVED, VERSION_NEGOTIATION_SENT])
         .terminal())
         .on_timeout(|context| {
             let mut snapshot = ProtocolContextSnapshot::new("quic", CLOSED);
@@ -518,6 +563,7 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
         .role(Role::Responder)
         .state(listen)
         .state(FlowState::new(INITIAL_OBSERVED))
+        .state(FlowState::new(VERSION_NEGOTIATION_SENT))
         .initial(LISTEN);
     flow.validate()?;
     Ok(flow)
@@ -550,23 +596,30 @@ fn initial_error_step(context: &mut crate::PacketContext, outcome: &'static str)
     Step::done_with(outcome)
 }
 
-fn matching_client_initial_header(
+fn classify_client_initial_header(
     payload: &[u8],
-    version: u32,
-) -> Option<(QuicConnectionId, QuicConnectionId)> {
+) -> Option<(u32, QuicConnectionId, QuicConnectionId)> {
     match classify_quic_header(payload).ok()? {
         QuicHeaderClassification::LongHeader {
+            first_byte,
             version: observed_version,
             destination_connection_id,
             source_connection_id,
-            packet_kind: QuicLongPacketKind::Initial,
+            packet_kind,
             remaining_len,
             ..
-        } if observed_version == version
+        } if observed_version != 0
+            && (packet_kind == QuicLongPacketKind::Initial
+                || (packet_kind == QuicLongPacketKind::UnknownVersion
+                    && first_byte & 0x30 == 0))
             && !destination_connection_id.is_empty()
             && remaining_len > 0 =>
         {
-            Some((destination_connection_id, source_connection_id))
+            Some((
+                observed_version,
+                destination_connection_id,
+                source_connection_id,
+            ))
         }
         _ => return None,
     }
@@ -1182,6 +1235,10 @@ pub struct QuicInitialServerConfig {
     pub crypto: Vec<u8>,
     /// Version Negotiation behavior.
     pub version_policy: QuicInitialVersionPolicy,
+    /// Versions advertised as supported, containing the protected Initial version.
+    pub supported_versions: Vec<u32>,
+    /// Optional deterministic reserved versions appended to Version Negotiation packets.
+    pub version_negotiation_grease_versions: Vec<u32>,
     /// Retry behavior.
     pub retry_policy: QuicInitialRetryPolicy,
     /// Resource and exchange bounds.
@@ -1197,6 +1254,8 @@ impl Default for QuicInitialServerConfig {
             identifiers: QuicInitialIdentifiers::documentation_server(),
             crypto: b"deterministic server Initial".to_vec(),
             version_policy: QuicInitialVersionPolicy::Version1Only,
+            supported_versions: vec![QUIC_VERSION_1],
+            version_negotiation_grease_versions: Vec::new(),
             retry_policy: QuicInitialRetryPolicy::Disabled,
             bounds: QuicInitialBounds::default(),
         }
@@ -1214,6 +1273,25 @@ impl QuicInitialServerConfig {
             self.bounds,
         )?;
         self.identifiers.validate()?;
+        if self.supported_versions.is_empty()
+            || self.supported_versions.iter().any(|version| *version == 0)
+            || !self.supported_versions.contains(&self.version)
+        {
+            return Err(FlowError::Build(
+                "QUIC Initial server supported versions must be nonzero and include the configured version"
+                    .to_string(),
+            ));
+        }
+        if self
+            .version_negotiation_grease_versions
+            .iter()
+            .any(|grease| *grease == 0 || self.supported_versions.contains(grease))
+        {
+            return Err(FlowError::Build(
+                "QUIC Version Negotiation grease versions must be nonzero and distinct from supported versions"
+                    .to_string(),
+            ));
+        }
         if self.retry_policy == QuicInitialRetryPolicy::AcceptValid {
             return Err(FlowError::Build(
                 "QUIC Initial servers cannot use the client Retry policy".to_string(),
@@ -1614,6 +1692,104 @@ mod tests {
         assert_eq!(
             snapshot.outcome.as_deref(),
             Some(INITIAL_ONLY_TIMEOUT_OUTCOME)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn initial_server_emits_version_negotiation_for_unsupported_version() -> crate::Result<()> {
+        const UNSUPPORTED_VERSION: u32 = 0xface_feed;
+        const GREASE_VERSION: u32 = 0x0a0a_0a0a;
+
+        let client_config = QuicInitialClientConfig::default();
+        let expected_destination_connection_id = client_config
+            .identifiers
+            .local_source_connection_id()
+            .clone();
+        let expected_source_connection_id = client_config
+            .identifiers
+            .original_destination_connection_id()
+            .clone();
+        let client_local = client_config.local;
+        let client_peer = client_config.peer;
+        let mut client = quic_initial_client_flow(client_config)?;
+        let mut client_context = crate::PacketContext::new();
+        let mut unsupported_payload = client
+            .state_mut(INITIAL_SENT)
+            .expect("InitialSent state exists")
+            .run_entry(&mut client_context)?
+            .expect("client emits its protected Initial")
+            .outputs()[0]
+            .packet()
+            .layer::<Quic>()
+            .expect("typed QUIC layer")
+            .packets()[0]
+            .as_bytes()
+            .to_vec();
+        unsupported_payload[1..5].copy_from_slice(&UNSUPPORTED_VERSION.to_be_bytes());
+        let unsupported_initial = Ipv4::new().src(*client_local.ip()).dst(*client_peer.ip())
+            / Udp::new()
+                .source_port(client_local.port())
+                .destination_port(client_peer.port())
+            / Quic::from_bytes(unsupported_payload);
+
+        let mut server_config = QuicInitialServerConfig::default();
+        server_config.version_negotiation_grease_versions = vec![GREASE_VERSION];
+        let server_local = server_config.local;
+        let server_peer = server_config.peer;
+        let mut server = quic_initial_server_flow(server_config)?;
+        let mut server_context = crate::PacketContext::new();
+        let transition = server
+            .state_mut(LISTEN)
+            .expect("Listen state exists")
+            .find_transition(&unsupported_initial, &server_context)
+            .expect("server matches structurally valid unsupported Initial");
+        let step = transition.fire(&unsupported_initial, &mut server_context)?;
+
+        assert_eq!(step.target(), Some(VERSION_NEGOTIATION_SENT));
+        assert_eq!(step.outputs().len(), 1);
+        assert!(!step.expects_reply());
+        assert!(!step.outputs()[0].allows_exact_replay());
+        assert!(!step.outputs()[0].requires_regeneration());
+        let response = step.outputs()[0].packet();
+        let ipv4 = response.layer::<Ipv4>().expect("typed IPv4 layer");
+        let udp = response.layer::<Udp>().expect("typed UDP layer");
+        let quic = response.layer::<Quic>().expect("typed QUIC layer");
+        assert_eq!(ipv4.source(), *server_local.ip());
+        assert_eq!(ipv4.destination(), *server_peer.ip());
+        assert_eq!(udp.source_port_value(), server_local.port());
+        assert_eq!(udp.destination_port_value(), server_peer.port());
+        let negotiation = quic.packets()[0]
+            .version_negotiation()
+            .expect("typed Version Negotiation packet");
+        assert_eq!(
+            negotiation.destination_connection_id(),
+            &expected_destination_connection_id
+        );
+        assert_eq!(
+            negotiation.source_connection_id(),
+            &expected_source_connection_id
+        );
+        assert_eq!(
+            negotiation.supported_versions(),
+            &[QUIC_VERSION_1, GREASE_VERSION]
+        );
+
+        assert_eq!(
+            server_context.get_namespaced_u64("quic", "initial_packet_number_received")?,
+            None
+        );
+        assert_eq!(
+            server_context.get_namespaced_bytes("quic", "initial_crypto_bytes")?,
+            None
+        );
+        let snapshot = server_context
+            .protocol_snapshot()
+            .expect("Version Negotiation records a lifecycle snapshot");
+        assert_eq!(snapshot.lifecycle, VERSION_NEGOTIATION_SENT);
+        assert_eq!(
+            snapshot.outcome.as_deref(),
+            Some(INITIAL_ONLY_VERSION_NEGOTIATION_SENT_OUTCOME)
         );
         Ok(())
     }
