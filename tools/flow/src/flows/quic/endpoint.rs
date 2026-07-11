@@ -326,24 +326,30 @@ impl ServerRuntime {
         ) {
             context.insert_namespaced_string("quic", "transport.validation", "validated")?;
         }
-        for event in events {
-            match event {
-                QuicEndpointEvent::StreamReadable(stream) => {
-                    self.stream.get_or_insert(stream);
-                    let _ = self.request.drive(&mut self.driver, stream, context)?;
-                }
-                QuicEndpointEvent::StreamWritable(stream) => {
-                    if context.get_namespaced_bool("quic", "application.request_complete")?
-                        == Some(true)
-                    {
+        let application_open =
+            self.driver.snapshot().lifecycle == QuicEndpointLifecycle::Established;
+        if application_open {
+            for event in events {
+                match event {
+                    QuicEndpointEvent::StreamReadable(stream) => {
                         self.stream.get_or_insert(stream);
-                        let _ = self.response.drive(&mut self.driver, stream, context)?;
+                        let _ = self.request.drive(&mut self.driver, stream, context)?;
                     }
+                    QuicEndpointEvent::StreamWritable(stream) => {
+                        if context.get_namespaced_bool("quic", "application.request_complete")?
+                            == Some(true)
+                        {
+                            self.stream.get_or_insert(stream);
+                            let _ = self.response.drive(&mut self.driver, stream, context)?;
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
-        if context.get_namespaced_bool("quic", "application.request_complete")? == Some(true) {
+        if application_open
+            && context.get_namespaced_bool("quic", "application.request_complete")? == Some(true)
+        {
             if let Some(stream) = self.stream {
                 if context.get_namespaced_bool("quic", "application.response_complete")?
                     != Some(true)
@@ -866,7 +872,11 @@ mod tests {
 
             driver.snapshot.lifecycle = QuicEndpointLifecycle::Closed;
             driver.events.extend([
-                QuicEndpointEvent::PeerClose { code: 99 },
+                QuicEndpointEvent::PeerClose {
+                    kind: crate::quic_endpoint::QuicEndpointPeerCloseKind::TransportError,
+                    code: 99,
+                    reason_summary: "none".to_string(),
+                },
                 QuicEndpointEvent::Closed,
             ]);
             mapper.poll(&mut driver, &mut context).unwrap();
@@ -879,5 +889,189 @@ mod tests {
 
         trace_for("client", 10);
         trace_for("server", 11);
+    }
+
+    #[test]
+    fn peer_close_and_draining_are_bounded() {
+        use std::{collections::VecDeque, time::Instant};
+
+        use crate::quic_endpoint::{
+            map_quinn_peer_close, QuicEndpointDatagram, QuicEndpointPacketSpaceCounts,
+            QuicEndpointPeerCloseKind, QuicEndpointRecoveryCounts, QuicEndpointSnapshot,
+            QuicEndpointStreamRead, QuicEndpointStreamReadStatus, QuicEndpointTransmit,
+        };
+        use bytes::Bytes;
+
+        struct PeerCloseDriver {
+            events: VecDeque<QuicEndpointEvent>,
+            snapshot: QuicEndpointSnapshot,
+        }
+
+        impl QuicEndpointDriver for PeerCloseDriver {
+            fn start(&mut self, _: Instant) -> Result<()> {
+                Ok(())
+            }
+
+            fn handle_datagram(&mut self, _: QuicEndpointDatagram) -> Result<()> {
+                Ok(())
+            }
+
+            fn drain_transmits(&mut self, _: Instant) -> Result<Vec<QuicEndpointTransmit>> {
+                Ok(Vec::new())
+            }
+
+            fn next_timeout(&self) -> Option<Instant> {
+                None
+            }
+
+            fn handle_timeout(&mut self, _: Instant) -> Result<()> {
+                self.snapshot.lifecycle = QuicEndpointLifecycle::Closed;
+                self.events.push_back(QuicEndpointEvent::Closed);
+                Ok(())
+            }
+
+            fn poll_events(&mut self) -> Result<Vec<QuicEndpointEvent>> {
+                Ok(self.events.drain(..).collect())
+            }
+
+            fn open_bidirectional_stream(&mut self) -> Result<QuicEndpointStreamId> {
+                panic!("peer close must stop opening streams")
+            }
+
+            fn write_stream(&mut self, _: QuicEndpointStreamId, _: &[u8]) -> Result<usize> {
+                panic!("peer close must stop application writes")
+            }
+
+            fn finish_stream(&mut self, _: QuicEndpointStreamId) -> Result<()> {
+                panic!("peer close must stop application writes")
+            }
+
+            fn read_stream(
+                &mut self,
+                _: QuicEndpointStreamId,
+                _: usize,
+            ) -> Result<QuicEndpointStreamRead> {
+                Ok(QuicEndpointStreamRead {
+                    bytes: Vec::new(),
+                    status: QuicEndpointStreamReadStatus::Blocked,
+                })
+            }
+
+            fn snapshot(&self) -> QuicEndpointSnapshot {
+                self.snapshot.clone()
+            }
+
+            fn close(&mut self, _: Instant, _: u64, _: &[u8]) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        fn snapshot(lifecycle: QuicEndpointLifecycle) -> QuicEndpointSnapshot {
+            QuicEndpointSnapshot {
+                lifecycle,
+                local_connection_id: vec![0x11; 8],
+                peer_connection_id: vec![0x22; 8],
+                initial: QuicEndpointPacketSpaceCounts::default(),
+                handshake: QuicEndpointPacketSpaceCounts::default(),
+                application: QuicEndpointPacketSpaceCounts::default(),
+                stream_bytes_sent: 0,
+                stream_bytes_received: 0,
+                recovery: QuicEndpointRecoveryCounts::default(),
+            }
+        }
+
+        fn assert_close(
+            provider_reason: quinn_proto::ConnectionError,
+            expected_kind: QuicEndpointPeerCloseKind,
+            expected_code: u64,
+            exchange_complete: bool,
+        ) {
+            let first = map_quinn_peer_close(provider_reason);
+            let duplicate = QuicEndpointEvent::PeerClose {
+                kind: QuicEndpointPeerCloseKind::TransportError,
+                code: 0xffff,
+                reason_summary: "redacted:64+-bytes".to_string(),
+            };
+            let lifecycle = if exchange_complete {
+                QuicEndpointLifecycle::Established
+            } else {
+                QuicEndpointLifecycle::Handshaking
+            };
+            let mut driver = PeerCloseDriver {
+                events: [
+                    first,
+                    duplicate,
+                    QuicEndpointEvent::Draining,
+                    QuicEndpointEvent::StreamWritable(QuicEndpointStreamId(0)),
+                    QuicEndpointEvent::Closed,
+                ]
+                .into(),
+                snapshot: snapshot(QuicEndpointLifecycle::Closed),
+            };
+            let mut mapper = QuicEndpointEventMapper::new(lifecycle);
+            let mut context = PacketContext::new();
+            if exchange_complete {
+                context
+                    .insert_namespaced_bool("quic", "application.complete", true)
+                    .unwrap();
+            }
+
+            let events = mapper.poll(&mut driver, &mut context).unwrap();
+            assert!(!events.iter().any(|event| matches!(
+                event,
+                QuicEndpointEvent::StreamWritable(_) | QuicEndpointEvent::StreamReadable(_)
+            )));
+            assert_eq!(context.protocol_snapshot().unwrap().lifecycle, "closed");
+            assert_eq!(
+                context.protocol_snapshot().unwrap().close_code,
+                Some(expected_code)
+            );
+            assert_eq!(
+                context.get_namespaced_string("quic", "close.kind").unwrap(),
+                Some(expected_kind.label())
+            );
+            assert_eq!(
+                context
+                    .get_namespaced_bool("quic", "close.exchange_completed_before_close")
+                    .unwrap(),
+                Some(exchange_complete)
+            );
+            let summary = context
+                .get_namespaced_string("quic", "close.reason_summary")
+                .unwrap()
+                .unwrap();
+            assert!(summary.len() <= 24);
+            assert!(!summary.contains("untrusted"));
+        }
+
+        assert_close(
+            quinn_proto::ConnectionError::ConnectionClosed(quinn_proto::ConnectionClose {
+                error_code: quinn_proto::TransportErrorCode::NO_ERROR,
+                frame_type: None,
+                reason: Bytes::new(),
+            }),
+            QuicEndpointPeerCloseKind::NoError,
+            0,
+            true,
+        );
+        assert_close(
+            quinn_proto::ConnectionError::TransportError(quinn_proto::TransportError {
+                code: quinn_proto::TransportErrorCode::PROTOCOL_VIOLATION,
+                frame: None,
+                reason: "untrusted transport reason".repeat(8),
+            }),
+            QuicEndpointPeerCloseKind::TransportError,
+            0x0a,
+            false,
+        );
+        assert_close(
+            quinn_proto::ConnectionError::ApplicationClosed(quinn_proto::ApplicationClose {
+                error_code: quinn_proto::VarInt::from_u32(7),
+                reason: Bytes::from_static(b"untrusted application reason"),
+            }),
+            QuicEndpointPeerCloseKind::ApplicationError,
+            7,
+            false,
+        );
     }
 }
