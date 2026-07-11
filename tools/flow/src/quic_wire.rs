@@ -5,13 +5,65 @@ use std::net::SocketAddrV4;
 
 use crafter::{
     quic_protect_complete_initial_packet, Ipv4, Packet, Quic, QuicFrame, QuicInitialPacketKeys,
-    QuicLongHeaderPacket, QuicPacketNumber, QuicVarInt, Udp, QUIC_INITIAL_AEAD_TAG_LEN,
+    QuicLongHeaderPacket, QuicPacket, QuicPacketNumber, QuicVarInt, Udp, QUIC_INITIAL_AEAD_TAG_LEN,
 };
 
 use crate::matcher::UdpDatagramMatcher;
 use crate::{Matcher, PacketContext, Result};
 
 const QUIC_CLIENT_INITIAL_MIN_UDP_PAYLOAD_LEN: usize = 1200;
+
+/// Opaque bytes or ordered QUIC packets carried by one UDP datagram.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum QuicUdpPayload {
+    Opaque(Vec<u8>),
+    Packets(Vec<QuicPacket>),
+}
+
+impl QuicUdpPayload {
+    pub(crate) fn opaque(bytes: impl AsRef<[u8]>) -> Self {
+        Self::Opaque(bytes.as_ref().to_vec())
+    }
+
+    pub(crate) fn packets(packets: impl IntoIterator<Item = QuicPacket>) -> Self {
+        Self::Packets(packets.into_iter().collect())
+    }
+
+    fn into_layer(self) -> Quic {
+        match self {
+            Self::Opaque(bytes) => Quic::from_bytes(bytes),
+            Self::Packets(packets) => Quic::from_packets(packets),
+        }
+    }
+}
+
+/// Wrap exactly one QUIC UDP datagram in the typed packet stack.
+///
+/// Multiple entries in `payload` remain coalesced in one [`Quic`] layer. A
+/// caller emitting multiple UDP datagrams must create multiple `Packet`s so
+/// the flow runner can retain their batch boundaries.
+pub(crate) fn wrap_quic_udp_datagram(
+    local: SocketAddrV4,
+    peer: SocketAddrV4,
+    payload: QuicUdpPayload,
+) -> Packet {
+    Ipv4::new().src(*local.ip()).dst(*peer.ip())
+        / Udp::new()
+            .source_port(local.port())
+            .destination_port(peer.port())
+        / payload.into_layer()
+}
+
+/// Extract one inbound QUIC datagram after verifying the reversed tuple.
+pub(crate) fn extract_quic_udp_ingress(
+    packet: &Packet,
+    local: SocketAddrV4,
+    peer: SocketAddrV4,
+    context: &PacketContext,
+) -> Option<QuicIngress> {
+    let matcher = UdpDatagramMatcher::inbound(*local.ip(), local.port(), *peer.ip(), peer.port());
+    QuicIngress::from_packet(packet, &matcher, context)
+}
 
 /// Explicit datagram padding policy for a protected Initial packet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,11 +156,11 @@ pub(crate) fn assemble_initial_datagram(
     let protected =
         quic_protect_complete_initial_packet(&padded, full_packet_number, keys, packet_number_len)?;
 
-    Ok(Ipv4::new().src(*local.ip()).dst(*peer.ip())
-        / Udp::new()
-            .source_port(local.port())
-            .destination_port(peer.port())
-        / Quic::new().packet(protected))
+    Ok(wrap_quic_udp_datagram(
+        local,
+        peer,
+        QuicUdpPayload::packets([protected]),
+    ))
 }
 
 fn initial_padding_len(
@@ -316,12 +368,14 @@ mod tests {
 
     use crafter::{
         derive_quic_initial_secrets, quic_decode_initial_protected_payload_with_keys, IntoPacket,
-        QuicConnectionId, QuicFrame, QuicLongHeaderPacket, QuicPacketNumber, QUIC_VERSION_1,
+        NetworkLayer, Packet, QuicConnectionId, QuicFrame, QuicLongHeaderPacket, QuicPacket,
+        QuicPacketNumber, QUIC_VERSION_1,
     };
 
     use super::{
-        assemble_initial_datagram, QuicCaptureRepresentation, QuicIngress, QuicIngressContext,
-        QuicInitialPadding,
+        assemble_initial_datagram, extract_quic_udp_ingress, wrap_quic_udp_datagram,
+        QuicCaptureRepresentation, QuicIngress, QuicIngressContext, QuicInitialPadding,
+        QuicUdpPayload,
     };
     use crate::matcher::UdpDatagramMatcher;
     use crate::PacketContext;
@@ -497,5 +551,64 @@ mod tests {
         assert!(!summary.contains("deadbeef"));
         assert!(!summary.contains("de ad be ef"));
         assert!(!summary.contains("407bdeadbeef"));
+    }
+
+    #[test]
+    fn quic_udp_wrapper_round_trips_typed_packet_stack() -> crate::Result<()> {
+        let sender = SocketAddrV4::new(local_ipv4(), LOCAL_PORT);
+        let receiver = SocketAddrV4::new(peer_ipv4(), PEER_PORT);
+        let initial = QuicLongHeaderPacket::initial_builder()
+            .destination_connection_id(QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]))
+            .source_connection_id(QuicConnectionId::from_bytes([0xaa]))
+            .packet_number(QuicPacketNumber::new(1))
+            .payload([0xbe])
+            .build()?;
+        let handshake = QuicLongHeaderPacket::handshake_builder()
+            .destination_connection_id(QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]))
+            .source_connection_id(QuicConnectionId::from_bytes([0xaa]))
+            .packet_number(QuicPacketNumber::new(2))
+            .payload([0xef])
+            .build()?;
+        let expected_payload = [initial.as_bytes(), handshake.as_bytes()].concat();
+
+        let outgoing = wrap_quic_udp_datagram(
+            sender,
+            receiver,
+            QuicUdpPayload::packets([
+                QuicPacket::from_long_header(initial.clone()),
+                QuicPacket::from_long_header(handshake.clone()),
+            ]),
+        );
+        let outgoing_quic = outgoing.layer::<crafter::Quic>().expect("typed QUIC layer");
+        assert_eq!(outgoing_quic.packets().len(), 2);
+        assert_eq!(outgoing_quic.packets()[0].as_bytes(), initial.as_bytes());
+        assert_eq!(outgoing_quic.packets()[1].as_bytes(), handshake.as_bytes());
+
+        let compiled = outgoing.compile()?;
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+        let ingress = extract_quic_udp_ingress(&decoded, receiver, sender, &PacketContext::new())
+            .expect("receiver sees the reversed sender tuple");
+        assert_eq!(ingress.local(), receiver);
+        assert_eq!(ingress.peer(), sender);
+        assert_eq!(ingress.payload(), expected_payload);
+        assert_eq!(ingress.representation(), QuicCaptureRepresentation::Typed);
+        assert!(
+            extract_quic_udp_ingress(&decoded, sender, receiver, &PacketContext::new(),).is_none()
+        );
+
+        let short_outgoing =
+            wrap_quic_udp_datagram(sender, receiver, QuicUdpPayload::opaque(SHORT_HEADER));
+        let short_compiled = short_outgoing.compile()?;
+        let short_decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, short_compiled.as_bytes())?;
+        let short_ingress =
+            extract_quic_udp_ingress(&short_decoded, receiver, sender, &PacketContext::new())
+                .expect("raw short-header ingress retains the tuple");
+        assert_eq!(short_ingress.payload(), SHORT_HEADER);
+        assert_eq!(
+            short_ingress.representation(),
+            QuicCaptureRepresentation::Raw
+        );
+
+        Ok(())
     }
 }
