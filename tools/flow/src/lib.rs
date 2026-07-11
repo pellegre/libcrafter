@@ -42,6 +42,8 @@ pub use quic_endpoint::{
     QuicEndpointAddresses, QuicEndpointErrorCategory, QuicPeerConfig, QuicSyntheticIdentity,
     QuicTransportLimits,
 };
+#[cfg(feature = "quic-endpoint")]
+pub use flows::quic::{quic_client_flow, QuicClientFlowConfig};
 pub use report::{FlowOutcome, FlowReport, RecoveryMetrics};
 pub use role::Role;
 pub use runner::Runner;

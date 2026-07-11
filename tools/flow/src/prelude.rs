@@ -30,6 +30,8 @@ pub use crate::{run_tool, ToolRun, ToolRunReport};
 pub use crate::{Flow, FlowBuilderExt};
 pub use crate::{FlowState, FnMutator, Identity, Mutator, Step, StepGotoExt, Transition};
 pub use crate::{RetransmitPolicy, RunOptions, SendRepeat};
+#[cfg(feature = "quic-endpoint")]
+pub use crate::flows::quic::{quic_client_flow, QuicClientFlowConfig};
 
 #[cfg(test)]
 mod tests {
