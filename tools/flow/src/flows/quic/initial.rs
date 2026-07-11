@@ -15,7 +15,10 @@ use crate::context::ProtocolContextSnapshot;
 use crate::flows::quic::{CLOSED, INITIAL_OBSERVED, INITIAL_SENT, LISTEN};
 use crate::matcher::UdpDatagramMatcher;
 use crate::quic_wire::{assemble_initial_datagram, extract_quic_udp_ingress, QuicInitialPadding};
-use crate::{docaddr, Flow, FlowBuilderExt, FlowError, FlowState, Result, Role, Step, Transition};
+use crate::{
+    docaddr, Flow, FlowBuilderExt, FlowError, FlowState, Result, Role, Step, StepGotoExt,
+    Transition,
+};
 
 const DEFAULT_CLIENT_PORT: u16 = 49_152;
 const DEFAULT_SERVER_PORT: u16 = 443;
@@ -32,6 +35,7 @@ const INITIAL_INVALID_PACKET_NUMBER_OUTCOME: &str = "initial-invalid-packet-numb
 const INITIAL_DISALLOWED_FRAME_OUTCOME: &str = "initial-disallowed-frame";
 const INITIAL_CRYPTO_LIMIT_OUTCOME: &str = "initial-crypto-limit-exceeded";
 const INITIAL_ACK_RANGE_LIMIT_OUTCOME: &str = "initial-ack-range-limit-exceeded";
+const INITIAL_AMPLIFICATION_LIMIT_OUTCOME: &str = "initial-amplification-limit-exceeded";
 
 /// Build the deterministic, bounded QUIC v1 Initial-only client flow.
 pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow> {
@@ -113,6 +117,12 @@ pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow>
 pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow> {
     config.validate()?;
 
+    let mut identifiers = config.identifiers.clone();
+    let (server_packet_number, encoded_server_packet_number) =
+        identifiers.take_next_initial_packet_number()?;
+    let server_source_connection_id = identifiers.local_source_connection_id().clone();
+    let server_packet_number_len = identifiers.packet_number_encoded_len();
+    let server_crypto = config.crypto.clone();
     let local = config.local;
     let peer = config.peer;
     let version = config.version;
@@ -220,6 +230,49 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
                 .collect::<Vec<_>>()
                 .join(",");
 
+            let acknowledged_packet_numbers = BTreeSet::from([full_packet_number]);
+            let response_frames = build_initial_frames(
+                &server_crypto,
+                max_crypto_bytes,
+                &acknowledged_packet_numbers,
+            )?;
+            let response_initial = QuicLongHeaderPacket::initial_builder()
+                .version(version)
+                .destination_connection_id(QuicConnectionId::from_bytes(
+                    peer_source_connection_id.clone(),
+                ))
+                .source_connection_id(server_source_connection_id.clone())
+                .packet_number(encoded_server_packet_number.clone())
+                .frames(response_frames)
+                .build()?;
+            let response_keys =
+                derive_quic_initial_secrets(version, &original_destination_connection_id)?
+                    .server_packet_keys()?;
+            let response = assemble_initial_datagram(
+                local,
+                peer,
+                &response_initial,
+                server_packet_number,
+                &response_keys,
+                server_packet_number_len,
+                QuicInitialPadding::None,
+            )?;
+            let received_bytes = u64::try_from(ingress.payload().len()).map_err(|_| {
+                FlowError::Build("QUIC Initial ingress size exceeds u64 accounting".to_string())
+            })?;
+            let response_bytes = u64::try_from(
+                response
+                    .layer::<crafter::Quic>()
+                    .expect("assembled Initial has a typed QUIC layer")
+                    .packets()[0]
+                    .as_bytes()
+                    .len(),
+            )
+            .map_err(|_| {
+                FlowError::Build("QUIC Initial response size exceeds u64 accounting".to_string())
+            })?;
+            let amplification_limit = received_bytes.saturating_mul(3);
+
             context.insert_namespaced_string("quic", "local_tuple", ingress.local().to_string())?;
             context.insert_namespaced_string("quic", "peer_tuple", ingress.peer().to_string())?;
             context.insert_namespaced_bytes(
@@ -244,13 +297,37 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
             )?;
             context.insert_namespaced_bytes("quic", "initial_crypto_bytes", crypto_bytes)?;
             context.insert_namespaced_string("quic", "initial_ack_ranges", ack_ranges)?;
+            context.insert_namespaced_u64("quic", "initial_bytes_received", received_bytes)?;
+            context.insert_namespaced_u64("quic", "initial_response_bytes", response_bytes)?;
+            context.insert_namespaced_u64(
+                "quic",
+                "initial_amplification_limit_bytes",
+                amplification_limit,
+            )?;
+            context.insert_namespaced_bool(
+                "quic",
+                "initial_response_within_amplification_limit",
+                response_bytes <= amplification_limit,
+            )?;
+
+            if response_bytes > amplification_limit {
+                return Ok(initial_error_step(
+                    context,
+                    INITIAL_AMPLIFICATION_LIMIT_OUTCOME,
+                ));
+            }
+            context.insert_namespaced_u64(
+                "quic",
+                "initial_packet_number_sent",
+                server_packet_number,
+            )?;
 
             let mut snapshot = ProtocolContextSnapshot::new("quic", INITIAL_OBSERVED);
-            snapshot.local_connection_id = Some(original_destination_connection_id);
+            snapshot.local_connection_id = Some(server_source_connection_id.as_bytes().to_vec());
             snapshot.peer_connection_id = Some(peer_source_connection_id);
             context.set_protocol_snapshot(snapshot);
 
-            Ok(Step::goto(INITIAL_OBSERVED))
+            Ok(Step::send_regeneration_only(response).goto(INITIAL_OBSERVED))
         })
         .targets([INITIAL_OBSERVED])
         .terminal())
@@ -975,6 +1052,11 @@ mod tests {
             .local_source_connection_id()
             .as_bytes()
             .to_vec();
+        let expected_local_connection_id = server_config
+            .identifiers
+            .local_source_connection_id()
+            .as_bytes()
+            .to_vec();
 
         let mut client = quic_initial_client_flow(client_config)?;
         let mut client_context = crate::PacketContext::new();
@@ -1030,7 +1112,8 @@ mod tests {
             .expect("matching client Initial is accepted");
         let accepted = transition.fire(&valid_initial, &mut context)?;
         assert_eq!(accepted.target(), Some(INITIAL_OBSERVED));
-        assert!(accepted.outputs().is_empty());
+        assert_eq!(accepted.outputs().len(), 1);
+        assert!(accepted.outputs()[0].requires_regeneration());
         assert_eq!(
             context.get_namespaced_string("quic", "local_tuple")?,
             Some(expected_local.to_string().as_str())
@@ -1051,7 +1134,7 @@ mod tests {
         assert_eq!(snapshot.lifecycle, INITIAL_OBSERVED);
         assert_eq!(
             snapshot.local_connection_id.as_deref(),
-            Some(expected_original_destination_connection_id.as_slice())
+            Some(expected_local_connection_id.as_slice())
         );
         assert_eq!(
             snapshot.peer_connection_id.as_deref(),
@@ -1126,6 +1209,114 @@ mod tests {
         assert_eq!(snapshot.lifecycle, INITIAL_OBSERVED);
         assert_ne!(snapshot.lifecycle, "Handshaking");
         assert_ne!(snapshot.lifecycle, "Established");
+        Ok(())
+    }
+
+    #[test]
+    fn initial_server_response_acks_client_and_carries_crypto() -> crate::Result<()> {
+        let client_config = QuicInitialClientConfig::default();
+        let server_config = QuicInitialServerConfig::default();
+        let original_destination_connection_id = client_config
+            .identifiers
+            .original_destination_connection_id()
+            .clone();
+        let client_source_connection_id = client_config
+            .identifiers
+            .local_source_connection_id()
+            .clone();
+        let server_source_connection_id = server_config
+            .identifiers
+            .local_source_connection_id()
+            .clone();
+        let expected_crypto = server_config.crypto.clone();
+        let expected_local = server_config.local;
+        let expected_peer = server_config.peer;
+
+        let mut client = quic_initial_client_flow(client_config)?;
+        let mut client_context = crate::PacketContext::new();
+        let client_initial = client
+            .state_mut(INITIAL_SENT)
+            .expect("InitialSent state exists")
+            .run_entry(&mut client_context)?
+            .expect("client emits its protected Initial")
+            .outputs()[0]
+            .packet()
+            .clone();
+
+        let mut server = quic_initial_server_flow(server_config)?;
+        let mut server_context = crate::PacketContext::new();
+        let listen = server.state_mut(LISTEN).expect("Listen state exists");
+        let transition = listen
+            .find_transition(&client_initial, &server_context)
+            .expect("server matches the protected client Initial");
+        let response_step = transition.fire(&client_initial, &mut server_context)?;
+
+        assert_eq!(response_step.target(), Some(INITIAL_OBSERVED));
+        assert_eq!(response_step.outputs().len(), 1);
+        assert!(response_step.outputs()[0].requires_regeneration());
+        let response = response_step.outputs()[0].packet();
+        let ipv4 = response.layer::<Ipv4>().expect("typed IPv4 layer");
+        let udp = response.layer::<Udp>().expect("typed UDP layer");
+        let quic = response.layer::<Quic>().expect("typed QUIC layer");
+        assert_eq!(ipv4.source(), *expected_local.ip());
+        assert_eq!(ipv4.destination(), *expected_peer.ip());
+        assert_eq!(udp.source_port_value(), expected_local.port());
+        assert_eq!(udp.destination_port_value(), expected_peer.port());
+        assert_eq!(quic.packets().len(), 1);
+
+        match classify_quic_header(quic.packets()[0].as_bytes())? {
+            QuicHeaderClassification::LongHeader {
+                destination_connection_id,
+                source_connection_id,
+                packet_kind: QuicLongPacketKind::Initial,
+                ..
+            } => {
+                assert_eq!(destination_connection_id, client_source_connection_id);
+                assert_eq!(source_connection_id, server_source_connection_id);
+            }
+            classification => panic!("unexpected server response header: {classification:?}"),
+        }
+
+        let server_keys = derive_quic_initial_secrets(
+            QUIC_VERSION_1,
+            original_destination_connection_id.as_bytes(),
+        )?
+        .server_packet_keys()?;
+        let decoded = quic_decode_initial_protected_payload_with_keys(
+            quic.packets()[0].as_bytes(),
+            &server_keys,
+        )?;
+        assert_eq!(decoded.packet_number().value(), 0);
+        let observations = inspect_initial_frames(decoded.frames(), expected_crypto.len())?;
+        assert_eq!(observations.acknowledgements.len(), 1);
+        assert_eq!(
+            observations.acknowledgements[0].packet_number_ranges,
+            [(0, 0)]
+        );
+        assert_eq!(observations.crypto_chunks.len(), 1);
+        assert_eq!(observations.crypto_chunks[0].data(), expected_crypto);
+
+        assert_eq!(
+            server_context.get_namespaced_u64("quic", "initial_packet_number_sent")?,
+            Some(0)
+        );
+        let received_bytes = server_context
+            .get_namespaced_u64("quic", "initial_bytes_received")?
+            .expect("received byte accounting");
+        let response_bytes = server_context
+            .get_namespaced_u64("quic", "initial_response_bytes")?
+            .expect("response byte accounting");
+        assert_eq!(
+            server_context.get_namespaced_u64("quic", "initial_amplification_limit_bytes")?,
+            Some(received_bytes * 3)
+        );
+        assert_eq!(
+            server_context
+                .get_namespaced_bool("quic", "initial_response_within_amplification_limit")?,
+            Some(true)
+        );
+        assert!(response_bytes <= received_bytes * 3);
+        assert_eq!(response_bytes as usize, quic.packets()[0].as_bytes().len());
         Ok(())
     }
 
