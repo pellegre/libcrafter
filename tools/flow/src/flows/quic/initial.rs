@@ -36,6 +36,7 @@ const INITIAL_INVALID_PACKET_NUMBER_OUTCOME: &str = "initial-invalid-packet-numb
 const INITIAL_DISALLOWED_FRAME_OUTCOME: &str = "initial-disallowed-frame";
 const INITIAL_CRYPTO_LIMIT_OUTCOME: &str = "initial-crypto-limit-exceeded";
 const INITIAL_ACK_RANGE_LIMIT_OUTCOME: &str = "initial-ack-range-limit-exceeded";
+const INITIAL_INVALID_ACK_OUTCOME: &str = "initial-invalid-ack";
 const INITIAL_AMPLIFICATION_LIMIT_OUTCOME: &str = "initial-amplification-limit-exceeded";
 
 /// Build the deterministic, bounded QUIC v1 Initial-only client flow.
@@ -88,6 +89,7 @@ pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow>
     let version = config.version;
     let max_crypto_bytes = config.bounds.max_crypto_bytes;
     let max_ack_ranges = config.bounds.max_datagrams;
+    let mut ack_state = QuicInitialAckState::from_sent([full_packet_number])?;
     let matcher = UdpDatagramMatcher::inbound(*local.ip(), local.port(), *peer.ip(), peer.port())
         .payload_where(
             "one protected QUIC v1 server Initial with the expected connection identifiers",
@@ -181,6 +183,15 @@ pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow>
                     INITIAL_DISALLOWED_FRAME_OUTCOME,
                 ));
             }
+            if ack_state
+                .validate(
+                    QuicAckPacketNumberSpace::Initial,
+                    observations.acknowledgements.iter().map(|ack| &ack.frame),
+                )
+                .is_err()
+            {
+                return Ok(initial_error_step(context, INITIAL_INVALID_ACK_OUTCOME));
+            }
 
             let crypto_bytes = observations
                 .crypto_chunks
@@ -209,6 +220,7 @@ pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow>
             )?;
             context.insert_namespaced_bytes("quic", "initial_crypto_bytes", crypto_bytes)?;
             context.insert_namespaced_string("quic", "initial_ack_ranges", ack_ranges.join(","))?;
+            ack_state.record(context)?;
 
             let mut snapshot = ProtocolContextSnapshot::new("quic", INITIAL_OBSERVED);
             snapshot.local_connection_id = Some(local_connection_id.clone());
@@ -277,6 +289,7 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
     let version = config.version;
     let max_crypto_bytes = config.bounds.max_crypto_bytes;
     let max_ack_ranges = config.bounds.max_datagrams;
+    let mut ack_state = QuicInitialAckState::default();
     let matcher = UdpDatagramMatcher::inbound(*local.ip(), local.port(), *peer.ip(), peer.port())
         .payload_where(
             "one structurally valid QUIC v1 Initial with a nonempty destination connection ID",
@@ -347,6 +360,15 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
                     context,
                     INITIAL_DISALLOWED_FRAME_OUTCOME,
                 ));
+            }
+            if ack_state
+                .validate(
+                    QuicAckPacketNumberSpace::Initial,
+                    observations.acknowledgements.iter().map(|ack| &ack.frame),
+                )
+                .is_err()
+            {
+                return Ok(initial_error_step(context, INITIAL_INVALID_ACK_OUTCOME));
             }
 
             let mut crypto_bytes = context
@@ -446,6 +468,7 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
             )?;
             context.insert_namespaced_bytes("quic", "initial_crypto_bytes", crypto_bytes)?;
             context.insert_namespaced_string("quic", "initial_ack_ranges", ack_ranges)?;
+            ack_state.record(context)?;
             context.insert_namespaced_u64("quic", "initial_bytes_received", received_bytes)?;
             context.insert_namespaced_u64("quic", "initial_response_bytes", response_bytes)?;
             context.insert_namespaced_u64(
@@ -470,6 +493,7 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
                 "initial_packet_number_sent",
                 server_packet_number,
             )?;
+            ack_state.record_sent(server_packet_number)?;
 
             let mut snapshot = ProtocolContextSnapshot::new("quic", INITIAL_OBSERVED);
             snapshot.local_connection_id = Some(server_source_connection_id.as_bytes().to_vec());
@@ -698,6 +722,174 @@ fn acknowledged_packet_number_ranges(ack: &QuicAckFrame) -> Result<Vec<(u64, u64
     }
 
     Ok(packet_number_ranges)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuicAckPacketNumberSpace {
+    Initial,
+    Handshake,
+    Application,
+}
+
+/// Minimal ACK state for the Initial packet-number space.
+///
+/// RFC 9000 Sections 12.3, 13.1, and 19.3 require ACKs to stay in their
+/// packet-number space and permit rejecting acknowledgements for packets that
+/// were never sent. Only packet numbers are retained here, never packet bytes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct QuicInitialAckState {
+    sent: BTreeSet<u64>,
+    acknowledged: BTreeSet<u64>,
+    largest_acknowledged: Option<u64>,
+    duplicate_acknowledgements: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct QuicInitialAckUpdate {
+    newly_acknowledged: u64,
+    duplicates: u64,
+    largest_acknowledged: Option<u64>,
+}
+
+impl QuicInitialAckState {
+    fn from_sent(packet_numbers: impl IntoIterator<Item = u64>) -> Result<Self> {
+        let mut state = Self::default();
+        for packet_number in packet_numbers {
+            state.record_sent(packet_number)?;
+        }
+        Ok(state)
+    }
+
+    fn record_sent(&mut self, packet_number: u64) -> Result<()> {
+        if packet_number >= QUIC_PACKET_NUMBER_LIMIT {
+            return Err(FlowError::Build(
+                "sent QUIC Initial packet number exceeds the 62-bit limit".to_string(),
+            ));
+        }
+        self.sent.insert(packet_number);
+        Ok(())
+    }
+
+    fn validate<'a>(
+        &mut self,
+        space: QuicAckPacketNumberSpace,
+        acknowledgements: impl IntoIterator<Item = &'a QuicAckFrame>,
+    ) -> Result<QuicInitialAckUpdate> {
+        if space != QuicAckPacketNumberSpace::Initial {
+            return Err(FlowError::Build(
+                "Initial-only QUIC ACK validation rejects Handshake and Application packet-number spaces"
+                    .to_string(),
+            ));
+        }
+
+        let largest_sent = self.sent.last().copied();
+        let mut acknowledged_in_update = BTreeSet::new();
+        let mut duplicates = 0u64;
+
+        for acknowledgement in acknowledgements {
+            let ranges = acknowledged_packet_number_ranges(acknowledgement)?;
+            let mut previous_low = None;
+            let mut acknowledged_in_frame = BTreeSet::new();
+
+            for (low, high) in ranges {
+                if low > high || high >= QUIC_PACKET_NUMBER_LIMIT {
+                    return Err(FlowError::Build(
+                        "QUIC Initial ACK contains an invalid packet-number range".to_string(),
+                    ));
+                }
+                if let Some(previous_low) = previous_low {
+                    let separated = high.checked_add(1).is_some_and(|next| next < previous_low);
+                    if !separated {
+                        return Err(FlowError::Build(
+                            "QUIC Initial ACK ranges overlap or contain an invalid gap".to_string(),
+                        ));
+                    }
+                }
+                if largest_sent.map_or(true, |largest| high > largest) {
+                    return Err(FlowError::Build(
+                        "QUIC Initial ACK exceeds the largest sent packet number".to_string(),
+                    ));
+                }
+
+                let range_len = high
+                    .checked_sub(low)
+                    .and_then(|length| length.checked_add(1))
+                    .ok_or_else(|| {
+                        FlowError::Build("QUIC Initial ACK range length overflow".to_string())
+                    })?;
+                if range_len > self.sent.len() as u64 {
+                    return Err(FlowError::Build(
+                        "QUIC Initial ACK range contains unsent packet numbers".to_string(),
+                    ));
+                }
+
+                for packet_number in low..=high {
+                    if !self.sent.contains(&packet_number) {
+                        return Err(FlowError::Build(format!(
+                            "QUIC Initial ACK acknowledges unsent packet number {packet_number}"
+                        )));
+                    }
+                    if !acknowledged_in_frame.insert(packet_number) {
+                        return Err(FlowError::Build(
+                            "QUIC Initial ACK ranges overlap".to_string(),
+                        ));
+                    }
+                    if self.acknowledged.contains(&packet_number)
+                        || !acknowledged_in_update.insert(packet_number)
+                    {
+                        duplicates = duplicates.checked_add(1).ok_or_else(|| {
+                            FlowError::Build(
+                                "QUIC Initial duplicate ACK count overflow".to_string(),
+                            )
+                        })?;
+                    }
+                }
+                previous_low = Some(low);
+            }
+        }
+
+        let newly_acknowledged = u64::try_from(acknowledged_in_update.len()).map_err(|_| {
+            FlowError::Build("QUIC Initial acknowledged packet count exceeds u64".to_string())
+        })?;
+        self.acknowledged.extend(acknowledged_in_update);
+        self.largest_acknowledged = self.acknowledged.last().copied();
+        self.duplicate_acknowledgements = self
+            .duplicate_acknowledgements
+            .checked_add(duplicates)
+            .ok_or_else(|| {
+            FlowError::Build("QUIC Initial duplicate ACK count overflow".to_string())
+        })?;
+
+        Ok(QuicInitialAckUpdate {
+            newly_acknowledged,
+            duplicates,
+            largest_acknowledged: self.largest_acknowledged,
+        })
+    }
+
+    fn record(&self, context: &mut crate::PacketContext) -> Result<()> {
+        let acknowledged_count = u64::try_from(self.acknowledged.len()).map_err(|_| {
+            FlowError::Build("QUIC Initial acknowledged packet count exceeds u64".to_string())
+        })?;
+        context.insert_namespaced_u64(
+            "quic",
+            "initial_acknowledged_packet_count",
+            acknowledged_count,
+        )?;
+        context.insert_namespaced_u64(
+            "quic",
+            "initial_duplicate_acknowledgement_count",
+            self.duplicate_acknowledgements,
+        )?;
+        if let Some(largest) = self.largest_acknowledged {
+            context.insert_namespaced_u64(
+                "quic",
+                "initial_largest_acknowledged_packet_number",
+                largest,
+            )?;
+        }
+        Ok(())
+    }
 }
 
 /// Reproducible connection identity and packet-number state for Initial-only flows.
@@ -1073,6 +1265,121 @@ fn validate_common(
 mod tests {
     use super::*;
     use crafter::{quic_decode_initial_protected_payload_with_keys, Ipv4, Quic, QuicVarInt, Udp};
+
+    #[test]
+    fn initial_ack_ranges_only_cover_sent_packets() -> crate::Result<()> {
+        struct Case {
+            name: &'static str,
+            sent: &'static [u64],
+            acknowledgements: Vec<QuicAckFrame>,
+            expected: std::result::Result<(u64, u64, Option<u64>, usize), ()>,
+        }
+
+        let single = QuicAckFrame::from_values(2, 0, 2, Vec::new())?;
+        let multiple = QuicAckFrame::from_values(
+            10,
+            0,
+            0,
+            vec![
+                QuicAckRange::from_values(2, 2)?,
+                QuicAckRange::from_values(1, 1)?,
+            ],
+        )?;
+        let gap_underflow =
+            QuicAckFrame::from_values(0, 0, 0, vec![QuicAckRange::from_values(0, 0)?])?;
+        let unsent = QuicAckFrame::from_values(2, 0, 2, Vec::new())?;
+
+        let cases = vec![
+            Case {
+                name: "single range",
+                sent: &[0, 1, 2],
+                acknowledgements: vec![single.clone()],
+                expected: Ok((3, 0, Some(2), 3)),
+            },
+            Case {
+                name: "multiple ranges",
+                sent: &[0, 1, 4, 5, 6, 10],
+                acknowledgements: vec![multiple],
+                expected: Ok((6, 0, Some(10), 6)),
+            },
+            Case {
+                name: "duplicate acknowledgement",
+                sent: &[0, 1, 2],
+                acknowledgements: vec![single.clone(), single],
+                expected: Ok((3, 3, Some(2), 3)),
+            },
+            Case {
+                name: "gap underflow",
+                sent: &[0],
+                acknowledgements: vec![gap_underflow],
+                expected: Err(()),
+            },
+            Case {
+                name: "unsent acknowledgement",
+                sent: &[0, 2],
+                acknowledgements: vec![unsent],
+                expected: Err(()),
+            },
+        ];
+
+        for case in cases {
+            let mut state = QuicInitialAckState::from_sent(case.sent.iter().copied())?;
+            let result = state.validate(
+                QuicAckPacketNumberSpace::Initial,
+                case.acknowledgements.iter(),
+            );
+            match case.expected {
+                Ok((newly_acknowledged, duplicates, largest, acknowledged_count)) => {
+                    let update = result.unwrap_or_else(|error| {
+                        panic!("{} unexpectedly failed: {error}", case.name)
+                    });
+                    assert_eq!(
+                        update.newly_acknowledged, newly_acknowledged,
+                        "{}",
+                        case.name
+                    );
+                    assert_eq!(update.duplicates, duplicates, "{}", case.name);
+                    assert_eq!(update.largest_acknowledged, largest, "{}", case.name);
+                    assert_eq!(
+                        state.acknowledged.len(),
+                        acknowledged_count,
+                        "{}",
+                        case.name
+                    );
+                }
+                Err(()) => assert!(result.is_err(), "{} unexpectedly passed", case.name),
+            }
+        }
+
+        let initial_ack = QuicAckFrame::from_values(0, 0, 0, Vec::new())?;
+        for space in [
+            QuicAckPacketNumberSpace::Handshake,
+            QuicAckPacketNumberSpace::Application,
+        ] {
+            let mut state = QuicInitialAckState::from_sent([0])?;
+            assert!(state.validate(space, [&initial_ack]).is_err());
+            assert!(state.acknowledged.is_empty());
+        }
+
+        let mut context = crate::PacketContext::new();
+        let mut state = QuicInitialAckState::from_sent([0, 1, 2])?;
+        state.validate(QuicAckPacketNumberSpace::Initial, [&initial_ack])?;
+        state.validate(QuicAckPacketNumberSpace::Initial, [&initial_ack])?;
+        state.record(&mut context)?;
+        assert_eq!(
+            context.get_namespaced_u64("quic", "initial_largest_acknowledged_packet_number")?,
+            Some(0)
+        );
+        assert_eq!(
+            context.get_namespaced_u64("quic", "initial_acknowledged_packet_count")?,
+            Some(1)
+        );
+        assert_eq!(
+            context.get_namespaced_u64("quic", "initial_duplicate_acknowledgement_count")?,
+            Some(1)
+        );
+        Ok(())
+    }
 
     #[test]
     fn initial_client_starts_with_protected_minimum_datagram() -> crate::Result<()> {
