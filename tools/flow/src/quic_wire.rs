@@ -3,8 +3,160 @@
 use std::fmt;
 use std::net::SocketAddrV4;
 
+use crafter::{
+    quic_protect_complete_initial_packet, Ipv4, Packet, Quic, QuicFrame, QuicInitialPacketKeys,
+    QuicLongHeaderPacket, QuicPacketNumber, QuicVarInt, Udp, QUIC_INITIAL_AEAD_TAG_LEN,
+};
+
 use crate::matcher::UdpDatagramMatcher;
-use crate::{Matcher, PacketContext};
+use crate::{Matcher, PacketContext, Result};
+
+const QUIC_CLIENT_INITIAL_MIN_UDP_PAYLOAD_LEN: usize = 1200;
+
+/// Explicit datagram padding policy for a protected Initial packet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuicInitialPadding {
+    /// Preserve the protected Initial size produced by the caller's frames.
+    None,
+    /// Pad the protected QUIC payload to the RFC 9000 client minimum.
+    ClientMinimum,
+    /// Pad the protected QUIC payload to an explicit caller-selected minimum.
+    AtLeast(usize),
+}
+
+impl QuicInitialPadding {
+    const fn minimum_udp_payload_len(self) -> Option<usize> {
+        match self {
+            Self::None => None,
+            Self::ClientMinimum => Some(QUIC_CLIENT_INITIAL_MIN_UDP_PAYLOAD_LEN),
+            Self::AtLeast(len) => Some(len),
+        }
+    }
+}
+
+/// Protect an Initial packet, apply explicit flow-owned padding, and wrap it in
+/// the typed IPv4 / UDP / QUIC stack.
+pub(crate) fn assemble_initial_datagram(
+    local: SocketAddrV4,
+    peer: SocketAddrV4,
+    initial: &QuicLongHeaderPacket,
+    full_packet_number: u64,
+    keys: &QuicInitialPacketKeys,
+    packet_number_len: usize,
+    padding: QuicInitialPadding,
+) -> Result<Packet> {
+    let packet_number_mask = match packet_number_len {
+        1..=4 => (1u64 << (packet_number_len * 8)) - 1,
+        _ => {
+            return Err(crafter::CrafterError::invalid_field_value(
+                "quic.packet_number.length",
+                "QUIC packet-number length must be 1, 2, 3, or 4 bytes",
+            )
+            .into())
+        }
+    };
+    let padding_len = padding
+        .minimum_udp_payload_len()
+        .map(|minimum| initial_padding_len(initial, packet_number_len, minimum))
+        .transpose()?
+        .unwrap_or(0);
+    let plaintext_len = initial
+        .protected_payload()
+        .len()
+        .checked_add(padding_len)
+        .ok_or_else(initial_length_overflow)?;
+    let protected_length = packet_number_len
+        .checked_add(plaintext_len)
+        .and_then(|len| len.checked_add(QUIC_INITIAL_AEAD_TAG_LEN))
+        .ok_or_else(initial_length_overflow)?;
+    let required_length_width =
+        QuicVarInt::new(u64::try_from(protected_length).map_err(|_| initial_length_overflow())?)?
+            .encoded_len()?;
+    let length_width = initial.length_encoded_len().max(required_length_width);
+
+    let mut builder = QuicLongHeaderPacket::initial_builder()
+        .first_byte(initial.first_byte())
+        .version(initial.version())
+        .destination_connection_id(initial.destination_connection_id().clone())
+        .source_connection_id(initial.source_connection_id().clone())
+        .token_length(
+            initial
+                .token_length()
+                .expect("Initial packets carry a token length"),
+        )
+        .token_length_encoded_len(
+            initial
+                .token_length_encoded_len()
+                .expect("Initial packets carry a token length width"),
+        )
+        .token(initial.token())
+        .length_encoded_len(length_width)
+        .packet_number(
+            QuicPacketNumber::new(full_packet_number & packet_number_mask)
+                .with_encoded_len(packet_number_len),
+        )
+        .protected_payload(initial.protected_payload());
+    if padding_len != 0 {
+        builder = builder.frame(QuicFrame::padding(padding_len));
+    }
+
+    let padded = builder.build()?;
+    let protected =
+        quic_protect_complete_initial_packet(&padded, full_packet_number, keys, packet_number_len)?;
+
+    Ok(Ipv4::new().src(*local.ip()).dst(*peer.ip())
+        / Udp::new()
+            .source_port(local.port())
+            .destination_port(peer.port())
+        / Quic::new().packet(protected))
+}
+
+fn initial_padding_len(
+    initial: &QuicLongHeaderPacket,
+    packet_number_len: usize,
+    minimum_udp_payload_len: usize,
+) -> Result<usize> {
+    let prefix_len = 1usize
+        .checked_add(4)
+        .and_then(|len| len.checked_add(1 + initial.destination_connection_id().len()))
+        .and_then(|len| len.checked_add(1 + initial.source_connection_id().len()))
+        .and_then(|len| len.checked_add(initial.token_length_encoded_len().unwrap_or(0)))
+        .and_then(|len| len.checked_add(initial.token().len()))
+        .ok_or_else(initial_length_overflow)?;
+    let base_plaintext_len = initial.protected_payload().len();
+    let mut padding_len = 0usize;
+
+    loop {
+        let protected_length = packet_number_len
+            .checked_add(base_plaintext_len)
+            .and_then(|len| len.checked_add(padding_len))
+            .and_then(|len| len.checked_add(QUIC_INITIAL_AEAD_TAG_LEN))
+            .ok_or_else(initial_length_overflow)?;
+        let required_width = QuicVarInt::new(
+            u64::try_from(protected_length).map_err(|_| initial_length_overflow())?,
+        )?
+        .encoded_len()?;
+        let length_width = initial.length_encoded_len().max(required_width);
+        let datagram_len = prefix_len
+            .checked_add(length_width)
+            .and_then(|len| len.checked_add(protected_length))
+            .ok_or_else(initial_length_overflow)?;
+
+        if datagram_len >= minimum_udp_payload_len {
+            return Ok(padding_len);
+        }
+        padding_len = padding_len
+            .checked_add(minimum_udp_payload_len - datagram_len)
+            .ok_or_else(initial_length_overflow)?;
+    }
+}
+
+fn initial_length_overflow() -> crafter::CrafterError {
+    crafter::CrafterError::invalid_field_value(
+        "quic.initial.datagram.length",
+        "QUIC Initial datagram length overflow",
+    )
+}
 
 /// How the captured UDP payload was represented by generic packet decoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,11 +312,17 @@ fn payload_after_udp(packet: &crafter::Packet) -> Option<(Vec<u8>, QuicCaptureRe
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
+    use std::net::{Ipv4Addr, SocketAddrV4};
 
-    use crafter::IntoPacket;
+    use crafter::{
+        derive_quic_initial_secrets, quic_decode_initial_protected_payload_with_keys, IntoPacket,
+        QuicConnectionId, QuicFrame, QuicLongHeaderPacket, QuicPacketNumber, QUIC_VERSION_1,
+    };
 
-    use super::{QuicCaptureRepresentation, QuicIngress, QuicIngressContext};
+    use super::{
+        assemble_initial_datagram, QuicCaptureRepresentation, QuicIngress, QuicIngressContext,
+        QuicInitialPadding,
+    };
     use crate::matcher::UdpDatagramMatcher;
     use crate::PacketContext;
 
@@ -187,6 +345,108 @@ mod tests {
                 .source_port(PEER_PORT)
                 .destination_port(LOCAL_PORT)
             / payload
+    }
+
+    fn initial_with_plaintext_len(plaintext_len: usize) -> crafter::Result<QuicLongHeaderPacket> {
+        QuicLongHeaderPacket::initial_builder()
+            .first_byte(0xc1)
+            .version(QUIC_VERSION_1)
+            .destination_connection_id(QuicConnectionId::from_bytes([0x83; 8]))
+            .source_connection_id(QuicConnectionId::from_bytes([0x44; 8]))
+            .token([0xde, 0xad])
+            .length_encoded_len(2)
+            .packet_number(QuicPacketNumber::new(7).with_encoded_len(2))
+            .frame(QuicFrame::padding(plaintext_len))
+            .build()
+    }
+
+    fn quic_payload(packet: &crafter::Packet) -> &[u8] {
+        packet
+            .layer::<crafter::Quic>()
+            .expect("typed QUIC layer")
+            .packets()[0]
+            .as_bytes()
+    }
+
+    #[test]
+    fn client_initial_udp_payload_is_at_least_1200_bytes() -> crate::Result<()> {
+        let local = SocketAddrV4::new(local_ipv4(), LOCAL_PORT);
+        let peer = SocketAddrV4::new(peer_ipv4(), PEER_PORT);
+        let keys = derive_quic_initial_secrets(QUIC_VERSION_1, [0x83; 8])?.client_packet_keys()?;
+
+        // With these explicit connection IDs, token, two-byte Length, and
+        // two-byte packet number, plaintext lengths 1153/1154/1155 produce
+        // protected Initials just below, exactly at, and just above 1200.
+        for (plaintext_len, unpadded_len, expected_padded_len) in
+            [(1153, 1199, 1200), (1154, 1200, 1200), (1155, 1201, 1201)]
+        {
+            let initial = initial_with_plaintext_len(plaintext_len)?;
+            let unpadded = assemble_initial_datagram(
+                local,
+                peer,
+                &initial,
+                7,
+                &keys,
+                2,
+                QuicInitialPadding::None,
+            )?;
+            assert_eq!(quic_payload(&unpadded).len(), unpadded_len);
+
+            let padded = assemble_initial_datagram(
+                local,
+                peer,
+                &initial,
+                7,
+                &keys,
+                2,
+                QuicInitialPadding::ClientMinimum,
+            )?;
+            assert_eq!(quic_payload(&padded).len(), expected_padded_len);
+
+            let decoded =
+                quic_decode_initial_protected_payload_with_keys(quic_payload(&padded), &keys)?;
+            assert_eq!(decoded.version(), QUIC_VERSION_1);
+            assert_eq!(decoded.packet_number().value(), 7);
+            assert_eq!(decoded.packet_number_len(), 2);
+            assert_eq!(decoded.decrypted_payload().len(), plaintext_len.max(1154));
+
+            // Compilation fills enclosing lengths/checksums without changing
+            // the explicit documentation tuple or protected QUIC bytes.
+            let compiled = padded.compile()?;
+            assert_eq!(compiled.as_bytes().len(), 20 + 8 + expected_padded_len);
+            let ipv4 = padded.layer::<crafter::Ipv4>().expect("typed IPv4 layer");
+            let udp = padded.layer::<crafter::Udp>().expect("typed UDP layer");
+            assert_eq!(ipv4.source(), local_ipv4());
+            assert_eq!(ipv4.destination(), peer_ipv4());
+            assert_eq!(udp.source_port_value(), LOCAL_PORT);
+            assert_eq!(udp.destination_port_value(), PEER_PORT);
+            assert_eq!(quic_payload(&padded).len(), expected_padded_len);
+        }
+
+        // Server output remains unchanged unless its caller selects padding.
+        let server_sized = assemble_initial_datagram(
+            local,
+            peer,
+            &initial_with_plaintext_len(24)?,
+            7,
+            &keys,
+            2,
+            QuicInitialPadding::None,
+        )?;
+        assert!(quic_payload(&server_sized).len() < 1200);
+
+        let explicitly_padded = assemble_initial_datagram(
+            local,
+            peer,
+            &initial_with_plaintext_len(24)?,
+            7,
+            &keys,
+            2,
+            QuicInitialPadding::AtLeast(1250),
+        )?;
+        assert_eq!(quic_payload(&explicitly_padded).len(), 1250);
+
+        Ok(())
     }
 
     #[test]
