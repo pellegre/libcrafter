@@ -1,8 +1,11 @@
 //! Deterministic configuration for bounded QUIC Initial-only flows.
 
-use std::net::SocketAddrV4;
+use std::{collections::BTreeSet, net::SocketAddrV4};
 
-use crafter::{QuicConnectionId, QuicPacketNumber, QUIC_VERSION_1};
+use crafter::{
+    QuicAckFrame, QuicAckRange, QuicConnectionCloseFrame, QuicConnectionId, QuicCryptoFrame,
+    QuicFrame, QuicPacketNumber, QUIC_VERSION_1,
+};
 
 use crate::{docaddr, FlowError, Result};
 
@@ -12,6 +15,158 @@ const MIN_INITIAL_CONNECTION_ID_LEN: usize = 8;
 const MAX_INITIAL_CONNECTION_ID_LEN: usize = 20;
 const MAX_CONFIGURED_CRYPTO_BYTES: usize = 64 * 1024;
 const QUIC_PACKET_NUMBER_LIMIT: u64 = 1 << 62;
+
+/// One parsed ACK together with the packet numbers represented by its ranges.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct QuicInitialAckObservation {
+    pub(crate) frame: QuicAckFrame,
+    pub(crate) packet_number_ranges: Vec<(u64, u64)>,
+}
+
+/// Bounded, separated observations from one decrypted Initial payload.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct QuicInitialFrameObservations {
+    pub(crate) acknowledgements: Vec<QuicInitialAckObservation>,
+    pub(crate) crypto_chunks: Vec<QuicCryptoFrame>,
+    pub(crate) close_frames: Vec<QuicConnectionCloseFrame>,
+    pub(crate) unexpected_frames: Vec<QuicFrame>,
+}
+
+/// Build an ACK-before-CRYPTO sequence without adding datagram padding.
+pub(crate) fn build_initial_frames(
+    crypto: &[u8],
+    max_crypto_bytes: usize,
+    observed_packet_numbers: &BTreeSet<u64>,
+) -> Result<Vec<QuicFrame>> {
+    if crypto.len() > max_crypto_bytes {
+        return Err(FlowError::Build(format!(
+            "QUIC Initial CRYPTO data exceeds the configured {max_crypto_bytes}-byte bound"
+        )));
+    }
+
+    let mut frames = Vec::with_capacity(2);
+    if let Some(ack) = build_initial_ack_frame(observed_packet_numbers)? {
+        frames.push(QuicFrame::from_ack_frame(ack)?);
+    }
+    frames.push(QuicFrame::from_crypto_frame(QuicCryptoFrame::from_values(
+        0, crypto,
+    )?)?);
+    Ok(frames)
+}
+
+fn build_initial_ack_frame(observed: &BTreeSet<u64>) -> Result<Option<QuicAckFrame>> {
+    let Some(&largest) = observed.last() else {
+        return Ok(None);
+    };
+    if largest >= QUIC_PACKET_NUMBER_LIMIT {
+        return Err(FlowError::Build(
+            "observed QUIC Initial packet number exceeds the 62-bit limit".to_string(),
+        ));
+    }
+
+    let mut ranges = Vec::new();
+    let mut descending = observed.iter().rev().copied();
+    let mut range_high = descending.next().expect("nonempty set has a largest value");
+    let mut range_low = range_high;
+    for packet_number in descending {
+        if packet_number + 1 == range_low {
+            range_low = packet_number;
+        } else {
+            ranges.push((range_low, range_high));
+            range_high = packet_number;
+            range_low = packet_number;
+        }
+    }
+    ranges.push((range_low, range_high));
+
+    let first_ack_range = ranges[0].1 - ranges[0].0;
+    let mut encoded_ranges = Vec::with_capacity(ranges.len().saturating_sub(1));
+    let mut previous_low = ranges[0].0;
+    for &(low, high) in &ranges[1..] {
+        let gap = previous_low - high - 2;
+        encoded_ranges.push(QuicAckRange::from_values(gap, high - low)?);
+        previous_low = low;
+    }
+
+    Ok(Some(QuicAckFrame::from_values(
+        largest,
+        0,
+        first_ack_range,
+        encoded_ranges,
+    )?))
+}
+
+/// Separate decrypted Initial frames while preserving opaque frame bytes.
+pub(crate) fn inspect_initial_frames(
+    frames: &[QuicFrame],
+    max_crypto_bytes: usize,
+) -> Result<QuicInitialFrameObservations> {
+    let mut observations = QuicInitialFrameObservations::default();
+    let mut crypto_bytes = 0usize;
+
+    for frame in frames {
+        if frame.is_padding() {
+            continue;
+        }
+        if let Some(ack) = frame.ack_frame()? {
+            let packet_number_ranges = acknowledged_packet_number_ranges(&ack)?;
+            observations
+                .acknowledgements
+                .push(QuicInitialAckObservation {
+                    frame: ack,
+                    packet_number_ranges,
+                });
+        } else if let Some(crypto) = frame.crypto_frame()? {
+            crypto_bytes = crypto_bytes
+                .checked_add(crypto.data().len())
+                .ok_or_else(|| {
+                    FlowError::Build("QUIC Initial CRYPTO observation length overflow".to_string())
+                })?;
+            if crypto_bytes > max_crypto_bytes {
+                return Err(FlowError::Build(format!(
+                    "QUIC Initial CRYPTO observations exceed the configured {max_crypto_bytes}-byte bound"
+                )));
+            }
+            observations.crypto_chunks.push(crypto);
+        } else if let Some(close) = frame.connection_close_frame()? {
+            observations.close_frames.push(close);
+        } else {
+            observations.unexpected_frames.push(frame.clone());
+        }
+    }
+
+    Ok(observations)
+}
+
+fn acknowledged_packet_number_ranges(ack: &QuicAckFrame) -> Result<Vec<(u64, u64)>> {
+    let largest = ack.largest_acknowledged().value();
+    let first_length = ack.first_ack_range().value();
+    let mut low = largest.checked_sub(first_length).ok_or_else(|| {
+        FlowError::Build(
+            "QUIC Initial ACK first range exceeds its largest packet number".to_string(),
+        )
+    })?;
+    let mut packet_number_ranges = vec![(low, largest)];
+
+    for range in ack.ack_ranges() {
+        let high = low
+            .checked_sub(range.gap().value())
+            .and_then(|value| value.checked_sub(2))
+            .ok_or_else(|| {
+                FlowError::Build("QUIC Initial ACK gap underflows packet-number space".to_string())
+            })?;
+        low = high
+            .checked_sub(range.ack_range_length().value())
+            .ok_or_else(|| {
+                FlowError::Build(
+                    "QUIC Initial ACK range underflows packet-number space".to_string(),
+                )
+            })?;
+        packet_number_ranges.push((low, high));
+    }
+
+    Ok(packet_number_ranges)
+}
 
 /// Reproducible connection identity and packet-number state for Initial-only flows.
 ///
@@ -385,6 +540,81 @@ fn validate_common(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crafter::QuicVarInt;
+
+    #[test]
+    fn initial_frame_sequence_is_bounded_and_deterministic() {
+        let observed = BTreeSet::from([0, 1, 4, 5, 6, 10]);
+        let opaque_crypto = [0x00, 0xff, 0x06, 0x80];
+
+        let frames = build_initial_frames(&opaque_crypto, opaque_crypto.len(), &observed).unwrap();
+        let encoded = QuicFrame::encode_sequence(frames.clone());
+        assert_eq!(
+            encoded,
+            [
+                0x02, 0x0a, 0x00, 0x02, 0x00, 0x02, 0x02, 0x01, 0x01, // ACK
+                0x06, 0x00, 0x04, 0x00, 0xff, 0x06, 0x80, // CRYPTO
+            ]
+        );
+        assert_eq!(
+            QuicFrame::encode_sequence(
+                build_initial_frames(&opaque_crypto, opaque_crypto.len(), &observed).unwrap()
+            ),
+            encoded
+        );
+        assert!(!frames.iter().any(QuicFrame::is_padding));
+
+        let ack = frames[0].ack_frame().unwrap().unwrap();
+        assert_eq!(ack.largest_acknowledged().value(), 10);
+        assert_eq!(ack.first_ack_range().value(), 0);
+        assert_eq!(ack.ack_ranges().len(), 2);
+        assert_eq!(ack.ack_ranges()[0].gap().value(), 2);
+        assert_eq!(ack.ack_ranges()[0].ack_range_length().value(), 2);
+        assert_eq!(ack.ack_ranges()[1].gap().value(), 1);
+        assert_eq!(ack.ack_ranges()[1].ack_range_length().value(), 1);
+
+        let crypto = frames[1].crypto_frame().unwrap().unwrap();
+        assert_eq!(crypto.offset().value(), 0);
+        assert_eq!(crypto.data(), opaque_crypto);
+
+        let stream = QuicFrame::stream(QuicVarInt::new(0).unwrap(), b"not Initial data").unwrap();
+        let close = QuicFrame::connection_close_transport(
+            QuicVarInt::new(0).unwrap(),
+            QuicVarInt::new(0x08).unwrap(),
+            b"closed",
+        )
+        .unwrap();
+        let mut decrypted = frames;
+        decrypted.push(close.clone());
+        decrypted.push(stream.clone());
+        decrypted.push(QuicFrame::padding(3));
+
+        let observations = inspect_initial_frames(&decrypted, opaque_crypto.len()).unwrap();
+        assert_eq!(observations.acknowledgements.len(), 1);
+        assert_eq!(
+            observations.acknowledgements[0].packet_number_ranges,
+            [(10, 10), (4, 6), (0, 1)]
+        );
+        assert_eq!(
+            observations.acknowledgements[0]
+                .frame
+                .largest_acknowledged()
+                .value(),
+            10
+        );
+        assert_eq!(observations.crypto_chunks.len(), 1);
+        assert_eq!(observations.crypto_chunks[0].offset().value(), 0);
+        assert_eq!(observations.crypto_chunks[0].data(), opaque_crypto);
+        assert_eq!(observations.close_frames.len(), 1);
+        assert_eq!(
+            observations.close_frames[0],
+            close.connection_close_frame().unwrap().unwrap()
+        );
+        assert_eq!(observations.unexpected_frames, [stream]);
+
+        assert!(build_initial_frames(&opaque_crypto, opaque_crypto.len() - 1, &observed).is_err());
+        assert!(inspect_initial_frames(&decrypted, opaque_crypto.len() - 1).is_err());
+    }
 
     #[test]
     fn initial_identifiers_are_deterministic_and_distinct() {
