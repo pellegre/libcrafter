@@ -863,6 +863,22 @@ pub(crate) struct QuicEndpointRecoveryCounts {
     pub(crate) regenerated_transmits: u64,
 }
 
+/// Provider-owned classification for the next endpoint deadline.
+///
+/// The flow engine uses this only for inspectable observations. It never
+/// derives PTO or idle deadlines itself; the endpoint provider remains the
+/// authority for both scheduling and recovery behavior.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuicEndpointTimeoutKind {
+    /// Bookkeeping such as delayed acknowledgement or key lifecycle work.
+    Maintenance,
+    /// A provider loss-recovery probe timeout.
+    ProbeTimeout,
+    /// The provider's authenticated idle timer.
+    IdleTimeout,
+}
+
 /// Non-secret state that full flows may copy into context and reports.
 #[cfg(feature = "quic-endpoint")]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -962,6 +978,9 @@ pub(crate) trait QuicEndpointDriver {
         Ok(step)
     }
     fn next_timeout(&self) -> Option<Instant>;
+    fn next_timeout_kind(&self) -> QuicEndpointTimeoutKind {
+        QuicEndpointTimeoutKind::Maintenance
+    }
     fn next_wakeup(&self, now: Instant) -> Option<Duration> {
         self.next_timeout().map(|deadline| {
             deadline
@@ -970,6 +989,36 @@ pub(crate) trait QuicEndpointDriver {
         })
     }
     fn handle_timeout(&mut self, now: Instant) -> Result<()>;
+    fn handle_timeout_step(
+        &mut self,
+        now: Instant,
+        addresses: QuicEndpointAddresses,
+        context: &mut PacketContext,
+    ) -> Result<Step> {
+        // Classify the deadline before firing it: handling the callback may
+        // replace the provider's next deadline with a different timer kind.
+        let timeout_kind = self.next_timeout_kind();
+        self.handle_timeout(now)?;
+
+        increment_quic_counter(context, "recovery.timeout_events", 1)?;
+        match timeout_kind {
+            QuicEndpointTimeoutKind::Maintenance => {
+                increment_quic_counter(context, "timeouts.maintenance", 1)?;
+            }
+            QuicEndpointTimeoutKind::ProbeTimeout => {
+                increment_quic_counter(context, "recovery.pto_firings", 1)?;
+            }
+            QuicEndpointTimeoutKind::IdleTimeout => {
+                increment_quic_counter(context, "timeouts.idle", 1)?;
+            }
+        }
+
+        // Provider output is drained only after the callback, so every packet
+        // is freshly protected and is marked regeneration-only by the shared
+        // transmit wrapper. An empty batch remains an inspectable timer-
+        // maintenance step and still carries the provider's next wakeup.
+        self.drain_transmit_step(now, addresses, context)
+    }
     fn poll_events(&mut self) -> Result<Vec<QuicEndpointEvent>>;
     fn open_bidirectional_stream(&mut self) -> Result<QuicEndpointStreamId>;
     fn write_stream(&mut self, stream: QuicEndpointStreamId, bytes: &[u8]) -> Result<usize>;
@@ -1845,5 +1894,194 @@ mod tests {
             }
         ));
         assert_eq!(driver.datagrams.len(), 2);
+    }
+
+    #[cfg(feature = "quic-endpoint")]
+    #[test]
+    fn driver_timeout_generates_fresh_bounded_output() {
+        use super::{
+            QuicEndpointAddresses, QuicEndpointClock, QuicEndpointDatagram, QuicEndpointDriver,
+            QuicEndpointEvent, QuicEndpointLifecycle, QuicEndpointManualClock,
+            QuicEndpointPacketSpaceCounts, QuicEndpointRecoveryCounts, QuicEndpointSnapshot,
+            QuicEndpointStreamId, QuicEndpointStreamRead, QuicEndpointTimeoutKind,
+            QuicEndpointTransmit, QuicEndpointTransmitPacketCounts,
+        };
+        use crate::{PacketContext, Result};
+        use std::{
+            net::SocketAddrV4,
+            time::{Duration, Instant},
+        };
+
+        struct TimerDriver {
+            deadline: Option<Instant>,
+            timeout_kind: QuicEndpointTimeoutKind,
+            timeout_calls: u64,
+            transmits: Vec<QuicEndpointTransmit>,
+            snapshot: QuicEndpointSnapshot,
+            local: SocketAddrV4,
+            peer: SocketAddrV4,
+        }
+
+        impl QuicEndpointDriver for TimerDriver {
+            fn start(&mut self, _: Instant) -> Result<()> {
+                Ok(())
+            }
+            fn handle_datagram(&mut self, _: QuicEndpointDatagram) -> Result<()> {
+                Ok(())
+            }
+            fn drain_transmits(&mut self, _: Instant) -> Result<Vec<QuicEndpointTransmit>> {
+                Ok(std::mem::take(&mut self.transmits))
+            }
+            fn next_timeout(&self) -> Option<Instant> {
+                self.deadline
+            }
+            fn next_timeout_kind(&self) -> QuicEndpointTimeoutKind {
+                self.timeout_kind
+            }
+            fn handle_timeout(&mut self, now: Instant) -> Result<()> {
+                self.timeout_calls = self.timeout_calls.saturating_add(1);
+                self.snapshot.recovery.timeout_events =
+                    self.snapshot.recovery.timeout_events.saturating_add(1);
+                if self.timeout_kind == QuicEndpointTimeoutKind::ProbeTimeout {
+                    self.snapshot.recovery.pto_firings =
+                        self.snapshot.recovery.pto_firings.saturating_add(1);
+                    self.transmits.push(QuicEndpointTransmit {
+                        source_ip: *self.local.ip(),
+                        source_port: self.local.port(),
+                        destination_ip: *self.peer.ip(),
+                        destination_port: self.peer.port(),
+                        payload: vec![0x40, self.timeout_calls as u8, 0xaa],
+                        packet_counts: QuicEndpointTransmitPacketCounts {
+                            application: 1,
+                            ..Default::default()
+                        },
+                    });
+                    self.snapshot.recovery.regenerated_transmits = self
+                        .snapshot
+                        .recovery
+                        .regenerated_transmits
+                        .saturating_add(1);
+                }
+                self.deadline = if self.timeout_calls < 3 {
+                    now.checked_add(Duration::from_millis(5))
+                } else {
+                    None
+                };
+                if self.timeout_calls == 2 {
+                    self.timeout_kind = QuicEndpointTimeoutKind::Maintenance;
+                }
+                Ok(())
+            }
+            fn poll_events(&mut self) -> Result<Vec<QuicEndpointEvent>> {
+                Ok(Vec::new())
+            }
+            fn open_bidirectional_stream(&mut self) -> Result<QuicEndpointStreamId> {
+                Ok(QuicEndpointStreamId(0))
+            }
+            fn write_stream(&mut self, _: QuicEndpointStreamId, _: &[u8]) -> Result<usize> {
+                Ok(0)
+            }
+            fn finish_stream(&mut self, _: QuicEndpointStreamId) -> Result<()> {
+                Ok(())
+            }
+            fn read_stream(
+                &mut self,
+                _: QuicEndpointStreamId,
+                _: usize,
+            ) -> Result<QuicEndpointStreamRead> {
+                Ok(QuicEndpointStreamRead {
+                    bytes: Vec::new(),
+                    finished: false,
+                })
+            }
+            fn snapshot(&self) -> QuicEndpointSnapshot {
+                self.snapshot.clone()
+            }
+            fn close(&mut self, _: Instant, _: u64, _: &[u8]) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let origin = Instant::now();
+        let local = SocketAddrV4::new("192.0.2.10".parse().unwrap(), 49_152);
+        let peer = SocketAddrV4::new("198.51.100.20".parse().unwrap(), 443);
+        let addresses = QuicEndpointAddresses::new(local.into(), peer.into());
+        let mut clock = QuicEndpointManualClock::new(origin);
+        let mut context = PacketContext::new();
+        let mut driver = TimerDriver {
+            deadline: origin.checked_add(Duration::from_millis(5)),
+            timeout_kind: QuicEndpointTimeoutKind::ProbeTimeout,
+            timeout_calls: 0,
+            transmits: Vec::new(),
+            snapshot: QuicEndpointSnapshot {
+                lifecycle: QuicEndpointLifecycle::Handshaking,
+                local_connection_id: vec![0x11; 8],
+                peer_connection_id: vec![0x22; 8],
+                initial: QuicEndpointPacketSpaceCounts::default(),
+                handshake: QuicEndpointPacketSpaceCounts::default(),
+                application: QuicEndpointPacketSpaceCounts::default(),
+                stream_bytes_sent: 0,
+                stream_bytes_received: 0,
+                recovery: QuicEndpointRecoveryCounts::default(),
+            },
+            local,
+            peer,
+        };
+
+        let mut protected_payloads = Vec::new();
+        for cycle in 0..3 {
+            let wakeup = driver.next_wakeup(clock.now()).unwrap();
+            assert_eq!(wakeup, Duration::from_millis(5));
+            clock.advance(wakeup);
+            let step = driver
+                .handle_timeout_step(clock.now(), addresses, &mut context)
+                .unwrap();
+            if cycle < 2 {
+                assert_eq!(step.outputs().len(), 1);
+                assert!(step.outputs()[0].requires_regeneration());
+                protected_payloads.push(
+                    step.outputs()[0]
+                        .packet()
+                        .layer::<crafter::Quic>()
+                        .unwrap()
+                        .payload_bytes()
+                        .to_vec(),
+                );
+                assert_eq!(step.wakeup(), Some(Duration::from_millis(5)));
+            } else {
+                assert!(step.outputs().is_empty());
+                assert_eq!(step.wakeup(), None);
+            }
+        }
+
+        assert_ne!(protected_payloads[0], protected_payloads[1]);
+        assert_eq!(driver.timeout_calls, 3);
+        assert_eq!(driver.snapshot.recovery.timeout_events, 3);
+        assert_eq!(driver.snapshot.recovery.pto_firings, 2);
+        assert_eq!(driver.snapshot.recovery.regenerated_transmits, 2);
+        assert_eq!(
+            context
+                .get_namespaced_u64("quic", "recovery.timeout_events")
+                .unwrap(),
+            Some(3)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_u64("quic", "recovery.pto_firings")
+                .unwrap(),
+            Some(2)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_u64("quic", "timeouts.maintenance")
+                .unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            context
+                .get_namespaced_u64("quic", "packets.application.sent")
+                .unwrap(),
+            Some(2)
+        );
     }
 }
