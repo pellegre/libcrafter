@@ -7,7 +7,11 @@ use std::{net::Ipv4Addr, time::Instant};
 
 use crate::FlowError;
 #[cfg(feature = "quic-endpoint")]
-use crate::{step::SendIntent, Result};
+use crate::{
+    quic_wire::{QuicCaptureRepresentation, QuicIngress},
+    step::SendIntent,
+    Result,
+};
 
 /// Local and peer address metadata carried with a QUIC UDP datagram.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -703,6 +707,59 @@ pub(crate) struct QuicEndpointDatagram {
     pub(crate) payload: Vec<u8>,
 }
 
+/// Result of validating a captured datagram at the endpoint boundary.
+#[cfg(feature = "quic-endpoint")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuicEndpointIngressDisposition {
+    /// The opaque UDP payload was delivered to the connection-aware provider.
+    Accepted(QuicCaptureRepresentation),
+    /// The datagram belonged to another path and was not shown to the provider.
+    IgnoredStrayTuple,
+}
+
+#[cfg(feature = "quic-endpoint")]
+impl QuicEndpointDatagram {
+    fn from_ingress(
+        ingress: &QuicIngress,
+        addresses: QuicEndpointAddresses,
+        max_udp_payload_size: u16,
+        now: Instant,
+    ) -> Result<Option<Self>> {
+        let (SocketAddr::V4(expected_local), SocketAddr::V4(expected_peer)) =
+            (addresses.local, addresses.peer)
+        else {
+            return Err(configuration_error("validating IPv4 QUIC endpoint path"));
+        };
+
+        if ingress.local() != expected_local || ingress.peer() != expected_peer {
+            return Ok(None);
+        }
+        if ingress.payload().is_empty() {
+            return Err(provider_error(
+                QuicEndpointErrorCategory::DatagramIngress,
+                "rejecting empty QUIC UDP payload",
+                (),
+            ));
+        }
+        if ingress.payload().len() > usize::from(max_udp_payload_size) {
+            return Err(provider_error(
+                QuicEndpointErrorCategory::DatagramIngress,
+                "rejecting oversized QUIC UDP payload",
+                (),
+            ));
+        }
+
+        Ok(Some(Self {
+            timestamp: now,
+            local_ip: *expected_local.ip(),
+            local_port: expected_local.port(),
+            remote_ip: *expected_peer.ip(),
+            remote_port: expected_peer.port(),
+            payload: ingress.payload().to_vec(),
+        }))
+    }
+}
+
 /// One provider-generated UDP datagram, retained in provider output order.
 ///
 /// Protected QUIC output is always regeneration-only. The flow runner must ask
@@ -817,6 +874,22 @@ pub(crate) struct QuicEndpointSnapshot {
 pub(crate) trait QuicEndpointDriver {
     fn start(&mut self, now: Instant) -> Result<()>;
     fn handle_datagram(&mut self, datagram: QuicEndpointDatagram) -> Result<()>;
+    fn handle_ingress(
+        &mut self,
+        ingress: &QuicIngress,
+        addresses: QuicEndpointAddresses,
+        max_udp_payload_size: u16,
+        now: Instant,
+    ) -> Result<QuicEndpointIngressDisposition> {
+        let representation = ingress.representation();
+        let Some(datagram) =
+            QuicEndpointDatagram::from_ingress(ingress, addresses, max_udp_payload_size, now)?
+        else {
+            return Ok(QuicEndpointIngressDisposition::IgnoredStrayTuple);
+        };
+        self.handle_datagram(datagram)?;
+        Ok(QuicEndpointIngressDisposition::Accepted(representation))
+    }
     fn drain_transmits(&mut self, now: Instant) -> Result<Vec<QuicEndpointTransmit>>;
     fn next_timeout(&self) -> Option<Instant>;
     fn next_wakeup(&self, now: Instant) -> Option<Duration> {
@@ -1338,5 +1411,181 @@ mod tests {
         let first = production.now();
         let second = production.now();
         assert!(second >= first);
+    }
+
+    #[cfg(feature = "quic-endpoint")]
+    #[test]
+    fn driver_accepts_typed_and_raw_ingress_with_connection_context() {
+        use std::{net::SocketAddrV4, time::Instant};
+
+        use super::{
+            QuicEndpointAddresses, QuicEndpointDatagram, QuicEndpointDriver,
+            QuicEndpointIngressDisposition, QuicEndpointLifecycle, QuicEndpointPacketSpaceCounts,
+            QuicEndpointRecoveryCounts, QuicEndpointSnapshot, QuicEndpointStreamId,
+            QuicEndpointStreamRead, QuicEndpointTransmit,
+        };
+        use crate::{
+            matcher::UdpDatagramMatcher,
+            quic_wire::{QuicCaptureRepresentation, QuicIngress, QuicIngressContext},
+            FlowError, PacketContext, Result,
+        };
+
+        #[derive(Default)]
+        struct IngressRecorder {
+            datagrams: Vec<QuicEndpointDatagram>,
+        }
+
+        impl QuicEndpointDriver for IngressRecorder {
+            fn start(&mut self, _: Instant) -> Result<()> {
+                Ok(())
+            }
+
+            fn handle_datagram(&mut self, datagram: QuicEndpointDatagram) -> Result<()> {
+                self.datagrams.push(datagram);
+                Ok(())
+            }
+
+            fn drain_transmits(&mut self, _: Instant) -> Result<Vec<QuicEndpointTransmit>> {
+                Ok(Vec::new())
+            }
+
+            fn next_timeout(&self) -> Option<Instant> {
+                None
+            }
+
+            fn handle_timeout(&mut self, _: Instant) -> Result<()> {
+                Ok(())
+            }
+
+            fn poll_events(&mut self) -> Result<Vec<super::QuicEndpointEvent>> {
+                Ok(Vec::new())
+            }
+
+            fn open_bidirectional_stream(&mut self) -> Result<QuicEndpointStreamId> {
+                Ok(QuicEndpointStreamId(0))
+            }
+
+            fn write_stream(&mut self, _: QuicEndpointStreamId, _: &[u8]) -> Result<usize> {
+                Ok(0)
+            }
+
+            fn finish_stream(&mut self, _: QuicEndpointStreamId) -> Result<()> {
+                Ok(())
+            }
+
+            fn read_stream(
+                &mut self,
+                _: QuicEndpointStreamId,
+                _: usize,
+            ) -> Result<QuicEndpointStreamRead> {
+                Ok(QuicEndpointStreamRead {
+                    bytes: Vec::new(),
+                    finished: false,
+                })
+            }
+
+            fn snapshot(&self) -> QuicEndpointSnapshot {
+                QuicEndpointSnapshot {
+                    lifecycle: QuicEndpointLifecycle::Handshaking,
+                    local_connection_id: vec![0x11; 8],
+                    peer_connection_id: vec![0x22; 8],
+                    initial: QuicEndpointPacketSpaceCounts::default(),
+                    handshake: QuicEndpointPacketSpaceCounts::default(),
+                    application: QuicEndpointPacketSpaceCounts::default(),
+                    stream_bytes_sent: 0,
+                    stream_bytes_received: 0,
+                    recovery: QuicEndpointRecoveryCounts::default(),
+                }
+            }
+
+            fn close(&mut self, _: Instant, _: u64, _: &[u8]) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let local = SocketAddrV4::new("192.0.2.10".parse().unwrap(), 49_152);
+        let peer = SocketAddrV4::new("198.51.100.20".parse().unwrap(), 443);
+        let addresses = QuicEndpointAddresses::new(local.into(), peer.into());
+        let matcher =
+            UdpDatagramMatcher::inbound(*local.ip(), local.port(), *peer.ip(), peer.port());
+        let context = PacketContext::new();
+        let typed_payload = [0xc0, 0, 0, 0, 1, 0xaa];
+        let raw_payload = [0x40, 0x7b, 0xde, 0xad, 0xbe, 0xef];
+        let typed_packet = crafter::Ipv4::new().src(*peer.ip()).dst(*local.ip())
+            / crafter::Udp::new()
+                .source_port(peer.port())
+                .destination_port(local.port())
+            / crafter::Quic::from_bytes(typed_payload);
+        let raw_packet = crafter::Ipv4::new().src(*peer.ip()).dst(*local.ip())
+            / crafter::Udp::new()
+                .source_port(peer.port())
+                .destination_port(local.port())
+            / crafter::Raw::from_bytes(raw_payload);
+        let typed = QuicIngress::from_packet(&typed_packet, &matcher, &context).unwrap();
+        let raw = QuicIngress::from_packet(&raw_packet, &matcher, &context)
+            .unwrap()
+            .with_endpoint_context(
+                QuicIngressContext::new([0x11; 8]).with_expected_destination_connection_id_len(8),
+            );
+
+        let now = Instant::now();
+        let mut driver = IngressRecorder::default();
+        assert_eq!(
+            driver
+                .handle_ingress(&typed, addresses, 1_472, now)
+                .unwrap(),
+            QuicEndpointIngressDisposition::Accepted(QuicCaptureRepresentation::Typed)
+        );
+        assert_eq!(
+            driver.handle_ingress(&raw, addresses, 1_472, now).unwrap(),
+            QuicEndpointIngressDisposition::Accepted(QuicCaptureRepresentation::Raw)
+        );
+        assert_eq!(driver.datagrams.len(), 2);
+        assert_eq!(driver.datagrams[0].timestamp, now);
+        assert_eq!(driver.datagrams[0].local_ip, *local.ip());
+        assert_eq!(driver.datagrams[0].local_port, local.port());
+        assert_eq!(driver.datagrams[0].remote_ip, *peer.ip());
+        assert_eq!(driver.datagrams[0].remote_port, peer.port());
+        assert_eq!(driver.datagrams[0].payload, typed_payload);
+        assert_eq!(driver.datagrams[1].payload, raw_payload);
+        assert_eq!(
+            raw.endpoint_context()
+                .unwrap()
+                .expected_destination_connection_id_len(),
+            Some(8)
+        );
+
+        let stray_peer = SocketAddrV4::new(*peer.ip(), peer.port() + 1);
+        let stray_matcher = UdpDatagramMatcher::inbound(
+            *local.ip(),
+            local.port(),
+            *stray_peer.ip(),
+            stray_peer.port(),
+        );
+        let stray_packet = crafter::Ipv4::new().src(*stray_peer.ip()).dst(*local.ip())
+            / crafter::Udp::new()
+                .source_port(stray_peer.port())
+                .destination_port(local.port())
+            / crafter::Raw::from_bytes(raw_payload);
+        let stray = QuicIngress::from_packet(&stray_packet, &stray_matcher, &context).unwrap();
+        assert_eq!(
+            driver
+                .handle_ingress(&stray, addresses, 1_472, now)
+                .unwrap(),
+            QuicEndpointIngressDisposition::IgnoredStrayTuple
+        );
+        assert_eq!(driver.datagrams.len(), 2);
+
+        let oversized = driver
+            .handle_ingress(&typed, addresses, 5, now)
+            .unwrap_err();
+        assert!(matches!(
+            oversized,
+            FlowError::QuicEndpoint {
+                category: super::QuicEndpointErrorCategory::DatagramIngress,
+                ..
+            }
+        ));
+        assert_eq!(driver.datagrams.len(), 2);
     }
 }
