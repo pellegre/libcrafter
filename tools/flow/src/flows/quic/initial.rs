@@ -13,9 +13,10 @@ use crafter::protocols::quic::header::{
 };
 use crafter::{
     derive_quic_initial_secrets, quic_decode_initial_protected_payload_with_keys, CrafterError,
-    QuicAckFrame, QuicAckRange, QuicConnectionCloseFrame, QuicConnectionId, QuicCryptoFrame,
-    QuicFrame, QuicLongHeaderPacket, QuicPacket, QuicPacketNumber, QuicRetryIntegrityStatus,
-    QuicRetryPacket, QuicVersionNegotiationPacket, QUIC_VERSION_1, QUIC_VERSION_2,
+    QuicAckFrame, QuicAckRange, QuicConnectionCloseFrame, QuicConnectionCloseKind,
+    QuicConnectionId, QuicCryptoFrame, QuicFrame, QuicLongHeaderPacket, QuicPacket,
+    QuicPacketNumber, QuicRetryIntegrityStatus, QuicRetryPacket, QuicVarInt,
+    QuicVersionNegotiationPacket, QUIC_VERSION_1, QUIC_VERSION_2,
 };
 
 use crate::context::ProtocolContextSnapshot;
@@ -67,6 +68,9 @@ const INITIAL_CRYPTO_LIMIT_OUTCOME: &str = "initial-crypto-limit-exceeded";
 const INITIAL_ACK_RANGE_LIMIT_OUTCOME: &str = "initial-ack-range-limit-exceeded";
 const INITIAL_INVALID_ACK_OUTCOME: &str = "initial-invalid-ack";
 const INITIAL_AMPLIFICATION_LIMIT_OUTCOME: &str = "initial-amplification-limit-exceeded";
+const INITIAL_ONLY_PEER_CLOSE_OUTCOME: &str = "initial-only-peer-close";
+const INITIAL_ONLY_LOCAL_CLOSE_OUTCOME: &str = "initial-only-local-close";
+const MAX_INITIAL_CLOSE_REASON_BYTES: usize = 128;
 
 /// Build the deterministic, bounded QUIC v1 Initial-only client flow.
 pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow> {
@@ -414,11 +418,19 @@ pub fn quic_initial_client_flow(config: QuicInitialClientConfig) -> Result<Flow>
                     ))
                 }
             };
-            if !observations.unexpected_frames.is_empty() || !observations.close_frames.is_empty() {
+            if !observations.unexpected_frames.is_empty() {
                 return Ok(initial_error_step(
                     context,
                     INITIAL_DISALLOWED_FRAME_OUTCOME,
                 ));
+            }
+            if let Some(close) = observations.close_frames.first() {
+                return initial_peer_close_step(
+                    context,
+                    close,
+                    &local_connection_id,
+                    &peer_connection_id,
+                );
             }
             if initial_ack_state
                 .borrow_mut()
@@ -741,6 +753,14 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
                     INITIAL_DISALLOWED_FRAME_OUTCOME,
                 ));
             }
+            if let Some(close) = observations.close_frames.first() {
+                return initial_peer_close_step(
+                    context,
+                    close,
+                    server_source_connection_id.as_bytes(),
+                    &peer_source_connection_id,
+                );
+            }
             if ack_state
                 .validate(
                     QuicAckPacketNumberSpace::Initial,
@@ -748,7 +768,30 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
                 )
                 .is_err()
             {
-                return Ok(initial_error_step(context, INITIAL_INVALID_ACK_OUTCOME));
+                let close = QuicConnectionCloseFrame::transport(
+                    QuicVarInt::new(0x0a)?,
+                    QuicVarInt::new(0x02)?,
+                    b"invalid Initial ACK",
+                );
+                let response = build_local_initial_close_datagram(
+                    version,
+                    local,
+                    peer,
+                    &original_destination_connection_id,
+                    QuicConnectionId::from_bytes(peer_source_connection_id.clone()),
+                    server_source_connection_id.clone(),
+                    encoded_server_packet_number.clone(),
+                    server_packet_number,
+                    false,
+                    close.clone(),
+                )?;
+                return initial_local_close_step(
+                    context,
+                    response,
+                    &close,
+                    server_source_connection_id.as_bytes(),
+                    &peer_source_connection_id,
+                );
             }
 
             let mut crypto_bytes = context
@@ -882,7 +925,12 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
 
             Ok(Step::send_regeneration_only(response).goto(INITIAL_OBSERVED))
         })
-        .targets([INITIAL_OBSERVED, VERSION_NEGOTIATION_SENT, RETRY_SENT])
+        .targets([
+            INITIAL_OBSERVED,
+            VERSION_NEGOTIATION_SENT,
+            RETRY_SENT,
+            CLOSED,
+        ])
         .terminal())
         .on_timeout(|context| {
             let mut snapshot = ProtocolContextSnapshot::new("quic", CLOSED);
@@ -900,6 +948,18 @@ pub fn quic_initial_server_flow(config: QuicInitialServerConfig) -> Result<Flow>
         .state(FlowState::new(INITIAL_OBSERVED))
         .state(FlowState::new(VERSION_NEGOTIATION_SENT))
         .state(FlowState::new(RETRY_SENT))
+        .state(
+            FlowState::new(CLOSED)
+                .on_entry(|context| {
+                    let outcome = context
+                        .protocol_snapshot()
+                        .and_then(|snapshot| snapshot.outcome.clone())
+                        .unwrap_or_else(|| INITIAL_ONLY_LOCAL_CLOSE_OUTCOME.to_string());
+                    Ok(Step::done_with(outcome))
+                })
+                .entry_description("finish after emitting a protected local Initial close")
+                .entry_terminal(),
+        )
         .initial(LISTEN);
     flow.validate()?;
     Ok(flow)
@@ -930,6 +990,142 @@ fn initial_error_step(context: &mut crate::PacketContext, outcome: &'static str)
     snapshot.close_category = Some("initial-error".to_string());
     context.set_protocol_snapshot(snapshot);
     Step::done_with(outcome)
+}
+
+fn initial_peer_close_step(
+    context: &mut crate::PacketContext,
+    close: &QuicConnectionCloseFrame,
+    local_connection_id: &[u8],
+    peer_connection_id: &[u8],
+) -> Result<Step> {
+    record_initial_close(
+        context,
+        "peer",
+        INITIAL_ONLY_PEER_CLOSE_OUTCOME,
+        close,
+        local_connection_id,
+        peer_connection_id,
+    )?;
+    Ok(Step::done_with(INITIAL_ONLY_PEER_CLOSE_OUTCOME))
+}
+
+fn initial_local_close_step(
+    context: &mut crate::PacketContext,
+    packet: crafter::Packet,
+    close: &QuicConnectionCloseFrame,
+    local_connection_id: &[u8],
+    peer_connection_id: &[u8],
+) -> Result<Step> {
+    record_initial_close(
+        context,
+        "local",
+        INITIAL_ONLY_LOCAL_CLOSE_OUTCOME,
+        close,
+        local_connection_id,
+        peer_connection_id,
+    )?;
+    Ok(Step::emit(packet).goto(CLOSED))
+}
+
+fn record_initial_close(
+    context: &mut crate::PacketContext,
+    origin: &'static str,
+    outcome: &'static str,
+    close: &QuicConnectionCloseFrame,
+    local_connection_id: &[u8],
+    peer_connection_id: &[u8],
+) -> Result<()> {
+    let reason = close.reason_phrase();
+    let bounded_len = reason.len().min(MAX_INITIAL_CLOSE_REASON_BYTES);
+    let bounded_reason = String::from_utf8_lossy(&reason[..bounded_len]).into_owned();
+    let close_kind = close.kind().label();
+
+    context.insert_namespaced_string("quic", "initial_close_origin", origin)?;
+    context.insert_namespaced_string("quic", "initial_close_kind", close_kind)?;
+    context.insert_namespaced_u64("quic", "initial_close_code", close.error_code().value())?;
+    context.insert_namespaced_u64(
+        "quic",
+        "initial_close_reason_length",
+        u64::try_from(reason.len()).unwrap_or(u64::MAX),
+    )?;
+    context.insert_namespaced_string("quic", "initial_close_reason", bounded_reason)?;
+    context.insert_namespaced_bool(
+        "quic",
+        "initial_close_reason_truncated",
+        reason.len() > MAX_INITIAL_CLOSE_REASON_BYTES,
+    )?;
+    if let Some(frame_type) = close.triggering_frame_type() {
+        context.insert_namespaced_u64(
+            "quic",
+            "initial_close_triggering_frame_type",
+            frame_type.value(),
+        )?;
+    }
+
+    let mut snapshot = ProtocolContextSnapshot::new("quic", CLOSED);
+    snapshot.local_connection_id = Some(local_connection_id.to_vec());
+    snapshot.peer_connection_id = Some(peer_connection_id.to_vec());
+    snapshot.outcome = Some(outcome.to_string());
+    snapshot.close_category = Some(format!("{origin}-{close_kind}"));
+    snapshot.close_code = Some(close.error_code().value());
+    context.set_protocol_snapshot(snapshot);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_local_initial_close_datagram(
+    version: u32,
+    local: SocketAddrV4,
+    peer: SocketAddrV4,
+    original_destination_connection_id: &[u8],
+    destination_connection_id: QuicConnectionId,
+    source_connection_id: QuicConnectionId,
+    packet_number: QuicPacketNumber,
+    full_packet_number: u64,
+    from_client: bool,
+    close: QuicConnectionCloseFrame,
+) -> Result<crafter::Packet> {
+    let reason = close.reason_phrase();
+    let bounded_reason = &reason[..reason.len().min(MAX_INITIAL_CLOSE_REASON_BYTES)];
+    let bounded_close = match close.kind() {
+        QuicConnectionCloseKind::Transport => QuicConnectionCloseFrame::transport(
+            close.error_code(),
+            close
+                .triggering_frame_type()
+                .expect("transport close has a triggering frame type"),
+            bounded_reason,
+        ),
+        QuicConnectionCloseKind::Application => {
+            QuicConnectionCloseFrame::application(close.error_code(), bounded_reason)
+        }
+    };
+    let packet_number_len = packet_number.effective_encoded_len()?;
+    let initial = QuicLongHeaderPacket::initial_builder()
+        .version(version)
+        .destination_connection_id(destination_connection_id)
+        .source_connection_id(source_connection_id)
+        .packet_number(packet_number)
+        .frames([QuicFrame::from_connection_close_frame(bounded_close)?])
+        .build()?;
+    let secrets = derive_quic_initial_secrets(version, original_destination_connection_id)?;
+    let keys = if from_client {
+        secrets.client_packet_keys()?
+    } else {
+        secrets.server_packet_keys()?
+    };
+    assemble_initial_datagram(
+        local,
+        peer,
+        &initial,
+        full_packet_number,
+        &keys,
+        packet_number_len,
+        if from_client {
+            QuicInitialPadding::ClientMinimum
+        } else {
+            QuicInitialPadding::None
+        },
+    )
 }
 
 fn classify_client_initial_header(
@@ -3126,6 +3322,172 @@ mod tests {
 
         assert!(build_initial_frames(&opaque_crypto, opaque_crypto.len() - 1, &observed).is_err());
         assert!(inspect_initial_frames(&decrypted, opaque_crypto.len() - 1).is_err());
+    }
+
+    #[test]
+    fn initial_connection_close_is_bounded_and_inspectable() -> crate::Result<()> {
+        let local_connection_id = [0x51; 8];
+        let peer_connection_id = [0xc1; 8];
+        let long_reason = vec![b'x'; MAX_INITIAL_CLOSE_REASON_BYTES + 37];
+        let transport_close = QuicConnectionCloseFrame::transport(
+            QuicVarInt::new(0x0a)?,
+            QuicVarInt::new(0x06)?,
+            &long_reason,
+        );
+        let mut transport_context = crate::PacketContext::new();
+        let transport_step = initial_peer_close_step(
+            &mut transport_context,
+            &transport_close,
+            &local_connection_id,
+            &peer_connection_id,
+        )?;
+
+        assert!(transport_step.is_terminal());
+        assert_eq!(
+            transport_step.outcome(),
+            Some(INITIAL_ONLY_PEER_CLOSE_OUTCOME)
+        );
+        assert_eq!(
+            transport_context.get_namespaced_string("quic", "initial_close_origin")?,
+            Some("peer")
+        );
+        assert_eq!(
+            transport_context.get_namespaced_string("quic", "initial_close_kind")?,
+            Some("transport")
+        );
+        assert_eq!(
+            transport_context.get_namespaced_u64("quic", "initial_close_code")?,
+            Some(0x0a)
+        );
+        assert_eq!(
+            transport_context.get_namespaced_u64("quic", "initial_close_triggering_frame_type")?,
+            Some(0x06)
+        );
+        assert_eq!(
+            transport_context
+                .get_namespaced_string("quic", "initial_close_reason")?
+                .expect("bounded reason")
+                .len(),
+            MAX_INITIAL_CLOSE_REASON_BYTES
+        );
+        assert_eq!(
+            transport_context.get_namespaced_bool("quic", "initial_close_reason_truncated")?,
+            Some(true)
+        );
+        let transport_snapshot = transport_context
+            .protocol_snapshot()
+            .expect("transport close snapshot");
+        assert_eq!(transport_snapshot.lifecycle, CLOSED);
+        assert_eq!(
+            transport_snapshot.close_category.as_deref(),
+            Some("peer-transport")
+        );
+        assert_eq!(transport_snapshot.close_code, Some(0x0a));
+        assert_ne!(transport_snapshot.lifecycle, "Established");
+
+        let application_close =
+            QuicConnectionCloseFrame::application(QuicVarInt::new(0x1234)?, b"finished");
+        let mut application_context = crate::PacketContext::new();
+        let application_step = initial_peer_close_step(
+            &mut application_context,
+            &application_close,
+            &local_connection_id,
+            &peer_connection_id,
+        )?;
+        assert!(application_step.is_terminal());
+        assert_eq!(
+            application_context.get_namespaced_string("quic", "initial_close_kind")?,
+            Some("application")
+        );
+        assert_eq!(
+            application_context
+                .get_namespaced_u64("quic", "initial_close_triggering_frame_type")?,
+            None
+        );
+        let application_snapshot = application_context
+            .protocol_snapshot()
+            .expect("application close snapshot");
+        assert_eq!(application_snapshot.lifecycle, CLOSED);
+        assert_eq!(
+            application_snapshot.close_category.as_deref(),
+            Some("peer-application")
+        );
+        assert_ne!(application_snapshot.lifecycle, "Established");
+
+        let server = QuicInitialServerConfig::default();
+        let local_close_packet = build_local_initial_close_datagram(
+            server.version,
+            server.local,
+            server.peer,
+            server
+                .identifiers
+                .original_destination_connection_id()
+                .as_bytes(),
+            server.identifiers.peer_source_connection_id().clone(),
+            server.identifiers.local_source_connection_id().clone(),
+            QuicPacketNumber::new(7).with_encoded_len(2),
+            7,
+            false,
+            transport_close.clone(),
+        )?;
+        let protected = local_close_packet
+            .layer::<Quic>()
+            .expect("local close retains a typed QUIC layer")
+            .packets()[0]
+            .as_bytes();
+        let keys = derive_quic_initial_secrets(
+            server.version,
+            server
+                .identifiers
+                .original_destination_connection_id()
+                .as_bytes(),
+        )?
+        .server_packet_keys()?;
+        let decoded = quic_decode_initial_protected_payload_with_keys(protected, &keys)?;
+        assert_eq!(decoded.packet_number().value(), 7);
+        let local_close = decoded
+            .frames()
+            .iter()
+            .find_map(|frame| frame.connection_close_frame().ok().flatten())
+            .expect("protected local Initial contains CONNECTION_CLOSE");
+        assert_eq!(local_close.kind(), QuicConnectionCloseKind::Transport);
+        assert_eq!(local_close.error_code().value(), 0x0a);
+        assert_eq!(
+            local_close
+                .triggering_frame_type()
+                .map(|value| value.value()),
+            Some(0x06)
+        );
+        assert_eq!(
+            local_close.reason_phrase().len(),
+            MAX_INITIAL_CLOSE_REASON_BYTES
+        );
+
+        let mut local_context = crate::PacketContext::new();
+        let local_step = initial_local_close_step(
+            &mut local_context,
+            local_close_packet,
+            &local_close,
+            server.identifiers.local_source_connection_id().as_bytes(),
+            server.identifiers.peer_source_connection_id().as_bytes(),
+        )?;
+        assert_eq!(local_step.target(), Some(CLOSED));
+        assert_eq!(local_step.outputs().len(), 1);
+        assert!(!local_step.outputs()[0].expects_reply());
+        let local_snapshot = local_context
+            .protocol_snapshot()
+            .expect("local close snapshot");
+        assert_eq!(local_snapshot.lifecycle, CLOSED);
+        assert_eq!(
+            local_snapshot.outcome.as_deref(),
+            Some(INITIAL_ONLY_LOCAL_CLOSE_OUTCOME)
+        );
+        assert_eq!(
+            local_snapshot.close_category.as_deref(),
+            Some("local-transport")
+        );
+        assert_ne!(local_snapshot.lifecycle, "Established");
+        Ok(())
     }
 
     #[test]
