@@ -5,8 +5,10 @@
 
 use crafter::protocols::quic::{QuicFrame, QuicFrameKind, QuicHandshakeDoneFrame, QuicHeader};
 use crafter::{
-    CrafterError, Ipv4, NetworkLayer, Packet, QuicLongHeaderPacket, QuicPacket, QuicPacketNumber,
-    QuicRetryPacket, QuicVarInt, Raw, Udp,
+    derive_quic_initial_secrets, quic_decode_initial_protected_payload,
+    quic_protect_complete_initial_packet, CrafterError, Ipv4, NetworkLayer, Packet,
+    QuicConnectionId, QuicInitialPacketDirection, QuicLongHeaderPacket, QuicPacket,
+    QuicPacketNumber, QuicRetryPacket, QuicVarInt, Raw, Udp, QUIC_VERSION_1,
 };
 use std::net::Ipv4Addr;
 
@@ -29,6 +31,137 @@ fn udp_ipv4_quic_payload(payload: &[u8]) -> crafter::Result<Vec<u8>> {
         / Udp::new().sport(49_152).dport(4433)
         / Raw::from_bytes(payload);
     Ok(packet.compile()?.as_bytes().to_vec())
+}
+
+fn initial_for_protection(payload: impl AsRef<[u8]>) -> crafter::Result<QuicLongHeaderPacket> {
+    QuicLongHeaderPacket::initial_builder()
+        .destination_connection_id(QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]))
+        .source_connection_id(QuicConnectionId::from_bytes([0xaa]))
+        .packet_number(QuicPacketNumber::new(1))
+        .protected_payload(payload)
+        .build()
+}
+
+#[test]
+fn complete_initial_protection_reports_structured_errors() -> crafter::Result<()> {
+    let dcid = [0x83, 0x94, 0xc8, 0xf0];
+    let keys = derive_quic_initial_secrets(QUIC_VERSION_1, dcid)?.client_packet_keys()?;
+
+    let empty = initial_for_protection([])?;
+    let empty_error = quic_protect_complete_initial_packet(&empty, 1, &keys, 1).unwrap_err();
+    assert!(matches!(
+        empty_error,
+        CrafterError::BufferTooShort {
+            context: "quic.crypto.header_protection.sample",
+            required: 34,
+            available: 31,
+        }
+    ));
+
+    assert_eq!(
+        quic_protect_complete_initial_packet(&empty, 1, &keys, 0).unwrap_err(),
+        CrafterError::invalid_field_value(
+            "quic.packet_number.length",
+            "QUIC packet-number length must be 1, 2, 3, or 4 bytes"
+        )
+    );
+
+    let unsupported = QuicLongHeaderPacket::initial_builder()
+        .first_byte(0xc0)
+        .version(0xface_feed)
+        .destination_connection_id(QuicConnectionId::from_bytes(dcid))
+        .packet_number(QuicPacketNumber::new(1))
+        .protected_payload([0u8; 24])
+        .build()?;
+    assert_eq!(
+        quic_protect_complete_initial_packet(&unsupported, 1, &keys, 1).unwrap_err(),
+        CrafterError::invalid_field_value(
+            "quic.crypto.initial.version",
+            "unsupported QUIC Initial salt version"
+        )
+    );
+
+    let handshake = QuicLongHeaderPacket::handshake_builder()
+        .packet_number(QuicPacketNumber::new(1))
+        .protected_payload([0u8; 24])
+        .build()?;
+    assert_eq!(
+        quic_protect_complete_initial_packet(&handshake, 1, &keys, 1).unwrap_err(),
+        CrafterError::invalid_field_value(
+            "quic.crypto.initial.packet",
+            "packet is not a QUIC Initial long-header packet"
+        )
+    );
+
+    // A declared Length that extends beyond the supplied datagram is rejected
+    // before header-protection sampling can inspect ciphertext.
+    let declared_length_mismatch = [0xc0, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x20];
+    assert_eq!(
+        quic_decode_initial_protected_payload(
+            QUIC_VERSION_1,
+            dcid,
+            QuicInitialPacketDirection::Client,
+            declared_length_mismatch,
+        )
+        .unwrap_err(),
+        CrafterError::buffer_too_short("quic.long_header.protected_payload", 41, 9)
+    );
+
+    // Length covers the bytes on hand, but not the complete 16-byte sample at
+    // packet-number offset + 4 required by RFC 9001 header protection.
+    let mut short_sample = vec![0xc0, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x10];
+    short_sample.extend_from_slice(&[0u8; 16]);
+    assert_eq!(
+        quic_decode_initial_protected_payload(
+            QUIC_VERSION_1,
+            dcid,
+            QuicInitialPacketDirection::Client,
+            &short_sample,
+        )
+        .unwrap_err(),
+        CrafterError::buffer_too_short("quic.crypto.header_protection.sample", 29, 25)
+    );
+
+    let plaintext = [0x1f; 24];
+    let initial = initial_for_protection(plaintext)?;
+    let protected = quic_protect_complete_initial_packet(&initial, 1, &keys, 1)?;
+    let generic = QuicPacket::decode(protected.as_bytes())?;
+    assert!(generic.is_long_header());
+    assert_eq!(generic.as_bytes(), protected.as_bytes());
+    assert_ne!(
+        generic.long_header().unwrap().protected_payload(),
+        plaintext.as_slice()
+    );
+
+    let mut tampered = protected.as_bytes().to_vec();
+    *tampered
+        .last_mut()
+        .expect("protected Initial has an AEAD tag") ^= 1;
+    assert_eq!(
+        quic_decode_initial_protected_payload(
+            QUIC_VERSION_1,
+            dcid,
+            QuicInitialPacketDirection::Client,
+            tampered,
+        )
+        .unwrap_err(),
+        CrafterError::invalid_field_value(
+            "quic.crypto.initial.ciphertext_tag",
+            "AES-128-GCM Initial authentication failed"
+        )
+    );
+
+    assert_eq!(
+        QuicPacketNumber::new(0)
+            .reconstruct(1u64 << 62)
+            .unwrap_err(),
+        CrafterError::invalid_field_value(
+            "quic.packet_number.expected_next",
+            "expected next QUIC packet number exceeds the 62-bit limit"
+        )
+    );
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

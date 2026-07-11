@@ -21,10 +21,50 @@ use crafter::protocols::dhcp::{
     DHCPV4_FIXED_HEADER_LEN, DHCPV4_MAGIC_COOKIE, DHCPV4_MIN_LEN, DHCPV4_OPTION_END,
     DHCPV4_OPTION_MESSAGE_TYPE,
 };
+use crafter::protocols::quic::{
+    derive_quic_initial_secrets, quic_decode_initial_protected_payload,
+    quic_protect_complete_initial_packet, QuicConnectionId, QuicInitialPacketDirection,
+    QuicLongHeaderPacket, QuicPacketNumber,
+};
 use crafter::protocols::snmp::Snmp;
 use crafter::wire::backend::pcap::PcapLinkType;
 use crafter::wire::{IpDefrag, IpFragment, PacketRecord, WireError};
+use crafter::QUIC_VERSION_1;
 use proptest::prelude::*;
+
+#[test]
+fn quic_initial_protection_truncations_never_panic() -> crafter::Result<()> {
+    let dcid = [0x83, 0x94, 0xc8, 0xf0];
+    let keys = derive_quic_initial_secrets(QUIC_VERSION_1, dcid)?.client_packet_keys()?;
+    let initial = QuicLongHeaderPacket::initial_builder()
+        .destination_connection_id(QuicConnectionId::from_bytes(dcid))
+        .source_connection_id(QuicConnectionId::from_bytes([0xaa]))
+        .packet_number(QuicPacketNumber::new(1))
+        .protected_payload([0x01; 24])
+        .build()?;
+    let protected = quic_protect_complete_initial_packet(&initial, 1, &keys, 1)?;
+
+    for available in 0..protected.as_bytes().len() {
+        let truncated = &protected.as_bytes()[..available];
+        let result = std::panic::catch_unwind(|| {
+            quic_decode_initial_protected_payload(
+                QUIC_VERSION_1,
+                dcid,
+                QuicInitialPacketDirection::Client,
+                truncated,
+            )
+        });
+        let decoded = result.unwrap_or_else(|_| {
+            panic!("QUIC Initial protected decode panicked at prefix length {available}")
+        });
+        assert!(
+            decoded.is_err(),
+            "truncated prefix length {available} decoded"
+        );
+    }
+
+    Ok(())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum DecodeTarget {
