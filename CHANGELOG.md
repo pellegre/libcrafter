@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.4 - 2026-07-12
+
+### Changed
+
+- Add SCTP packet-layer coverage with typed chunks, parameters, causes, checksums, IPv4/IPv6 bindings, structured decode errors, fixtures, and oracle/probe validation.
+- Add a reusable stateful packet sender for raw-socket reuse across link, IPv4, batch, and send/receive workflows while retaining explicit live-mode safeguards.
+- Add the crafter-flow bounded conversation engine with dry-run-first ARP, DHCPv4, DNS, TCP, and QUIC flows, deterministic lifecycle handling, reporting, capture integration, and offline conformance coverage.
+
 ## 0.3.3 - 2026-07-03
 
 ### Changed
