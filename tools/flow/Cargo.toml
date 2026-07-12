@@ -12,7 +12,7 @@ quic-endpoint = ["dep:bytes", "dep:quinn-proto", "dep:rustls"]
 bytes = { version = "1", optional = true }
 crafter = { path = "../../crafter" }
 quinn-proto = { version = "=0.11.14", default-features = false, features = ["qlog", "rustls-ring"], optional = true }
-rustls = { version = "=0.23.5", default-features = false, features = ["ring", "std"], optional = true }
+rustls = { version = "=0.23.41", default-features = false, features = ["ring", "std"], optional = true }
 
 [[example]]
 name = "quic_client_flow"
