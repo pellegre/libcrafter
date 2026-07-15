@@ -5,8 +5,17 @@
 //! truncation outcomes remain pinned to the supplied datagram boundary.
 
 use std::collections::HashSet;
+use std::net::Ipv4Addr;
 
 use crafter::prelude::*;
+use proptest::prelude::*;
+
+const CLIENT_PORT: u16 = 49_152;
+const DOC_CLIENT: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 44);
+const DOC_SERVER: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 44);
+const MAX_EXTENDED_LENGTH: usize = 65_804;
+const MAX_IPV4_UDP_PAYLOAD: usize = (u16::MAX as usize) - 20 - 8;
+const DEEP_OPTION_COUNT: usize = 16_384;
 
 const COAP_MALFORMED_CORPUS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -296,4 +305,221 @@ fn assert_decode_marker(case: &CoapMalformedCase, decoder_name: &str, marker: &s
             case.name
         ),
     }
+}
+
+#[test]
+fn coap_extreme_lengths_and_option_repetition_are_panic_free() {
+    let maximum_token = maximum_token_datagram();
+    assert_eq!(maximum_token.len(), 6 + MAX_EXTENDED_LENGTH);
+    assert_direct_decode("maximum-token", &maximum_token, true);
+
+    let maximum_option = maximum_option_datagram();
+    assert_eq!(maximum_option.len(), 7 + MAX_EXTENDED_LENGTH);
+    assert_direct_decode("maximum-option", &maximum_option, true);
+
+    let maximum_registry_input = maximum_registry_datagram();
+    assert_eq!(maximum_registry_input.len(), MAX_IPV4_UDP_PAYLOAD);
+    assert_direct_and_registry_decode("maximum-registry-input", &maximum_registry_input, false);
+
+    let repeated_extensions = repeated_extension_overflow_datagram();
+    assert_direct_and_registry_decode("repeated-extensions", &repeated_extensions, false);
+
+    let overflow_adjacent = overflow_adjacent_option_datagram();
+    assert_direct_and_registry_decode("overflow-adjacent-option", &overflow_adjacent, false);
+
+    let deeply_repeated = deeply_repeated_option_datagram();
+    assert_direct_and_registry_decode("deeply-repeated-options", &deeply_repeated, true);
+}
+
+#[test]
+fn coap_empty_and_every_header_prefix_are_panic_free() {
+    let complete_header = [0x40, 0x01, 0x12, 0x34];
+
+    for available in 0..complete_header.len() {
+        let input = &complete_header[..available];
+        assert_direct_and_registry_decode("header-prefix", input, false);
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(96))]
+
+    #[test]
+    fn arbitrary_coap_slices_never_panic_or_escape_registry_shape_gating(
+        input in prop::collection::vec(any::<u8>(), 0..=2_048),
+    ) {
+        let direct_ok = assert_direct_decode("arbitrary-slice", &input, None);
+        let registry_typed = assert_registry_decode("arbitrary-slice", &input);
+        let version_one = input
+            .first()
+            .is_some_and(|first| (first >> 6) == 1);
+
+        prop_assert_eq!(registry_typed, direct_ok && version_one);
+    }
+}
+
+fn maximum_token_datagram() -> Vec<u8> {
+    let capacity = 6usize
+        .checked_add(MAX_EXTENDED_LENGTH)
+        .expect("maximum token test length is representable");
+    let mut bytes = Vec::with_capacity(capacity);
+    bytes.extend_from_slice(&[0x4e, 0x01, 0x12, 0x34, 0xff, 0xff]);
+    bytes.resize(capacity, 0xa5);
+    bytes
+}
+
+fn maximum_option_datagram() -> Vec<u8> {
+    let capacity = 7usize
+        .checked_add(MAX_EXTENDED_LENGTH)
+        .expect("maximum option test length is representable");
+    let mut bytes = Vec::with_capacity(capacity);
+    bytes.extend_from_slice(&[0x40, 0x01, 0x12, 0x34, 0x0e, 0xff, 0xff]);
+    bytes.resize(capacity, 0x5a);
+    bytes
+}
+
+fn maximum_registry_datagram() -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(MAX_IPV4_UDP_PAYLOAD);
+    bytes.extend_from_slice(&[0x40, 0x01, 0x12, 0x34, 0x0e, 0xff, 0xff]);
+    bytes.resize(MAX_IPV4_UDP_PAYLOAD, 0x5a);
+    bytes
+}
+
+fn repeated_extension_overflow_datagram() -> Vec<u8> {
+    // A zero-length delta-269 option uses a repeated 16-bit extension. The
+    // 244th occurrence crosses the u16 option-number domain without wrapping.
+    const OCCURRENCES_THROUGH_OVERFLOW: usize = 244;
+    let option_bytes = OCCURRENCES_THROUGH_OVERFLOW
+        .checked_mul(3)
+        .expect("repeated option test length is representable");
+    let capacity = 4usize
+        .checked_add(option_bytes)
+        .expect("repeated option datagram length is representable");
+    let mut bytes = Vec::with_capacity(capacity);
+    bytes.extend_from_slice(&[0x40, 0x01, 0x12, 0x34]);
+    for _ in 0..OCCURRENCES_THROUGH_OVERFLOW {
+        bytes.extend_from_slice(&[0xe0, 0x00, 0x00]);
+    }
+    bytes
+}
+
+fn overflow_adjacent_option_datagram() -> Vec<u8> {
+    // 269 + 0xfef2 is exactly 65535; the following direct delta of one must be
+    // rejected instead of wrapping the cumulative option number to zero.
+    vec![0x40, 0x01, 0x12, 0x34, 0xe0, 0xfe, 0xf2, 0x10]
+}
+
+fn deeply_repeated_option_datagram() -> Vec<u8> {
+    let capacity = 4usize
+        .checked_add(DEEP_OPTION_COUNT)
+        .expect("deep option test length is representable");
+    let mut bytes = Vec::with_capacity(capacity);
+    bytes.extend_from_slice(&[0x40, 0x01, 0x12, 0x34]);
+    bytes.resize(capacity, 0x00);
+    bytes
+}
+
+fn assert_direct_and_registry_decode(name: &str, input: &[u8], expected_direct_ok: bool) {
+    let direct_ok = assert_direct_decode(name, input, Some(expected_direct_ok));
+    let registry_typed = assert_registry_decode(name, input);
+    let version_one = input.first().is_some_and(|first| (first >> 6) == 1);
+
+    assert_eq!(registry_typed, direct_ok && version_one, "case {name}");
+}
+
+fn assert_direct_decode(name: &str, input: &[u8], expected_ok: impl Into<Option<bool>>) -> bool {
+    let expected_ok = expected_ok.into();
+    let mut first_outcome = None;
+
+    for &(decoder_name, decoder) in PUBLIC_DECODERS {
+        let outcome = std::panic::catch_unwind(|| decoder(input)).unwrap_or_else(|_| {
+            panic!("CoAP resilience case {name} panicked through {decoder_name}")
+        });
+        let decoded_ok = outcome.is_ok();
+
+        if let Some(expected_ok) = expected_ok {
+            assert_eq!(decoded_ok, expected_ok, "case {name} via {decoder_name}");
+        }
+        if let Some(first_outcome) = first_outcome {
+            assert_eq!(decoded_ok, first_outcome, "case {name} via {decoder_name}");
+        } else {
+            first_outcome = Some(decoded_ok);
+        }
+
+        match outcome {
+            Ok(message) => {
+                assert!(
+                    message.token_value().len() <= input.len(),
+                    "case {name} allocated a token beyond its input via {decoder_name}"
+                );
+                assert!(
+                    message.options_value().len() <= input.len(),
+                    "case {name} decoded more options than input bytes via {decoder_name}"
+                );
+                assert!(
+                    message
+                        .options_value()
+                        .iter()
+                        .all(|option| option.value().len() <= input.len()),
+                    "case {name} allocated an option value beyond its input via {decoder_name}"
+                );
+                assert!(
+                    message.payload_value().len() <= input.len(),
+                    "case {name} allocated a payload beyond its input via {decoder_name}"
+                );
+            }
+            Err(CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            }) => {
+                assert!(context.starts_with("coap."), "case {name} via {decoder_name}");
+                assert!(required > available, "case {name} via {decoder_name}");
+            }
+            Err(CrafterError::InvalidFieldValue { field, reason }) => {
+                assert!(field.starts_with("coap."), "case {name} via {decoder_name}");
+                assert!(!reason.is_empty(), "case {name} via {decoder_name}");
+            }
+            Err(other) => panic!(
+                "CoAP resilience case {name} returned non-CoAP error through {decoder_name}: {other}"
+            ),
+        }
+    }
+
+    first_outcome.unwrap_or(false)
+}
+
+fn assert_registry_decode(name: &str, input: &[u8]) -> bool {
+    assert!(
+        input.len() <= MAX_IPV4_UDP_PAYLOAD,
+        "case {name} exceeds the IPv4 UDP registry boundary"
+    );
+    let packet = Ipv4::with_addresses(DOC_CLIENT, DOC_SERVER)
+        / Udp::new().sport(CLIENT_PORT).dport(COAP_PORT)
+        / Raw::from_bytes(input);
+    let compiled = packet
+        .compile()
+        .unwrap_or_else(|error| panic!("case {name} failed to compile registry input: {error}"));
+    let decoded = std::panic::catch_unwind(|| {
+        Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())
+    })
+    .unwrap_or_else(|_| panic!("CoAP resilience case {name} panicked through registry decode"))
+    .unwrap_or_else(|error| panic!("CoAP resilience case {name} failed registry decode: {error}"));
+
+    let typed = decoded.layer::<Coap>().is_some();
+    if typed {
+        assert!(decoded.layer::<Raw>().is_none(), "case {name}");
+    } else if input.is_empty() {
+        assert!(decoded.layer::<Raw>().is_none(), "case {name}");
+    } else {
+        assert_eq!(
+            decoded
+                .layer::<Raw>()
+                .unwrap_or_else(|| panic!("case {name} lost its Raw registry fallback"))
+                .as_bytes(),
+            input,
+            "case {name} changed its Raw registry fallback"
+        );
+    }
+    typed
 }
