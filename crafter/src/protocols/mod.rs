@@ -42,8 +42,8 @@ pub mod ipv6 {
 /// Curated protocol symbols exported by both `crate::protocols` and the crate root.
 pub mod exports {
     use super::{
-        bgp, dhcp, dns, eapol, icmp, igmp, ip, ipsec, ipv4, ipv6, link, mqtt, ntp, ospf, quic, rip,
-        rsn, snmp, ssdp, tls, transport,
+        bgp, coap, dhcp, dns, eapol, icmp, igmp, ip, ipsec, ipv4, ipv6, link, mqtt, ntp, ospf,
+        quic, rip, rsn, snmp, ssdp, tls, transport,
     };
 
     pub use crate::packet::Raw;
@@ -53,6 +53,24 @@ pub mod exports {
     };
     pub use bgp::{
         Bgp, BgpCapability, BgpKeepalive, BgpNotification, BgpOpen, BgpRouteRefresh, BgpUpdate,
+    };
+    pub use coap::{
+        coap_code_meta, coap_content_format_meta, coap_ipv4_request, coap_ipv4_response,
+        coap_ipv6_request, coap_ipv6_response, coap_option_meta, coap_request_udp,
+        coap_response_udp, coap_signaling_code_meta, coap_signaling_option_meta, decode_coap, Coap,
+        CoapCode, CoapMessageType, CoapOption, CoapOptionEncoding, CoapOptionFormat,
+        CoapOptionNumber, CoapOptionOrder, CoapPayloadMarker, CoapRegistryMeta, CoapRegistryStatus,
+        CoapToken, CoapTokenLength, CoapVersion, COAPS_PORT, COAP_CODE_CLASS_MASK,
+        COAP_CODE_CLASS_SHIFT, COAP_CODE_DETAIL_MASK, COAP_HEADER_LEN, COAP_MAX_TOKEN_LEN,
+        COAP_OPTION_ACCEPT, COAP_OPTION_BLOCK1, COAP_OPTION_BLOCK2, COAP_OPTION_CONTENT_FORMAT,
+        COAP_OPTION_ECHO, COAP_OPTION_ETAG, COAP_OPTION_HOP_LIMIT, COAP_OPTION_IF_MATCH,
+        COAP_OPTION_IF_NONE_MATCH, COAP_OPTION_LOCATION_PATH, COAP_OPTION_LOCATION_QUERY,
+        COAP_OPTION_MAX_AGE, COAP_OPTION_NO_RESPONSE, COAP_OPTION_OBSERVE, COAP_OPTION_OSCORE,
+        COAP_OPTION_PROXY_SCHEME, COAP_OPTION_PROXY_URI, COAP_OPTION_Q_BLOCK1,
+        COAP_OPTION_Q_BLOCK2, COAP_OPTION_REQUEST_TAG, COAP_OPTION_SIZE1, COAP_OPTION_SIZE2,
+        COAP_OPTION_URI_HOST, COAP_OPTION_URI_PATH, COAP_OPTION_URI_PORT, COAP_OPTION_URI_QUERY,
+        COAP_PAYLOAD_MARKER, COAP_PORT, COAP_TKL_MASK, COAP_TYPE_MASK, COAP_TYPE_SHIFT,
+        COAP_VERSION_1, COAP_VERSION_MASK, COAP_VERSION_SHIFT,
     };
     /// Re-export `Dhcpv6` and the DHCPv6 public surface through crate root, core, and prelude.
     pub use dhcp::v6::*;
