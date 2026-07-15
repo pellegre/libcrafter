@@ -18,6 +18,7 @@ use crate::protocols::transport::Udp;
 
 use super::block::{CoapBlock, CoapBlockKind, CoapBlockTransport, CoapBlockValidation};
 use super::constants::*;
+use super::no_response::CoapNoResponse;
 use super::observe::CoapObserve;
 use super::option::{
     encode_option_sequence, validate_coap_proxy_options, CoapAccept, CoapContentFormat, CoapEtag,
@@ -1055,6 +1056,15 @@ impl Coap {
         self.option(CoapOption::from(value.into()))
     }
 
+    /// Append one RFC 7967 No-Response request option.
+    ///
+    /// This records response-class preferences without changing the Code,
+    /// message Type, transport, or any endpoint send/receive behavior.
+    /// Repetition and request applicability remain opt-in validation concerns.
+    pub fn no_response(self, value: impl Into<CoapNoResponse>) -> Self {
+        self.option(CoapOption::from(value.into()))
+    }
+
     /// Append one raw-preserving RFC 7959 Block1 option.
     pub fn block1(self, value: CoapBlock) -> Self {
         self.option(value.into_block1_option())
@@ -1344,6 +1354,19 @@ impl Coap {
     /// Return the first Observe occurrence as a checked, raw-preserving view.
     pub fn observe_value(&self) -> Option<Result<CoapObserve>> {
         self.observe_values().next()
+    }
+
+    /// Iterate over typed No-Response occurrences in insertion or wire order.
+    pub fn no_response_values(&self) -> impl Iterator<Item = Result<CoapNoResponse>> + '_ {
+        self.options
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_NO_RESPONSE)
+            .map(CoapNoResponse::try_from)
+    }
+
+    /// Return the first raw-preserving No-Response mask.
+    pub fn no_response_value(&self) -> Option<Result<CoapNoResponse>> {
+        self.no_response_values().next()
     }
 
     /// Iterate over typed, raw-preserving Block1 occurrences.
