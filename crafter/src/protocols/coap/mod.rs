@@ -67,6 +67,7 @@ pub use self::registry::{
     coap_code_meta, coap_content_format_meta, coap_option_meta, coap_signaling_code_meta,
     coap_signaling_option_meta, CoapRegistryMeta, CoapRegistryStatus,
 };
+pub use self::reliable::{CoapReliable, CoapReliableLength};
 
 #[cfg(test)]
 mod tests {
