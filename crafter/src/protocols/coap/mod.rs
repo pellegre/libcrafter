@@ -18,6 +18,8 @@ mod oscore;
 mod registry;
 mod reliable;
 
+pub use self::decode::decode_coap;
+
 #[cfg(test)]
 mod tests {
     #[test]
