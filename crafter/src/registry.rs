@@ -6,6 +6,7 @@ use crate::endian::read_u32_be;
 use crate::error::Result;
 use crate::packet::{LinkType, NetworkLayer, Packet, Raw};
 use crate::protocols::bgp::{decode::append_bgp_packet_with_registry, BGP_PORT};
+use crate::protocols::coap::{append_coap_packet, looks_like_coap_payload, COAP_UDP_PORT};
 use crate::protocols::dhcp::{
     append_dhcpv4_packet, append_dhcpv6_packet, is_dhcpv4_port_pair, looks_like_dhcpv4_payload,
     looks_like_dhcpv6_payload,
@@ -485,6 +486,18 @@ impl ProtocolRegistry {
             |_registry, packet, payload| append_ssdp_packet(packet, payload),
         );
 
+        // Cleartext CoAP binds only to its assigned UDP/5683 service port and
+        // only when the complete datagram passes the conservative CoAP shape
+        // gate. Secure UDP/5684 ciphertext and malformed port-matched payloads
+        // remain `Raw`.
+        registry.bind_udp_with_registry(
+            |ctx| {
+                (ctx.source_port == COAP_UDP_PORT || ctx.destination_port == COAP_UDP_PORT)
+                    && looks_like_coap_payload(ctx.source_port, ctx.destination_port, ctx.payload)
+            },
+            |_registry, packet, payload| append_coap_packet(packet, payload),
+        );
+
         registry.bind_tcp_port_with_registry(BGP_PORT, |registry, packet, payload| {
             append_bgp_packet_with_registry(registry, packet, payload)
         });
@@ -950,6 +963,12 @@ impl ProtocolRegistry {
                 && looks_like_ssdp_payload(payload)
             {
                 return append_ssdp_packet(packet, payload);
+            }
+
+            if (source_port == COAP_UDP_PORT || destination_port == COAP_UDP_PORT)
+                && looks_like_coap_payload(source_port, destination_port, payload)
+            {
+                return append_coap_packet(packet, payload);
             }
 
             if (source_port == NATT_UDP_PORT || destination_port == NATT_UDP_PORT)
@@ -2217,6 +2236,179 @@ mod dns_udp_binding {
             decoded.layer::<Raw>().unwrap().as_bytes(),
             b"custom-dns-like"
         );
+    }
+}
+
+#[cfg(test)]
+mod coap_udp_dispatch {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    use super::ProtocolRegistry;
+    use crate::protocols::coap::{Coap, COAP_UDP_PORT};
+    use crate::{Ipv4, Ipv6, NetworkLayer, Packet, Raw, Udp};
+
+    fn coap_payload(message_id: u16) -> Vec<u8> {
+        Packet::from_layer(Coap::get().message_id(message_id))
+            .compile()
+            .expect("compile CoAP payload")
+            .as_bytes()
+            .to_vec()
+    }
+
+    #[test]
+    fn coap_udp_dispatch_decodes_ipv4_request_and_ipv6_response() {
+        let ipv4 = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            / Udp::new().sport(49_152).dport(COAP_UDP_PORT)
+            / Coap::get().message_id(0x1234);
+        let ipv4_decoded = Packet::decode_from_l3(
+            NetworkLayer::Ipv4,
+            ipv4.compile().expect("compile IPv4 CoAP").as_bytes(),
+        )
+        .expect("decode IPv4 CoAP");
+
+        let ipv4_coap = ipv4_decoded.layer::<Coap>().expect("IPv4 CoAP layer");
+        assert_eq!(ipv4_coap.code_value().wire_value(), 0x01);
+        assert_eq!(ipv4_coap.message_id_value(), 0x1234);
+        assert!(ipv4_decoded.layer::<Raw>().is_none());
+
+        let ipv6 = Ipv6::new()
+            .src("2001:db8::20".parse::<Ipv6Addr>().unwrap())
+            .dst("2001:db8::10".parse::<Ipv6Addr>().unwrap())
+            / Udp::new().sport(COAP_UDP_PORT).dport(49_153)
+            / Coap::get().message_id(0xabcd);
+        let ipv6_decoded = Packet::decode_from_l3(
+            NetworkLayer::Ipv6,
+            ipv6.compile().expect("compile IPv6 CoAP").as_bytes(),
+        )
+        .expect("decode IPv6 CoAP");
+
+        let ipv6_coap = ipv6_decoded.layer::<Coap>().expect("IPv6 CoAP layer");
+        assert_eq!(ipv6_coap.code_value().wire_value(), 0x01);
+        assert_eq!(ipv6_coap.message_id_value(), 0xabcd);
+        assert!(ipv6_decoded.layer::<Raw>().is_none());
+    }
+
+    #[test]
+    fn coap_udp_dispatch_requires_the_cleartext_service_port() {
+        let payload = coap_payload(0x2001);
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            / Udp::new().sport(49_152).dport(49_153)
+            / Raw::from_bytes(&payload);
+        let decoded = Packet::decode_from_l3(
+            NetworkLayer::Ipv4,
+            packet
+                .compile()
+                .expect("compile wrong-port packet")
+                .as_bytes(),
+        )
+        .expect("decode wrong-port packet");
+
+        assert!(decoded.layer::<Coap>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), payload);
+    }
+
+    #[test]
+    fn coap_udp_dispatch_preserves_malformed_port_matched_payloads_as_raw() {
+        let malformed: &[&[u8]] = &[
+            &[0x40, 0x01, 0x12],
+            &[0x40, 0x01, 0x12, 0x34, 0xff],
+            &[0x00, 0x01, 0x12, 0x34],
+        ];
+
+        for payload in malformed {
+            let packet = Ipv4::new()
+                .src(Ipv4Addr::new(192, 0, 2, 10))
+                .dst(Ipv4Addr::new(198, 51, 100, 20))
+                / Udp::new().sport(49_152).dport(COAP_UDP_PORT)
+                / Raw::from_bytes(payload);
+            let decoded = Packet::decode_from_l3(
+                NetworkLayer::Ipv4,
+                packet
+                    .compile()
+                    .expect("compile malformed CoAP candidate")
+                    .as_bytes(),
+            )
+            .expect("decode malformed CoAP candidate as Raw");
+
+            assert!(decoded.layer::<Coap>().is_none());
+            assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), *payload);
+        }
+    }
+
+    #[test]
+    fn coap_udp_dispatch_custom_binding_overrides_builtin() {
+        let payload = coap_payload(0x3001);
+        let mut registry = ProtocolRegistry::new();
+        registry.bind_udp_port(COAP_UDP_PORT, |packet, payload| {
+            Ok(packet.push(Raw::from_bytes(payload)))
+        });
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            / Udp::new().sport(49_152).dport(COAP_UDP_PORT)
+            / Raw::from_bytes(&payload);
+        let decoded = Packet::decode_from_l3_with_registry(
+            &registry,
+            NetworkLayer::Ipv4,
+            packet
+                .compile()
+                .expect("compile custom-bound CoAP")
+                .as_bytes(),
+        )
+        .expect("decode custom-bound CoAP");
+
+        assert!(decoded.layer::<Coap>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), payload);
+    }
+
+    #[test]
+    fn coap_udp_dispatch_remains_declaratively_bound_with_custom_registry() {
+        let mut registry = ProtocolRegistry::new();
+        registry.bind_udp_port(49_999, |packet, payload| {
+            Ok(packet.push(Raw::from_bytes(payload)))
+        });
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            / Udp::new().sport(49_152).dport(COAP_UDP_PORT)
+            / Coap::get().message_id(0x3002);
+        let decoded = Packet::decode_from_l3_with_registry(
+            &registry,
+            NetworkLayer::Ipv4,
+            packet
+                .compile()
+                .expect("compile declaratively-bound CoAP")
+                .as_bytes(),
+        )
+        .expect("decode declaratively-bound CoAP");
+
+        assert!(decoded.layer::<Coap>().is_some());
+        assert!(decoded.layer::<Raw>().is_none());
+    }
+
+    #[test]
+    fn coap_udp_dispatch_respects_application_decoding_toggle() {
+        let payload = coap_payload(0x4001);
+        let registry = ProtocolRegistry::new().application_decoding(false);
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            / Udp::new().sport(49_152).dport(COAP_UDP_PORT)
+            / Raw::from_bytes(&payload);
+        let decoded = Packet::decode_from_l3_with_registry(
+            &registry,
+            NetworkLayer::Ipv4,
+            packet.compile().expect("compile CoAP opt-out").as_bytes(),
+        )
+        .expect("decode CoAP opt-out");
+
+        assert!(decoded.layer::<Udp>().is_some());
+        assert!(decoded.layer::<Coap>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), payload);
     }
 }
 
