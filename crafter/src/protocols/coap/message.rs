@@ -778,6 +778,36 @@ impl Coap {
         Self::request(CoapCode::delete())
     }
 
+    /// Build a FETCH (`0.05`) request (RFC 8132).
+    pub fn fetch() -> Self {
+        Self::request(CoapCode::fetch())
+    }
+
+    /// Build a PATCH (`0.06`) request (RFC 8132).
+    pub fn patch() -> Self {
+        Self::request(CoapCode::patch())
+    }
+
+    /// Build an iPATCH (`0.07`) request (RFC 8132).
+    pub fn ipatch() -> Self {
+        Self::request(CoapCode::ipatch())
+    }
+
+    /// Build a Content (`2.05`) response without inferring transaction fields.
+    pub fn content() -> Self {
+        Self::response(CoapCode::content())
+    }
+
+    /// Build a Bad Request (`4.00`) response without inferring transaction fields.
+    pub fn bad_request() -> Self {
+        Self::response(CoapCode::bad_request())
+    }
+
+    /// Build an Internal Server Error (`5.00`) response without inferring transaction fields.
+    pub fn internal_server_error() -> Self {
+        Self::response(CoapCode::internal_server_error())
+    }
+
     /// Set the preserved Version value explicitly.
     pub fn version(mut self, value: impl Into<CoapVersion>) -> Self {
         self.version.set_user(value.into());
@@ -1646,19 +1676,99 @@ mod tests {
     #[test]
     fn coap_named_constructors_pin_only_unambiguous_values() {
         let cases = [
+            (
+                Coap::get(),
+                CoapCode::get(),
+                0x01,
+                "Coap(version=1, type=confirmable, code=0.01(GET), mid=0x0000, token_len=0, options=0, marker=absent, payload=0 bytes)",
+            ),
+            (
+                Coap::post(),
+                CoapCode::post(),
+                0x02,
+                "Coap(version=1, type=confirmable, code=0.02(POST), mid=0x0000, token_len=0, options=0, marker=absent, payload=0 bytes)",
+            ),
+            (
+                Coap::put(),
+                CoapCode::put(),
+                0x03,
+                "Coap(version=1, type=confirmable, code=0.03(PUT), mid=0x0000, token_len=0, options=0, marker=absent, payload=0 bytes)",
+            ),
+            (
+                Coap::delete(),
+                CoapCode::delete(),
+                0x04,
+                "Coap(version=1, type=confirmable, code=0.04(DELETE), mid=0x0000, token_len=0, options=0, marker=absent, payload=0 bytes)",
+            ),
+            (
+                Coap::fetch(),
+                CoapCode::fetch(),
+                0x05,
+                "Coap(version=1, type=confirmable, code=0.05(FETCH), mid=0x0000, token_len=0, options=0, marker=absent, payload=0 bytes)",
+            ),
+            (
+                Coap::patch(),
+                CoapCode::patch(),
+                0x06,
+                "Coap(version=1, type=confirmable, code=0.06(PATCH), mid=0x0000, token_len=0, options=0, marker=absent, payload=0 bytes)",
+            ),
+            (
+                Coap::ipatch(),
+                CoapCode::ipatch(),
+                0x07,
+                "Coap(version=1, type=confirmable, code=0.07(iPATCH), mid=0x0000, token_len=0, options=0, marker=absent, payload=0 bytes)",
+            ),
+            (
+                Coap::content(),
+                CoapCode::content(),
+                0x45,
+                "Coap(version=1, type=confirmable, code=2.05(Content), mid=0x0000, token_len=0, options=0, marker=absent, payload=0 bytes)",
+            ),
+            (
+                Coap::bad_request(),
+                CoapCode::bad_request(),
+                0x80,
+                "Coap(version=1, type=confirmable, code=4.00(Bad Request), mid=0x0000, token_len=0, options=0, marker=absent, payload=0 bytes)",
+            ),
+            (
+                Coap::internal_server_error(),
+                CoapCode::internal_server_error(),
+                0xa0,
+                "Coap(version=1, type=confirmable, code=5.00(Internal Server Error), mid=0x0000, token_len=0, options=0, marker=absent, payload=0 bytes)",
+            ),
+        ];
+
+        for (message, code, code_byte, summary) in cases {
+            assert_eq!(message.code_state(), FieldState::User);
+            assert_eq!(message.code_value(), code);
+            assert_eq!(message.version_state(), FieldState::Unset);
+            assert_eq!(message.message_type_state(), FieldState::Unset);
+            assert_eq!(message.message_id_state(), FieldState::Unset);
+            assert_eq!(message.token_state(), FieldState::Unset);
+            assert_eq!(message.token_length_state(), FieldState::Unset);
+            assert!(message.options_value().is_empty());
+            assert_eq!(message.payload_marker_state(), FieldState::Unset);
+            assert!(message.payload_value().is_empty());
+            assert_eq!(message.summary(), summary);
+            assert_eq!(
+                Packet::from_layer(message).compile().unwrap().as_bytes(),
+                &[0x40, code_byte, 0x00, 0x00]
+            );
+        }
+
+        let generic_cases = [
             (Coap::empty(), CoapCode::empty()),
-            (Coap::get(), CoapCode::get()),
-            (Coap::post(), CoapCode::post()),
-            (Coap::put(), CoapCode::put()),
-            (Coap::delete(), CoapCode::delete()),
             (
                 Coap::request(CoapCode::from_wire(0x1f)),
                 CoapCode::from_wire(0x1f),
             ),
-            (Coap::response(CoapCode::content()), CoapCode::content()),
+            (
+                Coap::response(CoapCode::from_wire(0xbe)),
+                CoapCode::from_wire(0xbe),
+            ),
         ];
 
-        for (message, code) in cases {
+        for (message, code) in generic_cases {
             assert_eq!(message.code_state(), FieldState::User);
             assert_eq!(message.code_value(), code);
             assert_eq!(message.version_state(), FieldState::Unset);
