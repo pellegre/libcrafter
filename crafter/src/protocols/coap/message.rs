@@ -1148,12 +1148,33 @@ impl Coap {
 
     /// Append one raw-preserving RFC 7959 Block1 option.
     pub fn block1(self, value: CoapBlock) -> Self {
-        self.option(value.into_block1_option())
+        self.block(CoapBlockKind::Block1, value)
     }
 
     /// Append one raw-preserving RFC 7959 Block2 option.
     pub fn block2(self, value: CoapBlock) -> Self {
-        self.option(value.into_block2_option())
+        self.block(CoapBlockKind::Block2, value)
+    }
+
+    /// Append one raw-preserving Block or Q-Block option of `kind`.
+    ///
+    /// The explicit kind selects only the option number. Exact value bytes,
+    /// including malformed and noncanonical encodings, remain authoritative.
+    pub fn block(self, kind: CoapBlockKind, value: CoapBlock) -> Self {
+        self.option(value.into_option(kind))
+    }
+
+    /// Append one raw-preserving RFC 9177 Q-Block1 option.
+    pub fn qblock1(self, value: CoapBlock) -> Self {
+        self.block(CoapBlockKind::QBlock1, value)
+    }
+
+    /// Append one raw-preserving RFC 9177 Q-Block2 option.
+    ///
+    /// Repeated occurrences remain ordered so missing-block request metadata
+    /// can be inspected and validated without scheduling retransmissions.
+    pub fn qblock2(self, value: CoapBlock) -> Self {
+        self.block(CoapBlockKind::QBlock2, value)
     }
 
     /// Attach one Block2 request selection without changing the request Code.
@@ -1242,6 +1263,54 @@ impl Coap {
         Self::response(CoapCode::request_entity_too_large())
             .block1(value)
             .size1(maximum_size)
+    }
+
+    /// Attach one RFC 9177 Q-Block1 request payload with required metadata.
+    ///
+    /// Request-Tag and Size1 are required for every payload of the request
+    /// body. This helper only records their exact values; uniqueness, stable
+    /// cross-message values, and transmission order remain caller concerns.
+    pub fn qblock1_request_fragment(
+        self,
+        value: CoapBlock,
+        payload: impl Into<Vec<u8>>,
+        request_tag: impl Into<CoapRequestTag>,
+        total_size: impl Into<CoapSize1>,
+    ) -> Self {
+        self.qblock1(value)
+            .request_tag(request_tag)
+            .size1(total_size)
+            .payload(payload)
+    }
+
+    /// Build an RFC 9177 `2.31 Continue` Q-Block1 response.
+    ///
+    /// The supplied value identifies the highest acknowledged block in the
+    /// latest MAX_PAYLOADS_SET. Token selection remains caller-controlled.
+    pub fn qblock1_continue(value: CoapBlock) -> Self {
+        Self::response(CoapCode::continue_()).qblock1(value)
+    }
+
+    /// Attach one Q-Block2 request selector without changing the request Code.
+    pub fn qblock2_request_selection(self, value: CoapBlock) -> Self {
+        self.qblock2(value)
+    }
+
+    /// Attach one RFC 9177 Q-Block2 response payload with required metadata.
+    ///
+    /// ETag and Size2 describe the complete body. This helper retains no
+    /// cache, response sequence, retransmission, or reassembly state.
+    pub fn qblock2_response_fragment(
+        self,
+        value: CoapBlock,
+        payload: impl Into<Vec<u8>>,
+        etag: impl Into<CoapEtag>,
+        total_size: impl Into<CoapSize2>,
+    ) -> Self {
+        self.qblock2(value)
+            .etag(etag)
+            .size2(total_size)
+            .payload(payload)
     }
 
     /// Build an RFC 7641 GET registration request with `Observe: 0`.
@@ -1610,6 +1679,77 @@ impl Coap {
         })
     }
 
+    /// Iterate over typed, raw-preserving Q-Block1 occurrences.
+    pub fn qblock1_values(&self) -> impl Iterator<Item = Result<CoapBlock>> + '_ {
+        self.options
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_Q_BLOCK1)
+            .map(CoapBlock::try_from)
+    }
+
+    /// Return the first Q-Block1 occurrence.
+    pub fn qblock1_value(&self) -> Option<Result<CoapBlock>> {
+        self.qblock1_values().next()
+    }
+
+    /// Return packet-local Q-Block1 value and payload validation.
+    pub fn qblock1_validation(
+        &self,
+        transport: CoapBlockTransport,
+    ) -> Option<Result<CoapBlockValidation>> {
+        self.qblock1_value().map(|value| {
+            value.map(|value| {
+                if self.is_request() {
+                    value.validate_qblock1_request(transport, self.payload.len())
+                } else {
+                    value.validate_qblock1_response(transport)
+                }
+            })
+        })
+    }
+
+    /// Iterate over typed, raw-preserving Q-Block2 occurrences.
+    pub fn qblock2_values(&self) -> impl Iterator<Item = Result<CoapBlock>> + '_ {
+        self.options
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_Q_BLOCK2)
+            .map(CoapBlock::try_from)
+    }
+
+    /// Return the first Q-Block2 occurrence.
+    pub fn qblock2_value(&self) -> Option<Result<CoapBlock>> {
+        self.qblock2_values().next()
+    }
+
+    /// Return the first Q-Block2 byte offset.
+    pub fn qblock2_offset(&self) -> Option<Result<u64>> {
+        self.qblock2_value()
+            .map(|value| value.and_then(|value| value.offset()))
+    }
+
+    /// Return packet-local Q-Block2 request or response validation.
+    pub fn qblock2_validation(
+        &self,
+        transport: CoapBlockTransport,
+        requested: Option<&CoapBlock>,
+        max_payloads: u64,
+    ) -> Option<Result<CoapBlockValidation>> {
+        self.qblock2_value().map(|value| {
+            value.map(|value| {
+                if self.is_request() {
+                    value.validate_qblock2_request(transport, max_payloads)
+                } else {
+                    value.validate_qblock2_response(
+                        transport,
+                        self.payload.len(),
+                        requested,
+                        max_payloads,
+                    )
+                }
+            })
+        })
+    }
+
     /// Return the Observe value when this is a 2.xx notification shape.
     pub fn observe_notification(&self) -> Option<Result<CoapObserve>> {
         self.is_observe_notification()
@@ -1736,6 +1876,7 @@ impl Coap {
         validate_empty_message_semantics(self, &mut validation);
         validate_patch_semantics(self, &mut validation);
         validate_option_semantics(self, &mut validation);
+        validate_qblock_semantics(self, &mut validation);
 
         validation
     }
@@ -2509,6 +2650,108 @@ fn validate_option_semantics(message: &Coap, validation: &mut CoapValidation) {
                 );
             }
         }
+    }
+}
+
+fn validate_qblock_semantics(message: &Coap, validation: &mut CoapValidation) {
+    let has_block = message.options_value().iter().any(|option| {
+        matches!(
+            option.number().value(),
+            COAP_OPTION_BLOCK1 | COAP_OPTION_BLOCK2
+        )
+    });
+    let has_qblock = message.options_value().iter().any(|option| {
+        matches!(
+            option.number().value(),
+            COAP_OPTION_Q_BLOCK1 | COAP_OPTION_Q_BLOCK2
+        )
+    });
+    if has_block && has_qblock {
+        validation.push(
+            "coap.options",
+            CoapValidationSeverity::Error,
+            CoapValidationCategory::OptionInteraction,
+            "Block and Q-Block options must not be mixed at the same protection level",
+        );
+    }
+
+    let has_qblock1 = message
+        .options_value()
+        .iter()
+        .any(|option| option.number().value() == COAP_OPTION_Q_BLOCK1);
+    if message.is_request() && has_qblock1 {
+        if message.request_tag_value().is_none() {
+            validation.push(
+                "coap.options",
+                CoapValidationSeverity::Error,
+                CoapValidationCategory::OptionInteraction,
+                "Q-Block1 requests require a Request-Tag option",
+            );
+        }
+        if message.size1_value().is_none() {
+            validation.push(
+                "coap.options",
+                CoapValidationSeverity::Error,
+                CoapValidationCategory::OptionInteraction,
+                "Q-Block1 requests require a Size1 option",
+            );
+        }
+    }
+
+    let qblock2_indices = message
+        .options_value()
+        .iter()
+        .enumerate()
+        .filter(|(_, option)| option.number().value() == COAP_OPTION_Q_BLOCK2)
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+
+    if message.is_response() && !qblock2_indices.is_empty() {
+        if message.etag_value().is_none() {
+            validation.push(
+                "coap.options",
+                CoapValidationSeverity::Error,
+                CoapValidationCategory::OptionInteraction,
+                "Q-Block2 responses require an ETag option",
+            );
+        }
+        if message.size2_value().is_none() {
+            validation.push(
+                "coap.options",
+                CoapValidationSeverity::Error,
+                CoapValidationCategory::OptionInteraction,
+                "Q-Block2 responses require a Size2 option",
+            );
+        }
+    }
+
+    if qblock2_indices.len() > 1 && !message.is_request() {
+        for index in qblock2_indices.iter().skip(1) {
+            validation.push(
+                format!("coap.options[{index}]"),
+                CoapValidationSeverity::Error,
+                CoapValidationCategory::OptionRepeatability,
+                "Q-Block2 may be repeated only in a request for missing blocks",
+            );
+        }
+    }
+
+    let mut previous: Option<CoapBlock> = None;
+    for index in qblock2_indices {
+        let Ok(value) = CoapBlock::try_from(&message.options_value()[index]) else {
+            continue;
+        };
+        if let Some(previous) = previous {
+            if !previous.qblock_precedes(&value) {
+                validation.push(
+                    format!("coap.options[{index}].value"),
+                    CoapValidationSeverity::Error,
+                    CoapValidationCategory::OptionOrdering,
+                    "repeated Q-Block2 request numbers must be strictly increasing",
+                );
+            }
+        }
+        previous = Some(value);
     }
 }
 
