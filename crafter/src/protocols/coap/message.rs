@@ -2,9 +2,8 @@
 //!
 //! Header, default, and override behavior follows
 //! `.agents/docs/coap-wire-grammar.md` and RFC 7252 Sections 3 and 4.1.
-//! Extended token-length metadata follows RFC 8974 Section 2.1; canonical
-//! extended-token emission remains assigned to the later extended-token
-//! codec.
+//! Extended token-length metadata and canonical wire emission follow RFC 8974
+//! Section 2.1.
 
 use core::fmt;
 use core::net::{Ipv4Addr, Ipv6Addr};
@@ -545,9 +544,9 @@ pub struct CoapToken(Vec<u8>);
 impl CoapToken {
     /// Build a token whose length is canonical for base RFC 7252 datagrams.
     ///
-    /// Extended-token header encoding is added separately. Until then, use
-    /// [`Self::from_bytes`] to preserve extended or intentionally malformed
-    /// token values.
+    /// Use [`Self::from_bytes`] for RFC 8974 extended tokens or intentionally
+    /// malformed token values; their canonical extended TKL is derived during
+    /// compilation when token-length metadata remains unset.
     pub fn new(bytes: impl AsRef<[u8]>) -> Result<Self> {
         let bytes = bytes.as_ref();
         validate_base_token_len(bytes.len())?;
@@ -790,6 +789,17 @@ impl CoapTokenLength {
                 "TKL 14 encoding requires exactly two extension bytes",
             )),
         }
+    }
+
+    /// Append the exact preserved token-length extension bytes.
+    ///
+    /// Compilation deliberately does not normalize or validate these bytes:
+    /// canonical metadata already contains the shortest RFC 8974 form, while
+    /// explicit metadata may intentionally be malformed and must survive
+    /// byte-for-byte.
+    pub(super) fn encode_extension(&self, out: &mut Vec<u8>) -> usize {
+        out.extend_from_slice(&self.extension_bytes);
+        self.extension_bytes.len()
     }
 }
 
@@ -2371,9 +2381,14 @@ impl Layer for Coap {
             .encoded_options()
             .map(|options| options.len())
             .unwrap_or_default();
+        let token_length_extension_len = self
+            .token_length_value()
+            .map(|token_length| token_length.extension_bytes().len())
+            .unwrap_or_default();
         let marker_len = usize::from(self.payload_marker_value().is_present());
 
         COAP_HEADER_LEN
+            .saturating_add(token_length_extension_len)
             .saturating_add(self.token_value().len())
             .saturating_add(option_len)
             .saturating_add(marker_len)
@@ -2381,19 +2396,29 @@ impl Layer for Coap {
     }
 
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
-        // The model accepts complete RFC 8974 metadata, while canonical
-        // extension-byte emission remains a separate codec concern. Retain
-        // the established base-only automatic compile boundary until then.
-        if self.token_length_state() == FieldState::Unset {
-            validate_base_token_len(self.token_value().len())?;
-        }
+        let token_length = self.token_length_value()?;
         let first_octet = self.first_octet_value()?;
         let options = self.encoded_options()?;
-        let mut encoded = Vec::with_capacity(self.encoded_len());
+        let encoded_len = COAP_HEADER_LEN
+            .checked_add(token_length.extension_bytes().len())
+            .and_then(|value| value.checked_add(self.token_value().len()))
+            .and_then(|value| value.checked_add(options.len()))
+            .and_then(|value| {
+                value.checked_add(usize::from(self.payload_marker_value().is_present()))
+            })
+            .and_then(|value| value.checked_add(self.payload.len()))
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "coap.token-length",
+                    "encoded CoAP datagram length overflow",
+                )
+            })?;
+        let mut encoded = Vec::with_capacity(encoded_len);
 
         encoded.push(first_octet);
         encoded.push(self.code_value().wire_value());
         encoded.extend_from_slice(&self.message_id_value().to_be_bytes());
+        token_length.encode_extension(&mut encoded);
         encoded.extend_from_slice(self.token_value().as_bytes());
         encoded.extend_from_slice(&options);
         if self.payload_marker_value().is_present() {
@@ -3483,21 +3508,71 @@ mod tests {
 
         assert_eq!(
             Packet::from_layer(message).compile().unwrap().as_bytes(),
-            &[0x41, 0x00, 0x00, 0x00, 0xaa, 0xbb, 0xcc]
+            &[0x41, 0x00, 0x00, 0x00, 0xfe, 0xaa, 0xbb, 0xcc]
         );
     }
 
     #[test]
-    fn compile_rejects_unset_token_length_requiring_extended_support() {
-        let message = Coap::new().token(CoapToken::from_bytes([0u8; COAP_MAX_TOKEN_LEN + 1]));
+    fn compile_autofills_and_round_trips_every_extended_token_transition() {
+        let cases: &[(usize, u8, &[u8])] = &[
+            (COAP_MAX_TOKEN_LEN, 8, &[]),
+            (COAP_MAX_TOKEN_LEN + 1, 9, &[]),
+            (CoapTokenLength::DIRECT_MAX_LEN, 12, &[]),
+            (CoapTokenLength::EXTENDED8_MIN_LEN, 13, &[0x00]),
+            (CoapTokenLength::EXTENDED8_MAX_LEN, 13, &[0xff]),
+            (CoapTokenLength::EXTENDED16_MIN_LEN, 14, &[0x00, 0x00]),
+            (CoapTokenLength::MAX_LEN, 14, &[0xff, 0xff]),
+        ];
+
+        for &(token_len, nibble, extension) in cases {
+            let token = vec![0xa5; token_len];
+            let message = Coap::get()
+                .message_id(0x1234)
+                .token(CoapToken::from_bytes(&token));
+            let encoded = Packet::from_layer(message.clone()).compile().unwrap();
+            let bytes = encoded.as_bytes();
+
+            assert_eq!(bytes[0], 0x40 | nibble, "token length {token_len}");
+            assert_eq!(
+                &bytes[COAP_HEADER_LEN..COAP_HEADER_LEN + extension.len()],
+                extension,
+                "token length {token_len}",
+            );
+            assert_eq!(
+                &bytes[COAP_HEADER_LEN + extension.len()..],
+                token,
+                "token length {token_len}",
+            );
+            assert_eq!(message.encoded_len(), bytes.len());
+
+            let decoded = Coap::decode(bytes).expect("decode canonical extended token");
+            assert_eq!(decoded.token_value().as_bytes(), token);
+            assert_eq!(decoded.token_length_value().unwrap().nibble(), nibble);
+            assert_eq!(
+                decoded.token_length_value().unwrap().extension_bytes(),
+                extension,
+            );
+            assert_eq!(
+                Packet::from_layer(decoded).compile().unwrap().as_bytes(),
+                bytes,
+            );
+        }
+    }
+
+    #[test]
+    fn compile_preserves_explicit_token_length_extension_bytes_exactly() {
+        let message = Coap::get()
+            .message_id(0x0102)
+            .token(CoapToken::from_bytes([0xaa, 0xbb]))
+            .token_length(CoapTokenLength::explicit(13, vec![0xfe, 0xed], usize::MAX));
+
+        let encoded = Packet::from_layer(message.clone()).compile().unwrap();
 
         assert_eq!(
-            Packet::from_layer(message).compile().unwrap_err(),
-            CrafterError::invalid_field_value(
-                "coap.token-length",
-                "base CoAP tokens must be at most 8 bytes"
-            )
+            encoded.as_bytes(),
+            &[0x4d, 0x01, 0x01, 0x02, 0xfe, 0xed, 0xaa, 0xbb],
         );
+        assert_eq!(message.encoded_len(), encoded.len());
     }
 
     #[test]
