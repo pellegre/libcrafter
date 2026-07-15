@@ -758,6 +758,25 @@ impl Coap {
         Self::new().code(code)
     }
 
+    /// Build an Empty Acknowledgement (ACK) for `message_id`.
+    ///
+    /// RFC 7252 Sections 4.4 and 5.2.2 require the Message ID of an
+    /// Acknowledgement to echo the correlated message. The type, Empty code,
+    /// and Message ID are ordinary explicit fields: later builder calls may
+    /// deliberately override any of them for malformed-packet construction.
+    pub fn empty_acknowledgement(message_id: u16) -> Self {
+        Self::empty().acknowledgement().message_id(message_id)
+    }
+
+    /// Build an Empty Reset (RST) for `message_id`.
+    ///
+    /// RFC 7252 Section 4.4 requires a Reset to echo the Message ID of the
+    /// correlated message. The type, Empty code, and Message ID remain
+    /// explicit caller values and may be deliberately overridden afterward.
+    pub fn empty_reset(message_id: u16) -> Self {
+        Self::empty().reset().message_id(message_id)
+    }
+
     /// Build a GET (`0.01`) request.
     pub fn get() -> Self {
         Self::request(CoapCode::get())
@@ -1114,6 +1133,115 @@ impl Coap {
     /// Borrow the exact owned payload bytes.
     pub fn payload_value(&self) -> &[u8] {
         &self.payload
+    }
+
+    /// Return true when this datagram carries the Empty (`0.00`) code.
+    ///
+    /// This is a field classification, not semantic validation: an explicitly
+    /// malformed Empty message with a token, options, or payload remains
+    /// classified as Empty so its caller-supplied fields stay inspectable.
+    pub fn is_empty(&self) -> bool {
+        self.code_value().is_empty()
+    }
+
+    /// Return true when this datagram carries a non-empty class-0 code.
+    ///
+    /// Classification is intentionally open to future method assignments and
+    /// does not validate whether the datagram message type is suitable for a
+    /// request.
+    pub fn is_request(&self) -> bool {
+        self.code_value().is_request()
+    }
+
+    /// Return true when this datagram carries a class-2 through class-5 code.
+    ///
+    /// This preserves the open response-code space and does not validate the
+    /// response's datagram message type.
+    pub fn is_response(&self) -> bool {
+        self.code_value().is_response()
+    }
+
+    /// Return true when this datagram has the Confirmable (CON) message type.
+    pub fn is_confirmable(&self) -> bool {
+        self.message_type_value().is_confirmable()
+    }
+
+    /// Return true when this datagram has the Acknowledgement (ACK) type.
+    pub fn is_acknowledgement(&self) -> bool {
+        self.message_type_value().is_acknowledgement()
+    }
+
+    /// Return true when this datagram has the Reset (RST) message type.
+    pub fn is_reset(&self) -> bool {
+        self.message_type_value().is_reset()
+    }
+
+    /// Return true for the Empty ACK shape used before or after a separate
+    /// Confirmable response.
+    ///
+    /// This predicate does not establish that a response will follow or that
+    /// retained transaction state accepts this acknowledgement.
+    pub fn is_empty_acknowledgement(&self) -> bool {
+        self.is_acknowledgement() && self.is_empty()
+    }
+
+    /// Return true for a response carried in an Acknowledgement message.
+    ///
+    /// RFC 7252 Section 5.2.1 defines this ACK-plus-response-code shape as a
+    /// piggybacked response. Use [`Self::matches_request`] to also compare the
+    /// request Token and Message ID.
+    pub fn is_piggybacked_response(&self) -> bool {
+        self.is_acknowledgement() && self.is_response()
+    }
+
+    /// Return true for the datagram shape of a separate response.
+    ///
+    /// RFC 7252 Sections 5.2.2 and 5.2.3 carry separate responses in a new
+    /// Confirmable or Non-confirmable message, not in an Acknowledgement.
+    /// This predicate does not require or retain the preceding Empty ACK.
+    pub fn is_separate_response(&self) -> bool {
+        self.is_response()
+            && (self.is_confirmable() || self.message_type_value().is_non_confirmable())
+    }
+
+    /// Compare the opaque Token bytes of two datagrams.
+    ///
+    /// RFC 7252 Section 5.3 uses the Token, together with endpoint information,
+    /// to correlate a response with a request. This packet-local predicate
+    /// compares only the typed token bytes and is not a transaction lookup.
+    pub fn token_matches(&self, other: &Self) -> bool {
+        self.token_value() == other.token_value()
+    }
+
+    /// Compare the Message ID fields of two datagrams.
+    ///
+    /// RFC 7252 Section 4.4 also requires endpoint information when matching
+    /// an ACK or RST. This packet-local predicate compares only Message IDs.
+    pub fn message_id_matches(&self, other: &Self) -> bool {
+        self.message_id_value() == other.message_id_value()
+    }
+
+    /// Test the packet-local RFC 7252 shape and correlation fields for this
+    /// response against `request`.
+    ///
+    /// A piggybacked response requires matching Token and Message ID. A
+    /// separate CON or NON response requires only a matching Token. The
+    /// caller remains responsible for endpoint identity, outstanding-request
+    /// state, timing, security association, and duplicate handling; this is
+    /// deliberately not a transaction engine.
+    pub fn matches_request(&self, request: &Self) -> bool {
+        let request_has_valid_shape = request.is_request()
+            && (request.is_confirmable() || request.message_type_value().is_non_confirmable());
+
+        if !request_has_valid_shape || !self.is_response() || !self.token_matches(request) {
+            return false;
+        }
+
+        if self.is_piggybacked_response() {
+            request.is_confirmable() && self.message_id_matches(request)
+        } else {
+            self.is_separate_response()
+        }
     }
 
     fn first_octet_value(&self) -> Result<u8> {
@@ -2306,6 +2434,159 @@ mod tests {
             assert_eq!(code.registry_meta().label, registry_label);
             assert!(code.registry_meta().status.is_assigned());
         }
+    }
+
+    #[test]
+    fn message_classification_covers_piggybacked_separate_and_malformed_shapes() {
+        let request = Coap::get().confirmable();
+        assert!(request.is_request());
+        assert!(request.is_confirmable());
+        assert!(!request.is_empty());
+        assert!(!request.is_response());
+        assert!(!request.is_acknowledgement());
+        assert!(!request.is_reset());
+        assert!(!request.is_piggybacked_response());
+        assert!(!request.is_separate_response());
+
+        let piggybacked = Coap::content().acknowledgement();
+        assert!(piggybacked.is_response());
+        assert!(piggybacked.is_acknowledgement());
+        assert!(piggybacked.is_piggybacked_response());
+        assert!(!piggybacked.is_empty_acknowledgement());
+        assert!(!piggybacked.is_separate_response());
+
+        let separate_confirmable = Coap::content().confirmable();
+        let separate_non_confirmable = Coap::response(CoapCode::from_wire(0x5d)).non_confirmable();
+        for response in [&separate_confirmable, &separate_non_confirmable] {
+            assert!(response.is_response());
+            assert!(response.is_separate_response());
+            assert!(!response.is_piggybacked_response());
+        }
+        assert!(separate_confirmable.is_confirmable());
+        assert!(!separate_non_confirmable.is_confirmable());
+
+        let empty_ack = Coap::empty_acknowledgement(0x1234);
+        assert!(empty_ack.is_empty());
+        assert!(empty_ack.is_acknowledgement());
+        assert!(empty_ack.is_empty_acknowledgement());
+        assert!(!empty_ack.is_response());
+
+        let reset = Coap::empty_reset(0x1234);
+        assert!(reset.is_empty());
+        assert!(reset.is_reset());
+        assert!(!reset.is_empty_acknowledgement());
+
+        let malformed_ack_request = Coap::get().acknowledgement();
+        assert!(malformed_ack_request.is_request());
+        assert!(malformed_ack_request.is_acknowledgement());
+        assert!(!malformed_ack_request.is_piggybacked_response());
+        assert!(!malformed_ack_request.is_separate_response());
+
+        let malformed_reset_response = Coap::response(CoapCode::from_wire(0x5d)).reset();
+        assert!(malformed_reset_response.is_response());
+        assert!(malformed_reset_response.is_reset());
+        assert!(!malformed_reset_response.is_piggybacked_response());
+        assert!(!malformed_reset_response.is_separate_response());
+
+        let reserved = Coap::new().code(CoapCode::from_wire(0x20));
+        assert!(!reserved.is_empty());
+        assert!(!reserved.is_request());
+        assert!(!reserved.is_response());
+    }
+
+    #[test]
+    fn token_and_message_id_predicates_follow_rfc7252_matching_fields() {
+        let request = Coap::get()
+            .confirmable()
+            .message_id(0x1234)
+            .token(CoapToken::from_bytes([0xaa, 0xbb]));
+        let piggybacked = Coap::content()
+            .acknowledgement()
+            .message_id(0x1234)
+            .token(CoapToken::from_bytes([0xaa, 0xbb]));
+
+        assert!(piggybacked.token_matches(&request));
+        assert!(piggybacked.message_id_matches(&request));
+        assert!(piggybacked.matches_request(&request));
+
+        let wrong_piggybacked_token = piggybacked
+            .clone()
+            .token(CoapToken::from_bytes([0xcc, 0xdd]));
+        assert!(!wrong_piggybacked_token.token_matches(&request));
+        assert!(!wrong_piggybacked_token.matches_request(&request));
+
+        let wrong_piggybacked_message_id = piggybacked.clone().message_id(0x5678);
+        assert!(wrong_piggybacked_message_id.token_matches(&request));
+        assert!(!wrong_piggybacked_message_id.message_id_matches(&request));
+        assert!(!wrong_piggybacked_message_id.matches_request(&request));
+
+        let separate = Coap::response(CoapCode::from_wire(0x5d))
+            .confirmable()
+            .message_id(0x5678)
+            .token(CoapToken::from_bytes([0xaa, 0xbb]));
+        assert!(separate.token_matches(&request));
+        assert!(!separate.message_id_matches(&request));
+        assert!(separate.matches_request(&request));
+
+        let wrong_separate_token = separate.token(CoapToken::from_bytes([0x00]));
+        assert!(!wrong_separate_token.matches_request(&request));
+
+        let malformed_request = request.clone().acknowledgement();
+        assert!(!piggybacked.matches_request(&malformed_request));
+
+        let reset_with_response_code = Coap::response(CoapCode::from_wire(0x5d))
+            .reset()
+            .message_id(0x1234)
+            .token(CoapToken::from_bytes([0xaa, 0xbb]));
+        assert!(!reset_with_response_code.matches_request(&request));
+    }
+
+    #[test]
+    fn empty_acknowledgement_and_reset_constructors_keep_explicit_overrides() {
+        let acknowledgement = Coap::empty_acknowledgement(0x1234);
+        assert_eq!(acknowledgement.code_state(), FieldState::User);
+        assert_eq!(acknowledgement.code_value(), CoapCode::empty());
+        assert_eq!(acknowledgement.message_type_state(), FieldState::User);
+        assert_eq!(
+            acknowledgement.message_type_value(),
+            CoapMessageType::Acknowledgement
+        );
+        assert_eq!(acknowledgement.message_id_state(), FieldState::User);
+        assert_eq!(acknowledgement.message_id_value(), 0x1234);
+        assert_eq!(
+            Packet::from_layer(acknowledgement)
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &[0x60, 0x00, 0x12, 0x34]
+        );
+
+        let reset = Coap::empty_reset(0xabcd);
+        assert_eq!(reset.code_state(), FieldState::User);
+        assert_eq!(reset.code_value(), CoapCode::empty());
+        assert_eq!(reset.message_type_state(), FieldState::User);
+        assert_eq!(reset.message_type_value(), CoapMessageType::Reset);
+        assert_eq!(reset.message_id_state(), FieldState::User);
+        assert_eq!(reset.message_id_value(), 0xabcd);
+        assert_eq!(
+            Packet::from_layer(reset).compile().unwrap().as_bytes(),
+            &[0x70, 0x00, 0xab, 0xcd]
+        );
+
+        let overridden = Coap::empty_acknowledgement(0x1111)
+            .version(3u8)
+            .message_type(CoapMessageType::Unknown(6))
+            .code(CoapCode::from_wire(0x5d))
+            .message_id(0x2222)
+            .token(CoapToken::from_bytes([0xaa]));
+        let compiled = Packet::from_layer(overridden.clone()).compile().unwrap();
+
+        assert_eq!(overridden.version_value(), CoapVersion::from_wire(3));
+        assert_eq!(overridden.message_type_value(), CoapMessageType::Unknown(6));
+        assert_eq!(overridden.code_value(), CoapCode::from_wire(0x5d));
+        assert_eq!(overridden.message_id_value(), 0x2222);
+        assert_eq!(overridden.token_value().as_bytes(), [0xaa]);
+        assert_eq!(compiled.as_bytes(), &[0xe1, 0x5d, 0x22, 0x22, 0xaa]);
     }
 
     #[test]
