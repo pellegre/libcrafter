@@ -5,6 +5,7 @@ use core::str;
 use crate::error::{CrafterError, Result};
 use crate::field::{Field, FieldState};
 
+use super::constants::COAP_PAYLOAD_MARKER;
 use super::registry::{
     coap_option_is_critical, coap_option_is_no_cache_key, coap_option_is_safe_to_forward,
     coap_option_is_unsafe, coap_option_meta, CoapRegistryMeta,
@@ -715,6 +716,146 @@ impl<'a> IntoIterator for &'a mut CoapOptions {
     }
 }
 
+/// One decoded option sequence and its boundary within the input slice.
+///
+/// `consumed` counts only option bytes. When `payload_marker` is true, the
+/// marker is the next byte in the original input and remains available to the
+/// enclosing message decoder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct DecodedOptionSequence {
+    pub(super) options: CoapOptions,
+    pub(super) consumed: usize,
+    pub(super) payload_marker: bool,
+}
+
+/// Append an ordered option sequence and return its encoded byte count.
+///
+/// Unset encodings derive canonical deltas from the caller's typed order.
+/// Explicit logical delta or exact-header overrides remain authoritative,
+/// even when they deliberately describe a different or malformed wire
+/// sequence. The output is changed only after the entire sequence encodes.
+pub(super) fn encode_option_sequence(options: &CoapOptions, out: &mut Vec<u8>) -> Result<usize> {
+    let mut encoded = Vec::new();
+    let mut previous_number = 0u16;
+
+    for option in options {
+        let number = option.number().value();
+        let encoding = option.encoding();
+        let has_delta_override = encoding.is_some_and(|encoding| {
+            encoding.raw_bytes().is_some() || encoding.wire_delta().is_some()
+        });
+
+        let delta = match number.checked_sub(previous_number) {
+            Some(delta) => u32::from(delta),
+            None if has_delta_override => 0,
+            None => {
+                return Err(CrafterError::invalid_field_value(
+                    "coap.option-order",
+                    "canonical option numbers must be nondecreasing",
+                ));
+            }
+        };
+
+        if !has_delta_override {
+            let cumulative = u32::from(previous_number)
+                .checked_add(delta)
+                .and_then(|value| u16::try_from(value).ok())
+                .ok_or_else(|| {
+                    CrafterError::invalid_field_value(
+                        "coap.option-number",
+                        "cumulative option number exceeds 65535",
+                    )
+                })?;
+            if cumulative != number {
+                return Err(CrafterError::invalid_field_value(
+                    "coap.option-order",
+                    "canonical option numbers must be nondecreasing",
+                ));
+            }
+        }
+
+        encode_option_header(delta, option.value().len(), encoding, &mut encoded)?;
+        encoded.extend_from_slice(option.value());
+        previous_number = number;
+    }
+
+    let encoded_len = encoded.len();
+    out.extend_from_slice(&encoded);
+    Ok(encoded_len)
+}
+
+/// Decode options until input exhaustion or a payload marker boundary.
+///
+/// Unknown numbers, repeated occurrences, raw header bytes, and opaque values
+/// are preserved exactly. A marker is recognized only where the next option
+/// header would begin; marker-valued extension or option bytes are never
+/// searched for or treated specially.
+pub(super) fn decode_option_sequence(bytes: &[u8]) -> Result<DecodedOptionSequence> {
+    let mut options = CoapOptions::new();
+    let mut cursor = 0usize;
+    let mut previous_number = 0u16;
+
+    while cursor < bytes.len() {
+        let remaining = bytes.get(cursor..).unwrap_or_default();
+        if remaining.first() == Some(&COAP_PAYLOAD_MARKER) {
+            return Ok(DecodedOptionSequence {
+                options,
+                consumed: cursor,
+                payload_marker: true,
+            });
+        }
+
+        let header = decode_option_header(remaining)?;
+        let number = u32::from(previous_number)
+            .checked_add(header.delta)
+            .and_then(|value| u16::try_from(value).ok())
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "coap.option-number",
+                    "cumulative option number exceeds 65535",
+                )
+            })?;
+
+        let value_bytes = remaining.get(header.consumed..).unwrap_or_default();
+        let value = value_bytes.get(..header.length).ok_or_else(|| {
+            CrafterError::buffer_too_short("coap.option.value", header.length, value_bytes.len())
+        })?;
+        let option_len = header.consumed.checked_add(header.length).ok_or_else(|| {
+            CrafterError::invalid_field_value(
+                "coap.option.length",
+                "option sequence cursor overflow",
+            )
+        })?;
+        let raw_header = remaining
+            .get(..header.consumed)
+            .ok_or_else(|| {
+                CrafterError::buffer_too_short(
+                    "coap.option.header",
+                    header.consumed,
+                    remaining.len(),
+                )
+            })?
+            .to_vec();
+
+        let encoding =
+            CoapOptionEncoding::explicit(header.delta, header.length).with_raw_bytes(raw_header);
+        options.add(CoapOption::new(number, value.to_vec()).with_encoding(encoding));
+        cursor = cursor.checked_add(option_len).ok_or_else(|| {
+            CrafterError::invalid_field_value(
+                "coap.option.length",
+                "option sequence cursor overflow",
+            )
+        })?;
+        previous_number = number;
+    }
+
+    Ok(DecodedOptionSequence {
+        options,
+        consumed: cursor,
+        payload_marker: false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1099,6 +1240,127 @@ mod tests {
             Err(CrafterError::invalid_field_value(
                 "coap.option.delta",
                 "payload marker is not an option header",
+            ))
+        );
+    }
+
+    #[test]
+    fn option_sequence_round_trips_empty_and_payload_marker_boundaries() {
+        let mut encoded = vec![0xaa];
+        assert_eq!(
+            encode_option_sequence(&CoapOptions::new(), &mut encoded),
+            Ok(0)
+        );
+        assert_eq!(encoded, [0xaa]);
+
+        let decoded = decode_option_sequence(&[]).unwrap();
+        assert!(decoded.options.is_empty());
+        assert_eq!(decoded.consumed, 0);
+        assert!(!decoded.payload_marker);
+
+        let decoded = decode_option_sequence(&[COAP_PAYLOAD_MARKER, 0x01, 0xff]).unwrap();
+        assert!(decoded.options.is_empty());
+        assert_eq!(decoded.consumed, 0);
+        assert!(decoded.payload_marker);
+    }
+
+    #[test]
+    fn option_sequence_round_trips_repeats_extensions_and_unknown_values() {
+        let options = CoapOptions::from_options([
+            CoapOption::new(13u16, Vec::new()),
+            CoapOption::new(13u16, b"repeat".to_vec()),
+            CoapOption::new(282u16, vec![0xff, 0x00]),
+            CoapOption::new(283u16, vec![0xab; 269]),
+            CoapOption::new(65_000u16, vec![0xde, 0xad, 0xbe, 0xef]),
+        ]);
+
+        let mut encoded = Vec::new();
+        let encoded_len = encode_option_sequence(&options, &mut encoded).unwrap();
+        assert_eq!(encoded_len, encoded.len());
+        assert_eq!(&encoded[..2], [0xd0, 0x00]);
+        assert_eq!(encoded[2], 0x06);
+
+        let mut framed = encoded.clone();
+        framed.extend_from_slice(&[COAP_PAYLOAD_MARKER, 0x10, 0xff]);
+        let decoded = decode_option_sequence(&framed).unwrap();
+        assert_eq!(decoded.consumed, encoded.len());
+        assert!(decoded.payload_marker);
+
+        let decoded_numbers: Vec<_> = decoded
+            .options
+            .iter()
+            .map(|option| option.number().value())
+            .collect();
+        assert_eq!(decoded_numbers, [13, 13, 282, 283, 65_000]);
+        for (actual, expected) in decoded.options.iter().zip(options.iter()) {
+            assert_eq!(actual.value(), expected.value());
+            let encoding = actual.encoding().expect("decoded encoding metadata");
+            assert!(encoding.raw_bytes().is_some());
+            assert!(encoding.wire_delta().is_some());
+            assert_eq!(encoding.wire_length(), Some(actual.value().len()));
+        }
+
+        let mut reencoded = Vec::new();
+        encode_option_sequence(&decoded.options, &mut reencoded).unwrap();
+        assert_eq!(reencoded, encoded);
+    }
+
+    #[test]
+    fn option_sequence_honors_explicit_headers_and_rejects_only_impossible_ones() {
+        let options = CoapOptions::from_options([
+            CoapOption::new(11u16, b"a".to_vec()),
+            CoapOption::new(5u16, b"bc".to_vec())
+                .with_encoding(CoapOptionEncoding::from_raw_bytes([0xf1])),
+            CoapOption::new(4u16, b"d".to_vec()).with_wire_delta(13),
+        ]);
+        let mut encoded = Vec::new();
+        encode_option_sequence(&options, &mut encoded).unwrap();
+        assert_eq!(encoded, [0xb1, b'a', 0xf1, b'b', b'c', 0xd1, 0x00, b'd']);
+
+        let decreasing = CoapOptions::from_options([
+            CoapOption::new(11u16, Vec::new()),
+            CoapOption::new(5u16, Vec::new()),
+        ]);
+        let mut untouched = vec![0xaa];
+        assert_eq!(
+            encode_option_sequence(&decreasing, &mut untouched),
+            Err(CrafterError::invalid_field_value(
+                "coap.option-order",
+                "canonical option numbers must be nondecreasing",
+            ))
+        );
+        assert_eq!(untouched, [0xaa]);
+
+        let impossible =
+            CoapOptions::from_options(
+                [CoapOption::new(1u16, Vec::new()).with_wire_delta(u32::MAX)],
+            );
+        assert_eq!(
+            encode_option_sequence(&impossible, &mut untouched),
+            Err(CrafterError::invalid_field_value(
+                "coap.option.delta",
+                "option delta exceeds 65804",
+            ))
+        );
+        assert_eq!(untouched, [0xaa]);
+    }
+
+    #[test]
+    fn option_sequence_reports_value_truncation_and_cumulative_overflow() {
+        assert_eq!(
+            decode_option_sequence(&[0x03, 0xaa]),
+            Err(CrafterError::BufferTooShort {
+                context: "coap.option.value",
+                required: 3,
+                available: 1,
+            })
+        );
+
+        assert_eq!(
+            decode_option_sequence(&[0xe0, 0xff, 0xff]),
+            Err(CrafterError::invalid_field_value(
+                "coap.option-number",
+                "cumulative option number exceeds 65535",
             ))
         );
     }
