@@ -117,6 +117,12 @@ impl CoapBlock {
     /// Largest block number representable by a source-conformant 3-byte value.
     pub const MAX_NUMBER: u64 = COAP_BLOCK_MAX_NUMBER;
 
+    /// The SZX value assigned to BERT by RFC 8323 Section 6.
+    pub const BERT_SZX: u8 = COAP_BLOCK_BERT_SZX;
+
+    /// The byte unit used by BERT block numbers and payload chunks.
+    pub const BERT_UNIT: u64 = COAP_BLOCK_BERT_UNIT;
+
     /// Build a block value using the shortest CoAP `uint` representation.
     ///
     /// SZX 7 is retained for contextual BERT validation. Values above 7 have
@@ -259,6 +265,90 @@ impl CoapBlock {
         })
     }
 
+    /// Return how many 1024-byte BERT blocks `payload_len` represents.
+    ///
+    /// A final reliable-message payload may end with a partial block, so a
+    /// nonempty partial unit counts as one represented block. This helper is
+    /// stateless and does not decide whether another message should be sent.
+    pub fn bert_block_count(&self, payload_len: usize) -> Result<u64> {
+        self.require_bert()?;
+
+        let payload_len = u64::try_from(payload_len).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "coap.block.payload-length",
+                "BERT payload length exceeds the supported integer range",
+            )
+        })?;
+        let complete = payload_len / Self::BERT_UNIT;
+        if payload_len % Self::BERT_UNIT == 0 {
+            Ok(complete)
+        } else {
+            complete.checked_add(1).ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "coap.block.payload-length",
+                    "BERT payload block count overflow",
+                )
+            })
+        }
+    }
+
+    /// Return the checked byte offset immediately after `payload_len` bytes.
+    ///
+    /// Unlike [`Self::bert_next_offset`], this is the exact payload boundary
+    /// and therefore does not round a final partial BERT block up to 1024
+    /// bytes.
+    pub fn bert_payload_end_offset(&self, payload_len: usize) -> Result<u64> {
+        self.require_bert()?;
+        let payload_len = u64::try_from(payload_len).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "coap.block.payload-length",
+                "BERT payload length exceeds the supported integer range",
+            )
+        })?;
+        self.offset()?.checked_add(payload_len).ok_or_else(|| {
+            CrafterError::invalid_field_value(
+                "coap.block.offset",
+                "BERT payload end offset overflow",
+            )
+        })
+    }
+
+    /// Return the next BERT NUM after the represented reliable payload.
+    ///
+    /// The result advances by [`Self::bert_block_count`] and must still fit
+    /// the 20-bit NUM field so that it can be encoded in a following Block1
+    /// or Block2 option.
+    pub fn bert_next_number(&self, payload_len: usize) -> Result<u64> {
+        let next = self
+            .number()
+            .checked_add(self.bert_block_count(payload_len)?)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "coap.block.number",
+                    "next BERT block number overflow",
+                )
+            })?;
+        if next > Self::MAX_NUMBER {
+            return Err(CrafterError::invalid_field_value(
+                "coap.block.number",
+                "next BERT block number exceeds the 20-bit NUM field",
+            ));
+        }
+        Ok(next)
+    }
+
+    /// Return the 1024-byte boundary selected by the next BERT NUM.
+    pub fn bert_next_offset(&self, payload_len: usize) -> Result<u64> {
+        self.bert_next_number(payload_len)?
+            .checked_mul(Self::BERT_UNIT)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "coap.block.offset",
+                    "next BERT block byte offset overflow",
+                )
+            })
+    }
+
     /// Convert this value to an exact CoAP option occurrence of `kind`.
     pub fn into_option(self, kind: CoapBlockKind) -> CoapOption {
         CoapOption::new(kind.option_number(), self.wire_value)
@@ -375,6 +465,31 @@ impl CoapBlock {
                     "non-final BERT payload must be a positive multiple of 1024 bytes",
                 );
             }
+
+            if !kind.is_qblock() && transport == CoapBlockTransport::Reliable {
+                match self.bert_block_count(payload_len) {
+                    Ok(0) => {}
+                    Ok(block_count) => {
+                        let last_delta = block_count - 1;
+                        let last_number = self.number().checked_add(last_delta);
+                        if !matches!(last_number, Some(number) if number <= Self::MAX_NUMBER) {
+                            validation.push(
+                                "coap.block.number",
+                                "BERT payload exceeds the 20-bit NUM field",
+                            );
+                        } else if self.more() && self.bert_next_number(payload_len).is_err() {
+                            validation.push(
+                                "coap.block.number",
+                                "next BERT block number exceeds the 20-bit NUM field",
+                            );
+                        }
+                    }
+                    Err(_) => validation.push(
+                        "coap.block.payload-length",
+                        "BERT payload length cannot be represented safely",
+                    ),
+                }
+            }
         } else if self.more() {
             if payload_len as u128 != u128::from(self.block_size()) {
                 validation.push(
@@ -446,6 +561,17 @@ impl CoapBlock {
         }
 
         validation
+    }
+
+    fn require_bert(&self) -> Result<()> {
+        if self.is_bert() {
+            Ok(())
+        } else {
+            Err(CrafterError::invalid_field_value(
+                "coap.block.szx",
+                "BERT helper requires SZX 7",
+            ))
+        }
     }
 }
 
@@ -547,8 +673,14 @@ mod tests {
         assert_eq!(bert.raw_value(), 0x3f);
         assert_eq!(bert.raw_bytes(), &[0x3f]);
         assert!(bert.is_bert());
+        assert_eq!(CoapBlock::BERT_SZX, 7);
+        assert_eq!(CoapBlock::BERT_UNIT, 1024);
         assert_eq!(bert.block_size(), 1024);
         assert_eq!(bert.offset().unwrap(), 3072);
+        assert_eq!(bert.bert_block_count(2048).unwrap(), 2);
+        assert_eq!(bert.bert_payload_end_offset(2048).unwrap(), 5120);
+        assert_eq!(bert.bert_next_number(2048).unwrap(), 5);
+        assert_eq!(bert.bert_next_offset(2048).unwrap(), 5120);
         assert!(bert
             .validate(CoapBlockKind::Block1, CoapBlockTransport::Reliable, 2048)
             .is_valid());
@@ -563,9 +695,74 @@ mod tests {
             .is_valid());
 
         let final_bert = CoapBlock::new(8, false, 7).unwrap();
+        assert_eq!(final_bert.bert_block_count(4711).unwrap(), 5);
+        assert_eq!(final_bert.bert_payload_end_offset(4711).unwrap(), 12_903);
+        assert_eq!(final_bert.bert_next_number(4711).unwrap(), 13);
+        assert_eq!(final_bert.bert_next_offset(4711).unwrap(), 13_312);
         assert!(final_bert
             .validate(CoapBlockKind::Block2, CoapBlockTransport::Reliable, 4711)
             .is_valid());
+
+        let non_bert = CoapBlock::block1(0, false, 6).unwrap();
+        assert!(matches!(
+            non_bert.bert_block_count(1024),
+            Err(CrafterError::InvalidFieldValue {
+                field: "coap.block.szx",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn bert_validation_covers_partial_oversized_and_wrong_transport_payloads() {
+        // RFC 8323 Section 6 permits a partial final BERT block but requires
+        // every non-final payload to be a positive multiple of 1024 bytes.
+        let partial = CoapBlock::block2(4, false, CoapBlock::BERT_SZX).unwrap();
+        assert!(partial
+            .validate(CoapBlockKind::Block2, CoapBlockTransport::Reliable, 1537)
+            .is_valid());
+
+        let partial_non_final = CoapBlock::block2(4, true, CoapBlock::BERT_SZX).unwrap();
+        assert!(matches!(
+            partial_non_final
+                .validate(CoapBlockKind::Block2, CoapBlockTransport::Reliable, 1537)
+                .issues(),
+            [CrafterError::InvalidFieldValue {
+                field: "coap.block.payload-length",
+                reason: "non-final BERT payload must be a positive multiple of 1024 bytes",
+            }]
+        ));
+
+        let oversized =
+            CoapBlock::block1(CoapBlock::MAX_NUMBER, false, CoapBlock::BERT_SZX).unwrap();
+        assert_eq!(oversized.bert_block_count(1025).unwrap(), 2);
+        assert!(matches!(
+            oversized.bert_next_number(1025),
+            Err(CrafterError::InvalidFieldValue {
+                field: "coap.block.number",
+                reason: "next BERT block number exceeds the 20-bit NUM field",
+            })
+        ));
+        assert!(matches!(
+            oversized
+                .validate(CoapBlockKind::Block1, CoapBlockTransport::Reliable, 1025)
+                .issues(),
+            [CrafterError::InvalidFieldValue {
+                field: "coap.block.number",
+                reason: "BERT payload exceeds the 20-bit NUM field",
+            }]
+        ));
+
+        let wrong_transport = CoapBlock::block1(0, true, CoapBlock::BERT_SZX).unwrap();
+        assert!(matches!(
+            wrong_transport
+                .validate(CoapBlockKind::Block1, CoapBlockTransport::Datagram, 1024)
+                .issues(),
+            [CrafterError::InvalidFieldValue {
+                field: "coap.block.szx",
+                reason: "BERT SZX 7 requires a reliable transport",
+            }]
+        ));
     }
 
     #[test]
