@@ -1,6 +1,7 @@
 //! Protocol layer implementations.
 
 pub mod bgp;
+pub mod coap;
 pub mod dhcp;
 pub mod dns;
 pub mod eapol;

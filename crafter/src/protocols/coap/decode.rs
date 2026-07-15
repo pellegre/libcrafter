@@ -1,0 +1,1 @@
+//! Strict CoAP decoding primitives.

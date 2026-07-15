@@ -1,0 +1,1 @@
+//! Observe wire metadata.
