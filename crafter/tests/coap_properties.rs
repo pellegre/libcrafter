@@ -64,6 +64,44 @@ fn boundary_value() -> impl Strategy<Value = Vec<u8>> {
         .prop_flat_map(|len| prop::collection::vec(any::<u8>(), len..=len))
 }
 
+fn block_kind() -> impl Strategy<Value = CoapBlockKind> {
+    prop_oneof![Just(CoapBlockKind::Block1), Just(CoapBlockKind::Block2),]
+}
+
+fn canonical_block_number() -> impl Strategy<Value = u64> {
+    prop_oneof![
+        2 => Just(0),
+        1 => Just(1),
+        1 => Just(CoapBlock::MAX_NUMBER - 1),
+        2 => Just(CoapBlock::MAX_NUMBER),
+        8 => 0..=CoapBlock::MAX_NUMBER,
+    ]
+}
+
+fn checked_offset_number() -> impl Strategy<Value = u64> {
+    let constructor_max = u64::MAX >> 4;
+    prop_oneof![
+        2 => Just(0),
+        1 => Just(1),
+        1 => Just(CoapBlock::MAX_NUMBER),
+        1 => Just(constructor_max - 1),
+        2 => Just(constructor_max),
+        8 => 0..=constructor_max,
+    ]
+}
+
+fn bert_payload_length() -> impl Strategy<Value = usize> {
+    prop_oneof![
+        1 => Just(0),
+        1 => Just(1),
+        1 => Just(1_023),
+        1 => Just(1_024),
+        1 => Just(1_025),
+        1 => Just(2_048),
+        4 => 0usize..=4_096,
+    ]
+}
+
 fn monotonic_options() -> impl Strategy<Value = Vec<(u16, Vec<u8>)>> {
     prop::collection::vec((option_delta(), option_value()), 0..=6).prop_map(|entries| {
         let mut number = 0u16;
@@ -244,6 +282,84 @@ proptest! {
 
         prop_assert_eq!(encoded[0] & COAP_TKL_MASK, declared_len);
         prop_assert_eq!(&encoded[4..], token.as_slice());
+    }
+
+    #[test]
+    fn coap_property_canonical_blocks_roundtrip_through_options_and_messages(
+        kind in block_kind(),
+        number in canonical_block_number(),
+        more in any::<bool>(),
+        szx in 0u8..=CoapBlock::BERT_SZX,
+    ) {
+        let block = prop_result(CoapBlock::new_for(kind, number, more, szx))?;
+        let option = block.clone().into_option(kind);
+        let decoded_option = prop_result(CoapBlock::try_from(&option))?;
+
+        prop_assert_eq!(decoded_option.option_kind(), Some(kind));
+        prop_assert_eq!(decoded_option.number(), number);
+        prop_assert_eq!(decoded_option.more(), more);
+        prop_assert_eq!(decoded_option.szx(), szx);
+        prop_assert_eq!(decoded_option.raw_bytes(), block.raw_bytes());
+
+        let message = match kind {
+            CoapBlockKind::Block1 => Coap::put().message_id(0x65a1).block1(block),
+            CoapBlockKind::Block2 => Coap::content().message_id(0x65a2).block2(block),
+            CoapBlockKind::QBlock1 | CoapBlockKind::QBlock2 => unreachable!("generator excludes Q-Block"),
+        };
+        let encoded = compile(message)?;
+        let decoded_message = prop_result(decode_coap(&encoded))?;
+        let decoded_block = match kind {
+            CoapBlockKind::Block1 => decoded_message.block1_value(),
+            CoapBlockKind::Block2 => decoded_message.block2_value(),
+            CoapBlockKind::QBlock1 | CoapBlockKind::QBlock2 => unreachable!("generator excludes Q-Block"),
+        }
+        .ok_or_else(|| TestCaseError::fail("decoded message lacks block option"))
+        .and_then(prop_result)?;
+
+        prop_assert_eq!(decoded_block, decoded_option);
+        prop_assert_eq!(compile(decoded_message)?, encoded);
+    }
+
+    #[test]
+    fn coap_property_checked_block_offsets_match_u64_arithmetic(
+        number in checked_offset_number(),
+        szx in 0u8..=CoapBlock::BERT_SZX,
+    ) {
+        let block = prop_result(CoapBlock::new(number, false, szx))?;
+        match number.checked_mul(block.block_size()) {
+            Some(expected) => prop_assert_eq!(prop_result(block.offset())?, expected),
+            None => prop_assert!(block.offset().is_err()),
+        }
+    }
+
+    #[test]
+    fn coap_property_bert_next_offsets_are_checked_at_num_boundaries(
+        number in prop::sample::select(vec![0, 1, CoapBlock::MAX_NUMBER - 1, CoapBlock::MAX_NUMBER]),
+        payload_len in bert_payload_length(),
+    ) {
+        let block = prop_result(CoapBlock::block2(
+            number,
+            true,
+            CoapBlock::BERT_SZX,
+        ))?;
+        let payload_len_u64 = payload_len as u64;
+        let represented = (payload_len_u64 / CoapBlock::BERT_UNIT)
+            + u64::from(payload_len_u64 % CoapBlock::BERT_UNIT != 0);
+        prop_assert_eq!(prop_result(block.bert_block_count(payload_len))?, represented);
+
+        match number.checked_add(represented).filter(|next| *next <= CoapBlock::MAX_NUMBER) {
+            Some(next) => {
+                prop_assert_eq!(prop_result(block.bert_next_number(payload_len))?, next);
+                prop_assert_eq!(
+                    prop_result(block.bert_next_offset(payload_len))?,
+                    next * CoapBlock::BERT_UNIT,
+                );
+            }
+            None => {
+                prop_assert!(block.bert_next_number(payload_len).is_err());
+                prop_assert!(block.bert_next_offset(payload_len).is_err());
+            }
+        }
     }
 
     #[test]
