@@ -11,7 +11,7 @@ use crate::{
     field::{Field, FieldState},
 };
 
-use super::option::CoapContentFormat;
+use super::{constants::COAP_CONTENT_FORMAT_LINK_FORMAT, message::Coap, option::CoapContentFormat};
 
 const LINK_FORMAT_SYNTAX_FIELD: &str = "coap.link-format.syntax";
 const LINK_FORMAT_MAX_INPUT_LEN: usize = u16::MAX as usize;
@@ -120,6 +120,18 @@ impl CoapLinkFormat {
             None => serialize_links(&links),
         }
     }
+}
+
+/// Build a Content response carrying one owned CoRE Link Format document.
+///
+/// The document is serialized into the typed CoAP payload and identified by
+/// the assigned `application/link-format` Content-Format. Message type,
+/// Message ID, token, and transport remain caller-controlled transaction
+/// fields; this helper stores no resource directory and performs no I/O.
+pub fn coap_discovery_response(links: CoapLinkFormat) -> Coap {
+    Coap::content()
+        .content_format(CoapContentFormat::new(COAP_CONTENT_FORMAT_LINK_FORMAT))
+        .payload(links.into_payload())
 }
 
 fn serialize_links(links: &[CoapLink]) -> Vec<u8> {
