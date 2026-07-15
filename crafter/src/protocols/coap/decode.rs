@@ -4,8 +4,8 @@ use crate::error::{CrafterError, Result};
 use crate::packet::Packet;
 
 use super::constants::{
-    COAP_HEADER_LEN, COAP_TKL_MASK, COAP_TKL_SHIFT, COAP_TYPE_MASK, COAP_TYPE_SHIFT,
-    COAP_VERSION_MASK, COAP_VERSION_SHIFT,
+    COAPS_UDP_PORT, COAP_HEADER_LEN, COAP_TKL_MASK, COAP_TKL_SHIFT, COAP_TYPE_MASK,
+    COAP_TYPE_SHIFT, COAP_UDP_PORT, COAP_VERSION_1, COAP_VERSION_MASK, COAP_VERSION_SHIFT,
 };
 use super::message::{
     Coap, CoapCode, CoapMessageType, CoapOptionOrder, CoapPayloadMarker, CoapToken,
@@ -126,6 +126,36 @@ impl Coap {
 /// malformed or truncated input returns a structured [`CrafterError`].
 pub fn decode_coap(bytes: &[u8]) -> Result<Coap> {
     decode_datagram(bytes)
+}
+
+/// Return true when a UDP payload is a complete cleartext CoAP datagram.
+///
+/// The built-in registry uses service ports only as hints. Secure UDP/5684
+/// traffic is rejected before its ciphertext is inspected, while UDP/5683
+/// candidates must use Version 1 and pass the complete structural decoder.
+/// Unknown code and option values remain eligible when their wire grammar is
+/// otherwise sound.
+pub(crate) fn looks_like_coap_payload(
+    source_port: u16,
+    destination_port: u16,
+    bytes: &[u8],
+) -> bool {
+    if source_port == COAPS_UDP_PORT || destination_port == COAPS_UDP_PORT {
+        return false;
+    }
+    if source_port != COAP_UDP_PORT && destination_port != COAP_UDP_PORT {
+        return false;
+    }
+
+    let Some(first) = bytes.first() else {
+        return false;
+    };
+    let version = (first & COAP_VERSION_MASK) >> COAP_VERSION_SHIFT;
+    if version != COAP_VERSION_1 {
+        return false;
+    }
+
+    decode_datagram(bytes).is_ok()
 }
 
 /// Append one explicitly decoded CoAP datagram to an existing packet stack.
@@ -620,5 +650,71 @@ mod tests {
 
         assert!(packet.layer::<Coap>().is_some());
         assert_eq!(packet.compile().unwrap().as_bytes(), bytes);
+    }
+
+    #[test]
+    fn udp_shape_gate_accepts_complete_cleartext_messages() {
+        let cases: &[&[u8]] = &[
+            &[0x40, 0x01, 0x12, 0x34],
+            &[0x40, 0x1f, 0x00, 0x01, 0x20],
+            &[0x41, 0x45, 0x00, 0x02, 0xaa, 0xd0, 0x00],
+            &[0x40, 0x45, 0x00, 0x03, COAP_PAYLOAD_MARKER, 0x00],
+        ];
+
+        for &bytes in cases {
+            assert!(looks_like_coap_payload(49_152, COAP_UDP_PORT, bytes));
+            assert!(looks_like_coap_payload(COAP_UDP_PORT, 49_152, bytes));
+        }
+    }
+
+    #[test]
+    fn udp_shape_gate_rejects_malformed_and_unrelated_payloads() {
+        let cases: &[&[u8]] = &[
+            &[],
+            &[0x40, 0x01, 0x00],
+            &[0x00, 0x01, 0x00, 0x01],
+            &[0x80, 0x01, 0x00, 0x01],
+            &[0xc0, 0x01, 0x00, 0x01],
+            &[0x48, 0x01, 0x00, 0x01, 0xaa],
+            &[0x4f, 0x01, 0x00, 0x01],
+            &[0x40, 0x01, 0x00, 0x01, 0xf0],
+            &[0x40, 0x01, 0x00, 0x01, 0x0f],
+            &[0x40, 0x45, 0x00, 0x01, COAP_PAYLOAD_MARKER],
+            &[0x40, 0x00, 0x00, 0x01, 0x00],
+            b"random UDP",
+        ];
+
+        for &bytes in cases {
+            assert!(
+                !looks_like_coap_payload(49_152, COAP_UDP_PORT, bytes),
+                "bytes: {bytes:02x?}",
+            );
+        }
+    }
+
+    #[test]
+    fn udp_shape_gate_never_inspects_secure_or_unassigned_ports_as_cleartext() {
+        let structurally_valid_bytes = [0x40, 0x01, 0x12, 0x34];
+
+        assert!(!looks_like_coap_payload(
+            49_152,
+            COAPS_UDP_PORT,
+            &structurally_valid_bytes,
+        ));
+        assert!(!looks_like_coap_payload(
+            COAPS_UDP_PORT,
+            49_152,
+            &structurally_valid_bytes,
+        ));
+        assert!(!looks_like_coap_payload(
+            COAP_UDP_PORT,
+            COAPS_UDP_PORT,
+            &structurally_valid_bytes,
+        ));
+        assert!(!looks_like_coap_payload(
+            49_152,
+            49_153,
+            &structurally_valid_bytes,
+        ));
     }
 }
