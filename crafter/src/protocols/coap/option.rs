@@ -11,12 +11,14 @@ use crate::error::{CrafterError, Result};
 use crate::field::{Field, FieldState};
 
 use super::constants::{
-    COAP_OPTION_ETAG, COAP_OPTION_IF_MATCH, COAP_OPTION_IF_NONE_MATCH, COAP_OPTION_URI_HOST,
-    COAP_OPTION_URI_PATH, COAP_OPTION_URI_PORT, COAP_OPTION_URI_QUERY, COAP_PAYLOAD_MARKER,
+    COAP_OPTION_ACCEPT, COAP_OPTION_CONTENT_FORMAT, COAP_OPTION_ETAG, COAP_OPTION_IF_MATCH,
+    COAP_OPTION_IF_NONE_MATCH, COAP_OPTION_MAX_AGE, COAP_OPTION_SIZE1, COAP_OPTION_SIZE2,
+    COAP_OPTION_URI_HOST, COAP_OPTION_URI_PATH, COAP_OPTION_URI_PORT, COAP_OPTION_URI_QUERY,
+    COAP_PAYLOAD_MARKER,
 };
 use super::registry::{
-    coap_option_is_critical, coap_option_is_no_cache_key, coap_option_is_safe_to_forward,
-    coap_option_is_unsafe, coap_option_meta, CoapRegistryMeta,
+    coap_content_format_meta, coap_option_is_critical, coap_option_is_no_cache_key,
+    coap_option_is_safe_to_forward, coap_option_is_unsafe, coap_option_meta, CoapRegistryMeta,
 };
 
 const COAP_OPTION_DIRECT_MAX: u64 = 12;
@@ -426,6 +428,34 @@ pub struct CoapOption {
     encoding: Field<CoapOptionEncoding>,
 }
 
+fn encode_coap_uint(value: u64) -> Vec<u8> {
+    if value == 0 {
+        return Vec::new();
+    }
+
+    let encoded = value.to_be_bytes();
+    let first = encoded
+        .iter()
+        .position(|byte| *byte != 0)
+        .expect("a nonzero integer contains a nonzero byte");
+    encoded[first..].to_vec()
+}
+
+fn decode_coap_uint(
+    bytes: &[u8],
+    max_length: usize,
+    field: &'static str,
+    length_error: &'static str,
+) -> Result<u64> {
+    if bytes.len() > max_length {
+        return Err(CrafterError::invalid_field_value(field, length_error));
+    }
+
+    Ok(bytes
+        .iter()
+        .fold(0u64, |value, byte| (value << 8) | u64::from(*byte)))
+}
+
 impl CoapOption {
     /// Build an opaque option occurrence from its number and exact value bytes.
     pub fn new(number: impl Into<CoapOptionNumber>, value: impl Into<Vec<u8>>) -> Self {
@@ -447,16 +477,7 @@ impl CoapOption {
     /// format. Decoded or deliberately noncanonical integers should use
     /// [`Self::new`] so their original bytes remain intact.
     pub fn from_uint(number: impl Into<CoapOptionNumber>, value: u64) -> Self {
-        if value == 0 {
-            return Self::new(number, Vec::new());
-        }
-
-        let encoded = value.to_be_bytes();
-        let first = encoded
-            .iter()
-            .position(|byte| *byte != 0)
-            .expect("a nonzero integer contains a nonzero byte");
-        Self::new(number, encoded[first..].to_vec())
+        Self::new(number, encode_coap_uint(value))
     }
 
     /// Build an option from UTF-8 text while retaining its exact encoded bytes.
@@ -550,17 +571,12 @@ impl CoapOption {
     /// Empty values represent zero. Values wider than `u64` return a
     /// structured error, and the original bytes remain available unchanged.
     pub fn as_uint(&self) -> Result<u64> {
-        if self.value.len() > size_of::<u64>() {
-            return Err(CrafterError::invalid_field_value(
-                "coap.option.uint",
-                "unsigned option value exceeds 64 bits",
-            ));
-        }
-
-        Ok(self
-            .value
-            .iter()
-            .fold(0u64, |value, byte| (value << 8) | u64::from(*byte)))
+        decode_coap_uint(
+            &self.value,
+            size_of::<u64>(),
+            "coap.option.uint",
+            "unsigned option value exceeds 64 bits",
+        )
     }
 
     /// Interpret the exact value bytes as UTF-8 text.
@@ -581,6 +597,173 @@ impl CoapOption {
     pub fn as_opaque(&self) -> Result<&[u8]> {
         Ok(self.value())
     }
+}
+
+macro_rules! define_uint_option {
+    (
+        $(#[$meta:meta])*
+        $name:ident,
+        integer = $integer:ty,
+        number = $number:expr,
+        field = $field:literal,
+        wrong_number = $wrong_number:literal,
+        max_length = $max_length:expr,
+        length_error = $length_error:literal
+    ) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        pub struct $name {
+            value: $integer,
+            wire_value: Vec<u8>,
+        }
+
+        impl $name {
+            /// Build a value using the canonical shortest CoAP `uint` encoding.
+            pub fn new(value: $integer) -> Self {
+                Self {
+                    value,
+                    wire_value: encode_coap_uint(u64::from(value)),
+                }
+            }
+
+            /// Return the decoded unsigned integer.
+            pub const fn value(&self) -> $integer {
+                self.value
+            }
+
+            /// Borrow the exact canonical or decoded option value bytes.
+            pub fn as_bytes(&self) -> &[u8] {
+                &self.wire_value
+            }
+
+            /// Consume the wrapper and return the exact option value bytes.
+            pub fn into_bytes(self) -> Vec<u8> {
+                self.wire_value
+            }
+        }
+
+        impl From<$integer> for $name {
+            fn from(value: $integer) -> Self {
+                Self::new(value)
+            }
+        }
+
+        impl From<$name> for CoapOption {
+            fn from(value: $name) -> Self {
+                CoapOption::new($number, value.into_bytes())
+            }
+        }
+
+        impl TryFrom<&CoapOption> for $name {
+            type Error = CrafterError;
+
+            fn try_from(option: &CoapOption) -> Result<Self> {
+                if option.number().value() != $number {
+                    return Err(CrafterError::invalid_field_value($field, $wrong_number));
+                }
+
+                let value = decode_coap_uint(
+                    option.value(),
+                    $max_length,
+                    $field,
+                    $length_error,
+                )? as $integer;
+                Ok(Self {
+                    value,
+                    wire_value: option.value().to_vec(),
+                })
+            }
+        }
+    };
+}
+
+define_uint_option! {
+    /// One RFC 7252 Content-Format option with an open IANA identifier.
+    ///
+    /// The numeric value is never restricted to the currently assigned set.
+    /// Checked conversion retains zero-prefixed noncanonical bytes so the
+    /// option can be converted back without changing its wire representation.
+    CoapContentFormat,
+    integer = u16,
+    number = COAP_OPTION_CONTENT_FORMAT,
+    field = "coap.content-format",
+    wrong_number = "option number is not Content-Format",
+    max_length = 2,
+    length_error = "Content-Format length must not exceed 2 bytes"
+}
+
+impl CoapContentFormat {
+    /// Return current source-backed registry metadata for this open value.
+    pub fn registry_meta(&self) -> CoapRegistryMeta {
+        coap_content_format_meta(u64::from(self.value))
+    }
+}
+
+define_uint_option! {
+    /// One RFC 7252 Accept option with an open IANA Content-Format identifier.
+    ///
+    /// Unknown, experimental, and future identifiers remain representable and
+    /// inspectable through [`Self::registry_meta`].
+    CoapAccept,
+    integer = u16,
+    number = COAP_OPTION_ACCEPT,
+    field = "coap.accept",
+    wrong_number = "option number is not Accept",
+    max_length = 2,
+    length_error = "Accept length must not exceed 2 bytes"
+}
+
+impl CoapAccept {
+    /// Return current source-backed Content-Format metadata for this value.
+    pub fn registry_meta(&self) -> CoapRegistryMeta {
+        coap_content_format_meta(u64::from(self.value))
+    }
+}
+
+define_uint_option! {
+    /// One RFC 7252 Max-Age response freshness lifetime in seconds.
+    CoapMaxAge,
+    integer = u32,
+    number = COAP_OPTION_MAX_AGE,
+    field = "coap.max-age",
+    wrong_number = "option number is not Max-Age",
+    max_length = 4,
+    length_error = "Max-Age length must not exceed 4 bytes"
+}
+
+impl CoapMaxAge {
+    /// RFC 7252's freshness lifetime when a response omits Max-Age.
+    pub const RESPONSE_DEFAULT_SECONDS: u32 = 60;
+
+    /// Return the RFC 7252 response interpretation without inserting an option.
+    pub const fn effective_response_seconds(value: Option<&Self>) -> u32 {
+        match value {
+            Some(value) => value.value,
+            None => Self::RESPONSE_DEFAULT_SECONDS,
+        }
+    }
+}
+
+define_uint_option! {
+    /// One RFC 7252 Size1 request-body size metadata value.
+    CoapSize1,
+    integer = u32,
+    number = COAP_OPTION_SIZE1,
+    field = "coap.size1",
+    wrong_number = "option number is not Size1",
+    max_length = 4,
+    length_error = "Size1 length must not exceed 4 bytes"
+}
+
+define_uint_option! {
+    /// One RFC 7959 Size2 response-body size metadata value.
+    CoapSize2,
+    integer = u32,
+    number = COAP_OPTION_SIZE2,
+    field = "coap.size2",
+    wrong_number = "option number is not Size2",
+    max_length = 4,
+    length_error = "Size2 length must not exceed 4 bytes"
 }
 
 macro_rules! define_checked_opaque_option {
@@ -925,13 +1108,10 @@ pub struct CoapUriPort {
 impl CoapUriPort {
     /// Build a Uri-Port value using the canonical shortest `uint` encoding.
     pub fn new(value: u16) -> Self {
-        let wire_value = match value {
-            0 => Vec::new(),
-            1..=255 => vec![value as u8],
-            _ => value.to_be_bytes().to_vec(),
-        };
-
-        Self { value, wire_value }
+        Self {
+            value,
+            wire_value: encode_coap_uint(u64::from(value)),
+        }
     }
 
     /// Return the decoded transport-layer port number.
@@ -972,17 +1152,12 @@ impl TryFrom<&CoapOption> for CoapUriPort {
                 "option number is not Uri-Port",
             ));
         }
-        if option.value().len() > size_of::<u16>() {
-            return Err(CrafterError::invalid_field_value(
-                "coap.uri-port",
-                "Uri-Port length must not exceed 2 bytes",
-            ));
-        }
-
-        let value = option
-            .value()
-            .iter()
-            .fold(0u16, |value, byte| (value << 8) | u16::from(*byte));
+        let value = decode_coap_uint(
+            option.value(),
+            size_of::<u16>(),
+            "coap.uri-port",
+            "Uri-Port length must not exceed 2 bytes",
+        )? as u16;
         Ok(Self {
             value,
             wire_value: option.value().to_vec(),
@@ -1526,6 +1701,118 @@ mod tests {
             })
         );
         assert_eq!(too_wide.into_bytes(), vec![0; 9]);
+    }
+
+    #[test]
+    fn representation_uint_wrappers_cover_zero_and_multibyte_boundaries() {
+        let content_format_cases = [
+            (0, Vec::new()),
+            (u8::MAX as u16, vec![0xff]),
+            (u8::MAX as u16 + 1, vec![0x01, 0x00]),
+            (u16::MAX, vec![0xff, 0xff]),
+        ];
+        for (value, expected) in content_format_cases {
+            let content_format = CoapContentFormat::new(value);
+            assert_eq!(content_format.value(), value);
+            assert_eq!(content_format.as_bytes(), expected);
+
+            let option = CoapOption::from(content_format);
+            assert_eq!(option.number().value(), COAP_OPTION_CONTENT_FORMAT);
+            assert_eq!(option.value(), expected);
+            assert_eq!(CoapContentFormat::try_from(&option).unwrap().value(), value);
+        }
+
+        let wide_cases = [
+            (0, Vec::new()),
+            (u8::MAX as u32, vec![0xff]),
+            (u8::MAX as u32 + 1, vec![0x01, 0x00]),
+            (u16::MAX as u32 + 1, vec![0x01, 0x00, 0x00]),
+            (u32::MAX, vec![0xff, 0xff, 0xff, 0xff]),
+        ];
+        for (value, expected) in wide_cases {
+            assert_eq!(CoapMaxAge::new(value).as_bytes(), expected);
+            assert_eq!(CoapSize1::new(value).as_bytes(), expected);
+            assert_eq!(CoapSize2::new(value).as_bytes(), expected);
+        }
+    }
+
+    #[test]
+    fn content_format_wrappers_keep_open_registry_metadata() {
+        let assigned = CoapContentFormat::new(0).registry_meta();
+        assert_eq!(assigned.label, "text/plain; charset=utf-8");
+        assert_eq!(assigned.status, CoapRegistryStatus::Assigned);
+
+        let unknown = CoapContentFormat::new(1).registry_meta();
+        assert_eq!(unknown.value, 1);
+        assert_eq!(unknown.label, "content-format-1");
+        assert_eq!(unknown.status, CoapRegistryStatus::Unassigned);
+
+        let accepted = CoapAccept::new(65_535);
+        assert_eq!(accepted.value(), 65_535);
+        assert_eq!(
+            accepted.registry_meta().status,
+            CoapRegistryStatus::Experimental
+        );
+    }
+
+    #[test]
+    fn representation_wrappers_preserve_noncanonical_raw_values() {
+        let content_option = CoapOption::new(COAP_OPTION_CONTENT_FORMAT, [0x00, 0x2a]);
+        let content_format = CoapContentFormat::try_from(&content_option).unwrap();
+        assert_eq!(content_format.value(), 42);
+        assert_eq!(content_format.as_bytes(), [0x00, 0x2a]);
+        assert_eq!(CoapOption::from(content_format).value(), [0x00, 0x2a]);
+
+        let accept_option = CoapOption::new(COAP_OPTION_ACCEPT, [0x00, 0x01]);
+        let accept = CoapAccept::try_from(&accept_option).unwrap();
+        assert_eq!(accept.value(), 1);
+        assert_eq!(CoapOption::from(accept).value(), [0x00, 0x01]);
+
+        let max_age_option = CoapOption::new(COAP_OPTION_MAX_AGE, [0, 0, 0, 60]);
+        let max_age = CoapMaxAge::try_from(&max_age_option).unwrap();
+        assert_eq!(max_age.value(), 60);
+        assert_eq!(CoapOption::from(max_age).value(), [0, 0, 0, 60]);
+
+        for option in [
+            CoapOption::new(COAP_OPTION_SIZE1, [0, 0, 1, 0]),
+            CoapOption::new(COAP_OPTION_SIZE2, [0, 0, 1, 0]),
+        ] {
+            let rebuilt = if option.number().value() == COAP_OPTION_SIZE1 {
+                CoapOption::from(CoapSize1::try_from(&option).unwrap())
+            } else {
+                CoapOption::from(CoapSize2::try_from(&option).unwrap())
+            };
+            assert_eq!(rebuilt.value(), option.value());
+        }
+    }
+
+    #[test]
+    fn max_age_default_is_an_explicit_interpretation_helper() {
+        assert_eq!(CoapMaxAge::effective_response_seconds(None), 60);
+
+        let explicit = CoapMaxAge::new(0);
+        assert_eq!(CoapMaxAge::effective_response_seconds(Some(&explicit)), 0);
+
+        let message =
+            crate::protocols::coap::Coap::response(crate::protocols::coap::CoapCode::content());
+        assert!(message.options_value().is_empty());
+    }
+
+    #[test]
+    fn representation_message_helpers_append_exact_typed_options() {
+        let message =
+            crate::protocols::coap::Coap::request(crate::protocols::coap::CoapCode::get())
+                .content_format(CoapContentFormat::new(50))
+                .accept(CoapAccept::new(60))
+                .content_format(CoapContentFormat::new(42));
+
+        assert_eq!(message.options_value().len(), 3);
+        assert_eq!(message.options_value()[0].number().value(), 12);
+        assert_eq!(message.options_value()[0].value(), [50]);
+        assert_eq!(message.options_value()[1].number().value(), 17);
+        assert_eq!(message.options_value()[1].value(), [60]);
+        assert_eq!(message.options_value()[2].number().value(), 12);
+        assert_eq!(message.options_value()[2].value(), [42]);
     }
 
     #[test]
