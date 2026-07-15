@@ -1,6 +1,7 @@
 //! Strict CoAP decoding primitives.
 
 use crate::error::{CrafterError, Result};
+use crate::packet::Packet;
 
 use super::constants::{
     COAP_HEADER_LEN, COAP_TKL_MASK, COAP_TKL_SHIFT, COAP_TYPE_MASK, COAP_TYPE_SHIFT,
@@ -104,6 +105,32 @@ pub(super) fn decode_token_and_options(bytes: &[u8]) -> Result<DecodedTokenOptio
         consumed,
         payload_marker: decoded_options.payload_marker,
     })
+}
+
+impl Coap {
+    /// Decode one complete CoAP UDP payload as a typed datagram layer.
+    ///
+    /// This direct parser is strict because the caller has explicitly selected
+    /// CoAP: malformed input returns a structured [`CrafterError`]. Registry
+    /// auto-dispatch is deliberately more conservative and retains candidates
+    /// that fail its shape gate as `Raw` application payloads instead.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        decode_coap(bytes)
+    }
+}
+
+/// Decode one complete CoAP UDP payload as a typed datagram layer.
+///
+/// The whole slice is treated as one datagram. Unlike conservative registry
+/// classification, this explicit parser never silently falls back to `Raw`:
+/// malformed or truncated input returns a structured [`CrafterError`].
+pub fn decode_coap(bytes: &[u8]) -> Result<Coap> {
+    decode_datagram(bytes)
+}
+
+/// Append one explicitly decoded CoAP datagram to an existing packet stack.
+pub(crate) fn append_coap_packet(packet: Packet, bytes: &[u8]) -> Result<Packet> {
+    Ok(packet.push(decode_coap(bytes)?))
 }
 
 /// Decode one complete CoAP datagram, preserving its payload boundary.
@@ -552,5 +579,46 @@ mod tests {
                 available: 0,
             })
         );
+    }
+
+    #[test]
+    fn public_decode_entrypoints_round_trip_complete_udp_payloads() {
+        let messages: &[&[u8]] = &[
+            &[0x40, 0x01, 0x12, 0x34],
+            &[
+                0x41,
+                0x02,
+                0x00,
+                0x01,
+                0xaa,
+                0xb1,
+                b'x',
+                COAP_PAYLOAD_MARKER,
+                0x00,
+                0xff,
+            ],
+            &[0x60, 0x45, 0xbe, 0xef, COAP_PAYLOAD_MARKER, b'o', b'k'],
+        ];
+
+        for &bytes in messages {
+            let decoded = decode_coap(bytes).expect("decode complete CoAP UDP payload");
+            let decoded_by_type = Coap::decode(bytes).expect("decode through Coap::decode");
+
+            assert_eq!(decoded_by_type, decoded);
+            assert_eq!(
+                Packet::from_layer(decoded).compile().unwrap().as_bytes(),
+                bytes
+            );
+        }
+    }
+
+    #[test]
+    fn append_helper_pushes_the_typed_coap_layer() {
+        let bytes = [0x40, 0x01, 0x12, 0x34];
+
+        let packet = append_coap_packet(Packet::new(), &bytes).expect("append decoded CoAP");
+
+        assert!(packet.layer::<Coap>().is_some());
+        assert_eq!(packet.compile().unwrap().as_bytes(), bytes);
     }
 }
