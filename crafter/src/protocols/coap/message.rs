@@ -1,4 +1,10 @@
 //! CoAP datagram message layers.
+//!
+//! Header, default, and override behavior follows
+//! `.agents/docs/coap-wire-grammar.md` and RFC 7252 Sections 3 and 4.1.
+//! Extended token-length metadata follows RFC 8974 Section 2.1; canonical
+//! extended-token emission remains assigned to the later extended-token
+//! codec.
 
 use core::fmt;
 use core::net::{Ipv4Addr, Ipv6Addr};
@@ -998,7 +1004,10 @@ impl Coap {
 
     fn code_inspection_label(&self) -> String {
         let code = self.code_value();
-        let metadata = code.registry_meta();
+        // `CoapCode` is shared with reliable framing, where class 7 selects
+        // signaling metadata. This layer is specifically an RFC 7252
+        // datagram, whose classes 6 and 7 remain reserved.
+        let metadata = coap_code_meta(code.wire_value());
         let mut label = format!("{}({})", code.label(), metadata.label);
 
         if self.code_state() == FieldState::User && matches!(code.class(), 1 | 3 | 6 | 7) {

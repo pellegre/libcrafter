@@ -1,4 +1,8 @@
 //! Strict CoAP decoding primitives.
+//!
+//! Datagram boundaries follow `.agents/docs/coap-wire-grammar.md` and RFC
+//! 7252 Sections 3, 3.1, and 4.1, including the RFC 8974 Section 2.1 token
+//! update. Stable failures follow `.agents/docs/coap-error-policy.md`.
 
 use crate::error::{CrafterError, Result};
 use crate::packet::Packet;

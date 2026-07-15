@@ -488,8 +488,9 @@ impl ProtocolRegistry {
 
         // Cleartext CoAP binds only to its assigned UDP/5683 service port and
         // only when the complete datagram passes the conservative CoAP shape
-        // gate. Secure UDP/5684 ciphertext and malformed port-matched payloads
-        // remain `Raw`.
+        // gate frozen in `.agents/docs/coap-wire-grammar.md` from RFC 7252
+        // Sections 3 and 3.1 plus RFC 8974 Section 2.1. Secure UDP/5684
+        // ciphertext and malformed port-matched payloads remain `Raw`.
         registry.bind_udp_with_registry(
             |ctx| {
                 (ctx.source_port == COAP_UDP_PORT || ctx.destination_port == COAP_UDP_PORT)

@@ -42,8 +42,9 @@ condition in the source manifest.
 Advanced options use the base RFC 7252 option sequence. They do not introduce
 a second TLV stream:
 
-- preserve caller order and encode each option number as a delta from the
-  previous number;
+- preserve insertion and decoded order in the typed model; canonical message
+  compilation stably orders occurrences by number before encoding each delta,
+  while explicit wire-order compilation retains caller order and overrides;
 - allow delta zero for repeated options and preserve repeated occurrences in
   order, even when semantic validation later reports a non-repeatable option;
 - encode a typed option value using the option's `empty`, `opaque`, `uint`, or
@@ -61,10 +62,10 @@ Canonical `uint` values use the shortest network-byte-order representation;
 zero is encoded as an empty option value. A decoded raw representation remains
 available so a noncanonical explicit value can round trip byte-for-byte.
 
-Option sorting is never extension behavior. URI segments, link attributes,
-block metadata, OSCORE Outer options, and signaling options all retain their
-own occurrence order while using the same delta/length codec described in the
-base grammar.
+Extensions do not introduce a separate sorting rule. URI segments, link
+attributes, block metadata, OSCORE Outer options, and signaling options retain
+their typed occurrence order and use the same canonical-versus-explicit-wire
+policy and delta/length codec described in the base grammar.
 
 ## URI, condition, and representation options
 
