@@ -1006,11 +1006,23 @@ mod tests {
         assert_eq!(text.as_opaque(), Ok("temperatura".as_bytes()));
 
         let binary = CoapOption::new(COAP_OPTION_ETAG, vec![0xff, 0x00]);
-        assert!(binary.as_str().is_err());
+        assert_eq!(
+            binary.as_str(),
+            Err(CrafterError::InvalidFieldValue {
+                field: "coap.option.string",
+                reason: "option value is not valid UTF-8",
+            })
+        );
         assert_eq!(binary.value(), [0xff, 0x00]);
 
         let too_wide = CoapOption::new(65002u16, vec![0; 9]);
-        assert!(too_wide.as_uint().is_err());
+        assert_eq!(
+            too_wide.as_uint(),
+            Err(CrafterError::InvalidFieldValue {
+                field: "coap.option.uint",
+                reason: "unsigned option value exceeds 64 bits",
+            })
+        );
         assert_eq!(too_wide.into_bytes(), vec![0; 9]);
     }
 

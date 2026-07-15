@@ -60,6 +60,16 @@ pub(super) fn decode_fixed_header(bytes: &[u8]) -> Result<Coap> {
 pub(super) fn decode_token_and_options(bytes: &[u8]) -> Result<DecodedTokenOptions> {
     let message = decode_fixed_header(bytes)?;
     let token_length_nibble = message.token_length_value()?.nibble();
+
+    if message.code_value().is_empty()
+        && (token_length_nibble != 0 || bytes.len() > COAP_HEADER_LEN)
+    {
+        return Err(CrafterError::invalid_field_value(
+            "coap.empty-message",
+            "empty message contains token, options, marker, or payload",
+        ));
+    }
+
     let after_header = bytes.get(COAP_HEADER_LEN..).unwrap_or_default();
     let (token_length, extension_len) = decode_token_length(token_length_nibble, after_header)?;
     let after_extension = after_header.get(extension_len..).unwrap_or_default();
@@ -365,30 +375,64 @@ mod tests {
 
     #[test]
     fn token_length_boundaries_return_structured_errors() {
-        assert_eq!(
-            decode_token_and_options(&[0x4d, 0x01, 0x00, 0x01]),
-            Err(CrafterError::BufferTooShort {
-                context: "coap.token-length.extended8",
-                required: 1,
-                available: 0,
-            })
-        );
-        assert_eq!(
-            decode_token_and_options(&[0x4e, 0x01, 0x00, 0x01, 0x00]),
-            Err(CrafterError::BufferTooShort {
-                context: "coap.token-length.extended16",
-                required: 2,
-                available: 1,
-            })
-        );
-        assert_eq!(
-            decode_token_and_options(&[0x48, 0x01, 0x00, 0x01, 0xaa, 0xbb]),
-            Err(CrafterError::BufferTooShort {
-                context: "coap.token",
-                required: 8,
-                available: 2,
-            })
-        );
+        let cases: &[(&[u8], &'static str, usize, usize)] = &[
+            (
+                &[0x4d, 0x01, 0x00, 0x01],
+                "coap.token-length.extended8",
+                1,
+                0,
+            ),
+            (
+                &[0x4e, 0x01, 0x00, 0x01, 0x00],
+                "coap.token-length.extended16",
+                2,
+                1,
+            ),
+            (&[0x48, 0x01, 0x00, 0x01, 0xaa, 0xbb], "coap.token", 8, 2),
+            (
+                &[0x40, 0x01, 0x00, 0x01, 0xd0],
+                "coap.option.delta.extended8",
+                1,
+                0,
+            ),
+            (
+                &[0x40, 0x01, 0x00, 0x01, 0xe0, 0x00],
+                "coap.option.delta.extended16",
+                2,
+                1,
+            ),
+            (
+                &[0x40, 0x01, 0x00, 0x01, 0x0d],
+                "coap.option.length.extended8",
+                1,
+                0,
+            ),
+            (
+                &[0x40, 0x01, 0x00, 0x01, 0x0e, 0x00],
+                "coap.option.length.extended16",
+                2,
+                1,
+            ),
+            (
+                &[0x40, 0x01, 0x00, 0x01, 0x03, 0xaa],
+                "coap.option.value",
+                3,
+                1,
+            ),
+        ];
+
+        for &(bytes, context, required, available) in cases {
+            assert_eq!(
+                decode_token_and_options(bytes),
+                Err(CrafterError::BufferTooShort {
+                    context,
+                    required,
+                    available,
+                }),
+                "bytes: {bytes:02x?}",
+            );
+        }
+
         assert_eq!(
             decode_token_and_options(&[0x4f, 0x01, 0x00, 0x01]),
             Err(CrafterError::invalid_field_value(
@@ -399,23 +443,47 @@ mod tests {
     }
 
     #[test]
-    fn malformed_option_boundaries_propagate_local_size_errors() {
-        assert_eq!(
-            decode_token_and_options(&[0x40, 0x01, 0x00, 0x01, 0x03, 0xaa]),
-            Err(CrafterError::BufferTooShort {
-                context: "coap.option.value",
-                required: 3,
-                available: 1,
-            })
-        );
-        assert_eq!(
-            decode_token_and_options(&[0x40, 0x01, 0x00, 0x01, 0xd0]),
-            Err(CrafterError::BufferTooShort {
-                context: "coap.option.delta.extended8",
-                required: 1,
-                available: 0,
-            })
-        );
+    fn datagram_invalid_fields_report_stable_names_and_reasons() {
+        let cases: &[(&[u8], &'static str, &'static str)] = &[
+            (
+                &[0x4f, 0x01, 0x00, 0x01],
+                "coap.token-length",
+                "reserved TKL encoding 15",
+            ),
+            (
+                &[0x40, 0x01, 0x00, 0x01, 0xf0],
+                "coap.option.delta",
+                "reserved delta nibble 15 is not a payload marker",
+            ),
+            (
+                &[0x40, 0x01, 0x00, 0x01, 0x0f],
+                "coap.option.length",
+                "reserved option length nibble 15",
+            ),
+            (
+                &[0x40, 0x01, 0x00, 0x01, 0xe0, 0xff, 0xff],
+                "coap.option-number",
+                "cumulative option number exceeds 65535",
+            ),
+            (
+                &[0x41, 0x00, 0x00, 0x01],
+                "coap.empty-message",
+                "empty message contains token, options, marker, or payload",
+            ),
+            (
+                &[0x40, 0x00, 0x00, 0x01, 0x00],
+                "coap.empty-message",
+                "empty message contains token, options, marker, or payload",
+            ),
+        ];
+
+        for &(bytes, field, reason) in cases {
+            assert_eq!(
+                decode_datagram(bytes),
+                Err(CrafterError::InvalidFieldValue { field, reason }),
+                "bytes: {bytes:02x?}",
+            );
+        }
     }
 
     #[test]
