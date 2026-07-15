@@ -49,10 +49,10 @@ pub use self::message::{
 pub use self::no_response::CoapNoResponse;
 pub use self::observe::{CoapObserve, CoapObserveOrdering};
 pub use self::option::{
-    validate_coap_proxy_options, CoapAccept, CoapContentFormat, CoapEtag, CoapIfMatch,
+    validate_coap_proxy_options, CoapAccept, CoapContentFormat, CoapEcho, CoapEtag, CoapIfMatch,
     CoapIfNoneMatch, CoapLocationPath, CoapLocationQuery, CoapMaxAge, CoapOption,
     CoapOptionEncoding, CoapOptionFormat, CoapOptionNumber, CoapProxyScheme, CoapProxyUri,
-    CoapSize1, CoapSize2, CoapUriHost, CoapUriPath, CoapUriPort, CoapUriQuery,
+    CoapRequestTag, CoapSize1, CoapSize2, CoapUriHost, CoapUriPath, CoapUriPort, CoapUriQuery,
 };
 pub use self::registry::{
     coap_code_meta, coap_content_format_meta, coap_option_meta, coap_signaling_code_meta,

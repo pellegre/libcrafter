@@ -206,3 +206,160 @@ fn ipatch_duplicate_content_format_and_empty_document_report_semantics() -> Resu
 
     Ok(())
 }
+
+#[test]
+fn echo_challenge_and_response_round_trip_exact_opaque_bytes() -> Result<()> {
+    // RFC 9175 Section 2.2.1 leaves Echo content implementation-specific.
+    let challenge = CoapEcho::try_new([0x00, 0xff, 0x80, 0x45])?;
+    let echoed = CoapEcho::response_to(&challenge);
+    assert!(echoed.matches_challenge(&challenge));
+    assert!(echoed.matches_bytes([0x00, 0xff, 0x80, 0x45]));
+
+    let response = Coap::response(CoapCode::unauthorized())
+        .message_id(0x7001)
+        .echo(challenge);
+    let response_bytes = [
+        0x40, 0x81, 0x70, 0x01, // CON, 4.01 Unauthorized, MID.
+        0xd4, 0xef, 0x00, 0xff, 0x80, 0x45, // Echo 252, four opaque bytes.
+    ];
+    assert_eq!(compile_coap(response)?, response_bytes);
+
+    let decoded_response = decode_coap(&response_bytes)?;
+    let decoded_challenge = decoded_response.echo_value().expect("Echo option")?;
+    assert!(echoed.matches_challenge(&decoded_challenge));
+    assert_eq!(compile_coap(decoded_response)?, response_bytes);
+
+    let request = Coap::get().message_id(0x7002).echo(echoed);
+    let request_bytes = [
+        0x40, 0x01, 0x70, 0x02, // CON, GET, MID.
+        0xd4, 0xef, 0x00, 0xff, 0x80, 0x45, // Exact echoed value.
+    ];
+    assert_eq!(compile_coap(request)?, request_bytes);
+    assert_eq!(compile_coap(decode_coap(&request_bytes)?)?, request_bytes);
+
+    Ok(())
+}
+
+#[test]
+fn echo_and_request_tag_checked_boundaries_leave_raw_values_lossless() -> Result<()> {
+    assert!(CoapEcho::try_new([]).is_err());
+    assert!(CoapEcho::try_new([0x01]).is_ok());
+    assert!(CoapEcho::try_new([0x5a; 40]).is_ok());
+    assert!(CoapEcho::try_new([0x5a; 41]).is_err());
+
+    assert!(CoapRequestTag::try_new([]).is_ok());
+    assert!(CoapRequestTag::try_new([0xa5; 8]).is_ok());
+    assert!(CoapRequestTag::try_new([0xa5; 9]).is_err());
+
+    let malformed = Coap::get()
+        .message_id(0x7003)
+        .echo(CoapEcho::new([]))
+        .request_tag(CoapRequestTag::new([0x7e; 9]));
+    let malformed_bytes = compile_coap(malformed)?;
+    let decoded = decode_coap(&malformed_bytes)?;
+    assert!(decoded.echo_value().expect("Echo option").is_err());
+    assert!(decoded
+        .request_tag_value()
+        .expect("Request-Tag option")
+        .is_err());
+    assert!(decoded.validate().issues().iter().any(|issue| {
+        issue.field() == "coap.options[0].value"
+            && issue.category() == CoapValidationCategory::OptionLength
+            && issue.reason().contains("Echo")
+    }));
+    assert!(decoded.validate().issues().iter().any(|issue| {
+        issue.field() == "coap.options[1].value"
+            && issue.category() == CoapValidationCategory::OptionLength
+            && issue.reason().contains("Request-Tag")
+    }));
+    assert_eq!(compile_coap(decoded)?, malformed_bytes);
+
+    Ok(())
+}
+
+#[test]
+fn echo_repeatability_and_request_tag_repetition_are_validated_separately() -> Result<()> {
+    let request = Coap::get()
+        .echo(CoapEcho::try_new([0x10])?)
+        .echo(CoapEcho::try_new([0x11])?)
+        .request_tag(CoapRequestTag::try_new([])?)
+        .request_tag(CoapRequestTag::try_new([0x22])?);
+
+    let validation = request.validate();
+    assert!(validation.issues().iter().any(|issue| {
+        issue.category() == CoapValidationCategory::OptionRepeatability
+            && issue.reason().contains("Echo")
+    }));
+    assert!(!validation.issues().iter().any(|issue| {
+        issue.category() == CoapValidationCategory::OptionRepeatability
+            && issue.reason().contains("Request-Tag")
+    }));
+    assert_eq!(request.echo_values().count(), 2);
+    assert_eq!(request.request_tag_values().count(), 2);
+
+    Ok(())
+}
+
+#[test]
+fn request_tag_correlates_block1_fragments_without_transfer_state() -> Result<()> {
+    // RFC 9175 Sections 3.2 through 3.4 associate payload-bearing messages
+    // carrying equal Request-Tag bytes with one blockwise request body.
+    let tag = CoapRequestTag::try_new([0x00, 0xff, 0x42])?;
+    let first = Coap::put()
+        .message_id(0x7004)
+        .block1_request_fragment(CoapBlock::block1(0, true, 0)?, vec![0x61; 16])
+        .request_tag(tag.clone());
+    let final_fragment = Coap::put()
+        .message_id(0x7005)
+        .block1_request_fragment(CoapBlock::block1(1, false, 0)?, b"tail".to_vec())
+        .request_tag(CoapRequestTag::try_new([0x00, 0xff, 0x42])?);
+    let unrelated = Coap::put()
+        .block1(CoapBlock::block1(1, false, 0)?)
+        .request_tag(CoapRequestTag::try_new([0x00, 0xff, 0x43])?);
+
+    assert!(tag.correlates_with(
+        &final_fragment
+            .request_tag_value()
+            .expect("Request-Tag option")?
+    ));
+    assert!(first.request_tag_matches(&final_fragment));
+    assert!(final_fragment.request_tag_matches(&first));
+    assert!(!first.request_tag_matches(&unrelated));
+    assert!(!first.request_tag_matches(&Coap::put()));
+    assert!(first
+        .block1_validation(CoapBlockTransport::Datagram)
+        .expect("Block1 option")?
+        .is_valid());
+    assert!(final_fragment
+        .block1_validation(CoapBlockTransport::Datagram)
+        .expect("Block1 option")?
+        .is_valid());
+    assert!(first.validate().is_clean());
+    assert!(final_fragment.validate().is_clean());
+
+    let empty_a = Coap::post().request_tag(CoapRequestTag::try_new([])?);
+    let empty_b = Coap::post().request_tag(CoapRequestTag::try_new([])?);
+    assert!(empty_a.request_tag_matches(&empty_b));
+
+    let first_bytes = compile_coap(first)?;
+    let mut first_golden = vec![
+        0x40, 0x03, 0x70, 0x04, // CON, PUT, MID.
+        0xd1, 0x0e, 0x08, // Block1 0/1/16.
+        0xd3, 0xfc, 0x00, 0xff, 0x42, // Request-Tag 292, three opaque bytes.
+        0xff, // Payload marker.
+    ];
+    first_golden.extend_from_slice(&[0x61; 16]);
+    assert_eq!(first_bytes, first_golden);
+
+    let decoded = decode_coap(&first_bytes)?;
+    assert_eq!(
+        decoded
+            .request_tag_value()
+            .expect("Request-Tag option")?
+            .as_bytes(),
+        [0x00, 0xff, 0x42]
+    );
+    assert_eq!(compile_coap(decoded)?, first_bytes);
+
+    Ok(())
+}

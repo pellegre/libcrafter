@@ -12,11 +12,11 @@ use crate::field::{Field, FieldState};
 
 use super::constants::{
     COAP_CONTENT_FORMAT_JSON_PATCH_JSON, COAP_CONTENT_FORMAT_MERGE_PATCH_JSON, COAP_OPTION_ACCEPT,
-    COAP_OPTION_CONTENT_FORMAT, COAP_OPTION_ETAG, COAP_OPTION_IF_MATCH, COAP_OPTION_IF_NONE_MATCH,
-    COAP_OPTION_LOCATION_PATH, COAP_OPTION_LOCATION_QUERY, COAP_OPTION_MAX_AGE,
-    COAP_OPTION_PROXY_SCHEME, COAP_OPTION_PROXY_URI, COAP_OPTION_SIZE1, COAP_OPTION_SIZE2,
-    COAP_OPTION_URI_HOST, COAP_OPTION_URI_PATH, COAP_OPTION_URI_PORT, COAP_OPTION_URI_QUERY,
-    COAP_PAYLOAD_MARKER,
+    COAP_OPTION_CONTENT_FORMAT, COAP_OPTION_ECHO, COAP_OPTION_ETAG, COAP_OPTION_IF_MATCH,
+    COAP_OPTION_IF_NONE_MATCH, COAP_OPTION_LOCATION_PATH, COAP_OPTION_LOCATION_QUERY,
+    COAP_OPTION_MAX_AGE, COAP_OPTION_PROXY_SCHEME, COAP_OPTION_PROXY_URI, COAP_OPTION_REQUEST_TAG,
+    COAP_OPTION_SIZE1, COAP_OPTION_SIZE2, COAP_OPTION_URI_HOST, COAP_OPTION_URI_PATH,
+    COAP_OPTION_URI_PORT, COAP_OPTION_URI_QUERY, COAP_PAYLOAD_MARKER,
 };
 use super::registry::{
     coap_content_format_meta, coap_option_is_critical, coap_option_is_no_cache_key,
@@ -863,14 +863,14 @@ macro_rules! define_checked_opaque_option {
                 }
             }
 
-            /// Build one occurrence after checking its RFC 7252 length.
+            /// Build one occurrence after checking its source-backed length.
             pub fn try_new(value: impl AsRef<[u8]>) -> Result<Self> {
                 let value = Self::new(value);
                 value.validate()?;
                 Ok(value)
             }
 
-            /// Check this occurrence's RFC 7252 semantic length.
+            /// Check this occurrence's source-backed semantic length.
             pub fn validate(&self) -> Result<()> {
                 if !($min_length..=$max_length).contains(&self.value.len()) {
                     return Err(CrafterError::invalid_field_value($field, $length_error));
@@ -976,6 +976,62 @@ impl CoapEtag {
     /// Call [`CoapIfMatch::is_any`] separately for the empty wildcard form.
     pub fn matches_if_match(&self, if_match: &CoapIfMatch) -> bool {
         self.matches_bytes(if_match.as_bytes())
+    }
+}
+
+define_checked_opaque_option! {
+    /// One RFC 9175 Echo challenge or echoed response value.
+    ///
+    /// Echo values are implementation-specific opaque byte strings between
+    /// one and forty bytes. This wrapper stores only exact packet bytes; it
+    /// does not generate challenges, assess freshness, or retain replay state.
+    CoapEcho,
+    number = COAP_OPTION_ECHO,
+    field = "coap.echo",
+    wrong_number = "option number is not Echo",
+    min_length = 1,
+    max_length = 40,
+    length_error = "Echo length must be between 1 and 40 bytes"
+}
+
+impl CoapEcho {
+    /// Copy an exact server challenge into an echoed client value.
+    ///
+    /// This performs byte copying only. It does not assess challenge
+    /// freshness or decide whether retrying a request is appropriate.
+    pub fn response_to(challenge: &Self) -> Self {
+        Self::new(challenge.as_bytes())
+    }
+
+    /// Compare an echoed value with a challenge using exact byte equality.
+    pub fn matches_challenge(&self, challenge: &Self) -> bool {
+        self.matches_bytes(challenge.as_bytes())
+    }
+}
+
+define_checked_opaque_option! {
+    /// One repeatable RFC 9175 Request-Tag correlation value.
+    ///
+    /// Values are opaque byte strings from zero through eight bytes. Presence
+    /// with an empty value remains distinct from absence. This packet-local
+    /// wrapper neither allocates tags nor retains blockwise transfer state.
+    CoapRequestTag,
+    number = COAP_OPTION_REQUEST_TAG,
+    field = "coap.request-tag",
+    wrong_number = "option number is not Request-Tag",
+    min_length = 0,
+    max_length = 8,
+    length_error = "Request-Tag length must not exceed 8 bytes"
+}
+
+impl CoapRequestTag {
+    /// Compare two Request-Tag occurrences for packet-local correlation.
+    ///
+    /// Equal opaque bytes identify the same request body at one protection
+    /// level. This method does not decide when a tag may be reused and retains
+    /// no blockwise state.
+    pub fn correlates_with(&self, other: &Self) -> bool {
+        self.matches_bytes(other.as_bytes())
     }
 }
 
