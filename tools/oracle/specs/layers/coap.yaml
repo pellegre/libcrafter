@@ -1,0 +1,140 @@
+version: 1
+kind: layer
+name: coap
+summary: >-
+  CoAP datagrams and one complete reliable-transport frame, with lossless
+  header, token, ordered option, payload-marker, payload, signaling, and
+  protected-message metadata. Transaction state, stream reassembly, TLS/DTLS,
+  discovery scans, and live endpoint selection remain outside the layer.
+
+roots: []
+parents:
+  - udp
+  - tcp
+children: []
+
+supported_parents:
+  - layer: udp
+    destination_port: 5683
+    service: coap
+  - layer: udp
+    source_port: 5683
+    service: coap
+  - layer: tcp
+    destination_port: 5683
+    service: coap
+  - layer: tcp
+    source_port: 5683
+    service: coap
+secure_raw_parents:
+  - layer: udp
+    port: 5684
+    service: coaps
+    policy: opaque_raw
+  - layer: tcp
+    port: 5684
+    service: coaps
+    policy: opaque_raw
+live_eligibility: provider_gated
+live_defaults:
+  default_mode: dry_run
+  provider_required: true
+  protected_confirmation_required: true
+  coap_confirmation_environment: LIBCRAFTER_COAP_LIVE_CONFIRM
+  coap_confirmation_value: "yes"
+  developer_host_raw_send: false
+
+fields:
+  - name: transport
+    type: enum
+    required: true
+    domains: [datagram, reliable]
+  - name: version
+    type: uint2
+    required: false
+    domains: [canonical, explicit_preserved, reserved_preserved]
+  - name: message_type
+    type: uint2
+    required: false
+    domains: [confirmable, non_confirmable, acknowledgement, reset]
+  - name: code
+    type: uint8
+    required: true
+    domains: [request, response, signaling, unknown_preserved]
+  - name: message_id
+    type: uint16
+    required: false
+    domains: [deterministic, boundary, explicit_preserved]
+  - name: token
+    type: bytes
+    required: false
+    domains: [empty, base, extended8, extended16, maximum]
+  - name: token_length
+    type: coap_token_length
+    required: false
+    domains: [derived, direct, extended8, extended16, explicit_preserved]
+  - name: reliable_length
+    type: coap_reliable_length
+    required: false
+    domains: [derived, direct, extended8, extended16, extended32, explicit_preserved]
+  - name: options
+    type: coap_option_list
+    required: false
+    domains: [empty, uri, representation, observe, blockwise, qblock, oscore, unknown_preserved]
+  - name: payload_marker
+    type: enum
+    required: false
+    domains: [absent, present, explicit_missing, explicit_empty]
+  - name: payload
+    type: bytes
+    required: false
+    domains: [empty, text, binary, link_format, protected_opaque]
+  - name: signaling_options
+    type: coap_signaling_option_list
+    required: false
+    domains: [empty, csm, ping_pong, release, abort, unknown_preserved]
+
+normalized_fields:
+  datagram: [version, message_type, token_length, code, message_id, token, options, payload_marker, payload]
+  reliable: [reliable_length, token_length, code, token, options, payload_marker, payload]
+  option: [number, delta, length, value, order, raw_header]
+  protected: [outer_code, token, oscore_option, ciphertext, tag_length, plaintext_exposed]
+
+coverage_cases:
+  - coap-datagram-get
+  - coap-datagram-content
+  - coap-options-payload
+  - coap-reliable-csm
+  - coap-observe-notification
+  - coap-block2
+  - coap-qblock2
+  - coap-extended-token-extended16
+  - coap-link-format-canonical
+  - coap-oscore-request-vector
+  - coap-secure-port-raw
+  - malformed-coap-truncated-header
+  - coap-pcap-raw-ipv4
+  - coap-pcap-raw-ipv6
+  - coap-pcap-ethernet-ipv4
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers: [Raw]
+    notes:
+      - Step 93/94 will add deterministic raw-compatible datagram materialization; no native reliable, OSCORE, or extended-token support is claimed here.
+  wireshark:
+    status: planned
+    native_layers: [coap]
+    notes:
+      - Parser-only normalization is deferred to the reference-backend step and must not require TLS/DTLS secrets.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    pcap_read: true
+    pcap_write: true
+    native_layers: [Coap, CoapReliable]
+    notes:
+      - The crate supports typed datagram and one-frame reliable CoAP, advanced options, link-format, OSCORE vectors, structured errors, and classic pcap fixtures offline.
+

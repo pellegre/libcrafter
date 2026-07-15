@@ -1,0 +1,42 @@
+version: 1
+kind: profiles
+name: coap_profiles
+
+profiles:
+  - name: coap-smoke
+    purpose: focused deterministic offline CoAP datagram and reliable-frame smoke coverage
+    default_count: 12
+    family_weights: [{name: coap, weight: 1}]
+    payload_length: {min: 0, max: 64}
+    feature_weights: {baseline: 10, boundary: 2, malformed: 0, pcap: 0, live: 0}
+  - name: coap-ci
+    purpose: deterministic CoAP strict-byte, normalized, malformed, OSCORE-vector, and pcap contract coverage
+    default_count: 240
+    family_weights: [{name: coap, weight: 1}]
+    payload_length: {min: 0, max: 1024}
+    feature_weights: {baseline: 10, boundary: 6, malformed: 2, pcap: 2, live: 0}
+  - name: coap-live-dry-run
+    purpose: provider-neutral CoAP live validation planning with both confirmation gates still closed
+    default_count: 10
+    family_weights: [{name: coap, weight: 1}]
+    payload_length: {min: 0, max: 64}
+    feature_weights: {baseline: 2, boundary: 2, malformed: 0, pcap: 0, live: 0}
+
+live_policy:
+  default_mode: dry_run
+  provider_required: true
+  confirm_flag: --confirm-live-run
+  confirm_environment: LIBCRAFTER_COAP_LIVE_CONFIRM=yes
+  developer_host_raw_send: false
+
+backend_support:
+  scapy:
+    status: planned
+    notes: [Profiles become runnable after the generator and reference adapters land.]
+  wireshark:
+    status: planned
+    notes: [Parser-only comparisons remain capability-scoped.]
+  libcrafter:
+    status: supported
+    notes: [All profiles remain offline or dry-run by default.]
+

@@ -1,0 +1,23 @@
+version: 1
+kind: feature
+name: coap_link_format
+summary: CoRE Link Format request/response payloads with raw-preserving and canonical typed serialization directions.
+layers: [udp, coap]
+directions: [backend_to_libcrafter, libcrafter_to_backend]
+strict_bytes: false
+malformed: false
+behaviors:
+  - {name: discovery-request, checks: [well_known_core_path, accept_link_format]}
+  - {name: raw-preserve, checks: [ordered_links, repeated_attributes, unknown_attributes, exact_source_bytes]}
+  - {name: canonical, checks: [typed_model_agrees, canonical_escaping, normalized_comparison]}
+coverage_cases: [coap-link-format-discovery, coap-link-format-raw, coap-link-format-canonical]
+supported_cases:
+  - {name: coap-link-format-discovery, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-link-format-raw, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-link-format-canonical, directions: [libcrafter_to_backend], byte_policy: normalized, normalized_note: typed links and attributes agree after canonical escaping}
+source_refs: [RFC 6690, RFC 5987]
+backend_support:
+  scapy: {status: planned, native_layers: [Raw]}
+  wireshark: {status: planned, native_layers: [coap]}
+  libcrafter: {status: supported, encode: true, decode: true, native_layers: [CoapLinkFormat]}
+

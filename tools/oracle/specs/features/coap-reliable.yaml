@@ -1,0 +1,42 @@
+version: 1
+kind: feature
+name: coap_reliable
+summary: One complete RFC 8323 cleartext reliable CoAP frame, signaling codes/options, exact frame boundaries, and no stream reassembly.
+layers: [tcp, coap]
+directions: [backend_to_libcrafter, libcrafter_to_backend]
+strict_bytes: true
+malformed: false
+categories: [baseline, boundary]
+
+behaviors:
+  - {name: csm, checks: [length_autofill, csm_code, signaling_option_space]}
+  - {name: ping-pong, checks: [opaque_token_correlation, exact_frame_consumption]}
+  - {name: release-abort, checks: [unknown_signaling_options_preserved, diagnostic_payload_preserved]}
+  - {name: concatenated-frames, checks: [direct_decoder_reports_consumed_length, registry_keeps_tcp_payload_raw]}
+
+coverage_cases:
+  - coap-reliable-csm
+  - coap-reliable-ping-pong
+  - coap-reliable-release-abort
+  - coap-reliable-concatenated-raw
+supported_cases:
+  - {name: coap-reliable-csm, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-reliable-ping-pong, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-reliable-release-abort, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-reliable-concatenated-raw, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+
+source_refs: [RFC 8323, RFC 8974, IANA CoAP Signaling Option Numbers]
+backend_support:
+  scapy:
+    status: planned
+    native_layers: [Raw]
+    notes: [No native reliable CoAP frame or signaling model is claimed.]
+  wireshark:
+    status: planned
+    native_layers: [coap]
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    native_layers: [CoapReliable]
+

@@ -1,0 +1,23 @@
+version: 1
+kind: feature
+name: coap_observe
+summary: Stateless Observe option registration, notification, cancellation, serial-wrap, and malformed-value preservation contracts.
+layers: [udp, coap]
+directions: [backend_to_libcrafter, libcrafter_to_backend]
+strict_bytes: true
+malformed: false
+behaviors:
+  - {name: register, observe: 0, checks: [get_request, observe_option_exact]}
+  - {name: notification, observe: 16777215, checks: [response_code, serial_value_preserved]}
+  - {name: wrap, checks: [rfc7641_serial_order, no_subscription_state]}
+coverage_cases: [coap-observe-register, coap-observe-notification, coap-observe-wrap]
+supported_cases:
+  - {name: coap-observe-register, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-observe-notification, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-observe-wrap, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: normalized, contract_only: true}
+source_refs: [RFC 7641]
+backend_support:
+  scapy: {status: planned, native_layers: [Raw]}
+  wireshark: {status: planned, native_layers: [coap]}
+  libcrafter: {status: supported, encode: true, decode: true, native_layers: [CoapObserve]}
+

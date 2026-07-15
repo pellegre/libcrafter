@@ -1,0 +1,49 @@
+version: 1
+kind: feature
+name: coap_pcap
+summary: Deterministic classic pcap read/write contracts for Raw IPv4, Raw IPv6, and Ethernet-framed cleartext CoAP.
+layers: [ethernet, ipv4, ipv6, udp, coap]
+directions: [backend_to_libcrafter, libcrafter_to_backend]
+strict_bytes: true
+malformed: false
+categories: [pcap]
+coverage_cases: [coap-pcap-raw-ipv4, coap-pcap-raw-ipv6, coap-pcap-ethernet-ipv4]
+supported_cases:
+  - name: coap-pcap-raw-ipv4
+    directions: [backend_to_libcrafter, libcrafter_to_backend]
+    byte_policy: strict_bytes
+    file_format: pcap
+    fixture: crafter/tests/fixtures/pcaps/raw-ipv4-udp-coap-get.pcap
+  - name: coap-pcap-raw-ipv6
+    directions: [backend_to_libcrafter, libcrafter_to_backend]
+    byte_policy: strict_bytes
+    file_format: pcap
+    fixture: crafter/tests/fixtures/pcaps/raw-ipv6-udp-coap-content.pcap
+  - name: coap-pcap-ethernet-ipv4
+    directions: [backend_to_libcrafter, libcrafter_to_backend]
+    byte_policy: strict_bytes
+    file_format: pcap
+    fixture: crafter/tests/fixtures/pcaps/ethernet-ipv4-udp-coap-get.pcap
+artifact_policy:
+  deterministic: true
+  synthetic_only: true
+  sensitive_capture_forbidden: true
+source_refs: [crafter/tests/coap_pcap.rs]
+backend_support:
+  scapy:
+    status: planned
+    pcap_read: true
+    pcap_write: true
+    native_layers: [IP, IPv6, Ether, UDP, Raw]
+  wireshark:
+    status: planned
+    pcap_read: true
+    native_layers: [coap]
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    pcap_read: true
+    pcap_write: true
+    native_layers: [Ethernet, Ipv4, Ipv6, Udp, Coap]
+
