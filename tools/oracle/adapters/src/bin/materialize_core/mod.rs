@@ -286,6 +286,7 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "quic" => Ok(Box::new(quic_layer(plan)?)),
         "bgp" => Ok(Box::new(bgp_layer(plan)?)),
         "mqtt" => Ok(Box::new(mqtt_layer(plan)?)),
+        "coap" => coap_layer(plan),
         "radiotap" => Ok(Box::new(radiotap_layer(plan)?)),
         "dot11" => Ok(Box::new(dot11_layer(plan)?)),
         "llc_snap" => Ok(Box::new(llc_snap_layer(plan)?)),
@@ -296,6 +297,177 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         .into()),
         _ => Err(format!("unsupported libcrafter materialization layer: {layer}").into()),
     }
+}
+
+fn coap_layer(plan: &Value) -> ExampleResult<Box<dyn Layer>> {
+    let fields = layer_fields(plan, "coap")?;
+    match text_optional(fields, &["transport"]).unwrap_or("datagram") {
+        "datagram" | "udp" => Ok(Box::new(coap_datagram_layer(fields)?)),
+        "reliable" | "tcp" => Ok(Box::new(coap_reliable_layer(fields)?)),
+        value => Err(format!("unsupported CoAP transport: {value}").into()),
+    }
+}
+
+fn coap_datagram_layer(fields: &Map<String, Value>) -> ExampleResult<Coap> {
+    let mut layer = Coap::new();
+    if let Some(value) = optional(fields, &["version"]) {
+        layer = layer.version(CoapVersion::from_wire(raw_u8_value(value)?));
+    }
+    if let Some(value) = optional(fields, &["message_type", "type"]) {
+        layer = layer.message_type(coap_message_type(value)?);
+    }
+    if let Some(value) = optional(fields, &["code"]) {
+        layer = layer.code(CoapCode::from_wire(raw_u8_value(value)?));
+    }
+    if let Some(value) = optional(fields, &["message_id", "mid"]) {
+        layer = layer.message_id(u16_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["token"]) {
+        layer = layer.token(CoapToken::from_bytes(bytes_value(value)?));
+    }
+    if let Some(value) = optional(fields, &["token_length"]) {
+        layer = layer.token_length(coap_token_length(value)?);
+    }
+    layer = layer.options(coap_options(fields, false)?);
+    if let Some(value) = optional(fields, &["payload_marker"]) {
+        layer = layer.payload_marker(coap_payload_marker(value)?);
+    }
+    if let Some(value) = optional(fields, &["payload"]) {
+        layer = layer.payload(bytes_value(value)?);
+    }
+    Ok(layer)
+}
+
+fn coap_reliable_layer(fields: &Map<String, Value>) -> ExampleResult<CoapReliable> {
+    let code = optional(fields, &["code"])
+        .map(raw_u8_value)
+        .transpose()?
+        .unwrap_or(0xE1);
+    let mut layer = CoapReliable::new(CoapCode::from_wire(code));
+    if let Some(value) = optional(fields, &["reliable_length", "length"]) {
+        layer = layer.length(coap_reliable_length(value)?);
+    }
+    if let Some(value) = optional(fields, &["token_length"]) {
+        layer = layer.token_length(coap_token_length(value)?);
+    }
+    if let Some(value) = optional(fields, &["token"]) {
+        layer = layer.token(CoapToken::from_bytes(bytes_value(value)?));
+    }
+    layer = layer.options(coap_options(fields, true)?);
+    if let Some(value) = optional(fields, &["payload_marker"]) {
+        layer = layer.payload_marker(coap_payload_marker(value)?);
+    }
+    if let Some(value) = optional(fields, &["payload"]) {
+        layer = layer.payload(bytes_value(value)?);
+    }
+    Ok(layer)
+}
+
+fn coap_options(fields: &Map<String, Value>, signaling: bool) -> ExampleResult<Vec<CoapOption>> {
+    let mut output = Vec::new();
+    for name in if signaling {
+        &["options", "signaling_options"][..]
+    } else {
+        &["options"][..]
+    } {
+        let Some(value) = fields.get(*name) else {
+            continue;
+        };
+        for item in array_values(value)? {
+            output.push(coap_option(item)?);
+        }
+    }
+    Ok(output)
+}
+
+fn coap_option(value: &Value) -> ExampleResult<CoapOption> {
+    let fields = value
+        .as_object()
+        .ok_or_else(|| format!("CoAP option must be an object, got {value:?}"))?;
+    let number = u16_value(required(fields, &["number"])?)?;
+    let bytes = if let Some(hex) = text_optional(fields, &["value_hex", "hex"]) {
+        decode_hex(hex)?
+    } else if let Some(value) = optional(fields, &["value", "bytes"]) {
+        bytes_value(value)?
+    } else {
+        Vec::new()
+    };
+    let mut option = CoapOption::new(number, bytes);
+    if let Some(raw) = text_optional(fields, &["raw_header_hex"]) {
+        option = option.with_encoding(CoapOptionEncoding::from_raw_bytes(decode_hex(raw)?));
+    } else {
+        if let Some(delta) = optional(fields, &["wire_delta", "delta"]) {
+            option = option.with_wire_delta(u32_value(delta)?);
+        }
+        if let Some(length) = optional(fields, &["wire_length", "length"]) {
+            option = option.with_wire_length(usize::try_from(u64_value(length)?)?);
+        }
+    }
+    Ok(option)
+}
+
+fn coap_message_type(value: &Value) -> ExampleResult<CoapMessageType> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('-', "_").as_str() {
+            "confirmable" | "con" => Ok(CoapMessageType::Confirmable),
+            "non_confirmable" | "non" => Ok(CoapMessageType::NonConfirmable),
+            "acknowledgement" | "ack" => Ok(CoapMessageType::Acknowledgement),
+            "reset" | "rst" => Ok(CoapMessageType::Reset),
+            _ => Ok(CoapMessageType::from_wire(u8_text(text)?)),
+        };
+    }
+    Ok(CoapMessageType::from_wire(raw_u8_value(value)?))
+}
+
+fn coap_payload_marker(value: &Value) -> ExampleResult<CoapPayloadMarker> {
+    match text_value(value)?
+        .to_ascii_lowercase()
+        .replace('-', "_")
+        .as_str()
+    {
+        "present" | "explicit_empty" => Ok(CoapPayloadMarker::Present),
+        "absent" | "explicit_missing" => Ok(CoapPayloadMarker::Absent),
+        value => Err(format!("unsupported CoAP payload marker: {value}").into()),
+    }
+}
+
+fn coap_token_length(value: &Value) -> ExampleResult<CoapTokenLength> {
+    let fields = value
+        .as_object()
+        .ok_or_else(|| format!("CoAP token_length must be an object, got {value:?}"))?;
+    let nibble = raw_u8_value(required(fields, &["nibble", "discriminator"])?)?;
+    let extension = text_optional(fields, &["extension_hex"])
+        .map(decode_hex)
+        .transpose()?
+        .unwrap_or_default();
+    let declared = usize::try_from(u64_value(required(
+        fields,
+        &["declared_length", "declared_len"],
+    )?)?)?;
+    Ok(CoapTokenLength::explicit(nibble, extension, declared))
+}
+
+fn coap_reliable_length(value: &Value) -> ExampleResult<CoapReliableLength> {
+    let fields = value
+        .as_object()
+        .ok_or_else(|| format!("CoAP reliable_length must be an object, got {value:?}"))?;
+    let nibble = raw_u8_value(required(fields, &["nibble", "discriminator"])?)?;
+    let extension = text_optional(fields, &["extension_hex"])
+        .map(decode_hex)
+        .transpose()?
+        .unwrap_or_default();
+    let declared = usize::try_from(u64_value(required(
+        fields,
+        &["declared_length", "declared_body_len"],
+    )?)?)?;
+    Ok(CoapReliableLength::explicit(nibble, extension, declared))
+}
+
+fn raw_u8_value(value: &Value) -> ExampleResult<u8> {
+    if let Some(fields) = value.as_object() {
+        return u8_value(required(fields, &["raw", "value"])?);
+    }
+    u8_value(value)
 }
 
 /// The IP protocol / next-header value the carrying IP header must advertise for

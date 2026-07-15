@@ -503,6 +503,8 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "snmp"
     } else if layer.as_any().is::<Ntp>() {
         "ntp"
+    } else if layer.as_any().is::<Coap>() || layer.as_any().is::<CoapReliable>() {
+        "coap"
     } else if layer.as_any().is::<Eapol>() {
         "eapol"
     } else if layer.as_any().is::<EapolKey>() {
@@ -664,6 +666,12 @@ fn normalized_layer_fields(
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Ntp>() {
         return ntp_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<Coap>() {
+        return coap_datagram_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<CoapReliable>() {
+        return coap_reliable_fields(layer);
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Eapol>() {
         return eapol_fields(layer);
@@ -888,6 +896,103 @@ fn snmp_fields(layer: &Snmp) -> BTreeMap<String, Value> {
         );
     }
     fields
+}
+
+fn coap_datagram_fields(layer: &Coap) -> BTreeMap<String, Value> {
+    let token_length = layer.token_length_value().ok();
+    map([
+        ("transport", json!("datagram")),
+        ("version", json!(layer.version_value().value())),
+        (
+            "message_type",
+            json!(layer.message_type_value().label().replace('-', "_")),
+        ),
+        (
+            "token_length",
+            coap_token_length_json(token_length.as_ref()),
+        ),
+        ("code", json!(layer.code_value().wire_value())),
+        ("message_id", json!(layer.message_id_value())),
+        ("token", bytes_hex_ascii(layer.token_value().as_bytes())),
+        ("options", coap_options_json(layer.options_value())),
+        (
+            "payload_marker",
+            json!(if layer.payload_marker_value().is_present() {
+                "present"
+            } else {
+                "absent"
+            }),
+        ),
+        ("payload", bytes_hex_ascii(layer.payload_value())),
+    ])
+}
+
+fn coap_reliable_fields(layer: &CoapReliable) -> BTreeMap<String, Value> {
+    let length = layer.length_value().ok();
+    let token_length = layer.token_length_value().ok();
+    map([
+        ("transport", json!("reliable")),
+        (
+            "reliable_length",
+            length.as_ref().map_or(Value::Null, |length| {
+                json!({
+                    "nibble": length.nibble(),
+                    "extension_hex": hex_bytes(length.extension_bytes()),
+                    "declared_length": length.declared_body_len(),
+                })
+            }),
+        ),
+        (
+            "token_length",
+            coap_token_length_json(token_length.as_ref()),
+        ),
+        ("code", json!(layer.code_value().wire_value())),
+        ("token", bytes_hex_ascii(layer.token_value().as_bytes())),
+        ("options", coap_options_json(layer.options_value())),
+        (
+            "payload_marker",
+            json!(if layer.payload_marker_value().is_present() {
+                "present"
+            } else {
+                "absent"
+            }),
+        ),
+        ("payload", bytes_hex_ascii(layer.payload_value())),
+    ])
+}
+
+fn coap_token_length_json(value: Option<&CoapTokenLength>) -> Value {
+    value.map_or(Value::Null, |length| {
+        json!({
+            "nibble": length.nibble(),
+            "extension_hex": hex_bytes(length.extension_bytes()),
+            "declared_length": length.declared_len(),
+        })
+    })
+}
+
+fn coap_options_json(options: &[CoapOption]) -> Value {
+    let mut previous = 0u16;
+    Value::Array(
+        options
+            .iter()
+            .enumerate()
+            .map(|(index, option)| {
+                let number = option.number().value();
+                let derived_delta = number.saturating_sub(previous);
+                previous = number;
+                let encoding = option.encoding();
+                json!({
+                    "number": number,
+                    "delta": encoding.and_then(CoapOptionEncoding::wire_delta).unwrap_or(u32::from(derived_delta)),
+                    "length": encoding.and_then(CoapOptionEncoding::wire_length).unwrap_or(option.value().len()),
+                    "value": bytes_hex_ascii(option.value()),
+                    "order": index,
+                    "raw_header": encoding.and_then(CoapOptionEncoding::raw_bytes).map(hex_bytes),
+                })
+            })
+            .collect(),
+    )
 }
 
 fn ntp_fields(layer: &Ntp) -> BTreeMap<String, Value> {

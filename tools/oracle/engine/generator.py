@@ -217,6 +217,7 @@ _SCAPY_MATERIALIZED_LAYERS = {
 }
 _TLS_PROFILES = frozenset({"tls", "tls-smoke", "tls-ci"})
 _NTP_PROFILES = frozenset({"ntp-smoke", "ntp-ci", "ntp-live-dry-run"})
+_COAP_PROFILES = frozenset({"coap-smoke", "coap-ci", "coap-live-dry-run"})
 
 
 def load_stack_grammar(path: str | Path | None = None) -> JSONObject:
@@ -1204,6 +1205,8 @@ class PacketGenerator:
                 continue
             if family == "ntp" and not feature_name.startswith("ntp_"):
                 continue
+            if family == "coap" and not feature_name.startswith("coap_"):
+                continue
             categories = _string_list(feature_spec.get("categories", []), "feature.categories")
             for feature_case in self._compatible_feature_cases(
                 stack=stack_layers,
@@ -1359,6 +1362,8 @@ class PacketGenerator:
                 continue
             if self.profile in _NTP_PROFILES and not name.startswith("ntp_"):
                 continue
+            if self.profile in _COAP_PROFILES and not name.startswith("coap_"):
+                continue
             feature = _object(raw_feature, f"features.{name}")
             layers = _string_list(feature.get("layers"), f"features.{name}.layers")
             directions = _string_list(feature.get("directions"), f"features.{name}.directions")
@@ -1398,6 +1403,12 @@ class PacketGenerator:
             return [
                 case
                 for case in _udp_option_cases_for_stack(stack, cases)
+                if self._case_supported_in_direction(case, direction)
+            ]
+        if feature.startswith("coap_"):
+            return [
+                case
+                for case in _coap_cases_for_stack(stack, cases)
                 if self._case_supported_in_direction(case, direction)
             ]
         return [
@@ -2603,6 +2614,8 @@ def _stack_families(layers: Sequence[str], root_families: Sequence[str]) -> list
         families.append("mdns")
     if "tls" in layer_set:
         families.append("tls")
+    if "coap" in layer_set:
+        families.append("coap")
     if "link" in root_families and layer_set.intersection(
         {"ethernet", "vlan", "payload", "linux_cooked", "null_loopback"}
     ):
@@ -2657,10 +2670,16 @@ def _layers_cover_feature(stack: Sequence[str], feature_layers: Sequence[str]) -
         "ipv6_routing",
     }
     if {"ipv4", "ipv6"}.issubset(feature_set):
-        return bool(stack_set.intersection(feature_set))
+        if not stack_set.intersection({"ipv4", "ipv6"}):
+            return False
+        feature_set.difference_update({"ipv4", "ipv6"})
+    if {"udp", "tcp"}.issubset(feature_set):
+        if not stack_set.intersection({"udp", "tcp"}):
+            return False
+        feature_set.difference_update({"udp", "tcp"})
     if "ipv6" in feature_set and feature_set.intersection(ipv6_extension_layers):
         return "ipv6" in stack_set and bool(stack_set.intersection(ipv6_extension_layers))
-    return all(layer in stack_set for layer in feature_layers)
+    return feature_set.issubset(stack_set)
 
 
 def _feature_stack_compatible(feature: str | None, stack: Sequence[str]) -> bool:
@@ -2717,6 +2736,27 @@ def _udp_option_cases_for_stack(stack: Sequence[str], cases: Sequence[str]) -> l
         if "ipv4-zero-checksum" in normalized and "ipv4" not in stack_set:
             continue
         if "ipv6-zero-checksum" in normalized and "ipv6" not in stack_set:
+            continue
+        output.append(case)
+    return output
+
+
+def _coap_cases_for_stack(stack: Sequence[str], cases: Sequence[str]) -> list[str]:
+    """Keep CoAP datagram, reliable, and persisted-frame cases on valid stacks."""
+
+    stack_set = set(stack)
+    reliable = "tcp" in stack_set
+    output: list[str] = []
+    for case in cases:
+        normalized = case.replace("_", "-")
+        case_reliable = "reliable" in normalized or normalized == "coap-bert"
+        if case_reliable != reliable:
+            continue
+        if "pcap-raw-ipv4" in normalized and "ipv4" not in stack_set:
+            continue
+        if "pcap-raw-ipv6" in normalized and "ipv6" not in stack_set:
+            continue
+        if "pcap-ethernet" in normalized and "ethernet" not in stack_set:
             continue
         output.append(case)
     return output

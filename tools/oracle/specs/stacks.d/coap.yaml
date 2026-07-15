@@ -11,11 +11,11 @@ stacks:
   - name: ipv4_udp_coap
     root: "l3:ipv4"
     layers: [ipv4, udp, coap]
-    coverage_cases: [coap-datagram-get, coap-options-payload, coap-observe-notification, coap-block2, coap-qblock2, coap-extended-token-extended16, coap-oscore-request-vector, coap-pcap-raw-ipv4]
+    coverage_cases: [coap-datagram-get, coap-options-payload, coap-observe-notification, coap-block2, coap-qblock2, coap-extended-token-extended16, coap-oscore-request-vector, coap-secure-port-raw, coap-pcap-raw-ipv4]
   - name: ipv6_udp_coap
     root: "l3:ipv6"
     layers: [ipv6, udp, coap]
-    coverage_cases: [coap-datagram-content, coap-options-payload, coap-observe-notification, coap-block2, coap-qblock2, coap-link-format-canonical, coap-pcap-raw-ipv6]
+    coverage_cases: [coap-datagram-content, coap-options-payload, coap-observe-notification, coap-block2, coap-qblock2, coap-link-format-canonical, coap-secure-port-raw, coap-pcap-raw-ipv6]
   - name: ipv4_tcp_coap_reliable
     root: "l3:ipv4"
     layers: [ipv4, tcp, coap]
@@ -50,4 +50,3 @@ backend_support:
   libcrafter:
     status: supported
     native_layers: [Ipv4, Ipv6, Udp, Tcp, Coap, CoapReliable]
-
