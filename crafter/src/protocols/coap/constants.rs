@@ -100,6 +100,63 @@ pub(crate) const COAP_CODE_PONG: u8 = 0xe3;
 pub(crate) const COAP_CODE_RELEASE: u8 = 0xe4;
 pub(crate) const COAP_CODE_ABORT: u8 = 0xe5;
 
+// Datagram CoAP Option Numbers admitted by the reviewed packet API. Registry
+// rows whose semantics are draft-backed, external, or explicitly outside the
+// project scope remain available through `coap_option_meta` without receiving
+// a stable builder constant here.
+/// If-Match option number (RFC 7252).
+pub const COAP_OPTION_IF_MATCH: u16 = 1;
+/// Uri-Host option number (RFC 7252).
+pub const COAP_OPTION_URI_HOST: u16 = 3;
+/// ETag option number (RFC 7252).
+pub const COAP_OPTION_ETAG: u16 = 4;
+/// If-None-Match option number (RFC 7252).
+pub const COAP_OPTION_IF_NONE_MATCH: u16 = 5;
+/// Observe option number (RFC 7641).
+pub const COAP_OPTION_OBSERVE: u16 = 6;
+/// Uri-Port option number (RFC 7252).
+pub const COAP_OPTION_URI_PORT: u16 = 7;
+/// Location-Path option number (RFC 7252).
+pub const COAP_OPTION_LOCATION_PATH: u16 = 8;
+/// OSCORE option number (RFC 8613).
+pub const COAP_OPTION_OSCORE: u16 = 9;
+/// Uri-Path option number (RFC 7252).
+pub const COAP_OPTION_URI_PATH: u16 = 11;
+/// Content-Format option number (RFC 7252).
+pub const COAP_OPTION_CONTENT_FORMAT: u16 = 12;
+/// Max-Age option number (RFC 7252).
+pub const COAP_OPTION_MAX_AGE: u16 = 14;
+/// Uri-Query option number (RFC 7252).
+pub const COAP_OPTION_URI_QUERY: u16 = 15;
+/// Hop-Limit option number (RFC 8768).
+pub const COAP_OPTION_HOP_LIMIT: u16 = 16;
+/// Accept option number (RFC 7252).
+pub const COAP_OPTION_ACCEPT: u16 = 17;
+/// Q-Block1 option number (RFC 9177).
+pub const COAP_OPTION_Q_BLOCK1: u16 = 19;
+/// Location-Query option number (RFC 7252).
+pub const COAP_OPTION_LOCATION_QUERY: u16 = 20;
+/// Block2 option number (RFC 7959).
+pub const COAP_OPTION_BLOCK2: u16 = 23;
+/// Block1 option number (RFC 7959).
+pub const COAP_OPTION_BLOCK1: u16 = 27;
+/// Size2 option number (RFC 7959).
+pub const COAP_OPTION_SIZE2: u16 = 28;
+/// Q-Block2 option number (RFC 9177).
+pub const COAP_OPTION_Q_BLOCK2: u16 = 31;
+/// Proxy-Uri option number (RFC 7252).
+pub const COAP_OPTION_PROXY_URI: u16 = 35;
+/// Proxy-Scheme option number (RFC 7252).
+pub const COAP_OPTION_PROXY_SCHEME: u16 = 39;
+/// Size1 option number (RFC 7252).
+pub const COAP_OPTION_SIZE1: u16 = 60;
+/// Echo option number (RFC 9175).
+pub const COAP_OPTION_ECHO: u16 = 252;
+/// No-Response option number (RFC 7967).
+pub const COAP_OPTION_NO_RESPONSE: u16 = 258;
+/// Request-Tag option number (RFC 9175).
+pub const COAP_OPTION_REQUEST_TAG: u16 = 292;
+
 /// Assigned cleartext CoAP service port (IANA coap rows; RFC 7252 Section 12).
 pub const COAP_PORT: u16 = 5683;
 /// Assigned secure CoAP service port (IANA coaps rows; RFC 7252 Section 12).
