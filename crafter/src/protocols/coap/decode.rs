@@ -17,6 +17,40 @@ use super::message::{
 };
 use super::option::decode_option_sequence;
 
+/// Stable error names for one RFC 8974 token boundary in its enclosing wire
+/// grammar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct TokenDecodeContext {
+    extended8: &'static str,
+    extended16: &'static str,
+    token: &'static str,
+    token_length: &'static str,
+}
+
+impl TokenDecodeContext {
+    pub(super) const DATAGRAM: Self = Self {
+        extended8: "coap.token-length.extended8",
+        extended16: "coap.token-length.extended16",
+        token: "coap.token",
+        token_length: "coap.token-length",
+    };
+
+    pub(super) const RELIABLE: Self = Self {
+        extended8: "coap.reliable.token-length.extended8",
+        extended16: "coap.reliable.token-length.extended16",
+        token: "coap.reliable.token",
+        token_length: "coap.reliable.token-length",
+    };
+}
+
+/// One decoded token-length extension and complete token boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct DecodedTokenBoundary<'a> {
+    pub(super) token_length: CoapTokenLength,
+    pub(super) token: &'a [u8],
+    pub(super) consumed: usize,
+}
+
 /// A CoAP datagram decoded through its ordered option boundary.
 ///
 /// `consumed` includes the fixed header, token-length extension, token, and
@@ -76,22 +110,17 @@ pub(super) fn decode_token_and_options(bytes: &[u8]) -> Result<DecodedTokenOptio
     }
 
     let after_header = bytes.get(COAP_HEADER_LEN..).unwrap_or_default();
-    let (token_length, extension_len) = decode_token_length(token_length_nibble, after_header)?;
-    let after_extension = after_header.get(extension_len..).unwrap_or_default();
-    let token_len = token_length.declared_len();
-    let token = after_extension.get(..token_len).ok_or_else(|| {
-        CrafterError::buffer_too_short("coap.token", token_len, after_extension.len())
-    })?;
-
-    let token_and_extension_len = extension_len.checked_add(token_len).ok_or_else(|| {
-        CrafterError::invalid_field_value("coap.token-length", "decoded token boundary overflow")
-    })?;
+    let decoded_token = decode_token_boundary(
+        token_length_nibble,
+        after_header,
+        TokenDecodeContext::DATAGRAM,
+    )?;
     let option_bytes = after_header
-        .get(token_and_extension_len..)
+        .get(decoded_token.consumed..)
         .unwrap_or_default();
     let decoded_options = decode_option_sequence(option_bytes)?;
     let consumed = COAP_HEADER_LEN
-        .checked_add(token_and_extension_len)
+        .checked_add(decoded_token.consumed)
         .and_then(|value| value.checked_add(decoded_options.consumed))
         .ok_or_else(|| {
             CrafterError::invalid_field_value(
@@ -102,8 +131,8 @@ pub(super) fn decode_token_and_options(bytes: &[u8]) -> Result<DecodedTokenOptio
 
     Ok(DecodedTokenOptions {
         message: message
-            .token_length(token_length)
-            .token(CoapToken::from_bytes(token))
+            .token_length(decoded_token.token_length)
+            .token(CoapToken::from_bytes(decoded_token.token))
             .options(decoded_options.options)
             .option_order(CoapOptionOrder::Wire),
         consumed,
@@ -198,54 +227,77 @@ pub(super) fn decode_datagram(bytes: &[u8]) -> Result<Coap> {
         .payload(payload.to_vec()))
 }
 
-fn decode_token_length(nibble: u8, bytes: &[u8]) -> Result<(CoapTokenLength, usize)> {
-    match nibble {
-        0..=12 => Ok((
+pub(super) fn decode_token_boundary<'a>(
+    nibble: u8,
+    bytes: &'a [u8],
+    context: TokenDecodeContext,
+) -> Result<DecodedTokenBoundary<'a>> {
+    let (token_length, extension_len) = match nibble {
+        0..=12 => (
             CoapTokenLength::explicit(nibble, Vec::new(), usize::from(nibble)),
             0,
-        )),
+        ),
         13 => {
-            let extension = *bytes.first().ok_or_else(|| {
-                CrafterError::buffer_too_short("coap.token-length.extended8", 1, bytes.len())
-            })?;
+            let extension = *bytes
+                .first()
+                .ok_or_else(|| CrafterError::buffer_too_short(context.extended8, 1, bytes.len()))?;
             let declared_len = 13usize.checked_add(usize::from(extension)).ok_or_else(|| {
                 CrafterError::invalid_field_value(
-                    "coap.token-length",
+                    context.token_length,
                     "decoded token length overflow",
                 )
             })?;
-            Ok((
+            (
                 CoapTokenLength::explicit(nibble, vec![extension], declared_len),
                 1,
-            ))
+            )
         }
         14 => {
             let extension = bytes.get(..2).ok_or_else(|| {
-                CrafterError::buffer_too_short("coap.token-length.extended16", 2, bytes.len())
+                CrafterError::buffer_too_short(context.extended16, 2, bytes.len())
             })?;
             let extension_value = u16::from_be_bytes([extension[0], extension[1]]);
             let declared_len = 269usize
                 .checked_add(usize::from(extension_value))
                 .ok_or_else(|| {
                     CrafterError::invalid_field_value(
-                        "coap.token-length",
+                        context.token_length,
                         "decoded token length overflow",
                     )
                 })?;
-            Ok((
+            (
                 CoapTokenLength::explicit(nibble, extension.to_vec(), declared_len),
                 2,
+            )
+        }
+        15 => {
+            return Err(CrafterError::invalid_field_value(
+                context.token_length,
+                "reserved TKL encoding 15",
             ))
         }
-        15 => Err(CrafterError::invalid_field_value(
-            "coap.token-length",
-            "reserved TKL encoding 15",
-        )),
-        _ => Err(CrafterError::invalid_field_value(
-            "coap.token-length",
-            "token-length discriminator exceeds four bits",
-        )),
-    }
+        _ => {
+            return Err(CrafterError::invalid_field_value(
+                context.token_length,
+                "token-length discriminator exceeds four bits",
+            ))
+        }
+    };
+
+    let after_extension = bytes.get(extension_len..).unwrap_or_default();
+    let token_len = token_length.declared_len();
+    let token = after_extension.get(..token_len).ok_or_else(|| {
+        CrafterError::buffer_too_short(context.token, token_len, after_extension.len())
+    })?;
+    let consumed = extension_len.checked_add(token_len).ok_or_else(|| {
+        CrafterError::invalid_field_value(context.token_length, "decoded token boundary overflow")
+    })?;
+
+    Ok(DecodedTokenBoundary {
+        token_length,
+        token,
+        consumed,
+    })
 }
 
 #[cfg(test)]
