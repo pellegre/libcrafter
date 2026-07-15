@@ -18,9 +18,10 @@ use crate::protocols::transport::Udp;
 
 use super::constants::*;
 use super::option::{
-    encode_option_sequence, CoapAccept, CoapContentFormat, CoapEtag, CoapIfMatch, CoapIfNoneMatch,
-    CoapLocationPath, CoapLocationQuery, CoapOption, CoapOptions, CoapSize1, CoapSize2,
-    CoapUriHost, CoapUriPath, CoapUriPort, CoapUriQuery,
+    encode_option_sequence, validate_coap_proxy_options, CoapAccept, CoapContentFormat, CoapEtag,
+    CoapIfMatch, CoapIfNoneMatch, CoapLocationPath, CoapLocationQuery, CoapOption, CoapOptions,
+    CoapProxyScheme, CoapProxyUri, CoapSize1, CoapSize2, CoapUriHost, CoapUriPath, CoapUriPort,
+    CoapUriQuery,
 };
 use super::registry::{coap_code_meta, coap_signaling_code_meta, CoapRegistryMeta};
 
@@ -887,6 +888,16 @@ impl Coap {
         self.option(CoapOption::from(value.into()))
     }
 
+    /// Append one Proxy-Uri value without resolving or forwarding it.
+    pub fn proxy_uri(self, value: impl Into<CoapProxyUri>) -> Self {
+        self.option(CoapOption::from(value.into()))
+    }
+
+    /// Append one Proxy-Scheme value without composing or forwarding a URI.
+    pub fn proxy_scheme(self, value: impl Into<CoapProxyScheme>) -> Self {
+        self.option(CoapOption::from(value.into()))
+    }
+
     /// Replace the ordered option sequence.
     pub fn options(mut self, values: impl IntoIterator<Item = CoapOption>) -> Self {
         self.options = values.into_iter().collect();
@@ -1026,6 +1037,27 @@ impl Coap {
             .iter()
             .filter(|option| option.number().value() == COAP_OPTION_LOCATION_QUERY)
             .map(CoapLocationQuery::try_from)
+    }
+
+    /// Iterate over typed Proxy-Uri occurrences in insertion or wire order.
+    pub fn proxy_uris(&self) -> impl Iterator<Item = Result<CoapProxyUri>> + '_ {
+        self.options
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_PROXY_URI)
+            .map(CoapProxyUri::try_from)
+    }
+
+    /// Iterate over typed Proxy-Scheme occurrences in insertion or wire order.
+    pub fn proxy_schemes(&self) -> impl Iterator<Item = Result<CoapProxyScheme>> + '_ {
+        self.options
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_PROXY_SCHEME)
+            .map(CoapProxyScheme::try_from)
+    }
+
+    /// Check Proxy-Uri mutual exclusion without changing or compiling options.
+    pub fn validate_proxy_options(&self) -> Result<()> {
+        validate_coap_proxy_options(&self.options)
     }
 
     /// Return the selected option compilation order.

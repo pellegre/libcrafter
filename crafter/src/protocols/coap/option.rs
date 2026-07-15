@@ -13,8 +13,9 @@ use crate::field::{Field, FieldState};
 use super::constants::{
     COAP_OPTION_ACCEPT, COAP_OPTION_CONTENT_FORMAT, COAP_OPTION_ETAG, COAP_OPTION_IF_MATCH,
     COAP_OPTION_IF_NONE_MATCH, COAP_OPTION_LOCATION_PATH, COAP_OPTION_LOCATION_QUERY,
-    COAP_OPTION_MAX_AGE, COAP_OPTION_SIZE1, COAP_OPTION_SIZE2, COAP_OPTION_URI_HOST,
-    COAP_OPTION_URI_PATH, COAP_OPTION_URI_PORT, COAP_OPTION_URI_QUERY, COAP_PAYLOAD_MARKER,
+    COAP_OPTION_MAX_AGE, COAP_OPTION_PROXY_SCHEME, COAP_OPTION_PROXY_URI, COAP_OPTION_SIZE1,
+    COAP_OPTION_SIZE2, COAP_OPTION_URI_HOST, COAP_OPTION_URI_PATH, COAP_OPTION_URI_PORT,
+    COAP_OPTION_URI_QUERY, COAP_PAYLOAD_MARKER,
 };
 use super::registry::{
     coap_content_format_meta, coap_option_is_critical, coap_option_is_no_cache_key,
@@ -1016,6 +1017,7 @@ macro_rules! define_uri_string_option {
         field = $field:literal,
         wrong_number = $wrong_number:literal,
         min_length = $min_length:expr,
+        max_length = $max_length:expr,
         length_error = $length_error:literal
     ) => {
         $(#[$meta])*
@@ -1089,7 +1091,7 @@ macro_rules! define_uri_string_option {
                     return Err(CrafterError::invalid_field_value($field, $wrong_number));
                 }
 
-                if !($min_length..=255).contains(&option.value().len()) {
+                if !($min_length..=$max_length).contains(&option.value().len()) {
                     return Err(CrafterError::invalid_field_value($field, $length_error));
                 }
 
@@ -1109,6 +1111,7 @@ define_uri_string_option! {
     field = "coap.uri-host",
     wrong_number = "option number is not Uri-Host",
     min_length = 1,
+    max_length = 255,
     length_error = "Uri-Host length must be between 1 and 255 bytes"
 }
 
@@ -1123,6 +1126,7 @@ define_uri_string_option! {
     field = "coap.uri-path",
     wrong_number = "option number is not Uri-Path",
     min_length = 0,
+    max_length = 255,
     length_error = "Uri-Path length must not exceed 255 bytes"
 }
 
@@ -1136,6 +1140,7 @@ define_uri_string_option! {
     field = "coap.uri-query",
     wrong_number = "option number is not Uri-Query",
     min_length = 0,
+    max_length = 255,
     length_error = "Uri-Query length must not exceed 255 bytes"
 }
 
@@ -1149,6 +1154,7 @@ define_uri_string_option! {
     field = "coap.location-path",
     wrong_number = "option number is not Location-Path",
     min_length = 0,
+    max_length = 255,
     length_error = "Location-Path length must not exceed 255 bytes"
 }
 
@@ -1162,7 +1168,114 @@ define_uri_string_option! {
     field = "coap.location-query",
     wrong_number = "option number is not Location-Query",
     min_length = 0,
+    max_length = 255,
     length_error = "Location-Query length must not exceed 255 bytes"
+}
+
+macro_rules! impl_checked_text_option {
+    (
+        $name:ident,
+        field = $field:literal,
+        min_length = $min_length:expr,
+        max_length = $max_length:expr,
+        length_error = $length_error:literal
+    ) => {
+        impl $name {
+            /// Build one occurrence after checking its source-backed length and UTF-8 text.
+            ///
+            /// This check does not resolve, normalize, or route the URI value.
+            pub fn try_new(value: impl AsRef<[u8]>) -> Result<Self> {
+                let value = Self::new(value);
+                value.validate()?;
+                Ok(value)
+            }
+
+            /// Check this occurrence's source-backed length and UTF-8 text.
+            pub fn validate(&self) -> Result<()> {
+                if !($min_length..=$max_length).contains(&self.value.len()) {
+                    return Err(CrafterError::invalid_field_value($field, $length_error));
+                }
+                self.as_str().map(|_| ())
+            }
+        }
+    };
+}
+
+define_uri_string_option! {
+    /// One RFC 7252 Proxy-Uri request option.
+    ///
+    /// The wrapper preserves the complete option value without parsing,
+    /// resolving, forwarding, or constructing cache keys for the URI.
+    CoapProxyUri,
+    number = COAP_OPTION_PROXY_URI,
+    field = "coap.proxy-uri",
+    wrong_number = "option number is not Proxy-Uri",
+    min_length = 1,
+    max_length = 1034,
+    length_error = "Proxy-Uri length must be between 1 and 1034 bytes"
+}
+
+impl_checked_text_option! {
+    CoapProxyUri,
+    field = "coap.proxy-uri",
+    min_length = 1,
+    max_length = 1034,
+    length_error = "Proxy-Uri length must be between 1 and 1034 bytes"
+}
+
+define_uri_string_option! {
+    /// One RFC 7252 Proxy-Scheme request option.
+    ///
+    /// This packet metadata replaces only the URI scheme. URI composition,
+    /// proxy selection, and forwarding remain caller concerns.
+    CoapProxyScheme,
+    number = COAP_OPTION_PROXY_SCHEME,
+    field = "coap.proxy-scheme",
+    wrong_number = "option number is not Proxy-Scheme",
+    min_length = 1,
+    max_length = 255,
+    length_error = "Proxy-Scheme length must be between 1 and 255 bytes"
+}
+
+impl_checked_text_option! {
+    CoapProxyScheme,
+    field = "coap.proxy-scheme",
+    min_length = 1,
+    max_length = 255,
+    length_error = "Proxy-Scheme length must be between 1 and 255 bytes"
+}
+
+/// Check RFC 7252's Proxy-Uri mutual-exclusion rule without changing options.
+///
+/// Proxy-Uri is incompatible with Uri-Host, Uri-Port, Uri-Path, Uri-Query,
+/// and Proxy-Scheme. This opt-in check deliberately does not run during
+/// compilation, so explicit malformed combinations remain serializable.
+pub fn validate_coap_proxy_options(options: &[CoapOption]) -> Result<()> {
+    let has_proxy_uri = options
+        .iter()
+        .any(|option| option.number().value() == COAP_OPTION_PROXY_URI);
+    if !has_proxy_uri {
+        return Ok(());
+    }
+
+    let has_incompatible_option = options.iter().any(|option| {
+        matches!(
+            option.number().value(),
+            COAP_OPTION_URI_HOST
+                | COAP_OPTION_URI_PORT
+                | COAP_OPTION_URI_PATH
+                | COAP_OPTION_URI_QUERY
+                | COAP_OPTION_PROXY_SCHEME
+        )
+    });
+    if has_incompatible_option {
+        return Err(CrafterError::invalid_field_value(
+            "coap.proxy-options",
+            "Proxy-Uri must not be combined with Uri-* or Proxy-Scheme options",
+        ));
+    }
+
+    Ok(())
 }
 
 /// One RFC 7252 Uri-Port option value with its exact uint representation.
@@ -2392,6 +2505,130 @@ mod tests {
             encoded,
             [0x19, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x30, 0x10, 0xff,]
         );
+    }
+
+    #[test]
+    fn proxy_wrappers_check_text_boundaries_and_preserve_raw_values() {
+        let uri = CoapProxyUri::try_new("coap://example.com/sensors").unwrap();
+        assert_eq!(uri.as_str(), Ok("coap://example.com/sensors"));
+        assert_eq!(uri.validate(), Ok(()));
+        let uri_option = CoapOption::from(uri.clone());
+        assert_eq!(uri_option.number().value(), COAP_OPTION_PROXY_URI);
+        assert_eq!(CoapProxyUri::try_from(&uri_option), Ok(uri));
+
+        let scheme = CoapProxyScheme::try_new("coaps").unwrap();
+        assert_eq!(scheme.as_str(), Ok("coaps"));
+        assert_eq!(scheme.validate(), Ok(()));
+        let scheme_option = CoapOption::from(scheme.clone());
+        assert_eq!(scheme_option.number().value(), COAP_OPTION_PROXY_SCHEME);
+        assert_eq!(CoapProxyScheme::try_from(&scheme_option), Ok(scheme));
+
+        assert!(CoapProxyUri::try_new(vec![b'u'; 1034]).is_ok());
+        assert_eq!(
+            CoapProxyUri::try_new(vec![b'u'; 1035]),
+            Err(CrafterError::invalid_field_value(
+                "coap.proxy-uri",
+                "Proxy-Uri length must be between 1 and 1034 bytes",
+            ))
+        );
+        assert_eq!(
+            CoapProxyUri::try_new(b""),
+            Err(CrafterError::invalid_field_value(
+                "coap.proxy-uri",
+                "Proxy-Uri length must be between 1 and 1034 bytes",
+            ))
+        );
+        assert!(CoapProxyScheme::try_new(vec![b's'; 255]).is_ok());
+        assert_eq!(
+            CoapProxyScheme::try_new(vec![b's'; 256]),
+            Err(CrafterError::invalid_field_value(
+                "coap.proxy-scheme",
+                "Proxy-Scheme length must be between 1 and 255 bytes",
+            ))
+        );
+
+        let invalid_text = CoapOption::new(COAP_OPTION_PROXY_URI, [0xff, 0x00]);
+        let typed = CoapProxyUri::try_from(&invalid_text).unwrap();
+        assert_eq!(typed.as_bytes(), [0xff, 0x00]);
+        assert_eq!(
+            typed.validate(),
+            Err(CrafterError::invalid_field_value(
+                "coap.proxy-uri",
+                "option value is not valid UTF-8",
+            ))
+        );
+        assert_eq!(invalid_text.value(), [0xff, 0x00]);
+    }
+
+    #[test]
+    fn proxy_uri_mutual_exclusion_is_opt_in_and_non_mutating() {
+        let expected_error = CrafterError::invalid_field_value(
+            "coap.proxy-options",
+            "Proxy-Uri must not be combined with Uri-* or Proxy-Scheme options",
+        );
+        for incompatible in [
+            CoapOption::new(COAP_OPTION_URI_HOST, b"example.com".to_vec()),
+            CoapOption::new(COAP_OPTION_URI_PORT, vec![0x16, 0x33]),
+            CoapOption::new(COAP_OPTION_URI_PATH, b"sensors".to_vec()),
+            CoapOption::new(COAP_OPTION_URI_QUERY, b"a=1".to_vec()),
+            CoapOption::new(COAP_OPTION_PROXY_SCHEME, b"coap".to_vec()),
+        ] {
+            let options = [
+                CoapOption::from(CoapProxyUri::new("coap://example.com/a")),
+                incompatible,
+            ];
+            assert_eq!(
+                validate_coap_proxy_options(&options),
+                Err(expected_error.clone())
+            );
+            assert_eq!(options[0].value(), b"coap://example.com/a");
+        }
+
+        let valid_proxy_uri = [CoapOption::from(CoapProxyUri::new("coap://example.com/a"))];
+        assert_eq!(validate_coap_proxy_options(&valid_proxy_uri), Ok(()));
+
+        let valid_proxy_scheme = [
+            CoapOption::from(CoapProxyScheme::new("coap")),
+            CoapOption::from(CoapUriHost::new("example.com")),
+            CoapOption::from(CoapUriPath::new("a")),
+        ];
+        assert_eq!(validate_coap_proxy_options(&valid_proxy_scheme), Ok(()));
+    }
+
+    #[test]
+    fn proxy_helpers_preserve_invalid_combinations_and_exact_serialization() {
+        let message = crate::protocols::coap::Coap::get()
+            .proxy_uri("coap://example.com/a")
+            .uri_path("x");
+        assert_eq!(
+            message.validate_proxy_options(),
+            Err(CrafterError::invalid_field_value(
+                "coap.proxy-options",
+                "Proxy-Uri must not be combined with Uri-* or Proxy-Scheme options",
+            ))
+        );
+        assert_eq!(
+            message.proxy_uris().next().unwrap().unwrap().as_str(),
+            Ok("coap://example.com/a")
+        );
+
+        let compiled = crate::packet::Packet::from_layer(message)
+            .compile()
+            .unwrap();
+        let mut expected = vec![0x40, 0x01, 0x00, 0x00, 0xb1, b'x', 0xdd, 0x0b, 0x07];
+        expected.extend_from_slice(b"coap://example.com/a");
+        assert_eq!(compiled.as_bytes(), expected);
+
+        let options = CoapOptions::from_options([
+            CoapOption::from(CoapProxyUri::new("coap://example.com/a")),
+            CoapOption::from(CoapProxyScheme::new("coap")),
+        ]);
+        let mut encoded = Vec::new();
+        encode_option_sequence(&options, &mut encoded).unwrap();
+        let mut expected = vec![0xdd, 0x16, 0x07];
+        expected.extend_from_slice(b"coap://example.com/a");
+        expected.extend_from_slice(&[0x44, b'c', b'o', b'a', b'p']);
+        assert_eq!(encoded, expected);
     }
 
     #[test]
