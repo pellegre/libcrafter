@@ -1,9 +1,10 @@
 //! OSCORE option metadata and immutable security-context inputs.
 //!
-//! The compressed option grammar and context derivation follow RFC 8613
-//! Sections 2, 3.1, 3.2.1, and 6.1.  Packet protection remains an explicit
-//! later transform; this module does not allocate sequence numbers, replay
-//! windows, contexts, or any other protocol state.
+//! The compressed option grammar, context derivation, nonce construction, and
+//! External AAD follow RFC 8613 Sections 2, 3.1, 3.2.1, 5.2, 5.4, and 6.1.
+//! Packet protection remains an explicit later transform; this module does not
+//! allocate sequence numbers, replay windows, contexts, or any other protocol
+//! state.
 
 use core::fmt;
 
@@ -26,6 +27,9 @@ const OSCORE_AES_CCM_16_64_128_KEY_LEN: usize = 16;
 const OSCORE_AES_CCM_16_64_128_NONCE_LEN: usize = 13;
 const OSCORE_AES_CCM_16_64_128_TAG_LEN: usize = 8;
 const OSCORE_AES_CCM_16_64_128_MAX_ID_LEN: usize = OSCORE_AES_CCM_16_64_128_NONCE_LEN - 6;
+const OSCORE_VERSION: u64 = 1;
+const HKDF_SHA_256_OUTPUT_LEN: usize = 32;
+const HKDF_MAX_BLOCKS: usize = u8::MAX as usize;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -619,9 +623,9 @@ impl OscoreContext {
         )?;
 
         let mut prk = hkdf_extract_sha256(&master_salt, &master_secret);
-        let sender_key = hkdf_expand_sha256(&prk, &sender_key_info, key_len);
-        let recipient_key = hkdf_expand_sha256(&prk, &recipient_key_info, key_len);
-        let common_iv = hkdf_expand_sha256(&prk, &common_iv_info, nonce_len);
+        let sender_key = hkdf_expand_sha256(&prk, &sender_key_info, key_len)?;
+        let recipient_key = hkdf_expand_sha256(&prk, &recipient_key_info, key_len)?;
+        let common_iv = hkdf_expand_sha256(&prk, &common_iv_info, nonce_len)?;
         prk.as_mut_slice().fill(0);
 
         Ok(Self {
@@ -725,6 +729,82 @@ impl OscoreContext {
         self.common_iv.len()
     }
 
+    /// Derive an AEAD nonce for a message produced by this context's sender.
+    ///
+    /// `partial_iv` is the minimally encoded network-order Sender Sequence
+    /// Number and therefore contains between one and five bytes.  The returned
+    /// nonce is packet metadata rather than long-lived key material and may be
+    /// passed directly to the selected AEAD implementation.
+    pub fn sender_nonce(&self, partial_iv: impl AsRef<[u8]>) -> Result<Vec<u8>, OscoreError> {
+        self.derive_nonce(&self.sender_id, partial_iv.as_ref())
+    }
+
+    /// Derive an AEAD nonce for a message produced by the peer represented by
+    /// this context's recipient.
+    pub fn recipient_nonce(&self, partial_iv: impl AsRef<[u8]>) -> Result<Vec<u8>, OscoreError> {
+        self.derive_nonce(&self.recipient_id, partial_iv.as_ref())
+    }
+
+    /// Encode RFC 8613's canonical five-element `aad_array`.
+    ///
+    /// `class_i_options` is the already encoded Class I option sequence whose
+    /// deltas begin at zero.  RFC 8613 defines no Class I options at
+    /// publication, so callers normally pass an empty slice.
+    pub fn aad_array(
+        &self,
+        request_kid: impl AsRef<[u8]>,
+        request_partial_iv: impl AsRef<[u8]>,
+        class_i_options: impl AsRef<[u8]>,
+    ) -> Result<Vec<u8>, OscoreError> {
+        let request_kid = request_kid.as_ref();
+        let request_partial_iv = request_partial_iv.as_ref();
+        validate_oscore_identifier(
+            request_kid,
+            self.aead_algorithm.max_identifier_len()?,
+            "coap.oscore.aad.request-kid",
+        )?;
+        validate_partial_iv(request_partial_iv, "coap.oscore.aad.request-piv")?;
+
+        let mut out = Vec::new();
+        out.push(0x85); // canonical CBOR array(5)
+        append_cbor_unsigned(0, OSCORE_VERSION, &mut out);
+        out.push(0x81); // canonical CBOR array(1)
+        append_cbor_integer(i64::from(self.aead_algorithm.id()), &mut out);
+        append_cbor_bytes(request_kid, &mut out)?;
+        append_cbor_bytes(request_partial_iv, &mut out)?;
+        append_cbor_bytes(class_i_options.as_ref(), &mut out)?;
+        Ok(out)
+    }
+
+    /// Encode the CBOR byte string that carries the RFC 8613 External AAD.
+    pub fn external_aad(
+        &self,
+        request_kid: impl AsRef<[u8]>,
+        request_partial_iv: impl AsRef<[u8]>,
+        class_i_options: impl AsRef<[u8]>,
+    ) -> Result<Vec<u8>, OscoreError> {
+        let aad_array = self.aad_array(request_kid, request_partial_iv, class_i_options)?;
+        let mut out = Vec::new();
+        append_cbor_bytes(&aad_array, &mut out)?;
+        Ok(out)
+    }
+
+    /// Encode the complete COSE Encrypt0 `Enc_structure` used as AEAD AAD.
+    pub fn cose_encrypt0_aad(
+        &self,
+        request_kid: impl AsRef<[u8]>,
+        request_partial_iv: impl AsRef<[u8]>,
+        class_i_options: impl AsRef<[u8]>,
+    ) -> Result<Vec<u8>, OscoreError> {
+        let external_aad = self.external_aad(request_kid, request_partial_iv, class_i_options)?;
+        let mut out = Vec::new();
+        out.push(0x83); // canonical CBOR array(3)
+        append_cbor_text(b"Encrypt0", &mut out)?;
+        append_cbor_bytes(&[], &mut out)?; // empty COSE protected header
+        out.extend_from_slice(&external_aad);
+        Ok(out)
+    }
+
     /// Stable redacted context summary.
     pub fn summary(&self) -> String {
         let id_context = match self.id_context.as_deref() {
@@ -753,6 +833,60 @@ impl OscoreContext {
 
     pub(super) fn common_iv(&self) -> &[u8] {
         &self.common_iv
+    }
+
+    fn derive_nonce(&self, sender_id: &[u8], partial_iv: &[u8]) -> Result<Vec<u8>, OscoreError> {
+        let nonce_len = self.aead_algorithm.nonce_len()?;
+        let padded_id_len = nonce_len.checked_sub(6).ok_or_else(|| {
+            OscoreError::invalid_field_value(
+                "coap.oscore.nonce.length",
+                "selected AEAD nonce is shorter than seven bytes",
+            )
+        })?;
+        validate_oscore_identifier(sender_id, padded_id_len, "coap.oscore.nonce.sender-id")?;
+        validate_partial_iv(partial_iv, "coap.oscore.nonce.partial-iv")?;
+
+        if self.common_iv.len() != nonce_len {
+            return Err(OscoreError::invalid_field_value(
+                "coap.oscore.nonce.common-iv",
+                "Common IV length differs from the selected AEAD nonce length",
+            ));
+        }
+
+        let id_end = nonce_len
+            .checked_sub(OSCORE_MAX_PARTIAL_IV_LEN)
+            .ok_or_else(|| {
+                OscoreError::invalid_field_value(
+                    "coap.oscore.nonce.length",
+                    "selected AEAD nonce cannot contain a five-byte Partial IV",
+                )
+            })?;
+        let id_start = id_end.checked_sub(sender_id.len()).ok_or_else(|| {
+            OscoreError::invalid_field_value(
+                "coap.oscore.nonce.sender-id",
+                "Sender ID exceeds the selected AEAD nonce limit",
+            )
+        })?;
+        let partial_iv_start = nonce_len.checked_sub(partial_iv.len()).ok_or_else(|| {
+            OscoreError::invalid_field_value(
+                "coap.oscore.nonce.partial-iv",
+                "Partial IV exceeds the selected AEAD nonce length",
+            )
+        })?;
+
+        let mut nonce = vec![0; nonce_len];
+        nonce[0] = u8::try_from(sender_id.len()).map_err(|_| {
+            OscoreError::invalid_field_value(
+                "coap.oscore.nonce.sender-id",
+                "Sender ID length exceeds one-byte nonce encoding",
+            )
+        })?;
+        nonce[id_start..id_end].copy_from_slice(sender_id);
+        nonce[partial_iv_start..].copy_from_slice(partial_iv);
+        for (byte, common_iv_byte) in nonce.iter_mut().zip(&self.common_iv) {
+            *byte ^= common_iv_byte;
+        }
+        Ok(nonce)
     }
 }
 
@@ -835,16 +969,73 @@ fn hkdf_extract_sha256(salt: &[u8], input_key_material: &[u8]) -> hmac::digest::
     mac.finalize().into_bytes()
 }
 
-fn hkdf_expand_sha256(prk: &[u8], info: &[u8], length: usize) -> Vec<u8> {
-    debug_assert!(length <= 32);
-    let mut mac = HmacSha256::new_from_slice(prk)
-        .expect("an HKDF-SHA-256 pseudorandom key is a valid HMAC key");
-    mac.update(info);
-    mac.update(&[1]);
-    let mut block = mac.finalize().into_bytes();
-    let output = block[..length].to_vec();
-    block.as_mut_slice().fill(0);
-    output
+fn hkdf_expand_sha256(prk: &[u8], info: &[u8], length: usize) -> Result<Vec<u8>, OscoreError> {
+    let block_count = length
+        .checked_add(HKDF_SHA_256_OUTPUT_LEN - 1)
+        .ok_or_else(|| {
+            OscoreError::invalid_field_value(
+                "coap.oscore.hkdf.length",
+                "HKDF output length overflow",
+            )
+        })?
+        / HKDF_SHA_256_OUTPUT_LEN;
+    if block_count > HKDF_MAX_BLOCKS {
+        return Err(OscoreError::invalid_field_value(
+            "coap.oscore.hkdf.length",
+            "HKDF output exceeds 255 hash blocks",
+        ));
+    }
+
+    let mut output = Vec::with_capacity(length);
+    let mut previous = [0u8; HKDF_SHA_256_OUTPUT_LEN];
+    let mut previous_len = 0;
+    for block_index in 1..=block_count {
+        let mut mac = HmacSha256::new_from_slice(prk)
+            .expect("an HKDF-SHA-256 pseudorandom key is a valid HMAC key");
+        mac.update(&previous[..previous_len]);
+        mac.update(info);
+        mac.update(&[u8::try_from(block_index).expect("HKDF block count is at most 255")]);
+        let mut block = mac.finalize().into_bytes();
+        previous.copy_from_slice(&block);
+        previous_len = HKDF_SHA_256_OUTPUT_LEN;
+
+        let remaining = length - output.len();
+        let take = remaining.min(HKDF_SHA_256_OUTPUT_LEN);
+        output.extend_from_slice(&block[..take]);
+        block.as_mut_slice().fill(0);
+    }
+    previous.fill(0);
+    Ok(output)
+}
+
+fn validate_oscore_identifier(
+    identifier: &[u8],
+    maximum_len: usize,
+    field: &'static str,
+) -> Result<(), OscoreError> {
+    if identifier.len() > maximum_len {
+        return Err(OscoreError::invalid_field_value(
+            field,
+            "identifier exceeds the selected AEAD nonce limit",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_partial_iv(partial_iv: &[u8], field: &'static str) -> Result<(), OscoreError> {
+    if partial_iv.is_empty() {
+        return Err(OscoreError::invalid_field_value(
+            field,
+            "Partial IV must contain at least one byte",
+        ));
+    }
+    if partial_iv.len() > OSCORE_MAX_PARTIAL_IV_LEN {
+        return Err(OscoreError::invalid_field_value(
+            field,
+            "Partial IV exceeds five bytes",
+        ));
+    }
+    Ok(())
 }
 
 fn encode_context_info(
@@ -1078,6 +1269,152 @@ mod tests {
         assert_eq!(
             context.common_iv(),
             [0x46, 0x22, 0xd4, 0xdd, 0x6d, 0x94, 0x41, 0x68, 0xee, 0xfb, 0x54, 0x98, 0x7c,]
+        );
+    }
+
+    #[test]
+    fn hkdf_extract_expand_matches_rfc_5869_test_case_1() {
+        let input_key_material = [0x0b; 22];
+        let salt: Vec<u8> = (0x00..=0x0c).collect();
+        let info: Vec<u8> = (0xf0..=0xf9).collect();
+        let mut prk = hkdf_extract_sha256(&salt, &input_key_material);
+        assert_eq!(
+            prk.as_slice(),
+            [
+                0x07, 0x77, 0x09, 0x36, 0x2c, 0x2e, 0x32, 0xdf, 0x0d, 0xdc, 0x3f, 0x0d, 0xc4, 0x7b,
+                0xba, 0x63, 0x90, 0xb6, 0xc7, 0x3b, 0xb5, 0x0f, 0x9c, 0x31, 0x22, 0xec, 0x84, 0x4a,
+                0xd7, 0xc2, 0xb3, 0xe5,
+            ]
+        );
+        assert_eq!(
+            hkdf_expand_sha256(&prk, &info, 42).unwrap(),
+            [
+                0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a, 0x90, 0x43, 0x4f, 0x64, 0xd0, 0x36,
+                0x2f, 0x2a, 0x2d, 0x2d, 0x0a, 0x90, 0xcf, 0x1a, 0x5a, 0x4c, 0x5d, 0xb0, 0x2d, 0x56,
+                0xec, 0xc4, 0xc5, 0xbf, 0x34, 0x00, 0x72, 0x08, 0xd5, 0xb8, 0x87, 0x18, 0x58, 0x65,
+            ]
+        );
+        assert!(matches!(
+            hkdf_expand_sha256(&prk, &info, HKDF_SHA_256_OUTPUT_LEN * HKDF_MAX_BLOCKS + 1),
+            Err(OscoreError::InvalidFieldValue {
+                field: "coap.oscore.hkdf.length",
+                ..
+            })
+        ));
+        prk.as_mut_slice().fill(0);
+    }
+
+    #[test]
+    fn nonce_construction_matches_rfc_8613_appendices_c_3_and_c_4() {
+        let appendix_c_1 = OscoreContext::with_default_algorithms(
+            appendix_c_master_secret(),
+            appendix_c_master_salt(),
+            Vec::new(),
+            vec![0x01],
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            appendix_c_1.sender_nonce([0x14]).unwrap(),
+            [0x46, 0x22, 0xd4, 0xdd, 0x6d, 0x94, 0x41, 0x68, 0xee, 0xfb, 0x54, 0x98, 0x68]
+        );
+
+        let appendix_c_3 = OscoreContext::with_default_algorithms(
+            appendix_c_master_secret(),
+            appendix_c_master_salt(),
+            Vec::new(),
+            vec![0x01],
+            Some(vec![0x37, 0xcb, 0xf3, 0x21, 0x00, 0x17, 0xa2, 0xd3]),
+        )
+        .unwrap();
+        assert_eq!(
+            appendix_c_3.sender_nonce([0x00]).unwrap(),
+            [0x2c, 0xa5, 0x8f, 0xb8, 0x5f, 0xf1, 0xb8, 0x1c, 0x0b, 0x71, 0x81, 0xb8, 0x5e]
+        );
+        assert_eq!(
+            appendix_c_3.recipient_nonce([0x00]).unwrap(),
+            [0x2d, 0xa5, 0x8f, 0xb8, 0x5f, 0xf1, 0xb8, 0x1d, 0x0b, 0x71, 0x81, 0xb8, 0x5e]
+        );
+    }
+
+    #[test]
+    fn external_aad_matches_rfc_8613_section_5_4_and_appendix_c_4() {
+        let context = OscoreContext::with_default_algorithms(
+            appendix_c_master_secret(),
+            appendix_c_master_salt(),
+            Vec::new(),
+            vec![0x01],
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            context.aad_array([], [0x14], []).unwrap(),
+            [0x85, 0x01, 0x81, 0x0a, 0x40, 0x41, 0x14, 0x40]
+        );
+        assert_eq!(
+            context.external_aad([], [0x14], []).unwrap(),
+            [0x48, 0x85, 0x01, 0x81, 0x0a, 0x40, 0x41, 0x14, 0x40]
+        );
+        assert_eq!(
+            context.cose_encrypt0_aad([], [0x14], []).unwrap(),
+            [
+                0x83, 0x68, b'E', b'n', b'c', b'r', b'y', b'p', b't', b'0', 0x40, 0x48, 0x85, 0x01,
+                0x81, 0x0a, 0x40, 0x41, 0x14, 0x40,
+            ]
+        );
+
+        assert_eq!(
+            context.aad_array([0x00], [0x25], []).unwrap(),
+            [0x85, 0x01, 0x81, 0x0a, 0x41, 0x00, 0x41, 0x25, 0x40]
+        );
+        assert_eq!(
+            context.cose_encrypt0_aad([0x00], [0x25], []).unwrap(),
+            [
+                0x83, 0x68, b'E', b'n', b'c', b'r', b'y', b'p', b't', b'0', 0x40, 0x49, 0x85, 0x01,
+                0x81, 0x0a, 0x41, 0x00, 0x41, 0x25, 0x40,
+            ]
+        );
+    }
+
+    #[test]
+    fn nonce_and_aad_reject_invalid_identifier_and_partial_iv_lengths() {
+        let context = OscoreContext::with_default_algorithms(
+            appendix_c_master_secret(),
+            appendix_c_master_salt(),
+            Vec::new(),
+            vec![0x01],
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            context.sender_nonce([]).unwrap_err(),
+            OscoreError::InvalidFieldValue {
+                field: "coap.oscore.nonce.partial-iv",
+                reason: "Partial IV must contain at least one byte",
+            }
+        );
+        assert_eq!(
+            context.sender_nonce([0; 6]).unwrap_err(),
+            OscoreError::InvalidFieldValue {
+                field: "coap.oscore.nonce.partial-iv",
+                reason: "Partial IV exceeds five bytes",
+            }
+        );
+        assert_eq!(
+            context.aad_array([0; 8], [0x01], []).unwrap_err(),
+            OscoreError::InvalidFieldValue {
+                field: "coap.oscore.aad.request-kid",
+                reason: "identifier exceeds the selected AEAD nonce limit",
+            }
+        );
+        assert_eq!(
+            context.aad_array([], [], []).unwrap_err(),
+            OscoreError::InvalidFieldValue {
+                field: "coap.oscore.aad.request-piv",
+                reason: "Partial IV must contain at least one byte",
+            }
         );
     }
 
