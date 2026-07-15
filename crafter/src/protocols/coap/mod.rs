@@ -18,6 +18,7 @@ mod oscore;
 mod registry;
 mod reliable;
 
+pub use self::block::{CoapBlock, CoapBlockKind, CoapBlockTransport, CoapBlockValidation};
 pub(crate) use self::constants::COAP_UDP_PORT;
 pub use self::constants::{
     COAPS_PORT, COAP_CODE_CLASS_MASK, COAP_CODE_CLASS_SHIFT, COAP_CODE_DETAIL_MASK,
