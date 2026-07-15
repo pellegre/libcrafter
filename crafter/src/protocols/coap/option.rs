@@ -10,7 +10,10 @@ use core::str;
 use crate::error::{CrafterError, Result};
 use crate::field::{Field, FieldState};
 
-use super::constants::COAP_PAYLOAD_MARKER;
+use super::constants::{
+    COAP_OPTION_URI_HOST, COAP_OPTION_URI_PATH, COAP_OPTION_URI_PORT, COAP_OPTION_URI_QUERY,
+    COAP_PAYLOAD_MARKER,
+};
 use super::registry::{
     coap_option_is_critical, coap_option_is_no_cache_key, coap_option_is_safe_to_forward,
     coap_option_is_unsafe, coap_option_meta, CoapRegistryMeta,
@@ -580,6 +583,304 @@ impl CoapOption {
     }
 }
 
+macro_rules! define_uri_string_option {
+    (
+        $(#[$meta:meta])*
+        $name:ident,
+        number = $number:expr,
+        field = $field:literal,
+        wrong_number = $wrong_number:literal,
+        min_length = $min_length:expr,
+        length_error = $length_error:literal
+    ) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        pub struct $name {
+            value: Vec<u8>,
+        }
+
+        impl $name {
+            /// Build one typed occurrence from exact option value bytes.
+            ///
+            /// Construction is intentionally lossless and does not enforce
+            /// semantic length or UTF-8 validity. Use `TryFrom<&CoapOption>`
+            /// and [`Self::as_str`] when a checked typed view is required.
+            pub fn new(value: impl AsRef<[u8]>) -> Self {
+                Self {
+                    value: value.as_ref().to_vec(),
+                }
+            }
+
+            /// Borrow the exact option value bytes.
+            pub fn as_bytes(&self) -> &[u8] {
+                &self.value
+            }
+
+            /// Consume the wrapper and return the exact option value bytes.
+            pub fn into_bytes(self) -> Vec<u8> {
+                self.value
+            }
+
+            /// Interpret the exact option value as UTF-8 without normalization.
+            pub fn as_str(&self) -> Result<&str> {
+                str::from_utf8(&self.value).map_err(|_| {
+                    CrafterError::invalid_field_value(
+                        $field,
+                        "option value is not valid UTF-8",
+                    )
+                })
+            }
+        }
+
+        impl From<&str> for $name {
+            fn from(value: &str) -> Self {
+                Self::new(value)
+            }
+        }
+
+        impl From<String> for $name {
+            fn from(value: String) -> Self {
+                Self::new(value)
+            }
+        }
+
+        impl From<Vec<u8>> for $name {
+            fn from(value: Vec<u8>) -> Self {
+                Self { value }
+            }
+        }
+
+        impl From<$name> for CoapOption {
+            fn from(value: $name) -> Self {
+                CoapOption::new($number, value.into_bytes())
+            }
+        }
+
+        impl TryFrom<&CoapOption> for $name {
+            type Error = CrafterError;
+
+            fn try_from(option: &CoapOption) -> Result<Self> {
+                if option.number().value() != $number {
+                    return Err(CrafterError::invalid_field_value($field, $wrong_number));
+                }
+
+                if !($min_length..=255).contains(&option.value().len()) {
+                    return Err(CrafterError::invalid_field_value($field, $length_error));
+                }
+
+                Ok(Self::new(option.value()))
+            }
+        }
+    };
+}
+
+define_uri_string_option! {
+    /// One RFC 7252 Uri-Host option value.
+    ///
+    /// The wrapper owns the exact wire bytes. It does not resolve names,
+    /// lowercase a host, or otherwise perform URI processing.
+    CoapUriHost,
+    number = COAP_OPTION_URI_HOST,
+    field = "coap.uri-host",
+    wrong_number = "option number is not Uri-Host",
+    min_length = 1,
+    length_error = "Uri-Host length must be between 1 and 255 bytes"
+}
+
+define_uri_string_option! {
+    /// One repeatable RFC 7252 Uri-Path segment.
+    ///
+    /// Empty segments are valid wire values. Dot-segment resolution and the
+    /// semantic prohibition on `.` and `..` remain separate from this
+    /// lossless packet wrapper.
+    CoapUriPath,
+    number = COAP_OPTION_URI_PATH,
+    field = "coap.uri-path",
+    wrong_number = "option number is not Uri-Path",
+    min_length = 0,
+    length_error = "Uri-Path length must not exceed 255 bytes"
+}
+
+define_uri_string_option! {
+    /// One repeatable RFC 7252 Uri-Query argument.
+    ///
+    /// Empty arguments and exact UTF-8 or non-UTF-8 bytes remain owned and
+    /// inspectable without treating the value as a form-encoded string.
+    CoapUriQuery,
+    number = COAP_OPTION_URI_QUERY,
+    field = "coap.uri-query",
+    wrong_number = "option number is not Uri-Query",
+    min_length = 0,
+    length_error = "Uri-Query length must not exceed 255 bytes"
+}
+
+/// One RFC 7252 Uri-Port option value with its exact uint representation.
+///
+/// Checked construction emits the canonical shortest network-byte-order
+/// representation. A typed view of a decoded noncanonical zero-prefixed
+/// value retains those original bytes for an exact conversion back to
+/// [`CoapOption`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CoapUriPort {
+    value: u16,
+    wire_value: Vec<u8>,
+}
+
+impl CoapUriPort {
+    /// Build a Uri-Port value using the canonical shortest `uint` encoding.
+    pub fn new(value: u16) -> Self {
+        let wire_value = match value {
+            0 => Vec::new(),
+            1..=255 => vec![value as u8],
+            _ => value.to_be_bytes().to_vec(),
+        };
+
+        Self { value, wire_value }
+    }
+
+    /// Return the decoded transport-layer port number.
+    pub const fn value(&self) -> u16 {
+        self.value
+    }
+
+    /// Borrow the exact canonical or decoded option value bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.wire_value
+    }
+
+    /// Consume the wrapper and return the exact option value bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.wire_value
+    }
+}
+
+impl From<u16> for CoapUriPort {
+    fn from(value: u16) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<CoapUriPort> for CoapOption {
+    fn from(value: CoapUriPort) -> Self {
+        CoapOption::new(COAP_OPTION_URI_PORT, value.into_bytes())
+    }
+}
+
+impl TryFrom<&CoapOption> for CoapUriPort {
+    type Error = CrafterError;
+
+    fn try_from(option: &CoapOption) -> Result<Self> {
+        if option.number().value() != COAP_OPTION_URI_PORT {
+            return Err(CrafterError::invalid_field_value(
+                "coap.uri-port",
+                "option number is not Uri-Port",
+            ));
+        }
+        if option.value().len() > size_of::<u16>() {
+            return Err(CrafterError::invalid_field_value(
+                "coap.uri-port",
+                "Uri-Port length must not exceed 2 bytes",
+            ));
+        }
+
+        let value = option
+            .value()
+            .iter()
+            .fold(0u16, |value, byte| (value << 8) | u16::from(*byte));
+        Ok(Self {
+            value,
+            wire_value: option.value().to_vec(),
+        })
+    }
+}
+
+impl CoapUriPath {
+    /// Split an already-resolved URI path into ordered Uri-Path occurrences.
+    ///
+    /// RFC 7252 Section 6.4 splits before resolving percent-encodings, so an
+    /// encoded slash remains inside its segment. An empty path and `/` yield
+    /// no occurrences; other empty segments, including a trailing segment,
+    /// are preserved. This helper accepts an optional leading slash but does
+    /// not parse a complete URI or resolve dot segments.
+    pub fn split(path: impl AsRef<[u8]>) -> Result<Vec<Self>> {
+        let path = path.as_ref();
+        if path.is_empty() || path == b"/" {
+            return Ok(Vec::new());
+        }
+
+        let segments = path.strip_prefix(b"/").unwrap_or(path);
+        segments
+            .split(|byte| *byte == b'/')
+            .map(|segment| {
+                decode_percent_encoded_uri_component(segment, "coap.uri-path.percent-encoding")
+                    .map(Self::from)
+            })
+            .collect()
+    }
+}
+
+impl CoapUriQuery {
+    /// Split a URI query component into ordered Uri-Query occurrences.
+    ///
+    /// RFC 7252 Section 6.4 splits on `&` before resolving percent-encodings,
+    /// preserving encoded ampersands within an argument. A leading `?` is
+    /// accepted for convenience. Empty arguments are retained and `+` is not
+    /// treated as form-encoded whitespace.
+    pub fn split(query: impl AsRef<[u8]>) -> Result<Vec<Self>> {
+        let query = query.as_ref();
+        let arguments = query.strip_prefix(b"?").unwrap_or(query);
+        arguments
+            .split(|byte| *byte == b'&')
+            .map(|argument| {
+                decode_percent_encoded_uri_component(argument, "coap.uri-query.percent-encoding")
+                    .map(Self::from)
+            })
+            .collect()
+    }
+}
+
+fn decode_percent_encoded_uri_component(input: &[u8], field: &'static str) -> Result<Vec<u8>> {
+    let mut decoded = Vec::with_capacity(input.len());
+    let mut cursor = 0;
+
+    while cursor < input.len() {
+        if input[cursor] != b'%' {
+            decoded.push(input[cursor]);
+            cursor += 1;
+            continue;
+        }
+
+        let encoded = input.get(cursor + 1..cursor + 3).ok_or_else(|| {
+            CrafterError::invalid_field_value(field, "incomplete percent-encoding")
+        })?;
+        let high = decode_hex_digit(encoded[0]).ok_or_else(|| {
+            CrafterError::invalid_field_value(
+                field,
+                "percent-encoding contains a non-hexadecimal digit",
+            )
+        })?;
+        let low = decode_hex_digit(encoded[1]).ok_or_else(|| {
+            CrafterError::invalid_field_value(
+                field,
+                "percent-encoding contains a non-hexadecimal digit",
+            )
+        })?;
+        decoded.push((high << 4) | low);
+        cursor += 3;
+    }
+
+    Ok(decoded)
+}
+
+const fn decode_hex_digit(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
 /// An ordered collection of CoAP option occurrences.
 ///
 /// Insertion and decoded wire order are preserved, including duplicates and
@@ -1029,6 +1330,252 @@ mod tests {
             })
         );
         assert_eq!(too_wide.into_bytes(), vec![0; 9]);
+    }
+
+    #[test]
+    fn uri_wrappers_construct_and_inspect_exact_option_values() {
+        let host = CoapUriHost::new("münchen.example");
+        let host_option = CoapOption::from(host.clone());
+        assert_eq!(host_option.number().value(), COAP_OPTION_URI_HOST);
+        assert_eq!(host_option.value(), "münchen.example".as_bytes());
+        assert_eq!(CoapUriHost::try_from(&host_option), Ok(host));
+
+        let empty_path = CoapUriPath::new(b"");
+        let empty_path_option = CoapOption::from(empty_path.clone());
+        assert_eq!(empty_path_option.number().value(), COAP_OPTION_URI_PATH);
+        assert_eq!(empty_path_option.value(), b"");
+        assert_eq!(CoapUriPath::try_from(&empty_path_option), Ok(empty_path));
+
+        let query = CoapUriQuery::new("city=Zürich");
+        let query_option = CoapOption::from(query.clone());
+        assert_eq!(query_option.number().value(), COAP_OPTION_URI_QUERY);
+        assert_eq!(query_option.value(), "city=Zürich".as_bytes());
+        assert_eq!(CoapUriQuery::try_from(&query_option), Ok(query));
+
+        let port_cases = [
+            (0, Vec::new()),
+            (u8::MAX as u16, vec![u8::MAX]),
+            (u8::MAX as u16 + 1, vec![1, 0]),
+            (u16::MAX, vec![u8::MAX, u8::MAX]),
+        ];
+        for (value, expected_bytes) in port_cases {
+            let port = CoapUriPort::new(value);
+            assert_eq!(port.value(), value);
+            assert_eq!(port.as_bytes(), expected_bytes);
+
+            let option = CoapOption::from(port);
+            assert_eq!(option.number().value(), COAP_OPTION_URI_PORT);
+            assert_eq!(option.value(), expected_bytes);
+            assert_eq!(CoapUriPort::try_from(&option).unwrap().value(), value);
+        }
+
+        let noncanonical_port = CoapOption::new(COAP_OPTION_URI_PORT, [0, 1]);
+        let port = CoapUriPort::try_from(&noncanonical_port).unwrap();
+        assert_eq!(port.value(), 1);
+        assert_eq!(port.as_bytes(), [0, 1]);
+        assert_eq!(CoapOption::from(port).value(), [0, 1]);
+    }
+
+    #[test]
+    fn uri_typed_view_failures_leave_opaque_options_unchanged() {
+        let invalid_utf8 = CoapOption::new(COAP_OPTION_URI_PATH, [0xff, 0x00]);
+        let typed = CoapUriPath::try_from(&invalid_utf8).unwrap();
+        assert_eq!(typed.as_bytes(), [0xff, 0x00]);
+        assert_eq!(
+            typed.as_str(),
+            Err(CrafterError::invalid_field_value(
+                "coap.uri-path",
+                "option value is not valid UTF-8",
+            ))
+        );
+        assert_eq!(invalid_utf8.value(), [0xff, 0x00]);
+
+        let wrong_number = CoapOption::new(COAP_OPTION_URI_QUERY, b"host".to_vec());
+        assert_eq!(
+            CoapUriHost::try_from(&wrong_number),
+            Err(CrafterError::invalid_field_value(
+                "coap.uri-host",
+                "option number is not Uri-Host",
+            ))
+        );
+        assert_eq!(wrong_number.value(), b"host");
+
+        let empty_host = CoapOption::new(COAP_OPTION_URI_HOST, Vec::new());
+        assert_eq!(
+            CoapUriHost::try_from(&empty_host),
+            Err(CrafterError::invalid_field_value(
+                "coap.uri-host",
+                "Uri-Host length must be between 1 and 255 bytes",
+            ))
+        );
+        assert_eq!(empty_host.value(), b"");
+
+        let oversized_path = CoapOption::new(COAP_OPTION_URI_PATH, vec![b'x'; 256]);
+        assert_eq!(
+            CoapUriPath::try_from(&oversized_path),
+            Err(CrafterError::invalid_field_value(
+                "coap.uri-path",
+                "Uri-Path length must not exceed 255 bytes",
+            ))
+        );
+        assert_eq!(oversized_path.value().len(), 256);
+
+        let oversized_port = CoapOption::new(COAP_OPTION_URI_PORT, [0, 1, 2]);
+        assert_eq!(
+            CoapUriPort::try_from(&oversized_port),
+            Err(CrafterError::invalid_field_value(
+                "coap.uri-port",
+                "Uri-Port length must not exceed 2 bytes",
+            ))
+        );
+        assert_eq!(oversized_port.value(), [0, 1, 2]);
+    }
+
+    #[test]
+    fn uri_path_split_preserves_empty_unicode_and_encoded_segments() {
+        let path = CoapUriPath::split("/sensors//caf%C3%A9/%2F/").unwrap();
+        let values: Vec<_> = path.iter().map(CoapUriPath::as_bytes).collect();
+        assert_eq!(
+            values,
+            vec![
+                b"sensors".as_slice(),
+                b"".as_slice(),
+                "café".as_bytes(),
+                b"/".as_slice(),
+                b"".as_slice(),
+            ]
+        );
+        assert!(CoapUriPath::split("").unwrap().is_empty());
+        assert!(CoapUriPath::split("/").unwrap().is_empty());
+
+        let unresolved = CoapUriPath::split("/./../status").unwrap();
+        assert_eq!(unresolved[0].as_bytes(), b".");
+        assert_eq!(unresolved[1].as_bytes(), b"..");
+        assert_eq!(unresolved[2].as_bytes(), b"status");
+
+        assert_eq!(
+            CoapUriPath::split("/bad/%2"),
+            Err(CrafterError::invalid_field_value(
+                "coap.uri-path.percent-encoding",
+                "incomplete percent-encoding",
+            ))
+        );
+    }
+
+    #[test]
+    fn uri_query_split_preserves_empty_arguments_and_decodes_after_splitting() {
+        let query = CoapUriQuery::split("?a=1&&city=Z%C3%BCrich&literal=%26&plus=a+b").unwrap();
+        let values: Vec<_> = query.iter().map(CoapUriQuery::as_bytes).collect();
+        assert_eq!(
+            values,
+            vec![
+                b"a=1".as_slice(),
+                b"".as_slice(),
+                "city=Zürich".as_bytes(),
+                b"literal=&".as_slice(),
+                b"plus=a+b".as_slice(),
+            ]
+        );
+        assert_eq!(
+            CoapUriQuery::split("").unwrap()[0].as_bytes(),
+            b"".as_slice()
+        );
+
+        let binary = CoapUriQuery::split("raw=%FF").unwrap();
+        assert_eq!(binary[0].as_bytes(), [b'r', b'a', b'w', b'=', 0xff]);
+        assert!(binary[0].as_str().is_err());
+
+        assert_eq!(
+            CoapUriQuery::split("bad=%GG"),
+            Err(CrafterError::invalid_field_value(
+                "coap.uri-query.percent-encoding",
+                "percent-encoding contains a non-hexadecimal digit",
+            ))
+        );
+    }
+
+    #[test]
+    fn uri_options_keep_repeat_order_and_round_trip_exactly() {
+        let options = CoapOptions::from_options([
+            CoapOption::from(CoapUriHost::new("example.com")),
+            CoapOption::from(CoapUriPort::new(5683)),
+            CoapOption::from(CoapUriPath::new("sensors")),
+            CoapOption::from(CoapUriPath::new("")),
+            CoapOption::from(CoapUriQuery::new("units=c")),
+            CoapOption::from(CoapUriQuery::new("raw=&")),
+        ]);
+
+        let mut encoded = Vec::new();
+        encode_option_sequence(&options, &mut encoded).unwrap();
+        let expected = [
+            0x3b, b'e', b'x', b'a', b'm', b'p', b'l', b'e', b'.', b'c', b'o', b'm', 0x42, 0x16,
+            0x33, 0x47, b's', b'e', b'n', b's', b'o', b'r', b's', 0x00, 0x47, b'u', b'n', b'i',
+            b't', b's', b'=', b'c', 0x05, b'r', b'a', b'w', b'=', b'&',
+        ];
+        assert_eq!(encoded, expected);
+
+        let decoded = decode_option_sequence(&encoded).unwrap();
+        let decoded_options = decoded.options.options();
+        assert_eq!(
+            CoapUriHost::try_from(&decoded_options[0]).unwrap().as_str(),
+            Ok("example.com")
+        );
+        assert_eq!(
+            CoapUriPort::try_from(&decoded_options[1]).unwrap().value(),
+            5683
+        );
+        assert_eq!(
+            CoapUriPath::try_from(&decoded_options[2]).unwrap().as_str(),
+            Ok("sensors")
+        );
+        assert_eq!(
+            CoapUriPath::try_from(&decoded_options[3]).unwrap().as_str(),
+            Ok("")
+        );
+        assert_eq!(
+            CoapUriQuery::try_from(&decoded_options[4])
+                .unwrap()
+                .as_str(),
+            Ok("units=c")
+        );
+        assert_eq!(
+            CoapUriQuery::try_from(&decoded_options[5])
+                .unwrap()
+                .as_str(),
+            Ok("raw=&")
+        );
+
+        let rebuilt = CoapOptions::from_options([
+            CoapOption::from(CoapUriHost::try_from(&decoded_options[0]).unwrap()),
+            CoapOption::from(CoapUriPort::try_from(&decoded_options[1]).unwrap()),
+            CoapOption::from(CoapUriPath::try_from(&decoded_options[2]).unwrap()),
+            CoapOption::from(CoapUriPath::try_from(&decoded_options[3]).unwrap()),
+            CoapOption::from(CoapUriQuery::try_from(&decoded_options[4]).unwrap()),
+            CoapOption::from(CoapUriQuery::try_from(&decoded_options[5]).unwrap()),
+        ]);
+        let mut reencoded = Vec::new();
+        encode_option_sequence(&rebuilt, &mut reencoded).unwrap();
+        assert_eq!(reencoded, encoded);
+    }
+
+    #[test]
+    fn coap_uri_builder_methods_append_typed_occurrences() {
+        let message = crate::protocols::coap::Coap::get()
+            .uri_host("example.com")
+            .uri_port(5683)
+            .uri_path("sensors")
+            .uri_path("")
+            .uri_query("units=c")
+            .uri_query("format=json");
+
+        let options = message.options_value();
+        assert_eq!(options.len(), 6);
+        assert_eq!(options[0].number().value(), COAP_OPTION_URI_HOST);
+        assert_eq!(options[1].number().value(), COAP_OPTION_URI_PORT);
+        assert_eq!(options[2].number().value(), COAP_OPTION_URI_PATH);
+        assert_eq!(options[3].number().value(), COAP_OPTION_URI_PATH);
+        assert_eq!(options[4].number().value(), COAP_OPTION_URI_QUERY);
+        assert_eq!(options[5].number().value(), COAP_OPTION_URI_QUERY);
     }
 
     #[test]

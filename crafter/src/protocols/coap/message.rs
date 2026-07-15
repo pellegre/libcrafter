@@ -17,7 +17,10 @@ use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::protocols::transport::Udp;
 
 use super::constants::*;
-use super::option::{encode_option_sequence, CoapOption, CoapOptions};
+use super::option::{
+    encode_option_sequence, CoapOption, CoapOptions, CoapUriHost, CoapUriPath, CoapUriPort,
+    CoapUriQuery,
+};
 use super::registry::{coap_code_meta, coap_signaling_code_meta, CoapRegistryMeta};
 
 const COAP_TWO_BIT_VALUE_MASK: u8 = 0x03;
@@ -813,6 +816,26 @@ impl Coap {
     pub fn option(mut self, value: impl Into<CoapOption>) -> Self {
         self.options.push(value.into());
         self
+    }
+
+    /// Append one Uri-Host option without replacing an existing occurrence.
+    pub fn uri_host(self, value: impl Into<CoapUriHost>) -> Self {
+        self.option(CoapOption::from(value.into()))
+    }
+
+    /// Append one Uri-Port option without replacing an existing occurrence.
+    pub fn uri_port(self, value: impl Into<CoapUriPort>) -> Self {
+        self.option(CoapOption::from(value.into()))
+    }
+
+    /// Append one Uri-Path segment without replacing existing segments.
+    pub fn uri_path(self, value: impl Into<CoapUriPath>) -> Self {
+        self.option(CoapOption::from(value.into()))
+    }
+
+    /// Append one Uri-Query argument without replacing existing arguments.
+    pub fn uri_query(self, value: impl Into<CoapUriQuery>) -> Self {
+        self.option(CoapOption::from(value.into()))
     }
 
     /// Replace the ordered option sequence.
