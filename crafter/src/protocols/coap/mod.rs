@@ -10,6 +10,7 @@ mod block;
 mod constants;
 mod decode;
 mod group;
+mod hop_limit;
 mod link_format;
 mod message;
 mod no_response;
@@ -35,6 +36,7 @@ pub use self::constants::{
 };
 pub use self::decode::decode_coap;
 pub(crate) use self::decode::{append_coap_packet, looks_like_coap_payload};
+pub use self::hop_limit::{CoapHopLimit, CoapHopLimitExhausted};
 pub use self::link_format::{
     coap_discovery_response, CoapLink, CoapLinkAttribute, CoapLinkAttributeValue, CoapLinkFormat,
 };
