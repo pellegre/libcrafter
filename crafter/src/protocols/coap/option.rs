@@ -12,9 +12,9 @@ use crate::field::{Field, FieldState};
 
 use super::constants::{
     COAP_OPTION_ACCEPT, COAP_OPTION_CONTENT_FORMAT, COAP_OPTION_ETAG, COAP_OPTION_IF_MATCH,
-    COAP_OPTION_IF_NONE_MATCH, COAP_OPTION_MAX_AGE, COAP_OPTION_SIZE1, COAP_OPTION_SIZE2,
-    COAP_OPTION_URI_HOST, COAP_OPTION_URI_PATH, COAP_OPTION_URI_PORT, COAP_OPTION_URI_QUERY,
-    COAP_PAYLOAD_MARKER,
+    COAP_OPTION_IF_NONE_MATCH, COAP_OPTION_LOCATION_PATH, COAP_OPTION_LOCATION_QUERY,
+    COAP_OPTION_MAX_AGE, COAP_OPTION_SIZE1, COAP_OPTION_SIZE2, COAP_OPTION_URI_HOST,
+    COAP_OPTION_URI_PATH, COAP_OPTION_URI_PORT, COAP_OPTION_URI_QUERY, COAP_PAYLOAD_MARKER,
 };
 use super::registry::{
     coap_content_format_meta, coap_option_is_critical, coap_option_is_no_cache_key,
@@ -766,6 +766,52 @@ define_uint_option! {
     length_error = "Size2 length must not exceed 4 bytes"
 }
 
+macro_rules! impl_size_platform_conversions {
+    ($name:ident, field = $field:literal, label = $label:literal) => {
+        impl $name {
+            /// Build a size value from the platform's collection length type.
+            pub fn try_from_usize(value: usize) -> Result<Self> {
+                let value = u32::try_from(value).map_err(|_| {
+                    CrafterError::invalid_field_value(
+                        $field,
+                        concat!($label, " value exceeds the four-byte CoAP uint range"),
+                    )
+                })?;
+                Ok(Self::new(value))
+            }
+
+            /// Convert the decoded size to the platform's collection length type.
+            pub fn try_to_usize(&self) -> Result<usize> {
+                usize::try_from(self.value()).map_err(|_| {
+                    CrafterError::invalid_field_value(
+                        $field,
+                        concat!($label, " value exceeds the platform usize range"),
+                    )
+                })
+            }
+        }
+
+        impl TryFrom<usize> for $name {
+            type Error = CrafterError;
+
+            fn try_from(value: usize) -> Result<Self> {
+                Self::try_from_usize(value)
+            }
+        }
+
+        impl TryFrom<&$name> for usize {
+            type Error = CrafterError;
+
+            fn try_from(value: &$name) -> Result<Self> {
+                value.try_to_usize()
+            }
+        }
+    };
+}
+
+impl_size_platform_conversions!(CoapSize1, field = "coap.size1", label = "Size1");
+impl_size_platform_conversions!(CoapSize2, field = "coap.size2", label = "Size2");
+
 macro_rules! define_checked_opaque_option {
     (
         $(#[$meta:meta])*
@@ -1091,6 +1137,32 @@ define_uri_string_option! {
     wrong_number = "option number is not Uri-Query",
     min_length = 0,
     length_error = "Uri-Query length must not exceed 255 bytes"
+}
+
+define_uri_string_option! {
+    /// One repeatable RFC 7252 Location-Path segment.
+    ///
+    /// Empty segments and exact binary bytes remain distinct occurrences.
+    /// Resource storage and relative-reference resolution are caller concerns.
+    CoapLocationPath,
+    number = COAP_OPTION_LOCATION_PATH,
+    field = "coap.location-path",
+    wrong_number = "option number is not Location-Path",
+    min_length = 0,
+    length_error = "Location-Path length must not exceed 255 bytes"
+}
+
+define_uri_string_option! {
+    /// One repeatable RFC 7252 Location-Query argument.
+    ///
+    /// Empty arguments and insertion order are preserved without parsing the
+    /// returned resource location as a complete URI.
+    CoapLocationQuery,
+    number = COAP_OPTION_LOCATION_QUERY,
+    field = "coap.location-query",
+    wrong_number = "option number is not Location-Query",
+    min_length = 0,
+    length_error = "Location-Query length must not exceed 255 bytes"
 }
 
 /// One RFC 7252 Uri-Port option value with its exact uint representation.
@@ -1813,6 +1885,127 @@ mod tests {
         assert_eq!(message.options_value()[1].value(), [60]);
         assert_eq!(message.options_value()[2].number().value(), 12);
         assert_eq!(message.options_value()[2].value(), [42]);
+    }
+
+    #[test]
+    fn location_wrappers_preserve_empty_binary_and_malformed_occurrences() {
+        let empty_path = CoapLocationPath::new("");
+        let empty_option = CoapOption::from(empty_path.clone());
+        assert_eq!(empty_option.number().value(), COAP_OPTION_LOCATION_PATH);
+        assert_eq!(empty_option.value(), b"");
+        assert_eq!(CoapLocationPath::try_from(&empty_option), Ok(empty_path));
+
+        let binary_query = CoapOption::new(COAP_OPTION_LOCATION_QUERY, [0xff, 0x00]);
+        let query = CoapLocationQuery::try_from(&binary_query).unwrap();
+        assert_eq!(query.as_bytes(), [0xff, 0x00]);
+        assert_eq!(
+            query.as_str(),
+            Err(CrafterError::invalid_field_value(
+                "coap.location-query",
+                "option value is not valid UTF-8",
+            ))
+        );
+        assert_eq!(binary_query.value(), [0xff, 0x00]);
+
+        let oversized = CoapOption::new(COAP_OPTION_LOCATION_PATH, vec![b'x'; 256]);
+        assert_eq!(
+            CoapLocationPath::try_from(&oversized),
+            Err(CrafterError::invalid_field_value(
+                "coap.location-path",
+                "Location-Path length must not exceed 255 bytes",
+            ))
+        );
+        assert_eq!(oversized.value().len(), 256);
+    }
+
+    #[test]
+    fn location_and_size_helpers_preserve_number_order_and_components() {
+        let response =
+            crate::protocols::coap::Coap::response(crate::protocols::coap::CoapCode::created())
+                .location_path("jobs")
+                .location_path("")
+                .location_path("42")
+                .location_query("view=full")
+                .location_query("")
+                .size2(CoapSize2::new(0))
+                .size1(CoapSize1::new(u32::MAX));
+
+        let options = response.options_value();
+        assert_eq!(
+            options
+                .iter()
+                .map(|option| option.number().value())
+                .collect::<Vec<_>>(),
+            vec![8, 8, 8, 20, 20, 28, 60]
+        );
+        assert_eq!(
+            response
+                .location_paths()
+                .map(|value| value.unwrap().into_bytes())
+                .collect::<Vec<_>>(),
+            vec![b"jobs".to_vec(), Vec::new(), b"42".to_vec()]
+        );
+        assert_eq!(
+            response
+                .location_queries()
+                .map(|value| value.unwrap().into_bytes())
+                .collect::<Vec<_>>(),
+            vec![b"view=full".to_vec(), Vec::new()]
+        );
+        assert_eq!(options[5].value(), b"");
+        assert_eq!(options[6].value(), [0xff, 0xff, 0xff, 0xff]);
+    }
+
+    #[test]
+    fn size_helpers_check_platform_values_and_preserve_malformed_raw_bytes() {
+        let payload_len = 65_536usize;
+        let size1 = CoapSize1::try_from(payload_len).unwrap();
+        let size2 = CoapSize2::try_from_usize(payload_len).unwrap();
+        assert_eq!(size1.value(), 65_536);
+        assert_eq!(size1.as_bytes(), [0x01, 0x00, 0x00]);
+        assert_eq!(size1.try_to_usize(), Ok(payload_len));
+        assert_eq!(usize::try_from(&size2), Ok(payload_len));
+
+        #[cfg(target_pointer_width = "64")]
+        {
+            let oversized = u32::MAX as usize + 1;
+            assert_eq!(
+                CoapSize1::try_from_usize(oversized),
+                Err(CrafterError::invalid_field_value(
+                    "coap.size1",
+                    "Size1 value exceeds the four-byte CoAP uint range",
+                ))
+            );
+            assert_eq!(
+                CoapSize2::try_from(oversized),
+                Err(CrafterError::invalid_field_value(
+                    "coap.size2",
+                    "Size2 value exceeds the four-byte CoAP uint range",
+                ))
+            );
+        }
+
+        for (number, field, reason) in [
+            (
+                COAP_OPTION_SIZE1,
+                "coap.size1",
+                "Size1 length must not exceed 4 bytes",
+            ),
+            (
+                COAP_OPTION_SIZE2,
+                "coap.size2",
+                "Size2 length must not exceed 4 bytes",
+            ),
+        ] {
+            let malformed = CoapOption::new(number, [0, 0, 0, 0, 1]);
+            let error = if number == COAP_OPTION_SIZE1 {
+                CoapSize1::try_from(&malformed).unwrap_err()
+            } else {
+                CoapSize2::try_from(&malformed).unwrap_err()
+            };
+            assert_eq!(error, CrafterError::invalid_field_value(field, reason));
+            assert_eq!(malformed.value(), [0, 0, 0, 0, 1]);
+        }
     }
 
     #[test]

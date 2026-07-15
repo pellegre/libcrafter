@@ -19,7 +19,8 @@ use crate::protocols::transport::Udp;
 use super::constants::*;
 use super::option::{
     encode_option_sequence, CoapAccept, CoapContentFormat, CoapEtag, CoapIfMatch, CoapIfNoneMatch,
-    CoapOption, CoapOptions, CoapUriHost, CoapUriPath, CoapUriPort, CoapUriQuery,
+    CoapLocationPath, CoapLocationQuery, CoapOption, CoapOptions, CoapSize1, CoapSize2,
+    CoapUriHost, CoapUriPath, CoapUriPort, CoapUriQuery,
 };
 use super::registry::{coap_code_meta, coap_signaling_code_meta, CoapRegistryMeta};
 
@@ -863,6 +864,29 @@ impl Coap {
         self.option(CoapOption::from(value.into()))
     }
 
+    /// Append one Location-Path segment without replacing existing segments.
+    ///
+    /// This response-oriented helper records packet metadata only; it does not
+    /// create or resolve a resource.
+    pub fn location_path(self, value: impl Into<CoapLocationPath>) -> Self {
+        self.option(CoapOption::from(value.into()))
+    }
+
+    /// Append one Location-Query argument without replacing existing arguments.
+    pub fn location_query(self, value: impl Into<CoapLocationQuery>) -> Self {
+        self.option(CoapOption::from(value.into()))
+    }
+
+    /// Append one Size1 value without replacing an existing occurrence.
+    pub fn size1(self, value: impl Into<CoapSize1>) -> Self {
+        self.option(CoapOption::from(value.into()))
+    }
+
+    /// Append one Size2 value without replacing an existing occurrence.
+    pub fn size2(self, value: impl Into<CoapSize2>) -> Self {
+        self.option(CoapOption::from(value.into()))
+    }
+
     /// Replace the ordered option sequence.
     pub fn options(mut self, values: impl IntoIterator<Item = CoapOption>) -> Self {
         self.options = values.into_iter().collect();
@@ -983,6 +1007,25 @@ impl Coap {
     /// Borrow option occurrences in their preserved order.
     pub fn options_value(&self) -> &[CoapOption] {
         &self.options
+    }
+
+    /// Iterate over typed Location-Path occurrences in insertion or wire order.
+    ///
+    /// Empty components remain present. A malformed occurrence is reported at
+    /// its exact position without changing the underlying opaque option.
+    pub fn location_paths(&self) -> impl Iterator<Item = Result<CoapLocationPath>> + '_ {
+        self.options
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_LOCATION_PATH)
+            .map(CoapLocationPath::try_from)
+    }
+
+    /// Iterate over typed Location-Query occurrences in insertion or wire order.
+    pub fn location_queries(&self) -> impl Iterator<Item = Result<CoapLocationQuery>> + '_ {
+        self.options
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_LOCATION_QUERY)
+            .map(CoapLocationQuery::try_from)
     }
 
     /// Return the selected option compilation order.
