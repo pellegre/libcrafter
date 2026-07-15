@@ -699,6 +699,140 @@ pub enum CoapOptionOrder {
     Wire,
 }
 
+/// Severity assigned to one opt-in CoAP semantic validation finding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum CoapValidationSeverity {
+    /// The message is structurally representable, but uses a noncanonical or
+    /// suspicious value that callers may still choose to send deliberately.
+    Warning,
+    /// The message violates a source-backed CoAP semantic requirement.
+    Error,
+}
+
+/// Stable category assigned to one CoAP semantic validation finding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum CoapValidationCategory {
+    /// Version, Type, or Code role and combination rules.
+    Header,
+    /// Empty-message rules from RFC 7252 Section 4.1.
+    EmptyMessage,
+    /// Token Length metadata and owned token byte agreement.
+    TokenLength,
+    /// Payload marker and owned payload byte agreement.
+    PayloadMarker,
+    /// Option number order or explicit option-header metadata.
+    OptionOrdering,
+    /// Explicit option-header delta, length, or raw bytes disagree with the
+    /// typed occurrence they encode.
+    OptionEncoding,
+    /// A non-repeatable option occurred more than once.
+    OptionRepeatability,
+    /// An option value violates its source-backed semantic length.
+    OptionLength,
+    /// Two individually valid options cannot be combined.
+    OptionInteraction,
+    /// An option is not applicable to the message's request/response role.
+    OptionApplicability,
+}
+
+/// One inspectable CoAP semantic validation finding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoapValidationIssue {
+    field: String,
+    severity: CoapValidationSeverity,
+    category: CoapValidationCategory,
+    reason: String,
+}
+
+impl CoapValidationIssue {
+    fn new(
+        field: impl Into<String>,
+        severity: CoapValidationSeverity,
+        category: CoapValidationCategory,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            field: field.into(),
+            severity,
+            category,
+            reason: reason.into(),
+        }
+    }
+
+    /// Return the stable dotted field path for this finding.
+    pub fn field(&self) -> &str {
+        &self.field
+    }
+
+    /// Return the finding severity.
+    pub const fn severity(&self) -> CoapValidationSeverity {
+        self.severity
+    }
+
+    /// Return the source-backed validation category.
+    pub const fn category(&self) -> CoapValidationCategory {
+        self.category
+    }
+
+    /// Return the stable human-readable reason.
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+}
+
+/// Aggregate opt-in semantic validation report for one CoAP datagram.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CoapValidation {
+    issues: Vec<CoapValidationIssue>,
+}
+
+impl CoapValidation {
+    /// Borrow findings in deterministic validation order.
+    pub fn issues(&self) -> &[CoapValidationIssue] {
+        &self.issues
+    }
+
+    /// Consume the report and return its findings.
+    pub fn into_issues(self) -> Vec<CoapValidationIssue> {
+        self.issues
+    }
+
+    /// Return true when validation found no semantic inconsistencies.
+    pub fn is_clean(&self) -> bool {
+        self.issues.is_empty()
+    }
+
+    /// Return true when at least one error-severity finding is present.
+    pub fn has_errors(&self) -> bool {
+        self.issues
+            .iter()
+            .any(|issue| issue.severity == CoapValidationSeverity::Error)
+    }
+
+    /// Return the number of findings.
+    pub fn len(&self) -> usize {
+        self.issues.len()
+    }
+
+    /// Return true when no findings are present.
+    pub fn is_empty(&self) -> bool {
+        self.issues.is_empty()
+    }
+
+    fn push(
+        &mut self,
+        field: impl Into<String>,
+        severity: CoapValidationSeverity,
+        category: CoapValidationCategory,
+        reason: impl Into<String>,
+    ) {
+        self.issues
+            .push(CoapValidationIssue::new(field, severity, category, reason));
+    }
+}
+
 static EMPTY_COAP_TOKEN: CoapToken = CoapToken(Vec::new());
 
 /// One owned CoAP datagram message.
@@ -1135,6 +1269,23 @@ impl Coap {
         &self.payload
     }
 
+    /// Inspect all source-backed CoAP datagram semantic inconsistencies.
+    ///
+    /// Validation is deliberately opt-in and aggregate: it neither mutates
+    /// the layer nor participates in [`Layer::compile`]. Unknown option
+    /// numbers remain lossless and receive no guessed semantic rules.
+    pub fn validate(&self) -> CoapValidation {
+        let mut validation = CoapValidation::default();
+
+        validate_header_semantics(self, &mut validation);
+        validate_token_semantics(self, &mut validation);
+        validate_payload_semantics(self, &mut validation);
+        validate_empty_message_semantics(self, &mut validation);
+        validate_option_semantics(self, &mut validation);
+
+        validation
+    }
+
     /// Return true when this datagram carries the Empty (`0.00`) code.
     ///
     /// This is a field classification, not semantic validation: an explicitly
@@ -1547,6 +1698,388 @@ pub fn coap_ipv6_response(source: Ipv6Addr, destination: Ipv6Addr, message: Coap
     Ipv6::with_addresses(source, destination) / coap_response_udp() / message
 }
 
+#[derive(Clone, Copy)]
+enum CoapOptionApplicability {
+    Both,
+    Request,
+    Response,
+}
+
+#[derive(Clone, Copy)]
+struct CoapOptionValidationRule {
+    label: &'static str,
+    min_len: Option<usize>,
+    max_len: Option<usize>,
+    repeatable: bool,
+    applicability: CoapOptionApplicability,
+}
+
+impl CoapOptionValidationRule {
+    const fn new(
+        label: &'static str,
+        min_len: usize,
+        max_len: usize,
+        repeatable: bool,
+        applicability: CoapOptionApplicability,
+    ) -> Self {
+        Self {
+            label,
+            min_len: Some(min_len),
+            max_len: Some(max_len),
+            repeatable,
+            applicability,
+        }
+    }
+
+    const fn without_length(
+        label: &'static str,
+        repeatable: bool,
+        applicability: CoapOptionApplicability,
+    ) -> Self {
+        Self {
+            label,
+            min_len: None,
+            max_len: None,
+            repeatable,
+            applicability,
+        }
+    }
+}
+
+fn validate_header_semantics(message: &Coap, validation: &mut CoapValidation) {
+    if !message.version_value().is_current() {
+        validation.push(
+            "coap.version",
+            CoapValidationSeverity::Error,
+            CoapValidationCategory::Header,
+            "datagram CoAP version must be 1",
+        );
+    }
+
+    if message.message_type_value().is_unknown() {
+        validation.push(
+            "coap.type",
+            CoapValidationSeverity::Error,
+            CoapValidationCategory::Header,
+            "datagram CoAP type must fit the two-bit message type field",
+        );
+    }
+
+    let code = message.code_value();
+    if matches!(code.class(), 1 | 3 | 6 | 7) {
+        validation.push(
+            "coap.code",
+            CoapValidationSeverity::Error,
+            CoapValidationCategory::Header,
+            "code class is reserved for datagram CoAP",
+        );
+    }
+
+    let message_type = message.message_type_value();
+    if message.is_request() && !(message_type.is_confirmable() || message_type.is_non_confirmable())
+    {
+        validation.push(
+            "coap.type",
+            CoapValidationSeverity::Error,
+            CoapValidationCategory::Header,
+            "requests must use Confirmable or Non-confirmable message type",
+        );
+    }
+
+    if !message.is_empty() && message_type.is_reset() {
+        validation.push(
+            "coap.code",
+            CoapValidationSeverity::Error,
+            CoapValidationCategory::Header,
+            "Reset messages must carry the Empty code",
+        );
+    }
+
+    if message.is_empty() && message_type.is_non_confirmable() {
+        validation.push(
+            "coap.type",
+            CoapValidationSeverity::Error,
+            CoapValidationCategory::EmptyMessage,
+            "Non-confirmable messages must not be Empty",
+        );
+    }
+}
+
+fn validate_token_semantics(message: &Coap, validation: &mut CoapValidation) {
+    let actual_len = message.token_value().len();
+    match message.token_length_value() {
+        Ok(token_length) if !token_length_matches_bytes(&token_length, actual_len) => {
+            validation.push(
+                "coap.token-length",
+                CoapValidationSeverity::Error,
+                CoapValidationCategory::TokenLength,
+                format!(
+                    "declared token length {} with discriminator {} does not describe {actual_len} token bytes",
+                    token_length.declared_len(),
+                    token_length.nibble()
+                ),
+            );
+        }
+        Err(error) => validation.push(
+            "coap.token-length",
+            CoapValidationSeverity::Error,
+            CoapValidationCategory::TokenLength,
+            error.to_string(),
+        ),
+        Ok(_) => {}
+    }
+}
+
+fn validate_payload_semantics(message: &Coap, validation: &mut CoapValidation) {
+    let marker_present = message.payload_marker_value().is_present();
+    let payload_present = !message.payload_value().is_empty();
+    if marker_present == payload_present {
+        return;
+    }
+
+    let reason = if marker_present {
+        "payload marker must be followed by a non-empty payload"
+    } else {
+        "a non-empty payload requires a payload marker"
+    };
+    validation.push(
+        "coap.payload-marker",
+        CoapValidationSeverity::Error,
+        CoapValidationCategory::PayloadMarker,
+        reason,
+    );
+}
+
+fn validate_empty_message_semantics(message: &Coap, validation: &mut CoapValidation) {
+    if !message.is_empty() {
+        return;
+    }
+
+    if !message.token_value().is_empty() {
+        validation.push(
+            "coap.token",
+            CoapValidationSeverity::Error,
+            CoapValidationCategory::EmptyMessage,
+            "Empty messages must not contain a token",
+        );
+    }
+    if !message.options_value().is_empty() {
+        validation.push(
+            "coap.options",
+            CoapValidationSeverity::Error,
+            CoapValidationCategory::EmptyMessage,
+            "Empty messages must not contain options",
+        );
+    }
+    if !message.payload_value().is_empty() {
+        validation.push(
+            "coap.payload",
+            CoapValidationSeverity::Error,
+            CoapValidationCategory::EmptyMessage,
+            "Empty messages must not contain a payload",
+        );
+    }
+}
+
+fn validate_option_semantics(message: &Coap, validation: &mut CoapValidation) {
+    validate_option_order_and_encoding(message, validation);
+
+    let mut seen = Vec::<u16>::new();
+    for (index, option) in message.options_value().iter().enumerate() {
+        let number = option.number().value();
+        let Some(rule) = coap_option_validation_rule(number) else {
+            continue;
+        };
+
+        if !rule.repeatable && seen.contains(&number) {
+            validation.push(
+                format!("coap.options[{index}]"),
+                CoapValidationSeverity::Error,
+                CoapValidationCategory::OptionRepeatability,
+                format!("{} option must not be repeated", rule.label),
+            );
+        }
+        seen.push(number);
+
+        if let (Some(min_len), Some(max_len)) = (rule.min_len, rule.max_len) {
+            let actual_len = option.value().len();
+            if actual_len < min_len || actual_len > max_len {
+                let expected = if min_len == max_len {
+                    format!("exactly {min_len}")
+                } else {
+                    format!("between {min_len} and {max_len}")
+                };
+                validation.push(
+                    format!("coap.options[{index}].value"),
+                    CoapValidationSeverity::Error,
+                    CoapValidationCategory::OptionLength,
+                    format!(
+                        "{} option value must contain {expected} bytes, found {actual_len}",
+                        rule.label
+                    ),
+                );
+            }
+        }
+
+        let applicable = match rule.applicability {
+            CoapOptionApplicability::Both => true,
+            CoapOptionApplicability::Request => message.is_request(),
+            CoapOptionApplicability::Response => message.is_response(),
+        };
+        if !applicable {
+            let required_role = match rule.applicability {
+                CoapOptionApplicability::Request => "request",
+                CoapOptionApplicability::Response => "response",
+                CoapOptionApplicability::Both => unreachable!("both roles are always applicable"),
+            };
+            validation.push(
+                format!("coap.options[{index}].number"),
+                CoapValidationSeverity::Error,
+                CoapValidationCategory::OptionApplicability,
+                format!("{} is a {required_role} option", rule.label),
+            );
+        }
+    }
+
+    let has_proxy_uri = message
+        .options_value()
+        .iter()
+        .any(|option| option.number().value() == COAP_OPTION_PROXY_URI);
+    if has_proxy_uri {
+        for (index, option) in message.options_value().iter().enumerate() {
+            if matches!(
+                option.number().value(),
+                COAP_OPTION_URI_HOST
+                    | COAP_OPTION_URI_PORT
+                    | COAP_OPTION_URI_PATH
+                    | COAP_OPTION_URI_QUERY
+                    | COAP_OPTION_PROXY_SCHEME
+            ) {
+                validation.push(
+                    format!("coap.options[{index}].number"),
+                    CoapValidationSeverity::Error,
+                    CoapValidationCategory::OptionInteraction,
+                    "Proxy-Uri must not be combined with Uri-* or Proxy-Scheme options",
+                );
+            }
+        }
+    }
+}
+
+fn validate_option_order_and_encoding(message: &Coap, validation: &mut CoapValidation) {
+    let mut indices = (0..message.options_value().len()).collect::<Vec<_>>();
+    if message.option_order_value() == CoapOptionOrder::Canonical {
+        indices.sort_by_key(|index| message.options_value()[*index].number());
+    }
+
+    let mut previous_number = 0u16;
+    for index in indices {
+        let option = &message.options_value()[index];
+        let number = option.number().value();
+        if message.option_order_value() == CoapOptionOrder::Wire && number < previous_number {
+            validation.push(
+                format!("coap.options[{index}].number"),
+                CoapValidationSeverity::Error,
+                CoapValidationCategory::OptionOrdering,
+                "wire-order option numbers must be nondecreasing",
+            );
+        }
+
+        let expected_delta = u32::from(number.saturating_sub(previous_number));
+        if let Some(encoding) = option.encoding() {
+            if encoding
+                .wire_delta()
+                .is_some_and(|wire_delta| wire_delta != expected_delta)
+            {
+                validation.push(
+                    format!("coap.options[{index}].encoding.delta"),
+                    CoapValidationSeverity::Error,
+                    CoapValidationCategory::OptionEncoding,
+                    format!("explicit option delta does not match expected delta {expected_delta}"),
+                );
+            }
+            if encoding
+                .wire_length()
+                .is_some_and(|wire_length| wire_length != option.value().len())
+            {
+                validation.push(
+                    format!("coap.options[{index}].encoding.length"),
+                    CoapValidationSeverity::Error,
+                    CoapValidationCategory::OptionEncoding,
+                    format!(
+                        "explicit option length does not match {} value bytes",
+                        option.value().len()
+                    ),
+                );
+            }
+            if encoding.raw_bytes().is_some()
+                && encoding.wire_delta().is_none()
+                && encoding.wire_length().is_none()
+            {
+                validation.push(
+                    format!("coap.options[{index}].encoding.header"),
+                    CoapValidationSeverity::Warning,
+                    CoapValidationCategory::OptionEncoding,
+                    "raw option header cannot be checked without logical delta and length metadata",
+                );
+            }
+        }
+
+        previous_number = number;
+    }
+}
+
+fn coap_option_validation_rule(number: u16) -> Option<CoapOptionValidationRule> {
+    use CoapOptionApplicability::{Both, Request, Response};
+
+    let rule = match number {
+        COAP_OPTION_IF_MATCH => CoapOptionValidationRule::new("If-Match", 0, 8, true, Request),
+        COAP_OPTION_URI_HOST => CoapOptionValidationRule::new("Uri-Host", 1, 255, false, Request),
+        COAP_OPTION_ETAG => CoapOptionValidationRule::new("ETag", 1, 8, true, Both),
+        COAP_OPTION_IF_NONE_MATCH => {
+            CoapOptionValidationRule::new("If-None-Match", 0, 0, false, Request)
+        }
+        COAP_OPTION_OBSERVE => CoapOptionValidationRule::new("Observe", 0, 3, false, Both),
+        COAP_OPTION_URI_PORT => CoapOptionValidationRule::new("Uri-Port", 0, 2, false, Request),
+        COAP_OPTION_LOCATION_PATH => {
+            CoapOptionValidationRule::new("Location-Path", 0, 255, true, Response)
+        }
+        COAP_OPTION_OSCORE => CoapOptionValidationRule::without_length("OSCORE", false, Both),
+        COAP_OPTION_URI_PATH => CoapOptionValidationRule::new("Uri-Path", 0, 255, true, Request),
+        COAP_OPTION_CONTENT_FORMAT => {
+            CoapOptionValidationRule::new("Content-Format", 0, 2, false, Both)
+        }
+        COAP_OPTION_MAX_AGE => CoapOptionValidationRule::new("Max-Age", 0, 4, false, Response),
+        COAP_OPTION_URI_QUERY => CoapOptionValidationRule::new("Uri-Query", 0, 255, true, Request),
+        COAP_OPTION_HOP_LIMIT => CoapOptionValidationRule::new("Hop-Limit", 1, 1, false, Request),
+        COAP_OPTION_ACCEPT => CoapOptionValidationRule::new("Accept", 0, 2, false, Request),
+        COAP_OPTION_Q_BLOCK1 => CoapOptionValidationRule::new("Q-Block1", 0, 3, false, Both),
+        COAP_OPTION_LOCATION_QUERY => {
+            CoapOptionValidationRule::new("Location-Query", 0, 255, true, Response)
+        }
+        COAP_OPTION_BLOCK2 => CoapOptionValidationRule::new("Block2", 0, 3, false, Both),
+        COAP_OPTION_BLOCK1 => CoapOptionValidationRule::new("Block1", 0, 3, false, Both),
+        COAP_OPTION_SIZE2 => CoapOptionValidationRule::new("Size2", 0, 4, false, Response),
+        COAP_OPTION_Q_BLOCK2 => CoapOptionValidationRule::new("Q-Block2", 0, 3, true, Both),
+        COAP_OPTION_PROXY_URI => {
+            CoapOptionValidationRule::new("Proxy-Uri", 1, 1034, false, Request)
+        }
+        COAP_OPTION_PROXY_SCHEME => {
+            CoapOptionValidationRule::new("Proxy-Scheme", 1, 255, false, Request)
+        }
+        COAP_OPTION_SIZE1 => CoapOptionValidationRule::new("Size1", 0, 4, false, Both),
+        COAP_OPTION_ECHO => CoapOptionValidationRule::new("Echo", 1, 40, false, Both),
+        COAP_OPTION_NO_RESPONSE => {
+            CoapOptionValidationRule::new("No-Response", 0, 1, false, Request)
+        }
+        COAP_OPTION_REQUEST_TAG => {
+            CoapOptionValidationRule::new("Request-Tag", 0, 8, true, Request)
+        }
+        _ => return None,
+    };
+    Some(rule)
+}
+
 fn bounded_hex(bytes: &[u8]) -> String {
     let shown = bytes.len().min(COAP_INSPECTION_HEX_LIMIT);
     let mut output = String::with_capacity(shown.saturating_mul(2).saturating_add(24));
@@ -1618,6 +2151,7 @@ fn validate_base_token_len(len: usize) -> Result<()> {
 mod tests {
     use super::*;
     use crate::packet::IntoPacket;
+    use crate::protocols::coap::CoapOptionEncoding;
     use crate::protocols::transport::UDP_HEADER_LEN;
 
     #[test]
@@ -2587,6 +3121,97 @@ mod tests {
         assert_eq!(overridden.message_id_value(), 0x2222);
         assert_eq!(overridden.token_value().as_bytes(), [0xaa]);
         assert_eq!(compiled.as_bytes(), &[0xe1, 0x5d, 0x22, 0x22, 0xaa]);
+    }
+
+    #[test]
+    fn canonical_coap_builders_validate_without_findings() {
+        let messages = [
+            Coap::new(),
+            Coap::empty_acknowledgement(0x1234),
+            Coap::empty_reset(0x1234),
+            Coap::get()
+                .uri_host(CoapUriHost::new("example.com"))
+                .uri_path(CoapUriPath::new("status"))
+                .accept(CoapAccept::new(50)),
+            Coap::content()
+                .content_format(CoapContentFormat::new(50))
+                .location_path(CoapLocationPath::new("created"))
+                .payload(b"ok".to_vec()),
+        ];
+
+        for message in messages {
+            let validation = message.validate();
+            assert!(validation.is_clean(), "{:#?}", validation.issues());
+            assert!(validation.is_empty());
+            assert!(!validation.has_errors());
+            assert_eq!(validation.len(), 0);
+            assert!(validation.into_issues().is_empty());
+        }
+    }
+
+    #[test]
+    fn malformed_coap_compiles_and_reports_all_semantic_categories() {
+        let malformed = Coap::empty()
+            .version(2u8)
+            .non_confirmable()
+            .token_length(CoapTokenLength::explicit(2, Vec::new(), 2))
+            .token(CoapToken::from_bytes([0xaa]))
+            .options([
+                CoapOption::new(COAP_OPTION_PROXY_URI, Vec::new())
+                    .with_encoding(CoapOptionEncoding::explicit(35, 0)),
+                CoapOption::new(COAP_OPTION_URI_HOST, Vec::new())
+                    .with_encoding(CoapOptionEncoding::explicit(0, 1)),
+                CoapOption::new(COAP_OPTION_URI_HOST, b"example.com".to_vec())
+                    .with_encoding(CoapOptionEncoding::explicit(0, 11)),
+            ])
+            .option_order(CoapOptionOrder::Wire)
+            .payload_marker(CoapPayloadMarker::Absent)
+            .payload(vec![0xff]);
+
+        let compiled = Packet::from_layer(malformed.clone())
+            .compile()
+            .expect("opt-in validation must not participate in compilation");
+        assert!(!compiled.as_bytes().is_empty());
+
+        let validation = malformed.validate();
+        assert!(!validation.is_clean());
+        assert!(validation.has_errors());
+
+        let categories = validation
+            .issues()
+            .iter()
+            .map(CoapValidationIssue::category)
+            .collect::<Vec<_>>();
+        for category in [
+            CoapValidationCategory::Header,
+            CoapValidationCategory::EmptyMessage,
+            CoapValidationCategory::TokenLength,
+            CoapValidationCategory::PayloadMarker,
+            CoapValidationCategory::OptionOrdering,
+            CoapValidationCategory::OptionEncoding,
+            CoapValidationCategory::OptionRepeatability,
+            CoapValidationCategory::OptionLength,
+            CoapValidationCategory::OptionInteraction,
+            CoapValidationCategory::OptionApplicability,
+        ] {
+            assert!(categories.contains(&category), "missing {category:?}");
+        }
+
+        let fields = validation
+            .issues()
+            .iter()
+            .map(CoapValidationIssue::field)
+            .collect::<Vec<_>>();
+        assert!(fields.contains(&"coap.version"));
+        assert!(fields.contains(&"coap.token-length"));
+        assert!(fields.contains(&"coap.payload-marker"));
+        assert!(fields.contains(&"coap.options[1].number"));
+        assert!(fields.contains(&"coap.options[1].encoding.length"));
+        assert!(fields.contains(&"coap.options[2]"));
+        assert!(validation
+            .issues()
+            .iter()
+            .all(|issue| !issue.reason().is_empty()));
     }
 
     #[test]

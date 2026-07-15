@@ -36,7 +36,8 @@ pub(crate) use self::decode::{append_coap_packet, looks_like_coap_payload};
 pub use self::message::{
     coap_ipv4_request, coap_ipv4_response, coap_ipv6_request, coap_ipv6_response, coap_request_udp,
     coap_response_udp, Coap, CoapCode, CoapMessageType, CoapOptionOrder, CoapPayloadMarker,
-    CoapToken, CoapTokenLength, CoapVersion,
+    CoapToken, CoapTokenLength, CoapValidation, CoapValidationCategory, CoapValidationIssue,
+    CoapValidationSeverity, CoapVersion,
 };
 pub use self::option::{
     validate_coap_proxy_options, CoapAccept, CoapContentFormat, CoapEtag, CoapIfMatch,
