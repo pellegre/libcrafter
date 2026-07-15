@@ -21,9 +21,9 @@ mod reliable;
 pub(crate) use self::constants::COAP_UDP_PORT;
 pub use self::constants::{
     COAPS_PORT, COAP_CODE_CLASS_MASK, COAP_CODE_CLASS_SHIFT, COAP_CODE_DETAIL_MASK,
-    COAP_HEADER_LEN, COAP_MAX_TOKEN_LEN, COAP_OPTION_ACCEPT, COAP_OPTION_BLOCK1,
-    COAP_OPTION_BLOCK2, COAP_OPTION_CONTENT_FORMAT, COAP_OPTION_ECHO, COAP_OPTION_ETAG,
-    COAP_OPTION_HOP_LIMIT, COAP_OPTION_IF_MATCH, COAP_OPTION_IF_NONE_MATCH,
+    COAP_CONTENT_FORMAT_LINK_FORMAT, COAP_HEADER_LEN, COAP_MAX_TOKEN_LEN, COAP_OPTION_ACCEPT,
+    COAP_OPTION_BLOCK1, COAP_OPTION_BLOCK2, COAP_OPTION_CONTENT_FORMAT, COAP_OPTION_ECHO,
+    COAP_OPTION_ETAG, COAP_OPTION_HOP_LIMIT, COAP_OPTION_IF_MATCH, COAP_OPTION_IF_NONE_MATCH,
     COAP_OPTION_LOCATION_PATH, COAP_OPTION_LOCATION_QUERY, COAP_OPTION_MAX_AGE,
     COAP_OPTION_NO_RESPONSE, COAP_OPTION_OBSERVE, COAP_OPTION_OSCORE, COAP_OPTION_PROXY_SCHEME,
     COAP_OPTION_PROXY_URI, COAP_OPTION_Q_BLOCK1, COAP_OPTION_Q_BLOCK2, COAP_OPTION_REQUEST_TAG,
@@ -33,12 +33,14 @@ pub use self::constants::{
 };
 pub use self::decode::decode_coap;
 pub(crate) use self::decode::{append_coap_packet, looks_like_coap_payload};
-pub use self::link_format::{CoapLink, CoapLinkAttribute, CoapLinkAttributeValue, CoapLinkFormat};
+pub use self::link_format::{
+    coap_discovery_response, CoapLink, CoapLinkAttribute, CoapLinkAttributeValue, CoapLinkFormat,
+};
 pub use self::message::{
-    coap_ipv4_request, coap_ipv4_response, coap_ipv6_request, coap_ipv6_response, coap_request_udp,
-    coap_response_udp, Coap, CoapCode, CoapMessageType, CoapOptionOrder, CoapPayloadMarker,
-    CoapToken, CoapTokenLength, CoapValidation, CoapValidationCategory, CoapValidationIssue,
-    CoapValidationSeverity, CoapVersion,
+    coap_discovery_request, coap_ipv4_request, coap_ipv4_response, coap_ipv6_request,
+    coap_ipv6_response, coap_request_udp, coap_response_udp, Coap, CoapCode, CoapMessageType,
+    CoapOptionOrder, CoapPayloadMarker, CoapToken, CoapTokenLength, CoapValidation,
+    CoapValidationCategory, CoapValidationIssue, CoapValidationSeverity, CoapVersion,
 };
 pub use self::option::{
     validate_coap_proxy_options, CoapAccept, CoapContentFormat, CoapEtag, CoapIfMatch,

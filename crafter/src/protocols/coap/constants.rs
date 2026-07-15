@@ -157,6 +157,9 @@ pub const COAP_OPTION_NO_RESPONSE: u16 = 258;
 /// Request-Tag option number (RFC 9175).
 pub const COAP_OPTION_REQUEST_TAG: u16 = 292;
 
+/// `application/link-format` Content-Format identifier (RFC 6690 Section 7.4).
+pub const COAP_CONTENT_FORMAT_LINK_FORMAT: u16 = 40;
+
 /// Assigned cleartext CoAP service port (IANA coap rows; RFC 7252 Section 12).
 pub const COAP_PORT: u16 = 5683;
 /// Assigned secure CoAP service port (IANA coaps rows; RFC 7252 Section 12).

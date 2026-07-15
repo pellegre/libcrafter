@@ -1646,6 +1646,19 @@ impl Layer for Coap {
 
 impl_layer_div!(Coap);
 
+/// Build the RFC 6690 `/.well-known/core` resource-discovery GET request.
+///
+/// The request contains the two Uri-Path segments and selects
+/// `application/link-format` through Accept. It remains an ordinary typed
+/// packet layer: callers provide transaction fields and choose a transport,
+/// and this helper performs no network discovery or I/O.
+pub fn coap_discovery_request() -> Coap {
+    Coap::get()
+        .uri_path(CoapUriPath::new(".well-known"))
+        .uri_path(CoapUriPath::new("core"))
+        .accept(CoapAccept::new(COAP_CONTENT_FORMAT_LINK_FORMAT))
+}
+
 /// Build a UDP header for a cleartext CoAP client request.
 ///
 /// Only the assigned cleartext destination port is pinned. Callers may
