@@ -1,0 +1,1 @@
+//! Group communication wire metadata.

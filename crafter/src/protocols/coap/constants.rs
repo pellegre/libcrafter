@@ -1,0 +1,1 @@
+//! CoAP wire constants.
