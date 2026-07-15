@@ -448,6 +448,7 @@ class PacketGenerator:
             stack=stack,
             case=selected_case,
             feature=feature,
+            family=selected_family,
             direction=direction,
         )
         if selected_feature is None:
@@ -1236,6 +1237,7 @@ class PacketGenerator:
         stack: Sequence[str],
         case: str,
         feature: str | None,
+        family: str | None,
         direction: str,
     ) -> str | None:
         if feature is not None:
@@ -1247,6 +1249,14 @@ class PacketGenerator:
         feature_weights = self._profile_feature_weights()
         choices: list[tuple[str, int]] = []
         for name, spec in matches:
+            if family == "udp" and name != "udp_options":
+                continue
+            if family == "mdns" and not name.startswith("mdns_"):
+                continue
+            if family == "ntp" and not name.startswith("ntp_"):
+                continue
+            if family == "coap" and not name.startswith("coap_"):
+                continue
             categories = _string_list(spec.get("categories", []), "feature.categories")
             weight = max((feature_weights.get(category, 0) for category in categories), default=0)
             if weight > 0:

@@ -21,6 +21,10 @@ def main(argv: list[str]) -> int:
         argv = ["generate", *argv[1:]]
 
     os.environ["ORACLE_REPO_ROOT"] = str(repo_root)
+    os.environ.setdefault(
+        "UV_CACHE_DIR",
+        str(repo_root / "target" / "oracle" / "uv-cache"),
+    )
     existing_pythonpath = os.environ.get("PYTHONPATH")
     os.environ["PYTHONPATH"] = (
         str(script_dir)

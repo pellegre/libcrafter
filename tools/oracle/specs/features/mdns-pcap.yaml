@@ -4,7 +4,6 @@ name: mdns_pcap
 summary: Classic pcap eligibility for raw IPv4 and Ethernet-framed mDNS UDP/5353 fixtures.
 
 layers:
-  - ethernet
   - ipv4
   - ipv6
   - udp

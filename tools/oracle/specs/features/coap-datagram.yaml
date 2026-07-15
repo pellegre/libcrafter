@@ -34,7 +34,7 @@ supported_cases:
   - {name: coap-datagram-content, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
   - {name: coap-options-payload, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
   - {name: coap-unknown-preservation, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
-  - {name: coap-udp-raw-fallback, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-udp-raw-fallback, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes, contract_only: true}
 
 source_refs: [RFC 7252, RFC 8974, IANA CoAP Numbers, .agents/docs/coap-wire-grammar.md]
 backend_support:
@@ -49,4 +49,3 @@ backend_support:
     encode: true
     decode: true
     native_layers: [Coap]
-

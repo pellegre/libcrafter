@@ -8443,6 +8443,17 @@ def _self_check(args: argparse.Namespace) -> int:
 
 _SUITE_FEATURE_BY_FAMILY = {
     "ble": "ble-pcap-link-types",
+    "coap": (
+        "coap_datagram",
+        "coap_reliable",
+        "coap_observe",
+        "coap_blockwise",
+        "coap_extended_token",
+        "coap_link_format",
+        "coap_oscore",
+        "coap_malformed",
+        "coap_pcap",
+    ),
     "dhcpv6": "dhcpv6_behavior",
     "dns": "dns_behavior",
     "igmp": "igmp_header",
