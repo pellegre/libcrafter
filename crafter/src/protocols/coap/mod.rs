@@ -42,6 +42,7 @@ pub use self::message::{
     CoapOptionOrder, CoapPayloadMarker, CoapToken, CoapTokenLength, CoapValidation,
     CoapValidationCategory, CoapValidationIssue, CoapValidationSeverity, CoapVersion,
 };
+pub use self::observe::{CoapObserve, CoapObserveOrdering};
 pub use self::option::{
     validate_coap_proxy_options, CoapAccept, CoapContentFormat, CoapEtag, CoapIfMatch,
     CoapIfNoneMatch, CoapLocationPath, CoapLocationQuery, CoapMaxAge, CoapOption,
