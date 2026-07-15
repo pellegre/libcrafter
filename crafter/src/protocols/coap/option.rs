@@ -11,8 +11,8 @@ use crate::error::{CrafterError, Result};
 use crate::field::{Field, FieldState};
 
 use super::constants::{
-    COAP_OPTION_URI_HOST, COAP_OPTION_URI_PATH, COAP_OPTION_URI_PORT, COAP_OPTION_URI_QUERY,
-    COAP_PAYLOAD_MARKER,
+    COAP_OPTION_ETAG, COAP_OPTION_IF_MATCH, COAP_OPTION_IF_NONE_MATCH, COAP_OPTION_URI_HOST,
+    COAP_OPTION_URI_PATH, COAP_OPTION_URI_PORT, COAP_OPTION_URI_QUERY, COAP_PAYLOAD_MARKER,
 };
 use super::registry::{
     coap_option_is_critical, coap_option_is_no_cache_key, coap_option_is_safe_to_forward,
@@ -580,6 +580,202 @@ impl CoapOption {
     /// uniform without copying or changing the stored value.
     pub fn as_opaque(&self) -> Result<&[u8]> {
         Ok(self.value())
+    }
+}
+
+macro_rules! define_checked_opaque_option {
+    (
+        $(#[$meta:meta])*
+        $name:ident,
+        number = $number:expr,
+        field = $field:literal,
+        wrong_number = $wrong_number:literal,
+        min_length = $min_length:expr,
+        max_length = $max_length:expr,
+        length_error = $length_error:literal
+    ) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        pub struct $name {
+            value: Vec<u8>,
+        }
+
+        impl $name {
+            /// Build one lossless occurrence from exact option value bytes.
+            ///
+            /// This constructor deliberately accepts semantically malformed
+            /// lengths for packet crafting. Use [`Self::try_new`] or
+            /// [`Self::validate`] when a checked value is required.
+            pub fn new(value: impl AsRef<[u8]>) -> Self {
+                Self {
+                    value: value.as_ref().to_vec(),
+                }
+            }
+
+            /// Build one occurrence after checking its RFC 7252 length.
+            pub fn try_new(value: impl AsRef<[u8]>) -> Result<Self> {
+                let value = Self::new(value);
+                value.validate()?;
+                Ok(value)
+            }
+
+            /// Check this occurrence's RFC 7252 semantic length.
+            pub fn validate(&self) -> Result<()> {
+                if !($min_length..=$max_length).contains(&self.value.len()) {
+                    return Err(CrafterError::invalid_field_value($field, $length_error));
+                }
+                Ok(())
+            }
+
+            /// Borrow the exact option value bytes.
+            pub fn as_bytes(&self) -> &[u8] {
+                &self.value
+            }
+
+            /// Consume the wrapper and return the exact option value bytes.
+            pub fn into_bytes(self) -> Vec<u8> {
+                self.value
+            }
+
+            /// Compare the exact opaque value with caller-provided bytes.
+            ///
+            /// This is byte equality only. It does not apply cache or server
+            /// precondition semantics.
+            pub fn matches_bytes(&self, other: impl AsRef<[u8]>) -> bool {
+                self.as_bytes() == other.as_ref()
+            }
+        }
+
+        impl From<Vec<u8>> for $name {
+            fn from(value: Vec<u8>) -> Self {
+                Self { value }
+            }
+        }
+
+        impl From<$name> for CoapOption {
+            fn from(value: $name) -> Self {
+                CoapOption::new($number, value.into_bytes())
+            }
+        }
+
+        impl TryFrom<&CoapOption> for $name {
+            type Error = CrafterError;
+
+            fn try_from(option: &CoapOption) -> Result<Self> {
+                if option.number().value() != $number {
+                    return Err(CrafterError::invalid_field_value($field, $wrong_number));
+                }
+
+                Self::try_new(option.value())
+            }
+        }
+    };
+}
+
+define_checked_opaque_option! {
+    /// One repeatable RFC 7252 If-Match request precondition value.
+    ///
+    /// Values are opaque and at most eight bytes. The empty value is the
+    /// source-defined wildcard form represented by [`Self::any`].
+    CoapIfMatch,
+    number = COAP_OPTION_IF_MATCH,
+    field = "coap.if-match",
+    wrong_number = "option number is not If-Match",
+    min_length = 0,
+    max_length = 8,
+    length_error = "If-Match length must not exceed 8 bytes"
+}
+
+impl CoapIfMatch {
+    /// Build the empty wildcard form that matches any current representation.
+    pub fn any() -> Self {
+        Self::new([])
+    }
+
+    /// Return whether this value is the empty wildcard form.
+    pub fn is_any(&self) -> bool {
+        self.as_bytes().is_empty()
+    }
+
+    /// Compare this value with one ETag using exact byte equality.
+    ///
+    /// The wildcard form is reported separately by [`Self::is_any`] and is
+    /// not expanded into server-side precondition behavior here.
+    pub fn matches_etag(&self, etag: &CoapEtag) -> bool {
+        self.matches_bytes(etag.as_bytes())
+    }
+}
+
+define_checked_opaque_option! {
+    /// One repeatable RFC 7252 Entity-Tag option value.
+    ///
+    /// ETags are opaque byte strings between one and eight bytes inclusive.
+    CoapEtag,
+    number = COAP_OPTION_ETAG,
+    field = "coap.etag",
+    wrong_number = "option number is not ETag",
+    min_length = 1,
+    max_length = 8,
+    length_error = "ETag length must be between 1 and 8 bytes"
+}
+
+impl CoapEtag {
+    /// Compare this ETag with one If-Match value using exact byte equality.
+    ///
+    /// Call [`CoapIfMatch::is_any`] separately for the empty wildcard form.
+    pub fn matches_if_match(&self, if_match: &CoapIfMatch) -> bool {
+        self.matches_bytes(if_match.as_bytes())
+    }
+}
+
+/// The empty RFC 7252 If-None-Match request precondition option.
+///
+/// Presence is the complete typed value. A nonempty raw [`CoapOption`] stays
+/// constructible and lossless but fails the checked `TryFrom` view.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct CoapIfNoneMatch;
+
+impl CoapIfNoneMatch {
+    /// Build the empty If-None-Match value.
+    pub const fn new() -> Self {
+        Self
+    }
+
+    /// Borrow the empty wire value.
+    pub const fn as_bytes(&self) -> &'static [u8] {
+        &[]
+    }
+
+    /// Return the empty wire value as owned bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        Vec::new()
+    }
+}
+
+impl From<CoapIfNoneMatch> for CoapOption {
+    fn from(value: CoapIfNoneMatch) -> Self {
+        CoapOption::new(COAP_OPTION_IF_NONE_MATCH, value.into_bytes())
+    }
+}
+
+impl TryFrom<&CoapOption> for CoapIfNoneMatch {
+    type Error = CrafterError;
+
+    fn try_from(option: &CoapOption) -> Result<Self> {
+        if option.number().value() != COAP_OPTION_IF_NONE_MATCH {
+            return Err(CrafterError::invalid_field_value(
+                "coap.if-none-match",
+                "option number is not If-None-Match",
+            ));
+        }
+        if !option.value().is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "coap.if-none-match",
+                "If-None-Match value must be empty",
+            ));
+        }
+
+        Ok(Self)
     }
 }
 
@@ -1576,6 +1772,146 @@ mod tests {
         assert_eq!(options[3].number().value(), COAP_OPTION_URI_PATH);
         assert_eq!(options[4].number().value(), COAP_OPTION_URI_QUERY);
         assert_eq!(options[5].number().value(), COAP_OPTION_URI_QUERY);
+    }
+
+    #[test]
+    fn conditional_wrappers_check_boundaries_and_preserve_binary_values() {
+        let wildcard = CoapIfMatch::any();
+        assert!(wildcard.is_any());
+        assert_eq!(wildcard.validate(), Ok(()));
+        assert_eq!(wildcard.as_bytes(), b"");
+
+        let if_match = CoapIfMatch::try_new([0x00, 0xff, 0x80, 1, 2, 3, 4, 5]).unwrap();
+        assert!(!if_match.is_any());
+        assert_eq!(if_match.as_bytes(), [0x00, 0xff, 0x80, 1, 2, 3, 4, 5]);
+        assert_eq!(
+            CoapIfMatch::try_new([0u8; 9]),
+            Err(CrafterError::invalid_field_value(
+                "coap.if-match",
+                "If-Match length must not exceed 8 bytes",
+            ))
+        );
+
+        for value in [vec![0xff], vec![0x00, 1, 2, 3, 4, 5, 6, 0xff]] {
+            let etag = CoapEtag::try_new(&value).unwrap();
+            assert_eq!(etag.as_bytes(), value);
+        }
+        assert_eq!(
+            CoapEtag::try_new([]),
+            Err(CrafterError::invalid_field_value(
+                "coap.etag",
+                "ETag length must be between 1 and 8 bytes",
+            ))
+        );
+        assert_eq!(
+            CoapEtag::try_new([0u8; 9]),
+            Err(CrafterError::invalid_field_value(
+                "coap.etag",
+                "ETag length must be between 1 and 8 bytes",
+            ))
+        );
+
+        let if_none_match = CoapIfNoneMatch::new();
+        assert_eq!(if_none_match.as_bytes(), b"");
+        let option = CoapOption::from(if_none_match);
+        assert_eq!(option.number().value(), COAP_OPTION_IF_NONE_MATCH);
+        assert_eq!(option.value(), b"");
+        assert_eq!(CoapIfNoneMatch::try_from(&option), Ok(if_none_match));
+    }
+
+    #[test]
+    fn conditional_comparisons_are_exact_byte_equality_only() {
+        let etag = CoapEtag::try_new([0xde, 0xad]).unwrap();
+        let same = CoapIfMatch::try_new([0xde, 0xad]).unwrap();
+        let different = CoapIfMatch::try_new([0xde, 0xae]).unwrap();
+        let wildcard = CoapIfMatch::any();
+
+        assert!(etag.matches_bytes([0xde, 0xad]));
+        assert!(etag.matches_if_match(&same));
+        assert!(same.matches_etag(&etag));
+        assert!(!different.matches_etag(&etag));
+        assert!(wildcard.is_any());
+        assert!(!wildcard.matches_etag(&etag));
+    }
+
+    #[test]
+    fn conditional_options_and_builders_preserve_repeated_occurrences() {
+        let message = crate::protocols::coap::Coap::get()
+            .etag(vec![0x01])
+            .etag(vec![0x02, 0x03])
+            .if_match(vec![0x01])
+            .if_match(CoapIfMatch::any())
+            .if_none_match();
+
+        let options = message.options_value();
+        let numbers: Vec<_> = options
+            .iter()
+            .map(|option| option.number().value())
+            .collect();
+        assert_eq!(
+            numbers,
+            [
+                COAP_OPTION_ETAG,
+                COAP_OPTION_ETAG,
+                COAP_OPTION_IF_MATCH,
+                COAP_OPTION_IF_MATCH,
+                COAP_OPTION_IF_NONE_MATCH,
+            ]
+        );
+        assert_eq!(options[0].value(), [0x01]);
+        assert_eq!(options[1].value(), [0x02, 0x03]);
+        assert_eq!(options[2].value(), [0x01]);
+        assert_eq!(options[3].value(), b"");
+        assert_eq!(options[4].value(), b"");
+    }
+
+    #[test]
+    fn malformed_conditional_raw_options_remain_lossless_and_encodable() {
+        let oversized_if_match = CoapOption::new(COAP_OPTION_IF_MATCH, vec![0x80; 9]);
+        assert_eq!(
+            CoapIfMatch::try_from(&oversized_if_match),
+            Err(CrafterError::invalid_field_value(
+                "coap.if-match",
+                "If-Match length must not exceed 8 bytes",
+            ))
+        );
+        assert_eq!(oversized_if_match.value(), [0x80; 9]);
+
+        let empty_etag = CoapOption::new(COAP_OPTION_ETAG, Vec::new());
+        assert_eq!(
+            CoapEtag::try_from(&empty_etag),
+            Err(CrafterError::invalid_field_value(
+                "coap.etag",
+                "ETag length must be between 1 and 8 bytes",
+            ))
+        );
+        assert_eq!(empty_etag.value(), b"");
+
+        let nonempty_if_none_match =
+            CoapOption::new(COAP_OPTION_IF_NONE_MATCH, [0xff]).with_wire_length(0);
+        assert_eq!(
+            CoapIfNoneMatch::try_from(&nonempty_if_none_match),
+            Err(CrafterError::invalid_field_value(
+                "coap.if-none-match",
+                "If-None-Match value must be empty",
+            ))
+        );
+        assert_eq!(nonempty_if_none_match.value(), [0xff]);
+        assert_eq!(
+            nonempty_if_none_match
+                .encoding()
+                .and_then(CoapOptionEncoding::wire_length),
+            Some(0)
+        );
+
+        let malformed =
+            CoapOptions::from_options([oversized_if_match, empty_etag, nonempty_if_none_match]);
+        let mut encoded = Vec::new();
+        encode_option_sequence(&malformed, &mut encoded).unwrap();
+        assert_eq!(
+            encoded,
+            [0x19, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x30, 0x10, 0xff,]
+        );
     }
 
     #[test]

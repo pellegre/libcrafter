@@ -39,8 +39,8 @@ pub use self::message::{
     CoapToken, CoapTokenLength, CoapVersion,
 };
 pub use self::option::{
-    CoapOption, CoapOptionEncoding, CoapOptionFormat, CoapOptionNumber, CoapUriHost, CoapUriPath,
-    CoapUriPort, CoapUriQuery,
+    CoapEtag, CoapIfMatch, CoapIfNoneMatch, CoapOption, CoapOptionEncoding, CoapOptionFormat,
+    CoapOptionNumber, CoapUriHost, CoapUriPath, CoapUriPort, CoapUriQuery,
 };
 pub use self::registry::{
     coap_code_meta, coap_content_format_meta, coap_option_meta, coap_signaling_code_meta,
