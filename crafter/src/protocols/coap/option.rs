@@ -10,6 +10,16 @@ use super::registry::{
     coap_option_is_unsafe, coap_option_meta, CoapRegistryMeta,
 };
 
+const COAP_OPTION_DIRECT_MAX: u64 = 12;
+const COAP_OPTION_EXTENDED8_BASE: u64 = 13;
+const COAP_OPTION_EXTENDED8_MAX: u64 = 268;
+const COAP_OPTION_EXTENDED16_BASE: u64 = 269;
+const COAP_OPTION_EXTENDED16_MAX: u64 = 65_804;
+
+const COAP_OPTION_EXTENDED8_NIBBLE: u8 = 13;
+const COAP_OPTION_EXTENDED16_NIBBLE: u8 = 14;
+const COAP_OPTION_RESERVED_NIBBLE: u8 = 15;
+
 /// Lossless CoAP datagram Option Number.
 ///
 /// The wrapper is open over the complete 16-bit option-number space. Registry
@@ -104,6 +114,7 @@ pub enum CoapOptionFormat {
 pub struct CoapOptionEncoding {
     wire_delta: Option<u32>,
     wire_length: Option<usize>,
+    raw_header: Option<Vec<u8>>,
 }
 
 impl CoapOptionEncoding {
@@ -112,6 +123,7 @@ impl CoapOptionEncoding {
         Self {
             wire_delta: None,
             wire_length: None,
+            raw_header: None,
         }
     }
 
@@ -120,6 +132,21 @@ impl CoapOptionEncoding {
         Self {
             wire_delta: Some(wire_delta),
             wire_length: Some(wire_length),
+            raw_header: None,
+        }
+    }
+
+    /// Preserve exact option header and extension bytes.
+    ///
+    /// Raw bytes take precedence over logical delta and length overrides when
+    /// the option header is compiled. They are deliberately not validated so
+    /// callers and decoded packets can retain noncanonical, truncated, or
+    /// reserved encodings byte-for-byte.
+    pub fn from_raw_bytes(raw_header: impl Into<Vec<u8>>) -> Self {
+        Self {
+            wire_delta: None,
+            wire_length: None,
+            raw_header: Some(raw_header.into()),
         }
     }
 
@@ -135,6 +162,15 @@ impl CoapOptionEncoding {
         self
     }
 
+    /// Pin exact option header and extension bytes.
+    ///
+    /// The raw representation wins over any logical overrides already stored
+    /// in this metadata.
+    pub fn with_raw_bytes(mut self, raw_header: impl Into<Vec<u8>>) -> Self {
+        self.raw_header = Some(raw_header.into());
+        self
+    }
+
     /// Return the caller-supplied wire delta, if present.
     pub const fn wire_delta(&self) -> Option<u32> {
         self.wire_delta
@@ -143,6 +179,229 @@ impl CoapOptionEncoding {
     /// Return the caller-supplied wire length, if present.
     pub const fn wire_length(&self) -> Option<usize> {
         self.wire_length
+    }
+
+    /// Borrow exact caller-supplied or decoded option header bytes.
+    pub fn raw_bytes(&self) -> Option<&[u8]> {
+        self.raw_header.as_deref()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct DecodedOptionHeader {
+    pub(super) delta: u32,
+    pub(super) length: usize,
+    pub(super) consumed: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EncodedOptionComponent {
+    nibble: u8,
+    extension: [u8; 2],
+    extension_len: usize,
+}
+
+impl EncodedOptionComponent {
+    fn direct(nibble: u8) -> Self {
+        Self {
+            nibble,
+            extension: [0; 2],
+            extension_len: 0,
+        }
+    }
+
+    fn extended8(extension: u8) -> Self {
+        Self {
+            nibble: COAP_OPTION_EXTENDED8_NIBBLE,
+            extension: [extension, 0],
+            extension_len: 1,
+        }
+    }
+
+    fn extended16(extension: u16) -> Self {
+        Self {
+            nibble: COAP_OPTION_EXTENDED16_NIBBLE,
+            extension: extension.to_be_bytes(),
+            extension_len: 2,
+        }
+    }
+
+    fn extension(&self) -> &[u8] {
+        &self.extension[..self.extension_len]
+    }
+}
+
+/// Append one option header and return its encoded byte count.
+///
+/// Canonical values use their shortest direct or extended representation.
+/// Logical values in `encoding` override the derived delta and length. Exact
+/// raw bytes, when present, take precedence and are emitted without validation
+/// so deliberately malformed packets remain constructible.
+pub(super) fn encode_option_header(
+    delta: u32,
+    length: usize,
+    encoding: Option<&CoapOptionEncoding>,
+    out: &mut Vec<u8>,
+) -> Result<usize> {
+    if let Some(raw_header) = encoding.and_then(CoapOptionEncoding::raw_bytes) {
+        out.extend_from_slice(raw_header);
+        return Ok(raw_header.len());
+    }
+
+    let delta = encoding
+        .and_then(CoapOptionEncoding::wire_delta)
+        .unwrap_or(delta);
+    let length = encoding
+        .and_then(CoapOptionEncoding::wire_length)
+        .unwrap_or(length);
+
+    let encoded_delta = encode_option_component(
+        u64::from(delta),
+        "coap.option.delta",
+        "option delta exceeds 65804",
+    )?;
+    let length = u64::try_from(length).map_err(|_| {
+        CrafterError::invalid_field_value("coap.option.length", "option length exceeds 65804")
+    })?;
+    let encoded_length =
+        encode_option_component(length, "coap.option.length", "option length exceeds 65804")?;
+
+    let encoded_len = 1usize
+        .checked_add(encoded_delta.extension_len)
+        .and_then(|len| len.checked_add(encoded_length.extension_len))
+        .ok_or_else(|| {
+            CrafterError::invalid_field_value("coap.option.header", "option header length overflow")
+        })?;
+
+    out.reserve(encoded_len);
+    out.push((encoded_delta.nibble << 4) | encoded_length.nibble);
+    out.extend_from_slice(encoded_delta.extension());
+    out.extend_from_slice(encoded_length.extension());
+    Ok(encoded_len)
+}
+
+/// Decode one option header and return logical values plus bytes consumed.
+pub(super) fn decode_option_header(bytes: &[u8]) -> Result<DecodedOptionHeader> {
+    let header = *bytes
+        .first()
+        .ok_or_else(|| CrafterError::buffer_too_short("coap.option.header", 1, bytes.len()))?;
+    let delta_nibble = header >> 4;
+    let length_nibble = header & 0x0f;
+
+    if delta_nibble == COAP_OPTION_RESERVED_NIBBLE {
+        let reason = if header == 0xff {
+            "payload marker is not an option header"
+        } else {
+            "reserved delta nibble 15 is not a payload marker"
+        };
+        return Err(CrafterError::invalid_field_value(
+            "coap.option.delta",
+            reason,
+        ));
+    }
+    if length_nibble == COAP_OPTION_RESERVED_NIBBLE {
+        return Err(CrafterError::invalid_field_value(
+            "coap.option.length",
+            "reserved option length nibble 15",
+        ));
+    }
+
+    let mut cursor = 1usize;
+    let delta = decode_option_component(
+        delta_nibble,
+        bytes,
+        &mut cursor,
+        "coap.option.delta.extended8",
+        "coap.option.delta.extended16",
+        "coap.option.delta",
+    )?;
+    let length = decode_option_component(
+        length_nibble,
+        bytes,
+        &mut cursor,
+        "coap.option.length.extended8",
+        "coap.option.length.extended16",
+        "coap.option.length",
+    )?;
+    let length = usize::try_from(length).map_err(|_| {
+        CrafterError::invalid_field_value("coap.option.length", "decoded option length overflow")
+    })?;
+
+    Ok(DecodedOptionHeader {
+        delta,
+        length,
+        consumed: cursor,
+    })
+}
+
+fn encode_option_component(
+    value: u64,
+    field: &'static str,
+    overflow_reason: &'static str,
+) -> Result<EncodedOptionComponent> {
+    match value {
+        0..=COAP_OPTION_DIRECT_MAX => Ok(EncodedOptionComponent::direct(value as u8)),
+        COAP_OPTION_EXTENDED8_BASE..=COAP_OPTION_EXTENDED8_MAX => {
+            let extension = value
+                .checked_sub(COAP_OPTION_EXTENDED8_BASE)
+                .and_then(|extension| u8::try_from(extension).ok())
+                .ok_or_else(|| CrafterError::invalid_field_value(field, overflow_reason))?;
+            Ok(EncodedOptionComponent::extended8(extension))
+        }
+        COAP_OPTION_EXTENDED16_BASE..=COAP_OPTION_EXTENDED16_MAX => {
+            let extension = value
+                .checked_sub(COAP_OPTION_EXTENDED16_BASE)
+                .and_then(|extension| u16::try_from(extension).ok())
+                .ok_or_else(|| CrafterError::invalid_field_value(field, overflow_reason))?;
+            Ok(EncodedOptionComponent::extended16(extension))
+        }
+        _ => Err(CrafterError::invalid_field_value(field, overflow_reason)),
+    }
+}
+
+fn decode_option_component(
+    nibble: u8,
+    bytes: &[u8],
+    cursor: &mut usize,
+    extended8_context: &'static str,
+    extended16_context: &'static str,
+    field: &'static str,
+) -> Result<u32> {
+    match nibble {
+        0..=12 => Ok(u32::from(nibble)),
+        COAP_OPTION_EXTENDED8_NIBBLE => {
+            let remaining = bytes.get(*cursor..).unwrap_or_default();
+            let extension = *remaining.first().ok_or_else(|| {
+                CrafterError::buffer_too_short(extended8_context, 1, remaining.len())
+            })?;
+            *cursor = cursor.checked_add(1).ok_or_else(|| {
+                CrafterError::invalid_field_value(field, "option header cursor overflow")
+            })?;
+            u32::from(extension)
+                .checked_add(COAP_OPTION_EXTENDED8_BASE as u32)
+                .ok_or_else(|| {
+                    CrafterError::invalid_field_value(field, "decoded option value overflow")
+                })
+        }
+        COAP_OPTION_EXTENDED16_NIBBLE => {
+            let remaining = bytes.get(*cursor..).unwrap_or_default();
+            let extension = remaining.get(..2).ok_or_else(|| {
+                CrafterError::buffer_too_short(extended16_context, 2, remaining.len())
+            })?;
+            let extension = u16::from_be_bytes([extension[0], extension[1]]);
+            *cursor = cursor.checked_add(2).ok_or_else(|| {
+                CrafterError::invalid_field_value(field, "option header cursor overflow")
+            })?;
+            u32::from(extension)
+                .checked_add(COAP_OPTION_EXTENDED16_BASE as u32)
+                .ok_or_else(|| {
+                    CrafterError::invalid_field_value(field, "decoded option value overflow")
+                })
+        }
+        _ => Err(CrafterError::invalid_field_value(
+            field,
+            "reserved option header nibble",
+        )),
     }
 }
 
@@ -626,6 +885,222 @@ mod tests {
         let encoding = option.encoding().expect("explicit encoding metadata");
         assert_eq!(encoding.wire_delta(), Some(65804));
         assert_eq!(encoding.wire_length(), Some(1));
+    }
+
+    #[test]
+    fn option_header_codec_covers_every_direct_value_and_extension_boundary() {
+        for value in 0u32..=12 {
+            let mut encoded = Vec::new();
+            let consumed = encode_option_header(value, 0, None, &mut encoded).unwrap();
+            assert_eq!(encoded, [((value as u8) << 4)]);
+            assert_eq!(consumed, 1);
+            assert_eq!(
+                decode_option_header(&encoded).unwrap(),
+                DecodedOptionHeader {
+                    delta: value,
+                    length: 0,
+                    consumed: 1,
+                }
+            );
+        }
+
+        for value in 0usize..=12 {
+            let mut encoded = Vec::new();
+            let consumed = encode_option_header(0, value, None, &mut encoded).unwrap();
+            assert_eq!(encoded, [value as u8]);
+            assert_eq!(consumed, 1);
+            assert_eq!(
+                decode_option_header(&encoded).unwrap(),
+                DecodedOptionHeader {
+                    delta: 0,
+                    length: value,
+                    consumed: 1,
+                }
+            );
+        }
+
+        let delta_cases: &[(u32, &[u8])] = &[
+            (13, &[0xd0, 0x00]),
+            (268, &[0xd0, 0xff]),
+            (269, &[0xe0, 0x00, 0x00]),
+            (65_804, &[0xe0, 0xff, 0xff]),
+        ];
+        for &(delta, expected) in delta_cases {
+            let mut encoded = Vec::new();
+            let consumed = encode_option_header(delta, 0, None, &mut encoded).unwrap();
+            assert_eq!(encoded, expected);
+            assert_eq!(consumed, expected.len());
+            assert_eq!(
+                decode_option_header(&encoded).unwrap(),
+                DecodedOptionHeader {
+                    delta,
+                    length: 0,
+                    consumed: expected.len(),
+                }
+            );
+        }
+
+        let length_cases: &[(usize, &[u8])] = &[
+            (13, &[0x0d, 0x00]),
+            (268, &[0x0d, 0xff]),
+            (269, &[0x0e, 0x00, 0x00]),
+            (65_804, &[0x0e, 0xff, 0xff]),
+        ];
+        for &(length, expected) in length_cases {
+            let mut encoded = Vec::new();
+            let consumed = encode_option_header(0, length, None, &mut encoded).unwrap();
+            assert_eq!(encoded, expected);
+            assert_eq!(consumed, expected.len());
+            assert_eq!(
+                decode_option_header(&encoded).unwrap(),
+                DecodedOptionHeader {
+                    delta: 0,
+                    length,
+                    consumed: expected.len(),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn option_header_codec_orders_extensions_and_reports_only_header_consumption() {
+        let mut encoded = Vec::new();
+        assert_eq!(encode_option_header(269, 268, None, &mut encoded), Ok(4));
+        assert_eq!(encoded, [0xed, 0x00, 0x00, 0xff]);
+
+        encoded.extend_from_slice(&[0xaa, 0xbb]);
+        assert_eq!(
+            decode_option_header(&encoded),
+            Ok(DecodedOptionHeader {
+                delta: 269,
+                length: 268,
+                consumed: 4,
+            })
+        );
+    }
+
+    #[test]
+    fn option_header_codec_honors_logical_and_exact_raw_overrides() {
+        let logical = CoapOptionEncoding::explicit(269, 268);
+        let mut encoded = Vec::new();
+        assert_eq!(
+            encode_option_header(1, 2, Some(&logical), &mut encoded),
+            Ok(4)
+        );
+        assert_eq!(encoded, [0xed, 0x00, 0x00, 0xff]);
+
+        let raw = logical.with_raw_bytes([0xfe, 0xaa, 0xbb]);
+        assert_eq!(raw.wire_delta(), Some(269));
+        assert_eq!(raw.wire_length(), Some(268));
+        assert_eq!(raw.raw_bytes(), Some([0xfe, 0xaa, 0xbb].as_slice()));
+
+        encoded.clear();
+        assert_eq!(encode_option_header(1, 2, Some(&raw), &mut encoded), Ok(3));
+        assert_eq!(encoded, [0xfe, 0xaa, 0xbb]);
+
+        let decoded = CoapOptionEncoding::from_raw_bytes([0xd0, 0x00]);
+        assert_eq!(decoded.raw_bytes(), Some([0xd0, 0x00].as_slice()));
+        assert_eq!(decoded.wire_delta(), None);
+        assert_eq!(decoded.wire_length(), None);
+    }
+
+    #[test]
+    fn option_header_codec_rejects_unencodable_logical_values() {
+        let mut encoded = Vec::new();
+        assert_eq!(
+            encode_option_header(65_805, 0, None, &mut encoded),
+            Err(CrafterError::invalid_field_value(
+                "coap.option.delta",
+                "option delta exceeds 65804",
+            ))
+        );
+        assert!(encoded.is_empty());
+
+        assert_eq!(
+            encode_option_header(0, 65_805, None, &mut encoded),
+            Err(CrafterError::invalid_field_value(
+                "coap.option.length",
+                "option length exceeds 65804",
+            ))
+        );
+        assert!(encoded.is_empty());
+
+        let invalid_override = CoapOptionEncoding::new().with_wire_delta(u32::MAX);
+        assert_eq!(
+            encode_option_header(0, 0, Some(&invalid_override), &mut encoded),
+            Err(CrafterError::invalid_field_value(
+                "coap.option.delta",
+                "option delta exceeds 65804",
+            ))
+        );
+        assert!(encoded.is_empty());
+    }
+
+    #[test]
+    fn option_header_codec_reports_stable_truncation_boundaries() {
+        let cases: &[(&[u8], &str, usize, usize)] = &[
+            (&[], "coap.option.header", 1, 0),
+            (&[0xd0], "coap.option.delta.extended8", 1, 0),
+            (&[0xe0], "coap.option.delta.extended16", 2, 0),
+            (&[0xe0, 0x00], "coap.option.delta.extended16", 2, 1),
+            (&[0x0d], "coap.option.length.extended8", 1, 0),
+            (&[0x0e], "coap.option.length.extended16", 2, 0),
+            (&[0x0e, 0x00], "coap.option.length.extended16", 2, 1),
+            (&[0xdd, 0x00], "coap.option.length.extended8", 1, 0),
+            (&[0xed, 0x00, 0x00], "coap.option.length.extended8", 1, 0),
+            (&[0xee, 0x00, 0x00], "coap.option.length.extended16", 2, 0),
+            (
+                &[0xee, 0x00, 0x00, 0x00],
+                "coap.option.length.extended16",
+                2,
+                1,
+            ),
+        ];
+
+        for &(bytes, context, required, available) in cases {
+            assert_eq!(
+                decode_option_header(bytes),
+                Err(CrafterError::BufferTooShort {
+                    context,
+                    required,
+                    available,
+                }),
+                "bytes: {bytes:02x?}"
+            );
+        }
+    }
+
+    #[test]
+    fn option_header_codec_rejects_every_reserved_nibble_position() {
+        for length_nibble in 0u8..=14 {
+            let header = 0xf0 | length_nibble;
+            assert_eq!(
+                decode_option_header(&[header]),
+                Err(CrafterError::invalid_field_value(
+                    "coap.option.delta",
+                    "reserved delta nibble 15 is not a payload marker",
+                ))
+            );
+        }
+
+        for delta_nibble in 0u8..=14 {
+            let header = (delta_nibble << 4) | 0x0f;
+            assert_eq!(
+                decode_option_header(&[header]),
+                Err(CrafterError::invalid_field_value(
+                    "coap.option.length",
+                    "reserved option length nibble 15",
+                ))
+            );
+        }
+
+        assert_eq!(
+            decode_option_header(&[0xff]),
+            Err(CrafterError::invalid_field_value(
+                "coap.option.delta",
+                "payload marker is not an option header",
+            ))
+        );
     }
 
     #[test]
