@@ -4,7 +4,8 @@ use core::fmt;
 
 use crate::error::{CrafterError, Result};
 use crate::field::{Field, FieldState};
-use crate::packet::hexdump;
+use crate::packet::{hexdump, Layer, LayerContext};
+use crate::protocols::transport::common::impl_layer_object;
 
 use super::constants::*;
 use super::option::CoapOption;
@@ -920,12 +921,43 @@ impl Coap {
     pub fn payload_value(&self) -> &[u8] {
         &self.payload
     }
+
+    fn first_octet_value(&self) -> Result<u8> {
+        let version = self.version_value().wire_value() << COAP_VERSION_SHIFT;
+        let message_type = self.message_type_value().wire_value() << COAP_TYPE_SHIFT;
+        let token_length = self.token_length_value()?.nibble() << COAP_TKL_SHIFT;
+
+        Ok((version & COAP_VERSION_MASK)
+            | (message_type & COAP_TYPE_MASK)
+            | (token_length & COAP_TKL_MASK))
+    }
 }
 
 impl Default for Coap {
     fn default() -> Self {
         Self::new()
     }
+}
+
+impl Layer for Coap {
+    fn name(&self) -> &'static str {
+        "Coap"
+    }
+
+    fn encoded_len(&self) -> usize {
+        COAP_HEADER_LEN
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        let first_octet = self.first_octet_value()?;
+
+        out.push(first_octet);
+        out.push(self.code_value().wire_value());
+        out.extend_from_slice(&self.message_id_value().to_be_bytes());
+        Ok(())
+    }
+
+    impl_layer_object!(Coap);
 }
 
 fn validate_base_token_len(len: usize) -> Result<()> {
@@ -942,6 +974,34 @@ fn validate_base_token_len(len: usize) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::packet::Packet;
+
+    #[test]
+    fn empty_default_fixed_header_matches_golden_bytes() {
+        let message = Coap::new();
+
+        assert_eq!(message.encoded_len(), COAP_HEADER_LEN);
+        assert_eq!(
+            Packet::from_layer(message).compile().unwrap().as_bytes(),
+            &[0x40, 0x00, 0x00, 0x00]
+        );
+    }
+
+    #[test]
+    fn explicit_malformed_fixed_header_matches_golden_bytes() {
+        let message = Coap::new()
+            .version(3u8)
+            .message_type(CoapMessageType::Reset)
+            .token_length(CoapTokenLength::explicit(15, Vec::new(), 0))
+            .code(0xffu8)
+            .message_id(0xabcd);
+
+        assert_eq!(message.encoded_len(), COAP_HEADER_LEN);
+        assert_eq!(
+            Packet::from_layer(message).compile().unwrap().as_bytes(),
+            &[0xff, 0xff, 0xab, 0xcd]
+        );
+    }
 
     #[test]
     fn coap_new_keeps_fields_unset_and_exposes_effective_defaults() {
