@@ -11,6 +11,8 @@ use crate::{
     field::{Field, FieldState},
 };
 
+use super::option::CoapContentFormat;
+
 const LINK_FORMAT_SYNTAX_FIELD: &str = "coap.link-format.syntax";
 const LINK_FORMAT_MAX_INPUT_LEN: usize = u16::MAX as usize;
 
@@ -62,6 +64,18 @@ impl CoapLinkFormat {
         &self.links
     }
 
+    /// Pin exact document bytes for lossless serialization.
+    ///
+    /// The raw representation wins over the typed links and is deliberately
+    /// not validated. This keeps unknown extensions and intentionally
+    /// malformed caller-selected forms byte-exact. Documents returned by
+    /// [`Self::parse`] retain their decoded bytes with `Defaulted` state;
+    /// this method records an explicit `User` override.
+    pub fn with_raw_bytes(mut self, raw: impl Into<Vec<u8>>) -> Self {
+        self.raw.set_user(raw.into());
+        self
+    }
+
     /// Return the state of the optional exact raw representation.
     pub const fn raw_state(&self) -> FieldState {
         self.raw.state()
@@ -71,6 +85,100 @@ impl CoapLinkFormat {
     pub fn raw_bytes(&self) -> Option<&[u8]> {
         self.raw.value().map(Vec::as_slice)
     }
+
+    /// Serialize this document as compact CoRE Link Format bytes.
+    ///
+    /// Retained decoded or caller-supplied raw bytes win for lossless round
+    /// trips. Otherwise links and attributes are emitted in model order with
+    /// no optional whitespace, using commas and semicolons as the canonical
+    /// separators and escaping quoted-string content where required.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        match self.raw.value() {
+            Some(raw) => raw.clone(),
+            None => serialize_links(&self.links),
+        }
+    }
+
+    /// Serialize this document as UTF-8 text.
+    ///
+    /// Byte serialization remains available for deliberately non-UTF-8 raw
+    /// forms. This helper reports those forms instead of normalizing or
+    /// replacing their bytes.
+    pub fn to_string(&self) -> Result<String> {
+        String::from_utf8(self.to_bytes())
+            .map_err(|_| link_format_syntax_error("serialized document is not valid UTF-8"))
+    }
+
+    /// Consume this document and return its serialized payload bytes.
+    ///
+    /// This is a packet-data conversion only; it does not select a transport
+    /// or perform network I/O.
+    pub fn into_payload(self) -> Vec<u8> {
+        let Self { links, raw } = self;
+        match raw.into_value() {
+            Some(raw) => raw,
+            None => serialize_links(&links),
+        }
+    }
+}
+
+fn serialize_links(links: &[CoapLink]) -> Vec<u8> {
+    let mut output = Vec::new();
+
+    for (link_index, link) in links.iter().enumerate() {
+        if link_index != 0 {
+            output.push(b',');
+        }
+
+        output.push(b'<');
+        output.extend_from_slice(link.target());
+        output.push(b'>');
+
+        for attribute in link.attributes() {
+            output.push(b';');
+            output.extend_from_slice(attribute.name());
+
+            match attribute.value() {
+                CoapLinkAttributeValue::Absent => {}
+                CoapLinkAttributeValue::Token(value) | CoapLinkAttributeValue::Extended(value) => {
+                    output.push(b'=');
+                    output.extend_from_slice(value);
+                }
+                CoapLinkAttributeValue::Quoted(value) => {
+                    output.extend_from_slice(b"=\"");
+                    serialize_quoted_value(value, &mut output);
+                    output.push(b'"');
+                }
+            }
+        }
+    }
+
+    output
+}
+
+fn serialize_quoted_value(value: &[u8], output: &mut Vec<u8>) {
+    let mut offset = 0;
+    while let Some(byte) = value.get(offset).copied() {
+        if byte == b'\\' {
+            match value.get(offset + 1).copied() {
+                Some(escaped) if escaped.is_ascii() => {
+                    output.extend_from_slice(&[byte, escaped]);
+                    offset += 2;
+                    continue;
+                }
+                _ => output.extend_from_slice(b"\\\\"),
+            }
+        } else if byte == b'"' || !is_quoted_text_byte(byte) {
+            output.extend_from_slice(&[b'\\', byte]);
+        } else {
+            output.push(byte);
+        }
+        offset += 1;
+    }
+}
+
+const fn is_quoted_text_byte(byte: u8) -> bool {
+    matches!(byte, b'\t' | b' '..=b'!' | b'#'..=b'~' | 0x80..=0xff)
 }
 
 struct LinkFormatParser<'a> {
@@ -615,6 +723,17 @@ impl CoapLinkAttribute {
         Self::token("ct", value)
     }
 
+    /// Build one RFC 7252 `ct` hint from typed Content-Format metadata.
+    ///
+    /// The numeric identifier remains open to unknown and future registry
+    /// values through [`CoapContentFormat`]. Use [`Self::content_type`] when a
+    /// link needs multiple space-separated identifiers or deliberately raw
+    /// textual bytes.
+    pub fn content_format(value: impl Into<CoapContentFormat>) -> Self {
+        let value = value.into().value().to_string();
+        Self::content_type(value)
+    }
+
     /// Build the RFC 6690 `rt` Resource Type attribute.
     pub fn resource_type(value: impl AsRef<[u8]>) -> Self {
         Self::quoted("rt", value)
@@ -767,7 +886,7 @@ impl CoapLinkAttribute {
 #[cfg(test)]
 mod tests {
     use super::{
-        CoapLink, CoapLinkAttribute, CoapLinkAttributeValue, CoapLinkFormat,
+        CoapContentFormat, CoapLink, CoapLinkAttribute, CoapLinkAttributeValue, CoapLinkFormat,
         LINK_FORMAT_MAX_INPUT_LEN, LINK_FORMAT_SYNTAX_FIELD,
     };
     use crate::error::CrafterError;
@@ -785,6 +904,25 @@ mod tests {
                 reason: expected_reason,
             })
         );
+    }
+
+    fn typed_link_strategy() -> impl Strategy<Value = (String, String, String, Vec<u8>)> {
+        (
+            "[a-z0-9/_-]{0,24}",
+            "[a-z][a-z0-9-]{0,8}",
+            "[A-Za-z0-9._~-]{1,16}",
+            proptest::collection::vec(
+                prop_oneof![
+                    Just(b'a'),
+                    Just(b' '),
+                    Just(b'"'),
+                    Just(b'\\'),
+                    Just(0x7f),
+                    Just(0x80),
+                ],
+                0..16,
+            ),
+        )
     }
 
     #[test]
@@ -1006,6 +1144,127 @@ mod tests {
     }
 
     #[test]
+    fn serializes_exact_rfc_6690_examples_canonically() {
+        // RFC 6690 Section 5 gives these compact forms without the linefeeds
+        // inserted in the surrounding prose for readability.
+        let cases: Vec<(CoapLinkFormat, &[u8])> = vec![
+            (
+                CoapLinkFormat::new()
+                    .link(
+                        CoapLink::new("/sensors/temp")
+                            .attribute(CoapLinkAttribute::interface_description("sensor")),
+                    )
+                    .link(
+                        CoapLink::new("/sensors/light")
+                            .attribute(CoapLinkAttribute::interface_description("sensor")),
+                    ),
+                b"</sensors/temp>;if=\"sensor\",</sensors/light>;if=\"sensor\"",
+            ),
+            (
+                CoapLinkFormat::new().link(
+                    CoapLink::new("/sensors")
+                        .attribute(CoapLinkAttribute::content_format(CoapContentFormat::new(40))),
+                ),
+                b"</sensors>;ct=40",
+            ),
+            (
+                CoapLinkFormat::new()
+                    .link(
+                        CoapLink::new("/sensors/temp")
+                            .attribute(CoapLinkAttribute::resource_type("temperature-c"))
+                            .attribute(CoapLinkAttribute::interface_description("sensor")),
+                    )
+                    .link(
+                        CoapLink::new("/sensors/light")
+                            .attribute(CoapLinkAttribute::resource_type("light-lux"))
+                            .attribute(CoapLinkAttribute::interface_description("sensor")),
+                    ),
+                b"</sensors/temp>;rt=\"temperature-c\";if=\"sensor\",</sensors/light>;rt=\"light-lux\";if=\"sensor\"",
+            ),
+            (
+                CoapLinkFormat::new().link(
+                    CoapLink::new("/firmware/v2.1")
+                        .attribute(CoapLinkAttribute::resource_type("firmware"))
+                        .attribute(CoapLinkAttribute::size("262144")),
+                ),
+                b"</firmware/v2.1>;rt=\"firmware\";sz=262144",
+            ),
+        ];
+
+        for (document, expected) in cases {
+            assert_eq!(document.to_bytes(), expected);
+            assert_eq!(document.to_string().unwrap().as_bytes(), expected);
+            assert_eq!(document.clone().into_payload(), expected);
+
+            let reparsed = CoapLinkFormat::parse(expected).unwrap();
+            assert_eq!(reparsed.links(), document.links());
+        }
+    }
+
+    #[test]
+    fn canonical_serialization_preserves_order_and_escapes_quoted_content() {
+        let document = CoapLinkFormat::new().link(
+            CoapLink::new("/x")
+                .attribute(CoapLinkAttribute::flag("first"))
+                .attribute(CoapLinkAttribute::quoted("title", b"a\"b\\"))
+                .attribute(CoapLinkAttribute::token("last", "value")),
+        );
+        let expected = b"</x>;first;title=\"a\\\"b\\\\\";last=value";
+
+        assert_eq!(document.to_bytes(), expected);
+        assert_eq!(
+            CoapLinkFormat::parse(expected).unwrap().links().len(),
+            document.links().len()
+        );
+    }
+
+    #[test]
+    fn retained_and_caller_selected_raw_documents_serialize_losslessly() {
+        let decoded_bytes = b"</x>;vendor=one;vendor=two;vendor-title*=UTF-8''raw%20bytes";
+        let decoded = CoapLinkFormat::parse(decoded_bytes).unwrap();
+        assert_eq!(decoded.raw_state(), FieldState::Defaulted);
+        assert_eq!(decoded.to_bytes(), decoded_bytes);
+        assert_eq!(decoded.clone().into_payload(), decoded_bytes);
+
+        let caller_bytes = b"caller-selected raw form";
+        let caller_selected = CoapLinkFormat::new()
+            .link(CoapLink::new("/typed"))
+            .with_raw_bytes(caller_bytes.to_vec());
+        assert_eq!(caller_selected.raw_state(), FieldState::User);
+        assert_eq!(caller_selected.raw_bytes(), Some(caller_bytes.as_slice()));
+        assert_eq!(caller_selected.to_bytes(), caller_bytes);
+        assert_eq!(caller_selected.into_payload(), caller_bytes);
+    }
+
+    #[test]
+    fn string_serialization_rejects_non_utf8_without_changing_payload_bytes() {
+        let bytes = b"</\x80>;vendor=raw";
+        let parsed = CoapLinkFormat::parse(bytes).unwrap();
+
+        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(
+            parsed.to_string(),
+            Err(CrafterError::InvalidFieldValue {
+                field: LINK_FORMAT_SYNTAX_FIELD,
+                reason: "serialized document is not valid UTF-8",
+            })
+        );
+    }
+
+    #[test]
+    fn content_format_metadata_builds_numeric_ct_attributes() {
+        let content_format = CoapContentFormat::new(40);
+        assert_eq!(
+            content_format.registry_meta().label,
+            "application/link-format"
+        );
+
+        let attribute = CoapLinkAttribute::content_format(content_format);
+        assert_eq!(attribute.name(), b"ct");
+        assert_eq!(attribute.value(), &CoapLinkAttributeValue::token("40"));
+    }
+
+    #[test]
     fn malformed_link_format_corpus_has_stable_context_and_reasons() {
         let cases: &[(&[u8], &str)] = &[
             (b"not-a-link", "link value is missing opening angle bracket"),
@@ -1116,6 +1375,28 @@ mod tests {
         #[test]
         fn arbitrary_input_never_panics(data in proptest::collection::vec(any::<u8>(), 0..2048)) {
             prop_assert!(catch_unwind(|| CoapLinkFormat::parse(&data)).is_ok());
+        }
+
+        #[test]
+        fn parse_serialize_parse_is_stable_for_typed_documents(
+            links in proptest::collection::vec(typed_link_strategy(), 0..8)
+        ) {
+            let mut document = CoapLinkFormat::new();
+            for (target, name, token, quoted) in links {
+                document = document.link(
+                    CoapLink::new(target)
+                        .attribute(CoapLinkAttribute::token(name, token))
+                        .attribute(CoapLinkAttribute::quoted("title", quoted)),
+                );
+            }
+
+            let canonical = document.to_bytes();
+            let parsed_once = CoapLinkFormat::parse(&canonical).unwrap();
+            let serialized = parsed_once.to_bytes();
+            let parsed_twice = CoapLinkFormat::parse(&serialized).unwrap();
+
+            prop_assert_eq!(serialized, canonical);
+            prop_assert_eq!(parsed_twice, parsed_once);
         }
     }
 }
