@@ -8,7 +8,7 @@ use crate::packet::{hexdump, Layer, LayerContext};
 use crate::protocols::transport::common::impl_layer_object;
 
 use super::constants::*;
-use super::option::CoapOption;
+use super::option::{encode_option_sequence, CoapOption, CoapOptions};
 use super::registry::{coap_code_meta, coap_signaling_code_meta, CoapRegistryMeta};
 
 const COAP_TWO_BIT_VALUE_MASK: u8 = 0x03;
@@ -673,6 +673,17 @@ impl CoapPayloadMarker {
     }
 }
 
+/// Ordering policy used when compiling CoAP options.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum CoapOptionOrder {
+    /// Stably sort options by number before encoding them.
+    #[default]
+    Canonical,
+    /// Encode options in caller-provided order, including explicit malformed
+    /// delta/header overrides.
+    Wire,
+}
+
 static EMPTY_COAP_TOKEN: CoapToken = CoapToken(Vec::new());
 
 /// One owned CoAP datagram message.
@@ -689,6 +700,7 @@ pub struct Coap {
     message_id: Field<u16>,
     token: Field<CoapToken>,
     options: Vec<CoapOption>,
+    option_order: CoapOptionOrder,
     payload_marker: Field<CoapPayloadMarker>,
     payload: Vec<u8>,
 }
@@ -704,6 +716,7 @@ impl Coap {
             message_id: Field::unset(),
             token: Field::unset(),
             options: Vec::new(),
+            option_order: CoapOptionOrder::Canonical,
             payload_marker: Field::unset(),
             payload: Vec::new(),
         }
@@ -795,6 +808,15 @@ impl Coap {
     /// Replace the ordered option sequence.
     pub fn options(mut self, values: impl IntoIterator<Item = CoapOption>) -> Self {
         self.options = values.into_iter().collect();
+        self
+    }
+
+    /// Select how option occurrences are ordered during compilation.
+    ///
+    /// Canonical ordering is the default. Wire order is explicit so callers
+    /// can retain deliberately malformed order and header overrides.
+    pub fn option_order(mut self, value: CoapOptionOrder) -> Self {
+        self.option_order = value;
         self
     }
 
@@ -905,6 +927,11 @@ impl Coap {
         &self.options
     }
 
+    /// Return the selected option compilation order.
+    pub const fn option_order_value(&self) -> CoapOptionOrder {
+        self.option_order
+    }
+
     /// Return the payload-marker field state.
     pub const fn payload_marker_state(&self) -> FieldState {
         self.payload_marker.state()
@@ -935,6 +962,17 @@ impl Coap {
             | (message_type & COAP_TYPE_MASK)
             | (token_length & COAP_TKL_MASK))
     }
+
+    fn encoded_options(&self) -> Result<Vec<u8>> {
+        let mut options = CoapOptions::from_options(self.options.iter().cloned());
+        if self.option_order == CoapOptionOrder::Canonical {
+            options.sort_canonical();
+        }
+
+        let mut encoded = Vec::new();
+        encode_option_sequence(&options, &mut encoded)?;
+        Ok(encoded)
+    }
 }
 
 impl Default for Coap {
@@ -949,15 +987,34 @@ impl Layer for Coap {
     }
 
     fn encoded_len(&self) -> usize {
+        let option_len = self
+            .encoded_options()
+            .map(|options| options.len())
+            .unwrap_or_default();
+        let marker_len = usize::from(self.payload_marker_value().is_present());
+
         COAP_HEADER_LEN
+            .saturating_add(self.token_value().len())
+            .saturating_add(option_len)
+            .saturating_add(marker_len)
+            .saturating_add(self.payload.len())
     }
 
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
         let first_octet = self.first_octet_value()?;
+        let options = self.encoded_options()?;
+        let mut encoded = Vec::with_capacity(self.encoded_len());
 
-        out.push(first_octet);
-        out.push(self.code_value().wire_value());
-        out.extend_from_slice(&self.message_id_value().to_be_bytes());
+        encoded.push(first_octet);
+        encoded.push(self.code_value().wire_value());
+        encoded.extend_from_slice(&self.message_id_value().to_be_bytes());
+        encoded.extend_from_slice(self.token_value().as_bytes());
+        encoded.extend_from_slice(&options);
+        if self.payload_marker_value().is_present() {
+            encoded.push(COAP_PAYLOAD_MARKER);
+        }
+        encoded.extend_from_slice(&self.payload);
+        out.extend_from_slice(&encoded);
         Ok(())
     }
 
@@ -1027,6 +1084,7 @@ mod tests {
         assert_eq!(message.token_state(), FieldState::Unset);
         assert!(message.token_value().is_empty());
         assert!(message.options_value().is_empty());
+        assert_eq!(message.option_order_value(), CoapOptionOrder::Canonical);
         assert_eq!(message.payload_marker_state(), FieldState::Unset);
         assert_eq!(message.payload_marker_value(), CoapPayloadMarker::Absent);
         assert!(message.payload_value().is_empty());
@@ -1147,9 +1205,15 @@ mod tests {
         let matching_bytes = Packet::from_layer(explicit_matching).compile().unwrap();
         let mismatching_bytes = Packet::from_layer(explicit_mismatching).compile().unwrap();
 
-        assert_eq!(automatic_bytes.as_bytes(), &[0x73, 0x45, 0xab, 0xcd]);
+        assert_eq!(
+            automatic_bytes.as_bytes(),
+            &[0x73, 0x45, 0xab, 0xcd, 0xaa, 0xbb, 0xcc]
+        );
         assert_eq!(matching_bytes, automatic_bytes);
-        assert_eq!(mismatching_bytes.as_bytes(), &[0x71, 0x45, 0xab, 0xcd]);
+        assert_eq!(
+            mismatching_bytes.as_bytes(),
+            &[0x71, 0x45, 0xab, 0xcd, 0xaa, 0xbb, 0xcc]
+        );
     }
 
     #[test]
@@ -1160,7 +1224,7 @@ mod tests {
 
         assert_eq!(
             Packet::from_layer(message).compile().unwrap().as_bytes(),
-            &[0x41, 0x00, 0x00, 0x00]
+            &[0x41, 0x00, 0x00, 0x00, 0xaa, 0xbb, 0xcc]
         );
     }
 
@@ -1187,6 +1251,75 @@ mod tests {
             .options([first.clone(), second.clone()]);
 
         assert_eq!(message.options_value(), &[first, second]);
+    }
+
+    #[test]
+    fn compile_options_only_uses_stable_canonical_order() {
+        let first_repeated = CoapOption::new(11u16, b"a".to_vec());
+        let lower = CoapOption::new(3u16, b"h".to_vec());
+        let second_repeated = CoapOption::new(11u16, b"b".to_vec());
+        let message = Coap::new().options([first_repeated, lower, second_repeated]);
+
+        assert_eq!(message.encoded_len(), 10);
+        assert_eq!(
+            Packet::from_layer(message).compile().unwrap().as_bytes(),
+            &[0x40, 0x00, 0x00, 0x00, 0x31, b'h', 0x81, b'a', 0x01, b'b']
+        );
+    }
+
+    #[test]
+    fn compile_explicit_wire_order_preserves_malformed_sequence() {
+        let message = Coap::new()
+            .options([
+                CoapOption::new(11u16, b"a".to_vec()),
+                CoapOption::new(3u16, b"h".to_vec()).with_wire_delta(0),
+                CoapOption::new(11u16, b"b".to_vec()),
+            ])
+            .option_order(CoapOptionOrder::Wire);
+
+        assert_eq!(message.option_order_value(), CoapOptionOrder::Wire);
+        assert_eq!(message.encoded_len(), 10);
+        assert_eq!(
+            Packet::from_layer(message).compile().unwrap().as_bytes(),
+            &[0x40, 0x00, 0x00, 0x00, 0xb1, b'a', 0x01, b'h', 0x81, b'b']
+        );
+    }
+
+    #[test]
+    fn compile_payload_only_autofills_marker() {
+        let message = Coap::new().payload(vec![0xde, 0xad]);
+
+        assert_eq!(message.payload_marker_state(), FieldState::Unset);
+        assert_eq!(message.encoded_len(), 7);
+        assert_eq!(
+            Packet::from_layer(message).compile().unwrap().as_bytes(),
+            &[0x40, 0x00, 0x00, 0x00, 0xff, 0xde, 0xad]
+        );
+    }
+
+    #[test]
+    fn compile_honors_explicit_payload_marker_mismatches() {
+        let marker_without_payload = Coap::new().payload_marker(CoapPayloadMarker::Present);
+        let payload_without_marker = Coap::new()
+            .payload_marker(CoapPayloadMarker::Absent)
+            .payload(vec![0xde, 0xad]);
+
+        assert_eq!(marker_without_payload.encoded_len(), 5);
+        assert_eq!(
+            Packet::from_layer(marker_without_payload)
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &[0x40, 0x00, 0x00, 0x00, 0xff]
+        );
+        assert_eq!(payload_without_marker.encoded_len(), 6);
+        assert_eq!(
+            Packet::from_layer(payload_without_marker)
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &[0x40, 0x00, 0x00, 0x00, 0xde, 0xad]
+        );
     }
 
     #[test]
