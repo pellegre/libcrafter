@@ -93,6 +93,10 @@ impl CoapBlockValidation {
         self.issues
             .push(CrafterError::invalid_field_value(field, reason));
     }
+
+    fn extend(&mut self, other: Self) {
+        self.issues.extend(other.issues);
+    }
 }
 
 /// One lossless CoAP Block or Q-Block option value.
@@ -152,6 +156,15 @@ impl CoapBlock {
     /// does not infer a request method, payload, transfer state, or Size1.
     pub fn block1(number: u64, more: bool, szx: u8) -> Result<Self> {
         Self::new_for(CoapBlockKind::Block1, number, more, szx)
+    }
+
+    /// Build a canonical RFC 7959 Block2 value.
+    ///
+    /// This constructor attaches response-body option context but does not
+    /// infer whether the value is request control metadata or a descriptive
+    /// response fragment.
+    pub fn block2(number: u64, more: bool, szx: u8) -> Result<Self> {
+        Self::new_for(CoapBlockKind::Block2, number, more, szx)
     }
 
     /// Decode exact CoAP `uint` bytes while retaining their original form.
@@ -259,6 +272,14 @@ impl CoapBlock {
         self.into_option(CoapBlockKind::Block1)
     }
 
+    /// Convert this value to an exact RFC 7959 Block2 option occurrence.
+    ///
+    /// Exact decoded bytes remain authoritative, including noncanonical uint
+    /// encodings used for malformed packet work.
+    pub fn into_block2_option(self) -> CoapOption {
+        self.into_option(CoapBlockKind::Block2)
+    }
+
     /// Validate this value as descriptive Block1 request metadata.
     ///
     /// The payload length rule is reported only here (or through the
@@ -272,11 +293,66 @@ impl CoapBlock {
         self.validate(CoapBlockKind::Block1, transport, payload_len)
     }
 
+    /// Validate this value as Block2 request selection metadata.
+    ///
+    /// RFC 7959 Sections 2.3 and 2.4 require the M bit to be zero in a
+    /// request. Validation is opt-in and never prevents the exact value from
+    /// being compiled.
+    pub fn validate_block2_request(&self, transport: CoapBlockTransport) -> CoapBlockValidation {
+        let mut validation = self.validate_control(CoapBlockKind::Block2, transport);
+        if self.more() {
+            validation.push(
+                "coap.block2.request.more",
+                "Block2 request M bit must be zero",
+            );
+        }
+        validation
+    }
+
+    /// Validate a descriptive Block2 response and optional request selection.
+    ///
+    /// Non-final fragment length follows the selected response SZX. When a
+    /// request Block2 is supplied, the response may retain or reduce its size
+    /// but must describe the same byte offset. These checks report findings
+    /// only; they do not rewrite either exact option value.
+    pub fn validate_block2_response(
+        &self,
+        transport: CoapBlockTransport,
+        payload_len: usize,
+        requested: Option<&Self>,
+    ) -> CoapBlockValidation {
+        let mut validation = self.validate(CoapBlockKind::Block2, transport, payload_len);
+
+        if let Some(requested) = requested {
+            validation.extend(requested.validate_block2_request(transport));
+
+            if self.block_size() > requested.block_size() {
+                validation.push(
+                    "coap.block2.response.size",
+                    "returned Block2 size must not exceed requested size",
+                );
+            }
+
+            if let (Ok(requested_offset), Ok(returned_offset)) = (requested.offset(), self.offset())
+            {
+                if returned_offset != requested_offset {
+                    validation.push(
+                        "coap.block2.response.offset",
+                        "returned Block2 offset must match requested offset",
+                    );
+                }
+            }
+        }
+
+        validation
+    }
+
     /// Validate source-level Block, Q-Block, BERT, and payload constraints.
     ///
     /// Validation is opt-in and never changes the exact raw representation.
     /// For ordinary descriptive blocks, a non-final payload must equal the
-    /// selected block size, and a final Block1 payload must not exceed it.
+    /// selected block size, and a final ordinary Block1 or Block2 payload must
+    /// not exceed it.
     /// For reliable BERT, a non-final payload must be a positive multiple of
     /// 1024 bytes; final BERT payloads may include any number of complete
     /// units plus a final partial unit.
@@ -306,13 +382,15 @@ impl CoapBlock {
                     "non-final block payload must equal the selected block size",
                 );
             }
-        } else if kind == CoapBlockKind::Block1
+        } else if matches!(kind, CoapBlockKind::Block1 | CoapBlockKind::Block2)
             && payload_len as u128 > u128::from(self.block_size())
         {
-            validation.push(
-                "coap.block.payload-length",
-                "final Block1 payload must not exceed the selected block size",
-            );
+            let reason = if kind == CoapBlockKind::Block1 {
+                "final Block1 payload must not exceed the selected block size"
+            } else {
+                "final Block2 payload must not exceed the selected block size"
+            };
+            validation.push("coap.block.payload-length", reason);
         }
 
         validation
@@ -402,7 +480,7 @@ fn encode_coap_uint(value: u64) -> Vec<u8> {
 mod tests {
     use super::*;
     use crate::packet::Packet;
-    use crate::protocols::coap::{Coap, CoapSize1};
+    use crate::protocols::coap::{Coap, CoapEtag, CoapSize1, CoapSize2};
 
     #[test]
     fn canonical_boundaries_cover_every_standard_szx() {
@@ -724,5 +802,271 @@ mod tests {
             ]
         );
         assert_eq!(too_large.size1_value().unwrap().unwrap().value(), 32);
+    }
+
+    #[test]
+    fn block2_response_fragments_match_first_middle_and_final_wire_bytes() {
+        // RFC 7959 Sections 2.3, 2.4, and 4: Block2 describes response-body
+        // fragments, while ETag and Size2 describe the complete body.
+        let first = Coap::content()
+            .acknowledgement()
+            .message_id(0x2000)
+            .block2_response_fragment_with_metadata(
+                CoapBlock::block2(0, true, 0).unwrap(),
+                (0xa0..=0xaf).collect::<Vec<_>>(),
+                CoapEtag::try_new([0x6f, 0x00]).unwrap(),
+                CoapSize2::new(37),
+            );
+        let middle = Coap::content()
+            .acknowledgement()
+            .message_id(0x2001)
+            .block2_response_fragment(
+                CoapBlock::block2(1, true, 0).unwrap(),
+                (0xb0..=0xbf).collect::<Vec<_>>(),
+            );
+        let final_fragment = Coap::content()
+            .acknowledgement()
+            .message_id(0x2002)
+            .block2_response_fragment(
+                CoapBlock::block2(2, false, 0).unwrap(),
+                vec![0xc0, 0xc1, 0xc2, 0xc3, 0xc4],
+            );
+
+        let first_bytes = [
+            0x60, 0x45, 0x20, 0x00, // ACK, 2.05 Content, MID
+            0x42, 0x6f, 0x00, // ETag 4, delta 4, length 2
+            0xd1, 0x06, 0x08, // Block2 0/1/16
+            0x51, 0x25, // Size2 37
+            0xff, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab, 0xac,
+            0xad, 0xae, 0xaf,
+        ];
+        assert_eq!(
+            Packet::from_layer(first.clone())
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &first_bytes
+        );
+        assert_eq!(
+            Packet::from_layer(middle.clone())
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &[
+                0x60, 0x45, 0x20, 0x01, // ACK, 2.05 Content, MID
+                0xd1, 0x0a, 0x18, // Block2 1/1/16
+                0xff, 0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xbb, 0xbc,
+                0xbd, 0xbe, 0xbf,
+            ]
+        );
+        assert_eq!(
+            Packet::from_layer(final_fragment.clone())
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &[
+                0x60, 0x45, 0x20, 0x02, // ACK, 2.05 Content, MID
+                0xd1, 0x0a, 0x20, // Block2 2/0/16
+                0xff, 0xc0, 0xc1, 0xc2, 0xc3, 0xc4,
+            ]
+        );
+
+        for message in [&first, &middle, &final_fragment] {
+            assert!(message
+                .block2_validation(CoapBlockTransport::Datagram, None)
+                .expect("Block2 occurrence")
+                .unwrap()
+                .is_valid());
+        }
+        assert_eq!(first.block2_offset().unwrap().unwrap(), 0);
+        assert_eq!(middle.block2_offset().unwrap().unwrap(), 16);
+        assert_eq!(final_fragment.block2_offset().unwrap().unwrap(), 32);
+        assert_eq!(
+            first.etag_value().unwrap().unwrap().as_bytes(),
+            &[0x6f, 0x00]
+        );
+        assert_eq!(first.size2_value().unwrap().unwrap().value(), 37);
+
+        let decoded = Coap::decode(&first_bytes).unwrap();
+        assert_eq!(
+            decoded.block2_value().unwrap().unwrap().raw_bytes(),
+            &[0x08]
+        );
+        assert_eq!(
+            decoded.etag_value().unwrap().unwrap().as_bytes(),
+            &[0x6f, 0x00]
+        );
+        assert_eq!(decoded.size2_value().unwrap().unwrap().value(), 37);
+        assert_eq!(
+            Packet::from_layer(decoded).compile().unwrap().as_bytes(),
+            &first_bytes
+        );
+    }
+
+    #[test]
+    fn block2_size_negotiation_preserves_request_and_returned_selection() {
+        // RFC 7959 Sections 2.3 and 2.4 permit a server to reduce the proposed
+        // block size. Scaling NUM keeps the returned byte offset unchanged.
+        let requested = CoapBlock::block2(2, false, 2).unwrap(); // offset 128, size 64
+        let request = Coap::get()
+            .message_id(0x3000)
+            .block2_request_selection_with_size2(requested.clone());
+        assert_eq!(
+            Packet::from_layer(request.clone())
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &[
+                0x40, 0x01, 0x30, 0x00, // CON, GET, MID
+                0xd1, 0x0a, 0x22, // Block2 2/0/64
+                0x50, // Size2 request, canonical uint zero
+            ]
+        );
+        assert!(request
+            .block2_validation(CoapBlockTransport::Datagram, None)
+            .unwrap()
+            .unwrap()
+            .is_valid());
+        assert!(!request.validate().has_errors());
+        assert_eq!(request.block2_offset().unwrap().unwrap(), 128);
+        assert_eq!(request.size2_value().unwrap().unwrap().value(), 0);
+
+        let invalid_size_request = Coap::get().size2(CoapSize2::new(1));
+        assert!(invalid_size_request
+            .validate()
+            .issues()
+            .iter()
+            .any(|issue| {
+                issue.field() == "coap.options[0].value"
+                    && issue.reason() == "Size2 in a request must use the size-request value zero"
+            }));
+
+        let returned = CoapBlock::block2(4, true, 1).unwrap(); // offset 128, size 32
+        let response = Coap::content()
+            .acknowledgement()
+            .message_id(0x3000)
+            .block2_response_fragment_with_metadata(
+                returned,
+                vec![0x5a; 32],
+                CoapEtag::try_new([0xde, 0xad]).unwrap(),
+                CoapSize2::new(291),
+            );
+        let expected = [
+            0x60, 0x45, 0x30, 0x00, // ACK, 2.05 Content, MID
+            0x42, 0xde, 0xad, // ETag
+            0xd1, 0x06, 0x49, // Block2 4/1/32
+            0x52, 0x01, 0x23, // Size2 291
+            0xff, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a,
+            0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a,
+            0x5a, 0x5a, 0x5a, 0x5a, 0x5a,
+        ];
+        assert_eq!(
+            Packet::from_layer(response.clone())
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &expected
+        );
+        assert!(response
+            .block2_validation(CoapBlockTransport::Datagram, Some(&requested))
+            .unwrap()
+            .unwrap()
+            .is_valid());
+        assert_eq!(response.block2_offset().unwrap().unwrap(), 128);
+    }
+
+    #[test]
+    fn block2_oversized_final_fragment_is_reported_without_blocking_compile() {
+        // RFC 7959 Sections 2 and 2.3 define a final response fragment as the
+        // possibly short remainder of the selected block size. Validation is
+        // descriptive, so an inconsistent caller-selected payload still
+        // compiles byte-for-byte.
+        let oversized_final = Coap::content()
+            .acknowledgement()
+            .message_id(0x2003)
+            .block2_response_fragment(
+                CoapBlock::block2(2, false, 0).unwrap(),
+                (0xd0..=0xe0).collect::<Vec<_>>(),
+            );
+
+        let report = oversized_final
+            .block2_validation(CoapBlockTransport::Datagram, None)
+            .expect("Block2 occurrence")
+            .unwrap();
+        assert!(matches!(
+            report.issues(),
+            [CrafterError::InvalidFieldValue {
+                field: "coap.block.payload-length",
+                reason: "final Block2 payload must not exceed the selected block size",
+            }]
+        ));
+        assert_eq!(
+            Packet::from_layer(oversized_final)
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &[
+                0x60, 0x45, 0x20, 0x03, // ACK, 2.05 Content, MID
+                0xd1, 0x0a, 0x20, // final Block2 2/0/16
+                0xff, 0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xdb, 0xdc,
+                0xdd, 0xde, 0xdf, 0xe0,
+            ]
+        );
+    }
+
+    #[test]
+    fn block2_validation_reports_m_size_offset_and_payload_without_blocking_compile() {
+        let malformed_request =
+            Coap::get().block2_request_selection(CoapBlock::block2(0, true, 0).unwrap());
+        let request_report = malformed_request
+            .block2_validation(CoapBlockTransport::Datagram, None)
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            request_report.issues(),
+            [CrafterError::InvalidFieldValue {
+                field: "coap.block2.request.more",
+                reason: "Block2 request M bit must be zero",
+            }]
+        ));
+        assert!(Packet::from_layer(malformed_request).compile().is_ok());
+
+        let short_fragment = Coap::content()
+            .block2_response_fragment(CoapBlock::block2(1, true, 0).unwrap(), vec![0; 15]);
+        let short_report = short_fragment
+            .block2_validation(CoapBlockTransport::Datagram, None)
+            .unwrap()
+            .unwrap();
+        assert!(short_report.issues().iter().any(|issue| matches!(
+            issue,
+            CrafterError::InvalidFieldValue {
+                field: "coap.block.payload-length",
+                ..
+            }
+        )));
+        assert!(Packet::from_layer(short_fragment).compile().is_ok());
+
+        let requested = CoapBlock::block2(1, false, 0).unwrap(); // offset 16, size 16
+        let incompatible = Coap::content()
+            .block2_response_fragment(CoapBlock::block2(1, true, 1).unwrap(), vec![0; 32]);
+        let response_report = incompatible
+            .block2_validation(CoapBlockTransport::Datagram, Some(&requested))
+            .unwrap()
+            .unwrap();
+        assert!(response_report.issues().iter().any(|issue| matches!(
+            issue,
+            CrafterError::InvalidFieldValue {
+                field: "coap.block2.response.size",
+                ..
+            }
+        )));
+        assert!(response_report.issues().iter().any(|issue| matches!(
+            issue,
+            CrafterError::InvalidFieldValue {
+                field: "coap.block2.response.offset",
+                ..
+            }
+        )));
+        assert!(Packet::from_layer(incompatible).compile().is_ok());
     }
 }

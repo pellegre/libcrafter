@@ -1060,6 +1060,53 @@ impl Coap {
         self.option(value.into_block1_option())
     }
 
+    /// Append one raw-preserving RFC 7959 Block2 option.
+    pub fn block2(self, value: CoapBlock) -> Self {
+        self.option(value.into_block2_option())
+    }
+
+    /// Attach one Block2 request selection without changing the request Code.
+    ///
+    /// The M bit, size, and option encoding remain caller-controlled and are
+    /// checked only by [`Self::block2_validation`].
+    pub fn block2_request_selection(self, value: CoapBlock) -> Self {
+        self.block2(value)
+    }
+
+    /// Attach a Block2 selection and request a Size2 estimate.
+    ///
+    /// RFC 7959 Section 4 represents a Size2 request with the canonical empty
+    /// uint value zero. A server may omit the estimate.
+    pub fn block2_request_selection_with_size2(self, value: CoapBlock) -> Self {
+        self.block2_request_selection(value)
+            .size2(CoapSize2::new(0))
+    }
+
+    /// Attach one descriptive Block2 value and its exact response payload.
+    ///
+    /// The existing response Code, token, transaction fields, and
+    /// representation metadata remain caller-controlled. Fragment semantics
+    /// are checked only by [`Self::block2_validation`].
+    pub fn block2_response_fragment(self, value: CoapBlock, payload: impl Into<Vec<u8>>) -> Self {
+        self.block2(value).payload(payload)
+    }
+
+    /// Attach a Block2 response fragment with ETag and total Size2 metadata.
+    ///
+    /// Both metadata values describe the complete representation rather than
+    /// only this fragment. This helper retains no cache or reassembly state.
+    pub fn block2_response_fragment_with_metadata(
+        self,
+        value: CoapBlock,
+        payload: impl Into<Vec<u8>>,
+        etag: impl Into<CoapEtag>,
+        total_size: impl Into<CoapSize2>,
+    ) -> Self {
+        self.block2_response_fragment(value, payload)
+            .etag(etag)
+            .size2(total_size)
+    }
+
     /// Attach one descriptive Block1 value and its exact request payload.
     ///
     /// The existing code, URI options, token, and transaction fields remain
@@ -1334,6 +1381,48 @@ impl Coap {
         })
     }
 
+    /// Iterate over typed, raw-preserving Block2 occurrences.
+    pub fn block2_values(&self) -> impl Iterator<Item = Result<CoapBlock>> + '_ {
+        self.options
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_BLOCK2)
+            .map(CoapBlock::try_from)
+    }
+
+    /// Return the first Block2 occurrence as a typed, raw-preserving value.
+    pub fn block2_value(&self) -> Option<Result<CoapBlock>> {
+        self.block2_values().next()
+    }
+
+    /// Return the byte offset selected or described by the first Block2 value.
+    pub fn block2_offset(&self) -> Option<Result<u64>> {
+        self.block2_value()
+            .map(|value| value.and_then(|value| value.offset()))
+    }
+
+    /// Return an explicit source-backed report for the first Block2 option.
+    ///
+    /// A request Block2 is control metadata whose M bit must be zero. A
+    /// response Block2 describes this message's payload and may be compared
+    /// with the request selection to validate returned size and offset.
+    /// Repeated occurrences remain inspectable and are reported separately by
+    /// [`Self::validate`].
+    pub fn block2_validation(
+        &self,
+        transport: CoapBlockTransport,
+        requested: Option<&CoapBlock>,
+    ) -> Option<Result<CoapBlockValidation>> {
+        self.block2_value().map(|value| {
+            value.map(|value| {
+                if self.is_request() {
+                    value.validate_block2_request(transport)
+                } else {
+                    value.validate_block2_response(transport, self.payload.len(), requested)
+                }
+            })
+        })
+    }
+
     /// Return the Observe value when this is a 2.xx notification shape.
     pub fn observe_notification(&self) -> Option<Result<CoapObserve>> {
         self.is_observe_notification()
@@ -1371,6 +1460,32 @@ impl Coap {
     /// Return the first Size1 occurrence as a typed, raw-preserving value.
     pub fn size1_value(&self) -> Option<Result<CoapSize1>> {
         self.size1_values().next()
+    }
+
+    /// Iterate over typed, raw-preserving ETag occurrences.
+    pub fn etag_values(&self) -> impl Iterator<Item = Result<CoapEtag>> + '_ {
+        self.options
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_ETAG)
+            .map(CoapEtag::try_from)
+    }
+
+    /// Return the first ETag occurrence as a typed, raw-preserving value.
+    pub fn etag_value(&self) -> Option<Result<CoapEtag>> {
+        self.etag_values().next()
+    }
+
+    /// Iterate over typed, raw-preserving Size2 occurrences.
+    pub fn size2_values(&self) -> impl Iterator<Item = Result<CoapSize2>> + '_ {
+        self.options
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_SIZE2)
+            .map(CoapSize2::try_from)
+    }
+
+    /// Return the first Size2 occurrence as a typed, raw-preserving value.
+    pub fn size2_value(&self) -> Option<Result<CoapSize2>> {
+        self.size2_values().next()
     }
 
     /// Iterate over typed Proxy-Uri occurrences in insertion or wire order.
@@ -2136,6 +2251,18 @@ fn validate_option_semantics(message: &Coap, validation: &mut CoapValidation) {
                 format!("{} is a {required_role} option", rule.label),
             );
         }
+
+        if number == COAP_OPTION_SIZE2 && message.is_request() {
+            match CoapSize2::try_from(option) {
+                Ok(size2) if size2.value() != 0 => validation.push(
+                    format!("coap.options[{index}].value"),
+                    CoapValidationSeverity::Error,
+                    CoapValidationCategory::OptionApplicability,
+                    "Size2 in a request must use the size-request value zero",
+                ),
+                _ => {}
+            }
+        }
     }
 
     let has_proxy_uri = message
@@ -2256,7 +2383,7 @@ fn coap_option_validation_rule(number: u16) -> Option<CoapOptionValidationRule> 
         }
         COAP_OPTION_BLOCK2 => CoapOptionValidationRule::new("Block2", 0, 3, false, Both),
         COAP_OPTION_BLOCK1 => CoapOptionValidationRule::new("Block1", 0, 3, false, Both),
-        COAP_OPTION_SIZE2 => CoapOptionValidationRule::new("Size2", 0, 4, false, Response),
+        COAP_OPTION_SIZE2 => CoapOptionValidationRule::new("Size2", 0, 4, false, Both),
         COAP_OPTION_Q_BLOCK2 => CoapOptionValidationRule::new("Q-Block2", 0, 3, true, Both),
         COAP_OPTION_PROXY_URI => {
             CoapOptionValidationRule::new("Proxy-Uri", 1, 1034, false, Request)
