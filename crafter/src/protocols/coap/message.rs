@@ -22,10 +22,10 @@ use super::hop_limit::CoapHopLimit;
 use super::no_response::CoapNoResponse;
 use super::observe::CoapObserve;
 use super::option::{
-    encode_option_sequence, validate_coap_proxy_options, CoapAccept, CoapContentFormat, CoapEtag,
-    CoapIfMatch, CoapIfNoneMatch, CoapLocationPath, CoapLocationQuery, CoapOption, CoapOptions,
-    CoapProxyScheme, CoapProxyUri, CoapSize1, CoapSize2, CoapUriHost, CoapUriPath, CoapUriPort,
-    CoapUriQuery,
+    encode_option_sequence, validate_coap_proxy_options, CoapAccept, CoapContentFormat, CoapEcho,
+    CoapEtag, CoapIfMatch, CoapIfNoneMatch, CoapLocationPath, CoapLocationQuery, CoapOption,
+    CoapOptions, CoapProxyScheme, CoapProxyUri, CoapRequestTag, CoapSize1, CoapSize2, CoapUriHost,
+    CoapUriPath, CoapUriPort, CoapUriQuery,
 };
 use super::registry::{coap_code_meta, coap_signaling_code_meta, CoapRegistryMeta};
 
@@ -1130,6 +1130,22 @@ impl Coap {
         self.option(CoapOption::from(value.into()))
     }
 
+    /// Append one raw-preserving RFC 9175 Echo challenge or response value.
+    ///
+    /// This only records exact packet bytes. It does not generate a challenge,
+    /// assess freshness, retry a request, or retain replay state.
+    pub fn echo(self, value: impl Into<CoapEcho>) -> Self {
+        self.option(CoapOption::from(value.into()))
+    }
+
+    /// Append one raw-preserving RFC 9175 Request-Tag occurrence.
+    ///
+    /// Repeated occurrences are retained in insertion order. Tag allocation,
+    /// reuse policy, and blockwise transfer state remain caller concerns.
+    pub fn request_tag(self, value: impl Into<CoapRequestTag>) -> Self {
+        self.option(CoapOption::from(value.into()))
+    }
+
     /// Append one raw-preserving RFC 7959 Block1 option.
     pub fn block1(self, value: CoapBlock) -> Self {
         self.option(value.into_block1_option())
@@ -1471,6 +1487,50 @@ impl Coap {
     /// Return the first Hop-Limit occurrence as a typed value.
     pub fn hop_limit_value(&self) -> Option<Result<CoapHopLimit>> {
         self.hop_limit_values().next()
+    }
+
+    /// Iterate over typed, raw-preserving Echo occurrences.
+    pub fn echo_values(&self) -> impl Iterator<Item = Result<CoapEcho>> + '_ {
+        self.options
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_ECHO)
+            .map(CoapEcho::try_from)
+    }
+
+    /// Return the first Echo occurrence as a checked typed value.
+    pub fn echo_value(&self) -> Option<Result<CoapEcho>> {
+        self.echo_values().next()
+    }
+
+    /// Iterate over typed, raw-preserving Request-Tag occurrences.
+    pub fn request_tag_values(&self) -> impl Iterator<Item = Result<CoapRequestTag>> + '_ {
+        self.options
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_REQUEST_TAG)
+            .map(CoapRequestTag::try_from)
+    }
+
+    /// Return the first Request-Tag occurrence as a checked typed value.
+    pub fn request_tag_value(&self) -> Option<Result<CoapRequestTag>> {
+        self.request_tag_values().next()
+    }
+
+    /// Compare Request-Tag occurrences in two messages using exact bytes.
+    ///
+    /// Empty occurrences match each other, while absence does not match
+    /// presence. The comparison intentionally remains independent of semantic
+    /// validation so explicitly malformed raw values remain inspectable. It
+    /// retains no transfer state and does not decide when a tag may be reused.
+    pub fn request_tag_matches(&self, other: &Self) -> bool {
+        self.options
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_REQUEST_TAG)
+            .any(|tag| {
+                other.options.iter().any(|other_tag| {
+                    other_tag.number().value() == COAP_OPTION_REQUEST_TAG
+                        && tag.value() == other_tag.value()
+                })
+            })
     }
 
     /// Iterate over typed, raw-preserving Block1 occurrences.
