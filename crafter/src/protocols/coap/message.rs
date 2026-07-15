@@ -18,6 +18,7 @@ use crate::protocols::transport::Udp;
 
 use super::block::{CoapBlock, CoapBlockKind, CoapBlockTransport, CoapBlockValidation};
 use super::constants::*;
+use super::hop_limit::CoapHopLimit;
 use super::no_response::CoapNoResponse;
 use super::observe::CoapObserve;
 use super::option::{
@@ -734,6 +735,9 @@ pub enum CoapValidationCategory {
     OptionRepeatability,
     /// An option value violates its source-backed semantic length.
     OptionLength,
+    /// An option value has a valid structural length but violates its
+    /// source-backed semantic range.
+    OptionValue,
     /// Two individually valid options cannot be combined.
     OptionInteraction,
     /// An option is not applicable to the message's request/response role.
@@ -1118,6 +1122,14 @@ impl Coap {
         self.option(CoapOption::from(value.into()))
     }
 
+    /// Append one raw-preserving RFC 8768 Hop-Limit request option.
+    ///
+    /// This only records packet metadata. Use [`CoapHopLimit::decrement`] to
+    /// obtain a safe stateless result before any caller-controlled forwarding.
+    pub fn hop_limit(self, value: impl Into<CoapHopLimit>) -> Self {
+        self.option(CoapOption::from(value.into()))
+    }
+
     /// Append one raw-preserving RFC 7959 Block1 option.
     pub fn block1(self, value: CoapBlock) -> Self {
         self.option(value.into_block1_option())
@@ -1446,6 +1458,19 @@ impl Coap {
     /// Return the first raw-preserving No-Response mask.
     pub fn no_response_value(&self) -> Option<Result<CoapNoResponse>> {
         self.no_response_values().next()
+    }
+
+    /// Iterate over typed, raw-preserving Hop-Limit occurrences.
+    pub fn hop_limit_values(&self) -> impl Iterator<Item = Result<CoapHopLimit>> + '_ {
+        self.options
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_HOP_LIMIT)
+            .map(CoapHopLimit::try_from)
+    }
+
+    /// Return the first Hop-Limit occurrence as a typed value.
+    pub fn hop_limit_value(&self) -> Option<Result<CoapHopLimit>> {
+        self.hop_limit_values().next()
     }
 
     /// Iterate over typed, raw-preserving Block1 occurrences.
@@ -2390,6 +2415,15 @@ fn validate_option_semantics(message: &Coap, validation: &mut CoapValidation) {
                 ),
                 _ => {}
             }
+        }
+
+        if number == COAP_OPTION_HOP_LIMIT && option.value() == [0] {
+            validation.push(
+                format!("coap.options[{index}].value"),
+                CoapValidationSeverity::Error,
+                CoapValidationCategory::OptionValue,
+                "Hop-Limit must be between 1 and 255",
+            );
         }
     }
 
