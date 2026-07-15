@@ -64,7 +64,8 @@ pub use self::option::{
     CoapRequestTag, CoapSize1, CoapSize2, CoapUriHost, CoapUriPath, CoapUriPort, CoapUriQuery,
 };
 pub use self::oscore::{
-    OscoreAeadAlgorithm, OscoreContext, OscoreError, OscoreKdfAlgorithm, OscoreOption,
+    protect_oscore, OscoreAeadAlgorithm, OscoreContext, OscoreError, OscoreKdfAlgorithm,
+    OscoreOption, OscoreProtectParams, OscoreRequestBinding,
 };
 pub use self::registry::{
     coap_code_meta, coap_content_format_meta, coap_option_meta, coap_signaling_code_meta,
