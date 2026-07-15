@@ -16,6 +16,7 @@ const COAP_TYPE_CONFIRMABLE: u8 = 0;
 const COAP_TYPE_NON_CONFIRMABLE: u8 = 1;
 const COAP_TYPE_ACKNOWLEDGEMENT: u8 = 2;
 const COAP_TYPE_RESET: u8 = 3;
+const COAP_INSPECTION_HEX_LIMIT: usize = 16;
 
 /// Source-backed CoAP datagram version field value.
 ///
@@ -973,6 +974,150 @@ impl Coap {
         encode_option_sequence(&options, &mut encoded)?;
         Ok(encoded)
     }
+
+    fn version_inspection_label(&self) -> String {
+        let version = self.version_value();
+        if self.version_state() == FieldState::User && !version.is_current() {
+            format!("{} [explicit-noncurrent]", version.value())
+        } else {
+            version.value().to_string()
+        }
+    }
+
+    fn message_type_inspection_label(&self) -> String {
+        let message_type = self.message_type_value();
+        if self.message_type_state() == FieldState::User && message_type.is_unknown() {
+            format!("{} [explicit-out-of-range]", message_type.label())
+        } else {
+            message_type.label()
+        }
+    }
+
+    fn code_inspection_label(&self) -> String {
+        let code = self.code_value();
+        let metadata = code.registry_meta();
+        let mut label = format!("{}({})", code.label(), metadata.label);
+
+        if self.code_state() == FieldState::User && matches!(code.class(), 1 | 3 | 6 | 7) {
+            label.push_str(" [explicit-reserved]");
+        }
+        if code.is_empty()
+            && (!self.token_value().is_empty()
+                || !self.options.is_empty()
+                || self.payload_marker_value().is_present()
+                || !self.payload.is_empty())
+        {
+            label.push_str(" [empty-message-mismatch]");
+        }
+
+        label
+    }
+
+    fn token_length_inspection_label(&self) -> String {
+        let actual_len = self.token_value().len();
+        let Ok(token_length) = self.token_length_value() else {
+            return format!("{actual_len} [unset-invalid]");
+        };
+
+        if self.token_length_state() == FieldState::User
+            && !token_length_matches_bytes(&token_length, actual_len)
+        {
+            format!(
+                "{} [explicit-mismatch:nibble={},actual={actual_len}]",
+                token_length.declared_len(),
+                token_length.nibble()
+            )
+        } else {
+            token_length.declared_len().to_string()
+        }
+    }
+
+    fn token_inspection_label(&self) -> String {
+        let token = self.token_value();
+        format!("len={} hex={}", token.len(), bounded_hex(token.as_bytes()))
+    }
+
+    fn option_malformed_overrides(&self) -> Vec<bool> {
+        let mut indices = (0..self.options.len()).collect::<Vec<_>>();
+        if self.option_order == CoapOptionOrder::Canonical {
+            indices.sort_by_key(|index| self.options[*index].number());
+        }
+
+        let mut malformed = vec![false; self.options.len()];
+        let mut previous_number = 0u16;
+        for index in indices {
+            let option = &self.options[index];
+            let number = option.number().value();
+            let out_of_order =
+                self.option_order == CoapOptionOrder::Wire && number < previous_number;
+            let expected_delta = u32::from(number.saturating_sub(previous_number));
+            previous_number = number;
+
+            malformed[index] = out_of_order || option_encoding_mismatch(option, expected_delta);
+        }
+
+        malformed
+    }
+
+    fn options_have_malformed_overrides(&self) -> bool {
+        self.option_malformed_overrides()
+            .into_iter()
+            .any(|value| value)
+    }
+
+    fn options_inspection_label(&self) -> String {
+        if self.options.is_empty() {
+            return "0 []".to_string();
+        }
+
+        let malformed = self.option_malformed_overrides();
+        let labels = self
+            .options
+            .iter()
+            .enumerate()
+            .map(|(index, option)| {
+                let number = option.number().value();
+                let metadata = option.registry_meta();
+
+                let value = if number == COAP_OPTION_OSCORE {
+                    "<redacted>".to_string()
+                } else {
+                    bounded_hex(option.value())
+                };
+                let mut label = format!(
+                    "{}({},len={},hex={value})",
+                    metadata.label,
+                    number,
+                    option.value().len()
+                );
+
+                if malformed[index] {
+                    label.push_str(" [malformed-override]");
+                }
+                label
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        format!("{} [{labels}]", self.options.len())
+    }
+
+    fn payload_marker_inspection_label(&self) -> String {
+        let marker = self.payload_marker_value();
+        let label = if marker.is_present() {
+            "present"
+        } else {
+            "absent"
+        };
+        let mismatch = self.payload_marker_state() == FieldState::User
+            && marker.is_present() != !self.payload.is_empty();
+
+        if mismatch {
+            format!("{label} [explicit-mismatch]")
+        } else {
+            label.to_string()
+        }
+    }
 }
 
 impl Default for Coap {
@@ -984,6 +1129,40 @@ impl Default for Coap {
 impl Layer for Coap {
     fn name(&self) -> &'static str {
         "Coap"
+    }
+
+    fn summary(&self) -> String {
+        let options = if self.options_have_malformed_overrides() {
+            format!("{} [malformed-override]", self.options.len())
+        } else {
+            self.options.len().to_string()
+        };
+
+        format!(
+            "Coap(version={}, type={}, code={}, mid=0x{:04x}, token_len={}, options={}, marker={}, payload={} bytes)",
+            self.version_inspection_label(),
+            self.message_type_inspection_label(),
+            self.code_inspection_label(),
+            self.message_id_value(),
+            self.token_length_inspection_label(),
+            options,
+            self.payload_marker_inspection_label(),
+            self.payload.len()
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("version", self.version_inspection_label()),
+            ("type", self.message_type_inspection_label()),
+            ("token_length", self.token_length_inspection_label()),
+            ("code", self.code_inspection_label()),
+            ("message_id", format!("0x{:04x}", self.message_id_value())),
+            ("token", self.token_inspection_label()),
+            ("options", self.options_inspection_label()),
+            ("payload_marker", self.payload_marker_inspection_label()),
+            ("payload_length", self.payload.len().to_string()),
+        ]
     }
 
     fn encoded_len(&self) -> usize {
@@ -1019,6 +1198,62 @@ impl Layer for Coap {
     }
 
     impl_layer_object!(Coap);
+}
+
+fn bounded_hex(bytes: &[u8]) -> String {
+    let shown = bytes.len().min(COAP_INSPECTION_HEX_LIMIT);
+    let mut output = String::with_capacity(shown.saturating_mul(2).saturating_add(24));
+    for byte in &bytes[..shown] {
+        output.push_str(&format!("{byte:02x}"));
+    }
+    if bytes.len() > shown {
+        output.push_str(&format!("...(+{} bytes)", bytes.len() - shown));
+    }
+    output
+}
+
+fn token_length_matches_bytes(token_length: &CoapTokenLength, actual_len: usize) -> bool {
+    if token_length.declared_len() != actual_len {
+        return false;
+    }
+
+    match token_length.nibble() {
+        0..=12 => {
+            token_length.extension_bytes().is_empty()
+                && token_length.declared_len() == usize::from(token_length.nibble())
+        }
+        13 => {
+            let extension = token_length.extension_bytes();
+            extension.len() == 1
+                && token_length.declared_len() == 13usize.saturating_add(usize::from(extension[0]))
+        }
+        14 => {
+            let extension = token_length.extension_bytes();
+            extension.len() == 2
+                && token_length.declared_len()
+                    == 269usize.saturating_add(usize::from(u16::from_be_bytes([
+                        extension[0],
+                        extension[1],
+                    ])))
+        }
+        _ => false,
+    }
+}
+
+fn option_encoding_mismatch(option: &CoapOption, expected_delta: u32) -> bool {
+    let Some(encoding) = option.encoding() else {
+        return false;
+    };
+
+    encoding
+        .wire_delta()
+        .is_some_and(|wire_delta| wire_delta != expected_delta)
+        || encoding
+            .wire_length()
+            .is_some_and(|wire_length| wire_length != option.value().len())
+        || (encoding.raw_bytes().is_some()
+            && encoding.wire_delta().is_none()
+            && encoding.wire_length().is_none())
 }
 
 fn validate_base_token_len(len: usize) -> Result<()> {
@@ -1261,6 +1496,7 @@ mod tests {
         let message = Coap::new().options([first_repeated, lower, second_repeated]);
 
         assert_eq!(message.encoded_len(), 10);
+        assert!(!message.summary().contains("malformed-override"));
         assert_eq!(
             Packet::from_layer(message).compile().unwrap().as_bytes(),
             &[0x40, 0x00, 0x00, 0x00, 0x31, b'h', 0x81, b'a', 0x01, b'b']
@@ -1279,6 +1515,7 @@ mod tests {
 
         assert_eq!(message.option_order_value(), CoapOptionOrder::Wire);
         assert_eq!(message.encoded_len(), 10);
+        assert!(message.summary().contains("malformed-override"));
         assert_eq!(
             Packet::from_layer(message).compile().unwrap().as_bytes(),
             &[0x40, 0x00, 0x00, 0x00, 0xb1, b'a', 0x01, b'h', 0x81, b'b']
@@ -1352,6 +1589,119 @@ mod tests {
         assert!(!CoapPayloadMarker::Absent.is_present());
         assert!(CoapPayloadMarker::Present.is_present());
         assert_eq!(CoapPayloadMarker::default(), CoapPayloadMarker::Absent);
+    }
+
+    #[test]
+    fn request_summary_and_show_are_exact_and_deterministic() {
+        let packet = Packet::from_layer(
+            Coap::get()
+                .confirmable()
+                .message_id(0x1234)
+                .token(CoapToken::from_bytes([0xaa, 0xbb]))
+                .option(CoapOption::from_string(COAP_OPTION_URI_PATH, "status")),
+        );
+
+        assert_eq!(
+            packet.summary(),
+            "Coap(version=1, type=confirmable, code=0.01(GET), mid=0x1234, token_len=2, options=1, marker=absent, payload=0 bytes)"
+        );
+        assert_eq!(
+            packet.show(),
+            "Packet(len=13, layers=1)\n  [0] Coap\n      version: 1\n      type: confirmable\n      token_length: 2\n      code: 0.01(GET)\n      message_id: 0x1234\n      token: len=2 hex=aabb\n      options: 1 [Uri-Path(11,len=6,hex=737461747573)]\n      payload_marker: absent\n      payload_length: 0"
+        );
+    }
+
+    #[test]
+    fn response_summary_and_show_are_exact_and_deterministic() {
+        let packet = Packet::from_layer(
+            Coap::response(CoapCode::content())
+                .non_confirmable()
+                .message_id(0x0102)
+                .token(CoapToken::from_bytes([0x01]))
+                .option(CoapOption::from_uint(COAP_OPTION_CONTENT_FORMAT, 0))
+                .payload(b"ok".to_vec()),
+        );
+
+        assert_eq!(
+            packet.summary(),
+            "Coap(version=1, type=non-confirmable, code=2.05(Content), mid=0x0102, token_len=1, options=1, marker=present, payload=2 bytes)"
+        );
+        assert_eq!(
+            packet.show(),
+            "Packet(len=9, layers=1)\n  [0] Coap\n      version: 1\n      type: non-confirmable\n      token_length: 1\n      code: 2.05(Content)\n      message_id: 0x0102\n      token: len=1 hex=01\n      options: 1 [Content-Format(12,len=0,hex=)]\n      payload_marker: present\n      payload_length: 2"
+        );
+    }
+
+    #[test]
+    fn empty_ack_summary_and_show_are_exact_and_deterministic() {
+        let packet = Packet::from_layer(Coap::empty().acknowledgement().message_id(0xabcd));
+
+        assert_eq!(
+            packet.summary(),
+            "Coap(version=1, type=acknowledgement, code=0.00(Empty), mid=0xabcd, token_len=0, options=0, marker=absent, payload=0 bytes)"
+        );
+        assert_eq!(
+            packet.show(),
+            "Packet(len=4, layers=1)\n  [0] Coap\n      version: 1\n      type: acknowledgement\n      token_length: 0\n      code: 0.00(Empty)\n      message_id: 0xabcd\n      token: len=0 hex=\n      options: 0 []\n      payload_marker: absent\n      payload_length: 0"
+        );
+    }
+
+    #[test]
+    fn unknown_option_summary_and_show_use_stable_numeric_labels() {
+        let packet = Packet::from_layer(
+            Coap::get()
+                .message_id(0x0001)
+                .option(CoapOption::new(65_001u16, vec![0xde, 0xad])),
+        );
+
+        assert_eq!(
+            packet.summary(),
+            "Coap(version=1, type=confirmable, code=0.01(GET), mid=0x0001, token_len=0, options=1, marker=absent, payload=0 bytes)"
+        );
+        assert_eq!(
+            packet.show(),
+            "Packet(len=9, layers=1)\n  [0] Coap\n      version: 1\n      type: confirmable\n      token_length: 0\n      code: 0.01(GET)\n      message_id: 0x0001\n      token: len=0 hex=\n      options: 1 [option-65001(65001,len=2,hex=dead)]\n      payload_marker: absent\n      payload_length: 0"
+        );
+    }
+
+    #[test]
+    fn payload_summary_and_show_report_length_without_dumping_bytes() {
+        let packet = Packet::from_layer(
+            Coap::post()
+                .message_id(0x0007)
+                .payload(vec![0x00, 0xff, 0x10]),
+        );
+
+        assert_eq!(
+            packet.summary(),
+            "Coap(version=1, type=confirmable, code=0.02(POST), mid=0x0007, token_len=0, options=0, marker=present, payload=3 bytes)"
+        );
+        assert_eq!(
+            packet.show(),
+            "Packet(len=8, layers=1)\n  [0] Coap\n      version: 1\n      type: confirmable\n      token_length: 0\n      code: 0.02(POST)\n      message_id: 0x0007\n      token: len=0 hex=\n      options: 0 []\n      payload_marker: present\n      payload_length: 3"
+        );
+    }
+
+    #[test]
+    fn explicit_malformed_overrides_are_visible_without_payload_disclosure() {
+        let packet = Packet::from_layer(
+            Coap::new()
+                .version(3u8)
+                .message_type(CoapMessageType::Unknown(4))
+                .token_length(CoapTokenLength::explicit(1, Vec::new(), 1))
+                .code(CoapCode::from_parts(1, 0))
+                .token(CoapToken::from_bytes([0xaa, 0xbb]))
+                .option(CoapOption::new(11u16, vec![0xcc]).with_wire_length(2))
+                .payload_marker(CoapPayloadMarker::Absent)
+                .payload(vec![0xde]),
+        );
+
+        assert_eq!(
+            packet.summary(),
+            "Coap(version=3 [explicit-noncurrent], type=message-type-4 [explicit-out-of-range], code=1.00(code-1.00) [explicit-reserved], mid=0x0000, token_len=1 [explicit-mismatch:nibble=1,actual=2], options=1 [malformed-override], marker=absent [explicit-mismatch], payload=1 bytes)"
+        );
+        assert!(!packet.show().contains("hex=de"));
+        assert!(packet.show().contains("[malformed-override]"));
     }
 
     #[test]
