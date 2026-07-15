@@ -2,6 +2,9 @@
 
 use core::fmt;
 
+use crate::error::{CrafterError, Result};
+use crate::packet::hexdump;
+
 use super::constants::*;
 use super::registry::{coap_code_meta, coap_signaling_code_meta, CoapRegistryMeta};
 
@@ -507,6 +510,98 @@ impl fmt::Display for CoapCode {
     }
 }
 
+/// Owned, byte-preserving CoAP token.
+///
+/// Token bytes are opaque and are deliberately modeled separately from the
+/// header Token Length field. This permits callers to preserve extended
+/// tokens and intentionally malformed token-length overrides without changing
+/// the owned bytes.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct CoapToken(Vec<u8>);
+
+impl CoapToken {
+    /// Build a token whose length is canonical for base RFC 7252 datagrams.
+    ///
+    /// Extended-token header encoding is added separately. Until then, use
+    /// [`Self::from_bytes`] to preserve extended or intentionally malformed
+    /// token values.
+    pub fn new(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        validate_base_token_len(bytes.len())?;
+        Ok(Self(bytes.to_vec()))
+    }
+
+    /// Preserve token bytes without applying the base-token length policy.
+    ///
+    /// This constructor never truncates or normalizes its input. It is the
+    /// explicit path for extended-token construction, decoded bytes, and
+    /// intentionally malformed test packets.
+    pub fn from_bytes(bytes: impl AsRef<[u8]>) -> Self {
+        Self(bytes.as_ref().to_vec())
+    }
+
+    /// Borrow the preserved token bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// Consume the token and return its owned bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+
+    /// Return the number of preserved token bytes.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Return true when the token contains no bytes.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Return the token as lowercase hexadecimal without interpreting it as
+    /// text.
+    pub fn to_hex(&self) -> String {
+        let mut output = String::with_capacity(self.len() * 2);
+        for byte in self.as_bytes() {
+            output.push_str(&format!("{byte:02x}"));
+        }
+        output
+    }
+
+    /// Return the token using the crate's stable binary hex-dump format.
+    pub fn hexdump(&self) -> String {
+        hexdump(self.as_bytes())
+    }
+}
+
+impl AsRef<[u8]> for CoapToken {
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
+impl fmt::Display for CoapToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in self.as_bytes() {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+fn validate_base_token_len(len: usize) -> Result<()> {
+    if len <= COAP_MAX_TOKEN_LEN {
+        Ok(())
+    } else {
+        Err(CrafterError::invalid_field_value(
+            "coap.token-length",
+            "base CoAP tokens must be at most 8 bytes",
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -733,5 +828,61 @@ mod tests {
         assert_eq!(unknown_signaling.label(), "7.31");
         assert_eq!(unknown_signaling.registry_meta().label, "signaling-7.31");
         assert!(unknown_signaling.is_signaling());
+    }
+
+    #[test]
+    fn token_checked_constructor_accepts_empty_one_and_eight_byte_values() {
+        let empty = CoapToken::new([]).unwrap();
+        assert!(empty.is_empty());
+        assert_eq!(empty.len(), 0);
+        assert_eq!(empty.as_bytes(), []);
+        assert_eq!(empty.to_hex(), "");
+        assert_eq!(empty.hexdump(), "");
+        assert_eq!(empty.to_string(), "");
+
+        let one = CoapToken::new([0xa5]).unwrap();
+        assert_eq!(one.len(), 1);
+        assert_eq!(one.as_bytes(), [0xa5]);
+        assert_eq!(one.as_ref(), [0xa5]);
+        assert_eq!(one.to_hex(), "a5");
+        assert_eq!(one.hexdump(), "0000: a5");
+        assert_eq!(one.to_string(), "a5");
+
+        let eight = CoapToken::new([0x00, 0x10, 0x80, 0xff, 0x01, 0x02, 0x03, 0x04]).unwrap();
+        assert_eq!(eight.len(), COAP_MAX_TOKEN_LEN);
+        assert_eq!(eight.to_hex(), "001080ff01020304");
+        assert_eq!(eight.to_string(), "001080ff01020304");
+        assert_eq!(
+            eight.into_bytes(),
+            vec![0x00, 0x10, 0x80, 0xff, 0x01, 0x02, 0x03, 0x04]
+        );
+    }
+
+    #[test]
+    fn token_raw_constructor_preserves_extended_and_oversized_inputs() {
+        let extended_bytes = vec![0x7e; COAP_MAX_TOKEN_LEN + 1];
+        let extended = CoapToken::from_bytes(&extended_bytes);
+        assert_eq!(extended.len(), COAP_MAX_TOKEN_LEN + 1);
+        assert_eq!(extended.as_bytes(), extended_bytes);
+
+        let oversized_bytes = vec![0x5a; 65_805];
+        let oversized = CoapToken::from_bytes(&oversized_bytes);
+        assert_eq!(oversized.len(), 65_805);
+        assert_eq!(oversized.as_bytes(), oversized_bytes);
+        assert_eq!(oversized.into_bytes(), oversized_bytes);
+    }
+
+    #[test]
+    fn token_checked_constructor_rejects_non_base_lengths_without_truncation() {
+        let bytes = [0x5a; COAP_MAX_TOKEN_LEN + 1];
+
+        assert_eq!(
+            CoapToken::new(bytes).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "coap.token-length",
+                "base CoAP tokens must be at most 8 bytes"
+            )
+        );
+        assert_eq!(CoapToken::from_bytes(bytes).as_bytes(), bytes);
     }
 }
