@@ -9,13 +9,13 @@ use std::sync::OnceLock;
 
 use crate::error::{CrafterError, Result};
 use crate::field::{Field, FieldState};
-use crate::packet::{Layer, LayerContext};
+use crate::packet::{Layer, LayerContext, Packet};
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 
 use super::constants::COAP_PAYLOAD_MARKER;
 use super::decode::{decode_token_boundary, DecodedTokenBoundary, TokenDecodeContext};
 use super::message::{CoapCode, CoapPayloadMarker, CoapToken, CoapTokenLength};
-use super::option::{encode_option_sequence, CoapOption, CoapOptions};
+use super::option::{decode_option_sequence, encode_option_sequence, CoapOption, CoapOptions};
 
 const RELIABLE_DIRECT_MAX_BODY_LEN: usize = 12;
 const RELIABLE_EXTENDED8_MIN_BODY_LEN: usize = 13;
@@ -285,6 +285,15 @@ impl CoapReliable {
         self
     }
 
+    /// Decode one complete reliable CoAP frame from the front of `bytes`.
+    ///
+    /// The returned byte count identifies the exact end of the declared frame.
+    /// Any following bytes remain caller-owned so stream buffers can be managed
+    /// without adding transport reassembly to the packet layer.
+    pub fn decode(bytes: &[u8]) -> Result<(Self, usize)> {
+        decode_coap_reliable(bytes)
+    }
+
     /// Return the reliable Len metadata field state.
     pub const fn length_state(&self) -> FieldState {
         self.length.state()
@@ -533,6 +542,61 @@ impl Layer for CoapReliable {
 }
 
 impl_layer_div!(CoapReliable);
+
+/// Decode one complete RFC 8323 frame and report its consumed byte count.
+///
+/// The parser is strict within the declared frame boundary: truncated Len,
+/// Code, TKL, Token, option, marker, and payload regions return structured
+/// errors. Bytes following the frame are not inspected or consumed.
+pub fn decode_coap_reliable(bytes: &[u8]) -> Result<(CoapReliable, usize)> {
+    let frame = decode_reliable_frame_boundary(bytes)?;
+    let decoded_options = decode_option_sequence(frame.body)?;
+
+    let (payload_marker, payload) = if decoded_options.payload_marker {
+        let marker_and_payload = frame
+            .body
+            .get(decoded_options.consumed..)
+            .unwrap_or_default();
+        let payload = marker_and_payload.get(1..).unwrap_or_default();
+        if payload.is_empty() {
+            return Err(CrafterError::buffer_too_short(
+                "coap.payload",
+                1,
+                payload.len(),
+            ));
+        }
+        (CoapPayloadMarker::Present, payload.to_vec())
+    } else {
+        (CoapPayloadMarker::Absent, Vec::new())
+    };
+
+    let message = CoapReliable::new(frame.code)
+        .length(frame.length)
+        .token_length(frame.token_length)
+        .token(CoapToken::from_bytes(frame.token))
+        .options(decoded_options.options)
+        .payload_marker(payload_marker)
+        .payload(payload);
+
+    Ok((message, frame.frame_len))
+}
+
+/// Append one complete reliable CoAP application payload to a packet stack.
+///
+/// Registry dispatch uses this only after a complete-frame shape gate. Refuse
+/// a prefix-only decode here so no caller can silently discard a following
+/// frame or arbitrary trailing transport bytes.
+#[allow(dead_code)]
+pub(crate) fn append_coap_reliable_packet(packet: Packet, bytes: &[u8]) -> Result<Packet> {
+    let (message, consumed) = decode_coap_reliable(bytes)?;
+    if consumed != bytes.len() {
+        return Err(CrafterError::invalid_field_value(
+            "coap.reliable.length",
+            "reliable frame does not consume the complete transport payload",
+        ));
+    }
+    Ok(packet.push(message))
+}
 
 /// The checked byte boundaries of one complete reliable CoAP frame.
 #[allow(dead_code)]
@@ -1155,6 +1219,136 @@ mod tests {
                 "coap.reliable.token-length",
                 "reserved TKL encoding 15",
             ))
+        );
+    }
+
+    #[test]
+    fn reliable_decode_parses_an_exact_frame_and_round_trips() {
+        let bytes = [
+            0xb2, 0x01, 0xaa, 0xbb, 0xb6, b's', b't', b'a', b't', b'u', b's', 0x43, b'a', b'=',
+            b'1',
+        ];
+
+        let (message, consumed) = CoapReliable::decode(&bytes).expect("decode reliable request");
+
+        assert_eq!(consumed, bytes.len());
+        assert_eq!(message.length_state(), FieldState::User);
+        assert_eq!(message.length_value().unwrap().declared_body_len(), 11);
+        assert_eq!(message.token_length_state(), FieldState::User);
+        assert_eq!(message.token_length_value().unwrap().declared_len(), 2);
+        assert_eq!(message.code_value(), CoapCode::get());
+        assert_eq!(message.token_value().as_bytes(), &[0xaa, 0xbb]);
+        assert_eq!(message.options_value().len(), 2);
+        assert_eq!(message.options_value()[0].number().value(), 11);
+        assert_eq!(message.options_value()[0].value(), b"status");
+        assert_eq!(message.options_value()[1].number().value(), 15);
+        assert_eq!(message.options_value()[1].value(), b"a=1");
+        assert_eq!(message.payload_marker_value(), CoapPayloadMarker::Absent);
+        assert!(message.payload_value().is_empty());
+        assert_eq!(
+            Packet::from_layer(message).compile().unwrap().as_bytes(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn reliable_decode_preserves_unknown_code_option_and_payload() {
+        let original = CoapReliable::new(CoapCode::from_wire(0x1f))
+            .token(CoapToken::from_bytes([0x01]))
+            .option(CoapOption::new(65_000u16, [0xde, 0xad]))
+            .payload([0xbe, 0xef]);
+        let bytes = Packet::from_layer(original).compile().unwrap();
+
+        let (decoded, consumed) = decode_coap_reliable(bytes.as_bytes()).unwrap();
+
+        assert_eq!(consumed, bytes.len());
+        assert_eq!(decoded.code_value(), CoapCode::from_wire(0x1f));
+        assert_eq!(decoded.options_value().len(), 1);
+        assert_eq!(decoded.options_value()[0].number().value(), 65_000);
+        assert_eq!(decoded.options_value()[0].value(), &[0xde, 0xad]);
+        assert_eq!(decoded.payload_marker_value(), CoapPayloadMarker::Present);
+        assert_eq!(decoded.payload_value(), &[0xbe, 0xef]);
+        assert_eq!(
+            Packet::from_layer(decoded).compile().unwrap().as_bytes(),
+            bytes.as_bytes()
+        );
+    }
+
+    #[test]
+    fn reliable_decode_reports_truncated_declared_frame() {
+        assert_eq!(
+            CoapReliable::decode(&[0x30, 0x01, 0xaa, 0xbb]),
+            Err(CrafterError::buffer_too_short("coap.reliable.body", 3, 2,))
+        );
+    }
+
+    #[test]
+    fn reliable_decode_stops_at_concatenated_frame_boundary() {
+        let first = [0x00, 0xe2];
+        let second = [0x00, 0xe3];
+        let mut bytes = first.to_vec();
+        bytes.extend_from_slice(&second);
+
+        let (decoded, consumed) = CoapReliable::decode(&bytes).unwrap();
+
+        assert_eq!(decoded.code_value(), CoapCode::ping());
+        assert_eq!(consumed, first.len());
+        assert_eq!(&bytes[consumed..], second);
+    }
+
+    #[test]
+    fn reliable_decode_ignores_trailing_bytes_outside_the_frame() {
+        let bytes = [0x00, 0xe2, 0xd0];
+
+        let (decoded, consumed) = decode_coap_reliable(&bytes).unwrap();
+
+        assert_eq!(decoded.code_value(), CoapCode::ping());
+        assert_eq!(consumed, 2);
+        assert_eq!(&bytes[consumed..], &[0xd0]);
+    }
+
+    #[test]
+    fn reliable_decode_limits_option_errors_to_the_declared_body() {
+        let bytes = [0x10, 0x01, 0xd0, 0x00];
+
+        assert_eq!(
+            decode_coap_reliable(&bytes),
+            Err(CrafterError::buffer_too_short(
+                "coap.option.delta.extended8",
+                1,
+                0,
+            ))
+        );
+        assert_eq!(
+            decode_coap_reliable(&[0x10, 0x45, COAP_PAYLOAD_MARKER]),
+            Err(CrafterError::buffer_too_short("coap.payload", 1, 0))
+        );
+        assert_eq!(
+            decode_coap_reliable(&[0x0f, 0x01]),
+            Err(CrafterError::invalid_field_value(
+                "coap.reliable.token-length",
+                "reserved TKL encoding 15",
+            ))
+        );
+    }
+
+    #[test]
+    fn reliable_append_helper_requires_one_exact_transport_payload() {
+        let packet = append_coap_reliable_packet(Packet::new(), &[0x00, 0xe2]).unwrap();
+        assert_eq!(
+            packet.layer::<CoapReliable>().unwrap().code_value(),
+            CoapCode::ping()
+        );
+
+        let error = append_coap_reliable_packet(Packet::new(), &[0x00, 0xe2, 0x00])
+            .err()
+            .expect("trailing transport bytes are rejected");
+        assert_eq!(
+            error,
+            CrafterError::invalid_field_value(
+                "coap.reliable.length",
+                "reliable frame does not consume the complete transport payload",
+            )
         );
     }
 }
