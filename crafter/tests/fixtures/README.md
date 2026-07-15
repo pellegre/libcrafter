@@ -34,7 +34,7 @@ The integration fixture catalog lives in
 - `path`: path below this fixture directory.
 - `contents`: checked-in bytes or checked-in hex text.
 - `target`: public decode entrypoint, such as a link type, L3 protocol, raw
-  decode, or DHCPv4 option decoder.
+  decode, CoAP datagram decode, or DHCPv4 option decoder.
 - `expected_layers`: typed layers that must be present after decode.
 - `preserve_exact_bytes`: whether decode/compile must preserve the fixture bytes.
 - `summary_path`: optional expected summary fixture.
@@ -128,6 +128,13 @@ Valid byte fixtures cover:
 - IPv4 UDP options surplus decode:
   `ipv4-udp-options-known.hex`,
   `ipv4-udp-options-unknown-safe.hex`
+- CoAP datagrams and option preservation:
+  `ipv4-udp-coap-get.hex`, `ipv6-udp-coap-content.hex`, and
+  `ethernet-ipv4-udp-coap-get.hex` cover typed IPv4, IPv6, and Ethernet UDP
+  stacks; `coap-unknown-options.hex` preserves an unknown code, repeated
+  unknown options, an unassigned Content-Format, and binary payload;
+  `coap-uri-representation-options.hex` covers repeated Uri-Path, Uri-Query,
+  and Accept option ordering.
 - IPv6 ICMPv6 echo and ICMPv6 error:
   `ipv6-icmp-echo-request.bin`, `ipv6-icmpv6-time-exceeded.hex`
 - IPv6 UDP, TCP, and fragment extension-header stacks:
@@ -185,6 +192,9 @@ Pcap fixtures cover:
   `raw-ipv4-udp-quic-initial.pcap` and
   `raw-ipv6-udp-quic-initial.pcap` carry one synthetic UDP/4433 QUIC Initial
   datagram each and decode as IPv4/UDP/QUIC and IPv6/UDP/QUIC.
+  `raw-ipv4-udp-coap-get.pcap` and `raw-ipv6-udp-coap-content.pcap` carry
+  deterministic UDP/5683 CoAP request and response records and decode as
+  IPv4/UDP/CoAP and IPv6/UDP/CoAP.
   `raw-ipv4-tcp-tls-client-hello.pcap` carries synthetic IPv4/TCP/TLS client
   hello, alert, and application data records over TCP/443 using documentation
   address space and deterministic timestamps.
@@ -195,7 +205,10 @@ Pcap fixtures cover:
   and reassembled through `IpDefrag`.
 - Ethernet link type also includes `ethernet-ipv4-udp-quic-initial.pcap`, a
   synthetic Ethernet/IPv4/UDP/QUIC record using documentation MAC and IPv4
-  address space. `ethernet-ipv4-tcp-tls-client-hello.pcap` carries synthetic
+  address space. `ethernet-ipv4-udp-coap-get.pcap` similarly carries a
+  deterministic Ethernet/IPv4/UDP/CoAP request using locally administered
+  MAC addresses and RFC 5737 IPv4 addresses.
+  `ethernet-ipv4-tcp-tls-client-hello.pcap` carries synthetic
   Ethernet/IPv4/TCP/TLS client hello, alert, and application data records
   generated offline from checked-in byte fixtures.
 - LinuxSll link type with an ARP payload.

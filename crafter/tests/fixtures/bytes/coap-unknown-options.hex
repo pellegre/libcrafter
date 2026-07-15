@@ -1,0 +1,3 @@
+# Direct CoAP datagram with version 2, an unknown code, repeated unknown
+# Option 1234 values, an unassigned Content-Format, and a binary payload.
+921fa1b2deadc23039e203b900ff0180fffa00

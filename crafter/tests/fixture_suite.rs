@@ -8,19 +8,19 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 
 use crafter::core::{
-    Ah, Arp, Bgp, Dhcpv4, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4RelayAgentInfo,
-    Dhcpv4RelaySuboption, Dns, DnsName, DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype,
-    Dot11ManagementSubtype, Dscp, Eapol, EapolKey, Ecn, EdnsOption, Esp, Ethernet, IcmpKind,
-    Icmpv4, Icmpv6, Igmp, IgmpExtensionType, IgmpGroupRecord, IgmpQuery, IgmpRecordType,
-    IgmpReport, IgmpType, IkeHeader, IkeKePayload, IkeNoncePayload, IkeSaPayload, Ipv4,
-    Ipv4ChecksumStatus, Ipv4Option, Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader,
-    Ipv6FragmentHeaderStatus, Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader,
-    Ipv6MobileRoutingHeaderStatus, Ipv6Option, Ipv6RoutingHeader, Ipv6RoutingTypeStatus,
-    Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll, LlcSnap, MacAddr, NetworkLayer, Ntp,
-    NtpMode, NtpTimestamp, NtpVersion, NullByteOrder, NullLoopback, OptionOverload,
-    OspfChecksumStatus, Ospfv2, Ospfv3, Packet, Quic, QuicFrame, QuicPacket,
-    QuicTransportParameter, QuicUnknownFrame, QuicVarInt, Radiotap, Raw, Rip, Ripng, Sctp,
-    SctpChecksumStatus, SctpChunk, SctpPpidStatus, Snmp, Tcp, TcpOption, TcpSackBlock, Tls,
+    Ah, Arp, Bgp, Coap, CoapCode, CoapMessageType, CoapPayloadMarker, CoapVersion, Dhcpv4,
+    Dhcpv4MessageType, Dhcpv4Option, Dhcpv4RelayAgentInfo, Dhcpv4RelaySuboption, Dns, DnsName,
+    DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype, Dot11ManagementSubtype, Dscp, Eapol,
+    EapolKey, Ecn, EdnsOption, Esp, Ethernet, IcmpKind, Icmpv4, Icmpv6, Igmp, IgmpExtensionType,
+    IgmpGroupRecord, IgmpQuery, IgmpRecordType, IgmpReport, IgmpType, IkeHeader, IkeKePayload,
+    IkeNoncePayload, IkeSaPayload, Ipv4, Ipv4ChecksumStatus, Ipv4Option, Ipv6,
+    Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
+    Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option,
+    Ipv6RoutingHeader, Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll,
+    LlcSnap, MacAddr, NetworkLayer, Ntp, NtpMode, NtpTimestamp, NtpVersion, NullByteOrder,
+    NullLoopback, OptionOverload, OspfChecksumStatus, Ospfv2, Ospfv3, Packet, Quic, QuicFrame,
+    QuicPacket, QuicTransportParameter, QuicUnknownFrame, QuicVarInt, Radiotap, Raw, Rip, Ripng,
+    Sctp, SctpChecksumStatus, SctpChunk, SctpPpidStatus, Snmp, Tcp, TcpOption, TcpSackBlock, Tls,
     TlsAlert, TlsContentType, TlsRecord, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus,
     UdpOptions, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCPV4_CLIENT_PORT, DHCPV4_SERVER_PORT,
     DNS_CLASS_IN, DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
@@ -68,6 +68,7 @@ enum PacketDecodeTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FixtureDecodeTarget {
     Packet(PacketDecodeTarget),
+    CoapDatagram,
     Dhcpv4Options,
     QuicDatagram,
     TlsRecords,
@@ -116,6 +117,7 @@ enum ExpectedLayer {
     Udp,
     UdpOptions,
     Sctp,
+    Coap,
     Ntp,
     Snmp,
     Bgp,
@@ -173,12 +175,14 @@ enum CoverageFamily {
     Ipv4Ospf,
     Ipv6Ospfv3,
     Ipv4UdpOptions,
+    Ipv4UdpCoap,
     Ipv6IcmpEcho,
     Ipv6IcmpError,
     Ipv6Udp,
     Ipv6UdpMdns,
     Ipv6UdpDhcpv6,
     Ipv6UdpOptions,
+    Ipv6UdpCoap,
     Ipv6Tcp,
     Ipv6ExtensionHeader,
     Dhcpv4Options,
@@ -198,6 +202,8 @@ enum CoverageFamily {
     Ipv6UdpRipng,
     QuicPackets,
     TlsRecords,
+    CoapUnknownOptions,
+    CoapAdvancedOptions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -216,6 +222,7 @@ enum PcapCoverageFamily {
     RawIpIpv6,
     LinuxSll,
     NullLoopback,
+    CoapRecords,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -318,6 +325,56 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         contents: FixtureContents::Hex(fixture_str!("bytes/raw-hello-agents.hex")),
         target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Raw),
         expected_layers: &[ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-udp-coap-get",
+        path: "bytes/ipv4-udp-coap-get.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-coap-get.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Coap],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv6-udp-coap-content",
+        path: "bytes/ipv6-udp-coap-content.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-udp-coap-content.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[ExpectedLayer::Ipv6, ExpectedLayer::Udp, ExpectedLayer::Coap],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ethernet-ipv4-udp-coap-get",
+        path: "bytes/ethernet-ipv4-udp-coap-get.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ethernet-ipv4-udp-coap-get.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ethernet)),
+        expected_layers: &[
+            ExpectedLayer::Ethernet,
+            ExpectedLayer::Ipv4,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Coap,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "coap-unknown-options",
+        path: "bytes/coap-unknown-options.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/coap-unknown-options.hex")),
+        target: FixtureDecodeTarget::CoapDatagram,
+        expected_layers: &[ExpectedLayer::Coap],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "coap-uri-representation-options",
+        path: "bytes/coap-uri-representation-options.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/coap-uri-representation-options.hex")),
+        target: FixtureDecodeTarget::CoapDatagram,
+        expected_layers: &[ExpectedLayer::Coap],
         preserve_exact_bytes: true,
         summary_path: None,
     },
@@ -2330,6 +2387,48 @@ const IP_FRAGMENT_TEXT_ARTIFACTS: &[IpFragmentTextArtifact] = &[
 
 const PCAP_FIXTURES: &[PcapFixtureCase] = &[
     PcapFixtureCase {
+        name: "raw-ipv4-udp-coap-get",
+        path: "pcaps/raw-ipv4-udp-coap-get.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv4-udp-coap-get.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv4,
+        records: &[PcapFixtureRecord {
+            seconds: 65,
+            fractional: 41_001,
+            fixture_name: "ipv4-udp-coap-get",
+        }],
+    },
+    PcapFixtureCase {
+        name: "raw-ipv6-udp-coap-content",
+        path: "pcaps/raw-ipv6-udp-coap-content.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv6-udp-coap-content.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv6,
+        records: &[PcapFixtureRecord {
+            seconds: 65,
+            fractional: 41_002,
+            fixture_name: "ipv6-udp-coap-content",
+        }],
+    },
+    PcapFixtureCase {
+        name: "ethernet-ipv4-udp-coap-get",
+        path: "pcaps/ethernet-ipv4-udp-coap-get.pcap",
+        contents: fixture_bytes!("pcaps/ethernet-ipv4-udp-coap-get.pcap"),
+        pcap_link_type: PcapLinkType::Ethernet,
+        link_type: LinkType::Ethernet,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::CoapRecords,
+        records: &[PcapFixtureRecord {
+            seconds: 65,
+            fractional: 41_003,
+            fixture_name: "ethernet-ipv4-udp-coap-get",
+        }],
+    },
+    PcapFixtureCase {
         name: "ethernet-arp-request-reply",
         path: "pcaps/ethernet-arp-request-reply.pcap",
         contents: fixture_bytes!("pcaps/ethernet-arp-request-reply.pcap"),
@@ -3101,6 +3200,7 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
         CoverageFamily::Ipv4UdpOptions,
         "IPv4 UDP options surplus decode",
     ),
+    (CoverageFamily::Ipv4UdpCoap, "IPv4 UDP CoAP datagram"),
     (CoverageFamily::Ipv6IcmpEcho, "IPv6 ICMPv6 echo"),
     (CoverageFamily::Ipv6IcmpError, "IPv6 ICMPv6 error message"),
     (CoverageFamily::Ipv6Udp, "IPv6 UDP payload"),
@@ -3110,6 +3210,7 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
         CoverageFamily::Ipv6UdpOptions,
         "IPv6 UDP options surplus decode",
     ),
+    (CoverageFamily::Ipv6UdpCoap, "IPv6 UDP CoAP datagram"),
     (CoverageFamily::Ipv6Tcp, "IPv6 TCP payload"),
     (
         CoverageFamily::Ipv6ExtensionHeader,
@@ -3172,6 +3273,14 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
         CoverageFamily::TlsRecords,
         "TLS record fixtures and typed TLS layer",
     ),
+    (
+        CoverageFamily::CoapUnknownOptions,
+        "CoAP unknown and repeated option preservation",
+    ),
+    (
+        CoverageFamily::CoapAdvancedOptions,
+        "CoAP URI and representation option sequence",
+    ),
 ];
 
 const REQUIRED_PCAP_COVERAGE: &[(PcapCoverageFamily, &str)] = &[
@@ -3201,11 +3310,16 @@ const REQUIRED_PCAP_COVERAGE: &[(PcapCoverageFamily, &str)] = &[
         PcapCoverageFamily::NullLoopback,
         "null loopback pcap link type",
     ),
+    (PcapCoverageFamily::CoapRecords, "typed CoAP pcap record"),
 ];
 
 fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
     match name {
         "raw-hello-agents" => &[CoverageFamily::RawPayload],
+        "ipv4-udp-coap-get" | "ethernet-ipv4-udp-coap-get" => &[CoverageFamily::Ipv4UdpCoap],
+        "ipv6-udp-coap-content" => &[CoverageFamily::Ipv6UdpCoap],
+        "coap-unknown-options" => &[CoverageFamily::CoapUnknownOptions],
+        "coap-uri-representation-options" => &[CoverageFamily::CoapAdvancedOptions],
         "quic-version-negotiation"
         | "quic-retry"
         | "quic-v1-initial"
@@ -3399,6 +3513,12 @@ fn valid_fixture_case(name: &str) -> &'static ValidFixtureCase {
 fn packet_target_for_case(case: &ValidFixtureCase) -> PacketDecodeTarget {
     match case.target {
         FixtureDecodeTarget::Packet(target) => target,
+        FixtureDecodeTarget::CoapDatagram => {
+            panic!(
+                "pcap fixture {} references direct CoAP datagram fixture",
+                case.name
+            )
+        }
         FixtureDecodeTarget::Dhcpv4Options => {
             panic!(
                 "pcap fixture {} references DHCPv4 option-only fixture",
@@ -3490,6 +3610,10 @@ fn decode_quic_fixture_datagram(bytes: &[u8]) -> crafter::core::Result<Packet> {
     Ok(Packet::from_layer(Quic::from_packets([
         QuicPacket::decode(bytes)?,
     ])))
+}
+
+fn decode_coap_fixture_datagram(bytes: &[u8]) -> crafter::core::Result<Packet> {
+    Ok(Packet::from_layer(Coap::decode(bytes)?))
 }
 
 fn decode_tls_records_fixture(bytes: &[u8]) -> crafter::core::Result<Packet> {
@@ -3685,6 +3809,41 @@ fn assert_quic_datagram_compile_decode_compile(
     );
 }
 
+fn assert_coap_datagram_compile_decode_compile(
+    case: &ValidFixtureCase,
+    packet: &Packet,
+    fixture_bytes: &[u8],
+) {
+    let compiled = packet
+        .compile()
+        .unwrap_or_else(|err| panic!("fixture {} should compile: {err}", case.path));
+
+    if case.preserve_exact_bytes {
+        assert_eq!(
+            compiled.as_bytes(),
+            fixture_bytes,
+            "fixture {} did not preserve original bytes after CoAP decode/compile",
+            case.path
+        );
+    }
+
+    let decoded_again = decode_coap_fixture_datagram(compiled.as_bytes()).unwrap_or_else(|err| {
+        panic!(
+            "fixture {} should decode after CoAP compile/decode/compile setup: {err}",
+            case.path
+        )
+    });
+    let recompiled = decoded_again
+        .compile()
+        .unwrap_or_else(|err| panic!("fixture {} should recompile: {err}", case.path));
+    assert_eq!(
+        recompiled.as_bytes(),
+        compiled.as_bytes(),
+        "fixture {} CoAP compile/decode/compile bytes changed",
+        case.path
+    );
+}
+
 fn compiled_decode_bytes_for_case(target: PacketDecodeTarget, compiled: &[u8]) -> Vec<u8> {
     match target {
         PacketDecodeTarget::Link(LinkType::BluetoothLeLl) => {
@@ -3846,6 +4005,9 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             ExpectedLayer::Sctp => {
                 let _ = expect_layer::<Sctp>(case, packet);
             }
+            ExpectedLayer::Coap => {
+                let _ = expect_layer::<Coap>(case, packet);
+            }
             ExpectedLayer::Ntp => {
                 let _ = expect_layer::<Ntp>(case, packet);
             }
@@ -3957,6 +4119,7 @@ fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
         ExpectedLayer::Udp => "Udp",
         ExpectedLayer::UdpOptions => "UdpOptions",
         ExpectedLayer::Sctp => "Sctp",
+        ExpectedLayer::Coap => "Coap",
         ExpectedLayer::Ntp => "Ntp",
         ExpectedLayer::Snmp => "Snmp",
         ExpectedLayer::Bgp => "BGP",
@@ -5166,8 +5329,123 @@ fn assert_sctp_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     }
 }
 
+fn assert_coap_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
+    let coap = expect_layer::<Coap>(case, packet);
+
+    match case.name {
+        "ipv4-udp-coap-get" | "ethernet-ipv4-udp-coap-get" => {
+            let (message_id, token, source_port, ttl) = if case.name.starts_with("ethernet-") {
+                let ethernet = expect_layer::<Ethernet>(case, packet);
+                assert_eq!(
+                    ethernet.source(),
+                    Some(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x41, 0x01]))
+                );
+                assert_eq!(
+                    ethernet.destination(),
+                    Some(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x41, 0x02]))
+                );
+                assert_eq!(ethernet.ethertype_value(), Some(ETHERTYPE_IPV4));
+                (0x4143, [0xc0, 0x43], 49_153, 63)
+            } else {
+                assert!(packet.layer::<Ethernet>().is_none());
+                (0x4141, [0xc0, 0x41], 49_152, 64)
+            };
+
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 41));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, 41));
+            assert_eq!(ipv4.ttl_value(), ttl);
+            assert_eq!(ipv4.protocol_value(), IPPROTO_UDP);
+            assert_eq!(ipv4.checksum_status(), Ipv4ChecksumStatus::Valid);
+
+            let udp = expect_layer::<Udp>(case, packet);
+            assert_eq!(udp.source_port_value(), source_port);
+            assert_eq!(udp.destination_port_value(), 5683);
+            assert_eq!(udp.checksum_status(), UdpChecksumStatus::Valid);
+
+            assert_eq!(coap.version_value(), CoapVersion::current());
+            assert_eq!(coap.message_type_value(), CoapMessageType::Confirmable);
+            assert_eq!(coap.code_value(), CoapCode::get());
+            assert_eq!(coap.message_id_value(), message_id);
+            assert_eq!(coap.token_value().as_bytes(), token);
+            assert_eq!(coap.options_value().len(), 1);
+            assert_eq!(coap.options_value()[0].number().value(), 11);
+            assert_eq!(coap.options_value()[0].value(), b"status");
+            assert_eq!(coap.payload_marker_value(), CoapPayloadMarker::Absent);
+            assert!(coap.payload_value().is_empty());
+        }
+        "ipv6-udp-coap-content" => {
+            let ipv6 = expect_layer::<Ipv6>(case, packet);
+            assert_eq!(
+                ipv6.source(),
+                Ipv6Addr::new(0x2001, 0xdb8, 0x41, 0, 0, 0, 0, 2)
+            );
+            assert_eq!(
+                ipv6.destination(),
+                Ipv6Addr::new(0x2001, 0xdb8, 0x41, 0, 0, 0, 0, 1)
+            );
+            assert_eq!(ipv6.next_header_value(), IPPROTO_UDP);
+
+            let udp = expect_layer::<Udp>(case, packet);
+            assert_eq!(udp.source_port_value(), 5683);
+            assert_eq!(udp.destination_port_value(), 49_152);
+            assert_eq!(udp.checksum_status(), UdpChecksumStatus::Valid);
+
+            assert_eq!(coap.version_value(), CoapVersion::current());
+            assert_eq!(coap.message_type_value(), CoapMessageType::Acknowledgement);
+            assert_eq!(coap.code_value(), CoapCode::content());
+            assert_eq!(coap.message_id_value(), 0x4142);
+            assert_eq!(coap.token_value().as_bytes(), [0xc0, 0x42]);
+            assert_eq!(coap.options_value().len(), 1);
+            assert_eq!(coap.options_value()[0].number().value(), 12);
+            assert!(coap.options_value()[0].value().is_empty());
+            assert_eq!(coap.payload_marker_value(), CoapPayloadMarker::Present);
+            assert_eq!(coap.payload_value(), b"ready");
+        }
+        "coap-unknown-options" => {
+            assert_eq!(coap.version_value(), CoapVersion::from_wire(2));
+            assert_eq!(coap.code_value(), CoapCode::from_wire(0x1f));
+            assert_eq!(coap.message_id_value(), 0xa1b2);
+            assert_eq!(coap.token_value().as_bytes(), [0xde, 0xad]);
+            let options = coap.options_value();
+            assert_eq!(options.len(), 3);
+            assert_eq!(options[0].number().value(), 12);
+            assert_eq!(options[0].as_uint().expect("Content-Format uint"), 12_345);
+            assert_eq!(options[1].number().value(), 1_234);
+            assert_eq!(options[1].value(), [0x00, 0xff]);
+            assert_eq!(options[2].number().value(), 1_234);
+            assert_eq!(options[2].value(), [0x80]);
+            assert_eq!(coap.payload_marker_value(), CoapPayloadMarker::Present);
+            assert_eq!(coap.payload_value(), [0xfa, 0x00]);
+        }
+        "coap-uri-representation-options" => {
+            assert_eq!(coap.version_value(), CoapVersion::current());
+            assert_eq!(coap.message_type_value(), CoapMessageType::Confirmable);
+            assert_eq!(coap.code_value(), CoapCode::get());
+            assert_eq!(coap.message_id_value(), 0x1234);
+            assert_eq!(coap.token_value().as_bytes(), [0xaa, 0xbb]);
+            let options = coap.options_value();
+            assert_eq!(options.len(), 4);
+            assert_eq!(options[0].number().value(), 11);
+            assert_eq!(options[0].as_str().expect("first Uri-Path"), "sensors");
+            assert_eq!(options[1].number().value(), 11);
+            assert_eq!(options[1].as_str().expect("second Uri-Path"), "temp");
+            assert_eq!(options[2].number().value(), 15);
+            assert_eq!(options[2].as_str().expect("Uri-Query"), "units=c");
+            assert_eq!(options[3].number().value(), 17);
+            assert_eq!(options[3].as_uint().expect("Accept uint"), 50);
+            assert_eq!(coap.payload_marker_value(), CoapPayloadMarker::Absent);
+            assert!(coap.payload_value().is_empty());
+        }
+        other => panic!("CoAP fixture {other} is missing typed field assertions"),
+    }
+}
+
 fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     match case.name {
+        name if name.starts_with("coap-") || name.contains("-coap-") => {
+            assert_coap_fixture_fields(case, packet)
+        }
         name if name.starts_with("ble-") => assert_ble_fixture_fields(case, packet),
         name if name.starts_with("dot11-") => assert_dot11_fixture_fields(case, packet),
         name if name.starts_with("dot15d4-") => assert_dot15d4_fixture_fields(case, packet),
@@ -9083,6 +9361,13 @@ fn valid_byte_fixtures_decode_compile_and_summarize() {
                 assert_fixture_fields(case, &packet);
                 assert_compile_decode_compile(case, target, &packet, &bytes);
             }
+            FixtureDecodeTarget::CoapDatagram => {
+                let packet = decode_coap_fixture_datagram(&bytes)
+                    .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+                assert_packet_surface(case, &packet);
+                assert_fixture_fields(case, &packet);
+                assert_coap_datagram_compile_decode_compile(case, &packet, &bytes);
+            }
             FixtureDecodeTarget::Dhcpv4Options => assert_dhcpv4_option_fixture(case, &bytes),
             FixtureDecodeTarget::QuicDatagram => {
                 let packet = decode_quic_fixture_datagram(&bytes)
@@ -9149,6 +9434,7 @@ fn tls_fixture_suite_decodes_byte_and_pcap_fixtures() {
                     bytes.as_slice()
                 );
             }
+            FixtureDecodeTarget::CoapDatagram => unreachable!("TLS fixture cannot be CoAP"),
             FixtureDecodeTarget::Dhcpv4Options => unreachable!("TLS fixture cannot be DHCPv4"),
             FixtureDecodeTarget::QuicDatagram => unreachable!("TLS fixture cannot be QUIC"),
         }
@@ -9252,6 +9538,7 @@ fn dhcpv4_fixture_catalog_decodes_renamed_fixtures() {
                 assert_fixture_fields(case, &packet);
                 assert_compile_decode_compile(case, target, &packet, &bytes);
             }
+            FixtureDecodeTarget::CoapDatagram => unreachable!("DHCPv4 fixture cannot be CoAP"),
             FixtureDecodeTarget::Dhcpv4Options => assert_dhcpv4_option_fixture(case, &bytes),
             FixtureDecodeTarget::QuicDatagram => unreachable!("DHCPv4 fixture cannot be QUIC"),
             FixtureDecodeTarget::TlsRecords => unreachable!("DHCPv4 fixture cannot be TLS"),
@@ -9289,6 +9576,7 @@ fn dhcpv6_fixture_catalog_decodes_byte_fixtures() {
                 assert_fixture_fields(case, &packet);
                 assert_compile_decode_compile(case, target, &packet, &bytes);
             }
+            FixtureDecodeTarget::CoapDatagram => unreachable!("DHCPv6 fixture cannot be CoAP"),
             FixtureDecodeTarget::Dhcpv4Options => unreachable!("DHCPv6 fixture cannot be DHCPv4"),
             FixtureDecodeTarget::QuicDatagram => unreachable!("DHCPv6 fixture cannot be QUIC"),
             FixtureDecodeTarget::TlsRecords => unreachable!("DHCPv6 fixture cannot be TLS"),
