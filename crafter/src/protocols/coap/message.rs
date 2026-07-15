@@ -5,7 +5,7 @@ use core::fmt;
 use crate::error::{CrafterError, Result};
 use crate::field::{Field, FieldState};
 use crate::packet::{hexdump, Layer, LayerContext};
-use crate::protocols::transport::common::impl_layer_object;
+use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 
 use super::constants::*;
 use super::option::{encode_option_sequence, CoapOption, CoapOptions};
@@ -1200,6 +1200,8 @@ impl Layer for Coap {
     impl_layer_object!(Coap);
 }
 
+impl_layer_div!(Coap);
+
 fn bounded_hex(bytes: &[u8]) -> String {
     let shown = bytes.len().min(COAP_INSPECTION_HEX_LIMIT);
     let mut output = String::with_capacity(shown.saturating_mul(2).saturating_add(24));
@@ -1270,7 +1272,83 @@ fn validate_base_token_len(len: usize) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::packet::Packet;
+    use crate::packet::{IntoPacket, Packet};
+    use crate::protocols::ip::{v4::Ipv4, v6::Ipv6};
+    use crate::protocols::transport::{Udp, UDP_HEADER_LEN};
+    use core::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn coap_packet_storage_supports_conversion_typed_access_mutation_and_clone() {
+        let message = Coap::post()
+            .message_id(0x1234)
+            .token(CoapToken::from_bytes([0xaa, 0xbb]));
+        let converted = message.clone().into_packet();
+        let mut packet = Packet::from_layer(message.clone());
+
+        assert_eq!(converted.layer::<Coap>(), Some(&message));
+        assert_eq!(packet.layer::<Coap>(), Some(&message));
+        assert_eq!(packet.get(0).expect("CoAP layer").name(), "Coap");
+
+        let stored = packet.layer_mut::<Coap>().expect("mutable CoAP layer");
+        *stored = stored.clone().message_id(0xabcd).payload(b"ok".to_vec());
+
+        let cloned = packet.clone();
+        let cloned_coap = cloned.layer::<Coap>().expect("cloned CoAP layer");
+        assert_eq!(cloned_coap.message_id_value(), 0xabcd);
+        assert_eq!(cloned_coap.payload_value(), b"ok");
+        assert_eq!(cloned.compile().unwrap(), packet.compile().unwrap());
+        assert_eq!(
+            packet.summary(),
+            "Coap(version=1, type=confirmable, code=0.02(POST), mid=0xabcd, token_len=2, options=0, marker=present, payload=2 bytes)"
+        );
+
+        let show = packet.show();
+        assert!(show.contains("Packet(len=9, layers=1)"), "{show}");
+        assert!(show.contains("[0] Coap"), "{show}");
+        assert!(show.contains("message_id: 0xabcd"), "{show}");
+        assert!(show.contains("payload_length: 2"), "{show}");
+    }
+
+    #[test]
+    fn coap_slash_composition_builds_ipv4_and_ipv6_udp_stacks() {
+        let message = Coap::get()
+            .message_id(0x1234)
+            .token(CoapToken::from_bytes([0xaa]))
+            .payload(b"ok".to_vec());
+        let coap_bytes = Packet::from_layer(message.clone()).compile().unwrap();
+
+        let ipv4_packet = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            / Udp::new().sport(49_152).dport(COAP_UDP_PORT)
+            / message.clone();
+        assert_eq!(ipv4_packet.len(), 3);
+        assert!(ipv4_packet.layer::<Ipv4>().is_some());
+        assert!(ipv4_packet.layer::<Udp>().is_some());
+        assert_eq!(ipv4_packet.layer::<Coap>(), Some(&message));
+
+        let ipv4_bytes = ipv4_packet.compile().expect("IPv4/UDP/CoAP compiles");
+        assert_eq!(ipv4_bytes.len(), 20 + UDP_HEADER_LEN + coap_bytes.len());
+        assert_eq!(&ipv4_bytes[20 + UDP_HEADER_LEN..], coap_bytes.as_bytes());
+        assert!(ipv4_packet.summary().contains(" / Coap("));
+        assert!(ipv4_packet.show().contains("[2] Coap"));
+
+        let ipv6_packet = Ipv6::new()
+            .src(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 10))
+            .dst(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 20))
+            / Udp::new().sport(49_152).dport(COAP_UDP_PORT)
+            / message.clone();
+        assert_eq!(ipv6_packet.len(), 3);
+        assert!(ipv6_packet.layer::<Ipv6>().is_some());
+        assert!(ipv6_packet.layer::<Udp>().is_some());
+        assert_eq!(ipv6_packet.layer::<Coap>(), Some(&message));
+
+        let ipv6_bytes = ipv6_packet.compile().expect("IPv6/UDP/CoAP compiles");
+        assert_eq!(ipv6_bytes.len(), 40 + UDP_HEADER_LEN + coap_bytes.len());
+        assert_eq!(&ipv6_bytes[40 + UDP_HEADER_LEN..], coap_bytes.as_bytes());
+        assert!(ipv6_packet.summary().contains(" / Coap("));
+        assert!(ipv6_packet.show().contains("[2] Coap"));
+    }
 
     #[test]
     fn empty_default_fixed_header_matches_golden_bytes() {
