@@ -12,6 +12,7 @@ mod decode;
 mod group;
 mod link_format;
 mod message;
+mod no_response;
 mod observe;
 mod option;
 mod oscore;
@@ -43,6 +44,7 @@ pub use self::message::{
     CoapOptionOrder, CoapPayloadMarker, CoapToken, CoapTokenLength, CoapValidation,
     CoapValidationCategory, CoapValidationIssue, CoapValidationSeverity, CoapVersion,
 };
+pub use self::no_response::CoapNoResponse;
 pub use self::observe::{CoapObserve, CoapObserveOrdering};
 pub use self::option::{
     validate_coap_proxy_options, CoapAccept, CoapContentFormat, CoapEtag, CoapIfMatch,
