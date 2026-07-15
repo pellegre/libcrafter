@@ -313,6 +313,31 @@ impl CoapCode {
         self.class() == 7
     }
 
+    /// Return true only for a Capabilities and Settings Message (`7.01`).
+    pub const fn is_csm(self) -> bool {
+        self.wire_value() == COAP_CODE_CSM
+    }
+
+    /// Return true only for a Ping signaling message (`7.02`).
+    pub const fn is_ping(self) -> bool {
+        self.wire_value() == COAP_CODE_PING
+    }
+
+    /// Return true only for a Pong signaling message (`7.03`).
+    pub const fn is_pong(self) -> bool {
+        self.wire_value() == COAP_CODE_PONG
+    }
+
+    /// Return true only for a Release signaling message (`7.04`).
+    pub const fn is_release(self) -> bool {
+        self.wire_value() == COAP_CODE_RELEASE
+    }
+
+    /// Return true only for an Abort signaling message (`7.05`).
+    pub const fn is_abort(self) -> bool {
+        self.wire_value() == COAP_CODE_ABORT
+    }
+
     /// Empty (`0.00`).
     pub const fn empty() -> Self {
         Self::from_wire(COAP_CODE_EMPTY)
