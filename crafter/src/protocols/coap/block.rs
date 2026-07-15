@@ -146,6 +146,14 @@ impl CoapBlock {
         Ok(Self::new(number, more, szx)?.with_option_kind(kind))
     }
 
+    /// Build a canonical RFC 7959 Block1 value.
+    ///
+    /// This convenience constructor attaches request-body option context but
+    /// does not infer a request method, payload, transfer state, or Size1.
+    pub fn block1(number: u64, more: bool, szx: u8) -> Result<Self> {
+        Self::new_for(CoapBlockKind::Block1, number, more, szx)
+    }
+
     /// Decode exact CoAP `uint` bytes while retaining their original form.
     ///
     /// Empty bytes decode to zero. Up to eight bytes are retained, including
@@ -243,18 +251,81 @@ impl CoapBlock {
         CoapOption::new(kind.option_number(), self.wire_value)
     }
 
+    /// Convert this value to an exact RFC 7959 Block1 option occurrence.
+    ///
+    /// Exact decoded bytes remain authoritative, including a server-selected
+    /// size and noncanonical uint encodings used for malformed packet work.
+    pub fn into_block1_option(self) -> CoapOption {
+        self.into_option(CoapBlockKind::Block1)
+    }
+
+    /// Validate this value as descriptive Block1 request metadata.
+    ///
+    /// The payload length rule is reported only here (or through the
+    /// message-level Block1 report); construction and compilation remain
+    /// lossless even when the M bit and payload length disagree.
+    pub fn validate_block1(
+        &self,
+        transport: CoapBlockTransport,
+        payload_len: usize,
+    ) -> CoapBlockValidation {
+        self.validate(CoapBlockKind::Block1, transport, payload_len)
+    }
+
     /// Validate source-level Block, Q-Block, BERT, and payload constraints.
     ///
     /// Validation is opt-in and never changes the exact raw representation.
     /// For ordinary descriptive blocks, a non-final payload must equal the
-    /// selected block size. For reliable BERT, a non-final payload must be a
-    /// positive multiple of 1024 bytes; final BERT payloads may include any
-    /// number of complete units plus a final partial unit.
+    /// selected block size, and a final Block1 payload must not exceed it.
+    /// For reliable BERT, a non-final payload must be a positive multiple of
+    /// 1024 bytes; final BERT payloads may include any number of complete
+    /// units plus a final partial unit.
     pub fn validate(
         &self,
         kind: CoapBlockKind,
         transport: CoapBlockTransport,
         payload_len: usize,
+    ) -> CoapBlockValidation {
+        let mut validation = self.validate_control(kind, transport);
+
+        if self.is_bert() {
+            if !kind.is_qblock()
+                && transport == CoapBlockTransport::Reliable
+                && self.more()
+                && (payload_len == 0 || payload_len % COAP_BLOCK_BERT_UNIT as usize != 0)
+            {
+                validation.push(
+                    "coap.block.payload-length",
+                    "non-final BERT payload must be a positive multiple of 1024 bytes",
+                );
+            }
+        } else if self.more() {
+            if payload_len as u128 != u128::from(self.block_size()) {
+                validation.push(
+                    "coap.block.payload-length",
+                    "non-final block payload must equal the selected block size",
+                );
+            }
+        } else if kind == CoapBlockKind::Block1
+            && payload_len as u128 > u128::from(self.block_size())
+        {
+            validation.push(
+                "coap.block.payload-length",
+                "final Block1 payload must not exceed the selected block size",
+            );
+        }
+
+        validation
+    }
+
+    /// Validate Block1/Block2 control metadata without applying a payload rule.
+    ///
+    /// Block1 in a response describes acknowledgement, atomicity, and the
+    /// server's selected size; it does not describe that response's payload.
+    pub(super) fn validate_control(
+        &self,
+        kind: CoapBlockKind,
+        transport: CoapBlockTransport,
     ) -> CoapBlockValidation {
         let mut validation = CoapBlockValidation::default();
 
@@ -293,19 +364,7 @@ impl CoapBlock {
                 validation.push("coap.block.szx", "Q-Block does not define BERT SZX 7");
             } else if transport != CoapBlockTransport::Reliable {
                 validation.push("coap.block.szx", "BERT SZX 7 requires a reliable transport");
-            } else if self.more()
-                && (payload_len == 0 || payload_len % COAP_BLOCK_BERT_UNIT as usize != 0)
-            {
-                validation.push(
-                    "coap.block.payload-length",
-                    "non-final BERT payload must be a positive multiple of 1024 bytes",
-                );
             }
-        } else if self.more() && payload_len as u128 != u128::from(self.block_size()) {
-            validation.push(
-                "coap.block.payload-length",
-                "non-final block payload must equal the selected block size",
-            );
         }
 
         validation
@@ -342,6 +401,8 @@ fn encode_coap_uint(value: u64) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::packet::Packet;
+    use crate::protocols::coap::{Coap, CoapSize1};
 
     #[test]
     fn canonical_boundaries_cover_every_standard_szx() {
@@ -464,5 +525,204 @@ mod tests {
         assert!(CoapBlock::new((u64::MAX >> 4) + 1, false, 0).is_err());
         assert!(CoapBlock::new(0, false, 8).is_err());
         assert!(CoapBlock::from_raw_bytes(vec![0; 9]).is_err());
+    }
+
+    #[test]
+    fn block1_request_fragments_match_first_middle_and_final_wire_bytes() {
+        // RFC 7959 Sections 2.3 and 3.2: non-final payloads exactly match
+        // SZX, while the final payload may be shorter. Size1 describes the
+        // complete request body rather than this fragment's payload.
+        let first = Coap::put()
+            .message_id(0x1234)
+            .block1_request_fragment_with_size1(
+                CoapBlock::block1(0, true, 0).unwrap(),
+                (0xa0..=0xaf).collect::<Vec<_>>(),
+                CoapSize1::new(37),
+            );
+        let middle = Coap::put().message_id(0x1235).block1_request_fragment(
+            CoapBlock::block1(1, true, 0).unwrap(),
+            (0xb0..=0xbf).collect::<Vec<_>>(),
+        );
+        let final_fragment = Coap::put().message_id(0x1236).block1_request_fragment(
+            CoapBlock::block1(2, false, 0).unwrap(),
+            vec![0xc0, 0xc1, 0xc2, 0xc3, 0xc4],
+        );
+
+        assert_eq!(
+            Packet::from_layer(first.clone())
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &[
+                0x40, 0x03, 0x12, 0x34, // CON, PUT, MID
+                0xd1, 0x0e, 0x08, // Block1 0/1/16
+                0xd1, 0x14, 0x25, // Size1 37
+                0xff, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab, 0xac,
+                0xad, 0xae, 0xaf,
+            ]
+        );
+        assert_eq!(
+            Packet::from_layer(middle.clone())
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &[
+                0x40, 0x03, 0x12, 0x35, // CON, PUT, MID
+                0xd1, 0x0e, 0x18, // Block1 1/1/16
+                0xff, 0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xbb, 0xbc,
+                0xbd, 0xbe, 0xbf,
+            ]
+        );
+        assert_eq!(
+            Packet::from_layer(final_fragment.clone())
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &[
+                0x40, 0x03, 0x12, 0x36, // CON, PUT, MID
+                0xd1, 0x0e, 0x20, // Block1 2/0/16
+                0xff, 0xc0, 0xc1, 0xc2, 0xc3, 0xc4,
+            ]
+        );
+
+        for message in [&first, &middle, &final_fragment] {
+            assert!(message
+                .block1_validation(CoapBlockTransport::Datagram)
+                .expect("Block1 occurrence")
+                .unwrap()
+                .is_valid());
+        }
+        assert_eq!(first.size1_value().unwrap().unwrap().value(), 37);
+
+        let short_non_final = Coap::put()
+            .block1_request_fragment(CoapBlock::block1(0, true, 0).unwrap(), vec![0; 15]);
+        let report = short_non_final
+            .block1_validation(CoapBlockTransport::Datagram)
+            .unwrap()
+            .unwrap();
+        assert!(!report.is_valid());
+        assert!(matches!(
+            report.issues(),
+            [CrafterError::InvalidFieldValue {
+                field: "coap.block.payload-length",
+                ..
+            }]
+        ));
+        assert!(Packet::from_layer(short_non_final).compile().is_ok());
+    }
+
+    #[test]
+    fn block1_oversized_final_fragment_is_reported_without_blocking_compile() {
+        // RFC 7959 Section 2 defines the final payload as the possibly short
+        // remainder of the selected block size, while Section 2.3 keeps
+        // semantic checks separate from the wire representation.
+        let oversized_final = Coap::put().message_id(0x1237).block1_request_fragment(
+            CoapBlock::block1(0, false, 0).unwrap(),
+            (0xd0..=0xe0).collect::<Vec<_>>(),
+        );
+
+        let report = oversized_final
+            .block1_validation(CoapBlockTransport::Datagram)
+            .expect("Block1 occurrence")
+            .unwrap();
+        assert!(matches!(
+            report.issues(),
+            [CrafterError::InvalidFieldValue {
+                field: "coap.block.payload-length",
+                reason: "final Block1 payload must not exceed the selected block size",
+            }]
+        ));
+        assert_eq!(
+            Packet::from_layer(oversized_final)
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &[
+                0x40, 0x03, 0x12, 0x37, // CON, PUT, MID
+                0xd0, 0x0e, // final Block1 0/0/16 uses canonical empty uint
+                0xff, 0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda, 0xdb, 0xdc,
+                0xdd, 0xde, 0xdf, 0xe0,
+            ]
+        );
+    }
+
+    #[test]
+    fn block1_continue_preserves_negotiated_downsize_and_unknown_details() {
+        // RFC 7959 Sections 2.3, 2.5, and Figure 9: a response Block1 value
+        // can acknowledge the request while selecting a smaller future SZX.
+        let selected = CoapBlock::from_raw_bytes_for(CoapBlockKind::Block1, vec![0x09]).unwrap();
+        let response = Coap::block1_continue(selected)
+            .acknowledgement()
+            .message_id(0x1234)
+            .option(CoapOption::new(2048u16, vec![0xde, 0xad]));
+        let expected = [
+            0x60, 0x5f, 0x12, 0x34, // ACK, 2.31 Continue, MID
+            0xd1, 0x0e, 0x09, // Block1 0/1/32 selected by server
+            0xe2, 0x06, 0xd8, 0xde, 0xad, // unknown option 2048
+        ];
+
+        assert_eq!(
+            Packet::from_layer(response.clone())
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &expected
+        );
+        assert!(response
+            .block1_validation(CoapBlockTransport::Datagram)
+            .unwrap()
+            .unwrap()
+            .is_valid());
+
+        let decoded = Coap::decode(&expected).unwrap();
+        let decoded_block = decoded.block1_value().unwrap().unwrap();
+        assert_eq!(decoded_block.raw_bytes(), &[0x09]);
+        assert_eq!(decoded_block.block_size(), 32);
+        assert_eq!(decoded.options_value()[1].number().value(), 2048);
+        assert_eq!(decoded.options_value()[1].value(), &[0xde, 0xad]);
+        assert_eq!(
+            Packet::from_layer(decoded).compile().unwrap().as_bytes(),
+            &expected
+        );
+    }
+
+    #[test]
+    fn block1_error_responses_preserve_raw_control_and_size1_metadata() {
+        let raw_ack = CoapBlock::from_raw_bytes_for(CoapBlockKind::Block1, vec![0, 0x10]).unwrap();
+        let incomplete = Coap::block1_request_entity_incomplete(raw_ack)
+            .acknowledgement()
+            .message_id(0x1235);
+        assert_eq!(
+            Packet::from_layer(incomplete.clone())
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &[0x60, 0x88, 0x12, 0x35, 0xd2, 0x0e, 0x00, 0x10]
+        );
+        assert_eq!(
+            incomplete.block1_value().unwrap().unwrap().raw_bytes(),
+            &[0x00, 0x10]
+        );
+
+        // RFC 7959 Section 2.9.3 permits both a smaller Block1 SZX hint and
+        // Size1 carrying the maximum request-body size accepted by the server.
+        let too_large = Coap::block1_request_entity_too_large(
+            CoapBlock::block1(0, false, 1).unwrap(),
+            CoapSize1::new(32),
+        )
+        .acknowledgement()
+        .message_id(0x1236);
+        assert_eq!(
+            Packet::from_layer(too_large.clone())
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &[
+                0x60, 0x8d, 0x12, 0x36, // ACK, 4.13, MID
+                0xd1, 0x0e, 0x01, // Block1 0/0/32
+                0xd1, 0x14, 0x20, // Size1 maximum 32
+            ]
+        );
+        assert_eq!(too_large.size1_value().unwrap().unwrap().value(), 32);
     }
 }
