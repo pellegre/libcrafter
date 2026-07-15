@@ -18,7 +18,12 @@ mod oscore;
 mod registry;
 mod reliable;
 
+pub(crate) use self::constants::COAP_UDP_PORT;
 pub use self::decode::decode_coap;
+pub(crate) use self::decode::{append_coap_packet, looks_like_coap_payload};
+
+#[cfg(test)]
+pub(crate) use self::message::Coap;
 
 #[cfg(test)]
 mod tests {
