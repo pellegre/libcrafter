@@ -309,3 +309,30 @@ fn debug_summary_show_and_errors_redact_context_secrets_and_keys() {
         }
     }
 }
+
+#[test]
+fn provisional_group_flag_is_lossless_and_rejected_by_pairwise_unprotect() {
+    // IANA currently assigns OSCORE flag bit position 2 to Group OSCORE while
+    // retaining an Internet-Draft reference. The remaining bytes are the
+    // compressed request-option example from draft revision 28 and are tested
+    // only for opaque preservation, not as a stable protection grammar.
+    let raw = [0x39, 0x05, 0x03, 0x44, 0x61, 0x6c, 0x25];
+    let option = OscoreOption::parse(raw).unwrap();
+    assert!(option.has_provisional_group_flag());
+    assert_eq!(option.partial_iv(), Some([0x05].as_slice()));
+    assert_eq!(option.kid_context(), Some([0x44, 0x61, 0x6c].as_slice()));
+    assert_eq!(option.kid(), Some([0x25].as_slice()));
+    assert_eq!(option.as_bytes(), raw);
+
+    let protected = Coap::post()
+        .option(CoapOption::new(COAP_OPTION_OSCORE, raw))
+        .payload([0xae, 0xa0, 0x15, 0x56, 0x67, 0x92, 0x4d, 0xff]);
+    assert_eq!(
+        server_context()
+            .unprotect(&protected, OscoreUnprotectParams::request())
+            .unwrap_err(),
+        OscoreError::UnsupportedGroupOscoreOperation {
+            operation: "pairwise-unprotect",
+        }
+    );
+}

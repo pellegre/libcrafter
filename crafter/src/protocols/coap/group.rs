@@ -7,18 +7,20 @@
 //! discovery metadata. This module intentionally performs no multicast group
 //! joins, endpoint discovery, response scheduling, suppression, or I/O.
 
+use core::fmt;
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use crate::error::Result;
 use crate::packet::Packet;
 use crate::protocols::ip::{v4::Ipv4, v6::Ipv6};
 
-use super::constants::{COAP_OPTION_ETAG, COAP_OPTION_OBSERVE};
+use super::constants::{COAP_OPTION_ETAG, COAP_OPTION_OBSERVE, COAP_OPTION_OSCORE};
 use super::message::{
     coap_request_udp, coap_response_udp, Coap, CoapCode, CoapMessageType, CoapToken,
     CoapValidation, CoapValidationCategory, CoapValidationSeverity,
 };
 use super::option::{CoapAccept, CoapContentFormat, CoapOption};
+use super::oscore::{OscoreError, OscoreOption};
 
 /// RFC 7252's IPv4 "All CoAP Nodes" multicast address.
 pub const COAP_ALL_NODES_IPV4_MULTICAST: Ipv4Addr = Ipv4Addr::new(224, 0, 1, 187);
@@ -52,6 +54,211 @@ impl CoapAccept {
     /// Build an Accept value for `application/coap-group+json` (256).
     pub fn coap_group_json() -> Self {
         Self::new(COAP_CONTENT_FORMAT_GROUP_JSON)
+    }
+}
+
+/// Opaque COSE algorithm identifier associated with provisional Group OSCORE metadata.
+///
+/// No countersignature algorithm is admitted while Group OSCORE remains an
+/// Internet-Draft. Numeric identifiers are retained so generated tools can
+/// inspect and persist future or unknown assignments without selecting an
+/// implementation from model memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GroupOscoreAlgorithmId(i32);
+
+impl GroupOscoreAlgorithmId {
+    /// Preserve an exact numeric COSE algorithm identifier.
+    pub const fn new(id: i32) -> Self {
+        Self(id)
+    }
+
+    /// Return the exact preserved numeric identifier.
+    pub const fn id(self) -> i32 {
+        self.0
+    }
+
+    /// Return whether this crate currently admits the algorithm for Group OSCORE.
+    pub const fn is_supported(self) -> bool {
+        false
+    }
+
+    /// Require countersignature support and return an explicit typed result.
+    pub fn require_supported(self) -> std::result::Result<(), OscoreError> {
+        Err(OscoreError::UnsupportedCountersignatureAlgorithm { id: self.0 })
+    }
+}
+
+/// Opaque countersignature-related inputs retained without cryptographic interpretation.
+///
+/// The current Internet-Draft describes countersignature bytes and External
+/// AAD inputs, but the repository source manifest forbids freezing their
+/// serializer or algorithm set before publication as a numbered RFC. Debug
+/// output therefore exposes lengths and the numeric algorithm only.
+#[derive(Clone, PartialEq, Eq)]
+pub struct GroupOscoreCountersignature {
+    algorithm: GroupOscoreAlgorithmId,
+    external_data: Vec<u8>,
+    bytes: Vec<u8>,
+}
+
+impl GroupOscoreCountersignature {
+    /// Preserve caller-supplied algorithm, external data, and countersignature bytes.
+    pub fn new(
+        algorithm: GroupOscoreAlgorithmId,
+        external_data: impl Into<Vec<u8>>,
+        bytes: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self {
+            algorithm,
+            external_data: external_data.into(),
+            bytes: bytes.into(),
+        }
+    }
+
+    /// Return the exact opaque COSE algorithm identifier.
+    pub const fn algorithm(&self) -> GroupOscoreAlgorithmId {
+        self.algorithm
+    }
+
+    /// Borrow caller-supplied countersignature external data verbatim.
+    pub fn external_data(&self) -> &[u8] {
+        &self.external_data
+    }
+
+    /// Borrow countersignature bytes verbatim.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Return the explicit unsupported result for countersignature verification.
+    pub fn verify(&self) -> std::result::Result<(), OscoreError> {
+        self.algorithm.require_supported()
+    }
+}
+
+impl fmt::Debug for GroupOscoreCountersignature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GroupOscoreCountersignature")
+            .field("algorithm_id", &self.algorithm.id())
+            .field("external_data", &"[redacted]")
+            .field("external_data_len", &self.external_data.len())
+            .field("bytes", &"[redacted]")
+            .field("bytes_len", &self.bytes.len())
+            .finish()
+    }
+}
+
+/// Provisional, lossless inspection metadata for one Group-Flagged CoAP message.
+///
+/// The complete typed [`Coap`] layer remains authoritative. This view parses
+/// only RFC 8613's established Partial IV, KID Context, and KID fields and
+/// recognizes IANA's provisional Group Flag. The protected payload and any
+/// countersignature material remain opaque; no boundary between ciphertext,
+/// tag, and encrypted countersignature is inferred.
+#[derive(Clone, PartialEq, Eq)]
+pub struct GroupOscoreMetadata {
+    message: Coap,
+    option: OscoreOption,
+    countersignature: GroupOscoreCountersignature,
+}
+
+impl GroupOscoreMetadata {
+    /// Inspect one Group-Flagged message without normalizing any wire bytes.
+    pub fn inspect(
+        message: Coap,
+        countersignature: GroupOscoreCountersignature,
+    ) -> std::result::Result<Self, OscoreError> {
+        let mut options = message
+            .options_value()
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_OSCORE);
+        let option = options.next().ok_or(OscoreError::MissingContext {
+            context: "coap.group-oscore.message.option",
+        })?;
+        if options.next().is_some() {
+            return Err(OscoreError::InvalidFieldValue {
+                field: "coap.group-oscore.message.option",
+                reason: "OSCORE option must not be repeated",
+            });
+        }
+        let option = OscoreOption::try_from(option)?;
+        if !option.has_provisional_group_flag() {
+            return Err(OscoreError::InvalidFieldValue {
+                field: "coap.group-oscore.option.flags",
+                reason: "provisional Group Flag is not set",
+            });
+        }
+
+        Ok(Self {
+            message,
+            option,
+            countersignature,
+        })
+    }
+
+    /// Return whether IANA's provisional Group Flag is set.
+    pub fn has_group_flag(&self) -> bool {
+        self.option.has_provisional_group_flag()
+    }
+
+    /// Borrow the exact parsed OSCORE option, including all raw bytes.
+    pub const fn oscore_option(&self) -> &OscoreOption {
+        &self.option
+    }
+
+    /// Borrow the Partial IV parsed by the established RFC 8613 grammar.
+    pub fn partial_iv(&self) -> Option<&[u8]> {
+        self.option.partial_iv()
+    }
+
+    /// Borrow the KID Context, provisionally interpreted as a Group Identifier.
+    pub fn group_identifier(&self) -> Option<&[u8]> {
+        self.option.kid_context()
+    }
+
+    /// Borrow the KID, provisionally interpreted as a Sender ID.
+    pub fn sender_id(&self) -> Option<&[u8]> {
+        self.option.kid()
+    }
+
+    /// Borrow the complete protected payload without guessing field boundaries.
+    pub fn protected_payload(&self) -> &[u8] {
+        self.message.payload_value()
+    }
+
+    /// Borrow the separately retained opaque countersignature metadata.
+    pub const fn countersignature(&self) -> &GroupOscoreCountersignature {
+        &self.countersignature
+    }
+
+    /// Borrow the complete typed CoAP layer.
+    pub const fn message(&self) -> &Coap {
+        &self.message
+    }
+
+    /// Consume the metadata and recover the exact typed CoAP layer.
+    pub fn into_message(self) -> Coap {
+        self.message
+    }
+
+    /// Return the explicit source-boundary error for unavailable protection.
+    pub fn require_protection_support(&self) -> std::result::Result<(), OscoreError> {
+        Err(OscoreError::UnsupportedGroupOscoreOperation {
+            operation: "protect-or-unprotect",
+        })
+    }
+}
+
+impl fmt::Debug for GroupOscoreMetadata {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GroupOscoreMetadata")
+            .field("group_flag", &self.has_group_flag())
+            .field("option", &"[redacted]")
+            .field("option_len", &self.option.as_bytes().len())
+            .field("protected_payload", &"[redacted]")
+            .field("protected_payload_len", &self.protected_payload().len())
+            .field("countersignature", &self.countersignature)
+            .finish()
     }
 }
 

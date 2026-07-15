@@ -31,6 +31,7 @@ const OSCORE_PARTIAL_IV_LENGTH_MASK: u8 = 0x07;
 const OSCORE_KID_FLAG: u8 = 0x08;
 const OSCORE_KID_CONTEXT_FLAG: u8 = 0x10;
 const OSCORE_EXTENSION_FLAGS_MASK: u8 = 0xe0;
+const OSCORE_PROVISIONAL_GROUP_FLAG: u8 = 0x20;
 const OSCORE_MAX_PARTIAL_IV_LEN: usize = 5;
 const OSCORE_MAX_OPTION_LEN: usize = u8::MAX as usize;
 const OSCORE_AES_CCM_16_64_128_ID: i32 = 10;
@@ -209,6 +210,16 @@ pub enum OscoreError {
         /// Numeric COSE algorithm identifier.
         id: i32,
     },
+    /// Group OSCORE processing is unavailable while its specification remains provisional.
+    UnsupportedGroupOscoreOperation {
+        /// Stable non-secret operation name.
+        operation: &'static str,
+    },
+    /// A preserved countersignature algorithm has no admitted implementation.
+    UnsupportedCountersignatureAlgorithm {
+        /// Numeric COSE algorithm identifier.
+        id: i32,
+    },
     /// Required request or context metadata was not supplied.
     MissingContext {
         /// Stable non-secret context name.
@@ -254,6 +265,18 @@ impl fmt::Display for OscoreError {
             }
             Self::UnsupportedKdfAlgorithm { id } => {
                 write!(f, "unsupported OSCORE KDF algorithm {id}")
+            }
+            Self::UnsupportedGroupOscoreOperation { operation } => {
+                write!(
+                    f,
+                    "unsupported provisional Group OSCORE operation {operation}"
+                )
+            }
+            Self::UnsupportedCountersignatureAlgorithm { id } => {
+                write!(
+                    f,
+                    "unsupported Group OSCORE countersignature algorithm {id}"
+                )
             }
             Self::MissingContext { context } => {
                 write!(f, "missing required OSCORE context {context}")
@@ -491,6 +514,14 @@ impl OscoreOption {
     /// Return unknown or provisional high flag bits without interpreting them.
     pub fn extension_flags(&self) -> u8 {
         self.flag_byte.unwrap_or(0) & OSCORE_EXTENSION_FLAGS_MASK
+    }
+
+    /// Return whether IANA's provisional Group Flag (bit position 2) is set.
+    ///
+    /// This is inspection metadata only. It does not select a Group OSCORE
+    /// serializer, protection algorithm, or countersignature grammar.
+    pub fn has_provisional_group_flag(&self) -> bool {
+        self.extension_flags() & OSCORE_PROVISIONAL_GROUP_FLAG != 0
     }
 
     /// Borrow the Partial IV when its encoded length is nonzero.
@@ -1268,6 +1299,11 @@ pub fn unprotect_oscore(
         ));
     }
     let oscore_option = OscoreOption::try_from(oscore_option)?;
+    if oscore_option.has_provisional_group_flag() {
+        return Err(OscoreError::UnsupportedGroupOscoreOperation {
+            operation: "pairwise-unprotect",
+        });
+    }
     if oscore_option.extension_flags() != 0 {
         return Err(OscoreError::invalid_field_value(
             "coap.oscore.option.flags",

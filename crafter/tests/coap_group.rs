@@ -331,3 +331,95 @@ fn protected_group_and_secure_port_payloads_remain_raw() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn provisional_group_oscore_example_is_typed_opaque_and_byte_exact() -> Result<()> {
+    // draft-ietf-core-oscore-groupcomm-28 Section 4.3.1 publishes this
+    // compressed request option and fourteen-byte ciphertext. The document is
+    // still in the RFC Editor queue, so these bytes are preserved as opaque
+    // provisional evidence and do not authorize a serializer or transform.
+    const OPTION: &[u8] = &[0x39, 0x05, 0x03, 0x44, 0x61, 0x6c, 0x25];
+    const CIPHERTEXT: &[u8] = &[
+        0xae, 0xa0, 0x15, 0x56, 0x67, 0x92, 0x4d, 0xff, 0x8a, 0x24, 0xe4, 0xcb, 0x35, 0xb9,
+    ];
+    const COUNTERSIGNATURE: &[u8] = &[
+        0x66, 0xe6, 0xd9, 0xb0, 0xdb, 0x00, 0x9f, 0x3e, 0x10, 0x5a, 0x67, 0x3f, 0x88, 0x55, 0x61,
+        0x17, 0x26, 0xca, 0xed, 0x57, 0xf5, 0x30, 0xf8, 0xca, 0xe9, 0xd0, 0xb1, 0x68, 0x51, 0x3a,
+        0xb9, 0x49, 0xfe, 0xdc, 0x3e, 0x80, 0xa9, 0x6e, 0xbe, 0x94, 0xba, 0x08, 0xd3, 0xf8, 0xd3,
+        0xbf, 0x83, 0x48, 0x74, 0x58, 0xe2, 0xab, 0x4c, 0x2f, 0x93, 0x6f, 0xf7, 0x8b, 0x50, 0xe3,
+        0x3c, 0x88, 0x5e, 0x35,
+    ];
+    const EXTERNAL_DATA: &[u8] = &[0xa1, 0x01, 0x82, 0x02, 0x03];
+
+    let message = Coap::post()
+        .non_confirmable()
+        .message_id(0x9001)
+        .option(CoapOption::new(COAP_OPTION_OSCORE, OPTION))
+        .payload(CIPHERTEXT);
+    let expected = [
+        &[0x50, 0x02, 0x90, 0x01, 0x97][..],
+        OPTION,
+        &[COAP_PAYLOAD_MARKER][..],
+        CIPHERTEXT,
+    ]
+    .concat();
+    assert_eq!(compile_coap(message.clone())?, expected);
+
+    let countersignature = GroupOscoreCountersignature::new(
+        GroupOscoreAlgorithmId::new(65_000),
+        EXTERNAL_DATA,
+        COUNTERSIGNATURE,
+    );
+    let metadata = GroupOscoreMetadata::inspect(message.clone(), countersignature.clone()).unwrap();
+    assert!(metadata.has_group_flag());
+    assert_eq!(metadata.oscore_option().as_bytes(), OPTION);
+    assert_eq!(metadata.partial_iv(), Some([0x05].as_slice()));
+    assert_eq!(metadata.group_identifier(), Some(b"Dal".as_slice()));
+    assert_eq!(metadata.sender_id(), Some([0x25].as_slice()));
+    assert_eq!(metadata.protected_payload(), CIPHERTEXT);
+    assert_eq!(metadata.countersignature().external_data(), EXTERNAL_DATA);
+    assert_eq!(metadata.countersignature().as_bytes(), COUNTERSIGNATURE);
+    assert_eq!(metadata.clone().into_message(), message);
+    assert_eq!(compile_coap(metadata.into_message())?, expected);
+
+    assert_eq!(
+        countersignature.verify().unwrap_err(),
+        OscoreError::UnsupportedCountersignatureAlgorithm { id: 65_000 }
+    );
+    assert!(!countersignature.algorithm().is_supported());
+    Ok(())
+}
+
+#[test]
+fn provisional_group_oscore_tamper_and_diagnostics_remain_opaque_and_redacted() {
+    let option = [0x39, 0x05, 0x03, 0x44, 0x61, 0x6c, 0x25];
+    let payload = [0xde, 0xad, 0xbe, 0xef, 0x80, 0x01];
+    let countersignature = GroupOscoreCountersignature::new(
+        GroupOscoreAlgorithmId::new(-999),
+        [0xca, 0xfe, 0xba, 0xbe],
+        [0x11, 0x22, 0x33, 0x44],
+    );
+    let message = Coap::post()
+        .option(CoapOption::new(COAP_OPTION_OSCORE, option))
+        .payload(payload);
+    let metadata = GroupOscoreMetadata::inspect(message, countersignature).unwrap();
+
+    let mut tampered = metadata.protected_payload().to_vec();
+    tampered[2] ^= 0xff;
+    let tampered_message = metadata.message().clone().payload(tampered.clone());
+    let tampered_metadata =
+        GroupOscoreMetadata::inspect(tampered_message, metadata.countersignature().clone())
+            .unwrap();
+    assert_eq!(tampered_metadata.protected_payload(), tampered);
+    assert_eq!(
+        tampered_metadata.require_protection_support().unwrap_err(),
+        OscoreError::UnsupportedGroupOscoreOperation {
+            operation: "protect-or-unprotect",
+        }
+    );
+
+    let rendered = format!("{tampered_metadata:?}").to_ascii_lowercase();
+    for forbidden in ["39050344616c25", "deadbeef8001", "cafebabe", "11223344"] {
+        assert!(!rendered.contains(forbidden), "{rendered}");
+    }
+}
