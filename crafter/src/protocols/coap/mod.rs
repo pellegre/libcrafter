@@ -33,6 +33,7 @@ pub use self::constants::{
 };
 pub use self::decode::decode_coap;
 pub(crate) use self::decode::{append_coap_packet, looks_like_coap_payload};
+pub use self::link_format::{CoapLink, CoapLinkAttribute, CoapLinkAttributeValue, CoapLinkFormat};
 pub use self::message::{
     coap_ipv4_request, coap_ipv4_response, coap_ipv6_request, coap_ipv6_response, coap_request_udp,
     coap_response_udp, Coap, CoapCode, CoapMessageType, CoapOptionOrder, CoapPayloadMarker,
