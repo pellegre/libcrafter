@@ -12,9 +12,10 @@ use crate::field::{Field, FieldState};
 use crate::packet::{Layer, LayerContext};
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 
+use super::constants::COAP_PAYLOAD_MARKER;
 use super::decode::{decode_token_boundary, DecodedTokenBoundary, TokenDecodeContext};
 use super::message::{CoapCode, CoapPayloadMarker, CoapToken, CoapTokenLength};
-use super::option::CoapOption;
+use super::option::{encode_option_sequence, CoapOption, CoapOptions};
 
 const RELIABLE_DIRECT_MAX_BODY_LEN: usize = 12;
 const RELIABLE_EXTENDED8_MIN_BODY_LEN: usize = 13;
@@ -289,15 +290,11 @@ impl CoapReliable {
         self.length.state()
     }
 
-    /// Return explicit Len metadata or the empty-body framing default.
-    ///
-    /// Canonical Len derivation from encoded options and payload is performed
-    /// by reliable-message compilation; this layer step keeps the independent
-    /// override state available before serialization.
+    /// Return explicit Len metadata or derive it from the encoded frame body.
     pub fn length_value(&self) -> Result<CoapReliableLength> {
         match self.length.value() {
             Some(value) => Ok(value.clone()),
-            None => CoapReliableLength::canonical_for_body_len(0),
+            None => CoapReliableLength::canonical_for_body_len(self.encoded_body_len()?),
         }
     }
 
@@ -360,6 +357,23 @@ impl CoapReliable {
     /// Borrow the exact owned payload bytes.
     pub fn payload_value(&self) -> &[u8] {
         &self.payload
+    }
+
+    fn encoded_options(&self) -> Result<Vec<u8>> {
+        let mut options = CoapOptions::from_options(self.options.iter().cloned());
+        options.sort_canonical();
+
+        let mut encoded = Vec::new();
+        encode_option_sequence(&options, &mut encoded)?;
+        Ok(encoded)
+    }
+
+    fn encoded_body_len(&self) -> Result<usize> {
+        self.encoded_options()?
+            .len()
+            .checked_add(usize::from(self.payload_marker_value().is_present()))
+            .and_then(|value| value.checked_add(self.payload.len()))
+            .ok_or_else(reliable_length_overflow_error)
     }
 
     fn length_inspection_label(&self) -> String {
@@ -453,20 +467,66 @@ impl Layer for CoapReliable {
     }
 
     fn encoded_len(&self) -> usize {
+        let Ok(options) = self.encoded_options() else {
+            return 0;
+        };
         let Ok(length) = self.length_value() else {
             return 0;
         };
         let Ok(token_length) = self.token_length_value() else {
             return 0;
         };
-        length.declared_frame_len(&token_length).unwrap_or_default()
+        let Some(body_len) = options
+            .len()
+            .checked_add(usize::from(self.payload_marker_value().is_present()))
+            .and_then(|value| value.checked_add(self.payload.len()))
+        else {
+            return 0;
+        };
+
+        checked_reliable_frame_len(
+            length.extension_bytes().len(),
+            token_length.extension_bytes().len(),
+            self.token_value().len(),
+            body_len,
+        )
+        .unwrap_or_default()
     }
 
-    fn compile(&self, _ctx: &LayerContext<'_>, _out: &mut Vec<u8>) -> Result<()> {
-        Err(CrafterError::invalid_field_value(
-            "coap.reliable.compile",
-            "reliable message serialization is not available",
-        ))
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        let options = self.encoded_options()?;
+        let token_length = self.token_length_value()?;
+        let body_len = options
+            .len()
+            .checked_add(usize::from(self.payload_marker_value().is_present()))
+            .and_then(|value| value.checked_add(self.payload.len()))
+            .ok_or_else(reliable_length_overflow_error)?;
+        let length = match self.length.value() {
+            Some(length) => length.clone(),
+            None => CoapReliableLength::canonical_for_body_len(body_len)?,
+        };
+        let encoded_len = checked_reliable_frame_len(
+            length.extension_bytes().len(),
+            token_length.extension_bytes().len(),
+            self.token_value().len(),
+            body_len,
+        )?;
+        let mut encoded = Vec::with_capacity(encoded_len);
+
+        encode_reliable_header(
+            &length,
+            &token_length,
+            self.code_value(),
+            self.token_value(),
+            &mut encoded,
+        )?;
+        encoded.extend_from_slice(&options);
+        if self.payload_marker_value().is_present() {
+            encoded.push(COAP_PAYLOAD_MARKER);
+        }
+        encoded.extend_from_slice(&self.payload);
+        out.extend_from_slice(&encoded);
+        Ok(())
     }
 
     impl_layer_object!(CoapReliable);
@@ -684,6 +744,7 @@ pub(super) fn decode_reliable_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::packet::Packet;
     use crate::protocols::transport::Tcp;
 
     #[test]
@@ -808,6 +869,80 @@ mod tests {
                 "payload_length",
             ]
         );
+    }
+
+    #[test]
+    fn reliable_compile_emits_short_frame_with_canonical_options() {
+        let message = CoapReliable::request(CoapCode::get())
+            .option(CoapOption::new(15u16, b"a=1".to_vec()))
+            .option(CoapOption::new(11u16, b"status".to_vec()));
+        let packet = Packet::from_layer(message.clone());
+        let expected = [
+            0xb0, 0x01, 0xb6, b's', b't', b'a', b't', b'u', b's', 0x43, b'a', b'=', b'1',
+        ];
+
+        assert_eq!(message.length_value().unwrap().declared_body_len(), 11);
+        assert_eq!(packet.encoded_len(), expected.len());
+        assert_eq!(packet.compile().unwrap().as_bytes(), expected);
+    }
+
+    #[test]
+    fn reliable_compile_selects_each_extended_length_form_exactly() {
+        let cases = [
+            (12usize, vec![0xd0, 0x00, 0x45]),
+            (268usize, vec![0xe0, 0x00, 0x00, 0x45]),
+            (65_804usize, vec![0xf0, 0x00, 0x00, 0x00, 0x00, 0x45]),
+        ];
+
+        for (payload_len, mut expected) in cases {
+            let message =
+                CoapReliable::response(CoapCode::content()).payload(vec![0xa5; payload_len]);
+            expected.push(COAP_PAYLOAD_MARKER);
+            expected.extend(std::iter::repeat(0xa5).take(payload_len));
+            let packet = Packet::from_layer(message.clone());
+
+            assert_eq!(
+                message.length_value().unwrap().declared_body_len(),
+                payload_len + 1
+            );
+            assert_eq!(packet.encoded_len(), expected.len());
+            assert_eq!(packet.compile().unwrap().as_bytes(), expected);
+        }
+    }
+
+    #[test]
+    fn reliable_compile_encodes_long_token_outside_len_body() {
+        let message =
+            CoapReliable::request(CoapCode::get()).token(CoapToken::from_bytes(vec![0xa5; 13]));
+        let mut expected = vec![0x0d, 0x01, 0x00];
+        expected.extend(std::iter::repeat(0xa5).take(13));
+        let packet = Packet::from_layer(message.clone());
+
+        assert_eq!(message.length_value().unwrap().declared_body_len(), 0);
+        assert_eq!(message.token_length_value().unwrap().nibble(), 13);
+        assert_eq!(packet.encoded_len(), expected.len());
+        assert_eq!(packet.compile().unwrap().as_bytes(), expected);
+    }
+
+    #[test]
+    fn reliable_compile_preserves_explicit_mismatches_and_raw_extensions() {
+        let message = CoapReliable::response(CoapCode::content())
+            .length(CoapReliableLength::explicit(0xfe, vec![0xaa], usize::MAX))
+            .token_length(CoapTokenLength::explicit(0xfd, vec![0xca, 0xfe], 999))
+            .token(CoapToken::from_bytes([1, 2, 3]))
+            .option(CoapOption::new(15u16, b"a".to_vec()))
+            .option(CoapOption::new(11u16, b"x".to_vec()))
+            .payload_marker(CoapPayloadMarker::Absent)
+            .payload([0xff, 0x00]);
+        let packet = Packet::from_layer(message.clone());
+        let expected = [
+            0xed, 0xaa, 0x45, 0xca, 0xfe, 0x01, 0x02, 0x03, 0xb1, b'x', 0x41, b'a', 0xff, 0x00,
+        ];
+
+        assert_eq!(message.length_value().unwrap().nibble(), 0xfe);
+        assert_eq!(message.token_length_value().unwrap().nibble(), 0xfd);
+        assert_eq!(packet.encoded_len(), expected.len());
+        assert_eq!(packet.compile().unwrap().as_bytes(), expected);
     }
 
     fn encode_complete_frame(body_len: usize, token_len: usize) -> Vec<u8> {
