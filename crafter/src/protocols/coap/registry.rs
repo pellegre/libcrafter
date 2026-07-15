@@ -1008,6 +1008,7 @@ mod tests {
 
         let option_cases = [
             (0xe1, 2, "Max-Message-Size", CoapRegistryStatus::Assigned),
+            (0xe1, 4, "Block-Wise-Transfer", CoapRegistryStatus::Assigned),
             (
                 0xe1,
                 6,
@@ -1015,7 +1016,9 @@ mod tests {
                 CoapRegistryStatus::Assigned,
             ),
             (0xe2, 2, "Custody", CoapRegistryStatus::Assigned),
+            (0xe3, 2, "Custody", CoapRegistryStatus::Assigned),
             (0xe4, 2, "Alternative-Address", CoapRegistryStatus::Assigned),
+            (0xe4, 4, "Hold-Off", CoapRegistryStatus::Assigned),
             (0xe5, 2, "Bad-CSM-Option", CoapRegistryStatus::Assigned),
             (0xe3, 9, "OSCORE", CoapRegistryStatus::Assigned),
             (
@@ -1038,5 +1041,19 @@ mod tests {
             assert_eq!(metadata.label, label);
             assert_eq!(metadata.status, status);
         }
+
+        // Signaling number 2 has four different contextual meanings and must
+        // never inherit an ordinary CoAP option label.
+        assert_eq!(
+            coap_signaling_option_meta(0xe1, 2).label,
+            "Max-Message-Size"
+        );
+        assert_eq!(coap_signaling_option_meta(0xe2, 2).label, "Custody");
+        assert_eq!(
+            coap_signaling_option_meta(0xe4, 2).label,
+            "Alternative-Address"
+        );
+        assert_eq!(coap_signaling_option_meta(0xe5, 2).label, "Bad-CSM-Option");
+        assert_ne!(coap_option_meta(2).label, "Max-Message-Size");
     }
 }

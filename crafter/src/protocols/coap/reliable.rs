@@ -15,7 +15,11 @@ use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use super::constants::COAP_PAYLOAD_MARKER;
 use super::decode::{decode_token_boundary, DecodedTokenBoundary, TokenDecodeContext};
 use super::message::{CoapCode, CoapPayloadMarker, CoapToken, CoapTokenLength};
-use super::option::{decode_option_sequence, encode_option_sequence, CoapOption, CoapOptions};
+use super::option::{
+    decode_option_sequence, encode_option_sequence, CoapOption, CoapOptionFormat, CoapOptionNumber,
+    CoapOptions,
+};
+use super::registry::{coap_signaling_option_meta, CoapRegistryMeta};
 
 const RELIABLE_DIRECT_MAX_BODY_LEN: usize = 12;
 const RELIABLE_EXTENDED8_MIN_BODY_LEN: usize = 13;
@@ -23,6 +27,13 @@ const RELIABLE_EXTENDED8_MAX_BODY_LEN: usize = 268;
 const RELIABLE_EXTENDED16_MIN_BODY_LEN: usize = 269;
 const RELIABLE_EXTENDED16_MAX_BODY_LEN: usize = 65_804;
 const RELIABLE_EXTENDED32_MIN_BODY_LEN: usize = 65_805;
+
+// Signaling option numbers are intentionally neutral: the same number has a
+// different name and format under different signaling Codes.
+const SIGNALING_OPTION_NUMBER_2: u16 = 2;
+const SIGNALING_OPTION_NUMBER_4: u16 = 4;
+const SIGNALING_OPTION_NUMBER_6: u16 = 6;
+const SIGNALING_OPTION_NUMBER_9: u16 = 9;
 
 /// Lossless RFC 8323 reliable-message body-length metadata.
 ///
@@ -163,6 +174,213 @@ impl Default for CoapReliableLength {
 }
 
 static EMPTY_RELIABLE_TOKEN: OnceLock<CoapToken> = OnceLock::new();
+
+/// One reliable CoAP option interpreted in its signaling-code context.
+///
+/// Signaling option numbers are keyed by `(code, number)`, so this view never
+/// substitutes labels or formats from the ordinary CoAP option registry. The
+/// underlying [`CoapOption`] remains authoritative and lossless; validation is
+/// explicit so malformed registered values and unknown future pairs can still
+/// be compiled and round-tripped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoapSignalingOption {
+    code: CoapCode,
+    option: CoapOption,
+}
+
+impl CoapSignalingOption {
+    /// RFC 8323's Max-Message-Size base value when the option is absent.
+    pub const MAX_MESSAGE_SIZE_BASE: u32 = 1152;
+
+    /// Preserve an opaque option under an explicit signaling-code context.
+    pub fn new(code: CoapCode, option: CoapOption) -> Self {
+        Self { code, option }
+    }
+
+    /// Build a canonical CSM Max-Message-Size capability option.
+    pub fn max_message_size(value: u32) -> Self {
+        Self::new(
+            CoapCode::csm(),
+            CoapOption::from_uint(SIGNALING_OPTION_NUMBER_2, u64::from(value)),
+        )
+    }
+
+    /// Build a canonical empty CSM Block-Wise-Transfer capability option.
+    pub fn block_wise_transfer() -> Self {
+        Self::new(
+            CoapCode::csm(),
+            CoapOption::new(SIGNALING_OPTION_NUMBER_4, Vec::new()),
+        )
+    }
+
+    /// Build a canonical empty Custody option for Ping or Pong.
+    pub fn custody(code: CoapCode) -> Result<Self> {
+        if !code.is_ping() && !code.is_pong() {
+            return Err(CrafterError::invalid_field_value(
+                "coap.signaling.option.value",
+                "Custody is assigned only to Ping and Pong",
+            ));
+        }
+        Ok(Self::new(
+            code,
+            CoapOption::new(SIGNALING_OPTION_NUMBER_2, Vec::new()),
+        ))
+    }
+
+    /// Build a canonical Release Alternative-Address option from UTF-8 text.
+    ///
+    /// Length and URI-authority semantics remain available through explicit
+    /// [`Self::validate`], keeping construction override-friendly.
+    pub fn alternative_address(value: impl AsRef<str>) -> Self {
+        Self::new(
+            CoapCode::release(),
+            CoapOption::from_string(SIGNALING_OPTION_NUMBER_2, value),
+        )
+    }
+
+    /// Build a canonical Release Hold-Off duration in seconds.
+    pub fn hold_off(seconds: u32) -> Self {
+        Self::new(
+            CoapCode::release(),
+            CoapOption::from_uint(SIGNALING_OPTION_NUMBER_4, u64::from(seconds)),
+        )
+    }
+
+    /// Build a canonical Abort Bad-CSM-Option identifying an option number.
+    pub fn bad_csm_option(number: u16) -> Self {
+        Self::new(
+            CoapCode::abort(),
+            CoapOption::from_uint(SIGNALING_OPTION_NUMBER_2, u64::from(number)),
+        )
+    }
+
+    /// Return the enclosing signaling Code used for contextual interpretation.
+    pub const fn code(&self) -> CoapCode {
+        self.code
+    }
+
+    /// Borrow the lossless underlying option occurrence.
+    pub const fn option(&self) -> &CoapOption {
+        &self.option
+    }
+
+    /// Consume the contextual view and return the lossless option occurrence.
+    pub fn into_option(self) -> CoapOption {
+        self.option
+    }
+
+    /// Return the complete contextual option number.
+    pub const fn number(&self) -> CoapOptionNumber {
+        self.option.number()
+    }
+
+    /// Borrow the exact option value bytes.
+    pub fn value(&self) -> &[u8] {
+        self.option.value()
+    }
+
+    /// Return contextual signaling registry metadata for this pair.
+    pub fn registry_meta(&self) -> CoapRegistryMeta {
+        coap_signaling_option_meta(self.code.wire_value(), self.number().value())
+    }
+
+    /// Return the source-backed format for this contextual pair.
+    pub fn format(&self) -> CoapOptionFormat {
+        match (self.code.wire_value(), self.number().value()) {
+            (0xe1, SIGNALING_OPTION_NUMBER_2)
+            | (0xe1, SIGNALING_OPTION_NUMBER_6)
+            | (0xe4, SIGNALING_OPTION_NUMBER_4)
+            | (0xe5, SIGNALING_OPTION_NUMBER_2) => CoapOptionFormat::Uint,
+            (0xe1, SIGNALING_OPTION_NUMBER_4) | (0xe2 | 0xe3, SIGNALING_OPTION_NUMBER_2) => {
+                CoapOptionFormat::Empty
+            }
+            (0xe4, SIGNALING_OPTION_NUMBER_2) => CoapOptionFormat::String,
+            (0xe0..=0xff, SIGNALING_OPTION_NUMBER_9) => CoapOptionFormat::Opaque,
+            _ => CoapOptionFormat::Unknown,
+        }
+    }
+
+    /// Check contextual assignment and the registered value representation.
+    ///
+    /// Unknown option numbers remain valid opaque values. Numbers registered
+    /// for a different signaling code are reported without changing bytes.
+    pub fn validate(&self) -> Result<()> {
+        if !self.code.is_signaling() {
+            return Err(signaling_option_value_error(
+                "signaling options require a class-7 Code",
+            ));
+        }
+
+        let value = self.value();
+        match (self.code.wire_value(), self.number().value()) {
+            (0xe1, SIGNALING_OPTION_NUMBER_2) if value.len() <= 4 => Ok(()),
+            (0xe1, SIGNALING_OPTION_NUMBER_2) => Err(signaling_option_value_error(
+                "Max-Message-Size length must not exceed 4 bytes",
+            )),
+            (0xe1, SIGNALING_OPTION_NUMBER_4) if value.is_empty() => Ok(()),
+            (0xe1, SIGNALING_OPTION_NUMBER_4) => Err(signaling_option_value_error(
+                "Block-Wise-Transfer must have an empty value",
+            )),
+            (0xe1, SIGNALING_OPTION_NUMBER_6) if value.len() <= 3 => {
+                let advertised = self.option.as_uint()?;
+                if (8..=65_804).contains(&advertised) {
+                    Ok(())
+                } else {
+                    Err(signaling_option_value_error(
+                        "Extended-Token-Length must be between 8 and 65804",
+                    ))
+                }
+            }
+            (0xe1, SIGNALING_OPTION_NUMBER_6) => Err(signaling_option_value_error(
+                "Extended-Token-Length length must not exceed 3 bytes",
+            )),
+            (0xe2 | 0xe3, SIGNALING_OPTION_NUMBER_2) if value.is_empty() => Ok(()),
+            (0xe2 | 0xe3, SIGNALING_OPTION_NUMBER_2) => Err(signaling_option_value_error(
+                "Custody must have an empty value",
+            )),
+            (0xe4, SIGNALING_OPTION_NUMBER_2) if (1..=255).contains(&value.len()) => {
+                std::str::from_utf8(value).map(|_| ()).map_err(|_| {
+                    signaling_option_value_error("Alternative-Address must be valid UTF-8")
+                })
+            }
+            (0xe4, SIGNALING_OPTION_NUMBER_2) => Err(signaling_option_value_error(
+                "Alternative-Address length must be between 1 and 255 bytes",
+            )),
+            (0xe4, SIGNALING_OPTION_NUMBER_4) if value.len() <= 3 => Ok(()),
+            (0xe4, SIGNALING_OPTION_NUMBER_4) => Err(signaling_option_value_error(
+                "Hold-Off length must not exceed 3 bytes",
+            )),
+            (0xe5, SIGNALING_OPTION_NUMBER_2) if value.len() <= 2 => Ok(()),
+            (0xe5, SIGNALING_OPTION_NUMBER_2) => Err(signaling_option_value_error(
+                "Bad-CSM-Option length must not exceed 2 bytes",
+            )),
+            (0xe0..=0xff, SIGNALING_OPTION_NUMBER_9) => Ok(()),
+            (_, SIGNALING_OPTION_NUMBER_2)
+            | (_, SIGNALING_OPTION_NUMBER_4)
+            | (_, SIGNALING_OPTION_NUMBER_6) => Err(signaling_option_value_error(
+                "option number is not assigned to this signaling Code",
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    fn is_repeatable(&self) -> bool {
+        matches!(
+            (self.code.wire_value(), self.number().value()),
+            (0xe4, SIGNALING_OPTION_NUMBER_2)
+        ) || !self.registry_meta().status.is_assigned()
+    }
+}
+
+impl From<CoapSignalingOption> for CoapOption {
+    fn from(value: CoapSignalingOption) -> Self {
+        value.into_option()
+    }
+}
+
+fn signaling_option_value_error(reason: &'static str) -> CrafterError {
+    CrafterError::invalid_field_value("coap.signaling.option.value", reason)
+}
 
 /// One owned RFC 8323 message supplied at a complete-frame boundary.
 ///
@@ -345,6 +563,49 @@ impl CoapReliable {
     /// Borrow option occurrences in their retained order.
     pub fn options_value(&self) -> &[CoapOption] {
         &self.options
+    }
+
+    /// Return owned contextual views of all signaling options in wire order.
+    ///
+    /// Ordinary reliable messages are not rejected here; callers can inspect
+    /// their exact option bytes and use [`Self::validate_signaling_options`]
+    /// when they want signaling semantics checked.
+    pub fn signaling_options(&self) -> Vec<CoapSignalingOption> {
+        let code = self.code_value();
+        self.options
+            .iter()
+            .cloned()
+            .map(|option| CoapSignalingOption::new(code, option))
+            .collect()
+    }
+
+    /// Validate the option space for one reliable signaling frame.
+    ///
+    /// Compilation deliberately does not call this method. Unknown option
+    /// numbers remain opaque and repeatable; assigned non-repeatable options
+    /// are checked for contextual use, registered value shape, and repetition.
+    pub fn validate_signaling_options(&self) -> Result<()> {
+        if !self.is_signaling() {
+            return Err(signaling_option_value_error(
+                "signaling option validation requires a class-7 Code",
+            ));
+        }
+
+        let options = self.signaling_options();
+        let mut seen_non_repeatable = Vec::new();
+        for option in &options {
+            option.validate()?;
+            if !option.is_repeatable() {
+                let number = option.number().value();
+                if seen_non_repeatable.contains(&number) {
+                    return Err(signaling_option_value_error(
+                        "non-repeatable signaling option occurs more than once",
+                    ));
+                }
+                seen_non_repeatable.push(number);
+            }
+        }
+        Ok(())
     }
 
     /// Return the payload-marker field state.
@@ -987,6 +1248,133 @@ mod tests {
             assert_eq!(consumed, 2);
             assert_eq!(decoded.code_value().wire_value(), expected_code);
             assert!(decoded.is_signaling());
+        }
+    }
+
+    #[test]
+    fn signaling_option_builders_compile_decode_and_validate_exact_bytes() {
+        // RFC 8323 Sections 5.3.1 and 5.3.2: CSM option 2 is uint 1152
+        // (`0x0480`) and option 4 is empty. Their canonical option headers are
+        // therefore `0x22` and `0x20` in this ordered body.
+        let message = CoapReliable::csm()
+            .option(CoapSignalingOption::max_message_size(1152))
+            .option(CoapSignalingOption::block_wise_transfer());
+        let expected = [0x40, 0xe1, 0x22, 0x04, 0x80, 0x20];
+
+        assert_eq!(message.validate_signaling_options(), Ok(()));
+        assert_eq!(
+            Packet::from_layer(message.clone())
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            expected
+        );
+
+        let (decoded, consumed) = CoapReliable::decode(&expected).unwrap();
+        assert_eq!(consumed, expected.len());
+        assert_eq!(decoded.validate_signaling_options(), Ok(()));
+        let options = decoded.signaling_options();
+        assert_eq!(options.len(), 2);
+        assert_eq!(options[0].registry_meta().label, "Max-Message-Size");
+        assert_eq!(options[0].format(), CoapOptionFormat::Uint);
+        assert_eq!(options[0].option().as_uint(), Ok(1152));
+        assert_eq!(options[1].registry_meta().label, "Block-Wise-Transfer");
+        assert_eq!(options[1].format(), CoapOptionFormat::Empty);
+        assert_eq!(
+            Packet::from_layer(decoded).compile().unwrap().as_bytes(),
+            expected
+        );
+
+        let custody = CoapSignalingOption::custody(CoapCode::ping()).unwrap();
+        assert_eq!(custody.value(), b"");
+        assert_eq!(custody.validate(), Ok(()));
+        assert_eq!(
+            Packet::from_layer(CoapReliable::ping().option(custody))
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &[0x10, 0xe2, 0x20]
+        );
+
+        let alternative = CoapSignalingOption::alternative_address("coap.example:5683");
+        let hold_off = CoapSignalingOption::hold_off(30);
+        let bad_csm = CoapSignalingOption::bad_csm_option(4);
+        assert_eq!(alternative.registry_meta().label, "Alternative-Address");
+        assert_eq!(alternative.validate(), Ok(()));
+        assert_eq!(hold_off.option().as_uint(), Ok(30));
+        assert_eq!(hold_off.validate(), Ok(()));
+        assert_eq!(bad_csm.option().as_uint(), Ok(4));
+        assert_eq!(bad_csm.validate(), Ok(()));
+        assert!(CoapSignalingOption::custody(CoapCode::csm()).is_err());
+    }
+
+    #[test]
+    fn signaling_options_are_contextual_and_unknown_values_remain_opaque() {
+        let raw = CoapOption::new(2u16, b"host".to_vec());
+        assert_ne!(raw.registry_meta().label, "Max-Message-Size");
+
+        let csm = CoapSignalingOption::new(CoapCode::csm(), raw.clone());
+        let ping = CoapSignalingOption::new(CoapCode::ping(), raw.clone());
+        let release = CoapSignalingOption::new(CoapCode::release(), raw.clone());
+        let abort = CoapSignalingOption::new(CoapCode::abort(), raw);
+        assert_eq!(csm.registry_meta().label, "Max-Message-Size");
+        assert_eq!(csm.format(), CoapOptionFormat::Uint);
+        assert_eq!(ping.registry_meta().label, "Custody");
+        assert_eq!(ping.format(), CoapOptionFormat::Empty);
+        assert_eq!(release.registry_meta().label, "Alternative-Address");
+        assert_eq!(release.format(), CoapOptionFormat::String);
+        assert_eq!(abort.registry_meta().label, "Bad-CSM-Option");
+        assert_eq!(abort.format(), CoapOptionFormat::Uint);
+
+        let wrong_context =
+            CoapSignalingOption::new(CoapCode::ping(), CoapOption::new(4u16, Vec::new()));
+        assert_eq!(wrong_context.registry_meta().label, "signaling-option-4");
+        assert!(wrong_context.validate().is_err());
+
+        let unknown = CoapSignalingOption::new(
+            CoapCode::from_wire(0xff),
+            CoapOption::new(65_000u16, [0xde, 0xad]),
+        );
+        assert_eq!(unknown.registry_meta().label, "signaling-option-65000");
+        assert_eq!(unknown.format(), CoapOptionFormat::Unknown);
+        assert_eq!(unknown.validate(), Ok(()));
+
+        let message = CoapReliable::new(CoapCode::from_wire(0xff)).option(unknown);
+        assert_eq!(message.validate_signaling_options(), Ok(()));
+        let bytes = Packet::from_layer(message).compile().unwrap();
+        let (decoded, consumed) = CoapReliable::decode(bytes.as_bytes()).unwrap();
+        assert_eq!(consumed, bytes.len());
+        assert_eq!(decoded.options_value()[0].value(), &[0xde, 0xad]);
+        assert_eq!(
+            Packet::from_layer(decoded).compile().unwrap().as_bytes(),
+            bytes.as_bytes()
+        );
+    }
+
+    #[test]
+    fn malformed_signaling_option_lengths_are_opt_in_validation_errors() {
+        let malformed = [
+            CoapSignalingOption::new(CoapCode::csm(), CoapOption::new(2u16, [0; 5])),
+            CoapSignalingOption::new(CoapCode::csm(), CoapOption::new(4u16, [0])),
+            CoapSignalingOption::new(CoapCode::ping(), CoapOption::new(2u16, [0])),
+            CoapSignalingOption::new(CoapCode::release(), CoapOption::new(2u16, Vec::new())),
+            CoapSignalingOption::new(CoapCode::release(), CoapOption::new(4u16, [0; 4])),
+            CoapSignalingOption::new(CoapCode::abort(), CoapOption::new(2u16, [0; 3])),
+        ];
+
+        for option in malformed {
+            assert!(matches!(
+                option.validate(),
+                Err(CrafterError::InvalidFieldValue {
+                    field: "coap.signaling.option.value",
+                    ..
+                })
+            ));
+
+            // The registered semantic error never prevents exact compilation.
+            let packet =
+                Packet::from_layer(CoapReliable::new(option.code()).option(option.into_option()));
+            assert!(packet.compile().is_ok());
         }
     }
 
