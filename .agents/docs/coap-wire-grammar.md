@@ -184,12 +184,15 @@ regardless of the option's absolute datagram offset:
 | Length nibble 15 | `InvalidFieldValue`, field `coap.option.length`, reason `reserved option length nibble 15` |
 | Cumulative number above 65535 | `InvalidFieldValue`, field `coap.option-number`, reason `cumulative option number exceeds 65535` |
 
-Canonical encoding calculates a nonnegative delta from the preceding option
-and uses the shortest applicable form. It never silently sorts an explicitly
-ordered option list. A decreasing typed option number without an explicit raw
-encoding is an `InvalidFieldValue` for `coap.option-order`. A caller-supplied
-raw option encoding is emitted as supplied under the override rules below,
-including a deliberately reserved nibble or inconsistent decoded metadata.
+Canonical encoding stably sorts typed option occurrences by number, preserving
+the relative order of repeats, then calculates a nonnegative delta and uses
+the shortest applicable form. This produces the increasing wire order required
+by RFC 7252 Section 3.1. `CoapOptionOrder::Wire` explicitly retains caller or
+decoded order; a decreasing typed option number in that mode requires an
+explicit raw or logical delta encoding and otherwise returns
+`InvalidFieldValue` for `coap.option-order`. A caller-supplied raw option
+encoding is emitted as supplied under the override rules below, including a
+deliberately reserved nibble or inconsistent decoded metadata.
 
 ## Payload marker and payload boundary
 
@@ -250,10 +253,11 @@ malformed compiled packet is not promised to pass strict direct decode: for
 example, payload bytes emitted without a marker are necessarily interpreted
 as option-sequence bytes by the wire grammar.
 
-For unset option encodings, the compiler derives deltas from the caller's
-ordered typed options and selects canonical 0..12, 13, or 14 forms. For unset
-TKL and marker state it derives them from token and payload lengths. No other
-field is inferred from a field that the caller explicitly pinned.
+For unset option encodings, canonical mode stably orders typed options by
+number before deriving deltas and selecting canonical 0..12, 13, or 14 forms.
+Explicit wire mode retains caller order and override metadata. For unset TKL
+and marker state the compiler derives them from token and payload lengths. No
+other field is inferred from a field that the caller explicitly pinned.
 
 ## Direct decode contract
 

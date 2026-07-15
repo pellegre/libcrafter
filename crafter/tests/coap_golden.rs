@@ -586,6 +586,27 @@ fn unknown_response_and_unusual_reset_code_pair_remain_lossless() -> crafter::Re
 }
 
 #[test]
+fn datagram_class_seven_inspection_uses_base_reserved_metadata() -> crafter::Result<()> {
+    // RFC 7252 Sections 4.2 and 12.1 reserve class 7 for datagrams. RFC 8323
+    // assigns 7.01 to CSM only in reliable framing, so the shared CoapCode
+    // metadata and the datagram inspection context deliberately differ.
+    let decoded = decode_coap(&[0x40, 0xe1, 0x12, 0x34])?;
+    let code = decoded.code_value();
+
+    assert_eq!(code.registry_meta().label, "CSM");
+    assert_eq!(coap_code_meta(code.wire_value()).label, "code-7.01");
+    assert_eq!(
+        decoded.summary(),
+        "Coap(version=1, type=confirmable, code=7.01(code-7.01) [explicit-reserved], mid=0x1234, token_len=0, options=0, marker=absent, payload=0 bytes)"
+    );
+    assert!(Packet::from_layer(decoded)
+        .show()
+        .contains("code: 7.01(code-7.01) [explicit-reserved]"));
+
+    Ok(())
+}
+
+#[test]
 fn request_goldens_compile_inside_ipv4_and_ipv6_udp_stacks() -> crafter::Result<()> {
     let ipv4 = Ipv4::with_addresses(
         Ipv4Addr::new(192, 0, 2, 10),

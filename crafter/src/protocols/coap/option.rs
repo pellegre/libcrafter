@@ -1,4 +1,9 @@
 //! Ordered, lossless CoAP option primitives.
+//!
+//! The delta/length grammar and preservation rules are frozen in
+//! `.agents/docs/coap-wire-grammar.md` from RFC 7252 Sections 3.1, 3.2, and
+//! 5.4.6. Registry labels remain the separate concern of the reviewed
+//! `.agents/docs/coap-codepoints.md` snapshot.
 
 use core::str;
 

@@ -83,6 +83,7 @@ pub struct Coap {
     message_id: Field<u16>,
     token: Field<CoapToken>,
     options: Vec<CoapOption>,
+    option_order: CoapOptionOrder,
     payload_marker: Field<CoapPayloadMarker>,
     payload: Vec<u8>,
 }
@@ -129,6 +130,7 @@ impl Coap {
     pub fn token(self, value: impl Into<CoapToken>) -> Self;
     pub fn option(self, value: impl Into<CoapOption>) -> Self;
     pub fn options(self, values: impl IntoIterator<Item = CoapOption>) -> Self;
+    pub fn option_order(self, value: CoapOptionOrder) -> Self;
     pub fn payload_marker(self, value: CoapPayloadMarker) -> Self;
     pub fn payload(self, value: impl Into<Vec<u8>>) -> Self;
 
@@ -173,6 +175,7 @@ impl Coap {
     pub fn token_state(&self) -> FieldState;
     pub fn token_value(&self) -> &CoapToken;
     pub fn options_value(&self) -> &[CoapOption];
+    pub fn option_order_value(&self) -> CoapOptionOrder;
     pub fn payload_marker_state(&self) -> FieldState;
     pub fn payload_marker_value(&self) -> CoapPayloadMarker;
     pub fn payload_value(&self) -> &[u8];
@@ -267,8 +270,10 @@ derived from the numeric bits for every known or unknown option.
 `into_value`, `encoding_state`, `encoding`, `registry_meta`, `format`,
 `as_uint`, and `as_str`. `as_uint` and `as_str` return typed `Result` values;
 they never panic, silently normalize a noncanonical representation, or reject
-the underlying option from the message. Canonical compilation uses the
-caller's order. An explicit `CoapOptionEncoding` wins byte-for-byte.
+the underlying option from the message. `CoapOptionOrder::Canonical` stably
+orders occurrences by number for RFC 7252 wire compliance;
+`CoapOptionOrder::Wire` retains caller or decoded order for exact and malformed
+representations. An explicit `CoapOptionEncoding` wins byte-for-byte.
 
 The following wrappers are owned, implement `From<Wrapper> for CoapOption`,
 and implement `TryFrom<&CoapOption>` without discarding the original opaque
@@ -632,7 +637,7 @@ Types:
 
 ```text
 Coap, CoapVersion, CoapMessageType, CoapCode, CoapToken, CoapTokenLength,
-CoapPayloadMarker, CoapOptionNumber, CoapOption, CoapOptionEncoding,
+CoapPayloadMarker, CoapOptionOrder, CoapOptionNumber, CoapOption, CoapOptionEncoding,
 CoapOptionFormat, CoapUriHost, CoapUriPort, CoapUriPath, CoapUriQuery,
 CoapProxyUri, CoapProxyScheme, CoapIfMatch, CoapIfNoneMatch, CoapEtag,
 CoapContentFormat, CoapAccept, CoapMaxAge, CoapLocationPath,

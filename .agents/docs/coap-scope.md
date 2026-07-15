@@ -62,6 +62,30 @@ The CoAP family follows the same rules as every other `crafter` layer:
 - Reliable parsing consumes one complete caller-provided frame only. The
   repository explicitly does not provide TCP stream reassembly.
 
+## Base source-conformance audit
+
+The completed base datagram implementation was audited on **2026-07-15**
+against every CoAP evidence note in this directory and rechecked against the
+official RFC Editor pages for RFCs 7252 and 8323 and the current IANA CoRE
+Parameters registry. The audit produced this trace:
+
+| Base area | Exact evidence | Audited implementation and tests | Result |
+| --- | --- | --- | --- |
+| Fixed header, bit fields, defaults, and Empty messages | RFC 7252 Sections 3 and 4.1; `coap-wire-grammar.md` fixed-header, defaults, and direct-decode sections | `constants.rs`, `message.rs`, `decode.rs`; public and golden suites | Conformant; explicit values remain inspectable and unset values use the frozen deterministic defaults. |
+| Base TKL and token boundaries | RFC 7252 Section 3 and RFC 8974 Section 2.1; `coap-wire-grammar.md` token-length section | `message.rs`, `decode.rs`; malformed and property suites | Base 0..8-byte construction and TKL 0..14 strict decoding are conformant. Canonical and override-preserving extended-token emission is deliberately deferred to plan steps 73 through 75. |
+| Option number, delta, length, ordering, repetition, and opaque bytes | RFC 7252 Sections 3.1, 3.2, and 5.4.6; `coap-wire-grammar.md` option section | `option.rs`, `message.rs`; golden, unknown, malformed, and property suites | Conformant. Canonical mode stably orders by number; explicit wire mode and raw headers retain malformed or decoded order byte-for-byte. |
+| Payload marker and binary payload | RFC 7252 Sections 3, 3.1, and 5.5; `coap-wire-grammar.md` payload section | `message.rs`, `decode.rs`; golden, malformed, stack, and pcap suites | Conformant, including independent marker state and the marker-without-payload structured error. |
+| Codes, options, Content-Formats, and ports | `coap-codepoints.md` dated IANA snapshot; RFC 7252 Section 12 and RFC 8323 Section 11 | `constants.rs`, CoAP `registry.rs`, root `registry.rs`; registry and golden tests | Numeric assignments and fallback status remain lossless. Datagram inspection now keeps class 7 in the base reserved registry instead of applying reliable-signaling labels. |
+| Structured failures and conservative dispatch | `coap-error-policy.md` stable datagram contexts; `coap-wire-grammar.md` UDP shape gate | `decode.rs`, `option.rs`, root `registry.rs`; malformed and stack suites | Conformant: direct decode is strict and panic-free, while wrong-port, secure-port, reserved-version, and malformed candidates remain exact `Raw` bytes. |
+| Packet composition and inspection | `coap-api-design.md` datagram, decode, inspection, helper, and export sections | `message.rs`, protocol exports, stack, pcap, fixture, and summary suites | Conformant after making datagram class-7 inspection transport-contextual. No parallel packet surface or live-send behavior was added. |
+
+Advanced typed URI/representation options, link format, Observe, blockwise and
+Q-Block semantics, semantic validation, reliable framing/signaling, canonical
+extended-token emission, OSCORE transforms, and group metadata remain assigned
+to their later plan steps. The base layer preserves their structurally valid
+numeric or opaque envelopes where the shared grammar already permits them, but
+this audit does not claim those deferred typed behaviors are implemented.
+
 ## Operational non-goals
 
 CoAP support must not add:
