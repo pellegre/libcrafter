@@ -13604,6 +13604,69 @@ fn summary_fixture_reader_matches_current_summary_fixture() {
     assert_eq!(actual, expected);
 }
 
+fn coap_layer_packet_from_fixture(name: &str) -> Packet {
+    let case = valid_fixture_case(name);
+    let bytes = fixture_bytes_for_case(case);
+    let decoded = match case.target {
+        FixtureDecodeTarget::Packet(target) => decode_packet(target, &bytes),
+        FixtureDecodeTarget::CoapDatagram => decode_coap_fixture_datagram(&bytes),
+        other => panic!(
+            "CoAP summary fixture {} has incompatible decode target {other:?}",
+            case.path
+        ),
+    }
+    .unwrap_or_else(|err| panic!("CoAP summary fixture {} should decode: {err}", case.path));
+    let coap = decoded
+        .layer::<Coap>()
+        .unwrap_or_else(|| panic!("CoAP summary fixture {} should carry CoAP", case.path))
+        .clone();
+
+    Packet::from_layer(coap)
+}
+
+#[test]
+fn coap_summary_show_fixtures_match_decoded_bytes() {
+    // RFC 7252 sections 3 and 4.2 define the empty ACK as the four bytes
+    // carrying version 1, ACK, Empty code, and the matched Message ID.
+    const EMPTY_ACK: &[u8] = &[0x60, 0x00, 0x34, 0x01];
+
+    let empty_ack = decode_coap_fixture_datagram(EMPTY_ACK)
+        .expect("source-backed CoAP empty ACK bytes should decode");
+    let cases = [
+        (
+            "summaries/coap-request-summary-show.summary.txt",
+            coap_layer_packet_from_fixture("coap-uri-representation-options"),
+        ),
+        (
+            "summaries/coap-response-summary-show.summary.txt",
+            coap_layer_packet_from_fixture("ipv6-udp-coap-content"),
+        ),
+        (
+            "summaries/coap-empty-ack-summary-show.summary.txt",
+            empty_ack,
+        ),
+        (
+            "summaries/coap-unknown-summary-show.summary.txt",
+            coap_layer_packet_from_fixture("coap-unknown-options"),
+        ),
+    ];
+
+    // These committed snapshots are review gates. Intentional rendering
+    // changes require a source-backed update to the affected fixture rather
+    // than an automatic regeneration path. Observe, blockwise, reliable
+    // signaling, and OSCORE cases join this matrix when their typed layers
+    // become available in their dedicated plan steps.
+    for (path, packet) in cases {
+        let expected = read_summary_fixture(path);
+        let actual = format!(
+            "summary:\n{}\n\nshow:\n{}\n",
+            packet.summary(),
+            packet.show()
+        );
+        assert_eq!(actual, expected, "CoAP inspection fixture {path} is stale");
+    }
+}
+
 fn dhcpv6_doc_addr(host: u16) -> Ipv6Addr {
     Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, host)
 }

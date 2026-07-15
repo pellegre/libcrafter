@@ -1,0 +1,15 @@
+summary:
+Coap(version=1, type=confirmable, code=0.01(GET), mid=0x1234, token_len=2, options=4, marker=absent, payload=0 bytes)
+
+show:
+Packet(len=29, layers=1)
+  [0] Coap
+      version: 1
+      type: confirmable
+      token_length: 2
+      code: 0.01(GET)
+      message_id: 0x1234
+      token: len=2 hex=aabb
+      options: 4 [Uri-Path(11,len=7,hex=73656e736f7273), Uri-Path(11,len=4,hex=74656d70), Uri-Query(15,len=7,hex=756e6974733d63), Accept(17,len=1,hex=32)]
+      payload_marker: absent
+      payload_length: 0
