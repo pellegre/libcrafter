@@ -1,0 +1,28 @@
+version: 1
+kind: feature
+name: coap_extended_token
+summary: RFC 8974 direct, extended-eight, and extended-sixteen token-length forms with exact boundaries and explicit override preservation.
+layers: [udp, tcp, coap]
+directions: [backend_to_libcrafter, libcrafter_to_backend]
+strict_bytes: true
+malformed: false
+behaviors:
+  - {name: direct-boundary, lengths: [0, 8], checks: [direct_tkl]}
+  - {name: extended8-boundary, lengths: [9, 268], checks: [tkl_13_extension]}
+  - {name: extended16-boundary, lengths: [269, 65804], checks: [tkl_14_extension]}
+  - {name: explicit-mismatch, checks: [wire_override_preserved, validation_reports_mismatch]}
+coverage_cases: [coap-extended-token-direct, coap-extended-token-extended8, coap-extended-token-extended16, coap-extended-token-explicit]
+supported_cases:
+  - {name: coap-extended-token-direct, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-extended-token-extended8, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-extended-token-extended16, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-extended-token-explicit, directions: [libcrafter_to_backend], byte_policy: strict_bytes}
+source_refs: [RFC 8974]
+backend_support:
+  scapy:
+    status: planned
+    native_layers: [Raw]
+    notes: [Extended token forms require raw-compatible bytes in the future adapter.]
+  wireshark: {status: planned, native_layers: [coap]}
+  libcrafter: {status: supported, encode: true, decode: true, native_layers: [CoapTokenLength]}
+

@@ -1,0 +1,50 @@
+version: 1
+kind: feature
+name: coap_oscore
+summary: RFC 8613 official protection vectors, opaque OSCORE packet fields, secure-port Raw fallback, and explicit unsupported reference/security operations.
+layers: [udp, coap]
+directions: [backend_to_libcrafter, libcrafter_to_backend]
+strict_bytes: true
+malformed: false
+behaviors:
+  - {name: request-vector, source: RFC 8613 Appendix C, checks: [nonce_exact, aad_exact, ciphertext_tag_exact, secrets_redacted]}
+  - {name: response-vector, source: RFC 8613 Appendix C, checks: [request_binding_explicit, ciphertext_tag_exact, typed_unprotect]}
+  - {name: opaque-option, checks: [unknown_high_flags_preserved, no_implicit_unprotect]}
+  - {name: secure-port-raw, ports: [5684], checks: [dtls_tls_not_implemented, ciphertext_remains_raw]}
+coverage_cases: [coap-oscore-request-vector, coap-oscore-response-vector, coap-oscore-opaque, coap-secure-port-raw]
+supported_cases:
+  - {name: coap-oscore-request-vector, directions: [libcrafter_to_backend], byte_policy: strict_bytes, reference: official_vector}
+  - {name: coap-oscore-response-vector, directions: [libcrafter_to_backend], byte_policy: strict_bytes, reference: official_vector}
+  - {name: coap-oscore-opaque, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-secure-port-raw, directions: [backend_to_libcrafter], byte_policy: strict_bytes}
+unsupported_cases:
+  - name: coaps-dtls-decryption
+    reason: secure-port payloads require external DTLS session keys and remain Raw
+  - name: coaps-tls-stream-decryption
+    reason: TLS records and stream reassembly are outside the CoAP packet primitive
+  - name: scapy-native-oscore-transform
+    reason: the planned Scapy adapter has no authoritative native OSCORE protect or unprotect API
+  - name: wireshark-secret-assisted-oscore
+    reason: deterministic offline oracle specs never provision secrets to tshark
+  - name: group-oscore-countersignature
+    reason: Group OSCORE remains provisional and countersignature algorithms are opaque metadata
+secret_policy:
+  synthetic_vectors_only: true
+  diagnostics_redacted: true
+  persist_context_secrets: false
+source_refs: [RFC 8613, RFC 5869, .agents/docs/coap-extensions.md]
+backend_support:
+  scapy:
+    status: planned
+    native_layers: [Raw]
+    notes: [Only exact opaque/reference bytes may be compared; no cryptographic capability is claimed.]
+  wireshark:
+    status: planned
+    native_layers: [coap]
+    notes: [Secret-assisted decryption is explicitly unsupported.]
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    native_layers: [Coap, OscoreContext]
+

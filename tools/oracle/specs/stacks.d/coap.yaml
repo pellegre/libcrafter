@@ -1,0 +1,53 @@
+version: 1
+kind: stack_grammar
+name: coap_stacks
+
+families:
+  - name: coap
+    default_stack: [ipv4, udp, coap]
+    feature_tags: [ipv4, ipv6, udp, tcp, coap]
+
+stacks:
+  - name: ipv4_udp_coap
+    root: "l3:ipv4"
+    layers: [ipv4, udp, coap]
+    coverage_cases: [coap-datagram-get, coap-options-payload, coap-observe-notification, coap-block2, coap-qblock2, coap-extended-token-extended16, coap-oscore-request-vector, coap-pcap-raw-ipv4]
+  - name: ipv6_udp_coap
+    root: "l3:ipv6"
+    layers: [ipv6, udp, coap]
+    coverage_cases: [coap-datagram-content, coap-options-payload, coap-observe-notification, coap-block2, coap-qblock2, coap-link-format-canonical, coap-pcap-raw-ipv6]
+  - name: ipv4_tcp_coap_reliable
+    root: "l3:ipv4"
+    layers: [ipv4, tcp, coap]
+    coverage_cases: [coap-reliable-csm, coap-reliable-ping-pong, coap-bert]
+  - name: ipv6_tcp_coap_reliable
+    root: "l3:ipv6"
+    layers: [ipv6, tcp, coap]
+    coverage_cases: [coap-reliable-csm, coap-reliable-release-abort, coap-extended-token-extended16]
+
+constraints:
+  - name: coap_udp_children
+    parent: udp
+    children: [coap]
+  - name: coap_tcp_children
+    parent: tcp
+    children: [coap]
+
+documentation_domains:
+  ipv4: [192.0.2.0/24, 198.51.100.0/24]
+  ipv6: [2001:db8::/32]
+service_ports:
+  cleartext: {udp: 5683, tcp: 5683}
+  secure_raw_only: {udp: 5684, tcp: 5684}
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers: [IP, IPv6, UDP, TCP, Raw]
+  wireshark:
+    status: planned
+    native_layers: [coap]
+  libcrafter:
+    status: supported
+    native_layers: [Ipv4, Ipv6, Udp, Tcp, Coap, CoapReliable]
+

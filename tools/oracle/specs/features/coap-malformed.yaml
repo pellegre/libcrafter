@@ -1,0 +1,28 @@
+version: 1
+kind: feature
+name: coap_malformed
+summary: Structured-error contracts for datagram, option, token, payload-marker, reliable-frame, link-format, and OSCORE truncation boundaries.
+layers: [udp, tcp, coap]
+directions: [backend_to_libcrafter, libcrafter_to_backend]
+strict_bytes: false
+malformed: true
+behaviors:
+  - {name: datagram-header, fixture: crafter/tests/fixtures/malformed/coap-corpus.hex, checks: [stable_context, required_available, no_panic]}
+  - {name: option-boundary, fixture: crafter/tests/fixtures/malformed/coap-corpus.hex, checks: [delta_length_context, no_overread]}
+  - {name: token-boundary, checks: [reserved_tkl, truncated_extension, no_panic]}
+  - {name: reliable-boundary, checks: [truncated_length, incomplete_frame, exact_required_available]}
+  - {name: oscore-authentication, checks: [tamper_rejected, plaintext_not_exposed, redacted_error]}
+coverage_cases: [malformed-coap-truncated-header, malformed-coap-option, malformed-coap-token, malformed-coap-reliable, malformed-coap-link-format, malformed-coap-oscore]
+supported_cases:
+  - {name: malformed-coap-truncated-header, directions: [backend_to_libcrafter], byte_policy: structured_error}
+  - {name: malformed-coap-option, directions: [backend_to_libcrafter], byte_policy: structured_error}
+  - {name: malformed-coap-token, directions: [backend_to_libcrafter], byte_policy: structured_error}
+  - {name: malformed-coap-reliable, directions: [backend_to_libcrafter], byte_policy: structured_error}
+  - {name: malformed-coap-link-format, directions: [backend_to_libcrafter], byte_policy: structured_error}
+  - {name: malformed-coap-oscore, directions: [backend_to_libcrafter], byte_policy: structured_error}
+source_refs: [.agents/docs/coap-error-policy.md, crafter/tests/coap_malformed.rs, crafter/tests/coap_oscore.rs]
+backend_support:
+  scapy: {status: planned, native_layers: [Raw]}
+  wireshark: {status: planned, native_layers: [coap]}
+  libcrafter: {status: supported, decode: true, native_layers: [CrafterError]}
+

@@ -1,0 +1,52 @@
+version: 1
+kind: feature
+name: coap_datagram
+summary: CoAP datagram fixed header, token, ordered options, payload marker, payload, unknown preservation, and conservative UDP dispatch.
+layers: [udp, coap]
+directions: [backend_to_libcrafter, libcrafter_to_backend]
+strict_bytes: true
+malformed: false
+categories: [baseline, boundary]
+
+behaviors:
+  - name: get
+    wire_hex: "41011234aa"
+    checks: [version_one, confirmable, get_code, message_id_preserved, one_byte_token]
+  - name: content
+    wire_hex: "61451234aa"
+    checks: [non_confirmable, content_code, token_preserved]
+  - name: options-payload
+    checks: [ordered_options, extended_delta_and_length, payload_marker_preserved, binary_payload_preserved]
+  - name: unknown-preservation
+    checks: [unknown_code_preserved, unknown_options_preserved, repeated_options_preserved, explicit_overrides_preserved]
+  - name: udp-raw-fallback
+    udp_port: 5683
+    checks: [shape_gate_rejects_non_coap, raw_payload_preserved]
+
+coverage_cases:
+  - coap-datagram-get
+  - coap-datagram-content
+  - coap-options-payload
+  - coap-unknown-preservation
+  - coap-udp-raw-fallback
+supported_cases:
+  - {name: coap-datagram-get, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-datagram-content, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-options-payload, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-unknown-preservation, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-udp-raw-fallback, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+
+source_refs: [RFC 7252, RFC 8974, IANA CoAP Numbers, .agents/docs/coap-wire-grammar.md]
+backend_support:
+  scapy:
+    status: planned
+    native_layers: [Raw]
+  wireshark:
+    status: planned
+    native_layers: [coap]
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    native_layers: [Coap]
+

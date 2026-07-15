@@ -1,0 +1,26 @@
+version: 1
+kind: feature
+name: coap_blockwise
+summary: Lossless Block1, Block2, BERT, Q-Block1, and Q-Block2 wire fields with stateless validation metadata.
+layers: [udp, tcp, coap]
+directions: [backend_to_libcrafter, libcrafter_to_backend]
+strict_bytes: true
+malformed: false
+behaviors:
+  - {name: block1, checks: [num_m_szx_exact, size1_metadata, no_reassembly]}
+  - {name: block2, checks: [num_m_szx_exact, etag_size2_metadata, no_followup_scheduler]}
+  - {name: bert, checks: [reliable_transport_context, 1024_byte_units]}
+  - {name: qblock, checks: [qblock1_qblock2_distinct, request_tag_metadata, burst_metadata_only]}
+coverage_cases: [coap-block1, coap-block2, coap-bert, coap-qblock1, coap-qblock2]
+supported_cases:
+  - {name: coap-block1, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-block2, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-bert, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-qblock1, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-qblock2, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+source_refs: [RFC 7959, RFC 8323, RFC 9177]
+backend_support:
+  scapy: {status: planned, native_layers: [Raw]}
+  wireshark: {status: planned, native_layers: [coap]}
+  libcrafter: {status: supported, encode: true, decode: true, native_layers: [CoapBlock]}
+
