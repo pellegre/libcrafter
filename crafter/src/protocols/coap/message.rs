@@ -17,6 +17,7 @@ use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::protocols::transport::Udp;
 
 use super::constants::*;
+use super::observe::CoapObserve;
 use super::option::{
     encode_option_sequence, validate_coap_proxy_options, CoapAccept, CoapContentFormat, CoapEtag,
     CoapIfMatch, CoapIfNoneMatch, CoapLocationPath, CoapLocationQuery, CoapOption, CoapOptions,
@@ -1048,6 +1049,26 @@ impl Coap {
         self.option(CoapOption::from(value.into()))
     }
 
+    /// Append one Observe option without replacing an existing occurrence.
+    pub fn observe(self, value: impl Into<CoapObserve>) -> Self {
+        self.option(CoapOption::from(value.into()))
+    }
+
+    /// Build an RFC 7641 GET registration request with `Observe: 0`.
+    ///
+    /// Token, URI, transport, and transaction fields remain caller-controlled.
+    pub fn observe_registration() -> Self {
+        Self::get().observe(CoapObserve::register())
+    }
+
+    /// Build an RFC 7641 GET deregistration request with `Observe: 1`.
+    ///
+    /// The caller is responsible for reusing the observation token and
+    /// request options required by RFC 7641 Section 3.6.
+    pub fn observe_deregistration() -> Self {
+        Self::get().observe(CoapObserve::deregister())
+    }
+
     /// Append one Location-Path segment without replacing existing segments.
     ///
     /// This response-oriented helper records packet metadata only; it does not
@@ -1203,6 +1224,36 @@ impl Coap {
         &self.options
     }
 
+    /// Return whether at least one Observe option is present.
+    ///
+    /// Repeatability and value validity remain available through typed access
+    /// and opt-in semantic validation.
+    pub fn has_observe(&self) -> bool {
+        self.options
+            .iter()
+            .any(|option| option.number().value() == COAP_OPTION_OBSERVE)
+    }
+
+    /// Iterate over typed Observe occurrences in insertion or wire order.
+    pub fn observe_values(&self) -> impl Iterator<Item = Result<CoapObserve>> + '_ {
+        self.options
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_OBSERVE)
+            .map(CoapObserve::try_from)
+    }
+
+    /// Return the first Observe occurrence as a checked, raw-preserving view.
+    pub fn observe_value(&self) -> Option<Result<CoapObserve>> {
+        self.observe_values().next()
+    }
+
+    /// Return the Observe value when this is a 2.xx notification shape.
+    pub fn observe_notification(&self) -> Option<Result<CoapObserve>> {
+        self.is_observe_notification()
+            .then(|| self.observe_value())
+            .flatten()
+    }
+
     /// Iterate over typed Location-Path occurrences in insertion or wire order.
     ///
     /// Empty components remain present. A malformed occurrence is reported at
@@ -1310,6 +1361,39 @@ impl Coap {
     /// response's datagram message type.
     pub fn is_response(&self) -> bool {
         self.code_value().is_response()
+    }
+
+    /// Return true for a GET carrying an Observe option.
+    ///
+    /// This packet-local predicate deliberately classifies malformed or
+    /// unknown-size values by code and option presence; callers can inspect
+    /// [`Self::observe_value`] or [`Self::validate`] separately.
+    pub fn is_observe_request(&self) -> bool {
+        self.code_value() == CoapCode::get() && self.has_observe()
+    }
+
+    /// Return true for a GET registration request carrying `Observe: 0`.
+    pub fn is_observe_registration(&self) -> bool {
+        self.code_value() == CoapCode::get()
+            && self
+                .observe_values()
+                .any(|value| value.is_ok_and(|value| value.is_registration()))
+    }
+
+    /// Return true for a GET deregistration request carrying `Observe: 1`.
+    pub fn is_observe_deregistration(&self) -> bool {
+        self.code_value() == CoapCode::get()
+            && self
+                .observe_values()
+                .any(|value| value.is_ok_and(|value| value.is_deregistration()))
+    }
+
+    /// Return true for a 2.xx response carrying an Observe option.
+    ///
+    /// RFC 7641 defines only 2.xx responses with Observe as continuing
+    /// notifications; terminal non-2.xx responses omit the option.
+    pub fn is_observe_notification(&self) -> bool {
+        self.code_value().class() == 2 && self.has_observe()
     }
 
     /// Return true when this datagram has the Confirmable (CON) message type.
