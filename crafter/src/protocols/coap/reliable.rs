@@ -12,7 +12,7 @@ use crate::field::{Field, FieldState};
 use crate::packet::{Layer, LayerContext, Packet};
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 
-use super::constants::COAP_PAYLOAD_MARKER;
+use super::constants::{COAPS_TCP_PORT, COAP_PAYLOAD_MARKER, COAP_TCP_PORT};
 use super::decode::{decode_token_boundary, DecodedTokenBoundary, TokenDecodeContext};
 use super::message::{CoapCode, CoapPayloadMarker, CoapToken, CoapTokenLength};
 use super::option::{
@@ -910,6 +910,28 @@ pub fn decode_coap_reliable(bytes: &[u8]) -> Result<(CoapReliable, usize)> {
         .payload(payload);
 
     Ok((message, frame.frame_len))
+}
+
+/// Return true when a TCP payload is exactly one complete cleartext CoAP frame.
+///
+/// The built-in registry uses service ports only as hints. Secure TCP/5684
+/// traffic is rejected before its protected bytes are inspected, while
+/// TCP/5683 candidates must pass the complete structural decoder and consume
+/// the entire caller-provided transport payload. This never buffers a partial
+/// frame or silently consumes a prefix of concatenated frames.
+pub(crate) fn looks_like_coap_reliable_frame(
+    source_port: u16,
+    destination_port: u16,
+    bytes: &[u8],
+) -> bool {
+    if source_port == COAPS_TCP_PORT || destination_port == COAPS_TCP_PORT {
+        return false;
+    }
+    if source_port != COAP_TCP_PORT && destination_port != COAP_TCP_PORT {
+        return false;
+    }
+
+    decode_coap_reliable(bytes).is_ok_and(|(_, consumed)| consumed == bytes.len())
 }
 
 /// Append one complete reliable CoAP application payload to a packet stack.
@@ -1968,5 +1990,46 @@ mod tests {
                 "reliable frame does not consume the complete transport payload",
             )
         );
+    }
+
+    #[test]
+    fn reliable_registry_shape_gate_requires_one_cleartext_frame() {
+        let complete =
+            Packet::from_layer(CoapReliable::ping().token(CoapToken::from_bytes([0xaa, 0xbb])))
+                .compile()
+                .unwrap()
+                .into_bytes();
+
+        assert!(looks_like_coap_reliable_frame(
+            49_152,
+            COAP_TCP_PORT,
+            &complete
+        ));
+        assert!(looks_like_coap_reliable_frame(
+            COAP_TCP_PORT,
+            49_152,
+            &complete
+        ));
+        assert!(!looks_like_coap_reliable_frame(
+            49_152,
+            COAPS_TCP_PORT,
+            &complete
+        ));
+        assert!(!looks_like_coap_reliable_frame(49_152, 49_153, &complete));
+
+        let partial = &complete[..complete.len() - 1];
+        assert!(!looks_like_coap_reliable_frame(
+            49_152,
+            COAP_TCP_PORT,
+            partial
+        ));
+
+        let mut concatenated = complete.clone();
+        concatenated.extend_from_slice(&[0x00, 0xe3]);
+        assert!(!looks_like_coap_reliable_frame(
+            49_152,
+            COAP_TCP_PORT,
+            &concatenated
+        ));
     }
 }
