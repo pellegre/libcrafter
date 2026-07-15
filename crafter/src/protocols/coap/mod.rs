@@ -69,7 +69,9 @@ pub use self::registry::{
 };
 #[allow(unused_imports)]
 pub(crate) use self::reliable::append_coap_reliable_packet;
-pub use self::reliable::{decode_coap_reliable, CoapReliable, CoapReliableLength};
+pub use self::reliable::{
+    decode_coap_reliable, CoapReliable, CoapReliableLength, CoapSignalingOption,
+};
 
 #[cfg(test)]
 mod tests {
