@@ -1,11 +1,14 @@
 //! CoAP datagram message layers.
 
 use core::fmt;
+use core::net::{Ipv4Addr, Ipv6Addr};
 
 use crate::error::{CrafterError, Result};
 use crate::field::{Field, FieldState};
-use crate::packet::{hexdump, Layer, LayerContext};
+use crate::packet::{hexdump, Layer, LayerContext, Packet};
+use crate::protocols::ip::{v4::Ipv4, v6::Ipv6};
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
+use crate::protocols::transport::Udp;
 
 use super::constants::*;
 use super::option::{encode_option_sequence, CoapOption, CoapOptions};
@@ -1202,6 +1205,58 @@ impl Layer for Coap {
 
 impl_layer_div!(Coap);
 
+/// Build a UDP header for a cleartext CoAP client request.
+///
+/// Only the assigned cleartext destination port is pinned. Callers may
+/// override either UDP port after construction.
+pub fn coap_request_udp() -> Udp {
+    Udp::new().destination_port(COAP_UDP_PORT)
+}
+
+/// Build a UDP header for a cleartext CoAP server response.
+///
+/// Only the assigned cleartext source port is pinned. Callers may override
+/// either UDP port after construction.
+pub fn coap_response_udp() -> Udp {
+    Udp::new().source_port(COAP_UDP_PORT)
+}
+
+/// Build an IPv4/UDP/CoAP request packet without sending it.
+///
+/// Documentation-safe examples can use `192.0.2.10` as `source` and
+/// `198.51.100.20` as `destination`; this helper never selects an interface or
+/// performs network I/O.
+pub fn coap_ipv4_request(source: Ipv4Addr, destination: Ipv4Addr, message: Coap) -> Packet {
+    Ipv4::with_addresses(source, destination) / coap_request_udp() / message
+}
+
+/// Build an IPv4/UDP/CoAP response packet without sending it.
+///
+/// Documentation-safe examples can use `198.51.100.20` as `source` and
+/// `192.0.2.10` as `destination`; this helper never selects an interface or
+/// performs network I/O.
+pub fn coap_ipv4_response(source: Ipv4Addr, destination: Ipv4Addr, message: Coap) -> Packet {
+    Ipv4::with_addresses(source, destination) / coap_response_udp() / message
+}
+
+/// Build an IPv6/UDP/CoAP request packet without sending it.
+///
+/// Documentation-safe examples can use `2001:db8::10` as `source` and
+/// `2001:db8::20` as `destination`; this helper never selects an interface or
+/// performs network I/O.
+pub fn coap_ipv6_request(source: Ipv6Addr, destination: Ipv6Addr, message: Coap) -> Packet {
+    Ipv6::with_addresses(source, destination) / coap_request_udp() / message
+}
+
+/// Build an IPv6/UDP/CoAP response packet without sending it.
+///
+/// Documentation-safe examples can use `2001:db8::20` as `source` and
+/// `2001:db8::10` as `destination`; this helper never selects an interface or
+/// performs network I/O.
+pub fn coap_ipv6_response(source: Ipv6Addr, destination: Ipv6Addr, message: Coap) -> Packet {
+    Ipv6::with_addresses(source, destination) / coap_response_udp() / message
+}
+
 fn bounded_hex(bytes: &[u8]) -> String {
     let shown = bytes.len().min(COAP_INSPECTION_HEX_LIMIT);
     let mut output = String::with_capacity(shown.saturating_mul(2).saturating_add(24));
@@ -1272,10 +1327,8 @@ fn validate_base_token_len(len: usize) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::packet::{IntoPacket, Packet};
-    use crate::protocols::ip::{v4::Ipv4, v6::Ipv6};
-    use crate::protocols::transport::{Udp, UDP_HEADER_LEN};
-    use core::net::{Ipv4Addr, Ipv6Addr};
+    use crate::packet::IntoPacket;
+    use crate::protocols::transport::UDP_HEADER_LEN;
 
     #[test]
     fn coap_packet_storage_supports_conversion_typed_access_mutation_and_clone() {
@@ -1348,6 +1401,60 @@ mod tests {
         assert_eq!(&ipv6_bytes[40 + UDP_HEADER_LEN..], coap_bytes.as_bytes());
         assert!(ipv6_packet.summary().contains(" / Coap("));
         assert!(ipv6_packet.show().contains("[2] Coap"));
+    }
+
+    #[test]
+    fn coap_udp_helpers_pin_only_the_cleartext_service_side_port() {
+        let request = coap_request_udp();
+        assert_eq!(request.destination_port_value(), COAP_UDP_PORT);
+        assert_eq!(request.source_port_value(), Udp::new().source_port_value());
+
+        let response = coap_response_udp();
+        assert_eq!(response.source_port_value(), COAP_UDP_PORT);
+        assert_eq!(
+            response.destination_port_value(),
+            Udp::new().destination_port_value()
+        );
+
+        let request_overrides = coap_request_udp()
+            .source_port(49_152)
+            .destination_port(12_345);
+        assert_eq!(request_overrides.source_port_value(), 49_152);
+        assert_eq!(request_overrides.destination_port_value(), 12_345);
+
+        let response_overrides = coap_response_udp()
+            .source_port(12_345)
+            .destination_port(49_152);
+        assert_eq!(response_overrides.source_port_value(), 12_345);
+        assert_eq!(response_overrides.destination_port_value(), 49_152);
+    }
+
+    #[test]
+    fn coap_ip_helpers_compile_typed_documentation_address_stacks() {
+        let ipv4_client = Ipv4Addr::new(192, 0, 2, 10);
+        let ipv4_server = Ipv4Addr::new(198, 51, 100, 20);
+        let ipv6_client = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 10);
+        let ipv6_server = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 20);
+        let request = Coap::get().message_id(0x1234);
+        let response = Coap::response(CoapCode::content())
+            .message_id(0x1234)
+            .payload(b"ok".to_vec());
+
+        let packets = [
+            coap_ipv4_request(ipv4_client, ipv4_server, request.clone()),
+            coap_ipv4_response(ipv4_server, ipv4_client, response.clone()),
+            coap_ipv6_request(ipv6_client, ipv6_server, request),
+            coap_ipv6_response(ipv6_server, ipv6_client, response),
+        ];
+
+        for packet in packets {
+            assert!(packet.layer::<Udp>().is_some());
+            assert!(packet.layer::<Coap>().is_some());
+            assert!(packet.layer::<Ipv4>().is_some() || packet.layer::<Ipv6>().is_some());
+            packet
+                .compile()
+                .expect("documentation-address stack compiles");
+        }
     }
 
     #[test]
