@@ -1,0 +1,41 @@
+# Hand-built CoAP datagram malformed corpus; no packet captures were used.
+# Provenance: RFC 7252 sections 3, 3.1, and 4.1 plus RFC 8974 section 2.1,
+# as frozen in .agents/docs/coap-wire-grammar.md and coap-error-policy.md.
+# Format: name|expected-kind|expected-context-field-or-marker|required|available|reason|hex
+# A blank final hex field represents the zero-byte datagram.
+
+header-empty|buffer-too-short|coap.header|4|0|-|
+header-one-byte|buffer-too-short|coap.header|4|1|-|40
+header-two-bytes|buffer-too-short|coap.header|4|2|-|4001
+header-three-bytes|buffer-too-short|coap.header|4|3|-|400100
+
+token-base-missing|buffer-too-short|coap.token|1|0|-|41010001
+token-base-short|buffer-too-short|coap.token|8|2|-|48010001aabb
+token-extended8-missing|buffer-too-short|coap.token-length.extended8|1|0|-|4d010001
+token-extended8-short|buffer-too-short|coap.token|13|12|-|4d01000100 a5a5a5a5a5a5a5a5a5a5a5a5
+token-extended16-missing|buffer-too-short|coap.token-length.extended16|2|0|-|4e010001
+token-extended16-partial|buffer-too-short|coap.token-length.extended16|2|1|-|4e01000100
+token-reserved|invalid-field-value|coap.token-length|-|-|reserved TKL encoding 15|4f010001
+
+option-delta-extended8-missing|buffer-too-short|coap.option.delta.extended8|1|0|-|40010001dd
+option-length-extended8-missing|buffer-too-short|coap.option.length.extended8|1|0|-|40010001dd00
+option-delta-extended16-missing|buffer-too-short|coap.option.delta.extended16|2|0|-|40010001ee
+option-delta-extended16-partial|buffer-too-short|coap.option.delta.extended16|2|1|-|40010001ee00
+option-length-extended16-missing|buffer-too-short|coap.option.length.extended16|2|0|-|40010001ee0000
+option-length-extended16-partial|buffer-too-short|coap.option.length.extended16|2|1|-|40010001ee000000
+option-value-missing|buffer-too-short|coap.option.value|3|0|-|4001000103
+option-value-one-byte-short|buffer-too-short|coap.option.value|3|1|-|4001000103aa
+option-value-two-bytes-short|buffer-too-short|coap.option.value|3|2|-|4001000103aabb
+option-value-extended16-short|buffer-too-short|coap.option.value|269|268|-|400100010e0000 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a 5a5a5a5a5a5a5a5a5a5a5a5a
+
+option-reserved-delta-f0|invalid-field-value|coap.option.delta|-|-|reserved delta nibble 15 is not a payload marker|40010001f0
+option-reserved-delta-fe|invalid-field-value|coap.option.delta|-|-|reserved delta nibble 15 is not a payload marker|40010001fe
+option-reserved-length-0f|invalid-field-value|coap.option.length|-|-|reserved option length nibble 15|400100010f
+option-reserved-length-ef|invalid-field-value|coap.option.length|-|-|reserved option length nibble 15|40010001ef
+option-number-overflow|invalid-field-value|coap.option-number|-|-|cumulative option number exceeds 65535|40010001e0fef210
+payload-marker-without-payload|buffer-too-short|coap.payload|1|0|-|40010001ff
+empty-message-with-token|invalid-field-value|coap.empty-message|-|-|empty message contains token, options, marker, or payload|41000001
+empty-message-with-option|invalid-field-value|coap.empty-message|-|-|empty message contains token, options, marker, or payload|4000000100
+
+unknown-option-raw-round-trip|decodes|unknown-option-round-trip|-|-|-|40010001e10000aa
+extended-token-269-raw-decode|decodes|extended-token-269|-|-|-|4e0100010000 a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5 a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5 a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5 a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5 a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5 a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5 a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5 a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5 a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5 a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5 a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5 a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5 a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5 a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5 a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5 a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5 a5a5a5a5a5a5a5a5a5a5a5a5a5
