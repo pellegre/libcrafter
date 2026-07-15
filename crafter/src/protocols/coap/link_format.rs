@@ -6,7 +6,13 @@
 //! attributes, unknown names, and each attribute's syntactic value form
 //! inspectable without requiring UTF-8 validation or normalization.
 
-use crate::field::{Field, FieldState};
+use crate::{
+    error::{CrafterError, Result},
+    field::{Field, FieldState},
+};
+
+const LINK_FORMAT_SYNTAX_FIELD: &str = "coap.link-format.syntax";
+const LINK_FORMAT_MAX_INPUT_LEN: usize = u16::MAX as usize;
 
 /// One ordered, lossless `application/link-format` document.
 ///
@@ -26,6 +32,23 @@ impl CoapLinkFormat {
             links: Vec::new(),
             raw: Field::unset(),
         }
+    }
+
+    /// Parse one complete RFC 6690 `application/link-format` payload.
+    ///
+    /// Parsing operates on bytes, retains the complete source payload, and
+    /// does not validate or normalize UTF-8. Link order, repeated attributes,
+    /// unknown attribute names, quoted-string escapes, and extended values
+    /// remain byte-exact. Whitespace outside quoted strings is rejected by
+    /// the RFC 6690 grammar rather than silently normalized.
+    ///
+    /// Syntax failures follow the frozen CoAP error policy and return
+    /// [`CrafterError::InvalidFieldValue`] with field
+    /// `coap.link-format.syntax` and a stable production-specific reason. The
+    /// shared error contract does not expose parser offsets, so callers retain
+    /// the original payload when they need to correlate a failure with input.
+    pub fn parse(data: &[u8]) -> Result<Self> {
+        LinkFormatParser::new(data).parse()
     }
 
     /// Append one typed link while preserving existing link order.
@@ -48,6 +71,357 @@ impl CoapLinkFormat {
     pub fn raw_bytes(&self) -> Option<&[u8]> {
         self.raw.value().map(Vec::as_slice)
     }
+}
+
+struct LinkFormatParser<'a> {
+    data: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> LinkFormatParser<'a> {
+    const fn new(data: &'a [u8]) -> Self {
+        Self { data, offset: 0 }
+    }
+
+    fn parse(mut self) -> Result<CoapLinkFormat> {
+        if self.data.len() > LINK_FORMAT_MAX_INPUT_LEN {
+            return Err(link_format_syntax_error(
+                "document exceeds 65535-byte parser limit",
+            ));
+        }
+
+        let mut links = Vec::new();
+        if !self.data.is_empty() {
+            loop {
+                if self.peek() != Some(b'<') {
+                    return Err(link_format_syntax_error(
+                        "link value is missing opening angle bracket",
+                    ));
+                }
+
+                links.push(self.parse_link()?);
+                match self.peek() {
+                    None => break,
+                    Some(b',') => {
+                        self.offset += 1;
+                        if self.peek().is_none() {
+                            return Err(link_format_syntax_error(
+                                "link separator is missing a following link value",
+                            ));
+                        }
+                    }
+                    Some(_) => {
+                        return Err(link_format_syntax_error(
+                            "invalid separator after link value",
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(CoapLinkFormat {
+            links,
+            raw: Field::defaulted(self.data.to_vec()),
+        })
+    }
+
+    fn parse_link(&mut self) -> Result<CoapLink> {
+        debug_assert_eq!(self.peek(), Some(b'<'));
+        self.offset += 1;
+        let target_start = self.offset;
+
+        while let Some(byte) = self.peek() {
+            match byte {
+                b'>' => {
+                    let target = self.data[target_start..self.offset].to_vec();
+                    self.offset += 1;
+                    let mut link = CoapLink::new(target);
+
+                    while self.peek() == Some(b';') {
+                        self.offset += 1;
+                        link.attributes.push(self.parse_attribute()?);
+                    }
+                    return Ok(link);
+                }
+                b'%' => {
+                    if !self.has_hex_escape() {
+                        return Err(link_format_syntax_error(
+                            "target URI-reference contains an invalid percent escape",
+                        ));
+                    }
+                    self.offset += 3;
+                }
+                byte if is_uri_reference_byte(byte) => self.offset += 1,
+                _ => {
+                    return Err(link_format_syntax_error(
+                        "target contains an invalid URI-reference byte",
+                    ));
+                }
+            }
+        }
+
+        Err(link_format_syntax_error("unterminated link target"))
+    }
+
+    fn parse_attribute(&mut self) -> Result<CoapLinkAttribute> {
+        let name_start = self.offset;
+        while self.peek().is_some_and(is_attribute_name_byte) {
+            self.offset += 1;
+        }
+        if self.offset == name_start {
+            return Err(link_format_syntax_error("missing link attribute name"));
+        }
+
+        let extended = self.peek() == Some(b'*');
+        if extended {
+            self.offset += 1;
+        }
+        let name = self.data[name_start..self.offset].to_vec();
+
+        match self.peek() {
+            Some(b'=') => self.offset += 1,
+            _ if extended => {
+                return Err(link_format_syntax_error(
+                    "extended link attribute is missing a value",
+                ));
+            }
+            None | Some(b';' | b',') => return Ok(CoapLinkAttribute::flag(name)),
+            Some(_) => {
+                return Err(link_format_syntax_error(
+                    "invalid separator after link attribute name",
+                ));
+            }
+        }
+
+        if extended {
+            let value = self.parse_extended_value()?;
+            return Ok(CoapLinkAttribute::extended(name, value));
+        }
+
+        if self.peek() == Some(b'"') {
+            let value = self.parse_quoted_value()?;
+            Ok(CoapLinkAttribute::quoted(name, value))
+        } else {
+            let value = self.parse_token_value()?;
+            Ok(CoapLinkAttribute::token(name, value))
+        }
+    }
+
+    fn parse_token_value(&mut self) -> Result<Vec<u8>> {
+        let value_start = self.offset;
+        while let Some(byte) = self.peek() {
+            if matches!(byte, b';' | b',') {
+                break;
+            }
+            if !is_ptoken_byte(byte) {
+                return Err(link_format_syntax_error(
+                    "unquoted link attribute value is not a ptoken",
+                ));
+            }
+            self.offset += 1;
+        }
+
+        if self.offset == value_start {
+            return Err(link_format_syntax_error("missing link attribute value"));
+        }
+        Ok(self.data[value_start..self.offset].to_vec())
+    }
+
+    fn parse_quoted_value(&mut self) -> Result<Vec<u8>> {
+        debug_assert_eq!(self.peek(), Some(b'"'));
+        self.offset += 1;
+        let value_start = self.offset;
+
+        while let Some(byte) = self.peek() {
+            match byte {
+                b'"' => {
+                    let value = self.data[value_start..self.offset].to_vec();
+                    self.offset += 1;
+                    return Ok(value);
+                }
+                b'\\' => {
+                    let Some(escaped) = self.data.get(self.offset + 1).copied() else {
+                        return Err(link_format_syntax_error(
+                            "quoted link attribute value ends in an escape",
+                        ));
+                    };
+                    if !escaped.is_ascii() {
+                        return Err(link_format_syntax_error(
+                            "quoted link attribute value has an invalid escape",
+                        ));
+                    }
+                    self.offset += 2;
+                }
+                b'\t' | b' '..=b'!' | b'#'..=b'~' | 0x80..=0xff => self.offset += 1,
+                _ => {
+                    return Err(link_format_syntax_error(
+                        "quoted link attribute value contains a control byte",
+                    ));
+                }
+            }
+        }
+
+        Err(link_format_syntax_error(
+            "unterminated quoted link attribute value",
+        ))
+    }
+
+    fn parse_extended_value(&mut self) -> Result<Vec<u8>> {
+        let value_start = self.offset;
+        let charset_start = self.offset;
+        while self.peek().is_some_and(is_mime_charset_byte) {
+            self.offset += 1;
+        }
+        if self.offset == charset_start || self.peek() != Some(b'\'') {
+            return Err(link_format_syntax_error(
+                "extended link attribute value has an invalid charset",
+            ));
+        }
+        self.offset += 1;
+
+        while self.peek().is_some_and(is_language_tag_byte) {
+            self.offset += 1;
+        }
+        if self.peek() != Some(b'\'') {
+            return Err(link_format_syntax_error(
+                "extended link attribute value is missing its language delimiter",
+            ));
+        }
+        self.offset += 1;
+
+        while let Some(byte) = self.peek() {
+            if matches!(byte, b';' | b',') {
+                break;
+            }
+            match byte {
+                b'%' if self.has_hex_escape() => self.offset += 3,
+                byte if is_extended_value_byte(byte) => self.offset += 1,
+                _ => {
+                    return Err(link_format_syntax_error(
+                        "extended link attribute value has invalid value bytes",
+                    ));
+                }
+            }
+        }
+
+        Ok(self.data[value_start..self.offset].to_vec())
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.data.get(self.offset).copied()
+    }
+
+    fn has_hex_escape(&self) -> bool {
+        self.data
+            .get(self.offset + 1..self.offset + 3)
+            .is_some_and(|digits| digits.iter().all(u8::is_ascii_hexdigit))
+    }
+}
+
+const fn is_attribute_name_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'#' | b'$' | b'&' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~'
+        )
+}
+
+const fn is_ptoken_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'('
+                | b')'
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'/'
+                | b':'
+                | b'<'
+                | b'='
+                | b'>'
+                | b'?'
+                | b'@'
+                | b'['
+                | b']'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'{'
+                | b'|'
+                | b'}'
+                | b'~'
+        )
+}
+
+const fn is_mime_charset_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'+'
+                | b'-'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'{'
+                | b'}'
+                | b'~'
+        )
+}
+
+const fn is_language_tag_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'-'
+}
+
+const fn is_extended_value_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'#' | b'$' | b'&' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~'
+        )
+}
+
+const fn is_uri_reference_byte(byte: u8) -> bool {
+    byte >= 0x80
+        || byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'$'
+                | b'&'
+                | b'\''
+                | b'('
+                | b')'
+                | b'*'
+                | b'+'
+                | b','
+                | b'-'
+                | b'.'
+                | b'/'
+                | b':'
+                | b';'
+                | b'='
+                | b'?'
+                | b'@'
+                | b'['
+                | b']'
+                | b'#'
+                | b'_'
+                | b'~'
+        )
+}
+
+const fn link_format_syntax_error(reason: &'static str) -> CrafterError {
+    CrafterError::invalid_field_value(LINK_FORMAT_SYNTAX_FIELD, reason)
 }
 
 /// One CoRE link target and its ordered target attributes.
@@ -392,8 +766,26 @@ impl CoapLinkAttribute {
 
 #[cfg(test)]
 mod tests {
-    use super::{CoapLink, CoapLinkAttribute, CoapLinkAttributeValue, CoapLinkFormat};
+    use super::{
+        CoapLink, CoapLinkAttribute, CoapLinkAttributeValue, CoapLinkFormat,
+        LINK_FORMAT_MAX_INPUT_LEN, LINK_FORMAT_SYNTAX_FIELD,
+    };
+    use crate::error::CrafterError;
     use crate::field::FieldState;
+    use proptest::prelude::*;
+    use std::panic::catch_unwind;
+
+    fn assert_syntax_error(data: &[u8], expected_reason: &'static str) {
+        let result = catch_unwind(|| CoapLinkFormat::parse(data))
+            .expect("link-format syntax parsing must not panic");
+        assert_eq!(
+            result,
+            Err(CrafterError::InvalidFieldValue {
+                field: LINK_FORMAT_SYNTAX_FIELD,
+                reason: expected_reason,
+            })
+        );
+    }
 
     #[test]
     fn construction_preserves_link_attribute_order_and_repeated_values() {
@@ -526,5 +918,204 @@ mod tests {
             document,
             CoapLinkFormat::new().link(CoapLink::new("/typed"))
         );
+    }
+
+    #[test]
+    fn parses_rfc_6690_discovery_examples_in_wire_order() {
+        // RFC 6690 Sections 2 and 5: commas separate links, while semicolons
+        // introduce ordered attributes and quoted relation values may contain
+        // spaces.
+        let bytes = b"</sensors/temp>;rt=\"temperature-c\";if=\"sensor\",</sensors/light>;rt=\"light-lux core.sen-light\";if=\"sensor\"";
+        let parsed = CoapLinkFormat::parse(bytes).unwrap();
+
+        assert_eq!(parsed.raw_state(), FieldState::Defaulted);
+        assert_eq!(parsed.raw_bytes(), Some(bytes.as_slice()));
+        assert_eq!(parsed.links().len(), 2);
+        assert_eq!(parsed.links()[0].target(), b"/sensors/temp");
+        assert_eq!(
+            parsed.links()[0].attributes(),
+            &[
+                CoapLinkAttribute::quoted("rt", "temperature-c"),
+                CoapLinkAttribute::quoted("if", "sensor"),
+            ]
+        );
+        assert_eq!(parsed.links()[1].target(), b"/sensors/light");
+        assert_eq!(
+            parsed.links()[1].attributes()[0],
+            CoapLinkAttribute::quoted("rt", "light-lux core.sen-light")
+        );
+    }
+
+    #[test]
+    fn empty_document_flags_empty_quotes_repeats_and_commas_are_supported() {
+        let empty = CoapLinkFormat::parse(b"").unwrap();
+        assert!(empty.links().is_empty());
+        assert_eq!(empty.raw_state(), FieldState::Defaulted);
+        assert_eq!(empty.raw_bytes(), Some(&b""[..]));
+
+        let bytes = b"<coap://example.test/a,b>;vendor;empty=\"\";repeat=one;repeat=two";
+        let parsed = CoapLinkFormat::parse(bytes).unwrap();
+        assert_eq!(parsed.links()[0].target(), b"coap://example.test/a,b");
+        assert_eq!(
+            parsed.links()[0].attributes(),
+            &[
+                CoapLinkAttribute::flag("vendor"),
+                CoapLinkAttribute::quoted("empty", b""),
+                CoapLinkAttribute::token("repeat", "one"),
+                CoapLinkAttribute::token("repeat", "two"),
+            ]
+        );
+    }
+
+    #[test]
+    fn unknown_quoted_and_extended_forms_preserve_exact_source_bytes() {
+        // RFC 6690 Section 2 permits commas and semicolons inside quotes and
+        // does not require a decoder to validate UTF-8. RFC 5987 Section 3.2
+        // supplies the extended-value spelling retained here.
+        let bytes = b"</\x80>;vendor=\"raw\x80,semi;slash\\\\quote\\\"\";vendor-title*=UTF-8'en'%E2%82%AC;empty*=UTF-8''";
+        let parsed = CoapLinkFormat::parse(bytes).unwrap();
+        let attributes = parsed.links()[0].attributes();
+
+        assert_eq!(parsed.links()[0].target(), b"/\x80");
+        assert_eq!(attributes[0].name(), b"vendor");
+        assert_eq!(
+            attributes[0].value(),
+            &CoapLinkAttributeValue::quoted(b"raw\x80,semi;slash\\\\quote\\\"")
+        );
+        assert_eq!(attributes[1].name(), b"vendor-title*");
+        assert_eq!(
+            attributes[1].value(),
+            &CoapLinkAttributeValue::extended("UTF-8'en'%E2%82%AC")
+        );
+        assert_eq!(
+            attributes[2].value(),
+            &CoapLinkAttributeValue::extended("UTF-8''")
+        );
+        assert_eq!(parsed.raw_bytes(), Some(bytes.as_slice()));
+    }
+
+    #[test]
+    fn ptoken_and_uri_reference_source_characters_are_accepted() {
+        let bytes = b"<coap://[2001:db8::1]/a!$&'()*+,;=:@/?q=x#f>;x=!#$%&'()*+-./:<=>?@[]^_`{|}~";
+        let parsed = CoapLinkFormat::parse(bytes).unwrap();
+
+        assert_eq!(
+            parsed.links()[0].attributes()[0].value().as_bytes(),
+            Some(&b"!#$%&'()*+-./:<=>?@[]^_`{|}~"[..])
+        );
+    }
+
+    #[test]
+    fn malformed_link_format_corpus_has_stable_context_and_reasons() {
+        let cases: &[(&[u8], &str)] = &[
+            (b"not-a-link", "link value is missing opening angle bracket"),
+            (b"</unterminated", "unterminated link target"),
+            (
+                b"</bad%escape>",
+                "target URI-reference contains an invalid percent escape",
+            ),
+            (
+                b"</bad target>",
+                "target contains an invalid URI-reference byte",
+            ),
+            (b"</ok> ", "invalid separator after link value"),
+            (
+                b"</ok>,",
+                "link separator is missing a following link value",
+            ),
+            (
+                b"</ok>,,</next>",
+                "link value is missing opening angle bracket",
+            ),
+            (b"</ok>;", "missing link attribute name"),
+            (b"</ok>;=value", "missing link attribute name"),
+            (
+                b"</ok>;bad name=value",
+                "invalid separator after link attribute name",
+            ),
+            (b"</ok>;empty=", "missing link attribute value"),
+            (
+                b"</ok>;token=has space",
+                "unquoted link attribute value is not a ptoken",
+            ),
+            (
+                b"</ok>;title=\"unterminated",
+                "unterminated quoted link attribute value",
+            ),
+            (
+                b"</ok>;title=\"escape\\",
+                "quoted link attribute value ends in an escape",
+            ),
+            (
+                b"</ok>;title=\"escape\\\x80\"",
+                "quoted link attribute value has an invalid escape",
+            ),
+            (
+                b"</ok>;title=\"control\x01\"",
+                "quoted link attribute value contains a control byte",
+            ),
+            (
+                b"</ok>;title*",
+                "extended link attribute is missing a value",
+            ),
+            (
+                b"</ok>;title*=\"quoted\"",
+                "extended link attribute value has an invalid charset",
+            ),
+            (
+                b"</ok>;title*='en'value",
+                "extended link attribute value has an invalid charset",
+            ),
+            (
+                b"</ok>;title*=UTF-8'en",
+                "extended link attribute value is missing its language delimiter",
+            ),
+            (
+                b"</ok>;title*=UTF-8''bad%2",
+                "extended link attribute value has invalid value bytes",
+            ),
+        ];
+
+        for &(data, reason) in cases {
+            assert_syntax_error(data, reason);
+        }
+    }
+
+    #[test]
+    fn public_syntax_error_contract_is_stable_at_different_internal_offsets() {
+        // The frozen CrafterError contract exposes the grammar context and
+        // reason, but no byte offset. Keep the public result identical when
+        // the same failed production occurs at different parser positions.
+        for data in [&b"not-a-link"[..], &b"</ok>,not-a-link"[..]] {
+            assert_syntax_error(data, "link value is missing opening angle bracket");
+        }
+        for data in [&b"<unterminated"[..], &b"</ok>,<unterminated"[..]] {
+            assert_syntax_error(data, "unterminated link target");
+        }
+    }
+
+    #[test]
+    fn parser_limit_accepts_boundary_and_rejects_oversized_input() {
+        let mut boundary = Vec::with_capacity(LINK_FORMAT_MAX_INPUT_LEN);
+        boundary.push(b'<');
+        boundary.resize(LINK_FORMAT_MAX_INPUT_LEN - 1, b'a');
+        boundary.push(b'>');
+        let parsed = CoapLinkFormat::parse(&boundary).unwrap();
+        assert_eq!(
+            parsed.links()[0].target().len(),
+            LINK_FORMAT_MAX_INPUT_LEN - 2
+        );
+
+        let oversized = vec![b'x'; LINK_FORMAT_MAX_INPUT_LEN + 1];
+        assert_syntax_error(&oversized, "document exceeds 65535-byte parser limit");
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn arbitrary_input_never_panics(data in proptest::collection::vec(any::<u8>(), 0..2048)) {
+            prop_assert!(catch_unwind(|| CoapLinkFormat::parse(&data)).is_ok());
+        }
     }
 }
