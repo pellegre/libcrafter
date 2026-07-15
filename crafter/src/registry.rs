@@ -6,7 +6,10 @@ use crate::endian::read_u32_be;
 use crate::error::Result;
 use crate::packet::{LinkType, NetworkLayer, Packet, Raw};
 use crate::protocols::bgp::{decode::append_bgp_packet_with_registry, BGP_PORT};
-use crate::protocols::coap::{append_coap_packet, looks_like_coap_payload, COAP_UDP_PORT};
+use crate::protocols::coap::{
+    append_coap_packet, append_coap_reliable_packet, looks_like_coap_payload,
+    looks_like_coap_reliable_frame, COAP_UDP_PORT,
+};
 use crate::protocols::dhcp::{
     append_dhcpv4_packet, append_dhcpv6_packet, is_dhcpv4_port_pair, looks_like_dhcpv4_payload,
     looks_like_dhcpv6_payload,
@@ -497,6 +500,18 @@ impl ProtocolRegistry {
                     && looks_like_coap_payload(ctx.source_port, ctx.destination_port, ctx.payload)
             },
             |_registry, packet, payload| append_coap_packet(packet, payload),
+        );
+
+        // Cleartext reliable CoAP binds only to its assigned TCP/5683 service
+        // port when the current transport payload is exactly one complete RFC
+        // 8323 frame. Partial frames, concatenated frames, arbitrary trailing
+        // bytes, and protected TCP/5684 traffic remain `Raw`; the registry does
+        // not buffer or perform TCP stream reassembly.
+        registry.bind_tcp_with_registry(
+            |ctx| {
+                looks_like_coap_reliable_frame(ctx.source_port, ctx.destination_port, ctx.payload)
+            },
+            |_registry, packet, payload| append_coap_reliable_packet(packet, payload),
         );
 
         registry.bind_tcp_port_with_registry(BGP_PORT, |registry, packet, payload| {
@@ -2409,6 +2424,133 @@ mod coap_udp_dispatch {
 
         assert!(decoded.layer::<Udp>().is_some());
         assert!(decoded.layer::<Coap>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), payload);
+    }
+}
+
+#[cfg(test)]
+mod coap_tcp_dispatch {
+    use super::ProtocolRegistry;
+    use crate::protocols::coap::{CoapCode, CoapReliable, CoapToken, COAPS_PORT, COAP_PORT};
+    use crate::{Ipv4, NetworkLayer, Packet, Raw, Tcp};
+
+    fn reliable_payload(message: CoapReliable) -> Vec<u8> {
+        Packet::from_layer(message)
+            .compile()
+            .expect("compile reliable CoAP frame")
+            .into_bytes()
+    }
+
+    fn tcp_ipv4_payload(source_port: u16, destination_port: u16, payload: &[u8]) -> Vec<u8> {
+        (Ipv4::new()
+            .src("192.0.2.10".parse().unwrap())
+            .dst("198.51.100.20".parse().unwrap())
+            / Tcp::new()
+                .sport(source_port)
+                .dport(destination_port)
+                .seq(0x1111_2222)
+                .ack(0x3333_4444)
+                .ack_segment()
+            / Raw::from_bytes(payload))
+        .compile()
+        .expect("compile TCP packet")
+        .into_bytes()
+    }
+
+    #[test]
+    fn coap_tcp_dispatch_types_one_complete_frame_in_either_direction() {
+        let payload =
+            reliable_payload(CoapReliable::ping().token(CoapToken::from_bytes([0xaa, 0xbb])));
+
+        for (source_port, destination_port) in [(49_152, COAP_PORT), (COAP_PORT, 49_152)] {
+            let bytes = tcp_ipv4_payload(source_port, destination_port, &payload);
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes)
+                .expect("decode exact reliable CoAP frame");
+            let reliable = decoded
+                .layer::<CoapReliable>()
+                .expect("typed reliable CoAP layer");
+
+            assert_eq!(reliable.code_value(), CoapCode::ping());
+            assert_eq!(reliable.token_value().as_bytes(), &[0xaa, 0xbb]);
+            assert!(decoded.layer::<Raw>().is_none());
+            assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+        }
+    }
+
+    #[test]
+    fn coap_tcp_dispatch_preserves_partial_concatenated_and_arbitrary_payloads() {
+        let complete =
+            reliable_payload(CoapReliable::ping().token(CoapToken::from_bytes([0xaa, 0xbb])));
+        let partial = complete[..complete.len() - 1].to_vec();
+        let mut concatenated = complete.clone();
+        concatenated.extend_from_slice(&reliable_payload(CoapReliable::pong()));
+        let arbitrary = b"not a reliable CoAP frame".to_vec();
+
+        for (label, payload) in [
+            ("partial", partial),
+            ("concatenated", concatenated),
+            ("arbitrary", arbitrary),
+        ] {
+            let bytes = tcp_ipv4_payload(49_152, COAP_PORT, &payload);
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes)
+                .unwrap_or_else(|error| panic!("{label} candidate should remain Raw: {error}"));
+
+            assert!(decoded.layer::<CoapReliable>().is_none(), "{label}");
+            assert_eq!(
+                decoded.layer::<Raw>().unwrap().as_bytes(),
+                payload,
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn coap_tcp_dispatch_requires_cleartext_service_port() {
+        let payload = reliable_payload(CoapReliable::ping());
+
+        for (label, source_port, destination_port) in [
+            ("wrong", 49_152, 49_153),
+            ("secure", 49_152, COAPS_PORT),
+            ("secure-source", COAPS_PORT, 49_152),
+        ] {
+            let bytes = tcp_ipv4_payload(source_port, destination_port, &payload);
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes)
+                .unwrap_or_else(|error| panic!("{label} candidate should remain Raw: {error}"));
+
+            assert!(decoded.layer::<CoapReliable>().is_none(), "{label}");
+            assert_eq!(
+                decoded.layer::<Raw>().unwrap().as_bytes(),
+                payload,
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn coap_tcp_dispatch_custom_binding_overrides_builtin() {
+        let payload = reliable_payload(CoapReliable::ping());
+        let mut registry = ProtocolRegistry::new();
+        registry.bind_tcp_port(COAP_PORT, |packet, payload| {
+            Ok(packet.push(Raw::from_bytes(payload)))
+        });
+        let bytes = tcp_ipv4_payload(49_152, COAP_PORT, &payload);
+        let decoded = Packet::decode_from_l3_with_registry(&registry, NetworkLayer::Ipv4, &bytes)
+            .expect("decode custom-bound reliable CoAP payload");
+
+        assert!(decoded.layer::<CoapReliable>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), payload);
+    }
+
+    #[test]
+    fn coap_tcp_dispatch_respects_application_decoding_toggle() {
+        let payload = reliable_payload(CoapReliable::ping());
+        let registry = ProtocolRegistry::new().application_decoding(false);
+        let bytes = tcp_ipv4_payload(49_152, COAP_PORT, &payload);
+        let decoded = Packet::decode_from_l3_with_registry(&registry, NetworkLayer::Ipv4, &bytes)
+            .expect("decode reliable CoAP with application decoding disabled");
+
+        assert!(decoded.layer::<Tcp>().is_some());
+        assert!(decoded.layer::<CoapReliable>().is_none());
         assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), payload);
     }
 }
