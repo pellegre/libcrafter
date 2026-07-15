@@ -18,8 +18,8 @@ use crate::protocols::transport::Udp;
 
 use super::constants::*;
 use super::option::{
-    encode_option_sequence, CoapEtag, CoapIfMatch, CoapIfNoneMatch, CoapOption, CoapOptions,
-    CoapUriHost, CoapUriPath, CoapUriPort, CoapUriQuery,
+    encode_option_sequence, CoapAccept, CoapContentFormat, CoapEtag, CoapIfMatch, CoapIfNoneMatch,
+    CoapOption, CoapOptions, CoapUriHost, CoapUriPath, CoapUriPort, CoapUriQuery,
 };
 use super::registry::{coap_code_meta, coap_signaling_code_meta, CoapRegistryMeta};
 
@@ -850,6 +850,16 @@ impl Coap {
 
     /// Append one ETag value without replacing existing occurrences.
     pub fn etag(self, value: impl Into<CoapEtag>) -> Self {
+        self.option(CoapOption::from(value.into()))
+    }
+
+    /// Append one Content-Format value without replacing an existing occurrence.
+    pub fn content_format(self, value: impl Into<CoapContentFormat>) -> Self {
+        self.option(CoapOption::from(value.into()))
+    }
+
+    /// Append one Accept value without replacing an existing occurrence.
+    pub fn accept(self, value: impl Into<CoapAccept>) -> Self {
         self.option(CoapOption::from(value.into()))
     }
 
