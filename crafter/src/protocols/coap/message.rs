@@ -859,7 +859,11 @@ impl Coap {
     pub fn token_length_value(&self) -> Result<CoapTokenLength> {
         match self.token_length.value() {
             Some(value) => Ok(value.clone()),
-            None => CoapTokenLength::canonical_for_len(self.token_value().len()),
+            None => {
+                let token_len = self.token_value().len();
+                validate_base_token_len(token_len)?;
+                CoapTokenLength::canonical_for_len(token_len)
+            }
         }
     }
 
@@ -1109,18 +1113,68 @@ mod tests {
     }
 
     #[test]
-    fn coap_unset_dependent_fields_follow_owned_bytes_without_changing_state() {
+    fn coap_unset_dependent_fields_follow_base_owned_bytes_without_changing_state() {
         let message = Coap::new()
-            .token(CoapToken::from_bytes(vec![0u8; 269]))
+            .token(CoapToken::from_bytes([0u8; COAP_MAX_TOKEN_LEN]))
             .payload(vec![1, 2, 3]);
 
         let token_length = message.token_length_value().unwrap();
-        assert_eq!(token_length.nibble(), 14);
-        assert_eq!(token_length.extension_bytes(), &[0, 0]);
-        assert_eq!(token_length.declared_len(), 269);
+        assert_eq!(token_length.nibble(), COAP_MAX_TOKEN_LEN as u8);
+        assert!(token_length.extension_bytes().is_empty());
+        assert_eq!(token_length.declared_len(), COAP_MAX_TOKEN_LEN);
         assert_eq!(message.token_length_state(), FieldState::Unset);
         assert_eq!(message.payload_marker_value(), CoapPayloadMarker::Present);
         assert_eq!(message.payload_marker_state(), FieldState::Unset);
+    }
+
+    #[test]
+    fn compile_autofills_only_unset_base_token_length() {
+        let token = CoapToken::from_bytes([0xaa, 0xbb, 0xcc]);
+        let automatic = Coap::response(CoapCode::content())
+            .message_type(CoapMessageType::Reset)
+            .message_id(0xabcd)
+            .token(token.clone());
+        let explicit_matching =
+            automatic
+                .clone()
+                .token_length(CoapTokenLength::explicit(3, Vec::new(), 3));
+        let explicit_mismatching =
+            automatic
+                .clone()
+                .token_length(CoapTokenLength::explicit(1, Vec::new(), 999));
+
+        let automatic_bytes = Packet::from_layer(automatic).compile().unwrap();
+        let matching_bytes = Packet::from_layer(explicit_matching).compile().unwrap();
+        let mismatching_bytes = Packet::from_layer(explicit_mismatching).compile().unwrap();
+
+        assert_eq!(automatic_bytes.as_bytes(), &[0x73, 0x45, 0xab, 0xcd]);
+        assert_eq!(matching_bytes, automatic_bytes);
+        assert_eq!(mismatching_bytes.as_bytes(), &[0x71, 0x45, 0xab, 0xcd]);
+    }
+
+    #[test]
+    fn compile_preserves_explicit_mismatch_for_empty_message_with_token() {
+        let message = Coap::empty()
+            .token(CoapToken::from_bytes([0xaa, 0xbb, 0xcc]))
+            .token_length(CoapTokenLength::explicit(1, vec![0xfe], 999));
+
+        assert_eq!(
+            Packet::from_layer(message).compile().unwrap().as_bytes(),
+            &[0x41, 0x00, 0x00, 0x00]
+        );
+    }
+
+    #[test]
+    fn compile_rejects_unset_token_length_requiring_extended_support() {
+        let message = Coap::new().token(CoapToken::from_bytes([0u8; COAP_MAX_TOKEN_LEN + 1]));
+
+        assert_eq!(
+            Packet::from_layer(message).compile().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "coap.token-length",
+                "base CoAP tokens must be at most 8 bytes"
+            )
+        );
     }
 
     #[test]
