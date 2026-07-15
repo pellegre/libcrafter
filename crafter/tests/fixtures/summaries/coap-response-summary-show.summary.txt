@@ -1,0 +1,15 @@
+summary:
+Coap(version=1, type=acknowledgement, code=2.05(Content), mid=0x4142, token_len=2, options=1, marker=present, payload=5 bytes)
+
+show:
+Packet(len=13, layers=1)
+  [0] Coap
+      version: 1
+      type: acknowledgement
+      token_length: 2
+      code: 2.05(Content)
+      message_id: 0x4142
+      token: len=2 hex=c042
+      options: 1 [Content-Format(12,len=0,hex=)]
+      payload_marker: present
+      payload_length: 5

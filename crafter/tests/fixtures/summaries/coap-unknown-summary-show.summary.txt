@@ -1,0 +1,15 @@
+summary:
+Coap(version=2 [explicit-noncurrent], type=non-confirmable, code=0.31(code-0.31), mid=0xa1b2, token_len=2, options=3, marker=present, payload=2 bytes)
+
+show:
+Packet(len=19, layers=1)
+  [0] Coap
+      version: 2 [explicit-noncurrent]
+      type: non-confirmable
+      token_length: 2
+      code: 0.31(code-0.31)
+      message_id: 0xa1b2
+      token: len=2 hex=dead
+      options: 3 [Content-Format(12,len=2,hex=3039), option-1234(1234,len=2,hex=00ff), option-1234(1234,len=1,hex=80)]
+      payload_marker: present
+      payload_length: 2
