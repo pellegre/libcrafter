@@ -878,6 +878,8 @@ pub enum CoapValidationCategory {
     OptionApplicability,
     /// A method-specific request shape is semantically incomplete.
     MethodSemantics,
+    /// Group-request or group-response metadata violates multicast CoAP rules.
+    GroupCommunication,
 }
 
 /// One inspectable CoAP semantic validation finding.
@@ -964,7 +966,7 @@ impl CoapValidation {
         self.issues.is_empty()
     }
 
-    fn push(
+    pub(super) fn push(
         &mut self,
         field: impl Into<String>,
         severity: CoapValidationSeverity,

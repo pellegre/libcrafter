@@ -36,6 +36,14 @@ pub use self::constants::{
 };
 pub use self::decode::decode_coap;
 pub(crate) use self::decode::{append_coap_packet, looks_like_coap_payload};
+pub use self::group::{
+    coap_ipv4_group_request, coap_ipv4_group_response, coap_ipv6_group_request,
+    coap_ipv6_group_response, CoapGroupMatch, CoapGroupMetadata, COAP_ALL_NODES_IPV4_MULTICAST,
+    COAP_ALL_NODES_IPV6_LINK_LOCAL_MULTICAST, COAP_ALL_NODES_IPV6_SITE_LOCAL_MULTICAST,
+    COAP_ALL_RESOURCE_DIRECTORIES_IPV4_MULTICAST,
+    COAP_ALL_RESOURCE_DIRECTORIES_IPV6_LINK_LOCAL_MULTICAST,
+    COAP_ALL_RESOURCE_DIRECTORIES_IPV6_SITE_LOCAL_MULTICAST, COAP_CONTENT_FORMAT_GROUP_JSON,
+};
 pub use self::hop_limit::{CoapHopLimit, CoapHopLimitExhausted};
 pub use self::link_format::{
     coap_discovery_response, CoapLink, CoapLinkAttribute, CoapLinkAttributeValue, CoapLinkFormat,
