@@ -57,6 +57,7 @@ from .protocols.mdns import (
     mdns_dns_packet,
     mdns_metadata,
 )
+from .protocols.coap import canonicalize_coap_payload
 from .protocols.ntp import canonicalize_ntp_payload
 from .protocols.quic import canonicalize_quic_payload
 from .protocols.ssdp import canonicalize_ssdp_payload
@@ -423,6 +424,12 @@ def normalize_packet(
         root=_normalize_root_name(root),
     )
     canonicalize_ssdp_payload(packet, normalized_layers, normalized_fields)
+    canonicalize_coap_payload(
+        packet,
+        normalized_layers,
+        normalized_fields,
+        source_hex=source_hex,
+    )
     canonicalize_mdns_payload(packet, normalized_layers, normalized_fields)
     canonicalize_ntp_payload(
         packet,

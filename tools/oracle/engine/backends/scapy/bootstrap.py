@@ -41,6 +41,7 @@ def import_scapy() -> dict[str, Any]:
         import scapy  # type: ignore[import-untyped]
         import scapy.all as scapy_all  # type: ignore[import-untyped]
         import scapy.contrib.bgp as scapy_bgp  # type: ignore[import-untyped]
+        import scapy.contrib.coap as scapy_coap  # type: ignore[import-untyped]
         import scapy.contrib.mqtt as scapy_mqtt  # type: ignore[import-untyped]
         import scapy.contrib.ospf as scapy_ospf  # type: ignore[import-untyped]
         import scapy.layers.dot15d4 as scapy_dot15d4  # type: ignore[import-untyped]
@@ -82,6 +83,7 @@ def import_scapy() -> dict[str, Any]:
         "module": scapy,
         "all": scapy_all,
         "bgp": scapy_bgp,
+        "coap": scapy_coap,
         "dot15d4": scapy_dot15d4,
         "mqtt": scapy_mqtt,
         "ospf": scapy_ospf,

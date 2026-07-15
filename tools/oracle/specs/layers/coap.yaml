@@ -119,15 +119,20 @@ coverage_cases:
 
 backend_support:
   scapy:
-    status: planned
-    native_layers: [Raw]
+    status: partial
+    encode: true
+    decode: true
+    native_layers: [CoAP, Raw]
     notes:
-      - Step 93/94 will add deterministic raw-compatible datagram materialization; no native reliable, OSCORE, or extended-token support is claimed here.
+      - Native Scapy agreement is limited to authoritative RFC 7252 base datagrams; the protocol-local raw builder preserves other bytes without claiming independent agreement.
+      - Reliable framing, extended tokens, incomplete advanced-option typing, and OSCORE transforms are explicit capability gaps.
   wireshark:
-    status: planned
+    status: partial
+    decode: true
     native_layers: [coap]
     notes:
-      - Parser-only normalization is deferred to the reference-backend step and must not require TLS/DTLS secrets.
+      - Parser-only cleartext datagram normalization prefers source bytes and never requires TLS/DTLS or OSCORE secrets.
+      - Reliable stream framing, version-dependent extended-token presentation, and secret-assisted OSCORE remain explicit gaps.
   libcrafter:
     status: supported
     encode: true
@@ -137,4 +142,3 @@ backend_support:
     native_layers: [Coap, CoapReliable]
     notes:
       - The crate supports typed datagram and one-frame reliable CoAP, advanced options, link-format, OSCORE vectors, structured errors, and classic pcap fixtures offline.
-
