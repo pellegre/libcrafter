@@ -14,7 +14,7 @@ use crate::field::{Field, FieldState};
 use crate::packet::{hexdump, Layer, LayerContext, Packet};
 use crate::protocols::ip::{v4::Ipv4, v6::Ipv6};
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
-use crate::protocols::transport::Udp;
+use crate::protocols::transport::{Udp, UDP_HEADER_LEN};
 
 use super::block::{CoapBlock, CoapBlockKind, CoapBlockTransport, CoapBlockValidation};
 use super::constants::*;
@@ -35,6 +35,7 @@ const COAP_TYPE_NON_CONFIRMABLE: u8 = 1;
 const COAP_TYPE_ACKNOWLEDGEMENT: u8 = 2;
 const COAP_TYPE_RESET: u8 = 3;
 const COAP_INSPECTION_HEX_LIMIT: usize = 16;
+const COAP_MAX_UDP_PAYLOAD_LEN: usize = u16::MAX as usize - UDP_HEADER_LEN;
 
 /// Source-backed CoAP datagram version field value.
 ///
@@ -613,6 +614,52 @@ impl fmt::Display for CoapToken {
     }
 }
 
+/// Source-backed RFC 8974 Token Length encoding form.
+///
+/// The form is selected by the four-bit TKL discriminator. Reserved or
+/// out-of-range discriminators remain preserved by [`CoapTokenLength`], but
+/// do not map to an encoding form and are reported through a structured
+/// error by [`CoapTokenLength::encoding`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CoapTokenLengthEncoding {
+    /// TKL 0 through 12 carries the token length directly.
+    Direct,
+    /// TKL 13 uses one extension byte and represents lengths 13 through 268.
+    Extended8,
+    /// TKL 14 uses two extension bytes and represents lengths 269 through
+    /// 65804.
+    Extended16,
+}
+
+impl CoapTokenLengthEncoding {
+    /// Return the number of extension bytes used by this encoding form.
+    pub const fn extension_len(self) -> usize {
+        match self {
+            Self::Direct => 0,
+            Self::Extended8 => 1,
+            Self::Extended16 => 2,
+        }
+    }
+
+    /// Return the smallest token length represented by this encoding form.
+    pub const fn min_len(self) -> usize {
+        match self {
+            Self::Direct => CoapTokenLength::DIRECT_MIN_LEN,
+            Self::Extended8 => CoapTokenLength::EXTENDED8_MIN_LEN,
+            Self::Extended16 => CoapTokenLength::EXTENDED16_MIN_LEN,
+        }
+    }
+
+    /// Return the largest token length represented by this encoding form.
+    pub const fn max_len(self) -> usize {
+        match self {
+            Self::Direct => CoapTokenLength::DIRECT_MAX_LEN,
+            Self::Extended8 => CoapTokenLength::EXTENDED8_MAX_LEN,
+            Self::Extended16 => CoapTokenLength::EXTENDED16_MAX_LEN,
+        }
+    }
+}
+
 /// Lossless CoAP datagram Token Length metadata.
 ///
 /// The discriminator, extension bytes, and logical declared length remain
@@ -626,14 +673,37 @@ pub struct CoapTokenLength {
 }
 
 impl CoapTokenLength {
+    /// Minimum length represented directly by TKL (RFC 8974 Section 2.1).
+    pub const DIRECT_MIN_LEN: usize = 0;
+    /// Maximum length represented directly by TKL (RFC 8974 Section 2.1).
+    pub const DIRECT_MAX_LEN: usize = 12;
+    /// Minimum length represented by the one-byte extension form.
+    pub const EXTENDED8_MIN_LEN: usize = 13;
+    /// Maximum length represented by the one-byte extension form.
+    pub const EXTENDED8_MAX_LEN: usize = 268;
+    /// Minimum length represented by the two-byte extension form.
+    pub const EXTENDED16_MIN_LEN: usize = 269;
+    /// Maximum length represented by the two-byte extension form.
+    pub const EXTENDED16_MAX_LEN: usize = 65_804;
+    /// Maximum token length representable by RFC 8974 TKL metadata.
+    pub const MAX_LEN: usize = Self::EXTENDED16_MAX_LEN;
+
     /// Build the shortest RFC 8974 token-length representation for `len`.
     pub fn canonical_for_len(len: usize) -> Result<Self> {
         match len {
-            0..=12 => Ok(Self::explicit(len as u8, Vec::new(), len)),
-            13..=268 => Ok(Self::explicit(13, vec![(len - 13) as u8], len)),
-            269..=65_804 => Ok(Self::explicit(
+            Self::DIRECT_MIN_LEN..=Self::DIRECT_MAX_LEN => {
+                Ok(Self::explicit(len as u8, Vec::new(), len))
+            }
+            Self::EXTENDED8_MIN_LEN..=Self::EXTENDED8_MAX_LEN => Ok(Self::explicit(
+                13,
+                vec![(len - Self::EXTENDED8_MIN_LEN) as u8],
+                len,
+            )),
+            Self::EXTENDED16_MIN_LEN..=Self::EXTENDED16_MAX_LEN => Ok(Self::explicit(
                 14,
-                ((len - 269) as u16).to_be_bytes().to_vec(),
+                ((len - Self::EXTENDED16_MIN_LEN) as u16)
+                    .to_be_bytes()
+                    .to_vec(),
                 len,
             )),
             _ => Err(CrafterError::invalid_field_value(
@@ -666,6 +736,60 @@ impl CoapTokenLength {
     /// Return the preserved logical declared token length.
     pub const fn declared_len(&self) -> usize {
         self.declared_len
+    }
+
+    /// Return the RFC 8974 encoding form selected by the preserved TKL.
+    ///
+    /// TKL 15 remains a message-format error. Values above 15 can exist only
+    /// as caller overrides and are rejected here instead of being masked.
+    pub fn encoding(&self) -> Result<CoapTokenLengthEncoding> {
+        match self.nibble {
+            0..=12 => Ok(CoapTokenLengthEncoding::Direct),
+            13 => Ok(CoapTokenLengthEncoding::Extended8),
+            14 => Ok(CoapTokenLengthEncoding::Extended16),
+            15 => Err(CrafterError::invalid_field_value(
+                "coap.token-length",
+                "reserved TKL encoding 15",
+            )),
+            _ => Err(CrafterError::invalid_field_value(
+                "coap.token-length",
+                "token-length discriminator exceeds four bits",
+            )),
+        }
+    }
+
+    /// Decode the logical token length represented by the TKL and extension.
+    ///
+    /// This value is derived from preserved wire metadata and is intentionally
+    /// separate from [`Self::declared_len`], which may be a caller override.
+    pub fn wire_len(&self) -> Result<usize> {
+        match self.encoding()? {
+            CoapTokenLengthEncoding::Direct if self.extension_bytes.is_empty() => {
+                Ok(usize::from(self.nibble))
+            }
+            CoapTokenLengthEncoding::Extended8 if self.extension_bytes.len() == 1 => {
+                Ok(Self::EXTENDED8_MIN_LEN + usize::from(self.extension_bytes[0]))
+            }
+            CoapTokenLengthEncoding::Extended16 if self.extension_bytes.len() == 2 => {
+                Ok(Self::EXTENDED16_MIN_LEN
+                    + usize::from(u16::from_be_bytes([
+                        self.extension_bytes[0],
+                        self.extension_bytes[1],
+                    ])))
+            }
+            CoapTokenLengthEncoding::Direct => Err(CrafterError::invalid_field_value(
+                "coap.token-length",
+                "direct TKL encoding must not contain extension bytes",
+            )),
+            CoapTokenLengthEncoding::Extended8 => Err(CrafterError::invalid_field_value(
+                "coap.token-length",
+                "TKL 13 encoding requires exactly one extension byte",
+            )),
+            CoapTokenLengthEncoding::Extended16 => Err(CrafterError::invalid_field_value(
+                "coap.token-length",
+                "TKL 14 encoding requires exactly two extension bytes",
+            )),
+        }
     }
 }
 
@@ -1437,12 +1561,17 @@ impl Coap {
     pub fn token_length_value(&self) -> Result<CoapTokenLength> {
         match self.token_length.value() {
             Some(value) => Ok(value.clone()),
-            None => {
-                let token_len = self.token_value().len();
-                validate_base_token_len(token_len)?;
-                CoapTokenLength::canonical_for_len(token_len)
-            }
+            None => self.canonical_token_length_value(),
         }
+    }
+
+    /// Derive canonical RFC 8974 metadata from the owned token bytes.
+    ///
+    /// This accessor deliberately ignores an explicit [`Self::token_length`]
+    /// override, allowing callers to compare the canonical representation of
+    /// the lossless token bytes with the wire metadata selected for compile.
+    pub fn canonical_token_length_value(&self) -> Result<CoapTokenLength> {
+        CoapTokenLength::canonical_for_len(self.token_value().len())
     }
 
     /// Return the Code field state.
@@ -2252,6 +2381,12 @@ impl Layer for Coap {
     }
 
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        // The model accepts complete RFC 8974 metadata, while canonical
+        // extension-byte emission remains a separate codec concern. Retain
+        // the established base-only automatic compile boundary until then.
+        if self.token_length_state() == FieldState::Unset {
+            validate_base_token_len(self.token_value().len())?;
+        }
         let first_octet = self.first_octet_value()?;
         let options = self.encoded_options()?;
         let mut encoded = Vec::with_capacity(self.encoded_len());
@@ -2449,17 +2584,24 @@ fn validate_header_semantics(message: &Coap, validation: &mut CoapValidation) {
 fn validate_token_semantics(message: &Coap, validation: &mut CoapValidation) {
     let actual_len = message.token_value().len();
     match message.token_length_value() {
-        Ok(token_length) if !token_length_matches_bytes(&token_length, actual_len) => {
-            validation.push(
+        Ok(token_length) => match token_length.wire_len() {
+            Ok(wire_len)
+                if wire_len == token_length.declared_len() && wire_len == actual_len => {}
+            Ok(wire_len) => validation.push(
                 "coap.token-length",
                 CoapValidationSeverity::Error,
                 CoapValidationCategory::TokenLength,
                 format!(
-                    "declared token length {} with discriminator {} does not describe {actual_len} token bytes",
-                    token_length.declared_len(),
-                    token_length.nibble()
+                    "wire token length {wire_len} and declared length {} do not describe {actual_len} token bytes",
+                    token_length.declared_len()
                 ),
-            );
+            ),
+            Err(error) => validation.push(
+                "coap.token-length",
+                CoapValidationSeverity::Error,
+                CoapValidationCategory::TokenLength,
+                error.to_string(),
+            ),
         }
         Err(error) => validation.push(
             "coap.token-length",
@@ -2467,7 +2609,34 @@ fn validate_token_semantics(message: &Coap, validation: &mut CoapValidation) {
             CoapValidationCategory::TokenLength,
             error.to_string(),
         ),
-        Ok(_) => {}
+    }
+
+    match message.canonical_token_length_value() {
+        Ok(canonical) => {
+            let minimum_datagram_len = COAP_HEADER_LEN
+                .saturating_add(canonical.encoding().map_or(0, |form| form.extension_len()))
+                .saturating_add(actual_len);
+            if minimum_datagram_len > COAP_MAX_UDP_PAYLOAD_LEN {
+                validation.push(
+                    "coap.token-length",
+                    CoapValidationSeverity::Error,
+                    CoapValidationCategory::TokenLength,
+                    format!(
+                        "token length {actual_len} cannot fit with the CoAP header and TKL extension in a standard UDP datagram"
+                    ),
+                );
+            }
+        }
+        Err(error) => {
+            if message.token_length_value().is_ok() {
+                validation.push(
+                    "coap.token-length",
+                    CoapValidationSeverity::Error,
+                    CoapValidationCategory::TokenLength,
+                    error.to_string(),
+                );
+            }
+        }
     }
 }
 
@@ -2882,31 +3051,9 @@ fn bounded_hex(bytes: &[u8]) -> String {
 }
 
 fn token_length_matches_bytes(token_length: &CoapTokenLength, actual_len: usize) -> bool {
-    if token_length.declared_len() != actual_len {
-        return false;
-    }
-
-    match token_length.nibble() {
-        0..=12 => {
-            token_length.extension_bytes().is_empty()
-                && token_length.declared_len() == usize::from(token_length.nibble())
-        }
-        13 => {
-            let extension = token_length.extension_bytes();
-            extension.len() == 1
-                && token_length.declared_len() == 13usize.saturating_add(usize::from(extension[0]))
-        }
-        14 => {
-            let extension = token_length.extension_bytes();
-            extension.len() == 2
-                && token_length.declared_len()
-                    == 269usize.saturating_add(usize::from(u16::from_be_bytes([
-                        extension[0],
-                        extension[1],
-                    ])))
-        }
-        _ => false,
-    }
+    token_length
+        .wire_len()
+        .is_ok_and(|wire_len| wire_len == token_length.declared_len() && wire_len == actual_len)
 }
 
 fn option_encoding_mismatch(option: &CoapOption, expected_delta: u32) -> bool {
@@ -2941,7 +3088,6 @@ mod tests {
     use super::*;
     use crate::packet::IntoPacket;
     use crate::protocols::coap::CoapOptionEncoding;
-    use crate::protocols::transport::UDP_HEADER_LEN;
 
     #[test]
     fn coap_packet_storage_supports_conversion_typed_access_mutation_and_clone() {
@@ -3443,23 +3589,118 @@ mod tests {
         assert_eq!(explicit.nibble(), 0xff);
         assert_eq!(explicit.extension_bytes(), &[1, 2, 3]);
         assert_eq!(explicit.declared_len(), usize::MAX);
+        assert_eq!(
+            explicit.encoding().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "coap.token-length",
+                "token-length discriminator exceeds four bits"
+            )
+        );
 
         let direct = CoapTokenLength::canonical_for_len(12).unwrap();
         assert_eq!(direct.nibble(), 12);
         assert!(direct.extension_bytes().is_empty());
         assert_eq!(direct.declared_len(), 12);
+        assert_eq!(direct.wire_len().unwrap(), 12);
+        assert_eq!(direct.encoding().unwrap(), CoapTokenLengthEncoding::Direct);
 
         let extended8 = CoapTokenLength::canonical_for_len(268).unwrap();
         assert_eq!(extended8.nibble(), 13);
         assert_eq!(extended8.extension_bytes(), &[0xff]);
         assert_eq!(extended8.declared_len(), 268);
+        assert_eq!(extended8.wire_len().unwrap(), 268);
+        assert_eq!(
+            extended8.encoding().unwrap(),
+            CoapTokenLengthEncoding::Extended8
+        );
 
-        let extended16 = CoapTokenLength::canonical_for_len(65_804).unwrap();
+        let extended16 = CoapTokenLength::canonical_for_len(CoapTokenLength::MAX_LEN).unwrap();
         assert_eq!(extended16.nibble(), 14);
         assert_eq!(extended16.extension_bytes(), &[0xff, 0xff]);
-        assert_eq!(extended16.declared_len(), 65_804);
+        assert_eq!(extended16.declared_len(), CoapTokenLength::MAX_LEN);
+        assert_eq!(extended16.wire_len().unwrap(), CoapTokenLength::MAX_LEN);
+        assert_eq!(
+            extended16.encoding().unwrap(),
+            CoapTokenLengthEncoding::Extended16
+        );
 
-        assert!(CoapTokenLength::canonical_for_len(65_805).is_err());
+        assert!(CoapTokenLength::canonical_for_len(CoapTokenLength::MAX_LEN + 1).is_err());
+    }
+
+    #[test]
+    fn token_length_encoding_metadata_exposes_source_backed_form_bounds() {
+        assert_eq!(CoapTokenLengthEncoding::Direct.extension_len(), 0);
+        assert_eq!(CoapTokenLengthEncoding::Direct.min_len(), 0);
+        assert_eq!(CoapTokenLengthEncoding::Direct.max_len(), 12);
+        assert_eq!(CoapTokenLengthEncoding::Extended8.extension_len(), 1);
+        assert_eq!(CoapTokenLengthEncoding::Extended8.min_len(), 13);
+        assert_eq!(CoapTokenLengthEncoding::Extended8.max_len(), 268);
+        assert_eq!(CoapTokenLengthEncoding::Extended16.extension_len(), 2);
+        assert_eq!(CoapTokenLengthEncoding::Extended16.min_len(), 269);
+        assert_eq!(CoapTokenLengthEncoding::Extended16.max_len(), 65_804);
+
+        assert_eq!(CoapTokenLength::DIRECT_MAX_LEN, 12);
+        assert_eq!(CoapTokenLength::EXTENDED8_MAX_LEN, 268);
+        assert_eq!(CoapTokenLength::EXTENDED16_MAX_LEN, 65_804);
+    }
+
+    #[test]
+    fn canonical_token_length_remains_distinct_from_explicit_wire_override() {
+        let message = Coap::get()
+            .token(CoapToken::from_bytes([0xa5; 13]))
+            .token_length(CoapTokenLength::explicit(1, Vec::new(), 1));
+
+        let canonical = message.canonical_token_length_value().unwrap();
+        assert_eq!(
+            canonical.encoding().unwrap(),
+            CoapTokenLengthEncoding::Extended8
+        );
+        assert_eq!(canonical.extension_bytes(), [0]);
+        assert_eq!(canonical.declared_len(), 13);
+        assert_eq!(
+            message.token_length_value().unwrap(),
+            CoapTokenLength::explicit(1, Vec::new(), 1)
+        );
+
+        let validation = message.validate();
+        assert_eq!(validation.len(), 1);
+        assert_eq!(validation.issues()[0].field(), "coap.token-length");
+        assert!(validation.issues()[0]
+            .reason()
+            .contains("do not describe 13 token bytes"));
+    }
+
+    #[test]
+    fn token_validation_reports_standard_udp_length_incompatibility() {
+        let largest_token_that_fits = COAP_MAX_UDP_PAYLOAD_LEN
+            - COAP_HEADER_LEN
+            - CoapTokenLengthEncoding::Extended16.extension_len();
+        let message = Coap::get().token(CoapToken::from_bytes(vec![
+            0x7e;
+            largest_token_that_fits + 1
+        ]));
+
+        let validation = message.validate();
+        assert_eq!(validation.len(), 1);
+        assert_eq!(validation.issues()[0].field(), "coap.token-length");
+        assert_eq!(
+            validation.issues()[0].reason(),
+            format!(
+                "token length {} cannot fit with the CoAP header and TKL extension in a standard UDP datagram",
+                largest_token_that_fits + 1
+            )
+        );
+    }
+
+    #[test]
+    fn reserved_token_length_remains_a_structured_direct_decode_error() {
+        assert_eq!(
+            Coap::decode(&[0x4f, 0x01, 0x00, 0x01]),
+            Err(CrafterError::invalid_field_value(
+                "coap.token-length",
+                "reserved TKL encoding 15"
+            ))
+        );
     }
 
     #[test]

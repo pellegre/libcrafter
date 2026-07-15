@@ -43,8 +43,9 @@ pub use self::link_format::{
 pub use self::message::{
     coap_discovery_request, coap_ipv4_request, coap_ipv4_response, coap_ipv6_request,
     coap_ipv6_response, coap_request_udp, coap_response_udp, Coap, CoapCode, CoapMessageType,
-    CoapOptionOrder, CoapPayloadMarker, CoapToken, CoapTokenLength, CoapValidation,
-    CoapValidationCategory, CoapValidationIssue, CoapValidationSeverity, CoapVersion,
+    CoapOptionOrder, CoapPayloadMarker, CoapToken, CoapTokenLength, CoapTokenLengthEncoding,
+    CoapValidation, CoapValidationCategory, CoapValidationIssue, CoapValidationSeverity,
+    CoapVersion,
 };
 pub use self::no_response::CoapNoResponse;
 pub use self::observe::{CoapObserve, CoapObserveOrdering};
