@@ -16,6 +16,7 @@ use crate::protocols::ip::{v4::Ipv4, v6::Ipv6};
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::protocols::transport::Udp;
 
+use super::block::{CoapBlock, CoapBlockKind, CoapBlockTransport, CoapBlockValidation};
 use super::constants::*;
 use super::observe::CoapObserve;
 use super::option::{
@@ -1054,6 +1055,57 @@ impl Coap {
         self.option(CoapOption::from(value.into()))
     }
 
+    /// Append one raw-preserving RFC 7959 Block1 option.
+    pub fn block1(self, value: CoapBlock) -> Self {
+        self.option(value.into_block1_option())
+    }
+
+    /// Attach one descriptive Block1 value and its exact request payload.
+    ///
+    /// The existing code, URI options, token, and transaction fields remain
+    /// caller-controlled. Payload length and M-bit consistency are checked
+    /// only by [`Self::block1_validation`], never while building or compiling.
+    pub fn block1_request_fragment(self, value: CoapBlock, payload: impl Into<Vec<u8>>) -> Self {
+        self.block1(value).payload(payload)
+    }
+
+    /// Attach a Block1 request fragment and total request-body Size1 metadata.
+    pub fn block1_request_fragment_with_size1(
+        self,
+        value: CoapBlock,
+        payload: impl Into<Vec<u8>>,
+        total_size: impl Into<CoapSize1>,
+    ) -> Self {
+        self.block1_request_fragment(value, payload)
+            .size1(total_size)
+    }
+
+    /// Build a provisional RFC 7959 `2.31 Continue` Block1 response.
+    ///
+    /// The supplied control value is emitted exactly, allowing a server to
+    /// acknowledge a block and select a smaller SZX for subsequent requests.
+    pub fn block1_continue(value: CoapBlock) -> Self {
+        Self::response(CoapCode::continue_()).block1(value)
+    }
+
+    /// Build an RFC 7959 `4.08 Request Entity Incomplete` Block1 response.
+    pub fn block1_request_entity_incomplete(value: CoapBlock) -> Self {
+        Self::response(CoapCode::request_entity_incomplete()).block1(value)
+    }
+
+    /// Build an RFC 7959 `4.13 Request Entity Too Large` Block1 response.
+    ///
+    /// Size1 carries the server's maximum accepted request-body size, while
+    /// the exact Block1 value may advertise a smaller preferred SZX.
+    pub fn block1_request_entity_too_large(
+        value: CoapBlock,
+        maximum_size: impl Into<CoapSize1>,
+    ) -> Self {
+        Self::response(CoapCode::request_entity_too_large())
+            .block1(value)
+            .size1(maximum_size)
+    }
+
     /// Build an RFC 7641 GET registration request with `Observe: 0`.
     ///
     /// Token, URI, transport, and transaction fields remain caller-controlled.
@@ -1247,6 +1299,41 @@ impl Coap {
         self.observe_values().next()
     }
 
+    /// Iterate over typed, raw-preserving Block1 occurrences.
+    pub fn block1_values(&self) -> impl Iterator<Item = Result<CoapBlock>> + '_ {
+        self.options
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_BLOCK1)
+            .map(CoapBlock::try_from)
+    }
+
+    /// Return the first Block1 occurrence as a typed, raw-preserving value.
+    pub fn block1_value(&self) -> Option<Result<CoapBlock>> {
+        self.block1_values().next()
+    }
+
+    /// Return an explicit source-backed report for the first Block1 option.
+    ///
+    /// Block1 in a request is descriptive, so its M bit and selected size are
+    /// checked against the request payload. Block1 in a response is control
+    /// metadata, so the response payload is deliberately ignored. Repeated
+    /// occurrences remain available through [`Self::block1_values`] and are
+    /// reported separately by [`Self::validate`].
+    pub fn block1_validation(
+        &self,
+        transport: CoapBlockTransport,
+    ) -> Option<Result<CoapBlockValidation>> {
+        self.block1_value().map(|value| {
+            value.map(|value| {
+                if self.is_request() {
+                    value.validate_block1(transport, self.payload.len())
+                } else {
+                    value.validate_control(CoapBlockKind::Block1, transport)
+                }
+            })
+        })
+    }
+
     /// Return the Observe value when this is a 2.xx notification shape.
     pub fn observe_notification(&self) -> Option<Result<CoapObserve>> {
         self.is_observe_notification()
@@ -1271,6 +1358,19 @@ impl Coap {
             .iter()
             .filter(|option| option.number().value() == COAP_OPTION_LOCATION_QUERY)
             .map(CoapLocationQuery::try_from)
+    }
+
+    /// Iterate over typed, raw-preserving Size1 occurrences.
+    pub fn size1_values(&self) -> impl Iterator<Item = Result<CoapSize1>> + '_ {
+        self.options
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_SIZE1)
+            .map(CoapSize1::try_from)
+    }
+
+    /// Return the first Size1 occurrence as a typed, raw-preserving value.
+    pub fn size1_value(&self) -> Option<Result<CoapSize1>> {
+        self.size1_values().next()
     }
 
     /// Iterate over typed Proxy-Uri occurrences in insertion or wire order.
