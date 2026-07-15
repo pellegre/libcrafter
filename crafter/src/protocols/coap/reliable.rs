@@ -368,6 +368,76 @@ impl CoapReliable {
         &self.payload
     }
 
+    /// Return true when this reliable frame carries the Empty (`0.00`) code.
+    pub fn is_empty(&self) -> bool {
+        self.code_value().is_empty()
+    }
+
+    /// Return true when this reliable frame carries a non-empty class-0 code.
+    pub fn is_request(&self) -> bool {
+        self.code_value().is_request()
+    }
+
+    /// Return true when this reliable frame carries a class-2 through class-5 code.
+    pub fn is_response(&self) -> bool {
+        self.code_value().is_response()
+    }
+
+    /// Return true for every class-7 signaling code, including future values.
+    pub fn is_signaling(&self) -> bool {
+        self.code_value().is_signaling()
+    }
+
+    /// Return true only for a Capabilities and Settings Message (`7.01`).
+    pub fn is_csm(&self) -> bool {
+        self.code_value().is_csm()
+    }
+
+    /// Return true only for a Ping signaling message (`7.02`).
+    pub fn is_ping(&self) -> bool {
+        self.code_value().is_ping()
+    }
+
+    /// Return true only for a Pong signaling message (`7.03`).
+    pub fn is_pong(&self) -> bool {
+        self.code_value().is_pong()
+    }
+
+    /// Return true only for a Release signaling message (`7.04`).
+    pub fn is_release(&self) -> bool {
+        self.code_value().is_release()
+    }
+
+    /// Return true only for an Abort signaling message (`7.05`).
+    pub fn is_abort(&self) -> bool {
+        self.code_value().is_abort()
+    }
+
+    /// Compare the opaque Token bytes of two reliable CoAP frames.
+    ///
+    /// This is a packet-local predicate. It does not retain a connection,
+    /// establish peer identity, or impose a response timeout.
+    pub fn token_matches(&self, other: &Self) -> bool {
+        self.token_value() == other.token_value()
+    }
+
+    /// Build the RFC 8323 Pong shape for `ping` by copying its Token.
+    ///
+    /// No options or connection state are copied. Callers may append a
+    /// contextual Custody option separately when that behavior is required.
+    pub fn pong_for(ping: &Self) -> Self {
+        Self::pong().token(ping.token_value().clone())
+    }
+
+    /// Test whether this Pong is the packet-local response to `ping`.
+    ///
+    /// RFC 8323 Section 5.4 correlates the pair by exact Token equality.
+    /// Endpoint identity, ordering, timing, and liveness policy remain the
+    /// caller's responsibility.
+    pub fn matches_ping(&self, ping: &Self) -> bool {
+        self.is_pong() && ping.is_ping() && self.token_matches(ping)
+    }
+
     fn encoded_options(&self) -> Result<Vec<u8>> {
         let mut options = CoapOptions::from_options(self.options.iter().cloned());
         options.sort_canonical();
@@ -809,6 +879,7 @@ pub(super) fn decode_reliable_token(
 mod tests {
     use super::*;
     use crate::packet::Packet;
+    use crate::protocols::coap::Coap;
     use crate::protocols::transport::Tcp;
 
     #[test]
@@ -862,6 +933,165 @@ mod tests {
             assert_eq!(message.token_state(), FieldState::Unset);
             assert_eq!(message.payload_marker_state(), FieldState::Unset);
         }
+    }
+
+    #[test]
+    fn signaling_code_predicates_are_exact_and_lossless() {
+        let cases = [
+            (CoapCode::csm(), [true, false, false, false, false]),
+            (CoapCode::ping(), [false, true, false, false, false]),
+            (CoapCode::pong(), [false, false, true, false, false]),
+            (CoapCode::release(), [false, false, false, true, false]),
+            (CoapCode::abort(), [false, false, false, false, true]),
+        ];
+
+        for (code, expected) in cases {
+            assert!(code.is_signaling());
+            assert_eq!(
+                [
+                    code.is_csm(),
+                    code.is_ping(),
+                    code.is_pong(),
+                    code.is_release(),
+                    code.is_abort(),
+                ],
+                expected
+            );
+        }
+
+        let unknown = CoapCode::from_wire(0xff);
+        assert!(unknown.is_signaling());
+        assert!(!unknown.is_csm());
+        assert!(!unknown.is_ping());
+        assert!(!unknown.is_pong());
+        assert!(!unknown.is_release());
+        assert!(!unknown.is_abort());
+        assert_eq!(unknown.wire_value(), 0xff);
+    }
+
+    #[test]
+    fn signaling_constructors_compile_and_decode_exact_codes() {
+        let cases = [
+            (CoapReliable::csm(), 0xe1),
+            (CoapReliable::ping(), 0xe2),
+            (CoapReliable::pong(), 0xe3),
+            (CoapReliable::release(), 0xe4),
+            (CoapReliable::abort(), 0xe5),
+        ];
+
+        for (message, expected_code) in cases {
+            let bytes = Packet::from_layer(message).compile().unwrap();
+            assert_eq!(bytes.as_bytes(), &[0x00, expected_code]);
+
+            let (decoded, consumed) = CoapReliable::decode(bytes.as_bytes()).unwrap();
+            assert_eq!(consumed, 2);
+            assert_eq!(decoded.code_value().wire_value(), expected_code);
+            assert!(decoded.is_signaling());
+        }
+    }
+
+    #[test]
+    fn reliable_classification_separates_signaling_and_ordinary_messages() {
+        let request = CoapReliable::request(CoapCode::get());
+        assert!(request.is_request());
+        assert!(!request.is_response());
+        assert!(!request.is_empty());
+        assert!(!request.is_signaling());
+
+        let response = CoapReliable::response(CoapCode::content());
+        assert!(response.is_response());
+        assert!(!response.is_request());
+        assert!(!response.is_signaling());
+
+        let empty = CoapReliable::default();
+        assert!(empty.is_empty());
+        assert!(!empty.is_request());
+        assert!(!empty.is_response());
+        assert!(!empty.is_signaling());
+
+        let unknown = CoapReliable::new(CoapCode::from_wire(0xff));
+        assert!(unknown.is_signaling());
+        assert!(!unknown.is_csm());
+        assert!(!unknown.is_ping());
+        assert!(!unknown.is_pong());
+        assert!(!unknown.is_release());
+        assert!(!unknown.is_abort());
+    }
+
+    #[test]
+    fn malformed_code_transport_combinations_remain_byte_exact() {
+        let datagram_signaling = Coap::request(CoapCode::ping());
+        assert_eq!(
+            Packet::from_layer(datagram_signaling)
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &[0x40, 0xe2, 0x00, 0x00]
+        );
+
+        let reserved_reliable = CoapReliable::new(CoapCode::from_wire(0xc0));
+        let bytes = Packet::from_layer(reserved_reliable).compile().unwrap();
+        assert_eq!(bytes.as_bytes(), &[0x00, 0xc0]);
+
+        let (decoded, consumed) = CoapReliable::decode(bytes.as_bytes()).unwrap();
+        assert_eq!(consumed, bytes.len());
+        assert_eq!(decoded.code_value().wire_value(), 0xc0);
+        assert!(!decoded.is_request());
+        assert!(!decoded.is_response());
+        assert!(!decoded.is_signaling());
+    }
+
+    #[test]
+    fn ping_pong_helpers_copy_and_correlate_only_exact_tokens() {
+        let ping = CoapReliable::ping().token(CoapToken::from_bytes([0x42]));
+        let pong = CoapReliable::pong_for(&ping);
+
+        assert!(ping.is_ping());
+        assert!(pong.is_pong());
+        assert!(pong.matches_ping(&ping));
+        assert!(pong.token_matches(&ping));
+        assert_eq!(
+            Packet::from_layer(pong.clone())
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &[0x01, 0xe3, 0x42]
+        );
+
+        assert!(!CoapReliable::pong()
+            .token(CoapToken::from_bytes([0x43]))
+            .matches_ping(&ping));
+        assert!(!CoapReliable::pong_for(&ping).matches_ping(&CoapReliable::csm()));
+        assert!(!CoapReliable::ping()
+            .token(CoapToken::from_bytes([0x42]))
+            .matches_ping(&ping));
+    }
+
+    #[test]
+    fn signaling_summary_show_and_unknown_code_remain_inspectable() {
+        let ping = CoapReliable::ping().token(CoapToken::from_bytes([0x42]));
+        let packet = Packet::from_layer(ping);
+
+        assert_eq!(
+            packet.summary(),
+            "CoapReliable(length=0, code=7.02(Ping), token_len=1, options=0, marker=absent, payload=0 bytes)"
+        );
+        assert_eq!(
+            packet.show(),
+            "Packet(len=3, layers=1)\n  [0] CoapReliable\n      length: 0\n      token_length: 1\n      code: 7.02(Ping)\n      token: len=1 hex=42\n      options: 0\n      payload_marker: absent\n      payload_length: 0"
+        );
+
+        let unknown_bytes = Packet::from_layer(CoapReliable::new(CoapCode::from_wire(0xff)))
+            .compile()
+            .unwrap();
+        assert_eq!(unknown_bytes.as_bytes(), &[0x00, 0xff]);
+        let (unknown, consumed) = CoapReliable::decode(unknown_bytes.as_bytes()).unwrap();
+        assert_eq!(consumed, unknown_bytes.len());
+        assert_eq!(unknown.code_value().wire_value(), 0xff);
+        assert_eq!(
+            unknown.summary(),
+            "CoapReliable(length=0, code=7.31(signaling-7.31), token_len=0, options=0, marker=absent, payload=0 bytes)"
+        );
     }
 
     #[test]
