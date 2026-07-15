@@ -243,3 +243,55 @@ pub mod prelude {
     #[cfg(feature = "whad")]
     pub use crate::{WhadBleMode, WhadDot15d4Mode, WhadWireBuilder};
 }
+
+#[cfg(test)]
+mod coap_public_path_tests {
+    use crate::Layer;
+
+    fn assert_layer<T: Layer>() {}
+
+    #[test]
+    fn protocol_module_path_compiles() {
+        use crate::protocols::coap as surface;
+
+        assert_layer::<surface::Coap>();
+        let _: surface::CoapCode = surface::CoapCode::get();
+        let _: surface::CoapToken = surface::CoapToken::default();
+        let _: surface::CoapOption =
+            surface::CoapOption::new(surface::COAP_OPTION_URI_PATH, b"status".to_vec());
+        let _: fn(&[u8]) -> crate::Result<surface::Coap> = surface::decode_coap;
+        let _: fn() -> crate::Udp = surface::coap_request_udp;
+        let _ = surface::coap_code_meta(surface::CoapCode::get().wire_value());
+        assert_eq!(surface::COAP_PORT, 5683);
+    }
+
+    #[test]
+    fn crate_root_path_compiles() {
+        assert_layer::<crate::Coap>();
+        let _: crate::CoapOptionNumber = crate::COAP_OPTION_URI_PATH.into();
+        let _: fn(&[u8]) -> crate::Result<crate::Coap> = crate::decode_coap;
+        let _: fn() -> crate::Udp = crate::coap_request_udp;
+        let _ = crate::coap_option_meta(crate::COAP_OPTION_URI_PATH);
+        assert_eq!(crate::COAP_HEADER_LEN, 4);
+    }
+
+    #[test]
+    fn core_path_compiles() {
+        assert_layer::<crate::core::Coap>();
+        let _: crate::core::CoapPayloadMarker = crate::core::CoapPayloadMarker::Absent;
+        let _: fn(&[u8]) -> crate::Result<crate::core::Coap> = crate::core::decode_coap;
+        let _: fn() -> crate::core::Udp = crate::core::coap_response_udp;
+        let _ = crate::core::coap_content_format_meta(0);
+        assert_eq!(crate::core::COAP_VERSION_1, 1);
+    }
+
+    #[test]
+    fn prelude_path_compiles() {
+        assert_layer::<crate::prelude::Coap>();
+        let _: crate::prelude::CoapOptionOrder = crate::prelude::CoapOptionOrder::Wire;
+        let _: fn(&[u8]) -> crate::Result<crate::prelude::Coap> = crate::prelude::decode_coap;
+        let _: fn() -> crate::prelude::Udp = crate::prelude::coap_response_udp;
+        let _ = crate::prelude::coap_signaling_code_meta(0xe1);
+        assert_eq!(crate::prelude::COAP_PAYLOAD_MARKER, 0xff);
+    }
+}
