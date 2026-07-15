@@ -7,7 +7,8 @@ use super::constants::{
     COAP_VERSION_MASK, COAP_VERSION_SHIFT,
 };
 use super::message::{
-    Coap, CoapCode, CoapMessageType, CoapOptionOrder, CoapToken, CoapTokenLength, CoapVersion,
+    Coap, CoapCode, CoapMessageType, CoapOptionOrder, CoapPayloadMarker, CoapToken,
+    CoapTokenLength, CoapVersion,
 };
 use super::option::decode_option_sequence;
 
@@ -93,6 +94,37 @@ pub(super) fn decode_token_and_options(bytes: &[u8]) -> Result<DecodedTokenOptio
         consumed,
         payload_marker: decoded_options.payload_marker,
     })
+}
+
+/// Decode one complete CoAP datagram, preserving its payload boundary.
+///
+/// Payload bytes remain opaque regardless of any Content-Format option. An
+/// absent marker is recorded independently from an empty payload, while a
+/// present marker must be followed by at least one payload byte.
+pub(super) fn decode_datagram(bytes: &[u8]) -> Result<Coap> {
+    let decoded = decode_token_and_options(bytes)?;
+
+    if !decoded.payload_marker {
+        return Ok(decoded
+            .message
+            .payload_marker(CoapPayloadMarker::Absent)
+            .payload(Vec::new()));
+    }
+
+    let marker_and_payload = bytes.get(decoded.consumed..).unwrap_or_default();
+    let payload = marker_and_payload.get(1..).unwrap_or_default();
+    if payload.is_empty() {
+        return Err(CrafterError::buffer_too_short(
+            "coap.payload",
+            1,
+            payload.len(),
+        ));
+    }
+
+    Ok(decoded
+        .message
+        .payload_marker(CoapPayloadMarker::Present)
+        .payload(payload.to_vec()))
 }
 
 fn decode_token_length(nibble: u8, bytes: &[u8]) -> Result<(CoapTokenLength, usize)> {
@@ -380,6 +412,74 @@ mod tests {
             decode_token_and_options(&[0x40, 0x01, 0x00, 0x01, 0xd0]),
             Err(CrafterError::BufferTooShort {
                 context: "coap.option.delta.extended8",
+                required: 1,
+                available: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn absent_marker_preserves_an_empty_payload_boundary() {
+        let bytes = [0x40, 0x01, 0x12, 0x34];
+
+        let decoded = decode_datagram(&bytes).expect("decode empty CoAP payload");
+
+        assert_eq!(decoded.payload_marker_state(), FieldState::User);
+        assert_eq!(decoded.payload_marker_value(), CoapPayloadMarker::Absent);
+        assert!(decoded.payload_value().is_empty());
+        assert_eq!(
+            Packet::from_layer(decoded).compile().unwrap().as_bytes(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn utf8_payload_remains_owned_opaque_bytes() {
+        let text = "Gr\u{fc}\u{df}e";
+        let mut bytes = vec![
+            0x40,
+            0x45,
+            0x12,
+            0x34,
+            0xc1,
+            0x00, // Content-Format: text/plain;charset=utf-8
+            COAP_PAYLOAD_MARKER,
+        ];
+        bytes.extend_from_slice(text.as_bytes());
+
+        let decoded = decode_datagram(&bytes).expect("decode UTF-8 CoAP payload");
+
+        assert_eq!(decoded.payload_marker_state(), FieldState::User);
+        assert_eq!(decoded.payload_marker_value(), CoapPayloadMarker::Present);
+        assert_eq!(decoded.options_value()[0].number().value(), 12);
+        assert_eq!(decoded.payload_value(), text.as_bytes());
+        assert_eq!(
+            Packet::from_layer(decoded).compile().unwrap().as_bytes(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn binary_payload_can_begin_with_and_contain_marker_octets() {
+        let payload = [COAP_PAYLOAD_MARKER, 0x00, 0x80, COAP_PAYLOAD_MARKER];
+        let mut bytes = vec![0x40, 0x45, 0xab, 0xcd, COAP_PAYLOAD_MARKER];
+        bytes.extend_from_slice(&payload);
+
+        let decoded = decode_datagram(&bytes).expect("decode binary CoAP payload");
+
+        assert_eq!(decoded.payload_value(), payload);
+        assert_eq!(
+            Packet::from_layer(decoded).compile().unwrap().as_bytes(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn marker_without_payload_reports_stable_boundary_error() {
+        assert_eq!(
+            decode_datagram(&[0x40, 0x45, 0x12, 0x34, COAP_PAYLOAD_MARKER]),
+            Err(CrafterError::BufferTooShort {
+                context: "coap.payload",
                 required: 1,
                 available: 0,
             })
