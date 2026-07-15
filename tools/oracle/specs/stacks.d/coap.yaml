@@ -11,7 +11,29 @@ stacks:
   - name: ipv4_udp_coap
     root: "l3:ipv4"
     layers: [ipv4, udp, coap]
-    coverage_cases: [coap-datagram-get, coap-options-payload, coap-observe-notification, coap-block2, coap-qblock2, coap-extended-token-extended16, coap-oscore-request-vector, coap-secure-port-raw, coap-pcap-raw-ipv4]
+    coverage_cases:
+      - coap-datagram-get
+      - coap-options-payload
+      - coap-unknown-preservation
+      - coap-udp-raw-fallback
+      - coap-observe-register
+      - coap-observe-notification
+      - coap-observe-wrap
+      - coap-block1
+      - coap-block2
+      - coap-qblock1
+      - coap-qblock2
+      - coap-extended-token-direct
+      - coap-extended-token-extended8
+      - coap-extended-token-extended16
+      - coap-extended-token-explicit
+      - coap-link-format-discovery
+      - coap-link-format-raw
+      - coap-oscore-request-vector
+      - coap-oscore-response-vector
+      - coap-oscore-opaque
+      - coap-secure-port-raw
+      - coap-pcap-raw-ipv4
   - name: ipv6_udp_coap
     root: "l3:ipv6"
     layers: [ipv6, udp, coap]
@@ -19,11 +41,15 @@ stacks:
   - name: ipv4_tcp_coap_reliable
     root: "l3:ipv4"
     layers: [ipv4, tcp, coap]
-    coverage_cases: [coap-reliable-csm, coap-reliable-ping-pong, coap-bert]
+    coverage_cases: [coap-reliable-csm, coap-reliable-ping-pong, coap-reliable-release-abort, coap-reliable-concatenated-raw, coap-bert]
   - name: ipv6_tcp_coap_reliable
     root: "l3:ipv6"
     layers: [ipv6, tcp, coap]
     coverage_cases: [coap-reliable-csm, coap-reliable-release-abort, coap-extended-token-extended16]
+  - name: ethernet_ipv4_udp_coap
+    root: "link:ethernet"
+    layers: [ethernet, ipv4, udp, coap]
+    coverage_cases: [coap-pcap-ethernet-ipv4]
 
 constraints:
   - name: coap_udp_children

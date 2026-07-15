@@ -4,7 +4,6 @@ name: mdns_multicast
 summary: Source-backed mDNS IPv4 and IPv6 multicast packet helper shapes and live-safety eligibility.
 
 layers:
-  - ethernet
   - ipv4
   - ipv6
   - udp

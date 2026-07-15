@@ -23,7 +23,7 @@ supported_cases:
   - {name: coap-reliable-csm, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
   - {name: coap-reliable-ping-pong, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
   - {name: coap-reliable-release-abort, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
-  - {name: coap-reliable-concatenated-raw, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes}
+  - {name: coap-reliable-concatenated-raw, directions: [backend_to_libcrafter, libcrafter_to_backend], byte_policy: strict_bytes, contract_only: true}
 
 source_refs: [RFC 8323, RFC 8974, IANA CoAP Signaling Option Numbers]
 backend_support:
@@ -39,4 +39,3 @@ backend_support:
     encode: true
     decode: true
     native_layers: [CoapReliable]
-

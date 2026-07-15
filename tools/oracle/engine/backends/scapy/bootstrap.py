@@ -6,6 +6,7 @@ import os
 import platform
 import shutil
 import sys
+from pathlib import Path
 from types import ModuleType
 from typing import Any
 
@@ -173,6 +174,8 @@ def _bootstrap_env(source: str) -> dict[str, str]:
     env[BOOTSTRAPPED_ENV] = "1"
     env[BOOTSTRAP_SOURCE_ENV] = source
     env.setdefault("UV_NO_PROGRESS", "1")
+    repo_root = Path(__file__).resolve().parents[5]
+    env.setdefault("UV_CACHE_DIR", str(repo_root / "target" / "oracle" / "uv-cache"))
     return env
 
 
