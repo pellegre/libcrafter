@@ -738,6 +738,8 @@ pub enum CoapValidationCategory {
     OptionInteraction,
     /// An option is not applicable to the message's request/response role.
     OptionApplicability,
+    /// A method-specific request shape is semantically incomplete.
+    MethodSemantics,
 }
 
 /// One inspectable CoAP semantic validation finding.
@@ -947,6 +949,57 @@ impl Coap {
     /// Build an iPATCH (`0.07`) request (RFC 8132).
     pub fn ipatch() -> Self {
         Self::request(CoapCode::ipatch())
+    }
+
+    /// Build a PATCH request carrying an opaque patch document.
+    ///
+    /// RFC 8132 identifies the patch document through Content-Format. The
+    /// bytes remain uninterpreted, and unknown or future formats are accepted.
+    pub fn patch_document(
+        content_format: impl Into<CoapContentFormat>,
+        payload: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self::patch()
+            .content_format(content_format)
+            .payload(payload)
+    }
+
+    /// Build an idempotent iPATCH request carrying an opaque patch document.
+    ///
+    /// This records the caller's idempotence assertion but does not inspect or
+    /// apply the patch document.
+    pub fn ipatch_document(
+        content_format: impl Into<CoapContentFormat>,
+        payload: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self::ipatch()
+            .content_format(content_format)
+            .payload(payload)
+    }
+
+    /// Build a `2.01 Created` response to a PATCH or iPATCH request.
+    pub fn patch_created_response() -> Self {
+        Self::response(CoapCode::created())
+    }
+
+    /// Build a `2.04 Changed` response to a PATCH or iPATCH request.
+    pub fn patch_changed_response() -> Self {
+        Self::response(CoapCode::changed())
+    }
+
+    /// Build a `4.09 Conflict` PATCH or iPATCH error response.
+    pub fn patch_conflict_response() -> Self {
+        Self::response(CoapCode::conflict())
+    }
+
+    /// Build a `4.15 Unsupported Content-Format` PATCH or iPATCH error response.
+    pub fn patch_unsupported_content_format_response() -> Self {
+        Self::response(CoapCode::unsupported_content_format())
+    }
+
+    /// Build a `4.22 Unprocessable Entity` PATCH or iPATCH error response.
+    pub fn patch_unprocessable_entity_response() -> Self {
+        Self::response(CoapCode::unprocessable_entity())
     }
 
     /// Build a Content (`2.05`) response without inferring transaction fields.
@@ -1333,6 +1386,32 @@ impl Coap {
         &self.options
     }
 
+    /// Iterate over typed, raw-preserving Content-Format occurrences.
+    pub fn content_format_values(&self) -> impl Iterator<Item = Result<CoapContentFormat>> + '_ {
+        self.options
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_CONTENT_FORMAT)
+            .map(CoapContentFormat::try_from)
+    }
+
+    /// Return the first typed, raw-preserving Content-Format occurrence.
+    pub fn content_format_value(&self) -> Option<Result<CoapContentFormat>> {
+        self.content_format_values().next()
+    }
+
+    /// Iterate over typed, raw-preserving Accept occurrences.
+    pub fn accept_values(&self) -> impl Iterator<Item = Result<CoapAccept>> + '_ {
+        self.options
+            .iter()
+            .filter(|option| option.number().value() == COAP_OPTION_ACCEPT)
+            .map(CoapAccept::try_from)
+    }
+
+    /// Return the first typed, raw-preserving Accept occurrence.
+    pub fn accept_value(&self) -> Option<Result<CoapAccept>> {
+        self.accept_values().next()
+    }
+
     /// Return whether at least one Observe option is present.
     ///
     /// Repeatability and value validity remain available through typed access
@@ -1570,6 +1649,7 @@ impl Coap {
         validate_token_semantics(self, &mut validation);
         validate_payload_semantics(self, &mut validation);
         validate_empty_message_semantics(self, &mut validation);
+        validate_patch_semantics(self, &mut validation);
         validate_option_semantics(self, &mut validation);
 
         validation
@@ -2212,6 +2292,31 @@ fn validate_empty_message_semantics(message: &Coap, validation: &mut CoapValidat
             CoapValidationSeverity::Error,
             CoapValidationCategory::EmptyMessage,
             "Empty messages must not contain a payload",
+        );
+    }
+}
+
+fn validate_patch_semantics(message: &Coap, validation: &mut CoapValidation) {
+    if !matches!(message.code_value(), code if code == CoapCode::patch() || code == CoapCode::ipatch())
+    {
+        return;
+    }
+
+    if message.content_format_value().is_none() {
+        validation.push(
+            "coap.options",
+            CoapValidationSeverity::Error,
+            CoapValidationCategory::MethodSemantics,
+            "PATCH and iPATCH requests require a Content-Format for the patch document",
+        );
+    }
+
+    if message.payload_value().is_empty() {
+        validation.push(
+            "coap.payload",
+            CoapValidationSeverity::Error,
+            CoapValidationCategory::MethodSemantics,
+            "PATCH and iPATCH requests require a non-empty patch document payload",
         );
     }
 }

@@ -430,6 +430,64 @@ fn builder_content_formats_match_the_reviewed_iana_snapshot() {
 }
 
 #[test]
+fn patch_methods_formats_and_response_helpers_match_rfc_8132_and_iana() {
+    let methods = [
+        (CoapCode::patch(), 0x06, "PATCH"),
+        (CoapCode::ipatch(), 0x07, "iPATCH"),
+    ];
+    for (code, wire, label) in methods {
+        assert_eq!(code.wire_value(), wire);
+        assert_eq!(code.registry_meta().label, label);
+        assert_eq!(code.registry_meta().status, CoapRegistryStatus::Assigned);
+        assert_eq!(code.registry_meta().reference, Some("RFC 8132"));
+    }
+
+    let formats = [
+        (
+            CoapContentFormat::json_patch_json(),
+            CoapAccept::json_patch_json(),
+            51,
+            "application/json-patch+json",
+            "RFC 6902",
+        ),
+        (
+            CoapContentFormat::merge_patch_json(),
+            CoapAccept::merge_patch_json(),
+            52,
+            "application/merge-patch+json",
+            "RFC 7396",
+        ),
+    ];
+    for (content_format, accept, value, label, reference) in formats {
+        assert_eq!(content_format.value(), value);
+        assert_eq!(accept.value(), value);
+        for metadata in [content_format.registry_meta(), accept.registry_meta()] {
+            assert_eq!(metadata.label, label);
+            assert_eq!(metadata.status, CoapRegistryStatus::Assigned);
+            assert_eq!(metadata.reference, Some(reference));
+        }
+    }
+
+    let responses = [
+        (Coap::patch_created_response(), CoapCode::created()),
+        (Coap::patch_changed_response(), CoapCode::changed()),
+        (Coap::patch_conflict_response(), CoapCode::conflict()),
+        (
+            Coap::patch_unsupported_content_format_response(),
+            CoapCode::unsupported_content_format(),
+        ),
+        (
+            Coap::patch_unprocessable_entity_response(),
+            CoapCode::unprocessable_entity(),
+        ),
+    ];
+    for (response, code) in responses {
+        assert_eq!(response.code_value(), code);
+        assert!(response.is_response());
+    }
+}
+
+#[test]
 fn content_format_boundaries_keep_status_references_and_fallbacks() {
     let rows = [
         (
