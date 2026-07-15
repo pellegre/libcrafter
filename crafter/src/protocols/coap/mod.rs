@@ -67,7 +67,9 @@ pub use self::registry::{
     coap_code_meta, coap_content_format_meta, coap_option_meta, coap_signaling_code_meta,
     coap_signaling_option_meta, CoapRegistryMeta, CoapRegistryStatus,
 };
-pub use self::reliable::{CoapReliable, CoapReliableLength};
+#[allow(unused_imports)]
+pub(crate) use self::reliable::append_coap_reliable_packet;
+pub use self::reliable::{decode_coap_reliable, CoapReliable, CoapReliableLength};
 
 #[cfg(test)]
 mod tests {
