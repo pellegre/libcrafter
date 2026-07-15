@@ -52,6 +52,54 @@ pub const COAP_DEFAULT_CODE: u8 = 0;
 /// Deterministic unset Message ID compile default from the CoAP wire grammar.
 pub const COAP_DEFAULT_MESSAGE_ID: u16 = 0;
 
+// CoAP Code values remain associated constructors on `CoapCode` rather than
+// duplicate public constants. These crate-private values are frozen by the
+// reviewed IANA snapshot in `.agents/docs/coap-codepoints.md`.
+pub(crate) const COAP_CODE_EMPTY: u8 = 0x00;
+pub(crate) const COAP_CODE_GET: u8 = 0x01;
+pub(crate) const COAP_CODE_POST: u8 = 0x02;
+pub(crate) const COAP_CODE_PUT: u8 = 0x03;
+pub(crate) const COAP_CODE_DELETE: u8 = 0x04;
+pub(crate) const COAP_CODE_FETCH: u8 = 0x05;
+pub(crate) const COAP_CODE_PATCH: u8 = 0x06;
+pub(crate) const COAP_CODE_IPATCH: u8 = 0x07;
+
+pub(crate) const COAP_CODE_CREATED: u8 = 0x41;
+pub(crate) const COAP_CODE_DELETED: u8 = 0x42;
+pub(crate) const COAP_CODE_VALID: u8 = 0x43;
+pub(crate) const COAP_CODE_CHANGED: u8 = 0x44;
+pub(crate) const COAP_CODE_CONTENT: u8 = 0x45;
+pub(crate) const COAP_CODE_CONTINUE: u8 = 0x5f;
+
+pub(crate) const COAP_CODE_BAD_REQUEST: u8 = 0x80;
+pub(crate) const COAP_CODE_UNAUTHORIZED: u8 = 0x81;
+pub(crate) const COAP_CODE_BAD_OPTION: u8 = 0x82;
+pub(crate) const COAP_CODE_FORBIDDEN: u8 = 0x83;
+pub(crate) const COAP_CODE_NOT_FOUND: u8 = 0x84;
+pub(crate) const COAP_CODE_METHOD_NOT_ALLOWED: u8 = 0x85;
+pub(crate) const COAP_CODE_NOT_ACCEPTABLE: u8 = 0x86;
+pub(crate) const COAP_CODE_REQUEST_ENTITY_INCOMPLETE: u8 = 0x88;
+pub(crate) const COAP_CODE_CONFLICT: u8 = 0x89;
+pub(crate) const COAP_CODE_PRECONDITION_FAILED: u8 = 0x8c;
+pub(crate) const COAP_CODE_REQUEST_ENTITY_TOO_LARGE: u8 = 0x8d;
+pub(crate) const COAP_CODE_UNSUPPORTED_CONTENT_FORMAT: u8 = 0x8f;
+pub(crate) const COAP_CODE_UNPROCESSABLE_ENTITY: u8 = 0x96;
+pub(crate) const COAP_CODE_TOO_MANY_REQUESTS: u8 = 0x9d;
+
+pub(crate) const COAP_CODE_INTERNAL_SERVER_ERROR: u8 = 0xa0;
+pub(crate) const COAP_CODE_NOT_IMPLEMENTED: u8 = 0xa1;
+pub(crate) const COAP_CODE_BAD_GATEWAY: u8 = 0xa2;
+pub(crate) const COAP_CODE_SERVICE_UNAVAILABLE: u8 = 0xa3;
+pub(crate) const COAP_CODE_GATEWAY_TIMEOUT: u8 = 0xa4;
+pub(crate) const COAP_CODE_PROXYING_NOT_SUPPORTED: u8 = 0xa5;
+pub(crate) const COAP_CODE_HOP_LIMIT_REACHED: u8 = 0xa8;
+
+pub(crate) const COAP_CODE_CSM: u8 = 0xe1;
+pub(crate) const COAP_CODE_PING: u8 = 0xe2;
+pub(crate) const COAP_CODE_PONG: u8 = 0xe3;
+pub(crate) const COAP_CODE_RELEASE: u8 = 0xe4;
+pub(crate) const COAP_CODE_ABORT: u8 = 0xe5;
+
 /// Assigned cleartext CoAP service port (IANA coap rows; RFC 7252 Section 12).
 pub const COAP_PORT: u16 = 5683;
 /// Assigned secure CoAP service port (IANA coaps rows; RFC 7252 Section 12).
