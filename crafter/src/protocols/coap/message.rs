@@ -3,9 +3,11 @@
 use core::fmt;
 
 use crate::error::{CrafterError, Result};
+use crate::field::{Field, FieldState};
 use crate::packet::hexdump;
 
 use super::constants::*;
+use super::option::CoapOption;
 use super::registry::{coap_code_meta, coap_signaling_code_meta, CoapRegistryMeta};
 
 const COAP_TWO_BIT_VALUE_MASK: u8 = 0x03;
@@ -591,6 +593,341 @@ impl fmt::Display for CoapToken {
     }
 }
 
+/// Lossless CoAP datagram Token Length metadata.
+///
+/// The discriminator, extension bytes, and logical declared length remain
+/// independent so decoded noncanonical forms and intentionally malformed
+/// caller overrides can be retained without changing the owned token bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CoapTokenLength {
+    nibble: u8,
+    extension_bytes: Vec<u8>,
+    declared_len: usize,
+}
+
+impl CoapTokenLength {
+    /// Build the shortest RFC 8974 token-length representation for `len`.
+    pub fn canonical_for_len(len: usize) -> Result<Self> {
+        match len {
+            0..=12 => Ok(Self::explicit(len as u8, Vec::new(), len)),
+            13..=268 => Ok(Self::explicit(13, vec![(len - 13) as u8], len)),
+            269..=65_804 => Ok(Self::explicit(
+                14,
+                ((len - 269) as u16).to_be_bytes().to_vec(),
+                len,
+            )),
+            _ => Err(CrafterError::invalid_field_value(
+                "coap.token-length",
+                "token length exceeds the RFC 8974 encoding range",
+            )),
+        }
+    }
+
+    /// Preserve explicit token-length metadata without requiring its parts to
+    /// agree with one another or with the owned token bytes.
+    pub fn explicit(nibble: u8, extension_bytes: impl Into<Vec<u8>>, declared_len: usize) -> Self {
+        Self {
+            nibble,
+            extension_bytes: extension_bytes.into(),
+            declared_len,
+        }
+    }
+
+    /// Return the preserved Token Length discriminator without masking.
+    pub const fn nibble(&self) -> u8 {
+        self.nibble
+    }
+
+    /// Borrow the exact token-length extension bytes.
+    pub fn extension_bytes(&self) -> &[u8] {
+        &self.extension_bytes
+    }
+
+    /// Return the preserved logical declared token length.
+    pub const fn declared_len(&self) -> usize {
+        self.declared_len
+    }
+}
+
+impl Default for CoapTokenLength {
+    fn default() -> Self {
+        Self::explicit(COAP_DEFAULT_TKL, Vec::new(), 0)
+    }
+}
+
+/// Explicit CoAP payload-marker choice.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum CoapPayloadMarker {
+    /// Do not place a payload marker before the owned payload bytes.
+    #[default]
+    Absent,
+    /// Place the `0xff` payload marker before the owned payload bytes.
+    Present,
+}
+
+impl CoapPayloadMarker {
+    /// Return true when the payload marker is selected.
+    pub const fn is_present(self) -> bool {
+        matches!(self, Self::Present)
+    }
+}
+
+static EMPTY_COAP_TOKEN: CoapToken = CoapToken(Vec::new());
+
+/// One owned CoAP datagram message.
+///
+/// Header fields, token bytes, marker state, and payload bytes remain
+/// independent so callers can construct malformed packets deliberately.
+/// Compilation fills only unset fields in later wire-encoding steps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Coap {
+    version: Field<CoapVersion>,
+    message_type: Field<CoapMessageType>,
+    token_length: Field<CoapTokenLength>,
+    code: Field<CoapCode>,
+    message_id: Field<u16>,
+    token: Field<CoapToken>,
+    options: Vec<CoapOption>,
+    payload_marker: Field<CoapPayloadMarker>,
+    payload: Vec<u8>,
+}
+
+impl Coap {
+    /// Create an empty CoAP datagram layer whose compile-time fields are unset.
+    pub fn new() -> Self {
+        Self {
+            version: Field::unset(),
+            message_type: Field::unset(),
+            token_length: Field::unset(),
+            code: Field::unset(),
+            message_id: Field::unset(),
+            token: Field::unset(),
+            options: Vec::new(),
+            payload_marker: Field::unset(),
+            payload: Vec::new(),
+        }
+    }
+
+    /// Build an Empty (`0.00`) message without pinning dependent fields.
+    pub fn empty() -> Self {
+        Self::new().code(CoapCode::empty())
+    }
+
+    /// Build a request with an explicit code.
+    ///
+    /// The code is not semantically restricted here so malformed and future
+    /// values remain constructible. Validation is an explicit later step.
+    pub fn request(code: CoapCode) -> Self {
+        Self::new().code(code)
+    }
+
+    /// Build a response with an explicit code and no inferred message type.
+    ///
+    /// Whether a response is Confirmable, Non-confirmable, or piggybacked in
+    /// an Acknowledgement depends on caller transaction context.
+    pub fn response(code: CoapCode) -> Self {
+        Self::new().code(code)
+    }
+
+    /// Build a GET (`0.01`) request.
+    pub fn get() -> Self {
+        Self::request(CoapCode::get())
+    }
+
+    /// Build a POST (`0.02`) request.
+    pub fn post() -> Self {
+        Self::request(CoapCode::post())
+    }
+
+    /// Build a PUT (`0.03`) request.
+    pub fn put() -> Self {
+        Self::request(CoapCode::put())
+    }
+
+    /// Build a DELETE (`0.04`) request.
+    pub fn delete() -> Self {
+        Self::request(CoapCode::delete())
+    }
+
+    /// Set the preserved Version value explicitly.
+    pub fn version(mut self, value: impl Into<CoapVersion>) -> Self {
+        self.version.set_user(value.into());
+        self
+    }
+
+    /// Set the preserved datagram message Type explicitly.
+    pub fn message_type(mut self, value: CoapMessageType) -> Self {
+        self.message_type.set_user(value);
+        self
+    }
+
+    /// Set explicit token-length metadata independently from the token bytes.
+    pub fn token_length(mut self, value: CoapTokenLength) -> Self {
+        self.token_length.set_user(value);
+        self
+    }
+
+    /// Set the preserved Code byte explicitly.
+    pub fn code(mut self, value: impl Into<CoapCode>) -> Self {
+        self.code.set_user(value.into());
+        self
+    }
+
+    /// Set the Message ID explicitly.
+    pub fn message_id(mut self, value: u16) -> Self {
+        self.message_id.set_user(value);
+        self
+    }
+
+    /// Set owned token bytes independently from token-length metadata.
+    pub fn token(mut self, value: impl Into<CoapToken>) -> Self {
+        self.token.set_user(value.into());
+        self
+    }
+
+    /// Append one option while preserving insertion order.
+    pub fn option(mut self, value: impl Into<CoapOption>) -> Self {
+        self.options.push(value.into());
+        self
+    }
+
+    /// Replace the ordered option sequence.
+    pub fn options(mut self, values: impl IntoIterator<Item = CoapOption>) -> Self {
+        self.options = values.into_iter().collect();
+        self
+    }
+
+    /// Set an explicit payload-marker choice independently from payload bytes.
+    pub fn payload_marker(mut self, value: CoapPayloadMarker) -> Self {
+        self.payload_marker.set_user(value);
+        self
+    }
+
+    /// Set the owned binary payload independently from marker state.
+    pub fn payload(mut self, value: impl Into<Vec<u8>>) -> Self {
+        self.payload = value.into();
+        self
+    }
+
+    /// Select a Confirmable message type.
+    pub fn confirmable(self) -> Self {
+        self.message_type(CoapMessageType::Confirmable)
+    }
+
+    /// Select a Non-confirmable message type.
+    pub fn non_confirmable(self) -> Self {
+        self.message_type(CoapMessageType::NonConfirmable)
+    }
+
+    /// Select an Acknowledgement message type.
+    pub fn acknowledgement(self) -> Self {
+        self.message_type(CoapMessageType::Acknowledgement)
+    }
+
+    /// Select a Reset message type.
+    pub fn reset(self) -> Self {
+        self.message_type(CoapMessageType::Reset)
+    }
+
+    /// Return the Version field state.
+    pub const fn version_state(&self) -> FieldState {
+        self.version.state()
+    }
+
+    /// Return the explicit Version or the current compile-time default.
+    pub fn version_value(&self) -> CoapVersion {
+        self.version.value().copied().unwrap_or_default()
+    }
+
+    /// Return the message Type field state.
+    pub const fn message_type_state(&self) -> FieldState {
+        self.message_type.state()
+    }
+
+    /// Return the explicit message Type or the Confirmable default.
+    pub fn message_type_value(&self) -> CoapMessageType {
+        self.message_type.value().copied().unwrap_or_default()
+    }
+
+    /// Return the token-length metadata field state.
+    pub const fn token_length_state(&self) -> FieldState {
+        self.token_length.state()
+    }
+
+    /// Return explicit token-length metadata or derive the canonical value.
+    pub fn token_length_value(&self) -> Result<CoapTokenLength> {
+        match self.token_length.value() {
+            Some(value) => Ok(value.clone()),
+            None => CoapTokenLength::canonical_for_len(self.token_value().len()),
+        }
+    }
+
+    /// Return the Code field state.
+    pub const fn code_state(&self) -> FieldState {
+        self.code.state()
+    }
+
+    /// Return the explicit Code or the Empty compile-time default.
+    pub fn code_value(&self) -> CoapCode {
+        self.code.value().copied().unwrap_or_default()
+    }
+
+    /// Return the Message ID field state.
+    pub const fn message_id_state(&self) -> FieldState {
+        self.message_id.state()
+    }
+
+    /// Return the explicit Message ID or the deterministic zero default.
+    pub fn message_id_value(&self) -> u16 {
+        self.message_id
+            .value()
+            .copied()
+            .unwrap_or(COAP_DEFAULT_MESSAGE_ID)
+    }
+
+    /// Return the token field state.
+    pub const fn token_state(&self) -> FieldState {
+        self.token.state()
+    }
+
+    /// Borrow explicit token bytes or the effective empty token.
+    pub fn token_value(&self) -> &CoapToken {
+        self.token.value().unwrap_or(&EMPTY_COAP_TOKEN)
+    }
+
+    /// Borrow option occurrences in their preserved order.
+    pub fn options_value(&self) -> &[CoapOption] {
+        &self.options
+    }
+
+    /// Return the payload-marker field state.
+    pub const fn payload_marker_state(&self) -> FieldState {
+        self.payload_marker.state()
+    }
+
+    /// Return the explicit marker choice or derive it from payload presence.
+    pub fn payload_marker_value(&self) -> CoapPayloadMarker {
+        self.payload_marker.value().copied().unwrap_or_else(|| {
+            if self.payload.is_empty() {
+                CoapPayloadMarker::Absent
+            } else {
+                CoapPayloadMarker::Present
+            }
+        })
+    }
+
+    /// Borrow the exact owned payload bytes.
+    pub fn payload_value(&self) -> &[u8] {
+        &self.payload
+    }
+}
+
+impl Default for Coap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn validate_base_token_len(len: usize) -> Result<()> {
     if len <= COAP_MAX_TOKEN_LEN {
         Ok(())
@@ -605,6 +942,170 @@ fn validate_base_token_len(len: usize) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn coap_new_keeps_fields_unset_and_exposes_effective_defaults() {
+        let message = Coap::new();
+
+        assert_eq!(message.version_state(), FieldState::Unset);
+        assert_eq!(message.version_value(), CoapVersion::current());
+        assert_eq!(message.message_type_state(), FieldState::Unset);
+        assert_eq!(message.message_type_value(), CoapMessageType::Confirmable);
+        assert_eq!(message.token_length_state(), FieldState::Unset);
+        assert_eq!(
+            message.token_length_value().unwrap(),
+            CoapTokenLength::default()
+        );
+        assert_eq!(message.code_state(), FieldState::Unset);
+        assert_eq!(message.code_value(), CoapCode::empty());
+        assert_eq!(message.message_id_state(), FieldState::Unset);
+        assert_eq!(message.message_id_value(), COAP_DEFAULT_MESSAGE_ID);
+        assert_eq!(message.token_state(), FieldState::Unset);
+        assert!(message.token_value().is_empty());
+        assert!(message.options_value().is_empty());
+        assert_eq!(message.payload_marker_state(), FieldState::Unset);
+        assert_eq!(message.payload_marker_value(), CoapPayloadMarker::Absent);
+        assert!(message.payload_value().is_empty());
+        assert_eq!(message, Coap::default());
+    }
+
+    #[test]
+    fn coap_named_constructors_pin_only_unambiguous_values() {
+        let cases = [
+            (Coap::empty(), CoapCode::empty()),
+            (Coap::get(), CoapCode::get()),
+            (Coap::post(), CoapCode::post()),
+            (Coap::put(), CoapCode::put()),
+            (Coap::delete(), CoapCode::delete()),
+            (
+                Coap::request(CoapCode::from_wire(0x1f)),
+                CoapCode::from_wire(0x1f),
+            ),
+            (Coap::response(CoapCode::content()), CoapCode::content()),
+        ];
+
+        for (message, code) in cases {
+            assert_eq!(message.code_state(), FieldState::User);
+            assert_eq!(message.code_value(), code);
+            assert_eq!(message.version_state(), FieldState::Unset);
+            assert_eq!(message.message_type_state(), FieldState::Unset);
+            assert_eq!(message.message_id_state(), FieldState::Unset);
+            assert_eq!(message.token_state(), FieldState::Unset);
+            assert_eq!(message.token_length_state(), FieldState::Unset);
+            assert_eq!(message.payload_marker_state(), FieldState::Unset);
+        }
+
+        assert_eq!(
+            Coap::new().acknowledgement().message_type_value(),
+            CoapMessageType::Acknowledgement
+        );
+        assert_eq!(
+            Coap::new().reset().message_type_value(),
+            CoapMessageType::Reset
+        );
+        assert_eq!(
+            Coap::new().confirmable().message_type_value(),
+            CoapMessageType::Confirmable
+        );
+        assert_eq!(
+            Coap::new().non_confirmable().message_type_value(),
+            CoapMessageType::NonConfirmable
+        );
+    }
+
+    #[test]
+    fn coap_setters_preserve_independent_explicit_state() {
+        let token_length = CoapTokenLength::explicit(0xfe, vec![0xaa, 0xbb], 999);
+        let first = CoapOption::new(11u16, b"a".to_vec());
+        let second = CoapOption::new(11u16, b"b".to_vec());
+        let message = Coap::new()
+            .version(0xfdu8)
+            .message_type(CoapMessageType::Unknown(0xfc))
+            .token_length(token_length.clone())
+            .code(0xffu8)
+            .message_id(0xabcd)
+            .token(CoapToken::from_bytes([1, 2, 3]))
+            .option(first.clone())
+            .option(second.clone())
+            .payload_marker(CoapPayloadMarker::Absent)
+            .payload(vec![0xff, 0x00]);
+
+        assert_eq!(message.version_state(), FieldState::User);
+        assert_eq!(message.version_value().value(), 0xfd);
+        assert_eq!(message.message_type_state(), FieldState::User);
+        assert_eq!(message.message_type_value(), CoapMessageType::Unknown(0xfc));
+        assert_eq!(message.token_length_state(), FieldState::User);
+        assert_eq!(message.token_length_value().unwrap(), token_length);
+        assert_eq!(message.code_state(), FieldState::User);
+        assert_eq!(message.code_value(), CoapCode::from_wire(0xff));
+        assert_eq!(message.message_id_state(), FieldState::User);
+        assert_eq!(message.message_id_value(), 0xabcd);
+        assert_eq!(message.token_state(), FieldState::User);
+        assert_eq!(message.token_value().as_bytes(), &[1, 2, 3]);
+        assert_eq!(message.options_value(), &[first, second]);
+        assert_eq!(message.payload_marker_state(), FieldState::User);
+        assert_eq!(message.payload_marker_value(), CoapPayloadMarker::Absent);
+        assert_eq!(message.payload_value(), &[0xff, 0x00]);
+    }
+
+    #[test]
+    fn coap_unset_dependent_fields_follow_owned_bytes_without_changing_state() {
+        let message = Coap::new()
+            .token(CoapToken::from_bytes(vec![0u8; 269]))
+            .payload(vec![1, 2, 3]);
+
+        let token_length = message.token_length_value().unwrap();
+        assert_eq!(token_length.nibble(), 14);
+        assert_eq!(token_length.extension_bytes(), &[0, 0]);
+        assert_eq!(token_length.declared_len(), 269);
+        assert_eq!(message.token_length_state(), FieldState::Unset);
+        assert_eq!(message.payload_marker_value(), CoapPayloadMarker::Present);
+        assert_eq!(message.payload_marker_state(), FieldState::Unset);
+    }
+
+    #[test]
+    fn coap_options_setter_replaces_and_preserves_order() {
+        let replaced = CoapOption::new(12u16, vec![0]);
+        let first = CoapOption::new(15u16, b"a=1".to_vec());
+        let second = CoapOption::new(11u16, b"status".to_vec());
+        let message = Coap::new()
+            .option(replaced)
+            .options([first.clone(), second.clone()]);
+
+        assert_eq!(message.options_value(), &[first, second]);
+    }
+
+    #[test]
+    fn token_length_model_preserves_explicit_and_canonical_forms() {
+        let explicit = CoapTokenLength::explicit(0xff, vec![1, 2, 3], usize::MAX);
+        assert_eq!(explicit.nibble(), 0xff);
+        assert_eq!(explicit.extension_bytes(), &[1, 2, 3]);
+        assert_eq!(explicit.declared_len(), usize::MAX);
+
+        let direct = CoapTokenLength::canonical_for_len(12).unwrap();
+        assert_eq!(direct.nibble(), 12);
+        assert!(direct.extension_bytes().is_empty());
+        assert_eq!(direct.declared_len(), 12);
+
+        let extended8 = CoapTokenLength::canonical_for_len(268).unwrap();
+        assert_eq!(extended8.nibble(), 13);
+        assert_eq!(extended8.extension_bytes(), &[0xff]);
+        assert_eq!(extended8.declared_len(), 268);
+
+        let extended16 = CoapTokenLength::canonical_for_len(65_804).unwrap();
+        assert_eq!(extended16.nibble(), 14);
+        assert_eq!(extended16.extension_bytes(), &[0xff, 0xff]);
+        assert_eq!(extended16.declared_len(), 65_804);
+
+        assert!(CoapTokenLength::canonical_for_len(65_805).is_err());
+    }
+
+    #[test]
+    fn payload_marker_reports_presence() {
+        assert!(!CoapPayloadMarker::Absent.is_present());
+        assert!(CoapPayloadMarker::Present.is_present());
+        assert_eq!(CoapPayloadMarker::default(), CoapPayloadMarker::Absent);
+    }
 
     #[test]
     fn version_preserves_every_wire_value() {
