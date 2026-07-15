@@ -2,7 +2,7 @@
 //!
 //! The compressed option grammar, context derivation, nonce construction, and
 //! External AAD follow RFC 8613 Sections 2, 3.1, 3.2.1, 5.2, 5.4, and 6.1.
-//! Packet protection remains an explicit later transform; this module does not
+//! Packet protection is an explicit typed transform; this module does not
 //! allocate sequence numbers, replay windows, contexts, or any other protocol
 //! state.
 
@@ -18,12 +18,14 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
 
+use crate::error::CrafterError;
+
 use super::constants::{
     COAP_OPTION_OBSERVE, COAP_OPTION_OSCORE, COAP_OPTION_PROXY_SCHEME, COAP_OPTION_PROXY_URI,
     COAP_OPTION_URI_HOST, COAP_OPTION_URI_PORT, COAP_PAYLOAD_MARKER,
 };
 use super::message::{Coap, CoapCode, CoapOptionOrder, CoapPayloadMarker, CoapToken};
-use super::option::{encode_option_sequence, CoapOption, CoapOptions};
+use super::option::{decode_option_sequence, encode_option_sequence, CoapOption, CoapOptions};
 
 const OSCORE_PARTIAL_IV_LENGTH_MASK: u8 = 0x07;
 const OSCORE_KID_FLAG: u8 = 0x08;
@@ -607,6 +609,49 @@ pub struct OscoreProtectParams {
     request_binding: Option<OscoreRequestBinding>,
 }
 
+/// Explicit packet-local inputs for one OSCORE unprotection operation.
+///
+/// Incoming requests carry their request KID and Partial IV in the OSCORE
+/// option. Incoming responses require caller-retained request binding metadata
+/// for External AAD and for responses that reuse the request nonce. This value
+/// owns no replay-window, transaction, or context-selection state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OscoreUnprotectParams {
+    request_binding: Option<OscoreRequestBinding>,
+}
+
+impl OscoreUnprotectParams {
+    /// Build parameters for an incoming protected request.
+    pub const fn request() -> Self {
+        Self {
+            request_binding: None,
+        }
+    }
+
+    /// Alias for [`Self::request`] used by request-oriented generated tools.
+    pub const fn new() -> Self {
+        Self::request()
+    }
+
+    /// Build parameters for an incoming protected response.
+    pub fn response(request_binding: OscoreRequestBinding) -> Self {
+        Self {
+            request_binding: Some(request_binding),
+        }
+    }
+
+    /// Borrow response request-binding metadata, when present.
+    pub fn request_binding(&self) -> Option<&OscoreRequestBinding> {
+        self.request_binding.as_ref()
+    }
+}
+
+impl Default for OscoreUnprotectParams {
+    fn default() -> Self {
+        Self::request()
+    }
+}
+
 impl OscoreProtectParams {
     /// Build request protection parameters with an explicit Partial IV.
     pub fn request(partial_iv: impl Into<Vec<u8>>) -> Self {
@@ -950,6 +995,19 @@ impl OscoreContext {
         protect_oscore(self, message, params)
     }
 
+    /// Authenticate and decode one typed RFC 8613 OSCORE outer message.
+    ///
+    /// Authentication completes before any protected Code, option, or payload
+    /// is interpreted. The returned value is an ordinary typed [`Coap`] layer;
+    /// failures retain ciphertext only in the caller-owned outer message.
+    pub fn unprotect(
+        &self,
+        message: &Coap,
+        params: OscoreUnprotectParams,
+    ) -> Result<Coap, OscoreError> {
+        unprotect_oscore(self, message, params)
+    }
+
     /// Stable redacted context summary.
     pub fn summary(&self) -> String {
         let id_context = match self.id_context.as_deref() {
@@ -1188,6 +1246,231 @@ pub fn protect_oscore(
         .option_order(CoapOptionOrder::Canonical)
         .payload_marker(CoapPayloadMarker::Present)
         .payload(plaintext))
+}
+
+/// Authenticate and decode one typed OSCORE outer message.
+pub fn unprotect_oscore(
+    context: &OscoreContext,
+    message: &Coap,
+    params: OscoreUnprotectParams,
+) -> Result<Coap, OscoreError> {
+    let mut oscore_options = message
+        .options_value()
+        .iter()
+        .filter(|option| option.number().value() == COAP_OPTION_OSCORE);
+    let oscore_option = oscore_options.next().ok_or(OscoreError::MissingContext {
+        context: "coap.oscore.message.option",
+    })?;
+    if oscore_options.next().is_some() {
+        return Err(OscoreError::invalid_field_value(
+            "coap.oscore.message.option",
+            "OSCORE option must not be repeated",
+        ));
+    }
+    let oscore_option = OscoreOption::try_from(oscore_option)?;
+    if oscore_option.extension_flags() != 0 {
+        return Err(OscoreError::invalid_field_value(
+            "coap.oscore.option.flags",
+            "unsupported provisional OSCORE flag metadata",
+        ));
+    }
+
+    if message.payload_marker_value() != CoapPayloadMarker::Present {
+        return Err(OscoreError::invalid_field_value(
+            "coap.oscore.message.payload-marker",
+            "OSCORE ciphertext requires an outer payload marker",
+        ));
+    }
+    let tag_len = context.aead_algorithm().tag_len()?;
+    let required = 1usize.checked_add(tag_len).ok_or_else(|| {
+        OscoreError::invalid_field_value(
+            "coap.oscore.ciphertext",
+            "ciphertext minimum length overflow",
+        )
+    })?;
+    let payload = message.payload_value();
+    if payload.len() < required {
+        return Err(OscoreError::buffer_too_short(
+            "coap.oscore.ciphertext",
+            required,
+            payload.len(),
+        ));
+    }
+
+    let outer_is_request = message.is_request();
+    let outer_is_response = message.is_response();
+    if !outer_is_request && !outer_is_response {
+        return Err(OscoreError::invalid_field_value(
+            "coap.oscore.message.code",
+            "OSCORE outer message requires a request or response Code",
+        ));
+    }
+
+    if let Some(kid_context) = oscore_option.kid_context() {
+        if context.id_context() != Some(kid_context) {
+            return Err(OscoreError::AuthenticationFailed {
+                context: "coap.oscore.authentication",
+            });
+        }
+    }
+
+    let (request_kid, request_partial_iv, nonce) = if outer_is_request {
+        if params.request_binding().is_some() {
+            return Err(OscoreError::invalid_field_value(
+                "coap.oscore.params.request-binding",
+                "request unprotection must not carry response binding metadata",
+            ));
+        }
+        let partial_iv = oscore_option
+            .partial_iv()
+            .ok_or(OscoreError::MissingContext {
+                context: "coap.oscore.nonce.partial-iv",
+            })?;
+        let kid = oscore_option.kid().ok_or(OscoreError::MissingContext {
+            context: "coap.oscore.aad.request-kid",
+        })?;
+        if !secret_eq(kid, context.recipient_id()) {
+            return Err(OscoreError::AuthenticationFailed {
+                context: "coap.oscore.authentication",
+            });
+        }
+        (
+            kid.to_vec(),
+            partial_iv.to_vec(),
+            context.recipient_nonce(partial_iv)?,
+        )
+    } else {
+        let binding = params
+            .request_binding()
+            .ok_or(OscoreError::MissingContext {
+                context: "coap.oscore.aad.request-binding",
+            })?;
+        let nonce = match oscore_option.partial_iv() {
+            Some(partial_iv) => context.recipient_nonce(partial_iv)?,
+            None => context.derive_nonce(binding.request_kid(), binding.request_partial_iv())?,
+        };
+        (
+            binding.request_kid().to_vec(),
+            binding.request_partial_iv().to_vec(),
+            nonce,
+        )
+    };
+
+    // RFC 8613 defines no Class I options. Keep this explicit so any future
+    // source-backed assignment has one narrow AAD integration point.
+    let class_i_options: &[u8] = &[];
+    let aad = context.cose_encrypt0_aad(&request_kid, &request_partial_iv, class_i_options)?;
+    let split_at = payload.len() - tag_len;
+    let mut plaintext = payload[..split_at].to_vec();
+    let tag = GenericArray::from_slice(&payload[split_at..]);
+    let cipher =
+        <OscoreAesCcm as AeadKeyInit>::new_from_slice(context.recipient_key()).map_err(|_| {
+            OscoreError::invalid_field_value(
+                "coap.oscore.context.recipient-key",
+                "Recipient Key length differs from the selected AEAD key length",
+            )
+        })?;
+    cipher
+        .decrypt_in_place_detached(GenericArray::from_slice(&nonce), &aad, &mut plaintext, tag)
+        .map_err(|_| OscoreError::AuthenticationFailed {
+            context: "coap.oscore.authentication",
+        })?;
+
+    let inner_code = plaintext.first().copied().ok_or_else(|| {
+        OscoreError::buffer_too_short("coap.oscore.plaintext", 1, plaintext.len())
+    })?;
+    let decoded = decode_option_sequence(&plaintext[1..]).map_err(map_plaintext_decode_error)?;
+    let payload_offset = 1usize.checked_add(decoded.consumed).ok_or_else(|| {
+        OscoreError::invalid_field_value(
+            "coap.oscore.plaintext",
+            "plaintext option boundary overflow",
+        )
+    })?;
+    let (payload_marker, inner_payload) = if decoded.payload_marker {
+        let payload_start = payload_offset.checked_add(1).ok_or_else(|| {
+            OscoreError::invalid_field_value(
+                "coap.oscore.plaintext",
+                "plaintext payload boundary overflow",
+            )
+        })?;
+        let inner_payload = plaintext.get(payload_start..).unwrap_or_default();
+        if inner_payload.is_empty() {
+            return Err(OscoreError::buffer_too_short(
+                "coap.oscore.plaintext.payload",
+                1,
+                inner_payload.len(),
+            ));
+        }
+        (CoapPayloadMarker::Present, inner_payload.to_vec())
+    } else {
+        (CoapPayloadMarker::Absent, Vec::new())
+    };
+
+    let inner_code = CoapCode::from_wire(inner_code);
+    if (outer_is_request && !inner_code.is_request())
+        || (outer_is_response && !inner_code.is_response())
+    {
+        return Err(OscoreError::invalid_field_value(
+            "coap.oscore.plaintext.code",
+            "inner and outer Code classes disagree",
+        ));
+    }
+
+    let mut merged_options = CoapOptions::new();
+    for option in message.options_value() {
+        let number = option.number().value();
+        if number == COAP_OPTION_OSCORE || number == COAP_OPTION_OBSERVE {
+            continue;
+        }
+        if !is_oscore_class_u_only(number) {
+            return Err(OscoreError::invalid_field_value(
+                "coap.oscore.message.outer-option",
+                "option is not assigned to OSCORE Class U",
+            ));
+        }
+        merged_options.add(CoapOption::new(number, option.value().to_vec()));
+    }
+    for option in decoded.options.iter() {
+        merged_options.add(CoapOption::new(
+            option.number().value(),
+            option.value().to_vec(),
+        ));
+    }
+    merged_options.sort_canonical();
+
+    let token_length = message.token_length_value().map_err(|_| {
+        OscoreError::invalid_field_value(
+            "coap.oscore.message.token-length",
+            "outer Token Length metadata cannot be decoded",
+        )
+    })?;
+    Ok(Coap::new()
+        .version(message.version_value())
+        .message_type(message.message_type_value())
+        .token_length(token_length)
+        .code(inner_code)
+        .message_id(message.message_id_value())
+        .token(message.token_value().clone())
+        .options(merged_options)
+        .option_order(CoapOptionOrder::Canonical)
+        .payload_marker(payload_marker)
+        .payload(inner_payload))
+}
+
+fn map_plaintext_decode_error(error: CrafterError) -> OscoreError {
+    match error {
+        CrafterError::BufferTooShort {
+            required,
+            available,
+            ..
+        } => OscoreError::buffer_too_short("coap.oscore.plaintext.options", required, available),
+        CrafterError::InvalidFieldValue { .. } | CrafterError::InvalidMacAddress { .. } => {
+            OscoreError::invalid_field_value(
+                "coap.oscore.plaintext.options",
+                "protected option sequence is malformed",
+            )
+        }
+    }
 }
 
 fn is_oscore_class_u_only(number: u16) -> bool {
@@ -1472,6 +1755,17 @@ mod tests {
         .unwrap()
     }
 
+    fn appendix_c_server_context() -> OscoreContext {
+        OscoreContext::with_default_algorithms(
+            appendix_c_master_secret(),
+            appendix_c_master_salt(),
+            vec![0x01],
+            Vec::new(),
+            None,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn protect_request_matches_rfc_8613_appendix_c_4() {
         let request = Coap::get()
@@ -1591,6 +1885,232 @@ mod tests {
             COAP_OPTION_URI_HOST
         );
         assert_eq!(protected.options_value()[0].value(), b"example.test");
+    }
+
+    #[test]
+    fn unprotect_request_and_response_round_trip_typed_messages() {
+        let request = Coap::get()
+            .message_id(0x5d1f)
+            .token(CoapToken::from_bytes([0x00, 0x00, 0x39, 0x74]))
+            .option(CoapOption::new(COAP_OPTION_URI_HOST, b"localhost"))
+            .option(CoapOption::new(11, b"tv1"));
+        let protected_request = appendix_c_client_context()
+            .protect(&request, OscoreProtectParams::request([0x14]))
+            .unwrap();
+        let recovered_request = appendix_c_server_context()
+            .unprotect(&protected_request, OscoreUnprotectParams::request())
+            .unwrap();
+        assert_eq!(recovered_request.code_value(), CoapCode::get());
+        assert_eq!(recovered_request.options_value().len(), 2);
+        assert_eq!(
+            Packet::from_layer(recovered_request)
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            Packet::from_layer(request).compile().unwrap().as_bytes()
+        );
+
+        let response = Coap::content()
+            .acknowledgement()
+            .message_id(0x5d1f)
+            .token(CoapToken::from_bytes([0x00, 0x00, 0x39, 0x74]))
+            .payload(b"Hello World!");
+        let binding = OscoreRequestBinding::new(Vec::new(), [0x14]).unwrap();
+        let protected_response = appendix_c_server_context()
+            .protect(&response, OscoreProtectParams::response(binding.clone()))
+            .unwrap();
+        let recovered_response = appendix_c_client_context()
+            .unprotect(
+                &protected_response,
+                OscoreUnprotectParams::response(binding),
+            )
+            .unwrap();
+        assert_eq!(recovered_response.code_value(), CoapCode::content());
+        assert_eq!(recovered_response.payload_value(), b"Hello World!");
+        assert_eq!(
+            Packet::from_layer(recovered_response)
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            Packet::from_layer(response).compile().unwrap().as_bytes()
+        );
+    }
+
+    #[test]
+    fn unprotect_preserves_unknown_authenticated_inner_option() {
+        let unknown = CoapOption::new(65_000, [0xde, 0xad, 0xbe, 0xef]);
+        let request = Coap::post()
+            .message_id(7)
+            .option(CoapOption::new(COAP_OPTION_URI_HOST, b"example.test"))
+            .option(unknown.clone())
+            .payload([0x00, 0xff, 0x80]);
+        let protected = appendix_c_client_context()
+            .protect(&request, OscoreProtectParams::request([0x01]))
+            .unwrap();
+        let recovered = appendix_c_server_context()
+            .unprotect(&protected, OscoreUnprotectParams::request())
+            .unwrap();
+
+        assert_eq!(recovered.payload_value(), [0x00, 0xff, 0x80]);
+        assert!(recovered.options_value().iter().any(|option| {
+            option.number() == unknown.number() && option.value() == unknown.value()
+        }));
+        assert_eq!(
+            Packet::from_layer(recovered).compile().unwrap().as_bytes(),
+            Packet::from_layer(request).compile().unwrap().as_bytes()
+        );
+    }
+
+    #[test]
+    fn unprotect_rejects_tampered_ciphertext_tag_and_request_aad() {
+        let request = Coap::get().message_id(1).option(CoapOption::new(11, b"s"));
+        let protected = appendix_c_client_context()
+            .protect(&request, OscoreProtectParams::request([0x14]))
+            .unwrap();
+
+        for index in [0, protected.payload_value().len() - 1] {
+            let mut tampered_payload = protected.payload_value().to_vec();
+            tampered_payload[index] ^= 0x80;
+            let tampered = protected.clone().payload(tampered_payload);
+            assert_eq!(
+                appendix_c_server_context()
+                    .unprotect(&tampered, OscoreUnprotectParams::request())
+                    .unwrap_err(),
+                OscoreError::AuthenticationFailed {
+                    context: "coap.oscore.authentication",
+                }
+            );
+        }
+
+        let response = Coap::content().payload(b"bound response");
+        let binding = OscoreRequestBinding::new(Vec::new(), [0x14]).unwrap();
+        let protected_response = appendix_c_server_context()
+            .protect(&response, OscoreProtectParams::response(binding.clone()))
+            .unwrap();
+        let wrong_binding = OscoreRequestBinding::new(Vec::new(), [0x15]).unwrap();
+        assert_eq!(
+            appendix_c_client_context()
+                .unprotect(
+                    &protected_response,
+                    OscoreUnprotectParams::response(wrong_binding),
+                )
+                .unwrap_err(),
+            OscoreError::AuthenticationFailed {
+                context: "coap.oscore.authentication",
+            }
+        );
+    }
+
+    #[test]
+    fn unprotect_rejects_wrong_key_and_identifier_without_exposing_plaintext() {
+        let request = Coap::get().payload(b"secret plaintext");
+        let protected = appendix_c_client_context()
+            .protect(&request, OscoreProtectParams::request([0x02]))
+            .unwrap();
+
+        let mut wrong_secret = appendix_c_master_secret();
+        wrong_secret[0] ^= 0xff;
+        let wrong_key_context = OscoreContext::with_default_algorithms(
+            wrong_secret,
+            appendix_c_master_salt(),
+            vec![0x01],
+            Vec::new(),
+            None,
+        )
+        .unwrap();
+        let wrong_key_error = wrong_key_context
+            .unprotect(&protected, OscoreUnprotectParams::request())
+            .unwrap_err();
+        assert_eq!(
+            wrong_key_error,
+            OscoreError::AuthenticationFailed {
+                context: "coap.oscore.authentication",
+            }
+        );
+        assert!(!wrong_key_error.to_string().contains("secret plaintext"));
+
+        let mut options = protected.options_value().to_vec();
+        let option = options
+            .iter_mut()
+            .find(|option| option.number().value() == COAP_OPTION_OSCORE)
+            .unwrap();
+        *option = CoapOption::new(COAP_OPTION_OSCORE, [0x09, 0x02, 0x7f]);
+        let wrong_identifier = protected.clone().options(options);
+        assert_eq!(
+            appendix_c_server_context()
+                .unprotect(&wrong_identifier, OscoreUnprotectParams::request())
+                .unwrap_err(),
+            OscoreError::AuthenticationFailed {
+                context: "coap.oscore.authentication",
+            }
+        );
+    }
+
+    #[test]
+    fn unprotect_reports_malformed_option_and_truncated_ciphertext() {
+        let malformed_option = Coap::post()
+            .option(CoapOption::new(COAP_OPTION_OSCORE, [0x05, 0xaa]))
+            .payload([0; 9]);
+        assert_eq!(
+            appendix_c_server_context()
+                .unprotect(&malformed_option, OscoreUnprotectParams::request())
+                .unwrap_err(),
+            OscoreError::BufferTooShort {
+                context: "coap.oscore.option.partial-iv",
+                required: 5,
+                available: 1,
+            }
+        );
+
+        let truncated = Coap::post()
+            .option(CoapOption::new(COAP_OPTION_OSCORE, [0x09, 0x01]))
+            .payload([0; 8]);
+        assert_eq!(
+            appendix_c_server_context()
+                .unprotect(&truncated, OscoreUnprotectParams::request())
+                .unwrap_err(),
+            OscoreError::BufferTooShort {
+                context: "coap.oscore.ciphertext",
+                required: 9,
+                available: 8,
+            }
+        );
+    }
+
+    #[test]
+    fn unprotect_authenticates_before_reporting_truncated_inner_payload() {
+        let sender = appendix_c_client_context();
+        let partial_iv = [0x03];
+        let option = OscoreOption::new(
+            Some(partial_iv.to_vec()),
+            None,
+            Some(sender.sender_id().to_vec()),
+        )
+        .unwrap();
+        let nonce = sender.sender_nonce(partial_iv).unwrap();
+        let aad = sender
+            .cose_encrypt0_aad(sender.sender_id(), partial_iv, [])
+            .unwrap();
+        let cipher = <OscoreAesCcm as AeadKeyInit>::new_from_slice(sender.sender_key()).unwrap();
+        let mut plaintext = vec![CoapCode::get().wire_value(), COAP_PAYLOAD_MARKER];
+        let tag = cipher
+            .encrypt_in_place_detached(GenericArray::from_slice(&nonce), &aad, &mut plaintext)
+            .unwrap();
+        plaintext.extend_from_slice(&tag);
+        let protected = Coap::post()
+            .option(option.into_coap_option())
+            .payload(plaintext);
+
+        assert_eq!(
+            appendix_c_server_context()
+                .unprotect(&protected, OscoreUnprotectParams::request())
+                .unwrap_err(),
+            OscoreError::BufferTooShort {
+                context: "coap.oscore.plaintext.payload",
+                required: 1,
+                available: 0,
+            }
+        );
     }
 
     #[test]
