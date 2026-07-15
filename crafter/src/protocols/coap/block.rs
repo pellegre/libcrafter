@@ -17,6 +17,7 @@ const COAP_BLOCK_MAX_NUMBER: u64 = 0x0f_ffff;
 const COAP_BLOCK_MAX_WIRE_LEN: usize = 3;
 const COAP_BLOCK_BERT_SZX: u8 = 7;
 const COAP_BLOCK_BERT_UNIT: u64 = 1024;
+const COAP_QBLOCK_DEFAULT_MAX_PAYLOADS: u64 = 10;
 
 /// The CoAP option whose shared block-value grammar is being interpreted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -123,6 +124,12 @@ impl CoapBlock {
     /// The byte unit used by BERT block numbers and payload chunks.
     pub const BERT_UNIT: u64 = COAP_BLOCK_BERT_UNIT;
 
+    /// RFC 9177's default number of payloads in one Q-Block set.
+    ///
+    /// This is inspectable grouping metadata only. Callers remain responsible
+    /// for configuration agreement, congestion control, and transmission.
+    pub const QBLOCK_DEFAULT_MAX_PAYLOADS: u64 = COAP_QBLOCK_DEFAULT_MAX_PAYLOADS;
+
     /// Build a block value using the shortest CoAP `uint` representation.
     ///
     /// SZX 7 is retained for contextual BERT validation. Values above 7 have
@@ -171,6 +178,22 @@ impl CoapBlock {
     /// response fragment.
     pub fn block2(number: u64, more: bool, szx: u8) -> Result<Self> {
         Self::new_for(CoapBlockKind::Block2, number, more, szx)
+    }
+
+    /// Build a canonical RFC 9177 Q-Block1 value.
+    ///
+    /// This convenience constructor attaches request-body option context but
+    /// does not allocate a Request-Tag, infer Size1, or retain transfer state.
+    pub fn qblock1(number: u64, more: bool, szx: u8) -> Result<Self> {
+        Self::new_for(CoapBlockKind::QBlock1, number, more, szx)
+    }
+
+    /// Build a canonical RFC 9177 Q-Block2 value.
+    ///
+    /// The M bit remains caller-controlled because it distinguishes a single
+    /// requested block from an entire-body, continuation, or set-tail request.
+    pub fn qblock2(number: u64, more: bool, szx: u8) -> Result<Self> {
+        Self::new_for(CoapBlockKind::QBlock2, number, more, szx)
     }
 
     /// Decode exact CoAP `uint` bytes while retaining their original form.
@@ -263,6 +286,101 @@ impl CoapBlock {
         self.number().checked_mul(self.block_size()).ok_or_else(|| {
             CrafterError::invalid_field_value("coap.block.offset", "block byte offset overflow")
         })
+    }
+
+    /// Return the zero-based RFC 9177 MAX_PAYLOADS_SET index.
+    ///
+    /// This is a pure grouping calculation; it does not schedule or pace a
+    /// burst. `max_payloads` must be nonzero and NUM must fit the 20-bit field.
+    pub fn qblock_set_index(&self, max_payloads: u64) -> Result<u64> {
+        self.validate_qblock_grouping(max_payloads)?;
+        Ok(self.number() / max_payloads)
+    }
+
+    /// Return NUM's zero-based position within its MAX_PAYLOADS_SET.
+    pub fn qblock_set_position(&self, max_payloads: u64) -> Result<u64> {
+        self.validate_qblock_grouping(max_payloads)?;
+        Ok(self.number() % max_payloads)
+    }
+
+    /// Return the first block number in NUM's MAX_PAYLOADS_SET.
+    pub fn qblock_set_start_number(&self, max_payloads: u64) -> Result<u64> {
+        self.qblock_set_index(max_payloads)?
+            .checked_mul(max_payloads)
+            .ok_or_else(|| {
+                CrafterError::invalid_field_value(
+                    "coap.qblock.max-payloads",
+                    "Q-Block set start overflow",
+                )
+            })
+    }
+
+    /// Return the last representable block number in NUM's MAX_PAYLOADS_SET.
+    pub fn qblock_set_end_number(&self, max_payloads: u64) -> Result<u64> {
+        let start = self.qblock_set_start_number(max_payloads)?;
+        let end = start.checked_add(max_payloads - 1).ok_or_else(|| {
+            CrafterError::invalid_field_value(
+                "coap.qblock.max-payloads",
+                "Q-Block set end overflow",
+            )
+        })?;
+        Ok(end.min(Self::MAX_NUMBER))
+    }
+
+    /// Return the next NUM in strictly increasing Q-Block order.
+    pub fn qblock_next_number(&self) -> Result<u64> {
+        let next = self.number().checked_add(1).ok_or_else(|| {
+            CrafterError::invalid_field_value("coap.block.number", "next Q-Block number overflow")
+        })?;
+        if next > Self::MAX_NUMBER {
+            return Err(CrafterError::invalid_field_value(
+                "coap.block.number",
+                "next Q-Block number exceeds the 20-bit NUM field",
+            ));
+        }
+        Ok(next)
+    }
+
+    /// Return whether `next` follows this value in strict NUM order.
+    ///
+    /// This helper intentionally accepts gaps, as recovery requests list only
+    /// missing block numbers, but rejects duplicates and descending values.
+    pub const fn qblock_precedes(&self, next: &Self) -> bool {
+        self.number() < next.number()
+    }
+
+    /// Return the inclusive block-number range selected by a Q-Block2 request.
+    ///
+    /// RFC 9177 Section 4.4 assigns these request meanings: an unset M bit
+    /// selects only NUM; `NUM=0, M=1` selects the entire body; any other set M
+    /// bit selects NUM through the end of its MAX_PAYLOADS_SET. A set-boundary
+    /// NUM therefore describes the stateless `Continue` range for that set.
+    pub fn qblock2_request_range(&self, max_payloads: u64) -> Result<(u64, u64)> {
+        self.validate_qblock_grouping(max_payloads)?;
+        if !self.more() {
+            return Ok((self.number(), self.number()));
+        }
+        if self.number() == 0 {
+            return Ok((0, Self::MAX_NUMBER));
+        }
+        Ok((self.number(), self.qblock_set_end_number(max_payloads)?))
+    }
+
+    /// Return whether this Q-Block2 request selects `block_number`.
+    pub fn qblock2_request_covers(&self, block_number: u64, max_payloads: u64) -> Result<bool> {
+        if block_number > Self::MAX_NUMBER {
+            return Err(CrafterError::invalid_field_value(
+                "coap.block.number",
+                "requested Q-Block number must fit in the 20-bit NUM field",
+            ));
+        }
+        let (start, end) = self.qblock2_request_range(max_payloads)?;
+        Ok((start..=end).contains(&block_number))
+    }
+
+    /// Return whether this is the RFC 9177 `Continue` Q-Block2 request shape.
+    pub fn is_qblock2_continue(&self, max_payloads: u64) -> Result<bool> {
+        Ok(self.more() && self.number() != 0 && self.qblock_set_position(max_payloads)? == 0)
     }
 
     /// Return how many 1024-byte BERT blocks `payload_len` represents.
@@ -370,6 +488,16 @@ impl CoapBlock {
         self.into_option(CoapBlockKind::Block2)
     }
 
+    /// Convert this value to an exact RFC 9177 Q-Block1 option occurrence.
+    pub fn into_qblock1_option(self) -> CoapOption {
+        self.into_option(CoapBlockKind::QBlock1)
+    }
+
+    /// Convert this value to an exact RFC 9177 Q-Block2 option occurrence.
+    pub fn into_qblock2_option(self) -> CoapOption {
+        self.into_option(CoapBlockKind::QBlock2)
+    }
+
     /// Validate this value as descriptive Block1 request metadata.
     ///
     /// The payload length rule is reported only here (or through the
@@ -437,6 +565,76 @@ impl CoapBlock {
         validation
     }
 
+    /// Validate descriptive Q-Block1 request payload metadata.
+    ///
+    /// Request-Tag and Size1 presence are message-level requirements. This
+    /// packet-local report checks the exact Q-Block value and payload length.
+    pub fn validate_qblock1_request(
+        &self,
+        transport: CoapBlockTransport,
+        payload_len: usize,
+    ) -> CoapBlockValidation {
+        self.validate(CoapBlockKind::QBlock1, transport, payload_len)
+    }
+
+    /// Validate Q-Block1 response control metadata without a payload rule.
+    pub fn validate_qblock1_response(&self, transport: CoapBlockTransport) -> CoapBlockValidation {
+        self.validate_control(CoapBlockKind::QBlock1, transport)
+    }
+
+    /// Validate one Q-Block2 request selector and its grouping parameter.
+    pub fn validate_qblock2_request(
+        &self,
+        transport: CoapBlockTransport,
+        max_payloads: u64,
+    ) -> CoapBlockValidation {
+        let mut validation = self.validate_control(CoapBlockKind::QBlock2, transport);
+        if self.qblock2_request_range(max_payloads).is_err() {
+            validation.push(
+                "coap.qblock.max-payloads",
+                "MAX_PAYLOADS must be nonzero and Q-Block NUM must fit in 20 bits",
+            );
+        }
+        validation
+    }
+
+    /// Validate a Q-Block2 response payload against an optional request range.
+    ///
+    /// The request can select one block, the entire body, or the remaining
+    /// blocks in a MAX_PAYLOADS_SET. This helper checks only packet-local
+    /// range, size, and payload facts; it retains no response or body state.
+    pub fn validate_qblock2_response(
+        &self,
+        transport: CoapBlockTransport,
+        payload_len: usize,
+        requested: Option<&Self>,
+        max_payloads: u64,
+    ) -> CoapBlockValidation {
+        let mut validation = self.validate(CoapBlockKind::QBlock2, transport, payload_len);
+
+        if let Some(requested) = requested {
+            validation.extend(requested.validate_qblock2_request(transport, max_payloads));
+
+            if self.block_size() > requested.block_size() {
+                validation.push(
+                    "coap.qblock2.response.size",
+                    "returned Q-Block2 size must not exceed requested size",
+                );
+            }
+
+            match requested.qblock2_request_covers(self.number(), max_payloads) {
+                Ok(true) => {}
+                Ok(false) => validation.push(
+                    "coap.qblock2.response.number",
+                    "returned Q-Block2 number is outside the requested range",
+                ),
+                Err(_) => {}
+            }
+        }
+
+        validation
+    }
+
     /// Validate source-level Block, Q-Block, BERT, and payload constraints.
     ///
     /// Validation is opt-in and never changes the exact raw representation.
@@ -497,13 +695,20 @@ impl CoapBlock {
                     "non-final block payload must equal the selected block size",
                 );
             }
-        } else if matches!(kind, CoapBlockKind::Block1 | CoapBlockKind::Block2)
-            && payload_len as u128 > u128::from(self.block_size())
-        {
-            let reason = if kind == CoapBlockKind::Block1 {
-                "final Block1 payload must not exceed the selected block size"
-            } else {
-                "final Block2 payload must not exceed the selected block size"
+        } else if payload_len as u128 > u128::from(self.block_size()) {
+            let reason = match kind {
+                CoapBlockKind::Block1 => {
+                    "final Block1 payload must not exceed the selected block size"
+                }
+                CoapBlockKind::Block2 => {
+                    "final Block2 payload must not exceed the selected block size"
+                }
+                CoapBlockKind::QBlock1 => {
+                    "final Q-Block1 payload must not exceed the selected block size"
+                }
+                CoapBlockKind::QBlock2 => {
+                    "final Q-Block2 payload must not exceed the selected block size"
+                }
             };
             validation.push("coap.block.payload-length", reason);
         }
@@ -573,6 +778,22 @@ impl CoapBlock {
             ))
         }
     }
+
+    fn validate_qblock_grouping(&self, max_payloads: u64) -> Result<()> {
+        if max_payloads == 0 {
+            return Err(CrafterError::invalid_field_value(
+                "coap.qblock.max-payloads",
+                "MAX_PAYLOADS must be nonzero",
+            ));
+        }
+        if self.number() > Self::MAX_NUMBER {
+            return Err(CrafterError::invalid_field_value(
+                "coap.block.number",
+                "Q-Block number must fit in the 20-bit NUM field",
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl TryFrom<&CoapOption> for CoapBlock {
@@ -606,7 +827,7 @@ fn encode_coap_uint(value: u64) -> Vec<u8> {
 mod tests {
     use super::*;
     use crate::packet::Packet;
-    use crate::protocols::coap::{Coap, CoapEtag, CoapSize1, CoapSize2};
+    use crate::protocols::coap::{Coap, CoapEtag, CoapRequestTag, CoapSize1, CoapSize2};
 
     #[test]
     fn canonical_boundaries_cover_every_standard_szx() {
@@ -1265,5 +1486,198 @@ mod tests {
             }
         )));
         assert!(Packet::from_layer(incompatible).compile().is_ok());
+    }
+
+    #[test]
+    fn qblock_grouping_and_request_ranges_are_checked_and_stateless() {
+        // RFC 9177 Sections 2 and 4.4 define MAX_PAYLOADS_SET by integer
+        // division and give Q-Block2's M bit its request-range meanings.
+        let selected = CoapBlock::qblock2(23, true, 2).unwrap();
+        assert_eq!(selected.option_kind(), Some(CoapBlockKind::QBlock2));
+        assert_eq!(selected.raw_bytes(), &[0x01, 0x7a]);
+        assert_eq!(selected.qblock_set_index(10).unwrap(), 2);
+        assert_eq!(selected.qblock_set_position(10).unwrap(), 3);
+        assert_eq!(selected.qblock_set_start_number(10).unwrap(), 20);
+        assert_eq!(selected.qblock_set_end_number(10).unwrap(), 29);
+        assert_eq!(selected.qblock_next_number().unwrap(), 24);
+        assert_eq!(selected.qblock2_request_range(10).unwrap(), (23, 29));
+        assert!(selected.qblock2_request_covers(29, 10).unwrap());
+        assert!(!selected.qblock2_request_covers(30, 10).unwrap());
+
+        let whole_body = CoapBlock::qblock2(0, true, 0).unwrap();
+        assert_eq!(
+            whole_body.qblock2_request_range(10).unwrap(),
+            (0, CoapBlock::MAX_NUMBER)
+        );
+        assert!(!whole_body.is_qblock2_continue(10).unwrap());
+
+        let continue_set = CoapBlock::qblock2(20, true, 0).unwrap();
+        assert_eq!(continue_set.qblock2_request_range(10).unwrap(), (20, 29));
+        assert!(continue_set.is_qblock2_continue(10).unwrap());
+
+        let single = CoapBlock::qblock2(23, false, 0).unwrap();
+        assert_eq!(single.qblock2_request_range(10).unwrap(), (23, 23));
+        assert!(single.qblock_precedes(
+            &selected
+                .qblock2_request_range(10)
+                .and_then(|(number, _)| CoapBlock::qblock2(number + 1, false, 0))
+                .unwrap()
+        ));
+
+        assert_eq!(CoapBlock::QBLOCK_DEFAULT_MAX_PAYLOADS, 10);
+        assert!(selected.qblock_set_index(0).is_err());
+        assert!(CoapBlock::qblock1(CoapBlock::MAX_NUMBER, false, 0)
+            .unwrap()
+            .qblock_next_number()
+            .is_err());
+    }
+
+    #[test]
+    fn qblock_validation_preserves_reserved_and_checks_payload_ranges() {
+        let request = CoapBlock::qblock1(1, true, 0).unwrap();
+        assert!(request
+            .validate_qblock1_request(CoapBlockTransport::Datagram, 16)
+            .is_valid());
+        assert!(!request
+            .validate_qblock1_request(CoapBlockTransport::Datagram, 15)
+            .is_valid());
+
+        let oversized_final = CoapBlock::qblock1(2, false, 0).unwrap();
+        assert!(matches!(
+            oversized_final
+                .validate_qblock1_request(CoapBlockTransport::Datagram, 17)
+                .issues(),
+            [CrafterError::InvalidFieldValue {
+                field: "coap.block.payload-length",
+                reason: "final Q-Block1 payload must not exceed the selected block size",
+            }]
+        ));
+
+        let requested = CoapBlock::qblock2(10, true, 1).unwrap();
+        let returned = CoapBlock::qblock2(15, true, 1).unwrap();
+        assert!(returned
+            .validate_qblock2_response(CoapBlockTransport::Datagram, 32, Some(&requested), 10,)
+            .is_valid());
+
+        let outside = CoapBlock::qblock2(20, true, 1).unwrap();
+        assert!(outside
+            .validate_qblock2_response(CoapBlockTransport::Datagram, 32, Some(&requested), 10,)
+            .issues()
+            .iter()
+            .any(|issue| matches!(
+                issue,
+                CrafterError::InvalidFieldValue {
+                    field: "coap.qblock2.response.number",
+                    ..
+                }
+            )));
+
+        // SZX 7 and overlong uint bytes remain constructible and exact, while
+        // opt-in validation reports that RFC 9177 does not assign BERT here.
+        let reserved = CoapBlock::qblock1(0, false, 7).unwrap();
+        assert_eq!(reserved.raw_bytes(), &[0x07]);
+        assert!(!reserved
+            .validate_qblock1_request(CoapBlockTransport::Reliable, 0)
+            .is_valid());
+        let raw =
+            CoapBlock::from_raw_bytes_for(CoapBlockKind::QBlock2, vec![0, 0, 0, 0x10]).unwrap();
+        assert_eq!(raw.raw_bytes(), &[0, 0, 0, 0x10]);
+        assert!(!raw
+            .validate_qblock2_request(CoapBlockTransport::Datagram, 10)
+            .is_valid());
+    }
+
+    #[test]
+    fn qblock_message_helpers_compile_decode_and_validate_required_metadata() {
+        let request = Coap::put().message_id(0x4000).qblock1_request_fragment(
+            CoapBlock::qblock1(0, true, 0).unwrap(),
+            vec![0xa5; 16],
+            CoapRequestTag::try_new([0x44]).unwrap(),
+            CoapSize1::new(20),
+        );
+        let request_bytes = [
+            0x40, 0x03, 0x40, 0x00, // CON, PUT, MID
+            0xd1, 0x06, 0x08, // Q-Block1 0/1/16
+            0xd1, 0x1c, 0x14, // Size1 20
+            0xd1, 0xdb, 0x44, // Request-Tag
+            0xff, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5,
+            0xa5, 0xa5, 0xa5,
+        ];
+        assert_eq!(
+            Packet::from_layer(request.clone())
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &request_bytes
+        );
+        assert!(!request.validate().has_errors());
+        assert!(request
+            .qblock1_validation(CoapBlockTransport::Datagram)
+            .unwrap()
+            .unwrap()
+            .is_valid());
+        let decoded_request = Coap::decode(&request_bytes).unwrap();
+        assert_eq!(
+            decoded_request
+                .qblock1_value()
+                .unwrap()
+                .unwrap()
+                .raw_bytes(),
+            &[0x08]
+        );
+
+        let response = Coap::content()
+            .acknowledgement()
+            .message_id(0x4001)
+            .qblock2_response_fragment(
+                CoapBlock::qblock2(0, true, 0).unwrap(),
+                vec![0x5a; 16],
+                CoapEtag::try_new([0x99]).unwrap(),
+                CoapSize2::new(20),
+            );
+        let response_bytes = [
+            0x60, 0x45, 0x40, 0x01, // ACK, 2.05 Content, MID
+            0x41, 0x99, // ETag
+            0xd1, 0x0b, 0x14, // Size2 20
+            0x31, 0x08, // Q-Block2 0/1/16
+            0xff, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a,
+            0x5a, 0x5a, 0x5a,
+        ];
+        assert_eq!(
+            Packet::from_layer(response.clone())
+                .compile()
+                .unwrap()
+                .as_bytes(),
+            &response_bytes
+        );
+        assert!(!response.validate().has_errors());
+        assert_eq!(response.qblock2_offset().unwrap().unwrap(), 0);
+
+        let missing_metadata = Coap::put().qblock1(CoapBlock::qblock1(0, false, 0).unwrap());
+        assert!(missing_metadata
+            .validate()
+            .issues()
+            .iter()
+            .any(|issue| { issue.reason() == "Q-Block1 requests require a Request-Tag option" }));
+        assert!(missing_metadata
+            .validate()
+            .issues()
+            .iter()
+            .any(|issue| issue.reason() == "Q-Block1 requests require a Size1 option"));
+
+        let out_of_order = Coap::get()
+            .qblock2(CoapBlock::qblock2(3, false, 0).unwrap())
+            .qblock2(CoapBlock::qblock2(2, false, 0).unwrap());
+        assert!(out_of_order.validate().issues().iter().any(|issue| {
+            issue.reason() == "repeated Q-Block2 request numbers must be strictly increasing"
+        }));
+
+        let mixed = Coap::get()
+            .block2(CoapBlock::block2(0, false, 0).unwrap())
+            .qblock2(CoapBlock::qblock2(0, false, 0).unwrap());
+        assert!(mixed.validate().issues().iter().any(|issue| {
+            issue.reason()
+                == "Block and Q-Block options must not be mixed at the same protection level"
+        }));
     }
 }
