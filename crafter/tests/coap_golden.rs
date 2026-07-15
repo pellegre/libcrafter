@@ -34,6 +34,7 @@ const RESET_MESSAGE_ID: u16 = 0x5601;
 const PIGGYBACKED_TOKEN: &[u8] = &[0xaa];
 const SEPARATE_TOKEN: &[u8] = &[0xde, 0xad];
 const NON_TOKEN: &[u8] = &[0xbb];
+const PATCH_DOCUMENT: &[u8] = br#"[{"op":"replace","path":"/x","value":45}]"#;
 
 const CONFIRMABLE_GET: &[u8] = &[
     // RFC 7252 section 3: version 1, CON, TKL 2; GET; Message ID 0x1234.
@@ -629,6 +630,152 @@ fn request_goldens_compile_inside_ipv4_and_ipv6_udp_stacks() -> crafter::Result<
     let ipv6_bytes = ipv6.compile()?;
     assert_eq!(ipv6_bytes.as_bytes().len(), 40 + 8 + PAYLOAD_POST.len());
     assert!(ipv6_bytes.as_bytes().ends_with(PAYLOAD_POST));
+
+    Ok(())
+}
+
+#[test]
+fn patch_request_and_changed_response_match_rfc_8132_bytes() -> crafter::Result<()> {
+    // RFC 8132 Sections 3.1 and 6: PATCH is 0.06 and
+    // application/json-patch+json is Content-Format 51. Accept remains the
+    // ordinary RFC 7252 response representation selector.
+    let request = Coap::patch_document(
+        CoapContentFormat::json_patch_json(),
+        PATCH_DOCUMENT.to_vec(),
+    )
+    .message_id(0x8132)
+    .token(CoapToken::from_bytes([0xa1]))
+    .uri_path(CoapUriPath::new("object"))
+    .accept(CoapAccept::new(50));
+
+    let mut expected_request = vec![
+        0x41, 0x06, 0x81, 0x32, 0xa1, // CON, PATCH, MID, token.
+        0xb6, b'o', b'b', b'j', b'e', b'c', b't', // Uri-Path 11.
+        0x11, 0x33, // Content-Format 12 = 51.
+        0x51, 0x32, // Accept 17 = application/json (50).
+        0xff,
+    ];
+    expected_request.extend_from_slice(PATCH_DOCUMENT);
+    assert_eq!(
+        Packet::from_layer(request.clone()).compile()?.as_bytes(),
+        expected_request
+    );
+
+    let decoded_request = decode_coap(&expected_request)?;
+    assert_eq!(decoded_request.code_value(), CoapCode::patch());
+    assert_eq!(decoded_request.payload_value(), PATCH_DOCUMENT);
+    assert_eq!(
+        decoded_request
+            .content_format_value()
+            .transpose()?
+            .expect("Content-Format")
+            .value(),
+        51
+    );
+    assert_eq!(
+        decoded_request
+            .accept_value()
+            .transpose()?
+            .expect("Accept")
+            .value(),
+        50
+    );
+    assert!(decoded_request.validate().is_clean());
+    assert_eq!(
+        Packet::from_layer(decoded_request).compile()?.as_bytes(),
+        expected_request
+    );
+
+    // RFC 8132 Section 3.2 uses 2.04 Changed for a modified resource.
+    let response = Coap::patch_changed_response()
+        .acknowledgement()
+        .message_id(0x8132)
+        .token(CoapToken::from_bytes([0xa1]))
+        .content_format(CoapContentFormat::new(50))
+        .payload(b"{}".to_vec());
+    let expected_response = [
+        0x61, 0x44, 0x81, 0x32, 0xa1, // ACK, 2.04 Changed, MID, token.
+        0xc1, 0x32, // Content-Format 12 = application/json (50).
+        0xff, b'{', b'}',
+    ];
+    assert_eq!(
+        Packet::from_layer(response).compile()?.as_bytes(),
+        expected_response
+    );
+    let decoded_response = decode_coap(&expected_response)?;
+    assert_eq!(decoded_response.code_value(), CoapCode::changed());
+    assert_eq!(decoded_response.payload_value(), b"{}");
+    assert!(decoded_response.validate().is_clean());
+
+    Ok(())
+}
+
+#[test]
+fn patch_unknown_format_and_raw_payload_remain_lossless() -> crafter::Result<()> {
+    let message =
+        Coap::patch_document(CoapContentFormat::new(64_997), [0xde, 0xad, 0x00]).message_id(0x6701);
+    let expected = [
+        0x40, 0x06, 0x67, 0x01, // CON, PATCH, MID, no token.
+        0xc2, 0xfd, 0xe5, // Content-Format 64997, preserved as an open uint.
+        0xff, 0xde, 0xad, 0x00,
+    ];
+
+    assert_eq!(Packet::from_layer(message).compile()?.as_bytes(), expected);
+    let decoded = decode_coap(&expected)?;
+    let format = decoded
+        .content_format_value()
+        .transpose()?
+        .expect("unknown format remains typed");
+    assert_eq!(format.value(), 64_997);
+    assert_eq!(
+        format.registry_meta().status,
+        CoapRegistryStatus::Unassigned
+    );
+    assert_eq!(decoded.payload_value(), [0xde, 0xad, 0x00]);
+    assert!(decoded.validate().is_clean());
+    assert_eq!(Packet::from_layer(decoded).compile()?.as_bytes(), expected);
+
+    Ok(())
+}
+
+#[test]
+fn patch_empty_and_explicit_malformed_messages_compile_but_validate() -> crafter::Result<()> {
+    let empty =
+        Coap::ipatch_document(CoapContentFormat::merge_patch_json(), Vec::new()).message_id(0x6702);
+    assert_eq!(
+        Packet::from_layer(empty.clone()).compile()?.as_bytes(),
+        [0x40, 0x07, 0x67, 0x02, 0xc1, 0x34]
+    );
+    let empty_issues = empty.validate();
+    assert!(empty_issues.issues().iter().any(|issue| {
+        issue.field() == "coap.payload"
+            && issue.category() == CoapValidationCategory::MethodSemantics
+    }));
+
+    let missing_format = Coap::patch().message_id(0x6703).payload([0x01]);
+    let missing_issues = missing_format.validate();
+    assert!(missing_issues.issues().iter().any(|issue| {
+        issue.field() == "coap.options"
+            && issue.category() == CoapValidationCategory::MethodSemantics
+    }));
+
+    let malformed = Coap::patch_document(CoapContentFormat::json_patch_json(), [0x01])
+        .message_id(0x6704)
+        .content_format(CoapContentFormat::merge_patch_json())
+        .payload_marker(CoapPayloadMarker::Absent);
+    assert_eq!(
+        Packet::from_layer(malformed.clone()).compile()?.as_bytes(),
+        [0x40, 0x06, 0x67, 0x04, 0xc1, 0x33, 0x01, 0x34, 0x01]
+    );
+    let malformed_issues = malformed.validate();
+    assert!(malformed_issues
+        .issues()
+        .iter()
+        .any(|issue| issue.category() == CoapValidationCategory::PayloadMarker));
+    assert!(malformed_issues
+        .issues()
+        .iter()
+        .any(|issue| issue.category() == CoapValidationCategory::OptionRepeatability));
 
     Ok(())
 }

@@ -159,6 +159,10 @@ pub const COAP_OPTION_REQUEST_TAG: u16 = 292;
 
 /// `application/link-format` Content-Format identifier (RFC 6690 Section 7.4).
 pub const COAP_CONTENT_FORMAT_LINK_FORMAT: u16 = 40;
+/// `application/json-patch+json` Content-Format identifier (RFC 8132 Section 6).
+pub(crate) const COAP_CONTENT_FORMAT_JSON_PATCH_JSON: u16 = 51;
+/// `application/merge-patch+json` Content-Format identifier (RFC 8132 Section 6).
+pub(crate) const COAP_CONTENT_FORMAT_MERGE_PATCH_JSON: u16 = 52;
 
 /// Assigned cleartext CoAP service port (IANA coap rows; RFC 7252 Section 12).
 pub const COAP_PORT: u16 = 5683;

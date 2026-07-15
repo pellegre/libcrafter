@@ -11,11 +11,12 @@ use crate::error::{CrafterError, Result};
 use crate::field::{Field, FieldState};
 
 use super::constants::{
-    COAP_OPTION_ACCEPT, COAP_OPTION_CONTENT_FORMAT, COAP_OPTION_ETAG, COAP_OPTION_IF_MATCH,
-    COAP_OPTION_IF_NONE_MATCH, COAP_OPTION_LOCATION_PATH, COAP_OPTION_LOCATION_QUERY,
-    COAP_OPTION_MAX_AGE, COAP_OPTION_PROXY_SCHEME, COAP_OPTION_PROXY_URI, COAP_OPTION_SIZE1,
-    COAP_OPTION_SIZE2, COAP_OPTION_URI_HOST, COAP_OPTION_URI_PATH, COAP_OPTION_URI_PORT,
-    COAP_OPTION_URI_QUERY, COAP_PAYLOAD_MARKER,
+    COAP_CONTENT_FORMAT_JSON_PATCH_JSON, COAP_CONTENT_FORMAT_MERGE_PATCH_JSON, COAP_OPTION_ACCEPT,
+    COAP_OPTION_CONTENT_FORMAT, COAP_OPTION_ETAG, COAP_OPTION_IF_MATCH, COAP_OPTION_IF_NONE_MATCH,
+    COAP_OPTION_LOCATION_PATH, COAP_OPTION_LOCATION_QUERY, COAP_OPTION_MAX_AGE,
+    COAP_OPTION_PROXY_SCHEME, COAP_OPTION_PROXY_URI, COAP_OPTION_SIZE1, COAP_OPTION_SIZE2,
+    COAP_OPTION_URI_HOST, COAP_OPTION_URI_PATH, COAP_OPTION_URI_PORT, COAP_OPTION_URI_QUERY,
+    COAP_PAYLOAD_MARKER,
 };
 use super::registry::{
     coap_content_format_meta, coap_option_is_critical, coap_option_is_no_cache_key,
@@ -694,6 +695,16 @@ define_uint_option! {
 }
 
 impl CoapContentFormat {
+    /// Build `application/json-patch+json` (Content-Format 51).
+    pub fn json_patch_json() -> Self {
+        Self::new(COAP_CONTENT_FORMAT_JSON_PATCH_JSON)
+    }
+
+    /// Build `application/merge-patch+json` (Content-Format 52).
+    pub fn merge_patch_json() -> Self {
+        Self::new(COAP_CONTENT_FORMAT_MERGE_PATCH_JSON)
+    }
+
     /// Return current source-backed registry metadata for this open value.
     pub fn registry_meta(&self) -> CoapRegistryMeta {
         coap_content_format_meta(u64::from(self.value))
@@ -715,6 +726,16 @@ define_uint_option! {
 }
 
 impl CoapAccept {
+    /// Build an Accept value for `application/json-patch+json` (51).
+    pub fn json_patch_json() -> Self {
+        Self::new(COAP_CONTENT_FORMAT_JSON_PATCH_JSON)
+    }
+
+    /// Build an Accept value for `application/merge-patch+json` (52).
+    pub fn merge_patch_json() -> Self {
+        Self::new(COAP_CONTENT_FORMAT_MERGE_PATCH_JSON)
+    }
+
     /// Return current source-backed Content-Format metadata for this value.
     pub fn registry_meta(&self) -> CoapRegistryMeta {
         coap_content_format_meta(u64::from(self.value))
