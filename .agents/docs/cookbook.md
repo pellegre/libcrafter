@@ -144,6 +144,89 @@ and read identification, reserved/DF/MF flags, `fragment_offset`, and
 transforms when a tool needs fragmentation or reassembly; they keep bounded
 state, metadata, overlap policy, and timers out of the layer builder.
 
+## Build CoAP Packet Primitives
+
+Generated CoAP tools should return typed `Packet` or `Coap` values and keep
+their first path offline. Use the standard prelude, documentation addresses,
+and the IP/UDP/CoAP helpers instead of returning raw bytes plus assembly
+instructions.
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+fn status_request(message_id: u16, token: [u8; 2]) -> Packet {
+    coap_ipv4_request(
+        Ipv4Addr::new(192, 0, 2, 10),
+        Ipv4Addr::new(198, 51, 100, 20),
+        Coap::get()
+            .message_id(message_id)
+            .token(CoapToken::from_bytes(token))
+            .uri_path("status")
+            .accept(CoapAccept::new(50)),
+    )
+}
+
+fn main() -> crafter::Result<()> {
+    let packet = status_request(0x1234, [0xaa, 0xbb]);
+    let plan = packet.send_dry_run(
+        SendOptions::new().iface("dry-run0").network_layer(),
+    )?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, plan.bytes())?;
+
+    println!("mode=dry-run");
+    println!("{}", decoded.summary());
+    println!("{}", decoded.show());
+    Ok(())
+}
+```
+
+Use `decode_coap` for a known datagram and `decode_coap_reliable` for one
+complete reliable frame. The latter returns a consumed length so a generated
+tool can own its stream buffer explicitly. Normal registry decode is the right
+choice for mixed traffic: malformed candidates, secure-port ciphertext,
+partial or concatenated reliable frames, and unrelated service-port payloads
+remain `Raw`.
+
+Keep typed extension work packet-local. `coap_discovery_request` and
+`coap_discovery_response` build CoRE Link Format messages; `CoapObserve`,
+`CoapBlock`, and the Q-Block helpers expose stateless metadata; and
+`OscoreContext::protect`/`unprotect` return ordinary typed `Coap` layers. A
+generated tool may retain transaction state, schedule retransmissions, compare
+Observe serials, select the next Block/Q-Block request, buffer TCP frames, or
+assemble bodies. Those are tool-level workflows because they require endpoint
+identity, timers, congestion policy, storage, or transport state; they do not
+belong in the packet layer.
+
+Persist deterministic packets with `PacketWire` or the classic pcap backend,
+and include `summary()`, `show()`, exact compiled bytes, and structured errors
+in tool reports. Never log OSCORE secrets or unauthenticated plaintext.
+
+Plan validation before considering a provider:
+
+```sh
+tools/oracle/run offline --family coap --profile coap-smoke --seed 5683 --count 12 --out target/oracle/coap-agent-offline
+tools/oracle/run live --provider local-dry-run --dry-run --family coap --profile coap-live-dry-run --seed 5683 --count 10 --out target/oracle/coap-agent-live-dry-run
+tools/probe/run --provider qemu --dry-run --profile coap-smoke --seed 5683 --count 12 --out target/probe/coap-agent-dry-run
+tools/lab/run plan --provider qemu --dry-run --profile smoke --seed 1 --role stimulus --role target --json
+```
+
+Live CoAP is optional, provider-backed, and never a developer-host raw send.
+The manual wrapper must require `LIBCRAFTER_PROBE_LIVE_PROVIDER`,
+`LIBCRAFTER_PROBE_LIVE_COAP_CONFIRM=yes`, the runner protocol gate
+`LIBCRAFTER_COAP_LIVE_CONFIRM=yes`, and `--confirm-live-run`. Promote only
+cases with a disposable controlled responder and finite send/capture bounds;
+collect plan, byte, pcap, response, log, provider, and cleanup artifacts below
+ignored `target/` paths, then tear down every endpoint after success, failure,
+or timeout. If credentials, virtualization, responder features, or other
+capabilities are unavailable, retain the dry-run artifact with a stable skip
+reason and do not create infrastructure.
+
+The user-facing API and complete guarded runbook are in
+[`docs/guide/coap.md`](../../docs/guide/coap.md). Source authority and detailed
+agent validation policy remain in the neighboring CoAP manifest and validation
+documents.
+
 ## Build MQTT Sessions
 
 MQTT is an application layer over cleartext TCP/1883. Generated tools should
