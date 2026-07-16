@@ -282,6 +282,11 @@ from .protocols.tls import (  # noqa: F401  (re-exported for identity)
 from .protocols.ntp import (  # noqa: F401  (re-exported for identity)
     _ntp_probe_plan,
 )
+# CoAP cases share one deterministic planned-only builder. Re-import it so the
+# public planning module retains the plugin builder's object identity.
+from .protocols.coap import (  # noqa: F401  (re-exported for identity)
+    _coap_probe_plan,
+)
 
 
 def planned_cases(

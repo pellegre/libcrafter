@@ -140,6 +140,7 @@ class ProbeProfileMembershipTest(unittest.TestCase):
             (
                 "behavior",
                 "bgp-smoke",
+                "coap-smoke",
                 "dhcpv6-advanced",
                 "dhcpv6-relay",
                 "dhcpv6-smoke",
