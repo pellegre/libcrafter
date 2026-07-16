@@ -6,7 +6,7 @@ import unittest
 from collections.abc import Mapping, Sequence
 
 from tools.oracle.engine.directions import BACKEND_TO_LIBCRAFTER, LIBCRAFTER_TO_BACKEND
-from tools.oracle.engine.generator import case_byte_policy_index
+from tools.oracle.engine.generator import case_byte_policy_index, generate_plans
 from tools.oracle.engine.spec_loader import FeatureSpec, LayerSpec, ProfileSpec, StackSpec, load_oracle_specs
 
 
@@ -110,6 +110,14 @@ class CoapOracleSpecTest(unittest.TestCase):
         self.assertEqual(self.specs.profiles["coap-smoke"].default_count, 12)
         self.assertEqual(self.specs.profiles["coap-ci"].default_count, 240)
         self.assertIn("tools/oracle/specs/profiles.d/coap.yaml", self.specs.source_paths)
+
+    def test_profiles_generate_only_coap_stacks_without_an_explicit_family_filter(self) -> None:
+        for profile in COAP_PROFILES:
+            with self.subTest(profile=profile):
+                plans = generate_plans(profile=profile, seed=7252, count=12)
+                self.assertTrue(plans)
+                self.assertEqual({plan.family for plan in plans}, {"coap"})
+                self.assertTrue(all("coap" in plan.stack for plan in plans))
 
     def test_secure_and_reference_backend_gaps_are_explicit(self) -> None:
         feature = self.specs.features["coap_oscore"]

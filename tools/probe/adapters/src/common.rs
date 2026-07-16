@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::{
-    arp, dhcpv4, dhcpv6, dns, icmp, mdns, mqtt, ndp, ntp, ospf, quic, rip, sctp, snmp, ssdp, tcp,
-    tls, udp,
+    arp, coap, dhcpv4, dhcpv6, dns, icmp, mdns, mqtt, ndp, ntp, ospf, quic, rip, sctp, snmp, ssdp,
+    tcp, tls, udp,
 };
 
 pub type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
@@ -1264,6 +1264,12 @@ fn dispatch_case(
         }
         (RunMode::Live, case) if ntp::is_live_capable_case(case) => {
             ntp::run_ntp_live(request, plan)
+        }
+        (RunMode::DryRun, case) if coap::is_live_capable_case(case) => {
+            coap::run_coap_dry_run(request, plan)
+        }
+        (RunMode::Live, case) if coap::is_live_capable_case(case) => {
+            coap::run_coap_live(request, plan)
         }
         (
             RunMode::DryRun,

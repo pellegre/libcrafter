@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import ipaddress
+import importlib
 import unittest
+from unittest.mock import patch
 
 from tools.probe.engine import cases as probe_cases
 from tools.probe.engine import planning
+from tools.probe.engine import target_services
 from tools.probe.engine.model import ProbeRunRequest
 from tools.probe.engine.protocols import PROTOCOL_REGISTRY
 from tools.probe.engine.protocols import coap as coap_protocol
+
+
+probe_cli = importlib.import_module("tools.probe.engine.cli.main")
 
 
 COAP_CASE_NAMES = tuple(case.name for case in coap_protocol.COAP_PROBE_CASES)
@@ -47,12 +53,12 @@ def _plan(case_name: str, *, seed: int = 5683, sequence: int = 0) -> dict:
 
 
 class CoapProbeCatalogTest(unittest.TestCase):
-    def test_plugin_registration_is_complete_and_adapter_routing_is_closed(self) -> None:
+    def test_plugin_registration_promotes_only_admitted_udp_cases(self) -> None:
         plugin = PROTOCOL_REGISTRY.require("coap")
 
         self.assertEqual(tuple(case.name for case in plugin.cases), COAP_CASE_NAMES)
-        self.assertEqual(plugin.planned_only_cases, frozenset(COAP_CASE_NAMES))
-        self.assertEqual(plugin.stimulus_endpoint_cases, frozenset())
+        self.assertEqual(plugin.planned_only_cases, frozenset(COAP_OFFLINE_CASES))
+        self.assertEqual(plugin.stimulus_endpoint_cases, frozenset(COAP_LIVE_CASES))
         self.assertIs(plugin.target_service, coap_protocol.coap_target_service_contribution)
         self.assertIs(plugin.rewrite_endpoint_addresses, coap_protocol.coap_rewrite_endpoint_addresses)
         self.assertIs(plugin.failure_reasons, coap_protocol.coap_failure_reasons)
@@ -63,7 +69,10 @@ class CoapProbeCatalogTest(unittest.TestCase):
             with self.subTest(case=case.name):
                 self.assertIs(probe_cases.PROBE_CASE_BY_NAME[case.name], case)
                 self.assertEqual(case.metadata["protocol"], "coap")
-                self.assertIs(case.metadata["planned_only"], True)
+                self.assertIs(
+                    case.metadata["planned_only"],
+                    case.name in COAP_OFFLINE_CASES,
+                )
                 self.assertEqual(
                     case.metadata["appliance_runtime_profile"],
                     coap_protocol.COAP_APPLIANCE_PROFILE,
@@ -99,7 +108,10 @@ class CoapProbePlanTest(unittest.TestCase):
                     planning.PLAN_BUILDERS[case_name],
                     planning._coap_probe_plan,
                 )
-                self.assertIn(case_name, planning.PLANNED_ONLY_REGISTERED_CASES)
+                if case_name in COAP_OFFLINE_CASES:
+                    self.assertIn(case_name, planning.PLANNED_ONLY_REGISTERED_CASES)
+                else:
+                    self.assertNotIn(case_name, planning.PLANNED_ONLY_REGISTERED_CASES)
 
     def test_plans_are_deterministic_documentation_safe_and_bounded(self) -> None:
         network = ipaddress.ip_network(coap_protocol.COAP_DOCUMENTATION_IPV4_PREFIX)
@@ -108,7 +120,10 @@ class CoapProbePlanTest(unittest.TestCase):
                 first = _plan(case_name, seed=7252, sequence=sequence)
                 second = _plan(case_name, seed=7252, sequence=sequence)
                 self.assertEqual(first, second)
-                self.assertIs(first["planned_only"], True)
+                if case_name in COAP_OFFLINE_CASES:
+                    self.assertTrue(first["planned_only"])
+                else:
+                    self.assertNotIn("planned_only", first)
                 self.assertEqual(first["protocol"], "coap")
                 self.assertEqual(len(bytes.fromhex(first["payload_hex"])), first["payload_length"])
                 self.assertIn(ipaddress.ip_address(first["source_ipv4"]), network)
@@ -122,7 +137,14 @@ class CoapProbePlanTest(unittest.TestCase):
                     first["wire_requirements"]["appliance_runtime_profile"],
                     "lan-raw",
                 )
-                self.assertTrue(first["wire_requirements"]["dry_run_only_until_adapter"])
+                self.assertIs(
+                    first["wire_requirements"]["dry_run_only_until_adapter"],
+                    case_name in COAP_OFFLINE_CASES,
+                )
+                self.assertIs(
+                    first["wire_requirements"]["stimulus_adapter_ready"],
+                    case_name in COAP_LIVE_CASES,
+                )
 
     def test_get_and_multi_response_plans_have_typed_decode_contracts(self) -> None:
         get = _plan("coap-unicast-get-content")
@@ -216,6 +238,32 @@ class CoapProbeTargetServiceAndRewriteTest(unittest.TestCase):
         self.assertFalse(service["supports"]["oscore_context"])
         self.assertEqual(coap_protocol.coap_lab_capabilities({"provider": "qemu"}), {})
 
+    def test_controlled_responder_script_is_bounded_deterministic_and_artifact_producing(self) -> None:
+        plans = [_plan(name, sequence=index) for index, name in enumerate(COAP_LIVE_CASES)]
+        first = target_services.target_service_setup_script(
+            artifact_root="/tmp/probe-target",
+            bind_ipv4="10.77.0.20",
+            open_ports=[],
+            closed_ports=[],
+            dns_plans=[],
+            coap_plans=plans,
+        )
+        second = target_services.target_service_setup_script(
+            artifact_root="/tmp/probe-target",
+            bind_ipv4="10.77.0.20",
+            open_ports=[],
+            closed_ports=[],
+            dns_plans=[],
+            coap_plans=plans,
+        )
+
+        self.assertEqual(first, second)
+        self.assertIn('check_udp_port_free "$coap_bind_ipv4" 5683', first)
+        self.assertIn("max_requests = min(10", first)
+        self.assertIn("deadline = time.monotonic() + 60.0", first)
+        self.assertIn("coap-responder.jsonl", first)
+        self.assertIn("response_payloads_hex", first)
+
     def test_live_rewrite_updates_every_address_and_filter(self) -> None:
         rewritten = coap_protocol.coap_rewrite_endpoint_addresses(
             _plan("coap-unicast-get-content"),
@@ -257,7 +305,7 @@ class CoapProbeTargetServiceAndRewriteTest(unittest.TestCase):
 
 
 class CoapProbeSkipPolicyTest(unittest.TestCase):
-    def test_live_cases_require_both_confirmation_gates_and_adapter(self) -> None:
+    def test_live_cases_require_both_confirmation_gates_and_have_adapter(self) -> None:
         for case_name in COAP_LIVE_CASES:
             with self.subTest(case=case_name):
                 plan = _plan(case_name)
@@ -268,7 +316,9 @@ class CoapProbeSkipPolicyTest(unittest.TestCase):
                     plan["wire_requirements"]["coap_confirmation_environment"],
                     "LIBCRAFTER_COAP_LIVE_CONFIRM",
                 )
-                self.assertIn("stimulus_adapter_not_implemented", plan["skip_reasons"]["live_promotion"])
+                self.assertEqual(plan["skip_reasons"]["live_promotion"], [])
+                self.assertEqual(plan["stimulus_driver"]["state"], "ready")
+                self.assertFalse(plan["stimulus_driver"]["planned_only"])
                 self.assertEqual(
                     plan["skip_reasons"]["capability"],
                     [
@@ -278,6 +328,25 @@ class CoapProbeSkipPolicyTest(unittest.TestCase):
                         "requires_controlled_coap_responder",
                     ],
                 )
+
+    def test_coap_environment_confirmation_is_checked_before_live_provider_work(self) -> None:
+        plan = _plan("coap-unicast-get-content")
+        with patch.dict("os.environ", {}, clear=True):
+            missing = probe_cli._missing_live_environment_confirmation(plan)
+        self.assertEqual(
+            missing,
+            {
+                "environment": "LIBCRAFTER_COAP_LIVE_CONFIRM",
+                "expected": "yes",
+                "present": False,
+            },
+        )
+        with patch.dict(
+            "os.environ",
+            {"LIBCRAFTER_COAP_LIVE_CONFIRM": "yes"},
+            clear=True,
+        ):
+            self.assertIsNone(probe_cli._missing_live_environment_confirmation(plan))
 
     def test_offline_cases_never_acquire_live_capability_from_name(self) -> None:
         for case_name in COAP_OFFLINE_CASES:

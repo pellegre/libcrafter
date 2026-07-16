@@ -775,6 +775,9 @@ class PacketGenerator:
                         continue
                 elif "ntp" in stack_layers:
                     continue
+            if feature is None and case is None and root is None and family is None:
+                if self.profile in _COAP_PROFILES and "coap" not in stack_layers:
+                    continue
             if (
                 feature is None
                 and case is None

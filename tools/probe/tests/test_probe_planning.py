@@ -496,6 +496,10 @@ class ProbePlanningRegistryTest(unittest.TestCase):
                         name,
                     )
                     self.assertEqual(plan["sctp"]["validation"]["planned_only"], True, name)
+                elif case.metadata.get("protocol") == "coap":
+                    self.assertEqual(plan["protocol"], "coap", name)
+                    self.assertEqual(plan["stimulus_driver"]["state"], "planned-only", name)
+                    self.assertTrue(plan["validation"]["planned_only"], name)
                 else:
                     self.fail(f"unhandled planned-only registered case {name}")
             else:

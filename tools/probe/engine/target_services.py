@@ -152,6 +152,15 @@ from .protocols.ndp import (
 # implementation.
 from .protocols.quic import quic_udp_probe_plans
 
+# CoAP uses a bounded exact-request responder generated from the admitted UDP
+# plans. The reliable/Q-Block/malformed/OSCORE cases remain offline-only and
+# are filtered by these plugin-owned helpers.
+from .protocols.coap import (
+    coap_port_check_lines,
+    coap_probe_plans,
+    coap_responder_setup_lines,
+)
+
 # BGP's target-service constants, the ``frr_bgp_peer_descriptor``, the FRR BGP
 # peer service-plan builder, the ``bgp-`` name-prefix plan selector
 # (``probe_plan_requires_bgp_peer``), and the ``bgp_peer_probe_plans`` selector
@@ -578,6 +587,12 @@ def prepare_wire_probe_target(
     dhcpv4_plans = dhcpv4_probe_plans(probe_plans)
     dhcpv6_plans = dhcpv6_probe_plans(probe_plans)
     mdns_plans = mdns_probe_plans(probe_plans)
+    coap_plans = [
+        plan
+        for plan in coap_probe_plans(probe_plans)
+        if isinstance(plan.get("target_service"), Mapping)
+        and plan.get("target_service", {}).get("kind") == "coap-controlled-responder"
+    ]
     arp_plans = arp_probe_plans(probe_plans)
     ndp_plans = ndp_probe_plans(probe_plans)
     udp_plans = [*udp_probe_plans(probe_plans), *quic_udp_probe_plans(probe_plans)]
@@ -588,6 +603,7 @@ def prepare_wire_probe_target(
         and not dhcpv4_plans
         and not dhcpv6_plans
         and not mdns_plans
+        and not coap_plans
         and not arp_plans
         and not ndp_plans
         and not udp_plans
@@ -621,6 +637,7 @@ def prepare_wire_probe_target(
         dhcpv4_plans=dhcpv4_plans,
         dhcpv6_plans=dhcpv6_plans,
         mdns_plans=mdns_plans,
+        coap_plans=coap_plans,
         arp_plans=arp_plans,
         ndp_plans=ndp_plans,
         udp_plans=udp_plans,
@@ -676,6 +693,7 @@ def target_service_setup_script(
     dhcpv4_plans: Sequence[JSONObject] = (),
     dhcpv6_plans: Sequence[JSONObject] = (),
     mdns_plans: Sequence[JSONObject] = (),
+    coap_plans: Sequence[JSONObject] = (),
     arp_plans: Sequence[JSONObject] = (),
     ndp_plans: Sequence[JSONObject] = (),
     udp_plans: Sequence[JSONObject] = (),
@@ -698,6 +716,7 @@ def target_service_setup_script(
         f"dhcpv6_bind_ipv6={shlex.quote(bind_ipv6)}",
         f"mdns_bind_ipv4={shlex.quote(bind_ipv4)}",
         f"mdns_bind_ipv6={shlex.quote(bind_ipv6)}",
+        f"coap_bind_ipv4={shlex.quote(bind_ipv4)}",
         f"udp_bind_ipv4={shlex.quote(bind_ipv4)}",
         f"target_interface={shlex.quote(target_interface)}",
         'mkdir -p "$artifact_root"',
@@ -765,6 +784,8 @@ def target_service_setup_script(
     lines.extend(dhcpv6_port_check_lines(dhcpv6_plans))
     # mDNS renders UDP/5353 free checks for the controlled Bonjour responder.
     lines.extend(mdns_port_check_lines(mdns_plans))
+    # CoAP checks only ports used by admitted controlled UDP cases.
+    lines.extend(coap_port_check_lines(coap_plans))
     # The closed-TCP-port free-check moved to
     # ``protocols.tcp.tcp_closed_port_check_lines``; render it here so the script
     # bytes stay byte-identical to the legacy inline ``for port in closed_ports:``
@@ -800,6 +821,14 @@ def target_service_setup_script(
         mdns_responder_setup_lines(
             artifact_root=artifact_root,
             mdns_plans=mdns_plans,
+        )
+    )
+    # CoAP renders a bounded exact-request responder with deterministic
+    # response sequences and JSONL artifacts.
+    lines.extend(
+        coap_responder_setup_lines(
+            artifact_root=artifact_root,
+            coap_plans=coap_plans,
         )
     )
     # DHCPv4 renders its responder heredoc and launch block with the materialized

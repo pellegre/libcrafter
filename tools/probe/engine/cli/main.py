@@ -160,6 +160,10 @@ from ..protocols.ipsec import (
     _IPSEC_PROBE_CASES,
     _ipsec_interop_dry_run_metadata,
 )
+from ..protocols.coap import (
+    missing_live_environment_confirmation as _missing_live_environment_confirmation,
+    missing_live_environment_confirmations as _missing_live_environment_confirmations,
+)
 # The argparse parser construction lives in ``cli.parser`` (an
 # orchestration-only concern with no patch/identity coupling). ``_build_parser``
 # is re-imported here so ``cli._build_parser`` stays resolvable (the profile
@@ -191,6 +195,7 @@ STATUS_DRY_RUN = "dry-run"
 STATUS_FAILED = "failed"
 STATUS_PASSED = "passed"
 STATUS_UNSUPPORTED = "unsupported"
+STATUS_REQUIRES_CONFIRMATION = "requires-confirmation"
 
 
 def _run(args: argparse.Namespace) -> int:
@@ -351,6 +356,21 @@ def _guarded_live_report(
     report_path: Path,
     status: str,
 ) -> ProbeReport:
+    missing_environment = _missing_live_environment_confirmations(probe_plans)
+    if missing_environment:
+        return _build_report(
+            request=request,
+            selected_cases=selected_cases,
+            planned_cases=planned_cases,
+            probe_plans=probe_plans,
+            report_path=report_path,
+            status=STATUS_REQUIRES_CONFIRMATION,
+            dry_run=False,
+            provider_context={
+                "live_environment_confirmations": missing_environment,
+                "creates_infrastructure": False,
+            },
+        )
     if is_probe_lab_provider(request.provider) and request.confirm_live_run:
         provider_capabilities = _probe_capabilities_for_request(request, dry_run=False)
         skipped_sequences = {
