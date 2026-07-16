@@ -113,9 +113,9 @@ named property; it does not waive the offline evidence in the same row.
 
 ## Reference-backend limits
 
-At this design step no CoAP oracle generator, Scapy adapter, Wireshark adapter,
-or probe plugin exists in the repository. Later adapters must declare support
-per feature and direction; the existence of a native layer name is not evidence
+The CoAP oracle generator, libcrafter adapter, partial Scapy/Wireshark reference
+adapters, and probe plugin are implemented. Support remains declared per
+feature and direction; the existence of a native layer name is not evidence
 that a backend supports the complete grammar.
 
 - Scapy is an encode/decode reference only for the canonical datagram fields,
@@ -168,14 +168,13 @@ compilation, full oracle capability/skip reporting, probe plan snapshots, and
 all official/reference vectors. It uses fixed seeds and counts in CI artifacts;
 changing a seed or a golden digest is a reviewed fixture change.
 
-Typical offline invocations, once the later oracle and probe steps define the
-profiles, are:
+Typical offline and local dry-run invocations are:
 
 ```sh
 tools/oracle/run offline --profile coap-smoke --seed 5683 --count 10 --out target/oracle/coap-smoke
 tools/oracle/run offline --profile coap-ci --seed 7252 --count 100 --out target/oracle/coap-ci
-tools/probe/run --dry-run --profile coap-smoke --seed 5683 --count 10 --out target/probe/coap-smoke
-tools/probe/run --dry-run --profile coap-ci --seed 7252 --count 100 --out target/probe/coap-ci
+tools/probe/run --provider local-dry-run --dry-run --profile coap-smoke --seed 5683 --count 12 --out target/probe/coap-smoke
+tools/oracle/run live --provider local-dry-run --dry-run --family coap --profile coap-live-dry-run --seed 5683 --count 10 --out target/oracle/coap-live-local-dry-run
 ```
 
 The bare Python oracle/probe unit gates, Rust tests, fixture suite, and static
@@ -195,14 +194,17 @@ Group OSCORE, public discovery, and unbounded Observe/block workflows are not
 live candidates.
 
 Before any protected live CoAP run, lab, oracle, and probe dry-runs must succeed
-or produce an inspected stable skip artifact for **each** of `qemu`,
-`virtualbox`, and `hetzner`. This produces nine tool/provider records:
+or produce an inspected stable skip artifact for every provider currently
+registered by the lab runner: `docker`, `hetzner`, `qemu`, and `virtualbox`.
+Provider names must come from `tools/lab/run providers`, not a permanently
+hard-coded list. For the current registry this produces twelve tool/provider
+records:
 
 ```sh
-for provider in qemu virtualbox hetzner; do
-  tools/lab/run plan --provider "$provider" --dry-run --profile coap-live-dry-run --seed 5683 --role stimulus --role target --json
-  tools/oracle/run live --provider "$provider" --dry-run --profile coap-live-dry-run --seed 5683 --count 10 --out "target/oracle/coap-live-dry-run/$provider"
-  tools/probe/run --provider "$provider" --dry-run --profile coap-live-dry-run --seed 5683 --count 10 --out "target/probe/coap-live-dry-run/$provider"
+for provider in docker hetzner qemu virtualbox; do
+  tools/lab/run plan --provider "$provider" --dry-run --profile smoke --seed 1 --role stimulus --role target --json
+  tools/oracle/run live --provider "$provider" --dry-run --family coap --profile coap-live-dry-run --seed 5683 --count 10 --out "target/oracle/coap-live-dry-run/$provider"
+  tools/probe/run --provider "$provider" --dry-run --profile coap-smoke --seed 5683 --count 12 --out "target/probe/coap-live-dry-run/$provider"
 done
 ```
 
@@ -226,14 +228,16 @@ Live CoAP traffic is optional and may start only when all of these conditions
 are true:
 
 1. The relevant `coap-smoke` and `coap-ci` offline evidence has passed.
-2. All nine `coap-live-dry-run` records have been inspected, and the exact
+2. All current provider `coap-live-dry-run` records have been inspected, and the exact
    provider, seed, count, case set, endpoint roles, capture envelope, artifact
    root, and teardown plan selected for live promotion are unchanged.
 3. The operator selects an explicit provider from the lab registry. There is
    no implicit provider, local provider, or developer-host fallback.
-4. The live-capable command includes `--confirm-live-run`, and the operator
-   separately sets `LIBCRAFTER_COAP_LIVE_CONFIRM=yes`. Provider selection,
-   credentials, raw-socket availability, or either confirmation alone is not
+4. The operator-facing runbook requires
+   `LIBCRAFTER_PROBE_LIVE_COAP_CONFIRM=yes`; the live-capable command includes
+   `--confirm-live-run`; and the probe runner separately receives its enforced
+   protocol gate `LIBCRAFTER_COAP_LIVE_CONFIRM=yes`. Provider selection,
+   credentials, raw-socket availability, or any one confirmation alone is not
    sufficient.
 5. Session metadata proves a controlled responder is ready for every selected
    case. The responder is disposable test infrastructure, not a public or
@@ -255,16 +259,43 @@ follows. This snippet is documentation only and must never appear in automated
 acceptance, CI, or unattended scripts:
 
 ```sh
-provider=${LIBCRAFTER_COAP_LIVE_PROVIDER:-}
-if [ -n "$provider" ] && [ "${LIBCRAFTER_COAP_LIVE_CONFIRM:-}" = yes ]; then
-  tools/probe/run --provider "$provider" --confirm-live-run --profile coap-live-dry-run --seed 5683 --count 10 --out "target/probe/coap-live/$provider"
+provider=${LIBCRAFTER_PROBE_LIVE_PROVIDER:-}
+if [ -n "$provider" ] && [ "${LIBCRAFTER_PROBE_LIVE_COAP_CONFIRM:-}" = yes ]; then
+  LIBCRAFTER_COAP_LIVE_CONFIRM=yes tools/probe/run --provider "$provider" --confirm-live-run --profile coap-smoke --seed 5683 --count 7 --out "target/probe/coap-live/$provider"
 else
-  tools/probe/run --provider qemu --dry-run --profile coap-live-dry-run --seed 5683 --count 10 --out target/probe/coap-live-dry-run/qemu
+  tools/probe/run --provider qemu --dry-run --profile coap-smoke --seed 5683 --count 7 --out target/probe/coap-live-dry-run/qemu
 fi
 ```
 
-Do not set either environment variable from automation. The runner must still
-enforce its own confirmation and provider guards even when both are present.
+Do not set these environment variables from automation. The runner must still
+enforce its own confirmation and provider guards even when all are present.
+
+## Retained step-98 dry-run record
+
+The documentation pass ran the current provider matrix with no live
+authorization. All four lab plans, four CoAP oracle plans, and four CoAP probe
+plans exited successfully with `dry_run=true`; they created no endpoints. Each
+probe plan retained all twelve `coap-smoke` cases. Oracle capability filtering
+kept six of ten generated cases wire-eligible on Docker, QEMU, and VirtualBox
+and four of ten on Hetzner; the skipped cases record unavailable IPv6 and, on
+Hetzner, L2/broadcast/provider-MAC requirements.
+
+Endpoint `doctor --dry-run` records were retained for every registered
+provider/exposure pair. Docker (`private`, `lan`, `wan`), Hetzner (`private`,
+`wan`), QEMU (`private`, `wan`), and VirtualBox `private` passed their dry-run
+checks. VirtualBox `lan` recorded the stable prerequisite skip
+`bridge_discovery` because the host VirtualBox driver/bridged-interface check
+was unavailable. Hetzner plans record missing `HETZNER_API_TOKEN` or
+`HCLOUD_TOKEN` as a live prerequisite while remaining valid dry-runs.
+
+Artifacts are under ignored `target/lab/coap-step98`,
+`target/oracle/coap-step98-*`, `target/probe/coap-step98-*`, and
+`target/endpoint/coap-step98`. Every live gate remained closed: no provider was
+selected through `LIBCRAFTER_PROBE_LIVE_PROVIDER`,
+`LIBCRAFTER_PROBE_LIVE_COAP_CONFIRM=yes` and
+`LIBCRAFTER_COAP_LIVE_CONFIRM=yes` were absent, and no command included
+`--confirm-live-run`. Therefore the result is dry-run evidence plus explicit
+live skips, not live CoAP coverage.
 
 ## Skip reporting, artifacts, teardown, and redaction
 
