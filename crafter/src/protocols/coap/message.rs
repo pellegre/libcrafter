@@ -2014,7 +2014,7 @@ impl Coap {
 
     /// Return the explicit marker choice or derive it from payload presence.
     pub fn payload_marker_value(&self) -> CoapPayloadMarker {
-        self.payload_marker.value().copied().unwrap_or_else(|| {
+        self.payload_marker.value().copied().unwrap_or({
             if self.payload.is_empty() {
                 CoapPayloadMarker::Absent
             } else {
@@ -2348,7 +2348,7 @@ impl Coap {
             "absent"
         };
         let mismatch = self.payload_marker_state() == FieldState::User
-            && marker.is_present() != !self.payload.is_empty();
+            && marker.is_present() == self.payload.is_empty();
 
         if mismatch {
             format!("{label} [explicit-mismatch]")

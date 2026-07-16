@@ -24,7 +24,7 @@ use super::constants::{
     COAP_OPTION_OBSERVE, COAP_OPTION_OSCORE, COAP_OPTION_PROXY_SCHEME, COAP_OPTION_PROXY_URI,
     COAP_OPTION_URI_HOST, COAP_OPTION_URI_PORT, COAP_PAYLOAD_MARKER,
 };
-use super::message::{Coap, CoapCode, CoapOptionOrder, CoapPayloadMarker, CoapToken};
+use super::message::{Coap, CoapCode, CoapOptionOrder, CoapPayloadMarker};
 use super::option::{decode_option_sequence, encode_option_sequence, CoapOption, CoapOptions};
 
 const OSCORE_PARTIAL_IV_LENGTH_MASK: u8 = 0x07;
@@ -53,9 +53,10 @@ type OscoreAesCcm = Ccm<Aes128, U8, U13>;
 /// identifiers remain inspectable and produce a typed unsupported result when
 /// context derivation or packet protection is requested.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OscoreAeadAlgorithm {
     /// AES-CCM-16-64-128 (COSE algorithm 10).
+    #[default]
     AesCcm16_64_128,
     /// An unsupported COSE AEAD identifier preserved verbatim.
     Unknown(i32),
@@ -123,17 +124,12 @@ impl OscoreAeadAlgorithm {
     }
 }
 
-impl Default for OscoreAeadAlgorithm {
-    fn default() -> Self {
-        Self::AesCcm16_64_128
-    }
-}
-
 /// HMAC-based key-derivation algorithm stored in an OSCORE context.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OscoreKdfAlgorithm {
     /// HKDF SHA-256 (COSE algorithm -10).
+    #[default]
     HkdfSha256,
     /// An unsupported COSE KDF identifier preserved verbatim.
     Unknown(i32),
@@ -167,12 +163,6 @@ impl OscoreKdfAlgorithm {
             Self::HkdfSha256 => "HKDF-SHA-256".to_string(),
             Self::Unknown(id) => format!("unknown-kdf-{id}"),
         }
-    }
-}
-
-impl Default for OscoreKdfAlgorithm {
-    fn default() -> Self {
-        Self::HkdfSha256
     }
 }
 
@@ -502,7 +492,7 @@ impl OscoreOption {
     }
 
     /// Return whether the canonical empty representation omitted the flag byte.
-    pub const fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.raw.is_empty()
     }
 
@@ -1065,6 +1055,7 @@ impl OscoreContext {
         &self.recipient_key
     }
 
+    #[cfg(test)]
     pub(super) fn common_iv(&self) -> &[u8] {
         &self.common_iv
     }
@@ -1769,6 +1760,7 @@ fn append_cbor_unsigned(major: u8, value: u64, out: &mut Vec<u8>) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::message::CoapToken;
     use super::*;
     use crate::packet::Packet;
 

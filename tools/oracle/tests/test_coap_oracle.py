@@ -12,7 +12,10 @@ import unittest
 from collections.abc import Mapping
 
 from tools.oracle.engine.backends.scapy.protocols import SCAPY_REGISTRY
-from tools.oracle.engine.backends.scapy.protocols.coap import coap_message_bytes
+from tools.oracle.engine.backends.scapy.protocols.coap import (
+    coap_message_bytes,
+    coap_reliable_fields_from_bytes,
+)
 from tools.oracle.engine.backends.wireshark.protocols import WIRESHARK_REGISTRY
 from tools.oracle.engine.cli import _SUITE_FEATURE_BY_FAMILY, _suite_offline_cases
 from tools.oracle.engine.generator import PacketGenerator, generate_plans
@@ -158,6 +161,22 @@ class CoapOfflineContractTest(unittest.TestCase):
             self.assertTrue(all(plan.direction in _DIRECTIONS for plan in first))
             self.assertTrue(all("live" not in plan.feature_tags for plan in first))
             self.assertTrue(all(plan.stack[-1] == "coap" for plan in first))
+
+    def test_reliable_frame_parser_requires_exactly_one_complete_frame(self) -> None:
+        fields = coap_reliable_fields_from_bytes(bytes.fromhex("30e1220480"))
+        self.assertIsNotNone(fields)
+        assert fields is not None
+        self.assertEqual(fields["transport"], "reliable")
+        self.assertEqual(
+            fields["reliable_length"],
+            {"nibble": 3, "extension_hex": "", "declared_length": 3},
+        )
+        self.assertEqual(fields["code"], 0xE1)
+        self.assertEqual(fields["token_length"]["declared_length"], 0)
+        self.assertEqual(fields["options"][0]["number"], 2)
+        self.assertEqual(fields["options"][0]["value"]["hex"], "0480")
+        self.assertIsNone(coap_reliable_fields_from_bytes(bytes.fromhex("30e12204")))
+        self.assertIsNone(coap_reliable_fields_from_bytes(bytes.fromhex("30e12204800000")))
 
 
 class CoapDirectionMatrixTest(unittest.TestCase):

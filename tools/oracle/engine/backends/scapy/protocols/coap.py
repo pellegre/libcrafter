@@ -303,6 +303,71 @@ def coap_fields_from_bytes(raw: bytes) -> JSONObject | None:
     }
 
 
+def coap_reliable_fields_from_bytes(raw: bytes) -> JSONObject | None:
+    """Parse exactly one structurally valid RFC 8323 cleartext frame."""
+
+    if len(raw) < 2:
+        return None
+    first = raw[0]
+    length_nibble = first >> 4
+    decoded_length = _decode_reliable_length(length_nibble, raw, 1)
+    if decoded_length is None:
+        return None
+    body_length, length_extension, cursor = decoded_length
+    if cursor >= len(raw):
+        return None
+    code = raw[cursor]
+    cursor += 1
+    token_nibble = first & 0x0F
+    decoded_token = _decode_token_length(token_nibble, raw, cursor)
+    if decoded_token is None:
+        return None
+    token_length, token_extension, cursor = decoded_token
+    token_end = cursor + token_length
+    body_end = token_end + body_length
+    if token_end > len(raw) or body_end != len(raw):
+        return None
+    token = raw[cursor:token_end]
+    parsed_options = _decode_options(raw[token_end:body_end], 0)
+    if parsed_options is None:
+        return None
+    options, marker_present, payload, cursor = parsed_options
+    if cursor != body_length:
+        return None
+    return {
+        "transport": "reliable",
+        "reliable_length": {
+            "nibble": length_nibble,
+            "extension_hex": length_extension.hex(),
+            "declared_length": body_length,
+        },
+        "token_length": {
+            "nibble": token_nibble,
+            "extension_hex": token_extension.hex(),
+            "declared_length": token_length,
+        },
+        "code": code,
+        "token": _json_bytes(token),
+        "options": options,
+        "payload_marker": "present" if marker_present else "absent",
+        "payload": _json_bytes(payload),
+    }
+
+
+def _decode_reliable_length(
+    nibble: int, raw: bytes, cursor: int
+) -> tuple[int, bytes, int] | None:
+    if nibble <= 12:
+        return nibble, b"", cursor
+    extension_size = {13: 1, 14: 2, 15: 4}[nibble]
+    end = cursor + extension_size
+    if end > len(raw):
+        return None
+    extension = raw[cursor:end]
+    base = {13: 13, 14: 269, 15: 65_805}[nibble]
+    return base + int.from_bytes(extension, "big"), extension, end
+
+
 def _decode_token_length(
     nibble: int, raw: bytes, cursor: int
 ) -> tuple[int, bytes, int] | None:
@@ -383,31 +448,37 @@ def canonicalize_coap_payload(
     *,
     source_hex: str | None = None,
 ) -> None:
-    """Replace a cleartext UDP/5683 payload/native layer with canonical CoAP."""
+    """Replace a cleartext UDP/TCP port 5683 payload with canonical CoAP."""
 
     udp = _scapy_layer(packet, "UDP")
-    if udp is None:
+    tcp = _scapy_layer(packet, "TCP")
+    payload: bytes | None
+    transport: str
+    if udp is not None and _uses_cleartext_coap_port(udp):
+        payload = _udp_payload_from_source_hex(source_hex)
+        if payload is None:
+            native = _scapy_layer(packet, "CoAP")
+            if native is not None:
+                try:
+                    payload = bytes(native)
+                except (TypeError, ValueError):
+                    payload = None
+        parser = coap_fields_from_bytes
+        transport = "udp"
+    elif tcp is not None and _uses_cleartext_coap_port(tcp):
+        payload = _tcp_payload_from_source_hex(source_hex)
+        parser = coap_reliable_fields_from_bytes
+        transport = "tcp"
+    else:
         return
-    if _int_value(getattr(udp, "sport", 0), 0) != _COAP_PORT and _int_value(
-        getattr(udp, "dport", 0), 0
-    ) != _COAP_PORT:
-        return
-    payload = _udp_payload_from_source_hex(source_hex)
-    if payload is None:
-        native = _scapy_layer(packet, "CoAP")
-        if native is not None:
-            try:
-                payload = bytes(native)
-            except (TypeError, ValueError):
-                payload = None
     if payload is None:
         payload = _raw_payload(packet)
     if payload is None:
         return
-    normalized = coap_fields_from_bytes(payload)
+    normalized = parser(payload)
     if normalized is None:
         return
-    target = _layer_index(layers, {"coap", "payload", "raw"}, after="udp")
+    target = _layer_index(layers, {"coap", "payload", "raw"}, after=transport)
     if target is None:
         return
     old_key = _layer_key_at(layers, target)
@@ -477,6 +548,49 @@ def _udp_payload_from_source_hex(source_hex: str | None) -> bytes | None:
     if udp_length < 8 or udp_offset + udp_length > len(raw):
         return None
     return raw[udp_offset + 8 : udp_offset + udp_length]
+
+
+def _tcp_payload_from_source_hex(source_hex: str | None) -> bytes | None:
+    if not source_hex:
+        return None
+    try:
+        raw = bytes.fromhex(source_hex)
+    except ValueError:
+        return None
+    offset = 0
+    if len(raw) >= 14 and int.from_bytes(raw[12:14], "big") in {0x0800, 0x86DD}:
+        offset = 14
+    if offset >= len(raw):
+        return None
+    version = raw[offset] >> 4
+    if version == 4:
+        if len(raw) < offset + 20 or raw[offset + 9] != 6:
+            return None
+        ip_header_length = (raw[offset] & 0x0F) * 4
+        total_length = int.from_bytes(raw[offset + 2 : offset + 4], "big")
+        if ip_header_length < 20 or total_length < ip_header_length:
+            return None
+        tcp_offset = offset + ip_header_length
+        packet_end = offset + total_length
+    elif version == 6:
+        if len(raw) < offset + 40 or raw[offset + 6] != 6:
+            return None
+        tcp_offset = offset + 40
+        packet_end = tcp_offset + int.from_bytes(raw[offset + 4 : offset + 6], "big")
+    else:
+        return None
+    if packet_end > len(raw) or tcp_offset + 20 > packet_end:
+        return None
+    tcp_header_length = (raw[tcp_offset + 12] >> 4) * 4
+    if tcp_header_length < 20 or tcp_offset + tcp_header_length > packet_end:
+        return None
+    return raw[tcp_offset + tcp_header_length : packet_end]
+
+
+def _uses_cleartext_coap_port(layer: Any) -> bool:
+    return _int_value(getattr(layer, "sport", 0), 0) == _COAP_PORT or _int_value(
+        getattr(layer, "dport", 0), 0
+    ) == _COAP_PORT
 
 
 def _option_list(value: object) -> list[Mapping[str, object]]:
@@ -612,4 +726,5 @@ __all__ = [
     "canonicalize_coap_payload",
     "coap_fields_from_bytes",
     "coap_message_bytes",
+    "coap_reliable_fields_from_bytes",
 ]

@@ -48,6 +48,7 @@ pub const COAP_DEFAULT_TYPE: u8 = 0;
 /// Unset Token Length compile default for an empty token (RFC 7252 Section 3).
 pub const COAP_DEFAULT_TKL: u8 = 0;
 /// Unset Code compile default: Empty `0.00` (RFC 7252 Sections 3 and 4.1).
+#[cfg(test)]
 pub const COAP_DEFAULT_CODE: u8 = 0;
 /// Deterministic unset Message ID compile default from the CoAP wire grammar.
 pub const COAP_DEFAULT_MESSAGE_ID: u16 = 0;
