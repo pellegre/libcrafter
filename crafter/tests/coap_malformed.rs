@@ -507,9 +507,7 @@ fn assert_registry_decode(name: &str, input: &[u8]) -> bool {
     .unwrap_or_else(|error| panic!("CoAP resilience case {name} failed registry decode: {error}"));
 
     let typed = decoded.layer::<Coap>().is_some();
-    if typed {
-        assert!(decoded.layer::<Raw>().is_none(), "case {name}");
-    } else if input.is_empty() {
+    if typed || input.is_empty() {
         assert!(decoded.layer::<Raw>().is_none(), "case {name}");
     } else {
         assert_eq!(
