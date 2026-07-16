@@ -6,6 +6,7 @@ repo_root="$(cd -- "${script_dir}/../.." && pwd)"
 
 export PROBE_REPO_ROOT="${repo_root}"
 export PYTHONPATH="${script_dir}${PYTHONPATH:+:${PYTHONPATH}}"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-${repo_root}/target/probe/uv-cache}"
 
 uv_bin="${PROBE_UV:-uv}"
 python_bin="${PROBE_PYTHON:-python3}"

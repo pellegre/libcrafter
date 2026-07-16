@@ -1,14 +1,18 @@
 """CoAP probe plugin: deterministic offline and provider-backed plans.
 
-The plugin plans packet-local exchanges only.  Every case is planned-only until
-the Rust stimulus adapter lands; the live-capable bit is an explicit allowlist,
-not an inference from the protocol name.  Provider placement uses the coarse
+Seven bounded UDP cases route through the Rust stimulus adapter and a generated
+controlled responder. Reliable transport, Q-Block scheduling, malformed-shape,
+and OSCORE cases remain offline-only. Provider placement uses the coarse
 ``lan-raw`` appliance profile, while controlled-responder readiness remains a
 target-service contract rather than a protocol-specific provider capability.
 """
 
 from __future__ import annotations
 
+import json
+import os
+import posixpath
+import shlex
 from collections.abc import Mapping, Sequence
 
 from ..case_helpers import _behavior_case
@@ -55,7 +59,7 @@ def _case(
         "service": COAP_SERVICE_KIND,
         "transport": transport,
         "service_port": COAP_PORT,
-        "planned_only": True,
+        "planned_only": not live_capable,
         "live_capable": live_capable,
         "message_kind": message_kind,
         "appliance_runtime_profile": COAP_APPLIANCE_PROFILE,
@@ -177,10 +181,10 @@ COAP_PROBE_CASES: tuple[ProbeCase, ...] = (
 )
 
 _COAP_CASE_BY_NAME = {case.name: case for case in COAP_PROBE_CASES}
-_COAP_PLANNED_ONLY_CASES = frozenset(_COAP_CASE_BY_NAME)
 _COAP_LIVE_CAPABLE_CASES = frozenset(
     case.name for case in COAP_PROBE_CASES if case.metadata.get("live_capable") is True
 )
+_COAP_PLANNED_ONLY_CASES = frozenset(_COAP_CASE_BY_NAME) - _COAP_LIVE_CAPABLE_CASES
 
 
 def _coap_probe_plan(
@@ -207,6 +211,7 @@ def _coap_probe_plan(
     )
     transport = str(case.metadata["transport"])
     live_capable = case_name in _COAP_LIVE_CAPABLE_CASES
+    planned_only = not live_capable
     expected = responses[-1] if responses else request
     response_models = response_models or [{"layer": "Raw", "raw_hex": expected.hex()}]
     expected_model = response_models[-1]
@@ -235,7 +240,7 @@ def _coap_probe_plan(
         "source_port": COAP_PORT,
         "destination_port": source_port,
         "response_count": len(responses),
-        "planned_only": True,
+        **({"planned_only": True} if planned_only else {}),
     }
     if case_name == "coap-malformed-raw-fallback":
         validation.update(
@@ -260,7 +265,7 @@ def _coap_probe_plan(
         "seed": seed,
         "stimulus": case.stimulus,
         "expected_response": case.expected_response,
-        "planned_only": True,
+        **({"planned_only": True} if planned_only else {}),
         "live_capable": live_capable,
         "protocol": "coap",
         "transport": transport,
@@ -327,13 +332,14 @@ def _coap_probe_plan(
             "coap_confirmation_environment": COAP_LIVE_CONFIRMATION_ENV,
             "coap_confirmation_value": "yes",
             "appliance_runtime_profile": COAP_APPLIANCE_PROFILE,
-            "dry_run_only_until_adapter": True,
+            "dry_run_only_until_adapter": planned_only,
+            "stimulus_adapter_ready": live_capable,
         },
         "stimulus_driver": {
             "name": COAP_STIMULUS_DRIVER,
             "adapter_module": COAP_ADAPTER_MODULE,
-            "state": "planned-only",
-            "planned_only": True,
+            "state": "ready" if live_capable else "planned-only",
+            "planned_only": planned_only,
         },
         "provider_capabilities": list(case.required_capabilities),
         "required_capabilities": list(case.required_capabilities),
@@ -593,7 +599,7 @@ def _target_service(
         "behavior": case.metadata["message_kind"],
         "response_payloads_hex": [payload.hex() for payload in response_payloads],
         "deterministic": True,
-        "planned_only": True,
+        "planned_only": False,
         "live_requires_provider": True,
         "controlled_responder": True,
         "workload_readiness": "required",
@@ -612,7 +618,7 @@ def _capability_skip_reasons(case: ProbeCase, *, live_capable: bool) -> list[str
 
 
 def _live_promotion_skip_reasons(case_name: str) -> list[str]:
-    reasons = ["stimulus_adapter_not_implemented"]
+    reasons: list[str] = []
     if case_name == "coap-malformed-raw-fallback":
         reasons.append("malformed_case_offline_only")
     elif case_name.startswith("coap-reliable-"):
@@ -626,6 +632,129 @@ def _live_promotion_skip_reasons(case_name: str) -> list[str]:
 
 def coap_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
     return [plan for plan in probe_plans if plan.get("case") in _COAP_CASE_BY_NAME]
+
+
+def missing_live_environment_confirmation(plan: JSONObject) -> JSONObject | None:
+    """Return one unsatisfied CoAP live-run environment gate."""
+
+    requirements = plan.get("wire_requirements")
+    if not isinstance(requirements, Mapping):
+        return None
+    environment = requirements.get("coap_confirmation_environment")
+    expected = requirements.get("coap_confirmation_value")
+    required = requirements.get("live_requires_coap_confirmation") is True
+    if not required or not isinstance(environment, str) or not isinstance(expected, str):
+        return None
+    actual = os.environ.get(environment)
+    if actual == expected:
+        return None
+    return {"environment": environment, "expected": expected, "present": actual is not None}
+
+
+def missing_live_environment_confirmations(
+    probe_plans: Sequence[JSONObject],
+) -> list[JSONObject]:
+    """Collect unsatisfied CoAP live gates before provider provisioning."""
+
+    missing: list[JSONObject] = []
+    for plan in probe_plans:
+        requirement = missing_live_environment_confirmation(plan)
+        if requirement is not None:
+            missing.append({"case": str(plan.get("case", "")), **requirement})
+    return missing
+
+
+def coap_port_check_lines(probe_plans: Sequence[JSONObject]) -> list[str]:
+    """Render deterministic UDP port-free checks for admitted responder plans."""
+
+    ports = sorted(
+        {
+            int(plan.get("destination_port", COAP_PORT))
+            for plan in coap_probe_plans(probe_plans)
+            if (plan.get("target_service") or {}).get("kind") == COAP_SERVICE_KIND
+        }
+    )
+    return [f'check_udp_port_free "$coap_bind_ipv4" {port}' for port in ports]
+
+
+def coap_responder_setup_lines(
+    *,
+    artifact_root: str,
+    coap_plans: Sequence[JSONObject],
+) -> list[str]:
+    """Render a bounded exact-request CoAP responder for disposable targets."""
+
+    service_plans = [
+        plan
+        for plan in coap_probe_plans(coap_plans)
+        if (plan.get("target_service") or {}).get("kind") == COAP_SERVICE_KIND
+    ]
+    if not service_plans:
+        return []
+    plans_json = json.dumps(service_plans, sort_keys=True, separators=(",", ":"))
+    script_path = posixpath.join(artifact_root, "coap-responder.py")
+    log_path = posixpath.join(artifact_root, "coap-responder.jsonl")
+    stdout_path = posixpath.join(artifact_root, "coap-5683.stdout.txt")
+    stderr_path = posixpath.join(artifact_root, "coap-5683.stderr.txt")
+    pid_path = posixpath.join(artifact_root, "coap-5683.pid")
+    return [
+        f"cat > {shlex.quote(script_path)} <<'PY'",
+        "import json",
+        "import signal",
+        "import socket",
+        "import sys",
+        "import time",
+        "",
+        f"plans = json.loads({plans_json!r})",
+        "bind_ip = sys.argv[1]",
+        "log_path = sys.argv[2]",
+        f"port = {COAP_PORT}",
+        "max_requests = min(10, max(1, sum(int((p.get('exchange') or {}).get('send_count', 1)) for p in plans)))",
+        "deadline = time.monotonic() + 60.0",
+        "stop = False",
+        "",
+        "def stop_now(_signum, _frame):",
+        "    global stop",
+        "    stop = True",
+        "",
+        "def log(event, **fields):",
+        "    record = {'event': event, 'ts': time.time(), **fields}",
+        "    with open(log_path, 'a', encoding='utf-8') as handle:",
+        "        handle.write(json.dumps(record, sort_keys=True) + '\\n')",
+        "",
+        "signal.signal(signal.SIGTERM, stop_now)",
+        "signal.signal(signal.SIGINT, stop_now)",
+        "exchanges = {}",
+        "for plan in plans:",
+        "    request = bytes.fromhex(str(plan['request_payload_hex']))",
+        "    responses = [bytes.fromhex(str(value)) for value in (plan.get('exchange') or {}).get('response_payloads_hex', [])]",
+        "    exchanges[request] = (str(plan.get('case')), responses)",
+        "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
+        "sock.bind((bind_ip, port))",
+        "sock.settimeout(1.0)",
+        "log('listening', bind_ipv4=bind_ip, port=port, max_requests=max_requests, timeout_seconds=60)",
+        "request_count = 0",
+        "while not stop and request_count < max_requests and time.monotonic() < deadline:",
+        "    try:",
+        "        data, peer = sock.recvfrom(65535)",
+        "    except socket.timeout:",
+        "        continue",
+        "    request_count += 1",
+        "    exchange = exchanges.get(data)",
+        "    if exchange is None:",
+        "        log('ignored', peer=str(peer), bytes=len(data), request_count=request_count)",
+        "        continue",
+        "    case_name, responses = exchange",
+        "    for index, response in enumerate(responses):",
+        "        sock.sendto(response, peer)",
+        "        log('responded', case=case_name, peer=str(peer), response_index=index, bytes=len(response))",
+        "sock.close()",
+        "log('stopped', request_count=request_count)",
+        "PY",
+        f"python3 {shlex.quote(script_path)} \"$coap_bind_ipv4\" {shlex.quote(log_path)} >{shlex.quote(stdout_path)} 2>{shlex.quote(stderr_path)} &",
+        f"coap_pid=$!; echo \"$coap_pid\" > {shlex.quote(pid_path)}",
+        'printf \'kill %s 2>/dev/null || true\\n\' "$coap_pid" >> "$cleanup"',
+    ]
 
 
 def coap_target_service_contribution(
@@ -648,7 +777,7 @@ def coap_target_service_contribution(
             "purpose": "bounded-controlled-coap-responder",
             "runtime": COAP_RUNTIME,
             "deterministic": True,
-            "planned_only": True,
+            "planned_only": False,
             "live_requires_provider": True,
             "workload_readiness": "required",
             "query_count": sum(1 for item in service_plans if int(item.get("destination_port", 0)) == port),
@@ -798,7 +927,7 @@ register(
         plan_builders=_COAP_PLAN_BUILDERS,
         planned_only_cases=_COAP_PLANNED_ONLY_CASES,
         profile_counts={},
-        stimulus_endpoint_cases=frozenset(),
+        stimulus_endpoint_cases=_COAP_LIVE_CAPABLE_CASES,
         target_service=coap_target_service_contribution,
         setup_script=None,
         rewrite_endpoint_addresses=coap_rewrite_endpoint_addresses,

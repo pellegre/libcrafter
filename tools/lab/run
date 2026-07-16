@@ -7,6 +7,7 @@ repo_root="$(cd -- "${script_dir}/../.." && pwd)"
 export LAB_REPO_ROOT="${repo_root}"
 export LIBCRAFTER_REPO_ROOT="${LIBCRAFTER_REPO_ROOT:-${repo_root}}"
 export PYTHONPATH="${script_dir}${PYTHONPATH:+:${PYTHONPATH}}"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-${repo_root}/target/lab/uv-cache}"
 
 uv_bin="${LAB_UV:-uv}"
 python_bin="${LAB_PYTHON:-python3}"
