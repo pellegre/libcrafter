@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ipaddress
-import importlib
 import unittest
 from unittest.mock import patch
 
@@ -11,11 +10,11 @@ from tools.probe.engine import cases as probe_cases
 from tools.probe.engine import planning
 from tools.probe.engine import target_services
 from tools.probe.engine.model import ProbeRunRequest
-from tools.probe.engine.protocols import PROTOCOL_REGISTRY
+from tools.probe.engine.protocols import (
+    PROTOCOL_REGISTRY,
+    missing_live_environment_confirmations,
+)
 from tools.probe.engine.protocols import coap as coap_protocol
-
-
-probe_cli = importlib.import_module("tools.probe.engine.cli.main")
 
 
 COAP_CASE_NAMES = tuple(case.name for case in coap_protocol.COAP_PROBE_CASES)
@@ -59,10 +58,18 @@ class CoapProbeCatalogTest(unittest.TestCase):
         self.assertEqual(tuple(case.name for case in plugin.cases), COAP_CASE_NAMES)
         self.assertEqual(plugin.planned_only_cases, frozenset(COAP_OFFLINE_CASES))
         self.assertEqual(plugin.stimulus_endpoint_cases, frozenset(COAP_LIVE_CASES))
+        self.assertEqual(
+            plugin.profile_counts[coap_protocol.COAP_SMOKE_PROFILE],
+            {name: 1 for name in COAP_CASE_NAMES},
+        )
         self.assertIs(plugin.target_service, coap_protocol.coap_target_service_contribution)
         self.assertIs(plugin.rewrite_endpoint_addresses, coap_protocol.coap_rewrite_endpoint_addresses)
         self.assertIs(plugin.failure_reasons, coap_protocol.coap_failure_reasons)
         self.assertIs(plugin.lab_capabilities, coap_protocol.coap_lab_capabilities)
+        self.assertIs(
+            plugin.live_environment_confirmations,
+            coap_protocol.missing_live_environment_confirmations,
+        )
 
     def test_catalog_marks_live_capability_explicitly(self) -> None:
         for case in coap_protocol.COAP_PROBE_CASES:
@@ -332,7 +339,8 @@ class CoapProbeSkipPolicyTest(unittest.TestCase):
     def test_coap_environment_confirmation_is_checked_before_live_provider_work(self) -> None:
         plan = _plan("coap-unicast-get-content")
         with patch.dict("os.environ", {}, clear=True):
-            missing = probe_cli._missing_live_environment_confirmation(plan)
+            missing = coap_protocol.missing_live_environment_confirmation(plan)
+            batch_missing = missing_live_environment_confirmations([plan])
         self.assertEqual(
             missing,
             {
@@ -341,12 +349,23 @@ class CoapProbeSkipPolicyTest(unittest.TestCase):
                 "present": False,
             },
         )
+        self.assertEqual(
+            batch_missing,
+            [
+                {
+                    "case": "coap-unicast-get-content",
+                    "environment": "LIBCRAFTER_COAP_LIVE_CONFIRM",
+                    "expected": "yes",
+                    "present": False,
+                }
+            ],
+        )
         with patch.dict(
             "os.environ",
             {"LIBCRAFTER_COAP_LIVE_CONFIRM": "yes"},
             clear=True,
         ):
-            self.assertIsNone(probe_cli._missing_live_environment_confirmation(plan))
+            self.assertIsNone(coap_protocol.missing_live_environment_confirmation(plan))
 
     def test_offline_cases_never_acquire_live_capability_from_name(self) -> None:
         for case_name in COAP_OFFLINE_CASES:

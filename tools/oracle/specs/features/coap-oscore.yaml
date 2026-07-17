@@ -47,4 +47,3 @@ backend_support:
     encode: true
     decode: true
     native_layers: [Coap, OscoreContext]
-

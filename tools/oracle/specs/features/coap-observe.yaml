@@ -20,4 +20,3 @@ backend_support:
   scapy: {status: planned, native_layers: [Raw]}
   wireshark: {status: planned, native_layers: [coap]}
   libcrafter: {status: supported, encode: true, decode: true, native_layers: [CoapObserve]}
-

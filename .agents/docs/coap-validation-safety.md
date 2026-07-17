@@ -100,7 +100,7 @@ named property; it does not waive the offline evidence in the same row.
 
 | ID | Oracle evidence | Probe evidence | Guarded-live evidence |
 | --- | --- | --- | --- |
-| A01 | Canonical common options may use Scapy/Wireshark when capability-pinned; byte fixtures own raw/noncanonical cases | Controlled GET/response plans with deterministic URI and representation options | Optional controlled unicast request; proxy, cache, and mutation behavior are excluded |
+| A01 | Canonical common options may use capability-pinned packet-building or Wireshark backends; byte fixtures own raw/noncanonical cases | Controlled GET/response plans with deterministic URI and representation options | Optional controlled unicast request; proxy, cache, and mutation behavior are excluded |
 | A02 | Compare link-format payload bytes and crafter typed model; backend text parsing is secondary | Controlled discovery responder plan using a fixed synthetic resource set | Optional unicast discovery only; multicast discovery requires an isolated provider segment |
 | A03 | Compare option bytes and stateless ordering results; backend subscription state is out of scope | Planned register/notification pair with bounded messages and no retained subscription | Optional one bounded controlled notification; no long-lived observer |
 | A04 | Compare individual block option/message bytes; backend reassembly is ignored | Planned single Block1/Block2 exchange and optional BERT capability plan | Optional one bounded block exchange; BERT requires a controlled reliable responder |
@@ -113,13 +113,14 @@ named property; it does not waive the offline evidence in the same row.
 
 ## Reference-backend limits
 
-The CoAP oracle generator, libcrafter adapter, partial Scapy/Wireshark reference
-adapters, and probe plugin are implemented. Support remains declared per
-feature and direction; the existence of a native layer name is not evidence
-that a backend supports the complete grammar.
+The CoAP oracle generator, libcrafter adapter, partial packet-building and
+Wireshark reference adapters, and probe plugin are implemented. Support remains
+declared per feature and direction; the existence of a native layer name is not
+evidence that a backend supports the complete grammar.
 
-- Scapy is an encode/decode reference only for the canonical datagram fields,
-  ordinary UDP stacks, and options that a capability test proves it preserves.
+- The packet-building reference adapter covers encode/decode only for canonical
+  datagram fields, ordinary UDP stacks, and options that a capability test
+  proves it preserves.
   Native normalization may discard explicit raw option headers, noncanonical
   integers, unknown ordering details, extended TKL metadata, or payload-marker
   state. Those cases use source-backed bytes and crafter round trips instead.
@@ -146,7 +147,7 @@ that a backend supports the complete grammar.
 
 Reference logic belongs under `tools/oracle/engine/backends/`, and support
 metadata belongs in the oracle specs and backend registry. Do not add ad hoc
-Scapy/tshark snippets to tests or generated tools.
+packet-building or tshark snippets to tests or generated tools.
 
 ## Required offline profiles
 
@@ -178,9 +179,9 @@ tools/oracle/run live --provider local-dry-run --dry-run --family coap --profile
 ```
 
 The bare Python oracle/probe unit gates, Rust tests, fixture suite, and static
-release gate remain part of `coap-ci`. A missing optional Scapy/tshark backend
-produces a capability-scoped skip; a missing required offline executable or a
-failed crafter comparison fails the profile.
+release gate remain part of `coap-ci`. A missing optional packet-building or
+tshark backend produces a capability-scoped skip; a missing required offline
+executable or a failed crafter comparison fails the profile.
 
 ## `coap-live-dry-run` plan profile
 

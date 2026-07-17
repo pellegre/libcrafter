@@ -926,12 +926,13 @@ register(
         cases=COAP_PROBE_CASES,
         plan_builders=_COAP_PLAN_BUILDERS,
         planned_only_cases=_COAP_PLANNED_ONLY_CASES,
-        profile_counts={},
+        profile_counts={COAP_SMOKE_PROFILE: {case.name: 1 for case in COAP_PROBE_CASES}},
         stimulus_endpoint_cases=_COAP_LIVE_CAPABLE_CASES,
         target_service=coap_target_service_contribution,
         setup_script=None,
         rewrite_endpoint_addresses=coap_rewrite_endpoint_addresses,
         failure_reasons=coap_failure_reasons,
         lab_capabilities=coap_lab_capabilities,
+        live_environment_confirmations=missing_live_environment_confirmations,
     )
 )

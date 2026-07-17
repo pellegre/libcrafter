@@ -25,4 +25,3 @@ backend_support:
     notes: [Extended token forms require raw-compatible bytes in the future adapter.]
   wireshark: {status: planned, native_layers: [coap]}
   libcrafter: {status: supported, encode: true, decode: true, native_layers: [CoapTokenLength]}
-
