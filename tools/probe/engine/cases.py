@@ -19,9 +19,8 @@ from .model import EndpointRole, ProbeCase
 # of the registry-sourced ordered profile-membership tables. Imports stay
 # relative; the package autodiscovers ``__name__``-relatively, so this does not
 # cycle back through ``cases``.
-from .protocols import (
-    all_cases as _registry_cases,
-)
+from .protocols import all_cases as _registry_cases
+from .protocols import all_profile_counts as _registry_profile_counts
 # Re-import the IGMP case tuple from the IGMP plugin so ``cases.IGMP_PROBE_CASES``
 # stays resolvable for the catalog tests (the cases themselves reach the merged
 # catalog through the registry; this is a back-compat re-export only).
@@ -107,6 +106,7 @@ UDP_ECHO_LARGE_PAYLOAD_LENGTH = 1200
 # (sorted-plugin / per-plugin declaration) order, which the plan-JSON snapshot
 # pins; there is no legacy per-protocol/inline aggregation left to merge.
 PROBE_CASES: tuple[ProbeCase, ...] = tuple(_registry_cases())
+_PLUGIN_PROFILE_COUNTS = _registry_profile_counts()
 
 PROBE_CASE_BY_NAME: dict[str, ProbeCase] = {case.name: case for case in PROBE_CASES}
 
@@ -199,7 +199,6 @@ SSDP_SMOKE_PROFILE = "ssdp-smoke"
 MDNS_SMOKE_PROFILE = "mdns-smoke"
 TLS_SMOKE_PROFILE = "tls-smoke"
 NTP_SMOKE_PROFILE = "ntp-smoke"
-COAP_SMOKE_PROFILE = "coap-smoke"
 # Legacy default count used by the smoke profile and any profile without an
 # explicit default; preserves the pre-behavior-suite CLI behavior.
 _LEGACY_DEFAULT_COUNT = 5
@@ -453,12 +452,11 @@ SSDP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _re
 MDNS_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "mdns")
 TLS_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "tls")
 NTP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "ntp")
-COAP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "coap")
 SCTP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "sctp")
 # Explicit profile case subsets; profiles not listed select the full catalog.
 # ``smoke`` stays pinned to the historical ICMP/TCP/DNS/TTL/ARP set, and the
 # registry-sourced ``*_PROFILE_CASE_NAMES`` tables preserve observable ordering.
-# The registry's ``profile_counts`` contribution stays empty by design.
+# Plugin profile contributions merge without protocol-specific scaffolding.
 _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     SMOKE_PROFILE: SMOKE_PROFILE_CASE_NAMES,
     BEHAVIOR_PROFILE: BEHAVIOR_PROFILE_CASE_NAMES,
@@ -478,8 +476,8 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     MDNS_SMOKE_PROFILE: MDNS_SMOKE_PROFILE_CASE_NAMES,
     TLS_SMOKE_PROFILE: TLS_SMOKE_PROFILE_CASE_NAMES,
     NTP_SMOKE_PROFILE: NTP_SMOKE_PROFILE_CASE_NAMES,
-    COAP_SMOKE_PROFILE: COAP_SMOKE_PROFILE_CASE_NAMES,
     SCTP_SMOKE_PROFILE: SCTP_SMOKE_PROFILE_CASE_NAMES,
+    **{profile: tuple(counts) for profile, counts in _PLUGIN_PROFILE_COUNTS.items()},
 }
 
 # Per-profile default counts used when no explicit ``--count`` is supplied. The
@@ -502,8 +500,8 @@ _PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     MDNS_SMOKE_PROFILE: len(MDNS_SMOKE_PROFILE_CASE_NAMES),
     TLS_SMOKE_PROFILE: len(TLS_SMOKE_PROFILE_CASE_NAMES),
     NTP_SMOKE_PROFILE: len(NTP_SMOKE_PROFILE_CASE_NAMES),
-    COAP_SMOKE_PROFILE: len(COAP_SMOKE_PROFILE_CASE_NAMES),
     SCTP_SMOKE_PROFILE: len(SCTP_SMOKE_PROFILE_CASE_NAMES),
+    **{profile: sum(counts.values()) for profile, counts in _PLUGIN_PROFILE_COUNTS.items()},
 }
 
 

@@ -7095,6 +7095,8 @@ def _canonical_pcap_record(value: object, context: str) -> JSONObject:
 
 def _canonical_pcap_layers(value: object) -> list[str]:
     aliases = {
+        "Coap": "coap",
+        "CoapReliable": "coap",
         "Dhcpv6": "dhcpv6",
         "Ipv6DestinationOptionsHeader": "ipv6_destination_options",
         "Ipv6HopByHopOptionsHeader": "ipv6_hop_by_hop",

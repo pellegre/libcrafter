@@ -39,4 +39,3 @@ backend_support:
   libcrafter:
     status: supported
     notes: [All profiles remain offline or dry-run by default.]
-

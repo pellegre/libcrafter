@@ -72,6 +72,13 @@ class PcapRecordCanonicalizationTest(unittest.TestCase):
 
         self.assertEqual(records[0]["layers"], ["ethernet", "ipv4", "udp", "ssdp"])
 
+    def test_libcrafter_coap_layer_names_canonicalize(self) -> None:
+        self.assertEqual(cli._canonical_pcap_layers(["udp", "Coap"]), ["udp", "coap"])
+        self.assertEqual(
+            cli._canonical_pcap_layers(["tcp", "CoapReliable"]),
+            ["tcp", "coap"],
+        )
+
 
 class PcapOutputDirTest(unittest.TestCase):
     def test_default_output_uses_mode_subdir(self) -> None:

@@ -28,7 +28,7 @@ module must not assume either import root.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from ..model import JSONObject, ProbeCase
@@ -56,6 +56,9 @@ from ..plugin_registry import PluginRegistry
 #   context (sibling target-service addresses) and must return the full sequence;
 #   ``live.plans_with_live_plan_candidates`` folds each plugin's transform in
 #   registry order so the live path stays protocol-agnostic.
+# ``live_environment_confirmations``: given the full batched live probe-plan
+#   sequence, return unsatisfied protocol-specific environment gates before any
+#   provider work begins.
 # ``ipsec_interop``: the IPSec-only cross-crypto interop dry-run hook.
 TargetServiceHook = Callable[..., object]
 SetupScriptHook = Callable[..., object]
@@ -63,6 +66,7 @@ RewriteEndpointAddressesHook = Callable[..., JSONObject]
 FailureReasonsHook = Callable[[str], "list[str] | None"]
 LabCapabilitiesHook = Callable[..., Mapping[str, object]]
 LivePlanCandidatesHook = Callable[..., "list[JSONObject]"]
+LiveEnvironmentConfirmationsHook = Callable[[Sequence[JSONObject]], "list[JSONObject]"]
 IpsecInteropHook = Callable[..., object]
 
 
@@ -88,6 +92,7 @@ class ProtocolPlugin:
     failure_reasons: FailureReasonsHook | None = None
     lab_capabilities: LabCapabilitiesHook | None = None
     live_plan_candidates: LivePlanCandidatesHook | None = None
+    live_environment_confirmations: LiveEnvironmentConfirmationsHook | None = None
     ipsec_interop: IpsecInteropHook | None = None
 
 
@@ -169,6 +174,18 @@ def all_stimulus_endpoint_cases() -> frozenset[str]:
     for plugin in registered_plugins():
         names.update(plugin.stimulus_endpoint_cases)
     return frozenset(names)
+
+
+def missing_live_environment_confirmations(
+    probe_plans: Sequence[JSONObject],
+) -> list[JSONObject]:
+    """Collect unsatisfied live environment gates from protocol plugins."""
+
+    missing: list[JSONObject] = []
+    for plugin in registered_plugins():
+        if plugin.live_environment_confirmations is not None:
+            missing.extend(plugin.live_environment_confirmations(probe_plans))
+    return missing
 
 
 def ipsec_interop_plugin() -> ProtocolPlugin | None:

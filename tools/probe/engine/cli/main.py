@@ -146,6 +146,7 @@ from ..endpoint_addressing import (
 from ..protocols import (
     all_stimulus_endpoint_cases as _registry_stimulus_endpoint_cases,
     ipsec_interop_plugin as _ipsec_interop_plugin,
+    missing_live_environment_confirmations as _missing_live_environment_confirmations,
     registered_plugins as _registered_protocol_plugins,
 )
 # The IPSec cross-crypto interop dry-run hook moved into the IPSec plugin
@@ -159,10 +160,6 @@ from ..protocols import (
 from ..protocols.ipsec import (
     _IPSEC_PROBE_CASES,
     _ipsec_interop_dry_run_metadata,
-)
-from ..protocols.coap import (
-    missing_live_environment_confirmation as _missing_live_environment_confirmation,
-    missing_live_environment_confirmations as _missing_live_environment_confirmations,
 )
 # The argparse parser construction lives in ``cli.parser`` (an
 # orchestration-only concern with no patch/identity coupling). ``_build_parser``
@@ -195,7 +192,6 @@ STATUS_DRY_RUN = "dry-run"
 STATUS_FAILED = "failed"
 STATUS_PASSED = "passed"
 STATUS_UNSUPPORTED = "unsupported"
-STATUS_REQUIRES_CONFIRMATION = "requires-confirmation"
 
 
 def _run(args: argparse.Namespace) -> int:
@@ -364,7 +360,7 @@ def _guarded_live_report(
             planned_cases=planned_cases,
             probe_plans=probe_plans,
             report_path=report_path,
-            status=STATUS_REQUIRES_CONFIRMATION,
+            status="requires-confirmation",
             dry_run=False,
             provider_context={
                 "live_environment_confirmations": missing_environment,
