@@ -284,6 +284,22 @@ def _build_corpus_report_from_generation(
     )
 
 
+def _offline_materialization_backend(backend: str, direction: str) -> str:
+    """Select the encoder used to materialize a deterministic corpus.
+
+    Wireshark is a parser-only reference backend. For traffic flowing from the
+    reference side to libcrafter, Scapy supplies the bytes that Wireshark later
+    decodes; every other backend/direction materializes itself.
+    """
+
+    if (
+        backend == "wireshark"
+        and normalize_direction(direction) == "backend_to_libcrafter"
+    ):
+        return "scapy"
+    return backend
+
+
 def _offline_required_capabilities(
     args: argparse.Namespace,
 ) -> tuple[BackendCapabilityName, ...]:
