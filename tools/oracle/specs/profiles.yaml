@@ -24,7 +24,6 @@ profiles:
       boundary: 1
       malformed: 0
       pcap: 0
-      live: 0
   - name: ci
     purpose: deterministic pull request coverage
     default_count: 2000
@@ -43,7 +42,6 @@ profiles:
       boundary: 3
       malformed: 1
       pcap: 1
-      live: 0
   - name: wild
     purpose: common packet shapes and field values
     default_count: 5000
@@ -62,7 +60,6 @@ profiles:
       boundary: 2
       malformed: 1
       pcap: 1
-      live: 1
   - name: boundary
     purpose: edge values, options, checksums, lengths, and header limits
     default_count: 1000
@@ -81,7 +78,6 @@ profiles:
       boundary: 10
       malformed: 2
       pcap: 1
-      live: 0
   - name: fuzz
     purpose: valid-weird and explicitly malformed behavior
     default_count: 1000
@@ -100,7 +96,6 @@ profiles:
       boundary: 4
       malformed: 8
       pcap: 1
-      live: 0
   # tcp-header: focused offline coverage of TCP header compile/decode behavior.
   # The generator narrows stack/case/feature selection to the tcp_header feature
   # when this profile is active (see tools/oracle/engine/generator.py), so a run
@@ -126,7 +121,6 @@ profiles:
       boundary: 6
       malformed: 4
       pcap: 0
-      live: 0
   # tcp-options: focused offline coverage of TCP option encode/decode behavior.
   # The generator narrows stack/case/feature selection to the tcp_options feature
   # when this profile is active (see tools/oracle/engine/generator.py), so a run
@@ -158,20 +152,17 @@ profiles:
       boundary: 6
       malformed: 4
       pcap: 0
-      live: 0
-  # tcp-smoke: representative TCP smoke set for provider-backed dry-run
-  # validation. It is the TCP analogue of the focused tcp-header / tcp-options
+  # tcp-smoke: representative deterministic TCP smoke set. It is the TCP
+  # analogue of the focused tcp-header / tcp-options
   # profiles, but it deliberately keeps BOTH the tcp_header and tcp_options
   # features eligible so a single small run materializes a representative mix of
   # TCP header and TCP option cases (see the tcp-smoke branches in
-  # tools/oracle/engine/generator.py). It exists so that
-  # `tools/oracle/run live --provider <p> --dry-run --profile tcp-smoke` can
-  # materialize a TCP packet plan WITHOUT any live traffic or credentials: the
-  # dry-run path only validates the orchestration plan and provider contract.
+  # tools/oracle/engine/generator.py). It materializes packet plans without live
+  # traffic, credentials, or infrastructure selection.
   # The ipv4/ipv6 weights keep both TCP stacks eligible; baseline/boundary keep
   # the typed cases sampled deterministically for a given seed.
   - name: tcp-smoke
-    purpose: representative TCP smoke set for provider-backed dry-run validation
+    purpose: representative deterministic TCP smoke set
     default_count: 10
     family_weights:
       - name: ipv4
@@ -186,7 +177,6 @@ profiles:
       boundary: 6
       malformed: 0
       pcap: 0
-      live: 0
   # bgp-smoke: focused offline BGP message smoke coverage over TCP. It keeps
   # live, pcap, and malformed sampling disabled; BGP wire behavior here is
   # represented by baseline and boundary message shapes using documentation
@@ -205,7 +195,6 @@ profiles:
       boundary: 4
       malformed: 0
       pcap: 0
-      live: 0
   # rip-smoke: focused offline RIP/RIPng message smoke coverage over UDP. It is
   # the RIP analogue of the focused dns / bgp-smoke profiles: it keeps the RIP
   # (UDP/520, RFC 1058/2453) and RIPng (UDP/521, RFC 2080) stacks eligible
@@ -231,7 +220,6 @@ profiles:
       boundary: 3
       malformed: 0
       pcap: 0
-      live: 0
   # ospf-smoke: focused offline OSPFv2 packet smoke coverage carried directly
   # over IPv4 (IP protocol 89). The generator narrows case selection to the
   # ospf-* coverage cases when this profile is active (see the ospf-smoke
@@ -256,7 +244,6 @@ profiles:
       boundary: 4
       malformed: 0
       pcap: 0
-      live: 0
   # sctp-smoke: focused offline SCTP packet-layer smoke coverage. It samples
   # only the executable DATA chunk cases over native IPv4, native IPv6, and RFC
   # 6951 UDP encapsulation; broader chunk matrices, pcap fixtures, and live
@@ -275,7 +262,6 @@ profiles:
       boundary: 2
       malformed: 0
       pcap: 0
-      live: 0
   # sctp-boundary: focused SCTP packet-layer boundary planning. It keeps the
   # SCTP family weighted alone and disables live traffic; executable smoke
   # cases remain available while later SCTP steps can promote checksum,
@@ -294,9 +280,8 @@ profiles:
       boundary: 10
       malformed: 2
       pcap: 0
-      live: 0
   # sctp-pcap: focused classic pcap planning for native IPv4/IPv6 SCTP and RFC
-  # 6951 UDP-encapsulated SCTP. Live traffic remains disabled; provider-backed
+  # 6951 UDP-encapsulated SCTP. Live traffic remains disabled; externally executed
   # live validation is a separate dry-run/live step.
   - name: sctp-pcap
     purpose: focused classic pcap SCTP link/root coverage
@@ -312,7 +297,6 @@ profiles:
       boundary: 1
       malformed: 0
       pcap: 10
-      live: 0
   # ipv4-enrichment: focused offline coverage of the enriched IPv4 header
   # domains declared in layers/ipv4.yaml. The generator narrows stack/case and
   # feature selection to that layer's coverage cases when this profile is active,
@@ -335,7 +319,6 @@ profiles:
       boundary: 10
       malformed: 0
       pcap: 0
-      live: 0
   # ipv6-enrichment: focused offline coverage for enriched IPv6 base and
   # extension-header decode/compile behavior. The generator narrows stack and
   # case selection to the IPv6 base/unknown-next-header cases plus the currently
@@ -359,7 +342,6 @@ profiles:
       boundary: 8
       malformed: 1
       pcap: 0
-      live: 0
   # fragmentation-smoke: focused classic pcap dry-run planning for IP fragment
   # coverage. It accepts the aggregate `ip` family filter used by transform
   # validation commands and narrows generation to existing IPv4/IPv6 fragment
@@ -378,27 +360,6 @@ profiles:
       boundary: 6
       malformed: 0
       pcap: 0
-      live: 0
-  # ip-fragment-smoke: provider-backed dry-run planning for IP fragment lab
-  # behavior. It samples the same strict-byte packet fragment shapes as the
-  # offline fragmentation profile, while the oracle live dry-run report adds the
-  # provider-neutral workload plan for small MTU setup, offload handling,
-  # oversized/crafted fragment traffic, pcap capture, and payload hash checks.
-  - name: ip-fragment-smoke
-    purpose: provider-neutral IP fragment lab workload dry-run planning
-    default_count: 10
-    family_weights:
-      - name: ip
-        weight: 1
-    payload_length:
-      min: 16
-      max: 96
-    feature_weights:
-      baseline: 1
-      boundary: 6
-      malformed: 0
-      pcap: 0
-      live: 0
   # dot11-smoke: focused offline IEEE 802.11 MAC smoke coverage. This profile
   # keeps live weight at zero; monitor-mode dongle injection is manual and can
   # only be represented by later dry-run send-plan validation.
@@ -418,7 +379,6 @@ profiles:
       boundary: 4
       malformed: 1
       pcap: 0
-      live: 0
   # radiotap-smoke: focused offline radiotap wrapper coverage, including
   # present-bit metadata and FCS status preservation. It is dry-run eligible
   # only; automated oracle runs must not require monitor mode or hardware.
@@ -438,7 +398,6 @@ profiles:
       boundary: 5
       malformed: 1
       pcap: 0
-      live: 0
   # dot11-pcap: focused classic pcap coverage for bare IEEE 802.11 and
   # radiotap-wrapped IEEE 802.11 link types. The pcap dimension is explicit,
   # while live remains zero so no send path is exercised by this profile.
@@ -458,7 +417,6 @@ profiles:
       boundary: 1
       malformed: 0
       pcap: 10
-      live: 0
   # eapol-smoke: focused offline EAPOL and RSN EAPOL-Key foundation coverage
   # carried through explicit LLC/SNAP. It remains dry-run eligible only because
   # phase 1.5 does not include handshake capture automation.
@@ -478,7 +436,6 @@ profiles:
       boundary: 4
       malformed: 1
       pcap: 0
-      live: 0
   # rsn-smoke: focused offline RSN information element coverage for management
   # metadata and EAPOL key-data boundaries. Decryption and live handshake
   # workflows remain out of scope; live sampling is disabled.
@@ -498,7 +455,6 @@ profiles:
       boundary: 4
       malformed: 1
       pcap: 0
-      live: 0
   # ipsec-smoke: representative offline IPSec smoke set covering ESP (RFC 4303,
   # IP protocol 50), AH (RFC 4302, IP protocol 51), and IKEv2 (RFC 7296, UDP/500
   # and UDP/4500). It keeps all three IPSec families eligible so a single small
@@ -529,7 +485,6 @@ profiles:
       boundary: 4
       malformed: 0
       pcap: 0
-      live: 0
   # esp: focused offline ESP coverage (transport AEAD, transport CBC+HMAC,
   # NULL/opaque, tunnel inner-IP, sequence boundary) over IPv4 and IPv6. The ESP
   # family is weighted alone so case selection stays on the ESP stacks. Pinned
@@ -549,7 +504,6 @@ profiles:
       boundary: 4
       malformed: 0
       pcap: 0
-      live: 0
   # ah: focused offline AH coverage (HMAC transport over IPv4 and IPv6, tunnel
   # inner-IP, sequence boundary). The ICV is computed over the canonical
   # immutable IP fields with a pinned integrity key so the appended ICV is
@@ -568,7 +522,6 @@ profiles:
       boundary: 4
       malformed: 0
       pcap: 0
-      live: 0
   # ikev2: focused offline IKEv2 message coverage (IKE_SA_INIT, IKE_AUTH, SK
   # encrypted payload, unknown-payload-raw) over UDP/500. Initiator/responder
   # SPIs are deterministic and the SK payload uses pinned crypto material.
@@ -586,7 +539,6 @@ profiles:
       boundary: 4
       malformed: 0
       pcap: 0
-      live: 0
   # igmp-smoke: tiny IPv4-only IGMP packet-layer smoke coverage. It keeps live,
   # pcap, and malformed sampling disabled; MLD remains in the ICMPv6 family and
   # is not eligible through this profile.
@@ -604,10 +556,9 @@ profiles:
       boundary: 3
       malformed: 0
       pcap: 0
-      live: 0
   # igmp-ci: deterministic IGMP packet-layer PR coverage over the l3:ipv4 IGMP
-  # stack. Live remains disabled so provider credentials or multicast-capable
-  # lab endpoints are never required by CI sampling.
+  # stack. Live remains disabled so external runner credentials or multicast-capable
+  # external endpoints are never required by CI sampling.
   - name: igmp-ci
     purpose: deterministic IGMP over IPv4 pull request coverage
     default_count: 200
@@ -622,7 +573,6 @@ profiles:
       boundary: 4
       malformed: 1
       pcap: 1
-      live: 0
   # igmp-boundary: focused edge coverage for IGMP checksums, counts, flags,
   # source lists, extension lengths, MRD fields, and structured malformed
   # contracts. It is still offline-only.
@@ -640,27 +590,6 @@ profiles:
       boundary: 10
       malformed: 4
       pcap: 0
-      live: 0
-  # igmp-live-dry-run: provider-neutral dry-run planning metadata for IGMP live
-  # validation. The live weight stays zero; real provider execution stays
-  # behind LIBCRAFTER_RUN_IGMP_VM_LIVE or LIBCRAFTER_RUN_IGMP_HETZNER_LIVE plus
-  # --confirm-live-run.
-  - name: igmp-live-dry-run
-    purpose: provider-neutral IGMP live validation dry-run planning
-    default_count: 10
-    family_weights:
-      - name: igmp
-        weight: 1
-    payload_length:
-      min: 0
-      max: 64
-    feature_weights:
-      baseline: 2
-      boundary: 4
-      malformed: 0
-      pcap: 0
-      live: 0
-
 backend_support:
   scapy:
     status: supported

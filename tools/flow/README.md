@@ -107,7 +107,7 @@ every transmit is still wrapped as a typed packet for flow planning and
 reporting. They print only safe configuration, packet-plan, lifecycle,
 payload-count, and recovery-count observations. The fixture is not a production
 identity. Live use requires a dry-run first, explicit authorization, disposable
-provider-backed isolation, and separate tooling.
+externally executed isolation, and separate tooling.
 
 ## Safety Model
 
@@ -125,17 +125,14 @@ and documentation snippets stay offline and use documentation address space.
 
 Bounded execution is also the default. Repetition is controlled by `Bound`,
 `RunOptions::run_timeout`, `RunOptions::step_timeout`, and `send_repeat`; any
-unbounded or live behavior belongs in an explicitly authorized tool or isolated
-lab run.
+unbounded or concrete-interface behavior belongs in externally operated tooling.
 
-## Scratch Lab And Tools
+## Scratch Tools
 
-The isolated lab and concrete offensive tools are intentionally untracked under
+Concrete experimental tools are intentionally untracked under
 `tools/flow/.scratch/`. See [`docs/scratch-layout.md`](docs/scratch-layout.md)
 for the local-only layout:
 
-- `tools/flow/.scratch/lab/`: QEMU lab assets for an internal-only VM topology
-  with no route to real networks.
 - `tools/flow/.scratch/tools/dhcp-starvation/`
 - `tools/flow/.scratch/tools/dhcp-hijack/`
 - `tools/flow/.scratch/tools/arp-poison/`
@@ -154,11 +151,10 @@ tests, documentation, and benign closed-loop examples. These files must remain
 safe to build and run without real targets, credentials, sensitive captures, or
 host network changes.
 
-Concrete tools that drive real clients, lab images, run artifacts, packet
-captures, and generated binaries stay under `.scratch/` and out of version
-control. They prove the abstraction by calling `Flow`, `Transition`, `Role`,
-`Runner`, and `Binding` rather than by adding private behavior to the tracked
-crate.
+Concrete tools that drive real clients, prepare execution targets, retain run
+artifacts or captures, and build generated binaries stay outside the tracked
+repository. They prove the abstraction by calling `Flow`, `Transition`, `Role`,
+`Runner`, and `Binding` rather than by adding operator behavior to the crate.
 
 ## Promotion Policy
 
@@ -167,8 +163,7 @@ into `crafter` include matcher adapters and combinators, capture-filter
 derivation, the persistent send-and-receive `Conversation` primitive, and
 inspectable reporting formats that are useful beyond stateful flows.
 
-Promotion requires evidence from offline tests, benign examples, and the
-isolated lab; a stable API shape that preserves the `Packet` abstraction; and
+Promotion requires evidence from offline tests, benign examples, and external
+qualification; a stable API shape that preserves the `Packet` abstraction; and
 the same safe-default, explicit-live model as `crafter`. Whole offensive
-workflows, scratch lab scripts, and flow-specific orchestration stay outside
-`crafter`.
+workflows and flow-specific orchestration stay outside `crafter`.

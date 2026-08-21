@@ -41,7 +41,7 @@ they do not create a second raw-bytes-plus-instructions API.
 | Reliable framing | Model one complete source-backed reliable-transport frame as `CoapReliable`, including its length/token-length encoding, code, token, options, payload state, and signaling messages. Compilation and direct decode operate on a complete frame supplied by the caller and report the consumed boundary; they do not create TCP stream state. |
 | OSCORE | Provide explicit, stateless transforms between typed cleartext and OSCORE-protected `Coap` messages using immutable caller-supplied context inputs and source-backed algorithms. Packet fields, identifiers, option metadata, ciphertext, and authentication failures remain inspectable without leaking secrets. |
 | Group wire metadata | Model source-backed CoAP group request/response metadata and admitted Group OSCORE wire fields. Unsupported signature or algorithm material remains explicit and opaque instead of implying group membership or key-management support. |
-| Persistence and validation | Exercise CoAP through deterministic bytes, malformed corpora, round trips, classic pcap records, summaries, oracle comparisons, probe plans, and dry-run provider artifacts. These surfaces validate packet behavior; they are not runtime CoAP products. |
+| Persistence and validation | Exercise CoAP through deterministic bytes, malformed corpora, round trips, classic pcap records, summaries, oracle comparisons, probe plans, and dry-run external runner artifacts. These surfaces validate packet behavior; they are not runtime CoAP products. |
 
 ## Packet invariants
 
@@ -97,12 +97,12 @@ CoAP support must not add:
   proxy service, or discovery scanner;
 - TCP stream reassembly, WebSocket framing, or connection/session management;
 - DTLS or TLS handshakes, certificate management, or secure-session setup;
-- ACE or EDHOC enrollment, context provisioning, replay databases, group
+- ACE or EDHOC enrollment, context preparation, replay databases, group
   membership, group key distribution, or unsupported cryptographic algorithms;
 - target selection, multicast membership policy, route management, or a live
   traffic default; or
-- credentials, public provider addresses, live host identifiers, sensitive
-  captures, or transient lab state in tracked files.
+- credentials, public external runner addresses, live host identifiers, sensitive
+  captures, or transient external environment state in tracked files.
 
 Generated tools may assemble operational workflows from these primitives, but
 those workflows remain outside the public `crafter` protocol API.
@@ -114,8 +114,8 @@ are the default. Tracked examples and artifacts use documentation address space
 and synthetic non-sensitive data.
 
 No CoAP acceptance command sends live traffic from the developer machine.
-Optional live behavior requires an explicitly authorized, disposable
-provider-backed endpoint or lab, bounded packet and time limits, a separate
-CoAP-specific confirmation gate, deterministic artifact collection, and
-teardown. If those prerequisites are absent, validation records a stable skip
+Optional live behavior requires external authorization, bounded packet and time
+limits, a CoAP-specific confirmation gate, deterministic artifact collection,
+and teardown supplied by operator tooling. If those prerequisites are absent,
+validation records a stable skip
 reason and still produces the available dry-run artifacts.

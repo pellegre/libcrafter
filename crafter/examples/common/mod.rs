@@ -96,8 +96,8 @@ pub fn flag_present(name: &str) -> bool {
     env::args().skip(1).any(|arg| arg == name)
 }
 
-pub const ADVANCED_LIVE_ACK_FLAG: &str = "--i-understand-isolated-lab";
-pub const LIVE_WIRE_ENV: &str = "LIBCRAFTER_ENDPOINT";
+pub const ADVANCED_LIVE_ACK_FLAG: &str = "--i-understand-live-traffic";
+pub const LIVE_WIRE_ENV: &str = "LIBCRAFTER_LIVE";
 
 pub fn live_wire_marker_present() -> bool {
     env::var(LIVE_WIRE_ENV)
@@ -127,7 +127,7 @@ pub fn require_advanced_wire_endpoint(example: &str) -> ExampleResult<()> {
         Ok(())
     } else {
         Err(format!(
-            "{example} can change network traffic and is only enabled on an isolated wire endpoint; missing {}",
+            "{example} can change network traffic and requires explicit external authorization; missing {}",
             missing.join(" and ")
         )
         .into())
@@ -144,7 +144,7 @@ pub fn live_mode(example: &str) -> ExampleResult<bool> {
 
 pub fn print_advanced_safety(example: &str, live: bool) {
     println!("example: {example}");
-    println!("mode: {}", if live { "wire-endpoint" } else { "dry-run" });
+    println!("mode: {}", if live { "live" } else { "dry-run" });
     if live {
         println!("safety: --live, {ADVANCED_LIVE_ACK_FLAG}, and {LIVE_WIRE_ENV}=1 were required");
     } else {

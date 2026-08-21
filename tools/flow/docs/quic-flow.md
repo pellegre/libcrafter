@@ -119,10 +119,8 @@ cargo run -p crafter-flow --example quic_initial_client_flow
 cargo run -p crafter-flow --example quic_initial_server_flow
 ```
 
-Keep ordinary experimentation on this offline path. Live traffic requires
-explicit authorization, a dry-run first, and a disposable provider-backed
-endpoint or lab with scoped targets and teardown; it must not originate from an
-elevated developer host.
+Keep ordinary experimentation on this offline path. An external operator owns
+any authorized execution against a concrete interface or peer.
 
 ## Limits and source policy
 
@@ -135,7 +133,7 @@ the later full-flow driver for an authenticated bounded conversation.
 Wire and safety decisions are governed by the
 [QUIC source manifest](../../../.agents/docs/quic-manifest.md), the
 [packet-protection scope](../../../.agents/docs/quic-packet-protection-scope.md),
-and the [provider-backed live safety policy](quic-flow-scope.md#offline-and-live-boundary).
+and the [external execution boundary](quic-flow-scope.md#offline-and-live-boundary).
 The public packet-primitive surface remains documented in
 [`docs/guide/quic.md`](../../../docs/guide/quic.md).
 
@@ -254,7 +252,5 @@ server-initiated application streams, DATAGRAM applications, migration,
 multipath, IPv6 endpoint flows, and a general-purpose QUIC stack remain
 non-goals.
 
-Keep full-flow work offline by default. Any authorized interoperability run
-must start with a dry-run plan, use disposable provider-backed endpoints or a
-lab instead of the developer host, scope its targets, keep sensitive captures
-untracked, collect only approved artifacts, and tear the environment down.
+Keep full-flow work offline by default. External tooling owns any authorized
+interoperability execution, target scope, artifact policy, and cleanup.

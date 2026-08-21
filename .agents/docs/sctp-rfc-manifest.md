@@ -28,7 +28,7 @@ fuzzer, daemon, or live traffic default.
 - `encapsulation source`: source for an alternate packet envelope that may
   expose SCTP bytes after a conservative shape gate.
 - `operational guidance`: source that informs safe examples, dry-run defaults,
-  lab/probe behavior, or deployment risk, but is not by itself a packet grammar
+  external qualification, or deployment risk, but is not by itself a packet grammar
   authority for this crate.
 - `obsolete context`: source superseded by newer SCTP authority and usable only
   to understand older fixtures or lineage.
@@ -181,7 +181,7 @@ IPv4/IPv6 protocol overrides even when the next typed layer is SCTP.
   reconfiguration workflow, socket APIs, AUTH cryptography, DTLS, or live
   sender behavior inside `crafter`.
 - Do not add live SCTP validation from the developer machine. Any later live
-  work must be provider-backed, explicitly confirmed, and documented through
+  work must be externally executed, explicitly confirmed, and documented through
   the repository live-gate policy.
 - Do not rely on packet captures, vendor behavior, Stack Overflow answers,
   expired drafts, implementation source, or public host observations as

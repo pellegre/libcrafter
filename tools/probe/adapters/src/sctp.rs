@@ -32,7 +32,7 @@ pub fn run_sctp_dry_run(
         "packet": plan.packet,
         "validation": validation_json(plan),
         "capture_filter": capture_filter(plan),
-        "target_service": target_service_json(plan),
+        "peer_contract": peer_contract_json(plan),
         "stimulus_driver": plan.stimulus_driver,
     });
     let observed = observed_response(
@@ -45,7 +45,7 @@ pub fn run_sctp_dry_run(
             "packet": plan.packet,
             "validation": validation_json(plan),
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
             "stimulus_driver": plan.stimulus_driver,
         }),
     );
@@ -94,15 +94,15 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
     )
 }
 
-pub fn target_service_json(plan: &ProbePlan) -> Value {
-    plan.target_service.clone().unwrap_or_else(|| {
+pub fn peer_contract_json(plan: &ProbePlan) -> Value {
+    plan.peer_contract.clone().unwrap_or_else(|| {
         json!({
             "required": true,
             "kind": "sctp-controlled-peer",
             "protocol": plan.protocol.as_deref().unwrap_or("sctp"),
             "port": plan.destination_port,
             "planned_only": plan.planned_only.unwrap_or(true),
-            "live_requires_provider": true,
+            "requires_controlled_peer": true,
         })
     })
 }

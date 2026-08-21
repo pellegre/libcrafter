@@ -465,4 +465,4 @@ walk implementation, retry scheduler, trap receiver service, MIB compiler,
 MIB browser, monitoring product, device inventory, alerting workflow, VACM
 evaluator, USM user/key database, credential store, live target default, or
 host-originated raw traffic workflow. Those belong in generated tools or
-provider-backed lab/probe/oracle workflows, not in the `crafter` crate.
+external operator tooling, not in the `crafter` crate.

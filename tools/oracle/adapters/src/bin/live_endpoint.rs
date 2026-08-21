@@ -49,7 +49,6 @@ impl RunMode {
 
 #[derive(Debug, Deserialize)]
 struct EndpointRequest {
-    provider: String,
     backend: String,
     seed: u64,
     profile: String,
@@ -713,7 +712,6 @@ fn endpoint_response(
     metadata: Value,
 ) -> Value {
     json!({
-        "provider": request.provider,
         "backend": request.backend,
         "direction": canonical_direction(&request.direction),
         "endpoint_id": request.endpoint_id,
@@ -838,20 +836,15 @@ fn address_text<'a>(addresses: &'a Value, key: &str) -> Option<&'a str> {
 
 /// Resolve the real OS network device for live send/capture.
 ///
-/// The orchestrator passes a logical interface name (for example "private"),
-/// which is not an actual device on the endpoint. Capture is interface-bound,
-/// so the receiver must sniff the device attached to the exchange network.
+/// A request may carry a logical interface label rather than an OS device name.
+/// Capture is interface-bound, so resolve the device attached to the requested
+/// local address before opening the receiver.
 ///
-/// Resolve the device that *owns the local address* first. Providers such as
-/// Hetzner configure the private NIC with a `/32` host address plus a separate
-/// route to the subnet, so subnet matching on the peer address misses it and
-/// `interface_for` falls back to the public default interface — which never
-/// observes the private-network traffic, leaving the receiver capturing zero
-/// packets. The interface holding the local address is unambiguously the one
-/// attached to that network. Freshly provisioned private NIC addresses can take
-/// several seconds to appear, so poll for the local address before falling back
-/// to route-style resolution toward the peer (then the local address), and
-/// finally to the configured name.
+/// Resolve the device that *owns the local address* first. Routed environments
+/// may use a `/32` host address plus a separate subnet route, so matching only
+/// the peer route can select the wrong interface. The interface holding the
+/// local address is unambiguous. Newly configured addresses can take several
+/// seconds to appear, so poll before falling back to route-style resolution.
 fn resolve_live_interface(request: &EndpointRequest) -> String {
     let mut local_targets = Vec::new();
     for family in ["ipv4", "ipv6"] {
@@ -2761,7 +2754,6 @@ mod live_endpoint_sender_modes {
 
     fn sender_request(local_addresses: Value, peer_addresses: Value) -> EndpointRequest {
         EndpointRequest {
-            provider: "local-dry-run".to_string(),
             backend: BACKEND_NAME.to_string(),
             seed: 17,
             profile: "smoke".to_string(),
@@ -2938,7 +2930,6 @@ mod ipv4_dhcpv4_live_endpoint {
         let plans = vec![ipv4_dhcpv4_discover_plan(11), ipv4_dhcpv4_discover_plan(12)];
         let artifact_paths = artifact_paths(direction, "libcrafter");
         EndpointRequest {
-            provider: "local-dry-run".to_string(),
             backend: ENDPOINT_BACKEND.to_string(),
             seed: 110,
             profile: "smoke".to_string(),
@@ -2964,7 +2955,6 @@ mod ipv4_dhcpv4_live_endpoint {
     fn run_dry(direction: &str) -> Value {
         let request = dhcpv4_request(direction);
         let request_json = serde_json::to_value(json!({
-            "provider": request.provider,
             "backend": request.backend,
             "seed": request.seed,
             "profile": request.profile,
@@ -3058,10 +3048,6 @@ mod ipv4_dhcpv4_live_endpoint {
         assert_eq!(
             response.get("endpoint_role").and_then(Value::as_str),
             Some("libcrafter")
-        );
-        assert_eq!(
-            response.get("provider").and_then(Value::as_str),
-            Some("local-dry-run")
         );
         assert_eq!(
             response.get("backend").and_then(Value::as_str),

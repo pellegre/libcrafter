@@ -19,8 +19,6 @@ supported_directions:
   - backend_to_libcrafter
   - libcrafter_to_backend
   - roundtrip
-live_eligibility: false
-live_gate: manual_monitor_mode_radiotap_only
 
 fields:
   - name: frame_control

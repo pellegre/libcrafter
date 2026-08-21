@@ -61,5 +61,5 @@ prefix:
 - Neighbor fixtures on QUIC ports remain `Raw`.
 - Custom UDP bindings continue to take precedence over built-in QUIC dispatch.
 
-Future oracle or lab coverage must start with dry-run plans and must not send
+Future oracle or external environment coverage must start with dry-run plans and must not send
 live traffic from the developer machine.

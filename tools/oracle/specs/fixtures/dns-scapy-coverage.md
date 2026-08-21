@@ -215,7 +215,7 @@ Scapy send). Offline is the default path and the acceptance baseline.
 
 | Coverage | Case ID | Notes |
 | --- | --- | --- |
-| Forced offline run for all DNS cases | (all `dns-*`, `crafter-dns-*`, `malformed-dns-*`) | Offline materialize + decode + compare; no provider, no capture. |
+| Forced offline run for all DNS cases | (all `dns-*`, `crafter-dns-*`, `malformed-dns-*`) | Offline materialize + decode + compare; no external execution or capture. |
 
 ## 14. Pcap
 
@@ -225,19 +225,6 @@ through deterministic pcap write/read.
 | Coverage | Case ID | Notes |
 | --- | --- | --- |
 | Pcap round trip for representable DNS cases | (all `dns-*` and `crafter-dns-*`) | Deterministic pcap bytes; malformed truncation cases that cannot frame are excluded and stay decode-error fixtures. |
-
-## 15. Live dry-run
-
-Every live-eligible DNS case must default to a provider-backed dry-run send
-plan. Real packet exchange is gated behind `--confirm-live-run` and the
-protected provider workflow; it is never part of ordinary acceptance. Live byte
-comparison tolerates documented in-transit mutation while preserving DNS
-semantic comparison.
-
-| Coverage | Case ID | Notes |
-| --- | --- | --- |
-| Live dry-run plan for all live-eligible DNS cases | (all `dns-*` and `crafter-dns-*`) | Default `--dry-run` send plan in documentation address space; malformed decode-only cases are not live-eligible. |
-| Protected live exchange (opt-in only) | same case IDs under `--confirm-live-run` | Not run by default; semantic DNS comparison tolerates documented in-transit mutation. |
 
 ## Summary of byte-comparison policy
 

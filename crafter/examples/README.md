@@ -13,7 +13,7 @@ values use `Ipv4Protocol`.
 - Dry-run: builds send or send/receive plans and reports without transmitting
   packets.
 - Live-gated: defaults to a safe plan or dry-run and opens live send or capture
-  handles only after the wire endpoint guard is satisfied.
+  handles only after explicit live authorization is satisfied.
 
 | example | area | safety mode | what it demonstrates | command |
 | --- | --- | --- | --- | --- |
@@ -25,7 +25,7 @@ values use `Ipv4Protocol`.
 | `send_plan` | Net workflows | Dry-run | Network-layer send planning, compiled bytes, targets, and derived reply filters. | `cargo run -p crafter --example send_plan` |
 | `send_packet` | Net workflows | Dry-run by default; live-gated with `--live` | Network-layer and link-layer send reports using dry-run options by default. | `cargo run -p crafter --example send_packet` |
 | `send_recv_icmp` | Net workflows | Dry-run | ICMP send/receive configuration, retry timing, filters, and dry-run reports. | `cargo run -p crafter --example send_recv_icmp` |
-| `network_ping` | Net workflows | Dry-run by default; live-gated with `--live` | Network-layer ICMP echo send/receive for disposable wire endpoint smoke tests. | `cargo run -p crafter --example network_ping` |
+| `network_ping` | Net workflows | Dry-run by default; live-gated with `--live` | Network-layer ICMP echo send/receive for an externally authorized target. | `cargo run -p crafter --example network_ping` |
 | `reply_matching` | Net workflows | Offline | Synthetic request/reply matching and generated reply filters. | `cargo run -p crafter --example reply_matching` |
 | `batch_send` | Net workflows | Dry-run | Positional batch send reports for multiple TCP packets. | `cargo run -p crafter --example batch_send` |
 | `batch_send_recv` | Net workflows | Dry-run | Batch send/receive reports across IPv4 and IPv6 requests. | `cargo run -p crafter --example batch_send_recv` |
@@ -41,7 +41,7 @@ values use `Ipv4Protocol`.
 | `ip_fragment_offline` | Pcap and sniffing | Offline | Documentation-addressed IPv6 packet fragmentation written to an in-memory writer. | `cargo run -p crafter --example ip_fragment_offline` |
 | `wpa_decrypt_offline` | Pcap and sniffing | Offline | Synthetic WPA2-PSK CCMP pcap decryption through `PacketWire`, `Sniffer`, and `WpaDecrypt` with Wi-Fi/WPA metadata. | `cargo run -p crafter --example wpa_decrypt_offline` |
 | `sniffer_offline` | Pcap and sniffing | Offline | Offline `Sniffer` filtering and bounded packet iteration. | `cargo run -p crafter --example sniffer_offline` |
-| `capture_pcap` | Pcap and sniffing | Live-gated; plan by default | Bounded libpcap capture configuration and pcap writing on an isolated wire endpoint. | `cargo run -p crafter --example capture_pcap` |
+| `capture_pcap` | Pcap and sniffing | Live-gated; plan by default | Bounded libpcap capture configuration and pcap writing on an externally authorized interface. | `cargo run -p crafter --example capture_pcap` |
 | `arp_who_has` | Protocols | Dry-run | Explicit Ethernet broadcast ARP who-has construction from known MAC and IPv4 values. | `cargo run -p crafter --example arp_who_has` |
 | `dns_query` | Protocols | Dry-run send/receive plus offline decode | DNS query construction, dry-run send/receive reporting, and synthetic response decoding. | `cargo run -p crafter --example dns_query -- --name example.com` |
 | `dhcpv4_discover` | Protocols | Dry-run by default; live-gated with `--live` | DHCPv4 discover construction with an explicit client MAC and link-layer send options. | `cargo run -p crafter --example dhcpv4_discover` |
@@ -73,5 +73,6 @@ values use `Ipv4Protocol`.
 | `ipv6_extensions` | Protocols | Offline | IPv6 traffic class, flow label, options, routing, segment-routing, fragment, and raw next-header fallback decoding. | `cargo run -p crafter --example ipv6_extensions` |
 
 Live-gated examples require all three opt-ins before opening live sockets or
-capture handles: `--live`, `--i-understand-isolated-lab`, and
-`LIBCRAFTER_ENDPOINT=1`.
+capture handles: `--live`, `--i-understand-live-traffic`, and
+`LIBCRAFTER_LIVE=1`. External operator tooling owns target selection,
+authorization, preparation, and cleanup.

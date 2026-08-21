@@ -516,7 +516,7 @@ base fields from draft-backed extension assignments.
 | 48 | Extension-7 Flag | introduces an eighth option byte | draft-backed | draft-ietf-core-oscore-key-update-03 |
 | 49-63 | Unassigned | no registered meaning | unassigned | IANA |
 
-The Group Flag and key-update extension rows are provisional metadata under
+The Group Flag and key-update extension rows are prepareal metadata under
 the source-manifest boundary. They are not stable serializer authority.
 Unknown, unassigned, reserved, or unsupported flag material remains lossless
 and inspectable; a protection transform may return an explicit unsupported
@@ -542,5 +542,5 @@ remain ordinary transport values; direct CoAP decode remains available to a
 caller that already knows the payload type.
 
 Port assignments do not authorize traffic. Offline and dry-run behavior stays
-the default, and any live CoAP validation remains provider-backed and
+the default, and any live CoAP validation remains externally executed and
 explicitly confirmed under the repository safety policy.

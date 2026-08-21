@@ -24,7 +24,7 @@ in generated tools that choose their targets and safety gates explicitly.
 | Bonjour-style records | Supported | PTR, SRV, TXT, A, and AAAA helpers build ordinary DNS records for browse, resolve, and announce packet shapes. |
 | Known answers, probes, goodbyes | Supported as packets | Helpers place known answers, probe tiebreak records, cache-flush records, and TTL-zero goodbyes in the DNS sections used on the wire. |
 | Resolver behavior | Out of scope | No cache, responder state, suppression decision, conflict state machine, service registration, or retry timing is implemented. |
-| Live behavior | Protected | Use offline fixtures, dry-run plans, oracle/probe dry-runs, or provider-backed labs; examples and tests do not send live multicast traffic. |
+| Live behavior | Protected | Use offline fixtures, dry-run plans, oracle/probe dry-runs, or externally executed labs; examples and tests do not send live multicast traffic. |
 
 ## Basic Packet Construction
 
@@ -367,20 +367,21 @@ The fixture suite covers IPv4 and IPv6 UDP/5353 packets, Bonjour-style browse
 and resolve responses, known answers, cache-flush records, goodbyes, compressed
 name decode, malformed mDNS buffers, and classic pcap read/write round trips.
 
-## Live Safety
+## External Execution Boundary
 
-Do not send real mDNS multicast or unicast traffic from default examples,
-tests, or generated-tool paths. A live mDNS exchange requires an authorized
-human or agent, an explicit live flag or confirmation, a provider-backed lab or
-probe environment, artifact collection under ignored `target/` paths, and
-teardown of disposable endpoints.
+Use the tracked deterministic validation surfaces first:
 
-Do not put credentials, provider account data, public endpoint addresses, live
-host identifiers, real device names, or captures from sensitive networks in
-tracked docs, fixtures, oracle specs, or probe cases. Provider-backed validation
-should start with dry-run metadata that names roles, capabilities, multicast
-filters, expected responses, and artifact roots before any live run is
-authorized.
+```sh
+tools/oracle/run offline --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
+```
+
+These commands do not select infrastructure or send packets. Any authorized use
+of concrete interfaces, peers, radios, or targets is owned by external operator
+tooling, which supplies runtime inputs and collects artifacts. libcrafter does
+not provision machines, configure responders, manage credentials, or perform
+remote cleanup.
 
 ## Evidence
 

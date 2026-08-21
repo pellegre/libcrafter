@@ -348,7 +348,7 @@ Out of crate scope:
   v1/v2/v3 compatibility-mode transitions are host/router stack behavior.
 - Forwarding decisions, PIM/SSM routing policy, multicast router discovery
   workflows, and live interoperability checks belong in generated tools,
-  oracle specs, probe specs, or provider-backed live validation. The crate
+  oracle specs, probe specs, or externally executed live validation. The crate
   should expose the bytes, metadata, builders, decode results, summaries, and
   optional validation helpers those tools need.
 
@@ -446,6 +446,6 @@ Unsupported until more source evidence exists:
 - RFC 9279 source review supports only generic/no-op extension metadata. Future
   semantic Extension Type bodies require source evidence for their specific
   registry assignments and message applicability.
-- Provider-backed live IGMP validation may depend on multicast support,
-  interface privileges, and lab topology. Live tests must remain dry-run or
+- Externally executed live IGMP validation may depend on multicast support,
+  interface privileges, and external environment topology. Live tests must remain dry-run or
   protected until those capabilities are explicit.

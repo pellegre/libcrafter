@@ -1,4 +1,4 @@
-//! Provider-neutral libcrafter execution smoke protocol.
+//! Substrate-neutral libcrafter execution smoke protocol.
 
 use std::fs;
 use std::io::{self, Read};
@@ -164,10 +164,10 @@ mod tests {
 
     #[test]
     fn smoke_contract_roundtrips_typed_packet_bytes() {
-        let response = execute(request("provider-neutral smoke")).unwrap();
+        let response = execute(request("substrate-neutral smoke")).unwrap();
         assert_eq!(response.result, "passed");
-        assert_eq!(response.input_bytes, 22);
-        assert_eq!(response.compiled_bytes, 20 + 8 + 22);
+        assert_eq!(response.input_bytes, 23);
+        assert_eq!(response.compiled_bytes, 20 + 8 + 23);
         assert_eq!(
             response.checks,
             Checks {

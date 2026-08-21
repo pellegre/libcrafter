@@ -1,10 +1,7 @@
 """Shared argparse option helpers for the oracle CLI subcommands.
 
-These helpers build the common option groups (output root, generation
-parameters) that several subcommands reuse. They are protocol-agnostic parser
-wiring with no dependence on the live-provider machinery, so they live here and
-are imported by the per-command modules under :mod:`.commands`. They are also
-re-exported from :mod:`.main` so historical ``cli.<name>`` lookups keep working.
+These helpers build the common option groups (output root and deterministic
+generation parameters) that the offline subcommands reuse.
 """
 
 from __future__ import annotations

@@ -316,9 +316,9 @@ sanitized and reduced to deterministic fixture data.
 
 IP fragmentation pcaps in this tree must stay deterministic RawIp fixtures built
 from documentation address space, such as `192.0.2.0/24`,
-`198.51.100.0/24`, `203.0.113.0/24`, or `2001:db8::/32`. Provider-backed live
-fragment artifacts belong under ignored `target/oracle/ip-fragment-*` or
-`target/lab/ip-fragment-*` directories; only sanitized summaries that omit
+`198.51.100.0/24`, `203.0.113.0/24`, or `2001:db8::/32`. Externally collected
+fragment artifacts belong under ignored `target/oracle/ip-fragment-*`
+directories; only sanitized summaries that omit
 credentials, public host addresses, live captures, and cloud resource IDs may be
 promoted into tracked docs or `.agents/context/`.
 
@@ -351,7 +351,7 @@ Before promoting oracle output into this tree:
 
 ## Regeneration
 
-Fixture regeneration must be explicit. Any wire endpoint or reference
+Fixture regeneration must be explicit. Any external execution or reference
 regeneration tool should write into a temporary artifact directory first so
 changes can be reviewed before fixtures are copied into this tree.
 

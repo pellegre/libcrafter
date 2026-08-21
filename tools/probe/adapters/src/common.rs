@@ -30,7 +30,7 @@ pub const FAILURE_WRONG_PEER: &str = "wrong_peer";
 pub const FAILURE_WRONG_PAYLOAD: &str = "wrong_payload";
 pub const FAILURE_WRONG_FLAGS: &str = "wrong_flags";
 pub const FAILURE_DECODE_FAILED: &str = "decode_failed";
-pub const FAILURE_TARGET_SETUP_FAILED: &str = "target_setup_failed";
+pub const FAILURE_PEER_UNAVAILABLE: &str = "peer_unavailable";
 
 pub fn open_capture_sniffer(
     interface: impl Into<String>,
@@ -87,7 +87,6 @@ impl RunMode {
 
 #[derive(Debug, Deserialize)]
 pub struct StimulusEndpointRequest {
-    pub provider: String,
     pub profile: String,
     pub seed: u64,
     pub endpoint_role: String,
@@ -126,6 +125,8 @@ pub struct ProbePlan {
     pub udp_payload_length: Option<usize>,
     #[serde(default)]
     pub expected_payload_hex: Option<String>,
+    #[serde(default)]
+    pub expected_payloads_hex: Option<Vec<String>>,
     #[serde(default)]
     pub expected_payload_length: Option<usize>,
     #[serde(default)]
@@ -417,7 +418,7 @@ pub struct ProbePlan {
     #[serde(default)]
     pub planned_only_reason: Option<String>,
     #[serde(default)]
-    pub target_service: Option<Value>,
+    pub peer_contract: Option<Value>,
     // Multi-send UDP behavioral case fields (`udp-multi-shot-order`). The plan
     // carries a `udp_sends` array (one entry per datagram), each with its own
     // ordered sequence marker and payload while sharing the same peer tuple. The
@@ -457,7 +458,7 @@ pub struct ProbePlan {
     pub validation: Option<ArpValidation>,
     // ARP alias behavioral case field (`arp-alias-address-reply`). The target
     // kernel answers ARP for a *configured secondary* IPv4 address (an alias)
-    // added to its interface during target setup; the who-has resolves this alias
+    // added to its interface during external precondition; the who-has resolves this alias
     // (it is also carried in `target_protocol_addr`). Non-alias cases leave this
     // unset.
     #[serde(default)]
@@ -490,25 +491,16 @@ pub struct ProbePlan {
     pub ethernet_min_frame_len: Option<usize>,
     #[serde(default)]
     pub expected_request_frame_len: Option<usize>,
-    // Neighbor-cache flush ARP behavioral case fields (`arp-cache-flush-reply`).
-    // Provider VMs can carry neighbor state across packets in a session, so the
-    // target setup flushes the relevant neighbor entries *before* the stimulus
-    // who-has (`neighbor_flush_commands`) and cleanup leaves neighbor state in a
-    // normal provider-controlled (flushed) state
-    // (`neighbor_flush_cleanup_commands`). `flush_neighbor` marks the case as
-    // requiring this explicit pre-stimulus flush. Other ARP cases leave these
-    // unset (they still carry the implicit `neighbor_cache_flush` sysctl flush).
+    // Some ARP cases require a cold neighbor cache. The execution environment
+    // satisfies this boolean precondition; libcrafter carries no commands for
+    // changing machine state.
     #[serde(default)]
     pub flush_neighbor: Option<bool>,
     #[serde(default)]
     pub neighbor_flush_interface: Option<String>,
-    #[serde(default)]
-    pub neighbor_flush_commands: Option<Vec<String>>,
-    #[serde(default)]
-    pub neighbor_flush_cleanup_commands: Option<Vec<String>>,
     // Broadcast-filtered ARP behavioral case fields
     // (`arp-broadcast-filtered-capture`). The capture filter intentionally
-    // admits all ARP replies, including an optional setup decoy event; the ARP
+    // admits all ARP replies, including an optional execution preparation decoy event; the ARP
     // module ignores replies whose decoded target protocol address is not the
     // planned sender protocol address and only passes on the matching is-at
     // contract.
@@ -1028,7 +1020,6 @@ pub fn run_endpoint(
     }
 
     let response = json!({
-        "provider": request.provider,
         "backend": BACKEND_NAME,
         "endpoint_role": request.endpoint_role,
         "profile": request.profile,
@@ -1058,7 +1049,7 @@ pub fn run_endpoint(
                 FAILURE_WRONG_PAYLOAD,
                 FAILURE_WRONG_FLAGS,
                 FAILURE_DECODE_FAILED,
-                FAILURE_TARGET_SETUP_FAILED
+                FAILURE_PEER_UNAVAILABLE
             ]
         }
     });
@@ -1423,6 +1414,7 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "udp_payload_hex": plan.udp_payload_hex,
         "udp_payload_length": plan.udp_payload_length,
         "expected_payload_hex": plan.expected_payload_hex,
+        "expected_payloads_hex": plan.expected_payloads_hex,
         "expected_payload_length": plan.expected_payload_length,
         "expected_udp_length": plan.expected_udp_length,
         "expected_udp_checksum_present": plan.expected_udp_checksum_present,
@@ -1556,7 +1548,7 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "expected_request_frame_len": plan.expected_request_frame_len,
         "arp_sends": arp::sends_json(plan.arp_sends.as_deref()),
         "validation": validation_json(plan),
-        "target_service": target_service_json(plan),
+        "peer_contract": peer_contract_json(plan),
         "capture_filter": capture_filter(plan),
     });
     // The NDP (IPv6 Neighbor Discovery) plan fields are merged after the base
@@ -1986,7 +1978,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
         })
 }
 
-pub fn target_service_json(plan: &ProbePlan) -> Value {
+pub fn peer_contract_json(plan: &ProbePlan) -> Value {
     match plan.case.as_str() {
         "tcp-syn-open" | "tcp-syn-options" => json!({
             "required": true,
@@ -2119,7 +2111,7 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
         | "mdns-known-answer-suppression"
         | "mdns-cache-flush-response"
         | "mdns-subtype-browse"
-        | "mdns-bonjour-txt" => plan.target_service.clone().unwrap_or_else(|| {
+        | "mdns-bonjour-txt" => plan.peer_contract.clone().unwrap_or_else(|| {
             json!({
                 "required": true,
                 "kind": "mdns-controlled-responder",
@@ -2145,8 +2137,8 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "snmp_request": plan.snmp_request,
             "expected_snmp_response": plan.expected_snmp_response,
         }),
-        case if sctp::is_sctp_case(case) => sctp::target_service_json(plan),
-        case if ntp::is_ntp_case(case) => ntp::target_service_json(plan),
+        case if sctp::is_sctp_case(case) => sctp::peer_contract_json(plan),
+        case if ntp::is_ntp_case(case) => ntp::peer_contract_json(plan),
         "dhcpv4-discover-offer" => json!({
             "required": true,
             "kind": "dhcpv4-responder",
@@ -2336,7 +2328,7 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
         | "dhcpv6-bulk-leasequery-plan"
         | "dhcpv6-active-leasequery-plan"
         | "dhcpv6-unknown-option-preservation"
-        | "dhcpv6-repeated-transaction-id" => plan.target_service.clone().unwrap_or_else(|| {
+        | "dhcpv6-repeated-transaction-id" => plan.peer_contract.clone().unwrap_or_else(|| {
             json!({
                 "required": true,
                 "kind": "dhcpv6-controlled-responder",
@@ -2402,7 +2394,7 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             json!({
                 "required": true,
                 // ARP relies primarily on the target kernel answering who-has for
-                // its own configured address; setup tunes ARP sysctls and flushes
+                // its own configured address; execution preparation tunes ARP sysctls and flushes
                 // the neighbor cache (no listening daemon).
                 "kind": "arp-kernel",
                 "layer": "link",
@@ -2418,7 +2410,7 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
         "arp-broadcast-filtered-capture" => json!({
             "required": true,
             // ARP relies primarily on the target kernel answering who-has for its
-            // own configured address; setup can also emit unrelated ARP replies.
+            // own configured address; execution preparation can also emit unrelated ARP replies.
             // The capture remains broad, and the ARP module ignores decoded decoys
             // that do not target the planned sender protocol address.
             "kind": "arp-kernel",
@@ -2434,9 +2426,9 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
         }),
         "arp-alias-address-reply" => json!({
             "required": true,
-            // Target setup adds (and cleanup removes) a deterministic secondary
+            // External preparation adds (and restoration removes) a deterministic secondary
             // IPv4 alias on the private interface; the kernel then answers ARP for
-            // the alias. Setup also tunes ARP sysctls and flushes the neighbor
+            // the alias. The execution environment also tunes ARP sysctls and flushes the neighbor
             // cache (no listening daemon). The who-has resolves the alias, so the
             // target protocol address is the alias rather than the primary IPv4.
             "kind": "arp-kernel",
@@ -2457,12 +2449,12 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
         "arp-spa-variation" => json!({
             "required": true,
             // ARP relies primarily on the target kernel answering who-has for its
-            // own configured address; setup tunes ARP sysctls and flushes the
+            // own configured address; execution preparation tunes ARP sysctls and flushes the
             // neighbor cache (no listening daemon). The who-has carries an
             // ALTERNATE sender protocol address (SPA); for live execution the
             // kernel may need that SPA configured as a secondary sender address so
-            // it accepts/answers the request, so the target service records the
-            // alternate SPA (added during setup, removed during cleanup).
+            // it accepts/answers the request, so the peer contract records the
+            // alternate SPA supplied by the execution environment.
             "kind": "arp-kernel",
             "layer": "link",
             "target_protocol_addr": plan.target_protocol_addr,
@@ -2481,7 +2473,7 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
         "arp-repeat-two-replies" => json!({
             "required": true,
             // ARP relies primarily on the target kernel answering who-has for
-            // its own configured address; setup tunes ARP sysctls and flushes
+            // its own configured address; execution preparation tunes ARP sysctls and flushes
             // the neighbor cache (no listening daemon). The repeated who-has
             // resolves the same target twice, so the kernel answers each send.
             "kind": "arp-kernel",
@@ -2502,7 +2494,7 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
         "arp-cache-flush-reply" => json!({
             "required": true,
             // ARP relies primarily on the target kernel answering who-has for its
-            // own configured address; setup tunes ARP sysctls and flushes the
+            // own configured address; execution preparation tunes ARP sysctls and flushes the
             // neighbor cache (no listening daemon).
             "kind": "arp-kernel",
             "layer": "link",
@@ -2513,22 +2505,16 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
                 .and_then(|validation| validation.sender_hardware_addr.clone()),
             "arp_sysctls": true,
             "neighbor_cache_flush": true,
-            // The behavioral distinction: the target setup flushes the relevant
-            // neighbor entries BEFORE the stimulus who-has so resolution starts
-            // cold, and cleanup leaves neighbor state in the normal,
-            // provider-controlled (flushed) state. Surface the explicit flush
-            // marker, interface, and setup/cleanup commands so the dry-run target
-            // service plan documents the cache-cleanup contract.
+            // The external execution environment supplies the cold-cache
+            // precondition before invoking this bounded packet workload.
             "flush_neighbor": plan.flush_neighbor.unwrap_or(true),
             "neighbor_flush_interface": plan.neighbor_flush_interface,
-            "neighbor_flush_commands": plan.neighbor_flush_commands,
-            "neighbor_flush_cleanup_commands": plan.neighbor_flush_cleanup_commands,
         }),
         "ndp-neighbor-solicitation" | "ndp-duplicate-address-detection" => json!({
             "required": true,
             // The target kernel answers a Neighbor Solicitation for an address it
             // owns (the IPv6 analog of the ARP-answering kernel); the DAD case has
-            // it defend a tentative address. Setup configures the link-local
+            // it defend a tentative address. The execution environment configures the link-local
             // address and flushes the neighbor cache so the kernel re-answers.
             "kind": "ndp-kernel",
             "layer": "network",
@@ -2584,7 +2570,7 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
         }),
         "tls-clienthello-observation"
         | "tls-alert-observation"
-        | "tls-application-data-capture" => tls::target_service_metadata(plan),
+        | "tls-application-data-capture" => tls::peer_contract_metadata(plan),
         _ => json!({}),
     }
 }
@@ -2879,7 +2865,6 @@ mod tests {
     fn unsupported_case_dispatches_to_decode_failed() {
         let plan = base_plan("nope");
         let request = StimulusEndpointRequest {
-            provider: "qemu".to_string(),
             profile: "smoke".to_string(),
             seed: 1,
             endpoint_role: "stimulus".to_string(),

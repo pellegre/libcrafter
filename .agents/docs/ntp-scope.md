@@ -33,5 +33,5 @@ NTP support is not a clock implementation. It must not add:
 Generated examples, fixtures, and defaults must stay offline or dry-run by
 default. Any addresses shown in examples must use documentation address space
 such as `192.0.2.0/24`, `198.51.100.0/24`, or `2001:db8::/32`; live NTP
-validation belongs behind explicit provider-backed gates, not on the developer
+validation belongs behind explicit externally executed gates, not on the developer
 machine.

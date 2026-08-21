@@ -58,8 +58,8 @@ and are imported by their module path:
 Use the same packet shape as the rest of the crate: build a layer, wrap it in an
 IPv4 (or IPv6) layer, call `compile()`, and inspect `summary()` or `show()`. All
 examples use documentation address space and the `AllSPFRouters` multicast
-destination `224.0.0.5`. Use real routers only in an explicitly authorized lab
-session.
+destination `224.0.0.5`. External operator tooling must explicitly authorize
+and prepare any real router peer.
 
 ## Hello Construction
 
@@ -243,18 +243,21 @@ checksum and authentication status through `checksum_status()` and the
 with context such as the common header, a specific packet body, or an LSA field.
 Truncation never becomes a silent panic.
 
-## Offline And Live Surfaces
+## Validation And External Execution Boundary
 
-The offline path is the default: build packets, `compile()` them, decode the
-bytes, and inspect `summary()`, `show()`, or `hexdump()` without touching a
-network. OSPF runs directly over IP, so live transmission rides the standard raw
-send and capture surface and the provider-backed lab/probe runners — never a
-privileged raw send from the developer host. Plan with `--dry-run` first, use
-documentation address space, and never commit live router identifiers,
-credentials, or captures from sensitive networks.
+Use the tracked deterministic validation surfaces first:
 
-For the agent-facing live procedure and generated-tool guidance, see
-[`.agents/docs/cookbook.md`](../../.agents/docs/cookbook.md).
+```sh
+tools/oracle/run offline --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
+```
+
+These commands do not select infrastructure or send packets. Any authorized use
+of concrete interfaces, peers, radios, or targets is owned by external operator
+tooling, which supplies runtime inputs and collects artifacts. libcrafter does
+not provision machines, configure responders, manage credentials, or perform
+remote cleanup.
 
 ## Explicit Exclusions
 

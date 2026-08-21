@@ -1,6 +1,6 @@
 # SSDP public API design
 
-This note sketches the provisional public API for SSDP before any Rust surface
+This note sketches the prepareal public API for SSDP before any Rust surface
 is exported. It is a design handoff, not an implementation. Wire facts remain
 gated by `.agents/docs/ssdp-source-manifest.md`,
 `.agents/docs/ssdp-wire-grammar.md`, `.agents/docs/ssdp-codepoints.md`, and

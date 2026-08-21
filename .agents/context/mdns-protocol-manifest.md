@@ -54,5 +54,5 @@ Primary references used by this review:
 
 - The manifest's broad candidate set is not a license to implement unrelated DNS privacy, proxy, SRP, LLQ, NAT-PMP, or scalable DNS-SD behavior.
 - No source in this review supports adding a resolver cache, responder daemon, service registration daemon, scanner, retransmission engine, or conflict-resolution state machine to `crafter`.
-- Query IP TTL/hop-limit defaults, live provider multicast capability behavior, and Apple Bonjour implementation quirks require separate source evidence if later steps need them.
+- Query IP TTL/hop-limit defaults and Apple Bonjour implementation quirks require separate source evidence if later steps need them.
 - DNS-SD instance labels are sourced as UTF-8 Net-Unicode labels; arbitrary non-text label bytes should be treated as generic DNS wire preservation, not DNS-SD-specific semantics.

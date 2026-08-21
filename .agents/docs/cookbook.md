@@ -2,7 +2,7 @@
 
 This cookbook is for generated packet tools. Prefer the public `crafter`
 facade and `crafter::prelude::*`, keep local behavior offline or dry-run by
-default, and require an explicit live-lab path before sending packets.
+default, and require an explicit external execution path before sending packets.
 
 Generated tools should expose structured errors instead of panicking. For small
 CLIs, returning `Result<(), Box<dyn std::error::Error>>` is enough. For services
@@ -115,7 +115,7 @@ waits for another party, and `Role::Injector` observes traffic and emits from
 its position. The default binding is dry-run and bounded; live traffic must be a
 separate opt-in such as
 `RunOptions::default().binding(Binding::interface("lab0").link_layer().live())`
-inside an authorized lab or provider-backed run. See
+inside an authorized external environment or externally executed run. See
 [`tools/flow/README.md`](../../tools/flow/README.md) for the full model.
 
 ## Build IPv4 Datagrams
@@ -125,7 +125,7 @@ packet, write deterministic pcap fixtures, run oracle `offline` or
 `local-dry-run`, or use `send_dry_run` with an interface such as `dry-run0`.
 IPv4 examples and tests should use documentation ranges `192.0.2.0/24`,
 `198.51.100.0/24`, and `203.0.113.0/24`; real targets belong only in an
-explicitly authorized live-lab path.
+explicitly authorized external execution path.
 
 Use the DS field helpers instead of hand-shifting the historical TOS octet:
 `Dscp::new(...)`, `Ecn::{NotEct,Ect1,Ect0,Ce}`, `.dscp(...)`, `.ecn(...)`,
@@ -202,21 +202,18 @@ Persist deterministic packets with `PacketWire` or the classic pcap backend,
 and include `summary()`, `show()`, exact compiled bytes, and structured errors
 in tool reports. Never log OSCORE secrets or unauthenticated plaintext.
 
-Plan validation before considering a provider:
+Plan validation before considering a external runner:
 
 ```sh
-tools/oracle/run offline --family coap --profile coap-smoke --seed 5683 --count 12 --out target/oracle/coap-agent-offline
-tools/oracle/run live --provider local-dry-run --dry-run --family coap --profile coap-live-dry-run --seed 5683 --count 10 --out target/oracle/coap-agent-live-dry-run
-tools/probe/run --provider qemu --dry-run --profile coap-smoke --seed 5683 --count 12 --out target/probe/coap-agent-dry-run
-tools/lab/run plan --provider qemu --dry-run --profile smoke --seed 1 --role stimulus --role target --json
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
-Live CoAP is optional, provider-backed, and never a developer-host raw send.
+Live CoAP is optional, externally executed, and never a developer-host raw send.
 The manual wrapper must require `LIBCRAFTER_PROBE_LIVE_PROVIDER`,
 `LIBCRAFTER_PROBE_LIVE_COAP_CONFIRM=yes`, the runner protocol gate
-`LIBCRAFTER_COAP_LIVE_CONFIRM=yes`, and `--confirm-live-run`. Promote only
+`LIBCRAFTER_COAP_LIVE_CONFIRM=yes`, and explicit external authorization. Promote only
 cases with a disposable controlled responder and finite send/capture bounds;
-collect plan, byte, pcap, response, log, provider, and cleanup artifacts below
+collect plan, byte, pcap, response, log, external runner, and cleanup artifacts below
 ignored `target/` paths, then tear down every endpoint after success, failure,
 or timeout. If credentials, virtualization, responder features, or other
 capabilities are unavailable, retain the dry-run artifact with a stable skip
@@ -231,8 +228,9 @@ documents.
 
 MQTT is an application layer over cleartext TCP/1883. Generated tools should
 build it as `Ipv4 / Tcp / Mqtt` or `Ipv6 / Tcp / Mqtt`, keep the default path
-offline, and reserve live broker sessions for an explicit `--peer` or probe/lab
-run. Use documentation IP addresses in examples and fixtures.
+offline, and reserve live broker sessions for an explicit `--peer` or an
+operator-supplied external run. Use documentation IP addresses in examples and
+fixtures.
 
 ```rust
 use crafter::prelude::*;
@@ -298,14 +296,11 @@ corpora against the reference backend, and the probe profile plans a controlled
 Mosquitto exchange without starting a broker in local dry-run mode:
 
 ```sh
-cargo run -p crafter --example mqtt_session
-cargo run -p crafter --example mqtt_session -- --v5
-tools/oracle/run offline --backend <reference-backend> --family mqtt --profile ci --seed 5 --count 30 --out target/oracle/mqtt-agent-offline
-tools/probe/run --provider local-dry-run --dry-run --profile mqtt-smoke --seed 1
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
 Live MQTT runs must stay opt-in: use `mqtt_session --peer IP:PORT` only against
-an authorized broker, or use a provider-backed probe/lab session that provisions
+an authorized broker, or use an externally executed probe/external session that prepares
 the broker, collects artifacts under `target/`, and tears the endpoint down.
 
 ## Build NTP Packet Primitives
@@ -313,7 +308,7 @@ the broker, collects artifacts under `target/`, and tears the endpoint down.
 NTP is a packet primitive over UDP/123, not a time synchronization workflow.
 Generated tools should build and decode `Ntp` layers, inspect summaries, and
 start with offline bytes or dry-run send plans. Use documentation addresses in
-defaults and keep live traffic behind provider-backed gates.
+defaults and keep live traffic behind externally executed gates.
 
 ```rust
 use crafter::prelude::*;
@@ -367,9 +362,9 @@ structured errors. Standard UDP decode only claims UDP/123 payloads that pass
 the conservative NTP shape gate; unrelated bytes stay `Raw`.
 
 Do not add a pool client, peer state machine, NTS key exchange, Autokey
-verification, scanner, or live default. Provider-backed live validation for NTP
-requires explicit provider selection, dry-run review,
-`--confirm-live-run`, an NTP-specific confirmation such as
+verification, scanner, or live default. Externally executed live validation for NTP
+requires explicit external runner selection, dry-run review,
+explicit external authorization, an NTP-specific confirmation such as
 `LIBCRAFTER_NTP_LIVE_CONFIRM=yes`, artifact collection, and endpoint teardown.
 
 ## Build TLS Packet Primitives
@@ -467,28 +462,20 @@ ALPN policy, SNI meaning, or handshake state.
 Keep validation offline first:
 
 ```sh
-cargo run -p crafter --example tls_client_hello
-cargo run -p crafter --example tls_pcap_read
-cargo test -p crafter --test tls_pcap
-tools/lab/run plan --provider qemu --dry-run --profile tls-smoke --seed 1 --role stimulus --role target --json
-tools/probe/run --provider local-dry-run --dry-run --profile tls-smoke --seed 1
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
-Live TLS work belongs behind provider-backed gates. Provision a disposable
-endpoint or lab, review the dry-run bytes and pcap artifacts under `target/`,
+Live TLS work belongs behind externally executed gates. Prepare a disposable
+execution environment, review the dry-run bytes and pcap artifacts under `target/`,
 require an explicit live confirmation flag in the generated tool, and destroy
-the provider resources after the run. Never send crafted TLS traffic from the
+the external runner resources after the run. Never send crafted TLS traffic from the
 developer host by default and never embed real credentials, public hostnames,
 private certificates, or sensitive captures in tracked files.
 
 Use an environment-gated command so unattended runs stay offline:
 
 ```sh
-if [ -n "${LIBCRAFTER_TLS_LIVE_PROVIDER:-}" ] && [ "${LIBCRAFTER_TLS_LIVE_CONFIRM:-}" = "yes" ]; then
-  tools/probe/run --provider "$LIBCRAFTER_TLS_LIVE_PROVIDER" --confirm-live-run --profile tls-smoke --seed 8446 --count 1 --out target/probe/tls-live
-else
-  tools/probe/run --provider qemu --dry-run --profile tls-smoke --seed 8446 --count 1 --out target/probe/tls-live-dry-run
-fi
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
 ## Build SSDP Discovery Packets
@@ -539,20 +526,18 @@ cargo run -p crafter --example ssdp_search_plan -- --iface dry-run0
 cargo run -p crafter --example ssdp_notify
 ```
 
-Before any protected live SSDP validation, plan the provider-backed work through
-the existing dry-run oracle, probe, or lab flows and keep artifacts under ignored
+Before any protected live SSDP validation, plan the externally executed work through
+the existing dry-run oracle, probe, or external environment flows and keep artifacts under ignored
 `target/` paths:
 
 ```sh
-tools/oracle/run live --backend <reference-backend> --provider local-dry-run --dry-run --family ssdp --profile smoke --seed 1900 --count 5 --out target/oracle/ssdp-dry-run
-tools/probe/run --provider qemu --dry-run --profile ssdp --seed 1900 --count 5 --out target/probe/ssdp-dry-run
-tools/lab/run plan --provider qemu --dry-run --profile ssdp --seed 1900 --role stimulus --role target --json
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
 Do not build an SSDP scanner, discovery daemon, service cache, retry scheduler,
 UPnP control point, or live multicast default in `crafter` or in generated
 default paths. Real SSDP traffic must be explicitly authorized and routed
-through disposable provider-backed oracle, probe, or lab flows with artifact
+through disposable externally executed oracle, probe, or external environment flows with artifact
 collection and teardown; do not send live multicast from the developer host by
 default.
 
@@ -655,12 +640,10 @@ Keep IGMP validation offline until the IGMP oracle/probe profiles are present in
 the repo, then start with deterministic offline, pcap, and local dry-run modes:
 
 ```sh
-tools/oracle/run offline --profile igmp-smoke --seed 1 --count 20 --out target/oracle/igmp-agent-offline
-tools/oracle/run pcap --profile igmp-smoke --seed 1 --count 20 --out target/oracle/igmp-agent-pcap
-tools/probe/run --provider local-dry-run --dry-run --profile igmp-smoke --seed 1
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
-Live IGMP belongs behind provider-backed lab, oracle, or probe runners with
+Live IGMP belongs behind operator-supplied external runners with
 explicit confirmation, capability checks, artifact collection under `target/`,
 and teardown. Do not generate a multicast router, snooper, proxy, scanner, or
 state machine inside the crate or a default tool path.
@@ -714,7 +697,7 @@ while packet-stream fragmentation and reassembly belong to `IpFragment` and
 `IpDefrag`.
 
 Focused IPv6 validation stays offline unless a human explicitly asks for a live
-provider run:
+external run:
 
 ```sh
 cargo run -p crafter --example ipv6_extensions
@@ -777,7 +760,7 @@ assert_eq!(exotic.sender_hardware_bytes_value().len(), 8); // raw view stays
 ```
 
 ARP dry-run sends use the link-layer plan; never send raw ARP from the
-developer host. Reserve the live path for a disposable lab (see Live-Lab
+developer host. Reserve the live path for a disposable external environment (see External Execution
 Sending below):
 
 ```rust
@@ -798,11 +781,10 @@ println!("{}", plan.compiled_packet().hexdump());
 degrades to a bare `arp` filter for variable-length or non-IPv4 forms, so
 generated matchers stay correct on nonstandard ARP.
 
-Live ARP validation is L2-only and must run through provider-backed QEMU or
-VirtualBox lab sessions with `link_layer_send` + `link_layer_capture`
-capability checks, protected confirmation, artifact collection, and teardown.
-When authorization or VM prerequisites are absent, plan with `--dry-run` and
-record a skip artifact rather than faking a live run. The user-facing coverage
+Live ARP validation is L2-only. External operator tooling must satisfy
+`link_layer_send` + `link_layer_capture`, protected confirmation, artifact
+collection, and teardown. When those prerequisites are absent, retain the
+deterministic plan rather than faking a live run. The user-facing coverage
 boundary lives in [`docs/guide/arp.md`](../../docs/guide/arp.md).
 
 ## Build IPv6 Neighbor Discovery (NDP)
@@ -862,7 +844,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Neighbor Solicitation, matching the Neighbor Advertisement
 
 Send an NS to the target's solicited-node multicast group and match the returned
-NA. Keep the live path in a disposable lab (see Live-Lab Sending); use dry-run
+NA. Keep the live path in a disposable external environment (see External Execution Sending); use dry-run
 for generated defaults.
 
 ```rust
@@ -886,15 +868,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .hop_limit(255) // REQUIRED: receivers drop NDP with hop limit != 255
         / Icmpv6::neighbor_solicitation_with_source_link_layer(target, me);
 
-    // Dry-run plan by default; only the lab path actually transmits.
+    // Dry-run plan by default; only the external environment path actually transmits.
     let plan = ns.send_dry_run(SendOptions::new().iface("dry-run0").link_layer())?;
     println!("{}", plan.compiled_packet().hexdump());
 
-    // In a live lab, send/receive and inspect the Neighbor Advertisement:
+    // In a external execution, send/receive and inspect the Neighbor Advertisement:
     let options = SendRecv::new()
         .iface("eth0")
         .link_layer()
-        .dry_run() // drop for a real lab send
+        .dry_run() // drop for a real external environment send
         .timeout(Duration::from_secs(1))
         .filter("icmp6");
     let report = ns.send_recv_report(options)?;
@@ -928,26 +910,24 @@ answers with an NA. Build it with `Icmpv6::neighbor_solicitation(target)` over a
 ### Run the NDP behavior probe
 
 The repo ships three NDP behavior cases that exercise a real kernel through the
-lab/probe runners, modeled on the ARP `who-has` -> `is-at` case:
+external runners, modeled on the ARP `who-has` -> `is-at` case:
 
 - `ndp-neighbor-solicitation` — NS -> NA (the reliable kernel analog of ARP)
 - `ndp-router-solicitation` — RS -> RA (needs an RA-emitting router on the target)
 - `ndp-duplicate-address-detection` — NS from `::` -> defending NA
 
-Dry-run is the safety boundary; start there on either VM provider:
+Dry-run is the safety boundary; start there on either external runner:
 
 ```sh
-tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --case ndp-neighbor-solicitation
-tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --case ndp-duplicate-address-detection
-tools/probe/run --provider virtualbox --dry-run --profile behavior --seed 1052 --case ndp-router-solicitation
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
 NDP probe cases require `link_layer_send`, `link_layer_capture`, and the derived
-`ipv6_multicast` capability, so they plan on QEMU and VirtualBox and skip cleanly
+`ipv6_multicast` capability, so they plan on authorized L2 environments and skip cleanly
 on endpoints without link-layer access. A real exchange needs
-`--confirm-live-run` plus a provisioned two-endpoint lab session; collect
-artifacts and tear the session down afterward (see Live-Lab Sending and the
-`lab-session` skill). The user-facing NDP/ICMPv6 coverage boundary lives in
+explicit external authorization plus a prepared two-endpoint external session; collect
+artifacts and tear the session down afterward (see External Execution Sending and the
+operator-supplied tooling). The user-facing NDP/ICMPv6 coverage boundary lives in
 [`docs/guide/icmpv6.md`](../../docs/guide/icmpv6.md).
 
 ## Build Dot11 Stacks
@@ -1010,9 +990,7 @@ Keep validation offline first. Use deterministic pcap fixtures and the focused
 Dot11 oracle profiles before any live discussion:
 
 ```sh
-tools/oracle/run offline --profile dot11-smoke --seed 1101 --count 20 --out target/oracle/dot11-agent-offline
-tools/oracle/run pcap --profile dot11-pcap --seed 1201 --count 20 --out target/oracle/dot11-agent-pcap
-tools/oracle/run live --provider local-dry-run --profile dot11-smoke --seed 1301 --count 5 --dry-run --out target/oracle/dot11-agent-live-local-dry-run
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
 Protected Dot11 data is not decrypted in this phase. If the protected bit is
@@ -1043,13 +1021,12 @@ assert!(decoded.layer::<LlcSnap>().is_none());
 assert!(decoded.layer::<Raw>().is_some());
 ```
 
-Live radiotap injection is a manual gate, not an automatic generated-tool path.
-The built-in sender can produce dry-run link-layer plans for `Radiotap / Dot11`,
-but current live radiotap transmission returns an unsupported-send error. Do
-not add a generated `--live` mode that assumes monitor-mode injection works.
-Use the manual gate in [`docs/operations/dot11-live-manual.md`](../../docs/operations/dot11-live-manual.md)
-only after human authorization, isolated RF setup, dry-run byte review, artifact
-cleanup, and explicit live confirmation.
+Live radiotap injection is not an automatic generated-tool path. The built-in
+sender can produce dry-run link-layer plans for `Radiotap / Dot11`, but current
+live radiotap transmission returns an unsupported-send error. Do not add a
+generated `--live` mode that assumes monitor-mode injection works. External
+operator tooling must own RF authorization, isolated setup, interface
+preparation, execution, artifact collection, and cleanup.
 
 ## Build BLE Advertising
 
@@ -1151,7 +1128,7 @@ generated-tool behavior.
 Generated 802.15.4/Zigbee tools should use the public `crafter` facade:
 `crafter::prelude::*`, `Dot15d4Radio / Dot15d4 / ZigbeeNwk / ZigbeeAps`,
 `PacketWire`, `Sniffer`, and `Transmitter`. Keep examples synthetic with
-lab-safe 2.4 GHz channels (11 through 26) and documentation PAN ids and short
+test-safe 2.4 GHz channels (11 through 26) and documentation PAN ids and short
 addresses, and do not commit real captures, device addresses, dongle
 identifiers, or RF observations.
 
@@ -1261,7 +1238,7 @@ fn whad_dot15d4_paths(packet: Packet, live: bool) -> crafter::Result<()> {
 ```
 
 Only call `.live()` in an authorized RF environment with bounded sniff counts
-or timeouts and lab-safe channel and PAN/address values. Live WHAD 802.15.4
+or timeouts and test-safe channel and PAN/address values. Live WHAD 802.15.4
 paths are for manual or operator-gated runs, not default generated-tool
 behavior.
 
@@ -1316,7 +1293,7 @@ assert!(!bytes.as_bytes().is_empty());
 ```
 
 Keep validation offline first: golden bytes, malformed cases, pcap fixtures,
-and oracle/probe dry-runs. Use provider-backed lab sessions for any later live
+and oracle/probe dry-runs. Use external execution tooling for any later live
 traffic; do not send crafted QUIC traffic from the developer machine by default.
 
 The `quic-smoke` probe profile is the generated-tool behavior path. Only
@@ -1326,8 +1303,7 @@ Negotiation, Retry, stateless reset, and protected-flow cases are planned-only
 until a stateful controlled QUIC target exists.
 
 ```sh
-tools/probe/run --provider qemu --dry-run --profile quic-smoke --seed 1 --count 5 --out target/probe/quic-agent-dry-run
-tools/lab/run plan --provider qemu --dry-run --profile quic-smoke --seed 1 --role stimulus --role target --json
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
 ## Build UDP Options
@@ -1463,22 +1439,19 @@ inside `Packet` or typed SCTP values so `summary()`, `show()`, pcap fixtures,
 and oracle/probe artifacts remain inspectable.
 
 Start SCTP validation with offline byte fixtures, pcap fixtures, and dry-run
-oracle/probe/lab plans. The planned SCTP oracle profile uses a reference
+oracle and probe plans. The planned SCTP oracle profile uses a reference
 backend and documentation-safe packet bytes:
 
 ```sh
-tools/oracle/run live --backend <reference-backend> --provider local-dry-run --dry-run --family sctp --profile sctp-smoke --seed 9262 --count 5 --out target/oracle/sctp-live-local-dry-run
-tools/oracle/run live --backend <reference-backend> --provider qemu --dry-run --family sctp --profile sctp-smoke --seed 9262 --count 5 --out target/oracle/sctp-live-qemu-dry-run
-tools/lab/run plan --provider qemu --dry-run --profile sctp-smoke --seed 9262 --role stimulus --role target --json
-tools/probe/run --provider qemu --dry-run --profile sctp-smoke --seed 9262 --count 5 --out target/probe/sctp-dry-run
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
-Real SCTP traffic must be provider-backed and explicitly authorized. Do not add
+Real SCTP traffic must be externally executed and explicitly authorized. Do not add
 a generated `--live` path that sends from the developer host. Require
-`--confirm-live-run`, controlled stimulus and target endpoints, bounded
+explicit external authorization, controlled stimulus and target endpoints, bounded
 captures, artifact output below ignored `target/` paths, and teardown in the
-same runbook. Never commit provider credentials, public endpoint addresses,
-provider instance IDs, live host identifiers, or pcaps from sensitive networks.
+same runbook. Never commit external runner credentials, public endpoint addresses,
+live host identifiers, live host identifiers, or pcaps from sensitive networks.
 
 ## Build TCP Segments
 
@@ -1689,57 +1662,24 @@ cargo run -p crafter --example bgp_session
 cargo run -p crafter --example bgp_session -- --ipv6
 ```
 
-The live form is opt-in and belongs only inside a disposable lab endpoint:
+The live form is opt-in and belongs only inside a disposable external environment endpoint:
 
 ```sh
 cargo run -p crafter --example bgp_session -- \
   --peer 192.0.2.20:179 \
   --ipv6 \
   --linger-seconds 45 \
-  --out target/lab/bgp/manual
+  --out target/bgp/manual
 ```
 
 Do not use a real internet peer in generated defaults. Do not write live public
-IPs, provider IDs, credentials, or packet captures into tracked files.
+IPs, external runner IDs, credentials, or packet captures into tracked files.
 
-### BGP Lab Flow
+### BGP external qualification
 
-For live validation, use the probe-owned provider workflow and FRR peer assets,
-not raw traffic from the developer machine. The BGP target-service assets live
-under `tools/probe/target_services/bgp/`. Plan first:
-
-```sh
-tools/probe/run --provider local-dry-run --dry-run --profile bgp-smoke
-tools/probe/run --provider qemu --dry-run --profile bgp-smoke --seed 1
-```
-
-Run a provider-backed live session only after explicit authorization:
-
-```sh
-tools/probe/run --provider qemu --confirm-live-run --profile bgp-smoke --seed 1 --out target/probe/bgp/qemu
-```
-
-Probe renders the target setup from
-`tools/probe/target_services/bgp/provision-peer.sh` and
-`tools/probe/target_services/bgp/frr.conf.template`, using runtime-only values
-for the driver address, peer AS, driver AS, and optional `EBGP_MULTIHOP_TTL`.
-The stimulus endpoint runs the `bgp_session` example with
-`--peer <target-private-ip>:179 --ipv6`, captures `tcp port 179`, and saves the
-FRR RIB output beside the transcript. The smoke validates:
-
-- the target RIB contains `203.0.113.0/24`;
-- the target RIB contains `2001:db8::/32`;
-- the driver transcript decoded the peer-originated `198.51.100.0/24` UPDATE;
-- a non-empty port-179 pcap and transcript were collected.
-
-Probe uses lab-backed endpoints for provider runs and tears down the scoped
-session, including on failure.
-
-For user-facing BGP coverage, see [`docs/guide/bgp.md`](../../docs/guide/bgp.md).
-
-To add a new probe protocol (one auto-discovered plugin file plus its Rust
-adapter, with no central dispatcher edits), see
-[`tools/probe/docs/adding-a-protocol.md`](../../tools/probe/docs/adding-a-protocol.md).
+Generate the deterministic `bgp-smoke` plan locally. If wire evidence is
+required, an operator-supplied external runner must provide the controlled peer
+and execute the exact candidate revision.
 
 ## Build RIP / RIPng Messages
 
@@ -1880,17 +1820,14 @@ profile plans the live exchange against an FRR `ripd` target service — all
 without a network:
 
 ```sh
-tools/oracle/run offline --profile rip-smoke --seed 1 --count 10 --out target/oracle/rip-agent-offline
-tools/oracle/run pcap --profile rip-smoke --seed 1 --count 10 --out target/oracle/rip-agent-pcap
-tools/probe/run --provider local-dry-run --dry-run --profile rip-smoke
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
 A real RIP exchange is opt-in only and must run from disposable infrastructure,
 never raw from the developer host. Start with the probe dry-run above, then
-provision a provider-backed routing daemon through a `lab-session` (see Live-Lab
-Sending and the `lab-session` skill); collect artifacts and tear the session
-down afterward. The RIP target-service assets live under
-`tools/probe/target_services/rip/`. For the user-facing coverage boundary, see
+prepare an externally executed routing daemon through operator-supplied tooling (see External Execution
+Sending and the operator-supplied tooling); collect artifacts and tear the session
+down afterward. For the user-facing coverage boundary, see
 [`docs/guide/rip.md`](../../docs/guide/rip.md), and for the RFC/IANA source mapping see
 [`.agents/docs/rip-manifest.md`](rip-manifest.md).
 
@@ -2026,64 +1963,26 @@ probe profile plans the ESP/AH/IKEv2 behavioral exchange plus an engine-level
 cross-crypto parity check — all without a network:
 
 ```sh
-tools/oracle/run offline --profile ipsec-smoke --seed 1 --count 20 --out target/oracle/ipsec-agent-offline
-tools/oracle/run offline --profile esp --seed 1 --count 20 --root l3:ipv4 --out target/oracle/esp-agent-offline
-tools/oracle/run pcap --profile ipsec-smoke --seed 1 --count 20 --out target/oracle/ipsec-agent-pcap
-tools/probe/run --provider local-dry-run --dry-run --profile ipsec --seed 1 --case esp-transport-echo
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
 Any live IPSec exchange is opt-in only and must run from disposable
 infrastructure, never raw from the developer host. Start with the probe dry-run
-above, then provision a controlled IPSec-capable peer through a `lab-session`
-(see Live-Lab Sending and the `lab-session` skill); collect artifacts and tear
+above, then prepare a controlled IPSec-capable peer through operator-supplied tooling
+(see External Execution Sending and the operator-supplied tooling); collect artifacts and tear
 the session down afterward. For the user-facing coverage boundary, see
 [`docs/guide/ipsec.md`](../../docs/guide/ipsec.md).
 
-## Validate TCP: Dry-Run First, Provider Live Opt-In
+## Validate TCP
 
-Dry-run is the default for TCP, exactly as for every other layer. `send_dry_run`
-compiles the segment, derives the send target, and returns a plan without
-transmitting. Use a documentation interface name (`dry-run0`) and documentation
-address space so nothing touches a real network:
-
-```rust
-use crafter::prelude::*;
-use std::net::Ipv4Addr;
-
-fn plan_syn() -> Result<(), Box<dyn std::error::Error>> {
-    let packet = Ipv4::new()
-        .src(Ipv4Addr::new(192, 0, 2, 10))
-        .dst(Ipv4Addr::new(198, 51, 100, 20))
-        / Tcp::new().sport(40000).dport(443).syn_segment()
-            .tcp_option(TcpOption::maximum_segment_size(1460))?;
-
-    let plan = packet.send_dry_run(
-        SendOptions::new()
-            .iface("dry-run0")
-            .network_layer(),
-    )?;
-
-    println!("target={:?}", plan.target());
-    println!("{}", plan.compiled_packet().hexdump());
-    Ok(())
-}
-```
-
-Use `send_recv_report(...).dry_run()` (see `send_recv Matching` below) when the
-tool also needs the derived BPF reply filter without sending.
-
-Live TCP traffic is the opt-in path and must run from disposable infrastructure,
-never raw from the developer host. Start with a provider dry-run, then run the
-real provider only after explicit authorization, and destroy the resource after:
+Validate TCP builder and decode behavior locally first:
 
 ```sh
-tools/live-lab/libcrafter-live-lab doctor --provider local-dry-run
-tools/oracle/run live --provider local-dry-run --profile smoke --seed 1 --count 10
-tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 1 --count 10
+tools/oracle/run offline --family tcp --profile smoke --seed 1 --count 20
+tools/probe/run --profile tcp-smoke --seed 1 --count 3 --out target/probe/tcp
 ```
 
-Only inside that disposable provider host does live code add `.live()` to
-`SendOptions` (see `Live-Lab Sending`).
+Wire qualification is external and uses the exact candidate revision.
 
 ## Decode Bytes
 
@@ -2197,7 +2096,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Live sniffing must be bounded and lab-only:
+Live sniffing must be bounded and external-only:
 
 ```rust
 use crafter::prelude::*;
@@ -2210,7 +2109,7 @@ let packets = Sniffer::interface("eth0")
     .collect()?;
 ```
 
-Only run that form inside a disposable live lab.
+Only run that form inside a disposable external execution.
 
 ## Dry-Run Sending
 
@@ -2230,100 +2129,16 @@ println!("target={:?}", plan.target());
 println!("{}", plan.compiled_packet().hexdump());
 ```
 
-Expose a `--live` flag only when the tool also checks for an isolated lab marker
-or is run through `tools/live-lab/`.
+Expose a `--live` flag only when the tool also checks for an isolated external environment marker
+or is run through `tools/external execution/`.
 
-## Live-Lab Sending
+## External execution boundary
 
-Live sending belongs in disposable infrastructure, not on the developer
-machine. Run local checks first, then use the provider-agnostic lab command:
-
-```sh
-cargo test --workspace
-tools/live-lab/libcrafter-live-lab doctor --provider local-dry-run
-tools/live-lab/libcrafter-live-lab run --provider local-dry-run --suite all
-```
-
-When credentials are configured outside the repo, the same suite can run on a
-disposable provider host:
-
-```sh
-tools/live-lab/libcrafter-live-lab doctor --provider hetzner --dry-run
-tools/live-lab/libcrafter-live-lab run --provider hetzner --suite all
-```
-
-Inside that disposable host, live code can opt in explicitly:
-
-```rust
-let report = packet.send(
-    SendOptions::new()
-        .iface("eth0")
-        .network_layer()
-        .live(),
-)?;
-println!("bytes_sent={}", report.bytes_sent());
-```
-
-Always destroy provider resources after the run.
-
-## Appliance-Backed Provider Work
-
-When a generated tool needs provider-backed execution, request a coarse
-appliance profile instead of inventing protocol-specific endpoint capabilities.
-Use `wan-raw` for WAN-capable raw packet work, `lan-raw` for prepared LAN or
-private lab work, `whad-serial` for WHAD serial dongle workflows, and
-`dot11-monitor` for a prepared monitor-mode Wi-Fi interface. The profile only
-describes placement and host requirements; the generated tool, oracle, or probe
-still owns packet semantics and live gates.
-
-Start with dry-run plans and inspect the reported `appliance_runtime` metadata:
-
-```sh
-tools/endpoint/run appliance check --dry-run --json ENDPOINT_ID lan-raw
-tools/endpoint/run appliance plan --dry-run --json ENDPOINT_ID lan-raw -- \
-  sh -lc 'printf "agent dry-run\n" > /artifacts/summary.txt'
-tools/lab/run plan --provider qemu --dry-run --profile smoke --seed 1 --role stimulus --role target --json
-tools/oracle/run live --provider qemu --dry-run --profile smoke --seed 1 --count 10
-tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10
-```
-
-For prepared dongle VMs or other reusable hardware-backed hosts, acquire a
-persistent asset lease by profile and run the appliance through the lease. Do
-not put real USB serials, interface names, SSIDs, BSSIDs, MACs, firmware paths,
-public addresses, credentials, or captures in tracked files:
-
-```sh
-tools/endpoint/run asset check PREPARED_ASSET_ID --profile whad-serial --json
-tools/endpoint/run asset acquire --profile whad-serial --lease-ttl 2h --owner agent-session --json
-tools/endpoint/run appliance plan --dry-run --json --lease LEASE_ID whad-serial -- \
-  sh -lc 'printf "leased WHAD dry-run\n" > /artifacts/summary.txt'
-tools/endpoint/run asset release LEASE_ID --json
-```
-
-Use the same lease pattern for `dot11-monitor` assets. Release leases after the
-appliance run, collect artifacts under ignored output roots, and keep real live
-traffic behind the same explicit confirmation required by the endpoint,
-lab-session, oracle, probe, and RF manuals.
-
-## Choose Docker Provider Modes
-
-Use Docker through the wire, lab, oracle, or probe provider commands, not
-through arbitrary `docker run` access from generated tools. Docker socket access
-is host-root equivalent; do not mount the socket into provider containers or
-generated workloads.
-
-Prefer `docker/private` when an agent needs a local, safe packet lab before
-using heavier VM or cloud providers. It runs endpoints on an isolated
-provider-owned bridge and is the Docker mode for same-segment packet work.
-Use `docker/lan` only as a NAT-backed L3 reachability smoke to LAN targets, and
-use `docker/wan` only as a NAT-backed L3 egress smoke to internet targets. Do
-not treat either mode as true LAN/WAN link-layer access.
-
-Live Docker runs still require `--confirm-live-run`. Start with dry-run plans,
-run the provider command that creates the endpoint or lab, collect artifacts,
-then destroy the endpoint with the matching provider cleanup command. If a live
-run fails halfway through, keep local artifacts for debugging but still run
-cleanup so containers and provider-owned private networks do not linger.
+Tracked examples and generated tools default to dry-run. When real traffic is
+required, an operator-supplied external runner selects the authorized machine,
+satisfies the declared runtime requirements, invokes the bounded workload, and
+returns artifacts. Do not add machine lifecycle, credentials, remote access,
+hardware leases, or topology to this repository.
 
 ## Oracle Validation
 
@@ -2353,33 +2168,24 @@ tools/oracle/run pcap --profile smoke --seed 1 --count 10
 ```
 
 For UDP options, keep generated-tool validation offline or dry-run unless a
-human has explicitly authorized a disposable provider endpoint:
+human has explicitly authorized a disposable execution endpoint:
 
 ```sh
-tools/oracle/run offline --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-agent-offline
-tools/oracle/run pcap --profile smoke --seed 9868 --count 100 --family udp --out target/oracle/udp-options-agent-pcap
-tools/oracle/run live --provider local-dry-run --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-agent-live-local-dry-run
-python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --profile smoke --seed 9868 --count 20 --dry-run --out target/oracle/udp-options-agent-live-dry-run-matrix
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
-Live validation routes through a provider. Use `local-dry-run` for agent and CI
-planning, and reserve real providers for explicit live-lab workflows:
+Live validation routes through a external runner. Use `local-dry-run` for agent and CI
+planning, and reserve real external runners for explicit external execution workflows:
 
 ```sh
-tools/oracle/run live --provider local-dry-run --profile smoke --seed 1 --count 10
-tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
 Guard real UDP option live validation with an environment opt-in and keep the
-provider disposable:
+external runner disposable:
 
 ```sh
-if [ "${LIBCRAFTER_RUN_LIVE_UDP_OPTIONS:-0}" = "1" ]; then
-  tools/oracle/run live --provider "${LIBCRAFTER_LIVE_PROVIDER:-qemu}" --confirm-live-run --direction backend_to_libcrafter --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-live-reference-to-libcrafter
-  tools/oracle/run live --provider "${LIBCRAFTER_LIVE_PROVIDER:-qemu}" --confirm-live-run --direction libcrafter_to_backend --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-live-libcrafter-to-reference
-else
-  echo "set LIBCRAFTER_RUN_LIVE_UDP_OPTIONS=1 to run guarded live UDP option validation"
-fi
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
 Artifacts default below `target/oracle/`, with mode-specific reports under
@@ -2388,8 +2194,8 @@ failing oracle command should be rerunnable with the same `--profile`, `--seed`,
 `--count`, and, when the report identifies one packet, `--index`.
 
 Pull request CI runs deterministic oracle offline coverage and pcap smoke
-coverage with the configured backend. Provider-backed live traffic must stay
-behind explicit live-lab confirmation or dry-run workflows.
+coverage with the configured backend. Externally executed live traffic must stay
+behind explicit external execution confirmation or dry-run workflows.
 
 ## send_recv Matching
 

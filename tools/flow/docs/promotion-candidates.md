@@ -2,12 +2,12 @@
 
 `crafter-flow` is the proving ground for stateful packet conversations. Pieces
 move into `crafter` only after they are proven by offline tests, benign examples,
-and isolated lab use, and only after their public shape is stable enough for a
+and external qualification, and only after their public shape is stable enough for a
 published crate contract. `crafter` users depend on exported names and behavior;
 promotion is therefore a compatibility decision, not a cleanup step.
 
 The state-machine layer itself stays in this tool crate. `Flow`, `Transition`,
-`Role`, `Runner`, protocol-specific flow definitions, scratch lab wiring, and
+`Role`, `Runner`, protocol-specific flow definitions, external wiring, and
 tool orchestration combine primitives into workflows. Under the `CLAUDE.md`
 "Agents write tools; the crate stays a primitive" test, that makes them examples,
 docs, skills, or tools rather than new `crafter` modules.
@@ -70,7 +70,7 @@ What must stabilize first:
   and explicit live opt-in.
 - Inspectable counters and reports, including what dry-run means for receive
   sources.
-- Provider and lab behavior after repeated real runs, not only memory-source
+- External runtime behavior after repeated real runs, not only memory-source
   tests.
 
 API-contract implications:
@@ -88,8 +88,8 @@ API-contract implications:
 
 Why it is wire-level enough:
 
-- `PcapCaptureSource` is now implemented in `crafter-flow` and proven live in the
-  isolated lab through the wired `Conversation` receive path.
+- `PcapCaptureSource` is now implemented in `crafter-flow` and externally
+  qualified through the wired `Conversation` receive path.
 - It adapts `crafter`'s pcap/sniffer primitives into a reusable capture source
   that can keep observing real packets across multiple send/receive steps.
 - The capability sits below tool orchestration: generated packet tools can use
@@ -98,10 +98,10 @@ Why it is wire-level enough:
 What must stabilize first:
 
 - Timeout polling, nonblocking behavior, BPF filter handling, interface
-  assumptions, and error context across platforms and providers.
+  assumptions, and error context across platforms.
 - Resource lifetime, drop behavior, and how callers choose between dry-run,
   memory-backed, and explicit live capture.
-- More repeated lab/provider evidence, including privilege failures,
+- More repeated external evidence, including privilege failures,
   malformed-packet handling, and quiet timeouts.
 - Whether it promotes as a standalone source, part of a future `Conversation`
   primitive, or both.

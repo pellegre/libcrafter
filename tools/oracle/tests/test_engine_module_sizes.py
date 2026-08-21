@@ -17,7 +17,7 @@ file's *current* post-refactor size, i.e. they lock against ~20% regrowth at the
 sizes actually achieved. They are NOT a target to shrink toward; they exist only
 to fail loudly if a file starts regrowing back toward a monolith.
 
-``cli/main.py`` is deliberately large (~8.7k lines). The live-provider machinery
+``cli/main.py`` is deliberately large. The validation command machinery
 is mock-patch-coupled to the ``cli`` module via the step-47 ``sys.modules``
 identity alias, so it cannot be physically relocated without breaking
 ``unittest.mock.patch.object(cli, ...)`` parity. That is an inherent test-design
@@ -64,7 +64,7 @@ _LINE_BOUNDS = {
     "engine/backends/scapy/packets.py": 1061,  # achieved 884
     "engine/backends/scapy/normalize.py": 4559,  # achieved 3799
     "engine/backends/wireshark/normalize.py": 544,  # achieved 453
-    # cli/*.py -- main.py is large by design (live-provider mock-patch coupling);
+    # cli/*.py -- main.py is large by design (public-module mock-patch coupling);
     # the bound locks it against regrowth, it does NOT assert a small file.
     "engine/cli/main.py": 10479,  # achieved 8732
     "engine/cli/__init__.py": 41,  # achieved 34

@@ -3,9 +3,8 @@
 The oracle's per-stage protocol plugins (generator sampling, Scapy encode/decode,
 Wireshark decode) all share one registration shape: a protocol module registers a
 value under a layer name, and the stage orchestrator looks it up by name. This
-module provides that shared mechanism so every stage registry mirrors the in-repo
-``providers/registry.py`` and ``backends/registry.py`` conventions instead of
-hand-rolling its own dict and ``Unknown...Error``.
+module provides that shared mechanism so every stage uses one consistent
+registry instead of hand-rolling its own dict and ``Unknown...Error``.
 
 Auto-discovery imports every non-dunder submodule of a ``protocols`` package so
 each protocol module self-registers at import. Discovery uses ``__name__``-relative

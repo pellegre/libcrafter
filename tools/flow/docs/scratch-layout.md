@@ -2,13 +2,11 @@
 
 `tools/flow/.scratch/` is reserved for local flow-engine artifacts that must not
 enter version control. The repository-level `.scratch/` gitignore rule ignores
-this directory at any depth, so lab files, generated tools, packet captures, and
+this directory at any depth, so generated tools, packet captures, and
 build outputs placed here remain local-only.
 
 ## Directory Layout
 
-- `tools/flow/.scratch/lab/`: QEMU lab files for the isolated, internal-only VM
-  topology used to validate flows against real client software.
 - `tools/flow/.scratch/tools/dhcp-starvation/`: standalone DHCP starvation tool
   crate.
 - `tools/flow/.scratch/tools/dhcp-hijack/`: standalone DHCP hijack tool crate.
@@ -46,6 +44,6 @@ tracked `crafter` crate at the repository root.
 ## Governance Boundary
 
 See `tools/flow/README.md` for the governance boundary. The tracked crate owns
-the neutral flow engine and benign closed-loop examples. The isolated lab and
-concrete offensive tools stay under `.scratch/` and are built by calling the
+the neutral flow engine and benign closed-loop examples. Concrete experimental
+tools stay under `.scratch/` and are built by calling the
 public engine API rather than patching tracked engine code.

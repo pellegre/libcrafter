@@ -91,7 +91,9 @@ def documentation_ipv6(rng: random.Random) -> str:
     """Select an IPv6 address from the RFC 3849 documentation prefix."""
 
     host = bounded_int(rng, 1, (1 << 96) - 2)
-    return str(ipaddress.IPv6Address(int(_IPV6_DOCUMENTATION_NETWORK.network_address) + host))
+    return str(
+        ipaddress.IPv6Address(int(_IPV6_DOCUMENTATION_NETWORK.network_address) + host)
+    )
 
 
 def documentation_mac(rng: random.Random) -> str:
@@ -269,7 +271,9 @@ def _integer_domain_value(
         return 68
     if domain == "bootps":
         return 67
-    raise ValueError(f"spec error: unsupported integer domain for {field_name}: {domain!r}")
+    raise ValueError(
+        f"spec error: unsupported integer domain for {field_name}: {domain!r}"
+    )
 
 
 def _mac_for_domain(ctx: _SamplingContext, domain: object, default: str) -> str:
@@ -308,7 +312,9 @@ def _different_ipv4(rng: random.Random, first: str) -> str:
     if second != first:
         return second
     address = ipaddress.IPv4Address(first)
-    network = next(network for network in _IPV4_DOCUMENTATION_NETWORKS if address in network)
+    network = next(
+        network for network in _IPV4_DOCUMENTATION_NETWORKS if address in network
+    )
     offset = int(address) - int(network.network_address)
     next_offset = 1 + (offset % (network.num_addresses - 2))
     return str(network.network_address + next_offset)
@@ -322,7 +328,11 @@ def _different_ipv6(rng: random.Random, first: str) -> str:
     next_host = int(address) - int(_IPV6_DOCUMENTATION_NETWORK.network_address) + 1
     if next_host >= _IPV6_DOCUMENTATION_NETWORK.num_addresses - 1:
         next_host = 1
-    return str(ipaddress.IPv6Address(int(_IPV6_DOCUMENTATION_NETWORK.network_address) + next_host))
+    return str(
+        ipaddress.IPv6Address(
+            int(_IPV6_DOCUMENTATION_NETWORK.network_address) + next_host
+        )
+    )
 
 
 def _field_bits(field_spec: JSONObject) -> int:
@@ -514,18 +524,16 @@ def _dot11_is_management(frame_control: int) -> bool:
 
 
 def _is_ipv4_root_dhcpv4_stack(stack: Sequence[str]) -> bool:
-    """Return True for the IPv4-root, unicast live DHCPv4 stack.
+    """Return True for an IPv4-root DHCPv4 packet stack.
 
-    The ``ipv4 / udp / dhcpv4`` stack carries DHCPv4 as a one-way unicast oracle
-    packet between provider endpoints. It has no Ethernet frame, so link-layer
+    The ``ipv4 / udp / dhcpv4`` stack has no Ethernet frame, so link-layer
     broadcast delivery, the IPv4 limited-broadcast destination, and the DHCP
-    broadcast flag have no meaning and would make the packet ineligible for
-    provider-backed live exchange. The Ethernet-root DHCPv4 stack keeps those
-    domains for offline link-layer coverage.
+    broadcast flag have no meaning. The Ethernet-root DHCPv4 stack keeps those
+    domains for deterministic link-layer coverage.
 
     Shared sampling primitive: the IPv4 sampler plugin uses it to resolve the
     IPv4 destination domain, and the (still legacy) DHCPv4 sampler uses it for the
-    broadcast destination. Kept here so the migrated IPv4 plugin can import it
+    broadcast destination. Kept here so the IPv4 plugin can import it
     without depending on ``generator``.
     """
 
@@ -657,5 +665,11 @@ def _udp_option_intent(key: str) -> list[JSONObject]:
         },
         {"kind": 6, "name": "req", "length": 6, "token": 16909060},
         {"kind": 7, "name": "res", "length": 6, "token": 168496141},
-        {"kind": 8, "name": "time", "length": 10, "tsval": 16909060, "tsecr": 168496141},
+        {
+            "kind": 8,
+            "name": "time",
+            "length": 10,
+            "tsval": 16909060,
+            "tsecr": 168496141,
+        },
     ]

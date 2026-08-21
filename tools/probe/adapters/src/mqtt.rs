@@ -1,5 +1,5 @@
 //! MQTT probe cases: planned CONNECT/CONNACK, SUBSCRIBE/SUBACK, and QoS 1
-//! PUBLISH/PUBACK exchanges against a probe-owned Mosquitto broker.
+//! PUBLISH/PUBACK exchanges against a caller-supplied controlled MQTT broker.
 //!
 //! Dry-run compiles inspectable IPv4/TCP/MQTT packet plans without sending
 //! traffic. Live mode is an explicit TCP application session: it connects to
@@ -17,9 +17,10 @@ use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::time::Duration;
 
 use crate::common::{
-    capture_filter, expected_response, failed_outcome, hex_bytes, observed_response, plan_json,
-    required_str, send_report_json, target_service_json, ExampleResult, ProbeOutcome, ProbePlan,
-    StimulusEndpointRequest, FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD,
+    capture_filter, expected_response, failed_outcome, hex_bytes, observed_response,
+    peer_contract_json, plan_json, required_str, send_report_json, ExampleResult, ProbeOutcome,
+    ProbePlan, StimulusEndpointRequest, FAILURE_DECODE_FAILED, FAILURE_TIMEOUT,
+    FAILURE_WRONG_PAYLOAD,
 };
 
 const DEFAULT_CLIENT_ID_PREFIX: &str = "crafter-probe";
@@ -91,7 +92,7 @@ pub fn run_mqtt_dry_run(
             "sent_raw_hex": sent_raw_hex,
             "mqtt_raw_hex": mqtt_raw_hex,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
             "exchange": exchange,
         }),
     );
@@ -109,7 +110,7 @@ pub fn run_mqtt_dry_run(
             "sent_raw_hex": sent_raw_hex,
             "mqtt_raw_hex": mqtt_raw_hex,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
             "exchange": exchange,
         }
     });
@@ -667,7 +668,6 @@ mod tests {
     fn expected_reply_validation_accepts_connack() {
         let bytes = mqtt_wire_bytes(&Mqtt::connack()).unwrap();
         let request = StimulusEndpointRequest {
-            provider: "qemu".to_string(),
             profile: "mqtt-smoke".to_string(),
             seed: 1,
             endpoint_role: "stimulus".to_string(),

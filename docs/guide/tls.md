@@ -207,7 +207,7 @@ unknown values without losing the original bytes.
 ## Pcap Usage
 
 TLS pcap workflows stay offline unless an operator explicitly chooses a live
-provider-backed run. The bundled example reads a checked-in fixture through
+externally executed run. The bundled example reads a checked-in fixture through
 `PacketWire`, applies a BPF filter, and iterates with `Sniffer`:
 
 ```console
@@ -261,29 +261,18 @@ cargo run -p crafter --example tls_client_hello
 cargo run -p crafter --example tls_pcap_read
 ```
 
-## Live And Provider Safety
+## External Execution Boundary
 
-Live TLS packet work is not a default workflow. Generated tools should first
-produce compiled bytes, `summary()`, `show()`, hexdumps, pcap artifacts, and
-dry-run plans. If a real network observation is required, use a disposable
-provider endpoint or lab session with explicit authorization, collect artifacts
-under `target/`, and tear the endpoint down. Do not elevate the developer host
-or aim crafted TLS traffic at arbitrary public services from local examples.
+Use the tracked deterministic validation surfaces first:
 
-Use the same guarded shell shape for TLS probe validation. With no environment
-variables set, the command below is a dry-run. A live provider-backed run
-requires both `LIBCRAFTER_TLS_LIVE_PROVIDER` and
-`LIBCRAFTER_TLS_LIVE_CONFIRM=yes`, and still passes `--confirm-live-run` to the
-probe runner:
-
-```console
-if [ -n "${LIBCRAFTER_TLS_LIVE_PROVIDER:-}" ] && [ "${LIBCRAFTER_TLS_LIVE_CONFIRM:-}" = "yes" ]; then
-  tools/probe/run --provider "$LIBCRAFTER_TLS_LIVE_PROVIDER" --confirm-live-run --profile tls-smoke --seed 8446 --count 1 --out target/probe/tls-live
-else
-  tools/probe/run --provider qemu --dry-run --profile tls-smoke --seed 8446 --count 1 --out target/probe/tls-live-dry-run
-fi
+```sh
+tools/oracle/run offline --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
-The TLS layer only provides packet primitives. Provider-backed probes can use
-those primitives to observe a controlled service, but the crate itself remains
-limited to building, decoding, preserving, and inspecting wire bytes.
+These commands do not select infrastructure or send packets. Any authorized use
+of concrete interfaces, peers, radios, or targets is owned by external operator
+tooling, which supplies runtime inputs and collects artifacts. libcrafter does
+not provision machines, configure responders, manage credentials, or perform
+remote cleanup.

@@ -1,0 +1,448 @@
+{
+  "version": 1,
+  "kind": "feature",
+  "name": "icmpv4_behavior",
+  "summary": "Deterministic ICMPv4 common-field and type-specific body coverage against the reference backend.",
+  "layers": [
+    "ipv4",
+    "icmp"
+  ],
+  "directions": [
+    "backend_to_libcrafter",
+    "libcrafter_to_backend"
+  ],
+  "strict_bytes": true,
+  "malformed": false,
+  "behavior_matrix": [
+    {
+      "behavior": "echo_request",
+      "coverage_case": "ipv4-icmp",
+      "icmp_type": "echo_request",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "representation": "typed"
+    },
+    {
+      "behavior": "echo_reply",
+      "coverage_case": "icmpv4-echo-reply",
+      "icmp_type": "echo_reply",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "representation": "typed"
+    },
+    {
+      "behavior": "destination_unreachable",
+      "coverage_case": "icmpv4-destination-unreachable",
+      "icmp_type": "destination_unreachable",
+      "codes": [
+        "net_unreachable",
+        "host_unreachable",
+        "protocol_unreachable",
+        "port_unreachable"
+      ],
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "representation": "typed"
+    },
+    {
+      "behavior": "frag_needed_next_hop_mtu",
+      "coverage_case": "icmpv4-frag-needed-next-hop-mtu",
+      "icmp_type": "destination_unreachable",
+      "codes": [
+        "fragmentation_needed"
+      ],
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "representation": "typed"
+    },
+    {
+      "behavior": "time_exceeded",
+      "coverage_case": "icmpv4-time-exceeded",
+      "icmp_type": "time_exceeded",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "representation": "typed"
+    },
+    {
+      "behavior": "parameter_problem",
+      "coverage_case": "icmpv4-parameter-problem",
+      "icmp_type": "parameter_problem",
+      "codes": [
+        "pointer"
+      ],
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "representation": "typed"
+    },
+    {
+      "behavior": "redirect",
+      "coverage_case": "icmpv4-redirect",
+      "icmp_type": "redirect",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "representation": "typed"
+    },
+    {
+      "behavior": "source_quench",
+      "coverage_case": "icmpv4-source-quench",
+      "icmp_type": "source_quench",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "representation": "typed"
+    },
+    {
+      "behavior": "timestamp",
+      "coverage_case": "icmpv4-timestamp",
+      "icmp_type": "timestamp",
+      "pairs": [
+        "timestamp",
+        "timestamp_reply"
+      ],
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "representation": "typed"
+    },
+    {
+      "behavior": "information",
+      "coverage_case": "icmpv4-information",
+      "icmp_type": "information_request",
+      "pairs": [
+        "information_request",
+        "information_reply"
+      ],
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "representation": "typed"
+    },
+    {
+      "behavior": "address_mask",
+      "coverage_case": "icmpv4-address-mask",
+      "icmp_type": "address_mask_request",
+      "pairs": [
+        "address_mask_request",
+        "address_mask_reply"
+      ],
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "representation": "typed"
+    },
+    {
+      "behavior": "router_solicitation",
+      "coverage_case": "icmpv4-router-solicitation",
+      "icmp_type": "router_solicitation",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "representation": "typed"
+    },
+    {
+      "behavior": "router_advertisement",
+      "coverage_case": "icmpv4-router-advertisement",
+      "icmp_type": "router_advertisement",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "representation": "typed"
+    },
+    {
+      "behavior": "rfc4884_extension_mpls",
+      "coverage_case": "icmpv4-extensions-mpls",
+      "icmp_type": "destination_unreachable",
+      "embeds": [
+        "icmp_extension_header",
+        "icmp_extension_mpls"
+      ],
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "representation": "typed"
+    },
+    {
+      "behavior": "rfc4884_extension_framing",
+      "coverage_case": "crafter-icmpv4-errors-extensions",
+      "icmp_type": "destination_unreachable",
+      "embeds": [
+        "quoted_ipv4",
+        "icmp_extension_header",
+        "icmp_extension_object"
+      ],
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "representation": "typed"
+    },
+    {
+      "behavior": "rfc5837_interface_info_extension",
+      "coverage_case": "icmpv4-extensions-interface-info",
+      "icmp_type": "destination_unreachable",
+      "embeds": [
+        "icmp_extension_header",
+        "icmp_extension_object"
+      ],
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "representation": "raw_compatible"
+    },
+    {
+      "behavior": "extended_echo_request",
+      "coverage_case": "icmpv4-extended-echo-request",
+      "icmp_type": "extended_echo_request",
+      "pairs": [
+        "extended_echo_request",
+        "extended_echo_reply"
+      ],
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "representation": "raw_compatible"
+    },
+    {
+      "behavior": "legacy_raw_compatible_types",
+      "coverage_case": "crafter-icmpv4-legacy-types",
+      "representation": "raw_compatible",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "representative_types": [
+        "source_quench",
+        "traceroute",
+        "mobile_host_redirect",
+        "domain_name_request",
+        "photuris"
+      ]
+    }
+  ],
+  "unsupported_matrix": [
+    {
+      "behavior": "experimental_types",
+      "representative_types": [
+        "reserved_security",
+        "reserved_robustness_experiment",
+        "seamoby_experimental",
+        "experiment_1",
+        "experiment_2",
+        "reserved_255"
+      ],
+      "representation": "raw_compatible",
+      "scapy_support": "unsupported",
+      "skip_reason": "scapy-icmp-type-field-does-not-enumerate-experimental-or-reserved-types",
+      "notes": [
+        "Scapy's ICMP type field does not name types 19, 20-29, 41, or 253-255, and the reference normalization path has no deterministic raw form for them yet. Kept as intended-but-skipped so the coverage gap stays visible."
+      ]
+    }
+  ],
+  "coverage_cases": [
+    "ipv4-icmp",
+    "icmpv4-echo-reply",
+    "icmpv4-destination-unreachable",
+    "icmpv4-frag-needed-next-hop-mtu",
+    "icmpv4-time-exceeded",
+    "icmpv4-parameter-problem",
+    "icmpv4-redirect",
+    "icmpv4-source-quench",
+    "icmpv4-timestamp",
+    "icmpv4-information",
+    "icmpv4-address-mask",
+    "icmpv4-router-solicitation",
+    "icmpv4-router-advertisement",
+    "icmpv4-extensions-mpls",
+    "crafter-icmpv4-errors-extensions",
+    "icmpv4-extensions-interface-info",
+    "icmpv4-extended-echo-request",
+    "crafter-icmpv4-legacy-types"
+  ],
+  "supported_cases": [
+    {
+      "name": "ipv4-icmp",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "byte_policy": "strict_bytes"
+    },
+    {
+      "name": "icmpv4-echo-reply",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "byte_policy": "strict_bytes"
+    },
+    {
+      "name": "icmpv4-destination-unreachable",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "byte_policy": "strict_bytes"
+    },
+    {
+      "name": "icmpv4-frag-needed-next-hop-mtu",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "byte_policy": "strict_bytes"
+    },
+    {
+      "name": "icmpv4-time-exceeded",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "byte_policy": "strict_bytes"
+    },
+    {
+      "name": "icmpv4-parameter-problem",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "byte_policy": "strict_bytes"
+    },
+    {
+      "name": "icmpv4-redirect",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "byte_policy": "strict_bytes"
+    },
+    {
+      "name": "icmpv4-source-quench",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "byte_policy": "strict_bytes"
+    },
+    {
+      "name": "icmpv4-timestamp",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "byte_policy": "strict_bytes"
+    },
+    {
+      "name": "icmpv4-information",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "byte_policy": "strict_bytes"
+    },
+    {
+      "name": "icmpv4-address-mask",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "byte_policy": "strict_bytes"
+    },
+    {
+      "name": "icmpv4-router-solicitation",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "byte_policy": "strict_bytes"
+    },
+    {
+      "name": "icmpv4-router-advertisement",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "byte_policy": "strict_bytes"
+    },
+    {
+      "name": "icmpv4-extensions-mpls",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "byte_policy": "strict_bytes"
+    },
+    {
+      "name": "crafter-icmpv4-errors-extensions",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "byte_policy": "strict_bytes"
+    },
+    {
+      "name": "icmpv4-extensions-interface-info",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "byte_policy": "strict_bytes"
+    },
+    {
+      "name": "icmpv4-extended-echo-request",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "byte_policy": "strict_bytes"
+    },
+    {
+      "name": "crafter-icmpv4-legacy-types",
+      "directions": [
+        "backend_to_libcrafter",
+        "libcrafter_to_backend"
+      ],
+      "byte_policy": "strict_bytes"
+    }
+  ],
+  "backend_support": {
+    "scapy": {
+      "status": "supported",
+      "encode": true,
+      "decode": true,
+      "native_layers": [
+        "ICMP",
+        "ICMPExtensionHeader",
+        "ICMPExtensionObject",
+        "ICMPExtensionMPLS"
+      ]
+    },
+    "libcrafter": {
+      "status": "supported",
+      "encode": true,
+      "decode": true
+    }
+  }
+}

@@ -23,7 +23,6 @@ from .base import (
     all_profile_counts,
     all_stimulus_endpoint_cases,
     ipsec_interop_plugin,
-    missing_live_environment_confirmations,
     register,
     registered_plugins,
 )
@@ -37,7 +36,6 @@ __all__ = [
     "all_profile_counts",
     "all_stimulus_endpoint_cases",
     "ipsec_interop_plugin",
-    "missing_live_environment_confirmations",
     "register",
     "registered_plugins",
 ]

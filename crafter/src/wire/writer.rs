@@ -5,7 +5,7 @@ use super::Result;
 
 /// Packet-shaped output for transmitters and outbound transform pipelines.
 ///
-/// Implementers may write to pcap files, live interfaces, provider endpoints,
+/// Implementers may write to pcap files, live interfaces, external endpoints,
 /// radio backends, or in-memory fixtures. The writer compiles packet records
 /// into backend-specific bytes and returns an inspectable report for each
 /// write.

@@ -8,7 +8,7 @@ these specs instead of carrying its own sampling rules.
 
 `tools/oracle/run offline` validates raw vectors and normalized decode behavior.
 `tools/oracle/run pcap` validates pcap writer, reader, and roundtrip behavior.
-`tools/oracle/run live` validates provider-backed live exchange plans and
+`tools/oracle/run live` validates externally executed live exchange plans and
 reports. All three modes accept `--backend scapy`, `--profile`, `--seed`,
 `--count`, and targeted reproduction coordinates such as `--case`, `--feature`,
 `--family`, and `--index`.
@@ -77,15 +77,13 @@ backend-specific generation logic. The expected profiles are:
   from packet equivalence. Store focused run artifacts below `target/oracle/`,
   such as `target/oracle/ipv6-enrichment-offline/` and
   `target/oracle/ipv6-enrichment-reference-to-libcrafter/`.
-- `ip-fragment-offline`, `ip-fragment-pcap`, and
-  `ip-fragment-lab-dry-run`: planned profiles declared by the
-  `ip_fragment_transforms` feature contract. They cover Scapy-backed IPv4 and
-  IPv6 fragment byte sequences, `IpDefrag` many-record-to-one behavior,
-  `IpFragment` one-record-to-many behavior, duplicate and overlap policy,
-  missing-fragment eviction, IPv4 DF handling, IPv6 atomic fragments, supported
-  extension-header scope, pcap payload-hash comparison, and provider-backed
-  constrained-MTU lab dry-runs. These profile names are contract metadata until
-  the oracle transform-case schema can execute packet-stream transforms.
+- `fragmentation-smoke`: deterministic IPv4 and IPv6 fragment packet coverage.
+  The `ip_fragment_transforms` feature contract also documents `IpDefrag`
+  many-record-to-one behavior, `IpFragment` one-record-to-many behavior,
+  duplicate and overlap policy, missing-fragment eviction, IPv4 DF handling,
+  IPv6 atomic fragments, supported extension-header scope, and pcap comparison.
+  External operator tooling may add constrained-MTU evidence without changing
+  the tracked oracle profile.
 
 ## Directions
 
@@ -96,7 +94,6 @@ Oracle reports use backend-neutral direction names:
 - `libcrafter_to_backend`: libcrafter emits bytes or pcaps that the reference
   backend decodes.
 - `roundtrip`: one side decodes and re-encodes a packet for comparison.
-- `live_exchange`: at least two endpoints exchange packets over a live network.
 
 A feature that is supported in only one direction must say so in its spec.
 
@@ -109,7 +106,7 @@ behavior: Scapy-owned inputs feed `IpDefrag` in the
 `backend_to_libcrafter` direction, and future `IpFragment` output is decoded
 and normalized by Scapy in the `libcrafter_to_backend` direction. Roundtrip
 cases feed `IpFragment` output back into `IpDefrag`, while the live profile is
-reserved for provider-backed constrained-MTU lab sessions.
+reserved for externally executed constrained-MTU external execution environments.
 
 Those cases are marked `contract_only` because the current oracle schema can
 compare single packet vectors but cannot yet model many input `PacketRecord`s,
@@ -117,7 +114,7 @@ many output `PacketRecord`s, or transform trace metadata. The minimal extension
 is recorded in the feature spec: add transform-case input and output record
 sequences, transform names, expected trace/error assertions, Scapy fragment
 sequence materializers, libcrafter transform adapter JSON, pcap payload-hash
-comparison, and provider-backed dry-run/live profiles.
+comparison, and externally executed dry-run/live profiles.
 
 `tools/oracle/run specs suite --family ip --json` therefore emits the planned
 contract matrix without producing runnable offline commands yet. Once the schema

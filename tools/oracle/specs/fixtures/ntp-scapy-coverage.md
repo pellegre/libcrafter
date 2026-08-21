@@ -7,8 +7,8 @@ legacy MAC tails, raw fallback, and structured malformed-input behavior.
 Clock synchronization, peer selection, NTS key exchange, Autokey verification,
 scanning, retries, and live target selection are out of scope.
 
-Offline oracle runs are the default. Any later live validation remains
-provider-gated and starts as a dry-run plan.
+Offline oracle runs are the default. External operator tooling owns any later
+live validation.
 
 ## How To Read This Matrix
 
@@ -111,6 +111,6 @@ strict-byte successes and must not weaken libcrafter's malformed-input tests.
 - Unknown extension field types, duplicate Autokey/NTS registry assignments,
   explicit unusual header values, and legacy MAC tails are preservation cases.
   Backends must not normalize them away.
-- Malformed structured-error rows are not live-eligible and are not Scapy
-  strict-byte rows. Provider-backed live validation, when added, remains
-  dry-run by default and excludes malformed decode-only cases.
+- Malformed structured-error rows are not Scapy strict-byte rows. External
+  qualification must exclude malformed decode-only cases unless its own
+  explicitly authorized workload says otherwise.

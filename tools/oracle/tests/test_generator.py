@@ -3,7 +3,7 @@
 These tests assert that the seeded generator samples ICMP rest-of-header and
 type-specific body fields (gateway, pointer, next-hop MTU, timestamps, address
 mask, router-discovery fields, and raw-compatible extension bytes) for the
-``icmpv4_live`` coverage cases, driven by the feature's live matrix rather than
+``icmpv4_behavior`` coverage cases, driven by the feature's behavior matrix rather than
 by backend-specific special cases. They also guard that plain echo cases stay
 free of body fields and that generation remains deterministic.
 """
@@ -24,10 +24,10 @@ from tools.oracle.engine.model import PacketPlan
 
 _BACKEND = "scapy"
 _ROOT = "l2:ipv4"
-_FEATURE = "icmpv4_live"
+_FEATURE = "icmpv4_behavior"
 _PROFILE = "smoke"
 _SEED = 21
-_DIRECTION = "live_exchange"
+_DIRECTION = "backend_to_libcrafter"
 IGMP_STRUCTURED_ERROR_CASES = {
     "malformed-igmp-truncated-header",
     "malformed-igmp-v2-truncated-group-address",
@@ -234,8 +234,8 @@ class IcmpCommonFieldDeterminismTest(unittest.TestCase):
         second = _icmp_for_case("icmpv4-timestamp")
         self.assertEqual(first, second)
 
-    def test_no_malformed_plans_in_live_matrix(self) -> None:
-        # The live matrix is well-formed only: generated ICMP live plans must not
+    def test_no_malformed_plans_in_behavior_matrix(self) -> None:
+        # The behavior matrix is well-formed only: generated ICMP plans must not
         # be flagged malformed or non-strict.
         plans = generate_plans(
             seed=_SEED,
@@ -361,7 +361,9 @@ class Ipv6EnrichmentProfileTest(unittest.TestCase):
         for plan in plans:
             with self.subTest(case=plan.case):
                 self.assertEqual(plan.metadata["root"], "l3:ipv6")
-                self.assertIn(plan.metadata.get("feature"), {None, "ipv6_fragment_routing"})
+                self.assertIn(
+                    plan.metadata.get("feature"), {None, "ipv6_fragment_routing"}
+                )
                 self.assertNotIn("live", plan.feature_tags)
                 self.assertNotIn("pcap", plan.feature_tags)
                 self.assertNotIn("malformed", plan.feature_tags)

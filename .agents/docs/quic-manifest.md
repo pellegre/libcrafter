@@ -55,10 +55,10 @@ IANA QUIC registry state from E-QUIC-IANA:
 | QUIC Transport Error Codes | 24 | RFC 9000 | CONNECTION_CLOSE transport error constants and unknown preservation. |
 
 The registry contains permanent entries from RFC 9000, RFC 9221, RFC 9287,
-RFC 9368, RFC 9369, and RFC 9443, plus provisional and draft-backed rows such as
+RFC 9368, RFC 9369, and RFC 9443, plus prepareal and draft-backed rows such as
 SCONE, ACK_FREQUENCY, Google experiment rows, BDP token rows, and multipath rows
 referenced by the registry as `RFC-ietf-quic-multipath-21`. Later codepoint
-steps must separate permanent, provisional, draft, and experiment rows before
+steps must separate permanent, prepareal, draft, and experiment rows before
 adding exported constants.
 
 ## Selected Core Documents
@@ -130,9 +130,9 @@ RFC Editor errata state from E-ERRATA on 2026-06-25:
 - IANA QUIC includes permanent multipath rows referencing
   `RFC-ietf-quic-multipath-21`; later codepoint extraction must confirm the
   final RFC/Datatracker state before exporting multipath constants.
-- IANA QUIC includes provisional draft and experiment rows for SCONE,
+- IANA QUIC includes prepareal draft and experiment rows for SCONE,
   ACK_FREQUENCY, Google experiments, and BDP token behavior. These must be
-  preserved or marked provisional unless a later step explicitly selects them.
+  preserved or marked prepareal unless a later step explicitly selects them.
 - RFC 9000 has verified and held errata. Later grammar/codepoint steps must
   cite the specific errata decision for any affected section instead of copying
   base RFC text blindly.
@@ -149,4 +149,4 @@ RFC Editor errata state from E-ERRATA on 2026-06-25:
 - Decoders must preserve valid but unsupported or encrypted QUIC content as raw
   bytes and must return structured `CrafterError` values for malformed buffers.
 - This evidence step performs no live traffic. Later live validation must go
-  through provider-backed dry-run/protected live workflows.
+  through externally executed dry-run/protected live workflows.

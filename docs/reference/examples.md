@@ -80,9 +80,9 @@ fn main() -> crafter::Result<()> {
 ```
 
 Use [mDNS and DNS-SD wire coverage](../guide/mdns.md) for the full helper
-catalog. Live mDNS traffic is not part of default examples; use dry-run plans
-or provider-backed lab/probe workflows when real multicast behavior is
-authorized.
+catalog. Live mDNS traffic is not part of default examples. External operator
+tooling may execute the bounded workload after real multicast behavior is
+explicitly authorized.
 
 ## TLS Examples
 
@@ -123,9 +123,8 @@ cargo run -p crafter --example dhcpv6_relay
 Both protocol families use the same packet stack surface: compose a typed
 `Dhcpv4` or `Dhcpv6` layer under the right IP/UDP envelope, compile bytes,
 decode fixtures, inspect `summary()`/`show()`, and keep live network I/O behind
-explicit dry-run-to-live workflow gates. DHCPv6 live validation belongs in the
-provider-backed lab, oracle, and probe workflows under `docs/operations/`,
-where artifacts and teardown are part of the run.
+explicit dry-run-to-live workflow gates. External operator tooling owns DHCPv6
+peer preparation, live invocation, artifacts, and teardown.
 
 ## NTP Examples
 
@@ -139,7 +138,7 @@ cargo run -p crafter --example ntp_decode
 cargo run -p crafter --example ntp_request_plan
 ```
 
-NTP live validation is not part of examples. Use the provider-backed oracle or
+NTP live validation is not part of examples. Use the externally executed oracle or
 probe workflows with explicit live confirmation and disposable endpoint cleanup
 when real traffic is authorized.
 
@@ -216,6 +215,6 @@ cargo test -p crafter --test fixture_suite udp_options
 tools/oracle/run offline --profile smoke --seed 9868 --count 20 --family udp --out target/oracle/udp-options-example-offline
 ```
 
-Examples are safe by default. Live-capable examples require `--live` and
-`--i-understand-isolated-lab` before opening live send or capture handles, and
-should run only inside disposable wire endpoints.
+Examples are safe by default. Live-capable examples require `--live`, an
+explicit acknowledgement flag, and `LIBCRAFTER_LIVE=1` before opening live send
+or capture handles. External operator tooling must select the authorized target.

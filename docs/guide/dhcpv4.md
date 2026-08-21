@@ -301,52 +301,21 @@ assert!(show.contains("message_type: discover"));
 # Ok::<(), crafter::CrafterError>(())
 ```
 
-## Dry-Run Send/Receive Planning
+## Validation And External Execution Boundary
 
-Offline planning is the default. Use `SendRecv::new().dry_run()` to inspect the
-compiled DHCPv4 request, the derived reply filter, the target, and the retry
-settings without opening capture or putting packets on the wire. DHCPv4 reply
-matching keys on the UDP port pair.
+Use the tracked deterministic validation surfaces first:
 
-```rust
-use crafter::prelude::*;
-use std::time::Duration;
-
-let client_mac = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]);
-let packet = Ethernet::new()
-        .src(client_mac)
-        .dst(MacAddr::BROADCAST)
-        .ethertype(ETHERTYPE_IPV4)
-    / Ipv4::new()
-        .src("192.0.2.10".parse()?)
-        .dst("192.0.2.1".parse()?)
-        .ipv4_protocol(Ipv4Protocol::Udp)
-    / Udp::dhcpv4_client()
-    / Dhcpv4::discover(client_mac).xid(0x0102_0304);
-
-let report = packet.send_recv_report(
-    SendRecv::new()
-        .iface("dry-run0")
-        .link_layer()
-        .dry_run()
-        .timeout(Duration::from_millis(250))
-        .retries(1),
-)?;
-
-assert_eq!(report.attempts(), 1);
-assert!(report.reply().is_none());
-assert_eq!(
-    report.effective_filter(),
-    Some("udp and src port 67 and dst port 68"),
-);
-assert!(report.send_reports().iter().all(|send| send.is_dry_run()));
-# Ok::<(), crafter::net::NetError>(())
+```sh
+tools/oracle/run offline --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
-Live DHCPv4 validation should start from the provider-backed lab, oracle, or
-probe workflows in `docs/operations/`, which create disposable endpoints,
-preserve artifacts, and tear them down. Do not turn DHCPv4 examples into
-developer-host raw traffic examples.
+These commands do not select infrastructure or send packets. Any authorized use
+of concrete interfaces, peers, radios, or targets is owned by external operator
+tooling, which supplies runtime inputs and collects artifacts. libcrafter does
+not provision machines, configure responders, manage credentials, or perform
+remote cleanup.
 
 ## Standards and RFCs implemented
 

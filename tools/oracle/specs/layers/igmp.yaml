@@ -34,19 +34,6 @@ supported_directions:
   - backend_to_libcrafter
   - libcrafter_to_backend
   - roundtrip
-  - live_exchange
-live_eligibility: provider_gated
-live_gate: confirm_live_run_provider_lab_only
-live_defaults:
-  default_mode: dry_run
-  allowed_without_confirmation: false
-  developer_host_raw_send: false
-  provider_required: true
-  destination_scope:
-    - documentation_multicast
-    - all_systems
-    - all_routers
-    - all_snoopers
 default_values:
   type: membership_query
   code: 0

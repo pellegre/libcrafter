@@ -312,9 +312,8 @@ let reports = tx.send(packet)?;
 ```
 
 `PacketWire::raw_socket_interface("eth0")` defaults to dry-run planning and
-requires `.live()` for real raw socket transmission. Live capture or transmit
-belongs in authorized endpoint provider or lab workflows, not local static
-tests.
+requires `.live()` for real raw socket transmission. External operator tooling
+owns concrete interface selection and authorization.
 
 ## IP Fragment Transforms
 
@@ -725,8 +724,8 @@ and status codes remain inspectable instead of being dropped. Truncated headers
 or TLVs return structured errors.
 
 Examples and generated tools should use documentation address space and either
-offline compile/decode or dry-run send/receive plans. Real DHCPv6 traffic
-belongs in an authorized provider-backed endpoint or lab workflow.
+offline compile/decode or dry-run send/receive plans. External operator tooling
+owns authorization and execution for real DHCPv6 traffic.
 
 ## Address And Range Helpers
 
@@ -786,7 +785,7 @@ IPv6 base-header and extension-header details live in
 [IPv6 wire coverage](../guide/ipv6.md), including source manifests, fixture coverage,
 and the offline `ipv6-enrichment` oracle profile. IPv6 examples should use
 documentation address space (`2001:db8::/32`) and dry-run or offline flows
-unless a provider-backed live workflow is explicitly selected.
+unless an externally executed live workflow is explicitly selected.
 
 ## ICMPv4 Messages
 
@@ -949,7 +948,7 @@ in the [ICMPv6 guide](../guide/icmpv6.md).
 | `pcap_write` | Generated Ethernet/IPv4/TCP packets written to a pcap file. |
 | `pcap_read` | Pcap metadata inspection, packet collection, and bounded `PacketWire` source workflows. |
 | `sniffer_offline` | Offline `PacketWire` pcap input, `PacketRecord` metadata, and bounded `Sniffer` iteration. |
-| `capture_pcap` | Bounded `PacketWire` pcap interface capture and pcap writing after isolated-lab opt-in. |
+| `capture_pcap` | Bounded `PacketWire` pcap interface capture and pcap writing after explicit live opt-in. |
 | `arp_who_has` | Explicit Ethernet broadcast ARP who-has construction from known MAC and IPv4 values. |
 | `dns_query` | DNS query construction, dry-run send/receive reporting, and synthetic response decoding. |
 | `dhcpv4_discover` | DHCPv4 discover construction with an explicit client MAC and link-layer send options. |

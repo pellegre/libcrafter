@@ -23,7 +23,7 @@
 //!
 //! Everything here uses documentation address space (`192.0.2.0/24`,
 //! `198.51.100.0/24`, `2001:db8::/32`) and caller-pinned keys; there are no
-//! sockets, no provider, and no live traffic.
+//! sockets, no remote execution and no live traffic.
 
 use std::error::Error;
 use std::io::{self, Read};

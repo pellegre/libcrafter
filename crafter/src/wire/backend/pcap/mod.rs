@@ -1085,7 +1085,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "live capture is reserved for disposable wire endpoint execution"]
+    #[ignore = "live capture requires explicit external authorization"]
     fn pcap_interface_wire_sniffer_live_endpoint_only() {
         let Some(iface) = std::env::var_os("LIBCRAFTER_LIVE_CAPTURE_IFACE") else {
             return;

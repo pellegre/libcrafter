@@ -24,7 +24,7 @@ client, NTS-KE workflow, Autokey verifier, scanner, or live traffic default.
   optional packet tail that must be preserved byte-exactly when structurally
   valid.
 - `operational guidance`: source that informs safe examples, dry-run defaults,
-  lab/probe behavior, or deployment risk, but is not by itself a packet grammar
+  external qualification, or deployment risk, but is not by itself a packet grammar
   authority for this crate.
 - `obsolete context`: source superseded by newer NTP authority and usable only
   to understand legacy SNTP/NTP-shaped packets or fixture context.
@@ -109,7 +109,7 @@ client, NTS-KE workflow, Autokey verifier, scanner, or live traffic default.
   pool behavior, replay cache, NTS-KE, AEAD encryption/decryption, Autokey
   cryptographic verification, or live sender defaults in the crate.
 - Do not add live NTP validation from the developer machine. Any later live
-  work must be provider-backed, explicitly confirmed, and documented through
+  work must be externally executed, explicitly confirmed, and documented through
   the repository live-gate policy.
 - Do not rely on packet captures, vendor behavior, pool-server observations,
   Stack Overflow answers, expired drafts, or implementation source as authority

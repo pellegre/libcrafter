@@ -2,7 +2,7 @@
 //!
 //! `arp-basic-who-has` is the baseline ARP behavioral check: build an
 //! Ethernet/ARP who-has request with libcrafter (operation 1, Ethernet
-//! destination broadcast), send it at the link layer on a private L2 lab
+//! destination broadcast), send it at the link layer on a isolated L2 network
 //! segment, capture the target kernel's unicast is-at reply, decode the
 //! Ethernet/ARP response with libcrafter, and validate the operation (reply,
 //! 2), the sender hardware/protocol address (the resolved target MAC/IPv4), the
@@ -21,10 +21,10 @@ use std::time::Duration;
 
 use crate::common::{
     capture_filter, captured_data, decoded_packet_json, failed_outcome, hex_bytes,
-    observed_response, open_capture_sniffer, plan_json, required_str, required_u16,
-    send_report_json, target_service_json, ArpSend, ArpValidation, CandidateValidation,
-    ExampleResult, ProbeOutcome, ProbePacketSender, ProbePlan, StimulusEndpointRequest,
-    FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
+    observed_response, open_capture_sniffer, peer_contract_json, plan_json, required_str,
+    required_u16, send_report_json, ArpSend, ArpValidation, CandidateValidation, ExampleResult,
+    ProbeOutcome, ProbePacketSender, ProbePlan, StimulusEndpointRequest, FAILURE_DECODE_FAILED,
+    FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
 };
 
 /// Stable identifier for the ARP case module.
@@ -70,7 +70,7 @@ pub fn run_arp_dry_run(
             "expected_request_frame_len": plan.expected_request_frame_len,
             "ethernet_min_frame_len": plan.ethernet_min_frame_len,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
             "ignore_unmatched_arp_replies": plan.ignore_unmatched_arp_replies,
             "decoy_arp_event": plan.decoy_arp_event,
         }),
@@ -91,7 +91,7 @@ pub fn run_arp_dry_run(
             "expected_request_frame_len": plan.expected_request_frame_len,
             "ethernet_min_frame_len": plan.ethernet_min_frame_len,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
             "ignore_unmatched_arp_replies": plan.ignore_unmatched_arp_replies,
             "decoy_arp_event": plan.decoy_arp_event,
         }
@@ -361,7 +361,7 @@ fn run_arp_multi_send_dry_run(
             "send_count": planned_sends.len(),
             "planned_sends": planned_sends,
             "expected_responses": expected_responses,
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }),
     );
     let result = json!({
@@ -378,7 +378,7 @@ fn run_arp_multi_send_dry_run(
             "send_count": planned_sends.len(),
             "planned_sends": planned_sends,
             "expected_responses": expected_responses,
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }
     });
     Ok(ProbeOutcome {
@@ -762,7 +762,7 @@ pub fn validate_arp_candidate(
         })),
     }
 
-    // Sender protocol address: usually the resolved target IPv4. Live lab setup
+    // Sender protocol address: usually the resolved target IPv4. External preconditions
     // can configure secondary IPv4s for sibling ARP cases in one full-suite run;
     // Linux may use one of those local addresses in an is-at reply while still
     // addressing the reply to the planned querier SPA.
@@ -1019,7 +1019,7 @@ mod tests {
         plan.case = "arp-broadcast-filtered-capture".to_string();
         plan.ignore_unmatched_arp_replies = Some(true);
         // The filtered-capture case may see unrelated ARP is-at replies from
-        // target setup. A reply addressed to another protocol address should be
+        // external precondition. A reply addressed to another protocol address should be
         // ignored, not treated as the matching response.
         let resolved_mac: MacAddr = "00:00:5e:00:53:14".parse().unwrap();
         let arp = Arp::is_at(

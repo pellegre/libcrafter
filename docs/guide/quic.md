@@ -73,26 +73,18 @@ tool that needs it, with its own tests and source manifest.
 
 ## Validation
 
-Keep QUIC validation offline by default:
-
-- Golden byte fixtures for packet, frame, and transport-parameter round trips.
-- Malformed decode fixtures that check structured `CrafterError` values.
-- Pcap fixtures and oracle/probe dry-run plans before any provider-backed live
-  work.
-
-The focused probe profile is `quic-smoke`. It includes one live-capable case,
-`quic-initial-udp-observation`, which builds an IPv4/UDP/QUIC datagram through
-the Rust stimulus adapter and targets a controlled UDP echo service on port
-4433. The Version Negotiation, Retry, stateless reset, and protected-flow cases
-are planned-only; they record target requirements and packet bytes without
-claiming state-machine behavior.
+Use the tracked deterministic validation surfaces first:
 
 ```sh
-tools/probe/run --provider qemu --dry-run --profile quic-smoke --seed 1 --count 5 --out target/probe/quic-smoke-dry-run
-tools/lab/run plan --provider qemu --dry-run --profile quic-smoke --seed 1 --role stimulus --role target --json
+tools/oracle/run offline --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
-Live QUIC traffic is not a default guide path. Use provider-backed lab sessions
-and explicit dry-run plans before any authorized live validation. A live run must
-use `--confirm-live-run`, disposable endpoints, captured artifacts under
-`target/`, and teardown.
+These commands do not select infrastructure or send packets. Any authorized use
+of concrete interfaces, peers, radios, or targets is owned by external operator
+tooling, which supplies runtime inputs and collects artifacts. libcrafter does
+not provision machines, configure responders, manage credentials, or perform
+remote cleanup.
+
+The focused deterministic probe profile is `quic-smoke`.

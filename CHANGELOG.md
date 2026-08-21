@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Remove repository-owned endpoint, appliance, lab, provider, credential, SSH,
+  VM, container, peer-service, and topology orchestration. Deterministic oracle
+  validation, substrate-independent probe plans, and bounded packet executors
+  remain in libcrafter; external operator tooling owns hardware-backed runs.
+
 ## 0.3.4 - 2026-07-12
 
 ### Changed

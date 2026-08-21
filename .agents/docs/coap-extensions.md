@@ -33,7 +33,7 @@ The stable sources used below are:
 
 The Group OSCORE source is still
 `draft-ietf-core-oscore-groupcomm-28` in the RFC Editor queue. Its IANA Group
-Flag assignment is inspectable provisional metadata, not authority for a
+Flag assignment is inspectable prepareal metadata, not authority for a
 stable serializer. The group boundary below follows the explicit stop
 condition in the source manifest.
 
@@ -411,7 +411,7 @@ Here `n` is the three least significant bits and gives a Partial IV length of
 states that `kid context` is present. With `h`, one length byte precedes the
 kid-context bytes. When present, `kid` consumes every remaining option byte
 and is therefore last. Under stable RFC 8613 the three high bits are zero;
-unknown or provisional flag metadata is retained but not interpreted by the
+unknown or prepareal flag metadata is retained but not interpreted by the
 base transform. If every base flag is zero the canonical option value is
 empty, not one zero byte.
 
@@ -509,7 +509,7 @@ The caller supplies immutable context inputs and any request-binding data.
 The packet primitive may derive keys, protect, authenticate, and return typed
 failure for a wrong context, unsupported algorithm, malformed option, or bad
 tag. It must redact Master Secret, Master Salt, derived keys, and plaintext
-from diagnostics. Context provisioning, ACE, EDHOC, sequence allocation,
+from diagnostics. Context preparation, ACE, EDHOC, sequence allocation,
 persistent replay windows, key rollover, and context databases remain outside
 the primitive.
 
@@ -533,18 +533,18 @@ The helper does not join a multicast group, select an interface or target,
 send a request, implement Leisure/random response scheduling, retain Token
 lifetime state, aggregate responses, or manage group membership.
 
-## Provisional Group OSCORE boundary
+## Prepareal Group OSCORE boundary
 
 The 2026-07-14 IANA snapshot assigns OSCORE flag bit position 2 as the Group
 Flag and references `RFC-ietf-core-oscore-groupcomm-28`. The source manifest
 records that document as an Internet-Draft in the RFC Editor queue, not a
 final numbered RFC. Therefore the only stable behavior admitted now is:
 
-- preserve the Group Flag as explicitly provisional registry metadata;
+- preserve the Group Flag as explicitly prepareal registry metadata;
 - preserve the complete raw OSCORE option, ID Context/Group Identifier,
   Sender ID/`kid`, Partial IV, ciphertext, authentication material, and any
   countersignature or algorithm metadata opaquely when encountered; and
-- return an explicit unsupported/provisional Group OSCORE result rather than
+- return an explicit unsupported/prepareal Group OSCORE result rather than
   invoking the pairwise RFC 8613 transform with guessed group semantics.
 
 Draft 28 describes group mode and pairwise mode, group identifiers in `kid
@@ -571,5 +571,5 @@ sender scheduling are outside `crafter` in all cases.
   block/Q-Block body assembly, Observe subscription engine, cache, proxy,
   discovery scanner, OSCORE context service, or group workflow.
 - Offline byte, malformed, pcap, and independent-vector tests are the default.
-  Live traffic requires the separately documented provider-backed safety and
+  Live traffic requires the separately documented externally executed safety and
   confirmation gates.

@@ -11,7 +11,7 @@ later generated manifest instead of relying on model memory.
 | Rule area | Evidence record |
 | --- | --- |
 | QUIC frame sequence payload shape, packet-type restrictions, core frame formats, extension-frame requirements, shortest frame-type encoding | `E-RFC-9000` in `quic-manifest.md`, especially RFC 9000 Sections 12.4, 12.5, 16, 19, and 22.4 |
-| QUIC Frame Types registry values, permanent/provisional status, and no frame-type grease formula | `.agents/docs/quic-codepoints.md` |
+| QUIC Frame Types registry values, permanent/prepareal status, and no frame-type grease formula | `.agents/docs/quic-codepoints.md` |
 | DATAGRAM frame type and format | `E-RFC-9221` in `quic-manifest.md`, especially RFC 9221 Section 4 |
 | QUIC bit greasing boundary, not frame-type greasing | `E-RFC-9287` in `quic-manifest.md` and `grease_quic_bit` in `quic-codepoints.md` |
 | Packet kinds that can contain frames | `.agents/docs/quic-packet-grammar.md` |
@@ -134,9 +134,9 @@ containing QUIC packet. For type `0x31`, Length is present and delimits
 Datagram Data. Empty DATAGRAM payloads are source-backed valid bytes. DATAGRAM
 frames carry application data and are protected with 0-RTT or 1-RTT keys; this
 does not authorize application datagram semantics, HTTP datagrams, MASQUE, or
-provider-backed live traffic in this step.
+externally executed live traffic in this step.
 
-## Unknown, Provisional, And Greased Values
+## Unknown, Prepareal, And Greased Values
 
 QUIC frames are not self-describing beyond the Frame Type. RFC 9000 says an
 endpoint treats unknown frame types as `FRAME_ENCODING_ERROR`, and the selected
@@ -145,13 +145,13 @@ from the transport-parameter grease rule `31 * N + 27` or the version grease
 rule.
 
 `quic-codepoints.md` currently classifies these non-core frame rows as
-non-default: provisional `IMMEDIATE_ACK` `0x1f`, provisional `ACK_FREQUENCY`
+non-default: prepareal `IMMEDIATE_ACK` `0x1f`, prepareal `ACK_FREQUENCY`
 `0xaf`, and unresolved multipath rows `0x3e..0x3f` and `0x3e75..0x3e7c`.
 Later source-backed steps may select individual rows. Until then:
 
 - builders may emit caller-supplied numeric frame types and raw bytes without
   normalizing or rejecting them;
-- default builders must not emit provisional, draft, experiment, or unresolved
+- default builders must not emit prepareal, draft, experiment, or unresolved
   multipath frames;
 - decoders may preserve an unknown frame's raw bytes only when a source-backed
   grammar or caller-supplied boundary determines its extent;

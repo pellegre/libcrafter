@@ -2,13 +2,11 @@
 //!
 //! The admitted cases materialize the planner's datagram bytes as a typed
 //! `Ipv4 / Udp / Coap` packet. Dry runs compile and decode that packet without
-//! sending it. Live execution is additionally gated on provider-backed
-//! infrastructure and `LIBCRAFTER_COAP_LIVE_CONFIRM=yes`, then captures only a
-//! bounded response sequence from the controlled peer.
+//! sending it. Explicit live mode captures only a bounded response sequence
+//! from the controlled peer.
 
 use crafter::prelude::*;
 use serde_json::{json, Value};
-use std::env;
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
@@ -16,12 +14,11 @@ use crate::common::{
     captured_data, decode_hex, decoded_packet_json, failed_outcome, hex_bytes, observed_response,
     open_capture_sniffer, plan_json, required_str, required_u16, send_report_json,
     CandidateValidation, ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest,
-    FAILURE_DECODE_FAILED, FAILURE_TARGET_SETUP_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD,
+    FAILURE_DECODE_FAILED, FAILURE_PEER_UNAVAILABLE, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD,
     FAILURE_WRONG_PEER,
 };
 
 const COAP_PORT: u16 = 5683;
-const COAP_CONFIRMATION_ENV: &str = "LIBCRAFTER_COAP_LIVE_CONFIRM";
 const MAX_CAPTURE_RECORDS: usize = 8;
 const MAX_TIMEOUT_SECONDS: u64 = 30;
 
@@ -61,7 +58,7 @@ pub fn run_coap_dry_run(
         .map(|payload| Coap::decode(payload).map(|message| coap_json(&message)))
         .collect::<crafter::Result<Vec<_>>>()?;
     let capture_filter = capture_filter(plan);
-    let target_service = plan.target_service.clone().unwrap_or_else(|| json!({}));
+    let peer_contract = plan.peer_contract.clone().unwrap_or_else(|| json!({}));
     let observed = observed_response(
         plan,
         false,
@@ -75,7 +72,7 @@ pub fn run_coap_dry_run(
             "coap": coap_json(request_coap),
             "expected_coap_responses": expected,
             "capture_filter": capture_filter,
-            "target_service": target_service,
+            "peer_contract": peer_contract,
         }),
     );
     let result = json!({
@@ -95,7 +92,7 @@ pub fn run_coap_dry_run(
             "coap": coap_json(request_coap),
             "expected_coap_responses": expected,
             "capture_filter": capture_filter,
-            "target_service": target_service,
+            "peer_contract": peer_contract,
         }
     });
     Ok(ProbeOutcome {
@@ -110,16 +107,12 @@ pub fn run_coap_live(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
-    if let Some(outcome) = live_gate_failure(request, plan) {
-        return Ok(outcome);
-    }
-
     let packet = coap_packet(plan)?;
     let expected_payloads = expected_response_payloads(plan)?;
     if expected_payloads.is_empty() {
         return Ok(failed_outcome(
             plan,
-            FAILURE_TARGET_SETUP_FAILED,
+            FAILURE_PEER_UNAVAILABLE,
             vec!["CoAP live plan has no bounded response payloads".to_string()],
             None,
             false,
@@ -475,24 +468,14 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
 }
 
 fn expected_response_payloads(plan: &ProbePlan) -> ExampleResult<Vec<Vec<u8>>> {
-    let from_service = plan
-        .target_service
-        .as_ref()
-        .and_then(|service| service.get("response_payloads_hex"))
-        .and_then(Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .map(|value| {
-                    let encoded = value
-                        .as_str()
-                        .ok_or("target_service.response_payloads_hex entries must be strings")?;
-                    decode_hex(encoded)
-                })
-                .collect::<ExampleResult<Vec<_>>>()
-        })
-        .transpose()?;
-    if let Some(payloads) = from_service.filter(|payloads| !payloads.is_empty()) {
+    let payloads = plan
+        .expected_payloads_hex
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(|encoded| decode_hex(encoded))
+        .collect::<ExampleResult<Vec<_>>>()?;
+    if !payloads.is_empty() {
         return Ok(payloads);
     }
     let expected = required_str(plan.expected_payload_hex.as_deref(), "expected_payload_hex")?;
@@ -553,48 +536,6 @@ where
     }
 }
 
-fn live_gate_failure(request: &StimulusEndpointRequest, plan: &ProbePlan) -> Option<ProbeOutcome> {
-    if !provider_is_live_capable(&request.provider) {
-        return Some(failed_outcome(
-            plan,
-            FAILURE_TARGET_SETUP_FAILED,
-            vec![format!(
-                "CoAP live stimulus requires provider-backed probe infrastructure; provider={} is not live-capable",
-                request.provider
-            )],
-            Some(json!({
-                "provider": request.provider,
-                "requires_provider": true,
-            })),
-            false,
-            false,
-        ));
-    }
-    if env::var(COAP_CONFIRMATION_ENV).ok().as_deref() != Some("yes") {
-        return Some(failed_outcome(
-            plan,
-            FAILURE_TARGET_SETUP_FAILED,
-            vec![format!(
-                "CoAP live stimulus requires {COAP_CONFIRMATION_ENV}=yes"
-            )],
-            Some(json!({
-                "confirmation_environment": COAP_CONFIRMATION_ENV,
-                "confirmation_value": "yes",
-            })),
-            false,
-            false,
-        ));
-    }
-    None
-}
-
-fn provider_is_live_capable(provider: &str) -> bool {
-    !matches!(
-        provider,
-        "" | "local" | "local-dry-run" | "dry-run" | "offline"
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -610,20 +551,17 @@ mod tests {
         plan.destination_port = Some(COAP_PORT);
         plan.payload_hex = Some(request_hex.to_string());
         plan.expected_payload_hex = responses.last().map(|value| (*value).to_string());
+        plan.expected_payloads_hex =
+            Some(responses.iter().map(|value| (*value).to_string()).collect());
         plan.capture_filter = Some(
             "udp and src host 192.0.2.20 and dst host 192.0.2.10 and src port 5683 and dst port 49152"
                 .to_string(),
         );
-        plan.target_service = Some(json!({
-            "kind": "coap-controlled-responder",
-            "response_payloads_hex": responses,
-        }));
         plan
     }
 
     fn request(plan: ProbePlan) -> StimulusEndpointRequest {
         StimulusEndpointRequest {
-            provider: "local-dry-run".to_string(),
             profile: "coap-smoke".to_string(),
             seed: 7252,
             endpoint_role: "stimulus".to_string(),
@@ -694,18 +632,5 @@ mod tests {
             .unwrap(),
             CandidateValidation::Passed(_)
         ));
-    }
-
-    #[test]
-    fn local_live_request_fails_before_capture_or_send() {
-        let plan = plan("coap-reset", "42011234aabbb6737461747573", &["70001234"]);
-        let request = request(plan);
-        let outcome = run_coap_live(&request, &request.probe_plans[0]).unwrap();
-        assert!(!outcome.sent);
-        assert!(!outcome.received);
-        assert_eq!(
-            outcome.result["metadata"]["failure_reason"],
-            FAILURE_TARGET_SETUP_FAILED
-        );
     }
 }

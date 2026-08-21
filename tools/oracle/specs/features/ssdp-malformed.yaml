@@ -132,7 +132,7 @@ notes:
     attempts and malformed SSDP-like payload fixtures.
   - >-
     Fixture values are local deterministic test inputs and contain no live host
-    identifiers, provider endpoints, credentials, captures from sensitive
+    identifiers, external endpoints, credentials, captures from sensitive
     networks, or local absolute paths.
 
 backend_support:

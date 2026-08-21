@@ -11,9 +11,8 @@ packets, place them on real networks, decode what comes back, and act on what
 they observe.
 
 This README is a progressive walkthrough: build your first packet, inspect and
-decode bytes, read and write pcap, plan a send, and reach for disposable
-endpoints and labs when traffic cannot live on the developer machine. Every
-snippet uses documentation address space (`192.0.2.0/24`, `198.51.100.0/24`,
+decode bytes, read and write pcap, and plan a send. Every snippet uses
+documentation address space (`192.0.2.0/24`, `198.51.100.0/24`,
 `2001:db8::/32`) and offline or dry-run defaults; live traffic is always an
 explicit opt-in.
 
@@ -198,8 +197,8 @@ fn live(packet: &Packet) -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 Live raw sends and captures require platform privileges, and you must be
-authorized to send and capture on the target network. Keep live work off the
-developer host — provision a disposable endpoint instead.
+authorized to send and capture on the target network. Machine selection and
+execution topology are deliberately outside this repository.
 
 For repeated raw sends, open a reusable `PacketSender` or a raw socket
 `PacketWire` writer instead of calling the one-shot `send_packet` path in a
@@ -228,43 +227,35 @@ radiotap frames through one opened backend; a network-layer sender currently
 handles bare IPv4 packets. Mixed link/network traffic needs separate senders,
 and full-header IPv6 network-layer live sends remain unsupported.
 
-## Tools: endpoint, lab, oracle, probe
+## Validation tools
 
-The live path does not have to originate from your machine. Four modules under
-`tools/` provision disposable network positions, run packet work from them,
-collect artifacts, and tear the resources down when the run is done:
+Tracked validation is deterministic and infrastructure-free:
 
-- **endpoint** — one disposable endpoint: doctor, create, exec, upload,
-  download, collect artifacts, destroy.
-- **lab** — multi-endpoint lab sessions that coordinate several endpoints for
-  one run.
-- **oracle** — packet-equivalence validation against reference backends
-  (offline, pcap, and live modes).
-- **probe** — peer-behavior validation against a live peer using seeded
-  profiles.
-
-The stack layers as endpoint ← lab ← oracle/probe. Every invocation is offline
-by default; live traffic is an explicit opt-in. Start every provider-backed run
-with `--dry-run`:
+- **oracle** generates source-backed corpora and compares libcrafter with
+  independent reference implementations offline or through pcap artifacts.
+- **probe** emits deterministic packet-workload plans and never selects a
+  machine or sends traffic.
+- **smoke** is a small bounded libcrafter workload suitable for an external
+  runner to build from an exact candidate revision.
 
 ```sh
-tools/endpoint/run doctor --provider hetzner --exposure wan --dry-run
-tools/lab/run doctor --provider hetzner --dry-run
-tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 1 --count 10
-tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
+tools/oracle/run specs validate --strict
+tools/oracle/run corpus --profile ci --seed 12345 --count 100 --out target/oracle/corpus
+tools/oracle/run offline --corpus target/oracle/corpus/plans.json --out target/oracle/offline
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
+cargo run -p crafter-smoke
 ```
 
-Opt into live traffic only when an authorized human or agent has said so. The
-Hetzner provider reads `HETZNER_API_TOKEN` or `HCLOUD_TOKEN` from the
-environment; never commit credentials, public IPs, or captures from sensitive
-networks.
+An external execution fabric can consume the candidate revision and plan,
+satisfy its runtime requirements, invoke a bounded executor with concrete
+interfaces and addresses, and return artifacts. Credentials, machine
+lifecycle, hardware leases, peer preparation, and topology remain outside this
+repository.
 
-- [docs/operations/tools.md](docs/operations/tools.md) — the four-tool stack,
-  when to use which, and safe dry-run examples (start here).
-- [docs/operations/endpoint.md](docs/operations/endpoint.md) — disposable
-  endpoint setup, credentials, artifacts, and cleanup.
-- [docs/operations/lab.md](docs/operations/lab.md) — provider-backed
-  multi-endpoint lab sessions for oracle and probe workflows.
+- [docs/operations/tools.md](docs/operations/tools.md) — validation tool
+  boundaries and local commands.
+- [docs/operations/validation.md](docs/operations/validation.md) — the offline
+  gate and the external execution contract.
 
 ## Protocol coverage
 
@@ -285,7 +276,7 @@ preserved as `Raw` payloads when the enclosing header is valid.
 | TLS | TLS-over-TCP record layer with typed records, handshakes, extensions, alerts, ChangeCipherSpec, heartbeat, opaque application data, and unknown preservation; not a TLS endpoint, scanner, certificate validator, or TCP stream reassembler | [tls](docs/guide/tls.md) |
 | UDP | UDP with options (RFC 9868) and checksum status | [udp](docs/guide/udp.md) |
 | SCTP | Native IPv4/IPv6 SCTP and RFC 6951 UDP encapsulation, CRC32c checksum status, DATA/INIT/SACK/control chunks, parameters, causes, padding, pcap fixtures, and unknown-codepoint preservation; not an association stack or socket API | [sctp](docs/guide/sctp.md) |
-| QUIC | UDP-carried QUIC datagrams, long/short headers, Version Negotiation, Retry, Initial/Handshake/0-RTT packets, frames, transport parameters, protected-payload preservation, and probe dry-run/lab planning; not a QUIC endpoint stack | [quic](docs/guide/quic.md) |
+| QUIC | UDP-carried QUIC datagrams, long/short headers, Version Negotiation, Retry, Initial/Handshake/0-RTT packets, frames, transport parameters, protected-payload preservation, and deterministic probe planning; not a QUIC endpoint stack | [quic](docs/guide/quic.md) |
 | DNS | EDNS(0), SVCB/HTTPS, DNSSEC record types | [dns](docs/guide/dns.md) |
 | mDNS / DNS-SD | UDP/5353 DNS message construction and decode, multicast constants and stack builders, QU/cache-flush class-bit helpers, DNS-SD service names, PTR/SRV/TXT/A/AAAA packet shapes, known answers, probes, announcements, and goodbyes; not a resolver, responder, cache, scanner, or service registry | [mdns](docs/guide/mdns.md) |
 | DHCPv4 | BOOTP/DHCPv4 packet construction and decode, option overload, RFC 3396 long options, relay agent option 82, client identifiers, authentication, and leasequery packet fields; not a client, server, or lease engine | [dhcpv4](docs/guide/dhcpv4.md) |
@@ -350,15 +341,14 @@ The full annotated table, with safety modes and commands, is in
   ([api.md](docs/reference/api.md)), the wire I/O layer
   ([wire.md](docs/reference/wire.md)), and the example catalog
   ([examples.md](docs/reference/examples.md)).
-- [docs/operations/](docs/operations/) — live, provider-backed, and manual
-  testing workflows (validation, probes, lab sessions, endpoints).
-- [docs/operations/tools.md](docs/operations/tools.md) — tools overview tying
-  the endpoint, lab, oracle, and probe modules together.
+- [docs/operations/](docs/operations/) — release and validation workflows.
+- [docs/operations/tools.md](docs/operations/tools.md) — oracle, probe, smoke,
+  and the external execution boundary.
 - [CHANGELOG.md](CHANGELOG.md) records release scope and boundaries.
 
 ## Validation
 
-Local validation does not require provider credentials:
+Local validation requires no infrastructure credentials:
 
 ```sh
 cargo test --workspace
@@ -371,9 +361,9 @@ The full local release gate is:
 .agents/scripts/check-crafter-release --static
 ```
 
-Provider-backed validation starts with dry-runs against the oracle, probe, and
-endpoint runners before any live invocation. Oracle modes, backends, and CI
-expectations are documented in
+Hardware-backed validation is requested through operator-supplied tooling only
+after the local gate passes. Oracle modes, plan contracts, and CI expectations
+are documented in
 [docs/operations/validation.md](docs/operations/validation.md).
 
 ## Publishing

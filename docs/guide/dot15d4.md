@@ -75,7 +75,7 @@ implied by the addresses present, the PAN-ID-compression bit when both addresses
 share a PAN, and the trailing 2-octet FCS computed over the whole MAC frame
 (header plus following layers) unless the caller explicitly set an override.
 
-The example uses lab-safe values: PAN `0x1234`, short addresses `0x0001` and
+The example uses synthetic values: PAN `0x1234`, short addresses `0x0001` and
 `0x0002`, channel 20, and synthetic payload bytes. Do not copy real device PAN
 ids, addresses, captures, or payloads from networks or devices you are not
 authorized to inspect into tracked docs or fixtures.
@@ -339,15 +339,13 @@ injection and sniffing can affect or observe devices outside the developer
 machine.
 
 The WHAD-compatible dongle backend is a live wire backend, not a default example
-path. Its default-safe behavior is dry-run planning; real serial transmit or
-sniff work requires the optional `whad` feature and explicit live opt-in. The
-live dongle checklist is covered by
-[`docs/operations/dot15d4-whad-live-manual.md`](../operations/dot15d4-whad-live-manual.md).
+path. Its default-safe behavior is dry-run planning; external operator tooling
+owns serial-device selection and any explicit live opt-in.
 
-Examples, docs, fixtures, and tests should use lab-safe 802.15.4 channels (11
-through 26), lab-safe PAN ids and short/extended addresses, documentation IP
+Examples, docs, fixtures, and tests should use valid 802.15.4 channels (11
+through 26), synthetic PAN ids and short/extended addresses, documentation IP
 address space where IP appears, and synthetic payload bytes. Real PAN ids,
-device addresses, captures, credentials, provider account data, public IPs, and
+device addresses, captures, credentials, public IPs, and
 live host identifiers do not belong in tracked documentation or fixtures.
 
 ## Validation
@@ -361,9 +359,9 @@ tools/oracle/run offline --family dot15d4 --profile smoke
 tools/oracle/run pcap --family dot15d4 --profile smoke
 ```
 
-Provider-backed or hardware-backed 802.15.4 work must start with dry-run planning
+Externally executed or hardware-backed 802.15.4 work must start with dry-run planning
 and remain behind explicit live confirmation. Automated validation must not
-require an 802.15.4 dongle, root privileges, provider credentials, or real device
+require an 802.15.4 dongle, root privileges, external runner credentials, or real device
 identifiers.
 
 ## Standards And Registries Implemented

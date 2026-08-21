@@ -29,7 +29,7 @@ state as unresolved.
 
 ## Registry Policy
 
-| Registry | Codepoint space | Permanent policy | Provisional policy | Reserved or grease rule |
+| Registry | Codepoint space | Permanent policy | Prepareal policy | Reserved or grease rule |
 | --- | --- | --- | --- | --- |
 | QUIC Versions | 32-bit | Specification Required; first unassigned codepoint by Standards Action | Expert Review; Date field update by First Come First Served | Values matching `0x?a?a?a?a` are reserved. Recognize with `(value & 0x0f0f0f0f) == 0x0a0a0a0a`. `0x00000000` is reserved for Version Negotiation. |
 | QUIC Transport Parameters | 62-bit QUIC varint | Standards Action or IESG Approval for `0x00-0x3f`; Specification Required above `0x3f`; first unassigned codepoint by Standards Action | Expert Review; Date field update by First Come First Served | Values `31 * N + 27`, for integer values of `N`, are reserved greasing values and must not be assigned by IANA. |
@@ -58,13 +58,13 @@ Unknown-codepoint policy for all four registries:
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 0x00000000 | 0x00000000 | permanent | RFC 9000 | 2021-02-11 | IETF | Reserved for Version Negotiation | default-eligible |
 | 0x00000001 | 0x00000001 | permanent | RFC 9000 | 2021-02-11 | IETF | QUIC version 1 | default-eligible |
-| 0x51303433 | 0x51303433 | provisional | none | 2021-10-15 | Google | Google QUIC Q043 | non-default: provisional experiment |
-| 0x51303436 | 0x51303436 | provisional | none | 2021-10-15 | Google | Google QUIC Q046 | non-default: provisional experiment |
-| 0x51303530 | 0x51303530 | provisional | none | 2021-10-15 | Google | Google QUIC Q050 | non-default: provisional experiment |
+| 0x51303433 | 0x51303433 | prepareal | none | 2021-10-15 | Google | Google QUIC Q043 | non-default: prepareal experiment |
+| 0x51303436 | 0x51303436 | prepareal | none | 2021-10-15 | Google | Google QUIC Q046 | non-default: prepareal experiment |
+| 0x51303530 | 0x51303530 | prepareal | none | 2021-10-15 | Google | Google QUIC Q050 | non-default: prepareal experiment |
 | 0x6b3343cf | 0x6b3343cf | permanent | RFC 9369 | 2022-12-16 | IETF | QUIC version 2 | default-eligible |
-| 0x6f7dc0fd | 0x6f7dc0fd | provisional | draft-ietf-scone-protocol-04 | 2026-04-16 | IETF | SCONE Protocol - Even Signal Values | non-default: draft provisional |
-| 0x709a50c4 | 0x709a50c4 | provisional | RFC 9369 | 2022-12-16 | IETF | QUIC v2 draft codepoint | non-default: provisional |
-| 0xef7dc0fd | 0xef7dc0fd | provisional | draft-ietf-scone-protocol-04 | 2026-04-16 | IETF | SCONE Protocol - Odd Signal Values | non-default: draft provisional |
+| 0x6f7dc0fd | 0x6f7dc0fd | prepareal | draft-ietf-scone-protocol-04 | 2026-04-16 | IETF | SCONE Protocol - Even Signal Values | non-default: draft prepareal |
+| 0x709a50c4 | 0x709a50c4 | prepareal | RFC 9369 | 2022-12-16 | IETF | QUIC v2 draft codepoint | non-default: prepareal |
+| 0xef7dc0fd | 0xef7dc0fd | prepareal | draft-ietf-scone-protocol-04 | 2026-04-16 | IETF | SCONE Protocol - Odd Signal Values | non-default: draft prepareal |
 
 ## QUIC Transport Parameters
 
@@ -90,18 +90,18 @@ Unknown-codepoint policy for all four registries:
 | 0x11 | version_information | permanent | RFC 9368 | 2022-12-16 | IETF | none | default-eligible |
 | 0x20 | max_datagram_frame_size | permanent | RFC 9221 | 2021-10-20 | IETF | none | default-eligible |
 | 0x3e | initial_max_path_id | permanent | RFC-ietf-quic-multipath-21 | 2026-03-30 | IETF | multipath xref unresolved in manifest | non-default: draft/multipath |
-| 0x173e | discard | provisional | QUIC WG Quantum Readiness test URI | 2022-06-02 | none | Receiver silently discards | non-default: provisional experiment |
-| 0x219e | scone_supported | provisional | draft-ietf-scone-protocol-04 | 2026-04-16 | IETF | none | non-default: draft provisional |
-| 0x26ab | google handshake message | provisional | none | 2022-11-01 | Google | Used to carry Google internal handshake message | non-default: provisional experiment |
+| 0x173e | discard | prepareal | QUIC WG Quantum Readiness test URI | 2022-06-02 | none | Receiver silently discards | non-default: prepareal experiment |
+| 0x219e | scone_supported | prepareal | draft-ietf-scone-protocol-04 | 2026-04-16 | IETF | none | non-default: draft prepareal |
+| 0x26ab | google handshake message | prepareal | none | 2022-11-01 | Google | Used to carry Google internal handshake message | non-default: prepareal experiment |
 | 0x2ab2 | grease_quic_bit | permanent | RFC 9287 | 2022-07-13 | IETF | QUIC bit grease signal | default-eligible |
-| 0x3127 | initial_rtt | provisional | none | 2021-10-20 | Google | Initial RTT in microseconds | non-default: provisional experiment |
-| 0x3128 | google_connection_options | provisional | none | 2021-10-20 | Google | Google connection options for experimentation | non-default: provisional experiment |
-| 0x3129 | user_agent | provisional | none | 2021-10-20 | Google | User agent string (deprecated) | non-default: provisional experiment |
-| 0x4752 | google_version | provisional | none | 2026-05-04 | Google | Deprecated; use version_information instead | non-default: provisional experiment |
-| 0xff73db | version_information_draft | provisional | draft-ietf-quic-version-negotiation-13 | 2025-03-21 | IETF | Deprecated; use version_information instead | non-default: draft provisional |
-| 0x219bbcd0 | google_debug_1 | provisional | none | 2025-09-23 | none | none | non-default: provisional |
-| 0xff04de1b | min_ack_delay | provisional | draft-ietf-quic-ack-frequency-07 | 2023-10-27 | Mirja Kuehlewind | none | non-default: draft provisional |
-| 0x4143414213370002 | bdp_frame | provisional | draft-misell-quic-bdp-token-02 | 2024-01-24 | Q Misell | none | non-default: draft provisional |
+| 0x3127 | initial_rtt | prepareal | none | 2021-10-20 | Google | Initial RTT in microseconds | non-default: prepareal experiment |
+| 0x3128 | google_connection_options | prepareal | none | 2021-10-20 | Google | Google connection options for experimentation | non-default: prepareal experiment |
+| 0x3129 | user_agent | prepareal | none | 2021-10-20 | Google | User agent string (deprecated) | non-default: prepareal experiment |
+| 0x4752 | google_version | prepareal | none | 2026-05-04 | Google | Deprecated; use version_information instead | non-default: prepareal experiment |
+| 0xff73db | version_information_draft | prepareal | draft-ietf-quic-version-negotiation-13 | 2025-03-21 | IETF | Deprecated; use version_information instead | non-default: draft prepareal |
+| 0x219bbcd0 | google_debug_1 | prepareal | none | 2025-09-23 | none | none | non-default: prepareal |
+| 0xff04de1b | min_ack_delay | prepareal | draft-ietf-quic-ack-frequency-07 | 2023-10-27 | Mirja Kuehlewind | none | non-default: draft prepareal |
+| 0x4143414213370002 | bdp_frame | prepareal | draft-misell-quic-bdp-token-02 | 2024-01-24 | Q Misell | none | non-default: draft prepareal |
 
 ## QUIC Frame Types
 
@@ -127,10 +127,10 @@ Unknown-codepoint policy for all four registries:
 | 0x1b | PATH_RESPONSE | permanent | RFC 9000 Section 19.18 | 2021-02-11 | IETF | none | default-eligible |
 | 0x1c-0x1d | CONNECTION_CLOSE | permanent | RFC 9000 Section 19.19 | 2021-02-11 | IETF | transport and application close variants | default-eligible |
 | 0x1e | HANDSHAKE_DONE | permanent | RFC 9000 Section 19.20 | 2021-02-11 | IETF | none | default-eligible |
-| 0x1f | IMMEDIATE_ACK | provisional | draft-ietf-quic-ack-frequency-07 | 2023-10-27 | Mirja Kuehlewind | none | non-default: draft provisional |
+| 0x1f | IMMEDIATE_ACK | prepareal | draft-ietf-quic-ack-frequency-07 | 2023-10-27 | Mirja Kuehlewind | none | non-default: draft prepareal |
 | 0x30-0x31 | DATAGRAM | permanent | RFC 9221 | 2021-10-20 | IETF | DATAGRAM and DATAGRAM_LEN variants | default-eligible |
 | 0x3e-0x3f | PATH_ACK | permanent | RFC-ietf-quic-multipath-21 | 2026-03-30 | IETF | multipath xref unresolved in manifest | non-default: draft/multipath |
-| 0xaf | ACK_FREQUENCY | provisional | draft-ietf-quic-ack-frequency-07 | 2023-10-27 | Mirja Kuehlewind | none | non-default: draft provisional |
+| 0xaf | ACK_FREQUENCY | prepareal | draft-ietf-quic-ack-frequency-07 | 2023-10-27 | Mirja Kuehlewind | none | non-default: draft prepareal |
 | 0x3e75 | PATH_ABANDON | permanent | RFC-ietf-quic-multipath-21 | 2026-03-30 | IETF | multipath xref unresolved in manifest | non-default: draft/multipath |
 | 0x3e76 | PATH_STATUS_BACKUP | permanent | RFC-ietf-quic-multipath-21 | 2026-03-30 | IETF | multipath xref unresolved in manifest | non-default: draft/multipath |
 | 0x3e77 | PATH_STATUS_AVAILABLE | permanent | RFC-ietf-quic-multipath-21 | 2026-03-30 | IETF | multipath xref unresolved in manifest | non-default: draft/multipath |
@@ -167,5 +167,5 @@ Unknown-codepoint policy for all four registries:
 | 0x3e75 | PATH_RESOURCE_LIMIT_REACHED | permanent | RFC-ietf-quic-multipath-21 | 2026-03-30 | IETF | Path abandoned due to resource limitations in the transport | non-default: draft/multipath |
 | 0x3e76 | PATH_UNSTABLE_OR_POOR | permanent | RFC-ietf-quic-multipath-21 | 2026-03-30 | IETF | Path abandoned due to unstable interfaces or poor performance | non-default: draft/multipath |
 | 0x3e77 | NO_CID_AVAILABLE_FOR_PATH | permanent | RFC-ietf-quic-multipath-21 | 2026-03-30 | IETF | Path abandoned due to no available connection IDs for the path | non-default: draft/multipath |
-| 0x4143414213370002 | BDP_TOKEN_ERROR | provisional | draft-misell-quic-bdp-token-02 | 2024-01-24 | Q Misell | The BDP token received from the client is invalid | non-default: draft provisional |
+| 0x4143414213370002 | BDP_TOKEN_ERROR | prepareal | draft-misell-quic-bdp-token-02 | 2024-01-24 | Q Misell | The BDP token received from the client is invalid | non-default: draft prepareal |
 

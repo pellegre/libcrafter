@@ -7,7 +7,7 @@ pcap coverage needed to validate SCTP as a `crafter` packet primitive.
 
 Wire facts come from `.agents/docs/sctp-rfc-manifest.md`,
 `.agents/docs/sctp-codepoints.md`, `.agents/docs/sctp-wire-grammar.md`,
-`.agents/docs/sctp-scope.md`, `.agents/docs/sctp-validation-safety.md`, and
+`.agents/docs/sctp-scope.md` and
 `.agents/docs/sctp-api-design.md`. Later fixture files should cite the narrower
 RFC section, IANA row, or erratum used for each case.
 
@@ -100,7 +100,7 @@ parameter values, cause values, and padding.
 ## Pcap coverage to add later
 
 Pcap fixtures should be synthetic and reproducible from the byte fixtures. They
-must use documentation address space and must not be copied from live provider
+must use documentation address space and must not be copied from live external runner
 traffic or local host captures.
 
 | Pcap family | Planned packets |
@@ -113,5 +113,5 @@ traffic or local host captures.
 | `sctp_malformed.pcap` | Bounded malformed buffers for truncation and length-error assertions where the pcap reader can safely retain packet bytes. |
 
 Oracle and probe coverage should consume these fixtures through offline or
-dry-run paths first. Provider-backed live validation is out of scope for this
+dry-run paths first. Externally executed live validation is out of scope for this
 catalog and must stay gated by the SCTP validation-safety note.

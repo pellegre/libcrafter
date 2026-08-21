@@ -1,34 +1,14 @@
-"""The per-protocol plugin contract and registry for the probe engine.
+"""Per-protocol deterministic probe-plan registry.
 
-A :class:`ProtocolPlugin` bundles a single protocol's entire surface so the six
-central case-name dispatchers can be fed from one place per protocol instead of
-the historical 5-7-way duplication:
-
-* the plan builders (``planning.PLAN_BUILDERS`` + planned-only set),
-* the cases and their profile membership / default-count contribution
-  (``cases.PROBE_CASES`` / ``cases._PROFILE_*``),
-* the target-service setup-plan and setup-script contributions
-  (``target_services.target_service_setup_plan`` / ``..._script``),
-* the stimulus-endpoint routing set (``cli._STIMULUS_ENDPOINT_CASES``),
-* the live-path address rewrite + failure-reason taxonomy
-  (``cli._probe_plan_with_endpoint_addresses`` / ``_failure_reasons_for_case``),
-* and the lab-capability derivation
-  (``lab.probe_capabilities_from_lab_capabilities``).
-
-This step only introduces the contract, an empty registry, and the
-auto-discovery entrypoint; no protocol is migrated, so the registry is empty and
-every dispatcher still flows through the existing legacy code. The field shapes
-are chosen to reproduce each legacy dispatcher byte-identically when protocols
-do migrate.
-
-Imports are relative only: the engine is imported both as ``engine.*`` (the CLI,
-``python -m engine.cli``) and as ``tools.probe.engine.*`` (the tests), so this
-module must not assume either import root.
+Plugins describe packet cases, deterministic builders, profile membership, and
+which cases the bounded local stimulus executable understands. Machine
+selection, capability translation, target provisioning, and execution topology
+are deliberately outside this repository.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from ..model import JSONObject, ProbeCase
@@ -36,37 +16,8 @@ from ..planning_helpers import PlanBuilder
 from ..plugin_registry import PluginRegistry
 
 
-# Optional per-protocol callables. Each mirrors the signature of the legacy
-# dispatcher branch it replaces so a migrated plugin reproduces it byte-for-byte.
-#
-# ``target_service``: given the probe plans selected for this protocol, return
-#   the protocol's contribution to ``target_service_setup_plan`` (services,
-#   closed-port entries, kernel-state contracts, ...).
-# ``setup_script``: given the setup context, return the protocol's contribution
-#   to ``target_service_setup_script`` (responder heredocs, provisioning steps).
-# ``rewrite_endpoint_addresses``: given a single plan plus the rewrite context,
-#   return the live-path address-rewritten plan for this protocol's cases.
-# ``failure_reasons``: given a case name owned by this protocol, return its
-#   ordered failure-reason taxonomy, or ``None`` to fall through.
-# ``lab_capabilities``: given the substrate capability mapping, return this
-#   protocol's contribution to the derived probe capability mapping.
-# ``live_plan_candidates``: given the full batched live probe-plan sequence,
-#   return a transformed plan sequence (e.g. ARP's batched sender-protocol
-#   candidate annotation). The hook receives every plan so it can read cross-plan
-#   context (sibling target-service addresses) and must return the full sequence;
-#   ``live.plans_with_live_plan_candidates`` folds each plugin's transform in
-#   registry order so the live path stays protocol-agnostic.
-# ``live_environment_confirmations``: given the full batched live probe-plan
-#   sequence, return unsatisfied protocol-specific environment gates before any
-#   provider work begins.
-# ``ipsec_interop``: the IPSec-only cross-crypto interop dry-run hook.
-TargetServiceHook = Callable[..., object]
-SetupScriptHook = Callable[..., object]
-RewriteEndpointAddressesHook = Callable[..., JSONObject]
+# Optional validation hooks stay local and deterministic.
 FailureReasonsHook = Callable[[str], "list[str] | None"]
-LabCapabilitiesHook = Callable[..., Mapping[str, object]]
-LivePlanCandidatesHook = Callable[..., "list[JSONObject]"]
-LiveEnvironmentConfirmationsHook = Callable[[Sequence[JSONObject]], "list[JSONObject]"]
 IpsecInteropHook = Callable[..., object]
 
 
@@ -86,13 +37,7 @@ class ProtocolPlugin:
     planned_only_cases: frozenset[str] = frozenset()
     profile_counts: Mapping[str, Mapping[str, int]] = field(default_factory=dict)
     stimulus_endpoint_cases: frozenset[str] = frozenset()
-    target_service: TargetServiceHook | None = None
-    setup_script: SetupScriptHook | None = None
-    rewrite_endpoint_addresses: RewriteEndpointAddressesHook | None = None
     failure_reasons: FailureReasonsHook | None = None
-    lab_capabilities: LabCapabilitiesHook | None = None
-    live_plan_candidates: LivePlanCandidatesHook | None = None
-    live_environment_confirmations: LiveEnvironmentConfirmationsHook | None = None
     ipsec_interop: IpsecInteropHook | None = None
 
 
@@ -174,18 +119,6 @@ def all_stimulus_endpoint_cases() -> frozenset[str]:
     for plugin in registered_plugins():
         names.update(plugin.stimulus_endpoint_cases)
     return frozenset(names)
-
-
-def missing_live_environment_confirmations(
-    probe_plans: Sequence[JSONObject],
-) -> list[JSONObject]:
-    """Collect unsatisfied live environment gates from protocol plugins."""
-
-    missing: list[JSONObject] = []
-    for plugin in registered_plugins():
-        if plugin.live_environment_confirmations is not None:
-            missing.extend(plugin.live_environment_confirmations(probe_plans))
-    return missing
 
 
 def ipsec_interop_plugin() -> ProtocolPlugin | None:

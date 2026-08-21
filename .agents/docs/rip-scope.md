@@ -8,7 +8,7 @@ gate passes. This matrix is derived from `spec.md` and the codepoint authority i
 
 `crafter` is a wire-level primitive. The matrix scopes message construction,
 compilation, decoding, `summary()`/`show()`, golden fixtures, oracle validation,
-and provider-backed live validation. It deliberately excludes the RIP routing
+and externally executed live validation. It deliberately excludes the RIP routing
 engine, the route table, distance-vector convergence, and timer state: those are
 agent-built tools, not crate surface.
 
@@ -102,8 +102,7 @@ the RIPv2 core; the on-demand-circuit state machine is **not** in scope.
 Unknown commands, unknown address families, unknown authentication types,
 reserved/odd trailing bytes, and over-length messages round-trip as preserved
 data or surface as structured `context`/`required`/`available` errors; decode
-never panics. Live work uses disposable lab/endpoint providers with dry-run plans
-first and is gated behind `--confirm-live-run` and provider credentials. All
+never panics. Concrete-interface execution is owned by external operator tooling. All
 examples, tests, and defaults use documentation address space.
 
 ## Out of scope (state, not wire)

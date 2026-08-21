@@ -197,44 +197,18 @@ assert!(show.contains("OPTION_STATUS_CODE"));
 # Ok::<(), crafter::CrafterError>(())
 ```
 
-## Dry-Run Send/Receive Planning
+## Validation And External Execution Boundary
 
-Offline planning is the default. Use `SendRecv::new().dry_run()` to inspect the
-compiled DHCPv6 request, derived reply filter, target, and retry settings
-without opening capture or putting packets on the wire.
+Use the tracked deterministic validation surfaces first:
 
-```rust
-use crafter::prelude::*;
-use std::net::Ipv6Addr;
-use std::time::Duration;
-
-let packet =
-    Ipv6::new()
-        .src(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x10))
-        .dst(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x01))
-    / Udp::dhcpv6_client()
-    / Dhcpv6::solicit(0x010203);
-
-let report = packet.send_recv_report(
-    SendRecv::new()
-        .iface("dry-run0")
-        .network_layer()
-        .dry_run()
-        .timeout(Duration::from_millis(250))
-        .retries(1),
-)?;
-
-assert_eq!(report.attempts(), 1);
-assert!(report.reply().is_none());
-assert_eq!(
-    report.effective_filter(),
-    Some("udp and src host 2001:db8::1 and dst host 2001:db8::10 and src port 547 and dst port 546"),
-);
-assert!(report.send_reports().iter().all(|send| send.is_dry_run()));
-# Ok::<(), crafter::CrafterError>(())
+```sh
+tools/oracle/run offline --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
-Live DHCPv6 validation should start from the provider-backed lab, oracle, or
-probe workflows in `docs/operations/`, which create disposable endpoints,
-preserve artifacts, and tear them down. Do not turn DHCPv6 examples into
-developer-host raw traffic examples.
+These commands do not select infrastructure or send packets. Any authorized use
+of concrete interfaces, peers, radios, or targets is owned by external operator
+tooling, which supplies runtime inputs and collects artifacts. libcrafter does
+not provision machines, configure responders, manage credentials, or perform
+remote cleanup.

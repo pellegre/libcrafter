@@ -28,7 +28,7 @@ pub enum FlowError {
     Unsupported(String),
     /// A private QUIC endpoint driver operation failed.
     QuicEndpoint {
-        /// Stable failure category independent of the selected provider.
+        /// Stable failure category independent of the QUIC implementation.
         category: crate::QuicEndpointErrorCategory,
         /// Non-secret description of the operation that failed.
         context: String,

@@ -15,7 +15,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const DEFAULT_OUT_DIR: &str = "target/lab/mqtt";
+const DEFAULT_OUT_DIR: &str = "target/examples/mqtt";
 const DEFAULT_CLIENT_ID: &str = "crafter-client";
 const DEFAULT_SUBSCRIBE_TOPIC: &str = "crafter/demo/inbound";
 const DEFAULT_PUBLISH_TOPIC: &str = "crafter/demo/outbound";

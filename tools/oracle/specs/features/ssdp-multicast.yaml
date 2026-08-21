@@ -53,8 +53,6 @@ behaviors:
     eligibility:
       offline: eligible
       pcap: eligible
-      live: provider_gated
-      developer_host_live: false
       default_send: false
     checks:
       - ipv4_destination_is_source_backed_ssdp_multicast
@@ -99,8 +97,6 @@ behaviors:
     eligibility:
       offline: eligible
       pcap: eligible
-      live: provider_gated
-      developer_host_live: false
       default_send: false
     checks:
       - ipv6_destination_is_source_backed_site_scope_ssdp_multicast
@@ -142,8 +138,6 @@ behaviors:
     eligibility:
       offline: eligible
       pcap: eligible
-      live: provider_gated
-      developer_host_live: false
       default_send: false
     checks:
       - ipv6_destination_is_source_backed_link_scope_ssdp_multicast
@@ -180,8 +174,8 @@ case_groups:
     cases:
       - ssdp-ipv4-multicast
       - ssdp-ipv6-multicast
-  - name: ssdp-multicast-eligibility
-    summary: Multicast packet shapes are offline and pcap eligible, but live exchange is provider-gated.
+  - name: ssdp-multicast-persistence
+    summary: Multicast packet shapes are eligible for deterministic offline and pcap validation.
     byte_policy: strict_bytes
     cases:
       - ssdp-ipv4-multicast
@@ -225,26 +219,16 @@ eligibility_matrix:
   - case: ssdp-ipv4-multicast
     offline: eligible
     pcap: eligible
-    live: provider_gated
-    provider_required: true
-    protected_confirmation_required: true
-    developer_host_raw_send: false
   - case: ssdp-ipv6-multicast
     offline: eligible
     pcap: eligible
-    live: provider_gated
-    provider_required: true
-    protected_confirmation_required: true
-    developer_host_raw_send: false
   - case: ssdp-ipv6-global-multicast
     offline: excluded
     pcap: excluded
-    live: excluded
     reason: obsolete_or_ambiguous_global_scope
   - case: ssdp-multicast-membership-management
     offline: excluded
     pcap: excluded
-    live: excluded
     reason: crate_exposes_packet_shape_only
 
 normalized_model:
@@ -275,7 +259,7 @@ normalized_model:
     - host_header
     - helper_default
     - eligible_packet_shape
-    - live_eligibility
+    - persistence_eligibility
 
 source_refs:
   - UPnP Device Architecture 2.0 Discovery
@@ -295,7 +279,6 @@ source_refs:
   - .agents/docs/ssdp-source-manifest.md
   - .agents/docs/ssdp-wire-grammar.md
   - .agents/docs/ssdp-codepoints.md
-  - .agents/docs/ssdp-validation-safety.md
 
 notes:
   - >-
@@ -313,7 +296,7 @@ notes:
     multicast feature.
   - >-
     Fixture and artifact values use documentation source addresses and
-    synthetic header values only. No provider endpoint identifiers, credentials,
+    synthetic header values only. No external endpoint identifiers, credentials,
     local paths, or live captures belong in outputs generated from this spec.
 
 backend_support:

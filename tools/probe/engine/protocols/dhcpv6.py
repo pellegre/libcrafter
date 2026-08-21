@@ -1,30 +1,16 @@
-"""DHCPv6 probe protocol plugin: planned behavior cases and lab gates."""
+"""Deterministic DHCPV6 probe cases and packet plans."""
 
 from __future__ import annotations
-
-import json
-import posixpath
-import shlex
-from collections.abc import Mapping, Sequence
-
-from ..capability_derivation import capability, capability_default_true
 from ..case_helpers import _behavior_case
-from ..model import JSONObject, JSONValue, ProbeCase
+from ..model import JSONObject, ProbeCase
 from ..planning_helpers import (
     deterministic_bytes,
     deterministic_documentation_ipv6,
     deterministic_documentation_mac,
 )
-from ..target_service_helpers import (
-    dedupe_ints,
-    plans_by_destination_port,
-    probe_plan_send_count,
-)
 from .base import ProtocolPlugin, register
 
-
 DHCPV6_SERVICE_KIND = "dhcpv6-controlled-responder"
-DHCPV6_RUNTIME = "probe-dhcpv6-reference"
 DHCPV6_STIMULUS_DRIVER = "dhcpv6_probe"
 DHCPV6_ADAPTER_MODULE = "tools/probe/adapters/src/dhcpv6.rs"
 DHCPV6_CLIENT_PORT = 546
@@ -38,19 +24,6 @@ DHCPV6_RELAY_INTERFACE_ID_HEX = "646f632d72656c6179"
 _DHCPV6_CAPABILITIES = ["dhcpv6_service"]
 _DHCPV6_RELAY_CAPABILITIES = ["dhcpv6_service", "dhcpv6_relay_topology"]
 _DHCPV6_ADVANCED_PROFILE = "dhcpv6-advanced"
-_DHCPV6_ADVANCED_PROFILES = {
-    "reconfigure",
-    "leasequery",
-    "bulk_leasequery",
-    "active_leasequery",
-}
-_DHCPV6_UNIMPLEMENTED_TARGET_SERVICES = {
-    "reconfigure",
-    "bulk_leasequery",
-    "active_leasequery",
-}
-
-
 DHCPV6_SMOKE_CASES: tuple[ProbeCase, ...] = (
     _behavior_case(
         name="dhcpv6-information-request-reply",
@@ -174,8 +147,6 @@ DHCPV6_SMOKE_CASES: tuple[ProbeCase, ...] = (
         metadata={"service": DHCPV6_SERVICE_KIND, "planned_only": True},
     ),
 )
-
-
 _DHCPV6_CASE_CONFIG: dict[str, JSONObject] = {
     "dhcpv6-information-request-reply": {
         "message_type": "information-request",
@@ -293,8 +264,6 @@ _DHCPV6_CASE_CONFIG: dict[str, JSONObject] = {
         "packet_count": 2,
     },
 }
-
-
 _DHCPV6_CASE_BY_NAME: dict[str, ProbeCase] = {
     case.name: case for case in DHCPV6_SMOKE_CASES
 }
@@ -302,10 +271,7 @@ _DHCPV6_PLANNED_ONLY_CASES = frozenset(_DHCPV6_CASE_BY_NAME)
 
 
 def dhcpv6_transaction_id(
-    case_name: str,
-    profile: str,
-    seed: int,
-    sequence: int,
+    case_name: str, profile: str, seed: int, sequence: int
 ) -> int:
     digest = deterministic_bytes(case_name, profile, seed, sequence)
     return int.from_bytes(digest[0:3], "big") or 1
@@ -313,20 +279,13 @@ def dhcpv6_transaction_id(
 
 def dhcpv6_duid_ll(profile: str, seed: int, sequence: int, *, role: str) -> str:
     mac = deterministic_documentation_mac(
-        profile,
-        seed,
-        sequence,
-        role=f"dhcpv6-{role}",
+        profile, seed, sequence, role=f"dhcpv6-{role}"
     )
     return "00030001" + mac.replace(":", "")
 
 
 def _dhcpv6_probe_plan(
-    *,
-    case_name: str,
-    profile: str,
-    seed: int,
-    sequence: int,
+    *, case_name: str, profile: str, seed: int, sequence: int
 ) -> JSONObject:
     case = _DHCPV6_CASE_BY_NAME[case_name]
     config = _DHCPV6_CASE_CONFIG[case_name]
@@ -349,9 +308,7 @@ def _dhcpv6_probe_plan(
     source_port = int(config.get("source_port", DHCPV6_CLIENT_PORT))
     destination_port = int(config.get("destination_port", DHCPV6_SERVER_PORT))
     destination_ipv6, destination_mac = _destination_addresses(
-        str(config["destination"]),
-        client_ipv6=client_ipv6,
-        server_ipv6=server_ipv6,
+        str(config["destination"]), client_ipv6=client_ipv6, server_ipv6=server_ipv6
     )
     client_duid = dhcpv6_duid_ll(profile, seed, sequence, role="client")
     server_duid = dhcpv6_duid_ll(profile, seed, sequence, role="server")
@@ -399,10 +356,7 @@ def _dhcpv6_probe_plan(
         "source_port": source_port,
         "destination_port": destination_port,
         "source_mac": deterministic_documentation_mac(
-            profile,
-            seed,
-            sequence,
-            role="dhcpv6-source",
+            profile, seed, sequence, role="dhcpv6-source"
         ),
         "destination_mac": destination_mac,
         "documentation_prefixes": [DHCPV6_DOCUMENTATION_PREFIX],
@@ -425,9 +379,7 @@ def _dhcpv6_probe_plan(
                 transaction_id=transaction_id,
             ),
             "ia_na": _ia_na_validation(
-                str(config["option_profile"]),
-                iaid=transaction_id,
-                address=ia_na_ipv6,
+                str(config["option_profile"]), iaid=transaction_id, address=ia_na_ipv6
             ),
             "ia_pd": _ia_pd_validation(
                 str(config["option_profile"]),
@@ -435,23 +387,10 @@ def _dhcpv6_probe_plan(
                 prefix=delegated_prefix,
             ),
             "pd_exchanges": _pd_exchange_sequence(
-                str(config["option_profile"]),
-                transaction_id=transaction_id,
+                str(config["option_profile"]), transaction_id=transaction_id
             ),
         },
         "dhcpv6_sends": sends,
-        "target_service": {
-            "required": True,
-            "kind": DHCPV6_SERVICE_KIND,
-            "protocol": "udp",
-            "port": DHCPV6_SERVER_PORT,
-            "bind_ipv6": server_ipv6,
-            "source_ipv6": client_ipv6,
-            "runtime": DHCPV6_RUNTIME,
-            "behavior": str(config["behavior"]),
-            "planned_only": True,
-            "deterministic": True,
-        },
         "stimulus_driver": {
             "name": DHCPV6_STIMULUS_DRIVER,
             "adapter_module": DHCPV6_ADAPTER_MODULE,
@@ -472,9 +411,7 @@ def _dhcpv6_probe_plan(
             "client_duid_hex": client_duid,
             "server_duid_hex": server_duid,
             "ia_na": _ia_na_validation(
-                str(config["option_profile"]),
-                iaid=transaction_id,
-                address=ia_na_ipv6,
+                str(config["option_profile"]), iaid=transaction_id, address=ia_na_ipv6
             ),
             "ia_pd": _ia_pd_validation(
                 str(config["option_profile"]),
@@ -482,8 +419,7 @@ def _dhcpv6_probe_plan(
                 prefix=delegated_prefix,
             ),
             "pd_exchanges": _pd_exchange_sequence(
-                str(config["option_profile"]),
-                transaction_id=transaction_id,
+                str(config["option_profile"]), transaction_id=transaction_id
             ),
             "route_installation": "out_of_scope",
             "reply_decode": {
@@ -504,26 +440,6 @@ def _dhcpv6_probe_plan(
         },
         "digest_hex": digest.hex()[:16],
     }
-    if str(config["option_profile"]) in _DHCPV6_ADVANCED_PROFILES:
-        reason = _planned_only_reason(str(config["option_profile"]))
-        artifacts = _plan_artifact_outputs(case_name)
-        plan["planned_only_reason"] = reason
-        plan["artifact_outputs"] = artifacts
-        plan["target_service"]["implemented"] = _target_service_implemented(
-            str(config["option_profile"])
-        )
-        plan["target_service"]["planned_only_reason"] = reason
-        plan["target_service"]["artifacts"] = artifacts
-        plan["stimulus_driver"]["planned_only_reason"] = reason
-        plan["stimulus_driver"]["artifacts"] = artifacts
-        plan["validation"]["advanced"] = _advanced_validation(
-            str(config["option_profile"]),
-            case_name=case_name,
-            transaction_id=transaction_id,
-            client_duid=client_duid,
-            server_duid=server_duid,
-            client_ipv6=client_ipv6,
-        )
     if str(config["option_profile"]) == "relay":
         plan["wire_requirements"]["requires_relay_topology"] = True
         plan["validation"]["relay"] = _relay_validation(
@@ -535,30 +451,23 @@ def _dhcpv6_probe_plan(
 
 
 def _destination_addresses(
-    destination: str,
-    *,
-    client_ipv6: str,
-    server_ipv6: str,
+    destination: str, *, client_ipv6: str, server_ipv6: str
 ) -> tuple[str, str]:
     if destination == "all_servers":
-        return DHCPV6_ALL_SERVERS, DHCPV6_MULTICAST_MAC_ALL_SERVERS
+        return (DHCPV6_ALL_SERVERS, DHCPV6_MULTICAST_MAC_ALL_SERVERS)
     if destination == "relay_agents_and_servers":
         return (
             DHCPV6_ALL_RELAY_AGENTS_AND_SERVERS,
             DHCPV6_MULTICAST_MAC_RELAY_AGENTS_AND_SERVERS,
         )
     if destination == "client":
-        return client_ipv6, deterministic_documentation_mac(
-            "dhcpv6",
-            0,
-            0,
-            role="client-destination",
+        return (
+            client_ipv6,
+            deterministic_documentation_mac("dhcpv6", 0, 0, role="client-destination"),
         )
-    return server_ipv6, deterministic_documentation_mac(
-        "dhcpv6",
-        0,
-        0,
-        role="server-destination",
+    return (
+        server_ipv6,
+        deterministic_documentation_mac("dhcpv6", 0, 0, role="server-destination"),
     )
 
 
@@ -573,7 +482,7 @@ def _request_options(
     delegated_prefix: str,
 ) -> list[JSONObject]:
     base: list[JSONObject] = [
-        {"code": 1, "name": "client_identifier", "duid_hex": client_duid},
+        {"code": 1, "name": "client_identifier", "duid_hex": client_duid}
     ]
     if option_profile in {
         "ia_na",
@@ -608,7 +517,11 @@ def _request_options(
     if option_profile == "reconfigure":
         base.extend(
             [
-                {"code": 19, "name": "reconfigure_message", "message_type": "information-request"},
+                {
+                    "code": 19,
+                    "name": "reconfigure_message",
+                    "message_type": "information-request",
+                },
                 {
                     "code": 11,
                     "name": "authentication",
@@ -659,7 +572,9 @@ def _request_options(
             ]
         )
     if option_profile == "unknown_option":
-        base.append({"code": 65000, "name": "unknown", "data_hex": "646f632d756e6b6e6f776e"})
+        base.append(
+            {"code": 65000, "name": "unknown", "data_hex": "646f632d756e6b6e6f776e"}
+        )
     return base
 
 
@@ -674,14 +589,20 @@ def _expected_options(
     delegated_prefix: str,
 ) -> list[JSONObject]:
     options: list[JSONObject] = [
-        {"code": 2, "name": "server_identifier", "duid_hex": server_duid},
+        {"code": 2, "name": "server_identifier", "duid_hex": server_duid}
     ]
     if option_profile != "leasequery":
-        options.append({"code": 1, "name": "client_identifier", "duid_hex": client_duid})
+        options.append(
+            {"code": 1, "name": "client_identifier", "duid_hex": client_duid}
+        )
     if option_profile in {"oro_dns", "solicit", "rapid_commit", "unknown_option"}:
         options.extend(
             [
-                {"code": 23, "name": "dns_recursive_name_servers", "servers": ["2001:db8::53"]},
+                {
+                    "code": 23,
+                    "name": "dns_recursive_name_servers",
+                    "servers": ["2001:db8::53"],
+                },
                 {"code": 24, "name": "domain_search_list", "domains": ["example.test"]},
             ]
         )
@@ -694,13 +615,19 @@ def _expected_options(
     if option_profile == "rapid_commit":
         options.append({"code": 14, "name": "rapid_commit"})
     if option_profile == "relay":
-        options.append({"code": 9, "name": "relay_message", "message_type": "advertise"})
+        options.append(
+            {"code": 9, "name": "relay_message", "message_type": "advertise"}
+        )
     if option_profile == "reconfigure":
         options.append({"code": 20, "name": "reconfigure_accept"})
     if option_profile == "leasequery":
         options.extend(
             [
-                {"code": 45, "name": "client_data", "client_identifier_hex": client_duid},
+                {
+                    "code": 45,
+                    "name": "client_data",
+                    "client_identifier_hex": client_duid,
+                },
                 {"code": 46, "name": "clt_time", "seconds": 0},
                 _status_success_option(),
             ]
@@ -715,14 +642,20 @@ def _expected_options(
     if option_profile == "active_leasequery":
         options.extend(
             [
-                {"code": 45, "name": "client_data", "client_identifier_hex": client_duid},
+                {
+                    "code": 45,
+                    "name": "client_data",
+                    "client_identifier_hex": client_duid,
+                },
                 {"code": 46, "name": "clt_time", "seconds": 0},
                 {"code": 100, "name": "lq_base_time", "seconds": 0},
                 _status_option(13, "catch_up_complete"),
             ]
         )
     if option_profile == "unknown_option":
-        options.append({"code": 65000, "name": "unknown", "data_hex": "646f632d756e6b6e6f776e"})
+        options.append(
+            {"code": 65000, "name": "unknown", "data_hex": "646f632d756e6b6e6f776e"}
+        )
     return options
 
 
@@ -757,10 +690,7 @@ def _relay_metadata(
 
 
 def _relay_validation(
-    *,
-    link_address: str,
-    peer_address: str,
-    transaction_id: int,
+    *, link_address: str, peer_address: str, transaction_id: int
 ) -> JSONObject:
     return {
         "enabled": True,
@@ -869,11 +799,7 @@ def _ia_na_validation(option_profile: str, *, iaid: int, address: str) -> JSONOb
         "iaid": iaid,
         "t1": 1800,
         "t2": 2880,
-        "iaaddr": {
-            "ipv6": address,
-            "preferred_lifetime": 3600,
-            "valid_lifetime": 7200,
-        },
+        "iaaddr": {"ipv6": address, "preferred_lifetime": 3600, "valid_lifetime": 7200},
         "status_code": 0,
         "status": "success",
     }
@@ -898,130 +824,13 @@ def _ia_pd_validation(option_profile: str, *, iaid: int, prefix: str) -> JSONObj
     }
 
 
-def _advanced_validation(
-    option_profile: str,
-    *,
-    case_name: str,
-    transaction_id: int,
-    client_duid: str,
-    server_duid: str,
-    client_ipv6: str,
-) -> JSONObject:
-    if option_profile not in _DHCPV6_ADVANCED_PROFILES:
-        return {"enabled": False}
-    base: JSONObject = {
-        "enabled": True,
-        "behavior": option_profile,
-        "transaction_id": transaction_id,
-        "transaction_id_match": True,
-        "client_duid_hex": client_duid,
-        "server_duid_hex": server_duid,
-        "status_required": True,
-        "planned_only_reason": _planned_only_reason(option_profile),
-        "artifacts": _plan_artifact_outputs(case_name),
-    }
-    if option_profile == "reconfigure":
-        base.update(
-            {
-                "stimulus": "reconfigure",
-                "expected_client_response": "information-request",
-                "required_request_options": [
-                    "server_identifier",
-                    "reconfigure_message",
-                    "authentication",
-                ],
-                "required_response_options": ["client_identifier", "option_request"],
-                "target_service_implemented": False,
-            }
-        )
-    elif option_profile == "leasequery":
-        base.update(
-            {
-                "stimulus": "leasequery",
-                "expected_response": "leasequery-reply",
-                "query_type": "by_address",
-                "query_address": client_ipv6,
-                "required_request_options": [
-                    "server_identifier",
-                    "lq_query",
-                    "query_client_identifier",
-                ],
-                "required_response_options": [
-                    "server_identifier",
-                    "client_data",
-                    "clt_time",
-                    "status_code",
-                ],
-                "target_service_implemented": True,
-            }
-        )
-    elif option_profile == "bulk_leasequery":
-        base.update(
-            {
-                "stimulus": "leasequery",
-                "expected_response": "leasequery-done",
-                "query_type": "by_link_address",
-                "required_request_options": [
-                    "server_identifier",
-                    "lq_query",
-                    "relay_id",
-                    "lq_start_time",
-                ],
-                "required_response_options": [
-                    "server_identifier",
-                    "lq_base_time",
-                    "status_code",
-                ],
-                "target_service_implemented": False,
-            }
-        )
-    elif option_profile == "active_leasequery":
-        base.update(
-            {
-                "stimulus": "activeleasequery",
-                "expected_response": "leasequery-reply",
-                "query_type": "by_relay_id",
-                "required_request_options": [
-                    "server_identifier",
-                    "lq_query",
-                    "relay_id",
-                    "lq_start_time",
-                ],
-                "required_response_options": [
-                    "server_identifier",
-                    "client_data",
-                    "clt_time",
-                    "lq_base_time",
-                    "status_code",
-                ],
-                "target_service_implemented": False,
-            }
-        )
-    return base
-
-
-def _target_service_implemented(option_profile: str) -> bool:
-    return option_profile not in _DHCPV6_UNIMPLEMENTED_TARGET_SERVICES
-
-
-def _planned_only_reason(option_profile: str) -> str:
-    if option_profile in _DHCPV6_UNIMPLEMENTED_TARGET_SERVICES:
-        return "controlled_dhcpv6_service_not_implemented"
-    return "stimulus_adapter_not_implemented"
-
-
-def _plan_artifact_outputs(case_name: str) -> list[str]:
-    return [
-        f"target/probe/artifacts/dhcpv6/{case_name}-plan.json",
-        f"target/probe/artifacts/dhcpv6/{case_name}-stimulus.request.json",
-    ]
-
-
-def _pd_exchange_sequence(option_profile: str, *, transaction_id: int) -> list[JSONObject]:
+def _pd_exchange_sequence(
+    option_profile: str, *, transaction_id: int
+) -> list[JSONObject]:
     if option_profile != "ia_pd":
         return []
     advertise_xid = transaction_id
-    reply_xid = ((transaction_id ^ 0xA5A5A5) & 0xFFFFFF) or 1
+    reply_xid = (transaction_id ^ 10855845) & 16777215 or 1
     return [
         {
             "stimulus": "solicit",
@@ -1056,11 +865,7 @@ def _required_reply_option_names(option_profile: str) -> list[str]:
 
 
 def _dhcpv6_send_sequence(
-    *,
-    packet_count: int,
-    message_type: str,
-    message_type_code: int,
-    transaction_id: int,
+    *, packet_count: int, message_type: str, message_type_code: int, transaction_id: int
 ) -> list[JSONObject]:
     return [
         {
@@ -1074,340 +879,12 @@ def _dhcpv6_send_sequence(
 
 
 def _delegated_prefix(digest: bytes) -> str:
-    return f"2001:db8:{0x4000 + digest[12]:x}:{digest[13]:x}::"
+    return f"2001:db8:{16384 + digest[12]:x}:{digest[13]:x}::"
 
 
 _DHCPV6_PLAN_BUILDERS: dict[str, object] = {
     case.name: _dhcpv6_probe_plan for case in DHCPV6_SMOKE_CASES
 }
-
-
-def dhcpv6_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
-    return [
-        plan
-        for plan in probe_plans
-        if plan.get("case") in _DHCPV6_CASE_BY_NAME
-        and int(plan.get("destination_port", 0)) == DHCPV6_SERVER_PORT
-        and _plan_target_service_implemented(plan)
-    ]
-
-
-def _plan_target_service_implemented(plan: JSONObject) -> bool:
-    target_service = plan.get("target_service")
-    if isinstance(target_service, Mapping):
-        return target_service.get("implemented") is not False
-    return True
-
-
-def dhcpv6_target_service_contribution(
-    probe_plans: Sequence[JSONObject],
-    *,
-    dry_run: bool,
-) -> JSONObject:
-    dhcpv6_plans = dhcpv6_probe_plans(probe_plans)
-    plans_by_port = plans_by_destination_port(dhcpv6_plans)
-    services = [
-        {
-            "name": DHCPV6_SERVICE_KIND,
-            "kind": DHCPV6_SERVICE_KIND,
-            "protocol": "udp",
-            "port": port,
-            "purpose": "dhcpv6",
-            "runtime": DHCPV6_RUNTIME,
-            "deterministic": True,
-            "request_count": sum(
-                probe_plan_send_count(item)
-                for item in dhcpv6_plans
-                if int(item.get("destination_port", 0)) == port
-            ),
-            "bind_ipv6": _service_ipv6_field(plan, "bind_ipv6", "target_ipv6"),
-            "source_ipv6": _service_ipv6_field(plan, "source_ipv6", "source_ipv6"),
-            "behaviors": sorted(
-                {
-                    str(item.get("target_service", {}).get("behavior"))
-                    for item in dhcpv6_plans
-                    if isinstance(item.get("target_service"), Mapping)
-                    and int(item.get("destination_port", 0)) == port
-                }
-            ),
-            "expected_replies": sorted(
-                {
-                    str(item.get("dhcpv6", {}).get("expected_message_type"))
-                    for item in dhcpv6_plans
-                    if isinstance(item.get("dhcpv6"), Mapping)
-                    and int(item.get("destination_port", 0)) == port
-                }
-            ),
-            "log_paths": [
-                f"live-artifacts/probe/target-services/dhcpv6-responder-{port}.stdout.txt",
-                f"live-artifacts/probe/target-services/dhcpv6-responder-{port}.stderr.txt",
-            ],
-            "artifacts": [
-                "live-artifacts/probe/target-services/dhcpv6-plans.json",
-                f"live-artifacts/probe/target-services/dhcpv6-responder-{port}.stdout.txt",
-                f"live-artifacts/probe/target-services/dhcpv6-responder-{port}.stderr.txt",
-                f"live-artifacts/probe/target-services/dhcpv6-responder-{port}.pid",
-            ],
-        }
-        for port, plan in plans_by_port.items()
-    ]
-    return {
-        "services": services,
-        "starts_services": not dry_run and bool(plans_by_port),
-    }
-
-
-def _service_ipv6_field(plan: JSONObject, service_key: str, plan_key: str) -> str:
-    target_service = plan.get("target_service")
-    if isinstance(target_service, Mapping):
-        value = target_service.get(service_key)
-        if isinstance(value, str):
-            return value
-    value = plan.get(plan_key)
-    return value if isinstance(value, str) else ""
-
-
-def dhcpv6_port_check_lines(dhcpv6_plans: Sequence[JSONObject]) -> list[str]:
-    dhcpv6_ports = dedupe_ints(
-        int(plan["destination_port"])
-        for plan in dhcpv6_plans
-        if isinstance(plan.get("destination_port"), int)
-    )
-    lines: list[str] = []
-    for port in dhcpv6_ports:
-        lines.extend(
-            [
-                f"check_udp6_port_free \"$dhcpv6_bind_ipv6\" {port}",
-            ]
-        )
-    return lines
-
-
-def dhcpv6_responder_setup_lines(
-    *,
-    artifact_root: str,
-    dhcpv6_plans: Sequence[JSONObject],
-) -> list[str]:
-    dhcpv6_plan_json = json.dumps(list(dhcpv6_plans), sort_keys=True)
-    dhcpv6_ports = dedupe_ints(
-        int(plan["destination_port"])
-        for plan in dhcpv6_plans
-        if isinstance(plan.get("destination_port"), int)
-    )
-    lines: list[str] = []
-    if dhcpv6_ports:
-        plan_path = posixpath.join(artifact_root, "dhcpv6-plans.json")
-        service_path = posixpath.join(artifact_root, "dhcpv6-responder.py")
-        lines.extend(
-            [
-                f"cat > {shlex.quote(plan_path)} <<'JSON'",
-                dhcpv6_plan_json,
-                "JSON",
-                f"cat > {shlex.quote(service_path)} <<'PY'",
-                "import ipaddress",
-                "import json",
-                "import signal",
-                "import socket",
-                "import struct",
-                "import sys",
-                "import time",
-                "",
-                "stop = False",
-                "",
-                "def handle_stop(_signum, _frame):",
-                "    global stop",
-                "    stop = True",
-                "",
-                "signal.signal(signal.SIGTERM, handle_stop)",
-                "signal.signal(signal.SIGINT, handle_stop)",
-                "",
-                "plan_path, bind_ip, port_text = sys.argv[1:4]",
-                "port = int(port_text)",
-                "plans = json.load(open(plan_path, encoding='utf-8'))",
-                "entries_by_xid = {}",
-                "entries_by_message = {}",
-                "",
-                "def option_payload(option):",
-                "    code = int(option.get('code', 0))",
-                "    if option.get('duid_hex'):",
-                "        return bytes.fromhex(str(option['duid_hex']))",
-                "    if option.get('data_hex'):",
-                "        return bytes.fromhex(str(option['data_hex']))",
-                "    if code == 23:",
-                "        return b''.join(ipaddress.IPv6Address(item).packed for item in option.get('servers', []))",
-                "    if code == 24:",
-                "        return b''.join(domain_wire(item) for item in option.get('domains', []))",
-                "    if code == 3:",
-                "        nested = b''.join(encode_option(item) for item in option.get('addresses', []))",
-                "        return struct.pack('!III', int(option.get('iaid', 0)), int(option.get('t1', 0)), int(option.get('t2', 0))) + nested",
-                "    if code == 5:",
-                "        return ipaddress.IPv6Address(str(option['ipv6'])).packed + struct.pack('!II', int(option.get('preferred_lifetime', 0)), int(option.get('valid_lifetime', 0)))",
-                "    if code == 25:",
-                "        nested = b''.join(encode_option(item) for item in option.get('prefixes', []))",
-                "        return struct.pack('!III', int(option.get('iaid', 0)), int(option.get('t1', 0)), int(option.get('t2', 0))) + nested",
-                "    if code == 26:",
-                "        preferred = int(option.get('preferred_lifetime', 0))",
-                "        valid = int(option.get('valid_lifetime', 0))",
-                "        length = int(option.get('prefix_length', 0))",
-                "        prefix = ipaddress.IPv6Address(str(option['prefix'])).packed",
-                "        return struct.pack('!IIB', preferred, valid, length) + prefix",
-                "    if code == 9:",
-                "        return bytes([2]) + b'\\x00\\x00\\x00'",
-                "    if code == 19:",
-                "        return bytes([11])",
-                "    if code == 13:",
-                "        text = str(option.get('status', '')).encode('utf-8')",
-                "        return struct.pack('!H', int(option.get('status_code', 0))) + text",
-                "    if code == 20 or code == 14:",
-                "        return b''",
-                "    if code == 44:",
-                "        query_type = int(option.get('query_type_code', 1))",
-                "        return bytes([query_type]) + ipaddress.IPv6Address(str(option['address'])).packed",
-                "    if code == 45:",
-                "        return bytes.fromhex(str(option.get('client_identifier_hex', '')))",
-                "    if code == 46:",
-                "        return struct.pack('!I', int(option.get('seconds', 0)))",
-                "    if code in (100, 101, 102):",
-                "        return struct.pack('!I', int(option.get('seconds', 0)))",
-                "    return b''",
-                "",
-                "def encode_option(option):",
-                "    code = int(option.get('code', 0))",
-                "    payload = option_payload(option)",
-                "    return struct.pack('!HH', code, len(payload)) + payload",
-                "",
-                "def encode_options(options):",
-                "    return b''.join(encode_option(option) for option in options)",
-                "",
-                "def domain_wire(value):",
-                "    output = bytearray()",
-                "    for label in str(value).rstrip('.').split('.'):",
-                "        raw = label.encode('ascii')",
-                "        output.append(len(raw))",
-                "        output.extend(raw)",
-                "    output.append(0)",
-                "    return bytes(output)",
-                "",
-                "def register(plan):",
-                "    dhcp = plan.get('dhcpv6') or {}",
-                "    xid = int(dhcp.get('transaction_id', 0))",
-                "    entries_by_xid[xid] = plan",
-                "    entries_by_message.setdefault(int(dhcp.get('message_type_code', 0)), plan)",
-                "",
-                "for plan in plans:",
-                "    register(plan)",
-                "",
-                "def transaction_id_from(data):",
-                "    if len(data) < 4:",
-                "        return 0",
-                "    if data[0] not in (12, 13):",
-                "        return int.from_bytes(data[1:4], 'big')",
-                "    offset = 34",
-                "    while offset + 4 <= len(data):",
-                "        code, size = struct.unpack('!HH', data[offset:offset + 4])",
-                "        payload = data[offset + 4:offset + 4 + size]",
-                "        if code == 9 and len(payload) >= 4:",
-                "            return int.from_bytes(payload[1:4], 'big')",
-                "        offset += 4 + size",
-                "    return 0",
-                "",
-                "def response_for(data):",
-                "    if not data:",
-                "        raise ValueError('empty dhcpv6 request')",
-                "    xid = transaction_id_from(data)",
-                "    plan = entries_by_xid.get(xid) or entries_by_message.get(data[0])",
-                "    if plan is None:",
-                "        raise ValueError(f'no planned dhcpv6 response for xid {xid} message {data[0]}')",
-                "    dhcp = plan['dhcpv6']",
-                "    response_type = int(dhcp['expected_message_type_code'])",
-                "    options = encode_options(dhcp.get('expected_options', []))",
-                "    if response_type == 13:",
-                "        relay = dhcp.get('relay') or {}",
-                "        link = ipaddress.IPv6Address(str(relay.get('link_address') or plan['target_ipv6'])).packed",
-                "        peer = ipaddress.IPv6Address(str(relay.get('peer_address') or plan['source_ipv6'])).packed",
-                "        inner = bytes([2]) + int(dhcp['transaction_id']).to_bytes(3, 'big') + options",
-                "        interface_id = bytes.fromhex(str(relay.get('interface_id_hex') or ''))",
-                "        interface_opt = struct.pack('!HH', 18, len(interface_id)) + interface_id",
-                "        relay_msg = struct.pack('!HH', 9, len(inner)) + inner",
-                "        response = bytes([13, int(relay.get('hop_count', 0))]) + link + peer + interface_opt + relay_msg",
-                "    else:",
-                "        response = bytes([response_type]) + int(dhcp['transaction_id']).to_bytes(3, 'big') + options",
-                "    return response, plan",
-                "",
-                "sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)",
-                "sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)",
-                "sock.bind((bind_ip, port))",
-                "sock.settimeout(1.0)",
-                "print(json.dumps({'event': 'listening', 'bind_ip': bind_ip, 'port': port, 'planned_responses': len(entries_by_xid)}), flush=True)",
-                "while not stop:",
-                "    try:",
-                "        data, addr = sock.recvfrom(8192)",
-                "    except socket.timeout:",
-                "        continue",
-                "    try:",
-                "        response, plan = response_for(data)",
-                "        response_port = 547 if response[0] == 13 else 546",
-                "        sock.sendto(response, (addr[0], response_port))",
-                "        print(json.dumps({'event': 'answered', 'client': addr[0], 'client_port': addr[1], 'case': plan['case'], 'response_type': response[0]}, sort_keys=True), flush=True)",
-                "    except Exception as exc:",
-                "        print(json.dumps({'event': 'error', 'client': addr[0], 'error': str(exc)}), file=sys.stderr, flush=True)",
-                "sock.close()",
-                "print(json.dumps({'event': 'stopped', 'ts': time.time()}), flush=True)",
-                "PY",
-            ]
-        )
-    for port in dhcpv6_ports:
-        stdout_path = posixpath.join(artifact_root, f"dhcpv6-responder-{port}.stdout.txt")
-        stderr_path = posixpath.join(artifact_root, f"dhcpv6-responder-{port}.stderr.txt")
-        pid_path = posixpath.join(artifact_root, f"dhcpv6-responder-{port}.pid")
-        lines.extend(
-            [
-                f"check_udp6_port_free \"$dhcpv6_bind_ipv6\" {port}",
-                (
-                    f"python3 {shlex.quote(posixpath.join(artifact_root, 'dhcpv6-responder.py'))} "
-                    f"{shlex.quote(posixpath.join(artifact_root, 'dhcpv6-plans.json'))} "
-                    f"\"$dhcpv6_bind_ipv6\" {port} "
-                    f">{shlex.quote(stdout_path)} 2>{shlex.quote(stderr_path)} &"
-                ),
-                "pid=$!",
-                f"echo \"$pid\" > {shlex.quote(pid_path)}",
-                "printf '%s\\n' \"kill $pid 2>/dev/null || true\" >> \"$cleanup\"",
-                f"printf '%s\\n' \"rm -f {shlex.quote(pid_path)}\" >> \"$cleanup\"",
-                "sleep 0.5",
-                "if ! kill -0 \"$pid\" 2>/dev/null; then",
-                f"  cat {shlex.quote(stderr_path)} >&2 || true",
-                f"  echo dhcpv6_responder_{port}=failed >&2",
-                "  exit 73",
-                "fi",
-                f"echo dhcpv6_responder_{port}=running",
-            ]
-        )
-    return lines
-
-
-def dhcpv6_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, object]:
-    ipv6_unicast = capability(substrate, "ipv6_unicast", "ipv6")
-    multicast = capability(substrate, "multicast", "multicast_send", "ipv6_multicast")
-    controlled_services = capability(
-        substrate,
-        "controlled_services",
-        "controlled_service",
-    )
-    dhcpv6_service = (
-        ipv6_unicast
-        and multicast
-        and controlled_services
-        and capability_default_true(substrate, "dhcpv6_service")
-    )
-    return {
-        "dhcpv6_service": dhcpv6_service,
-        "dhcpv6_relay_topology": (
-            dhcpv6_service
-            and capability_default_true(substrate, "dhcpv6_relay_topology")
-        ),
-    }
-
-
 register(
     ProtocolPlugin(
         name="dhcpv6",
@@ -1416,10 +893,6 @@ register(
         planned_only_cases=_DHCPV6_PLANNED_ONLY_CASES,
         profile_counts={},
         stimulus_endpoint_cases=frozenset(),
-        target_service=dhcpv6_target_service_contribution,
-        setup_script=None,
-        rewrite_endpoint_addresses=None,
         failure_reasons=None,
-        lab_capabilities=dhcpv6_lab_capabilities,
     )
 )

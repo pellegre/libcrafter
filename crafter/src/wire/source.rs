@@ -9,7 +9,7 @@ use super::Result;
 
 /// Packet-shaped input for sniffers and inbound transform pipelines.
 ///
-/// Implementers may read from pcap files, live interfaces, provider endpoints,
+/// Implementers may read from pcap files, live interfaces, external endpoints,
 /// radio backends, or in-memory fixtures. Source identity is intentionally not
 /// part of the required contract; record metadata carries origin details when a
 /// backend has them.

@@ -444,7 +444,7 @@ fn main() -> crafter::Result<()> {
     println!("{plan:?}");
 
     // Live: transmit on an already-configured monitor interface. Only run this
-    // behind the project's explicit live gate on an isolated, authorized lab.
+    // only through externally authorized execution tooling.
     // send_packet(&packet, SendOptions::new()
     //     .iface("dot11-monitor0")
     //     .link_layer()
@@ -461,19 +461,17 @@ missing interface fails with an interface-not-found error and transmits nothing;
 an interface that is not a usable Layer-2 channel surfaces a clear
 datalink-channel error.
 
-Live transmission is opt-in only. The default and example invocations never
-transmit; live injection requires the explicit live gate (the project's `--live`
-flag plus the isolated-lab acknowledgement and environment marker), and is not
-part of automated validation. The `dot11_beacon_inject` example demonstrates the
-full build-and-inject flow in dry-run by default and only transmits behind that
-gate:
+Live transmission is opt-in only. The default example invocation never
+transmits. The `dot11_beacon_inject` example demonstrates the packet build and
+dry-run plan:
 
 ```sh
 cargo run -p crafter --example dot11_beacon_inject
 ```
 
-Monitor-mode dongle setup and the manual injection checklist live in
-[`docs/operations/dot11-live-manual.md`](../operations/dot11-live-manual.md).
+Monitor-mode setup, channel selection, RF authorization, live invocation,
+artifact collection, and cleanup belong to external operator tooling and are
+not managed by this repository.
 
 Examples, docs, fixtures, and tests should use documentation MAC addresses from
 the `00:00:5e:00:53:00` range, documentation IP address space such as
@@ -503,9 +501,9 @@ tools/oracle/run offline --family dot11 --profile smoke --seed 1101 --count 20
 tools/oracle/run pcap --family dot11 --profile smoke --seed 1102 --count 20
 ```
 
-Provider-backed or hardware-backed live work must start with dry-run planning
+Externally executed or hardware-backed live work must start with dry-run planning
 and remain behind explicit live confirmation. Automated validation must not
-require a Wi-Fi dongle, monitor mode, root privileges, provider credentials, or
+require a Wi-Fi dongle, monitor mode, root privileges, external runner credentials, or
 real network identifiers.
 
 ## Standards and RFCs implemented

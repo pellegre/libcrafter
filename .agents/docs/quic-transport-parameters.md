@@ -10,14 +10,14 @@ later generated manifest instead of relying on model memory.
 This is a packet-primitive artifact. It records byte formats, registry policy,
 parse/build behavior, and validation boundaries. It does not define endpoint
 negotiation policy, TLS ownership, 0-RTT acceptance, application protocol
-behavior, live traffic, scanning, or provider-backed execution.
+behavior, live traffic, scanning, or externally executed execution.
 
 ## Evidence Boundary
 
 | Rule area | Evidence record |
 | --- | --- |
 | Transport parameter sequence encoding, duplicate handling, reserved grease identifiers, core parameter formats, server-only parameters, default values, and QUIC Transport Parameters registry policy | `E-RFC-9000` in `quic-manifest.md`, especially RFC 9000 Sections 7.3, 7.4, 16, 18, 18.1, 18.2, and 22.3 |
-| Current registered transport-parameter values, permanent/provisional status, registry update date, and non-default rows | `.agents/docs/quic-codepoints.md`, from IANA QUIC XML/HTML refreshed on 2026-06-25 |
+| Current registered transport-parameter values, permanent/prepareal status, registry update date, and non-default rows | `.agents/docs/quic-codepoints.md`, from IANA QUIC XML/HTML refreshed on 2026-06-25 |
 | DATAGRAM extension transport parameter `max_datagram_frame_size` | `E-RFC-9221` in `quic-manifest.md`, especially RFC 9221 Section 3 |
 | QUIC bit greasing transport parameter `grease_quic_bit` | `E-RFC-9287` in `quic-manifest.md`, especially RFC 9287 Sections 3 and 5 |
 | Compatible version negotiation transport parameter `version_information` | `E-RFC-9368` in `quic-manifest.md`, especially RFC 9368 Sections 3, 4, 8, and 10.1 |
@@ -60,7 +60,7 @@ Parse behavior:
 - For fixed-size known parameters, return a structured error when the value
   length is not byte-complete for the fixed format.
 - Preserve the raw encoded identifier, encoded length, and value bytes for
-  unknown, reserved, provisional, draft, experiment, or malformed parameters
+  unknown, reserved, prepareal, draft, experiment, or malformed parameters
   whenever the tuple itself is byte-complete.
 
 Build behavior:
@@ -106,8 +106,8 @@ For `crafter`:
 `quic-codepoints.md` records the current IANA QUIC Transport Parameters
 registry as a 62-bit QUIC varint space. Permanent registrations from `0x00`
 through `0x3f` require Standards Action or IESG Approval; permanent
-registrations above `0x3f` require Specification Required. Provisional
-registrations use Expert Review, and provisional Date field updates use First
+registrations above `0x3f` require Specification Required. Prepareal
+registrations use Expert Review, and prepareal Date field updates use First
 Come First Served. The first unassigned codepoint is Standards Action.
 
 Values of the form `31 * N + 27`, for integer values of `N`, are reserved for
@@ -324,8 +324,8 @@ Unknown parameter behavior:
 
 `quic-codepoints.md` records additional registered transport parameters that
 are non-default for this plan: unresolved multipath `initial_max_path_id`
-(`0x3e`), provisional or experiment rows such as `discard` (`0x173e`),
-`scone_supported` (`0x219e`), Google experiment rows, provisional
+(`0x3e`), prepareal or experiment rows such as `discard` (`0x173e`),
+`scone_supported` (`0x219e`), Google experiment rows, prepareal
 `min_ack_delay`, and `bdp_frame`.
 
 Until a later source-backed step selects one of those rows:

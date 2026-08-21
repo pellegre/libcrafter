@@ -1,7 +1,7 @@
 version: 1
 kind: feature
 name: mdns_multicast
-summary: Source-backed mDNS IPv4 and IPv6 multicast packet helper shapes and live-safety eligibility.
+summary: Source-backed mDNS IPv4 and IPv6 multicast packet helper shapes and persistence eligibility.
 
 layers:
   - ipv4
@@ -42,8 +42,6 @@ behaviors:
     eligibility:
       offline: eligible
       pcap: eligible
-      live: provider_gated
-      developer_host_live: false
       default_send: false
     checks:
       - ipv4_destination_is_mdns_multicast
@@ -77,8 +75,6 @@ behaviors:
     eligibility:
       offline: eligible
       pcap: eligible
-      live: provider_gated
-      developer_host_live: false
       default_send: false
     checks:
       - ipv6_destination_is_mdns_link_local_multicast
@@ -116,8 +112,8 @@ case_groups:
     cases:
       - mdns-ipv4-multicast
       - mdns-ipv6-multicast
-  - name: mdns-multicast-eligibility
-    summary: Multicast packet shapes are offline and pcap eligible; live exchange is provider-gated.
+  - name: mdns-multicast-persistence
+    summary: Multicast packet shapes are eligible for deterministic offline and pcap validation.
     byte_policy: strict_bytes
     cases:
       - mdns-ipv4-multicast
@@ -147,21 +143,12 @@ eligibility_matrix:
   - case: mdns-ipv4-multicast
     offline: eligible
     pcap: eligible
-    live: provider_gated
-    provider_required: true
-    protected_confirmation_required: true
-    developer_host_raw_send: false
   - case: mdns-ipv6-multicast
     offline: eligible
     pcap: eligible
-    live: provider_gated
-    provider_required: true
-    protected_confirmation_required: true
-    developer_host_raw_send: false
   - case: mdns-multicast-membership-management
     offline: excluded
     pcap: excluded
-    live: excluded
     reason: crate_exposes_packet_shape_only
 
 normalized_model:
@@ -187,7 +174,7 @@ normalized_model:
     - message_kind
     - questions
     - answers
-    - live_eligibility
+    - persistence_eligibility
 
 source_refs:
   - RFC 6762

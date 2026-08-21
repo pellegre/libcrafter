@@ -11,8 +11,8 @@ use std::net::Ipv4Addr;
 
 use crate::common::{
     capture_filter as common_capture_filter, decode_hex, decoded_packet_json, hex_bytes,
-    observed_response, plan_json, required_str, required_u16, send_report_json,
-    target_service_json, ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest,
+    observed_response, peer_contract_json, plan_json, required_str, required_u16, send_report_json,
+    ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest,
 };
 
 pub fn run_tls_dry_run(
@@ -46,7 +46,7 @@ pub fn run_tls_dry_run(
             "tls": tls_metadata,
             "expected_records": expected_records,
             "capture_filter": common_capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }),
     );
     let result = json!({
@@ -65,7 +65,7 @@ pub fn run_tls_dry_run(
             "tls": tls_metadata,
             "expected_records": expected_records,
             "capture_filter": common_capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }
     });
     Ok(ProbeOutcome {
@@ -129,7 +129,7 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         return filter.to_string();
     }
     if let Some(filter) =
-        object_field(plan.target_service.as_ref(), &["capture_filter"]).and_then(Value::as_str)
+        object_field(plan.peer_contract.as_ref(), &["capture_filter"]).and_then(Value::as_str)
     {
         return filter.to_string();
     }
@@ -139,8 +139,8 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
     )
 }
 
-pub fn target_service_metadata(plan: &ProbePlan) -> Value {
-    plan.target_service.clone().unwrap_or_else(|| {
+pub fn peer_contract_metadata(plan: &ProbePlan) -> Value {
+    plan.peer_contract.clone().unwrap_or_else(|| {
         json!({
             "required": true,
             "kind": "tls-controlled-service",
@@ -173,7 +173,7 @@ fn tls_plan_metadata(plan: &ProbePlan) -> Value {
         "plan": plan.tls,
         "packet_tls": packet_layer_value(plan, "tls").cloned(),
         "expected_records": expected_records_json(plan),
-        "target_service": target_service_metadata(plan),
+        "peer_contract": peer_contract_metadata(plan),
     })
 }
 
@@ -597,7 +597,7 @@ mod tests {
                 "capture_filter": "tcp and port 4433",
             },
         }));
-        plan.target_service = Some(json!({
+        plan.peer_contract = Some(json!({
             "required": true,
             "kind": "tls-controlled-service",
             "protocol": "tcp",

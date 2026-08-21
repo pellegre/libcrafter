@@ -342,18 +342,13 @@ normalized_model:
     - pdu_length_exceeds_available_payload
     - ad_length_exceeds_remaining_bytes
 
-live_boundary:
-  provider_backed: false
+hardware_boundary:
   dry_run_profile: smoke
   smoke_harness: .scratch/ble-whad-smoke
   notes:
-    - BLE advertising has no network live provider in the oracle; Hetzner,
-      QEMU, and VirtualBox validate IP/network exchanges, not BLE radio
-      traffic.
     - The smoke corpus includes BLE advertising so local-dry-run records the
-      boundary without sending packets or creating infrastructure.
-    - Real on-air BLE behavior is validated through the ignored WHAD dongle
-      smoke harness and is not committed to this repository.
+      boundary without sending packets.
+    - External operator tooling owns dongle selection and any on-air run.
 
 backend_support:
   scapy:

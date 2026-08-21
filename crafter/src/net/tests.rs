@@ -2042,7 +2042,7 @@ mod send_recv_wire_endpoint {
     use crate::net::{PacketSendRecvExt, SendRecv};
 
     #[test]
-    #[ignore = "requires root and a disposable wire endpoint"]
+    #[ignore = "requires root and an explicitly authorized live target"]
     fn send_recv_icmp_loopback_smoke() {
         let request = Ipv4::new()
             .src(Ipv4Addr::LOCALHOST)

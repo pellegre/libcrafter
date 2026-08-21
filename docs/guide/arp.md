@@ -97,14 +97,23 @@ filter, and prints a link-layer dry-run send plan without transmitting. The
 [API reference](../reference/api.md) lists the complete `Arp` constructor and
 accessor surface.
 
-## Live ARP
+## External Execution Boundary
 
-ARP is L2 traffic. It rides the generic `_requires_l2` capability gate and is
-validated live only through provider-backed QEMU or VirtualBox lab sessions,
-never through privileged raw sends from the developer host. Live runs are
-opt-in: plan first, record a skip artifact when authorization or VM
-prerequisites are absent, and only after explicit confirmation collect artifacts
-and tear the session down.
+Use the tracked deterministic validation surfaces first:
+
+```sh
+tools/oracle/run offline --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
+```
+
+These commands do not select infrastructure or send packets. Any authorized use
+of concrete interfaces, peers, radios, or targets is owned by external operator
+tooling, which supplies runtime inputs and collects artifacts. libcrafter does
+not provision machines, configure responders, manage credentials, or perform
+remote cleanup.
+
+ARP requires a concrete L2 interface; selecting and preparing that interface is outside this repository.
 
 ## Standards and RFCs implemented
 

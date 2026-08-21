@@ -155,17 +155,6 @@ supported_cases:
       - packet_bytes
       - decoded_model
 
-live_cases:
-  - name: pcap-sendpacket-plan
-    case: pcap-crafter-radiotap
-    expected_live: dry_run_only
-    required_user_action:
-      - monitor_mode_interface
-      - explicit_live_flag
-      - manual_dongle_validation
-    notes:
-      - Automated tests validate pcap file and send-plan metadata only; live injection remains manual.
-
 backend_support:
   scapy:
     status: planned

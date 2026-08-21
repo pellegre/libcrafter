@@ -222,17 +222,6 @@ normalized_model:
     - raw_bytes
     - protected_body_raw
 
-live_cases:
-  - name: radiotap-monitor-mode-plan
-    case: dot11-data-basic
-    expected_live: dry_run_only
-    required_user_action:
-      - manual_monitor_mode_interface
-      - explicit_live_flag
-      - manual_dongle_validation
-    notes:
-      - Automated oracle runs only validate dry-run send planning for IEEE 802.11 stacks.
-
 backend_support:
   scapy:
     status: planned

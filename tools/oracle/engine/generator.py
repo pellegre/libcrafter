@@ -216,8 +216,8 @@ _SCAPY_MATERIALIZED_LAYERS = {
     "zigbee_nwk",
 }
 _TLS_PROFILES = frozenset({"tls", "tls-smoke", "tls-ci"})
-_NTP_PROFILES = frozenset({"ntp-smoke", "ntp-ci", "ntp-live-dry-run"})
-_COAP_PROFILES = frozenset({"coap-smoke", "coap-ci", "coap-live-dry-run"})
+_NTP_PROFILES = frozenset({"ntp-smoke", "ntp-ci"})
+_COAP_PROFILES = frozenset({"coap-smoke", "coap-ci"})
 
 
 def load_stack_grammar(path: str | Path | None = None) -> JSONObject:
@@ -247,7 +247,9 @@ def load_stack_grammar(path: str | Path | None = None) -> JSONObject:
                 "root": stack.root,
                 "layers": list(stack.layers),
                 "coverage_cases": list(stack.coverage_cases),
-                "families": _stack_families(stack.layers, specs.roots[stack.root].families),
+                "families": _stack_families(
+                    stack.layers, specs.roots[stack.root].families
+                ),
             }
             for stack in specs.stacks.values()
         },
@@ -267,7 +269,13 @@ def load_stack_grammar(path: str | Path | None = None) -> JSONObject:
             layer.name: {
                 "name": layer.name,
                 "fields": [
-                    _layer_field_grammar(layer.raw, field.name, field.field_type, field.required, field.domains)
+                    _layer_field_grammar(
+                        layer.raw,
+                        field.name,
+                        field.field_type,
+                        field.required,
+                        field.domains,
+                    )
                     for field in layer.fields
                 ],
                 "coverage_cases": list(layer.coverage_cases),
@@ -290,11 +298,21 @@ def load_stack_grammar(path: str | Path | None = None) -> JSONObject:
                 "strict_bytes": feature.strict_bytes,
                 "malformed": feature.malformed,
                 "coverage_cases": list(feature.coverage_cases),
-                "behaviors": list(_object_list(feature.raw.get("behaviors", []), "feature.behaviors")),
-                "supported_cases": _normalize_supported_cases(
-                    _object_list(feature.raw.get("supported_cases", []), "feature.supported_cases")
+                "behaviors": list(
+                    _object_list(feature.raw.get("behaviors", []), "feature.behaviors")
                 ),
-                "live_matrix": list(_object_list(feature.raw.get("live_matrix", []), "feature.live_matrix")),
+                "supported_cases": _normalize_supported_cases(
+                    _object_list(
+                        feature.raw.get("supported_cases", []),
+                        "feature.supported_cases",
+                    )
+                ),
+                "behavior_matrix": list(
+                    _object_list(
+                        feature.raw.get("behavior_matrix", []),
+                        "feature.behavior_matrix",
+                    )
+                ),
                 "categories": _feature_categories(
                     feature.name,
                     feature.directions,
@@ -386,7 +404,9 @@ class PacketGenerator:
         backend: str = "scapy",
         grammar: Mapping[str, object] | None = None,
     ) -> None:
-        self.grammar = _json_object(load_stack_grammar() if grammar is None else grammar)
+        self.grammar = _json_object(
+            load_stack_grammar() if grammar is None else grammar
+        )
         profiles = _object(self.grammar.get("profiles"), "profiles")
         if profile not in profiles:
             raise ValueError(f"unsupported profile: {profile}")
@@ -430,7 +450,9 @@ class PacketGenerator:
         )
         stack_name = _string(selected_stack.get("name"), "stack.name")
         selected_root = _string(selected_stack.get("root"), f"stacks.{stack_name}.root")
-        stack = _string_list(selected_stack.get("layers"), f"stacks.{stack_name}.layers")
+        stack = _string_list(
+            selected_stack.get("layers"), f"stacks.{stack_name}.layers"
+        )
         stack_families = _string_list(
             selected_stack.get("families", []),
             f"stacks.{stack_name}.families",
@@ -511,7 +533,9 @@ class PacketGenerator:
         malformed = self._is_malformed_case(selected_feature, selected_case)
         if malformed:
             strict_bytes = False
-            feature_tags = list(dict.fromkeys([*feature_tags, "malformed", "non_strict_reencode"]))
+            feature_tags = list(
+                dict.fromkeys([*feature_tags, "malformed", "non_strict_reencode"])
+            )
         plan_id = plan_identifier(
             seed=self.seed,
             profile=self.profile,
@@ -568,7 +592,9 @@ class PacketGenerator:
                 **feature_metadata,
                 "selected_specs": selected_specs,
                 "strict_bytes": strict_bytes,
-                "comparison_policy": "non_strict_reencode" if malformed else "strict_reencode",
+                "comparison_policy": (
+                    "non_strict_reencode" if malformed else "strict_reencode"
+                ),
                 "reproduction": reproduction,
             },
         )
@@ -623,7 +649,11 @@ class PacketGenerator:
 
         families = _object(self.grammar.get("families"), "families")
         profile_family_names = set(self._family_weights())
-        if family is not None and family not in families and family not in profile_family_names:
+        if (
+            family is not None
+            and family not in families
+            and family not in profile_family_names
+        ):
             all_families = {
                 item
                 for stack in _object(self.grammar.get("stacks"), "stacks").values()
@@ -654,7 +684,9 @@ class PacketGenerator:
                 continue
             if case is not None and case not in coverage_cases:
                 continue
-            if case is not None and not self._case_supported_in_direction(case, direction):
+            if case is not None and not self._case_supported_in_direction(
+                case, direction
+            ):
                 continue
             if (
                 case is None
@@ -666,7 +698,9 @@ class PacketGenerator:
             ):
                 continue
             if feature_spec is not None:
-                feature_layers = _string_list(feature_spec.get("layers"), "feature.layers")
+                feature_layers = _string_list(
+                    feature_spec.get("layers"), "feature.layers"
+                )
                 feature_directions = _string_list(
                     feature_spec.get("directions"),
                     "feature.directions",
@@ -675,7 +709,10 @@ class PacketGenerator:
                     continue
                 if not _feature_stack_compatible(feature, stack_layers):
                     continue
-                if direction not in feature_directions and "roundtrip" not in feature_directions:
+                if (
+                    direction not in feature_directions
+                    and "roundtrip" not in feature_directions
+                ):
                     continue
             if (
                 feature is None
@@ -695,7 +732,8 @@ class PacketGenerator:
                 and case is None
                 and root is None
                 and family is None
-                and self.profile in {
+                and self.profile
+                in {
                     "dot11-smoke",
                     "radiotap-smoke",
                     "dot11-pcap",
@@ -713,7 +751,12 @@ class PacketGenerator:
                 profile_families = set(profile_family_names)
                 if not profile_families.intersection(stack_families):
                     continue
-            if feature is None and case is None and self.profile == "smoke" and "dhcpv4" in stack_layers:
+            if (
+                feature is None
+                and case is None
+                and self.profile == "smoke"
+                and "dhcpv4" in stack_layers
+            ):
                 continue
             if (
                 feature is None
@@ -823,7 +866,9 @@ class PacketGenerator:
             candidates.append(stack)
         return candidates
 
-    def _stack_deck(self, stacks: Sequence[JSONObject], *, direction: str) -> list[JSONObject]:
+    def _stack_deck(
+        self, stacks: Sequence[JSONObject], *, direction: str
+    ) -> list[JSONObject]:
         if self.profile in _DHCPV6_SMOKE_PROFILES:
             entries_by_case: dict[str, list[JSONObject]] = {}
             for stack in stacks:
@@ -836,14 +881,22 @@ class PacketGenerator:
                         continue
                     if not self._case_supported_in_direction(case, direction):
                         continue
-                    entries_by_case.setdefault(case, []).append({**stack, "coverage_cases": [case]})
+                    entries_by_case.setdefault(case, []).append(
+                        {**stack, "coverage_cases": [case]}
+                    )
             if entries_by_case:
                 primary: list[JSONObject] = []
                 secondary: list[JSONObject] = []
                 for offset, entries in enumerate(entries_by_case.values()):
                     chosen = offset % len(entries)
                     primary.append(entries[chosen])
-                    secondary.extend([entry for index, entry in enumerate(entries) if index != chosen])
+                    secondary.extend(
+                        [
+                            entry
+                            for index, entry in enumerate(entries)
+                            if index != chosen
+                        ]
+                    )
                 return [*primary, *secondary]
         if self.profile == "ipv6-enrichment":
             deck = []
@@ -894,13 +947,17 @@ class PacketGenerator:
         family_weights = self._family_weights()
         feature_weights = self._profile_feature_weights()
         stack_families = _string_list(stack.get("families", []), "stack.families")
-        coverage_cases = _string_list(stack.get("coverage_cases", []), "stack.coverage_cases")
+        coverage_cases = _string_list(
+            stack.get("coverage_cases", []), "stack.coverage_cases"
+        )
         weight = sum(family_weights.get(family, 0) for family in stack_families)
         if weight <= 0:
             weight = 1
 
         categories = _case_categories(coverage_cases)
-        category_weight = max((feature_weights.get(category, 0) for category in categories), default=1)
+        category_weight = max(
+            (feature_weights.get(category, 0) for category in categories), default=1
+        )
         return max(1, weight * max(1, category_weight))
 
     def _family_weights(self) -> dict[str, int]:
@@ -911,14 +968,18 @@ class PacketGenerator:
             raise ValueError(f"profiles.{self.profile}.family_weights is required")
 
         weights: dict[str, int] = {}
-        if not isinstance(raw_weights, Sequence) or isinstance(raw_weights, (str, bytes)):
+        if not isinstance(raw_weights, Sequence) or isinstance(
+            raw_weights, (str, bytes)
+        ):
             raise ValueError("family_weights must be a list")
         for item in raw_weights:
             item_obj = _object(item, "family_weights item")
             name = item_obj.get("name")
             weight = item_obj.get("weight")
             if not isinstance(name, str) or not isinstance(weight, int):
-                raise ValueError("family_weights entries require string name and integer weight")
+                raise ValueError(
+                    "family_weights entries require string name and integer weight"
+                )
             weights[name] = weight
         return weights
 
@@ -1007,7 +1068,9 @@ class PacketGenerator:
         family: str | None,
         direction: str,
     ) -> str:
-        coverage_cases = _string_list(stack.get("coverage_cases", []), "stack.coverage_cases")
+        coverage_cases = _string_list(
+            stack.get("coverage_cases", []), "stack.coverage_cases"
+        )
         if feature is None and self.profile == "ipv4-enrichment":
             # Focused IPv4 profile: restrict to the IPv4 layer's declared
             # enrichment cases so the run stays data-driven from layers/ipv4.yaml.
@@ -1016,64 +1079,89 @@ class PacketGenerator:
             # Focused profile: restrict the stack's own coverage cases to the
             # tcp_header set so case selection never falls through to the other
             # cases (ipv4-tcp-syn, tcp-options*) the IPv4/IPv6 TCP stacks declare.
-            coverage_cases = [case for case in coverage_cases if _has_tcp_header_case([case])]
+            coverage_cases = [
+                case for case in coverage_cases if _has_tcp_header_case([case])
+            ]
         if feature is None and self.profile == "tcp-options":
             # Focused profile: restrict to the tcp-option-* single-option cases so
             # case selection never falls through to the broad option-list cases
             # (ipv4-tcp-syn, tcp-options, tcp-header-*) the TCP stacks declare.
-            coverage_cases = [case for case in coverage_cases if _has_tcp_options_case([case])]
+            coverage_cases = [
+                case for case in coverage_cases if _has_tcp_options_case([case])
+            ]
         if feature is None and self.profile == "tcp-smoke":
             # Representative TCP smoke set: restrict to the union of the focused
             # tcp-header-* and tcp-option-* cases so case selection stays on TCP
             # behavior and never falls through to unrelated cases.
-            coverage_cases = [case for case in coverage_cases if _has_tcp_smoke_case([case])]
+            coverage_cases = [
+                case for case in coverage_cases if _has_tcp_smoke_case([case])
+            ]
         if feature is None and self.profile == "bgp-smoke":
             # Focused BGP smoke set: keep case selection on BGP message cases so
             # a default/raw payload case is never paired with a BGP stack.
-            coverage_cases = [case for case in coverage_cases if _is_bgp_smoke_case(case)]
+            coverage_cases = [
+                case for case in coverage_cases if _is_bgp_smoke_case(case)
+            ]
         if feature is None and self.profile == "rip-smoke":
             # Focused RIP/RIPng smoke set: keep case selection on the RIP and
             # RIPng message cases so a default/raw payload case is never paired
             # with a RIP/RIPng stack.
-            coverage_cases = [case for case in coverage_cases if _is_rip_smoke_case(case)]
+            coverage_cases = [
+                case for case in coverage_cases if _is_rip_smoke_case(case)
+            ]
         if feature is None and self.profile == "ospf-smoke":
             # Focused OSPF smoke set: keep case selection on the five OSPFv2
             # packet-type cases so a default/raw payload case is never paired
             # with the ipv4/ospf stack.
-            coverage_cases = [case for case in coverage_cases if _is_ospf_smoke_case(case)]
+            coverage_cases = [
+                case for case in coverage_cases if _is_ospf_smoke_case(case)
+            ]
         if feature is None and self.profile == "sctp-smoke":
             # Focused SCTP smoke set: keep case selection on the currently
             # executable SCTP DATA cases so later chunk/pcap contracts do not
             # enter this first Scapy parity run.
-            coverage_cases = [case for case in coverage_cases if _is_sctp_smoke_case(case)]
+            coverage_cases = [
+                case for case in coverage_cases if _is_sctp_smoke_case(case)
+            ]
         if feature is None and self.profile == "sctp-pcap":
             # Focused SCTP pcap set: keep case selection on stack-declared pcap
             # cases so pcap planning does not draw the DATA smoke cases.
-            coverage_cases = [case for case in coverage_cases if _is_sctp_pcap_case(case)]
+            coverage_cases = [
+                case for case in coverage_cases if _is_sctp_pcap_case(case)
+            ]
         if feature is None and self.profile in _DHCPV6_SMOKE_PROFILES:
             # Focused DHCPv6 smoke set: keep selection on DHCPv6 packet cases
             # so unrelated IPv6/UDP features never attach to the same stack.
-            coverage_cases = [case for case in coverage_cases if _is_dhcpv6_smoke_case(case)]
+            coverage_cases = [
+                case for case in coverage_cases if _is_dhcpv6_smoke_case(case)
+            ]
         if feature is None and self.profile == "ipv6-enrichment":
             # Focused IPv6 enrichment profile: restrict to stack-declared
             # base/unknown-next-header and strict-byte extension cases. This
             # avoids the generic feature expansion below, which is too broad for
             # extension chains because any ipv6_routing stack can otherwise draw
             # cases whose terminal layer belongs to a different stack.
-            coverage_cases = [case for case in coverage_cases if _is_ipv6_enrichment_case(case)]
+            coverage_cases = [
+                case for case in coverage_cases if _is_ipv6_enrichment_case(case)
+            ]
         if feature is None and self.profile in _IP_FRAGMENT_SMOKE_PROFILES:
             # Focused fragmentation profile: keep case selection on the stack's
             # own pcap-eligible fragment cases. Transform feature contract cases
             # are many-record stream cases and must not be paired with unrelated
             # packet stacks by the generic feature expansion below.
-            coverage_cases = [case for case in coverage_cases if _is_ip_fragment_smoke_case(case)]
+            coverage_cases = [
+                case for case in coverage_cases if _is_ip_fragment_smoke_case(case)
+            ]
         if feature is not None:
             feature_spec = self._feature_spec(feature)
-            feature_cases = _string_list(feature_spec.get("coverage_cases"), "feature.coverage_cases")
+            feature_cases = _string_list(
+                feature_spec.get("coverage_cases"), "feature.coverage_cases"
+            )
             matching = [
                 case
                 for case in coverage_cases
-                if case in feature_cases and self._case_supported_in_direction(case, direction)
+                if case in feature_cases
+                and self._case_supported_in_direction(case, direction)
             ]
             if matching:
                 return weighted_choice(rng, tuple((case, 1) for case in matching))
@@ -1091,7 +1179,9 @@ class PacketGenerator:
         for stack_case in coverage_cases:
             if not self._case_supported_in_direction(stack_case, direction):
                 continue
-            weight = self._case_weight(stack_case, categories=_case_categories([stack_case]))
+            weight = self._case_weight(
+                stack_case, categories=_case_categories([stack_case])
+            )
             if weight > 0:
                 choices.append((stack_case, weight))
         stack_layers = _string_list(stack.get("layers"), "stack.layers")
@@ -1211,7 +1301,9 @@ class PacketGenerator:
                 continue
             if family == "coap" and not feature_name.startswith("coap_"):
                 continue
-            categories = _string_list(feature_spec.get("categories", []), "feature.categories")
+            categories = _string_list(
+                feature_spec.get("categories", []), "feature.categories"
+            )
             for feature_case in self._compatible_feature_cases(
                 stack=stack_layers,
                 feature=feature_name,
@@ -1261,7 +1353,9 @@ class PacketGenerator:
             if family == "coap" and not name.startswith("coap_"):
                 continue
             categories = _string_list(spec.get("categories", []), "feature.categories")
-            weight = max((feature_weights.get(category, 0) for category in categories), default=0)
+            weight = max(
+                (feature_weights.get(category, 0) for category in categories), default=0
+            )
             if weight > 0:
                 choices.append((name, weight))
         if not choices:
@@ -1277,7 +1371,9 @@ class PacketGenerator:
     ) -> list[tuple[str, JSONObject]]:
         features = _object(self.grammar.get("features", {}), "features")
         output: list[tuple[str, JSONObject]] = []
-        for name, feature in self._matching_features_for_stack(stack=stack, direction=direction):
+        for name, feature in self._matching_features_for_stack(
+            stack=stack, direction=direction
+        ):
             cases = _string_list(
                 feature.get("coverage_cases", []),
                 f"features.{name}.coverage_cases",
@@ -1313,7 +1409,10 @@ class PacketGenerator:
             # tcp_header and tcp_options features are auto-sampled so the seeded
             # selection materializes a mix of TCP header and TCP option cases
             # without mixing in unrelated features.
-            if self.profile == "tcp-smoke" and name not in ("tcp_header", "tcp_options"):
+            if self.profile == "tcp-smoke" and name not in (
+                "tcp_header",
+                "tcp_options",
+            ):
                 continue
             # The BGP smoke profile auto-samples only BGP feature specs, keeping
             # pcap/IPsec/fragment features off the BGP TCP stacks.
@@ -1379,7 +1478,9 @@ class PacketGenerator:
                 continue
             feature = _object(raw_feature, f"features.{name}")
             layers = _string_list(feature.get("layers"), f"features.{name}.layers")
-            directions = _string_list(feature.get("directions"), f"features.{name}.directions")
+            directions = _string_list(
+                feature.get("directions"), f"features.{name}.directions"
+            )
             if not _layers_cover_feature(stack, layers):
                 continue
             if not _feature_stack_compatible(name, stack):
@@ -1405,7 +1506,9 @@ class PacketGenerator:
             return []
         if direction not in directions and "roundtrip" not in directions:
             return []
-        cases = _string_list(feature_spec.get("coverage_cases", []), "feature.coverage_cases")
+        cases = _string_list(
+            feature_spec.get("coverage_cases", []), "feature.coverage_cases"
+        )
         if feature == "ipv6_fragment_routing":
             return [
                 case
@@ -1425,9 +1528,7 @@ class PacketGenerator:
                 if self._case_supported_in_direction(case, direction)
             ]
         return [
-            case
-            for case in cases
-            if self._case_supported_in_direction(case, direction)
+            case for case in cases if self._case_supported_in_direction(case, direction)
         ]
 
     def _case_weight(self, case: str, *, categories: Sequence[str]) -> int:
@@ -1456,7 +1557,9 @@ class PacketGenerator:
 
     def _feature_categories(self, feature: str) -> list[str]:
         feature_spec = self._feature_spec(feature)
-        return _string_list(feature_spec.get("categories", []), f"features.{feature}.categories")
+        return _string_list(
+            feature_spec.get("categories", []), f"features.{feature}.categories"
+        )
 
     def _supported_case_index(self) -> dict[str, JSONObject]:
         """Map each declared supported case to its directions and byte policy.
@@ -1492,7 +1595,9 @@ class PacketGenerator:
                 byte_policy = raw_case.get("byte_policy")
                 index[name] = {
                     "directions": list(directions),
-                    "byte_policy": byte_policy if isinstance(byte_policy, str) else None,
+                    "byte_policy": (
+                        byte_policy if isinstance(byte_policy, str) else None
+                    ),
                     "contract_only": raw_case.get("contract_only") is True,
                 }
         self._supported_case_index_cache = index  # type: ignore[attr-defined]
@@ -1578,12 +1683,16 @@ class PacketGenerator:
                 }
             elif layer == "ipv6_hop_by_hop":
                 sampled = {
-                    "next_header": _ipv6_next_header_for_stack(stack, "ipv6_hop_by_hop"),
+                    "next_header": _ipv6_next_header_for_stack(
+                        stack, "ipv6_hop_by_hop"
+                    ),
                     "options": _ipv6_extension_options_for_case(layer, case),
                 }
             elif layer == "ipv6_destination_options":
                 sampled = {
-                    "next_header": _ipv6_next_header_for_stack(stack, "ipv6_destination_options"),
+                    "next_header": _ipv6_next_header_for_stack(
+                        stack, "ipv6_destination_options"
+                    ),
                     "options": _ipv6_extension_options_for_case(layer, case),
                 }
             elif layer == "ipv6_routing":
@@ -1632,7 +1741,9 @@ class PacketGenerator:
         if feature is None:
             return None
         feature_spec = self._feature_spec(feature)
-        behaviors = _object_list(feature_spec.get("behaviors", []), f"features.{feature}.behaviors")
+        behaviors = _object_list(
+            feature_spec.get("behaviors", []), f"features.{feature}.behaviors"
+        )
         names = [
             _string(behavior.get("name"), f"features.{feature}.behaviors.name")
             for behavior in behaviors
@@ -1650,7 +1761,11 @@ class PacketGenerator:
             # tcp_header cases are named tcp-header-<behavior>; match the behavior
             # whose id is the exact case suffix so tcp-header-syn-ack selects the
             # syn-ack behavior rather than the shorter syn substring match.
-            suffix = case_id[len("tcp-header-"):] if case_id.startswith("tcp-header-") else case_id
+            suffix = (
+                case_id[len("tcp-header-") :]
+                if case_id.startswith("tcp-header-")
+                else case_id
+            )
             for name in names:
                 if _identifier_part(name) == suffix:
                     return name
@@ -1662,12 +1777,14 @@ class PacketGenerator:
             # (tcp-options*, tcp-all-flags-reserved-offset) keep the existing
             # substring matching below and never select a focused behavior.
             if case_id.startswith("tcp-option-"):
-                suffix = case_id[len("tcp-option-"):]
+                suffix = case_id[len("tcp-option-") :]
                 for name in names:
                     if _identifier_part(name) == suffix:
                         return name
             else:
-                names = [name for name in names if not _is_focused_tcp_option_behavior(name)]
+                names = [
+                    name for name in names if not _is_focused_tcp_option_behavior(name)
+                ]
         for name in names:
             name_id = _identifier_part(name)
             if feature == "udp_options":
@@ -1731,10 +1848,10 @@ class PacketGenerator:
     ) -> str | None:
         """Fill ICMP rest-of-header and type-specific body fields per behavior.
 
-        Driven by the live coverage matrix in the feature spec rather than by
+        Driven by the behavior matrix in the feature spec rather than by
         backend-specific special cases: each matrix entry names a coverage case,
         its ICMP type, the representative code or pair, and (via the behavior
-        name) which rest-of-header body the live exchange exercises. Only the
+        name) which rest-of-header body the case exercises. Only the
         fields a given behavior needs are added, and only deterministic, well
         formed bytes both backends can emit and parse are sampled.
         """
@@ -1743,8 +1860,8 @@ class PacketGenerator:
             return None
         feature_spec = self._feature_spec(feature)
         matrix = _object_list(
-            feature_spec.get("live_matrix", []),
-            f"features.{feature}.live_matrix",
+            feature_spec.get("behavior_matrix", []),
+            f"features.{feature}.behavior_matrix",
         )
         if not matrix:
             return None
@@ -1766,7 +1883,9 @@ class PacketGenerator:
         return malformed
 
     def _validate_layer_backend_support(self, layer: str, spec: JSONObject) -> None:
-        support = _object(spec.get("backend_support"), f"layers.{layer}.backend_support")
+        support = _object(
+            spec.get("backend_support"), f"layers.{layer}.backend_support"
+        )
         for backend_name in (self.backend, SUPPORTED_LAYER_BACKEND):
             if backend_name not in support:
                 raise ValueError(
@@ -1776,7 +1895,10 @@ class PacketGenerator:
                 support[backend_name],
                 f"layers.{layer}.backend_support.{backend_name}",
             )
-            status = _string(entry.get("status"), f"layers.{layer}.backend_support.{backend_name}.status")
+            status = _string(
+                entry.get("status"),
+                f"layers.{layer}.backend_support.{backend_name}.status",
+            )
             if status == "planned":
                 raise ValueError(
                     f"spec error: layer {layer} is planned, not supported, for {backend_name}"
@@ -1858,7 +1980,9 @@ class PacketGenerator:
         field_name: str,
         field_spec: JSONObject,
     ) -> list[object]:
-        default_domains = _object_list(field_spec.get("domains"), f"layers.{layer}.{field_name}.domains")
+        default_domains = _object_list(
+            field_spec.get("domains"), f"layers.{layer}.{field_name}.domains"
+        )
         profile_domains = field_spec.get("profile_domains")
         if isinstance(profile_domains, Mapping) and self.profile in profile_domains:
             return _object_list(
@@ -1916,13 +2040,19 @@ def _field_specs(spec: JSONObject, layer: str) -> list[JSONObject]:
     return [_object(field, f"layers.{layer}.fields item") for field in raw_fields]
 
 
-def _domain_weight(ctx: _SamplingContext, layer: str, field_name: str, domain: object) -> int:
+def _domain_weight(
+    ctx: _SamplingContext, layer: str, field_name: str, domain: object
+) -> int:
     if field_name == "options" and layer == "ipv4":
         if ctx.feature == "ipv4_options" or "ipv4-options" in ctx.case:
             return max(1, ctx.feature_weights.get("boundary", 1))
         return 0
     if field_name == "options" and layer == "tcp":
-        if ctx.feature == "tcp_options" or "tcp-options" in ctx.case or ctx.case == "tcp-all-flags-reserved-offset":
+        if (
+            ctx.feature == "tcp_options"
+            or "tcp-options" in ctx.case
+            or ctx.case == "tcp-all-flags-reserved-offset"
+        ):
             return max(1, ctx.feature_weights.get("boundary", 1))
         return 0
     if field_name == "options" and layer == "udp":
@@ -2022,7 +2152,7 @@ def _icmp_live_matrix_entry(
     matrix: Sequence[object],
     case: str,
 ) -> JSONObject | None:
-    """Return the live-matrix entry whose coverage case matches ``case``."""
+    """Return the behavior-matrix entry whose coverage case matches ``case``."""
 
     for raw_entry in matrix:
         if not isinstance(raw_entry, Mapping):
@@ -2069,7 +2199,9 @@ def _apply_icmp_live_entry(
     # Representative legacy/raw-compatible types likewise rotate over the named
     # representative set.
     representative = entry.get("representative_types")
-    if isinstance(representative, Sequence) and not isinstance(representative, (str, bytes)):
+    if isinstance(representative, Sequence) and not isinstance(
+        representative, (str, bytes)
+    ):
         picked = _icmp_live_pick(rng, representative)
         if picked is not None:
             icmp_type = str(picked)
@@ -2088,7 +2220,9 @@ def _apply_icmp_live_entry(
         if isinstance(picked_code, str) and picked_code in _ICMP_DEST_UNREACHABLE_CODES:
             icmp["code"] = _ICMP_DEST_UNREACHABLE_CODES[picked_code]
 
-    _apply_icmp_live_body(rng, icmp, behavior=behavior, icmp_type=icmp_type, entry=entry)
+    _apply_icmp_live_body(
+        rng, icmp, behavior=behavior, icmp_type=icmp_type, entry=entry
+    )
     return behavior
 
 
@@ -2207,7 +2341,11 @@ def _udp_options_metadata(
     behavior: str | None,
 ) -> JSONObject:
     key = f"{case} {behavior or ''}".replace("_", "-")
-    payload_hex = _payload_hex_from_fields(fields.get("payload", {})) if "payload" in fields else None
+    payload_hex = (
+        _payload_hex_from_fields(fields.get("payload", {}))
+        if "payload" in fields
+        else None
+    )
     checksum_status = "generated"
     if "ipv4-zero-checksum" in key:
         checksum_status = "ipv4_no_checksum"
@@ -2237,9 +2375,11 @@ def _udp_options_metadata(
             "surplus_excluded_from_udp_checksum": surplus,
         },
         "logical_fields": {
-            "application_payload": "fields.payload.hex"
-            if payload_hex is not None
-            else "materialized_udp_payload",
+            "application_payload": (
+                "fields.payload.hex"
+                if payload_hex is not None
+                else "materialized_udp_payload"
+            ),
             "udp_options": "fields.udp.options",
         },
     }
@@ -2274,8 +2414,8 @@ def _has_tcp_options_case(cases: Sequence[str]) -> bool:
 def _has_tcp_smoke_case(cases: Sequence[str]) -> bool:
     """Whether ``cases`` contains a TCP smoke coverage case.
 
-    The tcp-smoke profile is the representative TCP smoke set used by
-    provider-backed dry-run validation. It keeps stack and case selection on the
+    The tcp-smoke profile is the representative deterministic TCP set. It keeps
+    stack and case selection on the
     union of the focused ``tcp-header-*`` and ``tcp-option-*`` cases declared by
     the IPv4/IPv6 TCP stacks, so a single small run materializes a mix of TCP
     header and TCP option cases without falling through to unrelated stacks.
@@ -2352,19 +2492,27 @@ def _has_sctp_pcap_case(cases: Sequence[str]) -> bool:
     return any(_is_sctp_pcap_case(case) for case in cases)
 
 
-def _ipv4_enrichment_cases(cases: Sequence[str], grammar: Mapping[str, object]) -> list[str]:
+def _ipv4_enrichment_cases(
+    cases: Sequence[str], grammar: Mapping[str, object]
+) -> list[str]:
     declared = _layer_coverage_cases(grammar, "ipv4")
     return [case for case in cases if case in declared]
 
 
-def _has_ipv4_enrichment_case(cases: Sequence[str], grammar: Mapping[str, object]) -> bool:
+def _has_ipv4_enrichment_case(
+    cases: Sequence[str], grammar: Mapping[str, object]
+) -> bool:
     return bool(_ipv4_enrichment_cases(cases, grammar))
 
 
 def _layer_coverage_cases(grammar: Mapping[str, object], layer: str) -> set[str]:
     layers = _object(grammar.get("layers"), "layers")
     layer_spec = _object(layers.get(layer), f"layers.{layer}")
-    return set(_string_list(layer_spec.get("coverage_cases", []), f"layers.{layer}.coverage_cases"))
+    return set(
+        _string_list(
+            layer_spec.get("coverage_cases", []), f"layers.{layer}.coverage_cases"
+        )
+    )
 
 
 _IPV6_ENRICHMENT_CASES = frozenset(
@@ -2539,7 +2687,10 @@ def run_self_checks() -> None:
     ipv4_address = ipaddress.IPv4Address(documentation_ipv4(random.Random(1)))
     if not any(ipv4_address in network for network in _IPV4_DOCUMENTATION_NETWORKS):
         raise AssertionError("IPv4 helper left documentation space")
-    if ipaddress.IPv6Address(documentation_ipv6(random.Random(1))) not in _IPV6_DOCUMENTATION_NETWORK:
+    if (
+        ipaddress.IPv6Address(documentation_ipv6(random.Random(1)))
+        not in _IPV6_DOCUMENTATION_NETWORK
+    ):
         raise AssertionError("IPv6 helper left documentation space")
     if not documentation_mac(random.Random(1)).startswith("00:00:5e:00:53:"):
         raise AssertionError("MAC helper left documentation block")
@@ -2554,13 +2705,23 @@ def run_self_checks() -> None:
     if first == third:
         raise AssertionError("different seeds produced identical plans")
     plan_id = first["metadata"]["plan_id"]
-    if not isinstance(plan_id, str) or "seed-1/profile-smoke/index-000000/" not in plan_id:
+    if (
+        not isinstance(plan_id, str)
+        or "seed-1/profile-smoke/index-000000/" not in plan_id
+    ):
         raise AssertionError("plan identifier is missing reproduction coordinates")
     ci_stacks = {
-        PacketGenerator(seed=12345, profile="ci").generate(index=item).metadata["stack_name"]
+        PacketGenerator(seed=12345, profile="ci")
+        .generate(index=item)
+        .metadata["stack_name"]
         for item in range(200)
     }
-    expected_stacks = {"ethernet_arp", "ipv4_tcp_payload", "ipv6_icmpv6", "vlan_ipv4_udp"}
+    expected_stacks = {
+        "ethernet_arp",
+        "ipv4_tcp_payload",
+        "ipv6_icmpv6",
+        "vlan_ipv4_udp",
+    }
     if not expected_stacks.intersection(ci_stacks):
         raise AssertionError("ci profile did not sample stack specs")
 
@@ -2648,11 +2809,12 @@ def _feature_categories(
 ) -> list[str]:
     categories = ["malformed" if malformed else "baseline"]
     tokens = " ".join((name, *cases)).replace("_", "-")
-    if any(direction.startswith("live") for direction in directions):
-        categories.append("live")
     if "pcap" in tokens:
         categories.append("pcap")
-    if any(token in tokens for token in ("boundary", "option", "fragment", "routing", "error")):
+    if any(
+        token in tokens
+        for token in ("boundary", "option", "fragment", "routing", "error")
+    ):
         categories.append("boundary")
     return list(dict.fromkeys(categories))
 
@@ -2666,9 +2828,10 @@ def _case_categories(cases: Sequence[str]) -> list[str]:
         categories.append("malformed")
     if "pcap" in tokens:
         categories.append("pcap")
-    if "live" in tokens:
-        categories.append("live")
-    if any(token in tokens for token in ("boundary", "options", "fragment", "routing", "errors")):
+    if any(
+        token in tokens
+        for token in ("boundary", "options", "fragment", "routing", "errors")
+    ):
         categories.append("boundary")
     return list(dict.fromkeys(categories))
 
@@ -2691,7 +2854,9 @@ def _layers_cover_feature(stack: Sequence[str], feature_layers: Sequence[str]) -
             return False
         feature_set.difference_update({"udp", "tcp"})
     if "ipv6" in feature_set and feature_set.intersection(ipv6_extension_layers):
-        return "ipv6" in stack_set and bool(stack_set.intersection(ipv6_extension_layers))
+        return "ipv6" in stack_set and bool(
+            stack_set.intersection(ipv6_extension_layers)
+        )
     return feature_set.issubset(stack_set)
 
 
@@ -2706,32 +2871,37 @@ def _feature_stack_compatible(feature: str | None, stack: Sequence[str]) -> bool
     return next_index < len(stack) and stack[next_index] == "payload"
 
 
-def _ipv6_extension_cases_for_stack(stack: Sequence[str], cases: Sequence[str]) -> list[str]:
+def _ipv6_extension_cases_for_stack(
+    stack: Sequence[str], cases: Sequence[str]
+) -> list[str]:
     stack_set = set(stack)
     output: list[str] = []
     for case in cases:
         normalized = case.replace("_", "-")
         if (
-            ("hop-by-hop" in normalized or "option-metadata" in normalized)
-            and "ipv6_hop_by_hop" in stack_set
-        ):
+            "hop-by-hop" in normalized or "option-metadata" in normalized
+        ) and "ipv6_hop_by_hop" in stack_set:
             output.append(case)
         elif (
-            ("destination-options" in normalized or "option-metadata" in normalized)
-            and "ipv6_destination_options" in stack_set
-        ):
+            "destination-options" in normalized or "option-metadata" in normalized
+        ) and "ipv6_destination_options" in stack_set:
             output.append(case)
         elif "ipv6-fragment" in normalized and "ipv6_fragment" in stack_set:
             output.append(case)
         elif (
-            any(token in normalized for token in ("routing", "segment", "mobile", "extension-chain"))
+            any(
+                token in normalized
+                for token in ("routing", "segment", "mobile", "extension-chain")
+            )
             and "ipv6_routing" in stack_set
         ):
             output.append(case)
     return output
 
 
-def _udp_option_cases_for_stack(stack: Sequence[str], cases: Sequence[str]) -> list[str]:
+def _udp_option_cases_for_stack(
+    stack: Sequence[str], cases: Sequence[str]
+) -> list[str]:
     stack_set = set(stack)
     if "udp" not in stack_set or "payload" not in stack_set:
         return []

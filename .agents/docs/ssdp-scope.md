@@ -53,7 +53,7 @@ It can be implemented after the minimal layer is stable:
 | Multicast helpers | Add IPv4 and IPv6 SSDP multicast constants and packet helpers backed by UPnP, IANA, and multicast RFC evidence. Helpers may assemble documentation-safe packet stacks, but they must not manage multicast membership, routing policy, retries, or live sends. |
 | Oracle | Add SSDP layer and feature specs, generator support, backend normalization, malformed cases, pcap cases, and offline/persisted validation records. Reference-backend gaps are recorded explicitly instead of being hidden. |
 | Probe | Add controlled SSDP behavior probes as dry-run-first generated-tool validation. Probe code may plan discovery-like exchanges but must keep target roles, capability assumptions, and artifacts outside the crate API. |
-| Lab dry-runs | Add provider-backed lab, oracle, and probe dry-run plans for disposable endpoint roles. Any real packet exchange remains a protected manual workflow with explicit confirmation, artifact collection, and teardown. |
+| External qualification | Consume deterministic plans through operator-supplied tooling. Any real packet exchange requires explicit confirmation, artifact collection, and teardown outside this repository. |
 | Examples | Add packet construction, decode, and dry-run send-plan examples that use `crafter::prelude::*`, documentation address space, and no live defaults. |
 | Docs | Add user-facing SSDP packet guide material under `docs/` and generated-tool operating guidance under `.agents/docs/`, keeping source authority and implementation status traceable. |
 
@@ -72,13 +72,12 @@ public source document and the SSDP source manifest authorize the new behavior.
   stack.
 - No multicast membership management, interface selection policy, route
   management, TTL or hop-limit policy engine, or live transmission default.
-- No automatic live traffic from examples, tests, oracle, probe, or lab steps;
-  live validation requires explicit protected confirmation and disposable
-  provider-backed endpoints.
+- No automatic live traffic from examples, tests, oracle, or probe plans; live
+  validation requires explicit external authorization and bounded execution.
 - No rejection of unknown but structurally valid SSDP methods, status lines,
   headers, extension values, URI-like values, duplicate fields, or body bytes
   solely because no typed helper knows them.
-- No tracked credentials, public provider addresses, live host identifiers,
+- No tracked credentials, public external runner addresses, live host identifiers,
   sensitive packet captures, local absolute paths, or private helper names in
   SSDP source, docs, fixtures, or validation records.
 - No implementation of ambiguous draft-only behavior, obsolete global-scope

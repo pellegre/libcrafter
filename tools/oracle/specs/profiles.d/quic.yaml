@@ -17,7 +17,6 @@ profiles:
       boundary: 4
       malformed: 0
       pcap: 1
-      live: 1
   - name: quic-ci
     purpose: deterministic QUIC UDP pull-request coverage for well-formed strict-byte oracle cases
     default_count: 50
@@ -32,4 +31,3 @@ profiles:
       boundary: 6
       malformed: 0
       pcap: 1
-      live: 0

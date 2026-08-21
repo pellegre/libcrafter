@@ -1,6 +1,6 @@
 # Crafter smoke protocol
 
-`crafter-smoke` is a bounded, provider-neutral execution contract for checking
+`crafter-smoke` is a bounded, substrate-neutral execution contract for checking
 an exact libcrafter source tree outside the developer process. It knows nothing
 about machines, placement, credentials, transports, interfaces, or resource
 lifecycle. An external executor may build and run it wherever suitable compute

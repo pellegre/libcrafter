@@ -210,18 +210,6 @@ normalized_model:
     - padding
     - payload_bytes
 
-live_cases:
-  - name: monitor-mode-injection-plan
-    case: radiotap-basic
-    expected_live: dry_run_only
-    required_user_action:
-      - monitor_mode_interface
-      - manual_channel_selection
-      - explicit_live_flag
-      - manual_dongle_validation
-    notes:
-      - Automated validation must stop at send-plan inspection and never require Wi-Fi hardware.
-
 backend_support:
   scapy:
     status: planned
