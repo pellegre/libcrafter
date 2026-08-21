@@ -4,6 +4,7 @@ members = [
     "tools/flow",
     "tools/oracle/adapters",
     "tools/probe/adapters",
+    "tools/smoke",
 ]
 exclude = ["target/package-self-test"]
 resolver = "2"
