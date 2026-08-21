@@ -13,9 +13,8 @@ import `crafter::prelude::*`.
 The core surface is in place: layered packet construction with auto-filled
 lengths and checksums, decode entrypoints for Ethernet, Linux cooked capture,
 null/loopback, and raw IPv4 / IPv6 inputs, classic pcap read/write with
-libpcap BPF filters, raw send and send/receive matching, provider-backed
-endpoints, and multi-endpoint lab sessions (Hetzner, QEMU, VirtualBox) for
-traffic that cannot live on a developer machine.
+libpcap BPF filters, raw send and send/receive matching, deterministic oracle
+validation, substrate-independent probe plans, and bounded packet executors.
 
 TCP stream reassembly, full pcapng, full BPF parsing, and a complete TCP/IP
 stack are not in scope yet; IP fragmentation and reassembly ship as explicit
@@ -50,11 +49,10 @@ becomes a silent panic.
 
 ## Two surfaces: safe offline, explicit live
 
-Every workflow has an offline path — dry-run send plans, pcap fixtures, decode
-tests, oracle and probe `--dry-run` profiles — and a live path: raw send,
-send/receive, bounded capture, provider-backed wire runs. The offline path is
-the default. The live path is opt-in through an explicit flag, profile, or
-provider credential.
+Every packet primitive has an offline path — dry-run send plans, pcap fixtures,
+decode tests, oracle validation, and probe plans — and an explicit live path:
+raw send, send/receive, and bounded capture. The offline path is the default.
+The live path is opt-in through an explicit API or executor flag.
 
 This is not a stylistic preference. Live raw traffic against the wrong network
 is a legal and operational problem. Examples, tests, and generated defaults
@@ -62,11 +60,12 @@ must use documentation address space (`192.0.2.0/24`, `198.51.100.0/24`,
 `2001:db8::/32`) and dry-run plans. Real targets enter the picture only when an
 authorized human or agent has said so.
 
-Endpoint providers and lab sessions exist so that the live path does not have to
-originate from the developer machine. When an agent needs to send crafted
-traffic for real, the correct move is to provision a disposable provider
-endpoint or lab session, run the work from there, collect the artifacts, and
-destroy it — not to elevate privileges on the host the agent is running on.
+This repository does not select machines, manage credentials, open SSH
+connections, create VMs or containers, lease hardware, prepare peer services,
+or own execution topology. An external execution fabric may check out an exact
+candidate revision, satisfy a plan's declared runtime requirements, invoke a
+bounded executor with concrete interfaces and addresses, and return artifacts.
+That integration belongs in operator-supplied tooling outside this repository.
 
 ## Agents write tools; the crate stays a primitive
 
@@ -104,18 +103,17 @@ get approval first.
   renaming exported types is a breaking change.
 - Generated examples and tests use documentation address space and dry-run
   send plans unless explicitly gated.
-- Do not store real credentials, provider account data, public IPs, live host
-  identifiers, or packet captures from sensitive networks in tracked files.
-  The endpoint provider reads `HETZNER_API_TOKEN` or `HCLOUD_TOKEN` from the
-  environment.
+- Do not store real credentials, public IPs, live host identifiers, execution
+  topology, or packet captures from sensitive networks in tracked files.
 - Run the local release gate before declaring a change ready to ship:
   `.agents/scripts/check-crafter-release --static`.
-- For provider-backed packet validation, start with `--dry-run` against the
-  `lab`, `oracle`, `probe`, and `endpoint` runners before any live invocation.
+- Run `tools/oracle/run specs validate --strict`, the relevant offline oracle
+  modes, and `tools/probe/run` before requesting external wire qualification.
 - Use the repo-local skills when the task they describe comes up:
   `agent-cargo-publish`, `commit-changes`, `prepare-pr`, `packet-validation`,
-  `lab-session`, `lab-provider`, `endpoint-provider`, `scratch-work`,
-  `create-branch`. They encode policy that this file does not repeat.
+  `scratch-work`, and `create-branch`. They encode policy that this file does
+  not repeat. Hardware-backed qualification uses operator-supplied, untracked
+  tooling when it is available.
 - Operating guidance for agents writing generated tools belongs in
   [`.agents/docs/cookbook.md`](.agents/docs/cookbook.md). User-facing crate
   documentation belongs in [`docs/`](docs/). Do not mix the two.

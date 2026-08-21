@@ -89,9 +89,9 @@ Unknown capability codes round-trip verbatim (RFC 5492 §5).
 | Oracle validation (layer + feature specs, profiles, reference backend, libcrafter adapter, offline + pcap runs) | spec Acceptance | 68-74 |
 | Live session establishment + documentation-prefix announcement against a real peer | spec Acceptance | 75-82 |
 
-Live work uses disposable lab/endpoint providers (QEMU step 79, VirtualBox step
-80, Hetzner step 81) with offline dry-run plans first (steps 75, 78); the final
-docs and release gate is step 82. All examples, tests, and defaults use
+Live work uses operator-supplied external execution tooling (external
+environment steps 79-81) with offline dry-run plans first (steps 75, 78); the
+final docs and release gate is step 82. All examples, tests, and defaults use
 documentation address space.
 
 ## Out of scope (state, not wire)

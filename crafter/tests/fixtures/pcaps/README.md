@@ -7,7 +7,7 @@ that are generated from libcrafter-compiled packets so they can be regenerated
 deterministically.
 
 All fixtures here are synthetic and deterministic. They use documentation
-address space and lab-safe identifiers only; none are captured from live
+address space and synthetic identifiers only; none are captured from live
 networks.
 
 ## SNMP

@@ -1,7 +1,7 @@
 use crafter::prelude::*;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    // Lab-safe documentation values: 2.4 GHz channel 15, PAN 0x1234, and short
+    // Synthetic documentation values: 2.4 GHz channel 15, PAN 0x1234, and short
     // (16-bit) addresses. The stack is Dot15d4Radio / Dot15d4 / ZigbeeNwk /
     // ZigbeeAps, composed with `/` like every other crafter packet.
     let packet = Dot15d4Radio::on_channel(15)

@@ -1,38 +1,15 @@
-"""SSDP probe protocol plugin: dry-run discovery packet plans.
-
-The SSDP probe surface plans source-backed UDP discovery exchanges without
-turning probe into a scanner or discovery daemon. All cases are planned-only
-until the Rust stimulus adapter and target-service assets land; the plans still
-record packet bytes, role intent, capability gates, failure taxonomy, and the
-profile contribution in the auto-discovered plugin.
-"""
+"""Deterministic SSDP probe cases and packet plans."""
 
 from __future__ import annotations
-
-from collections.abc import Mapping, Sequence
-
-from ..capability_derivation import capability, capability_default_true
+from collections.abc import Sequence
 from ..case_helpers import _behavior_case
-from ..endpoint_addressing import (
-    FAILURE_DECODE_FAILED,
-    FAILURE_TARGET_SETUP_FAILED,
-    FAILURE_TIMEOUT,
-    FAILURE_WRONG_PAYLOAD,
-    FAILURE_WRONG_PEER,
-    _eui64_link_local_ipv6,
-)
-from ..model import JSONObject, JSONValue, ProbeCase
+from ..validation import FAILURE_DECODE_FAILED, FAILURE_WRONG_PAYLOAD
+from ..model import JSONObject, ProbeCase
 from ..planning_helpers import deterministic_bytes, deterministic_documentation_ipv6
-from ..target_service_helpers import (
-    plans_by_destination_port,
-    target_service_address_fields,
-)
 from .base import ProtocolPlugin, register
-
 
 SSDP_SMOKE_PROFILE = "ssdp-smoke"
 SSDP_SERVICE_KIND = "ssdp-controlled-responder"
-SSDP_RUNTIME = "probe-ssdp-reference"
 SSDP_STIMULUS_DRIVER = "ssdp_probe"
 SSDP_ADAPTER_MODULE = "tools/probe/adapters/src/ssdp.rs"
 SSDP_UDP_PORT = 1900
@@ -47,30 +24,18 @@ SSDP_MAN_DISCOVER = '"ssdp:discover"'
 SSDP_ST_ALL = "ssdp:all"
 SSDP_TARGET_ROOTDEVICE = "upnp:rootdevice"
 SSDP_SERVER = "example-os/1.0 UPnP/2.0 example-product/1.0"
-
-_SSDP_IPV4_SEARCH_CAPABILITIES = [
-    "ssdp_ipv4_multicast",
-    "ssdp_controlled_responder",
-]
+_SSDP_IPV4_SEARCH_CAPABILITIES = ["ssdp_ipv4_multicast", "ssdp_controlled_responder"]
 _SSDP_IPV6_SEARCH_CAPABILITIES = [
     "ssdp_ipv6_multicast",
     "ssdp_ipv6_link_local_scope",
     "ssdp_controlled_responder",
 ]
-_SSDP_NOTIFY_CAPABILITIES = [
-    "ssdp_ipv4_multicast",
-    "ssdp_controlled_responder",
-]
+_SSDP_NOTIFY_CAPABILITIES = ["ssdp_ipv4_multicast", "ssdp_controlled_responder"]
 _SSDP_OFFLINE_CAPABILITIES = ["ssdp_offline_plan"]
-
-
 SSDP_PROBE_CASES: tuple[ProbeCase, ...] = (
     _behavior_case(
         name="ssdp-ipv4-search-exchange",
-        description=(
-            "Plan an IPv4 M-SEARCH multicast stimulus and deterministic "
-            "controlled SSDP response."
-        ),
+        description="Plan an IPv4 M-SEARCH multicast stimulus and deterministic controlled SSDP response.",
         stimulus="ssdp_m_search",
         expected_response="ssdp_search_response",
         required_capabilities=_SSDP_IPV4_SEARCH_CAPABILITIES,
@@ -88,10 +53,7 @@ SSDP_PROBE_CASES: tuple[ProbeCase, ...] = (
     ),
     _behavior_case(
         name="ssdp-ipv6-search-exchange",
-        description=(
-            "Plan an IPv6 M-SEARCH multicast stimulus and deterministic "
-            "controlled SSDP response."
-        ),
+        description="Plan an IPv6 M-SEARCH multicast stimulus and deterministic controlled SSDP response.",
         stimulus="ssdp_m_search_ipv6",
         expected_response="ssdp_search_response",
         required_capabilities=_SSDP_IPV6_SEARCH_CAPABILITIES,
@@ -109,10 +71,7 @@ SSDP_PROBE_CASES: tuple[ProbeCase, ...] = (
     ),
     _behavior_case(
         name="ssdp-notify-capture",
-        description=(
-            "Plan a bounded NOTIFY advertisement from a controlled target and "
-            "capture-side decode validation."
-        ),
+        description="Plan a bounded NOTIFY advertisement from a controlled target and capture-side decode validation.",
         stimulus="ssdp_notify",
         expected_response="ssdp_notify_observed",
         required_capabilities=_SSDP_NOTIFY_CAPABILITIES,
@@ -131,10 +90,7 @@ SSDP_PROBE_CASES: tuple[ProbeCase, ...] = (
     ),
     _behavior_case(
         name="ssdp-raw-fallback",
-        description=(
-            "Plan unrelated UDP/1900 payload handling that must remain Raw "
-            "outside the SSDP shape gate."
-        ),
+        description="Plan unrelated UDP/1900 payload handling that must remain Raw outside the SSDP shape gate.",
         stimulus="ssdp_unrelated_udp_payload",
         expected_response="raw_payload_preserved",
         required_capabilities=_SSDP_OFFLINE_CAPABILITIES,
@@ -150,10 +106,7 @@ SSDP_PROBE_CASES: tuple[ProbeCase, ...] = (
     ),
     _behavior_case(
         name="ssdp-malformed-observation",
-        description=(
-            "Plan malformed SSDP-like payload reporting as a structured parse "
-            "error without live transmission."
-        ),
+        description="Plan malformed SSDP-like payload reporting as a structured parse error without live transmission.",
         stimulus="ssdp_malformed_payload",
         expected_response="structured_parse_error",
         required_capabilities=_SSDP_OFFLINE_CAPABILITIES,
@@ -168,75 +121,40 @@ SSDP_PROBE_CASES: tuple[ProbeCase, ...] = (
         },
     ),
 )
-
 _SSDP_CASE_BY_NAME: dict[str, ProbeCase] = {
     case.name: case for case in SSDP_PROBE_CASES
 }
 _SSDP_PLANNED_ONLY_CASES = frozenset(_SSDP_CASE_BY_NAME)
-_SSDP_LIVE_CAPABLE_CASES = frozenset(
-    case.name
-    for case in SSDP_PROBE_CASES
-    if case.metadata.get("live_capable") is True
-)
 
 
 def _ssdp_probe_plan(
-    *,
-    case_name: str,
-    profile: str,
-    seed: int,
-    sequence: int,
+    *, case_name: str, profile: str, seed: int, sequence: int
 ) -> JSONObject:
     case = _SSDP_CASE_BY_NAME[case_name]
     digest = deterministic_bytes(case_name, profile, seed, sequence)
     if case_name == "ssdp-ipv6-search-exchange":
         return _ssdp_ipv6_search_plan(
-            case=case,
-            profile=profile,
-            seed=seed,
-            sequence=sequence,
-            digest=digest,
+            case=case, profile=profile, seed=seed, sequence=sequence, digest=digest
         )
     if case_name == "ssdp-notify-capture":
         return _ssdp_notify_plan(
-            case=case,
-            profile=profile,
-            seed=seed,
-            sequence=sequence,
-            digest=digest,
+            case=case, profile=profile, seed=seed, sequence=sequence, digest=digest
         )
     if case_name == "ssdp-raw-fallback":
         return _ssdp_raw_fallback_plan(
-            case=case,
-            profile=profile,
-            seed=seed,
-            sequence=sequence,
-            digest=digest,
+            case=case, profile=profile, seed=seed, sequence=sequence, digest=digest
         )
     if case_name == "ssdp-malformed-observation":
         return _ssdp_malformed_plan(
-            case=case,
-            profile=profile,
-            seed=seed,
-            sequence=sequence,
-            digest=digest,
+            case=case, profile=profile, seed=seed, sequence=sequence, digest=digest
         )
     return _ssdp_ipv4_search_plan(
-        case=case,
-        profile=profile,
-        seed=seed,
-        sequence=sequence,
-        digest=digest,
+        case=case, profile=profile, seed=seed, sequence=sequence, digest=digest
     )
 
 
 def _ssdp_ipv4_search_plan(
-    *,
-    case: ProbeCase,
-    profile: str,
-    seed: int,
-    sequence: int,
-    digest: bytes,
+    *, case: ProbeCase, profile: str, seed: int, sequence: int, digest: bytes
 ) -> JSONObject:
     source_ipv4, target_ipv4 = _documentation_ipv4_pair(digest)
     source_port = _ephemeral_port(digest)
@@ -245,9 +163,7 @@ def _ssdp_ipv4_search_plan(
     location = _location_url(digest)
     request_payload = _search_payload(host=SSDP_IPV4_HOST, mx=mx)
     response_payload = _response_payload(
-        location=location,
-        st=SSDP_TARGET_ROOTDEVICE,
-        usn=usn,
+        location=location, st=SSDP_TARGET_ROOTDEVICE, usn=usn
     )
     return _base_plan(
         case=case,
@@ -263,10 +179,7 @@ def _ssdp_ipv4_search_plan(
         target_ipv4=target_ipv4,
         expected_reply_source_ipv4=target_ipv4,
         expected_reply_destination_ipv4=source_ipv4,
-        documentation_prefixes=[
-            SSDP_DOCUMENTATION_IPV4_PREFIX,
-            SSDP_LOCATION_PREFIX,
-        ],
+        documentation_prefixes=[SSDP_DOCUMENTATION_IPV4_PREFIX, SSDP_LOCATION_PREFIX],
         ssdp={
             "message_kind": "m_search",
             "method": "M-SEARCH",
@@ -280,15 +193,10 @@ def _ssdp_ipv4_search_plan(
             "status_code": 200,
             "reason_phrase": "OK",
             "headers": _response_headers(
-                location=location,
-                st=SSDP_TARGET_ROOTDEVICE,
-                usn=usn,
+                location=location, st=SSDP_TARGET_ROOTDEVICE, usn=usn
             ),
         },
-        capture_filter=(
-            f"udp and src host {target_ipv4} and dst host {source_ipv4} "
-            f"and src port {SSDP_UDP_PORT} and dst port {source_port}"
-        ),
+        capture_filter=f"udp and src host {target_ipv4} and dst host {source_ipv4} and src port {SSDP_UDP_PORT} and dst port {source_port}",
         validation={
             "expected_decode": "ssdp",
             "source_ipv4": target_ipv4,
@@ -298,19 +206,6 @@ def _ssdp_ipv4_search_plan(
             "status_code": 200,
             "st": SSDP_TARGET_ROOTDEVICE,
             "usn": usn,
-            "planned_only": True,
-        },
-        target_service={
-            "required": True,
-            "kind": SSDP_SERVICE_KIND,
-            "protocol": "udp",
-            "port": SSDP_UDP_PORT,
-            "bind_ipv4": target_ipv4,
-            "source_ipv4": source_ipv4,
-            "runtime": SSDP_RUNTIME,
-            "behavior": "search_response",
-            "response_payload_hex": response_payload.hex(),
-            "deterministic": True,
             "planned_only": True,
         },
         wire_requirements={
@@ -324,12 +219,7 @@ def _ssdp_ipv4_search_plan(
 
 
 def _ssdp_ipv6_search_plan(
-    *,
-    case: ProbeCase,
-    profile: str,
-    seed: int,
-    sequence: int,
-    digest: bytes,
+    *, case: ProbeCase, profile: str, seed: int, sequence: int, digest: bytes
 ) -> JSONObject:
     source_ipv6 = deterministic_documentation_ipv6(digest)
     target_ipv6 = deterministic_documentation_ipv6(digest[::-1])
@@ -339,9 +229,7 @@ def _ssdp_ipv6_search_plan(
     location = _location_url(digest)
     request_payload = _search_payload(host=SSDP_IPV6_LINK_LOCAL_HOST, mx=mx)
     response_payload = _response_payload(
-        location=location,
-        st=SSDP_TARGET_ROOTDEVICE,
-        usn=usn,
+        location=location, st=SSDP_TARGET_ROOTDEVICE, usn=usn
     )
     return _base_plan(
         case=case,
@@ -357,10 +245,7 @@ def _ssdp_ipv6_search_plan(
         target_ipv6=target_ipv6,
         expected_reply_source_ipv6=target_ipv6,
         expected_reply_destination_ipv6=source_ipv6,
-        documentation_prefixes=[
-            SSDP_DOCUMENTATION_IPV6_PREFIX,
-            SSDP_LOCATION_PREFIX,
-        ],
+        documentation_prefixes=[SSDP_DOCUMENTATION_IPV6_PREFIX, SSDP_LOCATION_PREFIX],
         ssdp={
             "message_kind": "m_search",
             "method": "M-SEARCH",
@@ -374,15 +259,10 @@ def _ssdp_ipv6_search_plan(
             "status_code": 200,
             "reason_phrase": "OK",
             "headers": _response_headers(
-                location=location,
-                st=SSDP_TARGET_ROOTDEVICE,
-                usn=usn,
+                location=location, st=SSDP_TARGET_ROOTDEVICE, usn=usn
             ),
         },
-        capture_filter=(
-            f"ip6 and udp and src host {target_ipv6} and dst host {source_ipv6} "
-            f"and src port {SSDP_UDP_PORT} and dst port {source_port}"
-        ),
+        capture_filter=f"ip6 and udp and src host {target_ipv6} and dst host {source_ipv6} and src port {SSDP_UDP_PORT} and dst port {source_port}",
         validation={
             "expected_decode": "ssdp",
             "source_ipv6": target_ipv6,
@@ -392,19 +272,6 @@ def _ssdp_ipv6_search_plan(
             "status_code": 200,
             "st": SSDP_TARGET_ROOTDEVICE,
             "usn": usn,
-            "planned_only": True,
-        },
-        target_service={
-            "required": True,
-            "kind": SSDP_SERVICE_KIND,
-            "protocol": "udp",
-            "port": SSDP_UDP_PORT,
-            "bind_ipv6": target_ipv6,
-            "source_ipv6": source_ipv6,
-            "runtime": SSDP_RUNTIME,
-            "behavior": "search_response_ipv6",
-            "response_payload_hex": response_payload.hex(),
-            "deterministic": True,
             "planned_only": True,
         },
         wire_requirements={
@@ -418,12 +285,7 @@ def _ssdp_ipv6_search_plan(
 
 
 def _ssdp_notify_plan(
-    *,
-    case: ProbeCase,
-    profile: str,
-    seed: int,
-    sequence: int,
-    digest: bytes,
+    *, case: ProbeCase, profile: str, seed: int, sequence: int, digest: bytes
 ) -> JSONObject:
     source_ipv4, target_ipv4 = _documentation_ipv4_pair(digest)
     source_port = SSDP_UDP_PORT
@@ -444,10 +306,7 @@ def _ssdp_notify_plan(
         target_ipv4=target_ipv4,
         expected_reply_source_ipv4=target_ipv4,
         expected_reply_destination_ipv4=source_ipv4,
-        documentation_prefixes=[
-            SSDP_DOCUMENTATION_IPV4_PREFIX,
-            SSDP_LOCATION_PREFIX,
-        ],
+        documentation_prefixes=[SSDP_DOCUMENTATION_IPV4_PREFIX, SSDP_LOCATION_PREFIX],
         ssdp={
             "message_kind": "notify",
             "method": "NOTIFY",
@@ -460,10 +319,7 @@ def _ssdp_notify_plan(
             "method": "NOTIFY",
             "headers": _notify_headers(location=location, usn=usn),
         },
-        capture_filter=(
-            f"udp and src host {target_ipv4} and dst host {SSDP_IPV4_MULTICAST} "
-            f"and src port {SSDP_UDP_PORT} and dst port {SSDP_UDP_PORT}"
-        ),
+        capture_filter=f"udp and src host {target_ipv4} and dst host {SSDP_IPV4_MULTICAST} and src port {SSDP_UDP_PORT} and dst port {SSDP_UDP_PORT}",
         validation={
             "expected_decode": "ssdp",
             "source_ipv4": target_ipv4,
@@ -474,19 +330,6 @@ def _ssdp_notify_plan(
             "nt": SSDP_TARGET_ROOTDEVICE,
             "nts": "ssdp:alive",
             "usn": usn,
-            "planned_only": True,
-        },
-        target_service={
-            "required": True,
-            "kind": SSDP_SERVICE_KIND,
-            "protocol": "udp",
-            "port": SSDP_UDP_PORT,
-            "bind_ipv4": target_ipv4,
-            "source_ipv4": source_ipv4,
-            "runtime": SSDP_RUNTIME,
-            "behavior": "notify_emit",
-            "notify_payload_hex": payload.hex(),
-            "deterministic": True,
             "planned_only": True,
         },
         wire_requirements={
@@ -500,12 +343,7 @@ def _ssdp_notify_plan(
 
 
 def _ssdp_raw_fallback_plan(
-    *,
-    case: ProbeCase,
-    profile: str,
-    seed: int,
-    sequence: int,
-    digest: bytes,
+    *, case: ProbeCase, profile: str, seed: int, sequence: int, digest: bytes
 ) -> JSONObject:
     source_ipv4, target_ipv4 = _documentation_ipv4_pair(digest)
     source_port = _ephemeral_port(digest)
@@ -529,13 +367,8 @@ def _ssdp_raw_fallback_plan(
             "shape_gate": "reject",
             "payload_hex": payload.hex(),
         },
-        expected_ssdp={
-            "message_kind": "raw_preserved",
-            "raw_hex": payload.hex(),
-        },
-        capture_filter=(
-            f"udp and host {target_ipv4} and port {SSDP_UDP_PORT}"
-        ),
+        expected_ssdp={"message_kind": "raw_preserved", "raw_hex": payload.hex()},
+        capture_filter=f"udp and host {target_ipv4} and port {SSDP_UDP_PORT}",
         validation={
             "expected_decode": "raw",
             "source_ipv4": target_ipv4,
@@ -545,26 +378,13 @@ def _ssdp_raw_fallback_plan(
             "raw_hex": payload.hex(),
             "planned_only": True,
         },
-        target_service={
-            "required": False,
-            "kind": "none",
-            "behavior": "offline_raw_fallback",
-        },
-        wire_requirements={
-            "offline_only": True,
-            "requires_live_network": False,
-        },
+        wire_requirements={"offline_only": True, "requires_live_network": False},
         digest=digest,
     )
 
 
 def _ssdp_malformed_plan(
-    *,
-    case: ProbeCase,
-    profile: str,
-    seed: int,
-    sequence: int,
-    digest: bytes,
+    *, case: ProbeCase, profile: str, seed: int, sequence: int, digest: bytes
 ) -> JSONObject:
     source_ipv4, target_ipv4 = _documentation_ipv4_pair(digest)
     source_port = _ephemeral_port(digest)
@@ -594,9 +414,7 @@ def _ssdp_malformed_plan(
             "required": "header-name ':' header-value",
             "available": len(payload),
         },
-        capture_filter=(
-            f"udp and host {target_ipv4} and port {SSDP_UDP_PORT}"
-        ),
+        capture_filter=f"udp and host {target_ipv4} and port {SSDP_UDP_PORT}",
         validation={
             "expected_decode": "structured_error",
             "error_context": "ssdp.header",
@@ -606,15 +424,7 @@ def _ssdp_malformed_plan(
             "destination_port": source_port,
             "planned_only": True,
         },
-        target_service={
-            "required": False,
-            "kind": "none",
-            "behavior": "offline_malformed_observation",
-        },
-        wire_requirements={
-            "offline_only": True,
-            "requires_live_network": False,
-        },
+        wire_requirements={"offline_only": True, "requires_live_network": False},
         digest=digest,
     )
 
@@ -634,7 +444,6 @@ def _base_plan(
     expected_ssdp: JSONObject,
     capture_filter: str,
     validation: JSONObject,
-    target_service: JSONObject,
     wire_requirements: JSONObject,
     digest: bytes,
     source_ipv4: str | None = None,
@@ -681,7 +490,6 @@ def _base_plan(
             "state": "planned-only",
             "planned_only": True,
         },
-        "target_service": target_service,
         "capture_filter": capture_filter,
         "validation": validation,
         "wire_requirements": wire_requirements,
@@ -747,23 +555,18 @@ def _notify_headers(*, location: str, usn: str) -> list[JSONObject]:
 
 
 def _search_payload(*, host: str, mx: int) -> bytes:
-    return _message_bytes(
-        "M-SEARCH * HTTP/1.1",
-        _search_headers(host=host, mx=mx),
-    )
+    return _message_bytes("M-SEARCH * HTTP/1.1", _search_headers(host=host, mx=mx))
 
 
 def _response_payload(*, location: str, st: str, usn: str) -> bytes:
     return _message_bytes(
-        "HTTP/1.1 200 OK",
-        _response_headers(location=location, st=st, usn=usn),
+        "HTTP/1.1 200 OK", _response_headers(location=location, st=st, usn=usn)
     )
 
 
 def _notify_payload(*, location: str, usn: str) -> bytes:
     return _message_bytes(
-        "NOTIFY * HTTP/1.1",
-        _notify_headers(location=location, usn=usn),
+        "NOTIFY * HTTP/1.1", _notify_headers(location=location, usn=usn)
     )
 
 
@@ -783,7 +586,7 @@ def _header(name: str, value: str) -> JSONObject:
 def _documentation_ipv4_pair(digest: bytes) -> tuple[str, str]:
     source_host = 1 + digest[0] % 120
     target_host = 121 + digest[1] % 120
-    return f"198.51.100.{source_host}", f"198.51.100.{target_host}"
+    return (f"198.51.100.{source_host}", f"198.51.100.{target_host}")
 
 
 def _ephemeral_port(digest: bytes) -> int:
@@ -803,10 +606,7 @@ def _location_url(digest: bytes) -> str:
 def _capability_skip_reasons(case: ProbeCase) -> list[str]:
     reasons: list[str] = []
     for capability_name in case.required_capabilities:
-        if capability_name in {
-            "ssdp_ipv4_multicast",
-            "ssdp_ipv6_multicast",
-        }:
+        if capability_name in {"ssdp_ipv4_multicast", "ssdp_ipv6_multicast"}:
             reasons.append("requires_multicast")
         elif capability_name == "ssdp_ipv6_link_local_scope":
             reasons.append("requires_ipv6_link_local_scope_metadata")
@@ -815,63 +615,11 @@ def _capability_skip_reasons(case: ProbeCase) -> list[str]:
         elif capability_name == "ssdp_offline_plan":
             reasons.append("offline_plan_unavailable")
         else:
-            reasons.append("provider_capability_unavailable")
+            reasons.append("runtime_capability_unavailable")
     return list(dict.fromkeys(reasons))
 
 
-def ssdp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
-    return [plan for plan in probe_plans if plan.get("case") in _SSDP_CASE_BY_NAME]
-
-
-def ssdp_target_service_contribution(
-    probe_plans: Sequence[JSONObject],
-    *,
-    dry_run: bool,
-) -> JSONObject:
-    service_plans = [
-        plan
-        for plan in ssdp_probe_plans(probe_plans)
-        if isinstance(plan.get("target_service"), Mapping)
-        and plan.get("target_service", {}).get("kind") == SSDP_SERVICE_KIND
-    ]
-    plans_by_port = plans_by_destination_port(service_plans)
-    services = [
-        {
-            "name": SSDP_SERVICE_KIND,
-            "protocol": "udp",
-            "port": port,
-            "purpose": "ssdp-controlled-discovery-response",
-            "runtime": SSDP_RUNTIME,
-            "deterministic": True,
-            "planned_only": True,
-            "query_count": sum(
-                1
-                for item in service_plans
-                if int(item.get("destination_port", 0)) == port
-            ),
-            **target_service_address_fields(plan),
-            "log_paths": [
-                f"live-artifacts/probe/target-services/ssdp-{port}.stdout.txt",
-                f"live-artifacts/probe/target-services/ssdp-{port}.stderr.txt",
-            ],
-        }
-        for port, plan in plans_by_port.items()
-    ]
-    return {
-        "services": services,
-        "starts_services": not dry_run and bool(services),
-    }
-
-
 def ssdp_failure_reasons(case_name: str) -> list[str] | None:
-    if case_name in _SSDP_LIVE_CAPABLE_CASES:
-        return [
-            FAILURE_TIMEOUT,
-            FAILURE_WRONG_PEER,
-            FAILURE_WRONG_PAYLOAD,
-            FAILURE_DECODE_FAILED,
-            FAILURE_TARGET_SETUP_FAILED,
-        ]
     if case_name == "ssdp-raw-fallback":
         return [FAILURE_WRONG_PAYLOAD, FAILURE_DECODE_FAILED]
     if case_name == "ssdp-malformed-observation":
@@ -879,360 +627,12 @@ def ssdp_failure_reasons(case_name: str) -> list[str] | None:
     return None
 
 
-def ssdp_rewrite_endpoint_addresses(
-    plan: JSONObject,
-    *,
-    source_ipv4: str,
-    target_ipv4: str,
-    source_mac: str | None = None,
-    target_mac: str | None = None,
-    target_interface: str | None = None,
-    rewrite_source: str = "wire_endpoint_plan",
-) -> JSONObject:
-    """Rewrite SSDP live-capable plans onto lab endpoint addresses."""
-
-    updated = dict(plan)
-    case_name = str(updated.get("case", ""))
-    if case_name == "ssdp-ipv4-search-exchange":
-        return _rewrite_ssdp_ipv4_search(
-            updated,
-            source_ipv4=source_ipv4,
-            target_ipv4=target_ipv4,
-            rewrite_source=rewrite_source,
-        )
-    if case_name == "ssdp-notify-capture":
-        return _rewrite_ssdp_ipv4_notify(
-            updated,
-            source_ipv4=source_ipv4,
-            target_ipv4=target_ipv4,
-            rewrite_source=rewrite_source,
-        )
-    if case_name == "ssdp-ipv6-search-exchange":
-        if source_mac and target_mac and target_interface:
-            return _rewrite_ssdp_ipv6_search(
-                updated,
-                source_mac=source_mac,
-                target_mac=target_mac,
-                target_interface=target_interface,
-                rewrite_source=rewrite_source,
-            )
-        return _mark_ssdp_address_rewrite_skipped(
-            updated,
-            source_ipv4=source_ipv4,
-            target_ipv4=target_ipv4,
-            rewrite_source=rewrite_source,
-            reason="requires_ipv6_link_local_scope_metadata",
-            metadata={
-                "multicast_group": SSDP_IPV6_LINK_LOCAL_MULTICAST,
-                "required_metadata": [
-                    "source_mac",
-                    "target_mac",
-                    "target_interface",
-                ],
-            },
-        )
-    return _mark_ssdp_address_rewrite_skipped(
-        updated,
-        source_ipv4=source_ipv4,
-        target_ipv4=target_ipv4,
-        rewrite_source=rewrite_source,
-        reason="offline_only",
-        metadata={"offline_only": True},
-    )
-
-
-def _rewrite_ssdp_ipv4_search(
-    updated: JSONObject,
-    *,
-    source_ipv4: str,
-    target_ipv4: str,
-    rewrite_source: str,
-) -> JSONObject:
-    source_port = int(updated.get("source_port", 0))
-    destination_port = int(updated.get("destination_port", SSDP_UDP_PORT))
-    updated["source_ipv4"] = source_ipv4
-    updated["destination_ipv4"] = SSDP_IPV4_MULTICAST
-    updated["target_ipv4"] = target_ipv4
-    updated["expected_reply_source_ipv4"] = target_ipv4
-    updated["expected_reply_destination_ipv4"] = source_ipv4
-    updated["capture_filter"] = (
-        f"udp and src host {target_ipv4} and dst host {source_ipv4} "
-        f"and src port {destination_port} and dst port {source_port}"
-    )
-    _rewrite_ssdp_validation(
-        updated,
-        source_ipv4=target_ipv4,
-        destination_ipv4=source_ipv4,
-    )
-    _rewrite_ssdp_target_service(
-        updated,
-        bind_ipv4=target_ipv4,
-        source_ipv4=source_ipv4,
-    )
-    _mark_ssdp_address_rewritten(
-        updated,
-        source_ipv4=source_ipv4,
-        target_ipv4=target_ipv4,
-        rewrite_source=rewrite_source,
-        emitted_source_ipv4=source_ipv4,
-    )
-    return updated
-
-
-def _rewrite_ssdp_ipv4_notify(
-    updated: JSONObject,
-    *,
-    source_ipv4: str,
-    target_ipv4: str,
-    rewrite_source: str,
-) -> JSONObject:
-    source_port = int(updated.get("source_port", SSDP_UDP_PORT))
-    destination_port = int(updated.get("destination_port", SSDP_UDP_PORT))
-    updated["source_ipv4"] = target_ipv4
-    updated["destination_ipv4"] = SSDP_IPV4_MULTICAST
-    updated["target_ipv4"] = target_ipv4
-    updated["expected_reply_source_ipv4"] = target_ipv4
-    updated["expected_reply_destination_ipv4"] = source_ipv4
-    updated["capture_filter"] = (
-        f"udp and src host {target_ipv4} and dst host {SSDP_IPV4_MULTICAST} "
-        f"and src port {source_port} and dst port {destination_port}"
-    )
-    _rewrite_ssdp_validation(
-        updated,
-        source_ipv4=target_ipv4,
-        destination_ipv4=SSDP_IPV4_MULTICAST,
-    )
-    _rewrite_ssdp_target_service(
-        updated,
-        bind_ipv4=target_ipv4,
-        source_ipv4=source_ipv4,
-    )
-    _mark_ssdp_address_rewritten(
-        updated,
-        source_ipv4=source_ipv4,
-        target_ipv4=target_ipv4,
-        rewrite_source=rewrite_source,
-        emitted_source_ipv4=target_ipv4,
-    )
-    return updated
-
-
-def _rewrite_ssdp_ipv6_search(
-    updated: JSONObject,
-    *,
-    source_mac: str,
-    target_mac: str,
-    target_interface: str,
-    rewrite_source: str,
-) -> JSONObject:
-    source_ipv6 = _eui64_link_local_ipv6(source_mac)
-    target_ipv6 = _eui64_link_local_ipv6(target_mac)
-    source_port = int(updated.get("source_port", 0))
-    destination_port = int(updated.get("destination_port", SSDP_UDP_PORT))
-    updated["source_ipv6"] = source_ipv6
-    updated["destination_ipv6"] = SSDP_IPV6_LINK_LOCAL_MULTICAST
-    updated["target_ipv6"] = target_ipv6
-    updated["expected_reply_source_ipv6"] = target_ipv6
-    updated["expected_reply_destination_ipv6"] = source_ipv6
-    updated["capture_filter"] = (
-        f"ip6 and udp and src host {target_ipv6} and dst host {source_ipv6} "
-        f"and src port {destination_port} and dst port {source_port}"
-    )
-    validation = dict(
-        updated.get("validation", {})
-        if isinstance(updated.get("validation"), Mapping)
-        else {}
-    )
-    validation["source_ipv6"] = target_ipv6
-    validation["destination_ipv6"] = source_ipv6
-    updated["validation"] = validation
-
-    target_service = dict(
-        updated.get("target_service", {})
-        if isinstance(updated.get("target_service"), Mapping)
-        else {}
-    )
-    if target_service:
-        target_service["bind_ipv6"] = target_ipv6
-        target_service["source_ipv6"] = source_ipv6
-        target_service["interface"] = target_interface
-        updated["target_service"] = target_service
-
-    updated["live_address_rewrite"] = {
-        "source": rewrite_source,
-        "status": "rewritten",
-        "stimulus_ipv6": source_ipv6,
-        "target_ipv6": target_ipv6,
-        "stimulus_mac": source_mac,
-        "target_mac": target_mac,
-        "target_interface": target_interface,
-        "preserved_destination_ipv6": SSDP_IPV6_LINK_LOCAL_MULTICAST,
-    }
-    return updated
-
-
-def _rewrite_ssdp_validation(
-    updated: JSONObject,
-    *,
-    source_ipv4: str,
-    destination_ipv4: str,
-) -> None:
-    validation = dict(
-        updated.get("validation", {})
-        if isinstance(updated.get("validation"), Mapping)
-        else {}
-    )
-    validation["source_ipv4"] = source_ipv4
-    validation["destination_ipv4"] = destination_ipv4
-    updated["validation"] = validation
-
-
-def _rewrite_ssdp_target_service(
-    updated: JSONObject,
-    *,
-    bind_ipv4: str,
-    source_ipv4: str,
-) -> None:
-    target_service = dict(
-        updated.get("target_service", {})
-        if isinstance(updated.get("target_service"), Mapping)
-        else {}
-    )
-    if not target_service:
-        return
-    target_service["bind_ipv4"] = bind_ipv4
-    target_service["source_ipv4"] = source_ipv4
-    updated["target_service"] = target_service
-
-
-def _mark_ssdp_address_rewritten(
-    updated: JSONObject,
-    *,
-    source_ipv4: str,
-    target_ipv4: str,
-    rewrite_source: str,
-    emitted_source_ipv4: str,
-) -> None:
-    updated["live_address_rewrite"] = {
-        "source": rewrite_source,
-        "status": "rewritten",
-        "stimulus_ipv4": source_ipv4,
-        "target_ipv4": target_ipv4,
-        "emitted_source_ipv4": emitted_source_ipv4,
-        "preserved_destination_ipv4": SSDP_IPV4_MULTICAST,
-    }
-
-
-def _mark_ssdp_address_rewrite_skipped(
-    updated: JSONObject,
-    *,
-    source_ipv4: str,
-    target_ipv4: str,
-    rewrite_source: str,
-    reason: str,
-    metadata: JSONObject,
-) -> JSONObject:
-    skip_reasons = dict(
-        updated.get("skip_reasons", {})
-        if isinstance(updated.get("skip_reasons"), Mapping)
-        else {}
-    )
-    address_rewrite = list(
-        skip_reasons.get("address_rewrite", [])
-        if isinstance(skip_reasons.get("address_rewrite"), list)
-        else []
-    )
-    address_rewrite.append(reason)
-    skip_reasons["address_rewrite"] = list(
-        dict.fromkeys(str(item) for item in address_rewrite)
-    )
-    updated["skip_reasons"] = skip_reasons
-
-    wire_requirements = dict(
-        updated.get("wire_requirements", {})
-        if isinstance(updated.get("wire_requirements"), Mapping)
-        else {}
-    )
-    wire_requirements["address_rewrite_skip_reason"] = reason
-    updated["wire_requirements"] = wire_requirements
-
-    updated["live_address_rewrite"] = {
-        "source": rewrite_source,
-        "status": "skipped",
-        "reason": reason,
-        "stimulus_ipv4": source_ipv4,
-        "target_ipv4": target_ipv4,
-        **metadata,
-    }
-    return updated
-
-
-def ssdp_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, object]:
-    ipv4_unicast = capability(substrate, "ipv4_unicast", "ipv4")
-    ipv6_unicast = capability(substrate, "ipv6_unicast", "ipv6")
-    controlled_services = capability(
-        substrate,
-        "controlled_services",
-        "controlled_service",
-    )
-    controlled_udp_service = controlled_services and capability_default_true(
-        substrate,
-        "ssdp_controlled_responder",
-        "ssdp_responder",
-        "controlled_udp_service",
-    )
-    link_layer_send = capability(substrate, "link_layer_send")
-    link_layer_capture = capability(substrate, "link_layer_capture", "packet_capture")
-    provider_mac = capability(substrate, "provider_mac_known", "provider_mac")
-    interface_metadata = capability_default_true(
-        substrate,
-        "target_interface_known",
-        "provider_interface_known",
-    )
-    ipv4_multicast = (
-        ipv4_unicast
-        and link_layer_send
-        and link_layer_capture
-        and capability_default_true(
-            substrate,
-            "ssdp_ipv4_multicast",
-            "ipv4_multicast",
-            "multicast",
-            "multicast_send",
-        )
-    )
-    ipv6_multicast = (
-        ipv6_unicast
-        and link_layer_send
-        and link_layer_capture
-        and capability_default_true(
-            substrate,
-            "ssdp_ipv6_multicast",
-            "ipv6_multicast",
-            "multicast",
-            "multicast_send",
-        )
-    )
-    return {
-        "ssdp_offline_plan": True,
-        "ssdp_controlled_responder": controlled_udp_service,
-        "ssdp_ipv4_multicast": ipv4_multicast,
-        "ssdp_ipv6_multicast": ipv6_multicast,
-        "ssdp_ipv6_link_local_scope": (
-            ipv6_multicast and provider_mac and interface_metadata
-        ),
-    }
-
-
 _SSDP_PLAN_BUILDERS: dict[str, object] = {
     case.name: _ssdp_probe_plan for case in SSDP_PROBE_CASES
 }
-
 _SSDP_PROFILE_COUNTS: dict[str, dict[str, int]] = {
     SSDP_SMOKE_PROFILE: {case.name: 1 for case in SSDP_PROBE_CASES}
 }
-
-
 register(
     ProtocolPlugin(
         name="ssdp",
@@ -1241,10 +641,6 @@ register(
         planned_only_cases=_SSDP_PLANNED_ONLY_CASES,
         profile_counts=_SSDP_PROFILE_COUNTS,
         stimulus_endpoint_cases=frozenset(),
-        target_service=ssdp_target_service_contribution,
-        setup_script=None,
-        rewrite_endpoint_addresses=ssdp_rewrite_endpoint_addresses,
         failure_reasons=ssdp_failure_reasons,
-        lab_capabilities=ssdp_lab_capabilities,
     )
 )

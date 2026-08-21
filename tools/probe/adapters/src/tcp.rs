@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use crate::common::{
     capture_filter, captured_data, decoded_packet_json, expected_response, failed_outcome,
-    flag_mismatch, hex_bytes, observed_response, open_capture_sniffer, plan_json, required_str,
-    required_u16, required_u32, send_report_json, target_service_json, CandidateValidation,
+    flag_mismatch, hex_bytes, observed_response, open_capture_sniffer, peer_contract_json,
+    plan_json, required_str, required_u16, required_u32, send_report_json, CandidateValidation,
     ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest, TcpOptionSpec,
     FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_FLAGS, FAILURE_WRONG_PEER,
 };
@@ -38,7 +38,7 @@ pub fn run_tcp_dry_run(
             "send_report": send_report_json(&report),
             "sent_raw_hex": sent_raw_hex,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }),
     );
     let result = json!({
@@ -54,7 +54,7 @@ pub fn run_tcp_dry_run(
             "planned_only": true,
             "sent_raw_hex": sent_raw_hex,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }
     });
     Ok(ProbeOutcome {

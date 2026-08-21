@@ -5,8 +5,8 @@ They are intended for neutral client/server interop and test harnesses built on
 top of `crafter-flow`, not as a full TCP/IP stack.
 
 All examples should use documentation address space such as `192.0.2.10` and
-`198.51.100.20`. Live use remains explicit and should stay inside an isolated
-lab or provider endpoint.
+`198.51.100.20`. Live use remains explicit, and external operator tooling must
+select and authorize the execution target.
 
 ## Client Lifecycle
 
@@ -103,18 +103,17 @@ earlier SYN, data, and FIN sends.
 
 ## Validation Status
 
-The TCP client and TCP server were validated offline with scripted in-memory
-packets, with the client and server flows driving each other without a network,
-and live against real `netcat` peers in an isolated lab:
+The TCP client and TCP server are validated offline with scripted in-memory
+packets, with the client and server flows driving each other without a network.
+They have also been qualified externally against real `netcat` peers:
 
 - `crafter-flow` TCP client to a `netcat` server: handshake, payload send,
   payload receive, and graceful close.
 - `netcat` client to `crafter-flow` TCP server: passive handshake, payload
   receive, response send, and graceful close.
 
-The live validation used isolated lab artifacts and scratch runners that are not
-tracked. The tracked documentation keeps examples neutral and documentation-space
-only.
+The external qualification artifacts and runners are not tracked. This
+documentation keeps examples neutral and documentation-space only.
 
 ## First-Cut Scope
 
@@ -136,7 +135,6 @@ Userspace-crafted TCP competes with the host kernel. During live runs, the kerne
 can send a RST for SYNs or data segments that do not belong to a kernel socket,
 which tears down the userspace connection before the flow can finish.
 
-Live operation therefore requires the scoped kernel RST-drop guard from the
-isolated TCP lab. The concrete guard, verification, and rollback commands belong
-to the untracked lab under `tools/flow/.scratch/lab/tcp/`, not tracked code. The
-guard must be limited to the lab ports and removed after the run.
+Live operation may therefore require a scoped kernel RST-drop guard. External
+operator tooling owns that guard, its verification, and rollback. It must be
+limited to the authorized ports and removed after the run.

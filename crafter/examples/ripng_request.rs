@@ -20,12 +20,12 @@ fn main() -> ExampleResult<()> {
     }
 
     // The live path is opt-in only. Even when requested we refuse to place real
-    // RIPng traffic on the wire from this example: real sends must originate
-    // from a provider-backed endpoint or lab session, not the developer machine.
+    // RIPng traffic on the wire from this example. An external operator must
+    // choose an authorized endpoint and invoke the bounded packet workload there.
     if flag_present("--send") {
         eprintln!(
             "refusing live send: ripng_request is an offline stimulus driver; \
-             run RIPng against a provider-backed routing daemon via the probe/lab runners instead"
+             use external execution tooling with an authorized RIPng peer instead"
         );
         return Err("live RIPng send is not enabled in this example".into());
     }

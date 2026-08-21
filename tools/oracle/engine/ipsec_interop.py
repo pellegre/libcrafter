@@ -19,7 +19,7 @@ it asserts, with pinned keys/IV and documentation addresses, that:
 
 The libcrafter half runs through the ``ipsec_interop`` oracle adapter binary; the
 reference half runs in a ``uv`` subprocess that carries ``scapy`` + ``cryptography``
-so the probe's own interpreter needs neither. Everything is offline: no provider,
+so the probe's own interpreter needs neither. Everything is offline: no external orchestration,
 no sockets, no live traffic — only documentation address space and pinned keys.
 """
 
@@ -225,7 +225,9 @@ def run_interop(*, repo_root: Path | None = None) -> dict[str, object]:
     cases = interop_cases()
 
     # libcrafter seals every case; the reference opens them (direction A).
-    seal_results = _libcrafter_run(root, [case.to_operation(kind="seal") for case in cases])
+    seal_results = _libcrafter_run(
+        root, [case.to_operation(kind="seal") for case in cases]
+    )
     reference_seals = _reference_seal(root, cases)
 
     results: list[CaseResult] = []
@@ -295,7 +297,9 @@ def _evaluate_case(
 # --------------------------------------------------------------------------- #
 
 
-def _libcrafter_run(root: Path, operations: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+def _libcrafter_run(
+    root: Path, operations: list[dict[str, object]]
+) -> dict[str, dict[str, object]]:
     """Run the libcrafter ``ipsec_interop`` bin and return results keyed by name."""
 
     binary = _ensure_ipsec_interop_binary(root)
@@ -334,7 +338,9 @@ def _libcrafter_open(
     clean_result = clean.get(case.name, {})
 
     tampered_hex = _flip_last_byte(wire_hex)
-    tampered = _libcrafter_run(root, [case.to_operation(kind="open", wire_hex=tampered_hex)])
+    tampered = _libcrafter_run(
+        root, [case.to_operation(kind="open", wire_hex=tampered_hex)]
+    )
     tampered_result = tampered.get(case.name, {})
     # Fail-closed: a tampered packet must NOT open to the original plaintext.
     tamper_detected = not bool(tampered_result.get("ok")) or not bool(
@@ -357,7 +363,9 @@ def _ensure_ipsec_interop_binary(root: Path) -> Path:
 
     cargo = shutil.which("cargo")
     if cargo is None:
-        raise IpsecInteropError("cargo is required to build the ipsec_interop interop binary")
+        raise IpsecInteropError(
+            "cargo is required to build the ipsec_interop interop binary"
+        )
     completed = subprocess.run(
         [cargo, "build", "-p", "oracle-adapters", "--bin", "ipsec_interop"],
         cwd=str(root),
@@ -380,10 +388,15 @@ def _ensure_ipsec_interop_binary(root: Path) -> Path:
 # --------------------------------------------------------------------------- #
 
 
-def _reference_seal(root: Path, cases: list[InteropCase]) -> dict[str, dict[str, object]]:
+def _reference_seal(
+    root: Path, cases: list[InteropCase]
+) -> dict[str, dict[str, object]]:
     """Seal every case with the reference crypto and capture the open inputs."""
 
-    request = {"action": "seal", "cases": [_reference_case_json(case) for case in cases]}
+    request = {
+        "action": "seal",
+        "cases": [_reference_case_json(case) for case in cases],
+    }
     return _reference_run(root, request)
 
 
@@ -436,7 +449,9 @@ def _reference_case_json(case: InteropCase) -> dict[str, object]:
     }
 
 
-def _reference_run(root: Path, request: dict[str, object]) -> dict[str, dict[str, object]]:
+def _reference_run(
+    root: Path, request: dict[str, object]
+) -> dict[str, dict[str, object]]:
     """Run the embedded reference-crypto script in a uv subprocess with scapy."""
 
     uv = shutil.which(os.environ.get("PROBE_UV", "uv"))

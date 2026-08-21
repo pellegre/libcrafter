@@ -109,27 +109,22 @@ eligibility_matrix:
   - case: mdns-pcap-raw-ipv4
     offline: eligible
     pcap: eligible
-    live: excluded
     reason: pcap fixture coverage is offline file IO
   - case: mdns-pcap-ethernet-ipv4
     offline: eligible
     pcap: eligible
-    live: excluded
     reason: pcap fixture coverage is offline file IO
   - case: mdns-pcap-ethernet-ipv6
     offline: eligible
     pcap: eligible
-    live: excluded
     reason: pcap fixture coverage is offline file IO
   - case: mdns-compressed-names
     offline: eligible
     pcap: excluded
-    live: excluded
     reason: byte_policy_normalized_not_strict_bytes
   - case: malformed-mdns-truncated-question-fields
     offline: excluded
     pcap: excluded
-    live: excluded
     reason: byte_policy_structured_error
 
 normalized_model:

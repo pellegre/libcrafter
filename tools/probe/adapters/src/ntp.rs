@@ -2,7 +2,7 @@
 //!
 //! The adapter materializes live-capable NTP probe plans as typed
 //! libcrafter IPv4/UDP/NTP packets. It keeps dry-run output byte-inspectable and
-//! reserves live sends for provider-backed stimulus endpoint invocations.
+//! reserves network mutation for an explicit live invocation.
 
 use crafter::prelude::*;
 use serde_json::{json, Value};
@@ -13,8 +13,7 @@ use crate::common::{
     captured_data, decode_hex, decoded_packet_json, failed_outcome, hex_bytes, observed_response,
     open_capture_sniffer, plan_json, required_str, required_u16, send_report_json,
     CandidateValidation, ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest,
-    FAILURE_DECODE_FAILED, FAILURE_TARGET_SETUP_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD,
-    FAILURE_WRONG_PEER,
+    FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
 };
 
 const NTP_PORT: u16 = 123;
@@ -52,7 +51,7 @@ pub fn run_ntp_dry_run(
     let sent_decoded = decoded_ntp_packet_json(&sent_packet, sent_raw);
     let ntp = ntp_payload_json(plan)?;
     let expected_ntp = expected_ntp_payload_json(plan)?;
-    let target_service = target_service_json(plan);
+    let peer_contract = peer_contract_json(plan);
     let validation = validation_json(plan);
     let observed = observed_response(
         plan,
@@ -67,7 +66,7 @@ pub fn run_ntp_dry_run(
             "ntp": ntp,
             "expected_ntp": expected_ntp,
             "capture_filter": capture_filter,
-            "target_service": target_service,
+            "peer_contract": peer_contract,
             "validation": validation,
         }),
     );
@@ -87,7 +86,7 @@ pub fn run_ntp_dry_run(
             "ntp": ntp,
             "expected_ntp": expected_ntp,
             "capture_filter": capture_filter,
-            "target_service": target_service,
+            "peer_contract": peer_contract,
             "validation": validation,
         }
     });
@@ -103,10 +102,6 @@ pub fn run_ntp_live(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
 ) -> ExampleResult<ProbeOutcome> {
-    if let Some(outcome) = provider_gate_failure(request, plan) {
-        return Ok(outcome);
-    }
-
     let packet = ntp_packet(plan)?;
     let capture_filter = capture_filter(plan);
     let timeout = Duration::from_secs(request.timeout_seconds.max(1));
@@ -420,8 +415,8 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
     )
 }
 
-pub fn target_service_json(plan: &ProbePlan) -> Value {
-    plan.target_service.clone().unwrap_or_else(|| {
+pub fn peer_contract_json(plan: &ProbePlan) -> Value {
+    plan.peer_contract.clone().unwrap_or_else(|| {
         json!({
             "required": true,
             "kind": "ntp-controlled-responder",
@@ -429,7 +424,7 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "port": plan.destination_port.unwrap_or(NTP_PORT),
             "bind_ipv4": plan.destination_ipv4,
             "source_ipv4": plan.source_ipv4,
-            "live_requires_provider": true,
+            "requires_controlled_responder": true,
             "controlled_responder": true,
         })
     })
@@ -511,42 +506,6 @@ fn ntp_payload_bytes(ntp: &Ntp) -> ExampleResult<Vec<u8>> {
         .to_vec())
 }
 
-fn provider_gate_failure(
-    request: &StimulusEndpointRequest,
-    plan: &ProbePlan,
-) -> Option<ProbeOutcome> {
-    let target_service = target_service_json(plan);
-    let requires_provider = target_service
-        .get("live_requires_provider")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    if !requires_provider || provider_is_live_capable(&request.provider) {
-        return None;
-    }
-
-    Some(failed_outcome(
-        plan,
-        FAILURE_TARGET_SETUP_FAILED,
-        vec![format!(
-            "NTP live stimulus requires provider-backed probe infrastructure; provider={} is not live-capable",
-            request.provider
-        )],
-        Some(json!({
-            "target_service": target_service,
-            "provider": request.provider,
-        })),
-        false,
-        false,
-    ))
-}
-
-fn provider_is_live_capable(provider: &str) -> bool {
-    !matches!(
-        provider,
-        "" | "local" | "local-dry-run" | "dry-run" | "offline"
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -591,19 +550,18 @@ mod tests {
             "udp and src host 198.51.100.130 and dst host 198.51.100.10 and src port 123 and dst port 49152"
                 .to_string(),
         );
-        plan.target_service = Some(json!({
+        plan.peer_contract = Some(json!({
             "required": true,
             "kind": "ntp-controlled-responder",
             "protocol": "udp",
             "port": NTP_PORT,
-            "live_requires_provider": true,
+            "requires_controlled_responder": true,
         }));
         plan
     }
 
     fn stimulus_request(plan: ProbePlan) -> StimulusEndpointRequest {
         StimulusEndpointRequest {
-            provider: "local-dry-run".to_string(),
             profile: "ntp-smoke".to_string(),
             seed: 5905,
             endpoint_role: "stimulus".to_string(),
@@ -622,7 +580,6 @@ mod tests {
         let payload_hex = hex_bytes(&request_payload());
         let expected_payload_hex = hex_bytes(&response_payload());
         let request: StimulusEndpointRequest = serde_json::from_value(json!({
-            "provider": "local-dry-run",
             "profile": "ntp-smoke",
             "seed": 5905,
             "endpoint_role": "stimulus",
@@ -650,7 +607,7 @@ mod tests {
                 "ntp": {"mode": "client"},
                 "expected_ntp": {"mode": "server"},
                 "stimulus_driver": {"adapter_module": "tools/probe/adapters/src/ntp.rs"},
-                "target_service": {"kind": "ntp-controlled-responder"}
+                "peer_contract": {"kind": "ntp-controlled-responder"}
             }]
         }))
         .unwrap();
@@ -660,7 +617,7 @@ mod tests {
         assert_eq!(plan.protocol.as_deref(), Some("ntp"));
         assert_eq!(plan.packet.as_ref().unwrap()["stack"][2], "ntp");
         assert_eq!(
-            plan.target_service.as_ref().unwrap()["kind"],
+            plan.peer_contract.as_ref().unwrap()["kind"],
             "ntp-controlled-responder"
         );
         assert_eq!(ntp_payload(plan).unwrap().mode_value(), NtpMode::Client);
@@ -700,7 +657,7 @@ mod tests {
         );
         assert_eq!(outcome.result["metadata"]["expected_ntp"]["mode"], "server");
         assert_eq!(
-            outcome.result["metadata"]["target_service"]["kind"],
+            outcome.result["metadata"]["peer_contract"]["kind"],
             "ntp-controlled-responder"
         );
     }
@@ -722,19 +679,5 @@ mod tests {
             }
             other => panic!("unexpected validation: {other:?}"),
         }
-    }
-
-    #[test]
-    fn ntp_live_gate_blocks_local_provider_before_send() {
-        let plan = ntp_plan();
-        let request = stimulus_request(plan.clone());
-        let outcome = run_ntp_live(&request, &plan).unwrap();
-
-        assert_eq!(outcome.result["status"], "failed");
-        assert_eq!(
-            outcome.result["metadata"]["failure_reason"],
-            FAILURE_TARGET_SETUP_FAILED
-        );
-        assert!(!outcome.sent);
     }
 }

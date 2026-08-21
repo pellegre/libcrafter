@@ -97,11 +97,8 @@ This milestone does not provide:
 
 Defaults, examples, fixtures, and acceptance checks are offline,
 deterministic, bounded, and use documentation address space such as
-`192.0.2.0/24` and `198.51.100.0/24`. In-memory duplex tests and dry-run send,
-probe, endpoint, and lab plans are the first validation path and require no
-credentials or elevated privileges.
+`192.0.2.0/24` and `198.51.100.0/24`. In-memory duplex tests and dry-run send
+plans require no credentials or elevated privileges.
 
-Live traffic requires explicit authorization and a dry-run first. It must run
-on disposable provider-backed endpoint or lab infrastructure, with scoped
-targets, non-sensitive artifact collection, and teardown. It must not originate
-from an elevated developer host.
+Concrete-interface execution is outside this crate and is owned by external
+operator tooling.

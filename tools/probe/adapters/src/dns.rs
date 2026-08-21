@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use crate::common::{
     capture_filter, captured_data, decode_hex, decoded_packet_json, failed_outcome, hex_bytes,
-    observed_response, open_capture_sniffer, plan_json, required_str, required_u16,
-    send_report_json, target_service_json, CandidateValidation, DnsSend, EdnsOptionExpectation,
+    observed_response, open_capture_sniffer, peer_contract_json, plan_json, required_str,
+    required_u16, send_report_json, CandidateValidation, DnsSend, EdnsOptionExpectation,
     ExampleResult, ProbeOutcome, ProbePacketSender, ProbePlan, StimulusEndpointRequest,
     FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
 };
@@ -41,7 +41,7 @@ pub fn run_dns_dry_run(
             "send_report": send_report_json(&report),
             "sent_raw_hex": sent_raw_hex,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }),
     );
     let result = json!({
@@ -57,7 +57,7 @@ pub fn run_dns_dry_run(
             "planned_only": true,
             "sent_raw_hex": sent_raw_hex,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }
     });
     Ok(ProbeOutcome {
@@ -342,7 +342,7 @@ fn run_dns_multi_send_dry_run(
             "send_count": planned_sends.len(),
             "planned_sends": planned_sends,
             "expected_responses": expected_responses,
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }),
     );
     let result = json!({
@@ -359,7 +359,7 @@ fn run_dns_multi_send_dry_run(
             "send_count": planned_sends.len(),
             "planned_sends": planned_sends,
             "expected_responses": expected_responses,
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }
     });
     Ok(ProbeOutcome {
@@ -2488,7 +2488,6 @@ mod tests {
     fn multi_send_dry_run_emits_two_planned_sends_and_responses() {
         let plan = repeat_transaction_plan();
         let request: StimulusEndpointRequest = serde_json::from_value(serde_json::json!({
-            "provider": "qemu",
             "profile": "behavior",
             "seed": 1019,
             "endpoint_role": "stimulus",

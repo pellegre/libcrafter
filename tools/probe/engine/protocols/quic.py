@@ -1,21 +1,11 @@
-"""QUIC probe protocol plugin: planned UDP/QUIC behavior cases."""
+"""Deterministic QUIC probe cases and packet plans."""
 
 from __future__ import annotations
-
 import hashlib
-from collections.abc import Mapping, Sequence
-
-from ..capability_derivation import capability
 from ..case_helpers import _behavior_case
-from ..endpoint_addressing import apply_shared_ipv4_rewrite_tail
-from ..model import JSONObject, JSONValue, ProbeCase, json_object
+from ..model import JSONObject, ProbeCase
 from ..planning_helpers import deterministic_bytes, deterministic_ipv4_pair
-from ..target_service_helpers import (
-    plans_by_destination_port,
-    target_service_address_fields,
-)
 from .base import ProtocolPlugin, register
-
 
 QUIC_SERVICE_KIND = "quic-controlled-udp"
 QUIC_SERVICE_PORT = 4433
@@ -36,15 +26,10 @@ _QUIC_VERSION_NEGOTIATION_HEX = "c000000000048394c8f001aa000000016b3343cf"
 _QUIC_RETRY_HEX = "f000000001048394c8f001aa010203000102030405060708090a0b0c0d0e0f"
 _QUIC_STATELESS_RESET_CANDIDATE_HEX = "409d7c5b3a190817263544638291a0bf"
 _QUIC_PROTECTED_FLOW_HEX = "c000000001048394c8f001aa000501aabbccdd"
-
-
 QUIC_SMOKE_CASES: tuple[ProbeCase, ...] = (
     _behavior_case(
         name="quic-initial-udp-observation",
-        description=(
-            "Send a QUIC v1 Initial-looking UDP datagram to a controlled UDP "
-            "target and validate the observable UDP response path."
-        ),
+        description="Send a QUIC v1 Initial-looking UDP datagram to a controlled UDP target and validate the observable UDP response path.",
         stimulus="quic_udp_datagram",
         expected_response="udp_response",
         required_capabilities=_QUIC_CAPABILITIES,
@@ -53,10 +38,7 @@ QUIC_SMOKE_CASES: tuple[ProbeCase, ...] = (
     ),
     _behavior_case(
         name="quic-version-negotiation-observation",
-        description=(
-            "Plan a QUIC Version Negotiation observation against a controlled "
-            "target service when that service is provided."
-        ),
+        description="Plan a QUIC Version Negotiation observation against a controlled peer when that service is provided.",
         stimulus="quic_version_negotiation_probe",
         expected_response="quic_version_negotiation_or_udp_response",
         required_capabilities=_QUIC_CAPABILITIES,
@@ -69,10 +51,7 @@ QUIC_SMOKE_CASES: tuple[ProbeCase, ...] = (
     ),
     _behavior_case(
         name="quic-retry-observation",
-        description=(
-            "Plan a QUIC Retry observation only for a controlled target service "
-            "that can emit Retry packets."
-        ),
+        description="Plan a QUIC Retry observation only for a controlled peer that can emit Retry packets.",
         stimulus="quic_retry_probe",
         expected_response="quic_retry",
         required_capabilities=_QUIC_CAPABILITIES,
@@ -86,10 +65,7 @@ QUIC_SMOKE_CASES: tuple[ProbeCase, ...] = (
     ),
     _behavior_case(
         name="quic-stateless-reset-observation",
-        description=(
-            "Plan a stateless reset candidate observation only for a controlled "
-            "target service that owns the reset token behavior."
-        ),
+        description="Plan a stateless reset candidate observation only for a controlled peer that owns the reset token behavior.",
         stimulus="quic_stateless_reset_probe",
         expected_response="quic_stateless_reset_candidate",
         required_capabilities=_QUIC_CAPABILITIES,
@@ -103,11 +79,7 @@ QUIC_SMOKE_CASES: tuple[ProbeCase, ...] = (
     ),
     _behavior_case(
         name="quic-protected-flow-plan",
-        description=(
-            "Plan a stateful QUIC v1 client/server exchange with authenticated "
-            "endpoint state, one bidirectional stream, graceful close, capture, "
-            "validation, artifact collection, and teardown."
-        ),
+        description="Plan a stateful QUIC v1 client/server exchange with authenticated endpoint state, one bidirectional stream, graceful close, capture, validation, artifact collection, and teardown.",
         stimulus="quic_authenticated_client_flow",
         expected_response="quic_authenticated_stream_response_and_close",
         required_capabilities=_QUIC_STATEFUL_CAPABILITIES,
@@ -125,7 +97,9 @@ QUIC_SMOKE_CASES: tuple[ProbeCase, ...] = (
         },
     ),
 )
-_QUIC_CASE_BY_NAME: dict[str, ProbeCase] = {case.name: case for case in QUIC_SMOKE_CASES}
+_QUIC_CASE_BY_NAME: dict[str, ProbeCase] = {
+    case.name: case for case in QUIC_SMOKE_CASES
+}
 _QUIC_PLANNED_ONLY_CASES = frozenset(
     {
         "quic-version-negotiation-observation",
@@ -145,10 +119,7 @@ def _quic_initial_udp_observation_probe_plan(
     sequence: int,
 ) -> JSONObject:
     return _quic_probe_plan(
-        case_name=case_name,
-        profile=profile,
-        seed=seed,
-        sequence=sequence,
+        case_name=case_name, profile=profile, seed=seed, sequence=sequence
     )
 
 
@@ -160,25 +131,15 @@ def _quic_version_negotiation_observation_probe_plan(
     sequence: int,
 ) -> JSONObject:
     return _quic_probe_plan(
-        case_name=case_name,
-        profile=profile,
-        seed=seed,
-        sequence=sequence,
+        case_name=case_name, profile=profile, seed=seed, sequence=sequence
     )
 
 
 def _quic_retry_observation_probe_plan(
-    *,
-    case_name: str = "quic-retry-observation",
-    profile: str,
-    seed: int,
-    sequence: int,
+    *, case_name: str = "quic-retry-observation", profile: str, seed: int, sequence: int
 ) -> JSONObject:
     return _quic_probe_plan(
-        case_name=case_name,
-        profile=profile,
-        seed=seed,
-        sequence=sequence,
+        case_name=case_name, profile=profile, seed=seed, sequence=sequence
     )
 
 
@@ -190,10 +151,7 @@ def _quic_stateless_reset_observation_probe_plan(
     sequence: int,
 ) -> JSONObject:
     return _quic_probe_plan(
-        case_name=case_name,
-        profile=profile,
-        seed=seed,
-        sequence=sequence,
+        case_name=case_name, profile=profile, seed=seed, sequence=sequence
     )
 
 
@@ -205,19 +163,12 @@ def _quic_protected_flow_plan_probe_plan(
     sequence: int,
 ) -> JSONObject:
     return _quic_probe_plan(
-        case_name=case_name,
-        profile=profile,
-        seed=seed,
-        sequence=sequence,
+        case_name=case_name, profile=profile, seed=seed, sequence=sequence
     )
 
 
 def _quic_probe_plan(
-    *,
-    case_name: str,
-    profile: str,
-    seed: int,
-    sequence: int,
+    *, case_name: str, profile: str, seed: int, sequence: int
 ) -> JSONObject:
     case = _QUIC_CASE_BY_NAME[case_name]
     digest = deterministic_bytes(case_name, profile, seed, sequence)
@@ -230,13 +181,9 @@ def _quic_probe_plan(
     target_behavior = _target_behavior_for_case(case_name)
     stateful_endpoint_flow = case_name == "quic-protected-flow-plan"
     capture_filter = (
-        f"udp and host {stimulus_ipv4} and host {target_ipv4} "
-        f"and port {QUIC_SERVICE_PORT}"
+        f"udp and host {stimulus_ipv4} and host {target_ipv4} and port {QUIC_SERVICE_PORT}"
         if stateful_endpoint_flow
-        else (
-            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
-            f"and src port {QUIC_SERVICE_PORT} and dst port {source_port}"
-        )
+        else f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} and src port {QUIC_SERVICE_PORT} and dst port {source_port}"
     )
     plan: JSONObject = {
         "schema_version": 1,
@@ -269,19 +216,6 @@ def _quic_probe_plan(
             "packet_count": packet_count,
             "encrypted_payload_opaque": bool(case.metadata.get("encrypted", False)),
             "raw_hex": payload_hex,
-        },
-        "target_service": {
-            "required": True,
-            "kind": str(case.metadata.get("service", QUIC_SERVICE_KIND)),
-            "protocol": "udp",
-            "port": QUIC_SERVICE_PORT,
-            "bind_ipv4": target_ipv4,
-            "source_ipv4": stimulus_ipv4,
-            "behavior": target_behavior,
-            "payload_hex": payload_hex,
-            "payload_length": payload_length,
-            "deterministic": True,
-            "planned_only": planned_only,
         },
         "stimulus_driver": {
             "name": case.stimulus,
@@ -335,16 +269,11 @@ def _protected_flow_contract(digest: bytes, capture_filter: str) -> JSONObject:
         "crafter_server_log": f"{reference_artifact_root}/crafter-server.log.json",
         "reference_client_log": f"{reference_artifact_root}/reference-client.log.json",
         "reference_server_log": f"{reference_artifact_root}/reference-server.log.json",
-        "client_against_reference_pcap": (
-            f"{reference_artifact_root}/crafter-client-reference-server.pcap"
-        ),
-        "reference_against_server_pcap": (
-            f"{reference_artifact_root}/reference-client-crafter-server.pcap"
-        ),
+        "client_against_reference_pcap": f"{reference_artifact_root}/crafter-client-reference-server.pcap",
+        "reference_against_server_pcap": f"{reference_artifact_root}/reference-client-crafter-server.pcap",
         "decoded_summaries": f"{reference_artifact_root}/decoded-summaries.json",
         "state_traces": f"{reference_artifact_root}/state-traces.json",
         "command_manifest": f"{reference_artifact_root}/commands.json",
-        "provider_metadata": f"{reference_artifact_root}/provider.json",
         "teardown_status": f"{reference_artifact_root}/teardown.json",
         "structured_skip": f"{reference_artifact_root}/skip.json",
     }
@@ -356,7 +285,6 @@ def _protected_flow_contract(digest: bytes, capture_filter: str) -> JSONObject:
             "alpn": _QUIC_ALPN,
             "identity": {
                 "kind": "synthetic_test_identity",
-                "provisioned_by": "controlled_target_service",
                 "trust_installed_on": "stimulus_client",
                 "secrets_in_plan": False,
             },
@@ -376,16 +304,6 @@ def _protected_flow_contract(digest: bytes, capture_filter: str) -> JSONObject:
             },
             "close": "graceful_application_close",
         },
-        "provider_requirements": {
-            "endpoint_count": 2,
-            "roles": ["stimulus", "target"],
-            "capabilities": list(_QUIC_STATEFUL_CAPABILITIES),
-            "controlled_service_startup": True,
-            "udp_capture": True,
-            "collect_artifacts_before_teardown": True,
-            "always_teardown": True,
-            "live_requires_explicit_target_and_adapter": True,
-        },
         "capture": {
             "protocol": "udp",
             "points": ["stimulus", "target"],
@@ -393,62 +311,6 @@ def _protected_flow_contract(digest: bytes, capture_filter: str) -> JSONObject:
             "artifacts": artifacts,
         },
         "artifact_outputs": artifacts,
-        "provider_action_plan": {
-            "default_mode": "planned",
-            "live_confirmation_required": True,
-            "developer_host_fallback": False,
-            "actions": [
-                {
-                    "name": "build-feature-enabled-flow",
-                    "roles": ["stimulus", "target"],
-                    "mode": "planned",
-                    "command": [
-                        "cargo",
-                        "build",
-                        "-p",
-                        "crafter-flow",
-                        "--features",
-                        "quic-endpoint",
-                    ],
-                },
-                {
-                    "name": "generate-synthetic-identity",
-                    "roles": ["target"],
-                    "mode": "planned",
-                    "secrets_in_plan": False,
-                },
-                {
-                    "name": "start-controlled-server",
-                    "roles": ["target"],
-                    "mode": "planned",
-                },
-                {
-                    "name": "run-bounded-client-request",
-                    "roles": ["stimulus"],
-                    "mode": "planned",
-                    "max_request_bytes": request_bound,
-                    "max_response_bytes": response_bound,
-                },
-                {
-                    "name": "capture-protected-udp",
-                    "roles": ["stimulus", "target"],
-                    "mode": "planned",
-                    "filter": capture_filter,
-                },
-                {
-                    "name": "collect-artifacts",
-                    "roles": ["stimulus", "target"],
-                    "mode": "planned",
-                    "before_teardown": True,
-                },
-                {
-                    "name": "teardown-endpoints",
-                    "roles": ["stimulus", "target"],
-                    "mode": "planned",
-                    "always": True,
-                },
-            ],
-        },
         "flow_validation": {
             "client_state_trace": [
                 "Initial",
@@ -487,10 +349,7 @@ def _protected_flow_contract(digest: bytes, capture_filter: str) -> JSONObject:
             "reference": {
                 "implementation": _QUIC_REFERENCE_IMPLEMENTATION,
                 "version": _QUIC_REFERENCE_VERSION,
-                "package_pin": (
-                    f"{_QUIC_REFERENCE_IMPLEMENTATION}=={_QUIC_REFERENCE_VERSION}"
-                ),
-                "independent_from_flow_provider": True,
+                "package_pin": f"{_QUIC_REFERENCE_IMPLEMENTATION}=={_QUIC_REFERENCE_VERSION}",
             },
             "quic_version": 1,
             "alpn": _QUIC_ALPN,
@@ -508,7 +367,6 @@ def _protected_flow_contract(digest: bytes, capture_filter: str) -> JSONObject:
             ],
             "identity": {
                 "kind": "synthetic_short_lived",
-                "generated_on_disposable_provider": True,
                 "private_key_collected": False,
                 "certificate_public_fields_redacted": True,
             },
@@ -520,29 +378,9 @@ def _protected_flow_contract(digest: bytes, capture_filter: str) -> JSONObject:
                 "response_sha256": hashlib.sha256(response).hexdigest(),
                 "payload_bytes_collected": False,
             },
-            "execution_guard": {
-                "default_mode": "dry_run",
-                "confirm_live_run_required": True,
-                "explicit_authorization_required": True,
-                "disposable_provider_endpoints_required": True,
-                "developer_host_execution": False,
-                "teardown_always": True,
-            },
-            "provider_requirements": {
-                "capabilities": [
-                    "two_endpoints",
-                    "controlled_service_startup",
-                    "udp_capture",
-                    "artifact_collection",
-                    "endpoint_teardown",
-                    "reference_quic_runtime",
-                ],
-                "network_origin": "disposable_provider_only",
-                "host_privilege_escalation": False,
-            },
             "adapter_contract": {
                 "input": [
-                    "provider_endpoint_roles",
+                    "endpoint_roles",
                     "synthetic_identity_paths",
                     "opaque_request_length_and_sha256",
                     "opaque_response_length_and_sha256",
@@ -556,57 +394,6 @@ def _protected_flow_contract(digest: bytes, capture_filter: str) -> JSONObject:
                     "teardown_status",
                 ],
                 "secret_output_forbidden": True,
-            },
-            "provider_action_plan": {
-                "default_mode": "planned",
-                "actions": [
-                    {
-                        "name": "provision-disposable-endpoints",
-                        "roles": ["crafter", "reference"],
-                        "mode": "planned",
-                    },
-                    {
-                        "name": "install-pinned-reference",
-                        "roles": ["reference"],
-                        "mode": "planned",
-                        "package": (
-                            f"{_QUIC_REFERENCE_IMPLEMENTATION}=="
-                            f"{_QUIC_REFERENCE_VERSION}"
-                        ),
-                    },
-                    {
-                        "name": "generate-short-lived-identity",
-                        "roles": ["reference"],
-                        "mode": "planned",
-                        "collect_private_key": False,
-                    },
-                    {
-                        "name": "run-crafter-client-reference-server",
-                        "roles": ["crafter", "reference"],
-                        "mode": "planned",
-                        "request_length": len(request),
-                        "response_length": len(response),
-                    },
-                    {
-                        "name": "run-reference-client-crafter-server",
-                        "roles": ["reference", "crafter"],
-                        "mode": "planned",
-                        "request_length": len(request),
-                        "response_length": len(response),
-                    },
-                    {
-                        "name": "collect-and-redact-artifacts",
-                        "roles": ["crafter", "reference"],
-                        "mode": "planned",
-                        "before_teardown": True,
-                    },
-                    {
-                        "name": "teardown-disposable-endpoints",
-                        "roles": ["crafter", "reference"],
-                        "mode": "planned",
-                        "always": True,
-                    },
-                ],
             },
             "capture": {
                 "format": "pcap",
@@ -628,10 +415,7 @@ def _protected_flow_contract(digest: bytes, capture_filter: str) -> JSONObject:
                 "retain_only_payload_lengths_and_sha256": True,
             },
             "skip": {
-                "when": [
-                    "live_authorization_absent",
-                    "provider_capability_unavailable",
-                ],
+                "when": ["live_authorization_absent", "runtime_capability_unavailable"],
                 "status": "skipped",
                 "artifact": reference_artifacts["structured_skip"],
                 "developer_host_fallback": False,
@@ -646,8 +430,6 @@ def _protected_flow_contract(digest: bytes, capture_filter: str) -> JSONObject:
             "default_mode": "dry_run",
             "documentation_addresses": True,
             "deterministic_seed": True,
-            "live_requires_provider": True,
-            "live_requires_explicit_authorization": True,
             "developer_host_raw_send": False,
         },
     }
@@ -683,104 +465,6 @@ def _target_behavior_for_case(case_name: str) -> str:
     }[case_name]
 
 
-def quic_udp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
-    """Return QUIC plans that can use the controlled UDP echo responder."""
-
-    return [
-        plan
-        for plan in probe_plans
-        if plan.get("case") in _QUIC_STIMULUS_ENDPOINT_CASES
-    ]
-
-
-def quic_target_service_contribution(
-    probe_plans: Sequence[JSONObject],
-    *,
-    dry_run: bool,
-) -> JSONObject:
-    """Return target-service setup metadata for the QUIC UDP echo case."""
-
-    quic_plans = quic_udp_probe_plans(probe_plans)
-    plans_by_port = plans_by_destination_port(quic_plans)
-    services = [
-        {
-            "name": "quic-controlled-udp",
-            "protocol": "udp",
-            "port": port,
-            "purpose": "quic-initial-udp-observation",
-            "deterministic": True,
-            "echo": True,
-            "payload_count": sum(
-                1 for plan in quic_plans if int(plan.get("destination_port", 0)) == port
-            ),
-            **target_service_address_fields(plan),
-            "log_paths": [
-                f"live-artifacts/probe/target-services/udp-responder-{port}.stdout.txt",
-                f"live-artifacts/probe/target-services/udp-responder-{port}.stderr.txt",
-            ],
-        }
-        for port, plan in plans_by_port.items()
-    ]
-    return {
-        "services": services,
-        "starts_services": not dry_run and bool(plans_by_port),
-    }
-
-
-def quic_rewrite_endpoint_addresses(
-    plan: JSONObject,
-    *,
-    source_ipv4: str,
-    target_ipv4: str,
-    source_mac: str | None = None,
-    target_mac: str | None = None,
-    target_interface: str | None = None,
-    rewrite_source: str = "wire_endpoint_plan",
-) -> JSONObject:
-    """Rewrite the QUIC UDP probe plan onto lab-session endpoint addresses."""
-
-    updated = dict(plan)
-    updated["source_ipv4"] = source_ipv4
-    updated["destination_ipv4"] = target_ipv4
-    updated["expected_reply_source_ipv4"] = target_ipv4
-    updated["expected_reply_destination_ipv4"] = source_ipv4
-    case_name = str(updated.get("case", ""))
-    source_port = int(updated.get("source_port", 0))
-    destination_port = int(updated.get("destination_port", QUIC_SERVICE_PORT))
-    updated["capture_filter"] = (
-        f"udp and src host {target_ipv4} and dst host {source_ipv4} "
-        f"and src port {destination_port} and dst port {source_port}"
-    )
-    target_service = dict(
-        json_object(updated.get("target_service", {}), "probe_plan.target_service")
-    )
-    target_service.update(
-        {
-            "bind_ipv4": target_ipv4,
-            "port": destination_port,
-            "source_ipv4": source_ipv4,
-        }
-    )
-    updated["target_service"] = target_service
-    validation = dict(json_object(updated.get("validation", {}), "probe_plan.validation"))
-    validation.update(
-        {
-            "source_ipv4": target_ipv4,
-            "destination_ipv4": source_ipv4,
-            "source_port": destination_port,
-            "destination_port": source_port,
-        }
-    )
-    updated["validation"] = validation
-    return apply_shared_ipv4_rewrite_tail(
-        updated,
-        case_name=case_name,
-        source_ipv4=source_ipv4,
-        target_ipv4=target_ipv4,
-        rewrite_source=rewrite_source,
-    )
-
-
 def quic_failure_reasons(case_name: str) -> list[str] | None:
     if case_name in _QUIC_STIMULUS_ENDPOINT_CASES:
         return [
@@ -788,19 +472,9 @@ def quic_failure_reasons(case_name: str) -> list[str] | None:
             "wrong_peer",
             "wrong_payload",
             "decode_failed",
-            "target_setup_failed",
+            "target_precondition_failed",
         ]
     return None
-
-
-def quic_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, object]:
-    ipv4_unicast = capability(substrate, "ipv4_unicast", "ipv4")
-    controlled_services = capability(
-        substrate,
-        "controlled_services",
-        "controlled_service",
-    )
-    return {"quic_udp_service": ipv4_unicast and controlled_services}
 
 
 _QUIC_PLAN_BUILDERS: dict[str, object] = {
@@ -810,8 +484,6 @@ _QUIC_PLAN_BUILDERS: dict[str, object] = {
     "quic-stateless-reset-observation": _quic_stateless_reset_observation_probe_plan,
     "quic-protected-flow-plan": _quic_protected_flow_plan_probe_plan,
 }
-
-
 register(
     ProtocolPlugin(
         name="quic",
@@ -820,10 +492,6 @@ register(
         planned_only_cases=_QUIC_PLANNED_ONLY_CASES,
         profile_counts={},
         stimulus_endpoint_cases=_QUIC_STIMULUS_ENDPOINT_CASES,
-        target_service=quic_target_service_contribution,
-        setup_script=None,
-        rewrite_endpoint_addresses=quic_rewrite_endpoint_addresses,
         failure_reasons=quic_failure_reasons,
-        lab_capabilities=quic_lab_capabilities,
     )
 )

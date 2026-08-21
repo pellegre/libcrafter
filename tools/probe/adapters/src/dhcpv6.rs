@@ -13,8 +13,8 @@ use std::time::Duration;
 
 use crate::common::{
     captured_data, decode_hex, decoded_packet_json, failed_outcome, hex_bytes, observed_response,
-    open_capture_sniffer, plan_json, required_str, required_u16, send_report_json,
-    target_service_json, CandidateValidation, ExampleResult, ProbeOutcome, ProbePlan,
+    open_capture_sniffer, peer_contract_json, plan_json, required_str, required_u16,
+    send_report_json, CandidateValidation, ExampleResult, ProbeOutcome, ProbePlan,
     StimulusEndpointRequest, FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD,
     FAILURE_WRONG_PEER,
 };
@@ -52,7 +52,7 @@ pub fn run_dhcpv6_dry_run(
             "sent_raw_hex": sent_raw_hex,
             "sent_decoded": sent_decoded,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }),
     );
     let result = json!({
@@ -69,7 +69,7 @@ pub fn run_dhcpv6_dry_run(
             "sent_raw_hex": sent_raw_hex,
             "sent_decoded": sent_decoded,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }
     });
     Ok(ProbeOutcome {
@@ -80,7 +80,7 @@ pub fn run_dhcpv6_dry_run(
     })
 }
 
-/// Run one DHCPv6 probe plan against a live lab interface.
+/// Run one DHCPv6 probe plan against a supplied interface.
 pub fn run_dhcpv6_live(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
@@ -972,7 +972,6 @@ mod tests {
 
     fn request(plan: ProbePlan) -> StimulusEndpointRequest {
         StimulusEndpointRequest {
-            provider: "qemu".to_string(),
             profile: "dhcpv6-smoke".to_string(),
             seed: 9925,
             endpoint_role: "stimulus".to_string(),

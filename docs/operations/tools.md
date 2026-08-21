@@ -1,121 +1,31 @@
-# Tools Overview
+# Validation tools
 
-The `tools/` directory holds the Python/Rust modules that take `crafter`
-off the developer machine and onto disposable, provider-backed infrastructure
-for live validation. They form a layered stack: the lower layers manage where
-packets run, and the upper two decide what to validate.
+`libcrafter` keeps packet semantics and deterministic validation in this
+repository. It does not manage execution infrastructure.
 
-```text
-        oracle        probe          <- user-facing validators
-           \           /
-            \         /
-              lab                     <- multi-endpoint role sessions
-               |
-            endpoint                  <- one disposable endpoint
-               |
-            appliance                 <- Docker image, runtime profiles, checks
-```
+The tracked tools have three jobs:
 
-Read the stack bottom-up: `appliance` owns the standard Docker userland and
-coarse runtime profiles, `endpoint` owns one disposable machine or asset, `lab`
-composes endpoints into a role session, and `oracle` and `probe` are the two
-validators you actually invoke. Most workflows enter through `oracle` or
-`probe`; they reach down through `lab` to `endpoint` and the appliance runtime
-for you.
-
-Appliance profiles describe runtime placement, privileges, devices, and host
-checks, not packet behavior. Dry-run reports include appliance runtime metadata
-so operators can see whether a role would run as a Docker private endpoint
-container or as the standard appliance image on an SSH Docker host. Oracle and
-probe still own validation semantics.
-
-## endpoint
-
-`endpoint` manages the lifecycle of a single disposable endpoint: create, exec,
-upload, download, collect-artifacts, and destroy, across the Hetzner, QEMU,
-VirtualBox, and Docker providers. It owns only mechanical endpoint plumbing —
-provisioning, SSH transport, file transfer, and artifact collection — and never
-infers packet semantics. Reach for it directly only to confirm a provider is
-ready (`doctor`) or to debug one endpoint in isolation; otherwise it is the
-substrate that `lab` drives. Full setup, credentials, and cleanup live in the
-[endpoint provider guide](endpoint.md) and
-[`tools/endpoint/README.md`](../../tools/endpoint/README.md).
-
-Safe dry-run / offline examples:
+- `tools/oracle/run` generates source-backed corpora and compares bytes,
+  decoded models, and pcap behavior with independent implementations.
+- `tools/probe/run` emits deterministic peer-behavior plans. It never selects a
+  machine or sends packets.
+- `crafter-smoke` builds and runs a small bounded workload against the selected
+  `crafter` source tree.
 
 ```sh
-tools/endpoint/run doctor --provider qemu --exposure private --json
-tools/endpoint/run create --provider qemu --exposure private --private-group lab-a --dry-run --json
-tools/endpoint/run list
+tools/oracle/run specs validate --strict
+tools/oracle/run corpus --profile ci --seed 12345 --count 100 --out target/oracle/corpus
+tools/oracle/run offline --corpus target/oracle/corpus/plans.json --out target/oracle/offline
+tools/oracle/run pcap --corpus target/oracle/corpus/plans.json --out target/oracle/pcap
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
+cargo run -p crafter-smoke
 ```
 
-## lab
+The Rust executors under `tools/oracle/adapters` and `tools/probe/adapters`
+accept concrete request data and perform bounded packet work. They do not
+choose hosts, obtain credentials, create machines, prepare peers, lease
+hardware, or tear resources down.
 
-`lab` composes endpoints into a multi-endpoint, role-based session (for example
-a `stimulus` endpoint and a `target` endpoint) and owns session planning,
-provider capability metadata, appliance runtime metadata, repository
-push/bootstrap, artifact collection, and cleanup. It is protocol-agnostic: it
-passes caller-supplied profile, role, and workload fields through without
-inferring behavior from them. You rarely run `lab` directly — it is the
-provider-neutral substrate that `oracle` live runs
-and `probe` runs sit on. Use it on its own mainly to plan or inspect a session
-shape. See the [lab sessions guide](lab.md) and
-[`tools/lab/README.md`](../../tools/lab/README.md).
-
-Safe dry-run / offline examples:
-
-```sh
-tools/lab/run providers --json
-tools/lab/run plan --provider qemu --dry-run --profile smoke --seed 1 --role stimulus --role target --json
-tools/lab/run doctor --help
-```
-
-## oracle
-
-`oracle` answers "do libcrafter's bytes and decoded model match a reference
-backend?" It generates a packet corpus from executable specs and compares
-libcrafter against a full read/write/live reference backend or a parser-only
-backend (Wireshark/tshark) across offline, pcap, and live modes. Run it after changing
-builders, decoders, or pcap I/O, to catch wire-level regressions before they
-ship. Offline and pcap modes need no provider; live modes plan through `lab`.
-See the [oracle validation guide](validation.md) and
-[`tools/oracle/README.md`](../../tools/oracle/README.md).
-
-Safe dry-run / offline examples:
-
-```sh
-tools/oracle/run offline --profile smoke --seed 1 --count 10
-tools/oracle/run pcap --profile smoke --seed 1 --count 10
-tools/oracle/run live --provider local-dry-run --profile smoke --seed 1 --count 10
-```
-
-## probe
-
-`probe` answers "does a real peer respond the way libcrafter expects?" It sends
-libcrafter-built packets through a disposable `lab` session, captures the
-kernel or controlled-service replies, decodes them with libcrafter, and checks
-them against each case contract (DNS, DHCP, ARP, UDP behavior, plus an IPSec
-suite). Run it after changing send paths or request/response interaction logic.
-Dry-runs plan the full exchange — request artifacts, target setup, role
-addresses — without starting services or sending traffic. See the
-[probe validation guide](probe.md) and
-[`tools/probe/README.md`](../../tools/probe/README.md).
-
-Safe dry-run / offline examples:
-
-```sh
-tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10
-tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 40
-tools/probe/run --provider qemu --dry-run --profile ipsec --out target/probe/ipsec-dry-run
-```
-
-## Safe by default
-
-Every tool defaults to dry-run/offline: dry-run plans create no provider
-resources, read no credentials, and send no packets. A live, provider-backed run
-is opt-in and requires an explicit confirmation flag (`--confirm-live-run`, or
-`--live` for the VirtualBox smoke) plus provider credentials in the environment
-(`HETZNER_API_TOKEN` or `HCLOUD_TOKEN` for Hetzner; local prerequisites for
-QEMU, VirtualBox, and Docker). The example commands on this page are all
-dry-run/offline and use no live targets. Keep crafted live traffic on disposable
-provider endpoints, not on the developer machine.
+An operator-supplied external runner may check out an exact candidate revision,
+satisfy the plan's runtime requirements, invoke a bounded executor, and collect
+its artifacts. That runner and its topology are intentionally untracked.

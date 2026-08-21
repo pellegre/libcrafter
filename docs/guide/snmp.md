@@ -23,7 +23,7 @@ control, and user/key management belong in generated tools outside the crate.
 | SNMPv2c | Supported | Community wrapper, request/response PDUs, GetBulk, InformRequest, SNMPv2-Trap, Report wire shape, error-status labels, and unknown PDU preservation. |
 | SNMPv3 | Supported as wire framing | Global data, flags, security model labels, raw/USM security parameters, plaintext scoped PDUs, Reports, and encrypted scoped-data byte preservation. |
 | UDP dispatch | Supported | UDP/161 and UDP/162 decode as SNMP only when the payload looks like one complete SNMP BER message; non-SNMP payloads stay `Raw`. |
-| Live behavior | Out of crate scope | Use dry-run plans, oracle/probe fixtures, or provider-backed labs. The crate does not originate live SNMP workflows by itself. |
+| Live behavior | Out of crate scope | Use dry-run plans, oracle/probe fixtures, or externally executed labs. The crate does not originate live SNMP workflows by itself. |
 
 ## Public API
 
@@ -179,48 +179,24 @@ fn main() -> crafter::Result<()> {
 }
 ```
 
-Live SNMP traffic is lab-only. A generated tool that needs real packets should
-first produce dry-run plans and pcap artifacts, then run against authorized
-targets through provider-backed endpoint, oracle, probe, or lab workflows with
-explicit confirmation and teardown. Do not store real communities, USM keys,
-provider identifiers, public IPs, live hostnames, or sensitive packet captures
-in tracked files.
+Live SNMP traffic requires explicit external authorization. A generated tool
+should first produce dry-run plans and pcap artifacts; external operator tooling
+then supplies an authorized peer, invokes the bounded workload, collects
+artifacts, and restores external state. Do not store real communities, USM keys,
+public IPs, live hostnames, or sensitive packet captures in tracked files.
 
-## Guarded Live Validation
+## External Execution Boundary
 
-The SNMP oracle live workflow is dry-run by default. The first command uses the
-local dry-run provider and never creates infrastructure. The guarded provider
-command takes the dry-run branch unless `LIBCRAFTER_RUN_SNMP_LIVE=1` is set; a
-real run still requires `--confirm-live-run` and a registered lab provider.
+Use the tracked deterministic validation surfaces first:
 
 ```sh
-tools/oracle/run live --backend <reference-backend> --provider local-dry-run --family snmp --profile snmp-live-dry-run --seed 4205 --count 10 --out target/oracle/snmp-live-local-dry-run
-
-if [ "${LIBCRAFTER_RUN_SNMP_LIVE:-0}" = "1" ]; then
-  tools/oracle/run live \
-    --backend <reference-backend> \
-    --provider "${LIBCRAFTER_SNMP_LIVE_PROVIDER:-qemu}" \
-    --family snmp \
-    --profile snmp-live-dry-run \
-    --seed 4206 \
-    --count 10 \
-    --direction live_exchange \
-    --confirm-live-run \
-    --out target/oracle/snmp-live-confirmed
-else
-  tools/oracle/run live \
-    --backend <reference-backend> \
-    --provider qemu \
-    --dry-run \
-    --family snmp \
-    --profile snmp-live-dry-run \
-    --seed 4206 \
-    --count 10 \
-    --direction live_exchange \
-    --out target/oracle/snmp-live-guarded-dry-run
-fi
+tools/oracle/run offline --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
-Keep live artifacts under ignored `target/` paths. A confirmed run must collect
-the oracle report, endpoint artifacts, and teardown records before the lab
-session is considered complete.
+These commands do not select infrastructure or send packets. Any authorized use
+of concrete interfaces, peers, radios, or targets is owned by external operator
+tooling, which supplies runtime inputs and collects artifacts. libcrafter does
+not provision machines, configure responders, manage credentials, or perform
+remote cleanup.

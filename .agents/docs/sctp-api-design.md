@@ -4,7 +4,7 @@ This note sketches the planned public API for SCTP before any Rust surface is
 exported. It is a design handoff, not an implementation. Wire facts remain
 gated by `.agents/docs/sctp-rfc-manifest.md`,
 `.agents/docs/sctp-codepoints.md`, `.agents/docs/sctp-wire-grammar.md`,
-`.agents/docs/sctp-scope.md`, and `.agents/docs/sctp-validation-safety.md`.
+and `.agents/docs/sctp-scope.md`.
 
 SCTP support in `crafter` is a packet primitive. The API must compose through
 the existing typed `Packet` abstraction, decode through native IPv4/IPv6

@@ -1,7 +1,7 @@
 # IEEE 802.11 Fixture Corpus
 
 These fixtures are synthetic, deterministic hex fixtures for offline tests.
-They contain no live captures, real network identifiers, provider data, public
+They contain no live captures, real network identifiers, external run data, public
 IP addresses, or host-specific interface details.
 
 MAC addresses use locally administered documentation values matching

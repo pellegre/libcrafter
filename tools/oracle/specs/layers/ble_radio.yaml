@@ -12,8 +12,6 @@ supported_directions:
   - backend_to_libcrafter
   - libcrafter_to_backend
   - roundtrip
-live_eligibility: false
-live_gate: offline_pcap_link_type_only
 
 fields:
   - name: rf_channel

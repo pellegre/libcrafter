@@ -10,7 +10,6 @@ layers:
 directions:
   - backend_to_libcrafter
   - libcrafter_to_backend
-  - live_exchange
 strict_bytes: true
 malformed: false
 
@@ -118,16 +117,6 @@ supported_cases:
       - backend_to_libcrafter
       - libcrafter_to_backend
     byte_policy: strict_bytes
-  - name: dhcpv6-live-plan-client
-    directions:
-      - live_exchange
-    byte_policy: strict_bytes
-    contract_only: true
-  - name: dhcpv6-live-plan-relay
-    directions:
-      - live_exchange
-    byte_policy: strict_bytes
-    contract_only: true
 
 coverage_cases:
   - dhcpv6-solicit
@@ -141,8 +130,6 @@ coverage_cases:
   - dhcpv6-ia-pd-iaprefix
   - dhcpv6-unknown-option
   - dhcpv6-option-matrix
-  - dhcpv6-live-plan-client
-  - dhcpv6-live-plan-relay
 
 backend_support:
   scapy:
@@ -151,8 +138,7 @@ backend_support:
       - DHCP6
     notes:
       - Scapy DHCP6 layers cover the offline message, relay, identity
-        association, and unknown-option cases; live cases remain plan-only
-        contracts until provider validation runs them.
+        association, and unknown-option cases.
   libcrafter:
     status: supported
     notes:

@@ -181,7 +181,7 @@ RFC Editor errata state reviewed on 2026-06-30:
 - Offline examples, fixtures, oracle profiles, and probe plans must use
   documentation address space, deterministic bytes, dry-run behavior, or
   checked-in synthetic pcaps.
-- Live TLS validation must be provider-backed, explicitly confirmed,
+- Live TLS validation must be externally executed, explicitly confirmed,
   artifact-preserving, and safe to skip. This evidence step performs no live
   traffic and adds no live defaults.
 - Length fields and registry-backed values must preserve explicit caller

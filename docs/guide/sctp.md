@@ -243,30 +243,20 @@ and Raw IP link types for:
 
 These fixtures are deterministic and offline. They are suitable for generated
 tools, CI, and oracle/probe dry-run comparisons without raw socket privileges
-or provider credentials.
+or external runner credentials.
 
-## Live Safety
+## External Execution Boundary
 
-Keep SCTP examples and validation offline by default. Do not send live SCTP
-traffic from the developer machine, and do not use public peers as test
-targets. Live SCTP validation must be provider-backed, explicitly authorized,
-bounded to controlled endpoints, preceded by a dry-run plan, and followed by
-artifact collection and teardown.
-
-Start with dry-run planning:
+Use the tracked deterministic validation surfaces first:
 
 ```sh
-tools/lab/run plan --provider qemu --dry-run --profile sctp-smoke --seed 132 --role stimulus --role target --json
-tools/oracle/run live --backend <reference-backend> --provider qemu --dry-run --profile sctp-smoke --seed 132 --count 5 --out target/oracle/sctp-dry-run
-tools/probe/run --provider qemu --dry-run --profile sctp-smoke --seed 132 --count 5 --out target/probe/sctp-dry-run
+tools/oracle/run offline --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
-A non-dry-run live exchange requires an explicit live confirmation flag from
-the live-capable tool, disposable provider endpoints, controlled stimulus and
-target roles, bounded captures, artifacts under ignored `target/` paths, and
-teardown in the same runbook. Provider credentials, raw-socket privileges, or
-environment variables alone are not confirmation.
-
-Do not commit credentials, public endpoint addresses, provider instance IDs,
-live host identifiers, or packet captures from sensitive networks. Regenerate
-tracked fixtures from documentation-safe offline inputs instead.
+These commands do not select infrastructure or send packets. Any authorized use
+of concrete interfaces, peers, radios, or targets is owned by external operator
+tooling, which supplies runtime inputs and collects artifacts. libcrafter does
+not provision machines, configure responders, manage credentials, or perform
+remote cleanup.

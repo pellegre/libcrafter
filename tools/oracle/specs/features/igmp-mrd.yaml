@@ -150,7 +150,7 @@ documentation_only:
   - topic: router_state
     reason: RFC 4286 router discovery state, response behavior, neighbor tracking, and rate limiting are operational behavior outside the packet primitive.
   - topic: live_multicast
-    reason: Real MRD traffic requires provider-backed lab/probe/oracle gates and is not sampled by this offline feature spec.
+    reason: Real MRD traffic requires explicit external authorization and is not sampled by this offline feature spec.
   - topic: hidden_ipv4_defaults
     reason: IPv4 TTL 1, Router Alert, and All-Snoopers/All-Routers destinations are source-backed composition guidance, not implicit mutation by the IGMP layer.
 

@@ -3,7 +3,7 @@
 //! `dhcpv4-discover-offer` is the baseline DHCPv4 behavioral check: build a
 //! BOOTP/DHCPv4 Discover with libcrafter, send it from the client port (68) to
 //! the server port (67) against a controlled DHCPv4 responder on a private L2
-//! lab segment, capture the Offer, decode the IPv4/UDP/BOOTP/DHCPv4 response with
+//! isolated segment, capture the Offer, decode the IPv4/UDP/BOOTP/DHCPv4 response with
 //! libcrafter, and validate the BOOTP opcode (reply), the message type (Offer,
 //! option 53), the echoed transaction id (xid), the client hardware address
 //! (chaddr), the offered address (yiaddr), the server identifier (option 54),
@@ -17,8 +17,8 @@ use std::time::Duration;
 
 use crate::common::{
     capture_filter, captured_data, decode_hex, decoded_packet_json, failed_outcome, hex_bytes,
-    observed_response, open_capture_sniffer, plan_json, required_str, required_u32,
-    required_u8_list, send_report_json, target_service_json, CandidateValidation, Dhcpv4Send,
+    observed_response, open_capture_sniffer, peer_contract_json, plan_json, required_str,
+    required_u32, required_u8_list, send_report_json, CandidateValidation, Dhcpv4Send,
     ExampleResult, ProbeOutcome, ProbePacketSender, ProbePlan, StimulusEndpointRequest,
     FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
 };
@@ -52,7 +52,7 @@ pub fn run_dhcpv4_dry_run(
             "send_report": send_report_json(&report),
             "sent_raw_hex": sent_raw_hex,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }),
     );
     let result = json!({
@@ -68,7 +68,7 @@ pub fn run_dhcpv4_dry_run(
             "planned_only": true,
             "sent_raw_hex": sent_raw_hex,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }
     });
     Ok(ProbeOutcome {
@@ -348,7 +348,7 @@ fn run_dhcpv4_multi_send_dry_run(
             "send_count": planned_sends.len(),
             "planned_sends": planned_sends,
             "expected_responses": expected_responses,
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }),
     );
     let result = json!({
@@ -365,7 +365,7 @@ fn run_dhcpv4_multi_send_dry_run(
             "send_count": planned_sends.len(),
             "planned_sends": planned_sends,
             "expected_responses": expected_responses,
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }
     });
     Ok(ProbeOutcome {
@@ -380,7 +380,7 @@ fn run_dhcpv4_multi_send_dry_run(
 /// libcrafter Discover, capture the Offers, decode each, and validate every Offer
 /// against *its* send's transaction id (xid), client identity (chaddr), and
 /// offered address. Each send opens its own capture filtered to the client port,
-/// so two Offers that share the lab transport are never confused — every Offer is
+/// so two Offers that share the packet transport are never confused — every Offer is
 /// matched to the Discover that produced it by the echoed xid. The case passes
 /// only when every send validates.
 fn run_dhcpv4_multi_send_live(
@@ -717,7 +717,7 @@ pub fn dhcpv4_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
             .parameter_request_list(requests)
     } else {
         // RFC 2131 section 4.1: a client that cannot receive unicast before its
-        // address is configured sets the broadcast flag. The lab transport
+        // address is configured sets the broadcast flag. The packet transport
         // unicasts the Offer back over the private segment, so the responder uses
         // the recorded source address; the flag stays a faithful Discover shape.
         Dhcpv4::discover(client_mac).transaction_id(transaction_id)
@@ -1629,7 +1629,7 @@ mod tests {
     }
 
     fn hostname_plan() -> ProbePlan {
-        let hostname = "probe-qemu-1023-0".to_string();
+        let hostname = "probe-host-1023-0".to_string();
         let mut plan = base_plan("dhcpv4-hostname");
         plan.source_ipv4 = Some("10.64.0.10".to_string());
         plan.destination_ipv4 = Some("10.64.0.20".to_string());

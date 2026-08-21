@@ -52,7 +52,7 @@ against a dated IANA snapshot rather than copied from an RFC table alone.
 | [RFC 9175](https://www.rfc-editor.org/info/rfc9175), [Datatracker](https://datatracker.ietf.org/doc/rfc9175/) | Echo option format in Section 2.2.1; Request-Tag format and blockwise association in Sections 3.2 through 3.8; secure token binding changes in Sections 4.1 and 4.2; assignments in Section 7. | Updates RFC 7252. [Errata](https://www.rfc-editor.org/errata/rfc9175): no records found. | **Implement** opaque Echo and Request-Tag values, stateless request-tag metadata, and validation of secure token use. Freshness policy and anti-amplification challenge state are **operational-only**. |
 | [RFC 9176](https://www.rfc-editor.org/info/rfc9176), [Datatracker](https://datatracker.ietf.org/doc/rfc9176/) | Resource-directory discovery and content-format context in Section 4, registration and lookup interfaces in Sections 5 and 6, and RD assignments in Section 9. It reuses RFC 6690 link-format payloads rather than defining the base CoAP message grammar. | No formal update or obsolescence relation. [Errata](https://www.rfc-editor.org/errata/rfc9176): no records found. | RD request/response workflows, storage, lookup, registration lifetime, and server policy are **operational-only** and **out of scope**. Generic link-format extension bytes remain **preserved opaquely** by the RFC 6690 model. |
 | [RFC 9177](https://www.rfc-editor.org/info/rfc9177), [Datatracker](https://datatracker.ietf.org/doc/rfc9177/) | Q-Block1 and Q-Block2 properties and bit layout in Sections 4.1 and 4.2; their interactions in Sections 4.3 through 4.8; response/token constraints in Sections 5 and 6; assignments in Section 12; reliable examples in Appendix B. | No formal update or obsolescence relation. [Errata](https://www.rfc-editor.org/errata/rfc9177): no records found. | **Implement** lossless Q-Block fields, boundaries, and stateless burst metadata. Congestion control, burst scheduling, recovery, and transfer assembly are **operational-only** and **out of scope**. |
-| [RFC 9203](https://www.rfc-editor.org/info/rfc9203), [Datatracker](https://datatracker.ietf.org/doc/rfc9203/) | ACE OSCORE profile, including OSCORE input material in Section 3.2.1, token provisioning and context setup in Sections 3 through 6, and ACE registries in Section 9. It does not replace RFC 8613 packet protection grammar. | No formal update or obsolescence relation. [Errata](https://www.rfc-editor.org/errata/rfc9203): Reported 8678, affecting an operational cross-reference in Section 4.2. | ACE authorization, token provisioning, context enrollment, and lifecycle are **out of scope**. Do not use this RFC as authority for Group OSCORE packet grammar. Unsupported enrollment metadata is **preserved opaquely** only when encountered inside an otherwise supported value. |
+| [RFC 9203](https://www.rfc-editor.org/info/rfc9203), [Datatracker](https://datatracker.ietf.org/doc/rfc9203/) | ACE OSCORE profile, including OSCORE input material in Section 3.2.1, token preparation and context setup in Sections 3 through 6, and ACE registries in Section 9. It does not replace RFC 8613 packet protection grammar. | No formal update or obsolescence relation. [Errata](https://www.rfc-editor.org/errata/rfc9203): Reported 8678, affecting an operational cross-reference in Section 4.2. | ACE authorization, token preparation, context enrollment, and lifecycle are **out of scope**. Do not use this RFC as authority for Group OSCORE packet grammar. Unsupported enrollment metadata is **preserved opaquely** only when encountered inside an otherwise supported value. |
 | [RFC 9876](https://www.rfc-editor.org/info/rfc9876), [Datatracker](https://datatracker.ietf.org/doc/rfc9876/) | Current CoAP Content-Format registration policy in Sections 4.1 through 4.3, including the Media Type column, temporary entries, expert review, and documentation IDs 64998 and 64999. It changes registry authority, not the on-wire unsigned-integer encoding. | Updates RFC 7252. [Errata](https://www.rfc-editor.org/errata/rfc9876): no records found. | **Implement** current registry metadata and documentation-reserved classification in the later IANA snapshot. Unknown Content-Format values remain **preserved opaquely**. Registration workflow is **operational-only**. |
 
 ## Formal update graph
@@ -107,7 +107,7 @@ experimental ranges, and rows whose references are still Internet-Drafts or
 RFC Editor queue placeholders. A registered number is not by itself evidence
 that `crafter` may implement draft semantics. The later registry snapshot must
 record row status and reference authority, expose unknown numeric values, and
-avoid treating provisional or draft-backed rows as stable exported behavior.
+avoid treating prepareal or draft-backed rows as stable exported behavior.
 
 ## Work in progress and unresolved authority
 
@@ -123,11 +123,11 @@ Consequently:
 - do not freeze a Group OSCORE serializer, signature grammar, algorithm set,
   or exported constants from the Internet-Draft;
 - the already assigned IANA Group Flag may be represented only as explicitly
-  provisional metadata and otherwise preserved opaquely;
+  prepareal metadata and otherwise preserved opaquely;
 - the planned Group OSCORE step must re-check Datatracker, RFC Editor, Errata,
   and IANA before implementation and stop if the final RFC is still absent or
   differs from draft 28; and
-- RFC 9203 is an ACE profile for pairwise OSCORE provisioning, not a substitute
+- RFC 9203 is an ACE profile for pairwise OSCORE preparation, not a substitute
   source for Group OSCORE wire behavior.
 
 The active CoAP corrections-and-clarifications and OSCORE key-update work are

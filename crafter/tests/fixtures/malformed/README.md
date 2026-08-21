@@ -100,7 +100,7 @@ All rows currently expect `buffer-too-short` from `QuicVarInt::decode`; the
 
 ## Conventions
 
-- Frames use lab-safe documentation values (documentation PAN/address space,
+- Frames use synthetic documentation values (documentation PAN/address space,
   all-zero filler) and carry no real-network or device identifiers.
 - Each corpus's resilience test pins a required-case set so the malformation
   classes the corpus must exercise cannot be silently dropped.

@@ -18,10 +18,10 @@ use std::time::Duration;
 
 use crate::common::{
     capture_filter, captured_data, decode_hex, decoded_packet_json, failed_outcome, hex_bytes,
-    observed_response, open_capture_sniffer, plan_json, required_str, required_u16,
-    send_report_json, target_service_json, CandidateValidation, ExampleResult, ProbeOutcome,
-    ProbePlan, StimulusEndpointRequest, FAILURE_DECODE_FAILED, FAILURE_TIMEOUT,
-    FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
+    observed_response, open_capture_sniffer, peer_contract_json, plan_json, required_str,
+    required_u16, send_report_json, CandidateValidation, ExampleResult, ProbeOutcome, ProbePlan,
+    StimulusEndpointRequest, FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD,
+    FAILURE_WRONG_PEER,
 };
 
 const SNMP_SYS_UPTIME_OID: &str = "1.3.6.1.2.1.1.3.0";
@@ -67,7 +67,7 @@ pub fn run_snmp_dry_run(
             "sent_raw_hex": sent_raw_hex,
             "sent_decoded": sent_decoded,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
             "snmp_request": plan.snmp_request,
             "expected_snmp_response": expected_snmp_response_json(plan),
         }),
@@ -86,7 +86,7 @@ pub fn run_snmp_dry_run(
             "sent_raw_hex": sent_raw_hex,
             "sent_decoded": sent_decoded,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
             "snmp_request": plan.snmp_request,
             "expected_snmp_response": expected_snmp_response_json(plan),
         }
@@ -1007,7 +1007,6 @@ mod tests {
 
     fn stimulus_request(plan: ProbePlan) -> StimulusEndpointRequest {
         StimulusEndpointRequest {
-            provider: "local-dry-run".to_string(),
             profile: "snmp-smoke".to_string(),
             seed: 1,
             endpoint_role: "stimulus".to_string(),
@@ -1043,7 +1042,7 @@ mod tests {
             "get-request"
         );
         assert_eq!(
-            outcome.result["metadata"]["target_service"]["kind"],
+            outcome.result["metadata"]["peer_contract"]["kind"],
             "snmp-controlled-peer"
         );
     }

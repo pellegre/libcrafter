@@ -295,14 +295,13 @@ and sniffing can affect or observe devices outside the developer machine.
 The WHAD-compatible dongle backend is a live wire backend, not a default
 example path. Its default-safe behavior is dry-run planning; real serial
 transmit or sniff work requires the optional `whad` feature and explicit live
-opt-in. The live dongle checklist is covered by
-[`docs/operations/ble-live-manual.md`](../operations/ble-live-manual.md), added
-after this guide.
+opt-in. Device selection, RF authorization, execution, artifact collection,
+and cleanup belong to external operator tooling and are not managed here.
 
 Examples, docs, fixtures, and tests should use documentation 48-bit addresses
 from `00:00:5e:00:53:*`, documentation IP address space where IP appears,
 synthetic local names such as `crafter-ble`, and synthetic payload bytes. Real
-device names, addresses, captures, credentials, provider account data, public
+device names, addresses, captures, credentials, public
 IPs, and live host identifiers do not belong in tracked documentation or
 fixtures.
 
@@ -317,9 +316,9 @@ tools/oracle/run offline --family ble --profile smoke --seed 3701 --count 20
 tools/oracle/run pcap --family ble --profile smoke --seed 3702 --count 20
 ```
 
-Provider-backed or hardware-backed BLE work must start with dry-run planning
+Externally executed or hardware-backed BLE work must start with dry-run planning
 and remain behind explicit live confirmation. Automated validation must not
-require a BLE dongle, root privileges, provider credentials, or real device
+require a BLE dongle, root privileges, external runner credentials, or real device
 identifiers.
 
 ## Standards And Registries Implemented

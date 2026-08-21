@@ -26,7 +26,7 @@ through the existing `Packet` abstraction, `compile()`, decode entrypoints,
 | QPACK | Non-goal | RFC 9204 is HTTP/3 header compression, not QUIC packet grammar. |
 | MASQUE and HTTP proxy documents | Non-goal | RFC 9297, RFC 9298, RFC 9484, and related HTTP proxy workflows are generated-tool or application behavior, not packet primitives. |
 | Operational guidance | Documentation-only | RFC 9308 and RFC 9312 can inform explanatory docs and validation boundaries, but they do not authorize parser constants. |
-| Draft, provisional, and experiment registry rows | Deferred | IANA provisional, draft, Google experiment, BDP token, SCONE, ACK_FREQUENCY, and multipath rows remain raw or provisional until later source-backed notes classify them. |
+| Draft, prepareal, and experiment registry rows | Deferred | IANA prepareal, draft, Google experiment, BDP token, SCONE, ACK_FREQUENCY, and multipath rows remain raw or prepareal until later source-backed notes classify them. |
 | Ambiguous discovered documents | Documentation-only or non-goal | Token-overlap documents rejected in `quic-manifest.md` stay outside implementation unless a later source-backed step explicitly selects them. |
 
 ## Crate Boundary
@@ -59,5 +59,5 @@ tools, not in `crafter` itself.
 
 This scope step performs no live traffic. QUIC validation starts offline with
 golden bytes, malformed decode cases, pcap fixtures, and oracle/probe dry-runs.
-Any later live validation must use explicit provider-backed plans, protected
+Any later live validation must use explicit externally executed plans, protected
 confirmation, collected artifacts, and teardown or structured skip records.

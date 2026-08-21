@@ -25,8 +25,8 @@ registry records these registration ranges:
 
 | Range | Procedure |
 | --- | --- |
-| provisional, greater than `0x3f` | Expert Review |
-| provisional registration Date field update | First Come First Served |
+| prepareal, greater than `0x3f` | Expert Review |
+| prepareal registration Date field update | First Come First Served |
 | permanent, `0x00..0x3f` | Standards Action or IESG Approval |
 | permanent, greater than `0x3f` | Specification Required |
 

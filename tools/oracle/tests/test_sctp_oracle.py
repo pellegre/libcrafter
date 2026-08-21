@@ -3,7 +3,7 @@
 The full offline Scapy run is covered by the Step 105 acceptance command. These
 tests keep the bare ``python3 -m unittest`` gate non-vacuous by pinning the
 seeded plan matrix and the specs-suite command matrix without requiring Scapy,
-Rust builds, providers, or live traffic.
+Rust builds, external execution, or live traffic.
 """
 
 from __future__ import annotations

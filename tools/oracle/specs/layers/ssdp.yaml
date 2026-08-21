@@ -26,14 +26,6 @@ unsupported_parents:
   - tcp
   - http
   - tls
-live_eligibility: provider_gated
-live_gate: confirm_live_run_provider_lab_only
-live_defaults:
-  default_mode: dry_run
-  allowed_without_confirmation: false
-  developer_host_raw_send: false
-  provider_required: true
-
 fields:
   - name: message_kind
     type: enum
@@ -164,8 +156,7 @@ notes:
     enclosing SSDP message is structurally valid.
   - >-
     Source-backed multicast constants and packet helpers are offline packet
-    shapes only. Live exchange remains provider-gated and outside this layer
-    spec.
+    shapes only. Live execution policy is outside this layer spec.
 
 backend_support:
   scapy:

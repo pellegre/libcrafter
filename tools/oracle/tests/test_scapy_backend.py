@@ -273,7 +273,11 @@ class ScapyMdnsBackendTest(unittest.TestCase):
         query = mdns_scapy._dns_fields(
             {
                 "questions": [
-                    {"name": "printer.local.", "type": "A", "unicast_response_preferred": True}
+                    {
+                        "name": "printer.local.",
+                        "type": "A",
+                        "unicast_response_preferred": True,
+                    }
                 ]
             }
         )
@@ -281,7 +285,12 @@ class ScapyMdnsBackendTest(unittest.TestCase):
             {
                 "is_response": True,
                 "answers": [
-                    {"name": "printer.local.", "type": "A", "class": "IN", "cache_flush": True}
+                    {
+                        "name": "printer.local.",
+                        "type": "A",
+                        "class": "IN",
+                        "cache_flush": True,
+                    }
                 ],
             }
         )
@@ -292,7 +301,9 @@ class ScapyMdnsBackendTest(unittest.TestCase):
 
     def test_mdns_fixture_payloads_extract_udp_dns_bytes(self) -> None:
         compressed = mdns_scapy._raw_fixture_payload(
-            {"fixture": "crafter/tests/fixtures/bytes/ipv4-udp-mdns-compressed-names.hex"},
+            {
+                "fixture": "crafter/tests/fixtures/bytes/ipv4-udp-mdns-compressed-names.hex"
+            },
             case="mdns-compressed-names",
         )
         malformed = mdns_scapy._raw_fixture_payload(
@@ -301,9 +312,13 @@ class ScapyMdnsBackendTest(unittest.TestCase):
         )
 
         self.assertEqual(len(compressed or b""), 100)
-        self.assertEqual((compressed or b"")[:12], bytes.fromhex("000084000001000200000000"))
+        self.assertEqual(
+            (compressed or b"")[:12], bytes.fromhex("000084000001000200000000")
+        )
         self.assertEqual(len(malformed or b""), 30)
-        self.assertEqual((malformed or b"")[:12], bytes.fromhex("000000000001000000000000"))
+        self.assertEqual(
+            (malformed or b"")[:12], bytes.fromhex("000000000001000000000000")
+        )
 
 
 def _dot11_plan(
@@ -420,13 +435,19 @@ class ScapyDot11MaterializationTest(unittest.TestCase):
             "000008000000000080000000ffffffffffff00005e00530200005e005303000000000000000000006400010030140100000fac040100000fac040100000fac020000",
         )
 
-    def test_generated_dot11_smoke_plans_materialize_without_scapy_bootstrap(self) -> None:
+    def test_generated_dot11_smoke_plans_materialize_without_scapy_bootstrap(
+        self,
+    ) -> None:
         plans = generate_plans(seed=1, profile="dot11-smoke", count=3, backend="scapy")
 
         vectors = [packets.encode_packet_plan(plan) for plan in plans]
 
         self.assertEqual(len(vectors), 3)
-        self.assertTrue(all(vector.metadata["scapy_version"] == "not-required" for vector in vectors))
+        self.assertTrue(
+            all(
+                vector.metadata["scapy_version"] == "not-required" for vector in vectors
+            )
+        )
         self.assertTrue(all(vector.raw_hex for vector in vectors))
 
 
@@ -445,16 +466,25 @@ class ScapyDot11NormalizationTest(unittest.TestCase):
                     "addr3": "00:00:5e:00:53:03",
                     "sequence_control": 0x1000,
                 },
-                "llc_snap": {"dsap": 0xAA, "ssap": 0xAA, "control": 0x03, "ethertype": "eapol"},
+                "llc_snap": {
+                    "dsap": 0xAA,
+                    "ssap": 0xAA,
+                    "control": 0x03,
+                    "ethertype": "eapol",
+                },
                 "eapol": {"version": 2, "packet_type": "start", "body_length": 0},
                 "payload": {"hex": "01020304", "length": 4},
             },
         )
 
         vector = packets.encode_packet_plan(plan)
-        decoded = normalize.decode_bytes(vector.to_bytes(), root=vector.root, source_hex=vector.raw_hex)
+        decoded = normalize.decode_bytes(
+            vector.to_bytes(), root=vector.root, source_hex=vector.raw_hex
+        )
 
-        self.assertEqual(decoded.layers, ["radiotap", "dot11", "llc_snap", "eapol", "payload"])
+        self.assertEqual(
+            decoded.layers, ["radiotap", "dot11", "llc_snap", "eapol", "payload"]
+        )
         self.assertEqual(decoded.fields["radiotap"]["fcs_status"], "present")
         self.assertEqual(decoded.fields["dot11"]["sequence_number"], 0x100)
         self.assertEqual(decoded.fields["llc_snap"]["ethertype"], 0x888E)
@@ -501,11 +531,15 @@ class ScapyDot11NormalizationTest(unittest.TestCase):
         )
 
         vector = packets.encode_packet_plan(plan)
-        decoded = normalize.decode_bytes(vector.to_bytes(), root=vector.root, source_hex=vector.raw_hex)
+        decoded = normalize.decode_bytes(
+            vector.to_bytes(), root=vector.root, source_hex=vector.raw_hex
+        )
 
         self.assertEqual(decoded.layers, ["radiotap", "dot11", "rsn"])
         self.assertEqual(decoded.fields["rsn"]["version"], 1)
-        self.assertEqual(decoded.fields["rsn"]["group_cipher_suite"]["label"], "ccmp-128")
+        self.assertEqual(
+            decoded.fields["rsn"]["group_cipher_suite"]["label"], "ccmp-128"
+        )
         self.assertEqual(decoded.fields["rsn"]["akm_suites"][0]["label"], "psk")
 
 
@@ -528,9 +562,13 @@ class ScapyDot11PcapTest(unittest.TestCase):
             case="pcap-scapy-dot11",
         )
 
-        vector = pcap.with_pcap_metadata([packets.encode_packet_plan(plan)], link_type="ieee80211")[0]
+        vector = pcap.with_pcap_metadata(
+            [packets.encode_packet_plan(plan)], link_type="ieee80211"
+        )[0]
 
-        self.assertEqual(vector.metadata["pcap_record"]["link_type"]["name"], "ieee80211")
+        self.assertEqual(
+            vector.metadata["pcap_record"]["link_type"]["name"], "ieee80211"
+        )
         self.assertEqual(vector.metadata["pcap_record"]["link_type"]["datalink"], 105)
         self.assertEqual(pcap.pcap_link_type_for_vectors([vector]), "ieee80211")
         records = _write_and_read_scapy_pcap(vector)
@@ -558,9 +596,13 @@ class ScapyDot11PcapTest(unittest.TestCase):
             case="pcap-scapy-radiotap",
         )
 
-        vector = pcap.with_pcap_metadata([packets.encode_packet_plan(plan)], link_type="radiotap")[0]
+        vector = pcap.with_pcap_metadata(
+            [packets.encode_packet_plan(plan)], link_type="radiotap"
+        )[0]
 
-        self.assertEqual(vector.metadata["pcap_record"]["link_type"]["name"], "radiotap")
+        self.assertEqual(
+            vector.metadata["pcap_record"]["link_type"]["name"], "radiotap"
+        )
         self.assertEqual(vector.metadata["pcap_record"]["link_type"]["datalink"], 127)
         self.assertEqual(pcap.pcap_link_type_for_vectors([vector]), "radiotap")
         records = _write_and_read_scapy_pcap(vector)
@@ -686,7 +728,9 @@ class ScapyIgmpMaterializationTest(unittest.TestCase):
             "11649bece9fc003d8a7d0007c633640acb00711400000004aabbccdd",
         )
 
-    def test_igmp_v3_report_record_auxiliary_data_materializes_strict_bytes(self) -> None:
+    def test_igmp_v3_report_record_auxiliary_data_materializes_strict_bytes(
+        self,
+    ) -> None:
         plan = _igmp_plan(
             {
                 "type": "v3_membership_report",
@@ -760,7 +804,9 @@ class ScapyIgmpMaterializationTest(unittest.TestCase):
             packets.encode_packet_plan(plan)
 
 
-def _icmp_live_plan(icmp_fields: dict, *, case: str, payload_hex: str = "0102030405") -> PacketPlan:
+def _icmp_live_plan(
+    icmp_fields: dict, *, case: str, payload_hex: str = "0102030405"
+) -> PacketPlan:
     """Build an l2:ipv4 ICMP live-matrix plan with the given icmp body fields."""
 
     fields: dict = {
@@ -784,15 +830,15 @@ def _icmp_live_plan(icmp_fields: dict, *, case: str, payload_hex: str = "0102030
         profile="smoke",
         seed=22,
         index=0,
-        direction="live_exchange",
+        direction="backend_to_libcrafter",
         family="ipv4",
-        feature_tags=["icmp", "icmpv4_live", "ipv4"],
+        feature_tags=["icmp", "icmpv4_behavior", "ipv4"],
         case=case,
         strict_bytes=True,
         metadata={
             "root": "l2:ipv4",
             "root_decoder": "l2:ipv4",
-            "feature": "icmpv4_live",
+            "feature": "icmpv4_behavior",
             "stack_name": "l2_ipv4_icmp_payload",
         },
     )
@@ -812,12 +858,17 @@ class ScapyIcmpLiveMaterializationTest(unittest.TestCase):
         )
         return vector, decoded
 
-    def test_icmpv4_live_is_a_supported_feature(self) -> None:
-        self.assertIn("icmpv4_live", packets._SUPPORTED_FEATURES)
+    def test_icmpv4_behavior_is_a_supported_feature(self) -> None:
+        self.assertIn("icmpv4_behavior", packets._SUPPORTED_FEATURES)
 
     def test_echo_request_uses_id_seq_rest_of_header(self) -> None:
         plan = _icmp_live_plan(
-            {"type": "echo_request", "code": 0, "identifier": 0x1234, "sequence": 0x5678},
+            {
+                "type": "echo_request",
+                "code": 0,
+                "identifier": 0x1234,
+                "sequence": 0x5678,
+            },
             case="ipv4-icmp",
         )
         _, decoded = self._decode(plan)
@@ -829,7 +880,12 @@ class ScapyIcmpLiveMaterializationTest(unittest.TestCase):
 
     def test_destination_unreachable_collapses_to_rest_of_header(self) -> None:
         plan = _icmp_live_plan(
-            {"type": "destination_unreachable", "code": 3, "identifier": 1, "sequence": 2},
+            {
+                "type": "destination_unreachable",
+                "code": 3,
+                "identifier": 1,
+                "sequence": 2,
+            },
             case="icmpv4-destination-unreachable",
         )
         _, decoded = self._decode(plan)
@@ -921,9 +977,7 @@ class ScapyIcmpLiveMaterializationTest(unittest.TestCase):
         self.assertEqual(icmp["rest_of_header"], "11112222")
         self.assertNotIn("ts_ori", icmp)
         # The 12 timestamp bytes follow the rest-of-header in the flat payload.
-        self.assertEqual(
-            decoded.fields["payload"]["hex"], "0102030405060708090a0b0c"
-        )
+        self.assertEqual(decoded.fields["payload"]["hex"], "0102030405060708090a0b0c")
 
     def test_address_mask_moves_mask_into_payload(self) -> None:
         plan = _icmp_live_plan(
@@ -970,7 +1024,11 @@ class ScapyIcmpLiveMaterializationTest(unittest.TestCase):
 
     def test_router_solicitation_rest_of_header(self) -> None:
         plan = _icmp_live_plan(
-            {"type": "router_solicitation", "code": 0, "rest_of_header": {"hex": "00000000"}},
+            {
+                "type": "router_solicitation",
+                "code": 0,
+                "rest_of_header": {"hex": "00000000"},
+            },
             case="icmpv4-router-solicitation",
             payload_hex="",
         )
@@ -1033,7 +1091,11 @@ class ScapyIcmpLiveMaterializationTest(unittest.TestCase):
 
     def test_domain_name_request_rest_of_header_materializes_raw(self) -> None:
         plan = _icmp_live_plan(
-            {"type": "domain_name_request", "code": 0, "rest_of_header": {"hex": "00000000"}},
+            {
+                "type": "domain_name_request",
+                "code": 0,
+                "rest_of_header": {"hex": "00000000"},
+            },
             case="crafter-icmpv4-legacy-types",
             payload_hex="01020304",
         )
@@ -1200,7 +1262,9 @@ class ScapyIpsecMaterializationTest(unittest.TestCase):
                 "payload": {"hex": "cafebabe", "length": 4},
             },
         )
-        self.assertFalse(packets._is_ipsec_sa_stack(plan, packets._canonical_stack(plan.stack)))
+        self.assertFalse(
+            packets._is_ipsec_sa_stack(plan, packets._canonical_stack(plan.stack))
+        )
         vector = packets.encode_packet_plan(plan)
         raw = vector.to_bytes()
         self.assertEqual(raw[9], 50)

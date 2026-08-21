@@ -34,16 +34,15 @@ COUNT = 20
 
 # Pinned per-profile digests, computed once from the current generator. These are
 # the behavior lock: a digest mismatch means generated plans changed for a fixed
-# seed/count, which the refactor must never do (move code, do not rewrite it). If
-# a profile is intentionally added or removed, update the keys; never edit a value
-# to silence a real generation change.
+# seed/count and requires review. If a profile or deterministic packet shape is
+# intentionally changed, update the corresponding key or value; never edit a
+# value merely to silence an unexplained generation change.
 EXPECTED_DIGESTS = {
     "ah": "0768ce61aa59771235ae10522037c01a3b6599ac89c5c022a98dc82aa8ff88b7",
     "bgp-smoke": "784b998c5d5377eb34330d1a52d3ab075f1462e5f43f7db83f563128329310be",
     "boundary": "416c7b4c8cadaccd8b576740a4a947903e53a6d2f851f03b8d176f314f0f5eb3",
     "ci": "235b5fb216f7a6b696a8f2603900286996abf00b3a5aa2d248b5c1ce44c7a613",
     "coap-ci": "89371e91f42a5ca8d8fa89af000dac9b99ab71a4c9ff74284d4f3c320059d5ac",
-    "coap-live-dry-run": "532333c3c93c0692c44159bd00b5ac9760689e56b8f378a39c2deb15e5c87279",
     "coap-smoke": "dc8300ff828bba460cb35db1437160ffa5d346ef145539446f02747ff8019dbc",
     "dhcpv6-smoke": "08f26866d079baf38c023a4b54841aeaaf3d80109d82879ed7233ae50836b9b9",
     "dot11-pcap": "28e0d99a6f6fda12d5ef37570bb42aad50ebb0537dd260bb8d5f40806cacc611",
@@ -54,23 +53,19 @@ EXPECTED_DIGESTS = {
     "fuzz": "7bd8f5f7076da218e60fa61d93651d4876e0cc585a9e19e743c66b777e8fe1c2",
     "igmp-boundary": "ad4baf706380aeaad473e8197f9561af3d258024eec4506a67c836a83ce2ac1f",
     "igmp-ci": "eb31439534c000f2f5fea03f221584f3121acdaf7aef5ef21639009df7c8365a",
-    "igmp-live-dry-run": "1111f5c5ee07dd901f6475c0937dcca70cc94025d03efe0496f6c04de668f11a",
     "igmp-smoke": "4cd9ecb93cc74381826fa7a4725f45be1517291232d242c531f6e51098586f18",
     "ikev2": "e5746a33412a690ae1197351af92b545618cf210fa34b00b33df4dc636006519",
-    "ip-fragment-smoke": "707d5794bf1ede0159ffbabf94e64b5fe7e3327b6ce4a28866600b4c414ed0aa",
     "ipsec-smoke": "68f511d01f2ceae16267da0d2c9b0b04e9f0f6a9b4b3f910fac806453dd5545f",
     "ipv4-enrichment": "ca5d8ac931ec41f6a5509cf13672b0b25aaf427548c60962eb50968fe2714e41",
     "ipv6-enrichment": "2f1cecaffd46d9ef912e0b67bea0570c2b7af464d9dc7bafe9716034df244f8a",
     "mdns-boundary": "11629d6298b64e4987191ea2ad6af2662496da3cced5fdb723e5fd55c347a2b9",
     "mdns-ci": "d82201246209ceed4932aef5dcce79a9f427834984db1b851f1976da325008c3",
-    "mdns-live-dry-run": "def8bb2686d5d6519c77cd80b6609b0551f8b94de6d743cf4aab4e29797fee47",
     "mdns-pcap": "8171ef044b30156ad5d1df00501673afccb9433459e74346acd403151a7cc4c0",
     "mdns-smoke": "1998e96128b8a9c8b4154c999280bd22cfd8a9d5523310d18daa52f024ef3747",
     "ntp-ci": "720dc3617b5ef6e4fcbc5e62c43fe564686b30202caac0a683dd97de505a6de4",
-    "ntp-live-dry-run": "9ed37a2586969dc5566db0fdcdb30111e945d443bec6ea897d4f2f7286df8a69",
     "ntp-smoke": "7c5845a3510f54a9bf13a361c546825f6d4ddd404ab9bb27ef112a4e8a91a1a4",
-    "ospf-smoke": "7f829d6e9bf0e5773466cb7b11cf7b3853fd0dcc81284d6aa980490d8ead16bb",
-    "quic-ci": "798f8e39a1ede7a9cb09368246b089163f627f812a6701eb13bac40cb3e85cf8",
+    "ospf-smoke": "5ff9916e56474ae62d2ae390433ed8429fbcd318ca9cb31976dfa249f05675dd",
+    "quic-ci": "01d08f656af39a1ec530e4a18270ff3878ee57810a0a5de0ce76b619e39a032d",
     "quic-smoke": "cf3ca1b1ee63770baafbf012c63f2e06b7cf365ff8b0f0d4ea8fb8d2e8040143",
     "radiotap-smoke": "04b01f150d61aeef051f05254efe1ce45e63ad12ee923d3f8a3a4cb3dbebb45d",
     "rip-smoke": "5dfd7ad4bc2428075418fa0de787a1df377c09d8223f6892a80cb964cbdec092",
@@ -81,11 +76,9 @@ EXPECTED_DIGESTS = {
     "smoke": "1f77708846ecb83ec213f5fb985a10d65a1c14a20270c4188b3e88b5a4a1c5aa",
     "snmp-boundary": "7bf311a663168514940265d49ec6f6cea43c3c0e63f50161a9c2ab1b707e4b47",
     "snmp-ci": "30bfb539dfafb9a93fc5058bc3e8a3b9f6d829db379c1dbb793b57a972a0ced1",
-    "snmp-live-dry-run": "fdc15150796dd3d99461552c7f7fce01a932b9e01004b7ba74b8dd344c4f53bb",
     "snmp-smoke": "df44044299c8b5e06ac0e638af03613e6f70aeb893b2ba2ab1cc16c999e08a0f",
     "ssdp-boundary": "7741635660d02dce9839cca59cb2aa07499d62b78c8252bc2aa8f9a756d182e4",
     "ssdp-ci": "ef784998598d4ce38b06df06cae6fb0d962681c8fed889599240b5a03393f92a",
-    "ssdp-live-dry-run": "c2a14c88cc7c3da08fcc70ff9edf7529b0bb926c8de9e7ee19a2a82c0c6806fd",
     "ssdp-pcap": "7b08774cb33d81e476cb9115e2f807b36428fbc2dc50f2fc43fd31603c28a9d7",
     "ssdp-smoke": "bd4f054d2fbea5f8118b95a7b6a07ef205721c25e9bc62a827146d77b7921600",
     "tcp-header": "e62e918200aacb46fdfcd5cde318bf412739f1c64bfbfae5b35034bbde69380c",

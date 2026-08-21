@@ -9,8 +9,8 @@ schedule, encryption, TCP stream reassembly, scanning, and live target selection
 are out of scope.
 
 All generated stacks use documentation address space and deterministic TCP/TLS
-bytes. Offline oracle runs are the default; live validation remains provider
-gated and is documented separately.
+bytes. Offline oracle runs are the default; external operator tooling owns live
+validation.
 
 ## How To Read This Matrix
 

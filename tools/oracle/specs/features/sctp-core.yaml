@@ -12,7 +12,6 @@ directions:
   - backend_to_libcrafter
   - libcrafter_to_backend
   - roundtrip
-  - live
 strict_bytes: true
 malformed: false
 categories:
@@ -20,7 +19,6 @@ categories:
   - boundary
   - malformed
   - pcap
-  - live
 
 behaviors:
   - name: native-ipv4-data
@@ -235,7 +233,6 @@ supported_cases:
       - backend_to_libcrafter
       - libcrafter_to_backend
       - roundtrip
-      - live
     byte_policy: strict_bytes
     roots:
       - "l3:ipv4"
@@ -254,7 +251,6 @@ supported_cases:
       - backend_to_libcrafter
       - libcrafter_to_backend
       - roundtrip
-      - live
     byte_policy: strict_bytes
     roots:
       - "l3:ipv6"
@@ -271,7 +267,6 @@ supported_cases:
       - backend_to_libcrafter
       - libcrafter_to_backend
       - roundtrip
-      - live
     byte_policy: strict_bytes
     roots:
       - "l3:ipv4"
@@ -618,7 +613,6 @@ source_refs:
   - .agents/docs/sctp-codepoints.md
   - .agents/docs/sctp-wire-grammar.md
   - .agents/docs/sctp-fixtures.md
-  - .agents/docs/sctp-validation-safety.md
 
 notes:
   - >-
@@ -634,7 +628,7 @@ notes:
     pcap mode and artifact generation from the synthetic fixtures already stored
     under crafter/tests/fixtures/pcaps/.
   - >-
-    Live eligibility is limited to provider-backed dry-run planning until an
+    Live eligibility is limited to externally executed dry-run planning until an
     explicit live run is confirmed outside these default offline specs.
 
 backend_support:

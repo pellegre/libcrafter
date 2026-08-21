@@ -40,7 +40,7 @@ metadata, and RFC Editor errata as classified in the SSDP source notes.
   and body bytes whenever the enclosing message is structurally valid.
 - Keep malformed cases minimal enough to make the failing field obvious, and
   assert structured error categories rather than display strings.
-- Do not promote provider-backed artifacts, live captures, credentials, public
+- Do not promote externally collected artifacts, live captures, credentials, public
   endpoint addresses, host identifiers, or local paths into this fixture tree.
 
 ## Committed advanced fixtures

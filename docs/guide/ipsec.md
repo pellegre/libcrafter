@@ -562,13 +562,14 @@ oracle parity suite, and a behavioral probe profile:
   transport + tunnel and an IKE_SA_INIT exchange) and an engine-level
   cross-crypto parity check — libcrafter-sealed ESP/AH/SK opened by the reference
   crypto and vice versa — that runs deterministically without a network.
-  `--dry-run` is the default; live execution against a controlled IPSec-capable
-  peer is opt-in through providers and lab sessions.
+  External operator tooling may use these contracts against a controlled
+  IPSec-capable peer after explicit authorization.
 
 All documented examples use documentation address space (`192.0.2.0/24`,
 `198.51.100.0/24`, `203.0.113.0/24`, `2001:db8::/32`) and documentation-only key
-material with offline construction or decode. Live raw traffic remains opt-in
-through the crate's live send, capture, provider, and lab-session APIs.
+material with offline construction or decode. The crate exposes explicit live
+send and bounded capture primitives; peer selection and execution remain
+external.
 
 ## Explicit exclusions
 

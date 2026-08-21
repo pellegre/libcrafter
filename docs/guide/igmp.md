@@ -52,53 +52,18 @@ case the tool is modeling. Keep that choice explicit in the `Ipv4` builder so
 the compiled packet remains inspectable and intentionally malformed envelopes
 can still be represented.
 
-## Dry-Run First
+## Validation And External Execution Boundary
 
-Do not make IGMP examples send live traffic by default. Use documentation source
-addresses such as `192.0.2.0/24` and inspect an offline packet or dry-run send
-plan before any provider-backed live workflow:
-
-```rust
-use crafter::prelude::*;
-use std::net::Ipv4Addr;
-
-let packet = Ipv4::new()
-    .src(Ipv4Addr::new(192, 0, 2, 20))
-    .dst(Ipv4Addr::new(224, 0, 0, 2))
-    .ttl(1)
-    .ipv4_protocol(Ipv4Protocol::Igmp)
-    .ipv4_option(Ipv4Option::router_alert(0))?
-    / Igmp::mrd_solicitation();
-
-let plan = packet.send_dry_run(SendOptions::new().iface("igmp-dry-run0").network_layer())?;
-
-println!("mode: dry-run");
-println!("interface: {}", plan.interface());
-println!("target: {:?}", plan.target());
-println!("compiled bytes: {}", plan.len());
-# Ok::<(), crafter::CrafterError>(())
-```
-
-Live IGMP validation belongs behind the lab, oracle, or probe protected-live
-gates. A generated tool that needs real multicast traffic should first produce a
-dry-run plan, then run from an authorized provider-backed endpoint with explicit
-confirmation and artifact collection. The guarded local-provider oracle smoke
-path is opt-in only:
+Use the tracked deterministic validation surfaces first:
 
 ```sh
-if [ "${LIBCRAFTER_RUN_IGMP_VM_LIVE:-0}" = "1" ]; then
-  python3 tools/oracle/engine/live_provider_matrix.py \
-    --providers qemu,docker,virtualbox \
-    --family igmp --profile igmp-live-dry-run \
-    --seed 3601 --count 2 \
-    --real --skip-unavailable --confirm-live-run \
-    --out target/oracle/igmp-vm-live
-else
-  echo "skipping protected IGMP VM live run"
-fi
+tools/oracle/run offline --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
-With `LIBCRAFTER_RUN_IGMP_VM_LIVE` unset, the command prints the skip message
-and does not create endpoints or send packets. When enabled, keep all provider
-artifacts and packet captures under `target/`; do not copy endpoint IDs,
-credentials, public IPs, or sensitive pcaps into tracked files.
+These commands do not select infrastructure or send packets. Any authorized use
+of concrete interfaces, peers, radios, or targets is owned by external operator
+tooling, which supplies runtime inputs and collects artifacts. libcrafter does
+not provision machines, configure responders, manage credentials, or perform
+remote cleanup.

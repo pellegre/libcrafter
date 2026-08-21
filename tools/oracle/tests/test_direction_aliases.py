@@ -8,7 +8,6 @@ from tools.oracle.engine.corpus import packet_plan_from_object
 from tools.oracle.engine import cli
 from tools.oracle.engine.directions import normalize_direction
 from tools.oracle.engine.generator import generate_plans
-from tools.oracle.engine.live import live_execution_directions
 
 
 class DirectionAliasTest(unittest.TestCase):
@@ -52,11 +51,7 @@ class DirectionAliasTest(unittest.TestCase):
         )
         self.assertEqual(plan.direction, "libcrafter_to_backend")
 
-    def test_live_and_pcap_helpers_accept_legacy_directions(self) -> None:
-        self.assertEqual(
-            live_execution_directions("reference_to_libcrafter"),
-            ["backend_to_libcrafter"],
-        )
+    def test_pcap_helper_accepts_legacy_directions(self) -> None:
         self.assertEqual(
             cli._pcap_execution_directions("libcrafter_to_reference"),
             ["libcrafter_to_backend"],

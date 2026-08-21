@@ -26,6 +26,7 @@ from .planning_helpers import (
     deterministic_router_ipv4,
     dns_label,
 )
+
 # Importing from the ``protocols`` package runs its auto-discovery so every
 # migrated protocol module self-registers into ``PROTOCOL_REGISTRY`` before
 # ``PLAN_BUILDERS`` is assembled below. Imports stay relative; the package
@@ -35,6 +36,7 @@ from .protocols import (
     all_plan_builders as _registry_plan_builders,
     all_planned_only_cases as _registry_planned_only_cases,
 )
+
 # The ARP planning surface (cases, builders, deterministic helpers) lives in the
 # ARP plugin module. Re-import each moved builder and the ARP-only deterministic
 # helpers so ``planning._<builder>`` resolves to the *same* function object the
@@ -57,6 +59,7 @@ from .protocols.arp import (  # noqa: F401  (re-exported for identity/back-compa
     deterministic_arp_alias_ipv4,
     deterministic_arp_alt_sender_ipv4,
 )
+
 # The DNS planning surface (cases, builders, deterministic name/string helpers)
 # lives in the DNS plugin module. Re-import each moved builder, the multi-send
 # helper, and the DNS-only name/string helpers so ``planning._<builder>``
@@ -86,6 +89,7 @@ from .protocols.dns import (  # noqa: F401  (re-exported for identity/back-compa
     dns_target_name,
     dns_txt_strings,
 )
+
 # The DHCPv4 planning surface (cases, builders, deterministic client identity /
 # option helpers) lives in the DHCPv4 plugin module. Re-import the builders and
 # helpers so identity-based behavior tests compare the same function objects that
@@ -107,6 +111,7 @@ from .protocols.dhcpv4 import (  # noqa: F401  (re-exported for identity)
     dhcpv4_hostname,
     dhcpv4_parameter_request_list,
 )
+
 # The DHCPv6 planning surface (the planned-only smoke cases' shared
 # ``_dhcpv6_probe_plan`` builder plus deterministic identity helpers) lives in
 # the DHCPv6 plugin module. Re-import it so identity pins can compare the same
@@ -116,6 +121,7 @@ from .protocols.dhcpv6 import (  # noqa: F401  (re-exported for identity)
     dhcpv6_duid_ll,
     dhcpv6_transaction_id,
 )
+
 # The UDP planning surface (cases, builders, the multi-send helper, the shared
 # echo scaffolding, and the MTU/length-boundary constants) lives in the UDP
 # plugin module. Re-import each moved builder, the multi-send helper, and the
@@ -144,6 +150,7 @@ from .protocols.udp import (  # noqa: F401  (re-exported for identity/back-compa
     _udp_source_port_reflection_probe_plan,
     _udp_zero_checksum_ipv4_probe_plan,
 )
+
 # The NDP planning surface (cases, builders, the shared wire-requirements helper,
 # the deterministic link-local / target / solicited-node helpers, and the ICMPv6
 # type / IPv6 multicast / unspecified-address constants) lives in the NDP plugin
@@ -165,6 +172,7 @@ from .protocols.ndp import (  # noqa: F401  (re-exported for identity/back-compa
     _ndp_router_solicitation_probe_plan,
     solicited_node_multicast,
 )
+
 # The ICMP planning surface (the two inline cases and their builders) lives in the
 # ICMP plugin module. Re-import each moved builder so ``planning._<builder>``
 # resolves to the *same* function object the plugin registered and the merged
@@ -174,6 +182,7 @@ from .protocols.icmp import (  # noqa: F401  (re-exported for identity/back-comp
     _icmp_echo_probe_plan,
     _ttl_expired_probe_plan,
 )
+
 # The TCP planning surface (the three inline cases and their builders) lives in
 # the TCP plugin module. Re-import each moved builder so ``planning._<builder>``
 # resolves to the *same* function object the plugin registered and the merged
@@ -183,6 +192,7 @@ from .protocols.tcp import (  # noqa: F401  (re-exported for identity/back-compa
     _tcp_syn_options_probe_plan,
     _tcp_syn_probe_plan,
 )
+
 # The BGP planning surface (the ``bgp-session-smoke`` case and its builder) lives
 # in the BGP plugin module. Re-import the moved builder so
 # ``planning._bgp_session_smoke_probe_plan`` resolves to the *same* function
@@ -192,6 +202,7 @@ from .protocols.tcp import (  # noqa: F401  (re-exported for identity/back-compa
 from .protocols.bgp import (  # noqa: F401  (re-exported for identity/back-compat)
     _bgp_session_smoke_probe_plan,
 )
+
 # The RIP/RIPng planning surface (the ``rip-update-v2`` / ``ripng-update`` cases
 # and their builders) lives in the RIP plugin module. Re-import each moved
 # builder so ``planning._rip_update_probe_plan`` / ``planning._ripng_update_probe_plan``
@@ -201,6 +212,7 @@ from .protocols.rip import (  # noqa: F401  (re-exported for identity/back-compa
     _rip_update_probe_plan,
     _ripng_update_probe_plan,
 )
+
 # The SNMP planning surface (the planned-only SNMP smoke cases and their shared
 # builder) lives in the SNMP plugin module. Re-import the moved builder so
 # ``planning._snmp_probe_plan`` resolves to the same function object the plugin
@@ -208,6 +220,7 @@ from .protocols.rip import (  # noqa: F401  (re-exported for identity/back-compa
 from .protocols.snmp import (  # noqa: F401  (re-exported for identity/back-compat)
     _snmp_probe_plan,
 )
+
 # The SCTP planning surface (planned-only SCTP behavior cases and their shared
 # builder) lives in the SCTP plugin module. Re-import the moved builder so
 # ``planning._sctp_probe_plan`` resolves to the same function object the plugin
@@ -215,6 +228,7 @@ from .protocols.snmp import (  # noqa: F401  (re-exported for identity/back-comp
 from .protocols.sctp import (  # noqa: F401  (re-exported for identity)
     _sctp_probe_plan,
 )
+
 # The SSDP planning surface (the planned-only SSDP discovery cases' shared
 # ``_ssdp_probe_plan`` builder) lives in the SSDP plugin module. Re-import the
 # moved builder so ``planning._ssdp_probe_plan`` resolves to the same function
@@ -222,6 +236,7 @@ from .protocols.sctp import (  # noqa: F401  (re-exported for identity)
 from .protocols.ssdp import (  # noqa: F401  (re-exported for identity)
     _ssdp_probe_plan,
 )
+
 # The mDNS planning surface (the planned-only multicast / DNS-SD behavior cases'
 # shared ``_mdns_probe_plan`` builder) lives in the mDNS plugin module. Re-import
 # the moved builder so ``planning._mdns_probe_plan`` resolves to the same function
@@ -229,8 +244,9 @@ from .protocols.ssdp import (  # noqa: F401  (re-exported for identity)
 from .protocols.mdns import (  # noqa: F401  (re-exported for identity)
     _mdns_probe_plan,
 )
+
 # The IGMP planning surface (the four IGMP cases' shared ``_igmp_probe_plan``
-# builder, the ``_igmp_target_service`` plan-building helper, and the
+# builder and the
 # ``deterministic_igmp_group`` / ``deterministic_igmp_source_list`` helpers) lives
 # in the IGMP plugin module. Re-import the moved builder and deterministic helpers
 # so ``planning._igmp_probe_plan`` / ``planning.deterministic_igmp_group`` /
@@ -242,6 +258,7 @@ from .protocols.igmp import (  # noqa: F401  (re-exported for identity/back-comp
     deterministic_igmp_group,
     deterministic_igmp_source_list,
 )
+
 # The IPSec planning surface (the four IPSec cases' shared ``_ipsec_probe_plan``
 # planned-only builder and the IPSec ESP/AH IP-protocol numbers / IKEv2 UDP-port
 # constants it references) lives in the IPSec plugin module
@@ -253,6 +270,7 @@ from .protocols.igmp import (  # noqa: F401  (re-exported for identity/back-comp
 from .protocols.ipsec import (  # noqa: F401  (re-exported for identity/back-compat)
     _ipsec_probe_plan,
 )
+
 # The MQTT planning surface (the planned-only broker-exchange smoke cases'
 # shared ``_mqtt_probe_plan`` builder) lives in the MQTT plugin module. Re-import
 # the moved builder so ``planning._mqtt_probe_plan`` resolves to the *same*
@@ -268,6 +286,7 @@ from .protocols.quic import (  # noqa: F401  (re-exported for identity/back-comp
     _quic_stateless_reset_observation_probe_plan,
     _quic_version_negotiation_observation_probe_plan,
 )
+
 # The TLS planning surface (the planned-only controlled TLS service cases'
 # shared ``_tls_probe_plan`` builder) lives in the TLS plugin module. Re-import
 # it so ``planning._tls_probe_plan`` resolves to the same function object the
@@ -275,6 +294,7 @@ from .protocols.quic import (  # noqa: F401  (re-exported for identity/back-comp
 from .protocols.tls import (  # noqa: F401  (re-exported for identity)
     _tls_probe_plan,
 )
+
 # The NTP planning surface (the planned-only controlled UDP/123 probe cases'
 # shared ``_ntp_probe_plan`` builder) lives in the NTP plugin module. Re-import
 # it so ``planning._ntp_probe_plan`` resolves to the same function object the
@@ -282,6 +302,7 @@ from .protocols.tls import (  # noqa: F401  (re-exported for identity)
 from .protocols.ntp import (  # noqa: F401  (re-exported for identity)
     _ntp_probe_plan,
 )
+
 # CoAP cases share one deterministic planned-only builder. Re-import it so the
 # public planning module retains the plugin builder's object identity.
 from .protocols.coap import (  # noqa: F401  (re-exported for identity)
@@ -377,15 +398,11 @@ def _planned_only_probe_plan(
 # identity/back-compat.
 
 
-# The RIP/RIPng plan constants (UDP ports, multicast groups, service kinds, RIB
-# commands, documentation prefixes) and the ``rip_peer_service_descriptor`` the
-# IPv4 plan references now live in the RIP plugin module (``protocols/rip.py``);
-# the moved builders reach ``PLAN_BUILDERS`` through the registry merge below and
-# are re-imported into this module above for identity/back-compat.
+# The RIP/RIPng plan constants and builders live in the RIP plugin module.
 
 
 # The IGMP planning surface (the four IGMP cases' shared ``_igmp_probe_plan``
-# builder, the ``_igmp_target_service`` plan-building helper, the
+# builder, the
 # ``deterministic_igmp_group`` / ``deterministic_igmp_source_list`` helpers, and
 # the IGMP wire constants they reference) now lives in the IGMP plugin module
 # (``protocols/igmp.py``); the moved builder reaches ``PLAN_BUILDERS`` through the

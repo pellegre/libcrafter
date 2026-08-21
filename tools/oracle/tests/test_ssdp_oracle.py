@@ -105,7 +105,6 @@ def _ctx(*, case: str = "ssdp-m-search") -> _SamplingContext:
             "boundary": 3,
             "malformed": 0,
             "pcap": 0,
-            "live": 0,
         },
         stack=["ipv4", "udp", "ssdp"],
         payload_min=0,
@@ -181,7 +180,9 @@ class SsdpSamplerRegistrationTest(unittest.TestCase):
             "SEARCH",
         )
         self.assertIs(
-            _sample_field("method", "m_search", current_fields={"message_kind": "response"}),
+            _sample_field(
+                "method", "m_search", current_fields={"message_kind": "response"}
+            ),
             _SKIP_FIELD,
         )
         self.assertEqual(
@@ -202,7 +203,9 @@ class SsdpSamplerRegistrationTest(unittest.TestCase):
             404,
         )
 
-    def test_header_and_body_domains_cover_duplicates_extensions_and_binary(self) -> None:
+    def test_header_and_body_domains_cover_duplicates_extensions_and_binary(
+        self,
+    ) -> None:
         duplicate_headers = _sample_field("headers", "duplicate_preserved")
         self.assertEqual(
             _header_values(duplicate_headers, "NT"),
@@ -263,7 +266,9 @@ class SsdpFeatureBehaviorTest(unittest.TestCase):
         search_fields = search.fields["ssdp"]
         self.assertEqual(search_fields["message_kind"], "m_search")
         self.assertEqual(search_fields["start_line"], "M-SEARCH * HTTP/1.1")
-        self.assertEqual(_header_values(search_fields["headers"], "MAN"), ['"ssdp:discover"'])
+        self.assertEqual(
+            _header_values(search_fields["headers"], "MAN"), ['"ssdp:discover"']
+        )
         self.assertEqual(_header_values(search_fields["headers"], "ST"), ["ssdp:all"])
 
         response = _plan_for("ssdp-response-ok", "ssdp_core")
@@ -283,7 +288,9 @@ class SsdpFeatureBehaviorTest(unittest.TestCase):
         self.assertNotIn("headers", raw_fields)
         self.assertNotIn("method", raw_fields)
 
-    def test_header_behaviors_preserve_duplicates_extensions_and_boundaries(self) -> None:
+    def test_header_behaviors_preserve_duplicates_extensions_and_boundaries(
+        self,
+    ) -> None:
         duplicate = _plan_for("ssdp-duplicate-headers", "ssdp_headers").fields["ssdp"]
         duplicate_names = [header["name"] for header in _headers(duplicate)]
         self.assertEqual(duplicate_names.count("NT"), 2)
@@ -295,14 +302,20 @@ class SsdpFeatureBehaviorTest(unittest.TestCase):
             "ssdp_headers",
             root="l3:ipv6",
         ).fields["ssdp"]
-        self.assertEqual(_header_values(extension["headers"], "HOST"), ["[ff05::c]:1900"])
-        self.assertEqual(_header_values(extension["headers"], "TCPPORT.UPNP.ORG"), ["65535"])
+        self.assertEqual(
+            _header_values(extension["headers"], "HOST"), ["[ff05::c]:1900"]
+        )
+        self.assertEqual(
+            _header_values(extension["headers"], "TCPPORT.UPNP.ORG"), ["65535"]
+        )
         self.assertEqual(_header_values(extension["headers"], "01-NLS"), ["1"])
 
         boundary = _plan_for("ssdp-boundary-headers", "ssdp_headers").fields["ssdp"]
         self.assertEqual(_header_values(boundary["headers"], "EXT"), [""])
         self.assertEqual(boundary["body"], {"hex": "626f64792d6279746573"})
-        ows_headers = [header for header in _headers(boundary) if header["name"] == "X-OWS"]
+        ows_headers = [
+            header for header in _headers(boundary) if header["name"] == "X-OWS"
+        ]
         self.assertEqual(
             ows_headers,
             [

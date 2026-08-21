@@ -29,10 +29,10 @@ use std::time::Duration;
 
 use crate::common::{
     capture_filter, captured_data, decoded_packet_json, failed_outcome, hex_bytes,
-    observed_response, open_capture_sniffer, plan_json, required_str, send_report_json,
-    target_service_json, CandidateValidation, ExampleResult, NdpValidation, ProbeOutcome,
-    ProbePlan, StimulusEndpointRequest, FAILURE_DECODE_FAILED, FAILURE_TIMEOUT,
-    FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
+    observed_response, open_capture_sniffer, peer_contract_json, plan_json, required_str,
+    send_report_json, CandidateValidation, ExampleResult, NdpValidation, ProbeOutcome, ProbePlan,
+    StimulusEndpointRequest, FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD,
+    FAILURE_WRONG_PEER,
 };
 
 /// Stable identifier for the NDP case module.
@@ -82,7 +82,7 @@ pub fn run_ndp_dry_run(
             "sent_raw_hex": sent_raw_hex,
             "sent_frame_len": sent_frame_len,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
             "requires_router_target": plan.requires_router_target,
             "dad": plan.dad,
         }),
@@ -101,7 +101,7 @@ pub fn run_ndp_dry_run(
             "sent_raw_hex": sent_raw_hex,
             "sent_frame_len": sent_frame_len,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
             "requires_router_target": plan.requires_router_target,
             "dad": plan.dad,
         }
@@ -692,7 +692,7 @@ mod tests {
     #[test]
     fn validate_accepts_real_linux_kernel_neighbor_advertisement() {
         // A Neighbor Advertisement captured live from a real Linux 6.8 kernel
-        // (in a QEMU lab guest) in response to the hop-limit-255 Neighbor
+        // on an isolated execution host in response to the hop-limit-255 Neighbor
         // Solicitation this adapter builds. The kernel formed its EUI-64
         // link-local fe80::5054:ff:feaa:bbcc from MAC 52:54:00:aa:bb:cc, answered
         // with R=0/S=1/O=1 and a Target Link-Layer Address option, and addressed

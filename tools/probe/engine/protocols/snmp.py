@@ -1,31 +1,18 @@
-"""SNMP probe protocol plugin: dry-run peer plans and target service metadata."""
+"""Deterministic SNMP probe cases and packet plans."""
 
 from __future__ import annotations
-
-from collections.abc import Mapping, Sequence
-
-from ..capability_derivation import capability, capability_default_true
 from ..case_helpers import _behavior_case
-from ..endpoint_addressing import apply_shared_ipv4_rewrite_tail
-from ..model import JSONObject, JSONValue, ProbeCase
+from ..model import JSONObject, ProbeCase
 from ..planning_helpers import deterministic_bytes
-from ..target_service_helpers import (
-    plans_by_destination_port,
-    target_service_address_fields,
-)
 from .base import ProtocolPlugin, register
 
-
 SNMP_SERVICE_KIND = "snmp-controlled-peer"
-SNMP_RUNTIME = "probe-snmp-reference"
 SNMP_AGENT_PORT = 161
 SNMP_NOTIFICATION_PORT = 162
 SNMP_DOCUMENTATION_IPV4_PREFIX = "198.51.100.0/24"
 SNMP_STIMULUS_DRIVER = "snmp_probe"
 SNMP_ADAPTER_SOURCE = "tools/probe/adapters/src/snmp.rs"
 _SNMP_CAPABILITIES = ["snmp_peer"]
-
-
 _SNMP_CASES: tuple[ProbeCase, ...] = (
     _behavior_case(
         name="snmp-get-response",
@@ -84,8 +71,6 @@ _SNMP_CASES: tuple[ProbeCase, ...] = (
         },
     ),
 )
-
-
 _SNMP_CASE_CONFIG: dict[str, JSONObject] = {
     "snmp-get-response": {
         "version": "v2c",
@@ -136,21 +121,16 @@ _SNMP_CASE_CONFIG: dict[str, JSONObject] = {
 
 
 def _snmp_probe_plan(
-    *,
-    case_name: str,
-    profile: str,
-    seed: int,
-    sequence: int,
+    *, case_name: str, profile: str, seed: int, sequence: int
 ) -> JSONObject:
     case = _case(case_name)
     config = dict(_SNMP_CASE_CONFIG[case_name])
     digest = deterministic_bytes(case_name, profile, seed, sequence)
     source_ipv4, target_ipv4 = _snmp_documentation_ipv4_pair(digest)
     source_port = 42000 + int.from_bytes(digest[0:2], "big") % 10000
-    request_id = int.from_bytes(digest[2:6], "big") & 0x7FFFFFFF
+    request_id = int.from_bytes(digest[2:6], "big") & 2147483647
     destination_port = int(config["destination_port"])
     service_mode = str(config["service_mode"])
-
     snmp_request: JSONObject = {
         "version": str(config["version"]),
         "pdu": str(config["request_pdu"]),
@@ -167,7 +147,6 @@ def _snmp_probe_plan(
     msg_flags = config.get("msg_flags")
     if isinstance(msg_flags, list):
         snmp_request["msg_flags"] = list(msg_flags)
-
     expected_response: JSONObject = {
         "version": str(config["version"]),
         "pdu": str(config["response_pdu"]),
@@ -180,7 +159,6 @@ def _snmp_probe_plan(
     if "engine_id" in config:
         expected_response["engine_id"] = config["engine_id"]
         expected_response["security_model"] = str(config["security_model"])
-
     return {
         "schema_version": 1,
         "case": case_name,
@@ -207,21 +185,7 @@ def _snmp_probe_plan(
             "state": "planned-only",
             "planned_only": True,
         },
-        "target_service": {
-            "required": True,
-            "kind": SNMP_SERVICE_KIND,
-            "protocol": "udp",
-            "port": destination_port,
-            "bind_ipv4": target_ipv4,
-            "source_ipv4": source_ipv4,
-            "runtime": SNMP_RUNTIME,
-            "service_mode": service_mode,
-            "deterministic": True,
-        },
-        "capture_filter": (
-            f"udp and host {target_ipv4} "
-            f"and port {destination_port}"
-        ),
+        "capture_filter": f"udp and host {target_ipv4} and port {destination_port}",
         "validation": {
             "planned_only": True,
             "driver": SNMP_STIMULUS_DRIVER,
@@ -237,11 +201,7 @@ def _snmp_probe_plan(
             "requires_controlled_service": True,
             "requires_snmp_peer": True,
             "dry_run_only_until_adapter": True,
-            "note": (
-                "SNMP smoke dry-run exposes controlled peer setup and "
-                "source-backed wire intent without sending UDP/161 or UDP/162 "
-                "traffic."
-            ),
+            "note": "SNMP smoke dry-run exposes controlled peer precondition and source-backed wire intent without sending UDP/161 or UDP/162 traffic.",
         },
         "digest_hex": digest.hex()[:16],
     }
@@ -257,120 +217,13 @@ def _case(case_name: str) -> ProbeCase:
 def _snmp_documentation_ipv4_pair(digest: bytes) -> tuple[str, str]:
     source_host = 1 + digest[6] % 120
     target_host = 121 + digest[7] % 120
-    return f"198.51.100.{source_host}", f"198.51.100.{target_host}"
+    return (f"198.51.100.{source_host}", f"198.51.100.{target_host}")
 
 
 _SNMP_PLAN_BUILDERS: dict[str, object] = {
     case.name: _snmp_probe_plan for case in _SNMP_CASES
 }
-
-
 _SNMP_PLANNED_ONLY_CASES: frozenset[str] = frozenset(_SNMP_PLAN_BUILDERS)
-
-
-def snmp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
-    return [plan for plan in probe_plans if plan.get("case") in _SNMP_PLANNED_ONLY_CASES]
-
-
-def snmp_target_service_contribution(
-    probe_plans: Sequence[JSONObject],
-    *,
-    dry_run: bool,
-) -> JSONObject:
-    snmp_plans = snmp_probe_plans(probe_plans)
-    snmp_plans_by_port = plans_by_destination_port(snmp_plans)
-    services = [
-        {
-            "name": SNMP_SERVICE_KIND,
-            "protocol": "udp",
-            "port": port,
-            "purpose": _snmp_service_purpose(port),
-            "runtime": SNMP_RUNTIME,
-            "deterministic": True,
-            "planned_only": True,
-            "query_count": sum(
-                1
-                for item in snmp_plans
-                if int(item.get("destination_port", 0)) == port
-            ),
-            **target_service_address_fields(plan),
-            "log_paths": [
-                f"live-artifacts/probe/target-services/snmp-peer-{port}.stdout.txt",
-                f"live-artifacts/probe/target-services/snmp-peer-{port}.stderr.txt",
-            ],
-        }
-        for port, plan in snmp_plans_by_port.items()
-    ]
-    return {
-        "services": services,
-        "starts_services": not dry_run and bool(snmp_plans_by_port),
-    }
-
-
-def _snmp_service_purpose(port: int) -> str:
-    if port == SNMP_NOTIFICATION_PORT:
-        return "snmp-notification-sink"
-    return "snmp-agent"
-
-
-def snmp_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, object]:
-    ipv4_unicast = capability(substrate, "ipv4_unicast", "ipv4")
-    controlled_services = capability(
-        substrate,
-        "controlled_services",
-        "controlled_service",
-    )
-    return {
-        "snmp_peer": (
-            ipv4_unicast
-            and controlled_services
-            and capability_default_true(substrate, "snmp_peer")
-        ),
-    }
-
-
-def snmp_rewrite_endpoint_addresses(
-    plan: JSONObject,
-    *,
-    source_ipv4: str,
-    target_ipv4: str,
-    source_mac: str | None = None,
-    target_mac: str | None = None,
-    target_interface: str | None = None,
-    rewrite_source: str = "wire_endpoint_plan",
-) -> JSONObject:
-    """Rewrite a SNMP dry-run plan onto the live stimulus/target IPv4 pair."""
-
-    del source_mac, target_mac, target_interface
-
-    updated = dict(plan)
-    updated["source_ipv4"] = source_ipv4
-    updated["destination_ipv4"] = target_ipv4
-    updated["expected_reply_source_ipv4"] = target_ipv4
-    updated["expected_reply_destination_ipv4"] = source_ipv4
-
-    destination_port = int(updated.get("destination_port", SNMP_AGENT_PORT))
-    updated["capture_filter"] = f"udp and host {target_ipv4} and port {destination_port}"
-
-    target_service = dict(
-        updated.get("target_service", {})
-        if isinstance(updated.get("target_service"), Mapping)
-        else {}
-    )
-    if target_service:
-        target_service["bind_ipv4"] = target_ipv4
-        target_service["source_ipv4"] = source_ipv4
-        updated["target_service"] = target_service
-
-    return apply_shared_ipv4_rewrite_tail(
-        updated,
-        case_name=str(updated.get("case", "")),
-        source_ipv4=source_ipv4,
-        target_ipv4=target_ipv4,
-        rewrite_source=rewrite_source,
-    )
-
-
 register(
     ProtocolPlugin(
         name="snmp",
@@ -379,10 +232,6 @@ register(
         planned_only_cases=_SNMP_PLANNED_ONLY_CASES,
         profile_counts={},
         stimulus_endpoint_cases=_SNMP_PLANNED_ONLY_CASES,
-        target_service=snmp_target_service_contribution,
-        setup_script=None,
-        rewrite_endpoint_addresses=snmp_rewrite_endpoint_addresses,
         failure_reasons=None,
-        lab_capabilities=snmp_lab_capabilities,
     )
 )

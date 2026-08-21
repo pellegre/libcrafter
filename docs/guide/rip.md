@@ -80,7 +80,7 @@ fn main() -> crafter::Result<()> {
 
 All examples use documentation address space (`192.0.2.0/24`,
 `198.51.100.0/24`, `2001:db8::/32`). Send to real routers only in an explicitly
-authorized lab session.
+authorized external execution environment.
 
 ## RIPv1 And RIPv2 Construction
 
@@ -269,30 +269,21 @@ length is not a multiple of 20 returns a structured length error exposing
 `context`, `required`, and `available` — never a panic. Use `summary()` for a
 one-line description and `show()` for a full per-field dump.
 
-## Offline And Live Surfaces
+## Validation And External Execution Boundary
 
-The offline path is the default. The bundled examples build documentation-safe
-RIP and RIPng plans and print them without sending:
-
-```sh
-cargo run -p crafter --example rip_request
-cargo run -p crafter --example rip_response
-cargo run -p crafter --example rip_auth
-cargo run -p crafter --example ripng_request
-cargo run -p crafter --example ripng_response
-```
-
-A real wire run is opt-in: the examples gate sending behind an explicit `--send`
-flag, and provider-backed validation runs dry-run first.
+Use the tracked deterministic validation surfaces first:
 
 ```sh
-tools/probe/run --provider local-dry-run --dry-run --profile rip-smoke
-tools/probe/run --provider qemu --dry-run --profile rip-smoke --seed 1
+tools/oracle/run offline --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
-Live runs are intended for disposable provider-backed lab endpoints, not the
-developer host. For the agent-facing live procedure and generated-tool guidance,
-see [`.agents/docs/cookbook.md`](../../.agents/docs/cookbook.md).
+These commands do not select infrastructure or send packets. Any authorized use
+of concrete interfaces, peers, radios, or targets is owned by external operator
+tooling, which supplies runtime inputs and collects artifacts. libcrafter does
+not provision machines, configure responders, manage credentials, or perform
+remote cleanup.
 
 ## Explicit Exclusions
 
@@ -301,7 +292,7 @@ The crate intentionally does not implement:
 - A RIP routing engine, route table, distance-vector convergence, split-horizon,
   poison reverse, or RIP timer state machine.
 - Automatic real-wire RIP exchange; live runs stay dry-run by default and require
-  explicit confirmation and provider credentials.
+  explicit confirmation and external runner credentials.
 - TCP-based or proprietary RIP variants beyond RFC 1058, 2453, 2082, 4822, 2080,
   and 2091.
 

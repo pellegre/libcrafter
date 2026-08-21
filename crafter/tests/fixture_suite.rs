@@ -2339,10 +2339,6 @@ const DOT11_TEXT_ARTIFACTS: &[Dot11TextArtifact] = &[
         section_start: None,
     },
     Dot11TextArtifact {
-        path: "docs/operations/dot11-live-manual.md",
-        section_start: None,
-    },
-    Dot11TextArtifact {
         path: "crafter/tests/fixtures/dot11/README.md",
         section_start: None,
     },
@@ -2368,20 +2364,12 @@ const IP_FRAGMENT_TEXT_ARTIFACTS: &[IpFragmentTextArtifact] = &[
         section_start: Some("Built-in transform shapes include:"),
     },
     IpFragmentTextArtifact {
-        path: "docs/operations/lab.md",
-        section_start: Some("## IP Fragment Lab Safety"),
-    },
-    IpFragmentTextArtifact {
         path: "docs/operations/validation.md",
         section_start: Some("## IP Fragment Transform Validation"),
     },
     IpFragmentTextArtifact {
         path: "crafter/tests/fixtures/README.md",
         section_start: Some("## Current Coverage Matrix"),
-    },
-    IpFragmentTextArtifact {
-        path: ".agents/context/ip-fragment-live-audit.md",
-        section_start: None,
     },
 ];
 
@@ -9233,7 +9221,6 @@ fn assert_allowed_ip_fragment_artifact_path(
     violations: &mut Vec<String>,
 ) {
     if path.starts_with("target/oracle/ip-fragment-")
-        || path.starts_with("target/lab/ip-fragment-")
         || path.starts_with("crafter/tests/fixtures/bytes/ipv4-fragment-")
         || path.starts_with("crafter/tests/fixtures/bytes/ipv6-fragment-")
         || path.starts_with("crafter/tests/fixtures/pcaps/raw-ipv4-ipfragment-generated.pcap")

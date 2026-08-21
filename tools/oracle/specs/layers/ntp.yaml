@@ -27,14 +27,6 @@ unsupported_parents:
   - tls
   - dtls
   - quic
-live_eligibility: provider_gated
-live_gate: confirm_live_run_provider_lab_only
-live_defaults:
-  default_mode: dry_run
-  allowed_without_confirmation: false
-  developer_host_raw_send: false
-  provider_required: true
-
 fields:
   - name: first_octet
     type: uint8
@@ -290,8 +282,8 @@ notes:
     cryptographic verification, key derivation, replay-cache decisions, or live
     captures.
   - >-
-    Live validation remains provider-gated and starts from dry-run plans with
-    explicit confirmation, artifact collection, and endpoint teardown.
+    External operator tooling owns any live validation, including explicit
+    confirmation, artifact collection, and cleanup.
 
 backend_support:
   scapy:

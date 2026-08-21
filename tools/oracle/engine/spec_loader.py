@@ -39,7 +39,6 @@ class BackendSupport(JsonModel):
     decode: bool = False
     pcap_read: bool = False
     pcap_write: bool = False
-    live_endpoint: bool = False
     native_layers: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
     metadata: JSONObject = field(default_factory=dict)
@@ -387,9 +386,13 @@ def _load_stacks(
     for index, item in enumerate(list_for(document, "roots", path)):
         item_obj = _object(item, path, f"roots[{index}]")
         root = RootSpec(
-            name=_required_name(item_obj, "name", path, f"roots[{index}]", allow_colon=True),
+            name=_required_name(
+                item_obj, "name", path, f"roots[{index}]", allow_colon=True
+            ),
             layers=_required_name_tuple(item_obj, "layers", path, f"roots[{index}]"),
-            families=_required_name_tuple(item_obj, "families", path, f"roots[{index}]"),
+            families=_required_name_tuple(
+                item_obj, "families", path, f"roots[{index}]"
+            ),
         )
         _insert_unique(roots, root.name, root, path, "root")
 
@@ -416,7 +419,9 @@ def _load_stacks(
         item_obj = _object(item, path, f"stacks[{index}]")
         stack = StackSpec(
             name=_required_name(item_obj, "name", path, f"stacks[{index}]"),
-            root=_required_name(item_obj, "root", path, f"stacks[{index}]", allow_colon=True),
+            root=_required_name(
+                item_obj, "root", path, f"stacks[{index}]", allow_colon=True
+            ),
             layers=_required_name_tuple(item_obj, "layers", path, f"stacks[{index}]"),
             coverage_cases=_optional_name_tuple(
                 item_obj,
@@ -432,7 +437,9 @@ def _load_stacks(
         constraint = StackConstraint(
             name=_required_name(item_obj, "name", path, f"constraints[{index}]"),
             parent=_required_name(item_obj, "parent", path, f"constraints[{index}]"),
-            children=_required_name_tuple(item_obj, "children", path, f"constraints[{index}]"),
+            children=_required_name_tuple(
+                item_obj, "children", path, f"constraints[{index}]"
+            ),
         )
         _insert_unique(constraints, constraint.name, constraint, path, "constraint")
 
@@ -463,7 +470,9 @@ def _load_profiles(
         item_obj = _object(item, path, f"profiles[{index}]")
         profile_name = _required_name(item_obj, "name", path, f"profiles[{index}]")
         weights = tuple(
-            _sampling_weight(weight, path, f"profiles[{index}].family_weights[{weight_index}]")
+            _sampling_weight(
+                weight, path, f"profiles[{index}].family_weights[{weight_index}]"
+            )
             for weight_index, weight in enumerate(
                 _required_list(item_obj, "family_weights", path, f"profiles[{index}]")
             )
@@ -475,8 +484,12 @@ def _load_profiles(
             f"profiles[{index}]",
         )
         payload_length = PayloadLength(
-            minimum=_required_int(payload_length_obj, "min", path, f"profiles[{index}].payload_length"),
-            maximum=_required_int(payload_length_obj, "max", path, f"profiles[{index}].payload_length"),
+            minimum=_required_int(
+                payload_length_obj, "min", path, f"profiles[{index}].payload_length"
+            ),
+            maximum=_required_int(
+                payload_length_obj, "max", path, f"profiles[{index}].payload_length"
+            ),
         )
         if payload_length.minimum > payload_length.maximum:
             raise SpecValidationError(
@@ -515,18 +528,28 @@ def _load_layer(document: JSONObject, path: Path) -> LayerSpec:
             required=_required_bool(item_obj, "required", path, f"fields[{index}]"),
             domains=tuple(
                 to_jsonable(value)
-                for value in _required_list(item_obj, "domains", path, f"fields[{index}]")
+                for value in _required_list(
+                    item_obj, "domains", path, f"fields[{index}]"
+                )
             ),
         )
         fields.append(field_spec)
     return LayerSpec(
         name=_required_name(document, "name", path, "document"),
         summary=_required_string(document, "summary", path, "document"),
-        roots=_required_name_tuple(document, "roots", path, "document", allow_empty=True),
-        parents=_required_name_tuple(document, "parents", path, "document", allow_empty=True),
-        children=_required_name_tuple(document, "children", path, "document", allow_empty=True),
+        roots=_required_name_tuple(
+            document, "roots", path, "document", allow_empty=True
+        ),
+        parents=_required_name_tuple(
+            document, "parents", path, "document", allow_empty=True
+        ),
+        children=_required_name_tuple(
+            document, "children", path, "document", allow_empty=True
+        ),
         fields=tuple(fields),
-        coverage_cases=_required_name_tuple(document, "coverage_cases", path, "document"),
+        coverage_cases=_required_name_tuple(
+            document, "coverage_cases", path, "document"
+        ),
         backend_support=_backend_support(document, path),
         raw=document,
     )
@@ -543,7 +566,9 @@ def _load_feature(document: JSONObject, path: Path) -> FeatureSpec:
         ),
         strict_bytes=_required_bool(document, "strict_bytes", path, "document"),
         malformed=_required_bool(document, "malformed", path, "document"),
-        coverage_cases=_required_name_tuple(document, "coverage_cases", path, "document"),
+        coverage_cases=_required_name_tuple(
+            document, "coverage_cases", path, "document"
+        ),
         backend_support=_backend_support(document, path),
         raw=document,
     )
@@ -560,7 +585,9 @@ def _sampling_weight(value: object, path: Path, context: str) -> SamplingWeight:
     )
 
 
-def _backend_support(document: Mapping[str, object], path: Path) -> dict[str, BackendSupport]:
+def _backend_support(
+    document: Mapping[str, object], path: Path
+) -> dict[str, BackendSupport]:
     support_obj = document.get("backend_support", {})
     if support_obj is None:
         return {}
@@ -569,7 +596,9 @@ def _backend_support(document: Mapping[str, object], path: Path) -> dict[str, Ba
     for raw_backend, raw_value in support.items():
         backend_name = _normalize_name(raw_backend, path, "backend_support backend")
         value = _object(raw_value, path, f"backend_support.{backend_name}")
-        status = _required_string(value, "status", path, f"backend_support.{backend_name}")
+        status = _required_string(
+            value, "status", path, f"backend_support.{backend_name}"
+        )
         if status not in BACKEND_SUPPORT_STATUSES:
             supported = ", ".join(BACKEND_SUPPORT_STATUSES)
             raise SpecValidationError(
@@ -589,15 +618,17 @@ def _backend_support(document: Mapping[str, object], path: Path) -> dict[str, Ba
         backend_support = BackendSupport(
             name=backend_name,
             status=status,
-            encode=_optional_bool(value, "encode", path, f"backend_support.{backend_name}"),
-            decode=_optional_bool(value, "decode", path, f"backend_support.{backend_name}"),
-            pcap_read=_optional_bool(value, "pcap_read", path, f"backend_support.{backend_name}"),
-            pcap_write=_optional_bool(value, "pcap_write", path, f"backend_support.{backend_name}"),
-            live_endpoint=_optional_bool(
-                value,
-                "live_endpoint",
-                path,
-                f"backend_support.{backend_name}",
+            encode=_optional_bool(
+                value, "encode", path, f"backend_support.{backend_name}"
+            ),
+            decode=_optional_bool(
+                value, "decode", path, f"backend_support.{backend_name}"
+            ),
+            pcap_read=_optional_bool(
+                value, "pcap_read", path, f"backend_support.{backend_name}"
+            ),
+            pcap_write=_optional_bool(
+                value, "pcap_write", path, f"backend_support.{backend_name}"
             ),
             native_layers=_optional_name_tuple(
                 value,
@@ -606,8 +637,12 @@ def _backend_support(document: Mapping[str, object], path: Path) -> dict[str, Ba
                 f"backend_support.{backend_name}",
                 preserve_case=True,
             ),
-            notes=_optional_string_tuple(value, "notes", path, f"backend_support.{backend_name}"),
-            metadata=_json_object(to_jsonable(metadata), path, f"backend_support.{backend_name}.metadata"),
+            notes=_optional_string_tuple(
+                value, "notes", path, f"backend_support.{backend_name}"
+            ),
+            metadata=_json_object(
+                to_jsonable(metadata), path, f"backend_support.{backend_name}.metadata"
+            ),
         )
         _validate_backend_support_entry(
             backend_support,
@@ -635,7 +670,6 @@ def _merge_backend_support(
                 decode=existing.decode or item.decode,
                 pcap_read=existing.pcap_read or item.pcap_read,
                 pcap_write=existing.pcap_write or item.pcap_write,
-                live_endpoint=existing.live_endpoint or item.live_endpoint,
                 native_layers=tuple(
                     dict.fromkeys([*existing.native_layers, *item.native_layers])
                 ),
@@ -672,7 +706,9 @@ def _validate_cross_references(
                 f"{root / 'stacks.yaml'}: stack {stack.name} references unknown root {stack.root}"
             )
         if not stack.layers:
-            raise SpecValidationError(f"{root / 'stacks.yaml'}: stack {stack.name} has no layers")
+            raise SpecValidationError(
+                f"{root / 'stacks.yaml'}: stack {stack.name} has no layers"
+            )
         if stack.layers[0] not in roots[stack.root].layers:
             raise SpecValidationError(
                 f"{root / 'stacks.yaml'}: stack {stack.name} starts with "
@@ -876,8 +912,12 @@ def _validate_feature_supported_cases(
     roots: Mapping[str, RootSpec],
 ) -> None:
     path = root / "features"
-    for index, raw_case in enumerate(_optional_list(feature.raw, "supported_cases", path)):
-        case = _object(raw_case, path, f"feature {feature.name}.supported_cases[{index}]")
+    for index, raw_case in enumerate(
+        _optional_list(feature.raw, "supported_cases", path)
+    ):
+        case = _object(
+            raw_case, path, f"feature {feature.name}.supported_cases[{index}]"
+        )
         case_name = _optional_case_name(case, index)
 
         if "direction" in case:
@@ -890,12 +930,14 @@ def _validate_feature_supported_cases(
                     f"feature {feature.name}.supported_cases[{index}].direction",
                 ),
             )
-        for direction in _direction_tuple(_optional_name_tuple(
-            case,
-            "directions",
-            path,
-            f"feature {feature.name}.supported_cases[{index}]",
-        )):
+        for direction in _direction_tuple(
+            _optional_name_tuple(
+                case,
+                "directions",
+                path,
+                f"feature {feature.name}.supported_cases[{index}]",
+            )
+        ):
             _validate_feature_direction(path, f"{feature.name}.{case_name}", direction)
 
         for file_format in _case_file_formats(case, path, feature.name, index):
@@ -999,7 +1041,9 @@ def _validate_case_backend_role(
             f"{path}: feature {feature.name}.{case_name} {role} backend "
             f"{backend_name} has no backend_support mapping"
         )
-    backend = _backend_registration(backend_name, path, f"feature {feature.name}.{case_name}.{role}")
+    backend = _backend_registration(
+        backend_name, path, f"feature {feature.name}.{case_name}.{role}"
+    )
     _validate_backend_capability(
         backend=backend,
         capability=capability,
@@ -1017,9 +1061,13 @@ def _validate_backend_mappings(
     features: Mapping[str, FeatureSpec],
 ) -> None:
     if not stack_backend_support:
-        raise SpecValidationError(f"{root / 'stacks.yaml'}: backend_support is required")
+        raise SpecValidationError(
+            f"{root / 'stacks.yaml'}: backend_support is required"
+        )
     if not profile_backend_support:
-        raise SpecValidationError(f"{root / 'profiles.yaml'}: backend_support is required")
+        raise SpecValidationError(
+            f"{root / 'profiles.yaml'}: backend_support is required"
+        )
     for layer in layers.values():
         if not layer.backend_support:
             raise SpecValidationError(
@@ -1072,10 +1120,12 @@ def _validate_backend_capability(
     context: str,
 ) -> None:
     if capability not in BACKEND_CAPABILITY_KEYS:
-        raise SpecValidationError(f"{path}: {context} references unknown capability {capability}")
+        raise SpecValidationError(
+            f"{path}: {context} references unknown capability {capability}"
+        )
     if backend.capabilities.supports(capability):  # type: ignore[arg-type]
         return
-    if backend.parser_only and capability in {"encode", "pcap_write", "live_endpoint"}:
+    if backend.parser_only and capability in {"encode", "pcap_write"}:
         raise SpecValidationError(
             f"{path}: {context} requests {capability} from parser-only backend "
             f"{backend.name}"
@@ -1282,7 +1332,9 @@ def _required_name_tuple(
     if not allow_empty and not values:
         raise SpecValidationError(f"{path}: {context}.{key} must not be empty")
     return tuple(
-        _normalize_name(value, path, f"{context}.{key}[{index}]", preserve_case=preserve_case)
+        _normalize_name(
+            value, path, f"{context}.{key}[{index}]", preserve_case=preserve_case
+        )
         for index, value in enumerate(values)
     )
 
@@ -1296,7 +1348,9 @@ def _optional_name_tuple(
     preserve_case: bool = False,
 ) -> tuple[str, ...]:
     return tuple(
-        _normalize_name(value, path, f"{context}.{key}[{index}]", preserve_case=preserve_case)
+        _normalize_name(
+            value, path, f"{context}.{key}[{index}]", preserve_case=preserve_case
+        )
         for index, value in enumerate(_optional_list(document, key, path, context))
     )
 

@@ -1,4 +1,4 @@
-//! Provider-neutral configuration for the private QUIC endpoint driver.
+//! Transport-neutral configuration for the private QUIC endpoint driver.
 
 use std::{fmt, net::SocketAddr, time::Duration};
 
@@ -2442,7 +2442,7 @@ pub(crate) enum QuicEndpointExchangeDirection {
     Receive,
 }
 
-/// A provider-neutral terminal observation for one stream direction.
+/// A transport-neutral terminal observation for one stream direction.
 #[cfg(feature = "quic-endpoint")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum QuicEndpointStreamFinalState {

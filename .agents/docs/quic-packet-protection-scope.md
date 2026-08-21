@@ -73,5 +73,5 @@ The following remain non-goals for the crate:
 
 Packet-protection work starts offline with RFC 9001 and RFC 9369 test vectors,
 golden byte fixtures, malformed input tests, and dry-run oracle/probe records.
-Live behavioral validation is only allowed through explicit provider-backed lab
+Live behavioral validation is only allowed through explicit external operator
 steps after the offline helpers pass and the plan calls for live execution.

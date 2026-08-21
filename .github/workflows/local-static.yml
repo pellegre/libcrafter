@@ -109,19 +109,13 @@ jobs:
           fi
 
       - name: Compile Python validation tooling
-        run: python3 -m compileall tools/lab/engine tools/oracle/engine tools/probe/engine tools/endpoint/engine tools/endpoint/smoke
-
-      - name: Run lab Python tests
-        run: python3 -m unittest discover -s tools/lab/tests -p 'test_*.py'
+        run: python3 -m compileall tools/oracle/engine tools/probe/engine
 
       - name: Run oracle Python tests
         run: python3 -m unittest discover -s tools/oracle/tests -p 'test_*.py'
 
       - name: Run probe Python tests
         run: python3 -m unittest discover -s tools/probe/tests -p 'test_*.py'
-
-      - name: Run endpoint Python tests
-        run: python3 -m unittest discover -s tools/endpoint/tests -p 'test_*.py'
 
       - name: Generate oracle CI corpus
         run: tools/oracle/run corpus --profile ci --seed 12345 --count 100 --out target/oracle/ci-corpus
@@ -132,8 +126,20 @@ jobs:
       - name: Run oracle pcap validation
         run: tools/oracle/run pcap --corpus target/oracle/ci-corpus/plans.json --out target/oracle/ci-pcap
 
-      - name: Run oracle Hetzner wire dry run
-        run: tools/oracle/run live --provider hetzner --dry-run --corpus target/oracle/ci-corpus/plans.json --out target/oracle/ci-live-dry-run
+      - name: Generate probe plans
+        run: tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/ci-plan
 
-      - name: Run probe Hetzner dry run
-        run: tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10 --out target/probe/ci-dry-run
+      - name: Run bounded smoke workload
+        run: |
+          mkdir -p target/smoke-ci
+          cd target/smoke-ci
+          printf '%s\n' '{"schema_version":1,"protocol":"crafter-smoke-v1","payload":"ci-smoke"}' \
+            | cargo run -q --manifest-path "$GITHUB_WORKSPACE/tools/smoke/Cargo.toml"
+
+      - name: Enforce infrastructure boundary
+        run: |
+          test ! -e tools/lab
+          test ! -e tools/endpoint
+          test ! -e tools/appliance
+          ! tools/oracle/run --help | grep -qE '^ *live '
+          ! tools/probe/run --help | grep -q -- '--live'

@@ -359,8 +359,8 @@ assert!(reports.iter().all(|report| report.is_dry_run()));
 ```
 
 Examples use documentation address space and offline or dry-run writers. Do not
-turn fragment examples into live traffic instructions; provider-backed lab
-workflows are the explicit live path.
+turn fragment examples into live traffic instructions; external operator
+tooling owns any explicitly authorized live run.
 
 The `IpFragment` and `IpDefrag` transforms are source-backed for IPv4 by:
 
@@ -471,8 +471,8 @@ IPv4 behavior is covered by focused offline tests and deterministic fixtures:
   null/loopback.
 
 All documented examples use documentation address space and offline construction
-or decode. Live raw traffic remains opt-in through the crate's live send,
-capture, provider, and lab-session APIs.
+or decode. The crate exposes explicit live send and bounded capture primitives,
+while target selection and execution remain external.
 
 ## Explicit exclusions
 

@@ -8,7 +8,6 @@ from collections.abc import Mapping, Sequence
 from tools.oracle.engine.directions import (
     BACKEND_TO_LIBCRAFTER,
     LIBCRAFTER_TO_BACKEND,
-    LIVE_EXCHANGE,
 )
 from tools.oracle.engine.generator import case_byte_policy_index
 from tools.oracle.engine.spec_loader import (
@@ -26,14 +25,12 @@ SSDP_FEATURES = (
     "ssdp_headers",
     "ssdp_multicast",
     "ssdp_malformed",
-    "ssdp_live",
 )
 SSDP_PROFILES = (
     "ssdp-smoke",
     "ssdp-ci",
     "ssdp-boundary",
     "ssdp-pcap",
-    "ssdp-live-dry-run",
 )
 SSDP_STACKS = {
     "ipv4_udp_ssdp": ("l3:ipv4", ("ipv4", "udp", "ssdp")),
@@ -73,9 +70,6 @@ class SsdpOracleSpecTest(unittest.TestCase):
         self.assertEqual(layer.roots, ())
         self.assertEqual(layer.parents, ("udp",))
         self.assertEqual(layer.children, ())
-        self.assertEqual(layer.raw["live_eligibility"], "provider_gated")
-        self.assertFalse(layer.raw["live_defaults"]["developer_host_raw_send"])
-
         field_names = {field.name for field in layer.fields}
         for expected in (
             "message_kind",
@@ -113,12 +107,6 @@ class SsdpOracleSpecTest(unittest.TestCase):
                 False,
             ),
             "ssdp_malformed": (("udp", "ssdp"), OFFLINE_DIRECTIONS, False, True),
-            "ssdp_live": (
-                ("ipv4", "ipv6", "udp", "ssdp"),
-                {LIVE_EXCHANGE},
-                True,
-                False,
-            ),
         }
 
         for name, (layers, directions, strict_bytes, malformed) in expected.items():
@@ -164,7 +152,6 @@ class SsdpOracleSpecTest(unittest.TestCase):
                     [("ssdp", 1)],
                 )
                 self.assertEqual(profile.payload_length.as_pair(), [0, 0])
-                self.assertEqual(profile.feature_weights["live"], 0)
 
         self.assertEqual(self.specs.profiles["ssdp-smoke"].default_count, 10)
         self.assertEqual(self.specs.profiles["ssdp-ci"].default_count, 200)
@@ -183,10 +170,7 @@ class SsdpOracleSpecTest(unittest.TestCase):
                     assert isinstance(directions, list)
                     self.assertTrue(directions)
                     self.assertLessEqual(set(directions), set(feature.directions))
-                    if name == "ssdp_live":
-                        self.assertEqual(set(directions), {LIVE_EXCHANGE})
-                    else:
-                        self.assertEqual(set(directions), OFFLINE_DIRECTIONS)
+                    self.assertEqual(set(directions), OFFLINE_DIRECTIONS)
 
     def test_ssdp_case_byte_policies_follow_malformed_contract(self) -> None:
         policy_index = case_byte_policy_index()
@@ -206,7 +190,6 @@ class SsdpOracleSpecTest(unittest.TestCase):
             "structured_error",
         )
         self.assertEqual(policy_index["ssdp-raw-fallback"], "strict_bytes")
-        self.assertEqual(policy_index["ssdp-live-ipv4-search-exchange"], "strict_bytes")
 
 
 if __name__ == "__main__":

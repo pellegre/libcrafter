@@ -23,7 +23,7 @@ in the repository:
 `.agents/docs/coap-rfc-manifest.md`, `.agents/docs/coap-wire-grammar.md`, and
 `.agents/docs/coap-extensions.md` remain the authority for the actual grammar.
 This file assigns stable error names to those boundaries; it does not invent a
-second validity model. Group OSCORE remains provisional opaque metadata until
+second validity model. Group OSCORE remains prepareal opaque metadata until
 the source-manifest stop condition is resolved.
 
 The shared parse error is `CrafterError` from `crafter/src/error.rs`.
@@ -194,9 +194,9 @@ nonempty option, parse the flags before locating the following regions.
 | `coap.oscore.option.partial-iv-length` | `InvalidFieldValue` only when base `n` is the reserved value 6 or 7 |
 
 When `k` is present, `kid` owns all remaining option bytes and cannot itself
-be truncated relative to another field. Unknown or provisional high flag bits,
+be truncated relative to another field. Unknown or prepareal high flag bits,
 including opaque Group OSCORE metadata, remain present in the raw
-`OscoreOption`; the pairwise transform returns an unsupported/provisional
+`OscoreOption`; the pairwise transform returns an unsupported/prepareal
 result instead of guessing their semantics.
 
 ### Nonce and AAD inputs
@@ -273,7 +273,7 @@ byte-exact and inspectable:
 | Unknown Content-Format or Accept value | Original uint bytes, including a noncanonical representation, plus any decoded numeric value |
 | Unknown signaling data | Signaling code byte, contextual option number, option order, raw encoding, and opaque parameter bytes |
 | OSCORE ciphertext | Complete outer payload bytes, payload-marker state, OSCORE option bytes, and outer options; no normalization before authentication |
-| Group metadata | Provisional flag bits, identifiers, Partial IV, ciphertext, authentication material, signature/countersignature bytes, algorithm numbers, and other opaque fields |
+| Group metadata | Prepareal flag bits, identifiers, Partial IV, ciphertext, authentication material, signature/countersignature bytes, algorithm numbers, and other opaque fields |
 
 Unknown registry status may change labels after a future IANA refresh, but it
 must not change stored numeric values or bytes. Unknown valid data is never
@@ -307,7 +307,7 @@ The CoAP malformed suite follows the established pattern in
    cleartext service-port path and assert an exact unchanged `Raw` payload,
    while the direct parser asserts the structured error.
 6. Preservation fixtures round trip unknown codes, options, Content-Formats,
-   signaling parameters, ciphertext, and provisional group metadata and compare
+   signaling parameters, ciphertext, and prepareal group metadata and compare
    the complete bytes, ordering, marker state, and numeric values.
 7. OSCORE failure tests assert one redacted authentication category for wrong
    key, nonce, request binding, AAD, ciphertext, and tag inputs and prove that

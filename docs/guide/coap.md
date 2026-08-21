@@ -149,62 +149,18 @@ diagnostics. Classic pcap readers/writers and `PacketWire::pcap_file` or
 Ethernet link types; committed fixtures use documentation addresses and
 deterministic timestamps.
 
-## Offline and provider-backed validation
+## Validation
 
-Start with deterministic offline or dry-run plans. These commands create only
-ignored artifacts below `target/`; they do not create endpoints or send
-packets:
+Use the tracked deterministic validation surfaces first:
 
 ```sh
-tools/oracle/run offline --family coap --profile coap-smoke --seed 5683 --count 12 --out target/oracle/coap-smoke
-tools/oracle/run live --provider local-dry-run --dry-run --family coap --profile coap-live-dry-run --seed 5683 --count 10 --out target/oracle/coap-live-local-dry-run
-tools/probe/run --provider local-dry-run --dry-run --profile coap-smoke --seed 5683 --count 12 --out target/probe/coap-smoke
-tools/lab/run plan --provider qemu --dry-run --profile smoke --seed 1 --role stimulus --role target --json
+tools/oracle/run offline --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
-Provider dry-runs are supported for `docker`, `hetzner`, `qemu`, and
-`virtualbox`. Inspect each plan's `appliance_runtime`, provider capabilities,
-controlled-responder setup, finite send/capture bounds, artifact roots, and
-teardown commands. Missing credentials, virtualization, IPv6, L2, multicast,
-or responder capabilities are explicit live-promotion skips; they do not
-invalidate the retained offline evidence.
-
-Live CoAP validation is optional and was not executed for this coverage. A
-manual probe run must be provider-backed and fail closed unless all of these
-are present:
-
-- an explicit provider in `LIBCRAFTER_PROBE_LIVE_PROVIDER`;
-- the runbook opt-in `LIBCRAFTER_PROBE_LIVE_COAP_CONFIRM=yes`;
-- the runner's protocol gate `LIBCRAFTER_COAP_LIVE_CONFIRM=yes`; and
-- the command-line gate `--confirm-live-run`.
-
-The selected case must also have a disposable controlled CoAP responder. The
-run must retain request/response JSON, exact bytes, bounded pcaps, summaries,
-logs, provider/session manifests, collection status, and cleanup status below
-an ignored artifact root, then tear down every endpoint on success, failure, or
-timeout. Never send crafted CoAP from the developer host or target a public or
-production responder.
-
-A fail-closed manual wrapper can express the two operator-facing optional
-variables while passing the runner's protocol gate explicitly:
-
-```sh
-if [ -n "${LIBCRAFTER_PROBE_LIVE_PROVIDER:-}" ] && \
-   [ "${LIBCRAFTER_PROBE_LIVE_COAP_CONFIRM:-}" = yes ]; then
-  LIBCRAFTER_COAP_LIVE_CONFIRM=yes tools/probe/run \
-    --provider "$LIBCRAFTER_PROBE_LIVE_PROVIDER" \
-    --confirm-live-run \
-    --profile coap-smoke \
-    --seed 5683 \
-    --count 7 \
-    --out "target/probe/coap-live/$LIBCRAFTER_PROBE_LIVE_PROVIDER"
-else
-  tools/probe/run --provider qemu --dry-run --profile coap-smoke \
-    --seed 5683 --count 7 --out target/probe/coap-live-dry-run/qemu
-fi
-```
-
-Do not place that live branch in CI, acceptance scripts, or unattended
-automation. The detailed validation matrix, skip vocabulary, artifact policy,
-and teardown requirements are in
-[`.agents/docs/coap-validation-safety.md`](../../.agents/docs/coap-validation-safety.md).
+These commands do not select infrastructure or send packets. Any authorized use
+of concrete interfaces, peers, radios, or targets is owned by external operator
+tooling, which supplies runtime inputs and collects artifacts. libcrafter does
+not provision machines, configure responders, manage credentials, or perform
+remote cleanup.

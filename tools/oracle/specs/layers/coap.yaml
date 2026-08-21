@@ -35,15 +35,6 @@ secure_raw_parents:
     port: 5684
     service: coaps
     policy: opaque_raw
-live_eligibility: provider_gated
-live_defaults:
-  default_mode: dry_run
-  provider_required: true
-  protected_confirmation_required: true
-  coap_confirmation_environment: LIBCRAFTER_COAP_LIVE_CONFIRM
-  coap_confirmation_value: "yes"
-  developer_host_raw_send: false
-
 fields:
   - name: transport
     type: enum

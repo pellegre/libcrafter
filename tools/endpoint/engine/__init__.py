@@ -1,1 +1,0 @@
-"""Endpoint lifecycle package."""

@@ -19,6 +19,6 @@ fn main() -> crafter_flow::Result<()> {
     quic_full::print_send_plans(&report, Side::Left)?;
     quic_full::print_state_trace(&report, Side::Left);
     quic_full::print_counts(&report, Side::Left)?;
-    println!("live use requires explicit provider-backed authorization and separate tooling");
+    println!("live use requires explicit authorization and external execution tooling");
     Ok(())
 }

@@ -13,7 +13,6 @@ directions:
   - backend_to_libcrafter
   - libcrafter_to_backend
   - roundtrip
-  - live_exchange
 strict_bytes: true
 malformed: false
 
@@ -34,8 +33,6 @@ schema_extension_plan:
     over PacketRecord streams and emit normalized record plus metadata JSON.
   - Extend pcap mode to compare fragment pcaps with transform-reassembled
     payload hashes and per-record trace metadata.
-  - Add provider-backed live_exchange profiles for constrained-MTU lab runs
-    after offline and pcap transform cases are executable.
 
 profiles:
   - name: ip-fragment-offline
@@ -44,10 +41,6 @@ profiles:
     purpose: Fragment pcap fixtures and reassembled payload hash comparison.
   - name: fragmentation-smoke
     purpose: Focused pcap dry-run planning for deterministic IP fragment fixture coverage.
-  - name: ip-fragment-lab-dry-run
-    purpose: Provider-backed Hetzner, QEMU, and VirtualBox constrained-MTU dry-run planning.
-  - name: ip-fragment-smoke
-    purpose: Provider-neutral oracle live dry-run plan for constrained-MTU IP fragment behavior.
 
 pcap_fixtures:
   - name: raw-ipv4-ipfragment-generated
@@ -179,7 +172,6 @@ coverage_cases:
   - ip-fragment-ipv6-unsupported-extension-scope
   - ip-fragment-roundtrip-ipv4
   - ip-fragment-roundtrip-ipv6
-  - ip-fragment-lab-constrained-mtu
 
 supported_cases:
   # Existing generator/backend materializers can compare these packet-level
@@ -423,18 +415,6 @@ supported_cases:
       - ip-fragment-pcap
     contract_only: true
     expected: IpFragment output fed to IpDefrag reassembles to the original IPv6 payload, with the Fragment Header removed and traces preserved.
-  - name: ip-fragment-lab-constrained-mtu
-    directions:
-      - live_exchange
-    byte_policy: payload_hash_and_trace
-    transform: IpFragment_and_IpDefrag
-    family: IPv4_IPv6
-    profiles:
-      - ip-fragment-lab-dry-run
-      - ip-fragment-smoke
-    contract_only: true
-    expected: provider-backed lab endpoints with constrained MTU and offloads disabled produce kernel-delivered payload hashes matching transform-reassembled payload hashes, or a structured provider skip artifact.
-
 backend_support:
   scapy:
     status: supported

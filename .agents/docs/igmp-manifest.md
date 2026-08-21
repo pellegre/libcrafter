@@ -92,6 +92,6 @@ for planning is:
 - Decide in the codepoint step whether non-core registered IGMP types such as
   DVMRP, PIMv1, Cisco trace, and multicast traceroute remain `Raw` or get typed
   minimal metadata.
-- Validate provider multicast support before any live IGMP run; dry-run and
+- Validate external runner multicast support before any live IGMP run; dry-run and
   protected gates remain mandatory.
 

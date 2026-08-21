@@ -205,8 +205,8 @@ families:
       - payload
   # ospf: OSPFv2 (RFC 2328) rides directly over IPv4 (IP protocol 89). The
   # ipv6 feature tag reserves next-header 89 for the OSPFv3 base layer. OSPF
-  # is an IGP between routers, so the family stays offline/dry-run only and
-  # uses documentation router IDs/areas; live exchange is provider-backed.
+  # is an IGP between routers, so the family stays offline only and uses
+  # documentation router IDs/areas.
   - name: ospf
     default_stack:
       - ipv4
@@ -264,8 +264,8 @@ families:
       - payload
   # igmp: IPv4-only Internet Group Management Protocol (IP protocol 2).
   # The default root is network-layer IPv4/IGMP so focused profiles do not
-  # sample IPv6 MLD or ICMPv6-family behavior. Link-layer/provider-gated live
-  # validation is modeled by later oracle/probe/lab steps.
+  # sample IPv6 MLD or ICMPv6-family behavior. External operator tooling owns
+  # any authorized live qualification.
   - name: igmp
     default_stack:
       - ipv4
@@ -389,8 +389,8 @@ stacks:
       - pcap-dot11-protected-raw
       - crafter-dot11-roundtrip
   # radiotap / dot11: monitor-mode metadata wrapped around an IEEE 802.11 MAC
-  # frame. Automated oracle profiles keep this offline/dry-run only; live
-  # injection requires explicit manual dongle validation in a later step.
+  # frame. Oracle profiles keep this deterministic and offline; hardware-backed
+  # qualification is outside this spec.
   - name: radiotap_dot11_payload
     root: "link:radiotap"
     layers:
@@ -535,13 +535,8 @@ stacks:
       - malformed-zigbee-aps-truncated-header
   # ethernet / arp: ARP over Ethernet. ARP is IPv4-era link-layer address
   # resolution (target/arp-rfc/scope.md: RFC 826 over media-generic
-  # HRD/PRO/HLN/PLN), so it stays rooted at a link layer and is never eligible
-  # for network-layer host raw sends. Offline byte-equivalence, pcap, link-type,
-  # and decode-root coverage run locally; live validation is L2-gated
-  # (requires_l2 / requires_broadcast / requires_provider_mac in
-  # tools/oracle/engine/corpus.py, keyed off the arp layer) and runs only
-  # through provider-backed QEMU/VirtualBox lab sessions, never a privileged raw
-  # send from the developer host.
+  # HRD/PRO/HLN/PLN), so it stays rooted at a link layer. Deterministic byte,
+  # pcap, link-type, and decode-root coverage run locally.
   - name: ethernet_arp
     root: "link:ethernet"
     layers:
@@ -554,10 +549,7 @@ stacks:
   # linux_cooked / arp: ARP captured/replayed over Linux cooked capture
   # (DLT_LINUX_SLL). The crafter crate already ships a LinuxSll/ARP fixture and
   # pcap round trip (pcaps/linux-sll-arp-who-has.pcap), so ARP must select this
-  # supported link root in addition to Ethernet. It carries the same L2/live
-  # constraints as ethernet_arp (the arp layer drives requires_l2 /
-  # requires_broadcast / requires_provider_mac) and is offline/pcap-focused;
-  # live ARP exchange remains a provider-backed QEMU/VirtualBox lab path.
+  # supported link root in addition to Ethernet and remains offline/pcap-focused.
   - name: linux_cooked_arp
     root: "link:linux-cooked"
     layers:
@@ -707,8 +699,8 @@ stacks:
       - mqtt-ping-disconnect
   # SCTP (RFC 9260) rides directly over IP protocol / IPv6 next-header 132.
   # These focused smoke stacks are executable Scapy/libcrafter byte-parity
-  # coverage for DATA chunks only; broader chunks, pcap fixtures, and live
-  # exchange remain assigned to later SCTP plan steps.
+  # coverage for DATA chunks only; broader chunks and pcap fixtures remain
+  # assigned to later SCTP plan steps.
   - name: ipv4_sctp
     root: "l3:ipv4"
     layers:
@@ -996,9 +988,7 @@ stacks:
       - dns-section-multi
       - udp-options-known-dns-surplus
   # ethernet / ipv4 / udp / dhcpv4: link-layer DHCP for offline byte
-  # equivalence, pcap, link-type, and decode-root coverage. It stays
-  # link-layer-gated for live (requires_l2 / requires_provider_mac /
-  # requires_broadcast) and is not used for provider-backed live exchanges.
+  # equivalence, pcap, link-type, and decode-root coverage.
   - name: ethernet_dhcpv4
     root: "link:ethernet"
     layers:
@@ -1015,13 +1005,10 @@ stacks:
       - dhcpv4-force-renew
       - dhcpv4-lease-query
       - dhcpv4-option-matrix
-  # ipv4 / udp / dhcpv4 (root l3:ipv4): the live DHCP packet under test. Live
-  # validation is a one-way packet-equivalence exchange run in both directions
-  # (libcrafter_to_backend and backend_to_libcrafter) with NO expected DHCP
-  # reply. It is not a DHCP client, server, lease, or relay emulation. Rooted at
-  # IPv4 unicast it is wire-eligible without L2 framing, broadcast, or provider
-  # MAC discovery. Scapy is the live reference backend; Wireshark/tshark is
-  # parser-only and never acts as a live endpoint.
+  # ipv4 / udp / dhcpv4 (root l3:ipv4): a one-way packet-equivalence shape run
+  # in both directions (libcrafter_to_backend and backend_to_libcrafter) with NO
+  # expected DHCP reply. It is not a DHCP client, server, lease, or relay
+  # emulation. Rooted at IPv4 unicast, it needs no L2 framing or broadcast.
   - name: ipv4_udp_dhcpv4
     root: "l3:ipv4"
     layers:
@@ -1037,8 +1024,8 @@ stacks:
       - dhcpv4-lease-query
       - dhcpv4-option-matrix
   # ethernet / ipv6 / udp / dhcpv6: link-layer DHCPv6 coverage for offline byte,
-  # pcap, and decode-root validation. Provider live exchanges use the IPv6-root
-  # stack below instead of Ethernet framing.
+  # pcap, and decode-root validation. The IPv6-root stack below covers network
+  # layer materialization without Ethernet framing.
   - name: ethernet_dhcpv6
     root: "link:ethernet"
     layers:
@@ -1058,8 +1045,8 @@ stacks:
       - dhcpv6-ia-pd-iaprefix
       - dhcpv6-unknown-option
       - dhcpv6-option-matrix
-  # ipv6 / udp / dhcpv6 (root l3:ipv6): live-plan eligible DHCPv6 packet
-  # coverage. It is packet equivalence and dry-run planning only; the crate does
+  # ipv6 / udp / dhcpv6 (root l3:ipv6): deterministic DHCPv6 packet
+  # coverage. It is packet equivalence only; the crate does
   # not emulate a DHCPv6 client, server, relay daemon, or lease state machine.
   - name: ipv6_udp_dhcpv6
     root: "l3:ipv6"
@@ -1079,8 +1066,6 @@ stacks:
       - dhcpv6-ia-pd-iaprefix
       - dhcpv6-unknown-option
       - dhcpv6-option-matrix
-      - dhcpv6-live-plan-client
-      - dhcpv6-live-plan-relay
   # ipv4 / udp / rip: the Routing Information Protocol message under test
   # (RFC 1058 RIPv1 and RFC 2453 RIPv2, plus RFC 2453/2082/4822 authentication
   # entries) over UDP/520. Rooted at IPv4 unicast it is offline byte-equivalence
@@ -1148,17 +1133,8 @@ stacks:
       - ipv6
       - icmpv6
     # ICMPv6 echo/error plus the IPv6 Neighbor Discovery (RFC 4861) and MLD
-    # (RFC 2710 / RFC 3810 / RFC 9777) case ids. These case ids let the live
-    # runner resolve a focused NDP/MLD case
-    # (`tools/oracle/run live --case ndp-neighbor-solicitation`) onto the
-    # ICMPv6 stack. The packet rides next-header 58 over IPv6, so a provider
-    # without IPv6 unicast (Hetzner) marks the case wire-ineligible with the
-    # stable `requires_ipv6` reason and the live run skips it cleanly, the same
-    # IPv6-capability gating every ICMPv6 case already follows; providers that
-    # carry same-segment IPv6 link-layer multicast (QEMU, VirtualBox) plan it.
-    # Byte-exact NDP/MLD interop is pinned by the scapy bidirectional cases in
-    # fixtures/scapy-cases.json and the crafter round-trip tests; this list is
-    # the live-path case registry, not an offline byte-corpus generator.
+    # (RFC 2710 / RFC 3810 / RFC 9777) case ids. Byte-exact NDP/MLD interop is
+    # pinned by the Scapy bidirectional cases and crafter round-trip tests.
     coverage_cases:
       - ipv6-icmp
       - ndp-router-solicitation

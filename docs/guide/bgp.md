@@ -22,7 +22,7 @@ machine. Session sequencing belongs in a generated tool or in the
 | Path attributes | Supported | Framing, extended length, common well-known attributes, communities, MP-BGP, AS4 attributes, and unknown attributes. |
 | Registry dispatch | Supported | TCP payloads decode as BGP when either TCP port is 179. |
 | Stream payloads | Supported | Consecutive complete BGP messages become stacked `Bgp` layers; trailing partial bytes remain inspectable as `Raw`. |
-| Live sessions | Example only | `crafter/examples/bgp_session.rs` uses a kernel TCP socket and lab endpoints; no BGP FSM is in the crate. |
+| Live sessions | Example only | `crafter/examples/bgp_session.rs` uses a kernel TCP socket and external endpoints; no BGP FSM is in the crate. |
 
 ## Public API
 
@@ -98,7 +98,7 @@ fn main() -> crafter::Result<()> {
 ```
 
 All examples use documentation address space and private-use ASNs. Use real
-neighbors only in an explicitly authorized lab session.
+neighbors only in an explicitly authorized external execution environment.
 
 ## Message Construction
 
@@ -236,43 +236,21 @@ items. Malformed BGP framing returns typed errors with context such as
 partial BGP message after complete messages is kept as `Raw` so stream captures
 remain inspectable rather than silently truncated.
 
-## Offline And Live Surfaces
+## Validation And External Execution Boundary
 
-The offline path is the default. `crafter/examples/bgp_session.rs` prints a
-documentation-safe BGP message plan without opening a socket:
-
-```sh
-cargo run -p crafter --example bgp_session
-cargo run -p crafter --example bgp_session -- --ipv6
-```
-
-Live mode is explicit and uses a kernel TCP connection to a provided peer:
+Use the tracked deterministic validation surfaces first:
 
 ```sh
-cargo run -p crafter --example bgp_session -- \
-  --peer 192.0.2.20:179 \
-  --ipv6 \
-  --linger-seconds 45 \
-  --out target/lab/bgp/manual
+tools/oracle/run offline --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
-That live form is intended for disposable provider-backed lab endpoints, not
-the developer host. Probe owns the BGP provider workflow: it plans the
-`bgp_session` stimulus, provisions the target FRR peer from
-`tools/probe/target_services/bgp/`, captures port 179 traffic, reads the peer
-RIB, saves artifacts under `target/probe/bgp/<provider>/`, and destroys the
-session. Never commit live public IPs, endpoint identifiers, credentials, or
-packet captures.
-
-Use probe dry-run planning before any provider run:
-
-```sh
-tools/probe/run --provider local-dry-run --dry-run --profile bgp-smoke
-tools/probe/run --provider qemu --dry-run --profile bgp-smoke --seed 1
-```
-
-For the agent-facing live procedure and generated-tool guidance, see
-[`.agents/docs/cookbook.md`](../../.agents/docs/cookbook.md).
+These commands do not select infrastructure or send packets. Any authorized use
+of concrete interfaces, peers, radios, or targets is owned by external operator
+tooling, which supplies runtime inputs and collects artifacts. libcrafter does
+not provision machines, configure responders, manage credentials, or perform
+remote cleanup.
 
 ## Explicit Exclusions
 

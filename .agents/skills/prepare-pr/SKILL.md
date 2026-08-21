@@ -32,7 +32,7 @@ Allowed types are `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
 `refactor`, `revert`, `style`, and `test`.
 
 Scopes are required. Use the narrowest useful scope, such as `ci`, `pcap`,
-`live-lab`, `interop`, `docs`, `net`, or a protocol family. Do not include PR
+`validation`, `interop`, `docs`, `net`, or a protocol family. Do not include PR
 numbers, reviewer thanks, or branch metadata in the title.
 
 ## PR Body

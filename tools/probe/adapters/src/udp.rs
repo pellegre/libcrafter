@@ -8,7 +8,7 @@
 //! uses the same echo path but explicitly sets the outgoing IPv4 UDP checksum to
 //! zero so compile() override preservation is tested. `udp-options-surplus-echo`
 //! appends deterministic UDP surplus/options after the conventional payload
-//! length and validates the service still echoes that payload where the provider
+//! length and validates the service still echoes that payload when the execution environment
 //! supports delivery. `udp-closed-port-icmp` sends a UDP datagram to a verified-unbound
 //! target port and validates the kernel ICMP destination-unreachable /
 //! port-unreachable response plus the embedded original IPv4/UDP prefix.
@@ -20,8 +20,8 @@ use std::time::Duration;
 
 use crate::common::{
     capture_filter, captured_data, decode_hex, decoded_packet_json, failed_outcome, hex_bytes,
-    observed_response, open_capture_sniffer, plan_json, raw_payload, required_str, required_u16,
-    send_report_json, target_service_json, CandidateValidation, ExampleResult, ProbeOutcome,
+    observed_response, open_capture_sniffer, peer_contract_json, plan_json, raw_payload,
+    required_str, required_u16, send_report_json, CandidateValidation, ExampleResult, ProbeOutcome,
     ProbePacketSender, ProbePlan, StimulusEndpointRequest, UdpSend, FAILURE_DECODE_FAILED,
     FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
 };
@@ -67,7 +67,7 @@ pub fn run_udp_dry_run(
             "sent_udp_surplus_length": sent_udp_surplus_length,
             "sent_udp_options": sent_udp_options,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }),
     );
     let result = json!({
@@ -86,7 +86,7 @@ pub fn run_udp_dry_run(
             "sent_udp_surplus_length": sent_udp_surplus_length,
             "sent_udp_options": sent_udp_options,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }
     });
     Ok(ProbeOutcome {
@@ -283,7 +283,7 @@ fn run_udp_closed_port_dry_run(
             "sent_raw_hex": sent_raw_hex,
             "sent_decoded": sent_decoded,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
             "expected_embedded_prefix_hex": hex_bytes(&embedded_prefix),
         }),
     );
@@ -301,7 +301,7 @@ fn run_udp_closed_port_dry_run(
             "sent_raw_hex": sent_raw_hex,
             "sent_decoded": sent_decoded,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
             "expected_embedded_prefix_hex": hex_bytes(&embedded_prefix),
         }
     });
@@ -576,7 +576,7 @@ fn run_udp_multi_send_dry_run(
             "send_count": planned_sends.len(),
             "planned_sends": planned_sends,
             "expected_responses": expected_responses,
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }),
     );
     let result = json!({
@@ -593,7 +593,7 @@ fn run_udp_multi_send_dry_run(
             "send_count": planned_sends.len(),
             "planned_sends": planned_sends,
             "expected_responses": expected_responses,
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }
     });
     Ok(ProbeOutcome {
@@ -1169,7 +1169,6 @@ mod tests {
 
     fn closed_port_request(metadata: Value) -> StimulusEndpointRequest {
         StimulusEndpointRequest {
-            provider: "hetzner".to_string(),
             profile: "behavior".to_string(),
             seed: 1052,
             endpoint_role: "stimulus".to_string(),

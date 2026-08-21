@@ -11,7 +11,7 @@ trailing 2-octet Frame Check Sequence; no TAP radio pseudo-header). The
 `decode_from_link` entrypoint auto-dispatches the Zigbee NWK/APS layers when a
 MAC Data frame carries a Zigbee NWK Data payload.
 
-All addresses, PAN identifiers, clusters, and profiles are lab-safe synthetic
+All addresses, PAN identifiers, clusters, and profiles are synthetic
 values; none are captured from a real network.
 
 ## Derivation / provenance

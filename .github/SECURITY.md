@@ -12,7 +12,7 @@ is enabled for this repository. Include:
 - affected commit or version
 - platform and toolchain details
 - a minimal reproduction when possible
-- whether packet capture, raw sockets, or provider credentials are involved
+- whether packet capture, raw sockets, or infrastructure credentials are involved
 
-Do not include real provider tokens, public wire endpoint identifiers, or packet
+Do not include real infrastructure credentials, public host identifiers, or packet
 captures containing sensitive traffic in public reports.

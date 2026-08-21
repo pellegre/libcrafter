@@ -17,7 +17,7 @@ summarizes, and inspects NTPv4 and NTPv3/SNTP-shaped payloads inside the normal
 | Legacy MAC | Supported as raw tail bytes | Key ID and digest bytes are inspectable and round-trip. |
 | UDP dispatch | Supported | UDP/123 payloads decode as NTP only when the conservative shape gate accepts them; unrelated payloads remain `Raw`. |
 | Fixtures and pcaps | Supported | Golden headers, malformed tails, summary/show output, Raw IPv4 pcaps, and Ethernet pcaps are checked in and validated offline. |
-| Live behavior | Out of crate scope | Use offline construction, fixtures, dry-run plans, oracle/probe dry-runs, or provider-backed labs. |
+| Live behavior | Out of crate scope | Use offline construction, fixtures, dry-run plans, oracle/probe dry-runs, or externally executed labs. |
 
 ## Fixed Header And Timestamps
 
@@ -158,15 +158,18 @@ open live sockets. Request planning uses `send_dry_run` with a fake interface
 such as `dry-run0`, so the output is an inspectable send plan rather than live
 traffic.
 
-## Live Boundary
+## External Execution Boundary
 
-NTP live validation must be provider-backed and explicitly confirmed. Automated
-tests and examples do not send live NTP traffic. A live oracle or probe run must
-have all of the following:
+Use the tracked deterministic validation surfaces first:
 
-- provider selection for a disposable endpoint or lab;
-- an explicit live flag such as `--confirm-live-run`;
-- NTP-specific confirmation such as `LIBCRAFTER_NTP_LIVE_CONFIRM=yes`;
-- disposable endpoint/lab teardown and artifact collection.
+```sh
+tools/oracle/run offline --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
+```
 
-Without those preconditions, NTP validation remains offline or dry-run only.
+These commands do not select infrastructure or send packets. Any authorized use
+of concrete interfaces, peers, radios, or targets is owned by external operator
+tooling, which supplies runtime inputs and collects artifacts. libcrafter does
+not provision machines, configure responders, manage credentials, or perform
+remote cleanup.

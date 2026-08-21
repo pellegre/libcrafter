@@ -37,14 +37,6 @@ unsupported_parents:
   - ipx
   - ieee802
   - syslog
-live_eligibility: provider_gated
-live_gate: confirm_live_run_provider_lab_only
-live_defaults:
-  default_mode: dry_run
-  allowed_without_confirmation: false
-  developer_host_raw_send: false
-  provider_required: true
-
 fields:
   - name: version
     type: int

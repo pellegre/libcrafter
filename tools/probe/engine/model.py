@@ -30,7 +30,7 @@ class JsonModel:
 
 @dataclass(frozen=True, slots=True)
 class ProbeCase(JsonModel):
-    """One behavioral probe case requested for a lab endpoint pair."""
+    """One deterministic behavioral packet case."""
 
     name: str
     description: str
@@ -43,7 +43,7 @@ class ProbeCase(JsonModel):
 
 @dataclass(frozen=True, slots=True)
 class EndpointRole(JsonModel):
-    """A role an endpoint plays during a probe run."""
+    """A role required by a probe plan."""
 
     role: str
     responsibilities: list[str] = field(default_factory=list)
@@ -53,15 +53,12 @@ class EndpointRole(JsonModel):
 
 @dataclass(frozen=True, slots=True)
 class ProbeRunRequest(JsonModel):
-    """Normalized probe run request."""
+    """Normalized deterministic probe-plan request."""
 
-    provider: str
     profile: str
     seed: int
     count: int
     case_names: list[str] = field(default_factory=list)
-    dry_run: bool = False
-    confirm_live_run: bool = False
     out: str | None = None
     metadata: JSONObject = field(default_factory=dict)
 
@@ -107,10 +104,9 @@ class ProbeResult(JsonModel):
 
 @dataclass(frozen=True, slots=True)
 class ProbeReport(JsonModel):
-    """Machine-readable report for a probe command invocation."""
+    """Machine-readable deterministic probe-plan report."""
 
     mode: str
-    provider: str
     profile: str
     seed: int
     count: int
@@ -121,6 +117,7 @@ class ProbeReport(JsonModel):
     results: list[ProbeResult] = field(default_factory=list)
     skips: list[ProbeSkip] = field(default_factory=list)
     observed_responses: list[ObservedResponse] = field(default_factory=list)
+    plans: list[JSONObject] = field(default_factory=list)
     artifacts: list[str] = field(default_factory=list)
     artifact_paths: list[str] = field(default_factory=list)
     schema_version: int = 1
@@ -128,7 +125,7 @@ class ProbeReport(JsonModel):
 
 
 def coerce_json_value(value: object) -> JSONValue:
-    """Coerce provider-produced values into JSON-compatible report data."""
+    """Coerce values into JSON-compatible report data."""
 
     if value is None or isinstance(value, (str, bool, int, float)):
         return value

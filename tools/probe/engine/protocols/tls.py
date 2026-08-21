@@ -1,30 +1,18 @@
-"""TLS probe protocol plugin: controlled TLS service dry-run plans."""
+"""Deterministic TLS probe cases and packet plans."""
 
 from __future__ import annotations
-
-from collections.abc import Mapping, Sequence
-
-from ..capability_derivation import capability
 from ..case_helpers import _behavior_case
-from ..model import JSONObject, JSONValue, ProbeCase
+from ..model import JSONObject, ProbeCase
 from ..planning_helpers import deterministic_bytes, deterministic_ipv4_pair
-from ..target_service_helpers import (
-    plans_by_destination_port,
-    target_service_address_fields,
-)
 from .base import ProtocolPlugin, register
-
 
 TLS_SMOKE_PROFILE = "tls-smoke"
 TLS_SERVICE_KIND = "tls-controlled-service"
-TLS_RUNTIME = "probe-tls-reference"
 TLS_PORT = 4433
 TLS_STIMULUS_DRIVER = "tls_probe"
 TLS_ADAPTER_SOURCE = "tools/probe/adapters/src/tls.rs"
 TLS_DOCUMENTATION_IPV4_PREFIX = "198.51.100.0/24"
 _TLS_CAPABILITIES = ["tls_controlled_service"]
-
-
 TLS_PROBE_CASES: tuple[ProbeCase, ...] = (
     _behavior_case(
         name="tls-clienthello-observation",
@@ -72,11 +60,7 @@ TLS_PROBE_CASES: tuple[ProbeCase, ...] = (
 
 
 def _tls_probe_plan(
-    *,
-    case_name: str,
-    profile: str,
-    seed: int,
-    sequence: int,
+    *, case_name: str, profile: str, seed: int, sequence: int
 ) -> JSONObject:
     case = _case(case_name)
     digest = deterministic_bytes(case_name, profile, seed, sequence)
@@ -85,7 +69,6 @@ def _tls_probe_plan(
     payload = _tls_payload_for_case(case_name, digest)
     record = _tls_record_for_case(case_name, payload)
     capture_filter = f"tcp and port {TLS_PORT}"
-
     return {
         "schema_version": 1,
         "case": case_name,
@@ -123,7 +106,7 @@ def _tls_probe_plan(
             },
             "tls": {
                 "record_content_type": record["content_type"],
-                "record_legacy_version": 0x0303,
+                "record_legacy_version": 771,
                 "record_fragment_hex": str(record["fragment_hex"]),
                 "records": [record],
             },
@@ -140,12 +123,12 @@ def _tls_probe_plan(
         "expected_records": [
             {
                 "content_type": record["content_type"],
-                "legacy_record_version": 0x0303,
+                "legacy_record_version": 771,
                 "fragment_hex": str(record["fragment_hex"]),
             }
         ],
         "capture": {
-            "interface": "provider-target",
+            "interface_role": "target",
             "filter": capture_filter,
             "artifacts": [
                 "tls-listener.log",
@@ -159,30 +142,13 @@ def _tls_probe_plan(
             "state": "planned-only",
             "planned_only": True,
         },
-        "target_service": {
-            "required": True,
-            "kind": TLS_SERVICE_KIND,
-            "protocol": "tcp",
-            "port": TLS_PORT,
-            "bind_ipv4": target_ipv4,
-            "source_ipv4": source_ipv4,
-            "runtime": TLS_RUNTIME,
-            "deterministic": True,
-            "capture_filter": capture_filter,
-            "planned_only": True,
-        },
-        "safety": {
-            "default_mode": "dry_run",
-            "live_requires_provider": True,
-            "live_requires_confirm_live_run": True,
-            "developer_host_raw_send": False,
-        },
+        "safety": {"default_mode": "dry_run", "developer_host_raw_send": False},
     }
 
 
 def _tls_payload_for_case(case_name: str, digest: bytes) -> bytes:
     if case_name == "tls-clienthello-observation":
-        random = bytes([0x13]) * 32
+        random = bytes([19]) * 32
         session_id = bytes(digest[10:18])
         cipher_suites = bytes.fromhex("13011303")
         compression = b"\x00"
@@ -213,7 +179,7 @@ def _tls_record_for_case(case_name: str, payload: bytes) -> JSONObject:
             "fragment_hex": payload.hex(),
             "alert_level": "fatal",
             "alert_description": "decode_error",
-            "legacy_record_version": 0x0303,
+            "legacy_record_version": 771,
         }
     if case_name == "tls-application-data-capture":
         return {
@@ -221,7 +187,7 @@ def _tls_record_for_case(case_name: str, payload: bytes) -> JSONObject:
             "body_kind": "application_data",
             "fragment_hex": payload.hex(),
             "application_data_hex": payload.hex(),
-            "legacy_record_version": 0x0303,
+            "legacy_record_version": 771,
         }
     return {
         "content_type": "handshake",
@@ -235,7 +201,7 @@ def _tls_record_for_case(case_name: str, payload: bytes) -> JSONObject:
                 "body_hex": payload[4:].hex(),
             }
         ],
-        "legacy_record_version": 0x0303,
+        "legacy_record_version": 771,
     }
 
 
@@ -250,8 +216,8 @@ def _tls_failure_reasons(case_name: str) -> list[str] | None:
     if case_name not in _TLS_PLAN_BUILDERS:
         return None
     return [
-        "provider lacks tls_controlled_service",
-        "target TLS service setup failed",
+        "execution environment lacks tls_controlled_service",
+        "target TLS service precondition failed",
         "TLS record was not observed",
         "captured record did not match planned content type",
         "captured record bytes did not match planned stimulus",
@@ -259,88 +225,10 @@ def _tls_failure_reasons(case_name: str) -> list[str] | None:
     ]
 
 
-def _tls_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, object]:
-    ipv4_unicast = capability(substrate, "ipv4_unicast", "ipv4")
-    controlled_services = capability(
-        substrate,
-        "controlled_services",
-        "controlled_service",
-    )
-    return {
-        "tls_controlled_service": ipv4_unicast and controlled_services,
-    }
-
-
-def tls_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
-    return [plan for plan in probe_plans if plan.get("case") in _TLS_PLANNED_ONLY_CASES]
-
-
-def tls_target_service_contribution(
-    probe_plans: Sequence[JSONObject],
-    *,
-    dry_run: bool,
-) -> JSONObject:
-    tls_plans = tls_probe_plans(probe_plans)
-    tls_plans_by_port = plans_by_destination_port(tls_plans)
-    services = []
-    for port, plan in tls_plans_by_port.items():
-        matching_plans = [
-            item for item in tls_plans if int(item.get("destination_port", 0)) == port
-        ]
-        expected_records = []
-        for item in matching_plans:
-            records = item.get("expected_records")
-            if isinstance(records, Sequence) and not isinstance(records, (str, bytes)):
-                expected_records.extend(records)
-        capture = plan.get("capture") if isinstance(plan.get("capture"), Mapping) else {}
-        capture_filter = str(capture.get("filter", f"tcp and port {port}"))
-        services.append(
-            {
-                "name": TLS_SERVICE_KIND,
-                "protocol": "tcp",
-                "port": port,
-                "purpose": "tls-record-observer",
-                "runtime": TLS_RUNTIME,
-                "deterministic": True,
-                "planned_only": True,
-                "case_count": len(matching_plans),
-                "capture_filter": capture_filter,
-                "expected_records": expected_records,
-                "setup": {
-                    "listener": "scripted TLS byte observer",
-                    "bind": "target endpoint IPv4",
-                    "accepts": "single TCP connection per planned case",
-                    "writes": [
-                        "tls-listener.log",
-                        "tls-capture.pcap",
-                        "tls-observed-records.json",
-                    ],
-                },
-                "cleanup": {
-                    "terminate": "tls-controlled-service process",
-                    "collect_artifacts": True,
-                    "remove_temporary_state": True,
-                },
-                "artifacts": [
-                    "live-artifacts/probe/target-services/tls-listener.log",
-                    "live-artifacts/probe/target-services/tls-capture.pcap",
-                    "live-artifacts/probe/target-services/tls-observed-records.json",
-                ],
-                **target_service_address_fields(plan),
-            }
-        )
-    return {
-        "services": services,
-        "starts_services": not dry_run and bool(services),
-    }
-
-
 _TLS_PLAN_BUILDERS: dict[str, object] = {
     case.name: _tls_probe_plan for case in TLS_PROBE_CASES
 }
 _TLS_PLANNED_ONLY_CASES: frozenset[str] = frozenset(_TLS_PLAN_BUILDERS)
-
-
 register(
     ProtocolPlugin(
         name="tls",
@@ -348,8 +236,6 @@ register(
         plan_builders=_TLS_PLAN_BUILDERS,
         planned_only_cases=_TLS_PLANNED_ONLY_CASES,
         profile_counts={TLS_SMOKE_PROFILE: {case.name: 1 for case in TLS_PROBE_CASES}},
-        target_service=tls_target_service_contribution,
         failure_reasons=_tls_failure_reasons,
-        lab_capabilities=_tls_lab_capabilities,
     )
 )

@@ -413,7 +413,7 @@ The TCP layer is validated through deterministic crate fixtures, the public-API
 path tests, the malformed decode corpus, and the `resilience` structured-error
 suite. All cases use documentation address space (`192.0.2.0/24`,
 `198.51.100.0/24`, `2001:db8::/32`) and offline or dry-run workflows by default;
-live provider runs are opt-in and start with `--dry-run`. See
+concrete-interface execution is owned by external operator tooling. See
 [Oracle validation](../operations/validation.md) for the boundary and command shapes.
 
 ## Standards and RFCs implemented

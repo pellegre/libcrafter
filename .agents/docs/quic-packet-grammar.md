@@ -18,7 +18,7 @@ using model memory.
 | Compatible version negotiation behavior | `E-RFC-9368` in `quic-manifest.md` |
 | QUIC v2 version value, long-header packet type remapping, Initial and Retry crypto differences | `E-RFC-9369` in `quic-manifest.md` |
 | UDP multiplexing boundary for future classifier work | `E-RFC-9443` in `quic-manifest.md` |
-| Version constants, reserved version rule, permanent/provisional status | `.agents/docs/quic-codepoints.md` |
+| Version constants, reserved version rule, permanent/prepareal status | `.agents/docs/quic-codepoints.md` |
 
 The RFC 9000 errata note in `quic-manifest.md` remains active. Later
 implementation steps must re-check any affected section before coding if an
@@ -289,7 +289,7 @@ auto-fill dependent fields when unset.
 This step records grammar only and performs no live traffic. Later examples
 that include UDP/IP layers must use documentation address space such as
 `192.0.2.10:4433` to `198.51.100.20:4433` or `2001:db8::10` to
-`2001:db8::20`. Provider-backed validation, packet protection vectors, retry
+`2001:db8::20`. Externally executed validation, packet protection vectors, retry
 tag verification, compatible version negotiation helpers, multiplexing
 classifier policy, and full stateless reset token verification are deferred to
 their later plan steps.

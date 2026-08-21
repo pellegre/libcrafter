@@ -17,7 +17,6 @@ profiles:
       boundary: 3
       malformed: 0
       pcap: 0
-      live: 0
   - name: mdns-ci
     purpose: deterministic mDNS pull request coverage for strict-byte, normalized, pcap, and structured-error cases
     default_count: 220
@@ -32,7 +31,6 @@ profiles:
       boundary: 5
       malformed: 1
       pcap: 1
-      live: 0
   - name: mdns-boundary
     purpose: focused mDNS QU, cache-flush, known-answer, goodbye, probe, announcement, DNS-SD, compression, and malformed coverage
     default_count: 120
@@ -47,7 +45,6 @@ profiles:
       boundary: 10
       malformed: 4
       pcap: 1
-      live: 0
   - name: mdns-pcap
     purpose: focused classic pcap coverage for raw IPv4 and Ethernet-framed mDNS packet shapes
     default_count: 20
@@ -62,23 +59,6 @@ profiles:
       boundary: 2
       malformed: 0
       pcap: 10
-      live: 0
-  - name: mdns-live-dry-run
-    purpose: provider-neutral mDNS live-validation dry-run planning without sending traffic
-    default_count: 10
-    family_weights:
-      - name: mdns
-        weight: 1
-    payload_length:
-      min: 0
-      max: 0
-    feature_weights:
-      baseline: 2
-      boundary: 4
-      malformed: 0
-      pcap: 0
-      live: 0
-
 backend_support:
   scapy:
     status: supported

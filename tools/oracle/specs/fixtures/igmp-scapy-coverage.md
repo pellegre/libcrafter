@@ -129,5 +129,5 @@ decode error path. The paired crate coverage lives in
   extension Types, invalid checksums, explicit count overrides, and reserved
   field overrides are byte-preservation cases. The backend must not normalize
   them away while building reference packets.
-- Live multicast behavior is out of scope for this fixture matrix. Provider and
-  live gates remain dry-run or protected by later lab/oracle/probe steps.
+- Live multicast behavior is out of scope for this fixture matrix. External
+  operator tooling owns authorization and bounded live execution.

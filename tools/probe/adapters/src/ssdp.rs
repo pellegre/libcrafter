@@ -3,7 +3,7 @@
 //! The adapter materializes live-capable SSDP probe plans as typed libcrafter
 //! IPv4/IPv6 + UDP + SSDP packets. It sends search stimuli, captures controlled
 //! responses, and handles the notification case as a capture-only observation
-//! from the controlled target service.
+//! from the controlled peer contract.
 
 use crafter::prelude::*;
 use serde_json::{json, Value};
@@ -38,7 +38,7 @@ pub fn run_ssdp_dry_run(
     let sent_raw_hex = hex_bytes(sent_raw);
     let sent_packet = Packet::decode_from_l3(network_layer(plan), sent_raw)?;
     let sent_decoded = decoded_ssdp_packet_json(&sent_packet, sent_raw);
-    let target_service = ssdp_target_service_json(plan);
+    let peer_contract = ssdp_peer_contract_json(plan);
     let observed = observed_response(
         plan,
         false,
@@ -52,7 +52,7 @@ pub fn run_ssdp_dry_run(
             "ssdp": ssdp_payload_json(plan)?,
             "expected_ssdp": expected_ssdp_payload_json(plan)?,
             "capture_filter": capture_filter,
-            "target_service": target_service,
+            "peer_contract": peer_contract,
         }),
     );
     let result = json!({
@@ -71,7 +71,7 @@ pub fn run_ssdp_dry_run(
             "ssdp": ssdp_payload_json(plan)?,
             "expected_ssdp": expected_ssdp_payload_json(plan)?,
             "capture_filter": capture_filter,
-            "target_service": target_service,
+            "peer_contract": peer_contract,
         }
     });
     Ok(ProbeOutcome {
@@ -704,8 +704,8 @@ fn network_layer(plan: &ProbePlan) -> NetworkLayer {
     }
 }
 
-fn ssdp_target_service_json(plan: &ProbePlan) -> Value {
-    plan.target_service.clone().unwrap_or_else(|| json!({}))
+fn ssdp_peer_contract_json(plan: &ProbePlan) -> Value {
+    plan.peer_contract.clone().unwrap_or_else(|| json!({}))
 }
 
 #[cfg(test)]
@@ -751,7 +751,7 @@ mod tests {
         plan.payload_hex = Some(hex_bytes(search_payload()));
         plan.expected_payload_hex = Some(hex_bytes(response_payload()));
         plan.protocol = Some("ssdp".to_string());
-        plan.target_service = Some(json!({
+        plan.peer_contract = Some(json!({
             "required": true,
             "kind": "ssdp-controlled-responder",
             "protocol": "udp",
@@ -785,7 +785,6 @@ mod tests {
 
     fn stimulus_request(plan: ProbePlan) -> StimulusEndpointRequest {
         StimulusEndpointRequest {
-            provider: "local-dry-run".to_string(),
             profile: "ssdp-smoke".to_string(),
             seed: 1,
             endpoint_role: "stimulus".to_string(),
@@ -802,7 +801,6 @@ mod tests {
     #[test]
     fn json_decodes_ssdp_probe_plan_with_engine_metadata() {
         let request: StimulusEndpointRequest = serde_json::from_value(json!({
-            "provider": "local-dry-run",
             "profile": "ssdp-smoke",
             "seed": 11,
             "endpoint_role": "stimulus",
@@ -828,7 +826,7 @@ mod tests {
                 "ssdp": {"message_kind": "m_search"},
                 "expected_ssdp": {"message_kind": "response"},
                 "stimulus_driver": {"adapter_module": "tools/probe/adapters/src/ssdp.rs"},
-                "target_service": {"kind": "ssdp-controlled-responder"}
+                "peer_contract": {"kind": "ssdp-controlled-responder"}
             }]
         }))
         .unwrap();
@@ -843,7 +841,7 @@ mod tests {
             Some(hex_bytes(search_payload()).as_str())
         );
         assert_eq!(
-            plan.target_service.as_ref().unwrap()["kind"],
+            plan.peer_contract.as_ref().unwrap()["kind"],
             "ssdp-controlled-responder"
         );
         assert_eq!(ssdp_payload(plan).unwrap().headers().len(), 5);
@@ -903,7 +901,7 @@ mod tests {
             200
         );
         assert_eq!(
-            outcome.result["metadata"]["target_service"]["kind"],
+            outcome.result["metadata"]["peer_contract"]["kind"],
             "ssdp-controlled-responder"
         );
         assert_eq!(
@@ -928,15 +926,15 @@ mod tests {
     }
 
     #[test]
-    fn optional_fields_support_legacy_payload_and_target_service_shapes() {
+    fn optional_fields_support_legacy_payload_and_peer_contract_shapes() {
         let mut plan = ipv4_search_plan();
         let payload_hex = plan.payload_hex.take().unwrap();
         plan.udp_payload_hex = Some(payload_hex.clone());
-        plan.target_service = None;
+        plan.peer_contract = None;
 
         let ssdp = ssdp_payload(&plan).unwrap();
         assert_eq!(ssdp.to_bytes(), search_payload());
-        assert_eq!(ssdp_target_service_json(&plan), json!({}));
+        assert_eq!(ssdp_peer_contract_json(&plan), json!({}));
 
         let mut expected_fallback_plan = ipv4_search_plan();
         expected_fallback_plan.expected_payload_hex = None;

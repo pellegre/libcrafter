@@ -23,7 +23,7 @@ selected handshake structures through the existing `Packet` abstraction,
 | Malformed construction | In scope | Builders and `compile()` may fill unset lengths, but explicit caller overrides survive, including intentionally malformed record, handshake, vector, and extension lengths. |
 | Structured decode errors | In scope | Truncation and malformed buffers return structured `CrafterError` values with context, required byte count, and available byte count when the failure is a short buffer. |
 | Registry dispatch | In scope | Common TLS TCP ports may decode only behind a conservative TLS-looking shape gate; non-TLS payloads remain `Raw`. |
-| Fixtures and validation | In scope | Golden bytes, malformed cases, pcap fixtures, oracle specs, probe dry-runs, and lab dry-runs are offline defaults. |
+| Fixtures and validation | In scope | Golden bytes, malformed cases, pcap fixtures, oracle specs, probe dry-runs, and external environment dry-runs are offline defaults. |
 
 The Rust implementation must follow existing protocol patterns from modules
 such as MQTT, QUIC, BGP, and the TCP registry path. TLS should not create a
@@ -64,7 +64,7 @@ overview text, so the message grammar remains usable for packet modeling.
 `crafter` must not add heartbeat keepalive scheduling, PMTU probing, connection
 liveness policy, response generation, retry behavior, scanner workflows, or
 live heartbeat sends. Generated tools that need live heartbeat traffic must use
-the repo's explicit provider-backed live-validation rules and must keep dry-run
+the repo's explicit externally executed live-validation rules and must keep dry-run
 or fixture paths as the default.
 
 DTLS, QUIC TLS transcript internals, Encrypted ClientHello, and other
@@ -121,11 +121,11 @@ ciphertext.
 ## Live-Validation Safety
 
 This scope step adds no live traffic behavior. TLS examples, fixtures, oracle
-profiles, probe plans, and lab plans must default to documentation address
+profiles, probe plans, and external environment plans must default to documentation address
 space, checked-in bytes, pcap fixtures, or dry-run output.
 
-Later live validation, if any, must be provider-backed, explicitly confirmed,
-artifact-preserving, and safe to skip when provider credentials, disposable
+Later live validation, if any, must be externally executed, explicitly confirmed,
+artifact-preserving, and safe to skip when external runner credentials, disposable
 endpoints, controlled TLS peers, or confirmation flags are absent. Live work
 must not add credentials, public endpoint data, sensitive captures, host-specific
 paths, or live traffic defaults to tracked files.

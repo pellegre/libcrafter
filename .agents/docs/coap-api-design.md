@@ -15,7 +15,7 @@ and preserves non-candidates as `Raw`.
 
 CoAP support is a packet primitive. It does not add a client or server engine,
 transaction state, retransmission, discovery scans, Observe subscriptions,
-block transfer assembly, TCP stream reassembly, context provisioning, replay
+block transfer assembly, TCP stream reassembly, context preparation, replay
 databases, group membership, or live-send workflow.
 
 ## Naming and module boundary
@@ -404,7 +404,7 @@ and contextual metadata; it does not substitute datagram option labels.
 ## OSCORE and group metadata
 
 OSCORE is an explicit typed `Coap -> Coap` transform. It does not introduce an
-encrypted packet layer or provision contexts.
+encrypted packet layer or prepare contexts.
 
 ```rust
 pub struct OscoreContext {
@@ -450,13 +450,13 @@ have the same typed inputs and outputs for generated-tool ergonomics.
 `Debug`, `summary`, `Display`, and errors redact master secret, master salt,
 derived keys, authentication keys, and recovered plaintext. `OscoreOption`
 preserves its complete raw bytes plus parsed base fields. Unsupported or
-provisional flag material remains inspectable and returns `OscoreError`
+prepareal flag material remains inspectable and returns `OscoreError`
 instead of selecting guessed behavior.
 
 Stable group request/response packet facts use `CoapGroupMetadata` and
 `CoapGroupMatch`. They inspect multicast destination, Non-confirmable type,
 token-only response matching, and endpoint metadata without joining groups or
-retaining response state. `GroupOscoreMetadata` is opaque and provisional; it
+retaining response state. `GroupOscoreMetadata` is opaque and prepareal; it
 preserves group flag, identifiers, ciphertext, authentication, and signature
 material but exposes no stable Group OSCORE serializer or protection method
 until a final numbered RFC is reviewed.

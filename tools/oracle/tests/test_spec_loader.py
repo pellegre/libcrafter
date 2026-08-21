@@ -1,11 +1,10 @@
-"""Unit coverage for the oracle spec loader and the ICMPv4 live matrix.
+"""Unit coverage for the oracle spec loader and ICMPv4 behavior matrix.
 
 These tests load the full oracle spec set through the public loader and assert
-that the data-driven ICMPv4 live coverage matrix recorded under
-``tools/oracle/specs/features/icmpv4-live.yaml`` is present and internally
-consistent. The matrix is the source of truth for which ICMPv4 live cases are
-eligible for provider-backed exchange and which are explicitly skipped with a
-stable reason, so it must round-trip through the validated loader.
+that the data-driven ICMPv4 coverage matrix recorded under
+``tools/oracle/specs/features/icmpv4-behavior.yaml`` is present and internally
+consistent. The matrix is the source of truth for deterministic comparison and
+explicit unsupported cases, so it must round-trip through the validated loader.
 """
 
 from __future__ import annotations
@@ -91,7 +90,7 @@ IGMP_STRUCTURED_ERROR_CASES = {
 
 
 def _matrix_entries(value: object) -> Sequence[Mapping[str, object]]:
-    assert isinstance(value, list), "live matrix sections must be lists"
+    assert isinstance(value, list), "behavior matrix sections must be lists"
     entries: list[Mapping[str, object]] = []
     for entry in value:
         assert isinstance(entry, Mapping), "matrix entries must be objects"
@@ -116,7 +115,9 @@ def _structured_error_cases(feature: FeatureSpec) -> Sequence[Mapping[str, objec
     assert isinstance(raw_cases, list), "structured_error_cases must be a list"
     cases: list[Mapping[str, object]] = []
     for raw_case in raw_cases:
-        assert isinstance(raw_case, Mapping), "structured_error_cases entries must be objects"
+        assert isinstance(
+            raw_case, Mapping
+        ), "structured_error_cases entries must be objects"
         cases.append(raw_case)
     return cases
 
@@ -208,7 +209,6 @@ class SpecLoaderTest(unittest.TestCase):
             "igmp-smoke",
             "igmp-ci",
             "igmp-boundary",
-            "igmp-live-dry-run",
         ):
             with self.subTest(profile=profile_name):
                 profile = self.specs.profiles[profile_name]
@@ -216,7 +216,6 @@ class SpecLoaderTest(unittest.TestCase):
                     [(weight.name, weight.weight) for weight in profile.family_weights],
                     [("igmp", 1)],
                 )
-                self.assertEqual(profile.feature_weights["live"], 0)
 
     def test_igmp_supported_case_byte_policies_are_stable(self) -> None:
         policy_index = case_byte_policy_index()
@@ -238,20 +237,23 @@ class SpecLoaderTest(unittest.TestCase):
                     else:
                         self.assertEqual(raw_case["byte_policy"], "strict_bytes")
 
-    def test_icmpv4_live_feature_is_registered(self) -> None:
-        feature = self.specs.features.get("icmpv4_live")
+    def test_icmpv4_behavior_feature_is_registered(self) -> None:
+        feature = self.specs.features.get("icmpv4_behavior")
         self.assertIsInstance(feature, FeatureSpec)
         assert feature is not None
         self.assertEqual(feature.layers, ("ipv4", "icmp"))
-        self.assertIn("live_exchange", feature.directions)
+        self.assertEqual(
+            set(feature.directions),
+            {"backend_to_libcrafter", "libcrafter_to_backend"},
+        )
         self.assertTrue(feature.strict_bytes)
         self.assertFalse(feature.malformed)
         self.assertIn("scapy", feature.backend_support)
         self.assertIn("libcrafter", feature.backend_support)
 
-    def test_live_matrix_entries_are_well_formed(self) -> None:
-        feature = self.specs.features["icmpv4_live"]
-        entries = _matrix_entries(feature.raw["live_matrix"])
+    def test_icmpv4_behavior_matrix_entries_are_well_formed(self) -> None:
+        feature = self.specs.features["icmpv4_behavior"]
+        entries = _matrix_entries(feature.raw["behavior_matrix"])
         self.assertGreater(len(entries), 0)
 
         seen_behaviors: set[str] = set()
@@ -261,46 +263,26 @@ class SpecLoaderTest(unittest.TestCase):
             assert isinstance(behavior, str)
             self.assertNotIn(behavior, seen_behaviors, f"duplicate behavior {behavior}")
             seen_behaviors.add(behavior)
-
             self.assertIsInstance(entry.get("coverage_case"), str)
-
-            directions = entry.get("directions")
-            self.assertIsInstance(directions, list)
-            assert isinstance(directions, list)
-            self.assertIn("live_exchange", directions)
-
+            self.assertEqual(
+                set(entry.get("directions", [])),
+                {"backend_to_libcrafter", "libcrafter_to_backend"},
+            )
             self.assertIn(entry.get("representation"), REPRESENTATIONS)
 
-            support = entry.get("scapy_support")
-            self.assertIn(support, SUPPORT_VALUES)
-
-            # Eligible (supported) live cases carry the sentinel skip reason; a
-            # skipped case must record a non-sentinel stable reason so the gap is
-            # never silent.
-            skip_reason = entry.get("skip_reason")
-            self.assertIsInstance(skip_reason, str)
-            if support == "supported":
-                self.assertEqual(skip_reason, "none")
-            else:
-                self.assertNotEqual(skip_reason, "none")
-
-    def test_live_matrix_cases_are_declared_in_coverage_cases(self) -> None:
-        feature = self.specs.features["icmpv4_live"]
+    def test_icmpv4_behavior_cases_are_declared_in_coverage_cases(self) -> None:
+        feature = self.specs.features["icmpv4_behavior"]
         declared = set(feature.coverage_cases)
-        for entry in _matrix_entries(feature.raw["live_matrix"]):
+        for entry in _matrix_entries(feature.raw["behavior_matrix"]):
             case = entry["coverage_case"]
             assert isinstance(case, str)
-            self.assertIn(
-                case,
-                declared,
-                f"live matrix case {case} missing from coverage_cases",
-            )
+            self.assertIn(case, declared)
 
-    def test_live_matrix_covers_the_required_icmp_families(self) -> None:
-        feature = self.specs.features["icmpv4_live"]
+    def test_icmpv4_behavior_matrix_covers_required_families(self) -> None:
+        feature = self.specs.features["icmpv4_behavior"]
         behaviors = {
             entry["behavior"]
-            for entry in _matrix_entries(feature.raw["live_matrix"])
+            for entry in _matrix_entries(feature.raw["behavior_matrix"])
         }
         required = {
             "echo_request",
@@ -322,20 +304,18 @@ class SpecLoaderTest(unittest.TestCase):
             "extended_echo_request",
             "legacy_raw_compatible_types",
         }
-        missing = required - behaviors
-        self.assertEqual(missing, set(), f"missing live behaviors: {sorted(missing)}")
+        self.assertEqual(required - behaviors, set())
 
-    def test_unsupported_matrix_records_stable_skip_reasons(self) -> None:
-        feature = self.specs.features["icmpv4_live"]
+    def test_icmpv4_unsupported_matrix_records_stable_reasons(self) -> None:
+        feature = self.specs.features["icmpv4_behavior"]
         entries = _matrix_entries(feature.raw["unsupported_matrix"])
         self.assertGreater(len(entries), 0)
         for entry in entries:
-            self.assertEqual(entry.get("scapy_support"), "unsupported")
-            skip_reason = entry.get("skip_reason")
-            self.assertIsInstance(skip_reason, str)
-            assert isinstance(skip_reason, str)
-            self.assertNotEqual(skip_reason.strip(), "")
-            self.assertNotEqual(skip_reason, "none")
+            reason = entry.get("skip_reason")
+            self.assertIsInstance(reason, str)
+            assert isinstance(reason, str)
+            self.assertNotEqual(reason.strip(), "")
+            self.assertNotEqual(reason, "none")
 
     def test_dot11_structured_error_policy_is_preserved(self) -> None:
         self._assert_structured_error_policy(
@@ -392,7 +372,9 @@ class SpecLoaderTest(unittest.TestCase):
                 "fixture": MALFORMED_CORPUS_FIXTURE,
             },
         )
-        self.assertEqual(case_byte_policy_index().get(aggregate_case), "structured_error")
+        self.assertEqual(
+            case_byte_policy_index().get(aggregate_case), "structured_error"
+        )
 
         rows = _structured_error_cases(feature)
         self.assertEqual({row["name"] for row in rows}, expected_rows)
@@ -400,7 +382,9 @@ class SpecLoaderTest(unittest.TestCase):
             with self.subTest(feature=feature_name, row=row["name"]):
                 self.assertEqual(row["coverage_case"], aggregate_case)
                 self.assertEqual(row["decode_target"], expected_decode_target)
-                self.assertEqual(row["crate_test"], DOT11_RADIOTAP_STRUCTURED_ERROR_TEST)
+                self.assertEqual(
+                    row["crate_test"], DOT11_RADIOTAP_STRUCTURED_ERROR_TEST
+                )
                 self.assertEqual(row["fixture"], MALFORMED_CORPUS_FIXTURE)
                 expected_error = row["expected_error"]
                 self.assertIsInstance(expected_error, Mapping)
@@ -409,7 +393,9 @@ class SpecLoaderTest(unittest.TestCase):
                 self.assertIsInstance(expected_error["context"], str)
                 self.assertIsInstance(expected_error["required"], int)
                 self.assertIsInstance(expected_error["available"], int)
-                self.assertGreater(expected_error["required"], expected_error["available"])
+                self.assertGreater(
+                    expected_error["required"], expected_error["available"]
+                )
 
     def test_missing_spec_root_raises(self) -> None:
         with self.assertRaises(SpecValidationError):

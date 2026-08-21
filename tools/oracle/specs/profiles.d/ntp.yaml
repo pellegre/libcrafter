@@ -17,7 +17,6 @@ profiles:
       boundary: 3
       malformed: 0
       pcap: 0
-      live: 0
   - name: ntp-ci
     purpose: deterministic NTP pull request coverage for strict-byte, normalized, and structured-error cases
     default_count: 200
@@ -32,23 +31,6 @@ profiles:
       boundary: 5
       malformed: 1
       pcap: 1
-      live: 0
-  - name: ntp-live-dry-run
-    purpose: provider-neutral NTP live validation dry-run planning without sending traffic
-    default_count: 10
-    family_weights:
-      - name: ntp
-        weight: 1
-    payload_length:
-      min: 0
-      max: 0
-    feature_weights:
-      baseline: 2
-      boundary: 4
-      malformed: 0
-      pcap: 0
-      live: 0
-
 backend_support:
   scapy:
     status: planned
@@ -63,5 +45,5 @@ backend_support:
     notes:
       - >-
         Profiles remain offline or dry-run only, use documentation-safe NTP
-        packet shapes, and keep live traffic ineligible unless a provider-backed
+        packet shapes, and keep live traffic ineligible unless an externally executed
         workflow supplies protected confirmation outside these default profiles.

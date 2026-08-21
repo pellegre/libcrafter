@@ -1,53 +1,39 @@
 ---
 name: packet-validation
-description: Add or run libcrafter packet behavior validation through oracle specs, backend adapters, offline checks, pcap checks, live checks, and artifacts. Use when packet behavior changes need validation coverage.
+description: Add or run deterministic libcrafter packet behavior validation through oracle specs, reference backends, offline checks, pcap checks, probe plans, and artifacts.
 ---
 
-# Packet Validation
+# Packet validation
 
-Use this skill when a change affects packet behavior, including:
+Use this skill whenever packet construction, decode, checksums, framing,
+options, malformed behavior, or response matching changes.
 
-- new protocol layer
-- new option kind
-- new ICMP or ICMPv6 message type
-- new flag or field semantics
-- checksum behavior
-- extension header
-- encapsulation path
-- malformed decode behavior
-- pcap link type behavior
-- live exchange pattern
+## Required workflow
 
-## Required Workflow
+1. Update the relevant `tools/oracle/specs/` contract first.
+2. Keep independent implementation logic inside
+   `tools/oracle/engine/backends/`.
+3. Update backend materialization and normalization for the new case.
+4. Run strict spec validation and focused offline validation.
+5. Run pcap validation when framing, link types, capture files, or persisted
+   bytes are affected.
+6. Generate the relevant deterministic probe plan when peer behavior matters.
+7. Run Rust unit and adapter tests for any bounded executor changes.
+8. Record intentional mismatches and unsupported behavior in tracked specs or
+   nearby documentation.
 
-1. Update the relevant `tools/oracle` specs first so the expected behavior is
-   data-driven before backend code changes.
-2. Keep reference backend logic inside `tools/oracle/engine/backends/`.
-   Do not add ad hoc backend snippets elsewhere.
-3. Update backend materialization and normalization as needed so emitted bytes
-   and decoded summaries cover the new case or feature. Backend capability
-   changes belong in the oracle backend registry and adapter code.
-4. Run offline validation for the new case or feature, for example:
-   `tools/oracle/run offline --profile <profile> --seed <seed> --count <count>`.
-5. Run pcap validation when framing, capture/file IO, link type, or persisted
-   packet representation is affected.
-6. Use live validation only through `tools/oracle/run live`, `tools/probe/run`,
-   and lab-backed appliance providers. Start with local dry-run providers and
-   then lab dry-runs for every provider involved:
-   - `tools/lab/run plan --provider <provider> --dry-run --profile smoke --seed 1 --role stimulus --role target`
-   - `tools/oracle/run live --provider <provider> --dry-run --profile smoke --seed 1 --count 10`
-   - `tools/probe/run --provider <provider> --dry-run --profile smoke --seed 1 --count 10`
-   Inspect `appliance_runtime` metadata and request coarse profiles such as
-   `wan-raw`, `lan-raw`, `whad-serial`, or `dot11-monitor` instead of
-   protocol-specific endpoint capabilities. Use persistent asset leases for
-   prepared dongle VMs before any `whad-serial` or `dot11-monitor` live path.
-   Use `lab-session` for multi-endpoint provider-backed oracle/probe execution
-   and `lab-provider` when provider capability contracts or adapters change.
-   Preserve artifacts from any provider-backed run. Real provider execution
-   requires protected manual confirmation.
-7. Record any unsupported behavior, intentional mismatch, or required follow-up
-   in the oracle artifacts or nearby docs.
+Typical commands:
 
-Add packet behavior coverage through specs and backend adapters, not by
-creating standalone reference-backend code paths outside the oracle backend
-tree.
+```sh
+tools/oracle/run specs validate --strict
+tools/oracle/run offline --profile PROFILE --seed SEED --count COUNT
+tools/oracle/run pcap --profile PROFILE --seed SEED --count COUNT
+tools/probe/run --profile PROFILE --seed SEED --count COUNT --out target/probe/plan
+cargo test -p probe-adapters
+```
+
+This repository does not own machine selection, credentials, remote access,
+machine lifecycle, peer preparation, hardware leases, or execution topology.
+When hardware-backed qualification is necessary, use only operator-supplied
+untracked tooling, after the deterministic gate passes, and preserve evidence
+for the exact candidate revision.

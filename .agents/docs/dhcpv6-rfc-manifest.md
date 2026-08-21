@@ -43,7 +43,7 @@ Official source snapshot:
   constructible, decoded where practical, and byte-preserved, without adding a
   client/server/relay workflow or state machine.
 - **Controlled behavior validation**: later oracle or probe work may exercise a
-  behavior through offline, dry-run, or provider-backed lab paths. That does not
+  behavior through offline, dry-run, or externally executed paths. That does not
   make the behavior a crate runtime service.
 - **Obsolete or historical**: retained only for lineage or explicit obsolete
   codepoint preservation.
@@ -158,6 +158,6 @@ preserve the TLV bytes and expose registry labels.
 - Singleton and placement metadata are inspection and validation facts. They
   must not block construction of duplicate singleton options or questionable
   placements; generated tools may intentionally need malformed packets.
-- Live DHCPv6 validation must use explicit provider-backed lab opt-in. This
+- Live DHCPv6 validation must use explicit external-execution opt-in. This
   manifest records public standards only and contains no live captures,
   credentials, hostnames, or network identifiers.

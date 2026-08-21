@@ -3,7 +3,7 @@
 This note turns `.agents/docs/snmp-rfc-manifest.md` into an implementation scope for
 SNMP work in `crafter`. The crate may model SNMP packet bytes, compile them,
 decode them, preserve unknown but well-formed values, and validate them through
-offline and provider-backed packet workflows. It must not become an SNMP
+offline and externally executed packet workflows. It must not become an SNMP
 manager, scanner, trap receiver, MIB engine, credential store, or policy
 implementation.
 
@@ -38,8 +38,8 @@ support the behavior, stop the slice as unsupported instead of guessing.
    RFC 3417 and the IANA service-name registry. Other transports require their
    own source-backed mapping slice.
 8. Add validation in offline-first order: Rust tests and fixtures, oracle specs,
-   reference backend comparisons, pcap checks, probe dry-runs, lab dry-runs, and
-   only then guarded provider-backed live validation.
+   reference backend comparisons, pcap checks, probe dry-runs, external environment dry-runs, and
+   only then guarded externally executed live validation.
 
 ## Unresolved wire questions
 
@@ -78,7 +78,7 @@ and implementation slice prove the packet-layer wire scope:
 - AgentX and extensible-agent protocol behavior, unless a future plan scopes it
   as a separate protocol family.
 - Host-originated raw live traffic defaults. Live behavior belongs behind
-  explicit provider-backed oracle, probe, or lab workflows.
+  explicit externally executed oracle, probe, or external environment workflows.
 
 ## Obsolete and historical material
 
@@ -107,6 +107,6 @@ without a later gap review.
 - Reference-backend, Wireshark, or other oracle expectations must be backed by
   executable specs and recorded source authority before they become acceptance
   evidence.
-- Any live probe behavior must have a dry-run plan, provider capability
+- Any live probe behavior must have a dry-run plan, external runner capability
   evidence, explicit live confirmation, artifact collection under ignored
   paths, and teardown evidence before it can validate real traffic.

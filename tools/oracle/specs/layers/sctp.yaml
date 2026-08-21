@@ -45,14 +45,6 @@ supported_directions:
   - backend_to_libcrafter
   - libcrafter_to_backend
   - roundtrip
-  - live_exchange
-live_eligibility: provider_gated
-live_gate: confirm_live_run_provider_lab_only
-live_defaults:
-  default_mode: dry_run
-  allowed_without_confirmation: false
-  developer_host_raw_send: false
-  provider_required: true
 default_values:
   ipv4_protocol: 132
   ipv6_next_header: 132
@@ -375,7 +367,6 @@ source_refs:
   - .agents/docs/sctp-codepoints.md
   - .agents/docs/sctp-wire-grammar.md
   - .agents/docs/sctp-scope.md
-  - .agents/docs/sctp-validation-safety.md
 
 notes:
   - >-
@@ -393,10 +384,9 @@ notes:
     Padding contributes to checksum and round trips but is not semantic value
     data for typed helpers.
   - >-
-    Live SCTP validation is provider-gated and dry-run by default. Specs and
-    generated artifacts must use documentation address space and must not record
-    provider credentials, public endpoints, live host identifiers, or sensitive
-    captures.
+    These specs do not authorize live SCTP validation. Generated artifacts must
+    use documentation address space and must not record credentials, public
+    addresses, live host identifiers, or sensitive captures.
 
 backend_support:
   scapy:

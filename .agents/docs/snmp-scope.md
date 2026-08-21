@@ -41,7 +41,7 @@ store, access-control engine, or monitoring product.
 ## Tool Defaults
 
 - Default generated examples, fixtures, oracle cases, probe plans, and send
-  plans to offline or `--dry-run` behavior.
+  plans to offline behavior.
 - Use documentation address space such as `192.0.2.10`, `198.51.100.20`, and
   `2001:db8::10`, plus synthetic communities such as `doc-community` and
   placeholder USM names such as `doc-user`.
@@ -71,7 +71,7 @@ println!("{}", plan.compiled_packet().hexdump());
 
 ## Live Work
 
-Live SNMP traffic is lab-only. Plan with dry-run oracle, probe, endpoint, or lab
-commands first, then run real traffic only through explicit provider-backed
-workflows with authorized targets, protected confirmation, artifact collection,
-and teardown evidence. Do not send host-originated live SNMP traffic by default.
+Live SNMP traffic requires external authorization. Generate offline oracle and
+probe plans first, then let operator-supplied tooling provide the target,
+protected confirmation, artifact collection, and teardown evidence. Do not send
+host-originated live SNMP traffic by default.

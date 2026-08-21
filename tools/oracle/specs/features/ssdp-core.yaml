@@ -338,7 +338,7 @@ notes:
     layer or a malformed SSDP packet.
   - >-
     Fixture values use documentation address space and synthetic product
-    strings only. No live host identifiers, provider endpoints, credentials, or
+    strings only. No live host identifiers, external endpoints, credentials, or
     local paths belong in generated artifacts from these cases.
 
 backend_support:

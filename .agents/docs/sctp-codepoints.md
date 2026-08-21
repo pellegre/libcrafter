@@ -7,7 +7,7 @@ adaptation code points, error-detection methods, and the IP protocol number
 until generated Rust constants and protocol docs replace the note.
 
 User-facing SCTP documentation belongs under `docs/`. This file adds no live
-traffic defaults, credentials, host identifiers, packet captures, provider
+traffic defaults, credentials, host identifiers, packet captures, external runner
 account data, or public endpoint data.
 
 ## Provenance

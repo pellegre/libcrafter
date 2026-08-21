@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use crate::common::{
     capture_filter, captured_data, decode_hex, decoded_packet_json, failed_outcome, hex_bytes,
-    observed_response, open_capture_sniffer, plan_json, raw_payload, required_str, required_u16,
-    send_report_json, target_service_json, CandidateValidation, ExampleResult, ProbeOutcome,
+    observed_response, open_capture_sniffer, peer_contract_json, plan_json, raw_payload,
+    required_str, required_u16, send_report_json, CandidateValidation, ExampleResult, ProbeOutcome,
     ProbePlan, StimulusEndpointRequest, FAILURE_DECODE_FAILED, FAILURE_TIMEOUT,
     FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
 };
@@ -46,7 +46,7 @@ pub fn run_quic_dry_run(
             "sent_decoded": sent_decoded,
             "quic_payload_hex": quic_payload_hex(plan)?,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }),
     );
     let result = json!({
@@ -64,7 +64,7 @@ pub fn run_quic_dry_run(
             "sent_decoded": sent_decoded,
             "quic_payload_hex": quic_payload_hex(plan)?,
             "capture_filter": capture_filter(plan),
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }
     });
     Ok(ProbeOutcome {
@@ -140,7 +140,7 @@ pub fn run_quic_live(
                     decoded.clone(),
                     json!({
                         "capture_filter": capture_filter(plan),
-                        "target_service": target_service_json(plan),
+                        "peer_contract": peer_contract_json(plan),
                     }),
                 );
                 let result = json!({
@@ -155,7 +155,7 @@ pub fn run_quic_live(
                         "probe_plan": plan_json(plan),
                         "send_report": send_report_json(&send_report),
                         "capture_filter": capture_filter(plan),
-                        "target_service": target_service_json(plan),
+                        "peer_contract": peer_contract_json(plan),
                         "received_raw_hex": raw_hex,
                         "received_decoded": decoded,
                     }

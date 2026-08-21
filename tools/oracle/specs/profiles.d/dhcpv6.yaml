@@ -17,4 +17,3 @@ profiles:
       boundary: 4
       malformed: 0
       pcap: 0
-      live: 0

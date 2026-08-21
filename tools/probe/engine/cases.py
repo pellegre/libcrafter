@@ -12,6 +12,7 @@ from collections.abc import Sequence
 
 from .case_helpers import _behavior_case, canonical_case_name, case_name_filters
 from .model import EndpointRole, ProbeCase
+
 # Importing from the ``protocols`` package runs its auto-discovery so every
 # per-protocol module self-registers into ``PROTOCOL_REGISTRY`` before the case
 # catalog and profile tables are assembled below. Every probe case is now
@@ -21,6 +22,7 @@ from .model import EndpointRole, ProbeCase
 # cycle back through ``cases``.
 from .protocols import all_cases as _registry_cases
 from .protocols import all_profile_counts as _registry_profile_counts
+
 # Re-import the IGMP case tuple from the IGMP plugin so ``cases.IGMP_PROBE_CASES``
 # stays resolvable for the catalog tests (the cases themselves reach the merged
 # catalog through the registry; this is a back-compat re-export only).
@@ -36,17 +38,14 @@ from .protocols.mqtt import (  # noqa: F401  (re-exported for back-compat)
 # IPv4 unicast plus a controlled service; DHCPv4 and ARP additionally need a
 # link-layer (Ethernet/broadcast) substrate; NDP needs an IPv6 link-layer
 # multicast substrate (solicited-node / all-routers multicast, not broadcast).
-# The capability names match the probe capability derivation in
-# :mod:`tools.probe.engine.lab`, so the behavior-suite cases skip with stable
-# reasons on providers that cannot support them. Full per-case stimulus/
-# validation wiring lands in the later per-case steps; here the cases route
-# through the planned-only dispatcher fallback.
+# The capability names form a stable contract for external execution tooling.
+# Full per-case stimulus and validation details live in the protocol plans.
 UDP_ECHO_LARGE_PAYLOAD_LENGTH = 1200
 # DNS's, DHCPv4's, and UDP's capability constants and case tuples now live in their
 # plugin modules (``protocols/dns.py``, ``protocols/dhcpv4.py``,
 # ``protocols/udp.py``); the merged catalog/profile tables below pick those cases
 # up from the registry. ``UDP_ECHO_LARGE_PAYLOAD_LENGTH`` stays here because
-# :mod:`tools.probe.engine.lab` also reads it; the UDP plugin imports it lazily.
+# the UDP plugin imports it lazily.
 # BGP's capability constant (``_BGP_CAPABILITIES``) and case tuple now live in
 # the BGP plugin module (``protocols/bgp.py``); the merged catalog/profile tables
 # below pick the BGP case up from the registry.
@@ -96,8 +95,9 @@ UDP_ECHO_LARGE_PAYLOAD_LENGTH = 1200
 # (``protocols/ipsec.py``); the merged catalog/profile tables below pick them up
 # from the registry.
 
-# OSPFv2's behavioral cases (RFC 2328) -- the live-capable ``ospf-hello-exchange``
-# and the planned-only ``ospf-dd-exchange`` -- and their ``_OSPF_CAPABILITIES``
+# OSPFv2's behavioral cases (RFC 2328) -- the executor-ready
+# ``ospf-hello-exchange`` and planned-only ``ospf-dd-exchange`` -- and their
+# ``_OSPF_CAPABILITIES``
 # constant now live in the OSPF plugin module (``protocols/ospf.py``); the merged
 # catalog below contributes them through the registry.
 
@@ -168,7 +168,11 @@ def selected_cases(case_names: Sequence[str]) -> list[ProbeCase]:
 
     if not case_names:
         return list(PROBE_CASES)
-    unknown = [name for name in case_names if canonical_case_name(name) not in PROBE_CASE_BY_NAME]
+    unknown = [
+        name
+        for name in case_names
+        if canonical_case_name(name) not in PROBE_CASE_BY_NAME
+    ]
     if unknown:
         available = ", ".join(known_case_names())
         raise ValueError(
@@ -218,8 +222,8 @@ SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = (
 # The tcp-smoke profile samples a focused TCP-only set: a SYN carrying a
 # representative option set (MSS/Window Scale/SACK-Permitted/Timestamp/User
 # Timeout), plus the open- and closed-port SYN cases. It lets an agent inspect
-# the intended TCP traffic -- including the materialized options -- before any
-# provider-backed run, without pulling in the DNS/TTL/ARP smoke cases.
+# the intended TCP traffic -- including the materialized options -- without
+# pulling in the DNS/TTL/ARP smoke cases.
 TCP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = (
     "tcp-syn-options",
     "tcp-syn-open",
@@ -243,9 +247,7 @@ _DNS_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
 # DHCPv4 plugin's registered cases. DHCPv4's profile membership stays in these
 # explicit ordered tables so the behavior selection order remains deterministic.
 _DHCPV4_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
-    case.name
-    for case in _registry_cases()
-    if case.metadata.get("protocol") == "dhcpv4"
+    case.name for case in _registry_cases() if case.metadata.get("protocol") == "dhcpv4"
 )
 
 # The ten ARP behavioral case names, in declaration order, sourced from the ARP
@@ -267,9 +269,7 @@ _ARP_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
 # selection order is byte-identical: the registry-first profile merge would
 # otherwise move NDP to the front of the behavior profile.
 _NDP_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
-    case.name
-    for case in _registry_cases()
-    if case.metadata.get("protocol") == "ndp"
+    case.name for case in _registry_cases() if case.metadata.get("protocol") == "ndp"
 )
 
 # The ten UDP behavioral case names, in declaration order, sourced from the UDP
@@ -278,43 +278,37 @@ _NDP_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
 # selection order is byte-identical: the registry-first profile merge would
 # otherwise move UDP to the front of the behavior profile.
 _UDP_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
-    case.name
-    for case in _registry_cases()
-    if case.metadata.get("protocol") == "udp"
+    case.name for case in _registry_cases() if case.metadata.get("protocol") == "udp"
 )
 
-# The single live-capable OSPF case name (``ospf-hello-exchange``), sourced from
-# the OSPF plugin's registered cases. Only the OSPF case that is *not*
-# ``planned_only`` rides the live ``behavior`` profile; the planned-only
-# ``ospf-dd-exchange`` is excluded here (it lives in the dry-run ``ospf-smoke``
-# profile below). OSPF's profile membership stays in these legacy ordered tables
+# The executor-ready OSPF case name (``ospf-hello-exchange``), sourced from the
+# OSPF plugin's registered cases. The planned-only ``ospf-dd-exchange`` is
+# excluded here and lives in the focused ``ospf-smoke`` profile below. OSPF's
+# profile membership stays in these legacy ordered tables
 # (rather than the plugin's ``profile_counts``) so the behavior selection order
 # is byte-identical: the registry-first profile merge would otherwise move OSPF
 # to the front of the behavior profile.
 _OSPF_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
     case.name
     for case in _registry_cases()
-    if case.metadata.get("protocol") == "ospf"
-    and not case.metadata.get("planned_only")
+    if case.metadata.get("protocol") == "ospf" and not case.metadata.get("planned_only")
 )
 
 # The planned-only OSPF case names (currently ``ospf-dd-exchange``), sourced from
-# the OSPF plugin's registered cases. These ride the dry-run ``ospf-smoke``
-# profile, never the live ``behavior`` profile.
+# the OSPF plugin's registered cases. These use the focused ``ospf-smoke``
+# profile rather than the general ``behavior`` profile.
 _OSPF_SMOKE_CASE_NAMES: tuple[str, ...] = tuple(
     case.name
     for case in _registry_cases()
-    if case.metadata.get("protocol") == "ospf"
-    and case.metadata.get("planned_only")
+    if case.metadata.get("protocol") == "ospf" and case.metadata.get("planned_only")
 )
 
 # The behavior profile selects the full DNS/DHCPv4/ARP/NDP/UDP behavioral catalog
-# plus the live-capable OSPF case in a stable deterministic order: each protocol
+# plus the executor-ready OSPF case in a stable deterministic order: each protocol
 # group in declaration order, grouped DNS -> DHCPv4 -> ARP -> NDP -> UDP -> OSPF.
-# Only the live-routable OSPF case (``ospf-hello-exchange``, sourced into
+# Only the executor-ready OSPF case (``ospf-hello-exchange``, sourced into
 # ``_OSPF_BEHAVIOR_CASE_NAMES``) is included; the planned-only ``ospf-dd-exchange``
-# sits in the dry-run ``ospf-smoke`` profile so the behavior profile stays fully
-# live-routable. The default count covers every case so a bare
+# sits in the focused ``ospf-smoke`` profile. The default count covers every case so a bare
 # ``--profile behavior`` plans the complete suite.
 BEHAVIOR_PROFILE_CASE_NAMES: tuple[str, ...] = (
     *_DNS_BEHAVIOR_CASE_NAMES,
@@ -329,7 +323,7 @@ BEHAVIOR_PROFILE_CASE_NAMES: tuple[str, ...] = (
 # AH transport, IKE_SA_INIT) in declaration order. It is kept out of the general
 # ``behavior`` profile because the cases need an IPSec-capable peer that holds
 # the matching Security Association (or an IKE responder), so an agent inspects
-# the planned IPSec exchange in isolation before any provider-backed run. The
+# the planned IPSec exchange in isolation. The
 # default count covers every case so a bare ``--profile ipsec`` plans the whole
 # IPSec suite. The case names are sourced from the IPSec plugin's registered
 # cases; IPSec's profile membership stays in this legacy ordered table (rather
@@ -337,27 +331,23 @@ BEHAVIOR_PROFILE_CASE_NAMES: tuple[str, ...] = (
 # -- the registry-first profile merge would otherwise move IPSec to the front of
 # the profile.
 IPSEC_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
-    case.name
-    for case in _registry_cases()
-    if case.metadata.get("protocol") == "ipsec"
+    case.name for case in _registry_cases() if case.metadata.get("protocol") == "ipsec"
 )
 
-# The BGP smoke profile plans the probe-owned FRR peer target service and the
-# bgp_session stimulus driver intent without asking lab to infer workload
-# metadata from the profile label. The BGP case name is sourced from the BGP
+# The BGP smoke profile carries the explicit peer and stimulus requirements;
+# external execution tooling does not infer them from the profile label. The BGP
+# case name is sourced from the BGP
 # plugin's registered case; BGP's profile membership stays in this legacy ordered
 # table (rather than the plugin's ``profile_counts``) so the selection order is
 # byte-identical -- the registry-first profile merge would otherwise move BGP to
 # the front of the profile.
 BGP_SESSION_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
-    case.name
-    for case in _registry_cases()
-    if case.metadata.get("protocol") == "bgp"
+    case.name for case in _registry_cases() if case.metadata.get("protocol") == "bgp"
 )
 
-# The RIP smoke profile plans the probe-owned FRR ripd target service and the
-# RIP stimulus driver intent without asking lab to infer workload metadata from
-# the profile label. The RIP/RIPng case names are sourced from the RIP plugin's
+# The RIP smoke profile carries the explicit peer and stimulus requirements;
+# external execution tooling does not infer them from the profile label. The
+# RIP/RIPng case names are sourced from the RIP plugin's
 # registered cases in declaration order (``rip-update-v2`` then ``ripng-update``);
 # RIP's profile membership stays in this legacy ordered table (rather than the
 # plugin's ``profile_counts``) so the selection order is byte-identical -- the
@@ -369,21 +359,19 @@ RIP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     if case.metadata.get("protocol") in ("rip", "ripng")
 )
 
-# The MQTT smoke profile plans the probe-owned Mosquitto broker target service
-# and MQTT session stimulus intent without adding planned-only stateful cases to
+# The MQTT smoke profile declares the controlled broker and MQTT session
+# requirements without adding planned-only stateful cases to
 # the default smoke profile. The case names are sourced from the MQTT plugin's
 # registered cases in declaration order.
 MQTT_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
-    case.name
-    for case in _registry_cases()
-    if case.metadata.get("protocol") == "mqtt"
+    case.name for case in _registry_cases() if case.metadata.get("protocol") == "mqtt"
 )
 
 # The OSPF smoke profile carries the planned-only OSPF cases (currently the
-# Database Description exchange). They plan in dry-run but have no live adapter
-# arm yet, so they are kept out of the live ``behavior`` profile -- the way
+# Database Description exchange). They have no bounded executor yet, so they
+# are kept out of the general ``behavior`` profile -- the way
 # ``bgp-session-smoke`` lives in ``bgp-smoke`` -- and selected here for an
-# isolated dry-run plan until their adapter dispatch arm lands. The case names
+# isolated plan. The case names
 # are sourced from the OSPF plugin's registered planned-only cases; OSPF's
 # profile membership stays in this legacy ordered table (rather than the plugin's
 # ``profile_counts``) so the selection order is byte-identical.
@@ -396,19 +384,15 @@ OSPF_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = _OSPF_SMOKE_CASE_NAMES
 # registry-first profile merge would otherwise move IGMP to the front of the
 # profile.
 IGMP_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
-    case.name
-    for case in _registry_cases()
-    if case.metadata.get("protocol") == "igmp"
+    case.name for case in _registry_cases() if case.metadata.get("protocol") == "igmp"
 )
 
 # The SNMP smoke profile carries planned-only controlled peer exchanges for
 # Get/Response, GetBulk/Response, notification delivery, and SNMPv3
-# engine-discovery Report shapes. It is isolated from the live behavior profile
-# until the Rust stimulus endpoint adapter lands.
+# engine-discovery Report shapes. It is isolated from the general behavior
+# profile until a bounded executor is available.
 SNMP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
-    case.name
-    for case in _registry_cases()
-    if case.metadata.get("protocol") == "snmp"
+    case.name for case in _registry_cases() if case.metadata.get("protocol") == "snmp"
 )
 
 # The QUIC smoke profile carries focused UDP/QUIC datagram planning plus one
@@ -417,14 +401,12 @@ SNMP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
 # distinct from the UDP echo observation. The profile remains isolated from the
 # general behavior profile so QUIC does not disturb its protocol order.
 QUIC_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
-    case.name
-    for case in _registry_cases()
-    if case.metadata.get("protocol") == "quic"
+    case.name for case in _registry_cases() if case.metadata.get("protocol") == "quic"
 )
 
 # The DHCPv6 smoke profile carries planned-only DHCPv6 client/server and relay
-# exchanges. It is isolated from the general behavior profile until the
-# stimulus endpoint grows a live DHCPv6 adapter.
+# exchanges. It is isolated from the general behavior profile until a bounded
+# DHCPv6 executor is available.
 DHCPV6_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     case.name
     for case in _registry_cases()
@@ -432,11 +414,9 @@ DHCPV6_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     and case.metadata.get("profile") != DHCPV6_ADVANCED_PROFILE
 )
 
-# Relay validation needs a three-role stimulus/relay/target lab topology, so it
-# also has a focused profile that repeats only the relay-forward/reply case.
-DHCPV6_RELAY_PROFILE_CASE_NAMES: tuple[str, ...] = (
-    "dhcpv6-relay-forward-reply",
-)
+# Relay validation needs three logical roles (stimulus, relay, and target), so
+# it has a focused profile that repeats only the relay-forward/reply case.
+DHCPV6_RELAY_PROFILE_CASE_NAMES: tuple[str, ...] = ("dhcpv6-relay-forward-reply",)
 
 # Advanced DHCPv6 behavior has an isolated profile because Reconfigure, Bulk
 # Leasequery, and Active Leasequery need controlled peers beyond the current
@@ -448,11 +428,21 @@ DHCPV6_ADVANCED_PROFILE_CASE_NAMES: tuple[str, ...] = (
     "dhcpv6-active-leasequery-plan",
 )
 
-SSDP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "ssdp")
-MDNS_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "mdns")
-TLS_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "tls")
-NTP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "ntp")
-SCTP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(case.name for case in _registry_cases() if case.metadata.get("protocol") == "sctp")
+SSDP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name for case in _registry_cases() if case.metadata.get("protocol") == "ssdp"
+)
+MDNS_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name for case in _registry_cases() if case.metadata.get("protocol") == "mdns"
+)
+TLS_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name for case in _registry_cases() if case.metadata.get("protocol") == "tls"
+)
+NTP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name for case in _registry_cases() if case.metadata.get("protocol") == "ntp"
+)
+SCTP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name for case in _registry_cases() if case.metadata.get("protocol") == "sctp"
+)
 # Explicit profile case subsets; profiles not listed select the full catalog.
 # ``smoke`` stays pinned to the historical ICMP/TCP/DNS/TTL/ARP set, and the
 # registry-sourced ``*_PROFILE_CASE_NAMES`` tables preserve observable ordering.
@@ -501,7 +491,10 @@ _PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     TLS_SMOKE_PROFILE: len(TLS_SMOKE_PROFILE_CASE_NAMES),
     NTP_SMOKE_PROFILE: len(NTP_SMOKE_PROFILE_CASE_NAMES),
     SCTP_SMOKE_PROFILE: len(SCTP_SMOKE_PROFILE_CASE_NAMES),
-    **{profile: sum(counts.values()) for profile, counts in _PLUGIN_PROFILE_COUNTS.items()},
+    **{
+        profile: sum(counts.values())
+        for profile, counts in _PLUGIN_PROFILE_COUNTS.items()
+    },
 }
 
 

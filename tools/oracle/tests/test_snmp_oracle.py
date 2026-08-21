@@ -48,13 +48,19 @@ class SnmpOracleSpecTest(unittest.TestCase):
         self.assertIn("snmp", specs.layers)
         for feature in ("snmp_basic", "snmp_pdu_matrix", "snmp_v3"):
             self.assertIn(feature, specs.features)
-        for profile in ("snmp-smoke", "snmp-ci", "snmp-boundary", "snmp-live-dry-run"):
+        for profile in ("snmp-smoke", "snmp-ci", "snmp-boundary"):
             self.assertIn(profile, specs.profiles)
-        self.assertEqual(specs.layers["snmp"].backend_support["scapy"].status, "partial")
-        self.assertEqual(specs.layers["snmp"].backend_support["wireshark"].status, "partial")
+        self.assertEqual(
+            specs.layers["snmp"].backend_support["scapy"].status, "partial"
+        )
+        self.assertEqual(
+            specs.layers["snmp"].backend_support["wireshark"].status, "partial"
+        )
 
     def test_supported_fields_are_covered_by_registered_plugins(self) -> None:
-        layer_fields = {field.name for field in load_oracle_specs().layers["snmp"].fields}
+        layer_fields = {
+            field.name for field in load_oracle_specs().layers["snmp"].fields
+        }
         sampler = SAMPLER_REGISTRY.require("snmp")
         self.assertLessEqual(sampler.supported_fields, layer_fields)
         self.assertIn("varbinds", sampler.supported_fields)
@@ -78,7 +84,9 @@ class SnmpOracleSpecTest(unittest.TestCase):
         encrypted = _plan("snmp-v3-encrypted-scoped-data", "snmp_v3")
         self.assertEqual(encrypted.fields["udp"]["dst_port"], 161)
         self.assertEqual(encrypted.fields["snmp"]["version"], "v3")
-        self.assertEqual(encrypted.fields["snmp"]["scoped_data_kind"], "encrypted_opaque")
+        self.assertEqual(
+            encrypted.fields["snmp"]["scoped_data_kind"], "encrypted_opaque"
+        )
         self.assertIn("encrypted_scoped_pdu", encrypted.fields["snmp"])
 
 
@@ -98,7 +106,9 @@ class SnmpOracleBackendTest(unittest.TestCase):
         plan = _plan("snmp-basic-v2c-get-request", "snmp_basic")
         vector = scapy_packets.encode_packet_plan(plan)
         decoded = scapy_normalize.decode_vector(vector)
-        self.assertTrue(vector.to_bytes().endswith(snmp_scapy._snmp_message_bytes(plan.fields)))
+        self.assertTrue(
+            vector.to_bytes().endswith(snmp_scapy._snmp_message_bytes(plan.fields))
+        )
         self.assertIn("snmp", decoded.layers)
         self.assertEqual(decoded.fields["snmp"]["version"], "v2c")
         self.assertEqual(decoded.fields["snmp"]["community"], "doc-community")
@@ -113,7 +123,9 @@ class SnmpOracleBackendTest(unittest.TestCase):
         self.assertNotIn("payload", decoded.fields)
 
     @unittest.skipUnless(_scapy_available(), "scapy not importable")
-    def test_scapy_decode_canonicalizes_snmp_v3_raw_payload_without_feature_tags(self) -> None:
+    def test_scapy_decode_canonicalizes_snmp_v3_raw_payload_without_feature_tags(
+        self,
+    ) -> None:
         plan = _plan("snmp-v3-encrypted-scoped-data", "snmp_v3")
         vector = scapy_packets.encode_packet_plan(plan)
         decoded = scapy_normalize.decode_bytes(

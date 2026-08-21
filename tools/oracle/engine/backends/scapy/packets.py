@@ -20,6 +20,7 @@ from .encode_helpers import (
     _required_field,
     _string,
 )
+
 # Importing the protocols package runs its ``autodiscover`` so every per-protocol
 # Scapy encoder/decoder module self-registers. ``STACK_ENCODER_REGISTRY`` is
 # consulted before the legacy whole-stack branches and ``SCAPY_REGISTRY`` before the
@@ -39,6 +40,7 @@ from .protocols.ipv6 import (
     _ipv6_hop_by_hop,
     _ipv6_routing,
 )
+
 # The ``igmp`` layer is migrated to ``protocols/igmp.py`` and registered in
 # ``SCAPY_REGISTRY``. Its ``igmp_query`` / ``igmp_report`` / ``igmp_extension``
 # sub-layer bytes builders are co-located there but, like the IPv6 ext-header
@@ -51,12 +53,14 @@ from .protocols.igmp import (
     _igmp_query_bytes,
     _igmp_report_bytes,
 )
+
 # The ``dns`` layer is migrated to ``protocols/dns.py`` and registered in
 # ``SCAPY_REGISTRY`` (its ``ScapyProtocol`` build adapter calls the moved ``_dns``
 # materializer). The ``_dns`` builder and the ``_dns_record_entry`` record helper are
 # re-imported here so the existing ``test_dns_backend.py`` references
 # (``packets._dns`` / ``packets._dns_record_entry``) keep resolving after the move.
 from .protocols.dns import _dns, _dns_record_entry
+
 # The ``esp`` / ``ah`` / ``ikev2`` layers are migrated to ``protocols/ipsec.py`` and
 # registered in ``SCAPY_REGISTRY`` (their per-layer raw builders are reached through
 # the ``_build_layer`` registry consult). The ESP/AH SecurityAssociation path is a
@@ -71,6 +75,7 @@ from .protocols.ipsec import (
     _is_ipsec_sa_stack,
     _materialize_ipsec_sa_packet,
 )
+
 # The ``ble_radio`` / ``ble_adv`` layers are migrated to ``protocols/ble.py`` and
 # registered in ``SCAPY_REGISTRY`` (their ``ScapyProtocol`` declares ``scapy_class``
 # ``BTLE_PHDR`` / ``BTLE_ADV_IND``). Like Dot11 phase-1.5, BLE bypasses the per-layer
@@ -81,6 +86,7 @@ from .protocols.ipsec import (
 # and the BLE materialization metadata is reported on the encoded vector; the
 # BLE-named encoder is handled directly so that metadata is preserved.
 from .protocols.ble import _ble_bytes
+
 # The ``radiotap`` / ``dot11`` / ``eapol`` / ``rsn`` layers are migrated to
 # ``protocols/wifi.py`` and registered in ``SCAPY_REGISTRY`` (their
 # ``ScapyProtocol``s declare ``scapy_class`` and the native-name decode aliases).
@@ -204,6 +210,8 @@ def _scapy_supported_fields(layer: str) -> frozenset[str] | set[str] | None:
     if plugin is not None:
         return plugin.supported_fields
     return _SUPPORTED_FIELDS_BY_LAYER.get(layer)
+
+
 _SUPPORTED_FEATURES = {
     "ah_integrity",
     "bgp_communities",
@@ -240,7 +248,7 @@ _SUPPORTED_FEATURES = {
     "esp_aead",
     "esp_cbc",
     "icmpv4_errors",
-    "icmpv4_live",
+    "icmpv4_behavior",
     "icmpv6_errors",
     "igmp_extensions",
     "igmp_header",
@@ -405,8 +413,12 @@ def encode_packet_plan(
     # ``bluetooth4LE`` import) and skip the Scapy import. Other (future) stack encoders
     # may require Scapy, so they fall through to the import like the legacy per-layer
     # path.
-    wifi_materialization = stack_encoder is not None and stack_encoder.name == "dot11_phase15"
-    ble_materialization = stack_encoder is not None and stack_encoder.name == "ble_advertising"
+    wifi_materialization = (
+        stack_encoder is not None and stack_encoder.name == "dot11_phase15"
+    )
+    ble_materialization = (
+        stack_encoder is not None and stack_encoder.name == "ble_advertising"
+    )
     needs_scapy = not (wifi_materialization or ble_materialization)
     scapy_all = None
     scapy_version = "not-required"
@@ -428,14 +440,18 @@ def encode_packet_plan(
         scapy_version = _string(ble_metadata.get("scapy_version"), scapy_version)
     elif stack_encoder is not None:
         raw_bytes = stack_encoder.encode(plan, scapy_all)
-        raw_bytes, udp_options_metadata = _materialize_udp_options(plan, root, raw_bytes)
+        raw_bytes, udp_options_metadata = _materialize_udp_options(
+            plan, root, raw_bytes
+        )
     elif _is_ipsec_sa_stack(plan, stack):
         if raw is None:
             raise ValueError("Scapy raw materializer was not initialized")
         raw_bytes, ipsec_sa_metadata = _materialize_ipsec_sa_packet(
             plan, stack, scapy_all, _build_layer
         )
-        raw_bytes, udp_options_metadata = _materialize_udp_options(plan, root, raw_bytes)
+        raw_bytes, udp_options_metadata = _materialize_udp_options(
+            plan, root, raw_bytes
+        )
     else:
         packet = None
         for index, layer in enumerate(stack):
@@ -448,7 +464,9 @@ def encode_packet_plan(
         if raw is None:
             raise ValueError("Scapy raw materializer was not initialized")
         raw_bytes = bytes(raw(packet))
-        raw_bytes, udp_options_metadata = _materialize_udp_options(plan, root, raw_bytes)
+        raw_bytes, udp_options_metadata = _materialize_udp_options(
+            plan, root, raw_bytes
+        )
     metadata: JSONObject = {
         "backend": BACKEND_NAME,
         "feature_tags": list(plan.feature_tags),
@@ -517,7 +535,11 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
     if layer == "igmp_report":
         return scapy_all.Raw(load=_igmp_report_bytes(fields))
     if layer == "igmp_extension":
-        return scapy_all.Raw(load=_igmp_extension_layer_bytes(_layer_fields_for_stack_index(fields, stack, index)))
+        return scapy_all.Raw(
+            load=_igmp_extension_layer_bytes(
+                _layer_fields_for_stack_index(fields, stack, index)
+            )
+        )
 
     raise ValueError(f"unsupported Scapy materialization layer: {layer}")
 
@@ -555,7 +577,9 @@ def _validate_plan_contract(plan: PacketPlan, stack: list[str], root: str) -> No
     feature = plan.metadata.get("feature")
     if feature is not None:
         if not isinstance(feature, str):
-            raise ValueError("packet plan metadata.feature must be a string when present")
+            raise ValueError(
+                "packet plan metadata.feature must be a string when present"
+            )
         if feature not in _SUPPORTED_FEATURES:
             raise ValueError(
                 f"unsupported Scapy feature materialization: {feature!r}; "
@@ -563,7 +587,8 @@ def _validate_plan_contract(plan: PacketPlan, stack: list[str], root: str) -> No
             )
 
     if "igmp" in stack and (
-        plan.case.startswith("malformed-igmp-") or plan.metadata.get("malformed") is True
+        plan.case.startswith("malformed-igmp-")
+        or plan.metadata.get("malformed") is True
     ):
         raise ValueError(
             "IGMP structured-error cases are not materialized by the Scapy strict-byte path"
@@ -634,7 +659,9 @@ def _materialize_udp_options(
         ),
     )
     surplus = alignment + option_checksum.to_bytes(2, "big") + option_bytes
-    materialized = raw[: layout["surplus_start"]] + surplus + raw[layout["surplus_start"] :]
+    materialized = (
+        raw[: layout["surplus_start"]] + surplus + raw[layout["surplus_start"] :]
+    )
     materialized = _patch_ip_payload_length(materialized, layout, len(surplus))
 
     return materialized, {
@@ -725,27 +752,23 @@ def _udp_surplus_option_item_data(
             0,
         ).to_bytes(2, "big")
     if kind == 5:
-        return (
-            _int(
-                _required_field(item, "udp.options", "max_reassembled_size"),
-                0,
-            ).to_bytes(2, "big")
-            + bytes(
-                [
-                    _int(
-                        _required_field(item, "udp.options", "segment_count"),
-                        0,
-                    )
-                ]
-            )
+        return _int(
+            _required_field(item, "udp.options", "max_reassembled_size"),
+            0,
+        ).to_bytes(2, "big") + bytes(
+            [
+                _int(
+                    _required_field(item, "udp.options", "segment_count"),
+                    0,
+                )
+            ]
         )
     if kind in {6, 7}:
         return _int(_required_field(item, "udp.options", "token"), 0).to_bytes(4, "big")
     if kind == 8:
-        return (
-            _int(_required_field(item, "udp.options", "tsval"), 0).to_bytes(4, "big")
-            + _int(_required_field(item, "udp.options", "tsecr"), 0).to_bytes(4, "big")
-        )
+        return _int(_required_field(item, "udp.options", "tsval"), 0).to_bytes(
+            4, "big"
+        ) + _int(_required_field(item, "udp.options", "tsecr"), 0).to_bytes(4, "big")
 
     declared_length = _int(_required_field(item, "udp.options", "length"), 0)
     return b"\x00" * max(0, declared_length - 2)
@@ -870,7 +893,9 @@ def _ipv6_udp_start(raw: bytes, l3_start: int) -> int:
     return cursor
 
 
-def _patch_ip_payload_length(raw: bytes, layout: Mapping[str, int], added_len: int) -> bytes:
+def _patch_ip_payload_length(
+    raw: bytes, layout: Mapping[str, int], added_len: int
+) -> bytes:
     if added_len == 0:
         return raw
     output = bytearray(raw)
@@ -911,7 +936,9 @@ def _require_encode_capability(
 ) -> None:
     resolved = _capability_contract(capabilities)
     if not resolved.encode:
-        raise ValueError("unsupported backend capability: Scapy packet materialization requires encode")
+        raise ValueError(
+            "unsupported backend capability: Scapy packet materialization requires encode"
+        )
 
 
 def _capability_contract(

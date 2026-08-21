@@ -490,8 +490,8 @@ It samples the IPv6 base field cases, unknown Next Header `Raw` preservation,
 Hop-by-Hop Options, Destination Options, option metadata, Fragment Header,
 generic routing, Mobile Type 2, Segment Routing, TCP and ICMPv6 extension
 chains, and structured malformed extension coverage. Its profile weights keep
-pcap and live traffic disabled; use provider-backed lab or wire workflows only
-when a human explicitly authorizes live packet exchange.
+pcap and live traffic disabled. External operator tooling owns any explicitly
+authorized live packet exchange.
 
 ## Out Of Scope
 

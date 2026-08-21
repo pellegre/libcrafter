@@ -30,12 +30,12 @@ fn main() -> ExampleResult<()> {
     }
 
     // The live path is opt-in only. Even when requested we refuse to place real
-    // RIP traffic on the wire from this example: real sends must originate from a
-    // provider-backed endpoint or lab session, not the developer machine.
+    // RIP traffic on the wire from this example. An external operator must choose
+    // an authorized endpoint and invoke the bounded packet workload there.
     if flag_present("--send") {
         eprintln!(
             "refusing live send: rip_response is an offline example; \
-             run RIP against a provider-backed routing daemon via the probe/lab runners instead"
+             use external execution tooling with an authorized RIP peer instead"
         );
         return Err("live RIP send is not enabled in this example".into());
     }

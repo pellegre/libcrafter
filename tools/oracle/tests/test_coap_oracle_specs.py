@@ -7,7 +7,13 @@ from collections.abc import Mapping, Sequence
 
 from tools.oracle.engine.directions import BACKEND_TO_LIBCRAFTER, LIBCRAFTER_TO_BACKEND
 from tools.oracle.engine.generator import case_byte_policy_index, generate_plans
-from tools.oracle.engine.spec_loader import FeatureSpec, LayerSpec, ProfileSpec, StackSpec, load_oracle_specs
+from tools.oracle.engine.spec_loader import (
+    FeatureSpec,
+    LayerSpec,
+    ProfileSpec,
+    StackSpec,
+    load_oracle_specs,
+)
 
 
 COAP_FEATURES = {
@@ -21,7 +27,7 @@ COAP_FEATURES = {
     "coap_malformed",
     "coap_pcap",
 }
-COAP_PROFILES = ("coap-smoke", "coap-ci", "coap-live-dry-run")
+COAP_PROFILES = ("coap-smoke", "coap-ci")
 COAP_STACKS = {
     "ipv4_udp_coap": ("l3:ipv4", ("ipv4", "udp", "coap")),
     "ipv6_udp_coap": ("l3:ipv6", ("ipv6", "udp", "coap")),
@@ -46,9 +52,21 @@ class CoapOracleSpecTest(unittest.TestCase):
         assert layer is not None
         self.assertEqual(layer.parents, ("udp", "tcp"))
         fields = {field.name for field in layer.fields}
-        self.assertTrue({"version", "message_type", "code", "message_id", "token", "token_length", "reliable_length", "options", "payload_marker", "payload", "signaling_options"}.issubset(fields))
-        self.assertEqual(layer.raw["live_defaults"]["default_mode"], "dry_run")
-        self.assertFalse(layer.raw["live_defaults"]["developer_host_raw_send"])
+        self.assertTrue(
+            {
+                "version",
+                "message_type",
+                "code",
+                "message_id",
+                "token",
+                "token_length",
+                "reliable_length",
+                "options",
+                "payload_marker",
+                "payload",
+                "signaling_options",
+            }.issubset(fields)
+        )
         self.assertEqual(layer.backend_support["scapy"].status, "partial")
         self.assertTrue(layer.backend_support["scapy"].encode)
         self.assertTrue(layer.backend_support["scapy"].decode)
@@ -59,13 +77,24 @@ class CoapOracleSpecTest(unittest.TestCase):
 
     def test_focused_feature_specs_cover_every_required_contract(self) -> None:
         self.assertTrue(COAP_FEATURES.issubset(self.specs.features))
-        cases = {case for name in COAP_FEATURES for case in self.specs.features[name].coverage_cases}
+        cases = {
+            case
+            for name in COAP_FEATURES
+            for case in self.specs.features[name].coverage_cases
+        }
         required = {
-            "coap-datagram-get", "coap-options-payload", "coap-reliable-csm",
-            "coap-observe-notification", "coap-block2", "coap-qblock2",
-            "coap-extended-token-extended16", "coap-link-format-canonical",
-            "coap-oscore-request-vector", "coap-secure-port-raw",
-            "malformed-coap-reliable", "coap-pcap-raw-ipv4",
+            "coap-datagram-get",
+            "coap-options-payload",
+            "coap-reliable-csm",
+            "coap-observe-notification",
+            "coap-block2",
+            "coap-qblock2",
+            "coap-extended-token-extended16",
+            "coap-link-format-canonical",
+            "coap-oscore-request-vector",
+            "coap-secure-port-raw",
+            "malformed-coap-reliable",
+            "coap-pcap-raw-ipv4",
         }
         self.assertTrue(required.issubset(cases))
         for name in COAP_FEATURES:
@@ -77,10 +106,15 @@ class CoapOracleSpecTest(unittest.TestCase):
         for name in COAP_FEATURES:
             feature = self.specs.features[name]
             supported = _objects(feature.raw["supported_cases"])
-            self.assertEqual({case["name"] for case in supported}, set(feature.coverage_cases))
+            self.assertEqual(
+                {case["name"] for case in supported}, set(feature.coverage_cases)
+            )
             for case in supported:
                 self.assertTrue(case["directions"])
-                self.assertIn(case["byte_policy"], {"strict_bytes", "normalized", "structured_error"})
+                self.assertIn(
+                    case["byte_policy"],
+                    {"strict_bytes", "normalized", "structured_error"},
+                )
                 self.assertEqual(policy_index[case["name"]], case["byte_policy"])
         self.assertEqual(policy_index["coap-link-format-canonical"], "normalized")
         self.assertEqual(policy_index["coap-observe-wrap"], "normalized")
@@ -96,8 +130,12 @@ class CoapOracleSpecTest(unittest.TestCase):
             assert stack is not None
             self.assertEqual((stack.root, stack.layers), (root, layers))
             self.assertTrue(stack.coverage_cases)
-        self.assertEqual(self.specs.constraints["coap_udp_children"].children, ("coap",))
-        self.assertEqual(self.specs.constraints["coap_tcp_children"].children, ("coap",))
+        self.assertEqual(
+            self.specs.constraints["coap_udp_children"].children, ("coap",)
+        )
+        self.assertEqual(
+            self.specs.constraints["coap_tcp_children"].children, ("coap",)
+        )
         self.assertIn("tools/oracle/specs/stacks.d/coap.yaml", self.specs.source_paths)
 
     def test_profiles_are_offline_or_dry_run_with_live_weight_zero(self) -> None:
@@ -105,13 +143,19 @@ class CoapOracleSpecTest(unittest.TestCase):
             profile = self.specs.profiles.get(name)
             self.assertIsInstance(profile, ProfileSpec)
             assert profile is not None
-            self.assertEqual([(weight.name, weight.weight) for weight in profile.family_weights], [("coap", 1)])
-            self.assertEqual(profile.feature_weights["live"], 0)
+            self.assertEqual(
+                [(weight.name, weight.weight) for weight in profile.family_weights],
+                [("coap", 1)],
+            )
         self.assertEqual(self.specs.profiles["coap-smoke"].default_count, 12)
         self.assertEqual(self.specs.profiles["coap-ci"].default_count, 240)
-        self.assertIn("tools/oracle/specs/profiles.d/coap.yaml", self.specs.source_paths)
+        self.assertIn(
+            "tools/oracle/specs/profiles.d/coap.yaml", self.specs.source_paths
+        )
 
-    def test_profiles_generate_only_coap_stacks_without_an_explicit_family_filter(self) -> None:
+    def test_profiles_generate_only_coap_stacks_without_an_explicit_family_filter(
+        self,
+    ) -> None:
         for profile in COAP_PROFILES:
             with self.subTest(profile=profile):
                 plans = generate_plans(profile=profile, seed=7252, count=12)
@@ -121,19 +165,38 @@ class CoapOracleSpecTest(unittest.TestCase):
 
     def test_secure_and_reference_backend_gaps_are_explicit(self) -> None:
         feature = self.specs.features["coap_oscore"]
-        unsupported = {item["name"]: item["reason"] for item in _objects(feature.raw["unsupported_cases"])}
+        unsupported = {
+            item["name"]: item["reason"]
+            for item in _objects(feature.raw["unsupported_cases"])
+        }
         self.assertEqual(
             set(unsupported),
-            {"coaps-dtls-decryption", "coaps-tls-stream-decryption", "scapy-native-oscore-transform", "wireshark-secret-assisted-oscore", "group-oscore-countersignature"},
+            {
+                "coaps-dtls-decryption",
+                "coaps-tls-stream-decryption",
+                "scapy-native-oscore-transform",
+                "wireshark-secret-assisted-oscore",
+                "group-oscore-countersignature",
+            },
         )
-        self.assertTrue(all(isinstance(reason, str) and reason for reason in unsupported.values()))
+        self.assertTrue(
+            all(isinstance(reason, str) and reason for reason in unsupported.values())
+        )
         self.assertEqual(feature.backend_support["scapy"].status, "planned")
         self.assertEqual(feature.backend_support["wireshark"].status, "planned")
         self.assertFalse(feature.backend_support["scapy"].encode)
         self.assertFalse(feature.backend_support["wireshark"].decode)
-        secure_raw = next(case for case in _objects(feature.raw["supported_cases"]) if case["name"] == "coap-secure-port-raw")
+        secure_raw = next(
+            case
+            for case in _objects(feature.raw["supported_cases"])
+            if case["name"] == "coap-secure-port-raw"
+        )
         self.assertEqual(set(secure_raw["directions"]), {BACKEND_TO_LIBCRAFTER})
-        request_vector = next(case for case in _objects(feature.raw["supported_cases"]) if case["name"] == "coap-oscore-request-vector")
+        request_vector = next(
+            case
+            for case in _objects(feature.raw["supported_cases"])
+            if case["name"] == "coap-oscore-request-vector"
+        )
         self.assertEqual(set(request_vector["directions"]), {LIBCRAFTER_TO_BACKEND})
 
 

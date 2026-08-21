@@ -35,13 +35,13 @@ fn example_bssid(index: usize) -> MacAddr {
 
 fn main() -> ExampleResult<()> {
     if print_help_if_requested(
-        "usage: cargo run --example dot11_beacon_inject -- [--live] [--iface IFACE] [--channel CHANNEL] [--count COUNT] [--prefix PREFIX]\n\nBuild synthetic monitor-mode beacon frames and print a dry-run injection plan by default. Live transmission requires --live, the isolated-lab acknowledgement, and the wire-endpoint environment marker, plus an interface the operator has already placed into monitor mode.",
+        "usage: cargo run --example dot11_beacon_inject -- [--live] [--iface IFACE] [--channel CHANNEL] [--count COUNT] [--prefix PREFIX]\n\nBuild synthetic monitor-mode beacon frames and print a dry-run injection plan by default. Live transmission requires --live, the explicit live-traffic acknowledgement, and the live environment marker, plus an interface the external operator has already placed into monitor mode.",
     ) {
         return Ok(());
     }
 
-    // Gate live transmission behind the project's explicit live markers. Returns
-    // true only with --live AND --i-understand-isolated-lab AND LIBCRAFTER_ENDPOINT=1.
+    // Gate live transmission behind explicit live markers. External tooling
+    // still owns authorization, interface preparation, and cleanup.
     let live = live_mode("dot11_beacon_inject")?;
 
     let iface = arg_or("--iface", EXAMPLE_MONITOR_IFACE);

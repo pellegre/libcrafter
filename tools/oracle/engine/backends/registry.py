@@ -14,14 +14,12 @@ BackendCapabilityName: TypeAlias = Literal[
     "decode",
     "pcap_read",
     "pcap_write",
-    "live_endpoint",
 ]
 BACKEND_CAPABILITY_NAMES: tuple[BackendCapabilityName, ...] = (
     "encode",
     "decode",
     "pcap_read",
     "pcap_write",
-    "live_endpoint",
 )
 
 
@@ -33,7 +31,6 @@ class BackendCapabilities:
     decode: bool = False
     pcap_read: bool = False
     pcap_write: bool = False
-    live_endpoint: bool = False
 
     def supports(self, capability: BackendCapabilityName) -> bool:
         return bool(getattr(self, capability))
@@ -46,11 +43,7 @@ class BackendCapabilities:
         ]
 
     def missing(self, required: tuple[BackendCapabilityName, ...]) -> list[str]:
-        return [
-            capability
-            for capability in required
-            if not self.supports(capability)
-        ]
+        return [capability for capability in required if not self.supports(capability)]
 
     def to_dict(self) -> JSONObject:
         return {
@@ -58,7 +51,6 @@ class BackendCapabilities:
             "decode": self.decode,
             "pcap_read": self.pcap_read,
             "pcap_write": self.pcap_write,
-            "live_endpoint": self.live_endpoint,
             "enabled": self.enabled(),
         }
 
@@ -134,7 +126,9 @@ def get_backend(name: str) -> BackendRegistration:
     factory = _BACKEND_FACTORIES.get(name)
     if factory is None:
         supported = ", ".join(registered_backend_names())
-        raise UnknownBackendError(f"unsupported backend: {name}; supported: {supported}")
+        raise UnknownBackendError(
+            f"unsupported backend: {name}; supported: {supported}"
+        )
     return factory()
 
 
@@ -144,7 +138,9 @@ def get_backend_capability_registration(name: str) -> BackendRegistration:
     factory = _CAPABILITY_FACTORIES.get(name)
     if factory is None:
         supported = ", ".join(registered_backend_capability_names())
-        raise UnknownBackendError(f"unsupported backend: {name}; supported: {supported}")
+        raise UnknownBackendError(
+            f"unsupported backend: {name}; supported: {supported}"
+        )
     return factory()
 
 
@@ -178,7 +174,6 @@ def _scapy_backend() -> BackendRegistration:
             decode=True,
             pcap_read=True,
             pcap_write=True,
-            live_endpoint=True,
         ),
         availability=BackendAvailability(
             available=True,
@@ -219,14 +214,13 @@ def _libcrafter_backend() -> BackendRegistration:
             decode=True,
             pcap_read=True,
             pcap_write=True,
-            live_endpoint=True,
         ),
         availability=BackendAvailability(
             available=True,
             dependency="cargo workspace",
-            reason="local Rust oracle endpoint",
+            reason="local Rust oracle adapter",
         ),
-        description="Local libcrafter packet writer/parser endpoint.",
+        description="Local libcrafter packet writer/parser adapter.",
     )
 
 

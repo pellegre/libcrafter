@@ -263,16 +263,12 @@ assert!(reports.iter().all(|report| report.is_dry_run()));
 ```
 
 Use documentation address space in examples and dry-run or pcap writers by
-default. Provider-backed lab sessions are the live path when a workflow needs
-real packet exchange.
+default. External operator tooling owns any execution against concrete
+interfaces and any resulting artifact collection.
 
 For `IpDefrag` and `IpFragment` validation, run transform tests, oracle offline
-checks, and pcap checks before any live workflow. Live fragment behavior must go
-through a disposable lab provider session with `--confirm-live-run`, artifacts
-under `target/lab/ip-fragment-*`, and teardown or skip artifacts that explain
-what happened. Do not validate IP fragmentation by sending raw live traffic from
-the developer machine; use the lab-backed workflow in [validation.md](../operations/validation.md)
-and [lab.md](../operations/lab.md).
+checks, and pcap checks. Environment-specific fragment behavior is outside this
+repository's orchestration boundary.
 
 ## DHCP Packet Streams
 
@@ -304,8 +300,8 @@ assert!(reports.iter().all(|report| report.is_dry_run()));
 ```
 
 Live DHCP traffic can change network state. Keep examples and tests offline or
-dry-run, and run authorized live behavior only from a disposable provider-backed
-endpoint or lab session with artifacts collected after the run.
+dry-run, and run authorized live behavior only from a disposable externally executed
+endpoint or external execution environment with artifacts collected after the run.
 
 `WpaDecrypt` is an inbound transform. It accepts one or more configured SSIDs
 with either passphrases or pre-derived PMKs, observes beacons, RSN information,
@@ -360,9 +356,9 @@ fixtures for examples and CI.
 
 ## Live Capture
 
-Live examples must be explicit and bounded. Use disposable provider-backed
-endpoints or an authorized lab environment for real traffic. Do not run live
-capture against networks you do not control.
+Live examples must be explicit and bounded. External operator tooling must
+select and authorize the execution target. Do not run live capture against
+networks you do not control.
 
 ```rust
 use crafter::prelude::*;

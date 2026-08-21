@@ -39,7 +39,7 @@ Good examples:
 feat(pcap): add nanosecond timestamp writer
 fix(ci): install libpcap before workspace tests
 test(interop): cover malformed tcp options
-docs(live-lab): clarify Hetzner dry runs
+docs(validation): clarify external execution boundary
 ```
 
 ## Required Local Check
@@ -62,7 +62,7 @@ duplicating the regex by hand.
 ## Staging Discipline
 
 Stage only files that belong to the change being committed. Do not stage
-ignored artifacts, provider state, local credentials, generated reports, or
+ignored artifacts, execution state, local credentials, generated reports, or
 unrelated user edits.
 
 Keep commit subjects short, imperative, and specific. Put details in the body

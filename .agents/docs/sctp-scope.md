@@ -88,7 +88,6 @@ defaults must stay offline or dry-run by default. Addresses in examples must
 use documentation address space such as `192.0.2.0/24`, `198.51.100.0/24`, or
 `2001:db8::/32`.
 
-Any live SCTP validation must be explicitly gated, provider-backed through the
-repository lab/session/endpoint workflow, preceded by a dry-run plan, and kept
-out of tracked artifacts unless the artifact is sanitized and intentionally
-documented.
+Any live SCTP validation must be explicitly gated, executed by external
+operator tooling, preceded by a dry-run plan, and kept out of tracked artifacts
+unless the artifact is sanitized and intentionally documented.

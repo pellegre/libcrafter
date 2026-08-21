@@ -10,14 +10,12 @@ directions:
   - backend_to_libcrafter
   - libcrafter_to_backend
   - roundtrip
-  - live
 strict_bytes: true
 malformed: false
 categories:
   - baseline
   - boundary
   - pcap
-  - live
 
 behaviors:
   - name: v1-initial
@@ -114,56 +112,48 @@ supported_cases:
       - backend_to_libcrafter
       - libcrafter_to_backend
       - roundtrip
-      - live
     byte_policy: strict_bytes
   - name: quic-v2-initial
     directions:
       - backend_to_libcrafter
       - libcrafter_to_backend
       - roundtrip
-      - live
     byte_policy: strict_bytes
   - name: quic-version-negotiation
     directions:
       - backend_to_libcrafter
       - libcrafter_to_backend
       - roundtrip
-      - live
     byte_policy: strict_bytes
   - name: quic-retry
     directions:
       - backend_to_libcrafter
       - libcrafter_to_backend
       - roundtrip
-      - live
     byte_policy: strict_bytes
   - name: quic-handshake
     directions:
       - backend_to_libcrafter
       - libcrafter_to_backend
       - roundtrip
-      - live
     byte_policy: strict_bytes
   - name: quic-zero-rtt
     directions:
       - backend_to_libcrafter
       - libcrafter_to_backend
       - roundtrip
-      - live
     byte_policy: strict_bytes
   - name: quic-coalesced-initial-handshake
     directions:
       - backend_to_libcrafter
       - libcrafter_to_backend
       - roundtrip
-      - live
     byte_policy: strict_bytes
   - name: quic-datagram-frame
     directions:
       - backend_to_libcrafter
       - libcrafter_to_backend
       - roundtrip
-      - live
     byte_policy: strict_bytes
   - name: quic-grease-bit
     directions:
@@ -177,7 +167,6 @@ supported_cases:
       - backend_to_libcrafter
       - libcrafter_to_backend
       - roundtrip
-      - live
     byte_policy: strict_bytes
   - name: quic-pcap-udp-4433
     directions:

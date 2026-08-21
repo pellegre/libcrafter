@@ -17,7 +17,6 @@ profiles:
       boundary: 4
       malformed: 0
       pcap: 1
-      live: 0
   - name: tls-smoke
     purpose: small deterministic TLS smoke coverage for record, handshake, and extension strict-byte cases
     default_count: 20
@@ -32,7 +31,6 @@ profiles:
       boundary: 4
       malformed: 0
       pcap: 0
-      live: 0
   - name: tls-ci
     purpose: deterministic TLS pull-request coverage for well-formed strict-byte oracle cases
     default_count: 160
@@ -47,7 +45,6 @@ profiles:
       boundary: 6
       malformed: 0
       pcap: 1
-      live: 0
 
 backend_support:
   scapy:

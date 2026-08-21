@@ -1,70 +1,17 @@
-"""DHCPv4 probe protocol plugin: cases, plan builders, and lab hooks.
-
-This module keeps DHCPv4's behavior surface in one place:
-
-* the ten DHCPv4 behavioral cases plus the ``dhcpv4_service`` capability,
-* the ``_dhcpv4_*_probe_plan`` builders, the rapid-repeat send helper, and the
-  deterministic client identity / option helpers,
-* the DHCPv4 stimulus-endpoint routing set,
-* the controlled ``dhcpv4-responder`` target-service descriptors and setup
-  script blocks,
-* the live-lab address rewrite, failure-reason taxonomy, and capability
-  derivation hooks.
-
-The behavior profile keeps DHCPv4 in the explicit cross-protocol order owned by
-:mod:`tools.probe.engine.cases`; this plugin contributes builders and live-lab
-hooks through the protocol registry while ``cases.py`` owns deterministic suite
-placement.
-
-Imports are relative only so the module loads under both engine import roots
-(``engine.protocols.dhcpv4`` for the CLI and ``tools.probe.engine.protocols.dhcpv4``
-for the tests).
-"""
+"""Deterministic DHCPV4 probe cases and packet plans."""
 
 from __future__ import annotations
-
-import json
-import posixpath
-import shlex
-from collections.abc import Mapping, Sequence
-
-from ..capability_derivation import capability
 from ..case_helpers import _behavior_case
-from ..endpoint_addressing import (
-    FAILURE_DECODE_FAILED,
-    FAILURE_TARGET_SETUP_FAILED,
-    FAILURE_TIMEOUT,
-    FAILURE_WRONG_FLAGS,
-    FAILURE_WRONG_PAYLOAD,
-    FAILURE_WRONG_PEER,
-    apply_shared_ipv4_rewrite_tail,
-)
-from ..model import JSONObject, JSONValue, ProbeCase, json_object
+from ..model import JSONObject, ProbeCase
 from ..planning_helpers import (
     deterministic_bytes,
     deterministic_ipv4_pair,
     deterministic_router_ipv4,
     dns_label,
 )
-from ..target_service_helpers import (
-    TargetServiceDescriptor,
-    dedupe_ints,
-    plans_by_destination_port,
-    probe_plan_send_count,
-    target_service_address_fields,
-)
 from .base import ProtocolPlugin, register
 
-
-# Capabilities required by each DHCPv4 behavioral case. DHCPv4 needs IPv4 unicast
-# plus a controlled DHCPv4 responder; the capability name matches the probe
-# capability derivation in :mod:`tools.probe.engine.lab`, so the behavior-suite
-# cases skip with stable reasons on providers that cannot support them.
 _DHCPV4_CAPABILITIES = ["dhcpv4_service"]
-
-
-# Ten DHCPv4 behavioral cases (DHCPv4/BOOTP client messages against a controlled
-# DHCPv4 responder on a private L2 segment).
 BEHAVIOR_DHCPV4_CASES: tuple[ProbeCase, ...] = (
     _behavior_case(
         name="dhcpv4-discover-offer",
@@ -84,10 +31,7 @@ BEHAVIOR_DHCPV4_CASES: tuple[ProbeCase, ...] = (
     ),
     _behavior_case(
         name="dhcpv4-client-identifier",
-        description=(
-            "Send a Discover carrying a client identifier (option 61) and validate "
-            "the matching Offer that records the client identity."
-        ),
+        description="Send a Discover carrying a client identifier (option 61) and validate the matching Offer that records the client identity.",
         stimulus="dhcpv4_discover",
         expected_response="dhcpv4_offer",
         required_capabilities=_DHCPV4_CAPABILITIES,
@@ -103,10 +47,7 @@ BEHAVIOR_DHCPV4_CASES: tuple[ProbeCase, ...] = (
     ),
     _behavior_case(
         name="dhcpv4-parameter-request-list",
-        description=(
-            "Send a Discover with a parameter request list and validate the "
-            "requested options in the Offer."
-        ),
+        description="Send a Discover with a parameter request list and validate the requested options in the Offer.",
         stimulus="dhcpv4_discover",
         expected_response="dhcpv4_offer",
         required_capabilities=_DHCPV4_CAPABILITIES,
@@ -114,10 +55,7 @@ BEHAVIOR_DHCPV4_CASES: tuple[ProbeCase, ...] = (
     ),
     _behavior_case(
         name="dhcpv4-lease-time",
-        description=(
-            "Send a Discover and validate the lease time (51), renewal T1 (58), "
-            "and rebinding T2 (59) timing options in the Offer."
-        ),
+        description="Send a Discover and validate the lease time (51), renewal T1 (58), and rebinding T2 (59) timing options in the Offer.",
         stimulus="dhcpv4_discover",
         expected_response="dhcpv4_offer",
         required_capabilities=_DHCPV4_CAPABILITIES,
@@ -149,9 +87,7 @@ BEHAVIOR_DHCPV4_CASES: tuple[ProbeCase, ...] = (
     ),
     _behavior_case(
         name="dhcpv4-rapid-repeat",
-        description=(
-            "Send repeated Discovers and validate each independently decoded Offer."
-        ),
+        description="Send repeated Discovers and validate each independently decoded Offer.",
         stimulus="dhcpv4_discover",
         expected_response="dhcpv4_offer",
         required_capabilities=_DHCPV4_CAPABILITIES,
@@ -161,65 +97,29 @@ BEHAVIOR_DHCPV4_CASES: tuple[ProbeCase, ...] = (
 
 
 def dhcpv4_client_mac(profile: str, seed: int, sequence: int) -> str:
-    """Return the deterministic DHCPv4 client Ethernet MAC for a probe case.
-
-    Uses the RFC 7042 documentation unicast range (``00:00:5e:00:53:00-ff``)
-    derived from the case digest so the client hardware address (BOOTP
-    ``chaddr``) is stable per (case, profile, seed, sequence) and stays inside
-    the documentation MAC block.
-    """
-
-    digest = deterministic_bytes(f"dhcpv4-client-mac-{profile}", profile, seed, sequence)
+    digest = deterministic_bytes(
+        f"dhcpv4-client-mac-{profile}", profile, seed, sequence
+    )
     return f"00:00:5e:00:53:{digest[0]:02x}"
 
 
 def dhcpv4_hostname(profile: str, seed: int, sequence: int) -> str:
-    """Return the deterministic DHCPv4 client hostname (option 12) for a probe case."""
-
     label = dns_label(profile)
     return f"probe-{label}-{seed}-{sequence}"
 
 
 def dhcpv4_client_identifier(profile: str, seed: int, sequence: int) -> str:
-    """Return the deterministic DHCPv4 client identifier (option 61) payload hex.
-
-    Builds an RFC 4361 node-specific identifier: the type octet ``0xff``, a
-    deterministic 4-octet IAID, and a deterministic DUID-LL (DUID type 3,
-    hardware type 1) over an RFC 7042 documentation MAC. This is a stable client
-    identity distinct from ``chaddr`` so the controlled responder can record and
-    the validator can confirm option 61 specifically (RFC 2132 section 9.14).
-
-    The returned value is the lowercase hex of the encoded option-61 payload
-    (type octet plus identifier, without the option code or length), which is
-    exactly what the libcrafter ``Dhcpv4ClientIdentifier`` decoder re-encodes.
-    """
-
     digest = deterministic_bytes("dhcpv4-client-identifier", profile, seed, sequence)
-    # RFC 4361 type octet 0xff, then a 4-octet IAID derived from the digest.
     payload = bytearray()
-    payload.append(0xFF)
+    payload.append(255)
     payload.extend(digest[0:4])
-    # DUID-LL (RFC 3315 / RFC 4361): DUID type 3, hardware type 1 (Ethernet),
-    # followed by a documentation MAC (RFC 7042 00:00:5e:00:53:00-ff).
-    payload.extend((0x00, 0x03))  # DUID type 3 (DUID-LL)
-    payload.extend((0x00, 0x01))  # hardware type 1 (Ethernet)
-    payload.extend((0x00, 0x00, 0x5E, 0x00, 0x53, digest[4]))
+    payload.extend((0, 3))
+    payload.extend((0, 1))
+    payload.extend((0, 0, 94, 0, 83, digest[4]))
     return payload.hex()
 
 
 def dhcpv4_parameter_request_list(profile: str, seed: int, sequence: int) -> list[int]:
-    """Return the deterministic DHCPv4 parameter request list (option 55) codes.
-
-    Source: RFC 2132 section 9.8. The list names the option codes the client asks
-    the server to return. The probe uses a stable, RFC-correct set so the
-    controlled responder can return exactly those options and the validator can
-    confirm both the option presence and the returned values: subnet mask (1),
-    router (3), DNS server (6), IP address lease time (51), renewal T1 (58), and
-    rebinding T2 (59). The list is fixed (not digest-derived) so the requested
-    parameters stay aligned with the expected-response option fields the plan
-    carries; the digest only varies the per-case identity values elsewhere.
-    """
-
     return [1, 3, 6, 51, 58, 59]
 
 
@@ -230,44 +130,21 @@ def _dhcpv4_parameter_request_list_probe_plan(
     seed: int,
     sequence: int,
 ) -> JSONObject:
-    """Plan the ``dhcpv4-parameter-request-list`` behavioral case.
-
-    The stimulus is a BOOTP/DHCPv4 Discover (message type 1) built by libcrafter
-    that carries a parameter request list (option 55, RFC 2132 section 9.8) naming
-    the option codes the client wants the server to return: subnet mask (1),
-    router (3), DNS server (6), lease time (51), renewal T1 (58), and rebinding
-    T2 (59). The controlled responder returns those requested options in its
-    Offer, so this case exercises option-list construction in the outgoing
-    Discover and response option parsing in the Offer.
-
-    The validation contract covers the decoded UDP/BOOTP/DHCPv4 Offer: the BOOTP
-    opcode (reply), message type Offer, the echoed transaction id (xid), the
-    client hardware address (chaddr), the offered address (yiaddr), the server
-    identifier (option 54), and the requested configuration/lease options the
-    responder returned (subnet mask 1, router 3, DNS 6, lease 51, renewal 58,
-    rebinding 59), plus the response direction (server -> client over ports
-    67 -> 68). Addresses stay in documentation space: the offered address and the
-    returned DNS server are in ``198.51.100.0/24`` and the lab transport uses the
-    private endpoint pair.
-    """
-
     digest = deterministic_bytes(case_name, profile, seed, sequence)
     stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
     client_mac = dhcpv4_client_mac(profile, seed, sequence)
     parameter_request_list = dhcpv4_parameter_request_list(profile, seed, sequence)
     transaction_id = int.from_bytes(digest[0:4], "big") or 1
-    # DHCPv4 uses fixed privileged ports: client 68 -> server 67.
     source_port = 68
     destination_port = 67
     offered_ipv4 = f"198.51.100.{1 + digest[4] % 250}"
     subnet_mask = "255.255.255.0"
     server_identifier = target_ipv4
     router_ipv4 = deterministic_router_ipv4(profile, seed, sequence)
-    # A DNS server option (6) the responder hands back in documentation space.
     dns_server_ipv4 = f"198.51.100.{1 + digest[6] % 250}"
     lease_time = 3600 + 60 * (digest[5] % 60)
     renewal_time = lease_time // 2
-    rebinding_time = (lease_time * 7) // 8
+    rebinding_time = lease_time * 7 // 8
     return {
         "schema_version": 1,
         "case": case_name,
@@ -297,27 +174,7 @@ def _dhcpv4_parameter_request_list_probe_plan(
         "expected_lease_time": lease_time,
         "expected_renewal_time": renewal_time,
         "expected_rebinding_time": rebinding_time,
-        "target_service": {
-            "required": True,
-            "kind": "dhcpv4-responder",
-            "port": destination_port,
-            "client_port": source_port,
-            "client_mac": client_mac,
-            "parameter_request_list": parameter_request_list,
-            "transaction_id": transaction_id,
-            "yiaddr": offered_ipv4,
-            "server_identifier": server_identifier,
-            "subnet_mask": subnet_mask,
-            "router_ipv4": router_ipv4,
-            "dns_ipv4": dns_server_ipv4,
-            "lease_time": lease_time,
-            "renewal_time": renewal_time,
-            "rebinding_time": rebinding_time,
-        },
-        "capture_filter": (
-            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
-            f"and src port {destination_port} and dst port {source_port}"
-        ),
+        "capture_filter": f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} and src port {destination_port} and dst port {source_port}",
         "validation": {
             "source_ipv4": target_ipv4,
             "destination_ipv4": stimulus_ipv4,
@@ -344,51 +201,21 @@ def _dhcpv4_parameter_request_list_probe_plan(
 
 
 def _dhcpv4_lease_time_probe_plan(
-    *,
-    case_name: str = "dhcpv4-lease-time",
-    profile: str,
-    seed: int,
-    sequence: int,
+    *, case_name: str = "dhcpv4-lease-time", profile: str, seed: int, sequence: int
 ) -> JSONObject:
-    """Plan the ``dhcpv4-lease-time`` behavioral case.
-
-    The stimulus is a BOOTP/DHCPv4 Discover (message type 1) built by libcrafter
-    and sent from the DHCPv4 client port (68) to the server port (67) against a
-    controlled DHCPv4 responder on a private L2 lab segment. The controlled
-    responder answers with an Offer (message type 2) carrying the three DHCPv4
-    timing options as 32-bit second counts: the IP address lease time
-    (option 51, RFC 2132 section 9.2), the renewal (T1) time value (option 58,
-    RFC 2132 section 9.11), and the rebinding (T2) time value (option 59, RFC
-    2132 section 9.12). This case focuses on parsing each timing option as a
-    structured numeric value while still confirming the response identity and
-    direction.
-
-    The validation contract covers the decoded UDP/BOOTP/DHCPv4 Offer: the BOOTP
-    opcode (reply), message type Offer, the echoed transaction id (xid), the
-    client hardware address (chaddr), the offered address (yiaddr), the server
-    identifier (option 54), and each of the three timing option values (lease 51,
-    renewal 58, rebinding 59), plus the response direction (server -> client over
-    ports 67 -> 68). Addresses stay in documentation space: the offered address
-    is in ``198.51.100.0/24`` and the lab transport uses the private endpoint
-    pair.
-    """
-
     digest = deterministic_bytes(case_name, profile, seed, sequence)
     stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
     client_mac = dhcpv4_client_mac(profile, seed, sequence)
     transaction_id = int.from_bytes(digest[0:4], "big") or 1
-    # DHCPv4 uses fixed privileged ports: client 68 -> server 67.
     source_port = 68
     destination_port = 67
     offered_ipv4 = f"198.51.100.{1 + digest[4] % 250}"
     subnet_mask = "255.255.255.0"
     server_identifier = target_ipv4
     router_ipv4 = deterministic_router_ipv4(profile, seed, sequence)
-    # RFC 2131 section 4.4.5: T1 defaults to 0.5 * lease and T2 to 0.875 * lease,
-    # so the planned values keep T1 < T2 < lease for any lease the digest picks.
     lease_time = 3600 + 60 * (digest[5] % 60)
     renewal_time = lease_time // 2
-    rebinding_time = (lease_time * 7) // 8
+    rebinding_time = lease_time * 7 // 8
     return {
         "schema_version": 1,
         "case": case_name,
@@ -415,25 +242,7 @@ def _dhcpv4_lease_time_probe_plan(
         "expected_lease_time": lease_time,
         "expected_renewal_time": renewal_time,
         "expected_rebinding_time": rebinding_time,
-        "target_service": {
-            "required": True,
-            "kind": "dhcpv4-responder",
-            "port": destination_port,
-            "client_port": source_port,
-            "client_mac": client_mac,
-            "transaction_id": transaction_id,
-            "yiaddr": offered_ipv4,
-            "server_identifier": server_identifier,
-            "subnet_mask": subnet_mask,
-            "router_ipv4": router_ipv4,
-            "lease_time": lease_time,
-            "renewal_time": renewal_time,
-            "rebinding_time": rebinding_time,
-        },
-        "capture_filter": (
-            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
-            f"and src port {destination_port} and dst port {source_port}"
-        ),
+        "capture_filter": f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} and src port {destination_port} and dst port {source_port}",
         "validation": {
             "source_ipv4": target_ipv4,
             "destination_ipv4": stimulus_ipv4,
@@ -456,34 +265,12 @@ def _dhcpv4_lease_time_probe_plan(
 
 
 def _dhcpv4_discover_offer_probe_plan(
-    *,
-    case_name: str = "dhcpv4-discover-offer",
-    profile: str,
-    seed: int,
-    sequence: int,
+    *, case_name: str = "dhcpv4-discover-offer", profile: str, seed: int, sequence: int
 ) -> JSONObject:
-    """Plan the ``dhcpv4-discover-offer`` behavioral case.
-
-    The stimulus is a BOOTP/DHCPv4 Discover (message type 1) built by libcrafter
-    and sent from the DHCPv4 client port (68) to the server port (67) against a
-    controlled DHCPv4 responder on a private L2 lab segment. The responder answers
-    with an Offer (message type 2) carrying the offered address in ``yiaddr``,
-    the server identifier (option 54), and lease timing options (51/58/59).
-
-    The validation contract covers the decoded UDP/BOOTP/DHCPv4 response: the
-    BOOTP opcode (reply), message type Offer, the echoed transaction id (xid),
-    the client hardware address (chaddr), the offered address (yiaddr), the
-    server identifier, the lease time option, and the response direction
-    (server -> client over ports 67 -> 68). Addresses stay in documentation
-    space: the offered address is in ``198.51.100.0/24`` and the lab transport
-    uses the private endpoint pair.
-    """
-
     digest = deterministic_bytes(case_name, profile, seed, sequence)
     stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
     client_mac = dhcpv4_client_mac(profile, seed, sequence)
     transaction_id = int.from_bytes(digest[0:4], "big") or 1
-    # DHCPv4 uses fixed privileged ports: client 68 -> server 67.
     source_port = 68
     destination_port = 67
     offered_ipv4 = f"198.51.100.{1 + digest[4] % 250}"
@@ -492,7 +279,7 @@ def _dhcpv4_discover_offer_probe_plan(
     router_ipv4 = deterministic_router_ipv4(profile, seed, sequence)
     lease_time = 3600 + 60 * (digest[5] % 60)
     renewal_time = lease_time // 2
-    rebinding_time = (lease_time * 7) // 8
+    rebinding_time = lease_time * 7 // 8
     return {
         "schema_version": 1,
         "case": case_name,
@@ -519,25 +306,7 @@ def _dhcpv4_discover_offer_probe_plan(
         "expected_lease_time": lease_time,
         "expected_renewal_time": renewal_time,
         "expected_rebinding_time": rebinding_time,
-        "target_service": {
-            "required": True,
-            "kind": "dhcpv4-responder",
-            "port": destination_port,
-            "client_port": source_port,
-            "client_mac": client_mac,
-            "transaction_id": transaction_id,
-            "yiaddr": offered_ipv4,
-            "server_identifier": server_identifier,
-            "subnet_mask": subnet_mask,
-            "router_ipv4": router_ipv4,
-            "lease_time": lease_time,
-            "renewal_time": renewal_time,
-            "rebinding_time": rebinding_time,
-        },
-        "capture_filter": (
-            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
-            f"and src port {destination_port} and dst port {source_port}"
-        ),
+        "capture_filter": f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} and src port {destination_port} and dst port {source_port}",
         "validation": {
             "source_ipv4": target_ipv4,
             "destination_ipv4": stimulus_ipv4,
@@ -580,21 +349,6 @@ def _dhcpv4_rapid_repeat_send(
     renewal_time: int,
     rebinding_time: int,
 ) -> JSONObject:
-    """Build one of the two Discover->Offer sends for ``dhcpv4-rapid-repeat``.
-
-    Each send owns a distinct deterministic transaction id (xid) AND a distinct
-    deterministic client identity (the ``chaddr`` client MAC), so the controlled
-    responder answers each Discover with its own Offer keyed by xid/chaddr and
-    the validator matches every decoded Offer back to *its* Discover by the
-    echoed transaction id. Each send also carries its own deterministic offered
-    address (``yiaddr``) so the two Offers are recognizably different and a
-    response is never confused with the sibling send's Offer. The per-send
-    capture filter and full validation contract (BOOTP reply, message type Offer,
-    echoed xid/chaddr, offered address, server identifier, lease/renewal/rebinding
-    options, server -> client direction over ports 67 -> 68) round-trip through
-    libcrafter decode for this send alone.
-    """
-
     return {
         "index": index,
         "source_ipv4": stimulus_ipv4,
@@ -614,25 +368,7 @@ def _dhcpv4_rapid_repeat_send(
         "expected_lease_time": lease_time,
         "expected_renewal_time": renewal_time,
         "expected_rebinding_time": rebinding_time,
-        "capture_filter": (
-            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
-            f"and src port {destination_port} and dst port {source_port}"
-        ),
-        "target_service": {
-            "required": True,
-            "kind": "dhcpv4-responder",
-            "port": destination_port,
-            "client_port": source_port,
-            "client_mac": client_mac,
-            "transaction_id": transaction_id,
-            "yiaddr": offered_ipv4,
-            "server_identifier": server_identifier,
-            "subnet_mask": subnet_mask,
-            "router_ipv4": router_ipv4,
-            "lease_time": lease_time,
-            "renewal_time": renewal_time,
-            "rebinding_time": rebinding_time,
-        },
+        "capture_filter": f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} and src port {destination_port} and dst port {source_port}",
         "validation": {
             "source_ipv4": target_ipv4,
             "destination_ipv4": stimulus_ipv4,
@@ -655,82 +391,41 @@ def _dhcpv4_rapid_repeat_send(
 
 
 def _dhcpv4_rapid_repeat_probe_plan(
-    *,
-    case_name: str = "dhcpv4-rapid-repeat",
-    profile: str,
-    seed: int,
-    sequence: int,
+    *, case_name: str = "dhcpv4-rapid-repeat", profile: str, seed: int, sequence: int
 ) -> JSONObject:
-    """Plan the ``dhcpv4-rapid-repeat`` behavioral case.
-
-    Two BOOTP/DHCPv4 Discovers (message type 1) built by libcrafter and sent in
-    quick succession from the DHCPv4 client port (68) to the server port (67)
-    against a controlled DHCPv4 responder on a private L2 lab segment. Unlike the
-    single-send ``dhcpv4-discover-offer`` case, the two Discovers carry *distinct*
-    deterministic transaction ids (xids) and *distinct* deterministic client
-    identities (``chaddr`` client MACs), so the responder returns one Offer per
-    Discover (each keyed by its xid/chaddr) and the endpoint must receive two
-    Offers, decode each independently, and match every Offer back to *its*
-    Discover by the echoed transaction id — never confusing the two Offers.
-
-    The plan carries a ``dhcpv4_sends`` array (one entry per send) plus the
-    conventional single-send top-level fields (mirroring the first send) so the
-    generic plan echo and any single-send consumer keep working unchanged; the
-    DHCPv4 dispatch detects ``dhcpv4_sends`` and drives both sends. Addresses stay in
-    documentation space: each offered address is in ``198.51.100.0/24`` and the
-    lab transport uses the private endpoint pair.
-    """
-
     digest = deterministic_bytes(case_name, profile, seed, sequence)
     stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
-    # DHCPv4 uses fixed privileged ports: client 68 -> server 67.
     source_port = 68
     destination_port = 67
     subnet_mask = "255.255.255.0"
     server_identifier = target_ipv4
     router_ipv4 = deterministic_router_ipv4(profile, seed, sequence)
     base_client_mac = dhcpv4_client_mac(profile, seed, sequence)
-
-    # Two distinct deterministic transaction ids: the case point is that the two
-    # Discovers are independently identifiable. Derive each from a different slice
-    # of the digest and keep them distinct.
     first_xid = int.from_bytes(digest[0:4], "big") or 1
     second_xid = int.from_bytes(digest[4:8], "big") or 2
     if second_xid == first_xid:
-        second_xid = (first_xid ^ 0xFFFFFFFF) or (first_xid + 1)
+        second_xid = first_xid ^ 4294967295 or first_xid + 1
     transaction_ids = (first_xid, second_xid)
-
-    # Two distinct deterministic client identities (chaddr). The shared client MAC
-    # derives from the documentation MAC block (RFC 7042 00:00:5e:00:53:00-ff);
-    # vary the final octet per send so each Discover names a distinct client and
-    # the responder keys its Offer to that client.
     mac_prefix = base_client_mac.rsplit(":", 1)[0]
     first_mac_octet = digest[8]
     second_mac_octet = digest[9]
     if second_mac_octet == first_mac_octet:
-        second_mac_octet = (first_mac_octet + 1) & 0xFF
+        second_mac_octet = first_mac_octet + 1 & 255
     client_macs = (
         f"{mac_prefix}:{first_mac_octet:02x}",
         f"{mac_prefix}:{second_mac_octet:02x}",
     )
-
-    # Two distinct deterministic offered addresses in documentation space so each
-    # Offer carries a recognizably different yiaddr.
     first_offer_host = 1 + digest[10] % 250
     second_offer_host = 1 + digest[11] % 250
     if second_offer_host == first_offer_host:
-        second_offer_host = 1 + (first_offer_host % 250)
+        second_offer_host = 1 + first_offer_host % 250
     offered_ipv4s = (
         f"198.51.100.{first_offer_host}",
         f"198.51.100.{second_offer_host}",
     )
-
-    # One shared deterministic lease schedule across both sends (the lease timing
-    # is not the case variable; the per-send identity is).
     lease_time = 3600 + 60 * (digest[12] % 60)
     renewal_time = lease_time // 2
-    rebinding_time = (lease_time * 7) // 8
-
+    rebinding_time = lease_time * 7 // 8
     sends = [
         _dhcpv4_rapid_repeat_send(
             profile=profile,
@@ -755,7 +450,6 @@ def _dhcpv4_rapid_repeat_probe_plan(
         for index in range(2)
     ]
     first = sends[0]
-
     return {
         "schema_version": 1,
         "case": case_name,
@@ -765,8 +459,6 @@ def _dhcpv4_rapid_repeat_probe_plan(
         "seed": seed,
         "stimulus": "dhcpv4_discover",
         "expected_response": "dhcpv4_offer",
-        # Conventional single-send top-level fields mirror the first send so the
-        # generic plan echo / capture filter / single-send consumers keep working.
         "source_ipv4": stimulus_ipv4,
         "destination_ipv4": target_ipv4,
         "expected_reply_source_ipv4": target_ipv4,
@@ -784,40 +476,9 @@ def _dhcpv4_rapid_repeat_probe_plan(
         "expected_lease_time": lease_time,
         "expected_renewal_time": renewal_time,
         "expected_rebinding_time": rebinding_time,
-        # The rapid-repeat contract: two independent Discover->Offer sends, each
-        # with its own deterministic xid, client identity, and offered address,
-        # validated separately.
         "send_count": len(sends),
         "dhcpv4_sends": sends,
-        "target_service": {
-            "required": True,
-            "kind": "dhcpv4-responder",
-            "port": destination_port,
-            "client_port": source_port,
-            "client_mac": first["client_mac"],
-            "transaction_id": first["transaction_id"],
-            "yiaddr": first["expected_yiaddr"],
-            "server_identifier": server_identifier,
-            "subnet_mask": subnet_mask,
-            "router_ipv4": router_ipv4,
-            "lease_time": lease_time,
-            "renewal_time": renewal_time,
-            "rebinding_time": rebinding_time,
-            "rapid_repeat": {
-                "sends": [
-                    {
-                        "transaction_id": send["transaction_id"],
-                        "client_mac": send["client_mac"],
-                        "yiaddr": send["expected_yiaddr"],
-                    }
-                    for send in sends
-                ],
-            },
-        },
-        "capture_filter": (
-            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
-            f"and src port {destination_port} and dst port {source_port}"
-        ),
+        "capture_filter": f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} and src port {destination_port} and dst port {source_port}",
         "validation": first["validation"],
     }
 
@@ -829,31 +490,11 @@ def _dhcpv4_client_identifier_probe_plan(
     seed: int,
     sequence: int,
 ) -> JSONObject:
-    """Plan the ``dhcpv4-client-identifier`` behavioral case.
-
-    The stimulus is a BOOTP/DHCPv4 Discover (message type 1) built by libcrafter
-    that carries a client identifier option (option 61, RFC 2132 section 9.14)
-    in addition to the client hardware address (``chaddr``). DHCPv4 clients may
-    identify themselves with option 61 instead of relying only on ``chaddr``, so
-    the controlled responder records the offered client identity and echoes the
-    client identifier back in its Offer (RFC 6842 makes echoing the option a MUST
-    for compliant servers).
-
-    The validation contract covers the decoded UDP/BOOTP/DHCPv4 Offer: the BOOTP
-    opcode (reply), message type Offer, the echoed transaction id (xid), the
-    client hardware address (chaddr), the offered address (yiaddr), the server
-    identifier (option 54), the echoed client identifier (option 61), and the
-    response direction (server -> client over ports 67 -> 68). Addresses stay in
-    documentation space: the offered address is in ``198.51.100.0/24`` and the
-    lab transport uses the private endpoint pair.
-    """
-
     digest = deterministic_bytes(case_name, profile, seed, sequence)
     stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
     client_mac = dhcpv4_client_mac(profile, seed, sequence)
     client_identifier_hex = dhcpv4_client_identifier(profile, seed, sequence)
     transaction_id = int.from_bytes(digest[0:4], "big") or 1
-    # DHCPv4 uses fixed privileged ports: client 68 -> server 67.
     source_port = 68
     destination_port = 67
     offered_ipv4 = f"198.51.100.{1 + digest[4] % 250}"
@@ -862,7 +503,7 @@ def _dhcpv4_client_identifier_probe_plan(
     router_ipv4 = deterministic_router_ipv4(profile, seed, sequence)
     lease_time = 3600 + 60 * (digest[5] % 60)
     renewal_time = lease_time // 2
-    rebinding_time = (lease_time * 7) // 8
+    rebinding_time = lease_time * 7 // 8
     return {
         "schema_version": 1,
         "case": case_name,
@@ -891,26 +532,7 @@ def _dhcpv4_client_identifier_probe_plan(
         "expected_lease_time": lease_time,
         "expected_renewal_time": renewal_time,
         "expected_rebinding_time": rebinding_time,
-        "target_service": {
-            "required": True,
-            "kind": "dhcpv4-responder",
-            "port": destination_port,
-            "client_port": source_port,
-            "client_mac": client_mac,
-            "client_identifier_hex": client_identifier_hex,
-            "transaction_id": transaction_id,
-            "yiaddr": offered_ipv4,
-            "server_identifier": server_identifier,
-            "subnet_mask": subnet_mask,
-            "router_ipv4": router_ipv4,
-            "lease_time": lease_time,
-            "renewal_time": renewal_time,
-            "rebinding_time": rebinding_time,
-        },
-        "capture_filter": (
-            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
-            f"and src port {destination_port} and dst port {source_port}"
-        ),
+        "capture_filter": f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} and src port {destination_port} and dst port {source_port}",
         "validation": {
             "source_ipv4": target_ipv4,
             "destination_ipv4": stimulus_ipv4,
@@ -934,39 +556,13 @@ def _dhcpv4_client_identifier_probe_plan(
 
 
 def _dhcpv4_hostname_probe_plan(
-    *,
-    case_name: str = "dhcpv4-hostname",
-    profile: str,
-    seed: int,
-    sequence: int,
+    *, case_name: str = "dhcpv4-hostname", profile: str, seed: int, sequence: int
 ) -> JSONObject:
-    """Plan the ``dhcpv4-hostname`` behavioral case.
-
-    The stimulus is a BOOTP/DHCPv4 Discover (message type 1) built by libcrafter
-    that carries a hostname option (option 12, RFC 2132 section 3.14) in
-    addition to the client hardware address (``chaddr``). The hostname is a
-    string option, so this case exercises string option encode (in the outgoing
-    Discover) and decode (in the response) through libcrafter. The controlled
-    responder records the offered hostname and echoes it back in its Offer so
-    the validator can confirm the string option round-trips.
-
-    The dry-run metadata carries the planned outgoing hostname option so the
-    endpoint can validate the option it built into the Discover, and the
-    validation contract covers the decoded UDP/BOOTP/DHCPv4 Offer: the BOOTP
-    opcode (reply), message type Offer, the echoed transaction id (xid), the
-    client hardware address (chaddr), the offered address (yiaddr), the server
-    identifier (option 54), the echoed hostname (option 12), and the response
-    direction (server -> client over ports 67 -> 68). Addresses stay in
-    documentation space: the offered address is in ``198.51.100.0/24`` and the
-    lab transport uses the private endpoint pair.
-    """
-
     digest = deterministic_bytes(case_name, profile, seed, sequence)
     stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
     client_mac = dhcpv4_client_mac(profile, seed, sequence)
     hostname = dhcpv4_hostname(profile, seed, sequence)
     transaction_id = int.from_bytes(digest[0:4], "big") or 1
-    # DHCPv4 uses fixed privileged ports: client 68 -> server 67.
     source_port = 68
     destination_port = 67
     offered_ipv4 = f"198.51.100.{1 + digest[4] % 250}"
@@ -975,7 +571,7 @@ def _dhcpv4_hostname_probe_plan(
     router_ipv4 = deterministic_router_ipv4(profile, seed, sequence)
     lease_time = 3600 + 60 * (digest[5] % 60)
     renewal_time = lease_time // 2
-    rebinding_time = (lease_time * 7) // 8
+    rebinding_time = lease_time * 7 // 8
     return {
         "schema_version": 1,
         "case": case_name,
@@ -1004,26 +600,7 @@ def _dhcpv4_hostname_probe_plan(
         "expected_lease_time": lease_time,
         "expected_renewal_time": renewal_time,
         "expected_rebinding_time": rebinding_time,
-        "target_service": {
-            "required": True,
-            "kind": "dhcpv4-responder",
-            "port": destination_port,
-            "client_port": source_port,
-            "client_mac": client_mac,
-            "hostname": hostname,
-            "transaction_id": transaction_id,
-            "yiaddr": offered_ipv4,
-            "server_identifier": server_identifier,
-            "subnet_mask": subnet_mask,
-            "router_ipv4": router_ipv4,
-            "lease_time": lease_time,
-            "renewal_time": renewal_time,
-            "rebinding_time": rebinding_time,
-        },
-        "capture_filter": (
-            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
-            f"and src port {destination_port} and dst port {source_port}"
-        ),
+        "capture_filter": f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} and src port {destination_port} and dst port {source_port}",
         "validation": {
             "source_ipv4": target_ipv4,
             "destination_ipv4": stimulus_ipv4,
@@ -1047,53 +624,23 @@ def _dhcpv4_hostname_probe_plan(
 
 
 def _dhcpv4_request_ack_probe_plan(
-    *,
-    case_name: str = "dhcpv4-request-ack",
-    profile: str,
-    seed: int,
-    sequence: int,
+    *, case_name: str = "dhcpv4-request-ack", profile: str, seed: int, sequence: int
 ) -> JSONObject:
-    """Plan the ``dhcpv4-request-ack`` behavioral case.
-
-    The stimulus is a BOOTP/DHCPv4 Request (message type 3) built by libcrafter
-    and sent from the DHCPv4 client port (68) to the server port (67) against a
-    controlled DHCPv4 responder on a private L2 lab segment. The Request names the
-    address the client wants to commit in the requested-IP option (50) and the
-    chosen server in the server-identifier option (54), echoing the transaction
-    id (xid) and client hardware address (chaddr) from the prior Discover/Offer
-    exchange. The responder answers with an Ack (message type 5) that commits the
-    binding: the assigned address in ``yiaddr``, the server identifier (option
-    54), and the configuration/lease options (subnet 1, router 3, DNS 6, lease
-    51, renewal 58, rebinding 59).
-
-    The validation contract covers the decoded UDP/BOOTP/DHCPv4 response: the
-    BOOTP opcode (reply), message type Ack, the echoed transaction id and client
-    hardware address, the assigned address (yiaddr), the server identifier, the
-    subnet mask, router, DNS, and lease timing options, and the response
-    direction (server -> client over ports 67 -> 68). Addresses stay in
-    documentation space: the assigned/requested address is in ``198.51.100.0/24``
-    and the lab transport uses the private endpoint pair.
-    """
-
     digest = deterministic_bytes(case_name, profile, seed, sequence)
     stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
     client_mac = dhcpv4_client_mac(profile, seed, sequence)
     transaction_id = int.from_bytes(digest[0:4], "big") or 1
-    # DHCPv4 uses fixed privileged ports: client 68 -> server 67.
     source_port = 68
     destination_port = 67
-    # The client requests the address it was previously offered; the responder
-    # commits the same address in the Ack ``yiaddr``.
     assigned_ipv4 = f"198.51.100.{1 + digest[4] % 250}"
     requested_ipv4 = assigned_ipv4
     subnet_mask = "255.255.255.0"
     server_identifier = target_ipv4
     router_ipv4 = deterministic_router_ipv4(profile, seed, sequence)
-    # A DNS server option (6) the responder hands back in documentation space.
     dns_server_ipv4 = f"198.51.100.{1 + digest[6] % 250}"
     lease_time = 3600 + 60 * (digest[5] % 60)
     renewal_time = lease_time // 2
-    rebinding_time = (lease_time * 7) // 8
+    rebinding_time = lease_time * 7 // 8
     return {
         "schema_version": 1,
         "case": case_name,
@@ -1123,27 +670,7 @@ def _dhcpv4_request_ack_probe_plan(
         "expected_lease_time": lease_time,
         "expected_renewal_time": renewal_time,
         "expected_rebinding_time": rebinding_time,
-        "target_service": {
-            "required": True,
-            "kind": "dhcpv4-responder",
-            "port": destination_port,
-            "client_port": source_port,
-            "client_mac": client_mac,
-            "transaction_id": transaction_id,
-            "requested_ipv4": requested_ipv4,
-            "server_identifier": server_identifier,
-            "yiaddr": assigned_ipv4,
-            "subnet_mask": subnet_mask,
-            "router_ipv4": router_ipv4,
-            "dns_ipv4": dns_server_ipv4,
-            "lease_time": lease_time,
-            "renewal_time": renewal_time,
-            "rebinding_time": rebinding_time,
-        },
-        "capture_filter": (
-            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
-            f"and src port {destination_port} and dst port {source_port}"
-        ),
+        "capture_filter": f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} and src port {destination_port} and dst port {source_port}",
         "validation": {
             "source_ipv4": target_ipv4,
             "destination_ipv4": stimulus_ipv4,
@@ -1175,44 +702,12 @@ def _dhcpv4_renewal_unicast_ack_probe_plan(
     seed: int,
     sequence: int,
 ) -> JSONObject:
-    """Plan the ``dhcpv4-renewal-unicast-ack`` behavioral case.
-
-    The stimulus is a RENEWING-state BOOTP/DHCPv4 Request (message type 3) built
-    by libcrafter and *unicast* directly to the leasing server. RFC 2131 section
-    4.3.6 (table 4) and section 4.4.5 say that a client in the RENEWING state
-    sends its DHCPREQUEST as a unicast to the server that leased its address: it
-    fills ``ciaddr`` with the address it is already bound to, leaves the
-    broadcast flag clear, and omits both the server-identifier option (54) and
-    the requested-IP option (50), because the request is addressed to the one
-    server directly rather than broadcast to all servers. This is the key
-    difference from the SELECTING-state ``dhcpv4-request-ack`` Request, which
-    broadcasts and names the chosen server and requested address in options.
-
-    The controlled responder answers with a *unicast* Ack (message type 5) that
-    renews the binding: the bound address in ``yiaddr`` (equal to the client's
-    ``ciaddr``), the server identifier (option 54), and the configuration/lease
-    options (subnet 1, router 3, DNS 6, lease 51, renewal 58, rebinding 59).
-
-    The validation contract covers the decoded UDP/BOOTP/DHCPv4 response: the
-    BOOTP opcode (reply), message type Ack, the echoed transaction id and client
-    hardware address, the renewed address (yiaddr) matching the bound address,
-    the server identifier, the subnet/router/DNS and lease timing options, and
-    the response direction (server -> client over ports 67 -> 68). Addresses
-    stay in documentation space: the bound/renewed address is in
-    ``198.51.100.0/24`` and the lab transport uses the private endpoint pair,
-    where the destination is the *unicast* server address (never the broadcast
-    ``255.255.255.255``).
-    """
-
     digest = deterministic_bytes(case_name, profile, seed, sequence)
     stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
     client_mac = dhcpv4_client_mac(profile, seed, sequence)
     transaction_id = int.from_bytes(digest[0:4], "big") or 1
-    # DHCPv4 uses fixed privileged ports: client 68 -> server 67.
     source_port = 68
     destination_port = 67
-    # The client is already bound to this address; it carries it in ``ciaddr``
-    # and the server renews the same address in the Ack ``yiaddr``.
     bound_ipv4 = f"198.51.100.{1 + digest[4] % 250}"
     assigned_ipv4 = bound_ipv4
     subnet_mask = "255.255.255.0"
@@ -1221,7 +716,7 @@ def _dhcpv4_renewal_unicast_ack_probe_plan(
     dns_server_ipv4 = f"198.51.100.{1 + digest[6] % 250}"
     lease_time = 3600 + 60 * (digest[5] % 60)
     renewal_time = lease_time // 2
-    rebinding_time = (lease_time * 7) // 8
+    rebinding_time = lease_time * 7 // 8
     return {
         "schema_version": 1,
         "case": case_name,
@@ -1239,11 +734,6 @@ def _dhcpv4_renewal_unicast_ack_probe_plan(
         "destination_port": destination_port,
         "client_mac": client_mac,
         "transaction_id": transaction_id,
-        # RENEWING state: the bound address is carried in ciaddr; no broadcast
-        # flag, no requested-IP (50) or server-identifier (54) options. The
-        # parameter request list (option 55) asks the server to return the
-        # subnet (1), router (3), DNS (6), lease (51), renewal T1 (58), and
-        # rebinding T2 (59) options the unicast Ack confirms.
         "client_ciaddr": bound_ipv4,
         "renewal_state": "renewing",
         "renewal_unicast": True,
@@ -1259,29 +749,7 @@ def _dhcpv4_renewal_unicast_ack_probe_plan(
         "expected_lease_time": lease_time,
         "expected_renewal_time": renewal_time,
         "expected_rebinding_time": rebinding_time,
-        "target_service": {
-            "required": True,
-            "kind": "dhcpv4-responder",
-            "port": destination_port,
-            "client_port": source_port,
-            "client_mac": client_mac,
-            "transaction_id": transaction_id,
-            "client_ciaddr": bound_ipv4,
-            "renewal_state": "renewing",
-            "renewal_unicast": True,
-            "yiaddr": assigned_ipv4,
-            "server_identifier": server_identifier,
-            "subnet_mask": subnet_mask,
-            "router_ipv4": router_ipv4,
-            "dns_ipv4": dns_server_ipv4,
-            "lease_time": lease_time,
-            "renewal_time": renewal_time,
-            "rebinding_time": rebinding_time,
-        },
-        "capture_filter": (
-            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
-            f"and src port {destination_port} and dst port {source_port}"
-        ),
+        "capture_filter": f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} and src port {destination_port} and dst port {source_port}",
         "validation": {
             "source_ipv4": target_ipv4,
             "destination_ipv4": stimulus_ipv4,
@@ -1309,58 +777,19 @@ def _dhcpv4_renewal_unicast_ack_probe_plan(
 
 
 def _dhcpv4_inform_ack_probe_plan(
-    *,
-    case_name: str = "dhcpv4-inform-ack",
-    profile: str,
-    seed: int,
-    sequence: int,
+    *, case_name: str = "dhcpv4-inform-ack", profile: str, seed: int, sequence: int
 ) -> JSONObject:
-    """Plan the ``dhcpv4-inform-ack`` behavioral case.
-
-    The stimulus is a BOOTP/DHCPv4 Inform (message type 8) built by libcrafter and
-    sent from the DHCPv4 client port (68) to the server port (67) against a
-    controlled DHCPv4 responder on a private L2 lab segment. RFC 2131 section 3.4
-    and section 4.4.3 say that a client that already has an externally configured
-    IP address uses a DHCPINFORM to ask only for local configuration parameters:
-    it fills ``ciaddr`` with the address it is already using and names the wanted
-    options in the parameter request list (option 55), but it does NOT request a
-    lease, so it omits the requested-IP option (50). Because no lease is being
-    granted, the request list names only configuration options (subnet 1, router
-    3, DNS 6) and not the lease timing options (51/58/59).
-
-    The controlled responder answers with an Ack (message type 5) that carries
-    the requested configuration options (subnet mask 1, router 3, DNS 6) and the
-    server identifier (option 54). Critically, RFC 2131 section 4.3.5 says the
-    server MUST NOT allocate a new address in response to a DHCPINFORM: ``yiaddr``
-    MUST be 0.0.0.0 and the Ack MUST NOT carry an IP-address-lease-time option
-    (51). The validation contract therefore asserts the decoded message type Ack,
-    the echoed transaction id and client hardware address, the configuration
-    options and their values, the server identifier, the client's ``ciaddr``,
-    and the two negative invariants that distinguish an Inform Ack from a lease
-    Ack: ``yiaddr`` is zero (no allocation) and there is no lease-time option.
-
-    Addresses stay in documentation space: the client's already-configured
-    address (``ciaddr``) is in ``198.51.100.0/24`` and the lab transport uses the
-    private endpoint pair.
-    """
-
     digest = deterministic_bytes(case_name, profile, seed, sequence)
     stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
     client_mac = dhcpv4_client_mac(profile, seed, sequence)
     transaction_id = int.from_bytes(digest[0:4], "big") or 1
-    # DHCPv4 uses fixed privileged ports: client 68 -> server 67.
     source_port = 68
     destination_port = 67
-    # The client already holds this address (configured externally) and carries
-    # it in ``ciaddr``; the Inform asks only for configuration parameters.
     configured_ipv4 = f"198.51.100.{1 + digest[4] % 250}"
     subnet_mask = "255.255.255.0"
     server_identifier = target_ipv4
     router_ipv4 = deterministic_router_ipv4(profile, seed, sequence)
     dns_server_ipv4 = f"198.51.100.{1 + digest[6] % 250}"
-    # Configuration-only parameter request list: subnet mask (1), router (3), and
-    # DNS server (6). An Inform does not request a lease, so the list omits the
-    # lease timing options (51/58/59).
     parameter_request_list = [1, 3, 6]
     return {
         "schema_version": 1,
@@ -1379,42 +808,17 @@ def _dhcpv4_inform_ack_probe_plan(
         "destination_port": destination_port,
         "client_mac": client_mac,
         "transaction_id": transaction_id,
-        # INFORM: the externally-configured address is carried in ciaddr; the
-        # parameter request list (option 55) names the configuration options the
-        # Ack must return. No requested-IP (50) option, because no lease is asked.
         "client_ciaddr": configured_ipv4,
         "parameter_request_list": parameter_request_list,
         "expected_message_type": "ack",
         "expected_message_type_value": 5,
-        # RFC 2131 section 4.3.5: an Inform Ack allocates no address. yiaddr is
-        # 0.0.0.0 and there is no lease-time (51) option.
         "expected_yiaddr_zero": True,
         "expected_no_lease_time": True,
         "expected_server_identifier": server_identifier,
         "expected_subnet_mask": subnet_mask,
         "expected_router_ipv4": router_ipv4,
         "expected_dns_ipv4": dns_server_ipv4,
-        "target_service": {
-            "required": True,
-            "kind": "dhcpv4-responder",
-            "port": destination_port,
-            "client_port": source_port,
-            "client_mac": client_mac,
-            "transaction_id": transaction_id,
-            "client_ciaddr": configured_ipv4,
-            "parameter_request_list": parameter_request_list,
-            "inform": True,
-            "yiaddr_zero": True,
-            "no_lease_time": True,
-            "server_identifier": server_identifier,
-            "subnet_mask": subnet_mask,
-            "router_ipv4": router_ipv4,
-            "dns_ipv4": dns_server_ipv4,
-        },
-        "capture_filter": (
-            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
-            f"and src port {destination_port} and dst port {source_port}"
-        ),
+        "capture_filter": f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} and src port {destination_port} and dst port {source_port}",
         "validation": {
             "source_ipv4": target_ipv4,
             "destination_ipv4": stimulus_ipv4,
@@ -1427,7 +831,6 @@ def _dhcpv4_inform_ack_probe_plan(
             "transaction_id": transaction_id,
             "client_hardware_address": client_mac,
             "client_ciaddr": configured_ipv4,
-            # The Inform Ack allocates no address and grants no lease.
             "yiaddr_zero": True,
             "no_lease_time": True,
             "server_identifier": server_identifier,
@@ -1441,63 +844,17 @@ def _dhcpv4_inform_ack_probe_plan(
 
 
 def _dhcpv4_request_nak_probe_plan(
-    *,
-    case_name: str = "dhcpv4-request-nak",
-    profile: str,
-    seed: int,
-    sequence: int,
+    *, case_name: str = "dhcpv4-request-nak", profile: str, seed: int, sequence: int
 ) -> JSONObject:
-    """Plan the ``dhcpv4-request-nak`` behavioral case.
-
-    The stimulus is a BOOTP/DHCPv4 Request (message type 3) built by libcrafter and
-    sent from the DHCPv4 client port (68) to the server port (67) against a
-    controlled DHCPv4 responder on a private L2 lab segment. Unlike the
-    ``dhcpv4-request-ack`` Request, the requested-IP option (50) names an address
-    *outside* the responder's controlled lease pool: the responder's pool lives in
-    ``198.51.100.0/24`` (the address it would otherwise commit), while the
-    requested address is placed in a different documentation subnet
-    (``192.0.2.0/24``) that the server does not serve. RFC 2131 section 4.3.2 says
-    that when the address the client asks for is invalid or unacceptable the server
-    refuses the binding with a DHCPNAK (message type 6). The Request still names
-    the chosen server in the server-identifier option (54) and echoes the
-    transaction id (xid) and client hardware address (chaddr).
-
-    The controlled responder answers with a Nak (message type 6). RFC 2131 section
-    4.3.2 and table 3 say a DHCPNAK is a BOOTREPLY that refuses the request: it
-    carries no allocation (``yiaddr`` is 0.0.0.0), grants no lease (no
-    IP-address-lease-time option 51), names the responding server in the
-    server-identifier option (54), and MAY include a text message option (56)
-    explaining the refusal (RFC 2132 section 9.9).
-
-    The validation contract covers the decoded UDP/BOOTP/DHCPv4 response: the BOOTP
-    opcode (reply), message type Nak, the echoed transaction id and client hardware
-    address, the server identifier, the optional message text, the response
-    direction (server -> client over ports 67 -> 68), and the two negative
-    invariants that distinguish a Nak from a lease Ack: ``yiaddr`` is zero (no
-    allocation) and there is no lease-time option. Addresses stay in documentation
-    space: the rejected requested address is in ``192.0.2.0/24`` and the lab
-    transport uses the private endpoint pair.
-    """
-
     digest = deterministic_bytes(case_name, profile, seed, sequence)
     stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
     client_mac = dhcpv4_client_mac(profile, seed, sequence)
     transaction_id = int.from_bytes(digest[0:4], "big") or 1
-    # DHCPv4 uses fixed privileged ports: client 68 -> server 67.
     source_port = 68
     destination_port = 67
-    # The client asks for an address the responder cannot grant: the responder
-    # serves the 198.51.100.0/24 pool, so a requested address in a *different*
-    # documentation subnet (192.0.2.0/24) is invalid for this server and triggers a
-    # DHCPNAK (RFC 2131 section 4.3.2).
     requested_ipv4 = f"192.0.2.{1 + digest[4] % 250}"
     server_identifier = target_ipv4
-    # RFC 2132 section 9.9: the optional DHCPv4 message option (56) the responder
-    # returns to explain the refusal.
-    message_text = (
-        f"requested address {requested_ipv4} is not on this network "
-        f"({profile}:{seed}:{sequence})"
-    )
+    message_text = f"requested address {requested_ipv4} is not on this network ({profile}:{seed}:{sequence})"
     return {
         "schema_version": 1,
         "case": case_name,
@@ -1515,38 +872,15 @@ def _dhcpv4_request_nak_probe_plan(
         "destination_port": destination_port,
         "client_mac": client_mac,
         "transaction_id": transaction_id,
-        # The SELECTING/INIT-REBOOT-style Request names the address it wants in
-        # option 50 (invalid for this server) and the chosen server in option 54.
         "requested_ipv4": requested_ipv4,
         "server_identifier": server_identifier,
         "expected_message_type": "nak",
         "expected_message_type_value": 6,
-        # RFC 2131 section 4.3.2: a DHCPNAK allocates no address (yiaddr 0.0.0.0)
-        # and grants no lease (no option 51).
         "expected_yiaddr_zero": True,
         "expected_no_lease_time": True,
         "expected_server_identifier": server_identifier,
         "expected_message": message_text,
-        "target_service": {
-            "required": True,
-            "kind": "dhcpv4-responder",
-            "port": destination_port,
-            "client_port": source_port,
-            "client_mac": client_mac,
-            "transaction_id": transaction_id,
-            "requested_ipv4": requested_ipv4,
-            "server_identifier": server_identifier,
-            # The requested address is outside the served pool, so the responder
-            # refuses with a Nak rather than committing a binding.
-            "nak": True,
-            "yiaddr_zero": True,
-            "no_lease_time": True,
-            "message": message_text,
-        },
-        "capture_filter": (
-            f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} "
-            f"and src port {destination_port} and dst port {source_port}"
-        ),
+        "capture_filter": f"udp and src host {target_ipv4} and dst host {stimulus_ipv4} and src port {destination_port} and dst port {source_port}",
         "validation": {
             "source_ipv4": target_ipv4,
             "destination_ipv4": stimulus_ipv4,
@@ -1558,7 +892,6 @@ def _dhcpv4_request_nak_probe_plan(
             "message_type_value": 6,
             "transaction_id": transaction_id,
             "client_hardware_address": client_mac,
-            # The Nak allocates no address and grants no lease.
             "yiaddr_zero": True,
             "no_lease_time": True,
             "server_identifier": server_identifier,
@@ -1568,9 +901,6 @@ def _dhcpv4_request_nak_probe_plan(
     }
 
 
-# Map each DHCPv4 case name to its plan builder. ``planning.PLAN_BUILDERS`` merges
-# this via the registry and ``planning`` re-imports each builder so identity-based
-# tests compare the same function object.
 _DHCPV4_PLAN_BUILDERS: dict[str, object] = {
     "dhcpv4-discover-offer": _dhcpv4_discover_offer_probe_plan,
     "dhcpv4-request-ack": _dhcpv4_request_ack_probe_plan,
@@ -1583,9 +913,6 @@ _DHCPV4_PLAN_BUILDERS: dict[str, object] = {
     "dhcpv4-request-nak": _dhcpv4_request_nak_probe_plan,
     "dhcpv4-rapid-repeat": _dhcpv4_rapid_repeat_probe_plan,
 }
-
-
-# The ten DHCPv4 behavioral cases route through the stimulus endpoint adapter.
 _DHCPV4_STIMULUS_ENDPOINT_CASES: frozenset[str] = frozenset(
     {
         "dhcpv4-discover-offer",
@@ -1602,584 +929,18 @@ _DHCPV4_STIMULUS_ENDPOINT_CASES: frozenset[str] = frozenset(
 )
 
 
-# --------------------------------------------------------------------------- #
-# Target-service descriptor and case selector
-# --------------------------------------------------------------------------- #
-#
-# Probe cases that drive the controlled DHCPv4/BOOTP responder on a private L2
-# segment. ``dhcpv4-discover-offer`` is the baseline Discover->Offer case; the
-# later DHCPv4 behavioral cases reuse the same responder descriptor and target
-# setup. Providers without link-layer/broadcast capability skip these cases (the
-# descriptor records the link-layer requirement that gates them).
-_DHCPV4_RESPONDER_CASES: frozenset[str] = frozenset(
-    {
-        "dhcpv4-discover-offer",
-        "dhcpv4-request-ack",
-        "dhcpv4-client-identifier",
-        "dhcpv4-hostname",
-        "dhcpv4-parameter-request-list",
-        "dhcpv4-lease-time",
-        "dhcpv4-renewal-unicast-ack",
-        "dhcpv4-inform-ack",
-        "dhcpv4-request-nak",
-        "dhcpv4-rapid-repeat",
-    }
-)
-
-
-def dhcpv4_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
-    """Return the DHCPv4 probe plans in order."""
-
-    return [plan for plan in probe_plans if plan.get("case") in _DHCPV4_RESPONDER_CASES]
-
-
-def dhcpv4_responder_descriptor(
-    *,
-    bind_ipv4: str,
-    source_ipv4: str,
-    port: int,
-    artifact_root: str,
-) -> TargetServiceDescriptor:
-    """Describe the controlled DHCPv4/BOOTP responder on a private L2 segment.
-
-    DHCPv4 requires link-layer broadcast on a private lab network, so the
-    descriptor records the link-layer requirement that gates it.
-    """
-
-    # Imported lazily so the plugin module loads during ``protocols`` package
-    # auto-discovery without cycling through ``capabilities`` -> ``lab`` ->
-    # ``protocols``. The constants are plain skip-reason strings.
-    from ..capabilities import (
-        SKIP_REQUIRES_CONTROLLED_SERVICE,
-        SKIP_REQUIRES_LINK_LAYER,
-    )
-
-    return TargetServiceDescriptor(
-        name="dhcpv4-responder",
-        protocol="udp",
-        purpose="dhcpv4",
-        bind_ipv4=bind_ipv4,
-        source_ipv4=source_ipv4,
-        port=port,
-        requires=["python3", SKIP_REQUIRES_LINK_LAYER, SKIP_REQUIRES_CONTROLLED_SERVICE],
-        setup_commands=[
-            f"check udp port {bind_ipv4}:{port} is free",
-            f"start dhcpv4-responder.py on {bind_ipv4}:{port}",
-        ],
-        cleanup_commands=[
-            f"kill dhcpv4-responder on {bind_ipv4}:{port}",
-        ],
-        artifacts=[
-            posixpath.join(artifact_root, f"dhcpv4-responder-{port}.stdout.txt"),
-            posixpath.join(artifact_root, f"dhcpv4-responder-{port}.stderr.txt"),
-            posixpath.join(artifact_root, f"dhcpv4-responder-{port}.pid"),
-        ],
-        metadata={"runtime": "python3", "deterministic": True, "layer": "link"},
-    )
-
-
-def dhcpv4_target_service_contribution(
-    probe_plans: Sequence[JSONObject],
-    *,
-    dry_run: bool,
-) -> JSONObject:
-    """Return the DHCPv4 ``target_service_setup_plan`` contribution."""
-
-    dhcpv4_plans = dhcpv4_probe_plans(probe_plans)
-    dhcpv4_plans_by_port = plans_by_destination_port(dhcpv4_plans)
-    services = [
-        {
-            "name": "dhcpv4-responder",
-            "protocol": "udp",
-            "port": port,
-            "purpose": "dhcpv4",
-            "deterministic": True,
-            "request_count": sum(
-                probe_plan_send_count(plan)
-                for plan in dhcpv4_plans
-                if int(plan.get("destination_port", 0)) == port
-            ),
-            **target_service_address_fields(plan),
-            "log_paths": [
-                f"live-artifacts/probe/target-services/dhcpv4-responder-{port}.stdout.txt",
-                f"live-artifacts/probe/target-services/dhcpv4-responder-{port}.stderr.txt",
-            ],
-        }
-        for port, plan in dhcpv4_plans_by_port.items()
-    ]
-    return {
-        "services": services,
-        "starts_services": not dry_run and bool(dhcpv4_plans_by_port),
-    }
-
-
-# --------------------------------------------------------------------------- #
-# Target setup-script blocks
-# --------------------------------------------------------------------------- #
-#
-# The DHCPv4 setup-script contribution is split into a per-port UDP free check
-# and the responder heredoc + launch block. ``target_service_setup_script`` calls
-# these helpers directly because they need the materialized DHCPv4 plans.
-
-
-def dhcpv4_port_check_lines(dhcpv4_plans: Sequence[JSONObject]) -> list[str]:
-    """Render the DHCPv4 per-port UDP port-free check block.
-
-    Binds ``$dhcpv4_bind_ipv4:port`` to confirm the port is free before the
-    controlled responder starts.
-    """
-
-    dhcpv4_ports = dedupe_ints(
-        int(plan["destination_port"])
-        for plan in dhcpv4_plans
-        if isinstance(plan.get("destination_port"), int)
-    )
-    lines: list[str] = []
-    for port in dhcpv4_ports:
-        lines.extend(
-            [
-                "python3 - \"$dhcpv4_bind_ipv4\" \"$1\" <<'PY'".replace("$1", str(port)),
-                "import socket",
-                "import sys",
-                "bind_ip = sys.argv[1]",
-                "port = int(sys.argv[2])",
-                "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
-                "try:",
-                "    sock.bind((bind_ip, port))",
-                "except OSError as exc:",
-                "    print(f'udp port {bind_ip}:{port} is not free: {exc}', file=sys.stderr)",
-                "    sys.exit(1)",
-                "finally:",
-                "    sock.close()",
-                "PY",
-            ]
-        )
-    return lines
-
-
-def dhcpv4_responder_setup_lines(
-    *,
-    artifact_root: str,
-    dhcpv4_plans: Sequence[JSONObject],
-) -> list[str]:
-    """Render the DHCPv4 responder heredoc + launch block for the setup script.
-
-    The setup script writes the deterministic responder and launches one process
-    per DHCPv4 destination port.
-    """
-
-    dhcpv4_plan_json = json.dumps(list(dhcpv4_plans), sort_keys=True)
-    dhcpv4_ports = dedupe_ints(
-        int(plan["destination_port"])
-        for plan in dhcpv4_plans
-        if isinstance(plan.get("destination_port"), int)
-    )
-    lines: list[str] = []
-    if dhcpv4_ports:
-        plan_path = posixpath.join(artifact_root, "dhcpv4-plans.json")
-        service_path = posixpath.join(artifact_root, "dhcpv4-responder.py")
-        lines.extend(
-            [
-                f"cat > {shlex.quote(plan_path)} <<'JSON'",
-                dhcpv4_plan_json,
-                "JSON",
-                f"cat > {shlex.quote(service_path)} <<'PY'",
-                "import ipaddress",
-                "import json",
-                "import signal",
-                "import socket",
-                "import struct",
-                "import sys",
-                "import time",
-                "",
-                "stop = False",
-                "",
-                "def handle_stop(_signum, _frame):",
-                "    global stop",
-                "    stop = True",
-                "",
-                "signal.signal(signal.SIGTERM, handle_stop)",
-                "signal.signal(signal.SIGINT, handle_stop)",
-                "",
-                "plan_path, bind_ip, port_text = sys.argv[1:4]",
-                "port = int(port_text)",
-                "plans = json.load(open(plan_path, encoding='utf-8'))",
-                "entries = {}",
-                "entries_by_xid = {}",
-                "",
-                "def mac_normal(value):",
-                "    return str(value or '').lower()",
-                "",
-                "def mac_bytes(value):",
-                "    return bytes(int(part, 16) for part in mac_normal(value).split(':'))",
-                "",
-                "def ip_bytes(value):",
-                "    return ipaddress.IPv4Address(str(value)).packed",
-                "",
-                "def opt_u8(code, value):",
-                "    return bytes([code, 1, int(value) & 0xff])",
-                "",
-                "def opt_u32(code, value):",
-                "    return bytes([code, 4]) + struct.pack('!I', int(value) & 0xffffffff)",
-                "",
-                "def opt_ip(code, value):",
-                "    return bytes([code, 4]) + ip_bytes(value)",
-                "",
-                "def opt_bytes(code, data):",
-                "    return bytes([code, len(data)]) + data",
-                "",
-                "def opt_text(code, value):",
-                "    raw = str(value).encode('utf-8')",
-                "    if len(raw) > 255:",
-                "        raise ValueError(f'dhcpv4 option {code} text is too long')",
-                "    return opt_bytes(code, raw)",
-                "",
-                "def entry_from(raw, parent=None):",
-                "    parent = parent or {}",
-                "    xid = int(raw.get('transaction_id') or parent.get('transaction_id'))",
-                "    client_mac = mac_normal(raw.get('client_mac') or parent.get('client_mac'))",
-                "    message_type = int(",
-                "        raw.get('expected_message_type_value')",
-                "        or parent.get('expected_message_type_value')",
-                "        or (6 if raw.get('expected_message') or raw.get('message') else 2)",
-                "    )",
-                "    yiaddr = '0.0.0.0' if (raw.get('expected_yiaddr_zero') or raw.get('yiaddr_zero')) else str(",
-                "        raw.get('expected_yiaddr') or raw.get('yiaddr') or parent.get('expected_yiaddr') or '0.0.0.0'",
-                "    )",
-                "    return {",
-                "        'transaction_id': xid,",
-                "        'client_mac': client_mac,",
-                "        'message_type': message_type,",
-                "        'yiaddr': yiaddr,",
-                "        'server_identifier': str(",
-                "            raw.get('expected_server_identifier')",
-                "            or raw.get('server_identifier')",
-                "            or parent.get('expected_server_identifier')",
-                "            or bind_ip",
-                "        ),",
-                "        'subnet_mask': raw.get('expected_subnet_mask') or raw.get('subnet_mask') or parent.get('expected_subnet_mask'),",
-                "        'router_ipv4': raw.get('expected_router_ipv4') or raw.get('router_ipv4') or parent.get('expected_router_ipv4'),",
-                "        'dns_ipv4': raw.get('expected_dns_ipv4') or raw.get('dns_ipv4') or parent.get('expected_dns_ipv4'),",
-                "        'lease_time': raw.get('expected_lease_time') or raw.get('lease_time') or parent.get('expected_lease_time'),",
-                "        'renewal_time': raw.get('expected_renewal_time') or raw.get('renewal_time') or parent.get('expected_renewal_time'),",
-                "        'rebinding_time': raw.get('expected_rebinding_time') or raw.get('rebinding_time') or parent.get('expected_rebinding_time'),",
-                "        'no_lease_time': bool(raw.get('expected_no_lease_time') or raw.get('no_lease_time')),",
-                "        'client_identifier_hex': raw.get('expected_client_identifier_hex') or raw.get('client_identifier_hex') or parent.get('expected_client_identifier_hex'),",
-                "        'hostname': raw.get('expected_hostname') or raw.get('hostname') or parent.get('expected_hostname'),",
-                "        'message': raw.get('expected_message') or raw.get('message') or parent.get('expected_message'),",
-                "    }",
-                "",
-                "def register(raw, parent=None):",
-                "    entry = entry_from(raw, parent)",
-                "    key = (entry['transaction_id'], entry['client_mac'])",
-                "    entries[key] = entry",
-                "    entries_by_xid.setdefault(entry['transaction_id'], entry)",
-                "",
-                "for plan in plans:",
-                "    register(plan)",
-                "    sends = plan.get('dhcpv4_sends')",
-                "    if isinstance(sends, list):",
-                "        for send in sends:",
-                "            register(send, plan)",
-                "",
-                "def response_for(request):",
-                "    if len(request) < 240:",
-                "        raise ValueError('dhcpv4 request shorter than bootp header')",
-                "    xid = struct.unpack('!I', request[4:8])[0]",
-                "    chaddr = request[28:44]",
-                "    client_mac = ':'.join(f'{octet:02x}' for octet in chaddr[:6])",
-                "    entry = entries.get((xid, client_mac)) or entries_by_xid.get(xid)",
-                "    if entry is None:",
-                "        raise ValueError(f'no planned dhcpv4 response for xid {xid} client {client_mac}')",
-                "    server_ip = ip_bytes(entry['server_identifier'])",
-                "    yiaddr = ip_bytes(entry['yiaddr'])",
-                "    ciaddr = request[12:16]",
-                "    header = struct.pack(",
-                "        '!BBBBIHH4s4s4s4s16s64s128s',",
-                "        2,",
-                "        1,",
-                "        6,",
-                "        0,",
-                "        xid,",
-                "        0,",
-                "        0,",
-                "        ciaddr,",
-                "        yiaddr,",
-                "        server_ip,",
-                "        b'\\x00' * 4,",
-                "        chaddr,",
-                "        b'\\x00' * 64,",
-                "        b'\\x00' * 128,",
-                "    )",
-                "    options = bytearray(b'\\x63\\x82\\x53\\x63')",
-                "    options.extend(opt_u8(53, entry['message_type']))",
-                "    options.extend(opt_ip(54, entry['server_identifier']))",
-                "    if entry.get('subnet_mask'):",
-                "        options.extend(opt_ip(1, entry['subnet_mask']))",
-                "    if entry.get('router_ipv4'):",
-                "        options.extend(opt_ip(3, entry['router_ipv4']))",
-                "    if entry.get('dns_ipv4'):",
-                "        options.extend(opt_ip(6, entry['dns_ipv4']))",
-                "    if entry.get('lease_time') is not None and not entry.get('no_lease_time'):",
-                "        options.extend(opt_u32(51, entry['lease_time']))",
-                "    if entry.get('renewal_time') is not None:",
-                "        options.extend(opt_u32(58, entry['renewal_time']))",
-                "    if entry.get('rebinding_time') is not None:",
-                "        options.extend(opt_u32(59, entry['rebinding_time']))",
-                "    if entry.get('client_identifier_hex'):",
-                "        options.extend(opt_bytes(61, bytes.fromhex(str(entry['client_identifier_hex']))))",
-                "    if entry.get('hostname'):",
-                "        options.extend(opt_text(12, entry['hostname']))",
-                "    if entry.get('message'):",
-                "        options.extend(opt_text(56, entry['message']))",
-                "    options.append(255)",
-                "    return header + bytes(options), entry",
-                "",
-                "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
-                "sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)",
-                "sock.bind((bind_ip, port))",
-                "sock.settimeout(1.0)",
-                "print(json.dumps({'event': 'listening', 'bind_ip': bind_ip, 'port': port, 'planned_responses': len(entries)}), flush=True)",
-                "while not stop:",
-                "    try:",
-                "        data, addr = sock.recvfrom(4096)",
-                "    except socket.timeout:",
-                "        continue",
-                "    try:",
-                "        response, entry = response_for(data)",
-                "        sock.sendto(response, (addr[0], 68))",
-                "        print(json.dumps({'event': 'answered', 'client': addr[0], 'client_port': addr[1], 'transaction_id': entry['transaction_id'], 'message_type': entry['message_type']}, sort_keys=True), flush=True)",
-                "    except Exception as exc:",
-                "        print(json.dumps({'event': 'error', 'client': addr[0], 'error': str(exc)}), file=sys.stderr, flush=True)",
-                "sock.close()",
-                "print(json.dumps({'event': 'stopped', 'ts': time.time()}), flush=True)",
-                "PY",
-            ]
-        )
-    for port in dhcpv4_ports:
-        stdout_path = posixpath.join(artifact_root, f"dhcpv4-responder-{port}.stdout.txt")
-        stderr_path = posixpath.join(artifact_root, f"dhcpv4-responder-{port}.stderr.txt")
-        pid_path = posixpath.join(artifact_root, f"dhcpv4-responder-{port}.pid")
-        lines.extend(
-            [
-                f"check_udp_port_free \"$dhcpv4_bind_ipv4\" {port}",
-                (
-                    f"python3 {shlex.quote(posixpath.join(artifact_root, 'dhcpv4-responder.py'))} "
-                    f"{shlex.quote(posixpath.join(artifact_root, 'dhcpv4-plans.json'))} "
-                    f"\"$dhcpv4_bind_ipv4\" {port} "
-                    f">{shlex.quote(stdout_path)} 2>{shlex.quote(stderr_path)} &"
-                ),
-                "pid=$!",
-                f"echo \"$pid\" > {shlex.quote(pid_path)}",
-                "printf '%s\\n' \"kill $pid 2>/dev/null || true\" >> \"$cleanup\"",
-                f"printf '%s\\n' \"rm -f {shlex.quote(pid_path)}\" >> \"$cleanup\"",
-                "sleep 0.5",
-                "if ! kill -0 \"$pid\" 2>/dev/null; then",
-                f"  cat {shlex.quote(stderr_path)} >&2 || true",
-                f"  echo dhcpv4_responder_{port}=failed >&2",
-                "  exit 73",
-                "fi",
-                f"echo dhcpv4_responder_{port}=running",
-            ]
-        )
-    return lines
-
-
-# --------------------------------------------------------------------------- #
-# Live-path address rewrite
-# --------------------------------------------------------------------------- #
-#
-# Every DHCPv4 behavioral case carries the DHCPv4-specific rewrite plus the
-# shared transport-IPv4 pre-sets and the shared IPv4-layer tail.
-
-
-def dhcpv4_rewrite_endpoint_addresses(
-    plan: JSONObject,
-    *,
-    source_ipv4: str,
-    target_ipv4: str,
-    source_mac: str | None = None,
-    target_mac: str | None = None,
-    target_interface: str | None = None,
-    rewrite_source: str = "wire_endpoint_plan",
-) -> JSONObject:
-    """Rewrite a DHCPv4 probe plan onto the live lab-segment addresses.
-
-    DHCPv4 uses fixed privileged ports (client 68 -> server 67). The Offer/Ack
-    flows from the responder (target) back to the client (stimulus); the server
-    identifier names the responder, so it follows the target address onto the lab
-    segment. For a SELECTING-state Request the client also names the chosen server
-    (option 54), so the stimulus server identifier is rewritten to the target as
-    well. A RENEWING-state renewal Request (``dhcpv4-renewal-unicast-ack``) is
-    unicast directly to the leasing server and carries no server-identifier (54)
-    option, so the rewrite only touches the stimulus server identifier when one
-    is present. The client identifier (option 61), the hostname (option 12), and
-    the already-bound client address (ciaddr) are opaque identities or
-    documentation-space leases that carry no transport IP, so they stay
-    unchanged across the lab-segment rewrite.
-    """
-
-    updated = dict(plan)
-    updated["source_ipv4"] = source_ipv4
-    updated["destination_ipv4"] = target_ipv4
-    updated["expected_reply_source_ipv4"] = target_ipv4
-    updated["expected_reply_destination_ipv4"] = source_ipv4
-    case_name = str(updated.get("case", ""))
-    source_port = int(updated.get("source_port", 68))
-    destination_port = int(updated.get("destination_port", 67))
-    updated["capture_filter"] = (
-        f"udp and src host {target_ipv4} and dst host {source_ipv4} "
-        f"and src port {destination_port} and dst port {source_port}"
-    )
-    updated["expected_server_identifier"] = target_ipv4
-    if "server_identifier" in updated:
-        updated["server_identifier"] = target_ipv4
-    target_service = dict(
-        json_object(updated.get("target_service", {}), "probe_plan.target_service")
-    )
-    target_service.update(
-        {
-            "bind_ipv4": target_ipv4,
-            "port": destination_port,
-            "source_ipv4": source_ipv4,
-            "server_identifier": target_ipv4,
-        }
-    )
-    updated["target_service"] = target_service
-    # dhcpv4-rapid-repeat carries a per-send array: rewrite each send's transport
-    # addresses, capture filter, server identifier (option 54), and validation
-    # onto the lab segment so every Discover->Offer send is matched against its
-    # own Offer (its own xid/chaddr) and never confused with the sibling send.
-    # Each send keeps its distinct transaction id, client MAC, and offered
-    # address (those are per-send identities, not transport IPs).
-    dhcpv4_sends = updated.get("dhcpv4_sends")
-    if isinstance(dhcpv4_sends, list):
-        rewritten_dhcpv4_sends: list[JSONObject] = []
-        for raw_send in dhcpv4_sends:
-            send = dict(json_object(raw_send, "probe_plan.dhcpv4_send"))
-            send_source_port = int(send.get("source_port", 68))
-            send_destination_port = int(send.get("destination_port", 67))
-            send["source_ipv4"] = source_ipv4
-            send["destination_ipv4"] = target_ipv4
-            send["expected_reply_source_ipv4"] = target_ipv4
-            send["expected_reply_destination_ipv4"] = source_ipv4
-            send["expected_server_identifier"] = target_ipv4
-            send["capture_filter"] = (
-                f"udp and src host {target_ipv4} and dst host {source_ipv4} "
-                f"and src port {send_destination_port} and dst port {send_source_port}"
-            )
-            send_target_service = dict(
-                json_object(
-                    send.get("target_service", {}), "probe_plan.dhcpv4_send.target_service"
-                )
-            )
-            send_target_service.update(
-                {
-                    "bind_ipv4": target_ipv4,
-                    "port": send_destination_port,
-                    "source_ipv4": source_ipv4,
-                    "server_identifier": target_ipv4,
-                }
-            )
-            send["target_service"] = send_target_service
-            send_validation = dict(
-                json_object(send.get("validation", {}), "probe_plan.dhcpv4_send.validation")
-            )
-            send_validation["source_ipv4"] = target_ipv4
-            send_validation["destination_ipv4"] = source_ipv4
-            send_validation["server_identifier"] = target_ipv4
-            send["validation"] = send_validation
-            rewritten_dhcpv4_sends.append(send)
-        updated["dhcpv4_sends"] = rewritten_dhcpv4_sends
-    dhcpv4_validation = dict(
-        json_object(updated.get("validation", {}), "probe_plan.validation")
-    )
-    dhcpv4_validation["server_identifier"] = target_ipv4
-    updated["validation"] = dhcpv4_validation
-    return apply_shared_ipv4_rewrite_tail(
-        updated,
-        case_name=case_name,
-        source_ipv4=source_ipv4,
-        target_ipv4=target_ipv4,
-        rewrite_source=rewrite_source,
-    )
-
-
-# --------------------------------------------------------------------------- #
-# Failure-reason taxonomy
-# --------------------------------------------------------------------------- #
-
-
 def dhcpv4_failure_reasons(case_name: str) -> list[str] | None:
-    """Return the ordered DHCPv4 failure-reason taxonomy for ``case_name``.
-
-    Returns ``None`` for a non-matching case so the central dispatcher falls
-    through to the next protocol branch.
-    """
-
-    if case_name in _DHCPV4_RESPONDER_CASES:
-        return [
-            FAILURE_TIMEOUT,
-            FAILURE_WRONG_PEER,
-            FAILURE_WRONG_PAYLOAD,
-            FAILURE_WRONG_FLAGS,
-            FAILURE_DECODE_FAILED,
-            FAILURE_TARGET_SETUP_FAILED,
-        ]
     return None
-
-
-# --------------------------------------------------------------------------- #
-# Lab-capability derivation
-# --------------------------------------------------------------------------- #
-
-
-def dhcpv4_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, object]:
-    """Return the DHCPv4 plugin's derived probe-capability contribution.
-
-    The controlled DHCPv4 responder needs an IPv4-unicast substrate that can host
-    a controlled service and a link-layer segment carrying broadcast.
-    """
-
-    ipv4_unicast = capability(substrate, "ipv4_unicast", "ipv4")
-    controlled_services = capability(
-        substrate,
-        "controlled_services",
-        "controlled_service",
-    )
-    link_layer_send = capability(substrate, "link_layer_send")
-    link_layer_capture = capability(substrate, "link_layer_capture")
-    broadcast = capability(substrate, "broadcast")
-    return {
-        "dhcpv4_service": (
-            ipv4_unicast
-            and controlled_services
-            and link_layer_send
-            and link_layer_capture
-            and broadcast
-        ),
-    }
 
 
 register(
     ProtocolPlugin(
         name="dhcpv4",
-        # The ten DHCPv4 behavioral cases in declaration order.
         cases=BEHAVIOR_DHCPV4_CASES,
         plan_builders=_DHCPV4_PLAN_BUILDERS,
-        # DHCPv4 carries no planned-only cases (every builder materializes a plan).
         planned_only_cases=frozenset(),
-        # ``cases.py`` owns DHCPv4's behavior-profile placement to preserve
-        # deterministic cross-protocol ordering. Contribute nothing here.
         profile_counts={},
         stimulus_endpoint_cases=_DHCPV4_STIMULUS_ENDPOINT_CASES,
-        # The setup-script blocks need the materialized DHCPv4 plans, which the
-        # generic plugin ``setup_script`` hook does not receive, so
-        # ``target_services.target_service_setup_script`` renders them directly.
-        target_service=dhcpv4_target_service_contribution,
-        setup_script=None,
-        rewrite_endpoint_addresses=dhcpv4_rewrite_endpoint_addresses,
         failure_reasons=dhcpv4_failure_reasons,
-        lab_capabilities=dhcpv4_lab_capabilities,
     )
 )

@@ -14,8 +14,8 @@ use std::time::Duration;
 
 use crate::common::{
     captured_data, decoded_packet_json, failed_outcome, hex_bytes, observed_response,
-    open_capture_sniffer, plan_json, required_str, required_u16, send_report_json,
-    target_service_json, CandidateValidation, ExampleResult, ProbeOutcome, ProbePlan,
+    open_capture_sniffer, peer_contract_json, plan_json, required_str, required_u16,
+    send_report_json, CandidateValidation, ExampleResult, ProbeOutcome, ProbePlan,
     StimulusEndpointRequest, FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD,
     FAILURE_WRONG_PEER,
 };
@@ -52,7 +52,7 @@ pub fn run_mdns_dry_run(
             "mdns": mdns_json_from_plan(plan)?,
             "expected_mdns": expected_mdns_json(plan),
             "capture_filter": filter,
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }),
     );
     let result = json!({
@@ -71,7 +71,7 @@ pub fn run_mdns_dry_run(
             "mdns": mdns_json_from_plan(plan)?,
             "expected_mdns": expected_mdns_json(plan),
             "capture_filter": filter,
-            "target_service": target_service_json(plan),
+            "peer_contract": peer_contract_json(plan),
         }
     });
     Ok(ProbeOutcome {
@@ -1470,7 +1470,7 @@ mod tests {
                 "additional": []
             },
             "expected_mdns": expected_response(),
-            "target_service": {
+            "peer_contract": {
                 "required": true,
                 "kind": "mdns-controlled-responder",
                 "protocol": "udp",
@@ -1483,7 +1483,6 @@ mod tests {
         });
         let plan: ProbePlan = serde_json::from_value(plan_json).unwrap();
         let request = StimulusEndpointRequest {
-            provider: "local-dry-run".to_string(),
             profile: "mdns-smoke".to_string(),
             seed: 5353,
             endpoint_role: "stimulus".to_string(),
@@ -1504,7 +1503,7 @@ mod tests {
             "_ipp._tcp.local."
         );
         assert_eq!(
-            outcome.result["metadata"]["target_service"]["kind"],
+            outcome.result["metadata"]["peer_contract"]["kind"],
             "mdns-controlled-responder"
         );
     }

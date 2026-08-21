@@ -565,7 +565,7 @@ pub enum PacketOrigin {
     Unknown,
     /// Created locally by caller code.
     Generated,
-    /// Captured from a file, interface, or provider endpoint.
+    /// Captured from a file, interface, or external endpoint.
     Captured,
     /// Produced by a transform from one or more input records.
     Transformed,
@@ -585,7 +585,7 @@ pub enum BackendKind {
     PcapInterface,
     /// Raw socket send or receive backend.
     RawSocket,
-    /// Provider-backed endpoint backend.
+    /// Caller-operated external endpoint backend.
     Endpoint,
     /// WHAD Bluetooth radio backend.
     Whad,

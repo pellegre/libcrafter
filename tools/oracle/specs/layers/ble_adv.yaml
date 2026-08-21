@@ -11,8 +11,6 @@ supported_directions:
   - backend_to_libcrafter
   - libcrafter_to_backend
   - roundtrip
-live_eligibility: false
-live_gate: whad_backend_not_yet_available
 
 fields:
   - name: pdu_type

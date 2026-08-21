@@ -23,14 +23,6 @@ unsupported_parents:
   - tcp
   - dns_over_tcp
   - resolver_cache
-live_eligibility: provider_gated
-live_gate: confirm_live_run_provider_lab_only
-live_defaults:
-  default_mode: dry_run
-  allowed_without_confirmation: false
-  developer_host_raw_send: false
-  provider_required: true
-
 fields:
   - name: transport
     type: udp_service
@@ -206,9 +198,8 @@ notes:
     libcrafter re-encodes names uncompressed. Strict byte equality is required
     only for uncompressed deterministic packet shapes.
   - >-
-    Live exchange remains provider-gated and is not authorized by these specs.
-    Offline and pcap paths use documentation addresses and synthetic local
-    names only.
+    These specs do not authorize live exchange. Offline and pcap paths use
+    documentation addresses and synthetic local names only.
 
 backend_support:
   scapy:

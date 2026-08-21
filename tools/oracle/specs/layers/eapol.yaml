@@ -14,8 +14,6 @@ supported_directions:
   - backend_to_libcrafter
   - libcrafter_to_backend
   - roundtrip
-live_eligibility: false
-live_gate: inherited_from_dot11_radiotap
 
 fields:
   - name: version

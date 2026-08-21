@@ -23,7 +23,7 @@ packet primitive.
 | UDP dispatch | Supported | UDP/1900 payloads decode as SSDP only when the conservative HTTP-like shape gate accepts them; unrelated payloads remain `Raw`. |
 | Multicast helpers | Supported | IPv4 and IPv6 helper functions build documentation-safe multicast packet stacks with source-backed defaults and explicit override variants. |
 | Pcap fixtures | Supported | Synthetic RawIp and Ethernet classic pcap fixtures validate offline read, decode, and write round trips. |
-| Live behavior | Out of crate scope | Use offline fixtures, dry-run plans, oracle/probe dry-runs, or protected provider-backed labs. |
+| Live behavior | Out of crate scope | Use offline fixtures, dry-run plans, oracle/probe dry-runs, or protected externally executed labs. |
 
 ## Public API
 
@@ -172,75 +172,24 @@ fn main() -> crafter::Result<()> {
 
 Offline round-trip tests also write SSDP packets through the pcap writer and
 read them back through `PacketWire`. Keep new fixture data deterministic and
-synthetic; do not promote provider artifacts, public endpoint addresses, host
+synthetic; do not promote external run artifacts, public addresses, host
 identifiers, credentials, or sensitive packet captures into tracked files.
 
-## Dry-Run First
+## Validation And External Execution Boundary
 
-Examples and generated tools should default to offline construction, decode, pcap
-fixtures, or dry-run send plans. Use documentation addresses and synthetic
-device identifiers:
-
-```rust
-use crafter::prelude::*;
-use std::net::{Ipv4Addr, Ipv6Addr};
-
-fn main() -> crafter::Result<()> {
-    let ipv4_search = ssdp_ipv4_multicast_packet(
-        Ipv4Addr::new(192, 0, 2, 10),
-        Ssdp::m_search_all().mx(1),
-    );
-    let ipv6_search = ssdp_ipv6_multicast_packet(
-        Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 10),
-        Ssdp::m_search()
-            .host(SSDP_IPV6_SITE_LOCAL_HOST)
-            .man_discover()
-            .mx(1)
-            .search_target(SSDP_ST_ALL),
-    );
-
-    let ipv4_plan = ipv4_search.send_dry_run(
-        SendOptions::new().iface("dry-run0").network_layer(),
-    )?;
-    let ipv6_plan = ipv6_search.send_dry_run(
-        SendOptions::new().iface("dry-run0").network_layer(),
-    )?;
-
-    println!("mode: dry-run");
-    println!("ipv4 target: {:?}", ipv4_plan.target());
-    println!("ipv4 bytes: {}", ipv4_plan.len());
-    println!("ipv6 target: {:?}", ipv6_plan.target());
-    println!("ipv6 bytes: {}", ipv6_plan.len());
-    Ok(())
-}
-```
-
-The `ssdp_search_plan` example builds IPv4 and IPv6 M-SEARCH packets and
-inspects dry-run network-layer send plans only:
+Use the tracked deterministic validation surfaces first:
 
 ```sh
-cargo run -p crafter --example ssdp_search_plan -- --iface dry-run0
+tools/oracle/run offline --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
+tools/probe/run --profile smoke --seed 1 --count 10 --out target/probe/plan
 ```
 
-The `ssdp_notify` example compiles and decodes notification packets offline:
-
-```sh
-cargo run -p crafter --example ssdp_notify
-```
-
-Live SSDP validation belongs behind provider-backed endpoint, oracle, probe, or
-lab workflows. Start with dry-run commands and keep all generated artifacts
-under ignored `target/` paths:
-
-```sh
-tools/oracle/run live --backend <reference-backend> --provider local-dry-run --dry-run --family ssdp --profile smoke --seed 1905 --count 3 --out target/oracle/ssdp-live-local-dry-run
-
-python3 tools/probe/engine/run.py --protocol ssdp --provider local-dry-run --dry-run --case ssdp-live-ipv4-search-exchange --out target/probe/ssdp-dry-run
-```
-
-Do not send real multicast or unicast SSDP traffic from examples or default
-generated-tool paths. A real run requires an authorized provider-backed lab,
-explicit confirmation, artifact collection, and teardown.
+These commands do not select infrastructure or send packets. Any authorized use
+of concrete interfaces, peers, radios, or targets is owned by external operator
+tooling, which supplies runtime inputs and collects artifacts. libcrafter does
+not provision machines, configure responders, manage credentials, or perform
+remote cleanup.
 
 ## Non-Goals
 
@@ -256,5 +205,5 @@ not implement:
 - automatic live multicast traffic.
 
 Keep higher-level discovery behavior in generated tools that explicitly choose
-their targets, safety gates, retry policy, storage, and provider-backed live
+their targets, safety gates, retry policy, storage, and externally executed live
 environment.
