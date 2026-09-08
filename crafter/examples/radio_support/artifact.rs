@@ -36,6 +36,8 @@ impl From<&RxConfig> for Config {
         }
     }
 }
+pub const MAX_EXAMPLE_BUFFER_SAMPLES: usize = 16_777_216;
+
 impl Config {
     pub fn rx(&self) -> Result<RxConfig> {
         let c = RxConfig {
@@ -51,7 +53,7 @@ impl Config {
         c.validate()?;
         // Example-side limits keep untrusted artifact metadata from requesting huge allocations.
         if c.max_chunk_samples > 262_144
-            || c.max_buffer_samples > 4_194_304
+            || c.max_buffer_samples > MAX_EXAMPLE_BUFFER_SAMPLES
             || c.max_frame_bytes > 4095
             || c.max_pending_frames > 1024
         {
