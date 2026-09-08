@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "generator_version": "3",
-  "generator_sha256": "4044b9f2a841773671e1abe65d41254cf02ed70bc896331b9fcfaf17a71036ae",
+  "generator_version": "4",
+  "generator_sha256": "e422b195f2a25c12078bfadada769abf84238719ffc724d4c4497ec6ea5093f5",
   "format": "cs8",
   "sample_rate_hz": 20000000,
   "source": "IEEE Std 802.11-2007",
@@ -27,7 +27,8 @@
         "phase_rad": 0.4,
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
-        "nonzero_pad": false
+        "nonzero_pad": false,
+        "delayed_path": null
       }
     },
     {
@@ -51,7 +52,8 @@
         "phase_rad": 0.4,
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
-        "nonzero_pad": false
+        "nonzero_pad": false,
+        "delayed_path": null
       }
     },
     {
@@ -75,7 +77,8 @@
         "phase_rad": 0.4,
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
-        "nonzero_pad": false
+        "nonzero_pad": false,
+        "delayed_path": null
       }
     },
     {
@@ -99,7 +102,8 @@
         "phase_rad": 0.4,
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
-        "nonzero_pad": false
+        "nonzero_pad": false,
+        "delayed_path": null
       }
     },
     {
@@ -123,7 +127,8 @@
         "phase_rad": 0.4,
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
-        "nonzero_pad": false
+        "nonzero_pad": false,
+        "delayed_path": null
       }
     },
     {
@@ -147,7 +152,8 @@
         "phase_rad": 0.4,
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
-        "nonzero_pad": false
+        "nonzero_pad": false,
+        "delayed_path": null
       }
     },
     {
@@ -171,7 +177,8 @@
         "phase_rad": 0.4,
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
-        "nonzero_pad": false
+        "nonzero_pad": false,
+        "delayed_path": null
       }
     },
     {
@@ -195,7 +202,8 @@
         "phase_rad": 0.4,
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
-        "nonzero_pad": false
+        "nonzero_pad": false,
+        "delayed_path": null
       }
     },
     {
@@ -219,7 +227,8 @@
         "phase_rad": 0.4,
         "uniform_noise_amplitude": 0.003,
         "noise_seed": 12345,
-        "nonzero_pad": false
+        "nonzero_pad": false,
+        "delayed_path": null
       }
     },
     {
@@ -243,7 +252,38 @@
         "phase_rad": 0.4,
         "uniform_noise_amplitude": 0.06,
         "noise_seed": 12345,
-        "nonzero_pad": false
+        "nonzero_pad": false,
+        "delayed_path": null
+      }
+    },
+    {
+      "name": "ofdm-6-strong_multipath",
+      "rate_mbps": 6,
+      "nbpsc": 1,
+      "ndbps": 24,
+      "nsym": 21,
+      "seed": 93,
+      "sample_count": 2149,
+      "preamble_start": 37,
+      "signal_start": 357,
+      "data_start": 437,
+      "frame_end": 2117,
+      "psdu_hex": "080000000200000000010200000000020200000000030000aaaa030000000800450000170001000040fd8db2c0000201c6336402000102fb56c32d",
+      "sha256": "e12a3f742012780a6d8f1f251920c9862ce7dadaffa74576db013a313839e843",
+      "fcs_valid": true,
+      "expected": "frame",
+      "impairment": {
+        "cfo_hz": 0,
+        "phase_rad": 0.4,
+        "uniform_noise_amplitude": 0,
+        "noise_seed": 12345,
+        "nonzero_pad": false,
+        "delayed_path": {
+          "delay_samples": 4,
+          "amplitude": 0.9,
+          "phase_rad": 0.7,
+          "scale": 0.5
+        }
       }
     },
     {
@@ -267,7 +307,8 @@
         "phase_rad": 0.4,
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
-        "nonzero_pad": true
+        "nonzero_pad": true,
+        "delayed_path": null
       }
     },
     {
@@ -291,7 +332,8 @@
         "phase_rad": 0.4,
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
-        "nonzero_pad": false
+        "nonzero_pad": false,
+        "delayed_path": null
       }
     },
     {
@@ -315,7 +357,8 @@
         "phase_rad": 0.4,
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
-        "nonzero_pad": false
+        "nonzero_pad": false,
+        "delayed_path": null
       }
     },
     {
@@ -339,7 +382,8 @@
         "phase_rad": 0.4,
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
-        "nonzero_pad": false
+        "nonzero_pad": false,
+        "delayed_path": null
       }
     },
     {
@@ -363,7 +407,8 @@
         "phase_rad": 0.4,
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
-        "nonzero_pad": false
+        "nonzero_pad": false,
+        "delayed_path": null
       }
     },
     {
@@ -387,7 +432,8 @@
         "phase_rad": 0.4,
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
-        "nonzero_pad": false
+        "nonzero_pad": false,
+        "delayed_path": null
       }
     },
     {
@@ -411,7 +457,8 @@
         "phase_rad": 0.4,
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
-        "nonzero_pad": false
+        "nonzero_pad": false,
+        "delayed_path": null
       }
     },
     {
@@ -435,7 +482,8 @@
         "phase_rad": 0.4,
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
-        "nonzero_pad": false
+        "nonzero_pad": false,
+        "delayed_path": null
       }
     }
   ]
