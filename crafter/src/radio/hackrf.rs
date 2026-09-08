@@ -180,13 +180,16 @@ impl Shared {
                     s.stop = true;
                 }
             }
-            _ => {
+            failure => {
                 Self::discard_pending(&mut s);
                 Self::gap(&mut s, GapReason::SourceLoss);
                 if s.fault.is_none() {
-                    s.fault = Some(RadioError::Source(
-                        "HackRF continuity counters changed or unavailable".into(),
-                    ));
+                    s.fault = Some(match failure {
+                        Ok((shortfalls, longest)) => RadioError::Source(format!(
+                            "HackRF continuity counters changed (shortfalls={shortfalls}, longest_shortfall={longest})"
+                        )),
+                        Err(error) => error,
+                    });
                 }
                 s.stop = true;
             }
@@ -507,6 +510,11 @@ mod tests {
             };
             assert_eq!(c.cs8(), &[1; 8]);
             let e = s.next_event().unwrap_err();
+            if mode == 4 {
+                assert!(e.to_string().contains("shortfalls=1, longest_shortfall=0"));
+            } else {
+                assert_eq!(e, RadioError::Source("mock unavailable".into()));
+            }
             assert_eq!(e, s.next_event().unwrap_err());
             assert_eq!(s.stats().verified_samples, 4);
             assert_eq!(s.stats().discarded_samples, 4);
