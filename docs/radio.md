@@ -177,9 +177,9 @@ cargo run -p crafter --features radio --example radio_receive
 cargo run -p crafter --features radio --example radio_receive -- --replay samples.cs8
 ```
 
-The replay example assumes 20 Msps, has a one-second/20-million-sample bound and
-uses the documented example frequency; use `ReaderIqSource` directly for other
-metadata or limits. Live invocation requires every operator setting explicitly:
+Raw replay defaults to 20 Msps, one second and 20 million samples at the
+documented example frequency. `--replay FILE HZ SECONDS MAX_SAMPLES` supplies
+explicit frequency and longer bounds. Live invocation requires every setting explicitly:
 
 ```text
 cargo run -p crafter --features radio-hackrf --example radio_receive -- \
@@ -190,3 +190,102 @@ For the initial 20 Msps OFDM scope, set `FILTER_HZ` explicitly to `20000000`.
 The source can outpace the synchronous decoder; increase the explicit buffer
 bound in operator code only within an appropriate finite memory budget. Actual
 live decoder throughput and receiver agreement require separate qualification.
+
+
+## Local artifact and comparison schema v1
+
+`radio_receive` writes newline-terminated JSON records with a first `header`
+record whose `schema` is `crafter.radio.receive/v1`. Example-local serde support
+keeps serialization out of the packet library. Config fields include frequency,
+sample rate, all allocation/sample bounds and `max_duration_ns`. Positions carry
+`epoch`, `sequence`, `sample_index`, nullable `anchor` (sample index, Unix
+nanoseconds, uncertainty nanoseconds), nullable `gap_reason` and nullable
+`lost_samples` (null means unknown when a gap exists).
+
+Records are ordered: header, verified `chunk`/`frame`/`parser_error` events,
+`terminal`, `summary`, and an optional live `acquisition` record. Each chunk
+records config, position, sample count, verified-prefix status and a nullable
+software time bracket. Each frame records original FCS-bearing MAC hex, ordinal,
+legacy PHY rate, integrity state, config, start position, exclusive sample end
+and diagnostics. Frame output occurs before packet parsing. Parser failures are
+recorded and consumption continues; PHY/FCS rejection counters remain separate.
+The summary records terminal/error state and decoder counters. Acquisition adds
+received, verified and discarded sample counts, overflows, unknown loss intervals
+and explicit RF settings. Failed capture summaries are never accepted as complete
+comparison input. A missing terminal or summary is an incomplete artifact.
+
+Append `--save-iq NEW_FILE` to a receive/replay invocation to create an optional
+IQ JSONL artifact without overwriting an existing file. It uses the same header
+and chunk vocabulary, adding `cs8_hex` to each verified chunk, followed by a
+terminal event. Its size is bounded by configured capture samples (hex uses four
+characters per complex sample, plus per-chunk metadata). Only the preverified
+prefix is saved. A source failure writes a `source_error` record instead of a
+successful terminal event; replay decodes the saved prefix and then reports that
+failure with `complete:false`. Missing terminal evidence also fails replay.
+Replay uses the full saved bounds, configuration and positions:
+
+```sh
+cargo run -p crafter --features radio --example radio_receive -- --save-iq saved-iq.jsonl
+cargo run -p crafter --features radio --example radio_receive -- --replay-artifact saved-iq.jsonl
+cargo run -p crafter --features radio --example radio_compare -- receive.jsonl reference.pcap policy.json
+```
+
+`policy.json` is an explicit, operator-recorded timing and eligibility contract:
+
+```json
+{
+  "schema": "crafter.radio.comparison-policy/v1",
+  "overlap_ns": [1000000000, 2000000000],
+  "hackrf_capture_ns": [900000000, 2100000000],
+  "reference_capture_ns": [900000000, 2100000000],
+  "center_frequency_hz": 2412000000,
+  "reference_uncertainty_ns": 1000000,
+  "match_window_ns": 1000000,
+  "anchors": [
+    {"epoch": 0, "sample_index": 0, "unix_ns": 1000000000, "uncertainty_ns": 1000000}
+  ],
+  "max_observations": 10000
+}
+```
+
+The timestamps above are synthetic examples, not measured synchronization.
+Intervals are half-open Unix nanoseconds. Both declared capture intervals must
+contain the requested overlap. A recorded frame anchor takes precedence over an
+external epoch anchor; each supplied epoch must be unique. External anchors must
+come from separately recorded measurements, with uncertainty covering software
+latency, clock offset/drift and timestamp placement. The native source supplies
+no hardware anchor. Its software bracket spans before device open through chunk
+delivery; it is retained as coarse evidence and is **not** converted into a
+precise sample timestamp. No file mtime is consulted. Unknown timing excludes a
+frame; boundary uncertainty excludes it unless the entire frame fits the overlap.
+Pcap timestamps are converted to nanoseconds by libpcap; the policy uncertainty
+must include their actual precision and semantics.
+
+The comparator accepts radiotap pcap records only. It parses the capture header
+separately from the MAC body, requires explicit flags, a supported legacy rate
+and the selected frequency, and excludes incompatible PHY/channel metadata.
+Unparseable namespaces and newer PHY fields are exclusions. Explicit DATAPAD
+removes only the alignment bytes between a recognized legacy MAC header and its
+body. Unknown/Order/extension padding layouts are excluded. FCS is recomputed
+after that removal, then stripped only when explicitly present. The documented
+[radiotap flags source](https://github.com/radiotap/radiotap.github.io/blob/master/fields/Flags.md)
+and [rate source](https://github.com/radiotap/radiotap.github.io/blob/master/fields/Rate.md)
+are the framing authority; MAC geometry follows the existing IEEE evidence and
+library layouts. Absent reference FCS remains separately integrity-unverified.
+MAC sequence, retry, duration and all other bytes survive normalization.
+
+Output schema `crafter.radio.comparison/v1` contains the complete policy,
+`eligible_dongle_count`, `hackrf_valid_count`, `exact_matches`, both directional
+fractions, unique-byte overlap, per-source exclusion counts and maximum timing
+uncertainty, receive/acquisition evidence, SHA-256 digests of the three inputs, and one row per matched occurrence
+with both ordinals and full normalized bytes. No digest substitutes for equality.
+Verified contiguous chunk intervals qualify each recovered frame. Matching pairs
+compatible time intervals within `match_window_ns` one-to-one, preserving retries
+and identical ACK multiplicity. Zero denominators produce null fractions and
+`inconclusive`; otherwise status is `measured`. `target_assessed` is always false:
+baseline, numerical target selection and live qualification belong to a later step.
+The offline example caps each source at 10,000 observations and each JSON line at
+1 MiB; exceedance fails explicitly. Dense duplicate matching is quadratic within
+that bound. Inputs must be closed captures; before/after hashes detect changes during processing.
+Reference capture loss is explicitly unavailable from the pcap alone.
+Keep real artifacts and timing policies outside tracked files.
