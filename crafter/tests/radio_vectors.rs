@@ -25,7 +25,7 @@ fn radio_independent_vector_inventory_and_integrity() {
     let index = fs::read_to_string(root.join("ofdm-index.tsv")).unwrap();
     let rates = [6, 9, 12, 18, 24, 36, 48, 54];
     assert_eq!(crc(b"123456789"), 0xcbf43926);
-    assert_eq!(index.lines().skip(1).count(), 13);
+    assert_eq!(index.lines().skip(1).count(), 16);
     for (i, line) in index.lines().skip(1).enumerate() {
         let fields: Vec<_> = line.split('\t').collect();
         assert_eq!(fields.len(), 10);
