@@ -182,11 +182,16 @@ impl Synchronizer {
         Ok(())
     }
     fn ago(&self, n: usize) -> ComplexSample {
-        self.ring[(self.next + 384 - 1 - n) % 384]
+        let offset = self.next + 383 - n;
+        self.ring[if offset >= 384 { offset - 384 } else { offset }]
     }
+    #[inline]
     pub fn push(&mut self, sample: ComplexSample, index: u64) -> Option<SyncEvent> {
         self.ring[self.next] = sample;
-        self.next = (self.next + 1) % 384;
+        self.next += 1;
+        if self.next == 384 {
+            self.next = 0;
+        }
         self.count = (self.count + 1).min(384);
         if self.count == 80 {
             for n in 0..64 {
@@ -228,7 +233,11 @@ impl Synchronizer {
             self.candidate = None;
             return Some(SyncEvent::Failure(AcquisitionFailure::LongTrainingNotFound));
         }
-        let coarse = c.coarse;
+        self.acquire_long(index, c.coarse)
+    }
+    // Keep the training buffers and phase work off the per-sample search path.
+    #[inline(never)]
+    fn acquire_long(&mut self, index: u64, coarse: f32) -> Option<SyncEvent> {
         let mut first = [ComplexSample::ZERO; 64];
         let mut second = first;
         let mut cross = ComplexSample::ZERO;
