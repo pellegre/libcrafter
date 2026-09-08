@@ -6,10 +6,12 @@
 mod data;
 mod replay;
 mod signal;
+mod source;
 mod sync;
 pub use data::{DecoderStats, LegacyOfdmDecoder};
 pub use replay::{MemoryIqSource, ReaderIqSource};
 pub use signal::SignalInfo;
+pub use source::{RadioPacketSource, RadioReceiveMetadata};
 
 use crate::LinkType;
 use std::{
@@ -213,7 +215,7 @@ pub enum ResetReason {
     End(StreamEnd),
     Explicit,
 }
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum PhyDiagnostic {
     Reset(ResetReason),
     TruncatedFrame,
@@ -228,6 +230,31 @@ pub enum PhyDiagnostic {
         samples: u64,
     },
 }
+// Bitwise floating-point equality preserves Eq for packet metadata, including NaNs.
+impl PartialEq for PhyDiagnostic {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Reset(a), Self::Reset(b)) => a == b,
+            (
+                Self::Ofdm {
+                    frequency_offset_hz: a,
+                    training_correlation: b,
+                },
+                Self::Ofdm {
+                    frequency_offset_hz: c,
+                    training_correlation: d,
+                },
+            ) => a.to_bits() == c.to_bits() && b.to_bits() == d.to_bits(),
+            (Self::Clipping { samples: a }, Self::Clipping { samples: b }) => a == b,
+            (Self::TruncatedFrame, Self::TruncatedFrame)
+            | (Self::InvalidHeader, Self::InvalidHeader)
+            | (Self::InvalidFcs, Self::InvalidFcs)
+            | (Self::UnsupportedPhy, Self::UnsupportedPhy) => true,
+            _ => false,
+        }
+    }
+}
+impl Eq for PhyDiagnostic {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameIntegrity {
     ValidFcs,

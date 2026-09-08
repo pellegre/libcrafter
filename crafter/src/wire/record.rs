@@ -273,6 +273,8 @@ pub struct PacketMetadata {
     link_type: Option<LinkType>,
     pcap_link_type: Option<PcapLinkType>,
     medium: Option<MediumMetadata>,
+    #[cfg(feature = "radio")]
+    radio: Option<crate::radio::RadioReceiveMetadata>,
     ip_fragments: Vec<IpFragmentMetadata>,
     ip_defrags: Vec<IpDefragMetadata>,
     transforms: Vec<TransformTrace>,
@@ -347,6 +349,19 @@ impl PacketMetadata {
     /// Medium-specific annotations.
     pub const fn medium(&self) -> Option<&MediumMetadata> {
         self.medium.as_ref()
+    }
+
+    /// RF receive context, independent of medium-specific annotations.
+    #[cfg(feature = "radio")]
+    pub fn radio(&self) -> Option<&crate::radio::RadioReceiveMetadata> {
+        self.radio.as_ref()
+    }
+
+    /// Attach RF receive context without replacing Wi-Fi metadata.
+    #[cfg(feature = "radio")]
+    pub fn with_radio_metadata(mut self, radio: crate::radio::RadioReceiveMetadata) -> Self {
+        self.radio = Some(radio);
+        self
     }
 
     /// IP fragmentation metadata attached by transmit-side transforms.
@@ -550,6 +565,8 @@ impl Default for PacketMetadata {
             link_type: None,
             pcap_link_type: None,
             medium: None,
+            #[cfg(feature = "radio")]
+            radio: None,
             ip_fragments: Vec::new(),
             ip_defrags: Vec::new(),
             transforms: Vec::new(),
