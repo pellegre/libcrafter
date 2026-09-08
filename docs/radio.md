@@ -225,7 +225,12 @@ Replay also accepts earlier JSONL artifacts containing `cs8_hex` and no
 prefix is saved. A source failure writes a `source_error` record instead of a
 successful terminal event; replay decodes the saved prefix and then reports that
 failure with `complete:false`. Missing terminal evidence also fails replay.
-Replay uses the full saved bounds, configuration and positions:
+Replay uses the full saved bounds, configuration and positions.
+
+Recording uses a worker with an eight-chunk queue, separate from the acquisition
+queue. A full recording queue or file error fails capture; success is reported
+only after the worker flushes and joins. The summary includes `recording_error`.
+File operations retain the operating system's I/O latency, including at shutdown.
 
 ```sh
 cargo run -p crafter --features radio --example radio_receive -- --save-iq saved-iq.iq

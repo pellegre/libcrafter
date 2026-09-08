@@ -12,6 +12,8 @@ use std::{
     fs::{File, OpenOptions},
     io::{BufReader, BufWriter, Cursor, Read, Write},
     rc::Rc,
+    sync::mpsc::{sync_channel, SyncSender},
+    thread::JoinHandle,
     time::{Duration, SystemTime},
 };
 
@@ -19,10 +21,82 @@ type Output = Rc<RefCell<BufWriter<std::io::Stdout>>>;
 fn emit(out: &Output, v: serde_json::Value) -> RadioResult<()> {
     write_json(&mut *out.borrow_mut(), &v).map_err(|e| RadioError::Source(e.to_string()))
 }
+struct IqRecord {
+    metadata: serde_json::Value,
+    bytes: Option<Vec<u8>>,
+}
+struct IqWriter {
+    sender: Option<SyncSender<IqRecord>>,
+    worker: Option<JoinHandle<RadioResult<()>>>,
+}
+impl IqWriter {
+    fn new(file: File, header: serde_json::Value) -> RadioResult<Self> {
+        // Each message owns at most one already bounded source chunk.
+        let (sender, receiver) = sync_channel::<IqRecord>(8);
+        let worker = std::thread::Builder::new()
+            .name("crafter-iq-recorder".into())
+            .spawn(move || {
+                let record = || -> Result<()> {
+                    let mut writer = BufWriter::new(file);
+                    write_json(&mut writer, &header)?;
+                    let mut terminal = false;
+                    for record in receiver {
+                        if terminal {
+                            return Err("IQ record after terminal".into());
+                        }
+                        terminal = matches!(
+                            record.metadata["kind"].as_str(),
+                            Some("terminal" | "source_error")
+                        );
+                        write_json(&mut writer, &record.metadata)?;
+                        if let Some(bytes) = record.bytes {
+                            writer.write_all(&bytes)?;
+                            writer.write_all(b"\n")?;
+                        }
+                    }
+                    if !terminal {
+                        write_json(&mut writer, &json!({"kind":"source_error","error":"IQ recorder ended before terminal"}))?;
+                    }
+                    writer.flush()?;
+                    if !terminal {
+                        return Err("IQ recorder ended before terminal".into());
+                    }
+                    Ok(())
+                };
+                record().map_err(|e| RadioError::Source(e.to_string()))
+            })
+            .map_err(|e| RadioError::Source(e.to_string()))?;
+        Ok(Self {
+            sender: Some(sender),
+            worker: Some(worker),
+        })
+    }
+    fn send(&self, metadata: serde_json::Value, bytes: Option<Vec<u8>>) -> RadioResult<()> {
+        self.sender
+            .as_ref()
+            .ok_or_else(|| RadioError::Source("IQ recorder is closed".into()))?
+            .try_send(IqRecord { metadata, bytes })
+            .map_err(|e| RadioError::Source(format!("IQ recording queue: {e}")))
+    }
+    fn finish(&mut self) -> RadioResult<()> {
+        self.sender.take();
+        if let Some(worker) = self.worker.take() {
+            worker
+                .join()
+                .map_err(|_| RadioError::Source("IQ recorder panicked".into()))??;
+        }
+        Ok(())
+    }
+}
+impl Drop for IqWriter {
+    fn drop(&mut self) {
+        let _ = self.finish();
+    }
+}
 struct ObservedSource<'a, S> {
     source: &'a mut S,
     out: Output,
-    iq: Option<BufWriter<File>>,
+    iq: Option<&'a mut IqWriter>,
     software_start: Option<u64>,
 }
 impl<S: IqSource> IqSource for ObservedSource<'_, S> {
@@ -31,9 +105,10 @@ impl<S: IqSource> IqSource for ObservedSource<'_, S> {
             Ok(event) => event,
             Err(error) => {
                 if let Some(w) = &mut self.iq {
-                    write_json(w, &json!({"kind":"source_error","error":error.to_string()}))
-                        .map_err(|e| RadioError::Source(e.to_string()))?;
-                    w.flush().map_err(|e| RadioError::Source(e.to_string()))?;
+                    w.send(
+                        json!({"kind":"source_error","error":error.to_string()}),
+                        None,
+                    )?;
                 }
                 return Err(error);
             }
@@ -46,16 +121,11 @@ impl<S: IqSource> IqSource for ObservedSource<'_, S> {
         };
         emit(&self.out, value.clone())?;
         if let Some(w) = &mut self.iq {
-            write_json(w, &value).map_err(|e| RadioError::Source(e.to_string()))?;
-            if let IqEvent::Chunk(c) = &event {
-                let bytes: Vec<u8> = c.cs8().iter().map(|b| *b as u8).collect();
-                w.write_all(&bytes)
-                    .and_then(|_| w.write_all(b"\n"))
-                    .map_err(|e| RadioError::Source(e.to_string()))?;
-            }
-            if matches!(event, IqEvent::End(_)) {
-                w.flush().map_err(|e| RadioError::Source(e.to_string()))?;
-            }
+            let bytes = match &event {
+                IqEvent::Chunk(c) => Some(c.cs8().iter().map(|b| *b as u8).collect()),
+                IqEvent::End(_) => None,
+            };
+            w.send(value, bytes)?;
         }
         Ok(event)
     }
@@ -93,24 +163,18 @@ fn receive(
     let out = Rc::new(RefCell::new(BufWriter::new(std::io::stdout())));
     let header = json!({"kind":"header","schema":SCHEMA,"config":Config::from(&config),"time_basis":if software_start.is_some(){"software_bracket_only"}else{"recorded_anchor_or_unknown"}});
     emit(&out, header.clone())?;
-    let mut iq = iq_path
-        .map(|p| {
-            OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(p)
-                .map(BufWriter::new)
-        })
-        .transpose()?;
-    if let Some(w) = &mut iq {
+    let mut iq = if let Some(path) = iq_path {
+        let file = OpenOptions::new().write(true).create_new(true).open(path)?;
         let mut iq_header = header.clone();
         iq_header["iq_encoding"] = json!("cs8-binary/v1");
-        write_json(w, &iq_header)?;
-    }
+        Some(IqWriter::new(file, iq_header)?)
+    } else {
+        None
+    };
     let observed = ObservedSource {
         source,
         out: out.clone(),
-        iq,
+        iq: iq.as_mut(),
         software_start,
     };
     let decoder = ObservedDecoder {
@@ -121,7 +185,7 @@ fn receive(
     let mut packets = RadioPacketSource::new(observed, decoder, config)?;
     let mut parsed = 0u64;
     let mut parser_errors = 0u64;
-    let result = loop {
+    let mut result: Result<()> = loop {
         match packets.next_record() {
             Ok(Some(_)) => parsed += 1,
             Ok(None) => break Ok(()),
@@ -132,16 +196,24 @@ fn receive(
                     json!({"kind":"parser_error","error":format!("{e:?}")}),
                 )?;
             }
-            Err(e) => break Err(e),
+            Err(e) => break Err(e.into()),
         }
     };
     let s = packets.decoder().inner.stats();
+    let terminal = packets.end().map(|e| format!("{e:?}"));
+    drop(packets);
+    let recording_error = iq.as_mut().and_then(|w| w.finish().err());
+    if result.is_ok() {
+        if let Some(error) = &recording_error {
+            result = Err(error.clone().into());
+        }
+    }
     emit(
         &out,
-        json!({"kind":"summary","complete":result.is_ok(),"terminal":packets.end().map(|e|format!("{e:?}")),"error":result.as_ref().err().map(ToString::to_string),"parsed_packets":parsed,"parser_failures":parser_errors,"decoder":{"valid_frames":s.valid_frames,"invalid_fcs":s.invalid_fcs,"rejected_frames":s.rejected_frames,"truncated_frames":s.truncated_frames,"dropped_frames":s.dropped_frames}}),
+        json!({"kind":"summary","complete":result.is_ok(),"terminal":terminal,"error":result.as_ref().err().map(ToString::to_string),"recording_error":recording_error.map(|e|e.to_string()),"parsed_packets":parsed,"parser_failures":parser_errors,"decoder":{"valid_frames":s.valid_frames,"invalid_fcs":s.invalid_fcs,"rejected_frames":s.rejected_frames,"truncated_frames":s.truncated_frames,"dropped_frames":s.dropped_frames}}),
     )?;
     out.borrow_mut().flush()?;
-    result.map_err(Into::into)
+    result
 }
 struct ArtifactSource {
     reader: BufReader<File>,
@@ -327,6 +399,32 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn radio_iq_recording_queue_is_bounded() {
+        let (sender, _receiver) = sync_channel(8);
+        let writer = IqWriter {
+            sender: Some(sender),
+            worker: None,
+        };
+        for _ in 0..8 {
+            writer
+                .send(json!({"kind":"chunk"}), Some(vec![0, 1]))
+                .unwrap();
+        }
+        assert!(writer.send(json!({"kind":"terminal"}), None).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn radio_iq_recording_flush_failure_is_reported() {
+        let file = OpenOptions::new().write(true).open("/dev/full").unwrap();
+        let mut writer = IqWriter::new(file, json!({"kind":"header"})).unwrap();
+        writer
+            .send(json!({"kind":"terminal","reason":"Eof"}), None)
+            .unwrap();
+        assert!(writer.finish().is_err());
+    }
 
     fn exercise(binary: bool, body: &[u8], count: u64, succeeds: bool) {
         let config = RxConfig {
