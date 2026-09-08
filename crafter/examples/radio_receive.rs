@@ -10,7 +10,7 @@ use serde_json::json;
 use std::{
     cell::RefCell,
     fs::{File, OpenOptions},
-    io::{BufReader, BufWriter, Cursor, Write},
+    io::{BufReader, BufWriter, Cursor, Read, Write},
     rc::Rc,
     time::{Duration, SystemTime},
 };
@@ -38,7 +38,7 @@ impl<S: IqSource> IqSource for ObservedSource<'_, S> {
                 return Err(error);
             }
         };
-        let mut value = match &event {
+        let value = match &event {
             IqEvent::Chunk(c) => {
                 json!({"kind":"chunk","config":Config::from(c.config()),"position":Position::from(c.position()),"samples":c.len(),"verified_prefix":true,"software_time_bracket_ns":self.software_start.map(|s|[s,unix_ns(SystemTime::now())])})
             }
@@ -46,11 +46,13 @@ impl<S: IqSource> IqSource for ObservedSource<'_, S> {
         };
         emit(&self.out, value.clone())?;
         if let Some(w) = &mut self.iq {
-            if let IqEvent::Chunk(c) = &event {
-                value["cs8_hex"] =
-                    json!(hex(&c.cs8().iter().map(|b| *b as u8).collect::<Vec<_>>()));
-            }
             write_json(w, &value).map_err(|e| RadioError::Source(e.to_string()))?;
+            if let IqEvent::Chunk(c) = &event {
+                let bytes: Vec<u8> = c.cs8().iter().map(|b| *b as u8).collect();
+                w.write_all(&bytes)
+                    .and_then(|_| w.write_all(b"\n"))
+                    .map_err(|e| RadioError::Source(e.to_string()))?;
+            }
             if matches!(event, IqEvent::End(_)) {
                 w.flush().map_err(|e| RadioError::Source(e.to_string()))?;
             }
@@ -101,7 +103,9 @@ fn receive(
         })
         .transpose()?;
     if let Some(w) = &mut iq {
-        write_json(w, &header)?;
+        let mut iq_header = header.clone();
+        iq_header["iq_encoding"] = json!("cs8-binary/v1");
+        write_json(w, &iq_header)?;
     }
     let observed = ObservedSource {
         source,
@@ -144,6 +148,7 @@ struct ArtifactSource {
     config: RxConfig,
     samples: u64,
     end: Option<StreamEnd>,
+    binary: bool,
 }
 impl ArtifactSource {
     fn open(path: &str) -> Result<Self> {
@@ -153,11 +158,17 @@ impl ArtifactSource {
             return Err("unsupported IQ schema".into());
         }
         let config: Config = serde_json::from_value(h["config"].clone())?;
+        let binary = match h.get("iq_encoding") {
+            None => false,
+            Some(v) if v == "cs8-binary/v1" => true,
+            _ => return Err("unsupported IQ encoding".into()),
+        };
         Ok(Self {
             reader,
             config: config.rx()?,
             samples: 0,
             end: None,
+            binary,
         })
     }
 }
@@ -196,7 +207,22 @@ impl IqSource for ArtifactSource {
                     let c: Config = serde_json::from_value(v["config"].clone())?;
                     let c = c.rx()?;
                     let p: Position = serde_json::from_value(v["position"].clone())?;
-                    let bytes = unhex(v["cs8_hex"].as_str().ok_or("missing samples")?)?;
+                    let bytes = if self.binary {
+                        let count = v["samples"].as_u64().ok_or("missing sample count")?;
+                        if count == 0 || count > c.max_chunk_samples as u64 {
+                            return Err("binary IQ chunk bound exceeded".into());
+                        }
+                        let mut bytes = vec![0u8; count as usize * 2];
+                        self.reader.read_exact(&mut bytes)?;
+                        let mut separator = [0u8];
+                        self.reader.read_exact(&mut separator)?;
+                        if separator != *b"\n" {
+                            return Err("invalid binary IQ separator".into());
+                        }
+                        bytes
+                    } else {
+                        unhex(v["cs8_hex"].as_str().ok_or("missing samples")?)?
+                    };
                     let n = bytes.len() / 2;
                     if v["samples"].as_u64() != Some(n as u64) {
                         return Err("sample length mismatch".into());
@@ -293,5 +319,85 @@ fn main() -> Result<()> {
         [flag,path,hz,seconds,samples] if flag=="--replay"=>{let mut c=config;c.center_frequency_hz=hz.parse()?;c.max_duration=Duration::from_secs(seconds.parse()?);c.max_capture_samples=samples.parse()?;receive(&mut ReaderIqSource::new(File::open(path)?,c.clone(),position)?,c,iq_path.as_deref(),None)},
         [flag,path] if flag=="--replay-artifact"=>{let mut s=ArtifactSource::open(path)?;let c=s.config.clone();receive(&mut s,c,iq_path.as_deref(),None)},
         _=>Err("use no arguments, --replay FILE [HZ SECONDS MAX_SAMPLES], --replay-artifact FILE, or --live parameters; optional final --save-iq NEW_FILE".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    fn exercise(binary: bool, body: &[u8], count: u64, succeeds: bool) {
+        let config = RxConfig {
+            sample_rate_hz: 20_000_000,
+            center_frequency_hz: 2_412_000_000,
+            max_chunk_samples: 16,
+            max_buffer_samples: 384,
+            max_frame_bytes: 4095,
+            max_pending_frames: 1,
+            max_capture_samples: 16,
+            max_duration: Duration::from_secs(1),
+        };
+        let mut header = json!({"kind":"header","schema":SCHEMA,"config":Config::from(&config)});
+        if binary {
+            header["iq_encoding"] = json!("cs8-binary/v1");
+        }
+        let mut chunk = json!({"kind":"chunk","config":Config::from(&config),"position":{"epoch":0,"sequence":0,"sample_index":0,"anchor":null,"gap_reason":null,"lost_samples":null},"samples":count,"verified_prefix":true});
+        if !binary {
+            chunk["cs8_hex"] = json!(hex(body));
+        }
+        let path = std::env::temp_dir().join(format!(
+            "crafter-iq-test-{}-{}-{}",
+            std::process::id(),
+            unix_ns(SystemTime::now()),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .unwrap();
+            write_json(&mut file, &header).unwrap();
+            write_json(&mut file, &chunk).unwrap();
+            if binary {
+                file.write_all(body).unwrap();
+                file.write_all(b"\n").unwrap();
+            }
+            write_json(&mut file, &json!({"kind":"terminal","reason":"Eof"})).unwrap();
+        }
+        let mut source = ArtifactSource::open(path.to_str().unwrap()).unwrap();
+        let event = source.next_event();
+        if succeeds {
+            let IqEvent::Chunk(chunk) = event.unwrap() else {
+                panic!("expected chunk")
+            };
+            assert_eq!(
+                chunk.cs8().iter().map(|v| *v as u8).collect::<Vec<_>>(),
+                body
+            );
+            assert!(matches!(
+                source.next_event().unwrap(),
+                IqEvent::End(StreamEnd::Eof)
+            ));
+        } else {
+            assert!(event.is_err());
+        }
+        drop(source);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn radio_iq_binary_and_legacy_preserve_arbitrary_bytes() {
+        for binary in [false, true] {
+            exercise(binary, &[0, 255, 10, 13, 128, 127, b'{', b'}'], 4, true);
+        }
+    }
+
+    #[test]
+    fn radio_iq_binary_rejects_truncated_and_oversize_blocks() {
+        exercise(true, &[1, 2], 4, false);
+        exercise(true, &[1, 2], 17, false);
     }
 }
