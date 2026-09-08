@@ -20,6 +20,7 @@ path = "src/lib.rs"
 [features]
 default = []
 radio = []
+radio-hackrf = ["radio"]
 whad = ["dep:prost", "dep:prost-build", "dep:serialport"]
 
 [dependencies]
@@ -49,3 +50,7 @@ prost-build = { version = "0.14", optional = true }
 
 [dev-dependencies]
 proptest = "1"
+
+[[example]]
+name = "radio_receive"
+required-features = ["radio"]
