@@ -112,12 +112,19 @@ struct Candidate {
     detected: u64,
     coarse: f32,
 }
+#[derive(Clone, Copy)]
+struct LongWindow {
+    index: u64,
+    cross: ComplexSample,
+    energy: [f32; 2],
+}
 pub(super) struct Synchronizer {
     ring: [ComplexSample; 384],
     count: usize,
     next: usize,
     short_correlation: ComplexSample,
     short_energy: [f32; 2],
+    long_window: Option<LongWindow>,
     candidate: Option<Candidate>,
     reference: [ComplexSample; 64],
     continuity: IqContinuity,
@@ -130,6 +137,7 @@ impl Default for Synchronizer {
             next: 0,
             short_correlation: ComplexSample::ZERO,
             short_energy: [0.; 2],
+            long_window: None,
             candidate: None,
             reference: long_time(),
             continuity: IqContinuity::default(),
@@ -143,6 +151,7 @@ impl Synchronizer {
         self.next = 0;
         self.short_correlation = ComplexSample::ZERO;
         self.short_energy = [0.; 2];
+        self.long_window = None;
         interrupted
     }
     pub fn reset(&mut self) -> bool {
@@ -235,21 +244,50 @@ impl Synchronizer {
         }
         self.acquire_long(index, c.coarse)
     }
+    // Consecutive training candidates share 63 of their 64 lag-64 pairs.
+    fn training_window(&mut self, index: u64) -> LongWindow {
+        let window = if let Some(previous) = self
+            .long_window
+            .filter(|w| w.index.checked_add(1) == Some(index))
+        {
+            let leaving = self.ago(128);
+            let middle = self.ago(64);
+            let entering = self.ago(0);
+            LongWindow {
+                index,
+                cross: previous
+                    .cross
+                    .sub(leaving.conj().mul(middle))
+                    .add(middle.conj().mul(entering)),
+                energy: [
+                    previous.energy[0] + middle.power() - leaving.power(),
+                    previous.energy[1] + entering.power() - middle.power(),
+                ],
+            }
+        } else {
+            let mut window = LongWindow {
+                index,
+                cross: ComplexSample::ZERO,
+                energy: [0.; 2],
+            };
+            for n in 0..64 {
+                let first = self.ago(127 - n);
+                let second = self.ago(63 - n);
+                window.cross = window.cross.add(first.conj().mul(second));
+                window.energy[0] += first.power();
+                window.energy[1] += second.power();
+            }
+            window
+        };
+        self.long_window = Some(window);
+        window
+    }
     // Keep the training buffers and phase work off the per-sample search path.
     #[inline(never)]
     fn acquire_long(&mut self, index: u64, coarse: f32) -> Option<SyncEvent> {
-        let mut first = [ComplexSample::ZERO; 64];
-        let mut second = first;
-        let mut cross = ComplexSample::ZERO;
-        let mut repeat_a = 0.;
-        let mut repeat_b = 0.;
-        for n in 0..64 {
-            first[n] = self.ago(127 - n);
-            second[n] = self.ago(63 - n);
-            cross = cross.add(first[n].conj().mul(second[n]));
-            repeat_a += first[n].power();
-            repeat_b += second[n].power();
-        }
+        let window = self.training_window(index);
+        let mut cross = window.cross;
+        let [repeat_a, repeat_b] = window.energy;
         // A common frequency correction rotates the cross correlation but
         // preserves its magnitude and both energies. Reject nonrepeating
         // candidates before phase correction and reference matching.
@@ -264,9 +302,11 @@ impl Synchronizer {
         let step = ComplexSample::rotation(-frequency);
         let mut phase_first = ComplexSample { i: 1., q: 0. };
         let mut phase_second = ComplexSample::rotation(-frequency * 64.);
+        let mut first = [ComplexSample::ZERO; 64];
+        let mut second = first;
         for n in 0..64 {
-            first[n] = first[n].mul(phase_first);
-            second[n] = second[n].mul(phase_second);
+            first[n] = self.ago(127 - n).mul(phase_first);
+            second[n] = self.ago(63 - n).mul(phase_second);
             phase_first = phase_first.mul(step);
             phase_second = phase_second.mul(step);
             let average = first[n].add(second[n]).scale(0.5);
@@ -307,6 +347,9 @@ mod tests {
         let mut sync = Synchronizer::default();
         let mut random = 123u32;
         for index in 0..10_000 {
+            if index == 5000 {
+                sync.clear();
+            }
             random = random.wrapping_mul(1664525).wrapping_add(1013904223);
             let sample = ComplexSample {
                 i: (random >> 24) as u8 as i8 as f32 / 128.,
@@ -325,6 +368,20 @@ mod tests {
                 }
                 assert_eq!(sync.short_correlation, correlation);
                 assert_eq!(sync.short_energy, energy);
+            }
+            if sync.count >= 128 && index % 17 != 0 {
+                let window = sync.training_window(index);
+                let mut correlation = ComplexSample::ZERO;
+                let mut energy = [0.; 2];
+                for n in 0..64 {
+                    let x = sync.ago(127 - n);
+                    let y = sync.ago(63 - n);
+                    correlation = correlation.add(x.conj().mul(y));
+                    energy[0] += x.power();
+                    energy[1] += y.power();
+                }
+                assert_eq!(window.cross, correlation);
+                assert_eq!(window.energy, energy);
             }
         }
     }
