@@ -151,9 +151,10 @@ impl Driver for Native {
             check("M0 state", hackrf_get_m0_state(self.device, &mut state))?;
         }
         if state.active_mode != 2 || state.error != 0 {
-            return Err(RadioError::Source(
-                "HackRF M0 not receiving or reports error".into(),
-            ));
+            return Err(RadioError::Source(format!(
+                "HackRF M0 not receiving or reports error (active_mode={}, error={})",
+                state.active_mode, state.error
+            )));
         }
         Ok((state.num_shortfalls, state.longest_shortfall))
     }
