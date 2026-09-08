@@ -104,6 +104,21 @@ pub(super) fn parse_bits(
     })
 }
 
+// Figure 17-8 outputs depend only on the seven-bit encoder register.
+// Evaluate parity once at compile time rather than for every trellis branch.
+pub(super) const TRELLIS_SIGNS: [[f32; 2]; 128] = {
+    let mut signs = [[0.; 2]; 128];
+    let mut register = 0u32;
+    while register < 128 {
+        signs[register as usize] = [
+            2. * ((register & 0o155).count_ones() & 1) as f32 - 1.,
+            2. * ((register & 0o117).count_ones() & 1) as f32 - 1.,
+        ];
+        register += 1;
+    }
+    signs
+};
+
 /// Soft Viterbi, zero initial memory, unconstrained final state so a corrupt tail
 /// is observable rather than silently forced to zero. Fixed 24x64 traceback.
 fn viterbi(coded: &[f32; 48]) -> [u8; 24] {
@@ -115,12 +130,8 @@ fn viterbi(coded: &[f32; 48]) -> [u8; 24] {
         for (state, cost) in metric.iter().enumerate() {
             for bit in 0..2 {
                 let register = (state << 1) | bit;
-                // Figure 17-8 generators 133/171, reversed for newest-bit LSB.
-                let a = (register & 0o155).count_ones() & 1;
-                let b = (register & 0o117).count_ones() & 1;
-                let score = cost
-                    - coded[2 * t] * (2. * a as f32 - 1.)
-                    - coded[2 * t + 1] * (2. * b as f32 - 1.);
+                let [a, b] = TRELLIS_SIGNS[register];
+                let score = cost - coded[2 * t] * a - coded[2 * t + 1] * b;
                 let dest = register & 63;
                 if score < next[dest] {
                     next[dest] = score;

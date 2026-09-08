@@ -1,6 +1,6 @@
 //! Legacy DATA receive path; IEEE 802.11-2007 17.3.5, evidence in docs/radio.md.
 use super::{
-    signal::decode_signal,
+    signal::{decode_signal, TRELLIS_SIGNS},
     sync::{fft64, Acquisition, SyncEvent, Synchronizer},
     *,
 };
@@ -285,9 +285,8 @@ fn decode_data(
         for (state, cost) in metric.iter().enumerate() {
             for bit in 0..2 {
                 let reg = (state << 1) | bit;
-                let score = cost
-                    - pair[0] * (2. * ((reg & 0o155).count_ones() & 1) as f32 - 1.)
-                    - pair[1] * (2. * ((reg & 0o117).count_ones() & 1) as f32 - 1.);
+                let [a, b] = TRELLIS_SIGNS[reg];
+                let score = cost - pair[0] * a - pair[1] * b;
                 let dest = reg & 63;
                 if score < next[dest] {
                     next[dest] = score;
