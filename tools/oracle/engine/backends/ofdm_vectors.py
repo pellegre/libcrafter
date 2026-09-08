@@ -13,7 +13,7 @@ import zlib
 import argparse
 import tempfile
 
-VERSION = '2'
+VERSION = '3'
 ROOT = Path(__file__).resolve().parents[4]
 OUT = ROOT / 'crafter/tests/fixtures/iq'
 # Table 17-3 and 17-5: rate, transmission-order RATE, NBPSC, NDBPS.
@@ -122,6 +122,11 @@ def generate(rate, rb, nbpsc, ndbps, index, case='clean'):
     seed = 0x5d-index*3
     nsym = math.ceil((16+8*len(psdu)+6)/ndbps)
     data = [0]*16+bits(psdu)+[0]*(nsym*ndbps-16-8*len(psdu))
+    # Receiver discards PAD (17.3.12), even when transmitter PAD is erroneous.
+    if case == 'nonzero_pad':
+        pad_start = 16+8*len(psdu)+6
+        assert pad_start < len(data)
+        data[pad_start] = 1
     scrambled = scramble(data,seed)
     tail = 16+8*len(psdu)
     scrambled[tail:tail+6] = [0]*6
@@ -160,12 +165,12 @@ def generate(rate, rb, nbpsc, ndbps, index, case='clean'):
                 data_start=leading+400,frame_end=leading+400+nsym*80,psdu_hex=psdu.hex(),
                 sha256=hashlib.sha256(samples).hexdigest(),fcs_valid=case!='bad_fcs',
                 expected='reject' if case in ('invalid_signal','truncated','bad_fcs') else 'frame',
-                impairment=dict(cfo_hz=cfo,phase_rad=0.4,uniform_noise_amplitude=noise,noise_seed=12345))
+                impairment=dict(cfo_hz=cfo,phase_rad=0.4,uniform_noise_amplitude=noise,noise_seed=12345,nonzero_pad=case=='nonzero_pad'))
 
 def main():
     self_check()
     entries = [generate(*r,i) for i,r in enumerate(RATES)]
-    entries += [generate(*RATES[0],0,c) for c in ('noisy','low_snr','offset','truncated','invalid_signal','bad_fcs')]
+    entries += [generate(*RATES[0],0,c) for c in ('noisy','low_snr','nonzero_pad','offset','truncated','invalid_signal','bad_fcs')]
     entries += [generate(*RATES[i], i, 'max_length') for i in (0, 7)]
     entries += [generate(*RATES[4], 4, 'long_offset')]
     manifest = dict(schema=1,generator_version=VERSION,generator_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
