@@ -232,33 +232,41 @@ impl Synchronizer {
         let mut first = [ComplexSample::ZERO; 64];
         let mut second = first;
         let mut cross = ComplexSample::ZERO;
+        let mut repeat_a = 0.;
+        let mut repeat_b = 0.;
         for n in 0..64 {
-            first[n] = self
-                .ago(127 - n)
-                .mul(ComplexSample::rotation(-coarse * n as f32));
-            second[n] = self
-                .ago(63 - n)
-                .mul(ComplexSample::rotation(-coarse * (n + 64) as f32));
+            first[n] = self.ago(127 - n);
+            second[n] = self.ago(63 - n);
             cross = cross.add(first[n].conj().mul(second[n]));
+            repeat_a += first[n].power();
+            repeat_b += second[n].power();
         }
+        // A common frequency correction rotates the cross correlation but
+        // preserves its magnitude and both energies. Reject nonrepeating
+        // candidates before phase correction and reference matching.
+        if cross.power() < 0.8 * repeat_a * repeat_b {
+            return None;
+        }
+        cross = cross.mul(ComplexSample::rotation(-coarse * 64.));
         let fine = cross.phase() / 64.;
         let frequency = coarse + fine;
         let mut match_sum = ComplexSample::ZERO;
         let mut energy = 0.;
-        let mut repeat_a = 0.;
-        let mut repeat_b = 0.;
+        let step = ComplexSample::rotation(-frequency);
+        let mut phase_first = ComplexSample { i: 1., q: 0. };
+        let mut phase_second = ComplexSample::rotation(-frequency * 64.);
         for n in 0..64 {
-            first[n] = first[n].mul(ComplexSample::rotation(-fine * n as f32));
-            second[n] = second[n].mul(ComplexSample::rotation(-fine * (n + 64) as f32));
+            first[n] = first[n].mul(phase_first);
+            second[n] = second[n].mul(phase_second);
+            phase_first = phase_first.mul(step);
+            phase_second = phase_second.mul(step);
             let average = first[n].add(second[n]).scale(0.5);
             match_sum = match_sum.add(self.reference[n].conj().mul(average));
             energy += average.power();
-            repeat_a += first[n].power();
-            repeat_b += second[n].power();
         }
         // Reference energy is 52/64 by Parseval (IFFT normalization 1/64).
         let score = match_sum.power() / (energy * (52. / 64.) + f32::MIN_POSITIVE);
-        if score < 0.65 || cross.power() < 0.8 * repeat_a * repeat_b || energy < 0.001 {
+        if score < 0.65 || energy < 0.001 {
             return None;
         }
         let first_index = index.checked_sub(127)?;
