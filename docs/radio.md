@@ -74,7 +74,10 @@ PSDU octets enter the bit stream least-significant bit first. The DATA scrambler
 uses `x^7 + x^4 + 1`; the first seven zero SERVICE bits identify its initial
 state. The six encoder tail bits are forced to zero *after* scrambling at the
 PSDU boundary; do not validate them as ordinary descrambled zeros. Padding
-follows the tail, so the final padded trellis state need not be zero.
+follows the tail, so the final padded trellis state need not be zero. Receive
+PLCP discards PAD after the indicated PSDU (17.3.12); nonzero padding does not
+invalidate an otherwise FCS-valid frame. An independent fixture deliberately
+sets a PAD bit to verify this receiver behavior.
 
 For reflected byte-oriented CRC arithmetic use polynomial `0xedb88320`, initial
 remainder `0xffffffff` and final XOR `0xffffffff`; compare its little-endian

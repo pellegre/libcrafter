@@ -323,7 +323,9 @@ fn decode_data(
     for bit in &mut bits {
         *bit ^= feedback(&mut state);
     }
-    if bits[..16].iter().any(|b| *b != 0) || bits[tail + 6..].iter().any(|b| *b != 0) {
+    // Receive PLCP discards padding after the PSDU (802.11-2007 17.3.12).
+    // Errors in those bits do not invalidate an otherwise FCS-valid PSDU.
+    if bits[..16].iter().any(|b| *b != 0) {
         return Err(());
     }
     Ok(bits[16..tail]
