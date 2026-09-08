@@ -341,8 +341,8 @@ fn main() -> Result<()> {
             return Err("--buffer-samples requires a sample count".into());
         }
         let count: usize = args[1].parse()?;
-        if !(65_536..=4_194_304).contains(&count) {
-            return Err("example buffer must contain 65536..4194304 complex samples".into());
+        if !(65_536..=MAX_EXAMPLE_BUFFER_SAMPLES).contains(&count) {
+            return Err("example buffer must contain 65536..16777216 complex samples".into());
         }
         args.drain(..2);
         if args.first().map(String::as_str) == Some("--replay-artifact") {

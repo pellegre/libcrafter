@@ -233,7 +233,7 @@ only after the worker flushes and joins. The summary includes `recording_error`.
 File operations retain the operating system's I/O latency, including at shutdown.
 
 The example accepts an optional leading `--buffer-samples N` for live reception
-or raw replay (65536–4194304 complex samples; default 2097152). Saved artifacts
+or raw replay (65536–16777216 complex samples; default 2097152). Saved artifacts
 retain their own configuration. Acquisition overflow errors report pending,
 verified-ready, incoming and allowed sample counts to distinguish verification
 backlog from consumer backlog. A larger finite buffer absorbs bursts; it does
