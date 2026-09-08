@@ -336,11 +336,27 @@ fn main() -> Result<()> {
     } else {
         None
     };
+    let buffer_samples = if args.first().map(String::as_str) == Some("--buffer-samples") {
+        if args.len() < 2 {
+            return Err("--buffer-samples requires a sample count".into());
+        }
+        let count: usize = args[1].parse()?;
+        if !(65_536..=4_194_304).contains(&count) {
+            return Err("example buffer must contain 65536..4194304 complex samples".into());
+        }
+        args.drain(..2);
+        if args.first().map(String::as_str) == Some("--replay-artifact") {
+            return Err("saved IQ artifacts supply their own buffer configuration".into());
+        }
+        count
+    } else {
+        2_097_152
+    };
     let config = RxConfig {
         sample_rate_hz: 20_000_000,
         center_frequency_hz: 2_412_000_000,
         max_chunk_samples: 65_536,
-        max_buffer_samples: 2_097_152,
+        max_buffer_samples: buffer_samples,
         max_frame_bytes: 4095,
         max_pending_frames: 64,
         max_capture_samples: 20_000_000,

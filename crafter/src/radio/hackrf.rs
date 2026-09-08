@@ -111,11 +111,16 @@ impl Shared {
             .min(self.config.max_capture_samples - s.stats.received_samples)
             as usize;
         if count > self.config.max_buffer_samples - s.buffered {
+            let pending: usize = s.pending.iter().map(IqChunk::len).sum();
+            let ready = s.buffered - pending;
             s.stats.queue_overflows += 1;
             s.stats.received_samples += count as u64;
             s.stats.discarded_samples += count as u64;
             Self::gap(&mut s, GapReason::QueueOverflow);
-            s.fault = Some(RadioError::Source("HackRF receive queue overflow".into()));
+            s.fault = Some(RadioError::Source(format!(
+                "HackRF receive queue overflow (pending_samples={pending}, ready_samples={ready}, incoming_samples={count}, limit_samples={})",
+                self.config.max_buffer_samples
+            )));
             s.stop = true;
             self.wake.notify_all();
             return false;
@@ -157,15 +162,22 @@ impl Shared {
         let mut s = self.lock();
         s.stats.counter_queries += 1;
         match counter {
-            Ok((0, 0)) if s.fault.is_none() && !s.cancelled => {
-                while s
-                    .pending
-                    .front()
-                    .is_some_and(|c| c.position().sample_index + c.len() as u64 <= high_water)
-                {
-                    let chunk = s.pending.pop_front().unwrap();
-                    s.stats.verified_samples += chunk.len() as u64;
-                    s.ready.push_back(chunk);
+            Ok((0, 0)) => {
+                if s.fault.is_none() && !s.cancelled {
+                    while s
+                        .pending
+                        .front()
+                        .is_some_and(|c| c.position().sample_index + c.len() as u64 <= high_water)
+                    {
+                        let chunk = s.pending.pop_front().unwrap();
+                        s.stats.verified_samples += chunk.len() as u64;
+                        s.ready.push_back(chunk);
+                    }
+                } else {
+                    // A callback fault or cancellation during the query does
+                    // not make successful hardware counters a second loss.
+                    Self::discard_pending(&mut s);
+                    s.stop = true;
                 }
             }
             _ => {
@@ -426,7 +438,7 @@ mod tests {
         let stopped = Arc::new(AtomicUsize::new(0));
         let count = stopped.clone();
         let mut rx = config();
-        if mode == 3 {
+        if matches!(mode, 3 | 7) {
             rx.max_buffer_samples = 4;
         }
         if mode == 5 {
@@ -503,13 +515,22 @@ mod tests {
     }
     #[test]
     fn radio_hackrf_disconnect_queue_overflow_and_shutdown() {
-        for mode in [2, 3] {
+        for mode in [2, 3, 7] {
             let (s, stopped) = source(mode);
             let mut s = s.unwrap();
-            assert!(s.next_event().is_err());
+            let error = s.next_event().unwrap_err();
+            if matches!(mode, 3 | 7) {
+                assert!(error.to_string().contains(
+                    "pending_samples=4, ready_samples=0, incoming_samples=4, limit_samples=4"
+                ));
+            }
             assert_eq!(s.stats().verified_samples, 0);
             assert!(s.stats().last_gap.is_some());
-            assert_eq!(s.stats().queue_overflows, u64::from(mode == 3));
+            assert_eq!(s.stats().queue_overflows, u64::from(matches!(mode, 3 | 7)));
+            if mode == 7 {
+                assert_eq!(s.stats().unknown_loss_intervals, 1);
+                assert_eq!(s.stats().last_gap.unwrap().reason, GapReason::QueueOverflow);
+            }
             drop(s);
             assert_eq!(stopped.load(Ordering::SeqCst), 1);
         }
