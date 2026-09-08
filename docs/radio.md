@@ -82,6 +82,10 @@ four-byte representation with the received trailer. This is the byte-oriented
 equivalent of the polynomial/serial convention in 7.1.3.7. Tests must verify
 the equivalence using independent vectors, not two copies of the same helper.
 
+The independent OFDM fixtures include a 6 Mb/s case with stronger additive noise
+to exercise acquisition at lower signal-to-noise ratios. Repetition checks admit
+these candidates; SIGNAL validation and a valid PSDU FCS still govern delivery.
+
 ## Continuity and bounded processing
 
 Each chunk identifies its sample format, stream epoch, sequence, absolute sample

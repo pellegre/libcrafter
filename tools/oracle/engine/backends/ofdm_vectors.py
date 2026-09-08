@@ -13,7 +13,7 @@ import zlib
 import argparse
 import tempfile
 
-VERSION = '1'
+VERSION = '2'
 ROOT = Path(__file__).resolve().parents[4]
 OUT = ROOT / 'crafter/tests/fixtures/iq'
 # Table 17-3 and 17-5: rate, transmission-order RATE, NBPSC, NDBPS.
@@ -138,7 +138,7 @@ def generate(rate, rb, nbpsc, ndbps, index, case='clean'):
     leading = 37
     wave = [0j]*leading+wave+[0j]*32
     cfo = 80000 if case in ('offset', 'long_offset') else 0
-    noise = 0.003 if case=='noisy' else 0
+    noise = 0.06 if case=='low_snr' else (0.003 if case=='noisy' else 0)
     # Integer LCG uniform dither avoids implementation-specific Gaussian sampling.
     state = 12345
     def rand():
@@ -165,7 +165,7 @@ def generate(rate, rb, nbpsc, ndbps, index, case='clean'):
 def main():
     self_check()
     entries = [generate(*r,i) for i,r in enumerate(RATES)]
-    entries += [generate(*RATES[0],0,c) for c in ('noisy','offset','truncated','invalid_signal','bad_fcs')]
+    entries += [generate(*RATES[0],0,c) for c in ('noisy','low_snr','offset','truncated','invalid_signal','bad_fcs')]
     entries += [generate(*RATES[i], i, 'max_length') for i in (0, 7)]
     entries += [generate(*RATES[4], 4, 'long_offset')]
     manifest = dict(schema=1,generator_version=VERSION,generator_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
