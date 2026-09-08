@@ -231,9 +231,31 @@ pub fn reference_frame(
     {
         return Err("unsupported_phy");
     }
-    if present.field_bits().any(|b| b >= 29) {
+    // Namespace reset (bit 29) has no payload and resets the next bitmap
+    // to standard field zero: https://www.radiotap.org/fields/Radiotap%20Namespace.html
+    // Linux monitor captures repeat per-antenna signal/index fields this way.
+    // Keep accepting only those unambiguous one-byte repeated observations;
+    // vendor namespaces and repeated framing/PHY declarations remain excluded.
+    let words = present.words();
+    let reset = 1u32 << 29;
+    let extension = 1u32 << 31;
+    let antenna = (1u32 << 5) | (1u32 << 11);
+    if words[0] & (1 << 30) != 0 {
         return Err("unsupported_framing");
     }
+    if words.len() > 1 {
+        let mut tail_len = 0;
+        for i in 1..words.len() {
+            if words[i - 1] & reset == 0 || words[i] & !(antenna | reset | extension) != 0 {
+                return Err("unsupported_framing");
+            }
+            tail_len += (words[i] & antenna).count_ones() as usize;
+        }
+        if rt.raw_fields().len() != tail_len {
+            return Err("unsupported_framing");
+        }
+    }
+
     let flags = rt.flags_value().ok_or("unknown_fcs")?;
     if flags.failed_fcs() {
         return Err("corrupt_fcs");
@@ -637,6 +659,32 @@ mod tests {
             reference_frame(&bytes, bytes.len() as u32, [1000, 1002], 1, &p).unwrap_err(),
             "corrupt_fcs"
         );
+    }
+    #[test]
+    fn radio_comparison_repeated_antenna_namespaces() {
+        let p = policy();
+        // Synthetic standard fields followed by two antenna namespaces.
+        let mut bytes = vec![0, 0, 30, 0];
+        for word in [0xa000402eu32, 0xa0000820, 0x00000820] {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        bytes.extend_from_slice(&[0, 12, 0x6c, 0x09, 0x80, 0, 200, 0, 0, 0, 201, 0, 202, 1]);
+        bytes.extend_from_slice(&mac());
+        assert_eq!(
+            reference_frame(&bytes, bytes.len() as u32, [1000, 1002], 1, &p)
+                .unwrap()
+                .bytes,
+            mac()
+        );
+        // Missing reset, vendor namespace, and repeated Rate are not accepted.
+        for (index, mask) in [(7, 0x20), (11, 0x40), (8, 0x04)] {
+            let mut bad = bytes.clone();
+            bad[index] ^= mask;
+            assert!(reference_frame(&bad, bad.len() as u32, [1000, 1002], 1, &p).is_err());
+        }
+        let mut bad = bytes.clone();
+        bad[2] = 29;
+        assert!(reference_frame(&bad, bad.len() as u32, [1000, 1002], 1, &p).is_err());
     }
     #[test]
     fn radio_comparison_exclusions_and_inconclusive() {
