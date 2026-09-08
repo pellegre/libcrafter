@@ -242,6 +242,13 @@ impl Synchronizer {
             self.candidate = None;
             return Some(SyncEvent::Failure(AcquisitionFailure::LongTrainingNotFound));
         }
+        // A still strongly lag-16-periodic STF or tone is not the completed
+        // wideband LTF pair. Wait for that short-period coherence to disappear
+        // before paying for long-training reference matching.
+        let [a, b] = self.short_energy;
+        if self.short_correlation.power() > 0.85 * a * b {
+            return None;
+        }
         self.acquire_long(index, c.coarse)
     }
     // Consecutive training candidates share 63 of their 64 lag-64 pairs.
@@ -291,7 +298,7 @@ impl Synchronizer {
         // A common frequency correction rotates the cross correlation but
         // preserves its magnitude and both energies. Reject nonrepeating
         // candidates before phase correction and reference matching.
-        if cross.power() < 0.8 * repeat_a * repeat_b {
+        if cross.power() < 0.8 * repeat_a * repeat_b || repeat_a + repeat_b < 0.002 {
             return None;
         }
         cross = cross.mul(ComplexSample::rotation(-coarse * 64.));
