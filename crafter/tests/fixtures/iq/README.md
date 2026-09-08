@@ -23,3 +23,22 @@ Record impairment parameters separately from the expected original bytes. Add
 false-positive checks for noise and unsupported PHY observations. Keep long or
 large generated artifacts ignored; commit compact reproducible fixtures and
 provenance only. No hardware or network access is needed to replay fixtures.
+
+## Deterministic replay fixture
+
+`ramp.cs8` is an original synthetic eight-sample fixture (16 bytes), created
+without RF capture or external data. Bytes encode signed two's-complement
+interleaved I then Q, without a header or padding. The sample pairs are
+`(-128,127), (-64,64), (-1,1), (0,0), (1,-1), (64,-64), (127,-128), (32,-32)`.
+This tests storage, normalization, and replay only; it is not a Wi-Fi waveform.
+
+`ReaderIqSource::new(reader, config, position)` incrementally reads this format;
+`MemoryIqSource::from_cs8` uses the same path for owned signed bytes. Supply RF
+configuration, initial epoch/sequence/sample index, and optional time anchor
+explicitly. No file modification time is used. `mark_gap` records losses before
+the next chunk; known loss advances position, while unknown loss starts a new
+epoch and clears the anchor. Duration limits count received sample time rather
+than replay wall time. At a configured limit unread trailing input is not
+validated; otherwise an incomplete final I/Q pair is an error. Reader failures
+are sticky, and cancellation discards pending input. Arbitrary chunk sizes and
+one-byte short reads reproduce these same eight samples in the radio tests.

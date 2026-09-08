@@ -3,6 +3,9 @@
 //! Sources transfer owned interleaved signed eight-bit I/Q storage. DSP consumes
 //! normalized samples lazily: each component is divided by 128, giving [-1, 1).
 //! IQ is never a packet layer; only recovered MAC bytes cross the packet boundary.
+mod replay;
+pub use replay::{MemoryIqSource, ReaderIqSource};
+
 use crate::LinkType;
 use std::{
     fmt,
