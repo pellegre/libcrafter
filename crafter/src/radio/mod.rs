@@ -4,6 +4,10 @@
 //! normalized samples lazily: each component is divided by 128, giving [-1, 1).
 //! IQ is never a packet layer; only recovered MAC bytes cross the packet boundary.
 mod data;
+#[cfg(any(feature = "radio-hackrf", test))]
+mod hackrf;
+#[cfg(feature = "radio-hackrf")]
+pub use hackrf::{HackRfConfig, HackRfSource, HackRfStats};
 mod replay;
 mod signal;
 mod source;

@@ -124,3 +124,69 @@ qualification requires at least three independent bounded runs, each with real
 FCS-valid SDR matches and the fixed target satisfied. Preserve raw evidence,
 candidate identity and cleanup results privately; synthetic vectors and transport
 checks alone cannot satisfy this gate.
+
+## Explicit HackRF reception
+
+`radio-hackrf` enables `radio` plus a small receive-only native FFI boundary.
+The rest of the crate denies unsafe Rust; only the private native module permits
+it. Install libhackrf development and runtime libraries with the
+`hackrf_get_m0_state` API (firmware USB API >= 0x0106). Link with `libhackrf` on
+the normal native library search path. Custom installations can supply
+`LIBRARY_PATH` at link time and their platform's runtime loader search path.
+Offline `radio` builds and mock tests do not link or open libhackrf.
+
+The ABI and lifecycle were reviewed against Great Scott Gadgets' libhackrf
+`host/libhackrf/src/hackrf.h` and `hackrf.c`, revision `cc691022`.
+`hackrf_stop_rx` cancels transfers; `hackrf_close` joins the event thread before
+the callback context is freed. No transmit symbol is declared. Callback panics
+are caught before returning across FFI. A native thread-join failure aborts the
+process because the library cannot establish safe memory lifetime afterward.
+Native USB calls and shutdown retain the library's timeout/OS scheduling
+latency; the capture deadline prevents accepting further samples and an
+independent supervisor initiates shutdown without requiring consumer polls.
+Only one crafter acquisition may own libhackrf in a process at a time; callers
+must not manipulate the same library lifecycle through unrelated bindings.
+
+`HackRfSource::open_live(HackRfConfig { ... })` is the explicit runtime opt-in.
+A nonempty device serial, RF frequency, sample rate, baseband filter, LNA/VGA
+gains, amplifier state, antenna power state and finite sample/duration bounds
+are required. The filter is set **after** sample rate because setting the rate
+also changes the native filter. All settings are inspectable Rust values.
+The source does not provision devices, change host scheduling or transmit.
+
+The callback owns copied cs8 data before returning. Pending and verified chunks
+share `max_buffer_samples`; overflow terminates acquisition with a structured
+error. A query outside the callback verifies only samples received before that
+query began. Samples arriving during a query wait for the next query. Firmware
+shortfall counters must remain zero while actively receiving; changed,
+unavailable or erroneous counters stop acquisition and discard the unverified
+interval. The verified prefix remains readable before a sticky error. Shutdown
+never retroactively qualifies the remaining tail, even if firmware clears its
+counters. No exact lost-sample count or fabricated time anchor is inferred.
+`stats()` retains discarded-sample, overflow and unknown-continuity diagnostics
+including a final gap when no subsequent chunk exists. Cancellation drops all
+queued samples and joins the supervisor. Consumer slowness therefore produces
+bounded loss/error rather than unlimited memory growth.
+
+The example emits JSON Lines containing original FCS-bearing MAC bytes, a
+completion summary, and (for live operation) acquisition counters. With no
+arguments it replays the independent synthetic 6 Mb/s fixture:
+
+```sh
+cargo run -p crafter --features radio --example radio_receive
+cargo run -p crafter --features radio --example radio_receive -- --replay samples.cs8
+```
+
+The replay example assumes 20 Msps, has a one-second/20-million-sample bound and
+uses the documented example frequency; use `ReaderIqSource` directly for other
+metadata or limits. Live invocation requires every operator setting explicitly:
+
+```text
+cargo run -p crafter --features radio-hackrf --example radio_receive -- \
+  --live SERIAL FREQUENCY_HZ DURATION_SECONDS MAX_SAMPLES FILTER_HZ LNA_DB VGA_DB AMP_BOOL BIAS_BOOL
+```
+
+For the initial 20 Msps OFDM scope, set `FILTER_HZ` explicitly to `20000000`.
+The source can outpace the synchronous decoder; increase the explicit buffer
+bound in operator code only within an appropriate finite memory budget. Actual
+live decoder throughput and receiver agreement require separate qualification.

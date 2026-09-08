@@ -98,7 +98,8 @@
 //! # }
 //! ```
 
-#![forbid(unsafe_code)]
+#![cfg_attr(not(feature = "radio-hackrf"), forbid(unsafe_code))]
+#![deny(unsafe_code)]
 
 #[cfg(test)]
 #[allow(unused_macros)]
