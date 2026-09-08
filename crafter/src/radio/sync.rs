@@ -323,7 +323,9 @@ impl Synchronizer {
         }
         // Reference energy is 52/64 by Parseval (IFFT normalization 1/64).
         let score = match_sum.power() / (energy * (52. / 64.) + f32::MIN_POSITIVE);
-        if score < 0.65 || energy < 0.001 {
+        // Multipath spreads training energy across delayed copies; the direct
+        // path need not dominate. Repetition, SIGNAL and PSDU FCS still gate RX.
+        if score < 0.25 || energy < 0.001 {
             return None;
         }
         let first_index = index.checked_sub(127)?;

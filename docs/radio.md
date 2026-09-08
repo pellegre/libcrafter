@@ -88,6 +88,8 @@ the equivalence using independent vectors, not two copies of the same helper.
 The independent OFDM fixtures include a 6 Mb/s case with stronger additive noise
 to exercise acquisition at lower signal-to-noise ratios. Repetition checks admit
 these candidates; SIGNAL validation and a valid PSDU FCS still govern delivery.
+A strong delayed-path fixture also exercises acquisition when multipath reduces
+correlation with the ideal long-training waveform.
 
 ## Continuity and bounded processing
 
