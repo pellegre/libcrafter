@@ -215,18 +215,21 @@ and explicit RF settings. Failed capture summaries are never accepted as complet
 comparison input. A missing terminal or summary is an incomplete artifact.
 
 Append `--save-iq NEW_FILE` to a receive/replay invocation to create an optional
-IQ JSONL artifact without overwriting an existing file. It uses the same header
-and chunk vocabulary, adding `cs8_hex` to each verified chunk, followed by a
-terminal event. Its size is bounded by configured capture samples (hex uses four
-characters per complex sample, plus per-chunk metadata). Only the preverified
+IQ artifact without overwriting an existing file. Its JSON header declares
+`iq_encoding: "cs8-binary/v1"`. Each chunk metadata JSON line is followed by
+exactly `samples * 2` signed 8-bit interleaved I/Q bytes and one newline byte.
+Terminal/error records are JSON lines without sample blocks. The configured
+sample bound limits file size to two bytes per complex sample plus metadata.
+Replay also accepts earlier JSONL artifacts containing `cs8_hex` and no
+`iq_encoding` header field. Only the preverified
 prefix is saved. A source failure writes a `source_error` record instead of a
 successful terminal event; replay decodes the saved prefix and then reports that
 failure with `complete:false`. Missing terminal evidence also fails replay.
 Replay uses the full saved bounds, configuration and positions:
 
 ```sh
-cargo run -p crafter --features radio --example radio_receive -- --save-iq saved-iq.jsonl
-cargo run -p crafter --features radio --example radio_receive -- --replay-artifact saved-iq.jsonl
+cargo run -p crafter --features radio --example radio_receive -- --save-iq saved-iq.iq
+cargo run -p crafter --features radio --example radio_receive -- --replay-artifact saved-iq.iq
 cargo run -p crafter --features radio --example radio_compare -- receive.jsonl reference.pcap policy.json
 ```
 
