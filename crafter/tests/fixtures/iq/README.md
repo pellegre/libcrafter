@@ -20,9 +20,9 @@ Coverage must include all eight 20 MHz legacy rates, varied lengths and scramble
 states, arbitrarily split chunks, leading noise, frequency offsets, phase shifts,
 multipath, truncation, corrupt SIGNAL, corrupt FCS and explicit discontinuities.
 Record impairment parameters separately from the expected original bytes. Add
-false-positive checks for noise and unsupported PHY observations. Keep long or
-large generated artifacts ignored; commit compact reproducible fixtures and
-provenance only. No hardware or network access is needed to replay fixtures.
+false-positive checks for noise and unsupported PHY observations. Commit bounded
+synthetic regression fixtures and provenance; keep bulk experimental artifacts
+ignored. No hardware or network access is needed to replay fixtures.
 
 ## Deterministic replay fixture
 
@@ -82,6 +82,11 @@ uniform noise, +80 kHz carrier offset, a 73-sample end truncation, parity-invali
 SIGNAL (still convolutionally encoded), and a deliberately corrupted FCS.
 Rejection cases retain the intended PSDU as diagnostic truth, not expected
 successful receiver output. The clean 6 Mb/s frame has FCS `fb 56 c3 2d`.
+
+Two maximum-length 4095-byte PSDUs at 6 and 54 Mb/s exercise long traceback
+storage and pilot polarity wrap. A 1500-byte PSDU at 24 Mb/s adds +80 kHz carrier
+offset across a longer frame. Payload bytes repeat modulo 256. These three
+fixtures retain the same independent intermediate and original-byte evidence.
 
 Waveforms have 37 leading zero samples, 320 training samples, an 80-sample
 SIGNAL, DATA symbols and 32 trailing zero samples. A 0.4-radian phase rotation

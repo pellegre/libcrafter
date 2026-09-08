@@ -107,7 +107,7 @@ def self_check():
 def frame(extra):
     # Synthetic unprotected data frame, local MACs, LLC/SNAP, IPv4 documentation addresses.
     header = bytes.fromhex('080000000200000000010200000000020200000000030000aaaa030000000800')
-    payload = bytes(range(extra))
+    payload = bytes(i % 256 for i in range(extra))
     ip = bytearray(bytes.fromhex('450000000001000040fd0000c0000201c6336402'))
     ip[2:4] = struct.pack('>H',20+len(payload))
     total = sum(struct.unpack('>10H',ip))
@@ -117,7 +117,7 @@ def frame(extra):
     return body + struct.pack('<I',zlib.crc32(body))
 
 def generate(rate, rb, nbpsc, ndbps, index, case='clean'):
-    psdu = frame(index+3)
+    psdu = frame(4039 if case == 'max_length' else 1444 if case == 'long_offset' else index+3)
     if case=='bad_fcs': psdu = psdu[:-1]+bytes([psdu[-1]^1])
     seed = 0x5d-index*3
     nsym = math.ceil((16+8*len(psdu)+6)/ndbps)
@@ -137,7 +137,7 @@ def generate(rate, rb, nbpsc, ndbps, index, case='clean'):
     for i,b in enumerate(interleaved): wave += symbol(b,nbpsc,polarities[i+1])
     leading = 37
     wave = [0j]*leading+wave+[0j]*32
-    cfo = 80000 if case=='offset' else 0
+    cfo = 80000 if case in ('offset', 'long_offset') else 0
     noise = 0.003 if case=='noisy' else 0
     # Integer LCG uniform dither avoids implementation-specific Gaussian sampling.
     state = 12345
@@ -166,6 +166,8 @@ def main():
     self_check()
     entries = [generate(*r,i) for i,r in enumerate(RATES)]
     entries += [generate(*RATES[0],0,c) for c in ('noisy','offset','truncated','invalid_signal','bad_fcs')]
+    entries += [generate(*RATES[i], i, 'max_length') for i in (0, 7)]
+    entries += [generate(*RATES[4], 4, 'long_offset')]
     manifest = dict(schema=1,generator_version=VERSION,generator_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                     format='cs8',sample_rate_hz=20_000_000,source='IEEE Std 802.11-2007',fixtures=entries)
     (OUT/'ofdm-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')

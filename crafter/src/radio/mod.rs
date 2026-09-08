@@ -3,9 +3,11 @@
 //! Sources transfer owned interleaved signed eight-bit I/Q storage. DSP consumes
 //! normalized samples lazily: each component is divided by 128, giving [-1, 1).
 //! IQ is never a packet layer; only recovered MAC bytes cross the packet boundary.
+mod data;
 mod replay;
 mod signal;
 mod sync;
+pub use data::{DecoderStats, LegacyOfdmDecoder};
 pub use replay::{MemoryIqSource, ReaderIqSource};
 pub use signal::SignalInfo;
 
@@ -217,8 +219,14 @@ pub enum PhyDiagnostic {
     TruncatedFrame,
     InvalidHeader,
     InvalidFcs,
+    Ofdm {
+        frequency_offset_hz: f32,
+        training_correlation: f32,
+    },
     UnsupportedPhy,
-    Clipping { samples: u64 },
+    Clipping {
+        samples: u64,
+    },
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameIntegrity {
