@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "generator_version": "1",
-  "generator_sha256": "5b2d04373680eb942851d324049a745657742c8b9d0c7407ba74bcd9743f7145",
+  "generator_version": "2",
+  "generator_sha256": "3c645829e9c218344cee01dfdd32baaf64ff97c8921e9dcbe8416b7f389fd929",
   "format": "cs8",
   "sample_rate_hz": 20000000,
   "source": "IEEE Std 802.11-2007",
@@ -210,6 +210,29 @@
         "cfo_hz": 0,
         "phase_rad": 0.4,
         "uniform_noise_amplitude": 0.003,
+        "noise_seed": 12345
+      }
+    },
+    {
+      "name": "ofdm-6-low_snr",
+      "rate_mbps": 6,
+      "nbpsc": 1,
+      "ndbps": 24,
+      "nsym": 21,
+      "seed": 93,
+      "sample_count": 2149,
+      "preamble_start": 37,
+      "signal_start": 357,
+      "data_start": 437,
+      "frame_end": 2117,
+      "psdu_hex": "080000000200000000010200000000020200000000030000aaaa030000000800450000170001000040fd8db2c0000201c6336402000102fb56c32d",
+      "sha256": "4e71bfa0cd50d74f3b158d52d28e27b2b207863d44e6595d4024029991e68f21",
+      "fcs_valid": true,
+      "expected": "frame",
+      "impairment": {
+        "cfo_hz": 0,
+        "phase_rad": 0.4,
+        "uniform_noise_amplitude": 0.06,
         "noise_seed": 12345
       }
     },

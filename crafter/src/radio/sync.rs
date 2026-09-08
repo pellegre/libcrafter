@@ -226,7 +226,8 @@ impl Synchronizer {
         if self.candidate.is_none() && self.count >= 80 {
             let p = self.short_correlation;
             let [a, b] = self.short_energy;
-            if a > 0.001 && b > 0.001 && p.power() > 0.85 * a * b {
+            // Admit lower-SNR legacy rates; SIGNAL and FCS remain the integrity gates.
+            if a > 0.001 && b > 0.001 && p.power() > 0.6 * a * b {
                 self.candidate = Some(Candidate {
                     detected: index,
                     coarse: p.phase() / 16.,
@@ -246,7 +247,7 @@ impl Synchronizer {
         // wideband LTF pair. Wait for that short-period coherence to disappear
         // before paying for long-training reference matching.
         let [a, b] = self.short_energy;
-        if self.short_correlation.power() > 0.85 * a * b {
+        if self.short_correlation.power() > 0.6 * a * b {
             return None;
         }
         self.acquire_long(index, c.coarse)
@@ -298,7 +299,7 @@ impl Synchronizer {
         // A common frequency correction rotates the cross correlation but
         // preserves its magnitude and both energies. Reject nonrepeating
         // candidates before phase correction and reference matching.
-        if cross.power() < 0.8 * repeat_a * repeat_b || repeat_a + repeat_b < 0.002 {
+        if cross.power() < 0.5 * repeat_a * repeat_b || repeat_a + repeat_b < 0.002 {
             return None;
         }
         cross = cross.mul(ComplexSample::rotation(-coarse * 64.));
