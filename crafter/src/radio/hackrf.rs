@@ -313,7 +313,29 @@ fn supervise(shared: &Shared, driver: &mut impl Driver) {
         {
             break;
         }
-        let _ = shared.wake.wait_timeout(s, Duration::from_millis(5));
+        // Batch continuity checks instead of issuing a synchronous USB control
+        // transfer on every callback wakeup. Unverified samples remain pending.
+        // Bound both the delay and pending share of the configured queue; stop,
+        // cancellation and the capture sample bound still wake immediately.
+        let batch_samples = (shared.config.max_buffer_samples / 4)
+            .max(1)
+            .min((shared.config.sample_rate_hz as usize / 50).max(1))
+            as u64;
+        let delay = Duration::from_millis(20).min(
+            shared
+                .config
+                .max_duration
+                .saturating_sub(shared.start.elapsed()),
+        );
+        let _ = shared.wake.wait_timeout_while(s, delay, |s| {
+            !s.stop
+                && !s.cancelled
+                && s.stats.received_samples < shared.config.max_capture_samples
+                && s.stats
+                    .received_samples
+                    .saturating_sub(s.stats.verified_samples + s.stats.discarded_samples)
+                    < batch_samples
+        });
     }
     {
         shared.lock().stop = true;
@@ -458,6 +480,21 @@ mod tests {
             }),
             stopped,
         )
+    }
+    #[test]
+    fn radio_hackrf_spurious_wakes_do_not_flood_control_queries() {
+        let (source, stopped) = source(5);
+        let mut source = source.unwrap();
+        for _ in 0..40 {
+            source.shared.wake.notify_all();
+            std::thread::sleep(Duration::from_micros(250));
+        }
+        assert!(matches!(
+            source.next_event().unwrap(),
+            IqEvent::End(StreamEnd::LimitReached)
+        ));
+        assert!((1..=2).contains(&source.stats().counter_queries));
+        assert_eq!(stopped.load(Ordering::SeqCst), 1);
     }
     #[test]
     fn radio_hackrf_configuration_and_start_failure() {
