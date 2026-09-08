@@ -19,6 +19,7 @@ path = "src/lib.rs"
 # so the default build remains free of those dependencies.
 [features]
 default = []
+radio = []
 whad = ["dep:prost", "dep:prost-build", "dep:serialport"]
 
 [dependencies]
