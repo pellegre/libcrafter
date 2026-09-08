@@ -131,6 +131,8 @@ pub mod field;
 pub mod mac;
 pub mod packet;
 pub mod protocols;
+#[cfg(feature = "radio")]
+pub mod radio;
 pub mod registry;
 
 pub mod net;
