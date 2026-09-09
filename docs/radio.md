@@ -260,7 +260,11 @@ only after the worker flushes and joins. The summary includes `recording_error`.
 File operations retain the operating system's I/O latency, including at shutdown.
 
 The example accepts an optional leading `--buffer-samples N` for live reception
-or raw replay (65536–16777216 complex samples; default 2097152). Saved artifacts
+or raw replay (65536–536870912 complex samples; default 2097152). The maximum
+allows 1 GiB of queued CS8 data, plus chunk metadata and decoder state. Memory
+is consumed as samples arrive. Size the queue for the available memory and
+allow additional time to drain it after bounded reception stops. A 20-second
+capture at 20 Msps contains at most 800 MB of CS8 data. Saved artifacts
 retain their own configuration. Acquisition overflow errors report pending,
 verified-ready, incoming and allowed sample counts to distinguish verification
 backlog from consumer backlog. A larger finite buffer absorbs bursts; it does

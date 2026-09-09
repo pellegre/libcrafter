@@ -48,7 +48,9 @@ impl From<&RxConfig> for Config {
         }
     }
 }
-pub const MAX_EXAMPLE_BUFFER_SAMPLES: usize = 16_777_216;
+// At most 1 GiB of queued CS8 data, excluding chunk metadata and decoder state.
+// This is an opt-in ceiling, not an allocation or the default queue size.
+pub const MAX_EXAMPLE_BUFFER_SAMPLES: usize = 536_870_912;
 
 impl Config {
     pub fn rx(&self) -> Result<RxConfig> {
