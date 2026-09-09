@@ -67,10 +67,7 @@ fn length(header: [u8; 6], short: bool, bound: usize) -> Option<(u32, usize)> {
 struct Samples {
     // The first sixteen entries are mirrored at the end so every FIR window
     // is contiguous, including windows crossing the logical 64-sample wrap.
-    // Separate components let each four-tap accumulator use contiguous lanes.
-    // Together these still hold exactly eighty complex samples.
-    ring_i: [f32; 80],
-    ring_q: [f32; 80],
+    ring: [ComplexSample; 80],
     kernels: [[f32; 16]; 256],
     coarse_kernels: [[f32; 8]; 11],
     begin: u64,
@@ -113,8 +110,7 @@ impl Samples {
             }
         }
         Self {
-            ring_i: [0.; 80],
-            ring_q: [0.; 80],
+            ring: [ComplexSample::ZERO; 80],
             kernels,
             coarse_kernels,
             begin: 0,
@@ -127,11 +123,9 @@ impl Samples {
     }
     fn push(&mut self, value: ComplexSample) {
         let offset = self.end as usize % 64;
-        self.ring_i[offset] = value.i;
-        self.ring_q[offset] = value.q;
+        self.ring[offset] = value;
         if offset < 16 {
-            self.ring_i[offset + 64] = value.i;
-            self.ring_q[offset + 64] = value.q;
+            self.ring[offset + 64] = value;
         }
         self.end += 1;
         self.begin = self.begin.max(self.end.saturating_sub(64));
@@ -168,38 +162,26 @@ impl Samples {
         }
         let offset = (start % 64) as usize;
         Some(Self::dot(
-            &self.ring_i[offset..offset + 8],
-            &self.ring_q[offset..offset + 8],
+            &self.ring[offset..offset + 8],
             &self.coarse_kernels[phase],
         ))
     }
     #[inline]
     fn at_window(&self, start: u64, phase: usize) -> ComplexSample {
         let offset = (start % 64) as usize;
-        Self::dot(
-            &self.ring_i[offset..offset + 16],
-            &self.ring_q[offset..offset + 16],
-            &self.kernels[phase],
-        )
+        Self::dot(&self.ring[offset..offset + 16], &self.kernels[phase])
     }
     #[inline(always)]
-    fn dot<const N: usize>(i: &[f32], q: &[f32], weights: &[f32; N]) -> ComplexSample {
+    fn dot<const N: usize>(values: &[ComplexSample], weights: &[f32; N]) -> ComplexSample {
         // Independent accumulators expose parallel arithmetic without unsafe
         // SIMD or changing the interpolation coefficients.
-        let mut sums_i = [0.; 4];
-        let mut sums_q = [0.; 4];
+        let mut sums = [ComplexSample::ZERO; 4];
         for k in (0..N).step_by(4) {
             for lane in 0..4 {
-                sums_i[lane] += i[k + lane] * weights[k + lane];
-            }
-            for lane in 0..4 {
-                sums_q[lane] += q[k + lane] * weights[k + lane];
+                sums[lane] = sums[lane].add(values[k + lane].scale(weights[k + lane]));
             }
         }
-        ComplexSample {
-            i: ((sums_i[0] + sums_i[1]) + sums_i[2]) + sums_i[3],
-            q: ((sums_q[0] + sums_q[1]) + sums_q[2]) + sums_q[3],
-        }
+        sums[0].add(sums[1]).add(sums[2]).add(sums[3])
     }
     fn barker(&self, start: f64) -> Option<(ComplexSample, f32)> {
         let mut sum = ComplexSample::ZERO;
