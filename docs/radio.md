@@ -466,7 +466,9 @@ assumed. HackRF's [sampling/filter guidance](https://hackrf.readthedocs.io/en/la
 explains why analog filtering and source sample rate must be considered together;
 digital interpolation cannot undo aliasing or restore bandwidth already removed.
 
-The DSSS receiver uses a fixed 16-source-sample windowed-sinc fractional-delay
+The DSSS receiver uses an eight-source-sample normalized windowed-sinc kernel
+for initial acquisition, with eleven fractional phases selected by the rational
+sample clock. Timing refinement and payload recovery use a 16-source-sample
 kernel with 256 normalized fractional phases. Acquisition interpolates once onto
 an internal half-chip grid and reuses a rolling 32-sample history for Barker
 correlation across 22 timing phases. This internal 22 Msps clock does not request

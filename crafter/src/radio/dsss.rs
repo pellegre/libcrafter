@@ -2,6 +2,7 @@
 use super::*;
 use std::f32::consts::PI;
 const BARKER: [f32; 11] = [1., -1., 1., 1., -1., 1., 1., 1., -1., -1., -1.];
+const GRID_PHASES: [usize; 11] = [0, 23, 47, 70, 93, 116, 140, 163, 186, 209, 233];
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct Descrambler(u8);
@@ -62,12 +63,13 @@ fn length(header: [u8; 6], short: bool, bound: usize) -> Option<(u32, usize)> {
     Some((rate * 100_000, n))
 }
 
-/// Fixed history and normalized 256-phase, 16-tap Hann-windowed sinc kernels.
+/// Fixed history with separate coarse-search and refined interpolation kernels.
 struct Samples {
     // The first sixteen entries are mirrored at the end so every FIR window
     // is contiguous, including windows crossing the logical 64-sample wrap.
     ring: [ComplexSample; 80],
     kernels: [[f32; 16]; 256],
+    coarse_kernels: [[f32; 8]; 11],
     begin: u64,
     end: u64,
 }
@@ -90,9 +92,27 @@ impl Samples {
                 *coefficient /= gain;
             }
         }
+        let mut coarse_kernels = [[0.; 8]; 11];
+        for (phase, kernel) in coarse_kernels.iter_mut().enumerate() {
+            let fraction = GRID_PHASES[phase] as f32 / 256.;
+            for (k, coefficient) in kernel.iter_mut().enumerate() {
+                let x = k as f32 - 3. - fraction;
+                let sinc = if x.abs() < 1e-6 {
+                    1.
+                } else {
+                    (PI * x).sin() / (PI * x)
+                };
+                *coefficient = sinc * (0.5 + 0.5 * (PI * x / 4.).cos());
+            }
+            let gain: f32 = kernel.iter().sum();
+            for coefficient in kernel {
+                *coefficient /= gain;
+            }
+        }
         Self {
             ring: [ComplexSample::ZERO; 80],
             kernels,
+            coarse_kernels,
             begin: 0,
             end: 0,
         }
@@ -136,11 +156,15 @@ impl Samples {
     }
     #[inline]
     fn at_grid(&self, center: u64, phase: usize) -> Option<ComplexSample> {
-        let start = center.checked_sub(7)?;
-        if start < self.begin || start > self.end.checked_sub(16)? {
+        let start = center.checked_sub(3)?;
+        if start < self.begin || start > self.end.checked_sub(8)? {
             return None;
         }
-        Some(self.at_window(start, phase))
+        let offset = (start % 64) as usize;
+        Some(Self::dot(
+            &self.ring[offset..offset + 8],
+            &self.coarse_kernels[phase],
+        ))
     }
     #[inline]
     fn at_window(&self, start: u64, phase: usize) -> ComplexSample {
@@ -148,11 +172,11 @@ impl Samples {
         Self::dot(&self.ring[offset..offset + 16], &self.kernels[phase])
     }
     #[inline(always)]
-    fn dot(values: &[ComplexSample], weights: &[f32; 16]) -> ComplexSample {
+    fn dot<const N: usize>(values: &[ComplexSample], weights: &[f32; N]) -> ComplexSample {
         // Independent accumulators expose parallel arithmetic without unsafe
         // SIMD or changing the interpolation coefficients.
         let mut sums = [ComplexSample::ZERO; 4];
-        for k in (0..16).step_by(4) {
+        for k in (0..N).step_by(4) {
             for lane in 0..4 {
                 sums[lane] = sums[lane].add(values[k + lane].scale(weights[k + lane]));
             }
@@ -391,9 +415,8 @@ impl Acquisition {
             self.samples.push(value);
             loop {
                 // Rational 10/11 source-sample steps visit only eleven of the
-                // existing interpolation phases. Keep the cursor in integers;
+                // coarse interpolation phases. Keep the cursor in integers;
                 // corrected timing still uses the general interpolator.
-                const PHASES: [usize; 11] = [0, 23, 47, 70, 93, 116, 140, 163, 186, 209, 233];
                 let lookahead = 10 + u64::from(self.chip_fraction != 0);
                 if self
                     .chip_center
@@ -403,7 +426,7 @@ impl Acquisition {
                     break;
                 }
                 let center = self.chip_center;
-                let phase = PHASES[self.chip_fraction as usize];
+                let phase = self.chip_fraction as usize;
                 self.chip_fraction += 10;
                 if self.chip_fraction >= 11 {
                     self.chip_fraction -= 11;
@@ -672,7 +695,7 @@ mod tests {
         assert!(decode(&noise, 113).is_empty());
     }
     #[test]
-    fn radio_dsss_rational_grid_matches_general_interpolation() {
+    fn radio_dsss_rational_grid_matches_source_clock() {
         for origin in [0, u64::from(u32::MAX) - 8] {
             let mut acquisition = Acquisition::new();
             for sequence in 0..8 {
@@ -693,10 +716,13 @@ mod tests {
                 .unwrap();
                 acquisition.push(&chunk, |_| {}).unwrap();
                 for index in acquisition.next_chip - 32..acquisition.next_chip {
-                    let time = origin as f64 + index as f64 * (10. / 11.);
+                    // Closed-form source coordinates independently check the
+                    // incremental rational cursor across chunk/ring boundaries.
+                    let center = origin + index * 10 / 11;
+                    let phase = (index * 10 % 11) as usize;
                     assert_eq!(
                         acquisition.chips[(index % 32) as usize],
-                        acquisition.samples.at(time).unwrap(),
+                        acquisition.samples.at_grid(center, phase).unwrap(),
                         "origin {origin} chip {index}"
                     );
                 }
