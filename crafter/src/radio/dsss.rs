@@ -126,6 +126,18 @@ impl Samples {
         if start > last_start {
             return None;
         }
+        Some(self.at_window(start, phase))
+    }
+    #[inline]
+    fn at_grid(&self, center: u64, phase: usize) -> Option<ComplexSample> {
+        let start = center.checked_sub(7)?;
+        if start < self.begin || start > self.end.checked_sub(16)? {
+            return None;
+        }
+        Some(self.at_window(start, phase))
+    }
+    #[inline]
+    fn at_window(&self, start: u64, phase: usize) -> ComplexSample {
         let offset = (start % 64) as usize;
         let wrapped;
         let values: &[ComplexSample] = if offset <= 48 {
@@ -134,7 +146,7 @@ impl Samples {
             wrapped = std::array::from_fn::<_, 16, _>(|k| self.ring[(offset + k) % 64]);
             &wrapped
         };
-        Some(Self::dot(values, &self.kernels[phase]))
+        Self::dot(values, &self.kernels[phase])
     }
     #[inline(always)]
     fn dot(values: &[ComplexSample], weights: &[f32; 16]) -> ComplexSample {
@@ -280,6 +292,8 @@ pub(super) struct Acquisition {
     // existing 128-sample private history reservation.
     chips: [ComplexSample; 32],
     next_chip: u64,
+    chip_center: u64,
+    chip_fraction: u8,
     first_chip: Option<u64>,
     chip_power: [f64; 2],
     config: Option<RxConfig>,
@@ -298,6 +312,8 @@ impl Acquisition {
             tracks: std::array::from_fn(|_| Track::default()),
             chips: [ComplexSample::ZERO; 32],
             next_chip: 0,
+            chip_center: 0,
+            chip_fraction: 0,
             first_chip: None,
             chip_power: [0.; 2],
             config: None,
@@ -314,6 +330,8 @@ impl Acquisition {
         self.truncated_headers += u64::from(self.tracks.iter().any(|track| track.short.is_some()));
         self.tracks.fill(Track::default());
         self.next_chip = 0;
+        self.chip_center = 0;
+        self.chip_fraction = 0;
         self.first_chip = None;
         self.chip_power = [0.; 2];
         self.pending = None;
@@ -354,22 +372,42 @@ impl Acquisition {
             self.reset();
             self.samples.clear(p.sample_index);
             self.stream_start = p.sample_index;
+            self.chip_center = p.sample_index;
         }
         self.config = Some(chunk.config().clone());
         self.position = Some(p.clone());
         for value in chunk.normalized() {
             self.samples.push(value);
             loop {
-                let chip_time = self.stream_start as f64 + self.next_chip as f64 * (10. / 11.);
-                // Keep lookahead for the late timing-refinement interpolation.
-                if chip_time + 10. > self.samples.end as f64 {
+                // Rational 10/11 source-sample steps visit only eleven of the
+                // existing interpolation phases. Keep the cursor in integers;
+                // corrected timing still uses the general interpolator.
+                const PHASES: [usize; 11] = [0, 23, 47, 70, 93, 116, 140, 163, 186, 209, 233];
+                let lookahead = 10 + u64::from(self.chip_fraction != 0);
+                if self
+                    .chip_center
+                    .checked_add(lookahead)
+                    .map_or(true, |end| end > self.samples.end)
+                {
                     break;
+                }
+                let center = self.chip_center;
+                let phase = PHASES[self.chip_fraction as usize];
+                self.chip_fraction += 10;
+                if self.chip_fraction >= 11 {
+                    self.chip_fraction -= 11;
+                    self.chip_center =
+                        self.chip_center
+                            .checked_add(1)
+                            .ok_or(RadioError::Overflow {
+                                context: "DSSS source chip cursor",
+                            })?;
                 }
                 let chip_index = self.next_chip;
                 self.next_chip = self.next_chip.checked_add(1).ok_or(RadioError::Overflow {
                     context: "DSSS internal chip clock",
                 })?;
-                let Some(chip) = self.samples.at(chip_time) else {
+                let Some(chip) = self.samples.at_grid(center, phase) else {
                     self.first_chip = None;
                     self.chip_power = [0.; 2];
                     continue;
@@ -392,11 +430,21 @@ impl Acquisition {
                 let timing = self.tracks[track_index].timing;
                 let symbol_start = start + timing;
                 let coarse = if timing == 0. {
-                    let mut sum = ComplexSample::ZERO;
-                    for (k, &sign) in BARKER.iter().enumerate() {
-                        let value = self.chips[((chip_index - 20 + 2 * k as u64) % 32) as usize];
-                        sum = sum.add(value.scale(sign));
-                    }
+                    // Spell out the fixed signs so this hot correlation has
+                    // no dynamic coefficient loads or inner loop branches.
+                    let chip = |offset| self.chips[((chip_index - 20 + offset) % 32) as usize];
+                    let sum = ComplexSample::ZERO
+                        .add(chip(0))
+                        .sub(chip(2))
+                        .add(chip(4))
+                        .add(chip(6))
+                        .sub(chip(8))
+                        .add(chip(10))
+                        .add(chip(12))
+                        .add(chip(14))
+                        .sub(chip(16))
+                        .sub(chip(18))
+                        .sub(chip(20));
                     let power = self.chip_power[parity] as f32;
                     Some((sum.scale(1. / 11.), sum.power() / (11. * power).max(1e-12)))
                 } else {
@@ -612,6 +660,39 @@ mod tests {
             .collect();
         assert!(decode(&noise, 113).is_empty());
     }
+    #[test]
+    fn radio_dsss_rational_grid_matches_general_interpolation() {
+        for origin in [0, u64::from(u32::MAX) - 8] {
+            let mut acquisition = Acquisition::new();
+            for sequence in 0..8 {
+                let bytes: Vec<i8> = (0..226)
+                    .map(|n| ((n * 37 + sequence * 17) % 255) as u8 as i8)
+                    .collect();
+                let chunk = IqChunk::new(
+                    config(),
+                    IqPosition {
+                        epoch: 0,
+                        sequence,
+                        sample_index: origin + sequence * 113,
+                        time_anchor: None,
+                        discontinuity: None,
+                    },
+                    bytes,
+                )
+                .unwrap();
+                acquisition.push(&chunk, |_| {}).unwrap();
+                for index in acquisition.next_chip - 32..acquisition.next_chip {
+                    let time = origin as f64 + index as f64 * (10. / 11.);
+                    assert_eq!(
+                        acquisition.chips[(index % 32) as usize],
+                        acquisition.samples.at(time).unwrap(),
+                        "origin {origin} chip {index}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn radio_dsss_continuity_resets() {
         let bytes = include_bytes!("../../tests/fixtures/iq/dsss-10-long-clean-48.cs8");
