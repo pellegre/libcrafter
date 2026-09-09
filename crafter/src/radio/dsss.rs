@@ -280,6 +280,12 @@ impl Track {
             self.last = oldest;
             self.run = 1;
         }
+        // Refinement belongs to an active SYNC/SFD or PLCP header. Once a
+        // suspected SYNC expires, resume the shared nominal chip grid instead
+        // of carrying its correction through unrelated payload or noise.
+        if self.short.is_none() && self.run < 32 {
+            self.timing = 0.;
+        }
         None
     }
 }
