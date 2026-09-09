@@ -147,3 +147,45 @@ cases. Test arbitrary chunks, mixed OFDM/DSSS/CCK streams and explicit gaps.
 Reject short/1 Mbps, corrupt SFD/header CRC, unsupported SERVICE/SIGNAL,
 impossible/over-bound lengths, bad FCS and truncation at every field boundary.
 No synthetic waveform is evidence of live receiver agreement.
+
+### Implemented independent DSSS/CCK inventory
+
+`python3 tools/oracle/engine/backends/dsss_vectors.py` creates 25 bounded
+`dsss-*` fixtures. `--check` regenerates in a temporary directory and compares
+all bytes, including the inventory and generator digest, without changing the
+checked-in files. The encoder imports only Python's standard library. The
+literal checks above execute before waveform generation.
+
+Seven clean fixtures cover every valid preamble/rate combination. Four separate
+long-preamble impaired fixtures cover each rate with a fractional start at
+37.375 source samples, +35 ppm sample-clock error, +45 kHz carrier offset,
+0.63 radians phase, deterministic uniform noise and a 0.22-amplitude path
+1.3 chips late. Four short/11 Mbps fixtures use the literal 1023–1026 octet
+length-extension boundary cases. Remaining cases cover alternate long seed,
+header CRC, MAC FCS, SFD, SIGNAL and PBCC rejection, and truncation during SYNC,
+SFD, header and payload. All PSDUs are synthetic, with locally administered MAC
+addresses. Long payload bytes exercise all 11 Mbps phase selections; the
+inventory test also checks all four 5.5 Mbps codeword selections.
+
+Each chip is an impulse at its center convolved with a symmetric raised-cosine
+pulse (rolloff 0.35, support truncated to ±8 chips), evaluated directly at
+20 Msps. The mathematical raised-cosine pulse is bandlimited; finite support
+introduces small spectral leakage and is not a spectral-mask qualification.
+The pulse has no causal delay, and its precursor starts before the declared
+preamble boundary. `preamble_start`, `payload_start` and exclusive `frame_end`
+are nominal modulation boundaries in the original source coordinates, not
+first/last nonzero pulse samples. Trailing samples preserve pulse lookahead in
+complete fixtures; truncated cases intentionally omit required frame samples.
+No receiver interpolation code is reused. Quantization is signed cs8 with
+round-to-nearest saturation; the checked-in hashes are canonical across math
+library rounding differences.
+
+Per-fixture JSON records contain header bytes, complete input/scrambled serial
+bits, initial delay seed, payload chip boundary and every CCK symbol's serial
+bits, common phase quadrant and eight complex chips. The manifest hashes both
+IQ and intermediate records and records all pulse/impairment parameters.
+`radio_dsss_vectors` validates inventory integrity, an independently oriented
+CRC-16 implementation, MAC FCS, descrambler truth, rate/length arithmetic and
+codeword selection coverage. It deliberately makes no production-decoder
+success claim; replay, arbitrary chunk boundaries and live qualification belong
+to the subsequent receiver steps.

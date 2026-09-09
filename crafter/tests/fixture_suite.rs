@@ -8588,7 +8588,11 @@ fn assert_fixture_filename_convention(relative: &Path) {
         assert_eq!(relative.components().count(), 2, "IQ fixtures must be flat");
         if matches!(
             file_name,
-            "ramp.cs8" | "ofdm-index.tsv" | "ofdm-manifest.json"
+            "ramp.cs8"
+                | "ofdm-index.tsv"
+                | "ofdm-manifest.json"
+                | "dsss-index.tsv"
+                | "dsss-manifest.json"
         ) {
             return;
         }
@@ -8597,6 +8601,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
             include_str!("fixtures/iq/ofdm-index.tsv")
                 .lines()
                 .skip(1)
+                .chain(include_str!("fixtures/iq/dsss-index.tsv").lines().skip(1))
                 .any(|line| line.split('\t').next() == Some(base_name)),
             "IQ fixture {relative_str} must appear in the independent vector inventory"
         );
