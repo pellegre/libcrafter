@@ -191,6 +191,8 @@ impl Samples {
         for k in (0..N).step_by(4) {
             for lane in 0..4 {
                 sums_i[lane] += i[k + lane] * weights[k + lane];
+            }
+            for lane in 0..4 {
                 sums_q[lane] += q[k + lane] * weights[k + lane];
             }
         }
