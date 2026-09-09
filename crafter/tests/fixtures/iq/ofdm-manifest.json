@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "generator_version": "4",
-  "generator_sha256": "e422b195f2a25c12078bfadada769abf84238719ffc724d4c4497ec6ea5093f5",
+  "generator_version": "5",
+  "generator_sha256": "bd86ce66625b8bac8b6df98943c333ccffe00f9fddf1dbefca5465006c4a3c52",
   "format": "cs8",
   "sample_rate_hz": 20000000,
   "source": "IEEE Std 802.11-2007",
@@ -28,6 +28,7 @@
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
         "nonzero_pad": false,
+        "invalid_service": false,
         "delayed_path": null
       }
     },
@@ -53,6 +54,7 @@
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
         "nonzero_pad": false,
+        "invalid_service": false,
         "delayed_path": null
       }
     },
@@ -78,6 +80,7 @@
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
         "nonzero_pad": false,
+        "invalid_service": false,
         "delayed_path": null
       }
     },
@@ -103,6 +106,7 @@
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
         "nonzero_pad": false,
+        "invalid_service": false,
         "delayed_path": null
       }
     },
@@ -128,6 +132,7 @@
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
         "nonzero_pad": false,
+        "invalid_service": false,
         "delayed_path": null
       }
     },
@@ -153,6 +158,7 @@
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
         "nonzero_pad": false,
+        "invalid_service": false,
         "delayed_path": null
       }
     },
@@ -178,6 +184,7 @@
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
         "nonzero_pad": false,
+        "invalid_service": false,
         "delayed_path": null
       }
     },
@@ -203,6 +210,7 @@
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
         "nonzero_pad": false,
+        "invalid_service": false,
         "delayed_path": null
       }
     },
@@ -228,6 +236,7 @@
         "uniform_noise_amplitude": 0.003,
         "noise_seed": 12345,
         "nonzero_pad": false,
+        "invalid_service": false,
         "delayed_path": null
       }
     },
@@ -253,6 +262,7 @@
         "uniform_noise_amplitude": 0.06,
         "noise_seed": 12345,
         "nonzero_pad": false,
+        "invalid_service": false,
         "delayed_path": null
       }
     },
@@ -278,6 +288,7 @@
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
         "nonzero_pad": false,
+        "invalid_service": false,
         "delayed_path": {
           "delay_samples": 4,
           "amplitude": 0.9,
@@ -308,6 +319,7 @@
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
         "nonzero_pad": true,
+        "invalid_service": false,
         "delayed_path": null
       }
     },
@@ -333,6 +345,7 @@
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
         "nonzero_pad": false,
+        "invalid_service": false,
         "delayed_path": null
       }
     },
@@ -358,6 +371,7 @@
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
         "nonzero_pad": false,
+        "invalid_service": false,
         "delayed_path": null
       }
     },
@@ -383,6 +397,33 @@
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
         "nonzero_pad": false,
+        "invalid_service": false,
+        "delayed_path": null
+      }
+    },
+    {
+      "name": "ofdm-6-invalid_service",
+      "rate_mbps": 6,
+      "nbpsc": 1,
+      "ndbps": 24,
+      "nsym": 21,
+      "seed": 93,
+      "sample_count": 2149,
+      "preamble_start": 37,
+      "signal_start": 357,
+      "data_start": 437,
+      "frame_end": 2117,
+      "psdu_hex": "080000000200000000010200000000020200000000030000aaaa030000000800450000170001000040fd8db2c0000201c6336402000102fb56c32d",
+      "sha256": "27914fc482ae9397adffbfd8e999906dbb5b6c52cba0a32548c0b65b90c10dd8",
+      "fcs_valid": true,
+      "expected": "reject",
+      "impairment": {
+        "cfo_hz": 0,
+        "phase_rad": 0.4,
+        "uniform_noise_amplitude": 0,
+        "noise_seed": 12345,
+        "nonzero_pad": false,
+        "invalid_service": true,
         "delayed_path": null
       }
     },
@@ -408,6 +449,7 @@
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
         "nonzero_pad": false,
+        "invalid_service": false,
         "delayed_path": null
       }
     },
@@ -433,6 +475,7 @@
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
         "nonzero_pad": false,
+        "invalid_service": false,
         "delayed_path": null
       }
     },
@@ -458,6 +501,7 @@
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
         "nonzero_pad": false,
+        "invalid_service": false,
         "delayed_path": null
       }
     },
@@ -483,6 +527,7 @@
         "uniform_noise_amplitude": 0,
         "noise_seed": 12345,
         "nonzero_pad": false,
+        "invalid_service": false,
         "delayed_path": null
       }
     }

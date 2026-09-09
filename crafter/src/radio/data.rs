@@ -273,7 +273,8 @@ fn decode_data(
     metric[0] = 0.;
     let mut history = vec![[0u8; 64]; count];
     let mut cursor = 0;
-    for (t, row) in history.iter_mut().enumerate() {
+    for t in 0..count {
+        let row = &mut history[t];
         let mut pair = [0.; 2];
         for j in 0..2 {
             if pattern[(2 * t + j) % pattern.len()] == 1 {
@@ -293,6 +294,13 @@ fn decode_data(
                     row[dest] = state as u8;
                 }
             }
+        }
+        // Future trellis extensions cannot change any surviving path's prefix.
+        // Once every state has an invalid SERVICE field, no final traceback can
+        // produce a deliverable frame. Keep all possible states, not just the
+        // currently cheapest path, to preserve the full decoder's decisions.
+        if t == 47 && !possible_service_prefix(&history[..48]) {
+            return Err(());
         }
         let minimum = next.iter().copied().fold(f32::INFINITY, f32::min);
         for cost in &mut next {
@@ -332,6 +340,24 @@ fn decode_data(
         .map(|b| b.iter().enumerate().fold(0, |v, (i, b)| v | (b << i)))
         .collect())
 }
+fn possible_service_prefix(history: &[[u8; 64]]) -> bool {
+    for final_state in 0..64 {
+        let mut state = final_state;
+        for row in history[16..].iter().rev() {
+            state = row[state] as usize;
+        }
+        let mut service = [0u8; 16];
+        for t in (0..16).rev() {
+            service[t] = (state & 1) as u8;
+            state = history[t][state] as usize;
+        }
+        if (1u8..128).any(|mut seed| service.iter().all(|b| *b == feedback(&mut seed))) {
+            return true;
+        }
+    }
+    false
+}
+
 fn valid_fcs(bytes: &[u8]) -> bool {
     if bytes.len() < 4 {
         return false;

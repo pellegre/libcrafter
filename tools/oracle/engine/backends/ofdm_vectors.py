@@ -13,7 +13,7 @@ import zlib
 import argparse
 import tempfile
 
-VERSION = '4'
+VERSION = '5'
 ROOT = Path(__file__).resolve().parents[4]
 OUT = ROOT / 'crafter/tests/fixtures/iq'
 # Table 17-3 and 17-5: rate, transmission-order RATE, NBPSC, NDBPS.
@@ -122,6 +122,8 @@ def generate(rate, rb, nbpsc, ndbps, index, case='clean'):
     seed = 0x5d-index*3
     nsym = math.ceil((16+8*len(psdu)+6)/ndbps)
     data = [0]*16+bits(psdu)+[0]*(nsym*ndbps-16-8*len(psdu))
+    if case == 'invalid_service':
+        data[7] = 1  # Reserved SERVICE bit; PSDU and FCS remain valid.
     # Receiver discards PAD (17.3.12), even when transmitter PAD is erroneous.
     if case == 'nonzero_pad':
         pad_start = 16+8*len(psdu)+6
@@ -168,15 +170,15 @@ def generate(rate, rb, nbpsc, ndbps, index, case='clean'):
                 sample_count=len(samples)//2,preamble_start=leading,signal_start=leading+320,
                 data_start=leading+400,frame_end=leading+400+nsym*80,psdu_hex=psdu.hex(),
                 sha256=hashlib.sha256(samples).hexdigest(),fcs_valid=case!='bad_fcs',
-                expected='reject' if case in ('invalid_signal','truncated','bad_fcs') else 'frame',
-                impairment=dict(cfo_hz=cfo,phase_rad=0.4,uniform_noise_amplitude=noise,noise_seed=12345,nonzero_pad=case=='nonzero_pad',
+                expected='reject' if case in ('invalid_signal','invalid_service','truncated','bad_fcs') else 'frame',
+                impairment=dict(cfo_hz=cfo,phase_rad=0.4,uniform_noise_amplitude=noise,noise_seed=12345,nonzero_pad=case=='nonzero_pad',invalid_service=case=='invalid_service',
                                 delayed_path=(dict(delay_samples=4,amplitude=0.9,phase_rad=0.7,scale=0.5)
                                               if case=='strong_multipath' else None)))
 
 def main():
     self_check()
     entries = [generate(*r,i) for i,r in enumerate(RATES)]
-    entries += [generate(*RATES[0],0,c) for c in ('noisy','low_snr','strong_multipath','nonzero_pad','offset','truncated','invalid_signal','bad_fcs')]
+    entries += [generate(*RATES[0],0,c) for c in ('noisy','low_snr','strong_multipath','nonzero_pad','offset','truncated','invalid_signal','invalid_service','bad_fcs')]
     entries += [generate(*RATES[i], i, 'max_length') for i in (0, 7)]
     entries += [generate(*RATES[4], 4, 'long_offset')]
     manifest = dict(schema=1,generator_version=VERSION,generator_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
