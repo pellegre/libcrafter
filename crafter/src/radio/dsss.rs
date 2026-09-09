@@ -126,11 +126,27 @@ impl Samples {
         if start > last_start {
             return None;
         }
-        let mut sum = ComplexSample::ZERO;
-        for (k, &weight) in self.kernels[phase].iter().enumerate() {
-            sum = sum.add(self.ring[((start % 64) as usize + k) % 64].scale(weight));
+        let offset = (start % 64) as usize;
+        let wrapped;
+        let values: &[ComplexSample] = if offset <= 48 {
+            &self.ring[offset..offset + 16]
+        } else {
+            wrapped = std::array::from_fn::<_, 16, _>(|k| self.ring[(offset + k) % 64]);
+            &wrapped
+        };
+        Some(Self::dot(values, &self.kernels[phase]))
+    }
+    #[inline(always)]
+    fn dot(values: &[ComplexSample], weights: &[f32; 16]) -> ComplexSample {
+        // Independent accumulators expose parallel arithmetic without unsafe
+        // SIMD or changing the interpolation coefficients.
+        let mut sums = [ComplexSample::ZERO; 4];
+        for k in (0..16).step_by(4) {
+            for lane in 0..4 {
+                sums[lane] = sums[lane].add(values[k + lane].scale(weights[k + lane]));
+            }
         }
-        Some(sum)
+        sums[0].add(sums[1]).add(sums[2]).add(sums[3])
     }
     fn barker(&self, start: f64) -> Option<(ComplexSample, f32)> {
         let mut sum = ComplexSample::ZERO;
@@ -265,6 +281,7 @@ pub(super) struct Acquisition {
     chips: [ComplexSample; 32],
     next_chip: u64,
     first_chip: Option<u64>,
+    chip_power: [f64; 2],
     config: Option<RxConfig>,
     position: Option<IqPosition>,
     pending: Option<Header>,
@@ -282,6 +299,7 @@ impl Acquisition {
             chips: [ComplexSample::ZERO; 32],
             next_chip: 0,
             first_chip: None,
+            chip_power: [0.; 2],
             config: None,
             position: None,
             pending: None,
@@ -297,6 +315,7 @@ impl Acquisition {
         self.tracks.fill(Track::default());
         self.next_chip = 0;
         self.first_chip = None;
+        self.chip_power = [0.; 2];
         self.pending = None;
         self.position = None;
         self.config = None;
@@ -352,10 +371,19 @@ impl Acquisition {
                 })?;
                 let Some(chip) = self.samples.at(chip_time) else {
                     self.first_chip = None;
+                    self.chip_power = [0.; 2];
                     continue;
                 };
-                self.chips[chip_index as usize % 32] = chip;
                 let first = *self.first_chip.get_or_insert(chip_index);
+                let parity = (chip_index % 2) as usize;
+                // Each parity contains the eleven chip-spaced samples of one
+                // Barker window. f64 state avoids accumulating f32 drift.
+                if chip_index - first >= 22 {
+                    self.chip_power[parity] -=
+                        f64::from(self.chips[((chip_index - 22) % 32) as usize].power());
+                }
+                self.chip_power[parity] += f64::from(chip.power());
+                self.chips[chip_index as usize % 32] = chip;
                 if chip_index - first < 20 {
                     continue;
                 }
@@ -365,12 +393,11 @@ impl Acquisition {
                 let symbol_start = start + timing;
                 let coarse = if timing == 0. {
                     let mut sum = ComplexSample::ZERO;
-                    let mut power = 0.;
                     for (k, &sign) in BARKER.iter().enumerate() {
                         let value = self.chips[((chip_index - 20 + 2 * k as u64) % 32) as usize];
                         sum = sum.add(value.scale(sign));
-                        power += value.power();
                     }
+                    let power = self.chip_power[parity] as f32;
                     Some((sum.scale(1. / 11.), sum.power() / (11. * power).max(1e-12)))
                 } else {
                     self.samples.barker(symbol_start)
