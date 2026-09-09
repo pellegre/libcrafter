@@ -14,6 +14,7 @@ mod signal;
 mod source;
 mod sync;
 pub use data::{DecoderStats, LegacyOfdmDecoder};
+pub use dsss::DsssCckDecoder;
 pub use replay::{MemoryIqSource, ReaderIqSource};
 pub use signal::SignalInfo;
 pub use source::{RadioPacketSource, RadioReceiveMetadata};
@@ -230,6 +231,11 @@ pub enum PhyDiagnostic {
         frequency_offset_hz: f32,
         training_correlation: f32,
     },
+    Dsss {
+        short_preamble: bool,
+        frequency_offset_hz: f32,
+        timing_uncertainty_samples: u32,
+    },
     UnsupportedPhy,
     Clipping {
         samples: u64,
@@ -250,6 +256,18 @@ impl PartialEq for PhyDiagnostic {
                     training_correlation: d,
                 },
             ) => a.to_bits() == c.to_bits() && b.to_bits() == d.to_bits(),
+            (
+                Self::Dsss {
+                    short_preamble: a,
+                    frequency_offset_hz: b,
+                    timing_uncertainty_samples: c,
+                },
+                Self::Dsss {
+                    short_preamble: d,
+                    frequency_offset_hz: e,
+                    timing_uncertainty_samples: f,
+                },
+            ) => a == d && b.to_bits() == e.to_bits() && c == f,
             (Self::Clipping { samples: a }, Self::Clipping { samples: b }) => a == b,
             (Self::TruncatedFrame, Self::TruncatedFrame)
             | (Self::InvalidHeader, Self::InvalidHeader)

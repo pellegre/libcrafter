@@ -1,5 +1,4 @@
 //! Private clause 15/18 acquisition. Coordinates refer to the original 20 Msps stream.
-#![allow(dead_code)] // Connected to the packet decoder in the following plan steps.
 use super::*;
 use std::f32::consts::PI;
 const BARKER: [f32; 11] = [1., -1., 1., 1., -1., 1., 1., 1., -1., -1., -1.];
@@ -288,7 +287,19 @@ impl Acquisition {
         self.resets += 1;
     }
     /// Header callback avoids an unbounded output allocation. No payload storage here.
+    #[cfg(test)]
     pub fn push(&mut self, chunk: &IqChunk, mut emit: impl FnMut(Header)) -> RadioResult<()> {
+        self.push_samples(chunk, |header, _| {
+            if let Some(header) = header {
+                emit(header);
+            }
+        })
+    }
+    fn push_samples(
+        &mut self,
+        chunk: &IqChunk,
+        mut emit: impl FnMut(Option<Header>, &Samples),
+    ) -> RadioResult<()> {
         if chunk.config().sample_rate_hz != 20_000_000 {
             self.reset();
             return Err(RadioError::Invalid {
@@ -366,8 +377,9 @@ impl Acquisition {
             {
                 let header = self.pending.take().unwrap();
                 self.suppress_until = header.payload_start;
-                emit(header);
+                emit(Some(header), &self.samples);
             }
+            emit(None, &self.samples);
         }
         Ok(())
     }
@@ -564,5 +576,207 @@ mod tests {
             assert!(output.is_empty(), "reset variant {variant}");
             assert!(acquisition.resets >= 2);
         }
+    }
+}
+
+struct Payload {
+    header: Header,
+    start: IqPosition,
+    bytes: Vec<u8>,
+    bits: usize,
+    next: f64,
+}
+impl Payload {
+    fn advance(&mut self, samples: &Samples) -> bool {
+        while samples.end as f64 >= self.next + 29. {
+            let Some((symbol, _)) = samples.barker(self.next) else {
+                return false;
+            };
+            let corrected = symbol
+                .mul(self.header.previous_symbol.conj())
+                .mul(ComplexSample::rotation(-self.header.frequency_rad * 20.));
+            self.header.previous_symbol = symbol;
+            let pair = match ((corrected.phase() / (PI / 2.)).round() as i32).rem_euclid(4) {
+                0 => [0, 0],
+                1 => [0, 1],
+                2 => [1, 1],
+                _ => [1, 0],
+            };
+            let serial = if self.header.rate_bps == 1_000_000 {
+                [u8::from(corrected.i < 0.), 0]
+            } else {
+                pair
+            };
+            for bit in serial
+                .into_iter()
+                .take(if self.header.rate_bps == 1_000_000 {
+                    1
+                } else {
+                    2
+                })
+            {
+                self.bytes[self.bits / 8] |= self.header.descrambler.bit(bit) << (self.bits % 8);
+                self.bits += 1;
+            }
+            // Track slow sample-clock drift using the Barker correlation slope.
+            let adjustment = match (
+                samples.barker(self.next - 0.5),
+                samples.barker(self.next + 0.5),
+            ) {
+                (Some((_, early)), Some((_, late))) => {
+                    f64::from((late - early).clamp(-0.1, 0.1)) * 0.2
+                }
+                _ => 0.,
+            };
+            self.next += 20. + adjustment;
+            if self.bits == self.bytes.len() * 8 {
+                return true;
+            }
+        }
+        false
+    }
+}
+/// Streaming 20 Msps DSSS receiver. CCK headers are recognized but their payloads
+/// are currently rejected explicitly. Only received-FCS-valid frames are emitted.
+pub struct DsssCckDecoder {
+    acquisition: Acquisition,
+    continuity: IqContinuity,
+    pending: Option<Payload>,
+    terminal: bool,
+    stats: DecoderStats,
+}
+impl Default for DsssCckDecoder {
+    fn default() -> Self {
+        Self {
+            acquisition: Acquisition::new(),
+            continuity: IqContinuity::default(),
+            pending: None,
+            terminal: false,
+            stats: DecoderStats::default(),
+        }
+    }
+}
+impl DsssCckDecoder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn stats(&self) -> DecoderStats {
+        self.stats
+    }
+}
+impl PhyDecoder for DsssCckDecoder {
+    fn reset(&mut self, reason: ResetReason) -> DecodeOutput {
+        let mut out = DecodeOutput::default();
+        if self.pending.take().is_some()
+            || self.acquisition.pending.is_some()
+            || self.acquisition.tracks.iter().any(|t| t.short.is_some())
+        {
+            self.stats.truncated_frames += 1;
+            out.diagnostics.push(PhyDiagnostic::TruncatedFrame);
+        }
+        self.acquisition.reset();
+        self.continuity.reset();
+        self.terminal = matches!(reason, ResetReason::End(_));
+        out.diagnostics.push(PhyDiagnostic::Reset(reason));
+        out
+    }
+    fn consume(&mut self, event: IqEvent) -> RadioResult<DecodeOutput> {
+        if self.terminal {
+            return Ok(DecodeOutput::default());
+        }
+        let chunk = match event {
+            IqEvent::End(end) => return Ok(self.reset(ResetReason::End(end))),
+            IqEvent::Chunk(c) => c,
+        };
+        let config = chunk.config();
+        if config.sample_rate_hz != 20_000_000 || config.max_buffer_samples < 128 {
+            self.reset(ResetReason::Explicit);
+            return Err(RadioError::Invalid {
+                field: "config",
+                reason: "DSSS requires 20 Msps and at least 128 buffer samples",
+            });
+        }
+        let mut out = DecodeOutput::default();
+        if let Some(gap) = self.continuity.observe(&chunk) {
+            out = self.reset(ResetReason::Gap(gap));
+            self.continuity.observe(&chunk);
+        }
+        let old_invalid = self.acquisition.invalid_headers;
+        let pending = &mut self.pending;
+        let stats = &mut self.stats;
+        self.acquisition.push_samples(&chunk, |header, samples| {
+            if let Some(header) = header {
+                if pending.is_none() {
+                    if header.rate_bps > 2_000_000 {
+                        stats.rejected_frames += 1;
+                        if out.diagnostics.len() < config.max_pending_frames {
+                            out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
+                        }
+                    } else {
+                        let mut start = chunk.position().clone();
+                        start.sample_index = header.preamble_start.floor() as u64;
+                        *pending = Some(Payload {
+                            next: header.payload_start,
+                            bytes: vec![0; header.psdu_bytes],
+                            bits: 0,
+                            start,
+                            header,
+                        });
+                    }
+                }
+            }
+            if pending.as_mut().is_some_and(|p| p.advance(samples)) {
+                let p = pending.take().unwrap();
+                let split = p.bytes.len() - 4;
+                let mut crc = !0u32;
+                for byte in &p.bytes[..split] {
+                    crc ^= u32::from(*byte);
+                    for _ in 0..8 {
+                        crc = (crc >> 1) ^ (0xedb88320 & 0u32.wrapping_sub(crc & 1));
+                    }
+                }
+                if !crc == u32::from_le_bytes(p.bytes[split..].try_into().unwrap()) {
+                    stats.valid_frames += 1;
+                    if out.frames.len() < config.max_pending_frames {
+                        out.frames.push(RecoveredFrame {
+                            bytes: p.bytes,
+                            link_type: LinkType::Ieee80211,
+                            integrity: FrameIntegrity::ValidFcs,
+                            config: config.clone(),
+                            start: p.start,
+                            end_sample_index: p.next.ceil() as u64,
+                            rate_bps: p.header.rate_bps,
+                            diagnostics: vec![PhyDiagnostic::Dsss {
+                                short_preamble: p.header.short,
+                                frequency_offset_hz: p.header.frequency_rad * 20_000_000.
+                                    / std::f32::consts::TAU,
+                                timing_uncertainty_samples: 3,
+                            }],
+                        });
+                    } else {
+                        stats.dropped_frames += 1;
+                        if out.diagnostics.len() < config.max_pending_frames {
+                            out.diagnostics.push(PhyDiagnostic::Reset(ResetReason::Gap(
+                                Discontinuity {
+                                    reason: GapReason::QueueOverflow,
+                                    loss: SampleLoss::Known(0),
+                                },
+                            )));
+                        }
+                    }
+                } else {
+                    stats.invalid_fcs += 1;
+                    if out.diagnostics.len() < config.max_pending_frames {
+                        out.diagnostics.push(PhyDiagnostic::InvalidFcs);
+                    }
+                }
+            }
+        })?;
+        let rejected = self.acquisition.invalid_headers - old_invalid;
+        self.stats.rejected_frames += rejected;
+        if rejected > 0 && out.diagnostics.len() < config.max_pending_frames {
+            out.diagnostics.push(PhyDiagnostic::InvalidHeader);
+        }
+        Ok(out)
     }
 }
