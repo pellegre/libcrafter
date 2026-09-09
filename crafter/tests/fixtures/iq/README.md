@@ -103,3 +103,47 @@ packet materialization/normalization is unchanged until the receive bridge.
 Multipath, unsupported-PHY discrimination and stream-gap behavior require
 additional decoder-specific tests in later steps. The existing replay tests
 already exercise arbitrary chunks independently of these waveform fixtures.
+
+## DSSS/CCK vectors: source contract for the next generator
+
+This section specifies pending fixtures, not implemented receiver coverage.
+Use the retrieved IEEE 802.11-2007 document and digest in `docs/radio.md`.
+The extension evidence map identifies clauses 15 and 18; Annex G OFDM examples
+are not DSSS/CCK authority. Keep the future encoder independent of Rust DSP.
+
+Before generating waveforms, assert these literal intermediate cross-checks:
+
+- Figure 15-3: protected header octets `0a 00 c0 00` serialize as
+  `01010000 00000000 00000011 00000000`; CRC bits in time order are
+  `01011011 01010111`, hence trailer octets `da ea`. This cross-check was
+  reproduced with reflected polynomial `0x8408`, initial/final XOR `0xffff`.
+- Table 18-13: the unrotated 5.5 Mbps code for d2/d3=`00` is
+  `[j,1,j,-1,j,1,-j,1]`; for `11` it is `[j,-1,j,1,-j,1,j,1]`.
+  These literal rows distinguish chip order, cover signs and phase selection.
+- Table 18-14 maps serial pair `10` to pi, whereas Table 18-11 maps that
+  same pair to 3pi/2. Assert both; interchanging them silently corrupts CCK.
+- Table 18-2 gives 11 Mbps `(octets,LENGTH,extension)` tuples
+  `(1023,744,0)`, `(1024,745,0)`, `(1025,746,0)`, `(1026,747,1)`.
+- Derived checks from Figure 18-5 (not printed standard test vectors): first
+  16 scrambled long SYNC bits are `0111111011101100`, and short SYNC bits
+  are `0001100110101001`, with the specified Z1..Z7 seeds and input bits.
+  Independently self-descramble them after the first seven bits. Preserve
+  serial scrambler state across all subsequent fields.
+
+Cover seven valid rate/preamble combinations: long at 1/2/5.5/11 Mbps and short
+at 2/5.5/11 Mbps. Include alternate long scrambler seeds, both CCK symbol
+parities, all 5.5 Mbps codewords and all 11 Mbps phase selections, extension
+boundaries, varied PSDU lengths and complete independently computed MAC FCS.
+Manifest fields must include preamble kind, header bytes/CRC, serial scrambled
+bits, selected phase/codeword intermediates, original sample boundaries,
+20 Msps source rate and 11 MHz chip rate, pulse filter/delay and all impairments.
+
+Generate fractional chip timing directly from an independent continuous-time
+pulse model sampled at 20 Msps, not by copying the receiver interpolation
+kernel or pretending each chip occupies two source samples. Include fractional
+start phase, sample-clock error, carrier error, amplitude/phase rotation, noise
+and delayed paths. Retain clean deterministic cases separately from impairment
+cases. Test arbitrary chunks, mixed OFDM/DSSS/CCK streams and explicit gaps.
+Reject short/1 Mbps, corrupt SFD/header CRC, unsupported SERVICE/SIGNAL,
+impossible/over-bound lengths, bad FCS and truncation at every field boundary.
+No synthetic waveform is evidence of live receiver agreement.
