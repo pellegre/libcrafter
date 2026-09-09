@@ -105,19 +105,25 @@ impl Samples {
         self.begin = self.begin.max(self.end.saturating_sub(128));
     }
     fn at(&self, time: f64) -> Option<ComplexSample> {
-        let center = time.floor() as i128;
-        let start = center - 7;
-        if start < self.begin as i128 || start + 16 > self.end as i128 {
+        // Source coordinates are nonnegative. Truncation therefore supplies
+        // floor without a libm call or a floating-point-to-i128 conversion.
+        if !time.is_finite() || time < 0. {
             return None;
         }
-        let phase = ((time - time.floor()) * 256.).round() as usize;
+        let center = time as u64;
+        let start = center.checked_sub(7)?;
+        let last_start = self.end.checked_sub(16)?;
+        if start < self.begin || start > last_start {
+            return None;
+        }
+        let phase = ((time - center as f64) * 256. + 0.5) as usize;
         // Nearest phase; carry into the next source sample at the phase boundary.
         let (start, phase) = if phase == 256 {
             (start + 1, 0)
         } else {
             (start, phase)
         };
-        if start + 16 > self.end as i128 {
+        if start > last_start {
             return None;
         }
         let mut sum = ComplexSample::ZERO;
