@@ -227,6 +227,63 @@ fn radio_dsss_payload_vectors_exact_bytes_and_positions() {
     }
 }
 #[test]
+fn radio_dsss_minimal_terminal_prefix_is_chunk_invariant() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
+    let index = fs::read_to_string(root.join("dsss-index.tsv")).unwrap();
+    for row in index
+        .lines()
+        .skip(1)
+        .filter(|row| row.contains("-clean-48"))
+    {
+        let columns: Vec<_> = row.split('\t').collect();
+        let input = fs::read(root.join(format!("{}.cs8", columns[0]))).unwrap();
+        // A one-sample source establishes the first possible completion point.
+        // Stop there so padding cannot hide a lost singleton at a chunk end.
+        let mut single = DsssCckDecoder::new();
+        let mut baseline = None;
+        for (n, part) in input.chunks_exact(2).enumerate() {
+            let mut frames = single
+                .consume(IqEvent::Chunk(chunk(part, n as u64, n as u64)))
+                .unwrap()
+                .frames;
+            if !frames.is_empty() {
+                assert_eq!(frames.len(), 1);
+                let mut frame = frames.remove(0);
+                assert_eq!(frame.bytes, bytes(columns[4]));
+                frame.start.sequence = 0;
+                baseline = Some(((n + 1) * 2, format!("{frame:?}")));
+                break;
+            }
+        }
+        let (prefix, expected) = baseline.expect("clean vector must decode");
+        for width in [2, 3, 113, 128, 100_000] {
+            let mut decoder = DsssCckDecoder::new();
+            let mut frames = Vec::new();
+            for (n, part) in input[..prefix].chunks(width * 2).enumerate() {
+                frames.extend(
+                    decoder
+                        .consume(IqEvent::Chunk(chunk(part, n as u64, (n * width) as u64)))
+                        .unwrap()
+                        .frames,
+                );
+            }
+            frames.extend(
+                decoder
+                    .consume(IqEvent::End(StreamEnd::Eof))
+                    .unwrap()
+                    .frames,
+            );
+            assert_eq!(frames.len(), 1, "{} width {width}", columns[0]);
+            frames[0].start.sequence = 0;
+            // Source sequence identifies the caller's chunk; all other fields,
+            // including RF diagnostics and exact source positions, must agree.
+            assert_eq!(format!("{:?}", frames[0]), expected, "width {width}");
+            assert_eq!(decoder.stats().invalid_fcs, 0);
+            assert_eq!(decoder.stats().truncated_frames, 0);
+        }
+    }
+}
+#[test]
 fn radio_dsss_repeated_payloads_resume_after_idle_and_bad_fcs() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
     let index = fs::read_to_string(root.join("dsss-index.tsv")).unwrap();
