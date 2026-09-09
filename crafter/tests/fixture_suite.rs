@@ -8584,6 +8584,25 @@ fn assert_fixture_filename_convention(relative: &Path) {
         .and_then(|name| name.to_str())
         .unwrap_or_else(|| panic!("fixture path {relative_str} must have a UTF-8 file name"));
 
+    if category == "iq" {
+        assert_eq!(relative.components().count(), 2, "IQ fixtures must be flat");
+        if matches!(
+            file_name,
+            "ramp.cs8" | "ofdm-index.tsv" | "ofdm-manifest.json"
+        ) {
+            return;
+        }
+        let base_name = strip_allowed_suffix(file_name, &[".cs8", ".json"]);
+        assert!(
+            include_str!("fixtures/iq/ofdm-index.tsv")
+                .lines()
+                .skip(1)
+                .any(|line| line.split('\t').next() == Some(base_name)),
+            "IQ fixture {relative_str} must appear in the independent vector inventory"
+        );
+        return;
+    }
+
     let base_name = match category {
         "bytes" => strip_allowed_suffix(file_name, &[".bin", ".hex"]),
         "ble" => strip_allowed_suffix(file_name, &[".hex"]),

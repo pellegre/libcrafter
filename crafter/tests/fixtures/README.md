@@ -23,6 +23,11 @@ files in this tree.
 - `malformed/`: line-oriented malformed input corpora with structured expected
   error categories.
 
+- `iq/`: synthetic signed interleaved `.cs8` samples, paired `.json` metadata,
+  and an independent OFDM inventory/manifest. Vector filenames follow the
+  generator inventory (including underscore-separated impairment names);
+  `ramp.cs8` is the source contract fixture. See `iq/README.md`.
+
 ## Test Ownership
 
 The integration fixture catalog lives in

@@ -1,14 +1,27 @@
-# IQ receive contract
+# IQ to Wi-Fi reception
 
-This document defines the initial receive implementation contract. It does not
-claim that the decoder or live qualification is complete.
+The optional `radio` feature decodes 20 MHz legacy OFDM IQ into ordinary
+libcrafter packets. It supports offline replay without hardware; `radio-hackrf`
+adds explicit bounded native reception. Three independent live runs qualified
+exact agreement with a separate Wi-Fi receiver, within the limits below.
 
 ## Boundary and scope
 
 IQ sources supply owned sample chunks to a stateful PHY decoder. Reconstructed
 MAC bytes enter the existing packet decoder and `PacketSource` surface. IQ is
 never a `Raw` packet layer. Original recovered bytes remain available even when
-the parsed packet is later modified. RF context must coexist with Wi-Fi metadata.
+the parsed packet is later modified. RF context coexists with Wi-Fi metadata.
+
+`IqSource` supplies `IqEvent` values to a `PhyDecoder`. The provided
+`ReaderIqSource` reads signed interleaved 8-bit I/Q, and `LegacyOfdmDecoder`
+reconstructs FCS-valid `RecoveredFrame` values.
+`RadioPacketSource::new(source, decoder, bounds)` implements the ordinary
+`PacketSource` contract and can be consumed by `Sniffer`. It calls
+`Packet::decode_from_link(LinkType::Ieee80211, ...)` after stripping the verified
+four-byte FCS from parser input only. `PacketRecord` retains the original
+FCS-bearing bytes and additive `RadioReceiveMetadata`; Wi-Fi annotations remain
+available independently. Future sources can implement `IqSource` without
+changing the PHY decoder or the packet parser.
 
 The initial scope is legacy OFDM with 20 MHz channel spacing, including ERP-OFDM.
 DSSS/CCK, DSSS-OFDM, PBCC, HT, VHT, HE, half-clocked and quarter-clocked OFDM are
@@ -196,7 +209,7 @@ documented example frequency. `--replay FILE HZ SECONDS MAX_SAMPLES` supplies
 explicit frequency and longer bounds. Live invocation requires every setting explicitly:
 
 ```text
-cargo run -p crafter --features radio-hackrf --example radio_receive -- \
+cargo run --release -p crafter --features radio-hackrf --example radio_receive -- \
   --live SERIAL FREQUENCY_HZ DURATION_SECONDS MAX_SAMPLES FILTER_HZ LNA_DB VGA_DB AMP_BOOL BIAS_BOOL
 ```
 
@@ -312,9 +325,68 @@ Verified contiguous chunk intervals qualify each recovered frame. Matching pairs
 compatible time intervals within `match_window_ns` one-to-one, preserving retries
 and identical ACK multiplicity. Zero denominators produce null fractions and
 `inconclusive`; otherwise status is `measured`. `target_assessed` is always false:
-baseline, numerical target selection and live qualification belong to a later step.
+baseline, numerical target selection and live qualification belong to the
+external qualification runner, not the comparator.
 The offline example caps each source at 10,000 observations and each JSON line at
 1 MiB; exceedance fails explicitly. Dense duplicate matching is quadratic within
 that bound. Inputs must be closed captures; before/after hashes detect changes during processing.
 Reference capture loss is explicitly unavailable from the pcap alone.
 Keep real artifacts and timing policies outside tracked files.
+
+
+## Qualification and limits
+
+The qualified receive candidate passed three independent 20-second captures at
+20 Msps with a 20 MHz baseband filter, LNA gain 40 dB, VGA gain 4 dB, and both
+RF amplifier and antenna power disabled. The optimized native example used a
+16,777,216-sample acquisition bound. These are measured settings for one
+receiver environment, not universal gain defaults or a throughput guarantee.
+
+| Run | Eligible HackRF frames | Eligible reference frames | Exact matches | HackRF matched | Reference matched |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 203 | 225 | 187 | 92.12% | 83.11% |
+| 2 | 73 | 113 | 71 | 97.26% | 62.83% |
+| 3 | 53 | 50 | 30 | 56.60% | 60.00% |
+
+Each run exceeded the previously frozen 50% overlap requirement in both
+directions and the minimum counts of 5 HackRF frames, 10 reference frames and
+5 exact matches. Counts are eligible occurrences within the comparison interval,
+not all frames seen during the invocation. All three acquisitions reported zero
+sample loss, queue overflow, discarded samples, recording errors and parser
+errors. Raw IQ replay with the same native executable reproduced every frame
+record exactly. Cross-platform replay reproduced packet bytes and sample
+positions exactly; small floating-point RF diagnostic differences were checked
+with explicit tolerances. Candidate, library, artifact and cleanup evidence is
+retained privately; no live capture or receiver identity is shipped here.
+
+This evidence establishes bounded receive agreement for the observed traffic.
+Independent synthetic fixtures cover all eight listed rates, including adverse
+and rejected inputs; the live results do not establish equal sensitivity at
+every rate, universal real-time throughput, or support for later Wi-Fi PHYs.
+Unsupported observations and corrupt signals can be rejected without a reliable
+PHY-family classification; a rejected candidate is not proof of HT/VHT/HE.
+Software timestamp uncertainty also limits temporal discrimination between
+identical repeated frames.
+
+Decoder work varies with signal density and apparent frame lengths. Use optimized
+builds for native reception, bound every queue, and treat a source or recording
+overflow as failed continuity rather than silently accepting the remaining
+capture. Requalify changed runtime code, RF settings or execution environments;
+increasing a buffer alone does not establish sustained operation.
+
+## Local validation
+
+The offline feature has no libhackrf dependency and leaves default features
+unchanged. Run the feature tests and the ordinary static release gate locally:
+
+```sh
+cargo test -p crafter --features radio --all-targets
+cargo fmt --all -- --check
+.agents/scripts/check-crafter-release --static
+```
+
+Native mock/build checks require the separate native feature and development
+library. Actual device qualification additionally requires bounded paired
+captures, saved IQ replay, fixed eligibility and overlap rules, and independently
+verified cleanup through operator-supplied untracked tooling. Offline tests alone
+do not replace that evidence.
