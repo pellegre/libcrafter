@@ -130,6 +130,7 @@ impl Samples {
         self.end += 1;
         self.begin = self.begin.max(self.end.saturating_sub(64));
     }
+    #[inline(always)]
     fn at(&self, time: f64) -> Option<ComplexSample> {
         // Source coordinates are nonnegative. Truncation therefore supplies
         // floor without a libm call or a floating-point-to-i128 conversion.
@@ -183,6 +184,7 @@ impl Samples {
         }
         sums[0].add(sums[1]).add(sums[2]).add(sums[3])
     }
+    #[inline(always)]
     fn barker(&self, start: f64) -> Option<(ComplexSample, f32)> {
         let mut sum = ComplexSample::ZERO;
         let mut power = 0.;
