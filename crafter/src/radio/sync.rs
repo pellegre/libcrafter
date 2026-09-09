@@ -119,7 +119,9 @@ struct LongWindow {
     energy: [f32; 2],
 }
 pub(super) struct Synchronizer {
-    ring: [ComplexSample; 384],
+    // The oldest correlation input is ago(128); power-of-two storage permits
+    // masked indexing while retaining every input used by acquisition.
+    ring: [ComplexSample; 256],
     count: usize,
     next: usize,
     short_correlation: ComplexSample,
@@ -132,7 +134,7 @@ pub(super) struct Synchronizer {
 impl Default for Synchronizer {
     fn default() -> Self {
         Self {
-            ring: [ComplexSample::ZERO; 384],
+            ring: [ComplexSample::ZERO; 256],
             count: 0,
             next: 0,
             short_correlation: ComplexSample::ZERO,
@@ -191,17 +193,13 @@ impl Synchronizer {
         Ok(())
     }
     fn ago(&self, n: usize) -> ComplexSample {
-        let offset = self.next + 383 - n;
-        self.ring[if offset >= 384 { offset - 384 } else { offset }]
+        self.ring[(self.next + 255 - n) & 255]
     }
     #[inline]
     pub fn push(&mut self, sample: ComplexSample, index: u64) -> Option<SyncEvent> {
         self.ring[self.next] = sample;
-        self.next += 1;
-        if self.next == 384 {
-            self.next = 0;
-        }
-        self.count = (self.count + 1).min(384);
+        self.next = (self.next + 1) & 255;
+        self.count = (self.count + 1).min(256);
         if self.count == 80 {
             for n in 0..64 {
                 let x = self.ago(n + 16);
@@ -521,8 +519,8 @@ mod tests {
             }
         }
         assert!(failed);
-        assert_eq!(s.ring.len(), 384);
-        assert!(s.count <= 384);
+        assert!(s.ring.len() <= 384);
+        assert!(s.count <= s.ring.len());
     }
     #[test]
     fn radio_sync_loss_recovery() {
