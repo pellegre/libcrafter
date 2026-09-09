@@ -1,6 +1,7 @@
 //! Private clause 15/18 acquisition. Coordinates refer to the original 20 Msps stream.
 use super::*;
 use std::f32::consts::PI;
+use wide::f32x4;
 const BARKER: [f32; 11] = [1., -1., 1., 1., -1., 1., 1., 1., -1., -1., -1.];
 const GRID_PHASES: [usize; 11] = [0, 23, 47, 70, 93, 116, 140, 163, 186, 209, 233];
 
@@ -173,15 +174,31 @@ impl Samples {
     }
     #[inline(always)]
     fn dot<const N: usize>(values: &[ComplexSample], weights: &[f32; N]) -> ComplexSample {
-        // Independent accumulators expose parallel arithmetic without unsafe
-        // SIMD or changing the interpolation coefficients.
-        let mut sums = [ComplexSample::ZERO; 4];
+        // Two complex samples occupy each vector. Keep the original four-tap
+        // accumulator order; horizontal reduce_add would change that order.
+        let mut a = f32x4::ZERO;
+        let mut b = f32x4::ZERO;
         for k in (0..N).step_by(4) {
-            for lane in 0..4 {
-                sums[lane] = sums[lane].add(values[k + lane].scale(weights[k + lane]));
-            }
+            a += f32x4::new([values[k].i, values[k].q, values[k + 1].i, values[k + 1].q])
+                * f32x4::new([weights[k], weights[k], weights[k + 1], weights[k + 1]]);
+            b += f32x4::new([
+                values[k + 2].i,
+                values[k + 2].q,
+                values[k + 3].i,
+                values[k + 3].q,
+            ]) * f32x4::new([
+                weights[k + 2],
+                weights[k + 2],
+                weights[k + 3],
+                weights[k + 3],
+            ]);
         }
-        sums[0].add(sums[1]).add(sums[2]).add(sums[3])
+        let a = a.to_array();
+        let b = b.to_array();
+        ComplexSample {
+            i: ((a[0] + a[2]) + b[0]) + b[2],
+            q: ((a[1] + a[3]) + b[1]) + b[3],
+        }
     }
     fn barker(&self, start: f64) -> Option<(ComplexSample, f32)> {
         let mut sum = ComplexSample::ZERO;

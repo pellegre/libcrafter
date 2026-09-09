@@ -19,7 +19,7 @@ path = "src/lib.rs"
 # so the default build remains free of those dependencies.
 [features]
 default = []
-radio = []
+radio = ["dep:wide"]
 radio-hackrf = ["radio"]
 whad = ["dep:prost", "dep:prost-build", "dep:serialport"]
 
@@ -44,6 +44,7 @@ serialport = { version = "4.9.0", default-features = false, optional = true }
 sha1 = "0.10"
 sha2 = "0.10"
 subtle = "2"
+wide = { version = "0.7.33", optional = true, default-features = false }
 
 [build-dependencies]
 prost-build = { version = "0.14", optional = true }
