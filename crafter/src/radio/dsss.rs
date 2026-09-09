@@ -472,6 +472,18 @@ impl Acquisition {
                 let track_index = (chip_index % 22) as usize;
                 let timing = self.tracks[track_index].timing;
                 let symbol_start = || start() + timing;
+                if self.tracks[track_index].run >= 32 || self.tracks[track_index].short.is_some() {
+                    if let (Some((_, early)), Some((_, late))) = (
+                        self.samples.barker(symbol_start() - 0.5),
+                        self.samples.barker(symbol_start() + 0.5),
+                    ) {
+                        // Bounded early/late correction in original sample units, retained
+                        // across chunks. Adjacent acquisition tracks cover the other phases.
+                        self.tracks[track_index].timing = (timing
+                            + f64::from((late - early).clamp(-0.1, 0.1)) * 0.2)
+                            .clamp(-0.5, 0.5);
+                    }
+                }
                 let coarse = if timing == 0. {
                     // Spell out the fixed signs so this hot correlation has
                     // no dynamic coefficient loads or inner loop branches.
@@ -493,18 +505,6 @@ impl Acquisition {
                 } else {
                     self.samples.barker(symbol_start())
                 };
-                if self.tracks[track_index].run >= 32 || self.tracks[track_index].short.is_some() {
-                    if let (Some((_, early)), Some((_, late))) = (
-                        self.samples.barker(symbol_start() - 0.5),
-                        self.samples.barker(symbol_start() + 0.5),
-                    ) {
-                        // Bounded early/late correction in original sample units, retained
-                        // across chunks. Adjacent acquisition tracks cover the other phases.
-                        self.tracks[track_index].timing = (timing
-                            + f64::from((late - early).clamp(-0.1, 0.1)) * 0.2)
-                            .clamp(-0.5, 0.5);
-                    }
-                }
                 if let Some((symbol, quality)) = coarse {
                     if let Some(result) = self.tracks[track_index].symbol(
                         symbol,
