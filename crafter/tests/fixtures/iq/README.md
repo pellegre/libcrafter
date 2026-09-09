@@ -150,7 +150,7 @@ No synthetic waveform is evidence of live receiver agreement.
 
 ### Implemented independent DSSS/CCK inventory
 
-`python3 tools/oracle/engine/backends/dsss_vectors.py` creates 25 bounded
+`python3 tools/oracle/engine/backends/dsss_vectors.py` creates 26 bounded
 `dsss-*` fixtures. `--check` regenerates in a temporary directory and compares
 all bytes, including the inventory and generator digest, without changing the
 checked-in files. The encoder imports only Python's standard library. The
@@ -186,6 +186,11 @@ bits, common phase quadrant and eight complex chips. The manifest hashes both
 IQ and intermediate records and records all pulse/impairment parameters.
 `radio_dsss_vectors` validates inventory integrity, an independently oriented
 CRC-16 implementation, MAC FCS, descrambler truth, rate/length arithmetic and
-codeword selection coverage. It deliberately makes no production-decoder
-success claim; replay, arbitrary chunk boundaries and live qualification belong
-to the subsequent receiver steps.
+codeword selection coverage, plus exact production-decoder bytes and positions
+across arbitrary chunk boundaries. These deterministic checks do not establish
+live receive qualification.
+
+The `barker_interference` fixture adds a Barker-orthogonal chip vector with
+amplitude 2 to the final header symbol and uses gain 0.18 to avoid clipping.
+It preserves the transmitted header bits and CRC while reducing correlation
+quality, exercising acquisition of a distorted but recoverable symbol.

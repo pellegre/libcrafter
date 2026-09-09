@@ -139,6 +139,15 @@ def generate(rate, preamble, case='clean', octets=48):
             chips.extend(code)
             symbols.append(dict(bits=word, common_quadrant=common,
                                 chips=[[int(v.real), int(v.imag)] for v in code]))
+    interference = case == 'barker_interference'
+    if interference:
+        # Add a chip vector orthogonal to Barker in the final header symbol.
+        # Its energy lowers correlation quality while preserving the data bit.
+        # Reduce overall gain below to avoid clipping this deterministic stressor.
+        symbol_phase = chips[payload_chip - 11] / BARKER[0]
+        for k in range(11):
+            chips[payload_chip - 11 + k] += symbol_phase * 2 * (1 - BARKER[k] / 11)
+    gain = .18 if interference else .48
     impaired = case == 'impaired'
     initial = 37.375 if impaired else 37.0
     ppm = 35 if impaired else 0
@@ -164,7 +173,7 @@ def generate(rate, preamble, case='clean', octets=48):
         value = waveform(position)
         if impaired:
             value += path * waveform(position-delay)
-        value = .48 * value * cmath.exp(1j*(phase+2*math.pi*cfo*n/20_000_000))
+        value = gain * value * cmath.exp(1j*(phase+2*math.pi*cfo*n/20_000_000))
         value += noise * complex(rand(), rand())
         samples.extend(max(-128, min(127, round(a*127))) & 255 for a in (value.real,value.imag))
     end = initial + len(chips) * samples_per_chip
@@ -188,7 +197,8 @@ def generate(rate, preamble, case='clean', octets=48):
                 expected='reject' if case.startswith(('bad_', 'truncated_')) or case=='pbcc' else 'frame',
                 fcs_valid=case!='bad_fcs', header_crc_valid=case!='bad_crc',
                 impairment=dict(clock_ppm=ppm, carrier_hz=cfo, phase_rad=phase,
-                                noise_amplitude=noise, noise_seed=12345, gain=.48,
+                                noise_amplitude=noise, noise_seed=12345, gain=gain,
+                                header_interference_amplitude=2.0 if interference else 0.0,
                                 delayed_path_chips=delay, delayed_path_amplitude=abs(path),
                                 delayed_path_phase_rad=.7 if impaired else 0))
 
@@ -197,6 +207,7 @@ def main():
     self_check()
     entries = [generate(r,p) for p in ('long','short') for r in (10,20,55,110) if not(p=='short' and r==10)]
     entries += [generate(r,'long','impaired',64) for r in (10,20,55,110)]
+    entries += [generate(10,'long','barker_interference',48)]
     entries += [generate(110,'short','length_boundary',n) for n in (1023,1024,1025,1026)]
     entries += [generate(10,'long',case) for case in ('alternate_seed','bad_crc','bad_fcs','bad_sfd','bad_signal','pbcc','truncated_sync','truncated_sfd','truncated_header','truncated_payload')]
     manifest = dict(schema=1,generator_version=VERSION,generator_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),

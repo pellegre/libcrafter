@@ -253,7 +253,9 @@ impl Track {
         start: impl FnOnce() -> f64,
         bound: usize,
     ) -> Option<Result<Header, ()>> {
-        if quality < 0.25 || symbol.power() < 1e-5 {
+        // Permit distorted Barker symbols through acquisition; the complete
+        // PLCP header CRC and payload FCS still establish frame validity.
+        if quality < 0.15 || symbol.power() < 1e-5 {
             // A zero previous symbol denotes the already-reset search state.
             // Do not rewrite the entire track for every subsequent noise chip.
             // Accepted symbols have positive power, so an active track always
