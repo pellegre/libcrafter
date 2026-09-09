@@ -233,7 +233,7 @@ impl Track {
         &mut self,
         symbol: ComplexSample,
         quality: f32,
-        start: f64,
+        start: impl FnOnce() -> f64,
         bound: usize,
     ) -> Option<Result<Header, ()>> {
         if quality < 0.25 || symbol.power() < 1e-5 {
@@ -246,6 +246,7 @@ impl Track {
             }
             return None;
         }
+        let start = start();
         let delta = symbol.mul(self.previous.conj());
         self.previous = symbol;
         if let Some(short) = self.short {
@@ -463,10 +464,14 @@ impl Acquisition {
                 if chip_index - first < 20 {
                     continue;
                 }
-                let start = self.stream_start as f64 + (chip_index as f64 - 21.) * (10. / 11.);
+                let stream_start = self.stream_start;
+                // Rejected coarse correlations need no floating-point source
+                // coordinate. Preserve the same expression when a track or
+                // pending header actually needs it.
+                let start = || stream_start as f64 + (chip_index as f64 - 21.) * (10. / 11.);
                 let track_index = (chip_index % 22) as usize;
                 let timing = self.tracks[track_index].timing;
-                let symbol_start = start + timing;
+                let symbol_start = || start() + timing;
                 let coarse = if timing == 0. {
                     // Spell out the fixed signs so this hot correlation has
                     // no dynamic coefficient loads or inner loop branches.
@@ -486,12 +491,12 @@ impl Acquisition {
                     let power = self.chip_power[parity] as f32;
                     Some((sum.scale(1. / 11.), sum.power() / (11. * power).max(1e-12)))
                 } else {
-                    self.samples.barker(symbol_start)
+                    self.samples.barker(symbol_start())
                 };
                 if self.tracks[track_index].run >= 32 || self.tracks[track_index].short.is_some() {
                     if let (Some((_, early)), Some((_, late))) = (
-                        self.samples.barker(symbol_start - 0.5),
-                        self.samples.barker(symbol_start + 0.5),
+                        self.samples.barker(symbol_start() - 0.5),
+                        self.samples.barker(symbol_start() + 0.5),
                     ) {
                         // Bounded early/late correction in original sample units, retained
                         // across chunks. Adjacent acquisition tracks cover the other phases.
@@ -530,7 +535,7 @@ impl Acquisition {
                 if self
                     .pending
                     .as_ref()
-                    .is_some_and(|h| start >= h.payload_start + 20.)
+                    .is_some_and(|h| start() >= h.payload_start + 20.)
                 {
                     let header = self.pending.take().unwrap();
                     self.suppress_until = header.payload_start;
