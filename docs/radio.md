@@ -390,3 +390,106 @@ library. Actual device qualification additionally requires bounded paired
 captures, saved IQ replay, fixed eligibility and overlap rules, and independently
 verified cleanup through operator-supplied untracked tooling. Offline tests alone
 do not replace that evidence.
+
+## DSSS/CCK extension contract (implementation pending)
+
+This contract adds planned reception beside OFDM; it does not claim that the
+current implementation already decodes DSSS/CCK. The same IEEE 802.11-2007 PDF
+and SHA-256 above were retrieved and inspected for this extension. RFC/IANA
+manifest discovery again returned no candidates or extracted facts. The following
+reviewed IEEE map supplies the PHY evidence; an empty RFC manifest supplies none.
+
+| Area | IEEE 802.11-2007 location | Receive contract |
+| --- | --- | --- |
+| Barker and differential mapping | 15.4.6.3–15.4.6.4; 18.4.6.4, Tables 18-10/18-11 | Eleven chips per DBPSK/DQPSK symbol; transmission-order dibits and positive counterclockwise phase. |
+| Preamble, SIGNAL, SERVICE, LENGTH | 18.2.2–18.2.3.5; 18.2.3.7–18.2.3.14 | Distinguish long/short headers and payload modulation; recover exact PSDU octets. |
+| PLCP CRC | 15.2.3.6, Figures 15-2/15-3; 18.2.3.6 | Check the 32 protected bits before descrambled payload processing. |
+| Scrambling | 15.2.4; 18.2.4, Figures 18-5/18-6 | Self-synchronizing feedthrough descrambler, continuous across fields. |
+| CCK | 18.4.6.5, Equation 18-1, Tables 18-12–18-14 | Eight complex chips per symbol, differential common phase, payload symbol parity. |
+| Length ambiguity | 18.2.3.5, Table 18-2 | Integer microseconds are not an octet count; honor extension bit. |
+
+Barker chips in time order are `+ - + + - + + + - - -`. DBPSK zero preserves
+phase and one adds pi. DQPSK transmission-order dibits `00,01,11,10` add
+`0,pi/2,pi,3pi/2`. Differential decisions compare symbol phase before Barker
+spreading; the last negative Barker chip is not that phase reference.
+
+Write CCK phases as `a,b,c,d`. Its eight chips are complex exponentials of
+`a+b+c+d, a+c+d, a+b+d, a+d, a+b+c, a+c, a+b, a`, with signs of chips
+3 and 6 inverted (zero-based). Chip 7 carries common phase `a`. The first
+two serial bits select its differential change using DQPSK; add pi to that
+change on odd payload symbols. Number the first payload symbol zero. Carry
+the preceding header symbol phase into the first payload symbol, including
+long-header DBPSK transitions; do not restart differential state at the PSDU.
+For 5.5 Mbps, bits d2/d3 select `b=pi*d2+pi/2, c=0, d=pi*d3`.
+For 11 Mbps, pairs d2/d3, d4/d5 and d6/d7 select b/c/d with the **binary** map
+`00,01,10,11 → 0,pi/2,pi,3pi/2`, distinct from differential Gray mapping.
+
+Long SYNC contains 128 input ones; short SYNC contains 56 input zeros. Long
+SFD is `0xf3a0`, short SFD `0x05cf`, each serialized LSB first. Long preamble
+and 48-bit header use 1 Mbps (192 microseconds total). Short preamble uses
+1 Mbps and its header uses 2 Mbps (96 microseconds total). Short format permits
+2, 5.5 and 11 Mbps payloads; reject short/1 Mbps. SIGNAL values are
+`0x0a,0x14,0x37,0x6e`. Header fields and PSDU octets serialize LSB first.
+
+The scrambler is not the OFDM additive scrambler. If y is the transmitted
+scrambled bit, `y[n]=x[n] XOR y[n-4] XOR y[n-7]`; receive uses those delayed
+received bits to recover x. HR initial delay states Z1..Z7 are `1101100`
+(long) and `0011011` (short). Acquisition must not require one fixed long
+SYNC waveform: Clause 18 also requires compatibility with Clause 15 seeds.
+After seven received bits the descrambler history is known. Keep that history
+through SFD, header, CRC and PSDU; do not reset at rate changes.
+
+PLCP CRC covers SIGNAL, SERVICE and little-endian LENGTH, excluding SYNC/SFD.
+Use polynomial x^16+x^12+x^5+1, initial all ones and complemented output.
+A reflected implementation uses `0x8408`, final XOR `0xffff`, and little-endian
+output. Verify against the literal example below; the CRC-16 is independent of
+the existing MAC CRC-32. SERVICE bit 2 reports locked clocks and may be either
+value; bit 3 selects unsupported PBCC; bit 7 disambiguates 11 Mbps LENGTH.
+Reserved bits 0,1,4,5,6 must be zero for this supported contract.
+
+For PSDU size N including MAC FCS, LENGTH is `8*N` at 1 Mbps, `4*N` at
+2 Mbps, `ceil(16*N/11)` at 5.5 Mbps, and `ceil(8*N/11)` at 11 Mbps.
+At 11 Mbps set extension E when `11*LENGTH-8*N >= 8`. Recover N with
+`LENGTH/8`, `LENGTH/4`, `floor(11*LENGTH/16)`, or
+`floor(11*LENGTH/8)-E`, respectively. Validate the forward conversion as well
+as the inverse; reject impossible lengths, nonzero extension outside 11 Mbps,
+unsupported SIGNAL/PBCC, invalid CRC, over-bound PSDUs, incomplete frames and
+invalid MAC FCS. False acquisition never yields an unverified packet.
+
+### Sample timing and bounded DSP design
+
+The chip clock is 11 MHz; Barker symbols last 1 microsecond, while CCK symbols
+last 8/11 microsecond. Keep hardware acquisition at the already qualified
+20 Msps and feed OFDM the unchanged original samples. There are exactly 20/11
+source samples per nominal chip, not two. No 22 Msps device capability is
+assumed. HackRF's [sampling/filter guidance](https://hackrf.readthedocs.io/en/latest/sampling_rate.html)
+explains why analog filtering and source sample rate must be considered together;
+digital interpolation cannot undo aliasing or restore bandwidth already removed.
+
+The selected initial DSSS design interpolates directly at candidate chip times
+using a fixed 16-source-sample windowed-sinc fractional-delay kernel, with
+256 precomputed fractional phases and bounded history. It evaluates chip center
+and early/late positions for acquisition/timing tracking, avoiding a separately
+allocated whole-capture 22 Msps stream. Normalize each fractional kernel's DC
+gain. This reconstruction kernel is a receiver choice, not an IEEE-mandated
+transmit pulse shape or spectral-mask claim. Independent vectors must include
+bandlimited pulses and clock offsets; real 20 Msps agreement is a qualification
+requirement, not a consequence of nominal chip timing alone.
+
+Track source-domain chip time with a rational 20/11 nominal increment plus a
+bounded timing correction; retain the accumulator across chunks. Barker
+correlation supplies acquisition/early-late errors; estimate carrier rotation
+from the repeated SYNC structure and maintain phase through rate transitions.
+Use fixed search/history bounds and the configured PSDU bound. CCK uses the
+same chip clock with groups of eight. A finite interpolation lookahead delays
+processing only; it must not shift the reported on-air frame position.
+
+Record the recovered preamble origin in original input sample coordinates,
+rounding start down and exclusive end up; account for fractional rounding in
+time uncertainty. If a causal FIR representation adds delay D, subtract D
+before mapping positions. Do not subtract the receive decision latency again.
+A mid-SYNC acquisition that cannot locate the actual preamble origin must not
+invent one: retain conservative timing uncertainty or reject the candidate.
+Every filter, clock, carrier, scrambler and partial-frame state resets on a gap,
+epoch/configuration change, cancellation or overflow. EOF lookahead cannot be
+satisfied by silently adding zeros to a truncated real frame.
