@@ -13,11 +13,13 @@ mod replay;
 mod signal;
 mod source;
 mod sync;
+mod wifi;
 pub use data::{DecoderStats, LegacyOfdmDecoder};
 pub use dsss::DsssCckDecoder;
 pub use replay::{MemoryIqSource, ReaderIqSource};
 pub use signal::SignalInfo;
 pub use source::{RadioPacketSource, RadioReceiveMetadata};
+pub use wifi::LegacyWifiDecoder;
 
 use crate::LinkType;
 use std::{
