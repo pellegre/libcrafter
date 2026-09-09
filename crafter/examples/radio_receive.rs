@@ -398,7 +398,10 @@ fn main() -> Result<()> {
         }
         let count: usize = args[1].parse()?;
         if !(65_536..=MAX_EXAMPLE_BUFFER_SAMPLES).contains(&count) {
-            return Err("example buffer must contain 65536..16777216 complex samples".into());
+            return Err(format!(
+                "example buffer must contain 65536..{MAX_EXAMPLE_BUFFER_SAMPLES} complex samples"
+            )
+            .into());
         }
         args.drain(..2);
         if args.first().map(String::as_str) == Some("--replay-artifact") {
@@ -477,6 +480,29 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn radio_iq_large_queue_preserves_artifact_allocation_guards() {
+        let mut config = Config {
+            sample_rate_hz: 20_000_000,
+            center_frequency_hz: 2_412_000_000,
+            max_chunk_samples: 65_536,
+            max_buffer_samples: 400_000_000,
+            max_frame_bytes: 4095,
+            max_pending_frames: 64,
+            max_capture_samples: 400_000_000,
+            max_duration_ns: 20_000_000_000,
+        };
+        assert!(config.rx().is_ok());
+        config.max_buffer_samples = MAX_EXAMPLE_BUFFER_SAMPLES + 1;
+        assert!(config.rx().is_err());
+        config.max_buffer_samples = 400_000_000;
+        config.max_chunk_samples = 262_145;
+        assert!(config.rx().is_err());
+        config.max_chunk_samples = 65_536;
+        config.max_pending_frames = 1025;
+        assert!(config.rx().is_err());
+    }
 
     #[test]
     fn radio_iq_recording_queue_is_bounded() {
