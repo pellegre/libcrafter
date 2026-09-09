@@ -8001,6 +8001,7 @@ fn ipv4_flags(value: &Value) -> ExampleResult<u8> {
             "none" | "0" => Ok(0),
             "df" | "dont-fragment" => Ok(IPV4_FLAG_DONT_FRAGMENT),
             "mf" | "more-fragments" => Ok(IPV4_FLAG_MORE_FRAGMENTS),
+            "df-mf" => Ok(IPV4_FLAG_DONT_FRAGMENT | IPV4_FLAG_MORE_FRAGMENTS),
             "reserved" => Ok(IPV4_FLAG_RESERVED),
             _ => u8_text(text),
         };
@@ -9305,5 +9306,20 @@ mod igmp_materialization {
         assert!(query.suppress_router_side_processing());
         assert_eq!(query.querier_robustness_variable_value(), 2);
         assert_eq!(query.number_of_sources_value(), 2);
+    }
+}
+
+#[cfg(test)]
+mod ipv4_generated_flag_tests {
+    use super::*;
+
+    #[test]
+    fn ipv4_flags_accepts_generated_combination() {
+        for value in [json!("df_mf"), json!("df-mf"), json!(3)] {
+            assert_eq!(
+                ipv4_flags(&value).unwrap(),
+                IPV4_FLAG_DONT_FRAGMENT | IPV4_FLAG_MORE_FRAGMENTS
+            );
+        }
     }
 }
