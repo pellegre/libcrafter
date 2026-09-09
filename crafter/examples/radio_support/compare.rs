@@ -58,6 +58,7 @@ pub struct Observation {
     pub bytes: Vec<u8>,
     pub time: [u64; 2],
     pub absent_fcs: bool,
+    pub rate_bps: u32,
 }
 #[derive(Debug, Default, Serialize)]
 pub struct Counts {
@@ -76,17 +77,7 @@ fn within(t: [u64; 2], p: &Policy) -> bool {
     t[0] >= p.overlap_ns[0] && t[1] < p.overlap_ns[1]
 }
 fn supported(rate: u32) -> bool {
-    matches!(
-        rate,
-        6_000_000
-            | 9_000_000
-            | 12_000_000
-            | 18_000_000
-            | 24_000_000
-            | 36_000_000
-            | 48_000_000
-            | 54_000_000
-    )
+    phy_family(rate) != "unknown"
 }
 fn bracket(time: u64, uncertainty: u64) -> Option<[u64; 2]> {
     Some([
@@ -136,14 +127,19 @@ pub fn recovered_frame(
     if config.center_frequency_hz != policy.center_frequency_hz {
         return Ok(Err("channel_mismatch"));
     }
-    if v["phy"] != "legacy_ofdm" || config.sample_rate_hz != 20_000_000 {
+    if config.sample_rate_hz != 20_000_000 {
         return Ok(Err("unsupported_phy"));
     }
     let Some(rate) = v["rate_bps"].as_u64().and_then(|n| u32::try_from(n).ok()) else {
         return Ok(Err("unknown_rate"));
     };
-    if !supported(rate) {
+    if !supported(rate) || v["phy"] != phy_family(rate) {
         return Ok(Err("unsupported_phy"));
+    }
+    if phy_family(rate) != "legacy_ofdm"
+        && !(v["preamble"] == "long" || (v["preamble"] == "short" && rate != 1_000_000))
+    {
+        return Err("invalid DSSS/CCK preamble".into());
     }
     let Some(time) = frame_time(&position, config.sample_rate_hz, policy) else {
         return Ok(Err("unknown_timing"));
@@ -178,6 +174,7 @@ pub fn recovered_frame(
         bytes,
         time,
         absent_fcs,
+        rate_bps: rate,
     }))
 }
 // Only established legacy MAC layouts are padding-normalized. Unknown layouts,
@@ -274,7 +271,22 @@ pub fn reference_frame(
     if ch.frequency() as u64 * 1_000_000 != policy.center_frequency_hz {
         return Err("channel_mismatch");
     }
-    if ch.flags() & 0xc030 != 0 {
+    // Radiotap Channel: CCK=0x20, OFDM=0x40, 2GHz=0x80,
+    // 5GHz=0x100, dynamic CCK/OFDM=0x400; half/quarter=0xc000.
+    // Rate is the observed 500-kbit/s value, never advertised capabilities.
+    let modulation = ch.flags() & 0x460;
+    let expected = if phy_family(rate) == "legacy_ofdm" {
+        0x40
+    } else {
+        0x20
+    };
+    let band = ch.flags() & 0x180;
+    if ch.flags() & !0x07e0 != 0
+        || !matches!(band, 0x80 | 0x100)
+        || (expected == 0x20 && band != 0x80)
+        || !(modulation == expected || (modulation == 0x400 && band == 0x80))
+        || (rate == 1_000_000 && flags.bits() & 2 != 0)
+    {
         return Err("unsupported_phy");
     }
     let mut bytes = data[n..].to_vec();
@@ -303,6 +315,7 @@ pub fn reference_frame(
         bytes,
         time,
         absent_fcs,
+        rate_bps: rate,
     })
 }
 fn keep(
@@ -326,7 +339,7 @@ fn keep(
 pub fn load_recovered(path: &str, p: &Policy) -> Result<(Vec<Observation>, Counts, Value)> {
     let mut reader = BufReader::new(File::open(path)?);
     let h = read_json(&mut reader)?.ok_or("missing receive header")?;
-    if h["kind"] != "header" || h["schema"] != SCHEMA {
+    if h["kind"] != "header" || !supported_schema(&h["schema"]) {
         return Err("unsupported receive schema".into());
     }
     let config: Config = serde_json::from_value(h["config"].clone())?;
@@ -347,6 +360,9 @@ pub fn load_recovered(path: &str, p: &Policy) -> Result<(Vec<Observation>, Count
             Some("frame") => {
                 if terminal || counts.total >= p.max_observations as u64 {
                     return Err("frame after terminal or observation bound exceeded".into());
+                }
+                if h["schema"] == "crafter.radio.receive/v1" && v["phy"] != "legacy_ofdm" {
+                    return Err("v1 receive artifacts require OFDM".into());
                 }
                 let id = v["ordinal"].as_u64().ok_or("missing ordinal")?;
                 if !ids.insert(id) {
@@ -507,24 +523,29 @@ pub struct Match {
     pub hackrf_ordinal: u64,
     pub reference_ordinal: u64,
     pub reference_fcs_absent: bool,
+    pub rate_bps: u32,
+    pub phy: String,
     pub original_mac_without_fcs_hex: String,
 }
 fn compatible(a: &Observation, b: &Observation, w: u64) -> bool {
-    a.time[0] <= b.time[1].saturating_add(w) && b.time[0] <= a.time[1].saturating_add(w)
+    a.rate_bps == b.rate_bps
+        && a.time[0] <= b.time[1].saturating_add(w)
+        && b.time[0] <= a.time[1].saturating_add(w)
 }
 pub fn match_frames(a: &[Observation], b: &[Observation], window: u64) -> Vec<Match> {
-    let mut groups: BTreeMap<&[u8], (Vec<&Observation>, Vec<&Observation>)> = BTreeMap::new();
+    let mut groups: BTreeMap<(&[u8], u32), (Vec<&Observation>, Vec<&Observation>)> =
+        BTreeMap::new();
     for x in a {
-        groups.entry(&x.bytes).or_default().0.push(x)
+        groups.entry((&x.bytes, x.rate_bps)).or_default().0.push(x)
     }
     for x in b {
-        groups.entry(&x.bytes).or_default().1.push(x)
+        groups.entry((&x.bytes, x.rate_bps)).or_default().1.push(x)
     }
     let mut matches = Vec::new();
     // Earliest finishing interval first; pair it with the earliest finishing
     // compatible interval on the other side. Removing one occurrence from each
     // side preserves multiplicity. Full bytes form the group key (no hash claims).
-    for (bytes, (mut left, mut right)) in groups {
+    for ((bytes, _rate), (mut left, mut right)) in groups {
         left.sort_by_key(|x| (x.time[1], x.id));
         right.sort_by_key(|x| (x.time[1], x.id));
         while !left.is_empty() && !right.is_empty() {
@@ -545,12 +566,21 @@ pub fn match_frames(a: &[Observation], b: &[Observation], window: u64) -> Vec<Ma
                     hackrf_ordinal: a.id,
                     reference_ordinal: b.id,
                     reference_fcs_absent: b.absent_fcs,
+                    rate_bps: a.rate_bps,
+                    phy: phy_family(a.rate_bps).into(),
                     original_mac_without_fcs_hex: hex(bytes),
                 });
             }
         }
     }
     matches
+}
+fn breakdown(a: &[Observation], b: &[Observation], window: u64) -> Value {
+    let n = match_frames(a, b, window).len();
+    json!({"status":if a.is_empty() || b.is_empty() {"inconclusive"} else {"measured"},
+        "hackrf_valid_count":a.len(), "eligible_dongle_count":b.len(), "exact_matches":n,
+        "hackrf_fraction":if a.is_empty() {None} else {Some(n as f64/a.len() as f64)},
+        "dongle_fraction":if b.is_empty() {None} else {Some(n as f64/b.len() as f64)}})
 }
 pub fn report(
     a: Vec<Observation>,
@@ -562,9 +592,35 @@ pub fn report(
 ) -> Value {
     let pairs = match_frames(&a, &b, p.match_window_ns);
     let n = pairs.len();
+    let mut families = BTreeMap::new();
+    let mut rates = BTreeMap::new();
+    for family in ["dsss", "cck", "legacy_ofdm"] {
+        let left: Vec<_> = a
+            .iter()
+            .filter(|o| phy_family(o.rate_bps) == family)
+            .cloned()
+            .collect();
+        let right: Vec<_> = b
+            .iter()
+            .filter(|o| phy_family(o.rate_bps) == family)
+            .cloned()
+            .collect();
+        families.insert(family, breakdown(&left, &right, p.match_window_ns));
+    }
+    for rate in [
+        1_000_000, 2_000_000, 5_500_000, 11_000_000, 6_000_000, 9_000_000, 12_000_000, 18_000_000,
+        24_000_000, 36_000_000, 48_000_000, 54_000_000,
+    ] {
+        let left: Vec<_> = a.iter().filter(|o| o.rate_bps == rate).cloned().collect();
+        let right: Vec<_> = b.iter().filter(|o| o.rate_bps == rate).cloned().collect();
+        rates.insert(
+            rate.to_string(),
+            breakdown(&left, &right, p.match_window_ns),
+        );
+    }
     let au: BTreeSet<_> = a.iter().map(|o| &o.bytes).collect();
     let bu: BTreeSet<_> = b.iter().map(|o| &o.bytes).collect();
-    json!({"schema":"crafter.radio.comparison/v1","status":if ac.eligible==0 || bc.eligible==0 {"inconclusive"}else{"measured"},"policy":p,"hackrf_valid_count":ac.eligible,"eligible_dongle_count":bc.eligible,"exact_matches":n,"hackrf_fraction":if ac.eligible==0 {None}else{Some(n as f64/ac.eligible as f64)},"dongle_fraction":if bc.eligible==0 {None}else{Some(n as f64/bc.eligible as f64)},"unique_byte_overlap":au.intersection(&bu).count(),"hackrf":ac,"reference":bc,"evidence":evidence,"matches":pairs,"target_assessed":false})
+    json!({"schema":"crafter.radio.comparison/v2","families":families,"rates":rates,"status":if ac.eligible==0 || bc.eligible==0 {"inconclusive"}else{"measured"},"policy":p,"hackrf_valid_count":ac.eligible,"eligible_dongle_count":bc.eligible,"exact_matches":n,"hackrf_fraction":if ac.eligible==0 {None}else{Some(n as f64/ac.eligible as f64)},"dongle_fraction":if bc.eligible==0 {None}else{Some(n as f64/bc.eligible as f64)},"unique_byte_overlap":au.intersection(&bu).count(),"hackrf":ac,"reference":bc,"evidence":evidence,"matches":pairs,"target_assessed":false})
 }
 
 #[cfg(test)]
@@ -601,7 +657,51 @@ mod tests {
             bytes: mac(),
             time: t,
             absent_fcs: false,
+            rate_bps: 6_000_000,
         }
+    }
+    #[test]
+    fn radio_comparison_families_rates_and_unknown_modulation() {
+        let p = policy();
+        for rate in [2, 4, 11, 22] {
+            let mut bytes = radiotap(&fcs(mac()), 0x10, rate);
+            bytes[12] = 0xa0;
+            let o = reference_frame(&bytes, bytes.len() as u32, [1000, 1002], 1, &p).unwrap();
+            assert_eq!(o.rate_bps, rate as u32 * 500_000);
+            bytes[12] = 0x80;
+            assert!(reference_frame(&bytes, bytes.len() as u32, [1000, 1002], 1, &p).is_err());
+            bytes[12] = 0x80;
+            bytes[13] = 4;
+            assert!(reference_frame(&bytes, bytes.len() as u32, [1000, 1002], 1, &p).is_ok());
+            bytes[13] = 8;
+            assert!(reference_frame(&bytes, bytes.len() as u32, [1000, 1002], 1, &p).is_err());
+        }
+        let a = obs(1, [1000, 1002]);
+        let mut b = a.clone();
+        b.rate_bps = 1_000_000;
+        assert!(match_frames(&[a.clone()], &[b.clone()], 10).is_empty());
+        let mut c = a.clone();
+        c.id = 3;
+        c.rate_bps = 11_000_000;
+        let r = report(
+            vec![a.clone(), b.clone()],
+            Counts {
+                eligible: 2,
+                ..Counts::default()
+            },
+            vec![a, b, c],
+            Counts {
+                eligible: 3,
+                ..Counts::default()
+            },
+            p,
+            json!({}),
+        );
+        assert_eq!(r["exact_matches"], 2);
+        assert_eq!(r["families"]["cck"]["status"], "inconclusive");
+        assert!(r["families"]["cck"]["hackrf_fraction"].is_null());
+        assert_eq!(r["families"]["cck"]["dongle_fraction"], 0.0);
+        assert_eq!(r["families"]["dsss"]["exact_matches"], 1);
     }
     #[test]
     fn radio_comparison_duplicate_multiplicity_and_changed_bytes() {
@@ -668,7 +768,7 @@ mod tests {
         for word in [0xa000402eu32, 0xa0000820, 0x00000820] {
             bytes.extend_from_slice(&word.to_le_bytes());
         }
-        bytes.extend_from_slice(&[0, 12, 0x6c, 0x09, 0x80, 0, 200, 0, 0, 0, 201, 0, 202, 1]);
+        bytes.extend_from_slice(&[0, 12, 0x6c, 0x09, 0xc0, 0, 200, 0, 0, 0, 201, 0, 202, 1]);
         bytes.extend_from_slice(&mac());
         assert_eq!(
             reference_frame(&bytes, bytes.len() as u32, [1000, 1002], 1, &p)
@@ -728,6 +828,19 @@ mod tests {
         let p = policy();
         let mut v = json!({"ordinal":1,"config":{"sample_rate_hz":20000000,"center_frequency_hz":2412000000u64,"max_chunk_samples":100,"max_buffer_samples":1000,"max_frame_bytes":4095,"max_pending_frames":4,"max_capture_samples":10000,"max_duration_ns":1000000000},"position":{"epoch":0,"sequence":0,"sample_index":0,"anchor":{"sample_index":0,"unix_ns":1000,"uncertainty_ns":2},"gap_reason":null,"lost_samples":null},"end_sample_index":100,"phy":"legacy_ofdm","rate_bps":6000000,"fcs":"present_valid","original_mac_hex":hex(&fcs(mac()))});
         assert_eq!(recovered_frame(&v, &p).unwrap().unwrap().bytes, mac());
+        let mut dsss = v.clone();
+        dsss["phy"] = json!("dsss");
+        dsss["rate_bps"] = json!(1_000_000);
+        assert!(recovered_frame(&dsss, &p).is_err());
+        dsss["preamble"] = json!("short");
+        assert!(recovered_frame(&dsss, &p).is_err());
+        dsss["preamble"] = json!("long");
+        assert!(recovered_frame(&dsss, &p).unwrap().is_ok());
+        dsss["rate_bps"] = json!(11_000_000);
+        assert_eq!(
+            recovered_frame(&dsss, &p).unwrap().unwrap_err(),
+            "unsupported_phy"
+        );
         v["original_mac_hex"] = json!(hex(&mac()));
         assert_eq!(recovered_frame(&v, &p).unwrap().unwrap_err(), "corrupt_fcs");
         v["fcs"] = json!("absent");
@@ -833,6 +946,11 @@ mod tests {
             std::fs::write(&path, &out).unwrap();
             let (_, counts, _) = load_recovered(path.to_str().unwrap(), &p).unwrap();
             assert_eq!(counts.eligible, 0);
+            let old = String::from_utf8(out.clone())
+                .unwrap()
+                .replace(SCHEMA, "crafter.radio.receive/v1");
+            std::fs::write(&path, old).unwrap();
+            assert!(load_recovered(path.to_str().unwrap(), &p).is_ok());
             write_json(&mut out, &json!({"kind":"terminal","reason":"Eof"})).unwrap();
             std::fs::write(&path, &out).unwrap();
             assert!(load_recovered(path.to_str().unwrap(), &p).is_err());

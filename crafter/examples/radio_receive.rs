@@ -133,8 +133,42 @@ impl<S: IqSource> IqSource for ObservedSource<'_, S> {
         self.source.cancel();
     }
 }
+enum SelectedDecoder {
+    Ofdm(LegacyOfdmDecoder),
+    Wifi(LegacyWifiDecoder),
+}
+impl SelectedDecoder {
+    fn consume(&mut self, event: IqEvent) -> RadioResult<DecodeOutput> {
+        match self {
+            Self::Ofdm(d) => d.consume(event),
+            Self::Wifi(d) => d.consume(event),
+        }
+    }
+    fn reset(&mut self, reason: ResetReason) -> DecodeOutput {
+        match self {
+            Self::Ofdm(d) => d.reset(reason),
+            Self::Wifi(d) => d.reset(reason),
+        }
+    }
+    fn stats(&self) -> DecoderStats {
+        match self {
+            Self::Ofdm(d) => d.stats(),
+            Self::Wifi(d) => {
+                let a = d.ofdm_stats();
+                let b = d.dsss_stats();
+                DecoderStats {
+                    valid_frames: a.valid_frames.saturating_add(b.valid_frames),
+                    invalid_fcs: a.invalid_fcs.saturating_add(b.invalid_fcs),
+                    rejected_frames: a.rejected_frames.saturating_add(b.rejected_frames),
+                    truncated_frames: a.truncated_frames.saturating_add(b.truncated_frames),
+                    dropped_frames: a.dropped_frames.saturating_add(b.dropped_frames),
+                }
+            }
+        }
+    }
+}
 struct ObservedDecoder {
-    inner: LegacyOfdmDecoder,
+    inner: SelectedDecoder,
     out: Output,
     ordinal: u64,
 }
@@ -145,7 +179,7 @@ impl PhyDecoder for ObservedDecoder {
             self.ordinal += 1;
             emit(
                 &self.out,
-                json!({"kind":"frame","ordinal":self.ordinal,"original_mac_hex":hex(&f.bytes),"fcs":match f.integrity {FrameIntegrity::ValidFcs=>"present_valid",FrameIntegrity::InvalidFcs=>"present_invalid",FrameIntegrity::FcsAbsent=>"absent"},"phy":"legacy_ofdm","rate_bps":f.rate_bps,"config":Config::from(&f.config),"position":Position::from(&f.start),"end_sample_index":f.end_sample_index,"diagnostics":f.diagnostics.iter().map(|d|format!("{d:?}")).collect::<Vec<_>>()}),
+                json!({"kind":"frame","ordinal":self.ordinal,"original_mac_hex":hex(&f.bytes),"fcs":match f.integrity {FrameIntegrity::ValidFcs=>"present_valid",FrameIntegrity::InvalidFcs=>"present_invalid",FrameIntegrity::FcsAbsent=>"absent"},"phy":phy_family(f.rate_bps),"preamble":f.diagnostics.iter().find_map(|d| match d { PhyDiagnostic::Dsss { short_preamble, .. } => Some(if *short_preamble { "short" } else { "long" }), _ => None }),"rate_bps":f.rate_bps,"config":Config::from(&f.config),"position":Position::from(&f.start),"end_sample_index":f.end_sample_index,"diagnostics":f.diagnostics.iter().map(|d|format!("{d:?}")).collect::<Vec<_>>()}),
             )?;
         }
         Ok(decoded)
@@ -159,9 +193,10 @@ fn receive(
     config: RxConfig,
     iq_path: Option<&str>,
     software_start: Option<u64>,
+    ofdm_only: bool,
 ) -> Result<()> {
     let out = Rc::new(RefCell::new(BufWriter::new(std::io::stdout())));
-    let header = json!({"kind":"header","schema":SCHEMA,"config":Config::from(&config),"time_basis":if software_start.is_some(){"software_bracket_only"}else{"recorded_anchor_or_unknown"}});
+    let header = json!({"kind":"header","schema":SCHEMA,"config":Config::from(&config),"decoder":if ofdm_only {"ofdm"} else {"legacy_wifi"},"time_basis":if software_start.is_some(){"software_bracket_only"}else{"recorded_anchor_or_unknown"}});
     emit(&out, header.clone())?;
     let mut iq = if let Some(path) = iq_path {
         let file = OpenOptions::new().write(true).create_new(true).open(path)?;
@@ -178,7 +213,11 @@ fn receive(
         software_start,
     };
     let decoder = ObservedDecoder {
-        inner: LegacyOfdmDecoder::new(),
+        inner: if ofdm_only {
+            SelectedDecoder::Ofdm(LegacyOfdmDecoder::new())
+        } else {
+            SelectedDecoder::Wifi(LegacyWifiDecoder::new())
+        },
         out: out.clone(),
         ordinal: 0,
     };
@@ -221,14 +260,24 @@ struct ArtifactSource {
     samples: u64,
     end: Option<StreamEnd>,
     binary: bool,
+    ofdm_only: bool,
 }
 impl ArtifactSource {
     fn open(path: &str) -> Result<Self> {
         let mut reader = BufReader::new(File::open(path)?);
         let h = read_json(&mut reader)?.ok_or("missing IQ header")?;
-        if h["schema"] != SCHEMA || h["kind"] != "header" {
+        if !supported_schema(&h["schema"]) || h["kind"] != "header" {
             return Err("unsupported IQ schema".into());
         }
+        let ofdm_only = if h["schema"] == "crafter.radio.receive/v1" {
+            true
+        } else {
+            match h["decoder"].as_str() {
+                Some("ofdm") => true,
+                Some("legacy_wifi") => false,
+                _ => return Err("missing or unsupported IQ decoder".into()),
+            }
+        };
         let config: Config = serde_json::from_value(h["config"].clone())?;
         let binary = match h.get("iq_encoding") {
             None => false,
@@ -241,6 +290,7 @@ impl ArtifactSource {
             samples: 0,
             end: None,
             binary,
+            ofdm_only,
         })
     }
 }
@@ -329,6 +379,12 @@ impl IqSource for ArtifactSource {
 }
 fn main() -> Result<()> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let ofdm_only = if args.first().map(String::as_str) == Some("--ofdm-only") {
+        args.remove(0);
+        true
+    } else {
+        false
+    };
     let iq_path = if args.len() >= 2 && args[args.len() - 2] == "--save-iq" {
         let path = args.pop();
         args.pop();
@@ -390,7 +446,13 @@ fn main() -> Result<()> {
             };
             let start = unix_ns(SystemTime::now());
             let mut source = HackRfSource::open_live(settings)?;
-            let result = receive(&mut source, config, iq_path.as_deref(), Some(start));
+            let result = receive(
+                &mut source,
+                config,
+                iq_path.as_deref(),
+                Some(start),
+                ofdm_only,
+            );
             let s = source.stats();
             println!(
                 "{}",
@@ -402,10 +464,10 @@ fn main() -> Result<()> {
         return Err("live reception requires radio-hackrf".into());
     }
     match args.as_slice() {
-        []=>receive(&mut ReaderIqSource::new(Cursor::new(include_bytes!("../tests/fixtures/iq/ofdm-6-clean.cs8")),config.clone(),position)?,config,iq_path.as_deref(),None),
-        [flag,path] if flag=="--replay"=>receive(&mut ReaderIqSource::new(File::open(path)?,config.clone(),position)?,config,iq_path.as_deref(),None),
-        [flag,path,hz,seconds,samples] if flag=="--replay"=>{let mut c=config;c.center_frequency_hz=hz.parse()?;c.max_duration=Duration::from_secs(seconds.parse()?);c.max_capture_samples=samples.parse()?;receive(&mut ReaderIqSource::new(File::open(path)?,c.clone(),position)?,c,iq_path.as_deref(),None)},
-        [flag,path] if flag=="--replay-artifact"=>{let mut s=ArtifactSource::open(path)?;let c=s.config.clone();receive(&mut s,c,iq_path.as_deref(),None)},
+        []=>receive(&mut ReaderIqSource::new(Cursor::new(include_bytes!("../tests/fixtures/iq/ofdm-6-clean.cs8")),config.clone(),position)?,config,iq_path.as_deref(),None,ofdm_only),
+        [flag,path] if flag=="--replay"=>receive(&mut ReaderIqSource::new(File::open(path)?,config.clone(),position)?,config,iq_path.as_deref(),None,ofdm_only),
+        [flag,path,hz,seconds,samples] if flag=="--replay"=>{let mut c=config;c.center_frequency_hz=hz.parse()?;c.max_duration=Duration::from_secs(seconds.parse()?);c.max_capture_samples=samples.parse()?;receive(&mut ReaderIqSource::new(File::open(path)?,c.clone(),position)?,c,iq_path.as_deref(),None,ofdm_only)},
+        [flag,path] if flag=="--replay-artifact"=>{let mut s=ArtifactSource::open(path)?;let c=s.config.clone();let selected=ofdm_only || s.ofdm_only;receive(&mut s,c,iq_path.as_deref(),None,selected)},
         _=>Err("use no arguments, --replay FILE [HZ SECONDS MAX_SAMPLES], --replay-artifact FILE, or --live parameters; optional final --save-iq NEW_FILE".into()),
     }
 }
@@ -442,6 +504,28 @@ mod tests {
         assert!(writer.finish().is_err());
     }
 
+    #[test]
+    fn radio_iq_v2_requires_known_decoder() {
+        let path = std::env::temp_dir().join(format!(
+            "crafter-iq-decoder-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        for decoder in [serde_json::Value::Null, json!("future_wifi"), json!(42)] {
+            let header = json!({"kind":"header", "schema":SCHEMA, "decoder":decoder});
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .unwrap();
+            write_json(&mut file, &header).unwrap();
+            drop(file);
+            let error = ArtifactSource::open(path.to_str().unwrap()).err().unwrap();
+            assert_eq!(error.to_string(), "missing or unsupported IQ decoder");
+            std::fs::remove_file(&path).unwrap();
+        }
+    }
+
     fn exercise(binary: bool, body: &[u8], count: u64, succeeds: bool) {
         let config = RxConfig {
             sample_rate_hz: 20_000_000,
@@ -453,9 +537,10 @@ mod tests {
             max_capture_samples: 16,
             max_duration: Duration::from_secs(1),
         };
-        let mut header = json!({"kind":"header","schema":SCHEMA,"config":Config::from(&config)});
+        let mut header = json!({"kind":"header","schema":if binary {SCHEMA} else {"crafter.radio.receive/v1"},"config":Config::from(&config)});
         if binary {
             header["iq_encoding"] = json!("cs8-binary/v1");
+            header["decoder"] = json!("legacy_wifi");
         }
         let mut chunk = json!({"kind":"chunk","config":Config::from(&config),"position":{"epoch":0,"sequence":0,"sample_index":0,"anchor":null,"gap_reason":null,"lost_samples":null},"samples":count,"verified_prefix":true});
         if !binary {
@@ -482,6 +567,7 @@ mod tests {
             write_json(&mut file, &json!({"kind":"terminal","reason":"Eof"})).unwrap();
         }
         let mut source = ArtifactSource::open(path.to_str().unwrap()).unwrap();
+        assert_eq!(source.ofdm_only, !binary);
         let event = source.next_event();
         if succeeds {
             let IqEvent::Chunk(chunk) = event.unwrap() else {
