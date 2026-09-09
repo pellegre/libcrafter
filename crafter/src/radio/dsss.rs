@@ -232,12 +232,11 @@ impl Track {
     fn symbol(
         &mut self,
         symbol: ComplexSample,
-        quality_numerator: f32,
-        quality_denominator: f32,
+        quality: f32,
         start: f64,
         bound: usize,
     ) -> Option<Result<Header, ()>> {
-        if quality_numerator < quality_denominator * 0.25 || symbol.power() < 1e-5 {
+        if quality < 0.25 || symbol.power() < 1e-5 {
             // A zero previous symbol denotes the already-reset search state.
             // Do not rewrite the entire track for every subsequent noise chip.
             // Accepted symbols have positive power, so an active track always
@@ -247,9 +246,6 @@ impl Track {
             }
             return None;
         }
-        // Normalize only accepted correlations. Multiplication by the power-of-two
-        // cutoff preserves the decision at the finite, normal input boundary.
-        let quality = quality_numerator / quality_denominator;
         let delta = symbol.mul(self.previous.conj());
         self.previous = symbol;
         if let Some(short) = self.short {
@@ -338,6 +334,7 @@ pub(super) struct Acquisition {
     config: Option<RxConfig>,
     position: Option<IqPosition>,
     pending: Option<Header>,
+    payload_active: bool,
     suppress_until: f64,
     stream_start: u64,
     pub resets: u64,
@@ -358,6 +355,7 @@ impl Acquisition {
             config: None,
             position: None,
             pending: None,
+            payload_active: false,
             suppress_until: 0.,
             stream_start: 0,
             resets: 0,
@@ -374,6 +372,7 @@ impl Acquisition {
         self.first_chip = None;
         self.chip_power = [0.; 2];
         self.pending = None;
+        self.payload_active = false;
         self.position = None;
         self.config = None;
         self.suppress_until = 0.;
@@ -386,12 +385,13 @@ impl Acquisition {
             if let Some(header) = header {
                 emit(header);
             }
+            false
         })
     }
     fn push_samples(
         &mut self,
         chunk: &IqChunk,
-        mut emit: impl FnMut(Option<Header>, &Samples),
+        mut emit: impl FnMut(Option<Header>, &Samples) -> bool,
     ) -> RadioResult<()> {
         if chunk.config().sample_rate_hz != 20_000_000 {
             self.reset();
@@ -484,11 +484,9 @@ impl Acquisition {
                         .sub(chip(18))
                         .sub(chip(20));
                     let power = self.chip_power[parity] as f32;
-                    Some((sum.scale(1. / 11.), sum.power(), (11. * power).max(1e-12)))
+                    Some((sum.scale(1. / 11.), sum.power() / (11. * power).max(1e-12)))
                 } else {
-                    self.samples
-                        .barker(symbol_start)
-                        .map(|(symbol, quality)| (symbol, quality, 1.))
+                    self.samples.barker(symbol_start)
                 };
                 if self.tracks[track_index].run >= 32 || self.tracks[track_index].short.is_some() {
                     if let (Some((_, early)), Some((_, late))) = (
@@ -502,11 +500,10 @@ impl Acquisition {
                             .clamp(-0.5, 0.5);
                     }
                 }
-                if let Some((symbol, numerator, denominator)) = coarse {
+                if let Some((symbol, quality)) = coarse {
                     if let Some(result) = self.tracks[track_index].symbol(
                         symbol,
-                        numerator,
-                        denominator,
+                        quality,
                         symbol_start,
                         chunk.config().max_frame_bytes,
                     ) {
@@ -537,9 +534,13 @@ impl Acquisition {
                 {
                     let header = self.pending.take().unwrap();
                     self.suppress_until = header.payload_start;
-                    emit(Some(header), &self.samples);
+                    self.payload_active = emit(Some(header), &self.samples);
                 }
-                emit(None, &self.samples);
+                // The consumer requests sample notifications only while it
+                // has a payload to finish. A new header always wakes it.
+                if self.payload_active {
+                    self.payload_active = emit(None, &self.samples);
+                }
             }
         }
         Ok(())
@@ -549,28 +550,6 @@ impl Acquisition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn radio_dsss_correlation_gate_preserves_float_boundary() {
-        // Check adjacent representable numerators at the cutoff over the
-        // receiver's denominator range, including binade transitions.
-        for exponent in 87u32..=143 {
-            for mantissa in (0u32..1 << 23)
-                .step_by(4093)
-                .chain(std::iter::once((1 << 23) - 1))
-            {
-                let denominator = f32::from_bits((exponent << 23) | mantissa);
-                let cutoff = denominator * 0.25;
-                for delta in -8i64..=8 {
-                    let numerator = f32::from_bits((i64::from(cutoff.to_bits()) + delta) as u32);
-                    assert_eq!(
-                        numerator / denominator < 0.25,
-                        numerator < cutoff,
-                        "numerator {numerator:e}, denominator {denominator:e}"
-                    );
-                }
-            }
-        }
-    }
     fn config() -> RxConfig {
         RxConfig {
             sample_rate_hz: 20_000_000,
@@ -1089,6 +1068,7 @@ impl PhyDecoder for DsssCckDecoder {
                     }
                 }
             }
+            pending.is_some()
         })?;
         let rejected = self.acquisition.invalid_headers - old_invalid;
         self.stats.rejected_frames += rejected;
