@@ -64,7 +64,9 @@ fn length(header: [u8; 6], short: bool, bound: usize) -> Option<(u32, usize)> {
 
 /// Fixed history and normalized 256-phase, 16-tap Hann-windowed sinc kernels.
 struct Samples {
-    ring: [ComplexSample; 64],
+    // The first sixteen entries are mirrored at the end so every FIR window
+    // is contiguous, including windows crossing the logical 64-sample wrap.
+    ring: [ComplexSample; 80],
     kernels: [[f32; 16]; 256],
     begin: u64,
     end: u64,
@@ -89,7 +91,7 @@ impl Samples {
             }
         }
         Self {
-            ring: [ComplexSample::ZERO; 64],
+            ring: [ComplexSample::ZERO; 80],
             kernels,
             begin: 0,
             end: 0,
@@ -100,7 +102,11 @@ impl Samples {
         self.end = start;
     }
     fn push(&mut self, value: ComplexSample) {
-        self.ring[self.end as usize % 64] = value;
+        let offset = self.end as usize % 64;
+        self.ring[offset] = value;
+        if offset < 16 {
+            self.ring[offset + 64] = value;
+        }
         self.end += 1;
         self.begin = self.begin.max(self.end.saturating_sub(64));
     }
@@ -139,14 +145,7 @@ impl Samples {
     #[inline]
     fn at_window(&self, start: u64, phase: usize) -> ComplexSample {
         let offset = (start % 64) as usize;
-        let wrapped;
-        let values: &[ComplexSample] = if offset <= 48 {
-            &self.ring[offset..offset + 16]
-        } else {
-            wrapped = std::array::from_fn::<_, 16, _>(|k| self.ring[(offset + k) % 64]);
-            &wrapped
-        };
-        Self::dot(values, &self.kernels[phase])
+        Self::dot(&self.ring[offset..offset + 16], &self.kernels[phase])
     }
     #[inline(always)]
     fn dot(values: &[ComplexSample], weights: &[f32; 16]) -> ComplexSample {
@@ -213,12 +212,18 @@ impl Track {
         start: f64,
         bound: usize,
     ) -> Option<Result<Header, ()>> {
-        let delta = symbol.mul(self.previous.conj());
-        self.previous = symbol;
         if quality < 0.25 || symbol.power() < 1e-5 {
-            *self = Self::default();
+            // A zero previous symbol denotes the already-reset search state.
+            // Do not rewrite the entire track for every subsequent noise chip.
+            // Accepted symbols have positive power, so an active track always
+            // takes the full reset on the first failed correlation.
+            if self.previous != ComplexSample::ZERO {
+                *self = Self::default();
+            }
             return None;
         }
+        let delta = symbol.mul(self.previous.conj());
+        self.previous = symbol;
         if let Some(short) = self.short {
             let corrected = delta.mul(ComplexSample::rotation(-self.frequency));
             let quadrant = (corrected.phase() / (PI / 2.)).round() as i32;
@@ -294,7 +299,7 @@ pub(super) struct Acquisition {
     samples: Samples,
     tracks: [Track; 22],
     // Internal half-chip grid (22 Msps), derived from the original 20 Msps
-    // coordinates. Its 32 entries plus the 64 raw samples stay below the
+    // coordinates. Its 32 entries plus the 80 raw/mirrored entries stay below the
     // existing 128-sample private history reservation.
     chips: [ComplexSample; 32],
     next_chip: u64,
