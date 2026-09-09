@@ -64,7 +64,7 @@ fn length(header: [u8; 6], short: bool, bound: usize) -> Option<(u32, usize)> {
 
 /// Fixed history and normalized 256-phase, 16-tap Hann-windowed sinc kernels.
 struct Samples {
-    ring: [ComplexSample; 128],
+    ring: [ComplexSample; 64],
     kernels: [[f32; 16]; 256],
     begin: u64,
     end: u64,
@@ -89,7 +89,7 @@ impl Samples {
             }
         }
         Self {
-            ring: [ComplexSample::ZERO; 128],
+            ring: [ComplexSample::ZERO; 64],
             kernels,
             begin: 0,
             end: 0,
@@ -100,9 +100,9 @@ impl Samples {
         self.end = start;
     }
     fn push(&mut self, value: ComplexSample) {
-        self.ring[self.end as usize % 128] = value;
+        self.ring[self.end as usize % 64] = value;
         self.end += 1;
-        self.begin = self.begin.max(self.end.saturating_sub(128));
+        self.begin = self.begin.max(self.end.saturating_sub(64));
     }
     fn at(&self, time: f64) -> Option<ComplexSample> {
         // Source coordinates are nonnegative. Truncation therefore supplies
@@ -128,7 +128,7 @@ impl Samples {
         }
         let mut sum = ComplexSample::ZERO;
         for (k, &weight) in self.kernels[phase].iter().enumerate() {
-            sum = sum.add(self.ring[(start as usize + k) % 128].scale(weight));
+            sum = sum.add(self.ring[((start % 64) as usize + k) % 64].scale(weight));
         }
         Some(sum)
     }
@@ -258,7 +258,13 @@ impl Track {
 
 pub(super) struct Acquisition {
     samples: Samples,
-    tracks: [Track; 20],
+    tracks: [Track; 22],
+    // Internal half-chip grid (22 Msps), derived from the original 20 Msps
+    // coordinates. Its 32 entries plus the 64 raw samples stay below the
+    // existing 128-sample private history reservation.
+    chips: [ComplexSample; 32],
+    next_chip: u64,
+    first_chip: Option<u64>,
     config: Option<RxConfig>,
     position: Option<IqPosition>,
     pending: Option<Header>,
@@ -273,6 +279,9 @@ impl Acquisition {
         Self {
             samples: Samples::new(),
             tracks: std::array::from_fn(|_| Track::default()),
+            chips: [ComplexSample::ZERO; 32],
+            next_chip: 0,
+            first_chip: None,
             config: None,
             position: None,
             pending: None,
@@ -286,6 +295,8 @@ impl Acquisition {
     pub fn reset(&mut self) {
         self.truncated_headers += u64::from(self.tracks.iter().any(|track| track.short.is_some()));
         self.tracks.fill(Track::default());
+        self.next_chip = 0;
+        self.first_chip = None;
         self.pending = None;
         self.position = None;
         self.config = None;
@@ -329,63 +340,91 @@ impl Acquisition {
         self.position = Some(p.clone());
         for value in chunk.normalized() {
             self.samples.push(value);
-            // Eight samples of lookahead plus one complete Barker symbol.
-            if self.samples.end < 29 {
-                continue;
-            }
-            let start = self.samples.end - 29;
-            let track_index = start as usize % 20;
-            let timing = self.tracks[track_index].timing;
-            let symbol_start = start as f64 + timing;
-            if self.tracks[track_index].run >= 32 || self.tracks[track_index].short.is_some() {
-                if let (Some((_, early)), Some((_, late))) = (
-                    self.samples.barker(symbol_start - 0.5),
-                    self.samples.barker(symbol_start + 0.5),
-                ) {
-                    // Bounded early/late correction in original sample units, retained
-                    // across chunks. Adjacent acquisition tracks cover the other phases.
-                    self.tracks[track_index].timing = (timing
-                        + f64::from((late - early).clamp(-0.1, 0.1)) * 0.2)
-                        .clamp(-0.5, 0.5);
+            loop {
+                let chip_time = self.stream_start as f64 + self.next_chip as f64 * (10. / 11.);
+                // Keep lookahead for the late timing-refinement interpolation.
+                if chip_time + 10. > self.samples.end as f64 {
+                    break;
                 }
-            }
-            if let Some((symbol, quality)) = self.samples.barker(symbol_start) {
-                if let Some(result) = self.tracks[track_index].symbol(
-                    symbol,
-                    quality,
-                    symbol_start,
-                    chunk.config().max_frame_bytes,
-                ) {
-                    let header = match result {
-                        Ok(header) => header,
-                        Err(()) => {
-                            self.invalid_headers += 1;
-                            continue;
-                        }
-                    };
-                    if header.preamble_start >= self.suppress_until
-                        && header.preamble_start >= self.stream_start as f64
-                    {
-                        if self
-                            .pending
-                            .as_ref()
-                            .map_or(true, |old| header.correlation > old.correlation)
+                let chip_index = self.next_chip;
+                self.next_chip = self.next_chip.checked_add(1).ok_or(RadioError::Overflow {
+                    context: "DSSS internal chip clock",
+                })?;
+                let Some(chip) = self.samples.at(chip_time) else {
+                    self.first_chip = None;
+                    continue;
+                };
+                self.chips[chip_index as usize % 32] = chip;
+                let first = *self.first_chip.get_or_insert(chip_index);
+                if chip_index - first < 20 {
+                    continue;
+                }
+                let start = self.stream_start as f64 + (chip_index as f64 - 21.) * (10. / 11.);
+                let track_index = (chip_index % 22) as usize;
+                let timing = self.tracks[track_index].timing;
+                let symbol_start = start + timing;
+                let coarse = if timing == 0. {
+                    let mut sum = ComplexSample::ZERO;
+                    let mut power = 0.;
+                    for (k, &sign) in BARKER.iter().enumerate() {
+                        let value = self.chips[((chip_index - 20 + 2 * k as u64) % 32) as usize];
+                        sum = sum.add(value.scale(sign));
+                        power += value.power();
+                    }
+                    Some((sum.scale(1. / 11.), sum.power() / (11. * power).max(1e-12)))
+                } else {
+                    self.samples.barker(symbol_start)
+                };
+                if self.tracks[track_index].run >= 32 || self.tracks[track_index].short.is_some() {
+                    if let (Some((_, early)), Some((_, late))) = (
+                        self.samples.barker(symbol_start - 0.5),
+                        self.samples.barker(symbol_start + 0.5),
+                    ) {
+                        // Bounded early/late correction in original sample units, retained
+                        // across chunks. Adjacent acquisition tracks cover the other phases.
+                        self.tracks[track_index].timing = (timing
+                            + f64::from((late - early).clamp(-0.1, 0.1)) * 0.2)
+                            .clamp(-0.5, 0.5);
+                    }
+                }
+                if let Some((symbol, quality)) = coarse {
+                    if let Some(result) = self.tracks[track_index].symbol(
+                        symbol,
+                        quality,
+                        symbol_start,
+                        chunk.config().max_frame_bytes,
+                    ) {
+                        let header = match result {
+                            Ok(header) => header,
+                            Err(()) => {
+                                self.invalid_headers += 1;
+                                continue;
+                            }
+                        };
+                        if header.preamble_start >= self.suppress_until
+                            && header.preamble_start >= self.stream_start as f64
                         {
-                            self.pending = Some(header);
+                            if self
+                                .pending
+                                .as_ref()
+                                .map_or(true, |old| header.correlation > old.correlation)
+                            {
+                                self.pending = Some(header);
+                            }
                         }
                     }
                 }
+                if self
+                    .pending
+                    .as_ref()
+                    .is_some_and(|h| start >= h.payload_start + 20.)
+                {
+                    let header = self.pending.take().unwrap();
+                    self.suppress_until = header.payload_start;
+                    emit(Some(header), &self.samples);
+                }
+                emit(None, &self.samples);
             }
-            if self
-                .pending
-                .as_ref()
-                .is_some_and(|h| start as f64 >= h.payload_start + 20.)
-            {
-                let header = self.pending.take().unwrap();
-                self.suppress_until = header.payload_start;
-                emit(Some(header), &self.samples);
-            }
-            emit(None, &self.samples);
         }
         Ok(())
     }

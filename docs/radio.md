@@ -466,12 +466,14 @@ assumed. HackRF's [sampling/filter guidance](https://hackrf.readthedocs.io/en/la
 explains why analog filtering and source sample rate must be considered together;
 digital interpolation cannot undo aliasing or restore bandwidth already removed.
 
-The selected initial DSSS design interpolates directly at candidate chip times
-using a fixed 16-source-sample windowed-sinc fractional-delay kernel, with
-256 precomputed fractional phases and bounded history. It evaluates chip center
-and early/late positions for acquisition/timing tracking, avoiding a separately
-allocated whole-capture 22 Msps stream. Normalize each fractional kernel's DC
-gain. This reconstruction kernel is a receiver choice, not an IEEE-mandated
+The DSSS receiver uses a fixed 16-source-sample windowed-sinc fractional-delay
+kernel with 256 normalized fractional phases. Acquisition interpolates once onto
+an internal half-chip grid and reuses a rolling 32-sample history for Barker
+correlation across 22 timing phases. This internal 22 Msps clock does not request
+a different hardware sample rate. The 64 original source samples and 32 derived
+samples fit within the existing 128-sample history reservation; no whole-capture
+resampled buffer is allocated. Timing refinement and payload recovery still
+interpolate directly at corrected source-domain chip positions. This reconstruction kernel is a receiver choice, not an IEEE-mandated
 transmit pulse shape or spectral-mask claim. Independent vectors must include
 bandlimited pulses and clock offsets; real 20 Msps agreement is a qualification
 requirement, not a consequence of nominal chip timing alone.
