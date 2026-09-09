@@ -227,6 +227,53 @@ fn radio_dsss_payload_vectors_exact_bytes_and_positions() {
     }
 }
 #[test]
+fn radio_dsss_internal_grid_preserves_source_coordinates_and_small_history() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
+    let index = fs::read_to_string(root.join("dsss-index.tsv")).unwrap();
+    for row in index
+        .lines()
+        .skip(1)
+        .filter(|row| row.contains("-clean-48"))
+    {
+        let columns: Vec<_> = row.split('\t').collect();
+        let input = fs::read(root.join(format!("{}.cs8", columns[0]))).unwrap();
+        for origin in [1, u64::from(u32::MAX) - 8] {
+            let mut decoder = DsssCckDecoder::new();
+            let mut frames = Vec::new();
+            let mut config = config();
+            config.max_buffer_samples = 128;
+            config.max_chunk_samples = 113;
+            for (n, part) in input.chunks(226).enumerate() {
+                let chunk = IqChunk::new(
+                    config.clone(),
+                    IqPosition {
+                        epoch: 9,
+                        sequence: n as u64,
+                        sample_index: origin + (n * 113) as u64,
+                        time_anchor: None,
+                        discontinuity: None,
+                    },
+                    part.iter().map(|&v| v as i8).collect(),
+                )
+                .unwrap();
+                frames.extend(decoder.consume(IqEvent::Chunk(chunk)).unwrap().frames);
+            }
+            assert_eq!(frames.len(), 1, "{} origin {origin}", columns[0]);
+            let frame = &frames[0];
+            assert_eq!(frame.bytes, bytes(columns[4]));
+            assert_eq!(frame.start.epoch, 9);
+            assert!(frame.start.sample_index.abs_diff(origin + 37) <= 3);
+            let preamble = if columns[2] == "short" { 1920 } else { 3840 };
+            let end = origin
+                + 37
+                + preamble
+                + frame.bytes.len() as u64 * 8 * 20_000_000 / u64::from(frame.rate_bps);
+            assert!(frame.end_sample_index.abs_diff(end) <= 4);
+        }
+    }
+}
+
+#[test]
 fn radio_dsss_payload_gaps_and_terminal_reset() {
     let input = include_bytes!("fixtures/iq/dsss-10-long-clean-48.cs8");
     for variant in 0..7 {
