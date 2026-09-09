@@ -457,16 +457,7 @@ impl Acquisition {
                         .sub(chip(18))
                         .sub(chip(20));
                     let power = self.chip_power[parity] as f32;
-                    let numerator = sum.power();
-                    let denominator = (11. * power).max(1e-12);
-                    // Below half the acceptance threshold, even a rounded
-                    // quotient cannot reach 0.25. Avoid division for these
-                    // noise windows; accepted correlations retain exact math.
-                    if numerator < denominator * 0.125 {
-                        Some((ComplexSample::ZERO, 0.))
-                    } else {
-                        Some((sum.scale(1. / 11.), numerator / denominator))
-                    }
+                    Some((sum.scale(1. / 11.), sum.power() / (11. * power).max(1e-12)))
                 } else {
                     self.samples.barker(symbol_start)
                 };
