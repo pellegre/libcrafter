@@ -1,7 +1,7 @@
 //! Private clause 15/18 acquisition. Coordinates refer to the original 20 Msps stream.
 use super::*;
 use std::f32::consts::PI;
-use wide::{f32x4, CmpLt};
+use wide::f32x4;
 const BARKER: [f32; 11] = [1., -1., 1., 1., -1., 1., 1., 1., -1., -1., -1.];
 const GRID_PHASES: [usize; 11] = [0, 23, 47, 70, 93, 116, 140, 163, 186, 209, 233];
 
@@ -433,261 +433,145 @@ impl Acquisition {
         }
         self.config = Some(chunk.config().clone());
         self.position = Some(p.clone());
-        let mut values = chunk.normalized();
-        while let Some(value) = values.next() {
+        for value in chunk.normalized() {
             self.samples.push(value);
-            // At most one extra source sample is made available before draining
-            // every ready chip. Odd chunks and terminal prefixes drain as well.
-            if let Some(value) = values.next() {
-                self.samples.push(value);
-            }
             loop {
-                let Some((index, ready)) = self.next_ready_chip()? else {
+                // Rational 10/11 source-sample steps visit only eleven of the
+                // coarse interpolation phases. Keep the cursor in integers;
+                // corrected timing still uses the general interpolator.
+                let lookahead = 10 + u64::from(self.chip_fraction != 0);
+                if self
+                    .chip_center
+                    .checked_add(lookahead)
+                    .map_or(true, |end| end > self.samples.end)
+                {
                     break;
+                }
+                let center = self.chip_center;
+                let phase = self.chip_fraction as usize;
+                self.chip_fraction += 10;
+                if self.chip_fraction >= 11 {
+                    self.chip_fraction -= 11;
+                    self.chip_center =
+                        self.chip_center
+                            .checked_add(1)
+                            .ok_or(RadioError::Overflow {
+                                context: "DSSS source chip cursor",
+                            })?;
+                }
+                let chip_index = self.next_chip;
+                self.next_chip = self.next_chip.checked_add(1).ok_or(RadioError::Overflow {
+                    context: "DSSS internal chip clock",
+                })?;
+                let Some(chip) = self.samples.at_grid(center, phase) else {
+                    self.first_chip = None;
+                    self.chip_power = [0.; 2];
+                    continue;
                 };
-                if !ready {
+                let first = *self.first_chip.get_or_insert(chip_index);
+                let parity = (chip_index % 2) as usize;
+                // Each parity contains the eleven chip-spaced samples of one
+                // Barker window. f64 state avoids accumulating f32 drift.
+                if chip_index - first >= 22 {
+                    self.chip_power[parity] -=
+                        f64::from(self.chips[((chip_index - 22) % 32) as usize].power());
+                }
+                self.chip_power[parity] += f64::from(chip.power());
+                self.chips[chip_index as usize % 32] = chip;
+                if chip_index - first < 20 {
                     continue;
                 }
-                let mut count = 1;
-                let mut nominal = [(ComplexSample::ZERO, 0.); 2];
-                if self.chip_ready() {
-                    match self.next_ready_chip()? {
-                        Some((_, true)) => {
-                            nominal = self.correlate_pair(index);
-                            count = 2;
-                        }
-                        _ => {
-                            return Err(RadioError::Source(
-                                "DSSS paired chip unavailable after readiness check".into(),
-                            ));
+                let stream_start = self.stream_start;
+                // Rejected coarse correlations need no floating-point source
+                // coordinate. Preserve the same expression when a track or
+                // pending header actually needs it.
+                let start = || stream_start as f64 + (chip_index as f64 - 21.) * (10. / 11.);
+                let track_index = (chip_index % 22) as usize;
+                let timing = self.tracks[track_index].timing;
+                let symbol_start = || start() + timing;
+                let coarse = if timing == 0. {
+                    // Spell out the fixed signs so this hot correlation has
+                    // no dynamic coefficient loads or inner loop branches.
+                    let chip = |offset| self.chips[((chip_index - 20 + offset) % 32) as usize];
+                    let sum = ComplexSample::ZERO
+                        .add(chip(0))
+                        .sub(chip(2))
+                        .add(chip(4))
+                        .add(chip(6))
+                        .sub(chip(8))
+                        .add(chip(10))
+                        .add(chip(12))
+                        .add(chip(14))
+                        .sub(chip(16))
+                        .sub(chip(18))
+                        .sub(chip(20));
+                    let power = self.chip_power[parity] as f32;
+                    Some((sum.scale(1. / 11.), sum.power() / (11. * power).max(1e-12)))
+                } else {
+                    self.samples.barker(symbol_start())
+                };
+                if self.tracks[track_index].run >= 32 || self.tracks[track_index].short.is_some() {
+                    if let (Some((_, early)), Some((_, late))) = (
+                        self.samples.barker(symbol_start() - 0.5),
+                        self.samples.barker(symbol_start() + 0.5),
+                    ) {
+                        // Bounded early/late correction in original sample units, retained
+                        // across chunks. Adjacent acquisition tracks cover the other phases.
+                        self.tracks[track_index].timing = (timing
+                            + f64::from((late - early).clamp(-0.1, 0.1)) * 0.2)
+                            .clamp(-0.5, 0.5);
+                    }
+                }
+                if let Some((symbol, quality)) = coarse {
+                    if let Some(result) = self.tracks[track_index].symbol(
+                        symbol,
+                        quality,
+                        symbol_start,
+                        chunk.config().max_frame_bytes,
+                    ) {
+                        let header = match result {
+                            Ok(header) => header,
+                            Err(()) => {
+                                self.invalid_headers += 1;
+                                continue;
+                            }
+                        };
+                        if header.preamble_start >= self.suppress_until
+                            && header.preamble_start >= self.stream_start as f64
+                        {
+                            if self
+                                .pending
+                                .as_ref()
+                                .map_or(true, |old| header.correlation > old.correlation)
+                            {
+                                self.pending = Some(header);
+                            }
                         }
                     }
-                } else {
-                    nominal[0] = self.correlate_one(index);
                 }
-                for (offset, &correlation) in nominal.iter().take(count).enumerate() {
-                    self.advance_track(
-                        index + offset as u64,
-                        correlation,
-                        chunk.config().max_frame_bytes,
-                        &mut emit,
-                    );
+                if self
+                    .pending
+                    .as_ref()
+                    .is_some_and(|h| start() >= h.payload_start + 20.)
+                {
+                    let header = self.pending.take().unwrap();
+                    self.suppress_until = header.payload_start;
+                    self.payload_active = emit(Some(header), &self.samples);
+                }
+                // The consumer requests sample notifications only while it
+                // has a payload to finish. A new header always wakes it.
+                if self.payload_active {
+                    self.payload_active = emit(None, &self.samples);
                 }
             }
         }
         Ok(())
-    }
-    #[inline]
-    fn chip_ready(&self) -> bool {
-        self.chip_center
-            .checked_add(10 + u64::from(self.chip_fraction != 0))
-            .is_some_and(|end| end <= self.samples.end)
-    }
-    // This per-chip operation must not materialize its Result across a call.
-    #[inline(always)]
-    fn next_ready_chip(&mut self) -> RadioResult<Option<(u64, bool)>> {
-        if !self.chip_ready() {
-            return Ok(None);
-        }
-        let center = self.chip_center;
-        let phase = self.chip_fraction as usize;
-        self.chip_fraction += 10;
-        if self.chip_fraction >= 11 {
-            self.chip_fraction -= 11;
-            self.chip_center = self
-                .chip_center
-                .checked_add(1)
-                .ok_or(RadioError::Overflow {
-                    context: "DSSS source chip cursor",
-                })?;
-        }
-        let index = self.next_chip;
-        self.next_chip = self.next_chip.checked_add(1).ok_or(RadioError::Overflow {
-            context: "DSSS internal chip clock",
-        })?;
-        let Some(chip) = self.samples.at_grid(center, phase) else {
-            self.first_chip = None;
-            self.chip_power = [0.; 2];
-            return Ok(Some((index, false)));
-        };
-        let first = *self.first_chip.get_or_insert(index);
-        let parity = (index % 2) as usize;
-        if index - first >= 22 {
-            self.chip_power[parity] -= f64::from(self.chips[((index - 22) % 32) as usize].power());
-        }
-        self.chip_power[parity] += f64::from(chip.power());
-        self.chips[index as usize % 32] = chip;
-        Ok(Some((index, index - first >= 20)))
-    }
-    #[inline]
-    fn correlate_one(&self, index: u64) -> (ComplexSample, f32) {
-        let chip = |offset| self.chips[((index - 20 + offset) % 32) as usize];
-        let sum = ComplexSample::ZERO
-            .add(chip(0))
-            .sub(chip(2))
-            .add(chip(4))
-            .add(chip(6))
-            .sub(chip(8))
-            .add(chip(10))
-            .add(chip(12))
-            .add(chip(14))
-            .sub(chip(16))
-            .sub(chip(18))
-            .sub(chip(20));
-        let power = self.chip_power[(index % 2) as usize] as f32;
-        (sum.scale(1. / 11.), sum.power() / (11. * power).max(1e-12))
-    }
-    #[inline]
-    fn correlate_pair(&self, index: u64) -> [(ComplexSample, f32); 2] {
-        let pair = |offset| {
-            let a = self.chips[((index - 20 + offset) % 32) as usize];
-            let b = self.chips[((index - 19 + offset) % 32) as usize];
-            f32x4::new([a.i, a.q, b.i, b.q])
-        };
-        // Each lane retains the scalar Barker sum's exact operation order.
-        let sum = f32x4::ZERO + pair(0) - pair(2) + pair(4) + pair(6) - pair(8)
-            + pair(10)
-            + pair(12)
-            + pair(14)
-            - pair(16)
-            - pair(18)
-            - pair(20);
-        let squares = (sum * sum).to_array();
-        let parity = (index % 2) as usize;
-        let denominator = f32x4::new([
-            (11. * self.chip_power[parity] as f32).max(1e-12),
-            (11. * self.chip_power[1 - parity] as f32).max(1e-12),
-            1.,
-            1.,
-        ]);
-        let numerator = f32x4::new([squares[0] + squares[1], squares[2] + squares[3], 0., 0.]);
-        // The positive denominator is clamped above the subnormal range, so
-        // scaling it by 0.25 is exact. Strictly below-cutoff correlations are
-        // discarded by Track before their symbol or quality can be used.
-        // Refined tracks ignore these nominal results and interpolate normally.
-        if numerator.cmp_lt(denominator * f32x4::splat(0.25)).all() {
-            return [(ComplexSample::ZERO, 0.); 2];
-        }
-        let quality = (numerator / denominator).to_array();
-        let scaled = (sum * f32x4::splat(1. / 11.)).to_array();
-        [
-            (
-                ComplexSample {
-                    i: scaled[0],
-                    q: scaled[1],
-                },
-                quality[0],
-            ),
-            (
-                ComplexSample {
-                    i: scaled[2],
-                    q: scaled[3],
-                },
-                quality[1],
-            ),
-        ]
-    }
-    #[inline]
-    fn advance_track(
-        &mut self,
-        chip_index: u64,
-        nominal: (ComplexSample, f32),
-        bound: usize,
-        emit: &mut impl FnMut(Option<Header>, &Samples) -> bool,
-    ) {
-        let stream_start = self.stream_start;
-        // Rejected coarse correlations need no floating-point source
-        // coordinate. Preserve the same expression when a track or
-        // pending header actually needs it.
-        let start = || stream_start as f64 + (chip_index as f64 - 21.) * (10. / 11.);
-        let track_index = (chip_index % 22) as usize;
-        let timing = self.tracks[track_index].timing;
-        let symbol_start = || start() + timing;
-        let coarse = if timing == 0. {
-            Some(nominal)
-        } else {
-            self.samples.barker(symbol_start())
-        };
-        if self.tracks[track_index].run >= 32 || self.tracks[track_index].short.is_some() {
-            if let (Some((_, early)), Some((_, late))) = (
-                self.samples.barker(symbol_start() - 0.5),
-                self.samples.barker(symbol_start() + 0.5),
-            ) {
-                // Bounded early/late correction in original sample units, retained
-                // across chunks. Adjacent acquisition tracks cover the other phases.
-                self.tracks[track_index].timing =
-                    (timing + f64::from((late - early).clamp(-0.1, 0.1)) * 0.2).clamp(-0.5, 0.5);
-            }
-        }
-        if let Some((symbol, quality)) = coarse {
-            if let Some(result) =
-                self.tracks[track_index].symbol(symbol, quality, symbol_start, bound)
-            {
-                let header = match result {
-                    Ok(header) => header,
-                    Err(()) => {
-                        self.invalid_headers += 1;
-                        return;
-                    }
-                };
-                if header.preamble_start >= self.suppress_until
-                    && header.preamble_start >= self.stream_start as f64
-                {
-                    if self
-                        .pending
-                        .as_ref()
-                        .map_or(true, |old| header.correlation > old.correlation)
-                    {
-                        self.pending = Some(header);
-                    }
-                }
-            }
-        }
-        if self
-            .pending
-            .as_ref()
-            .is_some_and(|h| start() >= h.payload_start + 20.)
-        {
-            let header = self.pending.take().unwrap();
-            self.suppress_until = header.payload_start;
-            self.payload_active = emit(Some(header), &self.samples);
-        }
-        // The consumer requests sample notifications only while it
-        // has a payload to finish. A new header always wakes it.
-        if self.payload_active {
-            self.payload_active = emit(None, &self.samples);
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn radio_dsss_paired_rejection_preserves_division_boundary() {
-        // Adjacent representable scores around the existing 0.25 gate, across
-        // denominator binades and mixed passing/failing correlation pairs.
-        for exponent in [87u32, 96, 112, 127, 135, 143] {
-            for mantissa in (0u32..1 << 23)
-                .step_by(4093)
-                .chain(std::iter::once((1 << 23) - 1))
-            {
-                let a = f32::from_bits((exponent << 23) | mantissa);
-                let b = f32::from_bits(a.to_bits() + 1);
-                let denominator = f32x4::new([a, b, 1., 1.]);
-                for da in -8i64..=8 {
-                    for db in -1i64..=1 {
-                        let x = f32::from_bits(((a * 0.25).to_bits() as i64 + da) as u32);
-                        let y = f32::from_bits(((b * 0.25).to_bits() as i64 + db) as u32);
-                        let rejected = f32x4::new([x, y, 0., 0.])
-                            .cmp_lt(denominator * f32x4::splat(0.25))
-                            .all();
-                        assert_eq!(rejected, x / a < 0.25 && y / b < 0.25);
-                    }
-                }
-            }
-        }
-    }
     fn config() -> RxConfig {
         RxConfig {
             sample_rate_hz: 20_000_000,
