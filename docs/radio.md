@@ -219,10 +219,10 @@ bound in operator code only within an appropriate finite memory budget. Actual
 live decoder throughput and receiver agreement require separate qualification.
 
 
-## Local artifact and comparison schema v1
+## Local artifact and comparison schema v2
 
 `radio_receive` writes newline-terminated JSON records with a first `header`
-record whose `schema` is `crafter.radio.receive/v1`. Example-local serde support
+record whose `schema` is `crafter.radio.receive/v2`. Example-local serde support
 keeps serialization out of the packet library. Config fields include frequency,
 sample rate, all allocation/sample bounds and `max_duration_ns`. Positions carry
 `epoch`, `sequence`, `sample_index`, nullable `anchor` (sample index, Unix
@@ -316,7 +316,7 @@ are the framing authority; MAC geometry follows the existing IEEE evidence and
 library layouts. Absent reference FCS remains separately integrity-unverified.
 MAC sequence, retry, duration and all other bytes survive normalization.
 
-Output schema `crafter.radio.comparison/v1` contains the complete policy,
+Output schema `crafter.radio.comparison/v2` contains the complete policy,
 `eligible_dongle_count`, `hackrf_valid_count`, `exact_matches`, both directional
 fractions, unique-byte overlap, per-source exclusion counts and maximum timing
 uncertainty, receive/acquisition evidence, SHA-256 digests of the three inputs, and one row per matched occurrence
@@ -493,3 +493,34 @@ invent one: retain conservative timing uncertainty or reject the candidate.
 Every filter, clock, carrier, scrambler and partial-frame state resets on a gap,
 epoch/configuration change, cancellation or overflow. EOF lookahead cannot be
 satisfied by silently adding zeros to a truncated real frame.
+
+
+The receive example now selects `LegacyWifiDecoder` by default. A leading
+`--ofdm-only` selects the original standalone OFDM receiver. Saved v2 IQ records
+include `decoder: "legacy_wifi"` or `"ofdm"`; replay preserves that selection.
+Prior v1 IQ artifacts remain readable and replay with the original OFDM decoder.
+The binary IQ encoding and actual `config` sample-clock fields are unchanged.
+
+V2 frame records carry `phy: "dsss"`, `"cck"`, or `"legacy_ofdm"`, the observed
+`rate_bps`, and `preamble: "long"`/`"short"` for DSSS/CCK (null for OFDM).
+Original FCS-bearing bytes, sample coordinates, diagnostics, continuity,
+acquisition counters and parser failures remain present. The comparator accepts
+prior v1 OFDM receive records, but rejects inconsistent family/rate combinations
+and invalid DSSS/CCK preambles.
+
+Reference eligibility uses the observed [Radiotap Rate](https://www.radiotap.org/fields/Rate.html)
+and explicit compatible [Channel modulation/band flags](https://www.radiotap.org/fields/Channel.html).
+A dynamic CCK/OFDM channel can carry either family; CCK channel flags also cover
+1/2 Mbps Barker modes, distinguished by Rate. Missing, contradictory, unknown,
+FHSS or reduced-clock metadata is excluded. Advertised capabilities are never
+used as evidence of a received rate. Matches require equal observed rates and
+complete original MAC bytes after established FCS/padding normalization.
+
+Comparison v2 adds `families` (always DSSS, CCK and OFDM) and `rates` (all twelve
+supported rates). Each contains eligible denominators, occurrence match counts,
+directional fractions and measured/inconclusive status. Zero denominators yield
+null fractions and inconclusive status. Global exclusions remain counted by
+reason; unknown PHY exclusions cannot honestly be assigned to a family.
+No global overlap can establish a per-family qualification target: validators
+must assess each required family separately. Matching uses only the supplied
+independent timing policy; it does not fit a clock from matching bytes.

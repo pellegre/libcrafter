@@ -8,7 +8,19 @@ use std::{
     time::{Duration, SystemTime},
 };
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
-pub const SCHEMA: &str = "crafter.radio.receive/v1";
+pub const SCHEMA: &str = "crafter.radio.receive/v2";
+pub fn supported_schema(v: &serde_json::Value) -> bool {
+    v == SCHEMA || v == "crafter.radio.receive/v1"
+}
+pub fn phy_family(rate: u32) -> &'static str {
+    match rate {
+        1_000_000 | 2_000_000 => "dsss",
+        5_500_000 | 11_000_000 => "cck",
+        6_000_000 | 9_000_000 | 12_000_000 | 18_000_000 | 24_000_000 | 36_000_000 | 48_000_000
+        | 54_000_000 => "legacy_ofdm",
+        _ => "unknown",
+    }
+}
 pub const MAX_LINE: usize = 1_048_576;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
