@@ -587,7 +587,114 @@ struct Payload {
     next: f64,
 }
 impl Payload {
+    fn cck(&self, samples: &Samples, start: f64) -> Option<(ComplexSample, u8, f32)> {
+        let mut chips = [ComplexSample::ZERO; 8];
+        let mut power = 0.;
+        for (k, chip) in chips.iter_mut().enumerate() {
+            let offset = (k as f64 + 0.5) * 20. / 11.;
+            *chip = samples.at(start + offset)?.mul(ComplexSample::rotation(
+                -self.header.frequency_rad * (offset as f32 - 80. / 11.),
+            ));
+            power += chip.power();
+        }
+        let mut best = (ComplexSample::ZERO, 0, 0.);
+        let count = if self.header.rate_bps == 5_500_000 {
+            4
+        } else {
+            64
+        };
+        for word in 0..count {
+            // Clause 18 binary phase map, unlike the differential Gray map.
+            let (b, c, d) = if count == 4 {
+                (2 * (word & 1) + 1, 0, 2 * (word >> 1))
+            } else {
+                let phase = |v: u8| 2 * (v & 1) + ((v >> 1) & 1);
+                (phase(word), phase(word >> 2), phase(word >> 4))
+            };
+            let phases = [b + c + d, c + d, b + d, d, b + c, c, b, 0];
+            let mut sum = ComplexSample::ZERO;
+            for (k, chip) in chips.iter().enumerate() {
+                let v = match phases[k] % 4 {
+                    0 => *chip,
+                    1 => ComplexSample {
+                        i: chip.q,
+                        q: -chip.i,
+                    },
+                    2 => chip.scale(-1.),
+                    _ => ComplexSample {
+                        i: -chip.q,
+                        q: chip.i,
+                    },
+                };
+                sum = sum.add(v.scale(if k == 3 || k == 6 { -1. } else { 1. }));
+            }
+            let quality = sum.power() / (8. * power).max(1e-12);
+            if quality > best.2 {
+                best = (sum.scale(0.125), word, quality);
+            }
+        }
+        Some(best)
+    }
+    fn advance_cck(&mut self, samples: &Samples) -> bool {
+        const SYMBOL: f64 = 160. / 11.;
+        let width = if self.header.rate_bps == 5_500_000 {
+            4
+        } else {
+            8
+        };
+        while samples.end as f64 >= self.next + SYMBOL + 9. {
+            let Some((symbol, word, _)) = self.cck(samples, self.next) else {
+                return false;
+            };
+            // First CCK center follows the last Barker center by half of each
+            // symbol duration. Later CCK centers are one CCK symbol apart.
+            let elapsed = if self.bits == 0 {
+                10. + SYMBOL / 2.
+            } else {
+                SYMBOL
+            };
+            let delta =
+                symbol
+                    .mul(self.header.previous_symbol.conj())
+                    .mul(ComplexSample::rotation(
+                        -self.header.frequency_rad * elapsed as f32,
+                    ));
+            let parity = (self.bits / width) % 2;
+            let quadrant =
+                (((delta.phase() / (PI / 2.)).round() as i32) - 2 * parity as i32).rem_euclid(4);
+            let pair = match quadrant {
+                0 => 0,
+                1 => 2,
+                2 => 3,
+                _ => 1,
+            };
+            let serial = pair | (word << 2);
+            for k in 0..width {
+                self.bytes[self.bits / 8] |=
+                    self.header.descrambler.bit((serial >> k) & 1) << (self.bits % 8);
+                self.bits += 1;
+            }
+            self.header.previous_symbol = symbol;
+            let adjustment = match (
+                self.cck(samples, self.next - 0.5),
+                self.cck(samples, self.next + 0.5),
+            ) {
+                (Some((_, _, early)), Some((_, _, late))) => {
+                    f64::from((late - early).clamp(-0.1, 0.1)) * 0.2
+                }
+                _ => 0.,
+            };
+            self.next += SYMBOL + adjustment;
+            if self.bits == self.bytes.len() * 8 {
+                return true;
+            }
+        }
+        false
+    }
     fn advance(&mut self, samples: &Samples) -> bool {
+        if self.header.rate_bps > 2_000_000 {
+            return self.advance_cck(samples);
+        }
         while samples.end as f64 >= self.next + 29. {
             let Some((symbol, _)) = samples.barker(self.next) else {
                 return false;
@@ -636,8 +743,7 @@ impl Payload {
         false
     }
 }
-/// Streaming 20 Msps DSSS receiver. CCK headers are recognized but their payloads
-/// are currently rejected explicitly. Only received-FCS-valid frames are emitted.
+/// Streaming 20 Msps DSSS/CCK receiver. Only received-FCS-valid frames are emitted.
 pub struct DsssCckDecoder {
     acquisition: Acquisition,
     continuity: IqContinuity,
@@ -707,22 +813,15 @@ impl PhyDecoder for DsssCckDecoder {
         self.acquisition.push_samples(&chunk, |header, samples| {
             if let Some(header) = header {
                 if pending.is_none() {
-                    if header.rate_bps > 2_000_000 {
-                        stats.rejected_frames += 1;
-                        if out.diagnostics.len() < config.max_pending_frames {
-                            out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
-                        }
-                    } else {
-                        let mut start = chunk.position().clone();
-                        start.sample_index = header.preamble_start.floor() as u64;
-                        *pending = Some(Payload {
-                            next: header.payload_start,
-                            bytes: vec![0; header.psdu_bytes],
-                            bits: 0,
-                            start,
-                            header,
-                        });
-                    }
+                    let mut start = chunk.position().clone();
+                    start.sample_index = header.preamble_start.floor() as u64;
+                    *pending = Some(Payload {
+                        next: header.payload_start,
+                        bytes: vec![0; header.psdu_bytes],
+                        bits: 0,
+                        start,
+                        header,
+                    });
                 }
             }
             if pending.as_mut().is_some_and(|p| p.advance(samples)) {

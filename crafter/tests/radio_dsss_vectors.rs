@@ -172,9 +172,6 @@ fn radio_dsss_payload_vectors_exact_bytes_and_positions() {
     let index = fs::read_to_string(root.join("dsss-index.tsv")).unwrap();
     for line in index.lines().skip(1) {
         let c: Vec<_> = line.split('\t').collect();
-        if c[1].parse::<u32>().unwrap() > 2_000_000 {
-            continue;
-        }
         let input = fs::read(root.join(format!("{}.cs8", c[0]))).unwrap();
         for width in [1, 137, 4096, 100_000] {
             let mut decoder = DsssCckDecoder::new();
@@ -296,7 +293,7 @@ fn radio_dsss_payload_gaps_and_terminal_reset() {
 }
 
 #[test]
-fn radio_dsss_limits_and_unsupported_payload() {
+fn radio_dsss_limits_and_cck_payload() {
     let input = include_bytes!("fixtures/iq/dsss-10-long-clean-48.cs8");
     let mut decoder = DsssCckDecoder::new();
     let mut cfg = config();
@@ -338,6 +335,87 @@ fn radio_dsss_limits_and_unsupported_payload() {
     let cck = include_bytes!("fixtures/iq/dsss-110-long-clean-48.cs8");
     decoder.reset(ResetReason::Explicit);
     let output = decoder.consume(IqEvent::Chunk(chunk(cck, 0, 0))).unwrap();
-    assert!(output.frames.is_empty());
-    assert!(output.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy));
+    assert_eq!(output.frames.len(), 1);
+    assert_eq!(output.frames[0].rate_bps, 11_000_000);
+}
+
+#[test]
+fn radio_cck_corrupt_codewords_headers_and_interrupted_payloads() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
+    for rate in [55, 110] {
+        for preamble in ["long", "short"] {
+            let input =
+                fs::read(root.join(format!("dsss-{rate}-{preamble}-clean-48.cs8"))).unwrap();
+            let payload = 37 + if preamble == "short" { 1920 } else { 3840 };
+            for variant in 0..5 {
+                let mut decoder = DsssCckDecoder::new();
+                let mut damaged = input.clone();
+                match variant {
+                    // Destroy header modulation while leaving SYNC/SFD and payload intact.
+                    0 => damaged[(payload - 300) * 2..payload * 2].fill(0),
+                    // Corrupt complete interior CCK codewords; do not alter PLCP or FCS.
+                    1 => damaged[(payload + 80) * 2..(payload + 150) * 2].fill(0),
+                    _ => {}
+                }
+                if variant < 2 {
+                    let result = decoder
+                        .consume(IqEvent::Chunk(chunk(&damaged, 0, 0)))
+                        .unwrap();
+                    assert!(
+                        result.frames.is_empty(),
+                        "{rate} {preamble} corruption {variant}"
+                    );
+                    if variant == 1 {
+                        assert_eq!(decoder.stats().invalid_fcs, 1);
+                    }
+                } else {
+                    let split = (payload + 200) * 2;
+                    assert!(decoder
+                        .consume(IqEvent::Chunk(chunk(&input[..split], 0, 0)))
+                        .unwrap()
+                        .frames
+                        .is_empty());
+                    if variant == 2 {
+                        let mut position = chunk(&input[split..], 1, (split / 2) as u64)
+                            .position()
+                            .clone();
+                        position.discontinuity = Some(Discontinuity {
+                            reason: GapReason::SourceLoss,
+                            loss: SampleLoss::Unknown,
+                        });
+                        let tail = IqChunk::new(
+                            config(),
+                            position,
+                            input[split..].iter().map(|&x| x as i8).collect(),
+                        )
+                        .unwrap();
+                        assert!(decoder
+                            .consume(IqEvent::Chunk(tail))
+                            .unwrap()
+                            .frames
+                            .is_empty());
+                    } else {
+                        decoder
+                            .consume(IqEvent::End(if variant == 3 {
+                                StreamEnd::Eof
+                            } else {
+                                StreamEnd::Cancelled
+                            }))
+                            .unwrap();
+                    }
+                    assert_eq!(
+                        decoder.stats().truncated_frames,
+                        1,
+                        "{rate} {preamble} interruption {variant}"
+                    );
+                }
+                decoder.reset(ResetReason::Explicit);
+                let frames = decoder
+                    .consume(IqEvent::Chunk(chunk(&input, 0, 0)))
+                    .unwrap()
+                    .frames;
+                assert_eq!(frames.len(), 1, "{rate} {preamble} reset {variant}");
+            }
+        }
+    }
 }
