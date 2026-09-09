@@ -2278,3 +2278,35 @@ A generated Rust tool can write its compiled bytes to a target file and compare
 against the raw vector artifacts under `target/oracle/offline/`. Prefer exact
 byte comparison for stable headers and structured field comparison when
 timestamps, random ids, route state, or OS-assigned values are expected to vary.
+
+
+## Receive Wi-Fi from IQ
+
+Use the optional `crafter` feature `radio` for saved IQ and synthetic fixtures.
+Compose an `IqSource` with `LegacyOfdmDecoder` through `RadioPacketSource`; consume
+its ordinary `PacketRecord` values with `PacketSource` or `Sniffer`. Keep sample
+processing upstream of the existing packet parser. Do not represent IQ as `Raw`
+or build a second parsed-packet API. Preserve captured bytes and RF metadata
+when annotating Wi-Fi records.
+
+Start generated tools with the offline example:
+
+```sh
+cargo run -p crafter --features radio --example radio_receive
+cargo run -p crafter --features radio --example radio_receive -- --replay samples.cs8
+```
+
+Native reception requires `radio-hackrf`, an explicit live opt-in, every RF
+setting, finite duration/sample limits and bounded queues. Use release builds.
+The external operator supplies the device and runtime; generated crate code
+does not select hosts, establish remote access, or manage device lifecycle.
+Keep capture artifacts and actual device identifiers untracked. Reception does
+not authorize transmission or traffic generation.
+
+Compare original MAC bytes, never recompiled packets. Account explicitly for
+radiotap, indicated FCS/padding, supported rates, time uncertainty and repeated
+occurrences. Check both matched fractions against a target fixed before tuning;
+zero denominators are inconclusive. Source loss, recording failure or incomplete
+artifacts invalidate qualification. Preserve raw IQ so the exact candidate can
+reproduce the recovered frames. See [the receive guide](../../docs/radio.md) for
+API boundaries, example arguments, artifact schemas and measured limits.
