@@ -227,6 +227,64 @@ fn radio_dsss_payload_vectors_exact_bytes_and_positions() {
     }
 }
 #[test]
+fn radio_dsss_repeated_payloads_resume_after_idle_and_bad_fcs() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
+    let index = fs::read_to_string(root.join("dsss-index.tsv")).unwrap();
+    let mut input = vec![0; 194];
+    let mut expected = Vec::new();
+    for name in [
+        "dsss-10-long-clean-48",
+        "dsss-10-long-bad_fcs-48",
+        "dsss-110-short-clean-48",
+        "dsss-20-long-clean-48",
+        "dsss-55-short-clean-48",
+        "dsss-10-long-clean-48",
+    ] {
+        let row = index
+            .lines()
+            .find(|row| row.split('\t').next() == Some(name))
+            .unwrap();
+        let columns: Vec<_> = row.split('\t').collect();
+        let offset = input.len() as u64 / 2;
+        input.extend(fs::read(root.join(format!("{name}.cs8"))).unwrap());
+        input.extend([0; 200]);
+        if columns[6] == "frame" {
+            expected.push((
+                bytes(columns[4]),
+                columns[1].parse::<u32>().unwrap(),
+                offset + 37,
+            ));
+        }
+    }
+    for width in [113, 100_000] {
+        let mut decoder = DsssCckDecoder::new();
+        let mut frames = Vec::new();
+        for (n, part) in input.chunks(width * 2).enumerate() {
+            frames.extend(
+                decoder
+                    .consume(IqEvent::Chunk(chunk(part, n as u64, (n * width) as u64)))
+                    .unwrap()
+                    .frames,
+            );
+        }
+        frames.extend(
+            decoder
+                .consume(IqEvent::End(StreamEnd::Eof))
+                .unwrap()
+                .frames,
+        );
+        assert_eq!(frames.len(), expected.len(), "width {width}");
+        for (frame, (bytes, rate, start)) in frames.iter().zip(&expected) {
+            assert_eq!(&frame.bytes, bytes);
+            assert_eq!(frame.rate_bps, *rate);
+            assert_eq!(frame.integrity, FrameIntegrity::ValidFcs);
+            assert!(frame.start.sample_index.abs_diff(*start) <= 3);
+        }
+        assert_eq!(decoder.stats().invalid_fcs, 1);
+        assert_eq!(decoder.stats().truncated_frames, 0);
+    }
+}
+#[test]
 fn radio_dsss_internal_grid_preserves_source_coordinates_and_small_history() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
     let index = fs::read_to_string(root.join("dsss-index.tsv")).unwrap();
