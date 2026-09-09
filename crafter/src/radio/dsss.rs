@@ -1,7 +1,7 @@
 //! Private clause 15/18 acquisition. Coordinates refer to the original 20 Msps stream.
 use super::*;
 use std::f32::consts::PI;
-use wide::f32x4;
+use wide::{f32x4, CmpLt};
 const BARKER: [f32; 11] = [1., -1., 1., 1., -1., 1., 1., 1., -1., -1., -1.];
 const GRID_PHASES: [usize; 11] = [0, 23, 47, 70, 93, 116, 140, 163, 186, 209, 233];
 
@@ -450,10 +450,7 @@ impl Acquisition {
                 }
                 let mut count = 1;
                 let mut nominal = [(ComplexSample::ZERO, 0.); 2];
-                if self.tracks[(index % 22) as usize].timing == 0.
-                    && self.tracks[(self.next_chip % 22) as usize].timing == 0.
-                    && self.chip_ready()
-                {
+                if self.chip_ready() {
                     match self.next_ready_chip()? {
                         Some((_, true)) => {
                             nominal = self.correlate_pair(index);
@@ -465,7 +462,7 @@ impl Acquisition {
                             ));
                         }
                     }
-                } else if self.tracks[(index % 22) as usize].timing == 0. {
+                } else {
                     nominal[0] = self.correlate_one(index);
                 }
                 for (offset, &correlation) in nominal.iter().take(count).enumerate() {
@@ -563,9 +560,15 @@ impl Acquisition {
             1.,
             1.,
         ]);
-        let quality = (f32x4::new([squares[0] + squares[1], squares[2] + squares[3], 0., 0.])
-            / denominator)
-            .to_array();
+        let numerator = f32x4::new([squares[0] + squares[1], squares[2] + squares[3], 0., 0.]);
+        // The positive denominator is clamped above the subnormal range, so
+        // scaling it by 0.25 is exact. Strictly below-cutoff correlations are
+        // discarded by Track before their symbol or quality can be used.
+        // Refined tracks ignore these nominal results and interpolate normally.
+        if numerator.cmp_lt(denominator * f32x4::splat(0.25)).all() {
+            return [(ComplexSample::ZERO, 0.); 2];
+        }
+        let quality = (numerator / denominator).to_array();
         let scaled = (sum * f32x4::splat(1. / 11.)).to_array();
         [
             (
@@ -660,6 +663,31 @@ impl Acquisition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radio_dsss_paired_rejection_preserves_division_boundary() {
+        // Adjacent representable scores around the existing 0.25 gate, across
+        // denominator binades and mixed passing/failing correlation pairs.
+        for exponent in [87u32, 96, 112, 127, 135, 143] {
+            for mantissa in (0u32..1 << 23)
+                .step_by(4093)
+                .chain(std::iter::once((1 << 23) - 1))
+            {
+                let a = f32::from_bits((exponent << 23) | mantissa);
+                let b = f32::from_bits(a.to_bits() + 1);
+                let denominator = f32x4::new([a, b, 1., 1.]);
+                for da in -8i64..=8 {
+                    for db in -1i64..=1 {
+                        let x = f32::from_bits(((a * 0.25).to_bits() as i64 + da) as u32);
+                        let y = f32::from_bits(((b * 0.25).to_bits() as i64 + db) as u32);
+                        let rejected = f32x4::new([x, y, 0., 0.])
+                            .cmp_lt(denominator * f32x4::splat(0.25))
+                            .all();
+                        assert_eq!(rejected, x / a < 0.25 && y / b < 0.25);
+                    }
+                }
+            }
+        }
+    }
     fn config() -> RxConfig {
         RxConfig {
             sample_rate_hz: 20_000_000,
