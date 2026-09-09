@@ -486,7 +486,8 @@ impl Acquisition {
             .checked_add(10 + u64::from(self.chip_fraction != 0))
             .is_some_and(|end| end <= self.samples.end)
     }
-    #[inline]
+    // This per-chip operation must not materialize its Result across a call.
+    #[inline(always)]
     fn next_ready_chip(&mut self) -> RadioResult<Option<(u64, bool)>> {
         if !self.chip_ready() {
             return Ok(None);
