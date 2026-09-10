@@ -618,3 +618,37 @@ reason; unknown PHY exclusions cannot honestly be assigned to a family.
 No global overlap can establish a per-family qualification target: validators
 must assess each required family separately. Matching uses only the supplied
 independent timing policy; it does not fit a clock from matching bytes.
+
+### Measuring sustained receive performance
+
+Bounded capture and successful replay establish decoding correctness, but do
+not establish sustained processing capacity. Qualify performance with three
+separate workloads: capture into a minimal sink, decoding saved IQ, and the
+combined live path. Keep acquisition settings and input identities fixed when
+comparing decoder revisions. Record build flags, CPU allocation, competing load,
+wall time, CPU time, peak memory, and the exact source revision with each result.
+External operator tooling owns machine preparation and capture execution.
+
+For saved IQ, report complex samples processed per second for OFDM, DSSS/CCK,
+and combined dispatch. Separate file reading and output serialization from DSP
+time; label end-to-end replay measurements accordingly. Test both idle samples
+and representative packet-bearing inputs. Preserve exact recovered bytes, rates,
+source intervals, gap handling, and bounded-output behavior across optimizations.
+Report differences explicitly rather than accepting equal frame counts alone.
+
+At a 20 Msps input rate, sustained decoding must process at least 20 million
+complex samples per second. A proposed replay headroom target is 25–30 Msps;
+this is an engineering target, not an achieved performance claim. Compare one,
+two, and four workers using identical inputs before assuming CPU scaling.
+
+Live qualification must additionally report sample continuity, queue depth over
+time, overflow counters, and frame delivery latency distributions. A proposed
+initial latency target is p99 below 100 ms. Measure reception-to-delivery latency
+using a documented clock mapping and timestamp uncertainty; software callback
+time alone does not establish RF arrival time. A growing queue fails sustained
+qualification even if every frame eventually decodes after capture stops.
+
+Packet counts per second supplement these metrics. They cannot replace sample
+throughput or per-family occurrence matching against an independent receiver.
+Longer captures must retain the same correctness criteria and explicitly report
+missing evidence, reception variability, and unsuccessful trials.
