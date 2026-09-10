@@ -432,8 +432,9 @@ fn main() -> Result<()> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("--benchmark-artifact") {
         return match args.as_slice() {
-            [_, path, mode] => benchmark::run(path, mode),
-            _ => Err("use --benchmark-artifact FILE combined|parallel|ofdm|dsss".into()),
+            [_, path, mode] => benchmark::run(path, mode, None),
+            [_, path, mode, frames] => benchmark::run(path, mode, Some(frames)),
+            _ => Err("use --benchmark-artifact FILE combined|parallel|parallel-dsss|ofdm|dsss [FRAMES_JSONL]".into()),
         };
     }
     let capture_only_mode = if args.first().map(String::as_str) == Some("--capture-only") {

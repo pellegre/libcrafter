@@ -3,13 +3,28 @@ use super::*;
 use sha2::{Digest, Sha256};
 use std::time::Instant;
 
-pub(super) fn run(path: &str, mode: &str) -> Result<()> {
+pub(super) fn run(path: &str, mode: &str, frames_path: Option<&str>) -> Result<()> {
+    use std::io::Write;
+    let mut frame_report = frames_path
+        .map(|path| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .map(std::io::BufWriter::new)
+        })
+        .transpose()?;
     let mut decoder: Box<dyn PhyDecoder> = match mode {
         "combined" => Box::new(LegacyWifiDecoder::new()),
+        "parallel-dsss" => Box::new(ParallelLegacyWifiDecoder::with_parallel_dsss()?),
         "parallel" => Box::new(ParallelLegacyWifiDecoder::new()?),
         "ofdm" => Box::new(LegacyOfdmDecoder::new()),
         "dsss" => Box::new(DsssCckDecoder::new()),
-        _ => return Err("benchmark mode must be combined, parallel, ofdm, or dsss".into()),
+        _ => {
+            return Err(
+                "benchmark mode must be combined, parallel, parallel-dsss, ofdm, or dsss".into(),
+            )
+        }
     };
     let mut source = ArtifactSource::open(path)?;
     let mut input_hash = Sha256::new();
@@ -49,6 +64,17 @@ pub(super) fn run(path: &str, mode: &str) -> Result<()> {
         diagnostics += output.diagnostics.len() as u64;
         for frame in output.frames {
             frames += 1;
+            if let Some(report) = &mut frame_report {
+                serde_json::to_writer(
+                    &mut *report,
+                    &json!({
+                        "epoch": frame.start.epoch, "start": frame.start.sample_index,
+                        "end": frame.end_sample_index, "rate_bps": frame.rate_bps,
+                        "integrity": format!("{:?}", frame.integrity), "bytes": frame.bytes,
+                    }),
+                )?;
+                report.write_all(b"\n")?;
+            }
             // Length-prefix every variable field; preserve occurrence coordinates.
             frame_hash.update(frame.start.epoch.to_le_bytes());
             frame_hash.update(frame.start.sample_index.to_le_bytes());
@@ -62,6 +88,9 @@ pub(super) fn run(path: &str, mode: &str) -> Result<()> {
             break end;
         }
     };
+    if let Some(report) = &mut frame_report {
+        report.flush()?;
+    }
     let elapsed = wall.elapsed();
     println!(
         "{}",
