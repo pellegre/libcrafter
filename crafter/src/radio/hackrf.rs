@@ -215,6 +215,7 @@ trait Driver {
 /// deadline even when the consumer stalls. Any loss terminates capture; verified
 /// prefixes remain readable, then a sticky structured error reports the gap.
 pub struct HackRfSource {
+    emitted_sequence: u64,
     shared: Arc<Shared>,
     worker: Option<JoinHandle<()>>,
 }
@@ -269,6 +270,7 @@ impl HackRfSource {
             .map_err(|e| RadioError::Source(e.to_string()))?;
         match rx.recv() {
             Ok(Ok(())) => Ok(Self {
+                emitted_sequence: 0,
                 shared,
                 worker: Some(worker),
             }),
@@ -371,8 +373,39 @@ impl IqSource for HackRfSource {
     fn next_event(&mut self) -> RadioResult<IqEvent> {
         let mut s = self.shared.lock();
         loop {
-            if let Some(chunk) = s.ready.pop_front() {
-                s.buffered -= chunk.len();
+            if let Some(mut chunk) = s.ready.pop_front() {
+                let mut last_sequence = chunk.position.sequence;
+                let mut samples = chunk.len();
+                // Bound queue bookkeeping independently of chunk size. Move
+                // ownership under the lock; allocate/copy sample data afterward.
+                let mut neighbors: [Option<IqChunk>; 8] = std::array::from_fn(|_| None);
+                for neighbor in &mut neighbors {
+                    let compatible = s.ready.front().is_some_and(|next| {
+                        next.len() <= self.shared.config.max_chunk_samples - samples
+                            && next.config == chunk.config
+                            && next.position.epoch == chunk.position.epoch
+                            && next.position.discontinuity.is_none()
+                            && next.position.time_anchor == chunk.position.time_anchor
+                            && last_sequence.checked_add(1) == Some(next.position.sequence)
+                            && chunk.position.sample_index + samples as u64
+                                == next.position.sample_index
+                    });
+                    if !compatible {
+                        break;
+                    }
+                    let next = s.ready.pop_front().unwrap();
+                    last_sequence = next.position.sequence;
+                    samples += next.len();
+                    *neighbor = Some(next);
+                }
+                s.buffered -= samples;
+                drop(s);
+                chunk.cs8.reserve((samples - chunk.len()) * 2);
+                for next in neighbors.into_iter().flatten() {
+                    chunk.cs8.extend(next.cs8);
+                }
+                chunk.position.sequence = self.emitted_sequence;
+                self.emitted_sequence += 1;
                 return Ok(IqEvent::Chunk(chunk));
             }
             if let Some(end) = &s.terminal {
@@ -448,6 +481,9 @@ mod tests {
             }
             if self.queries == 2 {
                 match self.mode {
+                    8 => {
+                        shared.receive(&[3; 8]);
+                    }
                     4 => return Ok((1, 0)),
                     6 => return Err(RadioError::Source("mock unavailable".into())),
                     _ => (),
@@ -503,6 +539,81 @@ mod tests {
         ));
         assert!((1..=2).contains(&source.stats().counter_queries));
         assert_eq!(stopped.load(Ordering::SeqCst), 1);
+    }
+    fn batching_source(mode: u8) -> HackRfSource {
+        let mut rx = config();
+        rx.max_chunk_samples = 8;
+        rx.max_capture_samples = if mode == 8 { 12 } else { 8 };
+        let mut source = HackRfSource::spawn(rx, move || {
+            Ok(Mock {
+                mode,
+                shared: None,
+                queries: 0,
+                stopped: Arc::new(AtomicUsize::new(0)),
+            })
+        })
+        .unwrap();
+        // Deterministically queue the verified prefix before consuming it.
+        source.join();
+        source
+    }
+    #[test]
+    fn radio_hackrf_coalesces_ready_chunks_with_consecutive_sequences() {
+        let mut source = batching_source(8);
+        let IqEvent::Chunk(first) = source.next_event().unwrap() else {
+            panic!()
+        };
+        assert_eq!(first.cs8(), [vec![1; 8], vec![2; 8]].concat());
+        assert_eq!(first.len(), 8);
+        assert_eq!(first.position().sequence, 0);
+        assert_eq!(first.position().sample_index, 0);
+        assert_eq!(source.stats().queued_samples, 4);
+        let IqEvent::Chunk(second) = source.next_event().unwrap() else {
+            panic!()
+        };
+        assert_eq!(second.cs8(), &[3; 8]);
+        assert_eq!(second.position().sequence, 1);
+        assert_eq!(second.position().sample_index, 8);
+        assert_eq!(source.stats().queued_samples, 0);
+        assert_eq!(source.stats().verified_samples, 12);
+        assert!(matches!(
+            source.next_event().unwrap(),
+            IqEvent::End(StreamEnd::LimitReached)
+        ));
+    }
+    #[test]
+    fn radio_hackrf_coalescing_preserves_discontinuities() {
+        let mut source = batching_source(8);
+        let gap = Discontinuity {
+            reason: GapReason::SourceLoss,
+            loss: SampleLoss::Unknown,
+        };
+        source.shared.lock().ready[1].position.discontinuity = Some(gap);
+        let IqEvent::Chunk(first) = source.next_event().unwrap() else {
+            panic!()
+        };
+        assert_eq!(first.cs8(), &[1; 8]);
+        assert_eq!(first.position().discontinuity, None);
+        let IqEvent::Chunk(second) = source.next_event().unwrap() else {
+            panic!()
+        };
+        assert_eq!(second.cs8(), [vec![2; 8], vec![3; 8]].concat());
+        assert_eq!(second.position().discontinuity, Some(gap));
+        assert_eq!(second.position().sequence, 1);
+        assert_eq!(second.position().sample_index, 4);
+        assert_eq!(source.stats().queued_samples, 0);
+    }
+    #[test]
+    fn radio_hackrf_coalescing_preserves_verified_prefix_on_loss() {
+        let mut source = batching_source(4);
+        let IqEvent::Chunk(first) = source.next_event().unwrap() else {
+            panic!()
+        };
+        assert_eq!(first.cs8(), &[1; 8]);
+        assert_eq!(source.stats().verified_samples, 4);
+        assert_eq!(source.stats().discarded_samples, 4);
+        assert_eq!(source.stats().queued_samples, 0);
+        assert!(source.next_event().is_err());
     }
     #[test]
     fn radio_hackrf_configuration_and_start_failure() {

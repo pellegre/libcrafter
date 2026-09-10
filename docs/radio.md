@@ -186,6 +186,12 @@ are required. The filter is set **after** sample rate because setting the rate
 also changes the native filter. All settings are inspectable Rust values.
 The source does not provision devices, change host scheduling or transmit.
 
+Ready chunks may be combined up to `max_chunk_samples` when their original
+sample coordinates are contiguous. Coalescing uses only already-verified queued
+data, never waits to fill a batch, and never crosses a discontinuity. Emitted
+chunk sequence numbers remain consecutive; sample coordinates and acquisition
+counters retain their original meaning.
+
 The callback owns copied cs8 data before returning. Pending and verified chunks
 share `max_buffer_samples`; overflow terminates acquisition with a structured
 error. A query outside the callback verifies only samples received before that
