@@ -738,3 +738,11 @@ streamed with bounded memory. Report serialization is included in verification
 time, outside decoder time. These reports allow occurrence-by-occurrence
 comparison when timing estimates change; an aggregate frame count or digest
 alone does not prove that all baseline receptions were retained.
+
+`HackRfSource::stats()` reports `queued_samples` and `peak_queued_samples` for
+the combined pending-verification and ready queues. The receive example includes
+both in its final acquisition record. The peak counts accepted samples only;
+rejected overflow samples remain in `discarded_samples`. Dividing a queue count
+by the configured sample rate gives its duration of IQ data, not a measured
+packet-delivery latency or a hardware timestamp. These counts exclude data
+still buffered in the device or USB stack and chunks already handed to decoding.
