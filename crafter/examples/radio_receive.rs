@@ -570,7 +570,7 @@ fn main() -> Result<()> {
             let s = source.stats();
             println!(
                 "{}",
-                json!({"kind":"acquisition","received_samples":s.received_samples,"verified_samples":s.verified_samples,"discarded_samples":s.discarded_samples,"queue_overflows":s.queue_overflows,"unknown_loss_intervals":s.unknown_loss_intervals,"counter_queries":s.counter_queries,"last_gap":s.last_gap.map(|g|format!("{g:?}")),"settings":{"baseband_filter_hz":args[5].parse::<u32>()?,"lna_gain_db":args[6].parse::<u32>()?,"vga_gain_db":args[7].parse::<u32>()?,"amplifier_enabled":args[8].parse::<bool>()?,"antenna_power_enabled":args[9].parse::<bool>()?}})
+                json!({"kind":"acquisition","received_samples":s.received_samples,"verified_samples":s.verified_samples,"discarded_samples":s.discarded_samples,"queue_overflows":s.queue_overflows,"queued_samples":s.queued_samples,"peak_queued_samples":s.peak_queued_samples,"unknown_loss_intervals":s.unknown_loss_intervals,"counter_queries":s.counter_queries,"last_gap":s.last_gap.map(|g|format!("{g:?}")),"settings":{"baseband_filter_hz":args[5].parse::<u32>()?,"lna_gain_db":args[6].parse::<u32>()?,"vga_gain_db":args[7].parse::<u32>()?,"amplifier_enabled":args[8].parse::<bool>()?,"antenna_power_enabled":args[9].parse::<bool>()?}})
             );
             return result;
         }

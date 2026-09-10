@@ -54,6 +54,10 @@ impl HackRfConfig {
 /// Aggregate diagnostics remain available even if no following chunk can carry a gap.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HackRfStats {
+    /// Samples currently retained in the pending-verification and ready queues.
+    pub queued_samples: usize,
+    /// Largest retained queue size, excluding samples rejected on overflow.
+    pub peak_queued_samples: usize,
     pub received_samples: u64,
     pub verified_samples: u64,
     pub discarded_samples: u64,
@@ -137,6 +141,7 @@ impl Shared {
                 Ok(chunk) => {
                     s.sequence += 1;
                     s.buffered += chunk.len();
+                    s.stats.peak_queued_samples = s.stats.peak_queued_samples.max(s.buffered);
                     s.stats.received_samples += chunk.len() as u64;
                     s.pending.push_back(chunk);
                 }
@@ -277,7 +282,10 @@ impl HackRfSource {
         }
     }
     pub fn stats(&self) -> HackRfStats {
-        self.shared.lock().stats.clone()
+        let state = self.shared.lock();
+        let mut stats = state.stats.clone();
+        stats.queued_samples = state.buffered;
+        stats
     }
     fn join(&mut self) {
         if let Some(worker) = self.worker.take() {
@@ -531,6 +539,8 @@ mod tests {
         }
         assert_eq!(bytes, [vec![1; 8], vec![2; 8]].concat());
         assert_eq!(s.stats().verified_samples, 8);
+        assert_eq!(s.stats().queued_samples, 0);
+        assert!((4..=8).contains(&s.stats().peak_queued_samples));
         assert_eq!(stopped.load(Ordering::SeqCst), 1);
         assert!(matches!(
             s.next_event().unwrap(),
