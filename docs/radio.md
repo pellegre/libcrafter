@@ -265,6 +265,14 @@ queue. A full recording queue or file error fails capture; success is reported
 only after the worker flushes and joins. The summary includes `recording_error`.
 File operations retain the operating system's I/O latency, including at shutdown.
 
+Use `--chunk-samples N` after the optional `--buffer-samples N` to set the
+source chunk limit for live reception or raw replay (128–262144 complex samples;
+default 65536). The chunk must fit the buffer. Saved IQ artifacts retain their
+recorded configuration. Larger chunks reduce parallel worker synchronization
+frequency but can delay frame delivery; this option does not increase the queue
+budget or establish sustained reception. At 20 Msps, 262144 samples represent
+13.1 ms of input, compared with 3.3 ms for the default limit.
+
 The example accepts an optional leading `--buffer-samples N` for live reception
 or raw replay (65536–536870912 complex samples; default 2097152). The maximum
 allows 1 GiB of queued CS8 data, plus chunk metadata and decoder state. Memory
