@@ -713,3 +713,27 @@ Older headers without `dispatch` retain serial behavior. Explicit `--parallel`
 or `--ofdm-only` overrides the saved selection for a diagnostic replay. Unknown,
 non-string, and incompatible dispatch metadata is rejected. The input encoding,
 frame records, and protocol parser are unchanged.
+
+`ParallelLegacyWifiDecoder::with_parallel_dsss()` uses three workers: OFDM and
+one worker for each of the two DSSS acquisition phases. Both DSSS workers receive
+every raw sample for payload decoding. This mode requires at least 640 buffer
+samples and six frame slots; three slots cover worker outputs and two cover
+recent reception identities retained for duplicate suppression. Identical
+DSSS bytes at the same rate and epoch with overlapping sample intervals are
+coalesced, including detections completed in consecutive input chunks.
+Nonoverlapping retransmissions remain separate. Reset clears this history.
+Independent phase searches can change timing estimates and recover additional
+FCS-valid frames. DSSS statistics count worker detections before coalescing;
+count emitted frames to measure delivered receptions.
+
+Use `--benchmark-artifact saved.iq parallel-dsss` to evaluate this mode. It is
+also usable through the existing `PhyDecoder` and `RadioPacketSource` APIs.
+The receive example's `--parallel` flag continues to select two workers.
+
+An optional final `FRAMES_JSONL` argument to `--benchmark-artifact` writes each
+recovered frame's bytes, integrity, rate, epoch, and sample interval. The file
+is created exclusively, so an existing report is never overwritten. Output is
+streamed with bounded memory. Report serialization is included in verification
+time, outside decoder time. These reports allow occurrence-by-occurrence
+comparison when timing estimates change; an aggregate frame count or digest
+alone does not prove that all baseline receptions were retained.

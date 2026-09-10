@@ -6,6 +6,7 @@ use std::thread::JoinHandle;
 struct Job {
     chunk: IqChunk,
     sequence: u64,
+    dsss_workers: usize,
     output: Mutex<Collector>,
 }
 struct Collector {
@@ -13,6 +14,18 @@ struct Collector {
     diagnostics: Vec<((usize, u8, usize), PhyDiagnostic)>,
     limit: usize,
     diagnostic_limit: usize,
+    split: bool,
+    recent: Vec<RecoveredFrame>,
+}
+fn same_split_frame(a: &RecoveredFrame, b: &RecoveredFrame) -> bool {
+    a.start.epoch == b.start.epoch
+        && a.rate_bps == b.rate_bps
+        // Independent phase tracks can lock one symbol apart. Identical
+        // payloads occupying overlapping intervals denote one reception;
+        // nonoverlapping retransmissions remain separate occurrences.
+        && a.start.sample_index.max(b.start.sample_index)
+            < a.end_sample_index.min(b.end_sample_index)
+        && a.bytes == b.bytes
 }
 impl Collector {
     fn append(
@@ -23,23 +36,45 @@ impl Collector {
         config: &RxConfig,
     ) -> RadioResult<()> {
         for mut frame in output.frames {
+            if self.split
+                && family != 0
+                && self.recent.iter().any(|old| same_split_frame(old, &frame))
+            {
+                continue;
+            }
             if let Some((old_slice, old)) = self.frames.iter_mut().find(|(_, old)| {
-                old.start.epoch == frame.start.epoch
-                    && old.start.sample_index == frame.start.sample_index
-                    && old.end_sample_index == frame.end_sample_index
-                    && old.bytes == frame.bytes
+                (self.split && family != 0 && same_split_frame(old, &frame))
+                    || (old.start.epoch == frame.start.epoch
+                        && old.start.sample_index == frame.start.sample_index
+                        && old.end_sample_index == frame.end_sample_index
+                        && old.bytes == frame.bytes)
             }) {
-                if (slice, frame.rate_bps) < (*old_slice, old.rate_bps) {
+                if (
+                    slice,
+                    frame.end_sample_index,
+                    frame.start.sample_index,
+                    frame.rate_bps,
+                ) < (
+                    *old_slice,
+                    old.end_sample_index,
+                    old.start.sample_index,
+                    old.rate_bps,
+                ) {
                     frame.config = config.clone();
                     *old_slice = slice;
                     *old = frame;
                 }
                 continue;
             }
-            if self.frames.len() == self.limit - 2 {
+            let reserved = if self.split { 5 } else { 2 };
+            if self.frames.len() == self.limit - reserved {
                 return Err(RadioError::Limit {
-                    context: "combined pending frames (two child slots reserved)",
-                    limit: (self.limit - 2) as u64,
+                    context: if self.split {
+                        "combined pending frames (worker and history slots reserved)"
+                    } else {
+                        "combined pending frames (two child slots reserved)"
+                    },
+                    limit: (self.limit - reserved) as u64,
                     actual: (self.frames.len() + 1) as u64,
                 });
             }
@@ -58,14 +93,30 @@ impl Collector {
         }
         Ok(())
     }
-    fn finish(mut self) -> DecodeOutput {
+    fn finish(mut self) -> (DecodeOutput, Vec<RecoveredFrame>) {
         self.frames.sort_by_key(|(slice, f)| {
             (*slice, f.end_sample_index, f.start.sample_index, f.rate_bps)
         });
-        DecodeOutput {
-            frames: self.frames.into_iter().map(|(_, f)| f).collect(),
-            diagnostics: self.diagnostics.into_iter().map(|(_, d)| d).collect(),
+        if self.split {
+            for (_, frame) in &self.frames {
+                if matches!(
+                    frame.rate_bps,
+                    1_000_000 | 2_000_000 | 5_500_000 | 11_000_000
+                ) {
+                    if self.recent.len() == 2 {
+                        self.recent.remove(0);
+                    }
+                    self.recent.push(frame.clone());
+                }
+            }
         }
+        (
+            DecodeOutput {
+                frames: self.frames.into_iter().map(|(_, f)| f).collect(),
+                diagnostics: self.diagnostics.into_iter().map(|(_, d)| d).collect(),
+            },
+            self.recent,
+        )
     }
 }
 enum Command {
@@ -152,7 +203,7 @@ impl Drop for Worker {
 fn process(decoder: &mut impl PhyDecoder, job: &Job, family: u8) -> RadioResult<()> {
     let mut config = job.chunk.config().clone();
     config.max_buffer_samples = if family == 0 {
-        config.max_buffer_samples - 128
+        config.max_buffer_samples - 128 * job.dsss_workers
     } else {
         128
     };
@@ -178,16 +229,17 @@ fn process(decoder: &mut impl PhyDecoder, job: &Job, family: u8) -> RadioResult<
     Ok(())
 }
 
-/// Two persistent PHY workers sharing one owned input chunk and one output budget.
+/// Persistent PHY workers sharing one owned input chunk and one output budget.
 ///
 /// Implements the same [`PhyDecoder`] boundary as [`LegacyWifiDecoder`]. No device
 /// is opened. Dispatch retains 128-sample slice coordinates and completion order.
-/// Each call waits for both workers, so no input backlog is hidden in the decoder.
+/// Each call waits for all workers, so no input backlog is hidden in the decoder.
 /// A failed worker channel is terminal; construct a new decoder to recover it.
 /// On a failed chunk, worker statistics can include later work than serial dispatch.
 pub struct ParallelLegacyWifiDecoder {
-    workers: [Worker; 2],
-    stats: [DecoderStats; 2],
+    workers: Vec<Worker>,
+    stats: Vec<DecoderStats>,
+    recent: Vec<RecoveredFrame>,
     continuity: IqContinuity,
     sequence: u64,
     terminal: bool,
@@ -196,26 +248,50 @@ pub struct ParallelLegacyWifiDecoder {
 impl ParallelLegacyWifiDecoder {
     pub fn new() -> RadioResult<Self> {
         Ok(Self {
-            workers: [
+            workers: vec![
                 Worker::new(LegacyOfdmDecoder::new(), LegacyOfdmDecoder::stats, 0)?,
                 Worker::new(DsssCckDecoder::new(), DsssCckDecoder::stats, 1)?,
             ],
-            stats: [DecoderStats::default(); 2],
+            stats: vec![DecoderStats::default(); 2],
+            recent: Vec::new(),
             continuity: IqContinuity::default(),
             sequence: 0,
             terminal: false,
             failed: false,
         })
     }
+    /// Use separate workers for the two DSSS acquisition phases.
+    /// Requires 640 buffer samples and six frame slots. DSSS statistics count
+    /// worker detections before duplicate suppression.
+    pub fn with_parallel_dsss() -> RadioResult<Self> {
+        let mut decoder = Self::new()?;
+        decoder.workers[1] =
+            Worker::new(DsssCckDecoder::phase_worker(0), DsssCckDecoder::stats, 1)?;
+        decoder.workers.push(Worker::new(
+            DsssCckDecoder::phase_worker(1),
+            DsssCckDecoder::stats,
+            2,
+        )?);
+        decoder.stats.push(DecoderStats::default());
+        Ok(decoder)
+    }
     pub fn ofdm_stats(&self) -> DecoderStats {
         self.stats[0]
     }
     pub fn dsss_stats(&self) -> DecoderStats {
-        self.stats[1]
+        self.stats[1..]
+            .iter()
+            .fold(DecoderStats::default(), |a, b| DecoderStats {
+                valid_frames: a.valid_frames.saturating_add(b.valid_frames),
+                invalid_fcs: a.invalid_fcs.saturating_add(b.invalid_fcs),
+                rejected_frames: a.rejected_frames.saturating_add(b.rejected_frames),
+                truncated_frames: a.truncated_frames.saturating_add(b.truncated_frames),
+                dropped_frames: a.dropped_frames.saturating_add(b.dropped_frames),
+            })
     }
     fn collect(&mut self) -> RadioResult<DecodeOutput> {
-        // Always drain both replies, even when a decoder reports an error.
-        let replies = [self.workers[0].receive(), self.workers[1].receive()];
+        // Always drain all replies, even when a decoder reports an error.
+        let replies: Vec<_> = self.workers.iter().map(Worker::receive).collect();
         let mut output = DecodeOutput::default();
         let mut error = None;
         for (i, reply) in replies.into_iter().enumerate() {
@@ -249,6 +325,7 @@ impl ParallelLegacyWifiDecoder {
 }
 impl PhyDecoder for ParallelLegacyWifiDecoder {
     fn reset(&mut self, reason: ResetReason) -> DecodeOutput {
+        self.recent.clear();
         self.continuity.reset();
         self.sequence = 0;
         self.terminal = matches!(reason, ResetReason::End(_));
@@ -282,14 +359,19 @@ impl PhyDecoder for ParallelLegacyWifiDecoder {
             IqEvent::Chunk(chunk) => chunk,
         };
         let config = chunk.config();
+        let split = self.workers.len() == 3;
         if config.sample_rate_hz != 20_000_000
-            || config.max_buffer_samples < 512
-            || config.max_pending_frames < 3
+            || config.max_buffer_samples < if split { 640 } else { 512 }
+            || config.max_pending_frames < if split { 6 } else { 3 }
         {
             self.reset(ResetReason::Explicit);
             return Err(RadioError::Invalid {
                 field: "config",
-                reason: "combined Wi-Fi requires 20 Msps, 512 buffer samples and 3 output slots",
+                reason: if split {
+                    "split Wi-Fi requires 20 Msps, 640 buffer samples and 6 output slots"
+                } else {
+                    "combined Wi-Fi requires 20 Msps, 512 buffer samples and 3 output slots"
+                },
             });
         }
         let mut output = DecodeOutput::default();
@@ -307,6 +389,8 @@ impl PhyDecoder for ParallelLegacyWifiDecoder {
         let job = Arc::new(Job {
             output: Mutex::new(Collector {
                 frames: Vec::new(),
+                split,
+                recent: std::mem::take(&mut self.recent),
                 diagnostics: Vec::new(),
                 limit: config.max_pending_frames,
                 diagnostic_limit: config
@@ -314,6 +398,7 @@ impl PhyDecoder for ParallelLegacyWifiDecoder {
                     .saturating_sub(output.diagnostics.len()),
             }),
             chunk,
+            dsss_workers: self.workers.len() - 1,
             sequence: self.sequence,
         });
         self.send_both(|| Command::Process(job.clone()))?;
@@ -325,11 +410,12 @@ impl PhyDecoder for ParallelLegacyWifiDecoder {
         // Workers release their Arc before replying, so only the caller remains.
         let job = Arc::try_unwrap(job)
             .map_err(|_| RadioError::Source("PHY worker retained completed input".into()))?;
-        let decoded = job
+        let (decoded, recent) = job
             .output
             .into_inner()
             .map_err(|_| RadioError::Source("PHY output lock poisoned".into()))?
             .finish();
+        self.recent = recent;
         output.frames = decoded.frames;
         output.diagnostics.extend(decoded.diagnostics);
         Ok(output)
@@ -349,13 +435,96 @@ mod tests {
         }
     }
     #[test]
+    fn split_collector_coalesces_overlapping_phase_locks_across_chunks() {
+        let bytes = include_bytes!("../../tests/fixtures/iq/dsss-20-short-clean-48.cs8");
+        let config = RxConfig {
+            sample_rate_hz: 20_000_000,
+            center_frequency_hz: 2_437_000_000,
+            max_chunk_samples: bytes.len() / 2,
+            max_buffer_samples: bytes.len(),
+            max_frame_bytes: 4095,
+            max_pending_frames: 8,
+            max_capture_samples: bytes.len() as u64,
+            max_duration: std::time::Duration::from_secs(1),
+        };
+        let position = IqPosition {
+            epoch: 0,
+            sequence: 0,
+            sample_index: 0,
+            time_anchor: None,
+            discontinuity: None,
+        };
+        let chunk = IqChunk::new(
+            config.clone(),
+            position,
+            bytes.iter().map(|b| *b as i8).collect(),
+        )
+        .unwrap();
+        let frame = DsssCckDecoder::new()
+            .consume(IqEvent::Chunk(chunk))
+            .unwrap()
+            .frames
+            .remove(0);
+        let mut late = frame.clone();
+        late.start.sample_index += 18;
+        late.end_sample_index += 17;
+        let mut collector = Collector {
+            frames: Vec::new(),
+            diagnostics: Vec::new(),
+            limit: 8,
+            diagnostic_limit: 8,
+            split: true,
+            recent: Vec::new(),
+        };
+        let output = |frame| DecodeOutput {
+            frames: vec![frame],
+            diagnostics: Vec::new(),
+        };
+        collector
+            .append(0, 1, output(frame.clone()), &config)
+            .unwrap();
+        let (first, recent) = collector.finish();
+        assert_eq!(first.frames.len(), 1);
+        let mut collector = Collector {
+            frames: Vec::new(),
+            diagnostics: Vec::new(),
+            limit: 8,
+            diagnostic_limit: 8,
+            split: true,
+            recent,
+        };
+        collector.append(0, 2, output(late), &config).unwrap();
+        assert!(collector.frames.is_empty());
+        let mut repeat = frame.clone();
+        let shift = frame.end_sample_index - frame.start.sample_index + 100;
+        repeat.start.sample_index += shift;
+        repeat.end_sample_index += shift;
+        collector.append(1, 1, output(repeat), &config).unwrap();
+        assert_eq!(collector.finish().0.frames.len(), 1);
+    }
+    #[test]
+    fn third_worker_failure_at_eof_is_not_successful_completion() {
+        let mut decoder = ParallelLegacyWifiDecoder::with_parallel_dsss().unwrap();
+        decoder.workers[2] = Worker::new(FailedReset, |_| DecoderStats::default(), 2).unwrap();
+        assert!(matches!(
+            decoder.consume(IqEvent::End(StreamEnd::Eof)),
+            Err(RadioError::Source(_))
+        ));
+        assert!(matches!(
+            decoder.consume(IqEvent::End(StreamEnd::Eof)),
+            Err(RadioError::Source(_))
+        ));
+        drop(decoder);
+    }
+    #[test]
     fn worker_failure_at_eof_is_not_successful_completion() {
         let mut decoder = ParallelLegacyWifiDecoder {
-            workers: [
+            workers: vec![
                 Worker::new(FailedReset, |_| DecoderStats::default(), 0).unwrap(),
                 Worker::new(DsssCckDecoder::new(), DsssCckDecoder::stats, 1).unwrap(),
             ],
-            stats: [DecoderStats::default(); 2],
+            stats: vec![DecoderStats::default(); 2],
+            recent: Vec::new(),
             continuity: IqContinuity::default(),
             sequence: 0,
             terminal: false,

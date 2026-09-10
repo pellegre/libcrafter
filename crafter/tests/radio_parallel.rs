@@ -147,3 +147,99 @@ fn parallel_frames_enter_the_existing_packet_source() {
     assert!(!record.metadata().captured_bytes().unwrap().is_empty());
     assert!(source.next_record().unwrap().is_none());
 }
+
+#[test]
+fn split_dsss_workers_preserve_frame_occurrences() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
+    for index in [
+        include_str!("fixtures/iq/ofdm-index.tsv"),
+        include_str!("fixtures/iq/dsss-index.tsv"),
+    ] {
+        for line in index.lines().skip(1) {
+            let name = line.split('\t').next().unwrap();
+            let packet = std::fs::read(root.join(format!("{name}.cs8"))).unwrap();
+            // Repeated identical frames must remain distinct occurrences.
+            let mut bytes = packet.clone();
+            bytes.extend_from_slice(&[0; 1024]);
+            bytes.extend_from_slice(&packet);
+            for size in [1, 127, 4096] {
+                let mut source =
+                    ReaderIqSource::new(Cursor::new(&bytes), config(size), position()).unwrap();
+                let mut serial = LegacyWifiDecoder::new();
+                let mut parallel = ParallelLegacyWifiDecoder::with_parallel_dsss().unwrap();
+                let mut expected = Vec::new();
+                let mut actual = Vec::new();
+                loop {
+                    let event = source.next_event().unwrap();
+                    let end = matches!(event, IqEvent::End(_));
+                    expected.extend(serial.consume(clone_event(&event)).unwrap().frames);
+                    actual.extend(parallel.consume(event).unwrap().frames);
+                    if end {
+                        break;
+                    }
+                }
+                assert_eq!(actual.len(), expected.len(), "{name}, chunk={size}");
+                for (a, e) in actual.iter().zip(&expected) {
+                    assert_eq!(a.bytes, e.bytes, "{name}, chunk={size}");
+                    assert_eq!(a.rate_bps, e.rate_bps, "{name}, chunk={size}");
+                    assert!(
+                        a.start.sample_index.abs_diff(e.start.sample_index) <= 3,
+                        "{name}"
+                    );
+                    assert!(
+                        a.end_sample_index.abs_diff(e.end_sample_index) <= 3,
+                        "{name}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn split_dsss_budget_and_reset_clear_duplicate_history() {
+    let bytes = include_bytes!("fixtures/iq/dsss-20-short-clean-48.cs8");
+    let mut c = config(bytes.len() / 2);
+    c.max_pending_frames = 6;
+    let event = |c: RxConfig| {
+        IqEvent::Chunk(
+            IqChunk::new(c, position(), bytes.iter().map(|b| *b as i8).collect()).unwrap(),
+        )
+    };
+    let mut decoder = ParallelLegacyWifiDecoder::with_parallel_dsss().unwrap();
+    assert_eq!(decoder.consume(event(c.clone())).unwrap().frames.len(), 1);
+    decoder.reset(ResetReason::Explicit);
+    assert_eq!(decoder.consume(event(c.clone())).unwrap().frames.len(), 1);
+    // A repeated source position is a discontinuity, which must also clear history.
+    assert_eq!(decoder.consume(event(c.clone())).unwrap().frames.len(), 1);
+    let mut repeated = bytes.to_vec();
+    repeated.extend_from_slice(&[0; 1024]);
+    repeated.extend_from_slice(bytes);
+    c.max_chunk_samples = repeated.len() / 2;
+    let overflow = IqEvent::Chunk(
+        IqChunk::new(
+            c.clone(),
+            position(),
+            repeated.iter().map(|b| *b as i8).collect(),
+        )
+        .unwrap(),
+    );
+    assert!(matches!(
+        decoder.consume(overflow),
+        Err(RadioError::Limit { .. })
+    ));
+    assert_eq!(decoder.consume(event(c.clone())).unwrap().frames.len(), 1);
+    c.max_pending_frames = 5;
+    assert!(matches!(
+        decoder.consume(event(c.clone())),
+        Err(RadioError::Invalid { .. })
+    ));
+    c.max_pending_frames = 6;
+    c.max_buffer_samples = 639;
+    c.max_chunk_samples = 128;
+    let small = IqEvent::Chunk(IqChunk::new(c, position(), vec![0; 256]).unwrap());
+    assert!(matches!(
+        decoder.consume(small),
+        Err(RadioError::Invalid { .. })
+    ));
+}

@@ -474,6 +474,7 @@ impl Track {
 }
 
 pub(super) struct Acquisition {
+    phase: Option<u8>,
     samples: Samples,
     tracks: [Track; 22],
     // Internal half-chip grid (22 Msps), derived from the original 20 Msps
@@ -498,6 +499,7 @@ pub(super) struct Acquisition {
 impl Acquisition {
     pub fn new() -> Self {
         Self {
+            phase: None,
             samples: Samples::new(),
             tracks: std::array::from_fn(|_| Track::default()),
             chips: [ComplexSample::ZERO; 32],
@@ -520,9 +522,9 @@ impl Acquisition {
     pub fn reset(&mut self) {
         self.truncated_headers += u64::from(self.tracks.iter().any(|track| track.short.is_some()));
         self.tracks.fill(Track::default());
-        self.next_chip = 0;
+        self.next_chip = u64::from(self.phase.unwrap_or(0));
         self.chip_center = 0;
-        self.chip_fraction = 0;
+        self.chip_fraction = self.phase.unwrap_or(0) * 10;
         self.first_chip = None;
         self.chip_power = [0.; 2];
         self.pending = None;
@@ -543,6 +545,17 @@ impl Acquisition {
         })
     }
     fn push_samples(
+        &mut self,
+        chunk: &IqChunk,
+        emit: impl FnMut(Option<Header>, &Samples) -> bool,
+    ) -> RadioResult<()> {
+        if self.phase.is_some() {
+            self.push_grid::<true>(chunk, emit)
+        } else {
+            self.push_grid::<false>(chunk, emit)
+        }
+    }
+    fn push_grid<const SPLIT: bool>(
         &mut self,
         chunk: &IqChunk,
         mut emit: impl FnMut(Option<Header>, &Samples) -> bool,
@@ -585,7 +598,7 @@ impl Acquisition {
                 }
                 let center = self.chip_center;
                 let phase = self.chip_fraction as usize;
-                self.chip_fraction += 10;
+                self.chip_fraction += if SPLIT { 20 } else { 10 };
                 if self.chip_fraction >= 11 {
                     self.chip_fraction -= 11;
                     self.chip_center =
@@ -595,10 +608,22 @@ impl Acquisition {
                                 context: "DSSS source chip cursor",
                             })?;
                 }
+                if SPLIT && self.chip_fraction >= 11 {
+                    self.chip_fraction -= 11;
+                    self.chip_center =
+                        self.chip_center
+                            .checked_add(1)
+                            .ok_or(RadioError::Overflow {
+                                context: "DSSS source chip cursor",
+                            })?;
+                }
                 let chip_index = self.next_chip;
-                self.next_chip = self.next_chip.checked_add(1).ok_or(RadioError::Overflow {
-                    context: "DSSS internal chip clock",
-                })?;
+                self.next_chip = self
+                    .next_chip
+                    .checked_add(if SPLIT { 2 } else { 1 })
+                    .ok_or(RadioError::Overflow {
+                        context: "DSSS internal chip clock",
+                    })?;
                 let Some(chip) = self.samples.at_grid(center, phase) else {
                     self.first_chip = None;
                     self.chip_power = [0.; 2];
@@ -697,9 +722,14 @@ impl Acquisition {
                 }
                 // The consumer requests sample notifications only while it
                 // has a payload to finish. A new header always wakes it.
-                if self.payload_active {
+                if !SPLIT && self.payload_active {
                     self.payload_active = emit(None, &self.samples);
                 }
+            }
+            // Both phase workers see every raw sample. Payload availability
+            // must not wait for that worker's next acquisition-grid point.
+            if SPLIT && self.payload_active {
+                self.payload_active = emit(None, &self.samples);
             }
         }
         Ok(())
@@ -743,6 +773,64 @@ mod tests {
         }
         output
     }
+    #[test]
+    fn radio_dsss_split_phases_preserve_independent_frames() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
+        let index = std::fs::read_to_string(root.join("dsss-index.tsv")).unwrap();
+        for row in index.lines().skip(1) {
+            let name = row.split('\t').next().unwrap();
+            let bytes = std::fs::read(root.join(format!("{name}.cs8"))).unwrap();
+            for width in [1, 137, 4096] {
+                let run = |mut decoder: DsssCckDecoder| {
+                    let mut frames = Vec::new();
+                    let mut offset = 0;
+                    for (sequence, bytes) in bytes.chunks(width * 2).enumerate() {
+                        let chunk = IqChunk::new(
+                            config(),
+                            IqPosition {
+                                epoch: 0,
+                                sequence: sequence as u64,
+                                sample_index: offset,
+                                time_anchor: None,
+                                discontinuity: None,
+                            },
+                            bytes.iter().map(|&x| x as i8).collect(),
+                        )
+                        .unwrap();
+                        offset += chunk.len() as u64;
+                        frames.extend(decoder.consume(IqEvent::Chunk(chunk)).unwrap().frames);
+                    }
+                    frames
+                };
+                let baseline = run(DsssCckDecoder::new());
+                let mut split = run(DsssCckDecoder::phase_worker(0));
+                split.extend(run(DsssCckDecoder::phase_worker(1)));
+                for expected in &baseline {
+                    assert!(
+                        split.iter().any(|actual| actual.bytes == expected.bytes
+                            && actual.rate_bps == expected.rate_bps
+                            && actual
+                                .start
+                                .sample_index
+                                .abs_diff(expected.start.sample_index)
+                                <= 3
+                            && actual.end_sample_index.abs_diff(expected.end_sample_index) <= 3),
+                        "missing baseline frame: {name}, chunk {width}"
+                    );
+                }
+                for actual in &split {
+                    assert!(
+                        baseline
+                            .iter()
+                            .any(|expected| actual.bytes == expected.bytes
+                                && actual.rate_bps == expected.rate_bps),
+                        "unexpected split frame: {name}, chunk {width}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn radio_dsss_headers_independent_vectors() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
@@ -1288,6 +1376,12 @@ impl Default for DsssCckDecoder {
 impl DsssCckDecoder {
     pub fn new() -> Self {
         Self::default()
+    }
+    pub(super) fn phase_worker(phase: u8) -> Self {
+        assert!(phase <= 1);
+        let mut decoder = Self::new();
+        decoder.acquisition.phase = Some(phase);
+        decoder
     }
     pub fn stats(&self) -> DecoderStats {
         self.stats
