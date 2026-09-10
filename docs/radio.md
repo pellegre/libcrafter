@@ -652,3 +652,22 @@ Packet counts per second supplement these metrics. They cannot replace sample
 throughput or per-family occurrence matching against an independent receiver.
 Longer captures must retain the same correctness criteria and explicitly report
 missing evidence, reception variability, and unsuccessful trials.
+
+The receive example provides an offline measurement entrypoint:
+
+```sh
+cargo run --release -p crafter --features radio --example radio_receive -- \
+  --benchmark-artifact saved.iq combined
+```
+
+Replace `combined` with `ofdm` or `dsss` to isolate a PHY family. This explicit
+selection overrides the artifact's decoder label for measurement. The original
+sample metadata, gaps, and allocation limits remain in force. Output separates
+source-reading, decoder-call, and verification time, and includes sample/frame
+counts and SHA-256 digests of IQ bytes and ordered frame occurrences. Decoder
+time includes the public decoder's allocation and dispatch overhead. It excludes
+packet parsing, input hashing, and frame hashing; wall time includes them except
+packet parsing, which this mode does not perform. Digests help detect changes,
+but do not replace exact qualification records or independent frame validation.
+Input is streamed with bounded memory; filesystem cache state still affects
+source-reading time. No device is opened by this mode.
