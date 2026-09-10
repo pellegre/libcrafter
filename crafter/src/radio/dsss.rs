@@ -478,9 +478,10 @@ pub(super) struct Acquisition {
     samples: Samples,
     tracks: [Track; 22],
     // Internal half-chip grid (22 Msps), derived from the original 20 Msps
-    // coordinates. Its 32 entries plus the 80 raw/mirrored entries stay below the
-    // existing 128-sample private history reservation.
+    // coordinates. Its 32 entries, 80 raw/mirrored entries, and 32 cached
+    // scalar powers occupy the existing 128-complex-sample history reservation.
     chips: [ComplexSample; 32],
+    chip_powers: [f32; 32],
     next_chip: u64,
     chip_center: u64,
     chip_fraction: u8,
@@ -503,6 +504,7 @@ impl Acquisition {
             samples: Samples::new(),
             tracks: std::array::from_fn(|_| Track::default()),
             chips: [ComplexSample::ZERO; 32],
+            chip_powers: [0.; 32],
             next_chip: 0,
             chip_center: 0,
             chip_fraction: 0,
@@ -635,10 +637,14 @@ impl Acquisition {
                 // Barker window. f64 state avoids accumulating f32 drift.
                 if chip_index - first >= 22 {
                     self.chip_power[parity] -=
-                        f64::from(self.chips[((chip_index - 22) % 32) as usize].power());
+                        f64::from(self.chip_powers[((chip_index - 22) % 32) as usize]);
                 }
-                self.chip_power[parity] += f64::from(chip.power());
+                // Reuse this exact f32 value when the chip leaves the window;
+                // converting to f64 on each update preserves accumulation order.
+                let power = chip.power();
+                self.chip_power[parity] += f64::from(power);
                 self.chips[chip_index as usize % 32] = chip;
+                self.chip_powers[chip_index as usize % 32] = power;
                 if chip_index - first < 20 {
                     continue;
                 }
