@@ -380,6 +380,42 @@ impl IqSource for ArtifactSource {
 #[path = "radio_support/benchmark.rs"]
 mod benchmark;
 
+/// Drain a bounded source without DSP, recording, or per-chunk output.
+#[cfg(feature = "radio-hackrf")]
+fn capture_only(source: &mut impl IqSource) -> Result<()> {
+    let start = std::time::Instant::now();
+    let mut samples = 0u64;
+    let mut chunks = 0u64;
+    let mut terminal = None;
+    let result: Result<()> = loop {
+        match source.next_event() {
+            Ok(IqEvent::Chunk(chunk)) => {
+                samples += chunk.len() as u64;
+                chunks += 1;
+            }
+            Ok(IqEvent::End(end)) => {
+                terminal = Some(format!("{end:?}"));
+                break if end == StreamEnd::Cancelled {
+                    Err("capture-only source was cancelled".into())
+                } else {
+                    Ok(())
+                };
+            }
+            Err(error) => break Err(error.into()),
+        }
+    };
+    println!(
+        "{}",
+        json!({
+            "kind": "capture_only", "complete": result.is_ok(),
+            "consumed_samples": samples, "chunks": chunks,
+            "drain_wall_seconds": start.elapsed().as_secs_f64(),
+            "terminal": terminal, "error": result.as_ref().err().map(ToString::to_string),
+        })
+    );
+    result
+}
+
 fn main() -> Result<()> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("--benchmark-artifact") {
@@ -388,6 +424,12 @@ fn main() -> Result<()> {
             _ => Err("use --benchmark-artifact FILE combined|ofdm|dsss".into()),
         };
     }
+    let capture_only_mode = if args.first().map(String::as_str) == Some("--capture-only") {
+        args.remove(0);
+        true
+    } else {
+        false
+    };
     let ofdm_only = if args.first().map(String::as_str) == Some("--ofdm-only") {
         args.remove(0);
         true
@@ -420,6 +462,13 @@ fn main() -> Result<()> {
     } else {
         2_097_152
     };
+    if capture_only_mode
+        && (args.first().map(String::as_str) != Some("--live") || iq_path.is_some() || ofdm_only)
+    {
+        return Err(
+            "--capture-only requires --live and cannot record IQ or select a decoder".into(),
+        );
+    }
     let config = RxConfig {
         sample_rate_hz: 20_000_000,
         center_frequency_hz: 2_412_000_000,
@@ -458,13 +507,17 @@ fn main() -> Result<()> {
             };
             let start = unix_ns(SystemTime::now());
             let mut source = HackRfSource::open_live(settings)?;
-            let result = receive(
-                &mut source,
-                config,
-                iq_path.as_deref(),
-                Some(start),
-                ofdm_only,
-            );
+            let result = if capture_only_mode {
+                capture_only(&mut source)
+            } else {
+                receive(
+                    &mut source,
+                    config,
+                    iq_path.as_deref(),
+                    Some(start),
+                    ofdm_only,
+                )
+            };
             let s = source.stats();
             println!(
                 "{}",

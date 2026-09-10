@@ -671,3 +671,15 @@ packet parsing, which this mode does not perform. Digests help detect changes,
 but do not replace exact qualification records or independent frame validation.
 Input is streamed with bounded memory; filesystem cache state still affects
 source-reading time. No device is opened by this mode.
+
+To separate acquisition continuity from decoder throughput, a leading
+`--capture-only` modifier accepts the same explicit `--live` arguments and
+optional `--buffer-samples` limit. For example, use
+`--capture-only --buffer-samples 2097152 --live` followed by the documented live
+settings. It drains the bounded source without DSP, packet parsing, IQ recording,
+or per-chunk output. A final `capture_only` record reports consumed samples,
+chunks, wall time after source opening, terminal reason, and any error. The normal
+`acquisition` record retains verified/discarded samples and loss/overflow counters.
+Recording and decoder-selection flags are rejected in this mode. A successful
+exit alone does not prove continuity: assess acquisition counters as well. This
+measurement does not establish RF sensitivity, packet recovery, or latency.
