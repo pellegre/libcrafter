@@ -1,9 +1,11 @@
 # IQ to Wi-Fi reception
 
-The optional `radio` feature decodes 20 MHz legacy OFDM IQ into ordinary
-libcrafter packets. It supports offline replay without hardware; `radio-hackrf`
-adds explicit bounded native reception. Three independent live runs qualified
-exact agreement with a separate Wi-Fi receiver, within the limits below.
+The optional `radio` feature decodes legacy OFDM and DSSS/CCK IQ into ordinary
+libcrafter packets at a 20 Msps source clock. It supports offline replay without
+hardware; `radio-hackrf` adds explicit bounded native reception. Three independent
+paired live runs qualified DSSS and CCK agreement with a separate Wi-Fi receiver;
+the earlier OFDM qualification and its replay regression evidence are retained
+separately below.
 
 ## Boundary and scope
 
@@ -13,8 +15,9 @@ never a `Raw` packet layer. Original recovered bytes remain available even when
 the parsed packet is later modified. RF context coexists with Wi-Fi metadata.
 
 `IqSource` supplies `IqEvent` values to a `PhyDecoder`. The provided
-`ReaderIqSource` reads signed interleaved 8-bit I/Q, and `LegacyOfdmDecoder`
-reconstructs FCS-valid `RecoveredFrame` values.
+`ReaderIqSource` reads signed interleaved 8-bit I/Q. `LegacyWifiDecoder` combines
+OFDM and DSSS/CCK reception; `LegacyOfdmDecoder` and `DsssCckDecoder` select one
+receiver explicitly. Each reconstructs FCS-valid `RecoveredFrame` values.
 `RadioPacketSource::new(source, decoder, bounds)` implements the ordinary
 `PacketSource` contract and can be consumed by `Sniffer`. It calls
 `Packet::decode_from_link(LinkType::Ieee80211, ...)` after stripping the verified
@@ -23,9 +26,11 @@ FCS-bearing bytes and additive `RadioReceiveMetadata`; Wi-Fi annotations remain
 available independently. Future sources can implement `IqSource` without
 changing the PHY decoder or the packet parser.
 
-The initial scope is legacy OFDM with 20 MHz channel spacing, including ERP-OFDM.
-DSSS/CCK, DSSS-OFDM, PBCC, HT, VHT, HE, half-clocked and quarter-clocked OFDM are
-unsupported. A valid legacy SIGNAL alone does not prove a supported frame:
+Supported modes are legacy OFDM with 20 MHz channel spacing (including ERP-OFDM)
+and DSSS/CCK at 1, 2, 5.5 and 11 Mbps. Long preambles support all four
+DSSS/CCK rates; short preambles support 2, 5.5 and 11 Mbps. DSSS-OFDM, PBCC,
+HT, VHT, HE, half-clocked and quarter-clocked OFDM remain unsupported. A valid
+legacy SIGNAL alone does not prove a supported frame:
 later PHY formats can share a legacy preamble. DATA integrity must also pass.
 There is no transmit, injection, decryption, or active traffic-generation API.
 
@@ -213,7 +218,8 @@ cargo run --release -p crafter --features radio-hackrf --example radio_receive -
   --live SERIAL FREQUENCY_HZ DURATION_SECONDS MAX_SAMPLES FILTER_HZ LNA_DB VGA_DB AMP_BOOL BIAS_BOOL
 ```
 
-For the initial 20 Msps OFDM scope, set `FILTER_HZ` explicitly to `20000000`.
+For the qualified 20 Msps combined receiver, set `FILTER_HZ` explicitly to
+`20000000`.
 The source can outpace the synchronous decoder; increase the explicit buffer
 bound in operator code only within an appropriate finite memory budget. Actual
 live decoder throughput and receiver agreement require separate qualification.
@@ -340,7 +346,9 @@ Keep real artifacts and timing policies outside tracked files.
 
 ## Qualification and limits
 
-The qualified receive candidate passed three independent 20-second captures at
+### Earlier OFDM qualification
+
+The standalone OFDM candidate at functional revision `fce1ad75` passed three independent 20-second captures at
 20 Msps with a 20 MHz baseband filter, LNA gain 40 dB, VGA gain 4 dB, and both
 RF amplifier and antenna power disabled. The optimized native example used a
 16,777,216-sample acquisition bound. These are measured settings for one
@@ -364,7 +372,7 @@ with explicit tolerances. Candidate, library, artifact and cleanup evidence is
 retained privately; no live capture or receiver identity is shipped here.
 
 This evidence establishes bounded receive agreement for the observed traffic.
-Independent synthetic fixtures cover all eight listed rates, including adverse
+Independent synthetic OFDM fixtures cover all eight listed OFDM rates, including adverse
 and rejected inputs; the live results do not establish equal sensitivity at
 every rate, universal real-time throughput, or support for later Wi-Fi PHYs.
 Unsupported observations and corrupt signals can be rejected without a reliable
@@ -377,6 +385,72 @@ builds for native reception, bound every queue, and treat a source or recording
 overflow as failed continuity rather than silently accepting the remaining
 capture. Requalify changed runtime code, RF settings or execution environments;
 increasing a buffer alone does not establish sustained operation.
+
+### Combined receiver qualification
+
+The extended receiver at functional revision `878c7f46` passed three independent
+20-second paired captures at 20 Msps with a 20 MHz analog filter. The native
+executable and build inputs were identical across these runs. Run A used
+LNA/VGA gains of 32/12 dB; B and C used 40/4 dB. Amplifier and antenna power
+were disabled. Each run allowed 400 million queued complex samples (up to
+800 MB of CS8 data plus metadata), followed by a bounded 180-second drain.
+This demonstrates bounded acquisition and eventual decoding, not sustained
+real-time processing.
+
+| Run | Family | Eligible HackRF | Eligible reference | Exact matches | HackRF matched | Reference matched |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| A | DSSS | 1135 | 929 | 708 | 62.38% | 76.21% |
+| A | CCK | 122 | 182 | 121 | 99.18% | 66.48% |
+| B | DSSS | 1183 | 1159 | 851 | 71.94% | 73.43% |
+| B | CCK | 11 | 22 | 11 | 100.00% | 50.00% |
+| C | DSSS | 1383 | 1401 | 1039 | 75.13% | 74.16% |
+| C | CCK | 62 | 95 | 60 | 96.77% | 63.16% |
+
+For each row, HackRF matched means exact matches divided by eligible HackRF
+occurrences; reference matched uses the reference denominator. For example,
+run B CCK matched all 11 HackRF frames but only 11 of 22 reference frames.
+Each family independently met the frozen minimum of 50% in both directions,
+5 eligible HackRF frames, 10 eligible reference frames and 5 matches in every
+run. These are complete eligible occurrences, not selected packet types or
+unique byte strings. Timing used an independently recorded first-chunk software
+anchor, a 1 ms reference uncertainty and a fixed 10 ms matching window; packet
+matches were never used to fit the clock.
+
+| DSSS/CCK rate | Run A H / R / matches | Run B H / R / matches | Run C H / R / matches | Live interpretation |
+| --- | ---: | ---: | ---: | --- |
+| 1 Mbps | 1135 / 929 / 708 | 1183 / 1159 / 851 | 1383 / 1401 / 1039 | Repeated successful DSSS agreement |
+| 2 Mbps | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | Absent; not live-qualified |
+| 5.5 Mbps | 0 / 0 / 0 | 0 / 0 / 0 | 4 / 3 / 3 | Three exact matches; too sparse for independent rate qualification |
+| 11 Mbps | 122 / 182 / 121 | 11 / 22 / 11 | 58 / 92 / 57 | Repeated successful CCK agreement |
+
+H and R are eligible HackRF and reference counts. Independent offline fixtures
+cover all four rates and all seven valid rate/preamble combinations, including
+clock/carrier offsets, channel echoes and rejected inputs. Family qualification
+does not establish every rate's live sensitivity or preamble coverage.
+
+All three accepted acquisitions had zero queue overflow, unknown sample loss,
+discarded samples, reference kernel drops, parser errors and recording errors.
+Exact replay with the captured native executable reproduced all 1302, 1196 and
+1469 frame records respectively, including their chunk positions/counts.
+The private verifier recomputed full-byte, equal-observed-rate matches from raw
+inputs, checked artifact/build hashes and independently verified cleanup.
+Reference reception required a temporary, narrowly scoped driver receive-filter
+correction to include RTS frames; operator tooling verified and restored it.
+That host-specific correction is not part of the crate.
+
+These were independent successful runs selected from an iterative campaign,
+not three consecutive successful attempts. Other attempts suffered USB transfer
+shortfalls or failed the unchanged overlap targets; those failures remain in
+private evidence. The implementation detects such loss and fails qualification.
+It does not promise reliable uninterrupted USB capture in every environment.
+
+The final combined receiver also replayed the three earlier OFDM recordings,
+preserving all 203, 74 and 53 original recovered OFDM frame identities (330 total),
+including bytes, rates and source positions. Those replay counts include original
+frames outside the earlier comparison eligibility interval. This preserves the
+earlier evidence; the new DSSS/CCK captures did not independently requalify OFDM
+at their RF settings. Their OFDM H / R / match counts were 41 / 102 / 40,
+1 / 260 / 1 and 15 / 146 / 13. No all-family or all-rate live claim follows.
 
 ## Local validation
 
@@ -395,11 +469,10 @@ captures, saved IQ replay, fixed eligibility and overlap rules, and independentl
 verified cleanup through operator-supplied untracked tooling. Offline tests alone
 do not replace that evidence.
 
-## DSSS/CCK extension contract (implementation pending)
+## DSSS/CCK receive contract
 
-This contract adds planned reception beside OFDM; it does not claim that the
-current implementation already decodes DSSS/CCK. The same IEEE 802.11-2007 PDF
-and SHA-256 above were retrieved and inspected for this extension. RFC/IANA
+DSSS/CCK reception shares the existing packet boundary with OFDM. The same
+IEEE 802.11-2007 PDF and SHA-256 above were retrieved and inspected for this extension. RFC/IANA
 manifest discovery again returned no candidates or extracted facts. The following
 reviewed IEEE map supplies the PHY evidence; an empty RFC manifest supplies none.
 

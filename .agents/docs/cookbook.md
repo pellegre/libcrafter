@@ -2283,7 +2283,7 @@ timestamps, random ids, route state, or OS-assigned values are expected to vary.
 ## Receive Wi-Fi from IQ
 
 Use the optional `crafter` feature `radio` for saved IQ and synthetic fixtures.
-Compose an `IqSource` with `LegacyOfdmDecoder` through `RadioPacketSource`; consume
+Compose an `IqSource` with `LegacyWifiDecoder` through `RadioPacketSource`; consume
 its ordinary `PacketRecord` values with `PacketSource` or `Sniffer`. Keep sample
 processing upstream of the existing packet parser. Do not represent IQ as `Raw`
 or build a second parsed-packet API. Preserve captured bytes and RF metadata
@@ -2310,3 +2310,42 @@ zero denominators are inconclusive. Source loss, recording failure or incomplete
 artifacts invalidate qualification. Preserve raw IQ so the exact candidate can
 reproduce the recovered frames. See [the receive guide](../../docs/radio.md) for
 API boundaries, example arguments, artifact schemas and measured limits.
+
+The combined decoder supports 20 MHz legacy OFDM and 1/2/5.5/11 Mbps DSSS/CCK
+from 20 Msps source IQ. Long DSSS/CCK preambles support all four rates; short
+preambles support 2/5.5/11 Mbps. Use `LegacyOfdmDecoder` or `DsssCckDecoder`
+when the generated tool explicitly selects one family. The example defaults to
+combined reception; its leading `--ofdm-only` flag selects OFDM. Saved v2 IQ
+preserves that decoder selection, while v1 replay retains OFDM behavior.
+
+```sh
+cargo run -p crafter --features radio --example radio_receive -- --ofdm-only
+cargo run -p crafter --features radio --example radio_receive -- --replay-artifact saved-iq.iq
+```
+
+For an explicitly authorized bounded native receive operation, expose every RF
+setting and queue limit; a schematic invocation is:
+
+```text
+cargo run --release -p crafter --features radio-hackrf --example radio_receive -- \
+  --buffer-samples BUFFER_SAMPLES --live SERIAL FREQUENCY_HZ DURATION_SECONDS MAX_SAMPLES FILTER_HZ LNA_DB VGA_DB AMP_BOOL BIAS_BOOL
+```
+
+Use the qualified 20 Msps source clock and explicit 20 MHz filter. DSSS chips
+run at 11 MHz: fractional interpolation handles the 20/11 ratio without changing
+the hardware clock. Interpolation cannot recover removed RF bandwidth. Bound
+both queued samples and the post-capture drain; the qualified combined workload
+used a large finite backlog and does not establish sustained real-time decoding.
+Reset partial PHY state on gaps, epochs/configuration changes and cancellation;
+never pad a truncated real frame or treat an unknown loss as zero.
+
+Deliver only received-FCS-valid MAC frames. Strip FCS only from packet-parser
+input, retaining the original FCS-bearing bytes in the record. Missing reference
+FCS is integrity-unverified, even for an exact byte match. Combined live evidence
+passed the fixed 50% target in both directions for DSSS and CCK separately in
+three runs. Live DSSS coverage was 1 Mbps; 2 Mbps was absent. CCK was mainly
+11 Mbps, with only three 5.5 Mbps matches in one run. All four rates and valid
+preamble combinations passed independent offline fixtures. Preserve these
+limitations in generated reports; do not turn family success into a claim of
+all-rate live qualification. The receive guide contains the sanitized counts,
+prior OFDM provenance, failed-attempt caveats and resource limits.
