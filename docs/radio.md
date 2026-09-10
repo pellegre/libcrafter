@@ -550,8 +550,10 @@ kernel with 256 normalized fractional phases. Acquisition interpolates once onto
 an internal half-chip grid and reuses a rolling 32-sample history for Barker
 correlation across 22 timing phases. This internal 22 Msps clock does not request
 a different hardware sample rate. The 64 original source samples, 16 mirrored
-entries for contiguous filtering, and 32 derived samples fit within the existing
-128-sample history reservation; no whole-capture
+entries for contiguous filtering, 32 derived samples, and 32 cached scalar
+powers fit within the existing 128-complex-sample history reservation. Caching
+power avoids recalculating it when a chip leaves the rolling window while
+preserving the floating-point accumulation order; no whole-capture
 resampled buffer is allocated. Timing refinement and payload recovery still
 interpolate directly at corrected source-domain chip positions. This reconstruction kernel is a receiver choice, not an IEEE-mandated
 transmit pulse shape or spectral-mask claim. Independent vectors must include
