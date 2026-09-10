@@ -70,8 +70,8 @@ struct Samples {
     // The first sixteen entries are mirrored at the end so every FIR window
     // is contiguous, including windows crossing the logical 64-sample wrap.
     ring: [ComplexSample; 80],
-    kernels: [[f32; 16]; 256],
-    coarse_kernels: [[f32; 8]; 11],
+    kernels: [[f32x4; 8]; 256],
+    coarse_kernels: [[f32x4; 4]; 11],
     begin: u64,
     end: u64,
 }
@@ -113,8 +113,28 @@ impl Samples {
         }
         Self {
             ring: [ComplexSample::ZERO; 80],
-            kernels,
-            coarse_kernels,
+            // Each SIMD lane pair consumes one complex sample. Duplicate
+            // coefficients once instead of rebuilding vectors for every chip.
+            kernels: kernels.map(|kernel| {
+                std::array::from_fn(|k| {
+                    f32x4::new([
+                        kernel[2 * k],
+                        kernel[2 * k],
+                        kernel[2 * k + 1],
+                        kernel[2 * k + 1],
+                    ])
+                })
+            }),
+            coarse_kernels: coarse_kernels.map(|kernel| {
+                std::array::from_fn(|k| {
+                    f32x4::new([
+                        kernel[2 * k],
+                        kernel[2 * k],
+                        kernel[2 * k + 1],
+                        kernel[2 * k + 1],
+                    ])
+                })
+            }),
             begin: 0,
             end: 0,
         }
@@ -174,25 +194,20 @@ impl Samples {
         Self::dot(&self.ring[offset..offset + 16], &self.kernels[phase])
     }
     #[inline(always)]
-    fn dot<const N: usize>(values: &[ComplexSample], weights: &[f32; N]) -> ComplexSample {
-        // Two complex samples occupy each vector. Keep the original four-tap
-        // accumulator order; horizontal reduce_add would change that order.
+    fn dot<const N: usize>(values: &[ComplexSample], weights: &[f32x4; N]) -> ComplexSample {
+        // Preserve the existing four-tap accumulator and reduction order.
         let mut a = f32x4::ZERO;
         let mut b = f32x4::ZERO;
-        for k in (0..N).step_by(4) {
+        for pair in (0..N).step_by(2) {
+            let k = pair * 2;
             a += f32x4::new([values[k].i, values[k].q, values[k + 1].i, values[k + 1].q])
-                * f32x4::new([weights[k], weights[k], weights[k + 1], weights[k + 1]]);
+                * weights[pair];
             b += f32x4::new([
                 values[k + 2].i,
                 values[k + 2].q,
                 values[k + 3].i,
                 values[k + 3].q,
-            ]) * f32x4::new([
-                weights[k + 2],
-                weights[k + 2],
-                weights[k + 3],
-                weights[k + 3],
-            ]);
+            ]) * weights[pair + 1];
         }
         let a = a.to_array();
         let b = b.to_array();
