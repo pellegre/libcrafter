@@ -704,3 +704,12 @@ Use `--benchmark-artifact saved.iq parallel` to measure this implementation.
 Parallelism does not guarantee higher throughput: evaluate it on the actual CPU
 allocation and input, including scheduling overhead. This architecture has two
 independent PHY workers; allocating four CPUs does not create four DSP stages.
+
+A leading `--parallel` modifier selects the two-worker decoder in the receive
+example, including its explicit `--live` mode. It is mutually exclusive with
+`--ofdm-only` and `--capture-only`. Newly saved IQ headers record `dispatch` as
+`serial` or `parallel`; ordinary artifact replay preserves this selection.
+Older headers without `dispatch` retain serial behavior. Explicit `--parallel`
+or `--ofdm-only` overrides the saved selection for a diagnostic replay. Unknown,
+non-string, and incompatible dispatch metadata is rejected. The input encoding,
+frame records, and protocol parser are unchanged.
