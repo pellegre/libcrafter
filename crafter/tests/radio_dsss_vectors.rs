@@ -54,7 +54,7 @@ fn independent_dsss_inventory_and_literal_truth() {
     assert_eq!(manifest["chip_rate_hz"], 11_000_000);
     assert_eq!(manifest["generator_version"], "1");
     let fixtures = manifest["fixtures"].as_array().unwrap();
-    assert_eq!(fixtures.len(), 26);
+    assert_eq!(fixtures.len(), 32);
     let index = fs::read_to_string(root.join("dsss-index.tsv")).unwrap();
     assert_eq!(index.lines().skip(1).count(), fixtures.len());
     let mut names = HashSet::new();

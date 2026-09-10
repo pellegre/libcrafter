@@ -493,6 +493,18 @@ Use fixed search/history bounds and the configured PSDU bound. CCK uses the
 same chip clock with groups of eight. A finite interpolation lookahead delays
 processing only; it must not shift the reported on-air frame position.
 
+For CCK, the last sixteen PLCP header symbols also train a bounded channel
+estimate at two fractional positions per chip. Eight alternating symbols fit
+three neighboring-chip coefficients at each position; the other eight estimate
+residual noise. Payload correlation uses those coefficients and noise estimates,
+with additional uncertainty for neighboring chips outside the current symbol.
+The direct decoder remains the preferred result whenever its MAC FCS is valid.
+A second payload candidate supplies a fallback only when it independently passes
+the same FCS check. There are at most two PSDU buffers, each bounded by
+`max_frame_bytes`, plus fixed channel statistics; no additional source history
+or whole-recording buffer is needed. Header training never uses recovered
+payload bytes or a reference capture.
+
 Record the recovered preamble origin in original input sample coordinates,
 rounding start down and exclusive end up; account for fractional rounding in
 time uncertainty. If a causal FIR representation adds delay D, subtract D
