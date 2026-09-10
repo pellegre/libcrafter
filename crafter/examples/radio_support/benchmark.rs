@@ -6,9 +6,10 @@ use std::time::Instant;
 pub(super) fn run(path: &str, mode: &str) -> Result<()> {
     let mut decoder: Box<dyn PhyDecoder> = match mode {
         "combined" => Box::new(LegacyWifiDecoder::new()),
+        "parallel" => Box::new(ParallelLegacyWifiDecoder::new()?),
         "ofdm" => Box::new(LegacyOfdmDecoder::new()),
         "dsss" => Box::new(DsssCckDecoder::new()),
-        _ => return Err("benchmark mode must be combined, ofdm, or dsss".into()),
+        _ => return Err("benchmark mode must be combined, parallel, ofdm, or dsss".into()),
     };
     let mut source = ArtifactSource::open(path)?;
     let mut input_hash = Sha256::new();
