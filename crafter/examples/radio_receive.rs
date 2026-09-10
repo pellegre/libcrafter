@@ -377,8 +377,17 @@ impl IqSource for ArtifactSource {
         self.end = Some(StreamEnd::Cancelled)
     }
 }
+#[path = "radio_support/benchmark.rs"]
+mod benchmark;
+
 fn main() -> Result<()> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--benchmark-artifact") {
+        return match args.as_slice() {
+            [_, path, mode] => benchmark::run(path, mode),
+            _ => Err("use --benchmark-artifact FILE combined|ofdm|dsss".into()),
+        };
+    }
     let ofdm_only = if args.first().map(String::as_str) == Some("--ofdm-only") {
         args.remove(0);
         true
