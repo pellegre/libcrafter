@@ -421,7 +421,7 @@ fn main() -> Result<()> {
     if args.first().map(String::as_str) == Some("--benchmark-artifact") {
         return match args.as_slice() {
             [_, path, mode] => benchmark::run(path, mode),
-            _ => Err("use --benchmark-artifact FILE combined|ofdm|dsss".into()),
+            _ => Err("use --benchmark-artifact FILE combined|parallel|ofdm|dsss".into()),
         };
     }
     let capture_only_mode = if args.first().map(String::as_str) == Some("--capture-only") {

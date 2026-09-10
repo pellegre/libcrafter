@@ -683,3 +683,24 @@ chunks, wall time after source opening, terminal reason, and any error. The norm
 Recording and decoder-selection flags are rejected in this mode. A successful
 exit alone does not prove continuity: assess acquisition counters as well. This
 measurement does not establish RF sensitivity, packet recovery, or latency.
+
+### Parallel legacy decoding
+
+`ParallelLegacyWifiDecoder::new()?` implements the same `PhyDecoder` contract as
+`LegacyWifiDecoder`, using two persistent workers for OFDM and DSSS/CCK. It can
+be supplied directly to `RadioPacketSource`; recovered frames enter the same
+packet parser. Construction starts worker threads but never opens a device.
+
+The workers share one owned input chunk and the aggregate output budget. Each
+consume call waits for both workers, so the decoder has no hidden input backlog.
+The same 128-sample dispatch coordinates, frame completion order, and diagnostic
+order are retained. Reset and end events reach both workers; dropping the decoder
+closes its channels and joins the workers. Worker creation/channel failures are
+structured errors. A failed worker channel requires a new decoder instance.
+After a chunk fails, worker statistics may include more processing than serial
+execution, because the other worker may already have advanced farther.
+
+Use `--benchmark-artifact saved.iq parallel` to measure this implementation.
+Parallelism does not guarantee higher throughput: evaluate it on the actual CPU
+allocation and input, including scheduling overhead. This architecture has two
+independent PHY workers; allocating four CPUs does not create four DSP stages.

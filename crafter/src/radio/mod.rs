@@ -9,6 +9,8 @@ mod dsss;
 mod hackrf;
 #[cfg(feature = "radio-hackrf")]
 pub use hackrf::{HackRfConfig, HackRfSource, HackRfStats};
+mod parallel;
+pub use parallel::ParallelLegacyWifiDecoder;
 mod replay;
 mod signal;
 mod source;
