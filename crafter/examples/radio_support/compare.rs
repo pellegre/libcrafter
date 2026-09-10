@@ -470,7 +470,17 @@ pub fn load_recovered(path: &str, p: &Policy) -> Result<(Vec<Observation>, Count
     let parsed = summary["parsed_packets"]
         .as_u64()
         .ok_or("missing parsed count")?;
-    if valid.checked_sub(dropped) != Some(counts.total)
+    let emitted = summary.get("emitted_frames").map(|v| v.as_u64());
+    let detections_consistent = if h["dispatch"] == "parallel_dsss" {
+        emitted == Some(Some(counts.total))
+            && valid
+                .checked_sub(dropped)
+                .is_some_and(|n| n >= counts.total)
+    } else {
+        valid.checked_sub(dropped) == Some(counts.total)
+            && emitted.map_or(true, |n| n == Some(counts.total))
+    };
+    if !detections_consistent
         || parsed.checked_add(parser_errors) != Some(counts.total)
         || summary["parser_failures"].as_u64() != Some(parser_errors)
         || summary["terminal"] != terminal_reason
@@ -946,6 +956,20 @@ mod tests {
             std::fs::write(&path, &out).unwrap();
             let (_, counts, _) = load_recovered(path.to_str().unwrap(), &p).unwrap();
             assert_eq!(counts.eligible, 0);
+            for (emitted, expected) in [(None, false), (Some(0u64), true), (Some(1), false)] {
+                let mut records: Vec<Value> = String::from_utf8(out.clone())
+                    .unwrap()
+                    .lines()
+                    .map(|line| serde_json::from_str(line).unwrap())
+                    .collect();
+                records[0]["dispatch"] = json!("parallel_dsss");
+                if let Some(n) = emitted {
+                    records[2]["emitted_frames"] = json!(n);
+                }
+                let text = records.iter().map(|v| format!("{v}\n")).collect::<String>();
+                std::fs::write(&path, text).unwrap();
+                assert_eq!(load_recovered(path.to_str().unwrap(), &p).is_ok(), expected);
+            }
             let old = String::from_utf8(out.clone())
                 .unwrap()
                 .replace(SCHEMA, "crafter.radio.receive/v1");

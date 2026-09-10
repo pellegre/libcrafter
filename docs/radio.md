@@ -724,7 +724,10 @@ coalesced, including detections completed in consecutive input chunks.
 Nonoverlapping retransmissions remain separate. Reset clears this history.
 Independent phase searches can change timing estimates and recover additional
 FCS-valid frames. DSSS statistics count worker detections before coalescing;
-count emitted frames to measure delivered receptions.
+count emitted frames to measure delivered receptions. The receive summary
+exposes this separately as `emitted_frames`; comparison requires that count to
+match the frame records for `parallel_dsss` artifacts. Incomplete captures
+remain ineligible for qualification.
 
 Use `--benchmark-artifact saved.iq parallel-dsss` to evaluate this mode. It is
 also usable through the existing `PhyDecoder` and `RadioPacketSource` APIs.
