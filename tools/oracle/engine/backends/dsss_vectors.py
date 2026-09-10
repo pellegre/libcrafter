@@ -147,16 +147,17 @@ def generate(rate, preamble, case='clean', octets=48):
         symbol_phase = chips[payload_chip - 11] / BARKER[0]
         for k in range(11):
             chips[payload_chip - 11 + k] += symbol_phase * 2 * (1 - BARKER[k] / 11)
-    gain = .18 if interference else .48
-    impaired = case == 'impaired'
+    echo = case == 'channel_echo'
+    gain = .35 if echo else (.18 if interference else .48)
+    impaired = case in ('impaired', 'channel_echo')
     initial = 37.375 if impaired else 37.0
     ppm = 35 if impaired else 0
     samples_per_chip = 20 / 11 * (1 + ppm * 1e-6)
     cfo = 45000 if impaired else 0
     noise = .008 if impaired else 0
     phase = .63 if impaired else .2
-    delay = 1.3 if impaired else 0
-    path = .22 * cmath.exp(.7j) if impaired else 0j
+    delay = 1.0 if echo else (1.3 if impaired else 0)
+    path = .65 * cmath.exp(1j * math.pi / 2) if echo else (.22 * cmath.exp(.7j) if impaired else 0j)
     count = math.ceil(initial + len(chips) * samples_per_chip + 40)
     state = 12345
     def rand():
@@ -200,7 +201,7 @@ def generate(rate, preamble, case='clean', octets=48):
                                 noise_amplitude=noise, noise_seed=12345, gain=gain,
                                 header_interference_amplitude=2.0 if interference else 0.0,
                                 delayed_path_chips=delay, delayed_path_amplitude=abs(path),
-                                delayed_path_phase_rad=.7 if impaired else 0))
+                                delayed_path_phase_rad=math.pi / 2 if echo else (.7 if impaired else 0)))
 
 
 def main():
@@ -208,6 +209,8 @@ def main():
     entries = [generate(r,p) for p in ('long','short') for r in (10,20,55,110) if not(p=='short' and r==10)]
     entries += [generate(r,'long','impaired',64) for r in (10,20,55,110)]
     entries += [generate(10,'long','barker_interference',48)]
+    entries += [generate(110,p,'channel_echo',64) for p in ('long','short')]
+    entries += [generate(r,p,'bad_fcs') for r in (55,110) for p in ('long','short')]
     entries += [generate(110,'short','length_boundary',n) for n in (1023,1024,1025,1026)]
     entries += [generate(10,'long',case) for case in ('alternate_seed','bad_crc','bad_fcs','bad_sfd','bad_signal','pbcc','truncated_sync','truncated_sfd','truncated_header','truncated_payload')]
     manifest = dict(schema=1,generator_version=VERSION,generator_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),

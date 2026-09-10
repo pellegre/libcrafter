@@ -25,6 +25,7 @@ pub(super) struct Header {
     pub previous_symbol: ComplexSample,
     pub descrambler: Descrambler,
     pub correlation: f32,
+    pub trained_channel: Option<ChannelModel>,
 }
 
 pub(super) fn crc16(bytes: &[u8]) -> u16 {
@@ -212,6 +213,118 @@ impl Samples {
         Some((sum.scale(1. / 11.), quality))
     }
 }
+// Two within-chip phases, each modeled by three neighboring chips.
+type ChannelModel = ([ComplexSample; 6], [f32; 2]);
+#[derive(Clone)]
+struct ChannelTraining {
+    train: [ComplexSample; 6],
+    test: [ComplexSample; 6],
+    power: [f32; 2],
+    train_count: usize,
+    test_count: usize,
+}
+impl Default for ChannelTraining {
+    fn default() -> Self {
+        Self {
+            train: [ComplexSample::ZERO; 6],
+            test: [ComplexSample::ZERO; 6],
+            power: [0.; 2],
+            train_count: 0,
+            test_count: 0,
+        }
+    }
+}
+impl ChannelTraining {
+    fn observe(&mut self, samples: &Samples, start: f64, frequency: f32) {
+        let mut gain = ComplexSample::ZERO;
+        for (k, &sign) in BARKER.iter().enumerate() {
+            let offset = (k as f64 + 0.5) * 20. / 11.;
+            let Some(value) = samples.at(start + offset) else {
+                return;
+            };
+            gain = gain.add(
+                value
+                    .mul(ComplexSample::rotation(-frequency * (offset as f32 - 10.)))
+                    .scale(sign / 11.),
+            );
+        }
+        if gain.power() < 1e-12 {
+            return;
+        }
+        let mut projection = [ComplexSample::ZERO; 6];
+        let mut power = [0.; 2];
+        for phase in 0..2 {
+            for k in 1..10 {
+                let offset = (k as f64 + 0.25 + phase as f64 * 0.5) * 20. / 11.;
+                let Some(value) = samples.at(start + offset) else {
+                    return;
+                };
+                let value = value
+                    .mul(ComplexSample::rotation(-frequency * (offset as f32 - 10.)))
+                    .mul(gain.conj())
+                    .scale(1. / gain.power());
+                power[phase] += value.power();
+                for tap in 0..3 {
+                    projection[phase * 3 + tap] =
+                        projection[phase * 3 + tap].add(value.scale(BARKER[k + tap - 1]));
+                }
+            }
+        }
+        if (self.train_count + self.test_count) % 2 == 1 {
+            for k in 0..6 {
+                self.train[k] = self.train[k].add(projection[k]);
+            }
+            self.train_count += 1;
+        } else {
+            for k in 0..6 {
+                self.test[k] = self.test[k].add(projection[k]);
+            }
+            for k in 0..2 {
+                self.power[k] += power[k];
+            }
+            self.test_count += 1;
+        }
+    }
+    fn finish(&self) -> Option<ChannelModel> {
+        // Alternate the last sixteen PLCP symbols between fitting and noise
+        // estimation. The matrices are X^T X and its inverse for Barker chips
+        // 1..=9, with columns for the preceding, current and following chip.
+        if self.train_count != 8 || self.test_count != 8 {
+            return None;
+        }
+        let inverse = [[10., 1., 1.], [1., 10., -1.], [1., -1., 10.]];
+        let gram = [[9., -1., -1.], [-1., 9., 1.], [-1., 1., 9.]];
+        let mut h = [ComplexSample::ZERO; 6];
+        let mut noise = [0.; 2];
+        for phase in 0..2 {
+            for i in 0..3 {
+                for j in 0..3 {
+                    h[phase * 3 + i] = h[phase * 3 + i].add(
+                        self.train[phase * 3 + j]
+                            .scale(inverse[i][j] / (88. * self.train_count as f32)),
+                    );
+                }
+            }
+            let mut residual = self.power[phase];
+            for i in 0..3 {
+                residual -= 2. * h[phase * 3 + i].conj().mul(self.test[phase * 3 + i]).i;
+                for j in 0..3 {
+                    residual += self.test_count as f32
+                        * gram[i][j]
+                        * h[phase * 3 + i].conj().mul(h[phase * 3 + j]).i;
+                }
+            }
+            noise[phase] = (residual / (9. * self.test_count as f32)).max(0.01);
+        }
+        if h.iter().any(|v| !v.i.is_finite() || !v.q.is_finite())
+            || noise.iter().any(|v| !v.is_finite())
+        {
+            return None;
+        }
+        Some((h, noise))
+    }
+}
+
 #[derive(Clone)]
 struct Track {
     previous: ComplexSample,
@@ -226,6 +339,7 @@ struct Track {
     sfd_end: f64,
     quality: f32,
     timing: f64,
+    channel_training: ChannelTraining,
 }
 impl Default for Track {
     fn default() -> Self {
@@ -242,6 +356,7 @@ impl Default for Track {
             sfd_end: 0.,
             quality: 0.,
             timing: 0.,
+            channel_training: ChannelTraining::default(),
         }
     }
 }
@@ -252,9 +367,8 @@ impl Track {
         quality: f32,
         start: impl FnOnce() -> f64,
         bound: usize,
+        samples: &Samples,
     ) -> Option<Result<Header, ()>> {
-        // Permit distorted Barker symbols through acquisition; the complete
-        // PLCP header CRC and payload FCS still establish frame validity.
         if quality < 0.15 || symbol.power() < 1e-5 {
             // A zero previous symbol denotes the already-reset search state.
             // Do not rewrite the entire track for every subsequent noise chip.
@@ -269,6 +383,10 @@ impl Track {
         let delta = symbol.mul(self.previous.conj());
         self.previous = symbol;
         if let Some(short) = self.short {
+            if matches!(self.header[0], 55 | 110) && self.bits >= if short { 16 } else { 32 } {
+                self.channel_training
+                    .observe(samples, start, self.frequency / 20.);
+            }
             let corrected = delta.mul(ComplexSample::rotation(-self.frequency));
             let quadrant = (corrected.phase() / (PI / 2.)).round() as i32;
             let pair = match quadrant.rem_euclid(4) {
@@ -299,6 +417,7 @@ impl Track {
                         previous_symbol: symbol,
                         descrambler: self.descrambler,
                         correlation: self.quality / if short { 24. } else { 48. },
+                        trained_channel: self.channel_training.finish(),
                     });
                 *self = Self::default();
                 return Some(decoded.ok_or(()));
@@ -530,6 +649,7 @@ impl Acquisition {
                         quality,
                         symbol_start,
                         chunk.config().max_frame_bytes,
+                        &self.samples,
                     ) {
                         let header = match result {
                             Ok(header) => header,
@@ -639,7 +759,8 @@ mod tests {
                     assert_eq!(h.rate_bps, columns[1].parse::<u32>().unwrap(), "{name}");
                     assert_eq!(h.psdu_bytes, columns[4].len() / 2);
                     assert_eq!(h.short, columns[2] == "short");
-                    let impaired = name.contains("impaired");
+                    // Echo vectors share the carrier and clock offsets of impaired vectors.
+                    let impaired = name.contains("impaired") || name.contains("channel_echo");
                     let origin = if impaired { 37.375 } else { 37. };
                     let duration = if h.short { 1920. } else { 3840. };
                     let payload = origin + duration * if impaired { 1.000035 } else { 1. };
@@ -801,7 +922,66 @@ mod tests {
     }
 }
 
+// Both bounded payload hypotheses share the same source history. Preserve a
+// CRC-valid direct decode; use the channel-shaped candidate only as fallback.
+struct PayloadCandidates {
+    base: Payload,
+    equalized: Option<Payload>,
+    base_done: bool,
+    equalized_done: bool,
+}
+impl PayloadCandidates {
+    fn new(recovered: Payload) -> Self {
+        if recovered.channel.is_some() {
+            let base = Payload {
+                channel: None,
+                header: recovered.header.clone(),
+                start: recovered.start.clone(),
+                bytes: vec![0; recovered.bytes.len()],
+                bits: 0,
+                next: recovered.next,
+            };
+            Self {
+                base,
+                equalized: Some(recovered),
+                base_done: false,
+                equalized_done: false,
+            }
+        } else {
+            Self {
+                base: recovered,
+                equalized: None,
+                base_done: false,
+                equalized_done: true,
+            }
+        }
+    }
+    fn advance(&mut self, samples: &Samples) -> bool {
+        if !self.base_done {
+            self.base_done = self.base.advance(samples);
+        }
+        if self.base_done && self.base.valid_crc() {
+            return true;
+        }
+        if !self.equalized_done {
+            self.equalized_done = self.equalized.as_mut().unwrap().advance(samples);
+        }
+        self.base_done && self.equalized_done
+    }
+    fn select(self) -> Payload {
+        if self.base.valid_crc() {
+            return self.base;
+        }
+        if let Some(candidate) = self.equalized {
+            if candidate.valid_crc() {
+                return candidate;
+            }
+        }
+        self.base
+    }
+}
 struct Payload {
+    channel: Option<([ComplexSample; 6], [f32; 2])>,
     header: Header,
     start: IqPosition,
     bytes: Vec<u8>,
@@ -809,7 +989,113 @@ struct Payload {
     next: f64,
 }
 impl Payload {
+    fn valid_crc(&self) -> bool {
+        if self.bits != self.bytes.len() * 8 {
+            return false;
+        }
+        let split = self.bytes.len() - 4;
+        let mut crc = !0u32;
+        for byte in &self.bytes[..split] {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ (0xedb88320 & 0u32.wrapping_sub(crc & 1));
+            }
+        }
+        !crc == u32::from_le_bytes(self.bytes[split..].try_into().unwrap())
+    }
+    fn equalized_cck_symbol(
+        &self,
+        samples: &Samples,
+        start: f64,
+        h: [ComplexSample; 6],
+        noise: [f32; 2],
+    ) -> Option<(ComplexSample, u8, f32)> {
+        let mut chips = [ComplexSample::ZERO; 16];
+        let elapsed = if self.bits == 0 {
+            10. + 80. / 11.
+        } else {
+            160. / 11.
+        };
+        let previous = self
+            .header
+            .previous_symbol
+            .mul(ComplexSample::rotation(self.header.frequency_rad * elapsed));
+        for j in 0..16 {
+            let offset = (j as f64 * 0.5 + 0.25) * 20. / 11.;
+            chips[j] = samples.at(start + offset)?.mul(ComplexSample::rotation(
+                -self.header.frequency_rad * (offset as f32 - 80. / 11.),
+            ));
+        }
+        let count = if self.header.rate_bps == 5_500_000 {
+            4
+        } else {
+            64
+        };
+        let mut best = (ComplexSample::ZERO, 0, 0.);
+        for word in 0..count {
+            let (b, c, d) = if count == 4 {
+                (2 * (word & 1) + 1, 0, 2 * (word >> 1))
+            } else {
+                let phase = |v: u8| 2 * (v & 1) + ((v >> 1) & 1);
+                (phase(word), phase(word >> 2), phase(word >> 4))
+            };
+            let phases = [b + c + d, c + d, b + d, d, b + c, c, b, 0];
+            let mut code = [ComplexSample::ZERO; 8];
+            for k in 0..8 {
+                code[k] = match phases[k] % 4 {
+                    0 => ComplexSample { i: 1., q: 0. },
+                    1 => ComplexSample { i: 0., q: 1. },
+                    2 => ComplexSample { i: -1., q: 0. },
+                    _ => ComplexSample { i: 0., q: -1. },
+                }
+                .scale(if k == 3 || k == 6 { -1. } else { 1. });
+            }
+            let mut sum = ComplexSample::ZERO;
+            let mut energy = 0.;
+            let mut power = 0.;
+            for j in 0..16 {
+                let k = j / 2;
+                let h = &h[(j % 2) * 3..(j % 2) * 3 + 3];
+                let left = if k > 0 {
+                    h[0].mul(code[k - 1])
+                } else {
+                    ComplexSample::ZERO
+                };
+                let right = if k < 7 {
+                    h[2].mul(code[k + 1])
+                } else {
+                    ComplexSample::ZERO
+                };
+                let expected = left.add(h[1].mul(code[k])).add(right);
+                // Unmodeled neighboring chips add variance at symbol edges.
+                let boundary = if k == 7 {
+                    h[2].power()
+                } else if k == 0 {
+                    h[0].power()
+                } else {
+                    0.
+                };
+                let weight = 1. / (noise[j % 2].max(0.01) + boundary);
+                sum = sum.add(chips[j].mul(expected.conj()).scale(weight));
+                energy += expected.power() * weight;
+                power += chips[j].power() * weight;
+            }
+            // Differential CCK permits four common phases. Compare each
+            // channel-shaped word at those phases rather than an arbitrary one.
+            let rotated = sum.mul(previous.conj());
+            let score =
+                (rotated.i * rotated.i).max(rotated.q * rotated.q) / previous.power().max(1e-12);
+            let quality = score / (energy * power).max(1e-12);
+            if quality > best.2 {
+                best = (sum.scale(1. / energy.max(1e-12)), word, quality);
+            }
+        }
+        Some(best)
+    }
     fn cck(&self, samples: &Samples, start: f64) -> Option<(ComplexSample, u8, f32)> {
+        if let Some((h, noise)) = self.channel {
+            return self.equalized_cck_symbol(samples, start, h, noise);
+        }
         let mut chips = [ComplexSample::ZERO; 8];
         let mut power = 0.;
         for (k, chip) in chips.iter_mut().enumerate() {
@@ -969,7 +1255,7 @@ impl Payload {
 pub struct DsssCckDecoder {
     acquisition: Acquisition,
     continuity: IqContinuity,
-    pending: Option<Payload>,
+    pending: Option<PayloadCandidates>,
     terminal: bool,
     stats: DecoderStats,
 }
@@ -1037,17 +1323,19 @@ impl PhyDecoder for DsssCckDecoder {
                 if pending.is_none() {
                     let mut start = chunk.position().clone();
                     start.sample_index = header.preamble_start.floor() as u64;
-                    *pending = Some(Payload {
+                    let recovered = Payload {
+                        channel: header.trained_channel,
                         next: header.payload_start,
                         bytes: vec![0; header.psdu_bytes],
                         bits: 0,
                         start,
                         header,
-                    });
+                    };
+                    *pending = Some(PayloadCandidates::new(recovered));
                 }
             }
             if pending.as_mut().is_some_and(|p| p.advance(samples)) {
-                let p = pending.take().unwrap();
+                let p = pending.take().unwrap().select();
                 let split = p.bytes.len() - 4;
                 let mut crc = !0u32;
                 for byte in &p.bytes[..split] {

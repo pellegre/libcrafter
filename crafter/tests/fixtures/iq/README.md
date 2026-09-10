@@ -150,7 +150,7 @@ No synthetic waveform is evidence of live receiver agreement.
 
 ### Implemented independent DSSS/CCK inventory
 
-`python3 tools/oracle/engine/backends/dsss_vectors.py` creates 26 bounded
+`python3 tools/oracle/engine/backends/dsss_vectors.py` creates 32 bounded
 `dsss-*` fixtures. `--check` regenerates in a temporary directory and compares
 all bytes, including the inventory and generator digest, without changing the
 checked-in files. The encoder imports only Python's standard library. The
@@ -160,7 +160,13 @@ Seven clean fixtures cover every valid preamble/rate combination. Four separate
 long-preamble impaired fixtures cover each rate with a fractional start at
 37.375 source samples, +35 ppm sample-clock error, +45 kHz carrier offset,
 0.63 radians phase, deterministic uniform noise and a 0.22-amplitude path
-1.3 chips late. Four short/11 Mbps fixtures use the literal 1023–1026 octet
+1.3 chips late. Two `channel_echo` fixtures cover long and short 11 Mbps
+preambles with a 0.65-amplitude, pi/2-phase path one chip late, retaining those
+clock, carrier and noise impairments at gain 0.35. They exercise header-trained
+CCK channel correction with independently known transmitted bytes. Four
+additional CCK fixtures deliberately corrupt the MAC FCS at both rates and
+preamble lengths, ensuring that alternate payload hypotheses still reject it.
+Four short/11 Mbps fixtures use the literal 1023–1026 octet
 length-extension boundary cases. Remaining cases cover alternate long seed,
 header CRC, MAC FCS, SFD, SIGNAL and PBCC rejection, and truncation during SYNC,
 SFD, header and payload. All PSDUs are synthetic, with locally administered MAC
