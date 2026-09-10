@@ -706,9 +706,9 @@ allocation and input, including scheduling overhead. This architecture has two
 independent PHY workers; allocating four CPUs does not create four DSP stages.
 
 A leading `--parallel` modifier selects the two-worker decoder in the receive
-example, including its explicit `--live` mode. It is mutually exclusive with
+example; `--parallel-dsss` selects three workers. Both support explicit `--live` mode. It is mutually exclusive with
 `--ofdm-only` and `--capture-only`. Newly saved IQ headers record `dispatch` as
-`serial` or `parallel`; ordinary artifact replay preserves this selection.
+`serial`, `parallel`, or `parallel_dsss`; ordinary artifact replay preserves this selection.
 Older headers without `dispatch` retain serial behavior. Explicit `--parallel`
 or `--ofdm-only` overrides the saved selection for a diagnostic replay. Unknown,
 non-string, and incompatible dispatch metadata is rejected. The input encoding,
@@ -728,7 +728,8 @@ count emitted frames to measure delivered receptions.
 
 Use `--benchmark-artifact saved.iq parallel-dsss` to evaluate this mode. It is
 also usable through the existing `PhyDecoder` and `RadioPacketSource` APIs.
-The receive example's `--parallel` flag continues to select two workers.
+The receive example's `--parallel` flag continues to select two workers;
+`--parallel-dsss` selects this three-worker mode for live reception or replay.
 
 An optional final `FRAMES_JSONL` argument to `--benchmark-artifact` writes each
 recovered frame's bytes, integrity, rate, epoch, and sample interval. The file

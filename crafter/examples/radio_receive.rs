@@ -133,6 +133,21 @@ impl<S: IqSource> IqSource for ObservedSource<'_, S> {
         self.source.cancel();
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Dispatch {
+    Serial,
+    Parallel,
+    ParallelDsss,
+}
+impl Dispatch {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Serial => "serial",
+            Self::Parallel => "parallel",
+            Self::ParallelDsss => "parallel_dsss",
+        }
+    }
+}
 enum SelectedDecoder {
     Ofdm(LegacyOfdmDecoder),
     Wifi(LegacyWifiDecoder),
@@ -195,10 +210,10 @@ fn receive(
     iq_path: Option<&str>,
     software_start: Option<u64>,
     ofdm_only: bool,
-    parallel: bool,
+    dispatch: Dispatch,
 ) -> Result<()> {
     let out = Rc::new(RefCell::new(BufWriter::new(std::io::stdout())));
-    let header = json!({"kind":"header","schema":SCHEMA,"config":Config::from(&config),"decoder":if ofdm_only {"ofdm"} else {"legacy_wifi"},"dispatch":if parallel {"parallel"} else {"serial"},"time_basis":if software_start.is_some(){"software_bracket_only"}else{"recorded_anchor_or_unknown"}});
+    let header = json!({"kind":"header","schema":SCHEMA,"config":Config::from(&config),"decoder":if ofdm_only {"ofdm"} else {"legacy_wifi"},"dispatch":dispatch.label(),"time_basis":if software_start.is_some(){"software_bracket_only"}else{"recorded_anchor_or_unknown"}});
     emit(&out, header.clone())?;
     let mut iq = if let Some(path) = iq_path {
         let file = OpenOptions::new().write(true).create_new(true).open(path)?;
@@ -215,7 +230,9 @@ fn receive(
         software_start,
     };
     let decoder = ObservedDecoder {
-        inner: if parallel {
+        inner: if dispatch == Dispatch::ParallelDsss {
+            SelectedDecoder::Parallel(ParallelLegacyWifiDecoder::with_parallel_dsss()?)
+        } else if dispatch == Dispatch::Parallel {
             SelectedDecoder::Parallel(ParallelLegacyWifiDecoder::new()?)
         } else if ofdm_only {
             SelectedDecoder::Ofdm(LegacyOfdmDecoder::new())
@@ -265,7 +282,7 @@ struct ArtifactSource {
     end: Option<StreamEnd>,
     binary: bool,
     ofdm_only: bool,
-    parallel: bool,
+    dispatch: Dispatch,
 }
 impl ArtifactSource {
     fn open(path: &str) -> Result<Self> {
@@ -283,10 +300,11 @@ impl ArtifactSource {
                 _ => return Err("missing or unsupported IQ decoder".into()),
             }
         };
-        let parallel = match h.get("dispatch").and_then(serde_json::Value::as_str) {
-            None if h.get("dispatch").is_none() => false,
-            Some("serial") => false,
-            Some("parallel") if !ofdm_only => true,
+        let dispatch = match h.get("dispatch").and_then(serde_json::Value::as_str) {
+            None if h.get("dispatch").is_none() => Dispatch::Serial,
+            Some("serial") => Dispatch::Serial,
+            Some("parallel") if !ofdm_only => Dispatch::Parallel,
+            Some("parallel_dsss") if !ofdm_only => Dispatch::ParallelDsss,
             _ => return Err("unsupported or conflicting IQ dispatch".into()),
         };
         let config: Config = serde_json::from_value(h["config"].clone())?;
@@ -302,7 +320,7 @@ impl ArtifactSource {
             end: None,
             binary,
             ofdm_only,
-            parallel,
+            dispatch,
         })
     }
 }
@@ -443,11 +461,16 @@ fn main() -> Result<()> {
     } else {
         false
     };
-    let parallel = if args.first().map(String::as_str) == Some("--parallel") {
-        args.remove(0);
-        true
-    } else {
-        false
+    let dispatch = match args.first().map(String::as_str) {
+        Some("--parallel") => {
+            args.remove(0);
+            Dispatch::Parallel
+        }
+        Some("--parallel-dsss") => {
+            args.remove(0);
+            Dispatch::ParallelDsss
+        }
+        _ => Dispatch::Serial,
     };
     let ofdm_only = if args.first().map(String::as_str) == Some("--ofdm-only") {
         args.remove(0);
@@ -455,8 +478,8 @@ fn main() -> Result<()> {
     } else {
         false
     };
-    if parallel && ofdm_only {
-        return Err("--parallel and --ofdm-only are mutually exclusive".into());
+    if dispatch != Dispatch::Serial && ofdm_only {
+        return Err("parallel dispatch and --ofdm-only are mutually exclusive".into());
     }
     let iq_path = if args.len() >= 2 && args[args.len() - 2] == "--save-iq" {
         let path = args.pop();
@@ -488,7 +511,7 @@ fn main() -> Result<()> {
         && (args.first().map(String::as_str) != Some("--live")
             || iq_path.is_some()
             || ofdm_only
-            || parallel)
+            || dispatch != Dispatch::Serial)
     {
         return Err(
             "--capture-only requires --live and cannot record IQ or select a decoder".into(),
@@ -541,7 +564,7 @@ fn main() -> Result<()> {
                     iq_path.as_deref(),
                     Some(start),
                     ofdm_only,
-                    parallel,
+                    dispatch,
                 )
             };
             let s = source.stats();
@@ -555,10 +578,10 @@ fn main() -> Result<()> {
         return Err("live reception requires radio-hackrf".into());
     }
     match args.as_slice() {
-        []=>receive(&mut ReaderIqSource::new(Cursor::new(include_bytes!("../tests/fixtures/iq/ofdm-6-clean.cs8")),config.clone(),position)?,config,iq_path.as_deref(),None,ofdm_only,parallel),
-        [flag,path] if flag=="--replay"=>receive(&mut ReaderIqSource::new(File::open(path)?,config.clone(),position)?,config,iq_path.as_deref(),None,ofdm_only,parallel),
-        [flag,path,hz,seconds,samples] if flag=="--replay"=>{let mut c=config;c.center_frequency_hz=hz.parse()?;c.max_duration=Duration::from_secs(seconds.parse()?);c.max_capture_samples=samples.parse()?;receive(&mut ReaderIqSource::new(File::open(path)?,c.clone(),position)?,c,iq_path.as_deref(),None,ofdm_only,parallel)},
-        [flag,path] if flag=="--replay-artifact"=>{let mut s=ArtifactSource::open(path)?;let c=s.config.clone();let selected_parallel=parallel || (!ofdm_only && s.parallel);let selected_ofdm=!selected_parallel && (ofdm_only || s.ofdm_only);receive(&mut s,c,iq_path.as_deref(),None,selected_ofdm,selected_parallel)},
+        []=>receive(&mut ReaderIqSource::new(Cursor::new(include_bytes!("../tests/fixtures/iq/ofdm-6-clean.cs8")),config.clone(),position)?,config,iq_path.as_deref(),None,ofdm_only,dispatch),
+        [flag,path] if flag=="--replay"=>receive(&mut ReaderIqSource::new(File::open(path)?,config.clone(),position)?,config,iq_path.as_deref(),None,ofdm_only,dispatch),
+        [flag,path,hz,seconds,samples] if flag=="--replay"=>{let mut c=config;c.center_frequency_hz=hz.parse()?;c.max_duration=Duration::from_secs(seconds.parse()?);c.max_capture_samples=samples.parse()?;receive(&mut ReaderIqSource::new(File::open(path)?,c.clone(),position)?,c,iq_path.as_deref(),None,ofdm_only,dispatch)},
+        [flag,path] if flag=="--replay-artifact"=>{let mut s=ArtifactSource::open(path)?;let c=s.config.clone();let selected_dispatch=if ofdm_only {Dispatch::Serial} else if dispatch != Dispatch::Serial {dispatch} else {s.dispatch};let selected_ofdm=selected_dispatch == Dispatch::Serial && (ofdm_only || s.ofdm_only);receive(&mut s,c,iq_path.as_deref(),None,selected_ofdm,selected_dispatch)},
         _=>Err("use no arguments, --replay FILE [HZ SECONDS MAX_SAMPLES], --replay-artifact FILE, or --live parameters; optional final --save-iq NEW_FILE".into()),
     }
 }
@@ -658,9 +681,19 @@ mod tests {
             max_duration: Duration::from_secs(1),
         };
         for (decoder, dispatch, expected) in [
-            ("legacy_wifi", None, Some(false)),
-            ("legacy_wifi", Some(json!("serial")), Some(false)),
-            ("legacy_wifi", Some(json!("parallel")), Some(true)),
+            ("legacy_wifi", None, Some(Dispatch::Serial)),
+            ("legacy_wifi", Some(json!("serial")), Some(Dispatch::Serial)),
+            (
+                "legacy_wifi",
+                Some(json!("parallel")),
+                Some(Dispatch::Parallel),
+            ),
+            (
+                "legacy_wifi",
+                Some(json!("parallel_dsss")),
+                Some(Dispatch::ParallelDsss),
+            ),
+            ("ofdm", Some(json!("parallel_dsss")), None),
             ("ofdm", Some(json!("parallel")), None),
             ("legacy_wifi", Some(json!("future")), None),
             ("legacy_wifi", Some(json!(null)), None),
@@ -672,7 +705,7 @@ mod tests {
             std::fs::write(&path, format!("{header}\n")).unwrap();
             let actual = ArtifactSource::open(path.to_str().unwrap());
             match expected {
-                Some(expected) => assert_eq!(actual.unwrap().parallel, expected),
+                Some(expected) => assert_eq!(actual.unwrap().dispatch, expected),
                 None => assert!(actual.is_err()),
             }
             std::fs::remove_file(&path).unwrap();
