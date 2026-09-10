@@ -260,6 +260,7 @@ fn receive(
         }
     };
     let s = packets.decoder().inner.stats();
+    let emitted_frames = packets.decoder().ordinal;
     let terminal = packets.end().map(|e| format!("{e:?}"));
     drop(packets);
     let recording_error = iq.as_mut().and_then(|w| w.finish().err());
@@ -270,7 +271,7 @@ fn receive(
     }
     emit(
         &out,
-        json!({"kind":"summary","complete":result.is_ok(),"terminal":terminal,"error":result.as_ref().err().map(ToString::to_string),"recording_error":recording_error.map(|e|e.to_string()),"parsed_packets":parsed,"parser_failures":parser_errors,"decoder":{"valid_frames":s.valid_frames,"invalid_fcs":s.invalid_fcs,"rejected_frames":s.rejected_frames,"truncated_frames":s.truncated_frames,"dropped_frames":s.dropped_frames}}),
+        json!({"kind":"summary","complete":result.is_ok(),"terminal":terminal,"error":result.as_ref().err().map(ToString::to_string),"recording_error":recording_error.map(|e|e.to_string()),"emitted_frames":emitted_frames,"parsed_packets":parsed,"parser_failures":parser_errors,"decoder":{"valid_frames":s.valid_frames,"invalid_fcs":s.invalid_fcs,"rejected_frames":s.rejected_frames,"truncated_frames":s.truncated_frames,"dropped_frames":s.dropped_frames}}),
     )?;
     out.borrow_mut().flush()?;
     result
