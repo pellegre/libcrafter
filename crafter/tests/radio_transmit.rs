@@ -78,3 +78,13 @@ fn transmitter_accepts_radio_writer_and_non_dot11_is_rejected() {
     assert_eq!(reports.len(), 1);
     assert!(transmitter.send(Raw::from("not wifi")).is_err());
 }
+
+#[test]
+fn hackrf_offline_preparation_requires_no_device() {
+    let writer = RadioPacketWriter::new(
+        LegacyWifiTxConfig::ofdm(LegacyOfdmRate::Mbps54),
+        MemoryIqSink::new(),
+    );
+    let transmission = writer.encode_record(&PacketRecord::new(packet())).unwrap();
+    assert_eq!(transmission.sample_count() * 2, transmission.cs8().len());
+}

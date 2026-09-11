@@ -154,6 +154,8 @@ pub use radio::{
     LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink, OfdmSignalFields,
     RadioPacketWriter, WifiFcsPolicy,
 };
+#[cfg(feature = "radio-hackrf")]
+pub use radio::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};
 pub use registry::{
     EthertypeBindingContext, Ipv4ProtocolBindingContext, Ipv6NextHeaderBindingContext,
     ProtocolRegistry, TcpBindingContext, UdpBindingContext,
@@ -257,6 +259,8 @@ pub mod prelude {
         LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink, OfdmSignalFields,
         RadioPacketWriter, WifiFcsPolicy,
     };
+    #[cfg(feature = "radio-hackrf")]
+    pub use crate::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};
     #[cfg(feature = "whad")]
     pub use crate::{WhadBleMode, WhadDot15d4Mode, WhadWireBuilder};
 }

@@ -192,8 +192,92 @@ fn parse_args() -> Result<(bool, Option<PathBuf>)> {
 }
 
 fn main() -> Result<()> {
+    #[cfg(feature = "radio-hackrf")]
+    if std::env::args().nth(1).as_deref() == Some("--live-hackrf") {
+        return run_live(std::env::args().skip(2).collect());
+    }
     let (matrix, save) = parse_args()?;
     run(matrix, save.as_deref(), std::io::stdout())?;
+    Ok(())
+}
+
+#[cfg(feature = "radio-hackrf")]
+fn run_live(args: Vec<String>) -> Result<()> {
+    use std::{collections::BTreeMap, time::Duration};
+    let mut values = BTreeMap::new();
+    let mut index = 0;
+    while index < args.len() {
+        let key = args[index]
+            .strip_prefix("--")
+            .ok_or("live arguments require --name VALUE")?;
+        let value = args.get(index + 1).ok_or("live argument missing value")?;
+        if values.insert(key.to_owned(), value.to_owned()).is_some() {
+            return Err(format!("duplicate live argument: --{key}").into());
+        }
+        index += 2;
+    }
+    let required = |name: &str| -> Result<String> {
+        values
+            .get(name)
+            .cloned()
+            .ok_or_else(|| -> Box<dyn Error> { format!("missing explicit --{name}").into() })
+    };
+    let boolean = |name: &str| -> Result<bool> {
+        match required(name)?.as_str() {
+            "true" => Ok(true),
+            "false" => Ok(false),
+            _ => Err(format!("--{name} requires true or false").into()),
+        }
+    };
+    let config = HackRfTxConfig {
+        serial: required("serial")?,
+        center_frequency_hz: required("frequency-hz")?.parse()?,
+        sample_rate_hz: required("sample-rate-hz")?.parse()?,
+        baseband_filter_hz: required("filter-hz")?.parse()?,
+        tx_vga_gain_db: required("tx-gain-db")?.parse()?,
+        amplifier_enabled: boolean("amplifier")?,
+        antenna_power_enabled: boolean("antenna-power")?,
+        max_duration: Duration::from_millis(required("max-duration-ms")?.parse()?),
+        max_supplied_samples: required("max-samples")?.parse()?,
+        repetitions: required("repetitions")?.parse()?,
+        inter_burst_gap_samples: required("gap-samples")?.parse()?,
+    };
+    let matrix = required("matrix")? == "true";
+    let mut sink = HackRfTxSink::open_live(config)?;
+    let selected = cases(matrix);
+    println!(
+        "{}",
+        json!({"schema":SCHEMA,"kind":"header","case_count":selected.len(),"offline":false})
+    );
+    for case in selected {
+        let phy_config = match case.phy {
+            LegacyWifiPhy::Ofdm(rate) => LegacyWifiTxConfig::ofdm(rate),
+            LegacyWifiPhy::DsssCck { rate, preamble } => {
+                LegacyWifiTxConfig::dsss_cck(rate, preamble)
+            }
+        };
+        let mut writer = RadioPacketWriter::new(phy_config, sink);
+        writer.write_record(&PacketRecord::new(packet(case.id)))?;
+        let stats = writer
+            .sink()
+            .last_stats()
+            .ok_or("missing HackRF terminal stats")?;
+        println!(
+            "{}",
+            json!({
+                "schema":SCHEMA,"kind":"case","case_id":case.id,"terminal":"complete",
+                "requested_samples":stats.requested_samples,"supplied_samples":stats.supplied_samples,
+                "padded_samples":stats.padded_samples,"callbacks":stats.callbacks,
+                "completed_repetitions":stats.completed_repetitions,"firmware_shortfalls":stats.firmware_shortfalls,
+                "stopped":stats.stopped
+            })
+        );
+        sink = writer.into_sink();
+    }
+    println!(
+        "{}",
+        json!({"schema":SCHEMA,"kind":"summary","complete":true,"terminal":"complete"})
+    );
     Ok(())
 }
 
