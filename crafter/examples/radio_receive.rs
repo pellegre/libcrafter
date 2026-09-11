@@ -119,7 +119,11 @@ impl<S: IqSource> IqSource for ObservedSource<'_, S> {
             }
             IqEvent::End(e) => json!({"kind":"terminal","reason":format!("{e:?}")}),
         };
-        emit(&self.out, value.clone())?;
+        // End-of-source may flush frames from a buffered decoder. The observed
+        // decoder emits the terminal record after those frames.
+        if matches!(event, IqEvent::Chunk(_)) {
+            emit(&self.out, value.clone())?;
+        }
         if let Some(w) = &mut self.iq {
             let bytes = match &event {
                 IqEvent::Chunk(c) => Some(c.cs8().iter().map(|b| *b as u8).collect()),
@@ -196,12 +200,22 @@ struct ObservedDecoder {
 }
 impl PhyDecoder for ObservedDecoder {
     fn consume(&mut self, event: IqEvent) -> RadioResult<DecodeOutput> {
+        let terminal = match &event {
+            IqEvent::End(end) => Some(*end),
+            IqEvent::Chunk(_) => None,
+        };
         let decoded = self.inner.consume(event)?;
         for f in &decoded.frames {
             self.ordinal += 1;
             emit(
                 &self.out,
                 json!({"kind":"frame","ordinal":self.ordinal,"original_mac_hex":hex(&f.bytes),"fcs":match f.integrity {FrameIntegrity::ValidFcs=>"present_valid",FrameIntegrity::InvalidFcs=>"present_invalid",FrameIntegrity::FcsAbsent=>"absent"},"phy":phy_family(f.rate_bps),"preamble":f.diagnostics.iter().find_map(|d| match d { PhyDiagnostic::Dsss { short_preamble, .. } => Some(if *short_preamble { "short" } else { "long" }), _ => None }),"rate_bps":f.rate_bps,"config":Config::from(&f.config),"position":Position::from(&f.start),"end_sample_index":f.end_sample_index,"diagnostics":f.diagnostics.iter().map(|d|format!("{d:?}")).collect::<Vec<_>>()}),
+            )?;
+        }
+        if let Some(end) = terminal {
+            emit(
+                &self.out,
+                json!({"kind":"terminal","reason":format!("{end:?}")}),
             )?;
         }
         Ok(decoded)
