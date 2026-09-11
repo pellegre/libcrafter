@@ -280,7 +280,7 @@ budget or establish sustained reception. At 20 Msps, 262144 samples represent
 13.1 ms of input, compared with 3.3 ms for the default limit.
 
 The example accepts an optional leading `--buffer-samples N` for live reception
-or raw replay (65536–536870912 complex samples; default 2097152). The maximum
+or raw replay (65536–536870912 complex samples; default 16777216). The maximum
 allows 1 GiB of queued CS8 data, plus chunk metadata and decoder state. Memory
 is consumed as samples arrive. Size the queue for the available memory and
 allow additional time to drain it after bounded reception stops. A 20-second
@@ -749,6 +749,22 @@ Use `--benchmark-artifact saved.iq parallel-dsss` to evaluate this mode. It is
 also usable through the existing `PhyDecoder` and `RadioPacketSource` APIs.
 The receive example's `--parallel` flag continues to select two workers;
 `--parallel-dsss` selects this three-worker mode for live reception or replay.
+
+`WindowedLegacyWifiDecoder::new(workers)?` scales the complete legacy Wi-Fi
+decoder over coarse time windows. Each window contains a 100 ms core followed
+by enough overlap to finish the longest permitted 1 Mbps frame. A recovered
+frame belongs to the worker whose core contains its preamble coordinate, so
+overlap cannot duplicate an occurrence. Discontinuities finish the preceding
+epoch before resetting window assembly, and explicit reset drains and discards
+old worker results. The configured sample buffer must cover the assembly window
+and one in-flight window per worker; insufficient bounds fail before samples
+are retained.
+
+Use `--parallel-windows` to select four window workers in the receive example,
+or `--benchmark-artifact saved.iq windowed-4` for offline measurement. Windowed
+frames retain their original coordinates and enter `RadioPacketSource` through
+the normal `PhyDecoder` interface. Larger worker counts increase bounded memory
+and can help only when the assigned CPUs provide corresponding execution time.
 
 An optional final `FRAMES_JSONL` argument to `--benchmark-artifact` writes each
 recovered frame's bytes, integrity, rate, epoch, and sample interval. The file
