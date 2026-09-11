@@ -71,6 +71,8 @@ struct State {
     ready: VecDeque<IqChunk>,
     buffered: usize,
     sequence: u64,
+    counter_baseline: (u32, u32),
+    next_discontinuity: Option<Discontinuity>,
     stop: bool,
     cancelled: bool,
     terminal: Option<RadioResult<StreamEnd>>,
@@ -135,7 +137,7 @@ impl Shared {
                 sequence: s.sequence,
                 sample_index: s.stats.received_samples,
                 time_anchor: None,
-                discontinuity: None,
+                discontinuity: s.next_discontinuity.take(),
             };
             match IqChunk::new(self.config.clone(), position, part.to_vec()) {
                 Ok(chunk) => {
@@ -167,7 +169,7 @@ impl Shared {
         let mut s = self.lock();
         s.stats.counter_queries += 1;
         match counter {
-            Ok((0, 0)) => {
+            Ok(current) if s.counter_baseline == current => {
                 if s.fault.is_none() && !s.cancelled {
                     while s
                         .pending
@@ -185,16 +187,17 @@ impl Shared {
                     s.stop = true;
                 }
             }
-            failure => {
+            Ok(current) => {
+                Self::discard_pending(&mut s);
+                Self::gap(&mut s, GapReason::SourceLoss);
+                s.counter_baseline = current;
+                s.next_discontinuity = s.stats.last_gap;
+            }
+            Err(error) => {
                 Self::discard_pending(&mut s);
                 Self::gap(&mut s, GapReason::SourceLoss);
                 if s.fault.is_none() {
-                    s.fault = Some(match failure {
-                        Ok((shortfalls, longest)) => RadioError::Source(format!(
-                            "HackRF continuity counters changed (shortfalls={shortfalls}, longest_shortfall={longest})"
-                        )),
-                        Err(error) => error,
-                    });
+                    s.fault = Some(error);
                 }
                 s.stop = true;
             }
@@ -212,8 +215,9 @@ trait Driver {
 }
 
 /// Explicit live opt-in is `open_live`. A supervisor enforces the wall-clock
-/// deadline even when the consumer stalls. Any loss terminates capture; verified
-/// prefixes remain readable, then a sticky structured error reports the gap.
+/// deadline even when the consumer stalls. Firmware shortfalls discard the
+/// uncertain interval and mark the next verified chunk as discontinuous. Native
+/// query failures, disconnects, and queue overflow remain terminal errors.
 pub struct HackRfSource {
     emitted_sequence: u64,
     shared: Arc<Shared>,
@@ -240,6 +244,8 @@ impl HackRfSource {
                 ready: VecDeque::new(),
                 buffered: 0,
                 sequence: 0,
+                counter_baseline: (0, 0),
+                next_discontinuity: None,
                 stop: false,
                 cancelled: false,
                 terminal: None,
@@ -489,6 +495,13 @@ mod tests {
                     _ => (),
                 }
             }
+            if self.queries == 3 && self.mode == 9 {
+                shared.receive(&[4; 8]);
+                return Ok((1, 4));
+            }
+            if self.mode == 9 && self.queries >= 2 {
+                return Ok((1, 4));
+            }
             Ok((0, 0))
         }
         fn streaming(&mut self) -> bool {
@@ -509,6 +522,9 @@ mod tests {
         let mut rx = config();
         if matches!(mode, 3 | 7) {
             rx.max_buffer_samples = 4;
+        }
+        if mode == 9 {
+            rx.max_capture_samples = 12;
         }
         if mode == 5 {
             rx.max_duration = Duration::from_millis(10);
@@ -604,7 +620,7 @@ mod tests {
         assert_eq!(source.stats().queued_samples, 0);
     }
     #[test]
-    fn radio_hackrf_coalescing_preserves_verified_prefix_on_loss() {
+    fn radio_hackrf_coalescing_preserves_verified_prefix_on_shortfall() {
         let mut source = batching_source(4);
         let IqEvent::Chunk(first) = source.next_event().unwrap() else {
             panic!()
@@ -613,7 +629,11 @@ mod tests {
         assert_eq!(source.stats().verified_samples, 4);
         assert_eq!(source.stats().discarded_samples, 4);
         assert_eq!(source.stats().queued_samples, 0);
-        assert!(source.next_event().is_err());
+        assert!(matches!(
+            source.next_event().unwrap(),
+            IqEvent::End(StreamEnd::LimitReached)
+        ));
+        assert_eq!(source.stats().unknown_loss_intervals, 1);
     }
     #[test]
     fn radio_hackrf_configuration_and_start_failure() {
@@ -659,25 +679,45 @@ mod tests {
         ));
     }
     #[test]
-    fn radio_hackrf_counter_failure_preserves_only_verified_prefix() {
-        for mode in [4, 6] {
-            let (s, _) = source(mode);
-            let mut s = s.unwrap();
-            let IqEvent::Chunk(c) = s.next_event().unwrap() else {
-                panic!()
-            };
-            assert_eq!(c.cs8(), &[1; 8]);
-            let e = s.next_event().unwrap_err();
-            if mode == 4 {
-                assert!(e.to_string().contains("shortfalls=1, longest_shortfall=0"));
-            } else {
-                assert_eq!(e, RadioError::Source("mock unavailable".into()));
-            }
-            assert_eq!(e, s.next_event().unwrap_err());
-            assert_eq!(s.stats().verified_samples, 4);
-            assert_eq!(s.stats().discarded_samples, 4);
-            assert!(s.stats().unknown_loss_intervals > 0);
-        }
+    fn radio_hackrf_counter_query_failure_preserves_only_verified_prefix() {
+        let (s, _) = source(6);
+        let mut s = s.unwrap();
+        let IqEvent::Chunk(c) = s.next_event().unwrap() else {
+            panic!()
+        };
+        assert_eq!(c.cs8(), &[1; 8]);
+        let e = s.next_event().unwrap_err();
+        assert_eq!(e, RadioError::Source("mock unavailable".into()));
+        assert_eq!(e, s.next_event().unwrap_err());
+        assert_eq!(s.stats().verified_samples, 4);
+        assert_eq!(s.stats().discarded_samples, 4);
+        assert!(s.stats().unknown_loss_intervals > 0);
+    }
+    #[test]
+    fn radio_hackrf_counter_shortfall_marks_gap_and_continues() {
+        let (source, _) = source(9);
+        let mut source = source.unwrap();
+        let IqEvent::Chunk(first) = source.next_event().unwrap() else {
+            panic!()
+        };
+        assert_eq!(first.cs8(), &[1; 8]);
+        assert_eq!(first.position().discontinuity, None);
+        let IqEvent::Chunk(after_gap) = source.next_event().unwrap() else {
+            panic!()
+        };
+        assert_eq!(after_gap.cs8(), &[4; 8]);
+        assert_eq!(
+            after_gap.position().discontinuity.map(|gap| gap.reason),
+            Some(GapReason::SourceLoss)
+        );
+        assert!(matches!(
+            source.next_event().unwrap(),
+            IqEvent::End(StreamEnd::LimitReached)
+        ));
+        let stats = source.stats();
+        assert_eq!(stats.verified_samples, 8);
+        assert_eq!(stats.discarded_samples, 4);
+        assert_eq!(stats.unknown_loss_intervals, 1);
     }
     #[test]
     fn radio_hackrf_disconnect_queue_overflow_and_shutdown() {
