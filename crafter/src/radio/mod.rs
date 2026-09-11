@@ -5,6 +5,7 @@
 //! IQ is never a packet layer; only recovered MAC bytes cross the packet boundary.
 mod data;
 mod dsss;
+mod dsss_tx;
 #[cfg(any(feature = "radio-hackrf", test))]
 mod hackrf;
 mod ofdm_tx;
@@ -20,6 +21,10 @@ mod wifi;
 mod windowed;
 pub use data::{DecoderStats, LegacyOfdmDecoder};
 pub use dsss::DsssCckDecoder;
+pub use dsss_tx::{
+    DsssPlcpFields, DsssPreamble, LegacyDsssCckRate, LegacyDsssCckTransmission,
+    LegacyDsssCckTxConfig,
+};
 pub use ofdm_tx::{LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig, OfdmSignalFields};
 pub use replay::{MemoryIqSource, ReaderIqSource};
 pub use signal::SignalInfo;
