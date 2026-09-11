@@ -147,6 +147,13 @@ pub use packet::{
     TransportChecksumContext,
 };
 pub use protocols::exports::*;
+#[cfg(feature = "radio")]
+pub use radio::{
+    DsssPlcpFields, DsssPreamble, IqSink, LegacyDsssCckRate, LegacyDsssCckTransmission,
+    LegacyDsssCckTxConfig, LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig,
+    LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink, OfdmSignalFields,
+    RadioPacketWriter, WifiFcsPolicy,
+};
 pub use registry::{
     EthertypeBindingContext, Ipv4ProtocolBindingContext, Ipv6NextHeaderBindingContext,
     ProtocolRegistry, TcpBindingContext, UdpBindingContext,
@@ -242,6 +249,13 @@ pub mod prelude {
         SnifferCancel, SnifferHandle, TraceAppendTransform, TransformOutput, TransformTrace,
         IP_DEFRAG_DEFAULT_MAX_AGE, IP_DEFRAG_DEFAULT_MAX_BYTES_PER_DATAGRAM,
         IP_DEFRAG_DEFAULT_MAX_DATAGRAMS, IP_FRAGMENT_MIN_MTU,
+    };
+    #[cfg(feature = "radio")]
+    pub use crate::{
+        DsssPlcpFields, DsssPreamble, IqSink, LegacyDsssCckRate, LegacyDsssCckTransmission,
+        LegacyDsssCckTxConfig, LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig,
+        LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink, OfdmSignalFields,
+        RadioPacketWriter, WifiFcsPolicy,
     };
     #[cfg(feature = "whad")]
     pub use crate::{WhadBleMode, WhadDot15d4Mode, WhadWireBuilder};

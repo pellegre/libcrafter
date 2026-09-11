@@ -3,8 +3,36 @@
 mod artifact;
 #[path = "radio_support/compare.rs"]
 mod compare;
+#[path = "radio_support/transmit_compare.rs"]
+mod transmit_compare;
 fn main() -> artifact::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--compare-transmit") {
+        if args.len() != 4 {
+            return Err(
+                "usage: radio_compare --compare-transmit PLAN.jsonl CAPTURE.pcap REPORT.json"
+                    .into(),
+            );
+        }
+        let report = transmit_compare::compare(&args[1], &args[2])?;
+        artifact::write_json(&mut std::fs::File::create(&args[3])?, &report)?;
+        artifact::write_json(&mut std::io::stdout(), &report)?;
+        if report["status"] != "passed" {
+            return Err("transmit comparison requirements failed".into());
+        }
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("--verify-transmit-qualification") {
+        if args.len() != 2 {
+            return Err(
+                "usage: radio_compare --verify-transmit-qualification QUALIFICATION.json".into(),
+            );
+        }
+        return artifact::write_json(
+            &mut std::io::stdout(),
+            &transmit_compare::verify_qualification(&args[1])?,
+        );
+    }
     if args.len() != 3 {
         return Err("usage: radio_compare RECEIVE.jsonl REFERENCE.pcap POLICY.json".into());
     }
