@@ -61,3 +61,7 @@ required-features = ["radio"]
 [[example]]
 name = "radio_compare"
 required-features = ["radio"]
+
+[[example]]
+name = "radio_transmit"
+required-features = ["radio"]
