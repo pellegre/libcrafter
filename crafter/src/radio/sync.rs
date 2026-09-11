@@ -2,7 +2,7 @@
 //! Fixed storage, sample-at-a-time operation; no packet is asserted by acquisition.
 #![allow(dead_code)] // Consumed by the subsequent SIGNAL/DATA decoder increment.
 use super::*;
-use std::f32::consts::TAU;
+use std::{f32::consts::TAU, sync::OnceLock};
 
 impl ComplexSample {
     pub(super) const ZERO: Self = Self { i: 0., q: 0. };
@@ -52,6 +52,11 @@ impl ComplexSample {
 
 /// Natural-order, unnormalized forward FFT. Negative carriers use bin 64+k.
 pub(super) fn fft64(mut x: [ComplexSample; 64]) -> [ComplexSample; 64] {
+    // Every radix-2 stage uses a subset of these fixed rotations. Sharing the
+    // table avoids trigonometric calls for every received OFDM symbol.
+    static ROTATIONS: OnceLock<[ComplexSample; 32]> = OnceLock::new();
+    let rotations = ROTATIONS
+        .get_or_init(|| std::array::from_fn(|k| ComplexSample::rotation(-TAU * k as f32 / 64.)));
     for i in 0usize..64 {
         let j = i.reverse_bits() >> (usize::BITS - 6);
         if j > i {
@@ -62,8 +67,7 @@ pub(super) fn fft64(mut x: [ComplexSample; 64]) -> [ComplexSample; 64] {
     while width <= 64 {
         for base in (0..64).step_by(width) {
             for j in 0..width / 2 {
-                let b = x[base + j + width / 2]
-                    .mul(ComplexSample::rotation(-TAU * j as f32 / width as f32));
+                let b = x[base + j + width / 2].mul(rotations[j * (64 / width)]);
                 let a = x[base + j];
                 x[base + j] = a.add(b);
                 x[base + j + width / 2] = a.sub(b);
@@ -497,6 +501,28 @@ mod tests {
         for (k, v) in bins.iter().enumerate() {
             assert!((v.i - if k == 5 { 64. } else { 0. }).abs() < 0.0001);
             assert!(v.q.abs() < 0.0001);
+        }
+    }
+    #[test]
+    fn radio_sync_fft_matches_direct_transform() {
+        let samples: [ComplexSample; 64] = std::array::from_fn(|n| ComplexSample {
+            i: ((n * 17 % 31) as f32 - 15.) / 16.,
+            q: ((n * 13 % 29) as f32 - 14.) / 16.,
+        });
+        let actual = fft64(samples);
+        for (k, bin) in actual.iter().enumerate() {
+            let (mut real, mut imaginary) = (0., 0.);
+            for (n, sample) in samples.iter().enumerate() {
+                let angle = -std::f64::consts::TAU * (k * n) as f64 / 64.;
+                let (sin, cos) = angle.sin_cos();
+                real += f64::from(sample.i) * cos - f64::from(sample.q) * sin;
+                imaginary += f64::from(sample.i) * sin + f64::from(sample.q) * cos;
+            }
+            assert!((f64::from(bin.i) - real).abs() < 0.0001, "real bin {k}");
+            assert!(
+                (f64::from(bin.q) - imaginary).abs() < 0.0001,
+                "imaginary bin {k}"
+            );
         }
     }
     #[test]
