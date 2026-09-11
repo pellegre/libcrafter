@@ -232,10 +232,26 @@ impl WindowedLegacyWifiDecoder {
                     actual: (output.frames.len() + decoded.frames.len()) as u64,
                 });
             }
+            let unique_ofdm = self.ofdm.valid_frames;
+            let unique_dsss = self.dsss.valid_frames;
             self.worker_ofdm[reply.worker] = reply.ofdm;
             self.worker_dsss[reply.worker] = reply.dsss;
             self.ofdm = sum_stats(&self.worker_ofdm);
             self.dsss = sum_stats(&self.worker_dsss);
+            // Worker counters include valid frames in the trailing overlap.
+            // Report only the core-owned frames that this decoder emits.
+            self.ofdm.valid_frames = unique_ofdm;
+            self.dsss.valid_frames = unique_dsss;
+            for frame in &decoded.frames {
+                if matches!(
+                    frame.rate_bps,
+                    1_000_000 | 2_000_000 | 5_500_000 | 11_000_000
+                ) {
+                    self.dsss.valid_frames = self.dsss.valid_frames.saturating_add(1);
+                } else {
+                    self.ofdm.valid_frames = self.ofdm.valid_frames.saturating_add(1);
+                }
+            }
             output.frames.extend(decoded.frames);
             output.diagnostics.extend(decoded.diagnostics);
             self.next_output += 1;
