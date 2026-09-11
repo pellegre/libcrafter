@@ -232,9 +232,6 @@ fn receive(
     ofdm_only: bool,
     dispatch: Dispatch,
 ) -> Result<()> {
-    let window_workers = std::thread::available_parallelism()
-        .map(|cpus| cpus.get().saturating_sub(1).clamp(1, 4))
-        .unwrap_or(1);
     let out = Rc::new(RefCell::new(BufWriter::new(std::io::stdout())));
     let header = json!({"kind":"header","schema":SCHEMA,"config":Config::from(&config),"decoder":if ofdm_only {"ofdm"} else {"legacy_wifi"},"dispatch":dispatch.label(),"time_basis":if software_start.is_some(){"software_bracket_only"}else{"recorded_anchor_or_unknown"}});
     emit(&out, header.clone())?;
@@ -254,7 +251,7 @@ fn receive(
     };
     let decoder = ObservedDecoder {
         inner: if dispatch == Dispatch::Windowed {
-            SelectedDecoder::Windowed(WindowedLegacyWifiDecoder::new(window_workers)?)
+            SelectedDecoder::Windowed(WindowedLegacyWifiDecoder::new(4)?)
         } else if dispatch == Dispatch::ParallelDsss {
             SelectedDecoder::Parallel(ParallelLegacyWifiDecoder::with_parallel_dsss()?)
         } else if dispatch == Dispatch::Parallel {

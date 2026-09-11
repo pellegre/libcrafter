@@ -760,10 +760,9 @@ old worker results. The configured sample buffer must cover the assembly window
 and one in-flight window per worker; insufficient bounds fail before samples
 are retained.
 
-Use `--parallel-windows` to select up to four window workers in the receive
-example. It reserves one available logical CPU for acquisition and orchestration
-when the machine has more than one CPU. Use `--benchmark-artifact saved.iq
-windowed-3` or `windowed-4` for controlled offline measurement. Windowed
+Use `--parallel-windows` to select four window workers in the receive example.
+Use `--benchmark-artifact saved.iq windowed-3` or `windowed-4` for controlled
+offline measurement. Windowed
 frames retain their original coordinates and enter `RadioPacketSource` through
 the normal `PhyDecoder` interface. Larger worker counts increase bounded memory
 and can help only when the assigned CPUs provide corresponding execution time.
