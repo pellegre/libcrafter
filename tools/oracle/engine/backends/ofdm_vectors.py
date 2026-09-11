@@ -1,7 +1,8 @@
 """Independent, standard-library-only IEEE 802.11-2007 offline OFDM encoder.
 
 Run from repository root: python3 tools/oracle/engine/backends/ofdm_vectors.py
-No production crafter code is imported. No transmission capability is provided.
+No production crafter code is imported. This emits offline oracle samples only;
+it cannot open or transmit through a radio.
 """
 import cmath
 import hashlib
@@ -13,7 +14,7 @@ import zlib
 import argparse
 import tempfile
 
-VERSION = '5'
+VERSION = '6'
 ROOT = Path(__file__).resolve().parents[4]
 OUT = ROOT / 'crafter/tests/fixtures/iq'
 # Table 17-3 and 17-5: rate, transmission-order RATE, NBPSC, NDBPS.
@@ -116,6 +117,80 @@ def frame(extra):
     body = header + ip + payload
     return body + struct.pack('<I',zlib.crc32(body))
 
+def transmit_frame():
+    """Canonical Dot11 / Raw oracle input with documentation IPv4 addresses."""
+    return frame(32)[:-4]
+
+def quantize(wave, scale=300, phase=0.0):
+    samples = bytearray()
+    for value in wave:
+        value *= cmath.exp(1j * phase)
+        for axis in (value.real, value.imag):
+            samples.append(max(-128, min(127, round(axis * scale))) & 255)
+    return samples
+
+def generate_transmit(rate, rate_bits, nbpsc, ndbps, *, case_id=None,
+                      fcs_override=None, signal_override=None):
+    mac = transmit_frame()
+    derived_fcs = struct.pack('<I', zlib.crc32(mac))
+    psdu = mac + (derived_fcs if fcs_override is None else fcs_override)
+    seed = 0x5d
+    nsym = math.ceil((16 + 8 * len(psdu) + 6) / ndbps)
+    data = [0] * 16 + bits(psdu) + [0] * (nsym * ndbps - 16 - 8 * len(psdu))
+    scrambled = scramble(data, seed)
+    tail = 16 + 8 * len(psdu)
+    scrambled[tail:tail + 6] = [0] * 6
+    coded = encode(scrambled)
+    pattern = ([1, 1] if ndbps * 2 == 48 * nbpsc else
+               ([1, 1, 1, 0] if rate == 48 else [1, 1, 1, 0, 0, 1]))
+    punctured = [bit for index, bit in enumerate(coded)
+                 if pattern[index % len(pattern)]]
+    derived_signal = signal(rate_bits, len(psdu))
+    signal_bits = (derived_signal if signal_override is None else
+                   list(signal_override))
+    signal_interleaved = interleave(encode(signal_bits), 1)
+    polarities = [1 - 2 * bit for bit in scramble([0] * (nsym + 1), 127)]
+    interleaved = [interleave(punctured[index:index + 48 * nbpsc], nbpsc)
+                   for index in range(0, len(punctured), 48 * nbpsc)]
+    leading, trailing, scale = 64, 64, 300
+    wave = [0j] * leading + preamble() + symbol(signal_interleaved, 1, polarities[0])
+    for index, symbol_bits in enumerate(interleaved):
+        wave += symbol(symbol_bits, nbpsc, polarities[index + 1])
+    wave += [0j] * trailing
+    samples = quantize(wave, scale)
+    case_id = case_id or f'legacy-ofdm-{rate}'
+    stem = f'ofdm-tx-{case_id.removeprefix("legacy-ofdm-")}'
+    intermediate = dict(
+        case_id=case_id,
+        signal=signal_bits,
+        derived_signal=derived_signal,
+        signal_coded=encode(signal_bits),
+        signal_interleaved=signal_interleaved,
+        data=data,
+        scrambled=scrambled,
+        coded=coded,
+        punctured=punctured,
+        interleaved=interleaved,
+    )
+    intermediate_bytes = (json.dumps(intermediate, separators=(',', ':')) + '\n').encode()
+    (OUT / f'{stem}.cs8').write_bytes(samples)
+    (OUT / f'{stem}.psdu').write_bytes(psdu)
+    (OUT / f'{stem}.json').write_bytes(intermediate_bytes)
+    return dict(
+        case_id=case_id, artifact_stem=stem, phy='ofdm', rate_mbps=rate,
+        sample_rate_hz=20_000_000, mac_hex=mac.hex(), psdu_hex=psdu.hex(),
+        fcs_hex=psdu[-4:].hex(), fcs_policy=('auto' if fcs_override is None else 'explicit'),
+        signal_policy=('auto' if signal_override is None else 'explicit'),
+        signal_bits=signal_bits, nsym=nsym, scrambler_seed=seed,
+        leading_samples=leading, preamble_samples=320, signal_samples=80,
+        data_samples=nsym * 80, trailing_samples=trailing,
+        sample_count=len(samples) // 2, scale=scale,
+        cs8_sha256=hashlib.sha256(samples).hexdigest(),
+        psdu_sha256=hashlib.sha256(psdu).hexdigest(),
+        intermediate_sha256=hashlib.sha256(intermediate_bytes).hexdigest(),
+        expected='frame' if fcs_override is None and signal_override is None else 'reject',
+    )
+
 def generate(rate, rb, nbpsc, ndbps, index, case='clean'):
     psdu = frame(4039 if case == 'max_length' else 1444 if case == 'long_offset' else index+3)
     if case=='bad_fcs': psdu = psdu[:-1]+bytes([psdu[-1]^1])
@@ -186,6 +261,32 @@ def main():
     (OUT/'ofdm-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     columns = ['name','rate_mbps','nbpsc','ndbps','nsym','sample_count','psdu_hex','sha256','fcs_valid','expected']
     (OUT/'ofdm-index.tsv').write_text('\t'.join(columns)+'\n'+''.join('\t'.join(str(e[c]) for c in columns)+'\n' for e in entries))
+    transmit = [generate_transmit(*rate) for rate in RATES]
+    wrong_fcs = bytes.fromhex('00000000')
+    transmit.append(generate_transmit(*RATES[0], case_id='legacy-ofdm-6-explicit-wrong-fcs',
+                                      fcs_override=wrong_fcs))
+    wrong_signal = signal(RATES[0][1], len(transmit_frame()) + 4)
+    wrong_signal[17] ^= 1
+    transmit.append(generate_transmit(*RATES[0], case_id='legacy-ofdm-6-explicit-wrong-signal',
+                                      signal_override=wrong_signal))
+    tx_manifest = dict(
+        schema='crafter.radio.transmit-oracle/v1', generator_version=VERSION,
+        generator_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        source='IEEE Std 802.11-2007 clause 17 and Annex G', format='cs8',
+        sample_rate_hz=20_000_000, canonical_input='Dot11 / Raw',
+        cases=transmit,
+        rejected=[
+            dict(case_id='legacy-ofdm-unsupported-rate', reason='unsupported_phy_rate'),
+            dict(case_id='legacy-ofdm-psdu-limit', reason='psdu_limit_exceeded'),
+            dict(case_id='legacy-ofdm-sample-limit', reason='sample_limit_exceeded'),
+        ],
+    )
+    (OUT/'ofdm-transmit-manifest.json').write_text(json.dumps(tx_manifest, indent=2)+'\n')
+    tx_columns = ['case_id','artifact_stem','rate_mbps','sample_count','psdu_sha256',
+                  'cs8_sha256','expected']
+    (OUT/'ofdm-transmit-index.tsv').write_text(
+        '\t'.join(tx_columns)+'\n'+''.join(
+            '\t'.join(str(entry[key]) for key in tx_columns)+'\n' for entry in transmit))
     print(f'Generated {len(entries)} independent vectors; Annex G checks passed.')
 
 if __name__ == '__main__':
