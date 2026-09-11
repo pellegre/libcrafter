@@ -230,6 +230,23 @@ impl Samples {
 }
 // Two within-chip phases, each modeled by three neighboring chips.
 type ChannelModel = ([ComplexSample; 6], [f32; 2]);
+
+#[inline]
+fn nearest_quadrant(value: ComplexSample) -> i32 {
+    let vertical =
+        value.q.abs() > value.i.abs() || (value.q.abs() == value.i.abs() && value.i >= 0.);
+    if vertical {
+        if value.q >= 0. {
+            1
+        } else {
+            3
+        }
+    } else if value.i >= 0. {
+        0
+    } else {
+        2
+    }
+}
 #[derive(Clone)]
 struct ChannelTraining {
     train: [ComplexSample; 6],
@@ -403,8 +420,7 @@ impl Track {
                     .observe(samples, start, self.frequency / 20.);
             }
             let corrected = delta.mul(ComplexSample::rotation(-self.frequency));
-            let quadrant = (corrected.phase() / (PI / 2.)).round() as i32;
-            let pair = match quadrant.rem_euclid(4) {
+            let pair = match nearest_quadrant(corrected) {
                 0 => [0, 0],
                 1 => [0, 1],
                 2 => [1, 1],
@@ -1277,8 +1293,7 @@ impl Payload {
                         -self.header.frequency_rad * elapsed as f32,
                     ));
             let parity = (self.bits / width) % 2;
-            let quadrant =
-                (((delta.phase() / (PI / 2.)).round() as i32) - 2 * parity as i32).rem_euclid(4);
+            let quadrant = (nearest_quadrant(delta) - 2 * parity as i32).rem_euclid(4);
             let pair = match quadrant {
                 0 => 0,
                 1 => 2,
@@ -1320,7 +1335,7 @@ impl Payload {
                 .mul(self.header.previous_symbol.conj())
                 .mul(ComplexSample::rotation(-self.header.frequency_rad * 20.));
             self.header.previous_symbol = symbol;
-            let pair = match ((corrected.phase() / (PI / 2.)).round() as i32).rem_euclid(4) {
+            let pair = match nearest_quadrant(corrected) {
                 0 => [0, 0],
                 1 => [0, 1],
                 2 => [1, 1],
