@@ -7,6 +7,7 @@ mod data;
 mod dsss;
 #[cfg(any(feature = "radio-hackrf", test))]
 mod hackrf;
+mod ofdm_tx;
 #[cfg(feature = "radio-hackrf")]
 pub use hackrf::{HackRfConfig, HackRfSource, HackRfStats};
 mod parallel;
@@ -19,6 +20,7 @@ mod wifi;
 mod windowed;
 pub use data::{DecoderStats, LegacyOfdmDecoder};
 pub use dsss::DsssCckDecoder;
+pub use ofdm_tx::{LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig, OfdmSignalFields};
 pub use replay::{MemoryIqSource, ReaderIqSource};
 pub use signal::SignalInfo;
 pub use source::{RadioPacketSource, RadioReceiveMetadata};
