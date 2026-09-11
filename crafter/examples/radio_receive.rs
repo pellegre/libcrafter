@@ -555,7 +555,13 @@ fn main() -> Result<()> {
         max_chunk_samples: chunk_samples,
         max_buffer_samples: buffer_samples,
         max_frame_bytes: 4095,
-        max_pending_frames: 64,
+        // Coarse window workers can finish together at stream end, so their
+        // bounded aggregate needs more room than a serial decoder response.
+        max_pending_frames: if dispatch == Dispatch::Windowed {
+            256
+        } else {
+            64
+        },
         max_capture_samples: 20_000_000,
         max_duration: Duration::from_secs(1),
     };
