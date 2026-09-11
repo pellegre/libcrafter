@@ -138,6 +138,7 @@ enum Dispatch {
     Serial,
     Parallel,
     ParallelDsss,
+    Windowed,
 }
 impl Dispatch {
     fn label(self) -> &'static str {
@@ -145,6 +146,7 @@ impl Dispatch {
             Self::Serial => "serial",
             Self::Parallel => "parallel",
             Self::ParallelDsss => "parallel_dsss",
+            Self::Windowed => "windowed",
         }
     }
 }
@@ -152,6 +154,7 @@ enum SelectedDecoder {
     Ofdm(LegacyOfdmDecoder),
     Wifi(LegacyWifiDecoder),
     Parallel(ParallelLegacyWifiDecoder),
+    Windowed(WindowedLegacyWifiDecoder),
 }
 impl SelectedDecoder {
     fn consume(&mut self, event: IqEvent) -> RadioResult<DecodeOutput> {
@@ -159,6 +162,7 @@ impl SelectedDecoder {
             Self::Ofdm(d) => d.consume(event),
             Self::Wifi(d) => d.consume(event),
             Self::Parallel(d) => d.consume(event),
+            Self::Windowed(d) => d.consume(event),
         }
     }
     fn reset(&mut self, reason: ResetReason) -> DecodeOutput {
@@ -166,6 +170,7 @@ impl SelectedDecoder {
             Self::Ofdm(d) => d.reset(reason),
             Self::Wifi(d) => d.reset(reason),
             Self::Parallel(d) => d.reset(reason),
+            Self::Windowed(d) => d.reset(reason),
         }
     }
     fn stats(&self) -> DecoderStats {
@@ -173,6 +178,7 @@ impl SelectedDecoder {
             Self::Ofdm(d) => return d.stats(),
             Self::Wifi(d) => (d.ofdm_stats(), d.dsss_stats()),
             Self::Parallel(d) => (d.ofdm_stats(), d.dsss_stats()),
+            Self::Windowed(d) => (d.ofdm_stats(), d.dsss_stats()),
         };
         DecoderStats {
             valid_frames: a.valid_frames.saturating_add(b.valid_frames),
@@ -230,7 +236,9 @@ fn receive(
         software_start,
     };
     let decoder = ObservedDecoder {
-        inner: if dispatch == Dispatch::ParallelDsss {
+        inner: if dispatch == Dispatch::Windowed {
+            SelectedDecoder::Windowed(WindowedLegacyWifiDecoder::new(4)?)
+        } else if dispatch == Dispatch::ParallelDsss {
             SelectedDecoder::Parallel(ParallelLegacyWifiDecoder::with_parallel_dsss()?)
         } else if dispatch == Dispatch::Parallel {
             SelectedDecoder::Parallel(ParallelLegacyWifiDecoder::new()?)
@@ -306,6 +314,7 @@ impl ArtifactSource {
             Some("serial") => Dispatch::Serial,
             Some("parallel") if !ofdm_only => Dispatch::Parallel,
             Some("parallel_dsss") if !ofdm_only => Dispatch::ParallelDsss,
+            Some("windowed") if !ofdm_only => Dispatch::Windowed,
             _ => return Err("unsupported or conflicting IQ dispatch".into()),
         };
         let config: Config = serde_json::from_value(h["config"].clone())?;
@@ -453,7 +462,7 @@ fn main() -> Result<()> {
         return match args.as_slice() {
             [_, path, mode] => benchmark::run(path, mode, None),
             [_, path, mode, frames] => benchmark::run(path, mode, Some(frames)),
-            _ => Err("use --benchmark-artifact FILE combined|parallel|parallel-dsss|ofdm|dsss [FRAMES_JSONL]".into()),
+            _ => Err("use --benchmark-artifact FILE combined|parallel|parallel-dsss|windowed-4|ofdm|dsss [FRAMES_JSONL]".into()),
         };
     }
     let capture_only_mode = if args.first().map(String::as_str) == Some("--capture-only") {
@@ -470,6 +479,10 @@ fn main() -> Result<()> {
         Some("--parallel-dsss") => {
             args.remove(0);
             Dispatch::ParallelDsss
+        }
+        Some("--parallel-windows") => {
+            args.remove(0);
+            Dispatch::Windowed
         }
         _ => Dispatch::Serial,
     };
@@ -506,7 +519,7 @@ fn main() -> Result<()> {
         }
         count
     } else {
-        2_097_152
+        16_777_216
     };
     let chunk_samples = if args.first().map(String::as_str) == Some("--chunk-samples") {
         if args.len() < 2 {
@@ -712,7 +725,13 @@ mod tests {
                 Some(json!("parallel_dsss")),
                 Some(Dispatch::ParallelDsss),
             ),
+            (
+                "legacy_wifi",
+                Some(json!("windowed")),
+                Some(Dispatch::Windowed),
+            ),
             ("ofdm", Some(json!("parallel_dsss")), None),
+            ("ofdm", Some(json!("windowed")), None),
             ("ofdm", Some(json!("parallel")), None),
             ("legacy_wifi", Some(json!("future")), None),
             ("legacy_wifi", Some(json!(null)), None),

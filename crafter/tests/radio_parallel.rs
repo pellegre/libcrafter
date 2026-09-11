@@ -119,7 +119,7 @@ fn parallel_output_overflow_resets_both_workers() {
     );
     let expected = serial.consume(clone_event(&event)).unwrap_err();
     let actual = parallel.consume(event).unwrap_err();
-    assert_eq!(actual, expected);
+    assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
     assert!(matches!(actual, RadioError::Limit { .. }));
     let event = IqEvent::Chunk(
         IqChunk::new(
@@ -146,6 +146,43 @@ fn parallel_frames_enter_the_existing_packet_source() {
     let record = source.next_record().unwrap().unwrap();
     assert!(!record.metadata().captured_bytes().unwrap().is_empty());
     assert!(source.next_record().unwrap().is_none());
+}
+
+#[test]
+fn windowed_parallelism_preserves_frames_across_core_boundaries() {
+    const CORE: usize = 2_000_000;
+    let packet = include_bytes!("fixtures/iq/dsss-10-long-clean-48.cs8");
+    let offsets = [CORE - 20_000, CORE + 1_000];
+    let mut bytes = vec![0u8; (CORE + 1_000 + packet.len() / 2 + 64) * 2];
+    for offset in offsets {
+        bytes[offset * 2..offset * 2 + packet.len()].copy_from_slice(packet);
+    }
+    let mut c = config(65_536);
+    c.max_buffer_samples = 14_000_000;
+    c.max_capture_samples = bytes.len() as u64 / 2;
+    let mut source = ReaderIqSource::new(Cursor::new(&bytes), c.clone(), position()).unwrap();
+    let mut serial = LegacyWifiDecoder::new();
+    let mut windowed = WindowedLegacyWifiDecoder::new(4).unwrap();
+    let mut expected = Vec::new();
+    let mut actual = Vec::new();
+    loop {
+        let event = source.next_event().unwrap();
+        let end = matches!(event, IqEvent::End(_));
+        expected.extend(serial.consume(clone_event(&event)).unwrap().frames);
+        actual.extend(windowed.consume(event).unwrap().frames);
+        if end {
+            break;
+        }
+    }
+    assert_eq!(actual.len(), 2);
+    assert_eq!(actual.len(), expected.len());
+    for (actual, expected) in actual.iter().zip(expected) {
+        assert_eq!(actual.bytes, expected.bytes);
+        assert_eq!(actual.rate_bps, expected.rate_bps);
+        assert_eq!(actual.start.epoch, expected.start.epoch);
+        assert_eq!(actual.start.sample_index, expected.start.sample_index);
+        assert_eq!(actual.end_sample_index, expected.end_sample_index);
+    }
 }
 
 #[test]
