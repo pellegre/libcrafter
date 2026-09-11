@@ -18,11 +18,12 @@ pub(super) fn run(path: &str, mode: &str, frames_path: Option<&str>) -> Result<(
         "combined" => Box::new(LegacyWifiDecoder::new()),
         "parallel-dsss" => Box::new(ParallelLegacyWifiDecoder::with_parallel_dsss()?),
         "parallel" => Box::new(ParallelLegacyWifiDecoder::new()?),
+        "windowed-3" => Box::new(WindowedLegacyWifiDecoder::new(3)?),
         "windowed-4" => Box::new(WindowedLegacyWifiDecoder::new(4)?),
         "ofdm" => Box::new(LegacyOfdmDecoder::new()),
         "dsss" => Box::new(DsssCckDecoder::new()),
         _ => return Err(
-            "benchmark mode must be combined, parallel, parallel-dsss, windowed-4, ofdm, or dsss"
+            "benchmark mode must be combined, parallel, parallel-dsss, windowed-3, windowed-4, ofdm, or dsss"
                 .into(),
         ),
     };
