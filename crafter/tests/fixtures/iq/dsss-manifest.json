@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "generator_version": "1",
-  "generator_sha256": "0132e553c7c600745269d2cb0f6fa87f6805d36cc75d2bffec23b942c5f59662",
+  "generator_version": "2",
+  "generator_sha256": "6eb32bfef4b8d67aa0ecae06da7f3a0581a99945e5ac9cd28512cf027f7567e1",
   "source": "IEEE Std 802.11-2007 clauses 15 and 18",
   "format": "cs8",
   "sample_rate_hz": 20000000,

@@ -1,6 +1,6 @@
 # Independent IQ vector contract
 
-This directory will contain synthetic, offline receive vectors. It contains no
+This directory contains synthetic, offline receive and transmit vectors. It contains no
 recorded network traffic. The implementation contract and primary evidence map
 are in `docs/radio.md`.
 
@@ -200,3 +200,38 @@ The `barker_interference` fixture adds a Barker-orthogonal chip vector with
 amplitude 2 to the final header symbol and uses gain 0.18 to avoid clipping.
 It preserves the transmitted header bits and CRC while reducing correlation
 quality, exercising acquisition of a distorted but recoverable symbol.
+
+## Legacy transmit oracle corpus
+
+The `ofdm-tx-*` and `dsss-tx-*` artifacts are clean, bounded transmit-oracle
+waveforms produced by the same independent standard-library encoders. They are
+separate from the receive-stress inventory above. They are ideal offline
+waveforms and do not establish spectral-mask compliance, HackRF behavior, or
+successful reception by hardware.
+
+Both transmit manifests use schema `crafter.radio.transmit-oracle/v1` and one
+canonical synthetic `Dot11 / Raw` frame. Its MAC addresses are locally
+administered and its inert IPv4 body uses `192.0.2.1` and `198.51.100.2`.
+Each valid matrix case has a stable `legacy-*` case ID, the input MAC bytes
+without FCS, transmitted PSDU including little-endian FCS, exact CS8 and PSDU
+hashes, PHY fields, scrambler settings, sample boundaries, and expected result.
+The `.psdu` file is the exact transmitted PSDU, the `.json` file records
+intermediate encoder state, and the `.cs8` file contains interleaved signed I/Q
+at 20 Msps. The TSV inventories are dependency-free joins for later Rust tests
+and hardware qualification records.
+
+`ofdm-transmit-manifest.json` covers 6, 9, 12, 18, 24, 36, 48, and 54 Mb/s.
+`dsss-transmit-manifest.json` covers long preambles at 1, 2, 5.5, and 11 Mb/s
+and short preambles at 2, 5.5, and 11 Mb/s. The manifests also record bounded
+structured-rejection contracts, including short-preamble 1 Mb/s and exceeded
+PSDU/sample limits. Explicit malformed vectors pin a caller-supplied wrong MAC
+FCS and caller-supplied wrong OFDM SIGNAL or DSSS PLCP CRC without changing the
+selected modulation. Auto-derived cases retain valid FCS and PLCP values.
+
+Regenerate both receive and transmit artifacts with the generator commands
+above. Their `--check` modes regenerate every matching artifact in temporary
+storage and compare raw bytes, so checking cannot rewrite the committed corpus.
+Hardware qualification is a separate bounded process: it must transmit the
+production waveform through the HackRF, capture it through the monitor-mode
+dongle, compare exact MAC bytes and PHY metadata, and retain its untracked run
+evidence as described in `docs/radio.md`.

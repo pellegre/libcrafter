@@ -1,0 +1,147 @@
+version: 1
+kind: feature
+name: legacy_wifi_iq_transmit
+summary: Deterministic typed Dot11/Raw to 20 Msps CS8 transmission for every decoded legacy OFDM and DSSS/CCK mode.
+
+layers:
+  - dot11
+  - payload
+directions:
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+source:
+  standard: IEEE Std 802.11-2007
+  evidence: docs/radio.md
+  clauses:
+    - 15
+    - 17
+    - 18
+    - Annex G
+
+input:
+  packet: Dot11 / Raw
+  addresses: locally_administered
+  network_payload:
+    ipv4_source: 192.0.2.1
+    ipv4_destination: 198.51.100.2
+  mac_fcs: little_endian_ieee_crc32
+
+output:
+  format: cs8
+  sample_rate_hz: 20000000
+  complex_sample_order: [i, q]
+  finite_waveform: true
+  artifacts:
+    - cs8
+    - psdu
+    - intermediate_json
+    - index_tsv
+    - manifest_json
+
+behaviors:
+  - name: ofdm-matrix
+    phy: ofdm
+    channel_width_mhz: 20
+    rates_mbps: [6, 9, 12, 18, 24, 36, 48, 54]
+    plcp_fields: [rate, reserved, length, parity, tail]
+    derived_fields: [mac_fcs, signal_length, signal_parity, signal_tail, service, data_tail, pad]
+    boundaries: [leading, preamble, signal, data, trailing]
+    checks: [annex_g_literals, exact_psdu, exact_intermediates, exact_cs8_sha256]
+  - name: dsss-cck-matrix
+    phy: dsss_cck
+    channel_width_mhz: 20
+    chip_rate_hz: 11000000
+    valid_combinations:
+      - {rate_mbps: 1, preamble: long}
+      - {rate_mbps: 2, preamble: long}
+      - {rate_mbps: 5.5, preamble: long}
+      - {rate_mbps: 11, preamble: long}
+      - {rate_mbps: 2, preamble: short}
+      - {rate_mbps: 5.5, preamble: short}
+      - {rate_mbps: 11, preamble: short}
+    plcp_fields: [sync, sfd, signal, service, length, length_extension, header_crc]
+    derived_fields: [mac_fcs, signal, service, length, length_extension, header_crc]
+    boundaries: [leading, preamble, header, payload, trailing]
+    checks: [clause_15_18_literals, exact_psdu, exact_intermediates, exact_cs8_sha256]
+  - name: auto-filled-fields
+    checks: [valid_mac_fcs, valid_plcp_fields, valid_lengths, valid_tail_and_pad]
+  - name: explicit-malformed-overrides
+    override_cases:
+      - legacy-ofdm-6-explicit-wrong-fcs
+      - legacy-ofdm-6-explicit-wrong-signal
+      - legacy-dsss-1-long-explicit-wrong-fcs
+      - legacy-dsss-1-long-explicit-wrong-plcp-crc
+    checks: [override_bytes_preserved, modulation_rate_unchanged, expected_rejection_recorded]
+  - name: structured-rejection
+    rejects:
+      - {case_id: legacy-dsss-1-short, reason: short_preamble_unsupported_at_1_mbps}
+      - {case_id: legacy-wifi-unsupported-rate, reason: unsupported_phy_rate}
+      - {case_id: legacy-wifi-unsupported-sample-rate, reason: unsupported_sample_rate}
+      - {case_id: legacy-wifi-psdu-limit, reason: psdu_limit_exceeded}
+      - {case_id: legacy-wifi-sample-limit, reason: sample_limit_exceeded}
+      - {case_id: legacy-wifi-zero-bound, reason: invalid_zero_bound}
+      - {case_id: legacy-wifi-overflow-bound, reason: bound_overflow}
+
+coverage_cases:
+  - legacy-ofdm-6
+  - legacy-ofdm-9
+  - legacy-ofdm-12
+  - legacy-ofdm-18
+  - legacy-ofdm-24
+  - legacy-ofdm-36
+  - legacy-ofdm-48
+  - legacy-ofdm-54
+  - legacy-dsss-1-long
+  - legacy-dsss-2-long
+  - legacy-dsss-5.5-long
+  - legacy-dsss-11-long
+  - legacy-dsss-2-short
+  - legacy-dsss-5.5-short
+  - legacy-dsss-11-short
+  - legacy-ofdm-6-explicit-wrong-fcs
+  - legacy-ofdm-6-explicit-wrong-signal
+  - legacy-dsss-1-long-explicit-wrong-fcs
+  - legacy-dsss-1-long-explicit-wrong-plcp-crc
+  - legacy-dsss-1-short
+  - legacy-wifi-unsupported-rate
+  - legacy-wifi-unsupported-sample-rate
+  - legacy-wifi-psdu-limit
+  - legacy-wifi-sample-limit
+  - legacy-wifi-zero-bound
+  - legacy-wifi-overflow-bound
+
+supported_cases:
+  - {name: legacy-ofdm-6, directions: [roundtrip], byte_policy: strict_bytes}
+  - {name: legacy-ofdm-9, directions: [roundtrip], byte_policy: strict_bytes}
+  - {name: legacy-ofdm-12, directions: [roundtrip], byte_policy: strict_bytes}
+  - {name: legacy-ofdm-18, directions: [roundtrip], byte_policy: strict_bytes}
+  - {name: legacy-ofdm-24, directions: [roundtrip], byte_policy: strict_bytes}
+  - {name: legacy-ofdm-36, directions: [roundtrip], byte_policy: strict_bytes}
+  - {name: legacy-ofdm-48, directions: [roundtrip], byte_policy: strict_bytes}
+  - {name: legacy-ofdm-54, directions: [roundtrip], byte_policy: strict_bytes}
+  - {name: legacy-dsss-1-long, directions: [roundtrip], byte_policy: strict_bytes}
+  - {name: legacy-dsss-2-long, directions: [roundtrip], byte_policy: strict_bytes}
+  - {name: legacy-dsss-5.5-long, directions: [roundtrip], byte_policy: strict_bytes}
+  - {name: legacy-dsss-11-long, directions: [roundtrip], byte_policy: strict_bytes}
+  - {name: legacy-dsss-2-short, directions: [roundtrip], byte_policy: strict_bytes}
+  - {name: legacy-dsss-5.5-short, directions: [roundtrip], byte_policy: strict_bytes}
+  - {name: legacy-dsss-11-short, directions: [roundtrip], byte_policy: strict_bytes}
+  - {name: legacy-ofdm-6-explicit-wrong-fcs, directions: [roundtrip], byte_policy: strict_bytes}
+  - {name: legacy-ofdm-6-explicit-wrong-signal, directions: [roundtrip], byte_policy: structured_error}
+  - {name: legacy-dsss-1-long-explicit-wrong-fcs, directions: [roundtrip], byte_policy: strict_bytes}
+  - {name: legacy-dsss-1-long-explicit-wrong-plcp-crc, directions: [roundtrip], byte_policy: structured_error}
+  - {name: legacy-dsss-1-short, directions: [roundtrip], byte_policy: structured_error}
+  - {name: legacy-wifi-unsupported-rate, directions: [roundtrip], byte_policy: structured_error}
+  - {name: legacy-wifi-unsupported-sample-rate, directions: [roundtrip], byte_policy: structured_error}
+  - {name: legacy-wifi-psdu-limit, directions: [roundtrip], byte_policy: structured_error}
+  - {name: legacy-wifi-sample-limit, directions: [roundtrip], byte_policy: structured_error}
+  - {name: legacy-wifi-zero-bound, directions: [roundtrip], byte_policy: structured_error}
+  - {name: legacy-wifi-overflow-bound, directions: [roundtrip], byte_policy: structured_error}
+
+backend_support:
+  libcrafter:
+    status: planned
+    notes:
+      - Production transmit encoding is added only after these independent artifacts are committed.
