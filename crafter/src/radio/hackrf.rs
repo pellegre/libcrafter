@@ -8,7 +8,7 @@ use std::{
 };
 #[cfg(feature = "radio-hackrf")]
 #[allow(unsafe_code)]
-mod native;
+pub(super) mod native;
 
 /// All live settings must be supplied. Construction of this value opens nothing.
 #[derive(Clone, Debug)]

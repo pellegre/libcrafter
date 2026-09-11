@@ -1,5 +1,4 @@
-//! Minimal receive-only ABI reviewed against libhackrf hackrf.h at cc691022.
-//! No transmit symbol is declared. Library lifecycle is serialized in this crate.
+//! Minimal RX/TX ABI reviewed against libhackrf hackrf.h at cc691022.
 use super::*;
 use std::{
     ffi::{c_char, c_int, c_void, CString},
@@ -42,6 +41,7 @@ extern "C" {
     fn hackrf_set_freq(device: *mut c_void, frequency: u64) -> c_int;
     fn hackrf_set_lna_gain(device: *mut c_void, gain: u32) -> c_int;
     fn hackrf_set_vga_gain(device: *mut c_void, gain: u32) -> c_int;
+    fn hackrf_set_txvga_gain(device: *mut c_void, gain: u32) -> c_int;
     fn hackrf_set_amp_enable(device: *mut c_void, enable: u8) -> c_int;
     fn hackrf_set_antenna_enable(device: *mut c_void, enable: u8) -> c_int;
     fn hackrf_set_rx_overrun_limit(device: *mut c_void, limit: u32) -> c_int;
@@ -51,6 +51,12 @@ extern "C" {
         context: *mut c_void,
     ) -> c_int;
     fn hackrf_stop_rx(device: *mut c_void) -> c_int;
+    fn hackrf_start_tx(
+        device: *mut c_void,
+        callback: unsafe extern "C" fn(*mut Transfer) -> c_int,
+        context: *mut c_void,
+    ) -> c_int;
+    fn hackrf_stop_tx(device: *mut c_void) -> c_int;
     fn hackrf_is_streaming(device: *mut c_void) -> c_int;
     fn hackrf_get_m0_state(device: *mut c_void, state: *mut M0State) -> c_int;
 }
@@ -216,6 +222,163 @@ unsafe extern "C" fn receive(transfer: *mut Transfer) -> c_int {
         Ok(true) => 0,
         _ => 1,
     }
+}
+
+pub(in crate::radio) struct NativeTx {
+    device: *mut c_void,
+    context: Option<Box<Arc<super::super::hackrf_tx::TxShared>>>,
+    _library: MutexGuard<'static, ()>,
+}
+// SAFETY: the handle has exclusive ownership and all methods require `&mut self`;
+// callbacks touch only the separately synchronized context.
+unsafe impl Send for NativeTx {}
+
+impl NativeTx {
+    pub(in crate::radio) fn open(
+        config: &super::super::hackrf_tx::HackRfTxConfig,
+    ) -> RadioResult<Self> {
+        let library = LIBRARY.try_lock().map_err(|_| {
+            RadioError::Source("another crafter HackRF operation owns libhackrf".into())
+        })?;
+        let serial = CString::new(config.serial.clone()).map_err(|_| RadioError::Invalid {
+            field: "serial",
+            reason: "interior NUL",
+        })?;
+        // SAFETY: process-wide lock serializes library initialization and handles.
+        unsafe {
+            check("init", hackrf_init())?;
+        }
+        let mut native = Self {
+            device: ptr::null_mut(),
+            context: None,
+            _library: library,
+        };
+        // SAFETY: each call receives the open device and validated scalar settings.
+        unsafe {
+            check(
+                "open",
+                hackrf_open_by_serial(serial.as_ptr(), &mut native.device),
+            )?;
+            check(
+                "sample rate",
+                hackrf_set_sample_rate(native.device, config.sample_rate_hz as f64),
+            )?;
+            check(
+                "baseband filter",
+                hackrf_set_baseband_filter_bandwidth(native.device, config.baseband_filter_hz),
+            )?;
+            check(
+                "frequency",
+                hackrf_set_freq(native.device, config.center_frequency_hz),
+            )?;
+            check(
+                "TX VGA gain",
+                hackrf_set_txvga_gain(native.device, config.tx_vga_gain_db),
+            )?;
+            check(
+                "RF amplifier",
+                hackrf_set_amp_enable(native.device, config.amplifier_enabled.into()),
+            )?;
+            check(
+                "antenna power",
+                hackrf_set_antenna_enable(native.device, config.antenna_power_enabled.into()),
+            )?;
+        }
+        Ok(native)
+    }
+
+    pub(in crate::radio) fn transmit(
+        &mut self,
+        shared: Arc<super::super::hackrf_tx::TxShared>,
+    ) -> RadioResult<super::super::hackrf_tx::HackRfTxStats> {
+        let mut context = Box::new(shared);
+        let context_ptr = (&mut *context as *mut Arc<super::super::hackrf_tx::TxShared>).cast();
+        self.context = Some(context);
+        // SAFETY: boxed callback context stays pinned until stop has joined callbacks.
+        unsafe {
+            check(
+                "start TX",
+                hackrf_start_tx(self.device, transmit, context_ptr),
+            )?;
+        }
+        while unsafe { hackrf_is_streaming(self.device) } == 1 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let mut state = M0State::default();
+        // SAFETY: query occurs while the device and callback context remain live.
+        let counter_result = unsafe { hackrf_get_m0_state(self.device, &mut state) };
+        let stop_code = unsafe { hackrf_stop_tx(self.device) };
+        let shared = self.context.take().expect("TX context");
+        if counter_result != 0 {
+            shared.fail(RadioError::Source(format!(
+                "M0 state: libhackrf error {counter_result}"
+            )));
+        } else if state.error != 0 {
+            shared.fail(RadioError::Source(format!(
+                "HackRF M0 TX error {}",
+                state.error
+            )));
+        }
+        if stop_code != 0 {
+            shared.fail(RadioError::Source(format!(
+                "stop TX: libhackrf error {stop_code}"
+            )));
+        }
+        shared.finish(
+            (state.num_shortfalls, state.longest_shortfall),
+            stop_code == 0,
+        )
+    }
+}
+
+impl Drop for NativeTx {
+    fn drop(&mut self) {
+        if !self.device.is_null() {
+            // SAFETY: this object exclusively owns the device under LIBRARY.
+            unsafe {
+                let _ = hackrf_stop_tx_for_drop(self.device);
+                let close = hackrf_close(self.device);
+                if close == -1001 {
+                    std::process::abort();
+                }
+                self.device = ptr::null_mut();
+            }
+        }
+        self.context.take();
+        // SAFETY: initialization succeeded before this owner was returned or dropped.
+        unsafe {
+            let _ = hackrf_exit();
+        }
+    }
+}
+
+unsafe extern "C" fn transmit(transfer: *mut Transfer) -> c_int {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let Some(transfer) = (unsafe { transfer.as_mut() }) else {
+            return false;
+        };
+        if transfer.tx_ctx.is_null() || transfer.buffer.is_null() || transfer.buffer_length <= 0 {
+            return false;
+        }
+        let shared = unsafe {
+            &*transfer
+                .tx_ctx
+                .cast::<Arc<super::super::hackrf_tx::TxShared>>()
+        };
+        let bytes = unsafe {
+            std::slice::from_raw_parts_mut(transfer.buffer, transfer.buffer_length as usize)
+        };
+        shared.fill(bytes)
+    }));
+    match result {
+        Ok(true) => 0,
+        _ => 1,
+    }
+}
+
+// Kept separate so Drop cannot accidentally call an RX stop symbol.
+unsafe fn hackrf_stop_tx_for_drop(device: *mut c_void) -> c_int {
+    unsafe { hackrf_stop_tx(device) }
 }
 
 #[cfg(test)]
