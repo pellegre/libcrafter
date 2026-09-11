@@ -175,6 +175,8 @@ fn windowed_parallelism_preserves_frames_across_core_boundaries() {
         }
     }
     assert_eq!(actual.len(), 2);
+    assert_eq!(windowed.dsss_stats().valid_frames, 2);
+    assert_eq!(windowed.ofdm_stats().valid_frames, 0);
     assert_eq!(actual.len(), expected.len());
     for (actual, expected) in actual.iter().zip(expected) {
         assert_eq!(actual.bytes, expected.bytes);
