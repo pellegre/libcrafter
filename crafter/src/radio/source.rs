@@ -190,6 +190,58 @@ mod tests {
         }
     }
     #[test]
+    fn radio_ht_ampdu_packet_source_keeps_duplicate_mpdus() {
+        for row in include_str!("../../tests/fixtures/iq/ht-ampdu-index.tsv")
+            .lines()
+            .skip(1)
+            .filter(|row| {
+                row.starts_with("ht-ampdu-7-gi800-")
+                    && row.split('\t').next().unwrap().ends_with("duplicate")
+            })
+        {
+            let fields: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                fields[0]
+            ))
+            .unwrap();
+            let source = ReaderIqSource::new(Cursor::new(bytes), config(), position()).unwrap();
+            let source = RadioPacketSource::new(source, WifiDecoder::new(), config()).unwrap();
+            let records = Sniffer::new(source)
+                .with(Dot11Metadata::new())
+                .collect_records()
+                .unwrap();
+            assert_eq!(records.len(), 2);
+            let expected: Vec<u8> = fields[6]
+                .split(',')
+                .next()
+                .unwrap()
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
+                .collect();
+            for (record, offset) in records.iter().zip([0, 60]) {
+                assert_eq!(record.metadata().captured_bytes().unwrap(), expected);
+                assert_eq!(
+                    record.packet().compile().unwrap().as_ref(),
+                    &expected[..expected.len() - 4]
+                );
+                assert!(record.packet().layer::<Dot11>().is_some());
+                assert!(record.metadata().wifi().is_some());
+                let rf = record.metadata().radio().unwrap();
+                assert_eq!(rf.start.sample_index, 37);
+                assert_eq!(rf.start.time_anchor, position().time_anchor);
+                assert_eq!(rf.stripped_fcs_bytes, 4);
+                assert!(rf.diagnostics.contains(&PhyDiagnostic::Ampdu {
+                    delimiter_offset: offset,
+                    control_bits: 0
+                }));
+                assert_eq!(record.metadata(), &record.metadata().clone());
+            }
+        }
+    }
+    #[test]
     fn radio_ht_ldpc_packet_source_preserves_bytes_and_metadata() {
         let bytes = include_bytes!("../../tests/fixtures/iq/ht-ldpc-7-gi800-len100-clean.cs8");
         let source =

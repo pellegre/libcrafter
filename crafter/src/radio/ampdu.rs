@@ -1,7 +1,6 @@
 //! HT A-MPDU framing, IEEE 802.11-2020 9.7.1–2 and informative Annex O.2.
 //! Only FCS-valid MPDUs are emitted. Bad FCS resumes four-byte scanning too,
 //! so a false delimiter cannot hide a later valid MPDU inside its stated span.
-#![allow(dead_code)] // Connected after independent framing qualification.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Error {

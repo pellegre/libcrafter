@@ -251,6 +251,20 @@ pub enum ResetReason {
 }
 #[derive(Debug, Clone)]
 pub enum PhyDiagnostic {
+    /// Byte offset of this MPDU's delimiter within its HT A-MPDU PSDU.
+    /// Frame sample coordinates describe the entire containing PPDU.
+    Ampdu {
+        delimiter_offset: usize,
+        control_bits: u8,
+    },
+    /// Bounded summary of aggregate recovery failures, not one diagnostic per scan step.
+    AmpduErrors {
+        preamble_sample_index: u64,
+        invalid_delimiters: usize,
+        invalid_fcs: usize,
+        truncated_mpdus: usize,
+        oversized_mpdus: usize,
+    },
     /// An integrity-checked HT header, not an integrity-checked MAC frame.
     HtSignal {
         fields: HtSignalFields,
@@ -299,6 +313,32 @@ pub enum PhyDiagnostic {
 impl PartialEq for PhyDiagnostic {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (
+                Self::Ampdu {
+                    delimiter_offset: a,
+                    control_bits: b,
+                },
+                Self::Ampdu {
+                    delimiter_offset: c,
+                    control_bits: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::AmpduErrors {
+                    preamble_sample_index: a,
+                    invalid_delimiters: b,
+                    invalid_fcs: c,
+                    truncated_mpdus: d,
+                    oversized_mpdus: e,
+                },
+                Self::AmpduErrors {
+                    preamble_sample_index: f,
+                    invalid_delimiters: g,
+                    invalid_fcs: h,
+                    truncated_mpdus: i,
+                    oversized_mpdus: j,
+                },
+            ) => (a, b, c, d, e) == (f, g, h, i, j),
             (
                 Self::Ldpc {
                     codewords: a,

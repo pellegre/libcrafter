@@ -4,7 +4,10 @@ use super::*;
 /// Combined legacy and HT20 one-stream BCC/LDPC receiver.
 ///
 /// HT MCS 0–7, both coding families and both guard intervals are supported for
-/// nonaggregated PSDUs. STBC, additional streams, HT40, greenfield, VHT, HE and EHT are not
+/// nonaggregated PSDUs and HT A-MPDUs. `max_frame_bytes` bounds each MPDU;
+/// `max_pending_frames` must accommodate the returned MPDUs plus two reserved
+/// child slots. Overflow is an explicit error, never a truncated aggregate.
+/// STBC, additional streams, HT40, greenfield, VHT, HE and EHT are not
 /// yet decoded. This implements the same `PhyDecoder` packet-source interface
 /// and shares the bounds and output ordering of `LegacyWifiDecoder`.
 pub struct WifiDecoder {
@@ -107,10 +110,20 @@ impl PhyDecoder for LegacyWifiDecoder {
         let mut ofdm_config = config.clone();
         ofdm_config.max_buffer_samples -= 128;
         ofdm_config.max_chunk_samples = 128;
-        ofdm_config.max_pending_frames = 1;
+        ofdm_config.max_pending_frames = if self.ofdm.ht_enabled() {
+            config.max_pending_frames - 2
+        } else {
+            1
+        };
         let mut dsss_config = ofdm_config.clone();
         dsss_config.max_buffer_samples = 128;
+        dsss_config.max_pending_frames = 1;
         for (index, samples) in chunk.cs8().chunks(256).enumerate() {
+            if self.ofdm.ht_enabled() {
+                self.ofdm.set_output_allowance(
+                    (config.max_pending_frames - 2).saturating_sub(out.frames.len()),
+                );
+            }
             let mut position = chunk.position().clone();
             position.sample_index += (index * 128) as u64;
             position.sequence = self.sequence;
@@ -168,5 +181,14 @@ fn same_occurrence(a: &RecoveredFrame, b: &RecoveredFrame) -> bool {
     a.start.epoch == b.start.epoch
         && a.start.sample_index == b.start.sample_index
         && a.end_sample_index == b.end_sample_index
+        && aggregate_offset(a) == aggregate_offset(b)
         && a.bytes == b.bytes
+}
+fn aggregate_offset(frame: &RecoveredFrame) -> Option<usize> {
+    frame.diagnostics.iter().find_map(|d| match d {
+        PhyDiagnostic::Ampdu {
+            delimiter_offset, ..
+        } => Some(*delimiter_offset),
+        _ => None,
+    })
 }
