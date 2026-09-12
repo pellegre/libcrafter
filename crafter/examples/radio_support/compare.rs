@@ -403,11 +403,31 @@ pub fn load_recovered(path: &str, p: &Policy) -> Result<(Vec<Observation>, Count
     let mut terminal = false;
     let mut terminal_reason = String::new();
     let mut parser_errors = 0u64;
+    let mut ht_signals = 0u64;
     let mut gaps = 0u64;
     let mut acquisition = Value::Null;
     let mut ids = BTreeSet::new();
     while let Some(v) = read_json(&mut reader)? {
         match v["kind"].as_str() {
+            Some("ht_signal") => {
+                if terminal || h["decoder"] != "wifi" || ht_signals >= p.max_observations as u64 {
+                    return Err("invalid HT diagnostic ordering or bound".into());
+                }
+                let epoch = v["epoch"].as_u64().ok_or("missing HT diagnostic epoch")?;
+                let start = v["preamble_sample_index"]
+                    .as_u64()
+                    .ok_or("missing HT diagnostic coordinate")?;
+                if !v["ht"].is_object()
+                    || v["mac_integrity"] != "not_established_by_header"
+                    || !segment
+                        .is_some_and(|(e, lo, hi, _)| e == epoch && start >= lo && start < hi)
+                {
+                    return Err("unqualified HT diagnostic coordinate".into());
+                }
+                // Header recognition is evidence for investigation, not a valid
+                // MAC occurrence and never part of either match denominator.
+                ht_signals += 1;
+            }
             Some("frame") => {
                 if terminal || counts.total >= p.max_observations as u64 {
                     return Err("frame after terminal or observation bound exceeded".into());
@@ -544,7 +564,7 @@ pub fn load_recovered(path: &str, p: &Policy) -> Result<(Vec<Observation>, Count
     Ok((
         out,
         counts,
-        json!({"gaps":gaps,"acquisition":acquisition,"receive_summary":summary}),
+        json!({"gaps":gaps,"ht_signals":ht_signals,"acquisition":acquisition,"receive_summary":summary}),
     ))
 }
 pub fn load_reference(path: &str, p: &Policy) -> Result<(Vec<Observation>, Counts)> {
@@ -1156,6 +1176,46 @@ mod tests {
         assert!(read_json(&mut std::io::Cursor::new(b"{\"kind\":\"frame\"}")).is_err());
         assert!(unhex("é").is_err());
         assert!(unhex("0").is_err());
+    }
+    #[test]
+    fn radio_comparison_header_diagnostics_are_bounded_not_frames() {
+        let path =
+            std::env::temp_dir().join(format!("crafter-ht-diagnostic-{}", std::process::id()));
+        let config = json!({"sample_rate_hz":20000000,"center_frequency_hz":2412000000u64,"max_chunk_samples":100,"max_buffer_samples":1000,"max_frame_bytes":4095,"max_pending_frames":4,"max_capture_samples":10000,"max_duration_ns":1000000000});
+        let mut records = vec![
+            json!({"kind":"header","schema":SCHEMA,"decoder":"wifi","config":config}),
+            json!({"kind":"chunk","config":config,"verified_prefix":true,"samples":100,"position":{"epoch":0,"sequence":0,"sample_index":0,"anchor":null,"gap_reason":null,"lost_samples":null}}),
+            json!({"kind":"ht_signal","epoch":0,"preamble_sample_index":10,"ht":{"mcs":8},"mac_integrity":"not_established_by_header"}),
+            json!({"kind":"terminal","reason":"Eof"}),
+            json!({"kind":"summary","complete":true,"terminal":"Eof","decoder":{"valid_frames":0,"dropped_frames":0},"parsed_packets":0,"parser_failures":0}),
+        ];
+        let write = |records: &[Value]| {
+            std::fs::write(
+                &path,
+                records.iter().map(|v| format!("{v}\n")).collect::<String>(),
+            )
+            .unwrap()
+        };
+        write(&records);
+        let (frames, counts, evidence) = load_recovered(path.to_str().unwrap(), &policy()).unwrap();
+        assert!(frames.is_empty());
+        assert_eq!(counts.total, 0);
+        assert_eq!(counts.eligible, 0);
+        assert_eq!(evidence["ht_signals"], 1);
+        records[2]["epoch"] = json!(1);
+        write(&records);
+        assert!(load_recovered(path.to_str().unwrap(), &policy()).is_err());
+        records[2]["epoch"] = json!(0);
+        records[2]["preamble_sample_index"] = json!(100);
+        write(&records);
+        assert!(load_recovered(path.to_str().unwrap(), &policy()).is_err());
+        records[2]["preamble_sample_index"] = json!(10);
+        records.insert(3, records[2].clone());
+        write(&records);
+        let mut limited = policy();
+        limited.max_observations = 1;
+        assert!(load_recovered(path.to_str().unwrap(), &limited).is_err());
+        std::fs::remove_file(path).unwrap();
     }
     #[test]
     fn radio_comparison_pcap_loader_and_receive_terminal_evidence() {

@@ -180,6 +180,13 @@ existing benchmark accepts mode `wifi` for this decoder and includes aggregate
 offsets in its occurrence digest. This exposes a measurement path; it does not
 claim real-time performance.
 
+Modern receive artifacts also emit bounded `ht_signal` diagnostic records for
+integrity-checked headers, including modes whose DATA is not supported or not
+recovered. These contain the epoch, preamble coordinate and signaling fields,
+and explicitly do **not** establish MAC integrity. The comparator validates
+their ordering and coordinates and reports their count separately; they never
+increase frame counts or matching denominators.
+
 The existing `radio_compare` path now accepts HT20 MCS0–7 reference metadata
 when bandwidth, MCS and GI are known. Coding, STBC, format and extension-stream
 values are compared only when known; explicitly unsupported configurations

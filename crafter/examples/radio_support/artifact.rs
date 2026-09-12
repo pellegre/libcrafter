@@ -38,15 +38,18 @@ pub fn ht_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
         PhyDiagnostic::HtSignal {
             fields: f,
             preamble_sample_index,
-        } => Some(serde_json::json!({
-            "mcs":f.mcs, "bandwidth_mhz":if f.channel_width_40_mhz {40} else {20},
-            "psdu_bytes":f.psdu_bytes, "smoothing":f.smoothing, "not_sounding":f.not_sounding,
-            "aggregation":f.aggregation, "stbc":f.stbc, "coding":if f.ldpc {"ldpc"} else {"bcc"},
-            "guard_interval_ns":if f.short_guard_interval {400} else {800},
-            "extension_spatial_streams":f.extension_spatial_streams,
-            "preamble_sample_index":preamble_sample_index,
-        })),
+        } => Some(ht_signal_metadata(f, *preamble_sample_index)),
         _ => None,
+    })
+}
+pub fn ht_signal_metadata(f: &HtSignalFields, preamble_sample_index: u64) -> serde_json::Value {
+    serde_json::json!({
+        "mcs":f.mcs, "bandwidth_mhz":if f.channel_width_40_mhz {40} else {20},
+        "psdu_bytes":f.psdu_bytes, "smoothing":f.smoothing, "not_sounding":f.not_sounding,
+        "aggregation":f.aggregation, "stbc":f.stbc, "coding":if f.ldpc {"ldpc"} else {"bcc"},
+        "guard_interval_ns":if f.short_guard_interval {400} else {800},
+        "extension_spatial_streams":f.extension_spatial_streams,
+        "preamble_sample_index":preamble_sample_index,
     })
 }
 pub fn ampdu_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
