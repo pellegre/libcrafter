@@ -56,6 +56,12 @@
   ],
   "facts": [
     {
+      "id": "vht-receive-timing",
+      "source": "ieee-80211-2020",
+      "anchor": "Tables 21-5/12/13; 21.3.8.2.4 Equation 21-24; 21.3.10.9.4; 21.4.3 Equations 21-109/110",
+      "fact": "VHT uses 6 Mb/s L-SIG, whose length is three times the four-microsecond duration units after the initial 20 microseconds, minus three. VHT-LTF counts for 1..8 space-time streams are 1,2,4,4,6,6,8,8. DATA begins at 36+4*NLTF microseconds. Short-GI DATA has 3.6-microsecond symbols but its signaled duration rounds up to four-microsecond units. SIG-A disambiguation is one exactly when short GI is used and NSYM mod 10 equals 9. DATA symbol end and signaled duration can differ. STBC requires even symbol groups."
+    },
+    {
       "id": "vht20-signal-b-service",
       "source": "ieee-80211-2020",
       "anchor": "21.3.8.3.6 Tables 21-14/15 and Equation 21-46; 21.3.10.2-3 Table 21-16 and Equation 21-59; 21.3.10.8; 21.3.12",

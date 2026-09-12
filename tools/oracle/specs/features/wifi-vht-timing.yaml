@@ -1,0 +1,21 @@
+version: 1
+kind: feature
+name: wifi_vht_timing
+summary: VHT DATA symbol boundaries derived from L-SIG and SIG-A timing fields.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: duration-inversion
+    source: IEEE 802.11-2020 Tables 21-5/12/13 and Equations 21-24/109/110
+    checks: [ltf_count, data_start, short_gi_disambiguation, data_symbol_end, signaled_duration_distinct_from_data_end, ndp_zero_symbols, stbc_even_symbols, bounded_invalid_inputs, independent_forward_timing]
+coverage_cases: [wifi-vht20-timing]
+supported_cases:
+  - {name: wifi-vht20-timing, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - Timing primitives do not admit DATA modes or qualify frame recovery.
+      - Private receiver timing passes 1105 independent forward-generated cases and exhaustive L-SIG length and guard-interval combinations; streaming integration remains pending.

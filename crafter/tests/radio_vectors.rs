@@ -4,6 +4,28 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_vht_timing_independent_inventory() {
+    let inventory = include_str!("fixtures/iq/vht-timing-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(inventory.as_bytes())),
+        "846aab93b8bbbee30b966aa535d3117ed234759089e3cc264e8bc69e7a1dc70a"
+    );
+    assert_eq!(inventory.lines().skip(1).count(), 1105);
+    let mut dimensions = std::collections::BTreeSet::new();
+    for row in inventory.lines().skip(1) {
+        let c: Vec<usize> = row.split('\t').map(|s| s.parse().unwrap()).collect();
+        assert_eq!(c.len(), 10);
+        dimensions.insert((c[0], c[1], c[2]));
+    }
+    for streams in 1..=8 {
+        for short in 0..=1 {
+            assert!(dimensions.contains(&(streams, short, 0)));
+            assert_eq!(dimensions.contains(&(streams, short, 1)), streams % 2 == 0);
+        }
+    }
+}
+
+#[test]
 fn radio_vht_sig_b_public_paths_and_inventory() {
     use crafter::prelude::{VhtSignalB20Content, VhtSignalB20Error, VhtSignalB20Fields};
     let inventory = include_str!("fixtures/iq/vht-signal-b20-index.tsv");

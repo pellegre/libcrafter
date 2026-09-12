@@ -275,6 +275,20 @@ acquisition, DATA recovery, live qualification or TX. In particular,
 bandwidth code 3 does not distinguish 160 MHz from 80+80 MHz, and the ability
 to interpret a header must not be confused with admitting its DATA waveform.
 
+## VHT receive timing increment
+
+The private VHT20 timing primitive derives training-field count, DATA start,
+DATA symbol count and sample end from validated L-SIG/SIG-A fields. It keeps
+the rounded signaled duration separate from the actual DATA end, handles
+short-GI symbol-count disambiguation, and rejects inconsistent STBC grouping.
+Zero-symbol sounding timing is retained without claiming a DATA payload.
+
+The independent forward-time generator supplies 1,105 cases using exact
+rational durations. Receiver tests additionally enumerate every 12-bit L-SIG
+length with both guard intervals and disambiguation values, and check invalid
+stream counts and input bounds. This is timing groundwork, not integrated
+VHT waveform acquisition or DATA decoding.
+
 ## VHT20 SIG-B and SERVICE increment
 
 `VhtSignalB20Fields` interprets 26 decoded bits or 52 equalized soft metrics,
