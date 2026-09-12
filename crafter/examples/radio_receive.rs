@@ -942,55 +942,69 @@ mod tests {
 
     #[test]
     fn radio_iq_greenfield_metadata_preserves_format() {
-        let bytes = include_bytes!("../tests/fixtures/iq/ht-greenfield-7-ldpc-len100-clean.cs8");
-        let config = RxConfig {
-            sample_rate_hz: 20_000_000,
-            center_frequency_hz: 2_412_000_000,
-            max_chunk_samples: 10_000,
-            max_buffer_samples: 120_000,
-            max_frame_bytes: 4095,
-            max_pending_frames: 4,
-            max_capture_samples: 100_000,
-            max_duration: Duration::from_secs(1),
-        };
-        let chunk = IqChunk::new(
-            config,
-            IqPosition {
-                epoch: 7,
-                sequence: 0,
-                sample_index: 0,
-                time_anchor: None,
-                discontinuity: None,
-            },
-            bytes.iter().map(|b| *b as i8).collect(),
-        )
-        .unwrap();
-        let out = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
-        assert_eq!(out.frames.len(), 1);
-        assert_eq!(ht_metadata(&out.frames[0]).unwrap()["format"], "greenfield");
-        let records: Vec<_> = out
-            .diagnostics
-            .iter()
-            .filter_map(|d| ht_signal_record_with_context(d, 7, &out.diagnostics))
-            .collect();
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0]["ht"]["format"], "greenfield");
-        assert_eq!(records[0]["epoch"], 7);
-        let signal = out
-            .diagnostics
-            .iter()
-            .find(|d| matches!(d, PhyDiagnostic::HtSignal { .. }))
+        for (bytes, stbc) in [
+            (
+                include_bytes!("../tests/fixtures/iq/ht-greenfield-7-ldpc-len100-clean.cs8")
+                    .as_slice(),
+                0,
+            ),
+            (
+                include_bytes!("../tests/fixtures/iq/ht-stbc-7-ldpc-gf-gi800-len100-clean.cs8")
+                    .as_slice(),
+                1,
+            ),
+        ] {
+            let config = RxConfig {
+                sample_rate_hz: 20_000_000,
+                center_frequency_hz: 2_412_000_000,
+                max_chunk_samples: 10_000,
+                max_buffer_samples: 120_000,
+                max_frame_bytes: 4095,
+                max_pending_frames: 4,
+                max_capture_samples: 100_000,
+                max_duration: Duration::from_secs(1),
+            };
+            let chunk = IqChunk::new(
+                config,
+                IqPosition {
+                    epoch: 7,
+                    sequence: 0,
+                    sample_index: 0,
+                    time_anchor: None,
+                    discontinuity: None,
+                },
+                bytes.iter().map(|b| *b as i8).collect(),
+            )
             .unwrap();
-        assert!(ht_signal_record_with_context(
-            signal,
-            7,
-            &[PhyDiagnostic::HtGreenfield {
-                preamble_sample_index: 38
-            }]
-        )
-        .unwrap()["ht"]
-            .get("format")
-            .is_none());
+            let out = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
+            assert_eq!(out.frames.len(), 1);
+            assert_eq!(ht_metadata(&out.frames[0]).unwrap()["format"], "greenfield");
+            assert_eq!(ht_metadata(&out.frames[0]).unwrap()["stbc"], stbc);
+            let records: Vec<_> = out
+                .diagnostics
+                .iter()
+                .filter_map(|d| ht_signal_record_with_context(d, 7, &out.diagnostics))
+                .collect();
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0]["ht"]["format"], "greenfield");
+            assert_eq!(records[0]["ht"]["stbc"], stbc);
+            assert_eq!(records[0]["epoch"], 7);
+            let signal = out
+                .diagnostics
+                .iter()
+                .find(|d| matches!(d, PhyDiagnostic::HtSignal { .. }))
+                .unwrap();
+            assert!(ht_signal_record_with_context(
+                signal,
+                7,
+                &[PhyDiagnostic::HtGreenfield {
+                    preamble_sample_index: 38
+                }]
+            )
+            .unwrap()["ht"]
+                .get("format")
+                .is_none());
+        }
     }
     #[test]
     fn radio_iq_modern_artifact_recovers_distinct_frames_and_typed_metadata() {

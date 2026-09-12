@@ -852,7 +852,19 @@ mod tests {
         assert_eq!(pairs[0].phy, "ht");
         assert_eq!(pairs[0].ht.as_ref().unwrap().delimiter_offset, Some(60));
         bytes[14] = 0x37;
-        bytes[15] = 0x30; // Known unsupported STBC.
+        bytes[15] = 0x30; // One data stream with supported two-STS redundancy.
+        let stbc_reference =
+            reference_frame(&bytes, bytes.len() as u32, [1000, 1002], 1, &policy()).unwrap();
+        assert_eq!(stbc_reference.ht.as_ref().unwrap().stbc, Some(1));
+        let mut stbc_recovered = ht_obs(2, [1000, 1002], Some(true));
+        stbc_recovered.ht.as_mut().unwrap().stbc = Some(0);
+        assert!(match_frames(&[stbc_recovered.clone()], &[stbc_reference.clone()], 10).is_empty());
+        stbc_recovered.ht.as_mut().unwrap().stbc = Some(1);
+        assert_eq!(
+            match_frames(&[stbc_recovered], &[stbc_reference], 10).len(),
+            1
+        );
+        bytes[15] = 0x50; // STBC=2 is unsupported for NSS1.
         assert_eq!(
             reference_frame(&bytes, bytes.len() as u32, [1000, 1002], 1, &policy()).unwrap_err(),
             "unsupported_ht_configuration"
@@ -916,7 +928,7 @@ mod tests {
         for (field, bad) in [
             ("mcs", json!(8)),
             ("bandwidth_mhz", json!(40)),
-            ("stbc", json!(1)),
+            ("stbc", json!(2)),
             ("guard_interval_ns", json!(200)),
             ("coding", json!(null)),
             ("psdu_bytes", json!(77)),

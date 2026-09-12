@@ -47,7 +47,7 @@ def generate(out):
         fields = [(7 >> n) & 1 for n in range(7)] + [0]
         fields += [(len(psdu) >> n) & 1 for n in range(16)]
         fields += [1, 1, 1, 0, 0, 0, 1, 0, 0, 0]
-        changed_bit = {'short_gi': 31, 'stbc': 28, 'extension_stream': 32, 'width40': 7}.get(fault)
+        changed_bit = {'short_gi': 31, 'stbc': 29, 'extension_stream': 32, 'width40': 7}.get(fault)
         if changed_bit is not None:
             fields[changed_bit] = 1
         if fault == 'mcs8':

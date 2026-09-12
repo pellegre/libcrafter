@@ -53,7 +53,7 @@ impl HtPhy {
         let stbc = (known & 0x20 != 0).then_some((flags >> 5) & 3);
         let greenfield = (known & 8 != 0).then_some(flags & 8 != 0);
         let extension = (known & 0x40 != 0).then_some(((known >> 6) & 2) | (flags >> 7));
-        if stbc.is_some_and(|v| v != 0)
+        if stbc.is_some_and(|v| v > 1)
             || (greenfield == Some(true) && flags & 4 != 0)
             || extension.is_some_and(|v| v != 0)
         {
@@ -86,7 +86,11 @@ impl HtPhy {
             .as_u64()
             .filter(|n| *n < 8)
             .ok_or("unsupported_ht_mcs")? as u8;
-        if h["bandwidth_mhz"] != 20 || h["stbc"] != 0 || h["extension_spatial_streams"] != 0 {
+        let stbc = h["stbc"]
+            .as_u64()
+            .filter(|v| *v <= 1)
+            .ok_or("unsupported_ht_configuration")? as u8;
+        if h["bandwidth_mhz"] != 20 || h["extension_spatial_streams"] != 0 {
             return Err("unsupported_ht_configuration");
         }
         let short_gi = match h["guard_interval_ns"].as_u64() {
@@ -133,7 +137,7 @@ impl HtPhy {
             mcs: index,
             short_gi,
             ldpc: Some(ldpc),
-            stbc: Some(0),
+            stbc: Some(stbc),
             greenfield,
             extension_spatial_streams: Some(0),
             aggregation: Some(aggregation),
@@ -168,13 +172,16 @@ mod tests {
         for bits in [1, 2, 4] {
             assert!(HtPhy::reference([7 ^ bits, 0, 0], None).is_err());
         }
-        for flags in [1, 2, 3, 12, 0x20, 0x40, 0x60, 0x80] {
+        for flags in [1, 2, 3, 12, 0x40, 0x60, 0x80] {
             assert!(
                 HtPhy::reference([0x7f, flags, 0], None).is_err(),
                 "flags={flags}"
             );
         }
         assert!(HtPhy::reference([0xff, 0, 0], None).is_err());
+        let stbc = HtPhy::reference([0x7f, 0x20, 0], None).unwrap();
+        assert_eq!(stbc.stbc, Some(1));
+        assert!(!stbc.compatible(&HtPhy::reference([0x7f, 0, 0], None).unwrap()));
         let gf = HtPhy::reference([0x7f, 8, 0], None).unwrap();
         assert_eq!(gf.greenfield, Some(true));
         assert!(!gf.compatible(&HtPhy::reference([0x7f, 0, 0], None).unwrap()));
@@ -183,6 +190,36 @@ mod tests {
         assert!(!HtPhy::reference([0x17, 0, 3], None)
             .unwrap()
             .compatible(&HtPhy::reference([0x17, 0x10, 3], None).unwrap()));
+    }
+    #[test]
+    fn radio_ht_stbc_recovered_configuration() {
+        for (format, flags) in [("mixed", 0x10), ("greenfield", 0x18)] {
+            let mut value = serde_json::json!({"ht":{
+                "mcs":7,"bandwidth_mhz":20,"stbc":0,"extension_spatial_streams":0,
+                "guard_interval_ns":800,"coding":"ldpc","aggregation":false,
+                "psdu_bytes":100,"format":format
+            },"ampdu":null});
+            for stbc in 0..=1u8 {
+                value["ht"]["stbc"] = stbc.into();
+                let recovered = HtPhy::recovered(&value, 100).unwrap();
+                assert_eq!(recovered.stbc, Some(stbc));
+                assert!(recovered
+                    .compatible(&HtPhy::reference([0x7f, flags | (stbc << 5), 7], None).unwrap()));
+                assert!(!recovered.compatible(
+                    &HtPhy::reference([0x7f, flags | ((1 - stbc) << 5), 7], None).unwrap()
+                ));
+                assert!(recovered.compatible(&HtPhy::reference([0x1f, flags, 7], None).unwrap()));
+            }
+            for stbc in [
+                serde_json::json!(2),
+                serde_json::json!(3),
+                serde_json::json!(-1),
+                serde_json::Value::Null,
+            ] {
+                value["ht"]["stbc"] = stbc;
+                assert!(HtPhy::recovered(&value, 100).is_err());
+            }
+        }
     }
     #[test]
     fn radio_ht_greenfield_recovered_configuration() {

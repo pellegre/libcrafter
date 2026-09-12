@@ -42,6 +42,25 @@ pub(super) fn train_single_stream(
     Some(trained)
 }
 
+/// Separate the first two HT-LTF columns, whose known-tone-removed values
+/// observe h1+h2 and -h1+h2 respectively (Equation 19-27). The first estimate
+/// may come from either mixed HT-LTF1 or greenfield's repeated HT-LTF1.
+pub(super) fn train_stbc_second(
+    mut first: super::sync::Acquisition,
+    samples: &[super::ComplexSample],
+    start: u64,
+) -> Option<(super::sync::Acquisition, [super::ComplexSample; 64])> {
+    let second = train_single_stream(samples, start, &first)?;
+    let mut other = [super::ComplexSample::ZERO; 64];
+    for (k, value) in other.iter_mut().enumerate() {
+        let channels =
+            super::stbc::separate_training([first.channel[k], second.channel[k]]).ok()?;
+        first.channel[k] = channels[0];
+        *value = channels[1];
+    }
+    Some((first, other))
+}
+
 /// Integrity-checked HT-SIG fields. This does not qualify the signaled PHY mode
 /// for reception: MCS, STBC and stream combinations need separate validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -19,6 +19,8 @@ behaviors:
     greenfield_guard_interval_ns: [800]
     lengths: [100, 4095]
     impairments: [clean_two_channel, independent_multipath_and_carrier_offset]
+  - name: malformed-and-aggregate-iq
+    checks: [header_crc, invalid_stbc_dimensions, invalid_mcs, invalid_extension_count, unusable_training, service_integrity, mac_fcs, ldpc_nonconvergence, truncated_pairs, duplicate_mpdus, damaged_codeword_recovery]
 coverage_cases: [wifi-ht20-stbc]
 supported_cases:
   - {name: wifi-ht20-stbc, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
@@ -26,5 +28,6 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - Independent pair arithmetic precedes full IQ integration.
-      - The streaming receiver still rejects nonzero STBC; no live STBC qualification is claimed.
+      - Streaming HT20 RX supports NSS1/NSTS2 with MCS0-7, BCC or LDPC, mixed GI400/800 and greenfield GI800, without extension training.
+      - Independent full-IQ and malformed fixtures exercise the receiver; no live STBC qualification is claimed.
+      - Greenfield STBC short GI remains unqualified pending source review; additional data streams and extension training remain unsupported.

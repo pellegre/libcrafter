@@ -16,8 +16,22 @@ import ht_ldpc_vectors as ldpc
 import ofdm_vectors as base
 
 
-def waveform(psdu, mcs, guard, coding, greenfield):
-    symbols, coded = (ldpc.encode_psdu if coding else aggregate.bcc)(psdu, mcs, stbc=True)
+def waveform(psdu, mcs, guard, coding, greenfield, aggregation=False, fault=None):
+    if coding:
+        symbols,coded=ldpc.encode_psdu(psdu,mcs,invalid_service=fault=='invalid_service',stbc=True)
+    else:
+        symbols,coded=aggregate.bcc(psdu,mcs,stbc=True)
+    if fault in ['nonconvergence','damaged_codeword']:
+        start,length=0,len(coded)
+        if fault=='damaged_codeword':
+            ncbps,rate=ldpc.PARAMETERS[mcs]
+            _,count,block,short,puncture,repeat,_=ldpc.layout(len(psdu),ncbps,rate,2)
+            lengths=[block-short//count-(i<short%count)-puncture//count-(i<puncture%count)
+                     +repeat//count+(i<repeat%count) for i in range(count)]
+            assert count>3
+            start,length=sum(lengths[:2]),lengths[2]
+        noise=hashlib.shake_256(b'ht-stbc-damaged-codeword').digest((length+7)//8)
+        coded[start:start+length]=[noise[i//8]>>(i%8)&1 for i in range(length)]
     assert symbols % 2 == 0
     nbpsc = ht.PARAMETERS[mcs][0]
     chains = [[0j]*37, [0j]*37]
@@ -42,8 +56,12 @@ def waveform(psdu, mcs, guard, coding, greenfield):
         field(signal, signal, 16, legacy=True)
     fields = [(mcs >> n)&1 for n in range(7)]+[0]
     fields += [(len(psdu) >> n)&1 for n in range(16)]
-    fields += [1,1,1,0,1,0,int(coding),int(guard==8),0,0]
+    fields += [1,1,1,int(aggregation),1,0,int(coding),int(guard==8),0,0]
+    if fault=='stbc2': fields[28:30]=[0,1]
+    if fault=='mcs8': fields[:7]=[(8>>n)&1 for n in range(7)]
+    if fault=='extension3': fields[32:34]=[1,1]
     fields += ldpc.crc(fields)+[0]*6
+    if fault=='header_crc': fields[34]^=1
     header = base.encode(fields)
     for n in range(2):
         freq = [0j]*53
@@ -81,6 +99,11 @@ def waveform(psdu, mcs, guard, coding, greenfield):
             field(ht.ifft(freq[0]),ht.ifft(freq[1]),guard)
     end = len(chains[0])
     assert end == start+symbols*(64+guard) and len(chains[1]) == end
+    if fault=='zero_training':
+        assert not greenfield
+        for chain in chains: chain[start-160:start]=[0j]*160
+    if fault=='truncated_data':
+        for chain in chains: del chain[-(64+guard):]
     for chain in chains:
         chain.extend([0j]*64)
     return chains,symbols,start,end
@@ -106,7 +129,34 @@ def generate(out):
                         (out/f'{name}.cs8').write_bytes(iq)
                         rows.append('\t'.join(map(str,[name,mcs,guard,symbols,psdu.hex(),hashlib.sha256(iq).hexdigest(),len(iq)//2,start,end,int(coding),int(greenfield)])))
     (out/'ht-stbc-index.tsv').write_text('\n'.join(rows)+'\n')
-    print(f'{len(rows)-1} independent complete HT20 STBC waveforms verified')
+    invalid=['name\tresult\tsha256\tsamples']
+    for fault in ['header_crc','stbc2','mcs8','extension3','zero_training','invalid_service',
+                  'invalid_fcs','nonconvergence','truncated_data']:
+        psdu=bytearray(base.frame(44))
+        if fault=='invalid_fcs': psdu[-1]^=1
+        chains,_,_,_=waveform(psdu,7,16,True,False,fault=fault)
+        iq=base.quantize([a+(0.45+0.2j)*b for a,b in zip(*chains)])
+        name=f'ht-stbc-invalid-{fault}'
+        (out/f'{name}.cs8').write_bytes(iq)
+        invalid.append('\t'.join(map(str,[name,fault,hashlib.sha256(iq).hexdigest(),len(iq)//2])))
+    (out/'ht-stbc-invalid-index.tsv').write_text('\n'.join(invalid)+'\n')
+    aggregated=['name\tmcs\tguard_samples\tldpc\tpsdu_hex\tframe_offsets\tmpdu_hex\tsha256\tframe_end']
+    cases=[(mcs,coding,gf,guard,None) for mcs in [0,7] for coding in [False,True]
+           for gf,guard in [(False,8),(False,16),(True,16)]]
+    cases += [(3,True,False,8,'damaged_codeword'),(3,True,True,16,'damaged_codeword')]
+    for mcs,coding,greenfield,guard,fault in cases:
+        frames=[base.frame(1278),base.frame(44)] if fault else [base.frame(0)]*2
+        psdu,offsets=aggregate.ampdu.aggregate(frames)
+        chains,_,_,end=waveform(psdu,mcs,guard,coding,greenfield,aggregation=True,fault=fault)
+        if fault: frames,offsets=frames[1:],offsets[1:]
+        iq=base.quantize([a+(0.45+0.2j)*b for a,b in zip(*chains)])
+        name=f'ht-stbc-ampdu-{mcs}-{"ldpc" if coding else "bcc"}-{"gf" if greenfield else "mf"}-gi{guard*50}'
+        if fault: name+='-'+fault
+        (out/f'{name}.cs8').write_bytes(iq)
+        aggregated.append('\t'.join(map(str,[name,mcs,guard,int(coding),psdu.hex(),','.join(map(str,offsets)),
+                                              ','.join(f.hex() for f in frames),hashlib.sha256(iq).hexdigest(),end])))
+    (out/'ht-stbc-ampdu-index.tsv').write_text('\n'.join(aggregated)+'\n')
+    print(f'{len(rows)-1} complete, {len(invalid)-1} malformed and {len(aggregated)-1} aggregate HT20 STBC waveforms verified')
 
 
 if __name__=='__main__':
