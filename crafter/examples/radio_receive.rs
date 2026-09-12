@@ -208,7 +208,20 @@ impl PhyDecoder for ObservedDecoder {
             IqEvent::End(end) => Some(*end),
             IqEvent::Chunk(_) => None,
         };
+        let diagnostic_epoch = match &event {
+            IqEvent::Chunk(chunk) if matches!(self.inner, SelectedDecoder::Modern(_)) => {
+                Some(chunk.position().epoch)
+            }
+            _ => None,
+        };
         let decoded = self.inner.consume(event)?;
+        if let Some(epoch) = diagnostic_epoch {
+            for diagnostic in &decoded.diagnostics {
+                if let Some(value) = ht_signal_record(diagnostic, epoch) {
+                    emit(&self.out, value)?;
+                }
+            }
+        }
         for f in &decoded.frames {
             self.ordinal += 1;
             emit(
@@ -226,6 +239,20 @@ impl PhyDecoder for ObservedDecoder {
     }
     fn reset(&mut self, reason: ResetReason) -> DecodeOutput {
         self.inner.reset(reason)
+    }
+}
+fn ht_signal_record(diagnostic: &PhyDiagnostic, epoch: u64) -> Option<serde_json::Value> {
+    match diagnostic {
+        PhyDiagnostic::HtSignal {
+            fields,
+            preamble_sample_index,
+        } => Some(json!({
+            "kind":"ht_signal", "epoch":epoch,
+            "preamble_sample_index":preamble_sample_index,
+            "ht":ht_signal_metadata(fields,*preamble_sample_index),
+            "mac_integrity":"not_established_by_header",
+        })),
+        _ => None,
     }
 }
 fn receive(
@@ -927,6 +954,17 @@ mod tests {
         let mut decoder = SelectedDecoder::Modern(WifiDecoder::new());
         let out = decoder.consume(source.next_event().unwrap()).unwrap();
         assert_eq!(out.frames.len(), 2);
+        let signals: Vec<_> = out
+            .diagnostics
+            .iter()
+            .filter_map(|d| ht_signal_record(d, 0))
+            .collect();
+        assert_eq!(signals.len(), 1);
+        assert_eq!(signals[0]["kind"], "ht_signal");
+        assert_eq!(signals[0]["ht"]["mcs"], 7);
+        assert_eq!(signals[0]["preamble_sample_index"], 37);
+        assert_eq!(signals[0]["mac_integrity"], "not_established_by_header");
+        assert!(ht_signal_record(&PhyDiagnostic::InvalidData, 0).is_none());
         assert_eq!(out.frames[0].bytes, out.frames[1].bytes);
         for (frame, offset) in out.frames.iter().zip([0, 60]) {
             assert_eq!(frame_phy(frame), "ht");
