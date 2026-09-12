@@ -56,6 +56,12 @@
   ],
   "facts": [
     {
+      "id": "ht-two-chain-preamble-timing",
+      "source": "ieee-80211-2020",
+      "anchor": "19.3.2 Figure 19-1; 19.3.9.3.2 Table 19-9; 19.3.9.4.2 Table 19-10; 19.3.9.4.6 Tables 19-12/13/14",
+      "fact": "For two transmit chains, the non-HT portion of mixed format uses cyclic shifts 0 and -200 ns, including HT-SIG. Two space-time streams use cyclic shifts 0 and -400 ns in the HT portion and DATA; greenfield uses these HT shifts throughout. NSTS2 requires two data HT-LTFs. With no extension streams, mixed DATA begins at 40 us and greenfield DATA at 28 us. Additional extension training counts are 0/1/2/4 for NESS0/1/2/3; NSTS+NESS must not exceed four and total HT-LTF count must not exceed five."
+    },
+    {
       "id": "ht-single-data-stream-stbc",
       "source": "ieee-80211-2020",
       "anchor": "19.3.9.4.6 Equation 19-27 and Tables 19-12/13; 19.3.11.9.2 Table 19-18; 19.3.11.10 Table 19-19",
@@ -138,7 +144,7 @@
   ],
   "unresolved_questions": [
     "Review current-base changes and applicable corrigenda before final qualification.",
-    "Review remaining HT training and STBC clauses before implementation.",
+    "Complete extension-training coverage and clarify greenfield/STBC short-GI applicability; the current STBC waveform corpus uses greenfield long GI only.",
     "Review VHT and remaining HE wire clauses before implementation.",
     "Obtain and review EHT full text; publication metadata is not wire authority."
   ],

@@ -15,6 +15,10 @@ behaviors:
     checks: [known_tone_removal, first_two_training_columns, bounded_inverse, nonfinite_rejection]
   - name: complete-iq-recovery
     checks: [two_sts_pilots, even_symbol_count, bcc_and_ldpc, frame_fcs, aggregation, explicit_configuration_bounds, exact_streaming_bytes]
+    mixed_guard_interval_ns: [400, 800]
+    greenfield_guard_interval_ns: [800]
+    lengths: [100, 4095]
+    impairments: [clean_two_channel, independent_multipath_and_carrier_offset]
 coverage_cases: [wifi-ht20-stbc]
 supported_cases:
   - {name: wifi-ht20-stbc, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}

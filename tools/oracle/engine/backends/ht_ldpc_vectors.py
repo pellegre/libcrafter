@@ -16,9 +16,9 @@ OUT=base.OUT
 MATRICES={(c['n'],tuple(c['rate'])):c for c in json.loads(FIXTURE.read_text())['codes']}
 
 
-def encode_psdu(psdu,mcs,invalid_service=False):
+def encode_psdu(psdu,mcs,invalid_service=False,stbc=False):
     coded,rate=PARAMETERS[mcs]
-    symbols,count,n,short,puncture,repeat,_=layout(len(psdu),coded,rate,1)
+    symbols,count,n,short,puncture,repeat,_=layout(len(psdu),coded,rate,2 if stbc else 1)
     matrix=MATRICES[n,(rate.numerator,rate.denominator)]
     z,k=matrix['z'],matrix['k']
     checks=[sum(1<<(col*z+(offset+shift)%z) for col,shift in enumerate(block) if shift>=0)
