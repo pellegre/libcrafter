@@ -38,7 +38,14 @@ pub fn ht_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
         PhyDiagnostic::HtSignal {
             fields: f,
             preamble_sample_index,
-        } => Some(ht_signal_metadata(f, *preamble_sample_index)),
+        } => {
+            let mut metadata = ht_signal_metadata(f, *preamble_sample_index);
+            if frame.diagnostics.iter().any(|d| matches!(d,
+                PhyDiagnostic::HtGreenfield { preamble_sample_index: index } if index == preamble_sample_index)) {
+                metadata["format"] = "greenfield".into();
+            }
+            Some(metadata)
+        },
         _ => None,
     })
 }

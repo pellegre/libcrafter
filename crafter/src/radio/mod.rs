@@ -265,6 +265,11 @@ pub enum PhyDiagnostic {
         truncated_mpdus: usize,
         oversized_mpdus: usize,
     },
+    /// The associated integrity-checked HT-SIG used a greenfield preamble.
+    /// This format marker does not establish MAC integrity.
+    HtGreenfield {
+        preamble_sample_index: u64,
+    },
     /// An integrity-checked HT header, not an integrity-checked MAC frame.
     HtSignal {
         fields: HtSignalFields,
@@ -375,6 +380,14 @@ impl PartialEq for PhyDiagnostic {
                     failed_checks: f,
                 },
             ) => a == d && b == e && c == f,
+            (
+                Self::HtGreenfield {
+                    preamble_sample_index: a,
+                },
+                Self::HtGreenfield {
+                    preamble_sample_index: b,
+                },
+            ) => a == b,
             (
                 Self::HtSignal {
                     fields: a,

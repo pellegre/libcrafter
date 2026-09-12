@@ -15,6 +15,10 @@ behaviors:
     checks: [independent_iq, full_ht_ltf1, no_legacy_signal, twenty_four_us_preamble, pilot_offset_two, exact_psdu, valid_fcs]
   - name: admission-and-continuity
     checks: [explicit_format_metadata, legacy_defaults_preserved, short_gi_rejection_without_extra_training, truncation, sample_gaps, bounded_outputs]
+  - name: malformed-iq
+    checks: [bad_ht_sig_crc, unsupported_stbc, unsupported_extension_stream, unsupported_width, unsupported_mcs, invalid_service, invalid_fcs]
+  - name: greenfield-aggregation
+    checks: [bcc_and_ldpc, exact_mpdu_bytes, duplicate_occurrences, delimiter_offsets, per_mpdu_fcs, output_overflow, chunk_continuity]
 coverage_cases: [wifi-ht20-greenfield]
 supported_cases:
   - {name: wifi-ht20-greenfield, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
@@ -22,5 +26,6 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - Independent waveform qualification precedes receive implementation.
-      - Streaming acquisition, DATA recovery and live qualification remain unimplemented for greenfield.
+      - WifiDecoder recovers exact frame bytes from 64 independently generated greenfield waveforms at three chunk sizes.
+      - Header format, pilot offset, malformed IQ and continuity have explicit regression coverage.
+      - Live qualification, STBC and extension streams remain unsupported or unqualified.
