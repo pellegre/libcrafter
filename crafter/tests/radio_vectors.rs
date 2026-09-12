@@ -4,6 +4,33 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_vht_ampdu_independent_inventory() {
+    for (inventory, digest, count, columns) in [
+        (
+            include_str!("fixtures/iq/vht-ampdu-delimiters.tsv"),
+            "25d3b8e2cee53ebd56e68b2d0b199e90b9143df0410c7b540ae75f94345321dc",
+            16384,
+            3,
+        ),
+        (
+            include_str!("fixtures/iq/vht-ampdu-index.tsv"),
+            "bd4da6dce66701f14c88a4e6acc19f34a4508663e716c3ba95600941260a7c61",
+            144,
+            5,
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(inventory.as_bytes())), digest);
+        assert_eq!(inventory.lines().skip(1).count(), count);
+        let mut names = std::collections::BTreeSet::new();
+        for row in inventory.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            assert_eq!(c.len(), columns);
+            assert!(names.insert(c[0]));
+        }
+    }
+}
+
+#[test]
 fn radio_vht_bcc_iq_independent_inventory() {
     use crafter::{VhtSignalAFields, VhtSignalAUsers, VhtSignalB20Fields};
     let inventory = include_str!("fixtures/iq/vht-bcc-iq-index.tsv");

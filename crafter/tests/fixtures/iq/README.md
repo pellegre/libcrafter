@@ -228,6 +228,21 @@ greenfield GI800, two PSDU sizes and clean/independent-multipath-plus-CFO cases.
 Legacy and HT portions use their distinct per-chain cyclic shifts. These
 fixtures do not establish single-antenna STBC transmission or live reception.
 
+## VHT aggregate byte fixtures
+
+`vht-ampdu-delimiters.tsv` covers all 16384 representable delimiter lengths,
+including the high-two/low-twelve split, EOF and preserved reserved bits.
+`vht-ampdu-index.tsv` contains 144 independent aggregate cases: final padding
+alignments, S-MPDU and multi-MPDU, spacing and EOF delimiters, all trailing
+octet counts, large MPDUs, a PSDU above the HT total-length limit, corruption,
+truncation and invalid EOF ordering. Malformed cases retain earlier recovered
+FCS-valid bytes and report errors; an EOF-order violation stops publication.
+
+Regenerate with `python3 tools/oracle/engine/backends/vht_ampdu_vectors.py`;
+use `--check` for a read-only exact comparison. Authority is IEEE 802.11-2020
+9.7.1-2 and 10.12.6-8, a superseded base recorded in the PHY evidence map.
+These are framing fixtures, not evidence of complete VHT RX or RF qualification.
+
 ## Legacy transmit oracle corpus
 
 The `ofdm-tx-*` and `dsss-tx-*` artifacts are clean, bounded transmit-oracle

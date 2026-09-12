@@ -56,6 +56,12 @@
   ],
   "facts": [
     {
+      "id": "vht-aggregate-framing",
+      "source": "ieee-80211-2020",
+      "anchor": "9.7.1-2 Table 9-527 Figure 9-976; 10.12.6-8",
+      "fact": "VHT delimiter B2..3 carry the high two length bits and B4..15 the low twelve; B0 is EOF and B1 reserved. EOF=1/nonzero length marks an S-MPDU, which must be the only nonzero-length subframe. EOF=1/zero length marks padding and cannot precede an S-MPDU. No EOF=0 subframe may follow EOF=1. Final alignment padding and zero to three trailing EOF octets have unspecified contents. The HT 65535-octet total limit does not apply to VHT; its 1048575-octet limit is pre-EOF."
+    },
+    {
       "id": "vht20-siso-waveform",
       "source": "ieee-80211-2020",
       "anchor": "Table 21-8; Equations 21-28/29/36/47/91/95; 9.7.1; 10.12.6-8; 21.3.20 Equations 21-104/105/106",
