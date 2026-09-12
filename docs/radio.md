@@ -272,6 +272,12 @@ correlation with the ideal long-training waveform.
 
 ## Continuity and bounded processing
 
+Legacy OFDM acquisition continues while DATA is pending, retaining at most two
+candidates whose sample reservations share `max_buffer_samples`. A false long
+SIGNAL length therefore need not hide a later valid frame. Candidates beyond
+the slot or sample budget are rejected; this bounded search is not an unlimited
+collision decoder. Gaps and end events discard all incomplete candidates.
+
 Each chunk identifies its sample format, stream epoch, sequence, absolute sample
 position, configuration and any time anchor with uncertainty. A gap of unknown
 size cannot be represented as a known zero-sized loss. Loss, reconfiguration,

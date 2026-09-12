@@ -4,6 +4,53 @@ use crafter::radio::*;
 use std::{io::Cursor, time::Duration};
 
 #[test]
+fn radio_recovers_frame_inside_false_long_candidate() {
+    let mut tx = LegacyOfdmTxConfig::new(LegacyOfdmRate::Mbps6);
+    let mut signal = [0; 24];
+    signal[..4].copy_from_slice(&[1, 1, 0, 1]);
+    signal[5..17].fill(1); // Valid SIGNAL declares the maximum length.
+    signal[17] = signal[..17].iter().fold(0, |a, b| a ^ b);
+    tx.signal_override = Some(signal);
+    let false_frame = LegacyOfdmTransmission::encode(&[0; 16], None, &tx).unwrap();
+    let good = include_bytes!("fixtures/iq/ofdm-6-clean.cs8");
+    let expected_hex = include_str!("fixtures/iq/ofdm-index.tsv")
+        .lines()
+        .find(|line| line.starts_with("ofdm-6-clean\t"))
+        .unwrap()
+        .split('\t')
+        .nth(6)
+        .unwrap();
+    let expected: Vec<u8> = expected_hex
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+        .collect();
+    let mut bytes: Vec<u8> = false_frame.cs8.iter().map(|b| *b as u8).collect();
+    bytes.extend_from_slice(&[0; 1024]);
+    let expected_start = bytes.len() as u64 / 2 + 37;
+    bytes.extend_from_slice(good);
+    for chunk in [1, 127, 4096] {
+        let config = combined_config(chunk);
+        let mut source =
+            ReaderIqSource::new(Cursor::new(&bytes), config, combined_position()).unwrap();
+        let mut decoder = LegacyOfdmDecoder::new();
+        let mut frames = Vec::new();
+        loop {
+            let event = source.next_event().unwrap();
+            let end = matches!(event, IqEvent::End(_));
+            frames.extend(decoder.consume(event).unwrap().frames);
+            if end {
+                break;
+            }
+        }
+        assert_eq!(frames.len(), 1, "chunk={chunk}");
+        assert_eq!(frames[0].start.sample_index, expected_start);
+        assert_eq!(frames[0].bytes, expected);
+        assert_eq!(frames[0].integrity, FrameIntegrity::ValidFcs);
+    }
+}
+
+#[test]
 fn radio_periodic_interference_then_independent_frame() {
     let mut bytes = Vec::new();
     for n in 0..4096 {

@@ -24,7 +24,9 @@ struct Pending {
 pub struct LegacyOfdmDecoder {
     sync: Synchronizer,
     continuity: IqContinuity,
-    pending: Option<Pending>,
+    // Continue acquisition while DATA is pending, without an unbounded set of
+    // hypotheses. Reservations across both slots share max_buffer_samples.
+    pending: [Option<Pending>; 2],
     terminal: bool,
     stats: DecoderStats,
 }
@@ -39,8 +41,11 @@ impl LegacyOfdmDecoder {
 impl PhyDecoder for LegacyOfdmDecoder {
     fn reset(&mut self, reason: ResetReason) -> DecodeOutput {
         let mut out = DecodeOutput::default();
-        if self.pending.take().is_some() || self.sync.clear() {
-            self.stats.truncated_frames = self.stats.truncated_frames.saturating_add(1);
+        let partials = self.pending.iter_mut().filter_map(Option::take).count()
+            + usize::from(self.sync.clear());
+        if partials != 0 {
+            self.stats.truncated_frames =
+                self.stats.truncated_frames.saturating_add(partials as u64);
             out.diagnostics.push(PhyDiagnostic::TruncatedFrame);
         }
         self.sync.reset();
@@ -72,7 +77,16 @@ impl PhyDecoder for LegacyOfdmDecoder {
         }
         for (offset, sample) in chunk.normalized().enumerate() {
             let index = chunk.position().sample_index + offset as u64;
-            if let Some(p) = &mut self.pending {
+            for slot in 0..self.pending.len() {
+                let reserved: usize = self
+                    .pending
+                    .iter()
+                    .flatten()
+                    .map(|p| p.samples.capacity())
+                    .sum();
+                let Some(p) = &mut self.pending[slot] else {
+                    continue;
+                };
                 p.samples.push(sample);
                 if p.info.is_none() && p.samples.len() == 80 {
                     match decode_signal(
@@ -80,7 +94,10 @@ impl PhyDecoder for LegacyOfdmDecoder {
                         &p.acquisition,
                         config.max_frame_bytes.min(4095),
                     ) {
-                        Ok(info) if 80 + info.data_symbols * 80 <= config.max_buffer_samples => {
+                        Ok(info)
+                            if info.data_symbols * 80
+                                <= config.max_buffer_samples.saturating_sub(reserved) =>
+                        {
                             p.samples.reserve_exact(info.data_symbols * 80);
                             p.info = Some(info);
                         }
@@ -88,8 +105,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             self.stats.rejected_frames =
                                 self.stats.rejected_frames.saturating_add(1);
                             out.diagnostics.push(PhyDiagnostic::InvalidHeader);
-                            self.pending = None;
-                            self.sync.clear();
+                            self.pending[slot] = None;
                             continue;
                         }
                     }
@@ -97,7 +113,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                 if p.info
                     .is_some_and(|info| index + 1 == info.end_sample_index)
                 {
-                    let p = self.pending.take().unwrap();
+                    let p = self.pending[slot].take().unwrap();
                     let info = p.info.unwrap();
                     match decode_data(&p.samples[80..], &p.acquisition, info) {
                         Ok(bytes) => {
@@ -140,14 +156,28 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             out.diagnostics.push(PhyDiagnostic::InvalidHeader);
                         }
                     }
-                    self.sync.clear();
                 }
-            } else if let Some(event) = self.sync.push(sample, index) {
+            }
+            if let Some(event) = self.sync.push(sample, index) {
                 match event {
                     SyncEvent::Acquired(a) => {
                         let mut start = chunk.position().clone();
                         start.sample_index = a.preamble_start;
-                        self.pending = Some(Pending {
+                        let reserved: usize = self
+                            .pending
+                            .iter()
+                            .flatten()
+                            .map(|p| p.samples.capacity())
+                            .sum();
+                        let free = self.pending.iter().position(Option::is_none);
+                        let Some(slot) = free
+                            .filter(|_| config.max_buffer_samples.saturating_sub(reserved) >= 80)
+                        else {
+                            self.stats.rejected_frames =
+                                self.stats.rejected_frames.saturating_add(1);
+                            continue;
+                        };
+                        self.pending[slot] = Some(Pending {
                             acquisition: a,
                             start,
                             samples: Vec::with_capacity(80),
