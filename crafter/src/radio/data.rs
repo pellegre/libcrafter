@@ -697,7 +697,7 @@ fn possible_service_prefix(history: &[[u8; 64]]) -> bool {
     false
 }
 
-fn valid_fcs(bytes: &[u8]) -> bool {
+pub(super) fn valid_fcs(bytes: &[u8]) -> bool {
     if bytes.len() < 4 {
         return false;
     }

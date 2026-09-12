@@ -8595,6 +8595,8 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "ht-signal-index.tsv"
                 | "ht-mixed-index.tsv"
                 | "ht-bcc-index.tsv"
+                | "ampdu-delimiters.tsv"
+                | "ampdu-index.tsv"
                 | "ht-ldpc-index.tsv"
                 | "ht-ldpc-invalid-index.tsv"
                 | "ldpc-codewords.json"
