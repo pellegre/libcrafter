@@ -1,0 +1,88 @@
+{
+  "schema": "crafter.wifi-phy-evidence/v1",
+  "reviewed_at": "2026-09-12",
+  "scope": "Raw Wi-Fi PHY bytes; RX correctness before performance and TX",
+  "rfc_discovery": {
+    "query": "IEEE 802.11 Wi-Fi PHY",
+    "selected_documents": [],
+    "extracted_facts": [],
+    "note": "RFC discovery yielded no PHY authority. IEEE publications supply the evidence below."
+  },
+  "sources": [
+    {
+      "id": "ieee-80211-2020",
+      "classification": "published-base-superseded",
+      "authority_url": "https://standards.ieee.org/ieee/802.11/7028/",
+      "retrieval_url": "https://raw.githubusercontent.com/WeitaoZhu/wi-fi_books/master/IEEE_802.11_Specification/802.11-2020.pdf",
+      "sha256": "d4b6c467609800746e29dff1ff2e9a01ace281bab9485b615d6ae78666ed7b00",
+      "pdf_pages": 4379,
+      "status": "published_text_obtained_selected_clauses_reviewed",
+      "reviewed_clauses": ["19.3.9.4.3", "19.3.9.4.4", "19.3.9.4.5"],
+      "superseded_by": "ieee-80211-2024"
+    },
+    {
+      "id": "ieee-80211ax-2021",
+      "classification": "published-extension",
+      "authority_url": "https://www.ieee802.org/11/email/stds-802-11/msg05405.html",
+      "retrieval_url": "https://raw.githubusercontent.com/WeitaoZhu/wi-fi_books/master/IEEE_802.11_Specification/802.11ax-2021.pdf",
+      "sha256": "e6b6aa3301b23e84467c99c8460d0d990e1125e55e83a2bd5c7b3d0485b4036f",
+      "pdf_pages": 767,
+      "status": "published_text_obtained_selected_clauses_reviewed",
+      "reviewed_clauses": ["27.3.11.7.1", "27.3.11.7.3"]
+    },
+    {
+      "id": "ieee-80211-2024",
+      "classification": "current-base",
+      "authority_url": "https://standards.ieee.org/ieee/802.11/10548/",
+      "status": "publication_verified_full_text_pending",
+      "reviewed_clauses": []
+    },
+    {
+      "id": "ieee-80211be-2024",
+      "classification": "published-extension",
+      "authority_url": "https://ieeexplore.ieee.org/document/11090080",
+      "doi": "10.1109/IEEESTD.2024.11090080",
+      "status": "publication_verified_full_text_requires_ieee_sign_in",
+      "reviewed_clauses": []
+    }
+  ],
+  "facts": [
+    {
+      "id": "ht-sig-layout",
+      "source": "ieee-80211-2020",
+      "anchor": "19.3.9.4.3, Table 19-11, Figure 19-6",
+      "fact": "HT-SIG comprises two 24-bit parts. Data tones use BPSK rotated 90 degrees; pilots are not rotated."
+    },
+    {
+      "id": "ht-sig-crc",
+      "source": "ieee-80211-2020",
+      "anchor": "19.3.9.4.4, Figure 19-8, printed pages 2892-2893",
+      "fact": "CRC protects the first 34 HT-SIG bits, with polynomial x^8+x^2+x+1, all-one initialization and complemented output, C7 first.",
+      "published_example_input_bits": "1111000100100110000000001110000000",
+      "published_example_crc_bits": "10101000"
+    },
+    {
+      "id": "ht-stf20",
+      "source": "ieee-80211-2020",
+      "anchor": "19.3.9.4.5",
+      "fact": "HT-STF duration is 4 microseconds; its 20 MHz frequency sequence is identical to L-STF."
+    },
+    {
+      "id": "he-siga-crc",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.11.7.3, Figure 27-24",
+      "fact": "HE-SIG-A CRC covers 42 bits. The underlying eight-bit polynomial is inherited from HT, but only four complemented output bits are transmitted, C7 first."
+    }
+  ],
+  "unresolved_questions": [
+    "Review current-base changes and applicable corrigenda before final qualification.",
+    "Review HT DATA coding, LDPC matrices, training and STBC clauses before implementation.",
+    "Review VHT and remaining HE wire clauses before implementation.",
+    "Obtain and review EHT full text; publication metadata is not wire authority."
+  ],
+  "warnings": [
+    "This is a partial evidence inventory, not a claim of implemented or qualified modern PHY support.",
+    "IEEE's interpretations page describes a historical process; absence of a listed interpretation is not proof of no corrections.",
+    "Do not substitute drafts or secondary summaries for unreviewed published wire requirements."
+  ]
+}
