@@ -4,6 +4,66 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_vht_signal_a_independent_inventory() {
+    let inventory = include_str!("fixtures/iq/vht-signal-a-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(inventory.as_bytes())),
+        "653021668de364d2ce3c7716968d0e32a54eb297df0c67ead63b0f96e5e2d81f"
+    );
+    let mut headers = std::collections::BTreeSet::new();
+    let mut groups = std::collections::BTreeSet::new();
+    let mut single_user = 0;
+    let mut multi_user = 0;
+    for row in inventory.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 13);
+        assert_eq!(c[0].len(), 48);
+        assert_eq!(c[12].len(), 96);
+        assert!(c[0]
+            .bytes()
+            .chain(c[12].bytes())
+            .all(|b| b == b'0' || b == b'1'));
+        assert!(headers.insert(c[0]));
+        let number = |i: usize| c[i].parse::<usize>().unwrap();
+        let group = number(2);
+        let width = number(1);
+        assert!(width <= 3 && group <= 63);
+        groups.insert((group, width));
+        for i in [3, 5, 6, 7, 8, 9, 11] {
+            assert!(number(i) <= 1);
+        }
+        assert!(number(6) <= number(5));
+        assert_eq!(&c[0][42..], "000000");
+        if group == 0 || group == 63 {
+            single_user += 1;
+            assert!(number(10) <= 9);
+            let nsts = (number(4) & 7) + 1;
+            assert!(number(3) == 0 || nsts % 2 == 0);
+        } else {
+            multi_user += 1;
+            assert_eq!(number(3), 0);
+            assert_eq!(number(11), 1);
+            assert_ne!(number(10) & 8, 0);
+            for user in 0..4 {
+                let nsts = (number(4) >> (3 * user)) & 7;
+                assert!(nsts <= 4);
+                if nsts == 0 {
+                    let coding = if user == 0 {
+                        number(9)
+                    } else {
+                        (number(10) >> (user - 1)) & 1
+                    };
+                    assert_eq!(coding, 1);
+                }
+            }
+        }
+    }
+    assert_eq!((single_user, multi_user), (640, 1240));
+    assert_eq!(headers.len(), 1880);
+    assert_eq!(groups.len(), 64 * 4);
+}
+
+#[test]
 fn radio_extension_training_independent_waveform_integrity() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
     let rows: Vec<_> = include_str!("fixtures/iq/ht-extension-index.tsv")

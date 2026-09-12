@@ -56,6 +56,12 @@
   ],
   "facts": [
     {
+      "id": "vht-signal-a-fields",
+      "source": "ieee-80211-2020",
+      "anchor": "21.3.8.3.3, Table 21-12, Figures 21-18/19/20",
+      "fact": "VHT-SIG-A consists of two 24-bit parts, BCC encoded together at rate one-half and interleaved per 48-tone symbol. The first symbol's data tones use BPSK and the second QBPSK. Group IDs 0 and 63 select SU field interpretation; other IDs select four MU user positions. CRC covers the first 34 bits using the HT polynomial, followed by six zero tail bits. Bandwidth code 3 does not distinguish contiguous 160 MHz from 80+80 MHz. Header integrity alone does not admit the DATA configuration."
+    },
+    {
       "id": "ht-extension-training-data-boundary",
       "source": "ieee-80211-2020",
       "anchor": "19.3.9.4.6 Tables 19-12/13/14, Figures 19-9/10 and Equations 19-25/26/27; 19.3.9.5.5; 19.3.13.1",

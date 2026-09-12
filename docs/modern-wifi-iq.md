@@ -257,6 +257,19 @@ zero kernel capture drops. Optional radiotap coding and format fields were
 compared only when the reference driver marked them known; absent reference FCS
 remains recorded as such.
 
+## VHT-SIG-A oracle increment
+
+The independent `vht_signal_vectors.py --check` corpus contains 1880 header
+vectors: 640 SU and 1240 MU cases covering all group IDs and bandwidth codes.
+It includes encoded/interleaved bits, per-user MU stream/coding fields and SU
+stream, partial-AID and MCS fields. Inventory tests check exact corpus integrity,
+dimensions, reserved coding for absent MU users and distinct headers.
+
+This corpus precedes VHT parser and streaming integration. It does not establish
+VHT IQ acquisition, DATA recovery, live qualification or TX. In particular,
+bandwidth code 3 does not distinguish 160 MHz from 80+80 MHz, and the ability
+to interpret a header must not be confused with admitting its DATA waveform.
+
 ## Existing example and replay workflow
 
 The receive example's leading `--modern` flag selects `WifiDecoder`, including
