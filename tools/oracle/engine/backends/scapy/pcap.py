@@ -162,7 +162,14 @@ def read_pcap(
 
     records: list[JSONObject] = []
     for position, packet in enumerate(packets):
-        raw_hex = bytes(scapy_all.raw(packet)).hex()
+        # Wi-Fi dissection can separate FCS from nested protocol padding;
+        # rebuilding that packet can reorder bytes. A capture reader reports
+        # the original record, not a newly serialized packet.
+        raw_hex = (
+            bytes(packet.original)
+            if root in {"link:dot11", "link:radiotap"}
+            else bytes(scapy_all.raw(packet))
+        ).hex()
         if root in {"link:bluetooth-le-ll-with-phdr", "link:dot11", "link:radiotap"}:
             decoded = decode_bytes(bytes.fromhex(raw_hex), root=root, source_hex=raw_hex)
         else:
@@ -293,6 +300,13 @@ def _datalink_for_link_type(link_type: str) -> int:
 
 def _decode_packet_for_write(root: str | None, raw: bytes, scapy_all: Any) -> Any:
     if root in {
+        # Preserve supplied Wi-Fi record bytes, including FCS and nested
+        # padding; Scapy's dissect/rebuild path is not byte-preserving here.
+        "Dot11",
+        "link:dot11",
+        "link:ieee80211",
+        "RadioTap",
+        "link:radiotap",
         "BTLE_PHDR",
         "link:bluetooth-le-ll-with-phdr",
         "link:bluetooth_le_ll_with_phdr",

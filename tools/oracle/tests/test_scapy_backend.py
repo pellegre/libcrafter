@@ -544,6 +544,22 @@ class ScapyDot11NormalizationTest(unittest.TestCase):
 
 
 class ScapyDot11PcapTest(unittest.TestCase):
+    def test_radiotap_fcs_nested_padding_preserves_record_bytes(self) -> None:
+        plans = generate_plans(seed=30, profile="dot11-pcap", count=3, backend="scapy")
+        vector = pcap.with_pcap_metadata(
+            [packets.encode_packet_plan(plans[2])], link_type="radiotap"
+        )[0]
+        self.assertIn("eapol", vector.plan.stack)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "nested-padding.pcap"
+            pcap.write_pcap(path, [vector])
+            # Check the on-disk record separately: two compensating reader /
+            # writer reorderings must not make a false roundtrip pass.
+            self.assertEqual(path.read_bytes()[40:], vector.to_bytes())
+            records = pcap.read_pcap(path)
+        self.assertEqual(records[0]["raw_hex"], vector.raw_hex)
+        self.assertEqual(records[0]["timestamp"], vector.metadata["pcap_record"]["timestamp"])
+
     def test_bare_dot11_pcap_roundtrip_preserves_link_type_and_layers(self) -> None:
         plan = _dot11_plan(
             stack=["dot11", "payload"],

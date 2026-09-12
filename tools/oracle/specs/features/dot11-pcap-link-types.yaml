@@ -46,6 +46,7 @@ behaviors:
       - file_link_type_preserved
       - packet_bytes_preserved
       - decoded_model_starts_with_radiotap
+      - fcs_and_nested_payload_padding_keep_original_byte_order
   - name: protected-dot11-pcap
     link_types:
       - ieee80211
