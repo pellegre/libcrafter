@@ -47,9 +47,14 @@ def generate(out):
         fields = [(7 >> n) & 1 for n in range(7)] + [0]
         fields += [(len(psdu) >> n) & 1 for n in range(16)]
         fields += [1, 1, 1, 0, 0, 0, 1, 0, 0, 0]
-        changed_bit = {'short_gi': 31, 'stbc': 29, 'extension_stream': 32, 'width40': 7}.get(fault)
+        changed_bit = {'short_gi': 31, 'stbc': 29, 'width40': 7}.get(fault)
         if changed_bit is not None:
             fields[changed_bit] = 1
+        if fault == 'extension_stream':
+            # NSS1/STBC1 gives NSTS2; three extension streams exceed four
+            # total dimensions. NESS1 without STBC is now a supported mode.
+            fields[28] = 1
+            fields[32:34] = [1,1]
         if fault == 'mcs8':
             fields[:7] = [(8 >> n) & 1 for n in range(7)]
         fields += ldpc.crc(fields) + [0]*6

@@ -25,6 +25,6 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - The streaming receiver still rejects NESS greater than zero; independent fixtures precede integration.
+      - The streaming receiver admits legal NSS1 extension-training dimensions and skips HT-ELTFs while preserving DATA channel estimates and absolute sample coordinates.
       - Greenfield short-GI applicability with additional training remains a source question and is not included in the asserted matrix.
       - No live extension-training qualification, additional independent DATA streams, or modern TX is established here.

@@ -150,7 +150,7 @@
   ],
   "unresolved_questions": [
     "Review current-base changes and applicable corrigenda before final qualification.",
-    "Complete extension-training coverage and clarify greenfield/STBC short-GI applicability; the current STBC waveform corpus uses greenfield long GI only.",
+    "Qualify extension-training RX with live evidence and clarify greenfield/STBC short-GI applicability; the current waveform corpus uses greenfield long GI only.",
     "Review VHT and remaining HE wire clauses before implementation.",
     "Obtain and review EHT full text; publication metadata is not wire authority."
   ],

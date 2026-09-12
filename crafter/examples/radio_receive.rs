@@ -942,16 +942,26 @@ mod tests {
 
     #[test]
     fn radio_iq_greenfield_metadata_preserves_format() {
-        for (bytes, stbc) in [
+        for (bytes, stbc, extension) in [
             (
                 include_bytes!("../tests/fixtures/iq/ht-greenfield-7-ldpc-len100-clean.cs8")
                     .as_slice(),
+                0,
                 0,
             ),
             (
                 include_bytes!("../tests/fixtures/iq/ht-stbc-7-ldpc-gf-gi800-len100-clean.cs8")
                     .as_slice(),
                 1,
+                0,
+            ),
+            (
+                include_bytes!(
+                    "../tests/fixtures/iq/ht-extension-7-ldpc-gf-gi800-stbc1-ess2-len100-clean.cs8"
+                )
+                .as_slice(),
+                1,
+                2,
             ),
         ] {
             let config = RxConfig {
@@ -980,6 +990,10 @@ mod tests {
             assert_eq!(out.frames.len(), 1);
             assert_eq!(ht_metadata(&out.frames[0]).unwrap()["format"], "greenfield");
             assert_eq!(ht_metadata(&out.frames[0]).unwrap()["stbc"], stbc);
+            assert_eq!(
+                ht_metadata(&out.frames[0]).unwrap()["extension_spatial_streams"],
+                extension
+            );
             let records: Vec<_> = out
                 .diagnostics
                 .iter()
@@ -988,6 +1002,7 @@ mod tests {
             assert_eq!(records.len(), 1);
             assert_eq!(records[0]["ht"]["format"], "greenfield");
             assert_eq!(records[0]["ht"]["stbc"], stbc);
+            assert_eq!(records[0]["ht"]["extension_spatial_streams"], extension);
             assert_eq!(records[0]["epoch"], 7);
             let signal = out
                 .diagnostics

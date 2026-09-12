@@ -55,7 +55,7 @@ impl HtPhy {
         let extension = (known & 0x40 != 0).then_some(((known >> 6) & 2) | (flags >> 7));
         if stbc.is_some_and(|v| v > 1)
             || (greenfield == Some(true) && flags & 4 != 0)
-            || extension.is_some_and(|v| v != 0)
+            || stbc.zip(extension).is_some_and(|(s, e)| s + e > 3)
         {
             return Err("unsupported_ht_configuration");
         }
@@ -90,7 +90,11 @@ impl HtPhy {
             .as_u64()
             .filter(|v| *v <= 1)
             .ok_or("unsupported_ht_configuration")? as u8;
-        if h["bandwidth_mhz"] != 20 || h["extension_spatial_streams"] != 0 {
+        let extension = h["extension_spatial_streams"]
+            .as_u64()
+            .filter(|v| *v <= u64::from(3 - stbc))
+            .ok_or("unsupported_ht_configuration")? as u8;
+        if h["bandwidth_mhz"] != 20 {
             return Err("unsupported_ht_configuration");
         }
         let short_gi = match h["guard_interval_ns"].as_u64() {
@@ -139,7 +143,7 @@ impl HtPhy {
             ldpc: Some(ldpc),
             stbc: Some(stbc),
             greenfield,
-            extension_spatial_streams: Some(0),
+            extension_spatial_streams: Some(extension),
             aggregation: Some(aggregation),
             ampdu_reference: None,
             delimiter_offset,
@@ -172,13 +176,18 @@ mod tests {
         for bits in [1, 2, 4] {
             assert!(HtPhy::reference([7 ^ bits, 0, 0], None).is_err());
         }
-        for flags in [1, 2, 3, 12, 0x40, 0x60, 0x80] {
+        for flags in [1, 2, 3, 12, 0x40, 0x60] {
             assert!(
                 HtPhy::reference([0x7f, flags, 0], None).is_err(),
                 "flags={flags}"
             );
         }
-        assert!(HtPhy::reference([0xff, 0, 0], None).is_err());
+        assert_eq!(
+            HtPhy::reference([0xff, 0, 0], None)
+                .unwrap()
+                .extension_spatial_streams,
+            Some(2)
+        );
         let stbc = HtPhy::reference([0x7f, 0x20, 0], None).unwrap();
         assert_eq!(stbc.stbc, Some(1));
         assert!(!stbc.compatible(&HtPhy::reference([0x7f, 0, 0], None).unwrap()));
@@ -190,6 +199,48 @@ mod tests {
         assert!(!HtPhy::reference([0x17, 0, 3], None)
             .unwrap()
             .compatible(&HtPhy::reference([0x17, 0x10, 3], None).unwrap()));
+    }
+    #[test]
+    fn radio_ht_extension_training_metadata_dimensions() {
+        for stbc in 0..=1u8 {
+            for extension in 0..=3u8 {
+                let known = 0x7f | ((extension & 2) << 6);
+                let flags = 0x10 | (stbc << 5) | ((extension & 1) << 7);
+                let reference = HtPhy::reference([known, flags, 7], None);
+                let mut value = serde_json::json!({"ht":{
+                    "mcs":7,"bandwidth_mhz":20,"stbc":stbc,"extension_spatial_streams":extension,
+                    "guard_interval_ns":800,"coding":"ldpc","aggregation":false,
+                    "psdu_bytes":100,"format":"mixed"
+                },"ampdu":null});
+                let recovered = HtPhy::recovered(&value, 100);
+                if stbc + extension > 3 {
+                    assert!(reference.is_err() && recovered.is_err());
+                    continue;
+                }
+                let reference = reference.unwrap();
+                let recovered = recovered.unwrap();
+                assert_eq!(reference.extension_spatial_streams, Some(extension));
+                assert_eq!(recovered.extension_spatial_streams, Some(extension));
+                assert!(recovered.compatible(&reference));
+                let unknown = HtPhy::reference([7, 0x80, 7], None).unwrap();
+                assert_eq!(unknown.extension_spatial_streams, None);
+                assert!(recovered.compatible(&unknown));
+                if extension != 0 {
+                    assert!(!recovered.compatible(
+                        &HtPhy::reference([0x7f, 0x10 | (stbc << 5), 7], None).unwrap()
+                    ));
+                }
+                for invalid in [
+                    serde_json::json!(4),
+                    serde_json::json!(u64::MAX),
+                    serde_json::json!(-1),
+                    serde_json::Value::Null,
+                ] {
+                    value["ht"]["extension_spatial_streams"] = invalid;
+                    assert!(HtPhy::recovered(&value, 100).is_err());
+                }
+            }
+        }
     }
     #[test]
     fn radio_ht_stbc_recovered_configuration() {
