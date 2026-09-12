@@ -20,6 +20,72 @@ fn crc(bytes: &[u8]) -> u32 {
 }
 
 #[test]
+fn radio_sampling_clock_vector_inventory_and_integrity() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("ofdm-clock-manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["schema"], "crafter.radio.ofdm-clock/v1");
+    assert_eq!(manifest["sample_rate_hz"], 20_000_000);
+    assert_eq!(manifest["format"], "cs8");
+    let fixtures = manifest["fixtures"].as_array().unwrap();
+    assert_eq!(fixtures.len(), 48);
+    let mut combinations = std::collections::BTreeSet::new();
+    for fixture in fixtures {
+        let name = fixture["name"].as_str().unwrap();
+        let rate = fixture["rate_mbps"].as_u64().unwrap();
+        let ppm = fixture["receiver_clock_ppm"].as_i64().unwrap();
+        assert!([6, 9, 12, 18, 24, 36, 48, 54].contains(&rate));
+        assert!([-20, 0, 20].contains(&ppm));
+        assert_eq!(fixture["cfo_hz"], 0);
+        let maximum = name.contains("max_length");
+        assert!(combinations.insert((rate, ppm, maximum)));
+        let iq = fs::read(root.join(format!("{name}.cs8"))).unwrap();
+        assert_eq!(
+            iq.len() as u64,
+            2 * fixture["sample_count"].as_u64().unwrap()
+        );
+        assert_eq!(
+            hex(&Sha256::digest(&iq)),
+            fixture["sha256"].as_str().unwrap()
+        );
+        let encoded = fixture["psdu_hex"].as_str().unwrap();
+        assert_eq!(encoded.len() % 2, 0);
+        let psdu: Vec<u8> = encoded
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect();
+        assert_eq!(psdu.len() == 4095, maximum);
+        let split = psdu.len() - 4;
+        assert_eq!(
+            crc(&psdu[..split]),
+            u32::from_le_bytes(psdu[split..].try_into().unwrap())
+        );
+        let symbols = (16 + 8 * psdu.len() + 6).div_ceil(rate as usize * 4);
+        let origin = fixture["preamble_start"].as_u64().unwrap();
+        let ratio = 1.0 + ppm as f64 * 1e-6;
+        let expected_end = (origin as f64 + (400 + 80 * symbols) as f64 * ratio).ceil() as u64;
+        assert_eq!(fixture["frame_end"], expected_end);
+        assert_eq!(
+            fixture["sample_count"],
+            (origin as f64 + (432 + 80 * symbols) as f64 * ratio).ceil() as u64
+        );
+    }
+    for (field, file) in [
+        ("generator_sha256", "ofdm_clock_vectors.py"),
+        ("encoder_sha256", "ofdm_vectors.py"),
+    ] {
+        let source = root
+            .join("../../../../tools/oracle/engine/backends")
+            .join(file);
+        assert_eq!(
+            manifest[field].as_str().unwrap(),
+            hex(&Sha256::digest(fs::read(source).unwrap()))
+        );
+    }
+}
+
+#[test]
 fn radio_independent_vector_inventory_and_integrity() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
     let index = fs::read_to_string(root.join("ofdm-index.tsv")).unwrap();
