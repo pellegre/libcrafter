@@ -37,11 +37,26 @@ pub(super) struct Layout {
     pub coded_bits_per_symbol: usize,
     pub rate: Rate,
 }
+pub(super) struct Recovery {
+    pub bits: Vec<u8>,
+    pub iterations: usize,
+    pub failed_codewords: usize,
+    pub first_failure: Option<Error>,
+}
 impl Layout {
     /// Restore omitted known-zero information bits and erased parity, combine
     /// repeated observations, and recover the concatenated information stream.
     /// Input is in transmitted codeword order (LDPC bypasses BCC interleaving).
     pub(super) fn recover(self, metrics: &[f32], limit: usize) -> Result<(Vec<u8>, usize), Error> {
+        let recovered = self.recover_impl(metrics, limit, false)?;
+        Ok((recovered.bits, recovered.iterations))
+    }
+    /// Retain bounded estimates across damaged codewords for A-MPDU scanning.
+    /// The caller must validate SERVICE and every delivered MPDU's FCS.
+    pub(super) fn recover_partial(self, metrics: &[f32], limit: usize) -> Result<Recovery, Error> {
+        self.recover_impl(metrics, limit, true)
+    }
+    fn recover_impl(self, metrics: &[f32], limit: usize, partial: bool) -> Result<Recovery, Error> {
         use super::ldpc::{Code, Error as CodeError};
         let required = self.symbols * self.coded_bits_per_symbol;
         if metrics.len() != required {
@@ -65,6 +80,7 @@ impl Layout {
         let k = self.block_bits * num / den;
         let mut output = Vec::with_capacity(self.payload_bits);
         let (mut offset, mut iterations) = (0, 0);
+        let (mut failed_codewords, mut first_failure) = (0, None);
         for index in 0..self.codewords {
             let spec = self.word(index).unwrap();
             let mut word = vec![0.; self.block_bits]; // Unknown punctures have zero LLR.
@@ -87,18 +103,41 @@ impl Layout {
                 };
                 word[bit] += normalize(metrics[offset + base + repeat]);
             }
-            let (mut bits, used) = code
-                .decode(&word, limit)
+            let estimate = code
+                .estimate(&word, limit)
                 .map_err(|error| Error::Codeword { index, error })?;
-            if bits[spec.information_bits..].iter().any(|&b| b != 0) {
-                return Err(Error::Shortening { index });
+            let mut bits = estimate.bits;
+            let failure = if estimate.failed_checks != 0 {
+                Some(Error::Codeword {
+                    index,
+                    error: CodeError::Nonconvergence {
+                        iterations: estimate.iterations,
+                        failed_checks: estimate.failed_checks,
+                    },
+                })
+            } else if bits[spec.information_bits..].iter().any(|&b| b != 0) {
+                Some(Error::Shortening { index })
+            } else {
+                None
+            };
+            if let Some(error) = failure {
+                if !partial {
+                    return Err(error);
+                }
+                failed_codewords += 1;
+                first_failure.get_or_insert(error);
             }
             bits.truncate(spec.information_bits);
             output.extend(bits);
-            iterations += used;
+            iterations += estimate.iterations;
             offset += spec.transmitted_bits;
         }
-        Ok((output, iterations))
+        Ok(Recovery {
+            bits: output,
+            iterations,
+            failed_codewords,
+            first_failure,
+        })
     }
     /// u16 dimensions bound all arithmetic even on 32-bit hosts. The enclosing
     /// PHY must additionally validate that its MCS actually permits `coded`.

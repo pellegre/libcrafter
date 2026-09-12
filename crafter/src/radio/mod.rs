@@ -276,10 +276,16 @@ pub enum PhyDiagnostic {
     InvalidFcs,
     /// DATA failed after a valid SIGNAL header. This is not a header failure.
     InvalidData,
-    /// LDPC effort across successfully recovered codewords; not RF quality.
+    /// LDPC effort across processed codewords; not RF quality. When LdpcPartial
+    /// is also present, some codewords remain tentative despite valid MAC FCS.
     Ldpc {
         codewords: usize,
         iterations: usize,
+    },
+    /// A-MPDU recovery used tentative estimates for damaged codewords. Only
+    /// individually FCS-valid MPDUs from that PSDU may become recovered frames.
+    LdpcPartial {
+        failed_codewords: usize,
     },
     /// A codeword exhausted its bounded decoder without satisfying parity.
     LdpcNonconvergence {
@@ -313,6 +319,14 @@ pub enum PhyDiagnostic {
 impl PartialEq for PhyDiagnostic {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (
+                Self::LdpcPartial {
+                    failed_codewords: a,
+                },
+                Self::LdpcPartial {
+                    failed_codewords: b,
+                },
+            ) => a == b,
             (
                 Self::Ampdu {
                     delimiter_offset: a,

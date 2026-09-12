@@ -342,6 +342,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     let p = self.pending[slot].take().unwrap();
                     let info = p.info.unwrap();
                     let (mut coding_stats, mut coding_failure) = (None, None);
+                    let mut partial_stats = Vec::new();
                     let decoded = if let Some(fields) = p.ht {
                         ht::train_single_stream(
                             &p.samples[320..400],
@@ -358,10 +359,37 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                     Some(if fields.short_guard_interval { 8 } else { 16 }),
                                     false,
                                 )?;
-                                let (bits, iterations) =
+                                let (bits, iterations) = if fields.aggregation {
+                                    let recovered =
+                                        layout.recover_partial(&coded, 64).map_err(|error| {
+                                            coding_failure = Some(error);
+                                        })?;
+                                    if recovered.failed_codewords != 0 {
+                                        partial_stats.push(PhyDiagnostic::LdpcPartial {
+                                            failed_codewords: recovered.failed_codewords,
+                                        });
+                                        if let Some(ldpc_rate::Error::Codeword {
+                                            index,
+                                            error:
+                                                ldpc::Error::Nonconvergence {
+                                                    iterations,
+                                                    failed_checks,
+                                                },
+                                        }) = recovered.first_failure
+                                        {
+                                            partial_stats.push(PhyDiagnostic::LdpcNonconvergence {
+                                                codeword: index,
+                                                iterations,
+                                                failed_checks,
+                                            });
+                                        }
+                                    }
+                                    (recovered.bits, recovered.iterations)
+                                } else {
                                     layout.recover(&coded, 64).map_err(|error| {
                                         coding_failure = Some(error);
-                                    })?;
+                                    })?
+                                };
                                 coding_stats = Some(PhyDiagnostic::Ldpc {
                                     codewords: layout.codewords,
                                     iterations,
@@ -378,6 +406,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     } else {
                         decode_data(&p.samples[80..], &p.acquisition, info)
                     };
+                    out.diagnostics.extend(partial_stats.iter().cloned());
                     match decoded {
                         Ok((bytes, tracking)) => {
                             let mut diagnostics = vec![
@@ -397,6 +426,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             if let Some(stats) = coding_stats {
                                 diagnostics.push(stats);
                             }
+                            diagnostics.extend(partial_stats);
                             let frame = RecoveredFrame {
                                 bytes,
                                 link_type: LinkType::Ieee80211,
@@ -929,7 +959,7 @@ mod tests {
             .lines()
             .skip(1)
             .collect();
-        assert_eq!(rows.len(), 124);
+        assert_eq!(rows.len(), 128);
         for row in rows {
             let c: Vec<_> = row.split('\t').collect();
             let bytes = std::fs::read(format!(
@@ -947,6 +977,9 @@ mod tests {
             let mut config = config();
             config.max_pending_frames = 100;
             config.max_frame_bytes = 64; // Less than the aggregate, enough for each MPDU.
+            if c[0].ends_with("damaged_codeword") {
+                config.max_frame_bytes = 2048;
+            }
             for size in [1, 79, 4096] {
                 let out =
                     feed_config(&mut WifiDecoder::new(), &bytes, size, config.clone()).unwrap();
@@ -977,6 +1010,21 @@ mod tests {
                         "{}: {:?}",
                         c[0],
                         out.diagnostics
+                    );
+                }
+                if c[0].ends_with("damaged_codeword") {
+                    assert!(out.frames[0].diagnostics.iter().any(|d| matches!(d,PhyDiagnostic::LdpcPartial { failed_codewords } if *failed_codewords > 0)),"{}",c[0]);
+                    assert!(
+                        out.frames[0].diagnostics.iter().any(|d| matches!(
+                            d,
+                            PhyDiagnostic::LdpcNonconvergence {
+                                codeword: 2,
+                                iterations: 64,
+                                ..
+                            }
+                        )),
+                        "{}",
+                        c[0]
                     );
                 }
             }

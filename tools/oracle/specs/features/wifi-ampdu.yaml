@@ -21,6 +21,8 @@ behaviors:
   - name: ht-reference-comparison
     source: https://www.radiotap.org/fields/MCS.html
     checks: [conditional_known_bits, unknown_is_not_bcc_or_no_stbc, exact_mac_bytes, per_occurrence_matching, known_metadata_conflicts, explicit_qualification_gaps]
+  - name: partially-damaged-ldpc-aggregate
+    checks: [bounded_codeword_estimates, strict_nonaggregate_policy_preserved, per_mpdu_fcs_required, intact_later_mpdu_recovery, explicit_partial_ldpc_diagnostic]
 coverage_cases: [wifi-ht-ampdu]
 supported_cases:
   - {name: wifi-ht-ampdu, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
@@ -28,7 +30,7 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - WifiDecoder recovers exact MPDUs from124 independent complete BCC and LDPC HT20 aggregate waveforms at three chunk sizes.
+      - WifiDecoder recovers exact MPDUs from 128 independent complete BCC and LDPC HT20 aggregate waveforms at three chunk sizes.
       - Identical MPDUs retain separate delimiter offsets and shared PPDU coordinates.
       - Per-MPDU byte limits and explicit aggregate output overflow are covered.
       - Offline recovery does not qualify live capture, STBC, greenfield or later PHY families.

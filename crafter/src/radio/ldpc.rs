@@ -43,6 +43,11 @@ pub(super) struct Code {
     k: usize,
     checks: Vec<Vec<usize>>,
 }
+pub(super) struct Estimate {
+    pub bits: Vec<u8>,
+    pub iterations: usize,
+    pub failed_checks: usize,
+}
 impl Code {
     pub(super) fn new(n: usize, rate: Rate) -> Result<Self, Error> {
         let prototype: &[[i8; 24]] = match (n, rate) {
@@ -91,6 +96,18 @@ impl Code {
     /// 64 layered normalized-min-sum iterations; only zero-syndrome words exit.
     /// This is not MAC integrity: the caller must still validate SERVICE/FCS.
     pub(super) fn decode(&self, metrics: &[f32], limit: usize) -> Result<(Vec<u8>, usize), Error> {
+        let estimate = self.estimate(metrics, limit)?;
+        if estimate.failed_checks != 0 {
+            return Err(Error::Nonconvergence {
+                iterations: estimate.iterations,
+                failed_checks: estimate.failed_checks,
+            });
+        }
+        Ok((estimate.bits, estimate.iterations))
+    }
+    /// Tentative information bits at the bounded stopping point. Nonzero
+    /// syndrome is explicit; these bits are NOT integrity-checked payload.
+    pub(super) fn estimate(&self, metrics: &[f32], limit: usize) -> Result<Estimate, Error> {
         if metrics.len() != self.n {
             return Err(Error::MetricCount {
                 required: self.n,
@@ -117,12 +134,10 @@ impl Code {
         let mut bits: Vec<u8> = belief.iter().map(|&m| u8::from(m < 0.)).collect();
         for iteration in 0..=limit {
             let failed = self.failed_checks(&bits);
-            if failed == 0 {
+            if failed == 0 || iteration == limit {
                 bits.truncate(self.k);
-                return Ok((bits, iteration));
-            }
-            if iteration == limit {
-                return Err(Error::Nonconvergence {
+                return Ok(Estimate {
+                    bits,
                     iterations: iteration,
                     failed_checks: failed,
                 });
@@ -249,5 +264,16 @@ mod tests {
             code.decode(&noise, 1),
             Err(Error::Nonconvergence { iterations: 1, .. })
         ));
+        let tentative = code.estimate(&noise, 1).unwrap();
+        assert_eq!(tentative.bits.len(), 324);
+        assert_eq!(tentative.iterations, 1);
+        assert!(tentative.failed_checks > 0);
+        assert_eq!(
+            code.decode(&noise, 1),
+            Err(Error::Nonconvergence {
+                iterations: tentative.iterations,
+                failed_checks: tentative.failed_checks,
+            })
+        );
     }
 }
