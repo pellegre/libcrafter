@@ -49,6 +49,20 @@ fn radio_stbc_independent_waveform_integrity() {
             c[0].ends_with("offset")
         )));
     }
+    let invalid: Vec<_> = include_str!("fixtures/iq/ht-stbc-invalid-index.tsv")
+        .lines()
+        .skip(1)
+        .collect();
+    assert_eq!(invalid.len(), 9);
+    let mut faults = std::collections::BTreeSet::new();
+    for row in invalid {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 4);
+        let bytes = fs::read(root.join(format!("{}.cs8", c[0]))).unwrap();
+        assert_eq!(hex(&Sha256::digest(&bytes)), c[2]);
+        assert_eq!(bytes.len(), 2 * c[3].parse::<usize>().unwrap());
+        assert!(faults.insert(c[1]));
+    }
 }
 
 #[test]

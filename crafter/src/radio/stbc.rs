@@ -1,6 +1,5 @@
 //! HT NSS1/NSTS2 combining, IEEE802.11-2020 Table19-18 and Equation19-27.
 //! These bounded algebra primitives establish no SIGNAL or MAC integrity.
-#![allow(dead_code)] // Full IQ integration follows independent pair qualification.
 use super::ComplexSample;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

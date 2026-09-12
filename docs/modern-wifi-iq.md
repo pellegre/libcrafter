@@ -173,7 +173,8 @@ directly after HT-LTF1, retains all 56 occupied training tones, begins DATA
 after the 24 us preamble and uses pilot polarity offset 2. The shared mixed
 receiver still uses offset 3 and its additional training field. Greenfield
 short GI with immediate DATA is explicitly rejected, following the note in
-IEEE 802.11-2020 19.3.11.11.6. STBC and additional streams remain unsupported.
+IEEE 802.11-2020 19.3.11.11.6. The STBC increment below adds a second
+space-time stream carrying redundancy, not a second independent data stream.
 
 The 64 independent complete waveforms cover both coding families, all eight
 MCS values, two PSDU sizes and clean/carrier-offset-plus-multipath conditions.
@@ -192,7 +193,7 @@ diagnostics do not establish MAC integrity. Legacy-only decoder defaults do
 not gain greenfield frame delivery. Live greenfield interoperability and the
 remaining formats, throughput and modern TX are not qualified by these tests.
 
-## HT STBC arithmetic increment
+## HT STBC receiver increment
 
 The internal STBC primitives separate the first two HT-LTF observations into
 two effective channels and recover two consecutive constellation symbols for
@@ -203,9 +204,31 @@ and retain finite behavior at extreme input scales through wider intermediates.
 `stbc_vectors.py --check` independently generates 2400 constellation/training
 pairs across BPSK, QPSK, 16-QAM and 64-QAM and six channel pairs. Tests compare
 both supplied-channel and training-derived recovery against the independent
-expected symbols. This does not establish packet integrity or STBC IQ support:
-the streaming receiver still rejects nonzero STBC until two-channel training,
-pilot tracking, even-symbol DATA processing and full independent IQ are joined.
+expected symbols.
+
+`WifiDecoder` uses these primitives for HT20 NSS1/NSTS2 reception: MCS0–7,
+BCC or LDPC, mixed-format GI400/800 and greenfield GI800, without extension
+training. It estimates two effective channels from the two data HT-LTFs,
+tracks the two-STS pilots and combines consecutive DATA symbols before bit
+decoding. Both BCC and LDPC account for the even-symbol STBC grouping.
+
+The independent corpus contains 192 full waveforms covering all eight MCS
+values, both coding families, the three supported format/GI combinations,
+100/4095-byte PSDUs and clean or independently impaired transmit channels.
+Nine negative waveforms cover header CRC, unsupported dimensions, unusable
+training, SERVICE, FCS, LDPC nonconvergence and a truncated symbol pair.
+Fourteen aggregate waveforms include duplicate MPDUs and damaged LDPC
+codewords with an intact later MPDU. Streaming tests check exact bytes,
+FCS, sample coordinates and chunk-boundary independence; aggregate tests
+also exercise output limits and distinct duplicate occurrences.
+
+The existing receive records preserve STBC metadata and the reference
+comparator accepts known STBC=1 without treating unknown reference flags
+as zero. Greenfield STBC short-GI applicability remains an explicit source
+question; extension training and additional independent data streams remain
+unsupported. These offline tests do not establish live STBC interoperability,
+real-time throughput or modern TX support. Generating two synthetic transmit
+channels for a receive fixture does not enable two-chain HackRF transmission.
 
 ## Existing example and replay workflow
 
