@@ -70,8 +70,9 @@ This primitive alone does not decode an HT waveform or deliver modern frames.
 combines legacy reception with mixed-format HT20, one spatial stream, BCC MCS
 0–7, and 400/800 ns guard intervals. It estimates the additional HT tones from
 HT-LTF, tracks rotating pilots, deinterleaves 52 data carriers and depunctures
-all four BCC rates, including 5/6. Only FCS-valid nonaggregated PSDUs are
-published. The existing `LegacyWifiDecoder` remains legacy-only.
+all four BCC rates, including 5/6. Only FCS-valid MAC frames are published;
+HT aggregate recovery is described below. The existing `LegacyWifiDecoder`
+remains legacy-only.
 
 The independent oracle `ht_bcc_vectors.py` supplies 64 full-waveform fixtures:
 eight MCS values, both guard intervals, 100/4095-byte PSDUs, and clean or
@@ -107,8 +108,8 @@ interleaving or tail-bit rules are applied to LDPC DATA.
 New `PhyDiagnostic::Ldpc` and `LdpcNonconvergence` variants expose codeword
 effort and bounded parity failures. Downstream exhaustive matches must add
 arms for these variants. These diagnostics do not establish calibrated RF
-quality or live interoperability. Aggregation and live qualification remain
-required work, along with the broader formats in the contract above.
+quality or live interoperability. Live qualification remains required work,
+along with the broader formats in the contract above.
 The legacy receiver recognizes mixed-format HT-SIG after shared legacy
 training and emits `PhyDiagnostic::HtSignal` with its original preamble sample
 index, followed by `UnsupportedPhy`. It does not deliver the HT payload as a
@@ -122,3 +123,32 @@ an all-zero metric vector is rejected. Common scaling is normalized to avoid
 trellis overflow without changing relative reliability.
 Its published baseline and outstanding edition review are recorded in
 `wifi-phy-evidence.json`.
+
+## HT aggregate receiver increment
+
+`WifiDecoder` scans HT A-MPDU delimiters after BCC or LDPC PSDU recovery and
+publishes one `RecoveredFrame` per FCS-valid MPDU. It checks delimiter CRC and
+signature, honors four-byte alignment and zero-length padding delimiters,
+and scans again after corruption. A false length or bad MPDU FCS does not
+prevent recovery of valid later frames. This receiver policy follows the
+informative recovery guidance in IEEE 802.11-2020 Annex O.2; VHT delimiter
+length extensions and EOF padding are not interpreted as HT fields.
+
+Each frame retains the containing PPDU's full sample interval. The new
+`PhyDiagnostic::Ampdu` records its delimiter byte offset within that PSDU,
+preserving distinct occurrences even when two MPDUs have identical bytes.
+`AmpduErrors` summarizes malformed delimiters, bad FCS, truncated MPDUs and
+oversized MPDUs without allocating a diagnostic for every failed scan step.
+Downstream exhaustive diagnostic matches need arms for these new variants.
+
+`max_frame_bytes` applies to each MPDU, not the entire aggregate. The HT PSDU
+is bounded by its 16-bit length and the shared IQ buffer reservation. Configure
+`max_pending_frames` for the number of output MPDUs per source chunk **plus
+two reserved child slots**. Exhausting this bound returns an explicit error
+and resets the decoder; it does not return a silently shortened aggregate.
+
+`ht_ampdu_vectors.py --check` generates 124 complete independent IQ fixtures
+covering both coding families, MCS 0–7, both guard intervals, alignment,
+duplicate MPDUs and bad FCS, plus MCS 7 delimiter corruption, truncation,
+padding and aggregates larger than 4095 bytes. These are offline correctness
+fixtures, not live HackRF/dongle qualification or a throughput benchmark.

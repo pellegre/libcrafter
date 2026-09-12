@@ -1,4 +1,4 @@
-//! Legacy DATA receive path; IEEE 802.11-2007 17.3.5, evidence in docs/radio.md.
+//! Legacy and opt-in HT DATA receive paths; source map in docs/wifi-phy-evidence.json.
 use super::{
     signal::{decode_signal, TRELLIS_SIGNS},
     sync::{fft64, Acquisition, SyncEvent, Synchronizer},
@@ -32,6 +32,9 @@ pub struct LegacyOfdmDecoder {
     terminal: bool,
     stats: DecoderStats,
     ht_enabled: bool,
+    // Dispatcher output budget is not a capture reconfiguration. Changing
+    // RxConfig between internal slices would discard an in-flight PPDU.
+    output_allowance: Option<usize>,
 }
 impl LegacyOfdmDecoder {
     pub fn new() -> Self {
@@ -45,6 +48,98 @@ impl LegacyOfdmDecoder {
             ht_enabled: true,
             ..Self::default()
         }
+    }
+    pub(super) fn ht_enabled(&self) -> bool {
+        self.ht_enabled
+    }
+    pub(super) fn set_output_allowance(&mut self, allowance: usize) {
+        self.output_allowance = Some(allowance);
+    }
+    fn publish_psdu(
+        &mut self,
+        mut frame: RecoveredFrame,
+        aggregate: bool,
+        out: &mut DecodeOutput,
+    ) -> RadioResult<()> {
+        let limit = self
+            .output_allowance
+            .unwrap_or(frame.config.max_pending_frames)
+            .min(frame.config.max_pending_frames);
+        if aggregate {
+            let bytes = std::mem::take(&mut frame.bytes);
+            let scan = ampdu::Scan::new(&bytes, frame.config.max_frame_bytes).map_err(|_| {
+                RadioError::Limit {
+                    context: "HT aggregate bytes",
+                    limit: 65535,
+                    actual: bytes.len() as u64,
+                }
+            })?;
+            let (mut delimiters, mut fcs, mut truncated, mut oversized) = (0, 0, 0, 0);
+            for event in scan {
+                match event {
+                    ampdu::Event::Frame {
+                        delimiter_offset,
+                        control_bits,
+                        bytes,
+                    } => {
+                        if out.frames.len() >= limit {
+                            return Err(RadioError::Limit {
+                                context: "HT aggregate pending frames",
+                                limit: limit as u64,
+                                actual: (out.frames.len() + 1) as u64,
+                            });
+                        }
+                        let mut recovered = frame.clone();
+                        recovered.bytes = bytes.to_vec();
+                        recovered.diagnostics.push(PhyDiagnostic::Ampdu {
+                            delimiter_offset,
+                            control_bits,
+                        });
+                        out.frames.push(recovered);
+                        self.stats.valid_frames = self.stats.valid_frames.saturating_add(1);
+                    }
+                    ampdu::Event::Empty { .. } => {}
+                    ampdu::Event::Invalid { error, .. } => match error {
+                        ampdu::Error::BadFcs => fcs += 1,
+                        ampdu::Error::TruncatedMpdu { .. } => truncated += 1,
+                        ampdu::Error::MpduLimit { .. } => oversized += 1,
+                        _ => delimiters += 1,
+                    },
+                }
+            }
+            self.stats.invalid_fcs = self.stats.invalid_fcs.saturating_add(fcs as u64);
+            if delimiters + fcs + truncated + oversized != 0 {
+                out.diagnostics.push(PhyDiagnostic::AmpduErrors {
+                    preamble_sample_index: frame.start.sample_index,
+                    invalid_delimiters: delimiters,
+                    invalid_fcs: fcs,
+                    truncated_mpdus: truncated,
+                    oversized_mpdus: oversized,
+                });
+            }
+        } else if valid_fcs(&frame.bytes) {
+            self.stats.valid_frames = self.stats.valid_frames.saturating_add(1);
+            if out.frames.len() < limit {
+                out.frames.push(frame);
+            } else if self.ht_enabled {
+                return Err(RadioError::Limit {
+                    context: "Wi-Fi pending frames",
+                    limit: limit as u64,
+                    actual: (out.frames.len() + 1) as u64,
+                });
+            } else {
+                self.stats.dropped_frames = self.stats.dropped_frames.saturating_add(1);
+                out.diagnostics
+                    .push(PhyDiagnostic::Reset(ResetReason::Gap(Discontinuity {
+                        reason: GapReason::QueueOverflow,
+                        loss: SampleLoss::Known(0),
+                    })));
+            }
+        } else {
+            self.stats.invalid_fcs = self.stats.invalid_fcs.saturating_add(1);
+            out.diagnostics.push(PhyDiagnostic::InvalidFcs);
+        }
+        Ok(())
     }
 }
 impl PhyDecoder for LegacyOfdmDecoder {
@@ -146,9 +241,9 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             && fields.mcs < 8
                             && fields.stbc == 0
                             && fields.extension_spatial_streams == 0
-                            && !fields.aggregation
                             && fields.psdu_bytes >= 4
-                            && usize::from(fields.psdu_bytes) <= config.max_frame_bytes
+                            && (fields.aggregation
+                                || usize::from(fields.psdu_bytes) <= config.max_frame_bytes)
                         {
                             let (nbpsc, ndbps) = [
                                 (1, 26),
@@ -285,50 +380,40 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     };
                     match decoded {
                         Ok((bytes, tracking)) => {
-                            if valid_fcs(&bytes) {
-                                self.stats.valid_frames = self.stats.valid_frames.saturating_add(1);
-                                if out.frames.len() < config.max_pending_frames {
-                                    let mut diagnostics = vec![
-                                        PhyDiagnostic::Ofdm {
-                                            frequency_offset_hz: p.acquisition.frequency_rad
-                                                * 20_000_000.
-                                                / std::f32::consts::TAU,
-                                            training_correlation: p.acquisition.correlation,
-                                        },
-                                        tracking,
-                                    ];
-                                    if let Some(fields) = p.ht {
-                                        diagnostics.push(PhyDiagnostic::HtSignal {
-                                            fields,
-                                            preamble_sample_index: p.start.sample_index,
-                                        });
-                                    }
-                                    if let Some(stats) = coding_stats {
-                                        diagnostics.push(stats);
-                                    }
-                                    out.frames.push(RecoveredFrame {
-                                        bytes,
-                                        link_type: LinkType::Ieee80211,
-                                        integrity: FrameIntegrity::ValidFcs,
-                                        config: config.clone(),
-                                        start: p.start,
-                                        end_sample_index: info.end_sample_index,
-                                        rate_bps: info.rate_bps,
-                                        diagnostics,
-                                    });
-                                } else {
-                                    self.stats.dropped_frames =
-                                        self.stats.dropped_frames.saturating_add(1);
-                                    out.diagnostics.push(PhyDiagnostic::Reset(ResetReason::Gap(
-                                        Discontinuity {
-                                            reason: GapReason::QueueOverflow,
-                                            loss: SampleLoss::Known(0),
-                                        },
-                                    )));
-                                }
-                            } else {
-                                self.stats.invalid_fcs = self.stats.invalid_fcs.saturating_add(1);
-                                out.diagnostics.push(PhyDiagnostic::InvalidFcs);
+                            let mut diagnostics = vec![
+                                PhyDiagnostic::Ofdm {
+                                    frequency_offset_hz: p.acquisition.frequency_rad * 20_000_000.
+                                        / std::f32::consts::TAU,
+                                    training_correlation: p.acquisition.correlation,
+                                },
+                                tracking,
+                            ];
+                            if let Some(fields) = p.ht {
+                                diagnostics.push(PhyDiagnostic::HtSignal {
+                                    fields,
+                                    preamble_sample_index: p.start.sample_index,
+                                });
+                            }
+                            if let Some(stats) = coding_stats {
+                                diagnostics.push(stats);
+                            }
+                            let frame = RecoveredFrame {
+                                bytes,
+                                link_type: LinkType::Ieee80211,
+                                integrity: FrameIntegrity::ValidFcs,
+                                config: config.clone(),
+                                start: p.start,
+                                end_sample_index: info.end_sample_index,
+                                rate_bps: info.rate_bps,
+                                diagnostics,
+                            };
+                            if let Err(error) = self.publish_psdu(
+                                frame,
+                                p.ht.is_some_and(|f| f.aggregation),
+                                &mut out,
+                            ) {
+                                self.reset(ResetReason::Explicit);
+                                return Err(error);
                             }
                         }
                         Err(()) => {
@@ -800,10 +885,18 @@ mod tests {
         }
     }
     fn feed(decoder: &mut impl PhyDecoder, bytes: &[u8], size: usize) -> DecodeOutput {
+        feed_config(decoder, bytes, size, config()).unwrap()
+    }
+    fn feed_config(
+        decoder: &mut impl PhyDecoder,
+        bytes: &[u8],
+        size: usize,
+        config: RxConfig,
+    ) -> RadioResult<DecodeOutput> {
         let mut result = DecodeOutput::default();
         for (sequence, part) in bytes.chunks(size * 2).enumerate() {
             let chunk = IqChunk::new(
-                config(),
+                config.clone(),
                 IqPosition {
                     epoch: 0,
                     sequence: sequence as u64,
@@ -814,13 +907,136 @@ mod tests {
                 part.iter().map(|v| *v as i8).collect(),
             )
             .unwrap();
-            let mut out = decoder.consume(IqEvent::Chunk(chunk)).unwrap();
+            let mut out = decoder.consume(IqEvent::Chunk(chunk))?;
             result.frames.append(&mut out.frames);
             result.diagnostics.append(&mut out.diagnostics);
         }
         let mut out = decoder.consume(IqEvent::End(StreamEnd::Eof)).unwrap();
         result.diagnostics.append(&mut out.diagnostics);
-        result
+        Ok(result)
+    }
+    #[test]
+    fn radio_ht_ampdu_independent_iq() {
+        use sha2::{Digest, Sha256};
+        fn hex(value: &str) -> Vec<u8> {
+            value
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
+                .collect()
+        }
+        let rows: Vec<_> = include_str!("../../tests/fixtures/iq/ht-ampdu-index.tsv")
+            .lines()
+            .skip(1)
+            .collect();
+        assert_eq!(rows.len(), 124);
+        for row in rows {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            assert_eq!(format!("{:x}", Sha256::digest(&bytes)), c[7]);
+            let expected: Vec<Vec<u8>> = c[6].split(',').map(hex).collect();
+            let offsets: Vec<usize> = c[5]
+                .split(',')
+                .map(|s| s.parse::<usize>().unwrap() - 4)
+                .collect();
+            let mut config = config();
+            config.max_pending_frames = 100;
+            config.max_frame_bytes = 64; // Less than the aggregate, enough for each MPDU.
+            for size in [1, 79, 4096] {
+                let out =
+                    feed_config(&mut WifiDecoder::new(), &bytes, size, config.clone()).unwrap();
+                assert_eq!(
+                    out.frames.iter().map(|f| &f.bytes).collect::<Vec<_>>(),
+                    expected.iter().collect::<Vec<_>>(),
+                    "{}, chunk={size}: {:?}",
+                    c[0],
+                    out.diagnostics
+                );
+                for (frame, offset) in out.frames.iter().zip(&offsets) {
+                    assert_eq!(frame.start.sample_index, 37, "{}", c[0]);
+                    assert_eq!(frame.end_sample_index, c[8].parse::<u64>().unwrap());
+                    assert_eq!(frame.config, config);
+                    assert_eq!(frame.integrity, FrameIntegrity::ValidFcs);
+                    assert!(frame.diagnostics.contains(&PhyDiagnostic::Ampdu {
+                        delimiter_offset: *offset,
+                        control_bits: 0
+                    }));
+                    assert!(frame.diagnostics.iter().any(|d| matches!(d, PhyDiagnostic::HtSignal { fields, .. } if fields.aggregation && fields.ldpc == (c[3]=="1") && fields.mcs == c[1].parse::<u8>().unwrap() && fields.short_guard_interval == (c[2]=="8"))));
+                }
+                if c[0].ends_with("bad_fcs") {
+                    assert!(
+                        out.diagnostics.iter().any(|d| matches!(
+                            d,
+                            PhyDiagnostic::AmpduErrors { invalid_fcs: 1, .. }
+                        )),
+                        "{}: {:?}",
+                        c[0],
+                        out.diagnostics
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn radio_ht_ampdu_output_bounds_and_continuity() {
+        for bytes in [
+            include_bytes!("../../tests/fixtures/iq/ht-ampdu-7-gi800-bcc-duplicate.cs8").as_slice(),
+            include_bytes!("../../tests/fixtures/iq/ht-ampdu-7-gi800-ldpc-duplicate.cs8")
+                .as_slice(),
+        ] {
+            let mut config = config();
+            config.max_pending_frames = 3;
+            assert!(matches!(
+                feed_config(&mut WifiDecoder::new(), bytes, 4096, config.clone()),
+                Err(RadioError::Limit {
+                    context: "HT aggregate pending frames",
+                    limit: 1,
+                    actual: 2
+                })
+            ));
+            config.max_pending_frames = 4;
+            let out = feed_config(&mut WifiDecoder::new(), bytes, 4096, config.clone()).unwrap();
+            assert_eq!(out.frames.len(), 2);
+            config.max_frame_bytes = 55;
+            let out = feed_config(&mut WifiDecoder::new(), bytes, 4096, config.clone()).unwrap();
+            assert!(out.frames.is_empty());
+            assert!(out.diagnostics.iter().any(|d| matches!(
+                d,
+                PhyDiagnostic::AmpduErrors {
+                    oversized_mpdus: 2,
+                    ..
+                }
+            )));
+            config.max_frame_bytes = 56;
+            config.max_pending_frames = 6;
+            let mut paired = bytes.to_vec();
+            paired.extend_from_slice(bytes);
+            // Both PPDUs in one source chunk; available output shrinks between
+            // them, but this must not look like an IQ reconfiguration.
+            let out = feed_config(&mut WifiDecoder::new(), &paired, 10000, config.clone()).unwrap();
+            assert_eq!(out.frames.len(), 4, "{:?}", out.diagnostics);
+            assert_eq!(
+                out.frames[2].start.sample_index,
+                37 + bytes.len() as u64 / 2
+            );
+            assert!(!out.diagnostics.iter().any(|d| matches!(
+                d,
+                PhyDiagnostic::Reset(ResetReason::Gap(Discontinuity {
+                    reason: GapReason::Reconfiguration,
+                    ..
+                }))
+            )));
+            config.max_pending_frames = 5;
+            assert!(matches!(
+                feed_config(&mut WifiDecoder::new(), &paired, 10000, config),
+                Err(RadioError::Limit { .. })
+            ));
+        }
     }
     #[test]
     fn radio_ht_bcc_bounds_and_truncation() {

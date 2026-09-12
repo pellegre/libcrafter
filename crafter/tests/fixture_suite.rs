@@ -8597,6 +8597,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "ht-bcc-index.tsv"
                 | "ampdu-delimiters.tsv"
                 | "ampdu-index.tsv"
+                | "ht-ampdu-index.tsv"
                 | "ht-ldpc-index.tsv"
                 | "ht-ldpc-invalid-index.tsv"
                 | "ldpc-codewords.json"
@@ -8619,6 +8620,11 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 .skip(1)
                 .chain(include_str!("fixtures/iq/dsss-index.tsv").lines().skip(1))
                 .chain(include_str!("fixtures/iq/ht-bcc-index.tsv").lines().skip(1))
+                .chain(
+                    include_str!("fixtures/iq/ht-ampdu-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
                 .chain(
                     include_str!("fixtures/iq/ht-ldpc-index.tsv")
                         .lines()

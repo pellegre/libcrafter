@@ -42,11 +42,11 @@ def encode_psdu(psdu,mcs,invalid_service=False):
     return symbols,result
 
 
-def waveform(psdu,mcs,guard,symbols,coded):
+def waveform(psdu,mcs,guard,symbols,coded,aggregation=False,ldpc=True):
     nbpsc=ht.PARAMETERS[mcs][0]
     fields=[(mcs>>n)&1 for n in range(7)]+[0]
     fields += [(len(psdu)>>n)&1 for n in range(16)]
-    fields += [1,1,1,0,0,0,1,int(guard==8),0,0]
+    fields += [1,1,1,int(aggregation),0,0,int(ldpc),int(guard==8),0,0]
     fields += crc(fields)+[0]*6
     header=base.encode(fields)
     lsig_length=3*(4+math.ceil(symbols*(64+guard)/80))-3
@@ -67,6 +67,7 @@ def waveform(psdu,mcs,guard,symbols,coded):
     for symbol in range(symbols):
         # Clause 19.3.11.7.6: no BCC frequency interleaver for LDPC.
         block=coded[symbol*52*nbpsc:(symbol+1)*52*nbpsc]
+        if not ldpc: block=ht.interleave(block,nbpsc)
         freq=[0j]*57
         for j,k in enumerate(ht.CARRIERS): freq[k+28]=base.constellation(block[j*nbpsc:(j+1)*nbpsc])
         for j,k in enumerate([-21,-7,7,21]): freq[k+28]=polarities[symbol+3]*[1,1,1,-1][(symbol+j)%4]
