@@ -8591,6 +8591,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
             "ramp.cs8"
                 | "ofdm-index.tsv"
                 | "ofdm-manifest.json"
+                | "ofdm-clock-manifest.json"
                 | "dsss-index.tsv"
                 | "dsss-manifest.json"
                 | "ofdm-transmit-index.tsv"
@@ -8619,7 +8620,15 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 .any(|line| {
                     let mut fields = line.split('\t');
                     fields.next() == Some(base_name) || fields.next() == Some(base_name)
-                }),
+                })
+                || serde_json::from_str::<serde_json::Value>(include_str!(
+                    "fixtures/iq/ofdm-clock-manifest.json"
+                ))
+                .unwrap()["fixtures"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|entry| entry["name"].as_str() == Some(base_name)),
             "IQ fixture {relative_str} must appear in the independent vector inventory"
         );
         return;

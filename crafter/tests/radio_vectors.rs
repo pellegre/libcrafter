@@ -13,6 +13,7 @@ fn radio_sampling_clock_exact_frame_recovery() {
     for fixture in manifest["fixtures"].as_array().unwrap() {
         let name = fixture["name"].as_str().unwrap();
         let bytes = fs::read(root.join(format!("{name}.cs8"))).unwrap();
+        let mut coordinates = None;
         for chunk in [127, 65536] {
             let config = RxConfig {
                 sample_rate_hz: 20_000_000,
@@ -25,9 +26,9 @@ fn radio_sampling_clock_exact_frame_recovery() {
                 max_duration: std::time::Duration::from_secs(1),
             };
             let position = IqPosition {
-                epoch: 0,
+                epoch: 7,
                 sequence: 0,
-                sample_index: 0,
+                sample_index: 1_000_000,
                 time_anchor: None,
                 discontinuity: None,
             };
@@ -48,6 +49,27 @@ fn radio_sampling_clock_exact_frame_recovery() {
                 || frames[0].integrity != FrameIntegrity::ValidFcs
             {
                 failures.push(format!("{name} chunk={chunk} frames={}", frames.len()));
+            } else {
+                let frame = &frames[0];
+                assert_eq!(frame.start.epoch, 7);
+                assert_eq!(
+                    frame.start.sample_index,
+                    1_000_000 + fixture["preamble_start"].as_u64().unwrap(),
+                    "{name}"
+                );
+                let current = (frame.start.sample_index, frame.end_sample_index);
+                if let Some(previous) = coordinates {
+                    assert_eq!(current, previous, "{name}");
+                }
+                coordinates = Some(current);
+                // The receiver reports its consumed FFT extent, in original
+                // source coordinates, not a resampled or zero-based timeline.
+                let bits = frame.bytes.len() * 8 + 22;
+                let symbols = bits.div_ceil(frame.rate_bps as usize / 250_000);
+                assert_eq!(
+                    frame.end_sample_index,
+                    frame.start.sample_index + 400 + symbols as u64 * 80
+                );
             }
         }
     }
