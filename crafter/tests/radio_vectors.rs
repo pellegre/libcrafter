@@ -4,6 +4,34 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_vht_signal_a_public_paths() {
+    use crafter::prelude::{VhtSignalAError, VhtSignalAFields, VhtSignalAUsers};
+    let input: Vec<_> = include_str!("fixtures/iq/vht-signal-a-index.tsv")
+        .lines()
+        .nth(1)
+        .unwrap()
+        .split('\t')
+        .next()
+        .unwrap()
+        .bytes()
+        .map(|b| b - b'0')
+        .collect();
+    let result: Result<crafter::radio::VhtSignalAFields, crafter::VhtSignalAError> =
+        VhtSignalAFields::decode(&input);
+    assert!(matches!(
+        result.unwrap().users,
+        VhtSignalAUsers::Single { .. }
+    ));
+    assert_eq!(
+        VhtSignalAFields::decode(&[]),
+        Err(VhtSignalAError::BitCount {
+            required: 48,
+            available: 0
+        })
+    );
+}
+
+#[test]
 fn radio_vht_signal_a_independent_inventory() {
     let inventory = include_str!("fixtures/iq/vht-signal-a-index.tsv");
     assert_eq!(

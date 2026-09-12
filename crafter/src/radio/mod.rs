@@ -8,6 +8,8 @@ mod data;
 mod dsss;
 mod dsss_tx;
 mod ht;
+mod vht;
+pub use vht::{VhtSignalAError, VhtSignalAFields, VhtSignalAUsers};
 mod ldpc;
 pub use ht::{
     HtCoding, HtFormat, HtGuardInterval, HtMcs, HtSignalBits, HtSignalError, HtSignalFields,
