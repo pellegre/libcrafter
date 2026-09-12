@@ -201,6 +201,16 @@ amplitude 2 to the final header symbol and uses gain 0.18 to avoid clipping.
 It preserves the transmitted header bits and CRC while reducing correlation
 quality, exercising acquisition of a distorted but recoverable symbol.
 
+## HT greenfield receive oracle corpus
+
+`ht-greenfield-index.tsv` inventories 64 independent HT20 waveforms: MCS0–7,
+BCC/LDPC, 100/4095-byte PSDUs, clean or carrier-offset/multipath conditions.
+They contain one space-time stream, no extension streams and 800 ns GI.
+The 24 us preamble and DATA pilot polarity offset follow IEEE 802.11-2020
+19.3.9.5 and 19.3.11.11.3. Short GI with immediate DATA is excluded by the
+19.3.11.11.6 note. `ht_greenfield_vectors.py --check` verifies regeneration;
+fixture integrity checks alone do not establish streaming receive support.
+
 ## Legacy transmit oracle corpus
 
 The `ofdm-tx-*` and `dsss-tx-*` artifacts are clean, bounded transmit-oracle
