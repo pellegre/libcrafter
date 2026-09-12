@@ -249,6 +249,16 @@ pub enum PhyDiagnostic {
     TruncatedFrame,
     InvalidHeader,
     InvalidFcs,
+    /// DATA failed after a valid SIGNAL header. This is not a header failure.
+    InvalidData,
+    /// DATA pilot tracking, not a calibrated RF quality measurement.
+    OfdmTracking {
+        /// Positive means the receiving sample clock is faster. None for one symbol.
+        sampling_clock_offset_ppm: Option<f32>,
+        /// Channel-weighted RMS pilot phase error after slope/offset removal.
+        pilot_residual_rms_rad: f32,
+        data_symbols: usize,
+    },
     Ofdm {
         frequency_offset_hz: f32,
         training_correlation: f32,
@@ -267,6 +277,18 @@ pub enum PhyDiagnostic {
 impl PartialEq for PhyDiagnostic {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (
+                Self::OfdmTracking {
+                    sampling_clock_offset_ppm: a,
+                    pilot_residual_rms_rad: b,
+                    data_symbols: c,
+                },
+                Self::OfdmTracking {
+                    sampling_clock_offset_ppm: d,
+                    pilot_residual_rms_rad: e,
+                    data_symbols: f,
+                },
+            ) => a.map(f32::to_bits) == d.map(f32::to_bits) && b.to_bits() == e.to_bits() && c == f,
             (Self::Reset(a), Self::Reset(b)) => a == b,
             (
                 Self::Ofdm {
@@ -294,6 +316,7 @@ impl PartialEq for PhyDiagnostic {
             (Self::TruncatedFrame, Self::TruncatedFrame)
             | (Self::InvalidHeader, Self::InvalidHeader)
             | (Self::InvalidFcs, Self::InvalidFcs)
+            | (Self::InvalidData, Self::InvalidData)
             | (Self::UnsupportedPhy, Self::UnsupportedPhy) => true,
             _ => false,
         }
