@@ -225,12 +225,12 @@ also exercise output limits and distinct duplicate occurrences.
 The existing receive records preserve STBC metadata and the reference
 comparator accepts known STBC=1 without treating unknown reference flags
 as zero. Greenfield STBC short-GI applicability remains an explicit source
-question; extension training and additional independent data streams remain
-unsupported. These offline tests do not establish live STBC interoperability,
+question; extension training is covered by the increment below, while additional
+independent data streams remain unsupported. These offline tests do not establish live STBC interoperability,
 real-time throughput or modern TX support. Generating two synthetic transmit
 channels for a receive fixture does not enable two-chain HackRF transmission.
 
-## HT extension-training oracle increment
+## HT extension-training receiver increment
 
 The independent extension-training corpus models separate sounding dimensions
 using IEEE 802.11-2020 Equation 19-26, with DATA dimensions silent during
@@ -241,9 +241,12 @@ clean and independently impaired short frames plus 4095-byte endpoint cases;
 62 aggregates include duplicate MPDUs and corrupted-codeword recovery cases.
 Inventory tests verify geometry, hashes, MAC FCS and the configuration matrix.
 
-These fixtures do not themselves establish receiver support: the streaming
-receiver still rejects nonzero extension-stream counts. Greenfield short-GI
-applicability with additional training remains an explicit source question.
+The streaming receiver now admits these extension-training configurations,
+skips the additional training fields, and retains the DATA channel estimates.
+Aggregate, truncation, sample-gap, memory-bound and reference-metadata tests
+cover this admission path. This is independent-fixture evidence, not live
+extension-training qualification. Greenfield short-GI applicability with
+additional training remains an explicit source question.
 
 ## Existing example and replay workflow
 

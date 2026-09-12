@@ -33,7 +33,7 @@ impl Pending {
         if fields.channel_width_40_mhz
             || fields.mcs >= 8
             || fields.stbc > 1
-            || fields.extension_spatial_streams != 0
+            || u16::from(fields.stbc) + u16::from(fields.extension_spatial_streams) > 3
             || fields.psdu_bytes < 4
             || (!fields.aggregation && usize::from(fields.psdu_bytes) > config.max_frame_bytes)
             || (greenfield && fields.short_guard_interval)
@@ -80,7 +80,9 @@ impl Pending {
             || group * (16 + 8 * usize::from(fields.psdu_bytes) + 6).div_ceil(group * ndbps),
             |layout| layout.symbols,
         );
-        let data_offset = (if greenfield { 160 } else { 400 }) + usize::from(fields.stbc) * 80;
+        let extension_fields = [0, 1, 2, 4][usize::from(fields.extension_spatial_streams)];
+        let data_offset = (if greenfield { 160 } else { 400 })
+            + (usize::from(fields.stbc) + extension_fields) * 80;
         let required = data_offset + symbols * stride;
         if required.saturating_sub(self.samples.capacity())
             > config.max_buffer_samples.saturating_sub(reserved)
@@ -387,7 +389,10 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     let mut partial_stats = Vec::new();
                     let decoded = if let Some(fields) = p.ht {
                         let first_end = if p.greenfield { 160 } else { 400 };
-                        let data_offset = first_end + usize::from(fields.stbc) * 80;
+                        // HT-ELTFs sound dimensions not used by DATA. Keep the
+                        // data-training estimates, but include every extension
+                        // field in the configured DATA position and CFO time.
+                        let data_offset = (info.data_start - p.acquisition.signal_start) as usize;
                         let trained = if p.greenfield {
                             Some(p.acquisition.clone())
                         } else {
@@ -1075,6 +1080,140 @@ mod tests {
         Ok(result)
     }
     #[test]
+    fn radio_ht_extension_training_streaming_independent_iq() {
+        let rows: Vec<_> = include_str!("../../tests/fixtures/iq/ht-extension-index.tsv")
+            .lines()
+            .skip(1)
+            .collect();
+        assert_eq!(rows.len(), 540);
+        for row in rows {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let expected: Vec<_> = c[4]
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
+                .collect();
+            for size in [1, 79, 4096] {
+                let out = feed(&mut WifiDecoder::new(), &bytes, size);
+                assert_eq!(
+                    out.frames.len(),
+                    1,
+                    "{} chunk={size}: {:?}",
+                    c[0],
+                    out.diagnostics
+                );
+                let frame = &out.frames[0];
+                assert_eq!(frame.bytes, expected, "{} chunk={size}", c[0]);
+                assert_eq!(frame.integrity, FrameIntegrity::ValidFcs);
+                assert_eq!(frame.start.sample_index, 37);
+                assert_eq!(frame.end_sample_index, c[8].parse::<u64>().unwrap());
+                assert!(frame.diagnostics.iter().any(
+                    |d| matches!(d,PhyDiagnostic::HtSignal{fields,..}
+                    if fields.mcs==c[1].parse::<u8>().unwrap() && fields.ldpc==(c[9]=="1")
+                        && fields.stbc==c[11].parse::<u8>().unwrap()
+                        && fields.extension_spatial_streams==c[12].parse::<u8>().unwrap()
+                        && !fields.not_sounding)
+                ));
+                assert_eq!(
+                    frame
+                        .diagnostics
+                        .iter()
+                        .any(|d| matches!(d, PhyDiagnostic::HtGreenfield { .. })),
+                    c[10] == "1"
+                );
+            }
+        }
+    }
+    #[test]
+    fn radio_ht_extension_training_bounds_and_gaps() {
+        let rows: Vec<_> = include_str!("../../tests/fixtures/iq/ht-extension-index.tsv")
+            .lines()
+            .skip(1)
+            .filter(|row| {
+                let c: Vec<_> = row.split('\t').collect();
+                c[1] == "0" && c[9] == "0" && c[0].ends_with("len100-clean")
+            })
+            .collect();
+        assert_eq!(rows.len(), 15);
+        for row in rows {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let data_start = c[7].parse::<usize>().unwrap();
+            let count = [0, 1, 2, 4][c[12].parse::<usize>().unwrap()];
+            let first_extension = data_start - 80 * count;
+            for stop in [first_extension + 1, data_start - 1] {
+                for size in [1, 79, 4096] {
+                    let out = feed(&mut WifiDecoder::new(), &bytes[..2 * stop], size);
+                    assert!(out.frames.is_empty(), "{} stop={stop}", c[0]);
+                    assert!(
+                        out.diagnostics.contains(&PhyDiagnostic::TruncatedFrame),
+                        "{} stop={stop}: {:?}",
+                        c[0],
+                        out.diagnostics
+                    );
+                }
+            }
+            for (buffer, limit) in [(512, 4095), (120000, 99)] {
+                let mut cfg = config();
+                cfg.max_chunk_samples = 128;
+                cfg.max_buffer_samples = buffer;
+                cfg.max_frame_bytes = limit;
+                let out = feed_config(&mut WifiDecoder::new(), &bytes, 79, cfg).unwrap();
+                assert!(out.frames.is_empty());
+                assert!(
+                    out.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy),
+                    "{}: {:?}",
+                    c[0],
+                    out.diagnostics
+                );
+            }
+            let mut decoder = WifiDecoder::new();
+            let gap = first_extension + 40;
+            for (sequence, range) in [(0, 0..gap), (1, gap + 1..bytes.len() / 2)] {
+                let chunk = IqChunk::new(
+                    config(),
+                    IqPosition {
+                        epoch: 3,
+                        sequence,
+                        sample_index: range.start as u64,
+                        time_anchor: None,
+                        discontinuity: None,
+                    },
+                    bytes[2 * range.start..2 * range.end]
+                        .iter()
+                        .map(|b| *b as i8)
+                        .collect(),
+                )
+                .unwrap();
+                assert!(
+                    decoder
+                        .consume(IqEvent::Chunk(chunk))
+                        .unwrap()
+                        .frames
+                        .is_empty(),
+                    "{}",
+                    c[0]
+                );
+            }
+            assert!(decoder
+                .consume(IqEvent::End(StreamEnd::Eof))
+                .unwrap()
+                .frames
+                .is_empty());
+        }
+    }
+    #[test]
     fn radio_ht_stbc_streaming_independent_iq() {
         let rows: Vec<_> = include_str!("../../tests/fixtures/iq/ht-stbc-index.tsv")
             .lines()
@@ -1327,8 +1466,13 @@ mod tests {
                     .lines()
                     .skip(1),
             )
+            .chain(
+                include_str!("../../tests/fixtures/iq/ht-extension-ampdu-index.tsv")
+                    .lines()
+                    .skip(1),
+            )
             .collect();
-        assert_eq!(rows.len(), 146);
+        assert_eq!(rows.len(), 208);
         for row in rows {
             let c: Vec<_> = row.split('\t').collect();
             let bytes = std::fs::read(format!(
@@ -1371,9 +1515,19 @@ mod tests {
                     assert_eq!(frame.end_sample_index, c[8].parse::<u64>().unwrap());
                     assert_eq!(frame.config, config);
                     assert_eq!(frame.integrity, FrameIntegrity::ValidFcs);
+                    let expected_stbc = if c.len() == 12 {
+                        c[9].parse::<u8>().unwrap()
+                    } else {
+                        u8::from(c[0].starts_with("ht-stbc"))
+                    };
+                    let expected_extension = if c.len() == 12 {
+                        c[10].parse::<u8>().unwrap()
+                    } else {
+                        0
+                    };
                     assert!(frame.diagnostics.iter().any(|d| matches!(d,
                         PhyDiagnostic::HtSignal { fields, .. }
-                            if fields.stbc == u8::from(c[0].starts_with("ht-stbc")))));
+                            if fields.stbc == expected_stbc && fields.extension_spatial_streams==expected_extension)));
                     assert!(frame.diagnostics.contains(&PhyDiagnostic::Ampdu {
                         delimiter_offset: *offset,
                         control_bits: 0
@@ -1421,6 +1575,22 @@ mod tests {
             include_bytes!("../../tests/fixtures/iq/ht-stbc-ampdu-7-ldpc-mf-gi800.cs8").as_slice(),
             include_bytes!("../../tests/fixtures/iq/ht-stbc-ampdu-7-bcc-gf-gi800.cs8").as_slice(),
             include_bytes!("../../tests/fixtures/iq/ht-stbc-ampdu-7-ldpc-gf-gi800.cs8").as_slice(),
+            include_bytes!(
+                "../../tests/fixtures/iq/ht-extension-ampdu-7-bcc-mf-gi800-stbc0-ess3.cs8"
+            )
+            .as_slice(),
+            include_bytes!(
+                "../../tests/fixtures/iq/ht-extension-ampdu-7-ldpc-gf-gi800-stbc0-ess3.cs8"
+            )
+            .as_slice(),
+            include_bytes!(
+                "../../tests/fixtures/iq/ht-extension-ampdu-7-ldpc-mf-gi400-stbc1-ess2.cs8"
+            )
+            .as_slice(),
+            include_bytes!(
+                "../../tests/fixtures/iq/ht-extension-ampdu-7-bcc-gf-gi800-stbc1-ess2.cs8"
+            )
+            .as_slice(),
         ] {
             let mut config = config();
             config.max_pending_frames = 3;

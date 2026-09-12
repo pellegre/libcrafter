@@ -30,4 +30,4 @@ backend_support:
     notes:
       - Streaming HT20 RX supports NSS1/NSTS2 with MCS0-7, BCC or LDPC, mixed GI400/800 and greenfield GI800, without extension training.
       - Independent full-IQ and malformed fixtures exercise the receiver; no live STBC qualification is claimed.
-      - Greenfield STBC short GI remains unqualified pending source review; additional data streams and extension training remain unsupported.
+      - Greenfield STBC short GI remains unqualified pending source review; additional data streams remain unsupported, while extension training is covered by wifi_ht_extension_training.

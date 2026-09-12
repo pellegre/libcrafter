@@ -28,4 +28,4 @@ backend_support:
     notes:
       - WifiDecoder recovers exact frame bytes from 64 independently generated greenfield waveforms at three chunk sizes.
       - Header format, pilot offset, malformed IQ and continuity have explicit regression coverage.
-      - STBC NSS1/NSTS2 with long GI is covered by wifi_ht_stbc; extension training and live qualification remain incomplete.
+      - STBC NSS1/NSTS2 with long GI is covered by wifi_ht_stbc; extension training is covered by wifi_ht_extension_training, while live qualification remains incomplete.
