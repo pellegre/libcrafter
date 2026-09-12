@@ -9,6 +9,7 @@ mod dsss_tx;
 mod ht;
 mod ldpc;
 mod ldpc_matrices;
+mod ldpc_rate;
 pub use ht::{HtSignalError, HtSignalFields};
 #[cfg(any(feature = "radio-hackrf", test))]
 mod hackrf;
