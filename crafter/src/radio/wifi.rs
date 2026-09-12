@@ -1,10 +1,10 @@
 //! Combined receive-only legacy PHY dispatch.
 use super::*;
 
-/// Combined legacy and HT20 one-stream BCC receiver.
+/// Combined legacy and HT20 one-stream BCC/LDPC receiver.
 ///
-/// HT MCS 0–7 and both guard intervals are supported for nonaggregated PSDUs.
-/// LDPC, STBC, additional streams, HT40, greenfield, VHT, HE and EHT are not
+/// HT MCS 0–7, both coding families and both guard intervals are supported for
+/// nonaggregated PSDUs. STBC, additional streams, HT40, greenfield, VHT, HE and EHT are not
 /// yet decoded. This implements the same `PhyDecoder` packet-source interface
 /// and shares the bounds and output ordering of `LegacyWifiDecoder`.
 pub struct WifiDecoder {

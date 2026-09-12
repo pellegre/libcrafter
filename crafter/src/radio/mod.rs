@@ -261,6 +261,17 @@ pub enum PhyDiagnostic {
     InvalidFcs,
     /// DATA failed after a valid SIGNAL header. This is not a header failure.
     InvalidData,
+    /// LDPC effort across successfully recovered codewords; not RF quality.
+    Ldpc {
+        codewords: usize,
+        iterations: usize,
+    },
+    /// A codeword exhausted its bounded decoder without satisfying parity.
+    LdpcNonconvergence {
+        codeword: usize,
+        iterations: usize,
+        failed_checks: usize,
+    },
     /// DATA pilot tracking, not a calibrated RF quality measurement.
     OfdmTracking {
         /// Positive means the receiving sample clock is faster. None for one symbol.
@@ -287,6 +298,28 @@ pub enum PhyDiagnostic {
 impl PartialEq for PhyDiagnostic {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (
+                Self::Ldpc {
+                    codewords: a,
+                    iterations: b,
+                },
+                Self::Ldpc {
+                    codewords: c,
+                    iterations: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::LdpcNonconvergence {
+                    codeword: a,
+                    iterations: b,
+                    failed_checks: c,
+                },
+                Self::LdpcNonconvergence {
+                    codeword: d,
+                    iterations: e,
+                    failed_checks: f,
+                },
+            ) => a == d && b == e && c == f,
             (
                 Self::HtSignal {
                     fields: a,

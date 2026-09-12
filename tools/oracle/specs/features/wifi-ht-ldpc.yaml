@@ -1,0 +1,26 @@
+version: 1
+kind: feature
+name: wifi_ht_ldpc
+summary: Independent complete HT20 single-stream LDPC IQ recovery.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: ht20-ldpc-iq
+    mcs: [0, 1, 2, 3, 4, 5, 6, 7]
+    guard_interval_ns: [400, 800]
+    lengths: [100, 4095]
+    impairments: [clean, carrier_offset_and_multipath]
+    checks: [acquisition, header_crc, ht_training, direct_constellation_mapping, ldpc_rate_matching, exact_psdu, valid_fcs, sample_boundaries, nonconvergence_diagnostic]
+coverage_cases: [wifi-ht20-ldpc-iq]
+supported_cases:
+  - {name: wifi-ht20-ldpc-iq, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - WifiDecoder recovers all64 complete independent waveforms at three chunk sizes.
+      - Independent FCS, SERVICE and nonconvergence controls identify distinct failure stages.
+      - Truncation, gaps and the normal packet-source metadata path are covered.
+      - This matrix does not qualify aggregation, STBC, additional streams, greenfield or live operation.
