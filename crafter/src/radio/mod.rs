@@ -7,6 +7,8 @@ mod data;
 mod dsss;
 mod dsss_tx;
 mod ht;
+mod ldpc;
+mod ldpc_matrices;
 pub use ht::{HtSignalError, HtSignalFields};
 #[cfg(any(feature = "radio-hackrf", test))]
 mod hackrf;
