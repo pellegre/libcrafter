@@ -3,6 +3,57 @@
 use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
+#[test]
+fn radio_sampling_clock_exact_frame_recovery() {
+    use crafter::radio::*;
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("ofdm-clock-manifest.json")).unwrap()).unwrap();
+    let mut failures = Vec::new();
+    for fixture in manifest["fixtures"].as_array().unwrap() {
+        let name = fixture["name"].as_str().unwrap();
+        let bytes = fs::read(root.join(format!("{name}.cs8"))).unwrap();
+        for chunk in [127, 65536] {
+            let config = RxConfig {
+                sample_rate_hz: 20_000_000,
+                center_frequency_hz: 2_412_000_000,
+                max_chunk_samples: chunk,
+                max_buffer_samples: 120_000,
+                max_frame_bytes: 4095,
+                max_pending_frames: 4,
+                max_capture_samples: 200_000,
+                max_duration: std::time::Duration::from_secs(1),
+            };
+            let position = IqPosition {
+                epoch: 0,
+                sequence: 0,
+                sample_index: 0,
+                time_anchor: None,
+                discontinuity: None,
+            };
+            let mut source =
+                ReaderIqSource::new(std::io::Cursor::new(&bytes), config, position).unwrap();
+            let mut decoder = LegacyOfdmDecoder::new();
+            let mut frames = Vec::new();
+            loop {
+                let event = source.next_event().unwrap();
+                let end = matches!(event, IqEvent::End(_));
+                frames.extend(decoder.consume(event).unwrap().frames);
+                if end {
+                    break;
+                }
+            }
+            if frames.len() != 1
+                || hex(&frames[0].bytes) != fixture["psdu_hex"].as_str().unwrap()
+                || frames[0].integrity != FrameIntegrity::ValidFcs
+            {
+                failures.push(format!("{name} chunk={chunk} frames={}", frames.len()));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
