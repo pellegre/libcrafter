@@ -90,7 +90,11 @@ pub(super) struct TxShared {
 }
 
 impl TxShared {
-    fn new(iq: &[i8], config: &HackRfTxConfig, cancelled: Arc<AtomicBool>) -> RadioResult<Self> {
+    pub(super) fn new(
+        iq: &[i8],
+        config: &HackRfTxConfig,
+        cancelled: Arc<AtomicBool>,
+    ) -> RadioResult<Self> {
         config.validate()?;
         if iq.is_empty() || iq.len() % 2 != 0 {
             return Err(RadioError::Invalid {
@@ -204,6 +208,9 @@ impl TxShared {
 
     pub(super) fn done(&self) -> bool {
         self.lock().done
+    }
+    pub(super) fn remaining(&self) -> Duration {
+        self.deadline.saturating_duration_since(Instant::now())
     }
     pub(super) fn fail(&self, error: RadioError) {
         let mut s = self.lock();
