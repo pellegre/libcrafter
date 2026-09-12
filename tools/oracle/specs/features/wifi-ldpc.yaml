@@ -7,6 +7,9 @@ directions: [backend_to_libcrafter]
 strict_bytes: true
 malformed: true
 behaviors:
+  - name: ldpc-rate-matching
+    source: IEEE 802.11-2020 19.3.11.7.5 Table 19-16 and Equations 19-35 through 19-42
+    checks: [codeword_selection, shortening, puncturing, repetition, extra_symbol_group, equal_distribution, independent_geometry]
   - name: ldpc-matrices
     source: IEEE 802.11-2020 19.3.11.7.4 and Annex F
     lengths: [648, 1296, 1944]
@@ -23,4 +26,5 @@ backend_support:
     notes:
       - Internal codeword decoder covers all twelve matrices with a maximum of 64 iterations.
       - Thirty-six independent systematic codewords pass clean and eight low-confidence error cases.
-      - Codeword validation alone does not qualify rate matching or complete IQ decoding.
+      - Independent geometry covers 208 cases; 48 transmitted streams verify inverse rate matching and exact information bits.
+      - Codeword and rate-matching validation alone do not qualify complete IQ decoding.

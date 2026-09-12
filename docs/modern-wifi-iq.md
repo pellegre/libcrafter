@@ -94,8 +94,11 @@ or nonconvergence. A zero syndrome is necessary but does not replace MAC FCS.
 Gaussian elimination. The Rust tests verify 36 complete codewords, correction
 of eight low-confidence sign errors per word, finite extreme input scales,
 dimension checks, unusable metrics and the iteration bound. This primitive is
-not yet connected to HT IQ: shortening, puncturing, repetition and symbol
-mapping must be integrated before LDPC frames can be received.
+not yet connected to HT IQ. The internal rate-matching layer has independent
+coverage of 208 geometry cases and 48 shortened/punctured/repeated streams,
+including both symbol-group sizes and exact information-bit recovery. Symbol
+mapping and whole-waveform validation must be integrated before LDPC frames
+can be received.
 The legacy receiver recognizes mixed-format HT-SIG after shared legacy
 training and emits `PhyDiagnostic::HtSignal` with its original preamble sample
 index, followed by `UnsupportedPhy`. It does not deliver the HT payload as a
