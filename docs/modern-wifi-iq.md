@@ -79,7 +79,7 @@ carrier-offset/multipath conditions. The kernel test supplies timing/CFO to
 isolate DATA correctness; the separate streaming test must acquire both from
 IQ and checks exact bytes and sample boundaries with three chunk sizes.
 
-This increment does not qualify LDPC, aggregation, STBC, additional streams,
+This BCC increment does not qualify aggregation, STBC, additional streams,
 greenfield, VHT, HE, EHT, live interoperability, real-time throughput, or modern
 transmission. Those remain required work under the full contract above.
 
@@ -94,11 +94,21 @@ or nonconvergence. A zero syndrome is necessary but does not replace MAC FCS.
 Gaussian elimination. The Rust tests verify 36 complete codewords, correction
 of eight low-confidence sign errors per word, finite extreme input scales,
 dimension checks, unusable metrics and the iteration bound. This primitive is
-not yet connected to HT IQ. The internal rate-matching layer has independent
+connected to HT IQ through `WifiDecoder`. The internal rate-matching layer has independent
 coverage of 208 geometry cases and 48 shortened/punctured/repeated streams,
-including both symbol-group sizes and exact information-bit recovery. Symbol
-mapping and whole-waveform validation must be integrated before LDPC frames
-can be received.
+including both symbol-group sizes and exact information-bit recovery.
+
+`ht_ldpc_vectors.py --check` supplies 64 complete HT20 LDPC waveforms with the
+same MCS/GI/length/impairment matrix as BCC. Streaming recovery checks exact
+PSDU bytes, FCS, sample boundaries and coding metadata. Independent malformed
+controls target nonconvergence, invalid SERVICE and bad MAC FCS. No BCC
+interleaving or tail-bit rules are applied to LDPC DATA.
+
+New `PhyDiagnostic::Ldpc` and `LdpcNonconvergence` variants expose codeword
+effort and bounded parity failures. Downstream exhaustive matches must add
+arms for these variants. These diagnostics do not establish calibrated RF
+quality or live interoperability. Aggregation and live qualification remain
+required work, along with the broader formats in the contract above.
 The legacy receiver recognizes mixed-format HT-SIG after shared legacy
 training and emits `PhyDiagnostic::HtSignal` with its original preamble sample
 index, followed by `UnsupportedPhy`. It does not deliver the HT payload as a
