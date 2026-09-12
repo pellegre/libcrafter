@@ -1,0 +1,23 @@
+version: 1
+kind: feature
+name: wifi_ampdu
+summary: Independent HT A-MPDU delimiter and frame-boundary recovery.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: ht-delimiters
+    source: IEEE 802.11-2020 9.7.1-3 and Figure 9-977
+    checks: [twelve_bit_length, crc_bit_order, signature, zero_length_padding, four_byte_alignment]
+  - name: aggregate-recovery
+    source: IEEE 802.11-2020 Annex O.2 informative recovery guidance
+    checks: [per_mpdu_fcs, exact_bytes, duplicate_occurrences, invalid_delimiter_resync, bad_fcs_resync, truncated_length, output_bounds]
+coverage_cases: [wifi-ht-ampdu]
+supported_cases:
+  - {name: wifi-ht-ampdu, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: planned
+    notes:
+      - Delimiter recovery alone does not qualify whole aggregated IQ or live capture.
