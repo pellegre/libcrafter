@@ -16,6 +16,8 @@ behaviors:
   - name: ht20-aggregate-iq
     source: IEEE 802.11-2020 clauses 9.7 and 19.3
     checks: [bcc_and_ldpc, mcs_zero_through_seven, both_guard_intervals, per_mpdu_limit, shared_ppdu_coordinates, delimiter_offset_identity, explicit_output_overflow, chunk_continuity]
+  - name: capture-replay-integration
+    checks: [explicit_modern_selection, recorded_decoder_preservation, incompatible_dispatch_rejection, structured_ht_fields, aggregate_offset_metadata, exact_saved_iq_replay]
 coverage_cases: [wifi-ht-ampdu]
 supported_cases:
   - {name: wifi-ht-ampdu, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}

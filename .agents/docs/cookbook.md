@@ -2357,6 +2357,26 @@ cargo run -p crafter --features radio --example radio_receive
 cargo run -p crafter --features radio --example radio_receive -- --replay samples.cs8
 ```
 
+For the implemented modern subset, use `WifiDecoder` through that same packet
+source, or the example's leading `--modern` flag. It adds mixed-format HT20
+one-stream MCS0–7, BCC/LDPC, both guard intervals and A-MPDU extraction. This is
+not full HT/VHT/HE/EHT coverage. `max_frame_bytes` limits each MPDU and the
+output budget must hold all returned MPDUs plus two child slots. Repeated
+identical MPDUs have distinct `PhyDiagnostic::Ampdu` delimiter offsets while
+sharing their containing PPDU's sample interval. Keep both when matching.
+
+```sh
+cargo run -p crafter --features radio --example radio_receive -- --modern --replay samples.cs8
+cargo run -p crafter --features radio --example radio_receive -- --modern --replay-artifact saved-iq.iq
+```
+
+The artifact reports typed `ht` and `ampdu` fields and records decoder `wifi`.
+Default replay preserves the recorded decoder; explicit `--modern` selects it
+for older IQ too without relaxing recorded allocation bounds. Modern decoding
+is currently serial-only. Do not pass its output through legacy rate-only
+eligibility and present that as modern qualification; see
+[the modern development contract](../../docs/modern-wifi-iq.md).
+
 Native reception requires `radio-hackrf`, an explicit live opt-in, every RF
 setting, finite duration/sample limits and bounded queues. Use release builds.
 The external operator supplies the device and runtime; generated crate code
