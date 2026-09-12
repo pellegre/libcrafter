@@ -278,6 +278,14 @@ rates, short and 4095-byte PSDUs, and -20/0/+20 ppm receive-clock offsets with
 zero carrier offset. Exact PSDU/FCS recovery is checked at two chunk sizes.
 This is bounded drift correction, not arbitrary sample-rate conversion; larger
 drift, combined impairments and live clock offsets require separate evidence.
+`PhyDiagnostic::OfdmTracking` carries a DATA-symbol count, a signed sample-clock
+estimate (positive means faster receiver clock), and weighted residual pilot
+phase RMS in radians. The clock estimate is absent for a single DATA symbol;
+these values are not calibrated SNR, RSSI or a substitute for FCS. Frame end
+coordinates identify the consumed nominal FFT extent, not a separately measured
+RF burst end. `InvalidData` distinguishes a failed DATA decode from an invalid
+SIGNAL header and from an invalid MAC FCS. Existing diagnostic variants retain
+their fields; exhaustive diagnostic matches must handle the new variants.
 
 Legacy OFDM acquisition continues while DATA is pending, retaining at most two
 candidates whose sample reservations share `max_buffer_samples`. A false long

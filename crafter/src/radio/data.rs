@@ -116,7 +116,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     let p = self.pending[slot].take().unwrap();
                     let info = p.info.unwrap();
                     match decode_data(&p.samples[80..], &p.acquisition, info) {
-                        Ok(bytes) => {
+                        Ok((bytes, tracking)) => {
                             if valid_fcs(&bytes) {
                                 self.stats.valid_frames = self.stats.valid_frames.saturating_add(1);
                                 if out.frames.len() < config.max_pending_frames {
@@ -128,12 +128,15 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                         start: p.start,
                                         end_sample_index: info.end_sample_index,
                                         rate_bps: info.rate_bps,
-                                        diagnostics: vec![PhyDiagnostic::Ofdm {
-                                            frequency_offset_hz: p.acquisition.frequency_rad
-                                                * 20_000_000.
-                                                / std::f32::consts::TAU,
-                                            training_correlation: p.acquisition.correlation,
-                                        }],
+                                        diagnostics: vec![
+                                            PhyDiagnostic::Ofdm {
+                                                frequency_offset_hz: p.acquisition.frequency_rad
+                                                    * 20_000_000.
+                                                    / std::f32::consts::TAU,
+                                                training_correlation: p.acquisition.correlation,
+                                            },
+                                            tracking,
+                                        ],
                                     });
                                 } else {
                                     self.stats.dropped_frames =
@@ -153,7 +156,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                         Err(()) => {
                             self.stats.rejected_frames =
                                 self.stats.rejected_frames.saturating_add(1);
-                            out.diagnostics.push(PhyDiagnostic::InvalidHeader);
+                            out.diagnostics.push(PhyDiagnostic::InvalidData);
                         }
                     }
                 }
@@ -226,7 +229,7 @@ fn decode_data(
     samples: &[ComplexSample],
     a: &Acquisition,
     info: SignalInfo,
-) -> Result<Vec<u8>, ()> {
+) -> Result<(Vec<u8>, PhyDiagnostic), ()> {
     if samples.len() != info.data_symbols * 80 {
         return Err(());
     }
@@ -241,6 +244,8 @@ fn decode_data(
     let mut pilot_state = 127;
     feedback(&mut pilot_state); // SIGNAL occupies polarity zero.
     let mut phase_slope = 0.;
+    let (mut sum_x, mut sum_xx, mut sum_y, mut sum_xy) = (0f64, 0f64, 0f64, 0f64);
+    let (mut residual_energy, mut residual_weight) = (0f64, 0f64);
     for (symbol, samples) in samples.chunks_exact(80).enumerate() {
         let time = std::array::from_fn(|n| {
             samples[16 + n].mul(ComplexSample::rotation(
@@ -285,6 +290,19 @@ fn decode_data(
         let slope_delta = (w * xy - x * y) / determinant;
         let intercept = reference + (y - slope_delta * x) / w;
         phase_slope += slope_delta;
+        let time = (symbol * 80) as f64;
+        sum_x += time;
+        sum_xx += time * time;
+        sum_y += phase_slope as f64;
+        sum_xy += time * phase_slope as f64;
+        for (k, value) in pilots {
+            let weight = value.power().sqrt() as f64;
+            let error = value
+                .mul(ComplexSample::rotation(-intercept - slope_delta * k))
+                .phase() as f64;
+            residual_energy += weight * error * error;
+            residual_weight += weight;
+        }
         let mut interleaved = Vec::with_capacity(info.coded_bits_per_symbol);
         for k in (-26i32..=26).filter(|k| ![-21, -7, 0, 7, 21].contains(k)) {
             let rotation = ComplexSample::rotation(-intercept - phase_slope * k as f32);
@@ -394,10 +412,24 @@ fn decode_data(
     if bits[..16].iter().any(|b| *b != 0) {
         return Err(());
     }
-    Ok(bits[16..tail]
-        .chunks_exact(8)
-        .map(|b| b.iter().enumerate().fold(0, |v, (i, b)| v | (b << i)))
-        .collect())
+    let symbols = info.data_symbols as f64;
+    let sampling_clock_offset_ppm = (info.data_symbols > 1).then(|| {
+        let slope_per_sample =
+            (symbols * sum_xy - sum_x * sum_y) / (symbols * sum_xx - sum_x * sum_x);
+        (-slope_per_sample * 64. / std::f64::consts::TAU * 1e6) as f32
+    });
+    let tracking = PhyDiagnostic::OfdmTracking {
+        sampling_clock_offset_ppm,
+        pilot_residual_rms_rad: (residual_energy / residual_weight).sqrt() as f32,
+        data_symbols: info.data_symbols,
+    };
+    Ok((
+        bits[16..tail]
+            .chunks_exact(8)
+            .map(|b| b.iter().enumerate().fold(0, |v, (i, b)| v | (b << i)))
+            .collect(),
+        tracking,
+    ))
 }
 fn possible_service_prefix(history: &[[u8; 64]]) -> bool {
     for final_state in 0..64 {
@@ -468,6 +500,36 @@ mod tests {
         let mut out = decoder.consume(IqEvent::End(StreamEnd::Eof)).unwrap();
         result.diagnostics.append(&mut out.diagnostics);
         result
+    }
+    #[test]
+    fn radio_data_rejections_identify_the_failed_stage() {
+        for (bytes, expected) in [
+            (
+                include_bytes!("../../tests/fixtures/iq/ofdm-6-invalid_signal.cs8").as_slice(),
+                PhyDiagnostic::InvalidHeader,
+            ),
+            (
+                include_bytes!("../../tests/fixtures/iq/ofdm-6-invalid_service.cs8").as_slice(),
+                PhyDiagnostic::InvalidData,
+            ),
+            (
+                include_bytes!("../../tests/fixtures/iq/ofdm-6-bad_fcs.cs8").as_slice(),
+                PhyDiagnostic::InvalidFcs,
+            ),
+        ] {
+            let out = feed(&mut LegacyOfdmDecoder::new(), bytes, 127);
+            assert!(out.frames.is_empty());
+            assert!(out.diagnostics.contains(&expected), "{:?}", out.diagnostics);
+            for other in [
+                PhyDiagnostic::InvalidHeader,
+                PhyDiagnostic::InvalidData,
+                PhyDiagnostic::InvalidFcs,
+            ] {
+                if other != expected {
+                    assert!(!out.diagnostics.contains(&other));
+                }
+            }
+        }
     }
     #[test]
     fn radio_data_independent_vectors_all_rates_chunkings_and_integrity() {

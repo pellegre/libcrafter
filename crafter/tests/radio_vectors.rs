@@ -51,6 +51,35 @@ fn radio_sampling_clock_exact_frame_recovery() {
                 failures.push(format!("{name} chunk={chunk} frames={}", frames.len()));
             } else {
                 let frame = &frames[0];
+                let tracking = frame
+                    .diagnostics
+                    .iter()
+                    .find_map(|d| match d {
+                        PhyDiagnostic::OfdmTracking {
+                            sampling_clock_offset_ppm,
+                            pilot_residual_rms_rad,
+                            data_symbols,
+                        } => Some((
+                            *sampling_clock_offset_ppm,
+                            *pilot_residual_rms_rad,
+                            *data_symbols,
+                        )),
+                        _ => None,
+                    })
+                    .expect("tracking metadata");
+                assert!(
+                    tracking.1.is_finite() && tracking.1 >= 0. && tracking.1 < 0.2,
+                    "{name}: {tracking:?}"
+                );
+                let ppm = tracking.0.expect("multiple DATA symbols");
+                assert!(ppm.is_finite());
+                if name.contains("max_length") {
+                    let expected = fixture["receiver_clock_ppm"].as_i64().unwrap() as f32;
+                    assert!(
+                        (ppm - expected).abs() < 2.,
+                        "{name}: measured {ppm}, expected {expected}"
+                    );
+                }
                 assert_eq!(frame.start.epoch, 7);
                 assert_eq!(
                     frame.start.sample_index,
@@ -66,6 +95,7 @@ fn radio_sampling_clock_exact_frame_recovery() {
                 // source coordinates, not a resampled or zero-based timeline.
                 let bits = frame.bytes.len() * 8 + 22;
                 let symbols = bits.div_ceil(frame.rate_bps as usize / 250_000);
+                assert_eq!(tracking.2, symbols);
                 assert_eq!(
                     frame.end_sample_index,
                     frame.start.sample_index + 400 + symbols as u64 * 80
