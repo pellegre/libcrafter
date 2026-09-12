@@ -39,11 +39,20 @@ fn radio_vht_bcc_full_iq_kernel() {
         let c: Vec<_> = row.split('\t').collect();
         let samples = read_samples(c[0]);
         let a = acquire(&samples);
+        // Streaming must know the exact DATA extent with only L-SIG/SIG-A
+        // buffered, including short-GI duration rounding/disambiguation.
+        let start = a.signal_start as usize;
+        let (admitted_fields, admitted) = admit(&samples[start..start + 240], &a)
+            .unwrap_or_else(|_| panic!("{} header admission failed", c[0]));
         let decoded = decode(&samples[a.signal_start as usize..], &a)
             .unwrap_or_else(|_| panic!("{} IQ recovery failed", c[0]));
         let siga = c[5].bytes().map(|b| b - b'0').collect::<Vec<_>>();
         let sigb = c[6].bytes().map(|b| b - b'0').collect::<Vec<_>>();
         assert_eq!(decoded.signal_a, VhtSignalAFields::decode(&siga).unwrap());
+        assert_eq!(admitted_fields, decoded.signal_a);
+        assert_eq!(admitted.data_start, decoded.info.data_start);
+        assert_eq!(admitted.end_sample_index, decoded.info.end_sample_index);
+        assert_eq!(admitted.psdu_bytes, decoded.bytes.len());
         assert_eq!(
             decoded.signal_b,
             VhtSignalB20Fields::decode(&sigb, false).unwrap()
@@ -68,6 +77,14 @@ fn radio_vht_iq_truncation_and_unusable_fields() {
         let name = row.split('\t').next().unwrap();
         let all = read_samples(name);
         let a = acquire(&all);
+        let start = a.signal_start as usize;
+        // SIG-B/SERVICE corruption is deliberately not a header-admission
+        // failure: that integrity check requires the later DATA field.
+        assert_eq!(
+            admit(&all[start..start + 240], &a).is_ok(),
+            name == "vht-bcc-invalid-sigb-crc",
+            "{name} header admission"
+        );
         assert!(
             decode(&all[a.signal_start as usize..], &a).is_err(),
             "{name}"
@@ -84,6 +101,9 @@ fn radio_vht_iq_truncation_and_unusable_fields() {
     let end = c[11].parse::<usize>().unwrap() - a.signal_start as usize;
     for count in [0, 79, 80, 239, 399, 479, end - 1] {
         assert!(decode(&samples[..count], &a).is_err(), "length {count}");
+        if count < 240 {
+            assert!(admit(&samples[..count], &a).is_err());
+        }
     }
     for range in [80..240, 320..400, 400..480, 480..end] {
         let mut damaged = samples.to_vec();

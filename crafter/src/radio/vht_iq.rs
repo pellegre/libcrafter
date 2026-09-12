@@ -88,9 +88,12 @@ pub(super) struct Decoded {
     pub tracking: PhyDiagnostic,
 }
 
-/// Samples begin at L-SIG and may include trailing samples. Acquisition must
-/// come from the legacy preamble; no fixture timing or frequency hint is used.
-pub(super) fn decode(samples: &[ComplexSample], a: &Acquisition) -> Result<Decoded, ()> {
+/// Header-only admission gives the streaming receiver its exact reservation
+/// before training or DATA arrives. It does not assert payload integrity.
+pub(super) fn admit(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+) -> Result<(VhtSignalAFields, SignalInfo), ()> {
     let legacy =
         super::signal::decode_signal(samples.get(..80).ok_or(())?, a, 4095).map_err(|_| ())?;
     let fields = signal_a(samples.get(80..240).ok_or(())?, a).ok_or(())?;
@@ -128,7 +131,7 @@ pub(super) fn decode(samples: &[ComplexSample], a: &Acquisition) -> Result<Decod
         false,
     )
     .map_err(|_| ())?;
-    let count = timing.data_symbols * ndbps;
+    let count = timing.data_symbols.checked_mul(ndbps).ok_or(())?;
     let psdu_bytes = count.checked_sub(22).ok_or(())? / 8;
     let data_offset = timing.data_start.checked_sub(320).ok_or(())?;
     let end_offset = timing.data_end.checked_sub(320).ok_or(())?;
@@ -142,6 +145,21 @@ pub(super) fn decode(samples: &[ComplexSample], a: &Acquisition) -> Result<Decod
         data_start: a.signal_start.checked_add(data_offset as u64).ok_or(())?,
         end_sample_index: a.signal_start.checked_add(end_offset as u64).ok_or(())?,
     };
+    Ok((fields, info))
+}
+
+/// Samples begin at L-SIG and may include trailing samples. Acquisition must
+/// come from the legacy preamble; no fixture timing or frequency hint is used.
+pub(super) fn decode(samples: &[ComplexSample], a: &Acquisition) -> Result<Decoded, ()> {
+    let (fields, info) = admit(samples, a)?;
+    let data_offset =
+        usize::try_from(info.data_start.checked_sub(a.signal_start).ok_or(())?).map_err(|_| ())?;
+    let end_offset = usize::try_from(
+        info.end_sample_index
+            .checked_sub(a.signal_start)
+            .ok_or(())?,
+    )
+    .map_err(|_| ())?;
     let trained = super::ht::train_single_stream(
         samples.get(320..400).ok_or(())?,
         a.signal_start.checked_add(320).ok_or(())?,
@@ -154,7 +172,7 @@ pub(super) fn decode(samples: &[ComplexSample], a: &Acquisition) -> Result<Decod
         &trained,
     )
     .ok_or(())?;
-    if sig_b.apep_length_bounds().ok_or(())?.0 as usize > psdu_bytes {
+    if sig_b.apep_length_bounds().ok_or(())?.0 as usize > info.psdu_bytes {
         return Err(());
     }
     let (bytes, tracking) = super::data::decode_vht_bcc_data(

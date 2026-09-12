@@ -11,7 +11,7 @@ behaviors:
     source: IEEE 802.11-2020 9.7.1, 10.12.6-8, 21.3.8, 21.3.10, 21.3.20 and 21.5
     checks: [legacy_preamble_acquisition, signal_a_bpsk_qbpsk, signal_b_service_crc, vht_training, vht_pilot_sequence, field_power_normalization, mcs_0_through_8, both_guard_intervals, short_gi_disambiguation, phy_and_mac_padding, smpdu_fcs, frequency_offset_and_multipath, exact_psdu_bytes]
   - name: bounded-admission
-    checks: [invalid_header_crc, invalid_reserved_bit, invalid_lsig_length, inconsistent_sig_b_service, unsupported_width_and_coding, truncated_fields, unusable_training, checked_sample_coordinates]
+    checks: [invalid_header_crc, invalid_reserved_bit, invalid_lsig_length, inconsistent_sig_b_service, unsupported_width_and_coding, truncated_fields, unusable_training, checked_sample_coordinates, header_only_receive_extent]
 coverage_cases: [wifi-vht20-bcc-iq]
 supported_cases:
   - {name: wifi-vht20-bcc-iq, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
@@ -21,3 +21,4 @@ backend_support:
     notes:
       - Initial SISO BCC waveform coverage does not qualify STBC, LDPC, MU, HE, EHT or hardware interoperability.
       - The private IQ kernel passes 108 complete independent waveforms without supplied timing/CFO hints, plus eight invalid/unsupported waveforms and truncated/unusable-input checks. Public streaming integration remains pending.
+      - Header-only admission derives the same receive extent from the first 240 samples at L-SIG for all 108 waveforms; SIG-B/SERVICE integrity remains a later payload check, not an admission guarantee.
