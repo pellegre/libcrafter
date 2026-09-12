@@ -1,3 +1,5 @@
+#![cfg(feature = "radio")]
+
 use crafter::prelude::*;
 
 fn packet() -> Packet {

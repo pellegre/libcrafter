@@ -73,5 +73,5 @@ fn radio_independent_vector_inventory_and_integrity() {
     }
     let manifest = fs::read_to_string(root.join("ofdm-manifest.json")).unwrap();
     assert!(manifest.contains("\"sample_rate_hz\": 20000000"));
-    assert!(manifest.contains("\"generator_version\": \"5\""));
+    assert!(manifest.contains("\"generator_version\": \"6\""));
 }
