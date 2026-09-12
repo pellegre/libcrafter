@@ -82,6 +82,20 @@ IQ and checks exact bytes and sample boundaries with three chunk sizes.
 This increment does not qualify LDPC, aggregation, STBC, additional streams,
 greenfield, VHT, HE, EHT, live interoperability, real-time throughput, or modern
 transmission. Those remain required work under the full contract above.
+
+## LDPC codeword increment
+
+The internal LDPC primitive includes all twelve IEEE HT parity-check matrices:
+648/1296/1944-bit blocks at rates 1/2, 2/3, 3/4 and 5/6. Its layered normalized
+min-sum decoder is capped at 64 iterations and returns explicit input errors
+or nonconvergence. A zero syndrome is necessary but does not replace MAC FCS.
+
+`ldpc_vectors.py --check` independently solves systematic parity using GF(2)
+Gaussian elimination. The Rust tests verify 36 complete codewords, correction
+of eight low-confidence sign errors per word, finite extreme input scales,
+dimension checks, unusable metrics and the iteration bound. This primitive is
+not yet connected to HT IQ: shortening, puncturing, repetition and symbol
+mapping must be integrated before LDPC frames can be received.
 The legacy receiver recognizes mixed-format HT-SIG after shared legacy
 training and emits `PhyDiagnostic::HtSignal` with its original preamble sample
 index, followed by `UnsupportedPhy`. It does not deliver the HT payload as a

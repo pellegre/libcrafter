@@ -17,7 +17,7 @@
       "sha256": "d4b6c467609800746e29dff1ff2e9a01ace281bab9485b615d6ae78666ed7b00",
       "pdf_pages": 4379,
       "status": "published_text_obtained_selected_clauses_reviewed",
-      "reviewed_clauses": ["10.27.4", "19.3.9.3.5", "19.3.9.4.3", "19.3.9.4.4", "19.3.9.4.5", "19.3.9.4.6", "19.3.11.1", "19.3.11.2", "19.3.11.3", "19.3.11.4", "19.3.11.6", "19.3.11.8.3", "19.3.11.10", "19.3.11.11.3", "19.5"],
+      "reviewed_clauses": ["10.27.4", "19.3.9.3.5", "19.3.9.4.3", "19.3.9.4.4", "19.3.9.4.5", "19.3.9.4.6", "19.3.11.1", "19.3.11.2", "19.3.11.3", "19.3.11.4", "19.3.11.6", "19.3.11.7.1-6", "19.3.11.8.3", "19.3.11.10", "19.3.11.11.3", "19.5", "Annex F Tables F-1/F-2/F-3"],
       "superseded_by": "ieee-80211-2024"
     },
     {
@@ -47,6 +47,18 @@
     }
   ],
   "facts": [
+    {
+      "id": "ht-ldpc-matrices",
+      "source": "ieee-80211-2020",
+      "anchor": "19.3.11.7.2-4; Annex F Tables F-1/F-2/F-3",
+      "fact": "Systematic LDPC codewords satisfy H*c^T=0. Block lengths 648/1296/1944 support rates 1/2, 2/3, 3/4 and 5/6. Subblocks are zero matrices or identity matrices cyclically shifted right; sizes are 27/54/81 respectively. All twelve prototypes have been reviewed."
+    },
+    {
+      "id": "ht-ldpc-rate-matching",
+      "source": "ieee-80211-2020",
+      "anchor": "19.3.11.7.5-6; Table 19-16; Equations 19-35 through 19-42",
+      "fact": "LDPC uses PSDU plus 16 SERVICE bits without BCC tail. Codeword sizing, shortening, puncturing and repetition depend on available coded symbol bits. Excess puncturing can add one symbol group. Shortening and puncturing remove trailing information and parity bits, respectively; repetition copies the shortened codeword from its beginning. LDPC bypasses the BCC frequency interleaver."
+    },
     {
       "id": "ht20-bcc-data",
       "source": "ieee-80211-2020",
@@ -94,7 +106,7 @@
   ],
   "unresolved_questions": [
     "Review current-base changes and applicable corrigenda before final qualification.",
-    "Review HT DATA coding, LDPC matrices, training and STBC clauses before implementation.",
+    "Review remaining HT training and STBC clauses before implementation.",
     "Review VHT and remaining HE wire clauses before implementation.",
     "Obtain and review EHT full text; publication metadata is not wire authority."
   ],
