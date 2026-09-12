@@ -247,6 +247,11 @@ pub enum ResetReason {
 }
 #[derive(Debug, Clone)]
 pub enum PhyDiagnostic {
+    /// An integrity-checked HT header, not an integrity-checked MAC frame.
+    HtSignal {
+        fields: HtSignalFields,
+        preamble_sample_index: u64,
+    },
     Reset(ResetReason),
     TruncatedFrame,
     InvalidHeader,
@@ -279,6 +284,16 @@ pub enum PhyDiagnostic {
 impl PartialEq for PhyDiagnostic {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (
+                Self::HtSignal {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::HtSignal {
+                    fields: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
             (
                 Self::OfdmTracking {
                     sampling_clock_offset_ppm: a,

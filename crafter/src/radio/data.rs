@@ -110,6 +110,21 @@ impl PhyDecoder for LegacyOfdmDecoder {
                         }
                     }
                 }
+                if p.samples.len() == 240 && p.info.is_some_and(|info| info.rate_bps == 6_000_000) {
+                    if let Some(fields) = super::ht::decode_iq(&p.samples[80..240], &p.acquisition)
+                    {
+                        out.diagnostics.push(PhyDiagnostic::HtSignal {
+                            fields,
+                            preamble_sample_index: p.start.sample_index,
+                        });
+                        // Legacy-only receiver recognizes the header but cannot
+                        // deliver HT DATA. The modern receiver will own that path.
+                        out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
+                        self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
+                        self.pending[slot] = None;
+                        continue;
+                    }
+                }
                 if p.info
                     .is_some_and(|info| index + 1 == info.end_sample_index)
                 {
@@ -501,6 +516,51 @@ mod tests {
         result.diagnostics.append(&mut out.diagnostics);
         result
     }
+    #[test]
+    fn radio_ht_mixed_headers_from_independent_iq() {
+        use sha2::{Digest, Sha256};
+        let index = include_str!("../../tests/fixtures/iq/ht-mixed-index.tsv");
+        assert_eq!(index.lines().skip(1).count(), 32);
+        for row in index.lines().skip(1) {
+            let columns: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                columns[0]
+            ))
+            .unwrap();
+            assert_eq!(format!("{:x}", Sha256::digest(&bytes)), columns[3]);
+            assert_eq!(bytes.len(), columns[4].parse::<usize>().unwrap() * 2);
+            let bits: Vec<_> = columns[1].bytes().map(|b| b - b'0').collect();
+            for size in [1, 79, 4096] {
+                let out = feed(&mut LegacyOfdmDecoder::new(), &bytes, size);
+                assert!(out.frames.is_empty(), "{}", columns[0]);
+                let headers: Vec<_> = out
+                    .diagnostics
+                    .iter()
+                    .filter_map(|d| match d {
+                        PhyDiagnostic::HtSignal {
+                            fields,
+                            preamble_sample_index,
+                        } => Some((*fields, *preamble_sample_index)),
+                        _ => None,
+                    })
+                    .collect();
+                if ["clean", "offset"].contains(&columns[2]) {
+                    assert_eq!(
+                        headers,
+                        [(HtSignalFields::decode(&bits).unwrap(), 37)],
+                        "{} chunk={size}",
+                        columns[0]
+                    );
+                    assert!(out.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy));
+                } else {
+                    assert!(headers.is_empty(), "{} chunk={size}", columns[0]);
+                }
+            }
+        }
+    }
+
     #[test]
     fn radio_data_rejections_identify_the_failed_stage() {
         for (bytes, expected) in [

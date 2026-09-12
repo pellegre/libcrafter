@@ -119,6 +119,59 @@ fn crc(bits: &[u8]) -> u8 {
     !state
 }
 
+/// Recognize both QBPSK HT-SIG symbols using the shared legacy channel estimate.
+pub(super) fn decode_iq(
+    samples: &[super::ComplexSample],
+    acquisition: &super::sync::Acquisition,
+) -> Option<HtSignalFields> {
+    use super::{sync::fft64, ComplexSample};
+    if samples.len() != 160 {
+        return None;
+    }
+    let mut metrics = [0.; 96];
+    for symbol in 0..2 {
+        let mut time = [ComplexSample::ZERO; 64];
+        for (n, sample) in time.iter_mut().enumerate() {
+            let index = acquisition
+                .signal_start
+                .checked_add((80 + symbol * 80 + 16 + n) as u64)?;
+            let elapsed = index.checked_sub(acquisition.phase_origin)?;
+            *sample = samples[symbol * 80 + 16 + n].mul(ComplexSample::rotation(
+                -acquisition.frequency_rad * elapsed as f32,
+            ));
+        }
+        let bins = fft64(time);
+        let mut pilot = ComplexSample::ZERO;
+        for (k, sign) in [(43, 1.), (57, 1.), (7, 1.), (21, -1.)] {
+            pilot = pilot.add(bins[k].mul(acquisition.channel[k].conj()).scale(sign));
+        }
+        if !pilot.power().is_finite() || pilot.power() < 1e-12 {
+            return None;
+        }
+        let rotation = ComplexSample::rotation(-pilot.phase());
+        let (mut real_power, mut imaginary_power) = (0., 0.);
+        for (j, k) in (-26i32..=26)
+            .filter(|k| ![-21, -7, 0, 7, 21].contains(k))
+            .enumerate()
+        {
+            let bin = k.rem_euclid(64) as usize;
+            let value = bins[bin].mul(acquisition.channel[bin].conj()).mul(rotation);
+            if !value.power().is_finite() {
+                return None;
+            }
+            real_power += value.i * value.i;
+            imaginary_power += value.q * value.q;
+            metrics[symbol * 48 + j] = value.q;
+        }
+        // Acquisition heuristic: an ambiguous constellation is not classified.
+        // CRC, reserved and tail checks still gate every positive recognition.
+        if imaginary_power <= 4. * real_power || imaginary_power < 1e-12 {
+            return None;
+        }
+    }
+    HtSignalFields::decode_interleaved(&metrics).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

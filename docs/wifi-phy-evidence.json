@@ -17,7 +17,7 @@
       "sha256": "d4b6c467609800746e29dff1ff2e9a01ace281bab9485b615d6ae78666ed7b00",
       "pdf_pages": 4379,
       "status": "published_text_obtained_selected_clauses_reviewed",
-      "reviewed_clauses": ["19.3.9.4.3", "19.3.9.4.4", "19.3.9.4.5"],
+      "reviewed_clauses": ["10.27.4", "19.3.9.3.5", "19.3.9.4.3", "19.3.9.4.4", "19.3.9.4.5"],
       "superseded_by": "ieee-80211-2024"
     },
     {
@@ -47,6 +47,12 @@
     }
   ],
   "facts": [
+    {
+      "id": "ht-mixed-legacy-signal",
+      "source": "ieee-80211-2020",
+      "anchor": "10.27.4 and 19.3.9.3.5",
+      "fact": "HT-mixed uses an L_DATARATE of 6 Mb/s. L-SIG length describes protection duration, not the HT PSDU byte count."
+    },
     {
       "id": "ht-sig-layout",
       "source": "ieee-80211-2020",
