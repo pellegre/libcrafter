@@ -10,6 +10,14 @@
   },
   "sources": [
     {
+      "id": "radiotap-ht-metadata",
+      "classification": "capture-metadata",
+      "authority_url": "https://www.radiotap.org/fields/MCS.html",
+      "retrieval_url": "https://raw.githubusercontent.com/radiotap/radiotap.github.io/master/fields/MCS.md",
+      "status": "known_and_flags_tables_reviewed",
+      "related_url": "https://www.radiotap.org/fields/A-MPDU%20status.html"
+    },
+    {
       "id": "ieee-80211-2020",
       "classification": "published-base-superseded",
       "authority_url": "https://standards.ieee.org/ieee/802.11/7028/",
@@ -47,6 +55,12 @@
     }
   ],
   "facts": [
+    {
+      "id": "conditional-reference-ht-fields",
+      "source": "radiotap-ht-metadata",
+      "anchor": "MCS known/flags and A-MPDU status",
+      "fact": "MCS metadata separately qualifies bandwidth, index, GI, format, coding, STBC and extension-stream information. Unknown fields are not zero-valued observations. A-MPDU status identifies aggregation with a capture-device reference number; that identifier is channel-scoped and is not an IQ delimiter offset."
+    },
     {
       "id": "ht-ampdu-framing",
       "source": "ieee-80211-2020",
