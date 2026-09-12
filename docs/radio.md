@@ -180,6 +180,16 @@ and live transmit artifacts with missing cases, duplicate cases, shortfalls,
 sample-count disagreement, cancellation, or an incomplete stop. Multiple
 bounded transmit artifacts may jointly cover the fifteen cases in one run.
 
+Revision `11b4d1fccf647a4ecf30e5906de25acbd55a6747` passed this
+qualification in three independent bounded runs. Every run produced exact MAC
+matches for all eight OFDM rates and all seven valid DSSS/CCK rate/preamble
+cases, with zero accepted transmit shortfalls and successful cleanup. The
+receiver omitted FCS in these captures, so the result qualifies MAC bytes,
+radiotap rate, and DSSS/CCK preamble agreement while recording FCS integrity as
+absent. The runs used 20 Msps, a 20 MHz filter, disabled RF amplifier and
+antenna power, OFDM TX gain 47 dB, OFDM scale 450 except scale 400 at 48 Mb/s,
+and DSSS/CCK TX gains of 20, 30, or 47 dB as recorded per bounded artifact.
+
 ## Primary evidence
 
 The normative source reviewed for this implementation is
