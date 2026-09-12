@@ -152,3 +152,31 @@ covering both coding families, MCS 0–7, both guard intervals, alignment,
 duplicate MPDUs and bad FCS, plus MCS 7 delimiter corruption, truncation,
 padding and aggregates larger than 4095 bytes. These are offline correctness
 fixtures, not live HackRF/dongle qualification or a throughput benchmark.
+
+## Existing example and replay workflow
+
+The receive example's leading `--modern` flag selects `WifiDecoder`, including
+legacy reception and the HT modes described above. Without it, existing legacy
+behavior is unchanged. It uses the same source, IQ recording, packet parsing,
+terminal evidence and JSONL artifact path:
+
+```sh
+cargo run -p crafter --features radio --example radio_receive -- --modern --replay crafter/tests/fixtures/iq/ht-ampdu-7-gi800-ldpc-duplicate.cs8
+cargo run -p crafter --features radio --example radio_receive -- --modern --replay-artifact saved-iq.iq
+```
+
+Modern recording writes `decoder: "wifi"` in the existing v2 IQ header. Replay
+without an override preserves that selection. `--modern` can explicitly decode
+an older recording through the new receiver; original IQ and recorded bounds
+are preserved. Modern replay cannot use legacy parallel/windowed dispatch.
+New raw/live modern configurations reserve1024 output slots; older recordings
+retain their original output limit and may fail explicitly if an aggregate
+exceeds it. No samples are discarded to make an overflowing replay pass.
+
+Frame records report `phy: "ht"`, structured `ht` signaling fields and an
+`ampdu` delimiter offset when applicable, alongside original MAC bytes and
+sample coordinates. Legacy frames have null HT/aggregate metadata. The
+existing benchmark accepts mode `wifi` for this decoder and includes aggregate
+offsets in its occurrence digest. This exposes a measurement path; it does not
+claim real-time performance. The legacy comparison logic still needs HT
+reference eligibility and occurrence matching before modern live qualification.

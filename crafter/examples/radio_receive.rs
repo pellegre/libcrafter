@@ -157,6 +157,7 @@ impl Dispatch {
 enum SelectedDecoder {
     Ofdm(LegacyOfdmDecoder),
     Wifi(LegacyWifiDecoder),
+    Modern(WifiDecoder),
     Parallel(ParallelLegacyWifiDecoder),
     Windowed(WindowedLegacyWifiDecoder),
 }
@@ -165,6 +166,7 @@ impl SelectedDecoder {
         match self {
             Self::Ofdm(d) => d.consume(event),
             Self::Wifi(d) => d.consume(event),
+            Self::Modern(d) => d.consume(event),
             Self::Parallel(d) => d.consume(event),
             Self::Windowed(d) => d.consume(event),
         }
@@ -173,6 +175,7 @@ impl SelectedDecoder {
         match self {
             Self::Ofdm(d) => d.reset(reason),
             Self::Wifi(d) => d.reset(reason),
+            Self::Modern(d) => d.reset(reason),
             Self::Parallel(d) => d.reset(reason),
             Self::Windowed(d) => d.reset(reason),
         }
@@ -181,6 +184,7 @@ impl SelectedDecoder {
         let (a, b) = match self {
             Self::Ofdm(d) => return d.stats(),
             Self::Wifi(d) => (d.ofdm_stats(), d.dsss_stats()),
+            Self::Modern(d) => (d.ofdm_stats(), d.dsss_stats()),
             Self::Parallel(d) => (d.ofdm_stats(), d.dsss_stats()),
             Self::Windowed(d) => (d.ofdm_stats(), d.dsss_stats()),
         };
@@ -209,7 +213,7 @@ impl PhyDecoder for ObservedDecoder {
             self.ordinal += 1;
             emit(
                 &self.out,
-                json!({"kind":"frame","ordinal":self.ordinal,"original_mac_hex":hex(&f.bytes),"fcs":match f.integrity {FrameIntegrity::ValidFcs=>"present_valid",FrameIntegrity::InvalidFcs=>"present_invalid",FrameIntegrity::FcsAbsent=>"absent"},"phy":phy_family(f.rate_bps),"preamble":f.diagnostics.iter().find_map(|d| match d { PhyDiagnostic::Dsss { short_preamble, .. } => Some(if *short_preamble { "short" } else { "long" }), _ => None }),"rate_bps":f.rate_bps,"config":Config::from(&f.config),"position":Position::from(&f.start),"end_sample_index":f.end_sample_index,"diagnostics":f.diagnostics.iter().map(|d|format!("{d:?}")).collect::<Vec<_>>()}),
+                json!({"kind":"frame","ordinal":self.ordinal,"original_mac_hex":hex(&f.bytes),"fcs":match f.integrity {FrameIntegrity::ValidFcs=>"present_valid",FrameIntegrity::InvalidFcs=>"present_invalid",FrameIntegrity::FcsAbsent=>"absent"},"phy":frame_phy(f),"ht":ht_metadata(f),"ampdu":ampdu_metadata(f),"preamble":f.diagnostics.iter().find_map(|d| match d { PhyDiagnostic::Dsss { short_preamble, .. } => Some(if *short_preamble { "short" } else { "long" }), _ => None }),"rate_bps":f.rate_bps,"config":Config::from(&f.config),"position":Position::from(&f.start),"end_sample_index":f.end_sample_index,"diagnostics":f.diagnostics.iter().map(|d|format!("{d:?}")).collect::<Vec<_>>()}),
             )?;
         }
         if let Some(end) = terminal {
@@ -231,9 +235,13 @@ fn receive(
     software_start: Option<u64>,
     ofdm_only: bool,
     dispatch: Dispatch,
+    modern: bool,
 ) -> Result<()> {
+    if modern && (ofdm_only || dispatch != Dispatch::Serial) {
+        return Err("modern decoding requires serial combined dispatch".into());
+    }
     let out = Rc::new(RefCell::new(BufWriter::new(std::io::stdout())));
-    let header = json!({"kind":"header","schema":SCHEMA,"config":Config::from(&config),"decoder":if ofdm_only {"ofdm"} else {"legacy_wifi"},"dispatch":dispatch.label(),"time_basis":if software_start.is_some(){"software_bracket_only"}else{"recorded_anchor_or_unknown"}});
+    let header = json!({"kind":"header","schema":SCHEMA,"config":Config::from(&config),"decoder":if modern {"wifi"} else if ofdm_only {"ofdm"} else {"legacy_wifi"},"dispatch":dispatch.label(),"time_basis":if software_start.is_some(){"software_bracket_only"}else{"recorded_anchor_or_unknown"}});
     emit(&out, header.clone())?;
     let mut iq = if let Some(path) = iq_path {
         let file = OpenOptions::new().write(true).create_new(true).open(path)?;
@@ -250,7 +258,9 @@ fn receive(
         software_start,
     };
     let decoder = ObservedDecoder {
-        inner: if dispatch == Dispatch::Windowed {
+        inner: if modern {
+            SelectedDecoder::Modern(WifiDecoder::new())
+        } else if dispatch == Dispatch::Windowed {
             SelectedDecoder::Windowed(WindowedLegacyWifiDecoder::new(4)?)
         } else if dispatch == Dispatch::ParallelDsss {
             SelectedDecoder::Parallel(ParallelLegacyWifiDecoder::with_parallel_dsss()?)
@@ -306,6 +316,7 @@ struct ArtifactSource {
     binary: bool,
     ofdm_only: bool,
     dispatch: Dispatch,
+    modern: bool,
 }
 impl ArtifactSource {
     fn open(path: &str) -> Result<Self> {
@@ -319,16 +330,17 @@ impl ArtifactSource {
         } else {
             match h["decoder"].as_str() {
                 Some("ofdm") => true,
-                Some("legacy_wifi") => false,
+                Some("legacy_wifi" | "wifi") => false,
                 _ => return Err("missing or unsupported IQ decoder".into()),
             }
         };
+        let modern = h["schema"] != "crafter.radio.receive/v1" && h["decoder"] == "wifi";
         let dispatch = match h.get("dispatch").and_then(serde_json::Value::as_str) {
             None if h.get("dispatch").is_none() => Dispatch::Serial,
             Some("serial") => Dispatch::Serial,
-            Some("parallel") if !ofdm_only => Dispatch::Parallel,
-            Some("parallel_dsss") if !ofdm_only => Dispatch::ParallelDsss,
-            Some("windowed") if !ofdm_only => Dispatch::Windowed,
+            Some("parallel") if !ofdm_only && !modern => Dispatch::Parallel,
+            Some("parallel_dsss") if !ofdm_only && !modern => Dispatch::ParallelDsss,
+            Some("windowed") if !ofdm_only && !modern => Dispatch::Windowed,
             _ => return Err("unsupported or conflicting IQ dispatch".into()),
         };
         let config: Config = serde_json::from_value(h["config"].clone())?;
@@ -345,6 +357,7 @@ impl ArtifactSource {
             binary,
             ofdm_only,
             dispatch,
+            modern,
         })
     }
 }
@@ -476,7 +489,7 @@ fn main() -> Result<()> {
         return match args.as_slice() {
             [_, path, mode] => benchmark::run(path, mode, None),
             [_, path, mode, frames] => benchmark::run(path, mode, Some(frames)),
-            _ => Err("use --benchmark-artifact FILE combined|parallel|parallel-dsss|windowed-3|windowed-4|ofdm|dsss [FRAMES_JSONL]".into()),
+            _ => Err("use --benchmark-artifact FILE wifi|combined|parallel|parallel-dsss|windowed-3|windowed-4|ofdm|dsss [FRAMES_JSONL]".into()),
         };
     }
     let capture_only_mode = if args.first().map(String::as_str) == Some("--capture-only") {
@@ -500,6 +513,12 @@ fn main() -> Result<()> {
         }
         _ => Dispatch::Serial,
     };
+    let modern = if args.first().map(String::as_str) == Some("--modern") {
+        args.remove(0);
+        true
+    } else {
+        false
+    };
     let ofdm_only = if args.first().map(String::as_str) == Some("--ofdm-only") {
         args.remove(0);
         true
@@ -508,6 +527,9 @@ fn main() -> Result<()> {
     };
     if dispatch != Dispatch::Serial && ofdm_only {
         return Err("parallel dispatch and --ofdm-only are mutually exclusive".into());
+    }
+    if modern && (ofdm_only || dispatch != Dispatch::Serial) {
+        return Err("--modern requires serial combined dispatch".into());
     }
     let iq_path = if args.len() >= 2 && args[args.len() - 2] == "--save-iq" {
         let path = args.pop();
@@ -557,6 +579,7 @@ fn main() -> Result<()> {
         && (args.first().map(String::as_str) != Some("--live")
             || iq_path.is_some()
             || ofdm_only
+            || modern
             || dispatch != Dispatch::Serial)
     {
         return Err(
@@ -571,7 +594,9 @@ fn main() -> Result<()> {
         max_frame_bytes: 4095,
         // Coarse window workers can finish together at stream end, so their
         // bounded aggregate needs more room than a serial decoder response.
-        max_pending_frames: if dispatch == Dispatch::Windowed {
+        max_pending_frames: if modern {
+            1024
+        } else if dispatch == Dispatch::Windowed {
             256
         } else {
             64
@@ -617,6 +642,7 @@ fn main() -> Result<()> {
                     Some(start),
                     ofdm_only,
                     dispatch,
+                    modern,
                 )
             };
             let s = source.stats();
@@ -630,12 +656,43 @@ fn main() -> Result<()> {
         return Err("live reception requires radio-hackrf".into());
     }
     match args.as_slice() {
-        []=>receive(&mut ReaderIqSource::new(Cursor::new(include_bytes!("../tests/fixtures/iq/ofdm-6-clean.cs8")),config.clone(),position)?,config,iq_path.as_deref(),None,ofdm_only,dispatch),
-        [flag,path] if flag=="--replay"=>receive(&mut ReaderIqSource::new(File::open(path)?,config.clone(),position)?,config,iq_path.as_deref(),None,ofdm_only,dispatch),
-        [flag,path,hz,seconds,samples] if flag=="--replay"=>{let mut c=config;c.center_frequency_hz=hz.parse()?;c.max_duration=Duration::from_secs(seconds.parse()?);c.max_capture_samples=samples.parse()?;receive(&mut ReaderIqSource::new(File::open(path)?,c.clone(),position)?,c,iq_path.as_deref(),None,ofdm_only,dispatch)},
-        [flag,path] if flag=="--replay-artifact"=>{let mut s=ArtifactSource::open(path)?;let c=s.config.clone();let selected_dispatch=if ofdm_only {Dispatch::Serial} else if dispatch != Dispatch::Serial {dispatch} else {s.dispatch};let selected_ofdm=selected_dispatch == Dispatch::Serial && (ofdm_only || s.ofdm_only);receive(&mut s,c,iq_path.as_deref(),None,selected_ofdm,selected_dispatch)},
+        []=>receive(&mut ReaderIqSource::new(Cursor::new(include_bytes!("../tests/fixtures/iq/ofdm-6-clean.cs8")),config.clone(),position)?,config,iq_path.as_deref(),None,ofdm_only,dispatch,modern),
+        [flag,path] if flag=="--replay"=>receive(&mut ReaderIqSource::new(File::open(path)?,config.clone(),position)?,config,iq_path.as_deref(),None,ofdm_only,dispatch,modern),
+        [flag,path,hz,seconds,samples] if flag=="--replay"=>{let mut c=config;c.center_frequency_hz=hz.parse()?;c.max_duration=Duration::from_secs(seconds.parse()?);c.max_capture_samples=samples.parse()?;receive(&mut ReaderIqSource::new(File::open(path)?,c.clone(),position)?,c,iq_path.as_deref(),None,ofdm_only,dispatch,modern)},
+        [flag,path] if flag=="--replay-artifact"=>{
+            let mut s=ArtifactSource::open(path)?;
+            let c=s.config.clone();
+            let (selected_ofdm, selected_dispatch, selected_modern) = replay_selection(s.ofdm_only, s.dispatch, s.modern, ofdm_only, dispatch, modern)?;
+            receive(&mut s,c,iq_path.as_deref(),None,selected_ofdm,selected_dispatch,selected_modern)
+        },
         _=>Err("use no arguments, --replay FILE [HZ SECONDS MAX_SAMPLES], --replay-artifact FILE, or --live parameters; optional final --save-iq NEW_FILE".into()),
     }
+}
+
+fn replay_selection(
+    recorded_ofdm: bool,
+    recorded_dispatch: Dispatch,
+    recorded_modern: bool,
+    ofdm: bool,
+    dispatch: Dispatch,
+    modern: bool,
+) -> Result<(bool, Dispatch, bool)> {
+    if modern && (ofdm || dispatch != Dispatch::Serial) {
+        return Err("modern decoding requires serial combined dispatch".into());
+    }
+    if modern {
+        return Ok((false, Dispatch::Serial, true));
+    }
+    if ofdm {
+        return Ok((true, Dispatch::Serial, false));
+    }
+    if dispatch != Dispatch::Serial {
+        if recorded_modern {
+            return Err("recorded modern decoding cannot use legacy parallel dispatch".into());
+        }
+        return Ok((false, dispatch, false));
+    }
+    Ok((recorded_ofdm, recorded_dispatch, recorded_modern))
 }
 
 #[cfg(test)]
@@ -733,6 +790,11 @@ mod tests {
             max_duration: Duration::from_secs(1),
         };
         for (decoder, dispatch, expected) in [
+            ("wifi", None, Some(Dispatch::Serial)),
+            ("wifi", Some(json!("serial")), Some(Dispatch::Serial)),
+            ("wifi", Some(json!("parallel")), None),
+            ("wifi", Some(json!("parallel_dsss")), None),
+            ("wifi", Some(json!("windowed")), None),
             ("legacy_wifi", None, Some(Dispatch::Serial)),
             ("legacy_wifi", Some(json!("serial")), Some(Dispatch::Serial)),
             (
@@ -763,11 +825,134 @@ mod tests {
             std::fs::write(&path, format!("{header}\n")).unwrap();
             let actual = ArtifactSource::open(path.to_str().unwrap());
             match expected {
-                Some(expected) => assert_eq!(actual.unwrap().dispatch, expected),
+                Some(expected) => {
+                    let actual = actual.unwrap();
+                    assert_eq!(actual.dispatch, expected);
+                    assert_eq!(actual.modern, decoder == "wifi");
+                }
                 None => assert!(actual.is_err()),
             }
             std::fs::remove_file(&path).unwrap();
         }
+    }
+
+    #[test]
+    fn radio_iq_modern_replay_selection_preserves_explicit_intent() {
+        assert_eq!(
+            replay_selection(
+                false,
+                Dispatch::Parallel,
+                false,
+                false,
+                Dispatch::Serial,
+                true
+            )
+            .unwrap(),
+            (false, Dispatch::Serial, true)
+        );
+        assert_eq!(
+            replay_selection(true, Dispatch::Serial, false, false, Dispatch::Serial, true).unwrap(),
+            (false, Dispatch::Serial, true)
+        );
+        assert_eq!(
+            replay_selection(
+                false,
+                Dispatch::Serial,
+                true,
+                false,
+                Dispatch::Serial,
+                false
+            )
+            .unwrap(),
+            (false, Dispatch::Serial, true)
+        );
+        assert_eq!(
+            replay_selection(false, Dispatch::Serial, true, true, Dispatch::Serial, false).unwrap(),
+            (true, Dispatch::Serial, false)
+        );
+        assert!(replay_selection(
+            false,
+            Dispatch::Serial,
+            true,
+            false,
+            Dispatch::Parallel,
+            false
+        )
+        .is_err());
+        assert!(
+            replay_selection(false, Dispatch::Serial, false, true, Dispatch::Serial, true).is_err()
+        );
+        assert!(replay_selection(
+            false,
+            Dispatch::Serial,
+            false,
+            false,
+            Dispatch::Parallel,
+            true
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn radio_iq_modern_artifact_recovers_distinct_frames_and_typed_metadata() {
+        let bytes = include_bytes!("../tests/fixtures/iq/ht-ampdu-7-gi800-ldpc-duplicate.cs8");
+        let config = RxConfig {
+            sample_rate_hz: 20_000_000,
+            center_frequency_hz: 2_412_000_000,
+            max_chunk_samples: 10_000,
+            max_buffer_samples: 120_000,
+            max_frame_bytes: 64,
+            max_pending_frames: 4,
+            max_capture_samples: 100_000,
+            max_duration: Duration::from_secs(1),
+        };
+        let path = std::env::temp_dir().join(format!(
+            "crafter-iq-modern-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        write_json(&mut file, &json!({"kind":"header","schema":SCHEMA,"decoder":"wifi","dispatch":"serial","config":Config::from(&config),"iq_encoding":"cs8-binary/v1"})).unwrap();
+        write_json(&mut file, &json!({"kind":"chunk","config":Config::from(&config),"position":{"epoch":0,"sequence":0,"sample_index":0,"anchor":null,"gap_reason":null,"lost_samples":null},"samples":bytes.len()/2,"verified_prefix":true})).unwrap();
+        file.write_all(bytes).unwrap();
+        file.write_all(b"\n").unwrap();
+        write_json(&mut file, &json!({"kind":"terminal","reason":"Eof"})).unwrap();
+        drop(file);
+        let mut source = ArtifactSource::open(path.to_str().unwrap()).unwrap();
+        assert!(source.modern);
+        let mut decoder = SelectedDecoder::Modern(WifiDecoder::new());
+        let out = decoder.consume(source.next_event().unwrap()).unwrap();
+        assert_eq!(out.frames.len(), 2);
+        assert_eq!(out.frames[0].bytes, out.frames[1].bytes);
+        for (frame, offset) in out.frames.iter().zip([0, 60]) {
+            assert_eq!(frame_phy(frame), "ht");
+            let ht = ht_metadata(frame).unwrap();
+            assert_eq!(ht["mcs"], 7);
+            assert_eq!(ht["coding"], "ldpc");
+            assert_eq!(ht["bandwidth_mhz"], 20);
+            assert_eq!(ht["guard_interval_ns"], 800);
+            assert_eq!(ht["aggregation"], true);
+            assert_eq!(ht["stbc"], 0);
+            assert_eq!(ht["preamble_sample_index"], 37);
+            assert_eq!(ampdu_metadata(frame).unwrap()["delimiter_offset"], offset);
+            let mut legacy = frame.clone();
+            legacy.diagnostics.clear();
+            legacy.rate_bps = 6_000_000;
+            assert_eq!(frame_phy(&legacy), "legacy_ofdm");
+            assert!(ht_metadata(&legacy).is_none());
+            assert!(ampdu_metadata(&legacy).is_none());
+        }
+        assert!(matches!(
+            source.next_event().unwrap(),
+            IqEvent::End(StreamEnd::Eof)
+        ));
+        assert_eq!(decoder.stats().valid_frames, 2);
+        drop(source);
+        std::fs::remove_file(path).unwrap();
     }
 
     fn exercise(binary: bool, body: &[u8], count: u64, succeeds: bool) {

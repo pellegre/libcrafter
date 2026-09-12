@@ -21,6 +21,45 @@ pub fn phy_family(rate: u32) -> &'static str {
         _ => "unknown",
     }
 }
+/// PHY family comes from validated signaling when available, not rate guessing.
+pub fn frame_phy(frame: &RecoveredFrame) -> &'static str {
+    if frame
+        .diagnostics
+        .iter()
+        .any(|d| matches!(d, PhyDiagnostic::HtSignal { .. }))
+    {
+        "ht"
+    } else {
+        phy_family(frame.rate_bps)
+    }
+}
+pub fn ht_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
+    frame.diagnostics.iter().find_map(|d| match d {
+        PhyDiagnostic::HtSignal {
+            fields: f,
+            preamble_sample_index,
+        } => Some(serde_json::json!({
+            "mcs":f.mcs, "bandwidth_mhz":if f.channel_width_40_mhz {40} else {20},
+            "psdu_bytes":f.psdu_bytes, "smoothing":f.smoothing, "not_sounding":f.not_sounding,
+            "aggregation":f.aggregation, "stbc":f.stbc, "coding":if f.ldpc {"ldpc"} else {"bcc"},
+            "guard_interval_ns":if f.short_guard_interval {400} else {800},
+            "extension_spatial_streams":f.extension_spatial_streams,
+            "preamble_sample_index":preamble_sample_index,
+        })),
+        _ => None,
+    })
+}
+pub fn ampdu_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
+    frame.diagnostics.iter().find_map(|d| match d {
+        PhyDiagnostic::Ampdu {
+            delimiter_offset,
+            control_bits,
+        } => Some(serde_json::json!({
+            "delimiter_offset":delimiter_offset, "control_bits":control_bits,
+        })),
+        _ => None,
+    })
+}
 pub const MAX_LINE: usize = 1_048_576;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

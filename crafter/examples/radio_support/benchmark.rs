@@ -16,6 +16,7 @@ pub(super) fn run(path: &str, mode: &str, frames_path: Option<&str>) -> Result<(
         .transpose()?;
     let mut decoder: Box<dyn PhyDecoder> = match mode {
         "combined" => Box::new(LegacyWifiDecoder::new()),
+        "wifi" => Box::new(WifiDecoder::new()),
         "parallel-dsss" => Box::new(ParallelLegacyWifiDecoder::with_parallel_dsss()?),
         "parallel" => Box::new(ParallelLegacyWifiDecoder::new()?),
         "windowed-3" => Box::new(WindowedLegacyWifiDecoder::new(3)?),
@@ -23,7 +24,7 @@ pub(super) fn run(path: &str, mode: &str, frames_path: Option<&str>) -> Result<(
         "ofdm" => Box::new(LegacyOfdmDecoder::new()),
         "dsss" => Box::new(DsssCckDecoder::new()),
         _ => return Err(
-            "benchmark mode must be combined, parallel, parallel-dsss, windowed-3, windowed-4, ofdm, or dsss"
+            "benchmark mode must be wifi, combined, parallel, parallel-dsss, windowed-3, windowed-4, ofdm, or dsss"
                 .into(),
         ),
     };
@@ -72,6 +73,7 @@ pub(super) fn run(path: &str, mode: &str, frames_path: Option<&str>) -> Result<(
                         "epoch": frame.start.epoch, "start": frame.start.sample_index,
                         "end": frame.end_sample_index, "rate_bps": frame.rate_bps,
                         "integrity": format!("{:?}", frame.integrity), "bytes": frame.bytes,
+                        "phy":frame_phy(&frame), "ht":ht_metadata(&frame), "ampdu":ampdu_metadata(&frame),
                     }),
                 )?;
                 report.write_all(b"\n")?;
@@ -83,6 +85,12 @@ pub(super) fn run(path: &str, mode: &str, frames_path: Option<&str>) -> Result<(
             frame_hash.update(frame.rate_bps.to_le_bytes());
             frame_hash.update((frame.bytes.len() as u64).to_le_bytes());
             frame_hash.update(&frame.bytes);
+            // Preserve legacy digest compatibility; HT aggregate occurrences
+            // additionally identify their position within the shared PPDU.
+            if let Some(metadata) = ampdu_metadata(&frame) {
+                frame_hash.update(b"ht-ampdu-offset/v1");
+                frame_hash.update(metadata["delimiter_offset"].as_u64().unwrap().to_le_bytes());
+            }
         }
         verification_time += start.elapsed();
         if let Some(end) = end {
