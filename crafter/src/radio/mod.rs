@@ -6,6 +6,8 @@
 mod data;
 mod dsss;
 mod dsss_tx;
+mod ht;
+pub use ht::{HtSignalError, HtSignalFields};
 #[cfg(any(feature = "radio-hackrf", test))]
 mod hackrf;
 #[cfg(any(feature = "radio-hackrf", test))]

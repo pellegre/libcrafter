@@ -149,10 +149,10 @@ pub use packet::{
 pub use protocols::exports::*;
 #[cfg(feature = "radio")]
 pub use radio::{
-    DsssPlcpFields, DsssPreamble, IqSink, LegacyDsssCckRate, LegacyDsssCckTransmission,
-    LegacyDsssCckTxConfig, LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig,
-    LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink, OfdmSignalFields,
-    RadioPacketWriter, WifiFcsPolicy,
+    DsssPlcpFields, DsssPreamble, HtSignalError, HtSignalFields, IqSink, LegacyDsssCckRate,
+    LegacyDsssCckTransmission, LegacyDsssCckTxConfig, LegacyOfdmRate, LegacyOfdmTransmission,
+    LegacyOfdmTxConfig, LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink,
+    OfdmSignalFields, RadioPacketWriter, WifiFcsPolicy,
 };
 #[cfg(feature = "radio-hackrf")]
 pub use radio::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};
@@ -261,6 +261,8 @@ pub mod prelude {
     };
     #[cfg(feature = "radio-hackrf")]
     pub use crate::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};
+    #[cfg(feature = "radio")]
+    pub use crate::{HtSignalError, HtSignalFields};
     #[cfg(feature = "whad")]
     pub use crate::{WhadBleMode, WhadDot15d4Mode, WhadWireBuilder};
 }
