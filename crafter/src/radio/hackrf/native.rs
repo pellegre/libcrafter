@@ -4,6 +4,7 @@ use std::{
     ffi::{c_char, c_int, c_void, CString},
     panic::{catch_unwind, AssertUnwindSafe},
     ptr,
+    sync::Condvar,
 };
 static LIBRARY: Mutex<()> = Mutex::new(());
 #[repr(C)]
@@ -54,6 +55,11 @@ extern "C" {
     fn hackrf_start_tx(
         device: *mut c_void,
         callback: unsafe extern "C" fn(*mut Transfer) -> c_int,
+        context: *mut c_void,
+    ) -> c_int;
+    fn hackrf_enable_tx_flush(
+        device: *mut c_void,
+        callback: unsafe extern "C" fn(*mut c_void, c_int),
         context: *mut c_void,
     ) -> c_int;
     fn hackrf_stop_tx(device: *mut c_void) -> c_int;
@@ -226,8 +232,14 @@ unsafe extern "C" fn receive(transfer: *mut Transfer) -> c_int {
 
 pub(in crate::radio) struct NativeTx {
     device: *mut c_void,
-    context: Option<Box<Arc<super::super::hackrf_tx::TxShared>>>,
+    context: Option<Box<TxContext>>,
     _library: MutexGuard<'static, ()>,
+}
+
+struct TxContext {
+    shared: Arc<super::super::hackrf_tx::TxShared>,
+    flush_result: Mutex<Option<bool>>,
+    flush_ready: Condvar,
 }
 // SAFETY: the handle has exclusive ownership and all methods require `&mut self`;
 // callbacks touch only the separately synchronized context.
@@ -291,41 +303,80 @@ impl NativeTx {
         &mut self,
         shared: Arc<super::super::hackrf_tx::TxShared>,
     ) -> RadioResult<super::super::hackrf_tx::HackRfTxStats> {
-        let mut context = Box::new(shared);
-        let context_ptr = (&mut *context as *mut Arc<super::super::hackrf_tx::TxShared>).cast();
+        let mut context = Box::new(TxContext {
+            shared,
+            flush_result: Mutex::new(None),
+            flush_ready: Condvar::new(),
+        });
+        let context_ptr = (&mut *context as *mut TxContext).cast();
         self.context = Some(context);
-        // SAFETY: boxed callback context stays pinned until stop has joined callbacks.
+        // SAFETY: boxed callback context stays pinned until flush and stop have
+        // joined callbacks. The flush callback is the libhackrf completion
+        // boundary that guarantees the final transfer reached the device.
         unsafe {
+            check(
+                "enable TX flush",
+                hackrf_enable_tx_flush(self.device, flush, context_ptr),
+            )?;
             check(
                 "start TX",
                 hackrf_start_tx(self.device, transmit, context_ptr),
             )?;
         }
-        while unsafe { hackrf_is_streaming(self.device) } == 1 {
-            std::thread::sleep(std::time::Duration::from_millis(1));
+        let context = self.context.as_ref().expect("TX context");
+        let mut flush_result = context
+            .flush_result
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        while flush_result.is_none() {
+            let remaining = context.shared.remaining();
+            if remaining.is_zero() {
+                context.shared.fail(RadioError::Source(
+                    "HackRF transmission timed out before flush".into(),
+                ));
+                break;
+            }
+            let (guard, _) = context
+                .flush_ready
+                .wait_timeout(flush_result, remaining)
+                .unwrap_or_else(|error| error.into_inner());
+            flush_result = guard;
         }
+        if matches!(*flush_result, Some(false)) {
+            context
+                .shared
+                .fail(RadioError::Source("HackRF TX flush failed".into()));
+        }
+        drop(flush_result);
         let mut state = M0State::default();
         // SAFETY: query occurs while the device and callback context remain live.
         let counter_result = unsafe { hackrf_get_m0_state(self.device, &mut state) };
         let stop_code = unsafe { hackrf_stop_tx(self.device) };
         let shared = self.context.take().expect("TX context");
         if counter_result != 0 {
-            shared.fail(RadioError::Source(format!(
+            shared.shared.fail(RadioError::Source(format!(
                 "M0 state: libhackrf error {counter_result}"
             )));
         } else if state.error != 0 {
-            shared.fail(RadioError::Source(format!(
+            shared.shared.fail(RadioError::Source(format!(
                 "HackRF M0 TX error {}",
                 state.error
             )));
         }
         if stop_code != 0 {
-            shared.fail(RadioError::Source(format!(
+            shared.shared.fail(RadioError::Source(format!(
                 "stop TX: libhackrf error {stop_code}"
             )));
         }
-        shared.finish(
-            (state.num_shortfalls, state.longest_shortfall),
+        shared.shared.finish(
+            (
+                state.num_shortfalls,
+                if state.num_shortfalls == 0 {
+                    0
+                } else {
+                    state.longest_shortfall
+                },
+            ),
             stop_code == 0,
         )
     }
@@ -360,20 +411,30 @@ unsafe extern "C" fn transmit(transfer: *mut Transfer) -> c_int {
         if transfer.tx_ctx.is_null() || transfer.buffer.is_null() || transfer.buffer_length <= 0 {
             return false;
         }
-        let shared = unsafe {
-            &*transfer
-                .tx_ctx
-                .cast::<Arc<super::super::hackrf_tx::TxShared>>()
-        };
+        let context = unsafe { &*transfer.tx_ctx.cast::<TxContext>() };
         let bytes = unsafe {
             std::slice::from_raw_parts_mut(transfer.buffer, transfer.buffer_length as usize)
         };
-        shared.fill(bytes)
+        let keep_streaming = context.shared.fill(bytes);
+        transfer.valid_length = transfer.buffer_length;
+        keep_streaming
     }));
     match result {
         Ok(true) => 0,
         _ => 1,
     }
+}
+
+unsafe extern "C" fn flush(context: *mut c_void, success: c_int) {
+    let Some(context) = (unsafe { context.cast::<TxContext>().as_ref() }) else {
+        return;
+    };
+    let mut result = context
+        .flush_result
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    *result = Some(success != 0);
+    context.flush_ready.notify_all();
 }
 
 // Kept separate so Drop cannot accidentally call an RX stop symbol.
@@ -403,5 +464,51 @@ mod tests {
         };
         // SAFETY: valid transfer storage with deliberately absent context.
         assert_eq!(unsafe { receive(&mut transfer) }, 1);
+    }
+
+    #[test]
+    fn radio_hackrf_native_tx_sets_valid_length_and_records_flush() {
+        let config = super::super::super::hackrf_tx::HackRfTxConfig {
+            serial: "test".into(),
+            center_frequency_hz: 2_437_000_000,
+            sample_rate_hz: 20_000_000,
+            baseband_filter_hz: 17_500_000,
+            tx_vga_gain_db: 0,
+            amplifier_enabled: false,
+            antenna_power_enabled: false,
+            max_duration: std::time::Duration::from_secs(1),
+            max_supplied_samples: 8,
+            repetitions: 1,
+            inter_burst_gap_samples: 0,
+        };
+        let shared = Arc::new(
+            super::super::super::hackrf_tx::TxShared::new(
+                &[1, 2],
+                &config,
+                Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            )
+            .unwrap(),
+        );
+        let mut context = TxContext {
+            shared,
+            flush_result: Mutex::new(None),
+            flush_ready: Condvar::new(),
+        };
+        let mut buffer = [0u8; 8];
+        let mut transfer = Transfer {
+            device: ptr::null_mut(),
+            buffer: buffer.as_mut_ptr(),
+            buffer_length: buffer.len() as c_int,
+            valid_length: 0,
+            rx_ctx: ptr::null_mut(),
+            tx_ctx: (&mut context as *mut TxContext).cast(),
+        };
+        // SAFETY: transfer and callback context remain live for the call.
+        assert_eq!(unsafe { transmit(&mut transfer) }, 0);
+        assert_eq!(transfer.valid_length, transfer.buffer_length);
+        assert_eq!(buffer, [1, 2, 0, 0, 0, 0, 0, 0]);
+        // SAFETY: callback context remains live for the call.
+        unsafe { flush((&mut context as *mut TxContext).cast(), 1) };
+        assert_eq!(*context.flush_result.lock().unwrap(), Some(true));
     }
 }
