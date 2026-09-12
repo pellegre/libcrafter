@@ -113,32 +113,32 @@ coverage_cases:
   - legacy-wifi-overflow-bound
 
 supported_cases:
-  - {name: legacy-ofdm-6, directions: [roundtrip], byte_policy: strict_bytes}
-  - {name: legacy-ofdm-9, directions: [roundtrip], byte_policy: strict_bytes}
-  - {name: legacy-ofdm-12, directions: [roundtrip], byte_policy: strict_bytes}
-  - {name: legacy-ofdm-18, directions: [roundtrip], byte_policy: strict_bytes}
-  - {name: legacy-ofdm-24, directions: [roundtrip], byte_policy: strict_bytes}
-  - {name: legacy-ofdm-36, directions: [roundtrip], byte_policy: strict_bytes}
-  - {name: legacy-ofdm-48, directions: [roundtrip], byte_policy: strict_bytes}
-  - {name: legacy-ofdm-54, directions: [roundtrip], byte_policy: strict_bytes}
-  - {name: legacy-dsss-1-long, directions: [roundtrip], byte_policy: strict_bytes}
-  - {name: legacy-dsss-2-long, directions: [roundtrip], byte_policy: strict_bytes}
-  - {name: legacy-dsss-5.5-long, directions: [roundtrip], byte_policy: strict_bytes}
-  - {name: legacy-dsss-11-long, directions: [roundtrip], byte_policy: strict_bytes}
-  - {name: legacy-dsss-2-short, directions: [roundtrip], byte_policy: strict_bytes}
-  - {name: legacy-dsss-5.5-short, directions: [roundtrip], byte_policy: strict_bytes}
-  - {name: legacy-dsss-11-short, directions: [roundtrip], byte_policy: strict_bytes}
-  - {name: legacy-ofdm-6-explicit-wrong-fcs, directions: [roundtrip], byte_policy: strict_bytes}
-  - {name: legacy-ofdm-6-explicit-wrong-signal, directions: [roundtrip], byte_policy: structured_error}
-  - {name: legacy-dsss-1-long-explicit-wrong-fcs, directions: [roundtrip], byte_policy: strict_bytes}
-  - {name: legacy-dsss-1-long-explicit-wrong-plcp-crc, directions: [roundtrip], byte_policy: structured_error}
-  - {name: legacy-dsss-1-short, directions: [roundtrip], byte_policy: structured_error}
-  - {name: legacy-wifi-unsupported-rate, directions: [roundtrip], byte_policy: structured_error}
-  - {name: legacy-wifi-unsupported-sample-rate, directions: [roundtrip], byte_policy: structured_error}
-  - {name: legacy-wifi-psdu-limit, directions: [roundtrip], byte_policy: structured_error}
-  - {name: legacy-wifi-sample-limit, directions: [roundtrip], byte_policy: structured_error}
-  - {name: legacy-wifi-zero-bound, directions: [roundtrip], byte_policy: structured_error}
-  - {name: legacy-wifi-overflow-bound, directions: [roundtrip], byte_policy: structured_error}
+  - {name: legacy-ofdm-6, directions: [roundtrip], byte_policy: strict_bytes, contract_only: true}
+  - {name: legacy-ofdm-9, directions: [roundtrip], byte_policy: strict_bytes, contract_only: true}
+  - {name: legacy-ofdm-12, directions: [roundtrip], byte_policy: strict_bytes, contract_only: true}
+  - {name: legacy-ofdm-18, directions: [roundtrip], byte_policy: strict_bytes, contract_only: true}
+  - {name: legacy-ofdm-24, directions: [roundtrip], byte_policy: strict_bytes, contract_only: true}
+  - {name: legacy-ofdm-36, directions: [roundtrip], byte_policy: strict_bytes, contract_only: true}
+  - {name: legacy-ofdm-48, directions: [roundtrip], byte_policy: strict_bytes, contract_only: true}
+  - {name: legacy-ofdm-54, directions: [roundtrip], byte_policy: strict_bytes, contract_only: true}
+  - {name: legacy-dsss-1-long, directions: [roundtrip], byte_policy: strict_bytes, contract_only: true}
+  - {name: legacy-dsss-2-long, directions: [roundtrip], byte_policy: strict_bytes, contract_only: true}
+  - {name: legacy-dsss-5.5-long, directions: [roundtrip], byte_policy: strict_bytes, contract_only: true}
+  - {name: legacy-dsss-11-long, directions: [roundtrip], byte_policy: strict_bytes, contract_only: true}
+  - {name: legacy-dsss-2-short, directions: [roundtrip], byte_policy: strict_bytes, contract_only: true}
+  - {name: legacy-dsss-5.5-short, directions: [roundtrip], byte_policy: strict_bytes, contract_only: true}
+  - {name: legacy-dsss-11-short, directions: [roundtrip], byte_policy: strict_bytes, contract_only: true}
+  - {name: legacy-ofdm-6-explicit-wrong-fcs, directions: [roundtrip], byte_policy: strict_bytes, contract_only: true}
+  - {name: legacy-ofdm-6-explicit-wrong-signal, directions: [roundtrip], byte_policy: structured_error, contract_only: true}
+  - {name: legacy-dsss-1-long-explicit-wrong-fcs, directions: [roundtrip], byte_policy: strict_bytes, contract_only: true}
+  - {name: legacy-dsss-1-long-explicit-wrong-plcp-crc, directions: [roundtrip], byte_policy: structured_error, contract_only: true}
+  - {name: legacy-dsss-1-short, directions: [roundtrip], byte_policy: structured_error, contract_only: true}
+  - {name: legacy-wifi-unsupported-rate, directions: [roundtrip], byte_policy: structured_error, contract_only: true}
+  - {name: legacy-wifi-unsupported-sample-rate, directions: [roundtrip], byte_policy: structured_error, contract_only: true}
+  - {name: legacy-wifi-psdu-limit, directions: [roundtrip], byte_policy: structured_error, contract_only: true}
+  - {name: legacy-wifi-sample-limit, directions: [roundtrip], byte_policy: structured_error, contract_only: true}
+  - {name: legacy-wifi-zero-bound, directions: [roundtrip], byte_policy: structured_error, contract_only: true}
+  - {name: legacy-wifi-overflow-bound, directions: [roundtrip], byte_policy: structured_error, contract_only: true}
 
 backend_support:
   libcrafter:
