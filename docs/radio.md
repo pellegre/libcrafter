@@ -113,19 +113,23 @@ using `MemoryIqSink` cannot open a device. Live configuration requires a
 nonempty device serial, center frequency, exactly 20 Msps, nonzero baseband
 filter, TX VGA gain from 0 through 47 dB, explicit amplifier and antenna-power
 states, and nonzero duration, supplied-sample, and repetition bounds. The
-inter-burst gap is also explicit. The complete repeated waveform and gaps must
-fit `max_supplied_samples` before transmission begins.
+inter-burst gap, delay between matrix cases, OFDM CS8 scale, and case selection
+are also explicit. `--case-id all` emits the selected matrix; a stable case ID
+emits only that case so a qualification runner can retry device failures
+without invalidating successful cases. The complete repeated waveform and gaps
+must fit `max_supplied_samples` before transmission begins.
 
 ```text
 cargo run --release -p crafter --features radio-hackrf --example radio_transmit -- \
   --live-hackrf --serial SERIAL --frequency-hz HZ --sample-rate-hz 20000000 \
   --filter-hz HZ --tx-gain-db DB --amplifier false --antenna-power false \
   --max-duration-ms MS --max-samples N --repetitions N --gap-samples N \
-  --matrix true
+  --case-gap-ms MS --ofdm-scale SCALE --case-id all --matrix true
 ```
 
-The native callback owns its waveform and initializes every transfer buffer;
-the final USB buffer is zero-padded and padding is counted separately. RX and
+The native callback owns its waveform and initializes every valid transfer
+byte; the final transfer is rounded to a USB packet, zero-padded to that
+boundary, and padding is counted separately. RX and
 TX share one process-wide libhackrf ownership lock. Cancellation, deadline,
 native start/stop/query errors, firmware shortfalls, incomplete repetitions,
 and invalid callback buffers fail with a structured error. `HackRfTxStats`
@@ -161,9 +165,20 @@ Keep the aggregate, comparisons, CS8 files, pcaps, device settings, and cleanup
 receipts in ignored storage such as `target/`. Do not commit VM aliases, device
 serials, credentials, interface names, RF topology, public addresses, or raw
 captures. Machine provisioning and hardware orchestration remain external to
-the crate. `radio_compare transmit PLAN.jsonl CAPTURE.pcap` creates one
-comparison; `radio_compare transmit-qualification QUALIFICATION.json` verifies
-the repository-visible aggregate structure and referenced comparison reports.
+the crate. `radio_compare --compare-transmit PLAN.jsonl CAPTURE.pcap
+REPORT.json` creates one comparison; `radio_compare
+--verify-transmit-qualification QUALIFICATION.json` verifies the aggregate and
+its referenced files.
+
+The qualification aggregate has a lowercase 40-hex `revision` and at least
+three uniquely named runs. Each run repeats that revision and provides a
+nonempty `settings` object, `cleanup:true`, `invalidating_failures:0`, and
+`capture`, `comparison`, and `transmits` file records. A file record is
+`{"path":"relative/child","sha256":"..."}`. The verifier rejects absolute
+or parent paths, empty files, digest changes, incomplete comparison matrices,
+and live transmit artifacts with missing cases, duplicate cases, shortfalls,
+sample-count disagreement, cancellation, or an incomplete stop. Multiple
+bounded transmit artifacts may jointly cover the fifteen cases in one run.
 
 ## Primary evidence
 

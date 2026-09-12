@@ -75,14 +75,31 @@ fn cases(matrix: bool) -> Vec<Case> {
     cases
 }
 
+#[cfg(any(feature = "radio-hackrf", test))]
+fn selected_cases(matrix: bool, case_id: &str) -> Result<Vec<Case>> {
+    let cases = cases(matrix);
+    if case_id == "all" {
+        return Ok(cases);
+    }
+    cases
+        .into_iter()
+        .find(|case| case.id == case_id)
+        .map(|case| vec![case])
+        .ok_or_else(|| format!("unknown or unavailable --case-id: {case_id}").into())
+}
+
 fn packet(case_id: &str) -> Packet {
+    let case_tag = cases(true)
+        .iter()
+        .position(|case| case.id == case_id)
+        .expect("case ID comes from the closed transmit matrix") as u8;
     let dot11 = Dot11::data();
     dot11
         .addr1(MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 0x01]))
         .addr2(MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 0x02]))
         .addr3(MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 0x03]))
         .sequence_number(0x321)
-        / Raw::from(format!("crafter legacy Wi-Fi transmit {case_id}"))
+        / Raw::from(vec![case_tag])
 }
 
 fn labels(phy: LegacyWifiPhy) -> (&'static str, u32, &'static str) {
@@ -242,16 +259,34 @@ fn run_live(args: Vec<String>) -> Result<()> {
         repetitions: required("repetitions")?.parse()?,
         inter_burst_gap_samples: required("gap-samples")?.parse()?,
     };
-    let matrix = required("matrix")? == "true";
+    let case_gap = Duration::from_millis(required("case-gap-ms")?.parse()?);
+    if case_gap > Duration::from_secs(10) {
+        return Err("--case-gap-ms must not exceed 10000".into());
+    }
+    let ofdm_scale: f64 = required("ofdm-scale")?.parse()?;
+    if !ofdm_scale.is_finite() || ofdm_scale <= 0.0 {
+        return Err("--ofdm-scale must be finite and greater than zero".into());
+    }
+    let matrix = boolean("matrix")?;
+    let case_id = required("case-id")?;
     let mut sink = HackRfTxSink::open_live(config)?;
-    let selected = cases(matrix);
+    let selected = selected_cases(matrix, &case_id)?;
+    let selected_len = selected.len();
     println!(
         "{}",
-        json!({"schema":SCHEMA,"kind":"header","case_count":selected.len(),"offline":false})
+        json!({
+            "schema":SCHEMA,"kind":"header","case_count":selected.len(),"offline":false,
+            "case_selector":case_id,"ofdm_scale":ofdm_scale,
+            "case_gap_ms":case_gap.as_millis()
+        })
     );
-    for case in selected {
+    for (index, case) in selected.into_iter().enumerate() {
         let phy_config = match case.phy {
-            LegacyWifiPhy::Ofdm(rate) => LegacyWifiTxConfig::ofdm(rate),
+            LegacyWifiPhy::Ofdm(rate) => {
+                let mut config = LegacyWifiTxConfig::ofdm(rate);
+                config.ofdm.scale = ofdm_scale;
+                config
+            }
             LegacyWifiPhy::DsssCck { rate, preamble } => {
                 LegacyWifiTxConfig::dsss_cck(rate, preamble)
             }
@@ -273,6 +308,9 @@ fn run_live(args: Vec<String>) -> Result<()> {
             })
         );
         sink = writer.into_sink();
+        if index + 1 < selected_len {
+            std::thread::sleep(case_gap);
+        }
     }
     println!(
         "{}",
@@ -294,6 +332,8 @@ mod tests {
             .map(|case| case.id)
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(ids.len(), 15);
+        assert_eq!(selected_cases(true, "ofdm-54-long").unwrap().len(), 1);
+        assert!(selected_cases(false, "ofdm-54-long").is_err());
     }
 
     #[test]

@@ -349,9 +349,11 @@ impl NativeTx {
         }
         drop(flush_result);
         let mut state = M0State::default();
-        // SAFETY: query occurs while the device and callback context remain live.
-        let counter_result = unsafe { hackrf_get_m0_state(self.device, &mut state) };
+        // SAFETY: stopping joins callbacks and lets firmware roll back a
+        // shutdown-only shortfall before the terminal counters are sampled.
         let stop_code = unsafe { hackrf_stop_tx(self.device) };
+        // SAFETY: the stopped device remains open and exclusively owned here.
+        let counter_result = unsafe { hackrf_get_m0_state(self.device, &mut state) };
         let shared = self.context.take().expect("TX context");
         if counter_result != 0 {
             shared.shared.fail(RadioError::Source(format!(
@@ -415,9 +417,11 @@ unsafe extern "C" fn transmit(transfer: *mut Transfer) -> c_int {
         let bytes = unsafe {
             std::slice::from_raw_parts_mut(transfer.buffer, transfer.buffer_length as usize)
         };
-        let keep_streaming = context.shared.fill(bytes);
-        transfer.valid_length = transfer.buffer_length;
-        keep_streaming
+        let Some(valid_length) = context.shared.fill(bytes) else {
+            return false;
+        };
+        transfer.valid_length = valid_length as c_int;
+        true
     }));
     match result {
         Ok(true) => 0,

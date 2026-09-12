@@ -3,11 +3,34 @@
 use super::artifact::{hex, read_json, unhex, valid_fcs, Result};
 use crafter::{LinkType, Packet, Radiotap};
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, fs::File, io::BufReader, path::Path};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs::File,
+    io::{BufReader, Read},
+    path::{Component, Path, PathBuf},
+};
 
 pub const PLAN_SCHEMA: &str = "crafter.radio.transmit/v1";
 pub const REPORT_SCHEMA: &str = "crafter.radio.transmit-comparison/v1";
 pub const QUALIFICATION_SCHEMA: &str = "crafter.radio.transmit-qualification/v1";
+const MATRIX_CASE_IDS: [&str; 15] = [
+    "ofdm-6-long",
+    "ofdm-9-long",
+    "ofdm-12-long",
+    "ofdm-18-long",
+    "ofdm-24-long",
+    "ofdm-36-long",
+    "ofdm-48-long",
+    "ofdm-54-long",
+    "dsss-1-long",
+    "dsss-2-long",
+    "dsss-2-short",
+    "cck-5_5-long",
+    "cck-5_5-short",
+    "cck-11-long",
+    "cck-11-short",
+];
 
 #[derive(Debug, Clone)]
 struct PlannedCase {
@@ -160,6 +183,102 @@ pub fn compare(plan: &str, capture: &str) -> Result<Value> {
     Ok(compare_cases(&cases, &frames, exclusions))
 }
 
+fn qualified_path(base: &Path, relative: &str) -> Result<PathBuf> {
+    let path = Path::new(relative);
+    if relative.is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        return Err(format!("qualification path must be a relative child: {relative}").into());
+    }
+    Ok(base.join(path))
+}
+
+fn sha256(path: &Path) -> Result<String> {
+    let mut file = File::open(path)?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0u8; 65_536];
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    Ok(hex(&digest.finalize()))
+}
+
+fn verified_file(base: &Path, value: &Value, label: &str) -> Result<PathBuf> {
+    let relative = value["path"]
+        .as_str()
+        .ok_or_else(|| format!("missing {label} path"))?;
+    let expected = value["sha256"]
+        .as_str()
+        .ok_or_else(|| format!("missing {label} sha256"))?;
+    if expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("invalid {label} sha256: {relative}").into());
+    }
+    let path = qualified_path(base, relative)?;
+    let metadata = path.metadata()?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return Err(format!("empty or invalid {label}: {relative}").into());
+    }
+    if sha256(&path)? != expected.to_ascii_lowercase() {
+        return Err(format!("{label} digest mismatch: {relative}").into());
+    }
+    Ok(path)
+}
+
+fn verify_transmit(path: &Path) -> Result<BTreeSet<String>> {
+    let mut reader = BufReader::new(File::open(path)?);
+    let header = read_json(&mut reader)?.ok_or("empty live transmit artifact")?;
+    if header["schema"] != PLAN_SCHEMA
+        || header["kind"] != "header"
+        || header["offline"] != false
+        || match header["case_count"].as_u64() {
+            Some(count) => count == 0 || count > 15,
+            None => true,
+        }
+    {
+        return Err("invalid live transmit header".into());
+    }
+    let mut cases = BTreeSet::new();
+    let mut summary = None;
+    while let Some(value) = read_json(&mut reader)? {
+        match value["kind"].as_str() {
+            Some("case") => {
+                let id = value["case_id"].as_str().ok_or("missing live case id")?;
+                if !cases.insert(id.to_owned())
+                    || value["terminal"] != "complete"
+                    || value["requested_samples"].as_u64().is_none()
+                    || value["requested_samples"] != value["supplied_samples"]
+                    || value["completed_repetitions"].as_u64().unwrap_or(0) == 0
+                    || value["firmware_shortfalls"] != 0
+                    || value["stopped"] != true
+                {
+                    return Err(format!("invalid live transmit case: {id}").into());
+                }
+            }
+            Some("summary") if summary.is_none() => summary = Some(value),
+            _ => return Err("unexpected live transmit record".into()),
+        }
+    }
+    let declared = header["case_count"].as_u64().unwrap() as usize;
+    let expected = MATRIX_CASE_IDS.into_iter().collect::<BTreeSet<_>>();
+    if cases.len() != declared
+        || !cases.iter().all(|id| expected.contains(id.as_str()))
+        || match summary.as_ref() {
+            Some(value) => value["complete"] != true || value["terminal"] != "complete",
+            None => true,
+        }
+    {
+        return Err("incomplete live transmit artifact".into());
+    }
+    Ok(cases)
+}
+
 pub fn verify_qualification(path: &str) -> Result<Value> {
     let value: Value = serde_json::from_reader(File::open(path)?)?;
     if value["schema"] != QUALIFICATION_SCHEMA || value["complete"] != true {
@@ -171,21 +290,91 @@ pub fn verify_qualification(path: &str) -> Result<Value> {
     if runs.len() < 3 {
         return Err("qualification requires at least three runs".into());
     }
+    let revision = value["revision"]
+        .as_str()
+        .ok_or("missing qualification revision")?;
+    if revision.len() != 40
+        || !revision
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err("qualification revision must be a lowercase 40-hex commit".into());
+    }
     let base = Path::new(path).parent().unwrap_or_else(|| Path::new("."));
     let mut verified = Vec::with_capacity(runs.len());
+    let mut run_ids = BTreeSet::new();
+    let mut capture_paths = BTreeSet::new();
+    let mut comparison_paths = BTreeSet::new();
+    let mut transmit_paths = BTreeSet::new();
     for run in runs {
-        let relative = run["comparison"]
-            .as_str()
-            .ok_or("missing comparison path")?;
-        let report: Value = serde_json::from_reader(File::open(base.join(relative))?)?;
+        let id = run["id"].as_str().ok_or("missing qualification run id")?;
+        if !run_ids.insert(id.to_owned()) {
+            return Err(format!("duplicate qualification run id: {id}").into());
+        }
+        if run["revision"] != revision
+            || run["cleanup"] != true
+            || run["invalidating_failures"] != 0
+            || match run["settings"].as_object() {
+                Some(settings) => settings.is_empty(),
+                None => true,
+            }
+        {
+            return Err(format!("invalid qualification run state: {id}").into());
+        }
+        let capture = verified_file(base, &run["capture"], "capture")?;
+        if !capture_paths.insert(capture.clone()) {
+            return Err(format!("qualification capture reused by run: {id}").into());
+        }
+        let comparison = verified_file(base, &run["comparison"], "comparison")?;
+        if !comparison_paths.insert(comparison.clone()) {
+            return Err(format!("qualification comparison reused by run: {id}").into());
+        }
+        let report: Value = serde_json::from_reader(File::open(&comparison)?)?;
         if report["schema"] != REPORT_SCHEMA
             || report["status"] != "passed"
             || report["required_cases"] != 15
             || report["passed_cases"] != 15
         {
-            return Err(format!("qualification comparison failed: {relative}").into());
+            return Err(
+                format!("qualification comparison failed: {}", comparison.display()).into(),
+            );
         }
-        verified.push(json!({"comparison": relative, "passed_cases": 15}));
+        let report_cases = report["cases"]
+            .as_array()
+            .ok_or("missing comparison cases")?;
+        let passed_ids = report_cases
+            .iter()
+            .filter_map(|case| {
+                (case["status"] == "passed")
+                    .then(|| case["case_id"].as_str().map(str::to_owned))
+                    .flatten()
+            })
+            .collect::<BTreeSet<_>>();
+        if passed_ids != MATRIX_CASE_IDS.into_iter().map(str::to_owned).collect() {
+            return Err(format!("qualification comparison matrix failed: {id}").into());
+        }
+        let transmits = run["transmits"]
+            .as_array()
+            .ok_or("missing qualification transmit artifacts")?;
+        if transmits.is_empty() {
+            return Err(format!("qualification run has no transmits: {id}").into());
+        }
+        let mut transmitted_cases = BTreeSet::new();
+        for transmit in transmits {
+            let transmit_path = verified_file(base, transmit, "transmit")?;
+            if !transmit_paths.insert(transmit_path.clone()) {
+                return Err(format!("qualification transmit reused by run: {id}").into());
+            }
+            transmitted_cases.extend(verify_transmit(&transmit_path)?);
+        }
+        if transmitted_cases != MATRIX_CASE_IDS.into_iter().map(str::to_owned).collect() {
+            return Err(format!("qualification run transmit matrix is incomplete: {id}").into());
+        }
+        verified.push(json!({
+            "id": id, "comparison": comparison.strip_prefix(base)?.display().to_string(),
+            "capture_bytes": capture.metadata()?.len(), "transmit_artifacts": transmits.len(),
+            "passed_cases": 15
+        }));
     }
     Ok(
         json!({"schema":QUALIFICATION_SCHEMA,"status":"passed","verified_runs":verified.len(),"runs":verified}),
@@ -195,6 +384,10 @@ pub fn verify_qualification(path: &str) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn planned(id: &str, byte: u8, rate: u32, short: bool) -> PlannedCase {
         PlannedCase {
@@ -229,5 +422,34 @@ mod tests {
         let cases = [planned("a", 1, 2_000_000, true)];
         let report = compare_cases(&cases, &[seen(1, 2_000_000, false)], BTreeMap::new());
         assert_eq!(report["cases"][0]["status"], "metadata_mismatch");
+    }
+
+    #[test]
+    fn qualification_transmit_artifacts_allow_subsets_and_reject_shortfalls() {
+        let root = std::env::temp_dir().join(format!(
+            "crafter-transmit-qualification-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        let path = root.join("transmit.jsonl");
+        let artifact = |shortfalls| {
+            format!(
+            "{{\"schema\":\"{PLAN_SCHEMA}\",\"kind\":\"header\",\"case_count\":2,\"offline\":false}}\n\
+             {{\"schema\":\"{PLAN_SCHEMA}\",\"kind\":\"case\",\"case_id\":\"ofdm-54-long\",\"terminal\":\"complete\",\"requested_samples\":10,\"supplied_samples\":10,\"completed_repetitions\":1,\"firmware_shortfalls\":{shortfalls},\"stopped\":true}}\n\
+             {{\"schema\":\"{PLAN_SCHEMA}\",\"kind\":\"case\",\"case_id\":\"cck-11-short\",\"terminal\":\"complete\",\"requested_samples\":10,\"supplied_samples\":10,\"completed_repetitions\":1,\"firmware_shortfalls\":0,\"stopped\":true}}\n\
+             {{\"schema\":\"{PLAN_SCHEMA}\",\"kind\":\"summary\",\"complete\":true,\"terminal\":\"complete\"}}\n"
+        )
+        };
+        fs::write(&path, artifact(0)).unwrap();
+        let cases = verify_transmit(&path).unwrap();
+        assert_eq!(cases.len(), 2);
+        assert!(cases.contains("ofdm-54-long"));
+        fs::write(&path, artifact(1)).unwrap();
+        assert!(verify_transmit(&path).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 }
