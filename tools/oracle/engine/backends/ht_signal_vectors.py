@@ -5,6 +5,7 @@ This generator cannot transmit and imports no crafter implementation.
 """
 import argparse
 from pathlib import Path
+import ofdm_vectors as encoder
 
 OUT = Path(__file__).resolve().parents[4] / 'crafter/tests/fixtures/iq/ht-signal-index.tsv'
 
@@ -20,7 +21,8 @@ def crc(bits):
 def generate():
     example = list(map(int, '1111000100100110000000001110000000'))
     assert crc(example) == list(map(int, '10101000'))
-    rows = ['bits\tmcs\tcbw40\tlength\tsmoothing\tnot_sounding\taggregation\tstbc\tldpc\tshort_gi\textension_streams']
+    encoder.self_check()
+    rows = ['bits\tmcs\tcbw40\tlength\tsmoothing\tnot_sounding\taggregation\tstbc\tldpc\tshort_gi\textension_streams\tinterleaved']
     for case in range(256):
         fields = [case % 128, case // 128, (case * 257) % 65536,
                   (case >> 1) & 1, (case >> 2) & 1, (case >> 3) & 1,
@@ -31,7 +33,9 @@ def generate():
         wire += [smooth, sounding, 1, aggregate, stbc & 1, stbc >> 1,
                  ldpc, gi, ess & 1, ess >> 1]
         wire += crc(wire) + [0] * 6
-        rows.append('\t'.join([''.join(map(str, wire))] + list(map(str, fields))))
+        coded = encoder.encode(wire)
+        interleaved = encoder.interleave(coded[:48], 1) + encoder.interleave(coded[48:], 1)
+        rows.append('\t'.join([''.join(map(str, wire))] + list(map(str, fields)) + [''.join(map(str, interleaved))]))
     return '\n'.join(rows) + '\n'
 
 

@@ -7,6 +7,8 @@ directions: [backend_to_libcrafter]
 strict_bytes: true
 malformed: true
 behaviors:
+  - name: ht-sig-soft-recovery
+    checks: [two_symbol_deinterleaving, continuous_bcc_state, independent_coded_vectors, soft_metric_bounds, nonfinite_rejection]
   - name: ht-sig-integrity
     checks: [published_crc_example, independent_polynomial_vectors, every_single_bit_error, exact_bit_count, binary_input, reserved_bit, zero_tail]
   - name: ht-sig-fields
