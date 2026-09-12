@@ -7,6 +7,9 @@ directions: [backend_to_libcrafter]
 strict_bytes: true
 malformed: true
 behaviors:
+  - name: ht-mixed-iq-recognition
+    checks: [shared_legacy_training, qbpsk_data_unrotated_pilots, crc_before_classification, carrier_offset, multipath, chunk_invariance, no_legacy_frame_publication]
+    qualification: header_only_not_ht_data
   - name: ht-sig-soft-recovery
     checks: [two_symbol_deinterleaving, continuous_bcc_state, independent_coded_vectors, soft_metric_bounds, nonfinite_rejection]
   - name: ht-sig-integrity

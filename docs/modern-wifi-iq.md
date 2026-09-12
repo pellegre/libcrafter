@@ -63,6 +63,12 @@ reserved-bit and tail integrity, accepts the zero-length NDP indication, and
 preserves all signaled MCS/STBC/extension-stream values. Unsupported combinations
 must be checked by the receiving PHY before allocation or DATA decoding.
 This primitive alone does not decode an HT waveform or deliver modern frames.
+The legacy receiver recognizes mixed-format HT-SIG after shared legacy
+training and emits `PhyDiagnostic::HtSignal` with its original preamble sample
+index, followed by `UnsupportedPhy`. It does not deliver the HT payload as a
+legacy packet. Recognition requires both a QBPSK constellation check and valid
+header integrity. The independent IQ corpus covers clean and carrier-offset /
+multipath headers, bad CRCs and unrotated negative controls, not complete HT DATA.
 `decode_interleaved` accepts 96 finite soft metrics from two demapped HT-SIG
 symbols, reverses each symbol's interleaver and performs one continuous BCC
 traceback before the same integrity checks. Positive metrics favor bit 1;
