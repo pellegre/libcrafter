@@ -215,6 +215,14 @@ CRC, unsupported configurations, SERVICE and MAC FCS rejection tests.
 `ht-greenfield-ampdu-index.tsv` adds four two-MPDU aggregates at MCS0/7 with
 BCC/LDPC, for exact per-MPDU recovery, duplicate identity and output limits.
 
+## HT STBC arithmetic oracle
+
+`stbc-pairs.tsv` contains 2400 independently generated two-symbol observations
+and two HT-LTF observations, with expected channels and constellation symbols.
+It covers BPSK/QPSK/16-QAM/64-QAM, either channel missing, opposite channels,
+complex gains and weak gains. `stbc_vectors.py --check` verifies regeneration.
+These are algebra fixtures, not complete waveforms or hardware qualification.
+
 ## Legacy transmit oracle corpus
 
 The `ofdm-tx-*` and `dsss-tx-*` artifacts are clean, bounded transmit-oracle

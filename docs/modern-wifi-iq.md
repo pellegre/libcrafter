@@ -192,6 +192,21 @@ diagnostics do not establish MAC integrity. Legacy-only decoder defaults do
 not gain greenfield frame delivery. Live greenfield interoperability and the
 remaining formats, throughput and modern TX are not qualified by these tests.
 
+## HT STBC arithmetic increment
+
+The internal STBC primitives separate the first two HT-LTF observations into
+two effective channels and recover two consecutive constellation symbols for
+the NSS1/NSTS2 mapping in IEEE 802.11-2020 Table 19-18. They use bounded,
+allocation-free arithmetic, reject nonfinite inputs and unobservable channels,
+and retain finite behavior at extreme input scales through wider intermediates.
+
+`stbc_vectors.py --check` independently generates 2400 constellation/training
+pairs across BPSK, QPSK, 16-QAM and 64-QAM and six channel pairs. Tests compare
+both supplied-channel and training-derived recovery against the independent
+expected symbols. This does not establish packet integrity or STBC IQ support:
+the streaming receiver still rejects nonzero STBC until two-channel training,
+pilot tracking, even-symbol DATA processing and full independent IQ are joined.
+
 ## Existing example and replay workflow
 
 The receive example's leading `--modern` flag selects `WifiDecoder`, including
