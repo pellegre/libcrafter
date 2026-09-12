@@ -42,7 +42,7 @@ def encode_psdu(psdu,mcs,invalid_service=False):
     return symbols,result
 
 
-def waveform(psdu,mcs,guard,symbols,coded,aggregation=False,ldpc=True):
+def waveform(psdu,mcs,guard,symbols,coded,aggregation=False,ldpc=True,greenfield=False):
     nbpsc=ht.PARAMETERS[mcs][0]
     fields=[(mcs>>n)&1 for n in range(7)]+[0]
     fields += [(len(psdu)>>n)&1 for n in range(16)]
@@ -50,8 +50,13 @@ def waveform(psdu,mcs,guard,symbols,coded,aggregation=False,ldpc=True):
     fields += crc(fields)+[0]*6
     header=base.encode(fields)
     lsig_length=3*(4+math.ceil(symbols*(64+guard)/80))-3
-    wave=[0j]*37+base.preamble()
-    wave += base.symbol(base.interleave(base.encode(base.signal('1101',lsig_length)),1),1,1)
+    training=ht.ifft([1,1]+base.LTF+[-1,-1])
+    if greenfield:
+        assert guard == 16  # 19.3.11.11.6: no short GI with immediate DATA.
+        wave=[0j]*37+base.preamble()[:160]+training[-32:]+training*2
+    else:
+        wave=[0j]*37+base.preamble()
+        wave += base.symbol(base.interleave(base.encode(base.signal('1101',lsig_length)),1),1,1)
     for symbol in range(2):
         freq=[0j]*53
         for k,bit in zip(base.CARRIERS,base.interleave(header[symbol*48:(symbol+1)*48],1)):
@@ -59,18 +64,19 @@ def waveform(psdu,mcs,guard,symbols,coded,aggregation=False,ldpc=True):
         for k,sign in [(-21,1),(-7,1),(7,1),(21,-1)]: freq[k+26]=sign
         time=base.ifft(freq)
         wave += time[-16:]+time
-    wave += base.preamble()[:80]
-    training=ht.ifft([1,1]+base.LTF+[-1,-1])
-    wave += training[-16:]+training
+    if not greenfield:
+        wave += base.preamble()[:80]
+        wave += training[-16:]+training
     data_start=len(wave)
-    polarities=[1-2*b for b in base.scramble([0]*(symbols+3),127)]
+    pilot_offset=2 if greenfield else 3
+    polarities=[1-2*b for b in base.scramble([0]*(symbols+pilot_offset),127)]
     for symbol in range(symbols):
         # Clause 19.3.11.7.6: no BCC frequency interleaver for LDPC.
         block=coded[symbol*52*nbpsc:(symbol+1)*52*nbpsc]
         if not ldpc: block=ht.interleave(block,nbpsc)
         freq=[0j]*57
         for j,k in enumerate(ht.CARRIERS): freq[k+28]=base.constellation(block[j*nbpsc:(j+1)*nbpsc])
-        for j,k in enumerate([-21,-7,7,21]): freq[k+28]=polarities[symbol+3]*[1,1,1,-1][(symbol+j)%4]
+        for j,k in enumerate([-21,-7,7,21]): freq[k+28]=polarities[symbol+pilot_offset]*[1,1,1,-1][(symbol+j)%4]
         time=ht.ifft(freq)
         wave += time[-guard:]+time
     end=len(wave)

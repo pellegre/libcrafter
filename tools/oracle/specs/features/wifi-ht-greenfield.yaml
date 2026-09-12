@@ -1,0 +1,26 @@
+version: 1
+kind: feature
+name: wifi_ht_greenfield
+summary: Independent HT20 greenfield single-stream receive contract.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: one-space-time-stream
+    source: IEEE 802.11-2020 19.3.9.5 and Figure 19-1
+    mcs: [0, 1, 2, 3, 4, 5, 6, 7]
+    guard_interval_ns: [800]
+    coding: [bcc, ldpc]
+    checks: [independent_iq, full_ht_ltf1, no_legacy_signal, twenty_four_us_preamble, pilot_offset_two, exact_psdu, valid_fcs]
+  - name: admission-and-continuity
+    checks: [explicit_format_metadata, legacy_defaults_preserved, short_gi_rejection_without_extra_training, truncation, sample_gaps, bounded_outputs]
+coverage_cases: [wifi-ht20-greenfield]
+supported_cases:
+  - {name: wifi-ht20-greenfield, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - Independent waveform qualification precedes receive implementation.
+      - Streaming acquisition, DATA recovery and live qualification remain unimplemented for greenfield.

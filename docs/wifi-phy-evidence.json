@@ -56,6 +56,12 @@
   ],
   "facts": [
     {
+      "id": "ht-greenfield-single-stream",
+      "source": "ieee-80211-2020",
+      "anchor": "19.3.2 Figure 19-1; 19.3.9.5.1-5; 19.3.11.11.3 Equation 19-58; 19.3.11.11.6 note",
+      "fact": "HT-greenfield omits legacy SIGNAL and uses HT-GF-STF, HT-LTF1 and HT-SIG before any remaining HT-LTFs and DATA. With one space-time stream and no extension streams these first three fields each last 8 us and DATA begins at 24 us. HT-LTF1 has a 1.6 us cyclic prefix and two 3.2 us long symbols. HT-SIG contents match mixed format. DATA pilot polarity uses offset z=2, not mixed-format z=3. The short-GI note excludes greenfield with one spatial stream and DATA immediately following HT-SIG."
+    },
+    {
       "id": "conditional-reference-ht-fields",
       "source": "radiotap-ht-metadata",
       "anchor": "MCS known/flags and A-MPDU status",

@@ -4,6 +4,43 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_greenfield_independent_fixture_integrity() {
+    // This checks oracle artifacts, not receive support or interoperability.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
+    let rows: Vec<_> = include_str!("fixtures/iq/ht-greenfield-index.tsv")
+        .lines()
+        .skip(1)
+        .collect();
+    assert_eq!(rows.len(), 64);
+    let mut matrix = std::collections::BTreeSet::new();
+    for row in rows {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 10);
+        let iq = fs::read(root.join(format!("{}.cs8", c[0]))).unwrap();
+        assert_eq!(hex(&Sha256::digest(&iq)), c[5]);
+        let number = |i: usize| c[i].parse::<usize>().unwrap();
+        assert_eq!(iq.len(), 2 * number(6));
+        assert_eq!(number(2), 16);
+        assert_eq!(number(7), 37 + 480);
+        assert_eq!(number(8), number(7) + 80 * number(3));
+        assert_eq!(number(6), number(8) + 64);
+        let psdu: Vec<_> = (0..c[4].len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&c[4][i..i + 2], 16).unwrap())
+            .collect();
+        let end = psdu.len() - 4;
+        assert_eq!(
+            crc(&psdu[..end]),
+            u32::from_le_bytes(psdu[end..].try_into().unwrap())
+        );
+        assert!(number(1) < 8 && number(9) < 2);
+        assert!([100, 4095].contains(&psdu.len()));
+        assert!(matrix.insert((number(1), number(9), psdu.len(), c[0].ends_with("offset"))));
+    }
+    assert_eq!(matrix.len(), 64);
+}
+
+#[test]
 fn radio_sampling_clock_exact_frame_recovery() {
     use crafter::radio::*;
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
