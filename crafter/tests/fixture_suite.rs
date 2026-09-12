@@ -8599,6 +8599,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "ht-greenfield-invalid-index.tsv"
                 | "ht-greenfield-ampdu-index.tsv"
                 | "stbc-pairs.tsv"
+                | "ht-stbc-index.tsv"
                 | "ampdu-delimiters.tsv"
                 | "ampdu-index.tsv"
                 | "ht-ampdu-index.tsv"
@@ -8624,6 +8625,11 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 .skip(1)
                 .chain(include_str!("fixtures/iq/dsss-index.tsv").lines().skip(1))
                 .chain(include_str!("fixtures/iq/ht-bcc-index.tsv").lines().skip(1))
+                .chain(
+                    include_str!("fixtures/iq/ht-stbc-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
                 .chain(
                     include_str!("fixtures/iq/ht-greenfield-ampdu-index.tsv")
                         .lines()

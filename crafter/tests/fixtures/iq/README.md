@@ -222,6 +222,11 @@ and two HT-LTF observations, with expected channels and constellation symbols.
 It covers BPSK/QPSK/16-QAM/64-QAM, either channel missing, opposite channels,
 complex gains and weak gains. `stbc_vectors.py --check` verifies regeneration.
 These are algebra fixtures, not complete waveforms or hardware qualification.
+`ht-stbc-index.tsv` separately inventories 192 full simulated receive waveforms
+from two independent transmit chains: MCS0–7, BCC/LDPC, mixed GI400/800 or
+greenfield GI800, two PSDU sizes and clean/independent-multipath-plus-CFO cases.
+Legacy and HT portions use their distinct per-chain cyclic shifts. These
+fixtures do not establish single-antenna STBC transmission or live reception.
 
 ## Legacy transmit oracle corpus
 

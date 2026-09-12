@@ -9,9 +9,10 @@ import ht_ldpc_vectors as ldpc
 import ofdm_vectors as base
 
 
-def bcc(psdu, mcs):
+def bcc(psdu, mcs, stbc=False):
     nbpsc, ndbps = ht.PARAMETERS[mcs]
-    symbols = (16 + 8 * len(psdu) + 6 + ndbps - 1) // ndbps
+    group = 2 if stbc else 1
+    symbols = group * ((16 + 8 * len(psdu) + 6 + group*ndbps - 1) // (group*ndbps))
     payload = [0] * 16 + base.bits(psdu)
     bits = base.scramble(payload + [0] * (symbols * ndbps - len(payload)), 0x5d)
     bits[len(payload):len(payload) + 6] = [0] * 6
