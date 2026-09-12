@@ -52,7 +52,7 @@ fn independent_dsss_inventory_and_literal_truth() {
         serde_json::from_slice(&fs::read(root.join("dsss-manifest.json")).unwrap()).unwrap();
     assert_eq!(manifest["sample_rate_hz"], 20_000_000);
     assert_eq!(manifest["chip_rate_hz"], 11_000_000);
-    assert_eq!(manifest["generator_version"], "1");
+    assert_eq!(manifest["generator_version"], "2");
     let fixtures = manifest["fixtures"].as_array().unwrap();
     assert_eq!(fixtures.len(), 32);
     let index = fs::read_to_string(root.join("dsss-index.tsv")).unwrap();

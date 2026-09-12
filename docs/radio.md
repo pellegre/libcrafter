@@ -1,8 +1,9 @@
-# IQ to Wi-Fi reception
+# Legacy Wi-Fi IQ receive and transmit
 
 The optional `radio` feature decodes legacy OFDM and DSSS/CCK IQ into ordinary
-libcrafter packets at a 20 Msps source clock. It supports offline replay without
-hardware; `radio-hackrf` adds explicit bounded native reception. Three independent
+libcrafter packets and encodes bare typed Wi-Fi packets as owned CS8 waveforms at
+a 20 Msps source clock. It supports offline replay and generation without
+hardware; `radio-hackrf` adds explicit bounded native reception and transmission. Three independent
 paired live runs qualified DSSS and CCK agreement with a separate Wi-Fi receiver;
 the earlier OFDM qualification and its replay regression evidence are retained
 separately below.
@@ -32,7 +33,137 @@ DSSS/CCK rates; short preambles support 2, 5.5 and 11 Mbps. DSSS-OFDM, PBCC,
 HT, VHT, HE, half-clocked and quarter-clocked OFDM remain unsupported. A valid
 legacy SIGNAL alone does not prove a supported frame:
 later PHY formats can share a legacy preamble. DATA integrity must also pass.
-There is no transmit, injection, decryption, or active traffic-generation API.
+There is no decryption, association, authentication, scanning, retransmission,
+rate-control, or other Wi-Fi state-machine API. Radiotap monitor injection is a
+separate link-layer path; native packet-to-IQ transmission is described below.
+
+## Packet-shaped IQ transmission
+
+`RadioPacketWriter<S>` implements the ordinary `PacketWriter` contract for a
+bare `Dot11 / ...` packet stack. `encode_record()` compiles the packet without
+opening hardware and returns an owned `LegacyWifiTransmission`; `write_record()`
+passes that value to an `IqSink`. `MemoryIqSink` is the deterministic offline
+sink. A radiotap root is rejected because radiotap is capture metadata rather
+than part of the transmitted MAC frame.
+
+```rust
+use crafter::prelude::*;
+
+let packet = Dot11::data()
+    .addr1(MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 0x01]))
+    .addr2(MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 0x02]))
+    .addr3(MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 0x03]))
+    / Raw::from("offline IQ");
+let writer = RadioPacketWriter::new(
+    LegacyWifiTxConfig::ofdm(LegacyOfdmRate::Mbps6),
+    MemoryIqSink::new(),
+);
+let tx = writer.encode_record(&PacketRecord::new(packet))?;
+assert_eq!(tx.sample_count() * 2, tx.cs8().len());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The closed transmit matrix has fifteen cases: OFDM at 6, 9, 12, 18, 24, 36,
+48, and 54 Mb/s; DSSS/CCK at 1, 2, 5.5, and 11 Mb/s with a long preamble; and
+2, 5.5, and 11 Mb/s with a short preamble. Short-preamble 1 Mb/s is rejected.
+Every mode produces signed, interleaved 8-bit I/Q (`I0,Q0,I1,Q1,...`) at exactly
+20,000,000 complex samples per second. One complex sample therefore occupies
+two bytes. Literal WAV/RIFF files, later HT/VHT/HE PHYs, DSSS-OFDM, PBCC, and
+reduced-clock PHYs are outside this surface.
+
+`WifiFcsPolicy::Auto` appends a derived IEEE 802.11 FCS. `Explicit([u8; 4])`
+places those four bytes on the wire unchanged, including an intentionally bad
+FCS. OFDM derives SIGNAL rate, length, parity, reserved and tail bits unless
+`LegacyOfdmTxConfig::signal_override` is set. DSSS/CCK derives SIGNAL, SERVICE,
+LENGTH, length extension, and PLCP CRC unless
+`LegacyDsssCckTxConfig::plcp_override` is set. Scrambler seeds, leading and
+trailing samples, amplitude, PSDU limit, and generated-sample limit are explicit
+and validated. Overrides change the requested wire fields verbatim; they do not
+silently select a different modulation.
+
+The owned transmission retains compiled MAC bytes without FCS, the transmitted
+PSDU including FCS, CS8 samples, PHY selection, sample count, rate/preamble,
+derived and transmitted PLCP fields, override indicators, sample layout, scale,
+and scrambler settings. Invalid combinations, unsupported sample rates,
+oversized PSDUs, invalid seeds or amplitudes, arithmetic overflow, and waveform
+sizes beyond `max_samples` return structured `RadioError` values before a sink
+accepts samples.
+
+Run the offline example without arguments for one 6 Mb/s case, or generate the
+complete matrix and non-overwriting CS8 files:
+
+```sh
+cargo run -p crafter --features radio --example radio_transmit
+cargo run -p crafter --features radio --example radio_transmit -- \
+  --matrix --save-iq target/radio-transmit/offline
+```
+
+Its JSON Lines schema is `crafter.radio.transmit/v1`: a header declares the
+case count, CS8 format, 20 Msps rate, and offline state; each case records its
+stable ID, family, bit rate, preamble, complete MAC and FCS-bearing PSDU hex,
+sample count, CS8 SHA-256, and optional IQ path; the terminal summary must say
+`complete:true` and `terminal:"complete"`. Files use create-new semantics and
+are never silently overwritten.
+
+### Explicit bounded HackRF transmission
+
+`HackRfTxSink::open_live(HackRfTxConfig { ... })` exists only with
+`radio-hackrf`. Merely constructing `LegacyWifiTxConfig`, encoding a packet, or
+using `MemoryIqSink` cannot open a device. Live configuration requires a
+nonempty device serial, center frequency, exactly 20 Msps, nonzero baseband
+filter, TX VGA gain from 0 through 47 dB, explicit amplifier and antenna-power
+states, and nonzero duration, supplied-sample, and repetition bounds. The
+inter-burst gap is also explicit. The complete repeated waveform and gaps must
+fit `max_supplied_samples` before transmission begins.
+
+```text
+cargo run --release -p crafter --features radio-hackrf --example radio_transmit -- \
+  --live-hackrf --serial SERIAL --frequency-hz HZ --sample-rate-hz 20000000 \
+  --filter-hz HZ --tx-gain-db DB --amplifier false --antenna-power false \
+  --max-duration-ms MS --max-samples N --repetitions N --gap-samples N \
+  --matrix true
+```
+
+The native callback owns its waveform and initializes every transfer buffer;
+the final USB buffer is zero-padded and padding is counted separately. RX and
+TX share one process-wide libhackrf ownership lock. Cancellation, deadline,
+native start/stop/query errors, firmware shortfalls, incomplete repetitions,
+and invalid callback buffers fail with a structured error. `HackRfTxStats`
+reports requested, supplied, padded and discarded samples, callbacks, completed
+repetitions, firmware shortfalls, longest shortfall, cancellation, and whether
+the device stopped. Callback panics are caught before the FFI boundary, stop
+quiesces callbacks before their context is released, and dropping the sink
+attempts TX stop and device close. Treat any non-complete terminal state as a
+failed run and restore external device and capture state after every attempt.
+
+### External transmit qualification
+
+Generate the `crafter.radio.transmit/v1` plan from the exact candidate revision,
+then have operator-supplied, untracked tooling transmit each case and capture a
+radiotap pcap. The repository comparator accepts only radiotap records, removes
+the capture header, rejects truncation and bad-FCS indications, and strips an
+FCS only when radiotap says it is present and the trailer verifies. With absent
+FCS it compares every captured MAC byte to the planned MAC bytes and labels
+integrity `absent`; that match is useful but does not prove FCS integrity.
+
+An eligible match requires complete normalized MAC-byte equality plus the
+observed legacy rate and short/long preamble state. Matching consumes capture
+occurrences one-to-one, so repeated receptions of one case cannot cover another
+case. The comparison output uses `crafter.radio.transmit-comparison/v1` and
+must report all 15 cases passed. Final `crafter.radio.transmit-qualification/v1`
+evidence requires at least three independent bounded runs from one unchanged
+candidate revision. Each run must cover all fifteen cases, have complete
+transmit and capture artifacts, contain no underrun, shortfall, truncation,
+bad-FCS, rate/preamble mismatch, timeout, cancellation, or cleanup failure, and
+record successful restoration of external state.
+
+Keep the aggregate, comparisons, CS8 files, pcaps, device settings, and cleanup
+receipts in ignored storage such as `target/`. Do not commit VM aliases, device
+serials, credentials, interface names, RF topology, public addresses, or raw
+captures. Machine provisioning and hardware orchestration remain external to
+the crate. `radio_compare transmit PLAN.jsonl CAPTURE.pcap` creates one
+comparison; `radio_compare transmit-qualification QUALIFICATION.json` verifies
+the repository-visible aggregate structure and referenced comparison reports.
 
 ## Primary evidence
 
@@ -159,7 +290,7 @@ checks alone cannot satisfy this gate.
 
 ## Explicit HackRF reception
 
-`radio-hackrf` enables `radio` plus a small receive-only native FFI boundary.
+`radio-hackrf` enables `radio` plus a small native RX/TX FFI boundary.
 The rest of the crate denies unsafe Rust; only the private native module permits
 it. Install libhackrf development and runtime libraries with the
 `hackrf_get_m0_state` API (firmware USB API >= 0x0106). Link with `libhackrf` on
@@ -169,8 +300,8 @@ Offline `radio` builds and mock tests do not link or open libhackrf.
 
 The ABI and lifecycle were reviewed against Great Scott Gadgets' libhackrf
 `host/libhackrf/src/hackrf.h` and `hackrf.c`, revision `cc691022`.
-`hackrf_stop_rx` cancels transfers; `hackrf_close` joins the event thread before
-the callback context is freed. No transmit symbol is declared. Callback panics
+`hackrf_stop_rx` and `hackrf_stop_tx` cancel their respective transfers;
+`hackrf_close` joins the event thread before the callback context is freed. Callback panics
 are caught before returning across FFI. A native thread-join failure aborts the
 process because the library cannot establish safe memory lifetime afterward.
 Native USB calls and shutdown retain the library's timeout/OS scheduling

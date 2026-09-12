@@ -1028,6 +1028,67 @@ generated `--live` mode that assumes monitor-mode injection works. External
 operator tooling must own RF authorization, isolated setup, interface
 preparation, execution, artifact collection, and cleanup.
 
+Legacy packet-to-IQ transmission is a separate optional path. With the `radio`
+feature, give `RadioPacketWriter` a bare `Dot11 / ...` packet, one explicit
+`LegacyWifiTxConfig`, and `MemoryIqSink`. Do not put `Radiotap` at the packet
+root. Encoding is offline: it compiles the normal packet, derives an FCS unless
+`WifiFcsPolicy::Explicit` supplies the exact four bytes, and returns an owned
+`LegacyWifiTransmission` containing the MAC bytes, FCS-bearing PSDU, PHY fields,
+sample count, and signed interleaved CS8 at 20 Msps.
+
+```rust
+use crafter::prelude::*;
+
+let packet = Dot11::data()
+    .addr1(MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 1]))
+    .addr2(MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 2]))
+    .addr3(MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 3]))
+    / Raw::from("offline generated waveform");
+let writer = RadioPacketWriter::new(
+    LegacyWifiTxConfig::ofdm(LegacyOfdmRate::Mbps6),
+    MemoryIqSink::new(),
+);
+let waveform = writer.encode_record(&PacketRecord::new(packet))?;
+println!("{} complex samples", waveform.sample_count());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The complete matrix is eight OFDM rates (6, 9, 12, 18, 24, 36, 48, and 54
+Mb/s), four long-preamble DSSS/CCK rates (1, 2, 5.5, and 11 Mb/s), and three
+short-preamble rates (2, 5.5, and 11 Mb/s). Reject short-preamble 1 Mb/s before
+generation. Keep explicit limits on PSDU bytes and generated samples. PLCP/FCS
+overrides are intentional wire values, even when malformed; do not “repair”
+them in generated tooling. Literal WAV, later PHYs, association/authentication,
+rate control, scanning, and other Wi-Fi state machines are outside the crate.
+
+For deterministic artifacts, invoke the supplied example and retain its
+newline-delimited `crafter.radio.transmit/v1` header, 15 case records, complete
+summary, CS8 SHA-256 values, and create-new sample files under `target/`:
+
+```sh
+cargo run -p crafter --features radio --example radio_transmit -- \
+  --matrix --save-iq target/radio-transmit/offline
+```
+
+Only generate a native transmit mode when the operator explicitly requests
+live HackRF use. Enable `radio-hackrf` and require every `HackRfTxConfig` value:
+serial, frequency, 20 Msps, filter, TX gain, amplifier and antenna-power state,
+duration, maximum supplied samples, repetitions, and inter-burst gap. Never
+choose a device, interface, frequency, gain, or topology for the operator.
+Treat cancellation, timeout, native errors, firmware shortfalls, incomplete
+repetitions, or a false `stopped` result as failure. Report all
+`HackRfTxStats`, then restore device and capture state even after failure.
+
+External qualification stays in ignored operator storage. Compare each planned
+case to a radiotap capture with `radio_compare --compare-transmit`; require exact complete
+MAC bytes plus observed rate and preamble, consume repetitions one-to-one, and
+reject bad-FCS, truncation, and metadata mismatches. An absent capture FCS can
+match the complete MAC body but must remain integrity-unverified. Final evidence
+needs all 15 cases in each of three independent bounded runs from the same exact
+candidate revision, with no underrun, incomplete capture, changed revision, or
+failed cleanup. Keep VM aliases, serials, credentials, interface identities,
+RF topology, pcaps, IQ, and cleanup receipts out of tracked files.
+
 ## Build BLE Advertising
 
 Generated BLE tools should use the public `crafter` facade:

@@ -8593,16 +8593,33 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "ofdm-manifest.json"
                 | "dsss-index.tsv"
                 | "dsss-manifest.json"
+                | "ofdm-transmit-index.tsv"
+                | "ofdm-transmit-manifest.json"
+                | "dsss-transmit-index.tsv"
+                | "dsss-transmit-manifest.json"
         ) {
             return;
         }
-        let base_name = strip_allowed_suffix(file_name, &[".cs8", ".json"]);
+        let base_name = strip_allowed_suffix(file_name, &[".cs8", ".psdu", ".json"]);
         assert!(
             include_str!("fixtures/iq/ofdm-index.tsv")
                 .lines()
                 .skip(1)
                 .chain(include_str!("fixtures/iq/dsss-index.tsv").lines().skip(1))
-                .any(|line| line.split('\t').next() == Some(base_name)),
+                .chain(
+                    include_str!("fixtures/iq/ofdm-transmit-index.tsv")
+                        .lines()
+                        .skip(1),
+                )
+                .chain(
+                    include_str!("fixtures/iq/dsss-transmit-index.tsv")
+                        .lines()
+                        .skip(1),
+                )
+                .any(|line| {
+                    let mut fields = line.split('\t');
+                    fields.next() == Some(base_name) || fields.next() == Some(base_name)
+                }),
             "IQ fixture {relative_str} must appear in the independent vector inventory"
         );
         return;

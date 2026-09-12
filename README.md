@@ -266,7 +266,7 @@ preserved as `Raw` payloads when the enclosing header is valid.
 | Layer | Coverage | Guide |
 | --- | --- | --- |
 | Ethernet / VLAN | Ethernet II and 802.1Q VLAN, Linux cooked capture, null/loopback | — |
-| IEEE 802.11 | Management, control, and data frames with radiotap and LLC/SNAP, EAPOL and RSN (802.11i) key-exchange fields; monitor-mode radiotap injection (transmit on the air) supported behind explicit live gates | [dot11](docs/guide/dot11.md) |
+| IEEE 802.11 | Management, control, and data frames with radiotap and LLC/SNAP, EAPOL and RSN (802.11i) key-exchange fields; optional offline legacy OFDM/DSSS/CCK packet-to-IQ generation and explicit bounded HackRF transmission | [dot11](docs/guide/dot11.md), [radio](docs/radio.md) |
 | ARP | Request/reply construction and decode | [arp](docs/guide/arp.md) |
 | IPv4 | DSCP/ECN, protocol labels, checksum status, typed options, fragment fields (no automatic reassembly) | [ipv4](docs/guide/ipv4.md) |
 | IGMP | IPv4 packet-layer membership queries/reports, IGMPv1/v2 compatibility, IGMPv3 query/report records, generic extensions, and multicast router discovery packet shapes; not a router, snooper, proxy, or scanner | [igmp](docs/guide/igmp.md) |
@@ -306,6 +306,7 @@ cargo run -p crafter --example decode_bytes         # decode entry points
 cargo run -p crafter --example pcap_read            # pcap + Sniffer
 cargo run -p crafter --example send_recv_icmp       # dry-run send/receive
 cargo run -p crafter --example dns_query -- --name example.com
+cargo run -p crafter --features radio --example radio_transmit -- --matrix
 ```
 
 By category:
