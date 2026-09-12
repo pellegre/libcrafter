@@ -9,7 +9,9 @@ mod dsss;
 mod dsss_tx;
 mod ht;
 mod vht;
+mod vht_sig_b;
 pub use vht::{VhtSignalAError, VhtSignalAFields, VhtSignalAUsers};
+pub use vht_sig_b::{VhtSignalB20Content, VhtSignalB20Error, VhtSignalB20Fields};
 mod ldpc;
 pub use ht::{
     HtCoding, HtFormat, HtGuardInterval, HtMcs, HtSignalBits, HtSignalError, HtSignalFields,

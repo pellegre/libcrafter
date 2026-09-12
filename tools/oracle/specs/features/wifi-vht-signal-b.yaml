@@ -1,0 +1,24 @@
+version: 1
+kind: feature
+name: wifi_vht_signal_b
+summary: VHT20 SIG-B interpretation and verification against descrambled SERVICE.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: header-and-service
+    source: IEEE 802.11-2020 21.3.8.3.6 Tables 21-14/15; 21.3.10.2-3; 21.3.12
+    checks: [su_mu_lengths, four_octet_length_bounds, mu_mcs, su_only_ndp, ndp_mu_pattern_collision, crc_in_service_not_header, service_zero_prefix]
+  - name: bounded-recovery
+    checks: [independent_polynomial_crc, published_crc_example, independent_bcc_interleaving, exact_input_counts, binary_bits, finite_metrics, reserved_bits, zero_tail, corrupted_header_or_service]
+coverage_cases: [wifi-vht20-sig-b]
+supported_cases:
+  - {name: wifi-vht20-sig-b, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - Header parsing alone must not assert integrity; DATA SERVICE carries its CRC.
+      - The 20 MHz bit and soft-metric parser and SERVICE checker pass 225 independent cases, including the SU/MU NDP-pattern collision and corrupted header/SERVICE bits.
+      - Full VHT IQ acquisition, DATA recovery, live qualification and TX remain separate work.

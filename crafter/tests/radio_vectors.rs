@@ -4,6 +4,44 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_vht_sig_b_public_paths_and_inventory() {
+    use crafter::prelude::{VhtSignalB20Content, VhtSignalB20Error, VhtSignalB20Fields};
+    let inventory = include_str!("fixtures/iq/vht-signal-b20-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(inventory.as_bytes())),
+        "62957edc7e0b8b7de05472e07e6078565ef830d8de1c15fed772ce8ff981afe3"
+    );
+    assert_eq!(inventory.lines().skip(1).count(), 225);
+    let mut ndps = 0;
+    let mut headers = std::collections::BTreeSet::new();
+    for row in inventory.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 9);
+        assert!(headers.insert((c[0], c[1])));
+        let input: Vec<_> = c[0].bytes().map(|b| b - b'0').collect();
+        let result: Result<crafter::radio::VhtSignalB20Fields, crafter::VhtSignalB20Error> =
+            VhtSignalB20Fields::decode(&input, c[1] == "1");
+        let f = result.unwrap();
+        if f.content() == VhtSignalB20Content::Ndp {
+            ndps += 1;
+            assert_eq!(c[1], "0");
+            assert_eq!(
+                f.verify_service(&[]),
+                Err(VhtSignalB20Error::NoServiceForNdp)
+            );
+        } else {
+            let service: Vec<_> = c[7].bytes().map(|b| b - b'0').collect();
+            f.verify_service(&service).unwrap();
+            assert_eq!(
+                f.apep_length_bounds(),
+                Some((c[5].parse().unwrap(), c[6].parse().unwrap()))
+            );
+        }
+    }
+    assert_eq!(ndps, 1);
+}
+
+#[test]
 fn radio_vht_signal_a_public_paths() {
     use crafter::prelude::{VhtSignalAError, VhtSignalAFields, VhtSignalAUsers};
     let input: Vec<_> = include_str!("fixtures/iq/vht-signal-a-index.tsv")

@@ -56,6 +56,12 @@
   ],
   "facts": [
     {
+      "id": "vht20-signal-b-service",
+      "source": "ieee-80211-2020",
+      "anchor": "21.3.8.3.6 Tables 21-14/15 and Equation 21-46; 21.3.10.2-3 Table 21-16 and Equation 21-59; 21.3.10.8; 21.3.12",
+      "fact": "VHT20 SIG-B has 20 field bits and six zero tail bits. SU uses 17 length bits and three reserved ones; MU uses 16 length bits and four MCS bits. Length is ceil(APEP_LENGTH/4). VHT NDP is SU, has no DATA, and uses the fixed pre-tail pattern 00000111010001000010. In MU that same pattern is ordinary length/MCS data. SIG-B's CRC covers its first 20 bits and is transmitted c7 first in descrambled SERVICE bits 8..15; SERVICE bits 0..7 are zero. The 20 MHz one-stream BPSK interleaver uses 13 columns and four rows. SIG-B parsing alone cannot assert CRC integrity."
+    },
+    {
       "id": "vht-signal-a-fields",
       "source": "ieee-80211-2020",
       "anchor": "21.3.8.3.3, Table 21-12, Figures 21-18/19/20",

@@ -275,6 +275,22 @@ acquisition, DATA recovery, live qualification or TX. In particular,
 bandwidth code 3 does not distinguish 160 MHz from 80+80 MHz, and the ability
 to interpret a header must not be confused with admitting its DATA waveform.
 
+## VHT20 SIG-B and SERVICE increment
+
+`VhtSignalB20Fields` interprets 26 decoded bits or 52 equalized soft metrics,
+using the SU/MU context from SIG-A. It preserves encoded length units and
+exposes their inclusive byte-length bounds, not an invented exact length.
+The NDP pattern is recognized only in SU context; the same MU bits retain
+their length/MCS meaning.
+
+Parsing SIG-B does not verify its CRC. `verify_service` checks the 16
+already-descrambled DATA SERVICE bits against the header-derived CRC and
+zero prefix. NDP has no DATA/SERVICE and cannot pass that verification.
+The independent 225-case corpus covers lengths, all MU MCS field values,
+NDP context, BCC/interleaving and SERVICE linkage; tests also reject single-bit
+header/SERVICE corruption and malformed inputs. This remains a primitive for
+VHT integration, not complete VHT IQ acquisition, frame recovery or TX.
+
 ## Existing example and replay workflow
 
 The receive example's leading `--modern` flag selects `WifiDecoder`, including

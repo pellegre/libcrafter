@@ -158,6 +158,8 @@ pub use radio::{
 };
 #[cfg(feature = "radio-hackrf")]
 pub use radio::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};
+#[cfg(feature = "radio")]
+pub use radio::{VhtSignalB20Content, VhtSignalB20Error, VhtSignalB20Fields};
 pub use registry::{
     EthertypeBindingContext, Ipv4ProtocolBindingContext, Ipv6NextHeaderBindingContext,
     ProtocolRegistry, TcpBindingContext, UdpBindingContext,
@@ -268,6 +270,7 @@ pub mod prelude {
     #[cfg(feature = "radio")]
     pub use crate::{
         HtSignalError, HtSignalFields, VhtSignalAError, VhtSignalAFields, VhtSignalAUsers,
+        VhtSignalB20Content, VhtSignalB20Error, VhtSignalB20Fields,
     };
     #[cfg(feature = "whad")]
     pub use crate::{WhadBleMode, WhadDot15d4Mode, WhadWireBuilder};
