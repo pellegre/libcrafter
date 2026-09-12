@@ -26,12 +26,55 @@ pub fn frame_phy(frame: &RecoveredFrame) -> &'static str {
     if frame
         .diagnostics
         .iter()
+        .any(|d| matches!(d, PhyDiagnostic::VhtSignalA { .. }))
+    {
+        "vht"
+    } else if frame
+        .diagnostics
+        .iter()
         .any(|d| matches!(d, PhyDiagnostic::HtSignal { .. }))
     {
         "ht"
     } else {
         phy_family(frame.rate_bps)
     }
+}
+pub fn vht_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
+    frame.diagnostics.iter().find_map(|d| match d {
+        PhyDiagnostic::VhtSignalA {
+            fields: f,
+            preamble_sample_index,
+        } => {
+            let VhtSignalAUsers::Single {
+                space_time_streams,
+                mcs,
+                ldpc,
+                beamformed,
+                partial_aid,
+            } = f.users
+            else {
+                return None;
+            };
+            let sig_b = frame.diagnostics.iter().find_map(|d| match d {
+                PhyDiagnostic::VhtSignalB {
+                    fields,
+                    preamble_sample_index: index,
+                } if index == preamble_sample_index => fields.apep_length_bounds(),
+                _ => None,
+            });
+            Some(serde_json::json!({
+                "mcs":mcs, "bandwidth_code":f.bandwidth_code,
+                "space_time_streams":space_time_streams, "stbc":f.stbc,
+                "coding":if ldpc {"ldpc"} else {"bcc"},
+                "guard_interval_ns":if f.short_guard_interval {400} else {800},
+                "short_gi_disambiguation":f.short_gi_disambiguation,
+                "group_id":f.group_id, "partial_aid":partial_aid, "beamformed":beamformed,
+                "apep_length_bounds":sig_b, "service_crc_verified":sig_b.is_some(),
+                "preamble_sample_index":preamble_sample_index,
+            }))
+        }
+        _ => None,
+    })
 }
 pub fn ht_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
     frame.diagnostics.iter().find_map(|d| match d {

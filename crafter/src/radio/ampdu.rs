@@ -98,7 +98,6 @@ impl<'a> Scan<'a> {
     }
     /// Borrow an already bounded PSDU. VHT's pre-EOF length constraint must
     /// be enforced by PHY admission, not by applying HT's total byte limit.
-    #[allow(dead_code)] // Public streaming integration follows this framing slice.
     pub(super) fn vht(bytes: &'a [u8], max_mpdu: usize) -> Self {
         Self {
             bytes,

@@ -234,6 +234,7 @@ impl PhyDecoder for ObservedDecoder {
             for diagnostic in &decoded.diagnostics {
                 if let Some(value) =
                     ht_signal_record_with_context(diagnostic, epoch, &decoded.diagnostics)
+                        .or_else(|| vht_signal_record(diagnostic, epoch))
                 {
                     emit(&self.out, value)?;
                 }
@@ -241,10 +242,12 @@ impl PhyDecoder for ObservedDecoder {
         }
         for f in &decoded.frames {
             self.ordinal += 1;
-            emit(
-                &self.out,
-                json!({"kind":"frame","ordinal":self.ordinal,"original_mac_hex":hex(&f.bytes),"fcs":match f.integrity {FrameIntegrity::ValidFcs=>"present_valid",FrameIntegrity::InvalidFcs=>"present_invalid",FrameIntegrity::FcsAbsent=>"absent"},"phy":frame_phy(f),"ht":ht_metadata(f),"ampdu":ampdu_metadata(f),"preamble":f.diagnostics.iter().find_map(|d| match d { PhyDiagnostic::Dsss { short_preamble, .. } => Some(if *short_preamble { "short" } else { "long" }), _ => None }),"rate_bps":f.rate_bps,"config":Config::from(&f.config),"position":Position::from(&f.start),"end_sample_index":f.end_sample_index,"diagnostics":f.diagnostics.iter().map(|d|format!("{d:?}")).collect::<Vec<_>>()}),
-            )?;
+            let mut record = json!({"kind":"frame","ordinal":self.ordinal,"original_mac_hex":hex(&f.bytes),"fcs":match f.integrity {FrameIntegrity::ValidFcs=>"present_valid",FrameIntegrity::InvalidFcs=>"present_invalid",FrameIntegrity::FcsAbsent=>"absent"},"phy":frame_phy(f),"ht":ht_metadata(f),"ampdu":ampdu_metadata(f),"preamble":f.diagnostics.iter().find_map(|d| match d { PhyDiagnostic::Dsss { short_preamble, .. } => Some(if *short_preamble { "short" } else { "long" }), _ => None }),"rate_bps":f.rate_bps,"config":Config::from(&f.config),"position":Position::from(&f.start),"end_sample_index":f.end_sample_index,"diagnostics":f.diagnostics.iter().map(|d|format!("{d:?}")).collect::<Vec<_>>()});
+            // Do not add a null field to every existing legacy/HT artifact.
+            if let Some(metadata) = vht_metadata(f) {
+                record["vht"] = metadata;
+            }
+            emit(&self.out, record)?;
         }
         if let Some(end) = terminal {
             emit(
@@ -257,6 +260,41 @@ impl PhyDecoder for ObservedDecoder {
     fn reset(&mut self, reason: ResetReason) -> DecodeOutput {
         self.inner.reset(reason)
     }
+}
+fn vht_signal_record(diagnostic: &PhyDiagnostic, epoch: u64) -> Option<serde_json::Value> {
+    let PhyDiagnostic::VhtSignalA {
+        fields: f,
+        preamble_sample_index,
+    } = diagnostic
+    else {
+        return None;
+    };
+    let users = match f.users {
+        VhtSignalAUsers::Single {
+            space_time_streams,
+            partial_aid,
+            mcs,
+            ldpc,
+            beamformed,
+        } => {
+            json!({"mode":"su", "space_time_streams":space_time_streams, "partial_aid":partial_aid, "mcs":mcs, "ldpc":ldpc, "beamformed":beamformed})
+        }
+        VhtSignalAUsers::Multi {
+            space_time_streams,
+            ldpc,
+        } => json!({"mode":"mu", "space_time_streams":space_time_streams, "ldpc":ldpc}),
+    };
+    Some(json!({
+        "kind":"vht_signal_a", "epoch":epoch,
+        "preamble_sample_index":preamble_sample_index,
+        "signal_a":{
+            "bandwidth_code":f.bandwidth_code, "group_id":f.group_id, "stbc":f.stbc,
+            "short_guard_interval":f.short_guard_interval, "short_gi_disambiguation":f.short_gi_disambiguation,
+            "ldpc_extra_symbol":f.ldpc_extra_symbol, "txop_ps_not_allowed":f.txop_ps_not_allowed,
+            "users":users,
+        },
+        "mac_integrity":"not_established_by_header",
+    }))
 }
 fn ht_signal_record(diagnostic: &PhyDiagnostic, epoch: u64) -> Option<serde_json::Value> {
     match diagnostic {
@@ -659,7 +697,7 @@ fn main() -> Result<()> {
         center_frequency_hz: 2_412_000_000,
         max_chunk_samples: chunk_samples,
         max_buffer_samples: buffer_samples,
-        max_frame_bytes: 4095,
+        max_frame_bytes: if modern { 16383 } else { 4095 },
         // Coarse window workers can finish together at stream end, so their
         // bounded aggregate needs more room than a serial decoder response.
         max_pending_frames: if modern {
@@ -908,6 +946,58 @@ mod tests {
         }
     }
 
+    #[test]
+    fn radio_vht_frame_artifact_metadata() {
+        let bytes = include_bytes!("../tests/fixtures/iq/vht-bcc-8-gi400-case0-clean.cs8");
+        let config = RxConfig {
+            sample_rate_hz: 20_000_000,
+            center_frequency_hz: 5_180_000_000,
+            max_chunk_samples: 10_000,
+            max_buffer_samples: 120_000,
+            max_frame_bytes: 4095,
+            max_pending_frames: 4,
+            max_capture_samples: 100_000,
+            max_duration: Duration::from_secs(1),
+        };
+        let chunk = IqChunk::new(
+            config,
+            IqPosition {
+                epoch: 7,
+                sequence: 0,
+                sample_index: 0,
+                time_anchor: None,
+                discontinuity: None,
+            },
+            bytes.iter().map(|b| *b as i8).collect(),
+        )
+        .unwrap();
+        let out = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
+        assert_eq!(out.frames.len(), 1);
+        let frame = &out.frames[0];
+        assert_eq!(frame_phy(frame), "vht");
+        assert!(ht_metadata(frame).is_none());
+        let metadata = vht_metadata(frame).unwrap();
+        assert_eq!(metadata["mcs"], 8);
+        assert_eq!(metadata["coding"], "bcc");
+        assert_eq!(metadata["bandwidth_code"], 0);
+        assert_eq!(metadata["space_time_streams"], 1);
+        assert_eq!(metadata["guard_interval_ns"], 400);
+        assert_eq!(metadata["preamble_sample_index"], 37);
+        assert_eq!(metadata["service_crc_verified"], true);
+        assert_eq!(ampdu_metadata(frame).unwrap()["control_bits"], 1);
+        let headers: Vec<_> = out
+            .diagnostics
+            .iter()
+            .filter_map(|d| vht_signal_record(d, 7))
+            .collect();
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0]["signal_a"]["users"]["mcs"], 8);
+        assert_eq!(headers[0]["mac_integrity"], "not_established_by_header");
+        assert_eq!(headers[0]["epoch"], 7);
+        let mut absent = frame.clone();
+        absent.diagnostics.clear();
+        assert!(vht_metadata(&absent).is_none());
+    }
     #[test]
     fn radio_iq_modern_replay_selection_preserves_explicit_intent() {
         assert_eq!(

@@ -198,6 +198,12 @@ mod tests {
                 row.starts_with("ht-ampdu-7-gi800-")
                     && row.split('\t').next().unwrap().ends_with("duplicate")
             })
+            .chain(
+                include_str!("../../tests/fixtures/iq/vht-ampdu-iq-index.tsv")
+                    .lines()
+                    .skip(1)
+                    .filter(|row| row.starts_with("vht-ampdu-8-gi800-duplicate\t")),
+            )
         {
             let fields: Vec<_> = row.split('\t').collect();
             let bytes = std::fs::read(format!(
@@ -213,7 +219,8 @@ mod tests {
                 .collect_records()
                 .unwrap();
             assert_eq!(records.len(), 2);
-            let expected: Vec<u8> = fields[6]
+            let vht = fields[0].starts_with("vht-");
+            let expected: Vec<u8> = fields[if vht { 5 } else { 6 }]
                 .split(',')
                 .next()
                 .unwrap()
@@ -230,6 +237,12 @@ mod tests {
                 assert!(record.packet().layer::<Dot11>().is_some());
                 assert!(record.metadata().wifi().is_some());
                 let rf = record.metadata().radio().unwrap();
+                assert_eq!(
+                    rf.diagnostics
+                        .iter()
+                        .any(|d| matches!(d, PhyDiagnostic::VhtSignalB { .. })),
+                    vht
+                );
                 assert_eq!(rf.start.sample_index, 37);
                 assert_eq!(rf.start.time_anchor, position().time_anchor);
                 assert_eq!(rf.stripped_fcs_bytes, 4);

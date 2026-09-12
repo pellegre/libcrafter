@@ -243,6 +243,12 @@ use `--check` for a read-only exact comparison. Authority is IEEE 802.11-2020
 9.7.1-2 and 10.12.6-8, a superseded base recorded in the PHY evidence map.
 These are framing fixtures, not evidence of complete VHT RX or RF qualification.
 
+`vht-ampdu-iq-index.tsv` and its 54 CS8 files extend the complete VHT waveform
+model with two-MPDU aggregates across MCS0-8 and both GIs. Cases cover repeated
+identical MPDUs, one bad FCS followed by a valid MPDU, and a 4100-byte MPDU.
+Regenerate or verify with `vht_ampdu_iq_vectors.py [--check]`. All inputs are
+synthetic; complete offline recovery does not establish hardware interoperability.
+
 ## Legacy transmit oracle corpus
 
 The `ofdm-tx-*` and `dsss-tx-*` artifacts are clean, bounded transmit-oracle

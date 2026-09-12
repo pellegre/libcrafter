@@ -49,10 +49,10 @@ def vht_symbol(bits, nbpsc, pilot_symbol, polarity, guard=16):
     return time[-guard:] + time
 
 
-def waveform(mcs, guard, extra, corruption=None):
+def waveform(mcs, guard, extra, corruption=None, apep_override=None):
     nbpsc, ndbps = PARAMETERS[mcs]
     mpdu = base.frame(extra)
-    apep = delimiter(len(mpdu), 1) + mpdu
+    apep = delimiter(len(mpdu), 1) + mpdu if apep_override is None else apep_override
     symbols = (16 + 8 * len(apep) + 6 + ndbps - 1) // ndbps
     psdu_len, phy_pad = divmod(symbols * ndbps - 22, 8)
     psdu = bytearray(apep)

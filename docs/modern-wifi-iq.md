@@ -270,8 +270,8 @@ Tests check every fixture, every single-bit corruption, reserved fields,
 nonbinary/nonfinite inputs and metric scaling. SU/MU fields are typed separately;
 absent MU users retain `None` for coding rather than an inferred coding mode.
 
-Streaming integration remains pending. This does not establish VHT IQ
-acquisition, DATA recovery, live qualification or TX. In particular,
+The header parser alone does not establish VHT IQ acquisition, DATA recovery,
+live qualification or TX. The streaming integration below admits a subset. In particular,
 bandwidth code 3 does not distinguish 160 MHz from 80+80 MHz, and the ability
 to interpret a header must not be confused with admitting its DATA waveform.
 
@@ -284,8 +284,20 @@ disambiguation, S-MPDU/EOF/PHY padding, and frequency-offset/multipath cases.
 The kernel tests obtain timing and frequency from IQ, not fixture hints, and
 compare complete PSDU bytes and sample boundaries. Eight additional waveforms
 exercise invalid/unsupported signaling, alongside truncated and unusable inputs.
-The streaming dispatcher, general VHT aggregate publication, LDPC, STBC, MU,
-HE/EHT and hardware qualification remain separate unfinished work.
+`WifiDecoder` now connects this kernel to bounded streaming reception and the
+VHT-aware aggregate scanner. SIG-A admission reserves DATA samples within the
+existing shared candidate buffer budget. Each returned frame has its own FCS,
+delimiter offset, and typed SIG-A/SERVICE-verified SIG-B metadata. EOF padding
+does not become frame bytes. `radio_receive --modern` labels these frames as
+`vht` and adds VHT-only metadata without changing legacy/HT record fields.
+
+The 54 additional complete aggregate waveforms exercise duplicate occurrences,
+bad-FCS recovery and 4100-byte MPDUs across MCS0-8 and both GIs. Streaming tests
+use one-sample, 79-sample and 4096-sample chunks, with separate gap, buffer and
+output-limit checks. The reference comparator still needs VHT radiotap metadata
+support before paired VHT hardware qualification; do not treat its HT-only
+comparison path as VHT evidence. LDPC, STBC, MU, HE/EHT, hardware qualification,
+real-time performance and modern TX remain unfinished.
 
 ## VHT BCC DATA recovery increment
 

@@ -4,6 +4,48 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_vht_ampdu_iq_independent_inventory() {
+    let inventory = include_str!("fixtures/iq/vht-ampdu-iq-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(inventory.as_bytes())),
+        "f5ccd1144fc3fb1e02aa71a1953b99cac93ad087b9ad800b7a6d420e60ba7518"
+    );
+    assert_eq!(inventory.lines().skip(1).count(), 54);
+    let mut modes = std::collections::BTreeSet::new();
+    for row in inventory.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 9);
+        let bytes = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(hex(&Sha256::digest(&bytes)), c[6]);
+        assert!(bytes.len() >= 2 * (c[7].parse::<usize>().unwrap() + 64));
+        let shape = if c[0].ends_with("large") {
+            "large"
+        } else if c[0].ends_with("bad-fcs") {
+            "bad-fcs"
+        } else {
+            "duplicate"
+        };
+        modes.insert((
+            c[1].parse::<u8>().unwrap(),
+            c[2].parse::<u8>().unwrap(),
+            shape,
+        ));
+    }
+    for mcs in 0..9 {
+        for gi in [8, 16] {
+            for shape in ["large", "bad-fcs", "duplicate"] {
+                assert!(modes.contains(&(mcs, gi, shape)));
+            }
+        }
+    }
+}
+
+#[test]
 fn radio_vht_ampdu_independent_inventory() {
     for (inventory, digest, count, columns) in [
         (

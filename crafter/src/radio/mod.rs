@@ -259,8 +259,10 @@ pub enum ResetReason {
 }
 #[derive(Debug, Clone)]
 pub enum PhyDiagnostic {
-    /// Byte offset of this MPDU's delimiter within its HT A-MPDU PSDU.
+    /// Byte offset of this MPDU's delimiter within its HT/VHT A-MPDU PSDU.
     /// Frame sample coordinates describe the entire containing PPDU.
+    /// Control bits preserve HT's low nibble or VHT's EOF/reserved bits;
+    /// VHT high-length bits are not control flags.
     Ampdu {
         delimiter_offset: usize,
         control_bits: u8,
@@ -281,6 +283,16 @@ pub enum PhyDiagnostic {
     /// An integrity-checked HT header, not an integrity-checked MAC frame.
     HtSignal {
         fields: HtSignalFields,
+        preamble_sample_index: u64,
+    },
+    /// CRC-checked VHT-SIG-A, not proof of MAC or DATA integrity.
+    VhtSignalA {
+        fields: VhtSignalAFields,
+        preamble_sample_index: u64,
+    },
+    /// VHT-SIG-B whose CRC has been verified against descrambled DATA SERVICE.
+    VhtSignalB {
+        fields: VhtSignalB20Fields,
         preamble_sample_index: u64,
     },
     Reset(ResetReason),
@@ -348,6 +360,26 @@ impl PartialEq for PhyDiagnostic {
                 Self::Ampdu {
                     delimiter_offset: c,
                     control_bits: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::VhtSignalA {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::VhtSignalA {
+                    fields: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::VhtSignalB {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::VhtSignalB {
+                    fields: c,
+                    preamble_sample_index: d,
                 },
             ) => a == c && b == d,
             (

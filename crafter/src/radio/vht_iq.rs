@@ -1,6 +1,5 @@
 //! VHT20 SISO BCC IQ kernel. Streaming admission and MPDU publication are separate.
 //! IEEE 802.11-2020 21.3.8/10/20; source map in docs/wifi-phy-evidence.json.
-#![allow(dead_code)] // Wired into WifiDecoder after independent full-IQ validation.
 use super::{
     sync::{fft64, Acquisition},
     *,

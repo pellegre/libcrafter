@@ -1,4 +1,4 @@
-//! Legacy and opt-in HT DATA receive paths; source map in docs/wifi-phy-evidence.json.
+//! Legacy and opt-in HT/VHT DATA receive paths; source map in docs/wifi-phy-evidence.json.
 use super::{
     signal::{decode_signal, TRELLIS_SIGNS},
     sync::{fft64, Acquisition, SyncEvent, Synchronizer},
@@ -19,10 +19,38 @@ struct Pending {
     samples: Vec<ComplexSample>,
     info: Option<SignalInfo>,
     ht: Option<HtSignalFields>,
+    vht: Option<VhtSignalAFields>,
     ldpc: Option<ldpc::rate::Layout>,
     greenfield: bool,
 }
 impl Pending {
+    fn configure_vht(&mut self, config: &RxConfig, reserved: usize) -> bool {
+        let Ok((fields, info)) = vht_iq::admit(&self.samples, &self.acquisition) else {
+            return false;
+        };
+        let Some(required) = info
+            .end_sample_index
+            .checked_sub(self.acquisition.signal_start)
+            .and_then(|n| usize::try_from(n).ok())
+        else {
+            return false;
+        };
+        if required.saturating_sub(self.samples.capacity())
+            > config.max_buffer_samples.saturating_sub(reserved)
+        {
+            return false;
+        }
+        if self
+            .samples
+            .try_reserve_exact(required.saturating_sub(self.samples.len()))
+            .is_err()
+        {
+            return false;
+        }
+        self.info = Some(info);
+        self.vht = Some(fields);
+        true
+    }
     fn configure_ht(
         &mut self,
         fields: HtSignalFields,
@@ -109,6 +137,11 @@ impl Pending {
         true
     }
 }
+#[derive(Clone, Copy)]
+enum Aggregation {
+    Ht,
+    Vht,
+}
 /// Bounded streaming legacy OFDM receiver. Only integrity-valid PSDUs are delivered.
 #[derive(Default)]
 pub struct LegacyOfdmDecoder {
@@ -146,22 +179,25 @@ impl LegacyOfdmDecoder {
     fn publish_psdu(
         &mut self,
         mut frame: RecoveredFrame,
-        aggregate: bool,
+        aggregate: Option<Aggregation>,
         out: &mut DecodeOutput,
     ) -> RadioResult<()> {
         let limit = self
             .output_allowance
             .unwrap_or(frame.config.max_pending_frames)
             .min(frame.config.max_pending_frames);
-        if aggregate {
+        if let Some(aggregate) = aggregate {
             let bytes = std::mem::take(&mut frame.bytes);
-            let scan = ampdu::Scan::new(&bytes, frame.config.max_frame_bytes).map_err(|_| {
-                RadioError::Limit {
-                    context: "HT aggregate bytes",
-                    limit: 65535,
-                    actual: bytes.len() as u64,
-                }
-            })?;
+            let scan =
+                match aggregate {
+                    Aggregation::Vht => ampdu::Scan::vht(&bytes, frame.config.max_frame_bytes),
+                    Aggregation::Ht => ampdu::Scan::new(&bytes, frame.config.max_frame_bytes)
+                        .map_err(|_| RadioError::Limit {
+                            context: "HT aggregate bytes",
+                            limit: 65535,
+                            actual: bytes.len() as u64,
+                        })?,
+                };
             let (mut delimiters, mut fcs, mut truncated, mut oversized) = (0, 0, 0, 0);
             for event in scan {
                 match event {
@@ -172,7 +208,10 @@ impl LegacyOfdmDecoder {
                     } => {
                         if out.frames.len() >= limit {
                             return Err(RadioError::Limit {
-                                context: "HT aggregate pending frames",
+                                context: match aggregate {
+                                    Aggregation::Ht => "HT aggregate pending frames",
+                                    Aggregation::Vht => "VHT aggregate pending frames",
+                                },
                                 limit: limit as u64,
                                 actual: (out.frames.len() + 1) as u64,
                             });
@@ -363,6 +402,23 @@ impl PhyDecoder for LegacyOfdmDecoder {
                         self.pending[slot] = None;
                         continue;
                     }
+                    if let Some(fields) = self
+                        .ht_enabled
+                        .then(|| vht_iq::signal_a(&p.samples[80..240], &p.acquisition))
+                        .flatten()
+                    {
+                        out.diagnostics.push(PhyDiagnostic::VhtSignalA {
+                            fields,
+                            preamble_sample_index: p.start.sample_index,
+                        });
+                        if self.ht_enabled && p.configure_vht(config, reserved) {
+                            continue;
+                        }
+                        out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
+                        self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
+                        self.pending[slot] = None;
+                        continue;
+                    }
                     if self.ht_enabled {
                         let info = p.info.unwrap();
                         let required = 80 + info.data_symbols * 80;
@@ -387,7 +443,15 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     let info = p.info.unwrap();
                     let (mut coding_stats, mut coding_failure) = (None, None);
                     let mut partial_stats = Vec::new();
-                    let decoded = if let Some(fields) = p.ht {
+                    let mut vht_signal_b = None;
+                    let decoded = if p.vht.is_some() {
+                        vht_iq::decode(&p.samples, &p.acquisition).map(|decoded| {
+                            debug_assert_eq!(Some(decoded.signal_a), p.vht);
+                            debug_assert_eq!(decoded.info, info);
+                            vht_signal_b = Some(decoded.signal_b);
+                            (decoded.bytes, decoded.tracking)
+                        })
+                    } else if let Some(fields) = p.ht {
                         let first_end = if p.greenfield { 160 } else { 400 };
                         // HT-ELTFs sound dimensions not used by DATA. Keep the
                         // data-training estimates, but include every extension
@@ -490,6 +554,18 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                     preamble_sample_index: p.start.sample_index,
                                 });
                             }
+                            if let Some(fields) = p.vht {
+                                diagnostics.push(PhyDiagnostic::VhtSignalA {
+                                    fields,
+                                    preamble_sample_index: p.start.sample_index,
+                                });
+                            }
+                            if let Some(fields) = vht_signal_b {
+                                diagnostics.push(PhyDiagnostic::VhtSignalB {
+                                    fields,
+                                    preamble_sample_index: p.start.sample_index,
+                                });
+                            }
                             if let Some(stats) = coding_stats {
                                 diagnostics.push(stats);
                             }
@@ -511,7 +587,11 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             };
                             if let Err(error) = self.publish_psdu(
                                 frame,
-                                p.ht.is_some_and(|f| f.aggregation),
+                                if p.vht.is_some() {
+                                    Some(Aggregation::Vht)
+                                } else {
+                                    p.ht.filter(|f| f.aggregation).map(|_| Aggregation::Ht)
+                                },
                                 &mut out,
                             ) {
                                 self.reset(ResetReason::Explicit);
@@ -566,6 +646,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             samples: Vec::with_capacity(80),
                             info: None,
                             ht: None,
+                            vht: None,
                             ldpc: None,
                             greenfield: false,
                         });
@@ -1299,6 +1380,237 @@ mod tests {
         let mut out = decoder.consume(IqEvent::End(StreamEnd::Eof)).unwrap();
         result.diagnostics.append(&mut out.diagnostics);
         Ok(result)
+    }
+    #[test]
+    fn radio_vht_streaming_independent_iq() {
+        for row in include_str!("../../tests/fixtures/iq/vht-bcc-iq-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let expected: Vec<_> = c[8]
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
+                .collect();
+            for size in [1, 79, 4096] {
+                let out = feed(&mut WifiDecoder::new(), &bytes, size);
+                assert_eq!(
+                    out.frames.len(),
+                    1,
+                    "{} chunk={size}: {:?}",
+                    c[0],
+                    out.diagnostics
+                );
+                let frame = &out.frames[0];
+                assert_eq!(frame.bytes, expected, "{} chunk={size}", c[0]);
+                assert_eq!(frame.start.sample_index, 37);
+                assert_eq!(frame.end_sample_index, c[11].parse::<u64>().unwrap());
+                assert_eq!(frame.integrity, FrameIntegrity::ValidFcs);
+                assert_eq!(frame.config, config());
+                let bits = |s: &str| s.bytes().map(|b| b - b'0').collect::<Vec<_>>();
+                assert!(frame.diagnostics.contains(&PhyDiagnostic::VhtSignalA {
+                    fields: VhtSignalAFields::decode(&bits(c[5])).unwrap(),
+                    preamble_sample_index: 37,
+                }));
+                assert!(frame.diagnostics.contains(&PhyDiagnostic::VhtSignalB {
+                    fields: VhtSignalB20Fields::decode(&bits(c[6]), false).unwrap(),
+                    preamble_sample_index: 37,
+                }));
+                assert!(frame.diagnostics.contains(&PhyDiagnostic::Ampdu {
+                    delimiter_offset: 0,
+                    control_bits: 1
+                }));
+            }
+        }
+    }
+    #[test]
+    fn radio_vht_streaming_aggregate_iq() {
+        let hex = |s: &str| {
+            s.as_bytes()
+                .chunks_exact(2)
+                .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
+                .collect::<Vec<_>>()
+        };
+        let rows = include_str!("../../tests/fixtures/iq/vht-ampdu-iq-index.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 54);
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let expected: Vec<_> = c[5].split(',').map(hex).collect();
+            let offsets: Vec<_> = c[4]
+                .split(',')
+                .map(|s| s.parse::<usize>().unwrap() - 4)
+                .collect();
+            let mut cfg = config();
+            cfg.max_frame_bytes = 4100;
+            cfg.max_pending_frames = 8;
+            for size in [1, 79, 4096] {
+                let out = feed_config(&mut WifiDecoder::new(), &bytes, size, cfg.clone()).unwrap();
+                assert_eq!(
+                    out.frames.iter().map(|f| &f.bytes).collect::<Vec<_>>(),
+                    expected.iter().collect::<Vec<_>>(),
+                    "{} chunk={size}: {:?}",
+                    c[0],
+                    out.diagnostics
+                );
+                for (frame, offset) in out.frames.iter().zip(&offsets) {
+                    assert_eq!(frame.start.sample_index, 37);
+                    assert_eq!(frame.end_sample_index, c[7].parse::<u64>().unwrap());
+                    assert_eq!(frame.integrity, FrameIntegrity::ValidFcs);
+                    assert!(frame.diagnostics.contains(&PhyDiagnostic::Ampdu {
+                        delimiter_offset: *offset,
+                        control_bits: 0
+                    }));
+                }
+                assert_eq!(
+                    out.diagnostics
+                        .iter()
+                        .any(|d| matches!(d, PhyDiagnostic::AmpduErrors { invalid_fcs: 1, .. })),
+                    c[8] == "1",
+                    "{}",
+                    c[0]
+                );
+            }
+        }
+    }
+    #[test]
+    fn radio_vht_streaming_mixed_families() {
+        let parts = [
+            include_bytes!("../../tests/fixtures/iq/ofdm-6-clean.cs8").as_slice(),
+            include_bytes!("../../tests/fixtures/iq/vht-bcc-8-gi400-case0-clean.cs8").as_slice(),
+            include_bytes!("../../tests/fixtures/iq/ht-bcc-7-gi800-len100-clean.cs8").as_slice(),
+        ];
+        let mut combined = Vec::new();
+        let mut expected = Vec::new();
+        for part in parts {
+            let shift = combined.len() as u64 / 2;
+            let frames = feed(&mut WifiDecoder::new(), part, 79).frames;
+            assert_eq!(frames.len(), 1);
+            for frame in frames {
+                expected.push((
+                    frame.bytes,
+                    frame.start.sample_index + shift,
+                    frame.end_sample_index + shift,
+                ));
+            }
+            combined.extend_from_slice(part);
+            combined.extend_from_slice(&[0; 512]);
+        }
+        let mut cfg = config();
+        cfg.max_pending_frames = 8;
+        for size in [79, 4096, 10000] {
+            let out = feed_config(&mut WifiDecoder::new(), &combined, size, cfg.clone()).unwrap();
+            assert_eq!(
+                out.frames
+                    .into_iter()
+                    .map(|f| (f.bytes, f.start.sample_index, f.end_sample_index))
+                    .collect::<Vec<_>>(),
+                expected,
+                "chunk={size}"
+            );
+        }
+    }
+    #[test]
+    fn radio_vht_streaming_rejection_and_bounds() {
+        for row in include_str!("../../tests/fixtures/iq/vht-bcc-iq-invalid-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let name = row.split('\t').next().unwrap();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{name}.cs8",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap();
+            let out = feed(&mut WifiDecoder::new(), &bytes, 79);
+            assert!(out.frames.is_empty(), "{name}");
+        }
+        let name = include_str!("../../tests/fixtures/iq/vht-bcc-iq-index.tsv")
+            .lines()
+            .nth(1)
+            .unwrap()
+            .split('\t')
+            .next()
+            .unwrap();
+        let bytes = std::fs::read(format!(
+            "{}/tests/fixtures/iq/{name}.cs8",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        assert!(feed(&mut LegacyWifiDecoder::new(), &bytes, 79)
+            .frames
+            .is_empty());
+        for limit in [512, 800] {
+            let mut cfg = config();
+            cfg.max_buffer_samples = limit;
+            cfg.max_chunk_samples = 79;
+            let out = feed_config(&mut WifiDecoder::new(), &bytes, 79, cfg).unwrap();
+            assert!(out.frames.is_empty());
+        }
+        let mut cfg = config();
+        cfg.max_frame_bytes = 4;
+        let out = feed_config(&mut WifiDecoder::new(), &bytes, 79, cfg).unwrap();
+        assert!(out.frames.is_empty());
+        assert!(out.diagnostics.iter().any(|d| matches!(
+            d,
+            PhyDiagnostic::AmpduErrors {
+                oversized_mpdus: 1,
+                ..
+            }
+        )));
+        let mut decoder = WifiDecoder::new();
+        for (sequence, range) in [(0, 0..700), (1, 701..bytes.len() / 2)] {
+            let chunk = IqChunk::new(
+                config(),
+                IqPosition {
+                    epoch: 3,
+                    sequence,
+                    sample_index: range.start as u64,
+                    time_anchor: None,
+                    discontinuity: None,
+                },
+                bytes[2 * range.start..2 * range.end]
+                    .iter()
+                    .map(|b| *b as i8)
+                    .collect(),
+            )
+            .unwrap();
+            assert!(decoder
+                .consume(IqEvent::Chunk(chunk))
+                .unwrap()
+                .frames
+                .is_empty());
+        }
+        assert!(decoder
+            .consume(IqEvent::End(StreamEnd::Eof))
+            .unwrap()
+            .frames
+            .is_empty());
+        let mut doubled = bytes.clone();
+        doubled.extend_from_slice(&bytes);
+        let mut cfg = config();
+        cfg.max_pending_frames = 3; // one output plus two child slots
+        cfg.max_chunk_samples = doubled.len() / 2;
+        let result = feed_config(&mut WifiDecoder::new(), &doubled, doubled.len() / 2, cfg);
+        assert!(matches!(
+            result,
+            Err(RadioError::Limit {
+                context: "VHT aggregate pending frames",
+                ..
+            })
+        ));
     }
     #[test]
     fn radio_ht_extension_training_streaming_independent_iq() {
