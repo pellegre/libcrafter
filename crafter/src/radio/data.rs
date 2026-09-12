@@ -855,6 +855,76 @@ fn demodulate_data(
 }
 
 fn recover_bcc(coded: &[f32], info: SignalInfo) -> Result<Vec<u8>, ()> {
+    recover_bcc_format(coded, info, None)
+}
+
+/// Single-encoder VHT DATA; caller supplies admitted timing/MCS dimensions.
+/// This returns PSDU bytes, not FCS-qualified MPDUs or admitted aggregates.
+#[allow(dead_code)] // Connected by the forthcoming VHT IQ integration.
+pub(super) fn recover_vht_bcc(
+    coded: &[f32],
+    info: SignalInfo,
+    sig_b: VhtSignalB20Fields,
+) -> Result<Vec<u8>, ()> {
+    if ![
+        (52, 26),
+        (104, 52),
+        (104, 78),
+        (208, 104),
+        (208, 156),
+        (312, 208),
+        (312, 234),
+        (312, 260),
+        (416, 312),
+    ]
+    .contains(&(info.coded_bits_per_symbol, info.data_bits_per_symbol))
+    {
+        return Err(());
+    }
+    recover_bcc_format(coded, info, Some(sig_b))
+}
+
+fn recover_bcc_format(
+    coded: &[f32],
+    info: SignalInfo,
+    vht: Option<VhtSignalB20Fields>,
+) -> Result<Vec<u8>, ()> {
+    let count = info
+        .data_symbols
+        .checked_mul(info.data_bits_per_symbol)
+        .ok_or(())?;
+    let expected_coded = info
+        .data_symbols
+        .checked_mul(info.coded_bits_per_symbol)
+        .ok_or(())?;
+    let psdu_end = info
+        .psdu_bytes
+        .checked_mul(8)
+        .and_then(|n| n.checked_add(16))
+        .ok_or(())?;
+    if coded.len() != expected_coded
+        || count < 22
+        || psdu_end.checked_add(6).ok_or(())? > count
+        || info.data_bits_per_symbol > usize::MAX / 6
+        || info.coded_bits_per_symbol > usize::MAX / 5
+    {
+        return Err(());
+    }
+    let mut service = [0; 16];
+    let mut scale = 1.;
+    if let Some(sig_b) = vht {
+        if info.psdu_bytes != (count - 22) / 8 || coded.iter().any(|m| !m.is_finite()) {
+            return Err(());
+        }
+        let crc = sig_b.expected_service_crc().ok_or(())?;
+        for (i, bit) in service[8..].iter_mut().enumerate() {
+            *bit = (crc >> (7 - i)) & 1;
+        }
+        scale = coded.iter().map(|m| m.abs()).fold(0f32, f32::max);
+        if scale == 0. {
+            return Err(());
+        }
+    }
     let pattern: &[u8] = if info.data_bits_per_symbol * 2 == info.coded_bits_per_symbol {
         &[1, 1]
     } else if info.data_bits_per_symbol * 3 == info.coded_bits_per_symbol * 2 {
@@ -866,17 +936,18 @@ fn recover_bcc(coded: &[f32], info: SignalInfo) -> Result<Vec<u8>, ()> {
     } else {
         return Err(());
     };
-    let count = info.data_symbols * info.data_bits_per_symbol;
     let mut metric = [f32::INFINITY; 64];
     metric[0] = 0.;
-    let mut history = vec![[0u8; 64]; count];
+    let mut history = Vec::new();
+    history.try_reserve_exact(count).map_err(|_| ())?;
+    history.resize(count, [0u8; 64]);
     let mut cursor = 0;
     for t in 0..count {
         let row = &mut history[t];
         let mut pair = [0.; 2];
         for j in 0..2 {
             if pattern[(2 * t + j) % pattern.len()] == 1 {
-                pair[j] = coded[cursor];
+                pair[j] = *coded.get(cursor).ok_or(())? / scale;
                 cursor += 1;
             }
         }
@@ -897,7 +968,7 @@ fn recover_bcc(coded: &[f32], info: SignalInfo) -> Result<Vec<u8>, ()> {
         // Once every state has an invalid SERVICE field, no final traceback can
         // produce a deliverable frame. Keep all possible states, not just the
         // currently cheapest path, to preserve the full decoder's decisions.
-        if t == 47 && !possible_service_prefix(&history[..48]) {
+        if t == 47 && !possible_service_prefix(&history[..48], &service) {
             return Err(());
         }
         let minimum = next.iter().copied().fold(f32::INFINITY, f32::min);
@@ -906,23 +977,41 @@ fn recover_bcc(coded: &[f32], info: SignalInfo) -> Result<Vec<u8>, ()> {
         }
         metric = next;
     }
-    let mut state = (0..64)
-        .min_by(|x, y| metric[*x].total_cmp(&metric[*y]))
-        .ok_or(())?;
+    if cursor != coded.len() {
+        return Err(());
+    }
+    let mut state = if vht.is_some() {
+        0
+    } else {
+        (0..64)
+            .min_by(|x, y| metric[*x].total_cmp(&metric[*y]))
+            .ok_or(())?
+    };
     let mut bits = vec![0; count];
     for t in (0..count).rev() {
         bits[t] = (state & 1) as u8;
         state = history[t][state] as usize;
     }
-    let tail = 16 + 8 * info.psdu_bytes;
+    let tail = if vht.is_some() { count - 6 } else { psdu_end };
     if bits[tail..tail + 6].iter().any(|b| *b != 0) {
         return Err(());
     }
-    descramble_psdu(bits, info.psdu_bytes)
+    descramble_psdu_with_service(bits, info.psdu_bytes, &service)
 }
 
-fn descramble_psdu(mut bits: Vec<u8>, psdu_bytes: usize) -> Result<Vec<u8>, ()> {
-    let tail = 16 + 8 * psdu_bytes;
+fn descramble_psdu(bits: Vec<u8>, psdu_bytes: usize) -> Result<Vec<u8>, ()> {
+    descramble_psdu_with_service(bits, psdu_bytes, &[0; 16])
+}
+
+fn descramble_psdu_with_service(
+    mut bits: Vec<u8>,
+    psdu_bytes: usize,
+    service: &[u8; 16],
+) -> Result<Vec<u8>, ()> {
+    let tail = psdu_bytes
+        .checked_mul(8)
+        .and_then(|n| n.checked_add(16))
+        .ok_or(())?;
     if bits.len() < tail {
         return Err(());
     }
@@ -938,7 +1027,7 @@ fn descramble_psdu(mut bits: Vec<u8>, psdu_bytes: usize) -> Result<Vec<u8>, ()> 
     }
     // Receive PLCP discards padding after the PSDU (802.11-2007 17.3.12).
     // Errors in those bits do not invalidate an otherwise FCS-valid PSDU.
-    if bits[..16].iter().any(|b| *b != 0) {
+    if bits[..16] != *service {
         return Err(());
     }
     Ok(bits[16..tail]
@@ -946,7 +1035,7 @@ fn descramble_psdu(mut bits: Vec<u8>, psdu_bytes: usize) -> Result<Vec<u8>, ()> 
         .map(|b| b.iter().enumerate().fold(0, |v, (i, b)| v | (b << i)))
         .collect())
 }
-fn possible_service_prefix(history: &[[u8; 64]]) -> bool {
+fn possible_service_prefix(history: &[[u8; 64]], expected: &[u8; 16]) -> bool {
     for final_state in 0..64 {
         let mut state = final_state;
         for row in history[16..].iter().rev() {
@@ -957,7 +1046,12 @@ fn possible_service_prefix(history: &[[u8; 64]]) -> bool {
             service[t] = (state & 1) as u8;
             state = history[t][state] as usize;
         }
-        if (1u8..128).any(|mut seed| service.iter().all(|b| *b == feedback(&mut seed))) {
+        if (1u8..128).any(|mut seed| {
+            service
+                .iter()
+                .zip(expected)
+                .all(|(b, e)| *b == (feedback(&mut seed) ^ e))
+        }) {
             return true;
         }
     }
@@ -977,6 +1071,10 @@ pub(super) fn valid_fcs(bytes: &[u8]) -> bool {
     }
     (!crc).to_le_bytes() == bytes[bytes.len() - 4..]
 }
+
+#[cfg(test)]
+#[path = "vht_bcc_data_tests.rs"]
+mod vht_bcc_tests;
 
 #[cfg(test)]
 mod tests {

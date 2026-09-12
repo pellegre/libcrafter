@@ -275,6 +275,16 @@ acquisition, DATA recovery, live qualification or TX. In particular,
 bandwidth code 3 does not distinguish 160 MHz from 80+80 MHz, and the ability
 to interpret a header must not be confused with admitting its DATA waveform.
 
+## VHT BCC DATA recovery increment
+
+The private single-encoder VHT BCC DATA recovery path uses the SIG-B CRC in
+SERVICE, a nonzero scrambler seed, zero-tail termination after PHY padding,
+and the whole-octet PSDU length derived from symbol capacity. Legacy/HT
+retain their zero-SERVICE check and tail-before-padding layout. Independent
+coded-bit fixtures include all four BCC rates, every nonzero seed, invalid
+SERVICE/seed cases, and long payloads up to 58,965 bytes. These are DATA
+primitives, not complete IQ or MAC-aggregate qualification.
+
 ## VHT 256-QAM demapper increment
 
 The shared data demapper now also handles 256-QAM labels and normalization.

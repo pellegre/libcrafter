@@ -4,6 +4,46 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_vht_bcc_data_independent_inventory() {
+    let inventory = include_str!("fixtures/iq/vht-bcc-data-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(inventory.as_bytes())),
+        "b3f3ebe56b10f6269180fa8704b50939c49e2868ba00b023fe259f68a8f141a3"
+    );
+    let mut seeds = std::collections::BTreeSet::new();
+    let mut dimensions = std::collections::BTreeSet::new();
+    let mut valid = 0;
+    let mut invalid = 0;
+    for row in inventory.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 7);
+        assert_eq!(c[3].len(), 26);
+        assert!(c[3]
+            .bytes()
+            .chain(c[5].bytes())
+            .all(|b| b == b'0' || b == b'1'));
+        if c[6] == "1" {
+            valid += 1;
+            seeds.insert(c[2].parse::<u8>().unwrap());
+            dimensions.insert((c[0].parse::<u8>().unwrap(), c[1].parse::<u16>().unwrap()));
+        } else {
+            assert_eq!(c[6], "0");
+            invalid += 1;
+        }
+    }
+    assert_eq!((valid, invalid), (289, 27));
+    assert_eq!(seeds, (1..=127).collect());
+    for dimension in [(0, 1512), (8, 40), (8, 1512)] {
+        assert!(dimensions.contains(&dimension));
+    }
+    for mcs in 0..9 {
+        for symbols in [2, 3, 4, 5, 10, 17] {
+            assert!(dimensions.contains(&(mcs, symbols)));
+        }
+    }
+}
+
+#[test]
 fn radio_vht_qam_independent_inventory() {
     let inventory = include_str!("fixtures/iq/vht-qam-index.tsv");
     assert_eq!(

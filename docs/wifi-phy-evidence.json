@@ -56,6 +56,12 @@
   ],
   "facts": [
     {
+      "id": "vht-bcc-data-layout",
+      "source": "ieee-80211-2020",
+      "anchor": "21.3.10.1-5; 21.4.3 Equation 21-112",
+      "fact": "For VHT BCC with one encoder, DATA consists of 16 SERVICE bits, PSDU, zero through seven PHY pad bits, then six zero tail bits. SERVICE/PSDU/pad are scrambled with a nonzero seed; tail is not scrambled. PSDU length is floor((NSYM*NDBPS-22)/8). SERVICE bits 0-7 are zero and bits 8-15 carry the SIG-B CRC, c7 first. The final BCC trellis state is zero, unlike the existing HT layout with scrambled padding after its tail."
+    },
+    {
       "id": "vht20-one-stream-mcs",
       "source": "ieee-80211-2020",
       "anchor": "21.5 Table 21-29",
