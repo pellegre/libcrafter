@@ -17,7 +17,7 @@
       "sha256": "d4b6c467609800746e29dff1ff2e9a01ace281bab9485b615d6ae78666ed7b00",
       "pdf_pages": 4379,
       "status": "published_text_obtained_selected_clauses_reviewed",
-      "reviewed_clauses": ["10.27.4", "19.3.9.3.5", "19.3.9.4.3", "19.3.9.4.4", "19.3.9.4.5"],
+      "reviewed_clauses": ["10.27.4", "19.3.9.3.5", "19.3.9.4.3", "19.3.9.4.4", "19.3.9.4.5", "19.3.9.4.6", "19.3.11.1", "19.3.11.2", "19.3.11.3", "19.3.11.4", "19.3.11.6", "19.3.11.8.3", "19.3.11.10", "19.3.11.11.3", "19.5"],
       "superseded_by": "ieee-80211-2024"
     },
     {
@@ -47,6 +47,18 @@
     }
   ],
   "facts": [
+    {
+      "id": "ht20-bcc-data",
+      "source": "ieee-80211-2020",
+      "anchor": "19.3.11.1-6, Table 19-27, Figure 19-11",
+      "fact": "One-stream MCS 0-7 uses 52 data carriers and 26/52/78/104/156/208/234/260 data bits per symbol. BCC DATA contains 16 SERVICE bits, PSDU, six tail bits and padding. Rate 5/6 retains A0 B0 A1 B2 A3 B4."
+    },
+    {
+      "id": "ht20-training-and-mapping",
+      "source": "ieee-80211-2020",
+      "anchor": "19.3.9.4.6 Eq.19-23; 19.3.11.8.3 Table 19-17; 19.3.11.10 Table 19-19; 19.3.11.11.3 Eq.19-58",
+      "fact": "HT20 training extends L-LTF with +1 on the two extra negative tones and -1 on the two extra positive tones. BCC interleaving uses 13 columns. One-stream pilots rotate [1,1,1,-1] across DATA symbols; mixed-format polarity starts at p3."
+    },
     {
       "id": "ht-mixed-legacy-signal",
       "source": "ieee-80211-2020",
