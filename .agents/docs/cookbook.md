@@ -2373,8 +2373,10 @@ cargo run -p crafter --features radio --example radio_receive -- --modern --repl
 The artifact reports typed `ht` and `ampdu` fields and records decoder `wifi`.
 Default replay preserves the recorded decoder; explicit `--modern` selects it
 for older IQ too without relaxing recorded allocation bounds. Modern decoding
-is currently serial-only. Do not pass its output through legacy rate-only
-eligibility and present that as modern qualification; see
+is currently serial-only. Use the HT-aware `radio_compare` path, which requires
+known MCS/GI/bandwidth, preserves unknown coding and configuration fields,
+and matches aggregate occurrences one-to-one. Unknown reference configurations
+remain qualification gaps, not an implicit assertion that the mode is supported; see
 [the modern development contract](../../docs/modern-wifi-iq.md).
 
 Native reception requires `radio-hackrf`, an explicit live opt-in, every RF

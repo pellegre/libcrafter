@@ -178,5 +178,21 @@ Frame records report `phy: "ht"`, structured `ht` signaling fields and an
 sample coordinates. Legacy frames have null HT/aggregate metadata. The
 existing benchmark accepts mode `wifi` for this decoder and includes aggregate
 offsets in its occurrence digest. This exposes a measurement path; it does not
-claim real-time performance. The legacy comparison logic still needs HT
-reference eligibility and occurrence matching before modern live qualification.
+claim real-time performance.
+
+The existing `radio_compare` path now accepts HT20 MCS0–7 reference metadata
+when bandwidth, MCS and GI are known. Coding, STBC, format and extension-stream
+values are compared only when known; explicitly unsupported configurations
+remain exclusions. Missing STBC/format/extension-stream knowledge is counted
+and reported as a qualification gap, not silently assumed to mean zero.
+Reference FCS absence remains separately integrity-unverified.
+
+HT matching consumes distinct raw-byte occurrences one-to-one, requires
+compatible known PHY parameters, and uses the containing PPDU interval for
+each recovered MPDU. It retains both the IQ delimiter offset and the dongle's
+independently generated aggregation reference. Unknown reference coding can
+match either supported coding family; an augmenting-path matcher prevents
+such a flexible observation from hiding a more constrained valid pairing.
+The matching logic does not derive a clock from byte matches. Independently
+recorded timing and capture-loss evidence remain mandatory, and reported
+measurements are not automatically a passing live qualification.

@@ -506,8 +506,10 @@ must include their actual precision and semantics.
 
 The comparator accepts radiotap pcap records only. It parses the capture header
 separately from the MAC body, requires explicit flags, a supported legacy rate
-and the selected frequency, and excludes incompatible PHY/channel metadata.
-Unparseable namespaces and newer PHY fields are exclusions. Explicit DATAPAD
+or known HT20 MCS/GI/bandwidth, and the selected frequency. It excludes
+incompatible PHY/channel metadata; VHT/HE/EHT remain unsupported here.
+See [modern HT comparison](modern-wifi-iq.md) for conditional known fields and
+aggregation identity. Unparseable namespaces remain exclusions. Explicit DATAPAD
 removes only the alignment bytes between a recognized legacy MAC header and its
 body. Unknown/Order/extension padding layouts are excluded. FCS is recomputed
 after that removal, then stripped only when explicitly present. The documented
@@ -529,8 +531,12 @@ and identical ACK multiplicity. Zero denominators produce null fractions and
 baseline, numerical target selection and live qualification belong to the
 external qualification runner, not the comparator.
 The offline example caps each source at 10,000 observations and each JSON line at
-1 MiB; exceedance fails explicitly. Dense duplicate matching is quadratic within
-that bound. Inputs must be closed captures; before/after hashes detect changes during processing.
+1 MiB; exceedance fails explicitly. Legacy duplicate matching is quadratic.
+HT's optional metadata requires general augmenting paths (cubic worst-case
+work within a duplicate group), with linear matching-state allocation and no
+recursive search or quadratic adjacency storage. This is an offline
+comparison tool, not the real-time receiver. Inputs must be closed captures;
+before/after hashes detect changes during processing.
 Reference capture loss is explicitly unavailable from the pcap alone.
 Keep real artifacts and timing policies outside tracked files.
 
@@ -803,8 +809,8 @@ FHSS or reduced-clock metadata is excluded. Advertised capabilities are never
 used as evidence of a received rate. Matches require equal observed rates and
 complete original MAC bytes after established FCS/padding normalization.
 
-Comparison v2 adds `families` (always DSSS, CCK and OFDM) and `rates` (all twelve
-supported rates). Each contains eligible denominators, occurrence match counts,
+Comparison v2 includes `families` (DSSS, CCK, OFDM and HT) and `rates` (the twelve
+legacy rates plus observed supported HT rates). Each contains eligible denominators, occurrence match counts,
 directional fractions and measured/inconclusive status. Zero denominators yield
 null fractions and inconclusive status. Global exclusions remain counted by
 reason; unknown PHY exclusions cannot honestly be assigned to a family.

@@ -18,6 +18,9 @@ behaviors:
     checks: [bcc_and_ldpc, mcs_zero_through_seven, both_guard_intervals, per_mpdu_limit, shared_ppdu_coordinates, delimiter_offset_identity, explicit_output_overflow, chunk_continuity]
   - name: capture-replay-integration
     checks: [explicit_modern_selection, recorded_decoder_preservation, incompatible_dispatch_rejection, structured_ht_fields, aggregate_offset_metadata, exact_saved_iq_replay]
+  - name: ht-reference-comparison
+    source: https://www.radiotap.org/fields/MCS.html
+    checks: [conditional_known_bits, unknown_is_not_bcc_or_no_stbc, exact_mac_bytes, per_occurrence_matching, known_metadata_conflicts, explicit_qualification_gaps]
 coverage_cases: [wifi-ht-ampdu]
 supported_cases:
   - {name: wifi-ht-ampdu, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
