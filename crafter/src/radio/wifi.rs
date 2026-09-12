@@ -1,6 +1,45 @@
 //! Combined receive-only legacy PHY dispatch.
 use super::*;
 
+/// Combined legacy and HT20 one-stream BCC receiver.
+///
+/// HT MCS 0–7 and both guard intervals are supported for nonaggregated PSDUs.
+/// LDPC, STBC, additional streams, HT40, greenfield, VHT, HE and EHT are not
+/// yet decoded. This implements the same `PhyDecoder` packet-source interface
+/// and shares the bounds and output ordering of `LegacyWifiDecoder`.
+pub struct WifiDecoder {
+    inner: LegacyWifiDecoder,
+}
+impl Default for WifiDecoder {
+    fn default() -> Self {
+        Self {
+            inner: LegacyWifiDecoder {
+                ofdm: LegacyOfdmDecoder::with_ht(),
+                ..LegacyWifiDecoder::default()
+            },
+        }
+    }
+}
+impl WifiDecoder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn ofdm_stats(&self) -> DecoderStats {
+        self.inner.ofdm_stats()
+    }
+    pub fn dsss_stats(&self) -> DecoderStats {
+        self.inner.dsss_stats()
+    }
+}
+impl PhyDecoder for WifiDecoder {
+    fn reset(&mut self, reason: ResetReason) -> DecodeOutput {
+        self.inner.reset(reason)
+    }
+    fn consume(&mut self, event: IqEvent) -> RadioResult<DecodeOutput> {
+        self.inner.consume(event)
+    }
+}
+
 /// OFDM and DSSS/CCK reception from the same 20 Msps sample stream.
 ///
 /// Samples are dispatched in at most 128-sample slices. Within each slice,

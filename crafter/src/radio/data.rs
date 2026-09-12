@@ -18,6 +18,7 @@ struct Pending {
     start: IqPosition,
     samples: Vec<ComplexSample>,
     info: Option<SignalInfo>,
+    ht: Option<HtSignalFields>,
 }
 /// Bounded streaming legacy OFDM receiver. Only integrity-valid PSDUs are delivered.
 #[derive(Default)]
@@ -29,6 +30,7 @@ pub struct LegacyOfdmDecoder {
     pending: [Option<Pending>; 2],
     terminal: bool,
     stats: DecoderStats,
+    ht_enabled: bool,
 }
 impl LegacyOfdmDecoder {
     pub fn new() -> Self {
@@ -36,6 +38,12 @@ impl LegacyOfdmDecoder {
     }
     pub fn stats(&self) -> DecoderStats {
         self.stats
+    }
+    pub(super) fn with_ht() -> Self {
+        Self {
+            ht_enabled: true,
+            ..Self::default()
+        }
     }
 }
 impl PhyDecoder for LegacyOfdmDecoder {
@@ -92,13 +100,28 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     match decode_signal(
                         &p.samples,
                         &p.acquisition,
-                        config.max_frame_bytes.min(4095),
+                        if self.ht_enabled {
+                            4095
+                        } else {
+                            config.max_frame_bytes.min(4095)
+                        },
                     ) {
                         Ok(info)
-                            if info.data_symbols * 80
-                                <= config.max_buffer_samples.saturating_sub(reserved) =>
+                            if (self.ht_enabled && info.rate_bps == 6_000_000
+                                || info.psdu_bytes <= config.max_frame_bytes)
+                                && (if self.ht_enabled && info.rate_bps == 6_000_000 {
+                                    160
+                                } else {
+                                    info.data_symbols * 80
+                                }) <= config.max_buffer_samples.saturating_sub(reserved) =>
                         {
-                            p.samples.reserve_exact(info.data_symbols * 80);
+                            p.samples.reserve_exact(
+                                if self.ht_enabled && info.rate_bps == 6_000_000 {
+                                    160
+                                } else {
+                                    info.data_symbols * 80
+                                },
+                            );
                             p.info = Some(info);
                         }
                         _ => {
@@ -117,12 +140,72 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             fields,
                             preamble_sample_index: p.start.sample_index,
                         });
-                        // Legacy-only receiver recognizes the header but cannot
-                        // deliver HT DATA. The modern receiver will own that path.
+                        if self.ht_enabled
+                            && !fields.channel_width_40_mhz
+                            && fields.mcs < 8
+                            && !fields.ldpc
+                            && fields.stbc == 0
+                            && fields.extension_spatial_streams == 0
+                            && !fields.aggregation
+                            && fields.psdu_bytes >= 4
+                            && usize::from(fields.psdu_bytes) <= config.max_frame_bytes
+                        {
+                            let (nbpsc, ndbps) = [
+                                (1, 26),
+                                (2, 52),
+                                (2, 78),
+                                (4, 104),
+                                (4, 156),
+                                (6, 208),
+                                (6, 234),
+                                (6, 260),
+                            ][fields.mcs as usize];
+                            let stride = if fields.short_guard_interval { 72 } else { 80 };
+                            let symbols =
+                                (16 + 8 * usize::from(fields.psdu_bytes) + 6).div_ceil(ndbps);
+                            let required = 400 + symbols * stride;
+                            let extra = required.saturating_sub(p.samples.capacity());
+                            if extra <= config.max_buffer_samples.saturating_sub(reserved) {
+                                if let Some(end) =
+                                    p.acquisition.signal_start.checked_add(required as u64)
+                                {
+                                    p.samples
+                                        .reserve_exact(required.saturating_sub(p.samples.len()));
+                                    p.info = Some(SignalInfo {
+                                        rate_bps: (ndbps as u64 * 20_000_000 / stride as u64)
+                                            as u32,
+                                        coded_bits_per_symbol: 52 * nbpsc,
+                                        data_bits_per_symbol: ndbps,
+                                        psdu_bytes: usize::from(fields.psdu_bytes),
+                                        data_symbols: symbols,
+                                        data_start: p.acquisition.signal_start + 400,
+                                        end_sample_index: end,
+                                    });
+                                    p.ht = Some(fields);
+                                    continue;
+                                }
+                            }
+                        }
                         out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
                         self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
                         self.pending[slot] = None;
                         continue;
+                    }
+                    if self.ht_enabled {
+                        let info = p.info.unwrap();
+                        let required = 80 + info.data_symbols * 80;
+                        if info.psdu_bytes > config.max_frame_bytes
+                            || required.saturating_sub(p.samples.capacity())
+                                > config.max_buffer_samples.saturating_sub(reserved)
+                        {
+                            self.stats.rejected_frames =
+                                self.stats.rejected_frames.saturating_add(1);
+                            out.diagnostics.push(PhyDiagnostic::InvalidHeader);
+                            self.pending[slot] = None;
+                            continue;
+                        }
+                        p.samples
+                            .reserve_exact(required.saturating_sub(p.samples.len()));
                     }
                 }
                 if p.info
@@ -130,11 +213,44 @@ impl PhyDecoder for LegacyOfdmDecoder {
                 {
                     let p = self.pending[slot].take().unwrap();
                     let info = p.info.unwrap();
-                    match decode_data(&p.samples[80..], &p.acquisition, info) {
+                    let decoded = if let Some(fields) = p.ht {
+                        ht::train_single_stream(
+                            &p.samples[320..400],
+                            p.acquisition.signal_start + 320,
+                            &p.acquisition,
+                        )
+                        .ok_or(())
+                        .and_then(|a| {
+                            decode_data_mode(
+                                &p.samples[400..],
+                                &a,
+                                info,
+                                Some(if fields.short_guard_interval { 8 } else { 16 }),
+                            )
+                        })
+                    } else {
+                        decode_data(&p.samples[80..], &p.acquisition, info)
+                    };
+                    match decoded {
                         Ok((bytes, tracking)) => {
                             if valid_fcs(&bytes) {
                                 self.stats.valid_frames = self.stats.valid_frames.saturating_add(1);
                                 if out.frames.len() < config.max_pending_frames {
+                                    let mut diagnostics = vec![
+                                        PhyDiagnostic::Ofdm {
+                                            frequency_offset_hz: p.acquisition.frequency_rad
+                                                * 20_000_000.
+                                                / std::f32::consts::TAU,
+                                            training_correlation: p.acquisition.correlation,
+                                        },
+                                        tracking,
+                                    ];
+                                    if let Some(fields) = p.ht {
+                                        diagnostics.push(PhyDiagnostic::HtSignal {
+                                            fields,
+                                            preamble_sample_index: p.start.sample_index,
+                                        });
+                                    }
                                     out.frames.push(RecoveredFrame {
                                         bytes,
                                         link_type: LinkType::Ieee80211,
@@ -143,15 +259,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                         start: p.start,
                                         end_sample_index: info.end_sample_index,
                                         rate_bps: info.rate_bps,
-                                        diagnostics: vec![
-                                            PhyDiagnostic::Ofdm {
-                                                frequency_offset_hz: p.acquisition.frequency_rad
-                                                    * 20_000_000.
-                                                    / std::f32::consts::TAU,
-                                                training_correlation: p.acquisition.correlation,
-                                            },
-                                            tracking,
-                                        ],
+                                        diagnostics,
                                     });
                                 } else {
                                     self.stats.dropped_frames =
@@ -200,6 +308,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             start,
                             samples: Vec::with_capacity(80),
                             info: None,
+                            ht: None,
                         });
                     }
                     SyncEvent::Failure(_) => {
@@ -245,10 +354,24 @@ fn decode_data(
     a: &Acquisition,
     info: SignalInfo,
 ) -> Result<(Vec<u8>, PhyDiagnostic), ()> {
-    if samples.len() != info.data_symbols * 80 {
+    decode_data_mode(samples, a, info, None)
+}
+
+pub(super) fn decode_data_mode(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    info: SignalInfo,
+    ht_guard: Option<usize>,
+) -> Result<(Vec<u8>, PhyDiagnostic), ()> {
+    let guard = ht_guard.unwrap_or(16);
+    let stride = 64 + guard;
+    let carriers = if ht_guard.is_some() { 52 } else { 48 };
+    let columns = if ht_guard.is_some() { 13 } else { 16 };
+    let edge: i32 = if ht_guard.is_some() { 28 } else { 26 };
+    if samples.len() != info.data_symbols * stride || ![8, 16].contains(&guard) {
         return Err(());
     }
-    let nbpsc = info.coded_bits_per_symbol / 48;
+    let nbpsc = info.coded_bits_per_symbol / carriers;
     let scale: f32 = match nbpsc {
         1 => 1.,
         2 => 2.,
@@ -257,15 +380,18 @@ fn decode_data(
     };
     let mut coded = Vec::with_capacity(info.data_symbols * info.coded_bits_per_symbol);
     let mut pilot_state = 127;
-    feedback(&mut pilot_state); // SIGNAL occupies polarity zero.
+    for _ in 0..if ht_guard.is_some() { 3 } else { 1 } {
+        feedback(&mut pilot_state);
+    }
     let mut phase_slope = 0.;
     let (mut sum_x, mut sum_xx, mut sum_y, mut sum_xy) = (0f64, 0f64, 0f64, 0f64);
     let (mut residual_energy, mut residual_weight) = (0f64, 0f64);
-    for (symbol, samples) in samples.chunks_exact(80).enumerate() {
+    for (symbol, samples) in samples.chunks_exact(stride).enumerate() {
         let time = std::array::from_fn(|n| {
-            samples[16 + n].mul(ComplexSample::rotation(
+            samples[guard + n].mul(ComplexSample::rotation(
                 -a.frequency_rad
-                    * (info.data_start + (symbol * 80 + 16 + n) as u64 - a.phase_origin) as f32,
+                    * (info.data_start + (symbol * stride + guard + n) as u64 - a.phase_origin)
+                        as f32,
             ))
         });
         let bins = fft64(time);
@@ -273,7 +399,13 @@ fn decode_data(
         // Sampling-clock drift is a phase slope across subcarriers, not a
         // common carrier rotation. Remove the previous slope before measuring
         // residual pilot phases, then fit a weighted line each symbol.
-        let pilots = [(-21i32, 1.), (-7, 1.), (7, 1.), (21, -1.)].map(|(k, sign)| {
+        let pilots = std::array::from_fn::<_, 4, _>(|j| {
+            let k: i32 = [-21, -7, 7, 21][j];
+            let sign = [1., 1., 1., -1.][if ht_guard.is_some() {
+                (symbol + j) % 4
+            } else {
+                j
+            }];
             let bin = k.rem_euclid(64) as usize;
             let value = bins[bin]
                 .mul(a.channel[bin].conj())
@@ -305,7 +437,7 @@ fn decode_data(
         let slope_delta = (w * xy - x * y) / determinant;
         let intercept = reference + (y - slope_delta * x) / w;
         phase_slope += slope_delta;
-        let time = (symbol * 80) as f64;
+        let time = (symbol * stride) as f64;
         sum_x += time;
         sum_xx += time * time;
         sum_y += phase_slope as f64;
@@ -319,7 +451,7 @@ fn decode_data(
             residual_weight += weight;
         }
         let mut interleaved = Vec::with_capacity(info.coded_bits_per_symbol);
-        for k in (-26i32..=26).filter(|k| ![-21, -7, 0, 7, 21].contains(k)) {
+        for k in (-edge..=edge).filter(|k| ![-21, -7, 0, 7, 21].contains(k)) {
             let rotation = ComplexSample::rotation(-intercept - phase_slope * k as f32);
             let k = k.rem_euclid(64) as usize;
             let power = a.channel[k].power();
@@ -348,17 +480,21 @@ fn decode_data(
         let n = info.coded_bits_per_symbol;
         let s = (nbpsc / 2).max(1);
         for k in 0..n {
-            let i = (n / 16) * (k % 16) + k / 16;
-            let j = s * (i / s) + (i + n - 16 * i / n) % s;
+            let i = (n / columns) * (k % columns) + k / columns;
+            let j = s * (i / s) + (i + n - columns * i / n) % s;
             coded.push(interleaved[j]);
         }
     }
     let pattern: &[u8] = if info.data_bits_per_symbol * 2 == info.coded_bits_per_symbol {
         &[1, 1]
-    } else if info.rate_bps == 48_000_000 {
+    } else if info.data_bits_per_symbol * 3 == info.coded_bits_per_symbol * 2 {
         &[1, 1, 1, 0]
-    } else {
+    } else if info.data_bits_per_symbol * 4 == info.coded_bits_per_symbol * 3 {
         &[1, 1, 1, 0, 0, 1]
+    } else if info.data_bits_per_symbol * 6 == info.coded_bits_per_symbol * 5 {
+        &[1, 1, 1, 0, 0, 1, 1, 0, 0, 1]
+    } else {
+        return Err(());
     };
     let count = info.data_symbols * info.data_bits_per_symbol;
     let mut metric = [f32::INFINITY; 64];
@@ -481,6 +617,79 @@ fn valid_fcs(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radio_ht_bcc_independent_payload_kernel() {
+        use sha2::{Digest, Sha256};
+        let index = include_str!("../../tests/fixtures/iq/ht-bcc-index.tsv");
+        assert_eq!(index.lines().skip(1).count(), 64);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            assert_eq!(format!("{:x}", Sha256::digest(&bytes)), c[5]);
+            assert_eq!(bytes.len(), c[6].parse::<usize>().unwrap() * 2);
+            let samples: Vec<_> = bytes
+                .chunks_exact(2)
+                .map(|s| ComplexSample {
+                    i: s[0] as i8 as f32 / 128.,
+                    q: s[1] as i8 as f32 / 128.,
+                })
+                .collect();
+            let expected: Vec<_> = c[4]
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
+                .collect();
+            let mcs = c[1].parse::<usize>().unwrap();
+            let guard = c[2].parse::<usize>().unwrap();
+            let data_start = c[7].parse::<usize>().unwrap();
+            let end = c[8].parse::<usize>().unwrap();
+            let (nbpsc, ndbps) = [
+                (1, 26),
+                (2, 52),
+                (2, 78),
+                (4, 104),
+                (4, 156),
+                (6, 208),
+                (6, 234),
+                (6, 260),
+            ][mcs];
+            // This isolates DATA/training correctness, not packet acquisition:
+            // timing and CFO are supplied by the independent fixture contract.
+            let a = Acquisition {
+                preamble_start: 37,
+                signal_start: 357,
+                phase_origin: 0,
+                frequency_rad: if c[0].ends_with("offset") { 0.018 } else { 0. },
+                coarse_frequency_rad: 0.,
+                channel: [ComplexSample::ZERO; 64],
+                correlation: 1.,
+            };
+            let a = ht::train_single_stream(
+                &samples[data_start - 80..data_start],
+                (data_start - 80) as u64,
+                &a,
+            )
+            .unwrap();
+            let info = SignalInfo {
+                rate_bps: (ndbps as u64 * 20_000_000 / (64 + guard) as u64) as u32,
+                coded_bits_per_symbol: 52 * nbpsc,
+                data_bits_per_symbol: ndbps,
+                psdu_bytes: expected.len(),
+                data_symbols: c[3].parse().unwrap(),
+                data_start: data_start as u64,
+                end_sample_index: end as u64,
+            };
+            let (actual, _) = decode_data_mode(&samples[data_start..end], &a, info, Some(guard))
+                .unwrap_or_else(|_| panic!("{} DATA rejected", c[0]));
+            assert_eq!(actual, expected, "{}", c[0]);
+            assert!(valid_fcs(&actual), "{}", c[0]);
+        }
+    }
     fn config() -> RxConfig {
         RxConfig {
             sample_rate_hz: 20_000_000,
@@ -493,7 +702,7 @@ mod tests {
             max_duration: Duration::from_secs(1),
         }
     }
-    fn feed(decoder: &mut LegacyOfdmDecoder, bytes: &[u8], size: usize) -> DecodeOutput {
+    fn feed(decoder: &mut impl PhyDecoder, bytes: &[u8], size: usize) -> DecodeOutput {
         let mut result = DecodeOutput::default();
         for (sequence, part) in bytes.chunks(size * 2).enumerate() {
             let chunk = IqChunk::new(
@@ -515,6 +724,96 @@ mod tests {
         let mut out = decoder.consume(IqEvent::End(StreamEnd::Eof)).unwrap();
         result.diagnostics.append(&mut out.diagnostics);
         result
+    }
+    #[test]
+    fn radio_ht_bcc_bounds_and_truncation() {
+        let bytes = include_bytes!("../../tests/fixtures/iq/ht-bcc-0-gi800-len100-clean.cs8");
+        let end = bytes.len() / 2 - 64;
+        for cut in [597, 677, 756, 757, end - 1] {
+            let out = feed(&mut WifiDecoder::new(), &bytes[..cut * 2], 79);
+            assert!(out.frames.is_empty(), "cut={cut}");
+            assert!(
+                out.diagnostics.contains(&PhyDiagnostic::TruncatedFrame),
+                "cut={cut}: {:?}",
+                out.diagnostics
+            );
+        }
+        for max_frame in [99, 100] {
+            let mut config = config();
+            config.max_frame_bytes = max_frame;
+            config.max_buffer_samples = 4096;
+            config.max_chunk_samples = 4096;
+            let mut decoder = WifiDecoder::new();
+            let out = decoder
+                .consume(IqEvent::Chunk(
+                    IqChunk::new(
+                        config,
+                        IqPosition {
+                            epoch: 3,
+                            sequence: 0,
+                            sample_index: 1_000_000,
+                            time_anchor: None,
+                            discontinuity: None,
+                        },
+                        bytes.iter().map(|v| *v as i8).collect(),
+                    )
+                    .unwrap(),
+                ))
+                .unwrap();
+            assert_eq!(
+                out.frames.len(),
+                usize::from(max_frame == 100),
+                "max_frame={max_frame}: {:?}",
+                out.diagnostics
+            );
+            if let Some(frame) = out.frames.first() {
+                assert_eq!(frame.start.epoch, 3);
+                assert_eq!(frame.start.sample_index, 1_000_037);
+                assert_eq!(frame.end_sample_index, 1_000_000 + end as u64);
+            }
+        }
+        let mut zero_data = bytes.to_vec();
+        zero_data[757 * 2..end * 2].fill(0);
+        let out = feed(&mut WifiDecoder::new(), &zero_data, 79);
+        assert!(out.frames.is_empty());
+        assert!(out.diagnostics.contains(&PhyDiagnostic::InvalidData));
+    }
+    #[test]
+    fn radio_ht_bcc_streaming_independent_iq() {
+        for row in include_str!("../../tests/fixtures/iq/ht-bcc-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let expected: Vec<_> = c[4]
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
+                .collect();
+            for size in [1, 79, 4096] {
+                let mut decoder = WifiDecoder::new();
+                let out = feed(&mut decoder, &bytes, size);
+                assert_eq!(
+                    out.frames.len(),
+                    1,
+                    "{} chunk={size}: {:?}",
+                    c[0],
+                    out.diagnostics
+                );
+                let frame = &out.frames[0];
+                assert_eq!(frame.bytes, expected, "{} chunk={size}", c[0]);
+                assert_eq!(frame.start.sample_index, 37);
+                assert_eq!(frame.end_sample_index, c[8].parse::<u64>().unwrap());
+                assert!(frame.diagnostics.iter().any(|d| matches!(d,PhyDiagnostic::HtSignal{fields,..} if fields.mcs == c[1].parse::<u8>().unwrap())));
+                assert_eq!(decoder.ofdm_stats().valid_frames, 1);
+            }
+        }
     }
     #[test]
     fn radio_ht_mixed_headers_from_independent_iq() {

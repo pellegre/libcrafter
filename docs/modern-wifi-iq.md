@@ -63,6 +63,25 @@ reserved-bit and tail integrity, accepts the zero-length NDP indication, and
 preserves all signaled MCS/STBC/extension-stream values. Unsupported combinations
 must be checked by the receiving PHY before allocation or DATA decoding.
 This primitive alone does not decode an HT waveform or deliver modern frames.
+
+## HT20 BCC receiver increment
+
+`WifiDecoder` uses the existing `PhyDecoder`/radio packet-source interface and
+combines legacy reception with mixed-format HT20, one spatial stream, BCC MCS
+0–7, and 400/800 ns guard intervals. It estimates the additional HT tones from
+HT-LTF, tracks rotating pilots, deinterleaves 52 data carriers and depunctures
+all four BCC rates, including 5/6. Only FCS-valid nonaggregated PSDUs are
+published. The existing `LegacyWifiDecoder` remains legacy-only.
+
+The independent oracle `ht_bcc_vectors.py` supplies 64 full-waveform fixtures:
+eight MCS values, both guard intervals, 100/4095-byte PSDUs, and clean or
+carrier-offset/multipath conditions. The kernel test supplies timing/CFO to
+isolate DATA correctness; the separate streaming test must acquire both from
+IQ and checks exact bytes and sample boundaries with three chunk sizes.
+
+This increment does not qualify LDPC, aggregation, STBC, additional streams,
+greenfield, VHT, HE, EHT, live interoperability, real-time throughput, or modern
+transmission. Those remain required work under the full contract above.
 The legacy receiver recognizes mixed-format HT-SIG after shared legacy
 training and emits `PhyDiagnostic::HtSignal` with its original preamble sample
 index, followed by `UnsupportedPhy`. It does not deliver the HT payload as a

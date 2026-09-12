@@ -40,7 +40,7 @@ pub use tx::{
     IqSink, LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink,
     RadioPacketWriter, WifiFcsPolicy,
 };
-pub use wifi::LegacyWifiDecoder;
+pub use wifi::{LegacyWifiDecoder, WifiDecoder};
 pub use windowed::WindowedLegacyWifiDecoder;
 
 use crate::LinkType;
