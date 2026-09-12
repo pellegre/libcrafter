@@ -590,10 +590,33 @@ fn axis(label: usize, width: usize) -> f32 {
     match width {
         1 => sign,
         2 => sign * (3. - 2. * ((label >> 1) & 1) as f32),
-        _ => {
+        3 => {
             sign * (4.
                 - (2. * ((label >> 1) & 1) as f32 - 1.) * (3. - 2. * ((label >> 2) & 1) as f32))
         }
+        // IEEE 802.11-2020 Figures 21-24..27; label bit zero is sent first.
+        4 => {
+            sign * (8.
+                - (2. * ((label >> 1) & 1) as f32 - 1.)
+                    * (4.
+                        - (2. * ((label >> 2) & 1) as f32 - 1.)
+                            * (3. - 2. * ((label >> 3) & 1) as f32)))
+        }
+        _ => unreachable!("validated modulation width"),
+    }
+}
+
+fn constellation_energy(coded_bits: usize, carriers: usize) -> Result<f32, ()> {
+    if carriers == 0 || coded_bits % carriers != 0 {
+        return Err(());
+    }
+    match coded_bits / carriers {
+        1 => Ok(1.),
+        2 => Ok(2.),
+        4 => Ok(10.),
+        6 => Ok(42.),
+        8 => Ok(170.),
+        _ => Err(()),
     }
 }
 // Max-log bit metrics, weighted by channel power; punctures later have zero weight.
@@ -658,12 +681,7 @@ fn demodulate_data(
         return Err(());
     }
     let nbpsc = info.coded_bits_per_symbol / carriers;
-    let scale: f32 = match nbpsc {
-        1 => 1.,
-        2 => 2.,
-        4 => 10.,
-        _ => 42.,
-    };
+    let scale = constellation_energy(info.coded_bits_per_symbol, carriers)?;
     let mut coded = Vec::with_capacity(info.data_symbols * info.coded_bits_per_symbol);
     let mut pilot_state = 127;
     for _ in 0..if greenfield {
@@ -963,6 +981,66 @@ pub(super) fn valid_fcs(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radio_vht_qam_independent_metrics() {
+        let index = include_str!("../../tests/fixtures/iq/vht-qam-index.tsv");
+        assert_eq!(index.lines().skip(1).count(), 401);
+        let scale = constellation_energy(416, 52).unwrap().sqrt();
+        let mut energy = 0.;
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            assert_eq!(c.len(), 11);
+            let i: f32 = c[0].parse().unwrap();
+            let q: f32 = c[1].parse().unwrap();
+            if c[2] != "-" {
+                energy += (i * i + q * q) / scale.powi(2);
+            }
+            for weight in [0., 0.125, 1., 7.] {
+                let mut out = Vec::new();
+                demap(i / scale, 4, scale, weight, &mut out);
+                demap(q / scale, 4, scale, weight, &mut out);
+                assert_eq!(out.len(), 8);
+                for (bit, actual) in out.into_iter().enumerate() {
+                    let expected = c[3 + bit].parse::<f32>().unwrap() * weight;
+                    assert!(
+                        (actual - expected).abs() <= 2e-5 * (1. + expected.abs()),
+                        "{row}: bit={bit} weight={weight} actual={actual} expected={expected}"
+                    );
+                    if weight == 0. {
+                        assert_eq!(actual, 0.);
+                    } else if c[2] != "-" {
+                        assert_eq!(u8::from(actual > 0.), c[2].as_bytes()[bit] - b'0');
+                    }
+                }
+            }
+        }
+        assert!((energy / 256. - 1.).abs() < 1e-6);
+    }
+
+    #[test]
+    fn radio_qam_dimensions_and_lower_order_compatibility() {
+        // Numeric indices are little-endian bit labels, matching demap().
+        for (width, expected) in [
+            (1, &[-1., 1.][..]),
+            (2, &[-3., 3., -1., 1.][..]),
+            (3, &[-7., 7., -1., 1., -5., 5., -3., 3.][..]),
+        ] {
+            for (label, &value) in expected.iter().enumerate() {
+                assert_eq!(axis(label, width), value);
+            }
+        }
+        for carriers in [48, 52] {
+            for coded in 0..=carriers * 10 {
+                let expected = [(1, 1.), (2, 2.), (4, 10.), (6, 42.), (8, 170.)]
+                    .into_iter()
+                    .find_map(|(bits, energy)| (coded == carriers * bits).then_some(energy));
+                assert_eq!(constellation_energy(coded, carriers).ok(), expected);
+            }
+            assert!(constellation_energy(usize::MAX, carriers).is_err());
+        }
+        assert!(constellation_energy(0, 0).is_err());
+    }
+
     #[test]
     fn radio_ht_bcc_independent_payload_kernel() {
         use sha2::{Digest, Sha256};

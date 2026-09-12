@@ -4,6 +4,33 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_vht_qam_independent_inventory() {
+    let inventory = include_str!("fixtures/iq/vht-qam-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(inventory.as_bytes())),
+        "93f7dbd354872a0b18274a99e11b7d27bd6b19748f9b8b820a8a8ad95e05af73"
+    );
+    let mut labels = std::collections::BTreeSet::new();
+    let mut off_grid = 0;
+    for row in inventory.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 11);
+        if c[2] == "-" {
+            off_grid += 1;
+        } else {
+            assert_eq!(c[2].len(), 8);
+            assert!(c[2].bytes().all(|b| b == b'0' || b == b'1'));
+            assert!(labels.insert(c[2]));
+        }
+        for index in [0, 1, 3, 4, 5, 6, 7, 8, 9, 10] {
+            assert!(c[index].parse::<f64>().unwrap().is_finite());
+        }
+    }
+    assert_eq!(labels.len(), 256);
+    assert_eq!(off_grid, 145);
+}
+
+#[test]
 fn radio_vht_timing_independent_inventory() {
     let inventory = include_str!("fixtures/iq/vht-timing-index.tsv");
     assert_eq!(

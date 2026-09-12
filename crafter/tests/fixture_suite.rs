@@ -8596,6 +8596,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "vht-signal-a-index.tsv"
                 | "vht-signal-b20-index.tsv"
                 | "vht-timing-index.tsv"
+                | "vht-qam-index.tsv"
                 | "ht-mixed-index.tsv"
                 | "ht-bcc-index.tsv"
                 | "ht-greenfield-index.tsv"

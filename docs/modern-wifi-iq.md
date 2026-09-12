@@ -275,6 +275,15 @@ acquisition, DATA recovery, live qualification or TX. In particular,
 bandwidth code 3 does not distinguish 160 MHz from 80+80 MHz, and the ability
 to interpret a header must not be confused with admitting its DATA waveform.
 
+## VHT 256-QAM demapper increment
+
+The shared data demapper now also handles 256-QAM labels and normalization.
+Its independent diagram-derived cases cover all 256 ideal points and 145
+off-grid inputs, checking soft metrics, channel weighting and erasures.
+Invalid modulation dimensions are rejected instead of falling through to
+64-QAM. This does not admit VHT frames through the streaming receiver; pilot,
+coding, aggregation and waveform integration remain separate requirements.
+
 ## VHT receive timing increment
 
 The private VHT20 timing primitive derives training-field count, DATA start,
