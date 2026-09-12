@@ -55,3 +55,13 @@ Independent offline work can proceed, but missing capable-reference live
 evidence remains an explicit qualification gap. Raw captures, credentials,
 device identities and execution topology belong in operator-owned artifacts,
 never in the repository.
+## HT-SIG primitive
+
+`HtSignalFields::decode` validates exactly 48 post-BCC binary bits in
+transmission order and returns typed HT signaling fields. It checks CRC,
+reserved-bit and tail integrity, accepts the zero-length NDP indication, and
+preserves all signaled MCS/STBC/extension-stream values. Unsupported combinations
+must be checked by the receiving PHY before allocation or DATA decoding.
+This primitive alone does not decode an HT waveform or deliver modern frames.
+Its published baseline and outstanding edition review are recorded in
+`wifi-phy-evidence.json`.

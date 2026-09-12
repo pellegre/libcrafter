@@ -1,0 +1,23 @@
+version: 1
+kind: feature
+name: wifi_ht_signal
+summary: HT-SIG bit-field extraction and integrity before waveform configuration.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: ht-sig-integrity
+    checks: [published_crc_example, independent_polynomial_vectors, every_single_bit_error, exact_bit_count, binary_input, reserved_bit, zero_tail]
+  - name: ht-sig-fields
+    checks: [mcs, channel_width_flag, length, smoothing, not_sounding, aggregation, stbc, fec, guard_interval, extension_streams]
+coverage_cases: [wifi-ht-signal-fields]
+supported_cases:
+  - {name: wifi-ht-signal-fields, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: supported
+    notes:
+      - IEEE 802.11-2020 19.3.9.4.3-4; reviewed evidence is in docs/wifi-phy-evidence.json.
+      - Header extraction does not imply support for the signaled MCS or waveform.
+      - Rust tests check the published CRC example, 256 independent polynomial vectors, all single-bit errors, and malformed boundaries.
