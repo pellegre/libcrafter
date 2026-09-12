@@ -4,6 +4,83 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_vht_bcc_iq_independent_inventory() {
+    use crafter::{VhtSignalAFields, VhtSignalAUsers, VhtSignalB20Fields};
+    let inventory = include_str!("fixtures/iq/vht-bcc-iq-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(inventory.as_bytes())),
+        "02ad3e1dea0141b105f245af706ae9f3550b9c2b51aab62a97b0120bb5e47527"
+    );
+    assert_eq!(inventory.lines().skip(1).count(), 108);
+    let invalid = include_str!("fixtures/iq/vht-bcc-iq-invalid-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(invalid.as_bytes())),
+        "657c80df10ede9280dc033317a97c306b7c564ae61a6f888f60b72a4b9d8c142"
+    );
+    assert_eq!(invalid.lines().skip(1).count(), 8);
+    for row in invalid.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 3);
+        let bytes = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(hex(&Sha256::digest(&bytes)), c[2]);
+    }
+    let mut names = std::collections::BTreeSet::new();
+    let mut modes = std::collections::BTreeSet::new();
+    for row in inventory.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 14);
+        assert!(names.insert(c[0]));
+        let mcs = c[1].parse::<u8>().unwrap();
+        let guard = c[2].parse::<usize>().unwrap();
+        let symbols = c[3].parse::<usize>().unwrap();
+        let start = c[10].parse::<usize>().unwrap();
+        let end = c[11].parse::<usize>().unwrap();
+        let signaled_end = c[12].parse::<usize>().unwrap();
+        let bits = |s: &str| s.bytes().map(|b| b - b'0').collect::<Vec<_>>();
+        let a = VhtSignalAFields::decode(&bits(c[5])).unwrap();
+        let b = VhtSignalB20Fields::decode(&bits(c[6]), false).unwrap();
+        assert!(
+            matches!(a.users, VhtSignalAUsers::Single { mcs: n, space_time_streams: 1, ldpc: false, .. } if n == mcs)
+        );
+        assert_eq!(a.short_guard_interval, guard == 8);
+        assert_eq!(a.short_gi_disambiguation, guard == 8 && symbols % 10 == 9);
+        assert_eq!(start, 837);
+        assert_eq!(end, start + (64 + guard) * symbols);
+        assert!(signaled_end >= end && signaled_end - end < 80);
+        let apep = c[13].parse::<u32>().unwrap();
+        let (low, high) = b.apep_length_bounds().unwrap();
+        assert!(low <= apep && apep <= high);
+        let bytes = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(hex(&Sha256::digest(&bytes)), c[9]);
+        assert_eq!(bytes.len(), 2 * (signaled_end + 64));
+        modes.insert((
+            mcs,
+            guard,
+            a.short_gi_disambiguation,
+            c[0].ends_with("offset"),
+        ));
+    }
+    for mcs in 0..9 {
+        for offset in [false, true] {
+            assert!(modes.contains(&(mcs, 16, false, offset)));
+            for disambiguation in [false, true] {
+                assert!(modes.contains(&(mcs, 8, disambiguation, offset)));
+            }
+        }
+    }
+}
+
+#[test]
 fn radio_vht_bcc_data_independent_inventory() {
     let inventory = include_str!("fixtures/iq/vht-bcc-data-index.tsv");
     assert_eq!(

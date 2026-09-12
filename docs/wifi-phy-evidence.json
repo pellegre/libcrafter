@@ -56,6 +56,12 @@
   ],
   "facts": [
     {
+      "id": "vht20-siso-waveform",
+      "source": "ieee-80211-2020",
+      "anchor": "Table 21-8; Equations 21-28/29/36/47/91/95; 9.7.1; 10.12.6-8; 21.3.20 Equations 21-104/105/106",
+      "fact": "VHT-SIG-A uses BPSK then QBPSK data tones with unrotated pilots p1,p2. VHT-STF20 equals HT-STF20 and VHT-LTF20 equals HT-LTF20. VHT-SIG-B uses p3/P0; DATA uses p[n+4]/P[n]. Tone scaling uses 52 for L-LTF/L-SIG/SIG-A and 56 for VHT-LTF/SIG-B/DATA. A single nonzero-length delimiter may carry EOF=1 (S-MPDU); final subframe padding, EOF padding delimiters and trailing octets fill PSDU capacity under 10.12.6. RX symbol and PSDU length equations confirm the previously reviewed timing and BCC layout."
+    },
+    {
       "id": "vht-bcc-data-layout",
       "source": "ieee-80211-2020",
       "anchor": "21.3.10.1-5; 21.4.3 Equation 21-112",

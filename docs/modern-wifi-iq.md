@@ -275,6 +275,18 @@ acquisition, DATA recovery, live qualification or TX. In particular,
 bandwidth code 3 does not distinguish 160 MHz from 80+80 MHz, and the ability
 to interpret a header must not be confused with admitting its DATA waveform.
 
+## VHT BCC IQ kernel increment
+
+The private VHT20 SISO BCC IQ kernel connects legacy-preamble acquisition,
+L-SIG, VHT-SIG-A, VHT-LTF training, VHT-SIG-B and DATA recovery. Its 108
+complete independent waveforms cover MCS 0-8, both guard intervals, short-GI
+disambiguation, S-MPDU/EOF/PHY padding, and frequency-offset/multipath cases.
+The kernel tests obtain timing and frequency from IQ, not fixture hints, and
+compare complete PSDU bytes and sample boundaries. Eight additional waveforms
+exercise invalid/unsupported signaling, alongside truncated and unusable inputs.
+The streaming dispatcher, general VHT aggregate publication, LDPC, STBC, MU,
+HE/EHT and hardware qualification remain separate unfinished work.
+
 ## VHT BCC DATA recovery increment
 
 The private single-encoder VHT BCC DATA recovery path uses the SIG-B CRC in

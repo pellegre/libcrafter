@@ -660,6 +660,13 @@ fn decode_data_mode_with_format(
     Ok((recover_bcc(&coded, info)?, tracking))
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PilotFormat {
+    LegacyOrHt,
+    Greenfield,
+    Vht,
+}
+
 fn demodulate_data(
     samples: &[ComplexSample],
     a: &Acquisition,
@@ -667,6 +674,42 @@ fn demodulate_data(
     ht_guard: Option<usize>,
     bcc_interleaving: bool,
     greenfield: bool,
+    stbc_second: Option<&[ComplexSample; 64]>,
+) -> Result<(Vec<f32>, PhyDiagnostic), ()> {
+    demodulate_data_format(
+        samples,
+        a,
+        info,
+        ht_guard,
+        bcc_interleaving,
+        if greenfield {
+            PilotFormat::Greenfield
+        } else {
+            PilotFormat::LegacyOrHt
+        },
+        stbc_second,
+    )
+}
+
+pub(super) fn decode_vht_bcc_data(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    info: SignalInfo,
+    guard: usize,
+    sig_b: VhtSignalB20Fields,
+) -> Result<(Vec<u8>, PhyDiagnostic), ()> {
+    let (coded, tracking) =
+        demodulate_data_format(samples, a, info, Some(guard), true, PilotFormat::Vht, None)?;
+    Ok((recover_vht_bcc(&coded, info, sig_b)?, tracking))
+}
+
+fn demodulate_data_format(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    info: SignalInfo,
+    ht_guard: Option<usize>,
+    bcc_interleaving: bool,
+    format: PilotFormat,
     stbc_second: Option<&[ComplexSample; 64]>,
 ) -> Result<(Vec<f32>, PhyDiagnostic), ()> {
     let guard = ht_guard.unwrap_or(16);
@@ -684,7 +727,9 @@ fn demodulate_data(
     let scale = constellation_energy(info.coded_bits_per_symbol, carriers)?;
     let mut coded = Vec::with_capacity(info.data_symbols * info.coded_bits_per_symbol);
     let mut pilot_state = 127;
-    for _ in 0..if greenfield {
+    for _ in 0..if format == PilotFormat::Vht {
+        4
+    } else if format == PilotFormat::Greenfield {
         2
     } else if ht_guard.is_some() {
         3

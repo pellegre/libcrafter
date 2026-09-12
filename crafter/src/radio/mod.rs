@@ -9,6 +9,7 @@ mod dsss;
 mod dsss_tx;
 mod ht;
 mod vht;
+mod vht_iq;
 mod vht_sig_b;
 mod vht_timing;
 pub use vht::{VhtSignalAError, VhtSignalAFields, VhtSignalAUsers};

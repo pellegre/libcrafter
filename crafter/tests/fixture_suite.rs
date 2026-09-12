@@ -8598,6 +8598,8 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "vht-timing-index.tsv"
                 | "vht-qam-index.tsv"
                 | "vht-bcc-data-index.tsv"
+                | "vht-bcc-iq-index.tsv"
+                | "vht-bcc-iq-invalid-index.tsv"
                 | "ht-mixed-index.tsv"
                 | "ht-bcc-index.tsv"
                 | "ht-greenfield-index.tsv"
@@ -8634,6 +8636,16 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 .skip(1)
                 .chain(include_str!("fixtures/iq/dsss-index.tsv").lines().skip(1))
                 .chain(include_str!("fixtures/iq/ht-bcc-index.tsv").lines().skip(1))
+                .chain(
+                    include_str!("fixtures/iq/vht-bcc-iq-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
+                .chain(
+                    include_str!("fixtures/iq/vht-bcc-iq-invalid-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
                 .chain(
                     include_str!("fixtures/iq/ht-extension-index.tsv")
                         .lines()
