@@ -16,32 +16,42 @@ import ht_ldpc_vectors as ldpc
 import ofdm_vectors as base
 
 
-def waveform(psdu, mcs, guard, coding, greenfield, aggregation=False, fault=None):
+def waveform(psdu, mcs, guard, coding, greenfield, aggregation=False, fault=None,
+             extension=0, stbc=True):
+    nsts=1+int(stbc)
+    ntx=nsts+extension
+    assert 0<=extension<=3 and ntx<=4
+    extra_ltf=[0,1,2,4][extension]
     if coding:
-        symbols,coded=ldpc.encode_psdu(psdu,mcs,invalid_service=fault=='invalid_service',stbc=True)
+        symbols,coded=ldpc.encode_psdu(psdu,mcs,invalid_service=fault=='invalid_service',stbc=stbc)
     else:
-        symbols,coded=aggregate.bcc(psdu,mcs,stbc=True)
+        symbols,coded=aggregate.bcc(psdu,mcs,stbc=stbc)
     if fault in ['nonconvergence','damaged_codeword']:
         start,length=0,len(coded)
         if fault=='damaged_codeword':
             ncbps,rate=ldpc.PARAMETERS[mcs]
-            _,count,block,short,puncture,repeat,_=ldpc.layout(len(psdu),ncbps,rate,2)
+            _,count,block,short,puncture,repeat,_=ldpc.layout(len(psdu),ncbps,rate,2 if stbc else 1)
             lengths=[block-short//count-(i<short%count)-puncture//count-(i<puncture%count)
                      +repeat//count+(i<repeat%count) for i in range(count)]
             assert count>3
             start,length=sum(lengths[:2]),lengths[2]
         noise=hashlib.shake_256(b'ht-stbc-damaged-codeword').digest((length+7)//8)
         coded[start:start+length]=[noise[i//8]>>(i%8)&1 for i in range(length)]
-    assert symbols % 2 == 0
+    assert not stbc or symbols % 2 == 0
     nbpsc = ht.PARAMETERS[mcs][0]
-    chains = [[0j]*37, [0j]*37]
+    chains = [[0j]*37 for _ in range(ntx)]
 
     def field(first, second, prefix, repeat=1, legacy=False):
-        for chain, time in enumerate([first, second]):
-            advance = (4 if legacy else 8) if chain else 0
+        for chain in range(ntx):
+            if legacy:
+                time=first
+                advance={1:[0],2:[0,4],3:[0,2,4],4:[0,1,2,3]}[ntx][chain]
+            else:
+                time=[first,second][chain] if chain<nsts else [0j]*len(first)
+                advance=8 if chain==1 and chain<nsts else 0
             shifted = time[advance:]+time[:advance]
             samples = (shifted[-prefix:] if prefix else []) + shifted*repeat
-            chains[chain].extend(v/math.sqrt(2) for v in samples)
+            chains[chain].extend(v/math.sqrt(ntx if legacy else nsts) for v in samples)
 
     short = base.preamble()[:16]
     long = ht.ifft([1,1]+base.LTF+[-1,-1])
@@ -51,12 +61,12 @@ def waveform(psdu, mcs, guard, coding, greenfield, aggregation=False, fault=None
     else:
         legacy_long = base.ifft(base.LTF)
         field(legacy_long, legacy_long, 32, 2, legacy=True)
-        length = 3*(5+math.ceil(symbols*(64+guard)/80))-3
+        length = 3*(3+nsts+extra_ltf+math.ceil(symbols*(64+guard)/80))-3
         signal = base.symbol(base.interleave(base.encode(base.signal('1101',length)),1),1,1)[16:]
         field(signal, signal, 16, legacy=True)
     fields = [(mcs >> n)&1 for n in range(7)]+[0]
     fields += [(len(psdu) >> n)&1 for n in range(16)]
-    fields += [1,1,1,int(aggregation),1,0,int(coding),int(guard==8),0,0]
+    fields += [1,int(extension==0),1,int(aggregation),int(stbc),0,int(coding),int(guard==8),extension&1,extension>>1]
     if fault=='stbc2': fields[28:30]=[0,1]
     if fault=='mcs8': fields[:7]=[(8>>n)&1 for n in range(7)]
     if fault=='extension3': fields[32:34]=[1,1]
@@ -74,31 +84,47 @@ def waveform(psdu, mcs, guard, coding, greenfield, aggregation=False, fault=None
     if not greenfield:
         field(short, short, 0, 5)
         field(long, long, 16)
-    field([-v for v in long], long, 16)
+    if stbc:
+        field([-v for v in long], long, 16)
+    # Equation19-26: excite only the additional spatial dimensions. Their
+    # P rows/columns and CSD indexing restart within the extension portion.
+    mapping=[[1,-1,1,1],[1,1,-1,1],[1,1,1,-1],[-1,1,1,1]]
+    for column in range(extra_ltf):
+        for chain in range(ntx):
+            if chain<nsts:
+                chains[chain].extend([0j]*80)
+            else:
+                stream=chain-nsts
+                advance=[0,8,4][stream]
+                shifted=long[advance:]+long[:advance]
+                chains[chain].extend(v*mapping[stream][column]/math.sqrt(extension)
+                                     for v in shifted[-16:]+shifted)
     start = len(chains[0])
-    assert start == 37+(560 if greenfield else 800)
+    assert start == 37+(480 if greenfield else 720)+80*(nsts-1+extra_ltf)
     offset = 2 if greenfield else 3
     polarity = [1-2*b for b in base.scramble([0]*(symbols+offset),127)]
-    pilots = [[1,1,-1,-1], [1,-1,-1,1]]
-    for pair in range(symbols//2):
+    pilots = [[1,1,-1,-1], [1,-1,-1,1]] if stbc else [[1,1,1,-1]]
+    group=2 if stbc else 1
+    for pair in range(0,symbols,group):
         mapped = []
-        for n in [2*pair,2*pair+1]:
+        for n in range(pair,pair+group):
             block = coded[n*52*nbpsc:(n+1)*52*nbpsc]
             if not coding:
                 block = ht.interleave(block,nbpsc)
             mapped.append([base.constellation(block[j*nbpsc:(j+1)*nbpsc]) for j in range(52)])
-        for within in range(2):
-            n = 2*pair+within
+        for within in range(group):
+            n = pair+within
             freq = [[0j]*57,[0j]*57]
             for j,k in enumerate(ht.CARRIERS):
                 freq[0][k+28] = mapped[within][j]
-                freq[1][k+28] = (-1 if within==0 else 1)*mapped[1-within][j].conjugate()
-            for chain in range(2):
+                if stbc:
+                    freq[1][k+28] = (-1 if within==0 else 1)*mapped[1-within][j].conjugate()
+            for chain in range(nsts):
                 for j,k in enumerate([-21,-7,7,21]):
                     freq[chain][k+28] = polarity[n+offset]*pilots[chain][(n+j)%4]
             field(ht.ifft(freq[0]),ht.ifft(freq[1]),guard)
     end = len(chains[0])
-    assert end == start+symbols*(64+guard) and len(chains[1]) == end
+    assert end == start+symbols*(64+guard) and all(len(chain)==end for chain in chains)
     if fault=='zero_training':
         assert not greenfield
         for chain in chains: chain[start-160:start]=[0j]*160

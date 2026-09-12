@@ -230,6 +230,21 @@ unsupported. These offline tests do not establish live STBC interoperability,
 real-time throughput or modern TX support. Generating two synthetic transmit
 channels for a receive fixture does not enable two-chain HackRF transmission.
 
+## HT extension-training oracle increment
+
+The independent extension-training corpus models separate sounding dimensions
+using IEEE 802.11-2020 Equation 19-26, with DATA dimensions silent during
+extension training and extension dimensions silent during DATA. It covers
+NESS1–3 without STBC and NESS1–2 with NSS1/NSTS2 STBC, both coding families,
+MCS0–7, mixed GI400/800 and greenfield GI800. The 540 full waveforms include
+clean and independently impaired short frames plus 4095-byte endpoint cases;
+62 aggregates include duplicate MPDUs and corrupted-codeword recovery cases.
+Inventory tests verify geometry, hashes, MAC FCS and the configuration matrix.
+
+These fixtures do not themselves establish receiver support: the streaming
+receiver still rejects nonzero extension-stream counts. Greenfield short-GI
+applicability with additional training remains an explicit source question.
+
 ## Existing example and replay workflow
 
 The receive example's leading `--modern` flag selects `WifiDecoder`, including

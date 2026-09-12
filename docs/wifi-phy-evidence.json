@@ -56,6 +56,12 @@
   ],
   "facts": [
     {
+      "id": "ht-extension-training-data-boundary",
+      "source": "ieee-80211-2020",
+      "anchor": "19.3.9.4.6 Tables 19-12/13/14, Figures 19-9/10 and Equations 19-25/26/27; 19.3.9.5.5; 19.3.13.1",
+      "fact": "HT-ELTFs sound spatial dimensions not used by DATA. Data HT-LTFs excite Q columns 1 through NSTS; extension HT-LTFs excite the following NESS columns with their own P rows and columns, cyclic shifts indexed within NESS, and normalization by sqrt(NESS). NESS1/2/3 adds 1/2/4 four-microsecond fields after data training, before DATA. NSS1/STBC0 allows NESS0..3, while NSS1/STBC1 allows NESS0..2. The original DATA channel estimates remain applicable after these extension fields. Sounding PPDUs set Not Sounding to zero."
+    },
+    {
       "id": "ht-two-chain-preamble-timing",
       "source": "ieee-80211-2020",
       "anchor": "19.3.2 Figure 19-1; 19.3.9.3.2 Table 19-9; 19.3.9.4.2 Table 19-10; 19.3.9.4.6 Tables 19-12/13/14",

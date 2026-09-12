@@ -4,6 +4,79 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_extension_training_independent_waveform_integrity() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
+    let rows: Vec<_> = include_str!("fixtures/iq/ht-extension-index.tsv")
+        .lines()
+        .skip(1)
+        .collect();
+    assert_eq!(rows.len(), 540);
+    let mut matrix = std::collections::BTreeSet::new();
+    for row in rows {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 13);
+        let number = |i: usize| c[i].parse::<usize>().unwrap();
+        let bytes = fs::read(root.join(format!("{}.cs8", c[0]))).unwrap();
+        assert_eq!(hex(&Sha256::digest(&bytes)), c[5]);
+        assert_eq!(bytes.len(), 2 * number(6));
+        assert!(number(1) < 8 && number(9) < 2 && number(10) < 2 && number(11) < 2);
+        assert!((1..=3).contains(&number(12)));
+        assert!(1 + number(11) + number(12) <= 4);
+        let extra = [0, 1, 2, 4][number(12)];
+        assert!(1 + number(11) + extra <= 5);
+        if number(10) == 1 {
+            assert_eq!(number(2), 16);
+        }
+        if number(11) == 1 {
+            assert_eq!(number(3) % 2, 0);
+        }
+        assert!([8, 16].contains(&number(2)));
+        assert_eq!(
+            number(7),
+            37 + (if number(10) == 1 { 480 } else { 720 }) + 80 * (number(11) + extra)
+        );
+        assert_eq!(number(8), number(7) + (64 + number(2)) * number(3));
+        assert_eq!(number(6), number(8) + 64);
+        let psdu: Vec<_> = (0..c[4].len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&c[4][i..i + 2], 16).unwrap())
+            .collect();
+        let end = psdu.len() - 4;
+        assert_eq!(
+            crc(&psdu[..end]),
+            u32::from_le_bytes(psdu[end..].try_into().unwrap())
+        );
+        assert!([100, 4095].contains(&psdu.len()));
+        if psdu.len() == 4095 {
+            assert!([0, 7].contains(&number(1)) && c[0].ends_with("offset"));
+        }
+        assert!(matrix.insert((
+            number(1),
+            number(2),
+            number(9),
+            number(10),
+            number(11),
+            number(12),
+            psdu.len(),
+            c[0].ends_with("offset")
+        )));
+    }
+    assert_eq!(matrix.len(), 540);
+    let aggregates: Vec<_> = include_str!("fixtures/iq/ht-extension-ampdu-index.tsv")
+        .lines()
+        .skip(1)
+        .collect();
+    assert_eq!(aggregates.len(), 62);
+    for row in aggregates {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 12);
+        let bytes = fs::read(root.join(format!("{}.cs8", c[0]))).unwrap();
+        assert_eq!(hex(&Sha256::digest(&bytes)), c[7]);
+        assert_eq!(bytes.len() / 2, c[8].parse::<usize>().unwrap() + 64);
+    }
+}
+
+#[test]
 fn radio_stbc_independent_waveform_integrity() {
     // Inventory integrity is distinct from receiver support.
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
