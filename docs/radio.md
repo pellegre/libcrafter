@@ -272,6 +272,13 @@ correlation with the ideal long-training waveform.
 
 ## Continuity and bounded processing
 
+Legacy OFDM DATA fits a channel-weighted pilot phase offset and subcarrier slope
+per symbol to correct sampling-clock drift. Independent fixtures cover all eight
+rates, short and 4095-byte PSDUs, and -20/0/+20 ppm receive-clock offsets with
+zero carrier offset. Exact PSDU/FCS recovery is checked at two chunk sizes.
+This is bounded drift correction, not arbitrary sample-rate conversion; larger
+drift, combined impairments and live clock offsets require separate evidence.
+
 Legacy OFDM acquisition continues while DATA is pending, retaining at most two
 candidates whose sample reservations share `max_buffer_samples`. A false long
 SIGNAL length therefore need not hide a later valid frame. Candidates beyond

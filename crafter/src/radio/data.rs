@@ -240,6 +240,7 @@ fn decode_data(
     let mut coded = Vec::with_capacity(info.data_symbols * info.coded_bits_per_symbol);
     let mut pilot_state = 127;
     feedback(&mut pilot_state); // SIGNAL occupies polarity zero.
+    let mut phase_slope = 0.;
     for (symbol, samples) in samples.chunks_exact(80).enumerate() {
         let time = std::array::from_fn(|n| {
             samples[16 + n].mul(ComplexSample::rotation(
@@ -249,16 +250,44 @@ fn decode_data(
         });
         let bins = fft64(time);
         let polarity = 1. - 2. * feedback(&mut pilot_state) as f32;
-        let mut pilot = ComplexSample::ZERO;
-        for (k, sign) in [(43, 1.), (57, 1.), (7, 1.), (21, -1.)] {
-            pilot = pilot.add(bins[k].mul(a.channel[k].conj()).scale(sign * polarity));
-        }
-        if !pilot.power().is_finite() || pilot.power() < 1e-12 {
+        // Sampling-clock drift is a phase slope across subcarriers, not a
+        // common carrier rotation. Remove the previous slope before measuring
+        // residual pilot phases, then fit a weighted line each symbol.
+        let pilots = [(-21i32, 1.), (-7, 1.), (7, 1.), (21, -1.)].map(|(k, sign)| {
+            let bin = k.rem_euclid(64) as usize;
+            let value = bins[bin]
+                .mul(a.channel[bin].conj())
+                .scale(sign * polarity)
+                .mul(ComplexSample::rotation(-phase_slope * k as f32));
+            (k as f32, value)
+        });
+        let common = pilots
+            .iter()
+            .fold(ComplexSample::ZERO, |sum, (_, v)| sum.add(*v));
+        if !common.power().is_finite() || common.power() < 1e-12 {
             return Err(());
         }
-        let rotation = ComplexSample::rotation(-pilot.phase());
+        let reference = common.phase();
+        let (mut w, mut x, mut xx, mut y, mut xy) = (0., 0., 0., 0., 0.);
+        for (k, value) in pilots {
+            let weight = value.power().sqrt();
+            let residual = value.mul(ComplexSample::rotation(-reference)).phase();
+            w += weight;
+            x += weight * k;
+            xx += weight * k * k;
+            y += weight * residual;
+            xy += weight * k * residual;
+        }
+        let determinant = w * xx - x * x;
+        if !determinant.is_finite() || determinant < 1e-12 {
+            return Err(());
+        }
+        let slope_delta = (w * xy - x * y) / determinant;
+        let intercept = reference + (y - slope_delta * x) / w;
+        phase_slope += slope_delta;
         let mut interleaved = Vec::with_capacity(info.coded_bits_per_symbol);
         for k in (-26i32..=26).filter(|k| ![-21, -7, 0, 7, 21].contains(k)) {
+            let rotation = ComplexSample::rotation(-intercept - phase_slope * k as f32);
             let k = k.rem_euclid(64) as usize;
             let power = a.channel[k].power();
             if !power.is_finite() || power < 1e-12 {
