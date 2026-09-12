@@ -78,7 +78,7 @@ pub(super) fn fft64(mut x: [ComplexSample; 64]) -> [ComplexSample; 64] {
     x
 }
 // Equation 17-8, ascending signed carrier order -26..26.
-const LONG: [i8; 53] = [
+pub(super) const LONG: [i8; 53] = [
     1, 1, -1, -1, 1, 1, -1, 1, -1, 1, 1, 1, 1, 1, 1, -1, -1, 1, 1, -1, 1, -1, 1, 1, 1, 1, 0, 1, -1,
     -1, 1, 1, -1, 1, -1, 1, -1, -1, -1, -1, -1, 1, 1, -1, -1, 1, -1, 1, -1, 1, 1, 1, 1,
 ];

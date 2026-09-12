@@ -152,7 +152,7 @@ pub use radio::{
     DsssPlcpFields, DsssPreamble, HtSignalError, HtSignalFields, IqSink, LegacyDsssCckRate,
     LegacyDsssCckTransmission, LegacyDsssCckTxConfig, LegacyOfdmRate, LegacyOfdmTransmission,
     LegacyOfdmTxConfig, LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink,
-    OfdmSignalFields, RadioPacketWriter, WifiFcsPolicy,
+    OfdmSignalFields, RadioPacketWriter, WifiDecoder, WifiFcsPolicy,
 };
 #[cfg(feature = "radio-hackrf")]
 pub use radio::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};
@@ -257,7 +257,7 @@ pub mod prelude {
         DsssPlcpFields, DsssPreamble, IqSink, LegacyDsssCckRate, LegacyDsssCckTransmission,
         LegacyDsssCckTxConfig, LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig,
         LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink, OfdmSignalFields,
-        RadioPacketWriter, WifiFcsPolicy,
+        RadioPacketWriter, WifiDecoder, WifiFcsPolicy,
     };
     #[cfg(feature = "radio-hackrf")]
     pub use crate::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};
