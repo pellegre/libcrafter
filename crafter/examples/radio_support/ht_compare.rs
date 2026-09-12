@@ -54,7 +54,7 @@ impl HtPhy {
         let greenfield = (known & 8 != 0).then_some(flags & 8 != 0);
         let extension = (known & 0x40 != 0).then_some(((known >> 6) & 2) | (flags >> 7));
         if stbc.is_some_and(|v| v != 0)
-            || greenfield == Some(true)
+            || (greenfield == Some(true) && flags & 4 != 0)
             || extension.is_some_and(|v| v != 0)
         {
             return Err("unsupported_ht_configuration");
@@ -126,6 +126,7 @@ impl HtPhy {
         let greenfield = match h.get("format") {
             None | Some(Value::Null) => None,
             Some(v) if v == "mixed" => Some(false),
+            Some(v) if v == "greenfield" && !short_gi => Some(true),
             _ => return Err("unsupported_ht_configuration"),
         };
         Ok(Self {
@@ -167,18 +168,35 @@ mod tests {
         for bits in [1, 2, 4] {
             assert!(HtPhy::reference([7 ^ bits, 0, 0], None).is_err());
         }
-        for flags in [1, 2, 3, 8, 0x20, 0x40, 0x60, 0x80] {
+        for flags in [1, 2, 3, 12, 0x20, 0x40, 0x60, 0x80] {
             assert!(
                 HtPhy::reference([0x7f, flags, 0], None).is_err(),
                 "flags={flags}"
             );
         }
         assert!(HtPhy::reference([0xff, 0, 0], None).is_err());
+        let gf = HtPhy::reference([0x7f, 8, 0], None).unwrap();
+        assert_eq!(gf.greenfield, Some(true));
+        assert!(!gf.compatible(&HtPhy::reference([0x7f, 0, 0], None).unwrap()));
         assert!(HtPhy::reference([7, 0, 8], None).is_err());
         assert!(unknown.compatible(&HtPhy::reference([0x17, 0x10, 3], None).unwrap()));
         assert!(!HtPhy::reference([0x17, 0, 3], None)
             .unwrap()
             .compatible(&HtPhy::reference([0x17, 0x10, 3], None).unwrap()));
+    }
+    #[test]
+    fn radio_ht_greenfield_recovered_configuration() {
+        let mut value = serde_json::json!({"ht":{
+            "mcs":7,"bandwidth_mhz":20,"stbc":0,"extension_spatial_streams":0,
+            "guard_interval_ns":800,"coding":"ldpc","aggregation":false,
+            "psdu_bytes":100,"format":"greenfield"
+        },"ampdu":null});
+        let recovered = HtPhy::recovered(&value, 100).unwrap();
+        let reference = HtPhy::reference([0x7f, 0x18, 7], None).unwrap();
+        assert!(recovered.compatible(&reference));
+        assert!(!recovered.compatible(&HtPhy::reference([0x7f, 0x10, 7], None).unwrap()));
+        value["ht"]["guard_interval_ns"] = 400.into();
+        assert!(HtPhy::recovered(&value, 100).is_err());
     }
     #[test]
     fn radio_ht_reference_aggregate_status() {

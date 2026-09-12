@@ -165,6 +165,33 @@ at MCS 3/7 and both guard intervals verify recovery of the intact later MPDU
 without publishing the damaged earlier MPDU. These are offline correctness
 fixtures, not live HackRF/dongle qualification or a throughput benchmark.
 
+## HT greenfield receiver increment
+
+`WifiDecoder` also recognizes HT20 greenfield with one space-time stream,
+no extension streams, MCS0–7, BCC or LDPC, and 800 ns GI. It reads HT-SIG
+directly after HT-LTF1, retains all 56 occupied training tones, begins DATA
+after the 24 us preamble and uses pilot polarity offset 2. The shared mixed
+receiver still uses offset 3 and its additional training field. Greenfield
+short GI with immediate DATA is explicitly rejected, following the note in
+IEEE 802.11-2020 19.3.11.11.6. STBC and additional streams remain unsupported.
+
+The 64 independent complete waveforms cover both coding families, all eight
+MCS values, two PSDU sizes and clean/carrier-offset-plus-multipath conditions.
+The streaming test acquires timing and frequency from IQ at three chunk sizes
+and checks exact frame bytes, FCS and original sample coordinates. Eight
+negative waveforms cover header CRC, unsupported configurations, SERVICE and
+MAC FCS; separate tests exercise truncation, gaps and configured limits.
+Four additional aggregate waveforms cover BCC/LDPC at MCS0/7, preserving
+identical MPDUs as distinct occurrences and exercising aggregate output bounds.
+
+`PhyDiagnostic::HtGreenfield` tags the associated preamble sample index and
+requires an additional downstream exhaustive-match arm. The existing receive
+example preserves `ht.format = "greenfield"` in frame and header records;
+the comparator checks this against known radiotap format flags. Header-only
+diagnostics do not establish MAC integrity. Legacy-only decoder defaults do
+not gain greenfield frame delivery. Live greenfield interoperability and the
+remaining formats, throughput and modern TX are not qualified by these tests.
+
 ## Existing example and replay workflow
 
 The receive example's leading `--modern` flag selects `WifiDecoder`, including

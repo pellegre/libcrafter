@@ -210,6 +210,10 @@ The 24 us preamble and DATA pilot polarity offset follow IEEE 802.11-2020
 19.3.9.5 and 19.3.11.11.3. Short GI with immediate DATA is excluded by the
 19.3.11.11.6 note. `ht_greenfield_vectors.py --check` verifies regeneration;
 fixture integrity checks alone do not establish streaming receive support.
+`ht-greenfield-invalid-index.tsv` adds eight malformed waveforms for header
+CRC, unsupported configurations, SERVICE and MAC FCS rejection tests.
+`ht-greenfield-ampdu-index.tsv` adds four two-MPDU aggregates at MCS0/7 with
+BCC/LDPC, for exact per-MPDU recovery, duplicate identity and output limits.
 
 ## Legacy transmit oracle corpus
 

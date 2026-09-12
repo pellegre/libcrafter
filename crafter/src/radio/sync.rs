@@ -338,6 +338,11 @@ impl Synchronizer {
             let k = (i as i32 - 26).rem_euclid(64) as usize;
             channel[k] = bins[k].scale(*v as f32);
         }
+        // Greenfield HT-LTF1 shares these two long-symbol intervals but has
+        // four additional occupied tones. Legacy demapping never uses them.
+        for (k, sign) in [(36, 1.), (37, 1.), (27, -1.), (28, -1.)] {
+            channel[k] = bins[k].scale(sign);
+        }
         self.clear();
         Some(SyncEvent::Acquired(Acquisition {
             preamble_start,

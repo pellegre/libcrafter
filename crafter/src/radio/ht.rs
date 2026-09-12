@@ -165,6 +165,16 @@ pub(super) fn decode_iq(
     samples: &[super::ComplexSample],
     acquisition: &super::sync::Acquisition,
 ) -> Option<HtSignalFields> {
+    decode_iq_at(samples, acquisition, 80)
+}
+
+/// HT-SIG follows L-SIG in mixed format, but directly follows HT-LTF1 in
+/// greenfield. All oscillator corrections retain acquisition's phase origin.
+pub(super) fn decode_iq_at(
+    samples: &[super::ComplexSample],
+    acquisition: &super::sync::Acquisition,
+    signal_offset: usize,
+) -> Option<HtSignalFields> {
     use super::{sync::fft64, ComplexSample};
     if samples.len() != 160 {
         return None;
@@ -175,7 +185,7 @@ pub(super) fn decode_iq(
         for (n, sample) in time.iter_mut().enumerate() {
             let index = acquisition
                 .signal_start
-                .checked_add((80 + symbol * 80 + 16 + n) as u64)?;
+                .checked_add((signal_offset + symbol * 80 + 16 + n) as u64)?;
             let elapsed = index.checked_sub(acquisition.phase_origin)?;
             *sample = samples[symbol * 80 + 16 + n].mul(ComplexSample::rotation(
                 -acquisition.frequency_rad * elapsed as f32,
