@@ -89,7 +89,9 @@ transmission. Those remain required work under the full contract above.
 The internal LDPC primitive includes all twelve IEEE HT parity-check matrices:
 648/1296/1944-bit blocks at rates 1/2, 2/3, 3/4 and 5/6. Its layered normalized
 min-sum decoder is capped at 64 iterations and returns explicit input errors
-or nonconvergence. A zero syndrome is necessary but does not replace MAC FCS.
+or nonconvergence. Strict codeword recovery requires a zero syndrome, which
+does not replace MAC FCS. Aggregate recovery can retain tentative estimates
+from failed codewords under the separate policy below.
 
 `ldpc_vectors.py --check` independently solves systematic parity using GF(2)
 Gaussian elimination. The Rust tests verify 36 complete codewords, correction
@@ -147,10 +149,20 @@ is bounded by its 16-bit length and the shared IQ buffer reservation. Configure
 two reserved child slots**. Exhausting this bound returns an explicit error
 and resets the decoder; it does not return a silently shortened aggregate.
 
-`ht_ampdu_vectors.py --check` generates 124 complete independent IQ fixtures
+For LDPC aggregates, a failed codeword does not discard the entire PSDU.
+The receiver continues bounded decoding of the remaining codewords and scans
+the tentative PSDU only after SERVICE validation. Every delivered MPDU must
+still pass its own FCS. `PhyDiagnostic::LdpcPartial` counts failed codewords;
+the first parity failure also retains `LdpcNonconvergence` details. These
+diagnostics accompany recovered frames and require downstream match arms.
+Nonaggregated LDPC reception remains strict: any codeword failure rejects it.
+
+`ht_ampdu_vectors.py --check` generates 128 complete independent IQ fixtures
 covering both coding families, MCS 0–7, both guard intervals, alignment,
 duplicate MPDUs and bad FCS, plus MCS 7 delimiter corruption, truncation,
-padding and aggregates larger than 4095 bytes. These are offline correctness
+padding and aggregates larger than 4095 bytes. Four damaged-codeword fixtures
+at MCS 3/7 and both guard intervals verify recovery of the intact later MPDU
+without publishing the damaged earlier MPDU. These are offline correctness
 fixtures, not live HackRF/dongle qualification or a throughput benchmark.
 
 ## Existing example and replay workflow
