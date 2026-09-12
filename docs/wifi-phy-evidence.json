@@ -56,6 +56,12 @@
   ],
   "facts": [
     {
+      "id": "ht-single-data-stream-stbc",
+      "source": "ieee-80211-2020",
+      "anchor": "19.3.9.4.6 Equation 19-27 and Tables 19-12/13; 19.3.11.9.2 Table 19-18; 19.3.11.10 Table 19-19",
+      "fact": "NSS=1 with MCS0-7 and STBC=1 uses two space-time streams. For consecutive constellation symbols (a,b), stream 1 transmits (a,b) and stream 2 transmits (-conj(b),conj(a)). The first two HT-LTF columns are (1,1) and (-1,1). Two-STS pilot patterns are [1,1,-1,-1] and [1,-1,-1,1], cyclically rotated across symbols before polarity multiplication. The two-data-symbol inverse requires both effective channels, not the single-stream equalizer."
+    },
+    {
       "id": "ht-greenfield-single-stream",
       "source": "ieee-80211-2020",
       "anchor": "19.3.2 Figure 19-1; 19.3.9.5.1-5; 19.3.11.11.3 Equation 19-58; 19.3.11.11.6 note",

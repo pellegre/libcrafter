@@ -8598,6 +8598,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "ht-greenfield-index.tsv"
                 | "ht-greenfield-invalid-index.tsv"
                 | "ht-greenfield-ampdu-index.tsv"
+                | "stbc-pairs.tsv"
                 | "ampdu-delimiters.tsv"
                 | "ampdu-index.tsv"
                 | "ht-ampdu-index.tsv"
