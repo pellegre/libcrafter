@@ -912,7 +912,11 @@ by enough overlap to finish the longest permitted 1 Mbps frame. A recovered
 frame belongs to the worker whose core contains its preamble coordinate, so
 overlap cannot duplicate an occurrence. Discontinuities finish the preceding
 epoch before resetting window assembly, and explicit reset drains and discards
-old worker results. The configured sample buffer must cover the assembly window
+old worker results. Real EOF and gap boundaries finalize worker candidates and
+retain their truncation diagnostics; an artificial window boundary does not
+count as stream loss. Non-frame counters describe worker detections and can
+include trailing-overlap observations, while valid-frame counts include only
+emitted core-owned occurrences. The configured sample buffer must cover the assembly window
 and one in-flight window per worker; insufficient bounds fail before samples
 are retained.
 

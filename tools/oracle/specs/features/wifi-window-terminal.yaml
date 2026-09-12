@@ -1,0 +1,33 @@
+version: 1
+kind: feature
+name: wifi_window_terminal
+summary: Windowed IQ decoding reports partial frames at real stream boundaries without inventing truncation at worker window boundaries.
+layers:
+  - dot11
+directions:
+  - backend_to_libcrafter
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: partial-frame-eof
+    checks: [no_partial_packet, truncated_frame_diagnostic, decoder_truncation_counter]
+  - name: partial-frame-gap
+    checks: [no_cross_gap_packet, truncated_frame_diagnostic, recovery_after_gap]
+  - name: artificial-worker-boundary
+    checks: [no_synthetic_eof_diagnostic, no_reset_counter_leak]
+validation:
+  rust_test: crafter/tests/radio_parallel.rs
+  fixtures: crafter/tests/fixtures/iq
+coverage_cases:
+  - wifi-window-partial-eof
+  - wifi-window-partial-gap
+  - wifi-window-artificial-boundary
+supported_cases:
+  - {name: wifi-window-partial-eof, directions: [backend_to_libcrafter], byte_policy: structured_error, contract_only: true}
+  - {name: wifi-window-partial-gap, directions: [backend_to_libcrafter], byte_policy: structured_error, contract_only: true}
+  - {name: wifi-window-artificial-boundary, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: supported
+    notes:
+      - Contract exercised by independent IQ fixtures in Rust streaming tests; no new packet-backend materialization is required.

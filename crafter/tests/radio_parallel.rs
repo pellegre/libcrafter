@@ -188,6 +188,70 @@ fn windowed_parallelism_preserves_frames_across_core_boundaries() {
 }
 
 #[test]
+fn windowed_reports_partial_frames_at_eof_and_gap() {
+    for bytes in [
+        &include_bytes!("fixtures/iq/ofdm-6-truncated.cs8")[..],
+        &include_bytes!("fixtures/iq/dsss-10-long-truncated_payload-48.cs8")[..],
+    ] {
+        for gap in [false, true] {
+            let mut c = config(bytes.len() / 2);
+            c.max_buffer_samples = 6_000_000;
+            let mut serial = LegacyWifiDecoder::new();
+            let mut windowed = WindowedLegacyWifiDecoder::new(1).unwrap();
+            let event = IqEvent::Chunk(
+                IqChunk::new(
+                    c.clone(),
+                    position(),
+                    bytes.iter().map(|b| *b as i8).collect(),
+                )
+                .unwrap(),
+            );
+            assert!(serial
+                .consume(clone_event(&event))
+                .unwrap()
+                .frames
+                .is_empty());
+            assert!(windowed.consume(event).unwrap().frames.is_empty());
+            let boundary = if gap {
+                let mut p = position();
+                p.epoch = 1;
+                p.discontinuity = Some(Discontinuity {
+                    reason: GapReason::SourceLoss,
+                    loss: SampleLoss::Unknown,
+                });
+                IqEvent::Chunk(IqChunk::new(c.clone(), p, vec![0; 256]).unwrap())
+            } else {
+                IqEvent::End(StreamEnd::Eof)
+            };
+            let expected = serial.consume(clone_event(&boundary)).unwrap();
+            let actual = windowed.consume(boundary).unwrap();
+            assert!(actual.frames.is_empty());
+            let truncations = |out: &DecodeOutput| {
+                out.diagnostics
+                    .iter()
+                    .filter(|d| matches!(d, PhyDiagnostic::TruncatedFrame))
+                    .count()
+            };
+            assert!(truncations(&expected) > 0);
+            assert_eq!(truncations(&actual), truncations(&expected), "gap={gap}");
+            assert_eq!(
+                windowed.ofdm_stats().truncated_frames,
+                serial.ofdm_stats().truncated_frames
+            );
+            assert_eq!(
+                windowed.dsss_stats().truncated_frames,
+                serial.dsss_stats().truncated_frames
+            );
+            assert!(windowed
+                .consume(IqEvent::End(StreamEnd::Eof))
+                .unwrap()
+                .frames
+                .is_empty());
+        }
+    }
+}
+
+#[test]
 fn split_dsss_workers_preserve_frame_occurrences() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
     for index in [

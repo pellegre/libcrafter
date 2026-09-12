@@ -16,6 +16,7 @@ struct Job {
     config: RxConfig,
     position: IqPosition,
     cs8: Vec<i8>,
+    boundary: Option<ResetReason>,
 }
 struct Reply {
     worker: usize,
@@ -26,13 +27,17 @@ struct Reply {
 }
 
 fn run_worker(worker: usize, jobs: Arc<Mutex<mpsc::Receiver<Job>>>, replies: mpsc::Sender<Reply>) {
-    let mut decoder = LegacyWifiDecoder::new();
+    let mut ofdm = DecoderStats::default();
+    let mut dsss = DecoderStats::default();
     loop {
         let job = match jobs.lock().unwrap_or_else(|e| e.into_inner()).recv() {
             Ok(job) => job,
             Err(_) => break,
         };
-        decoder.reset(ResetReason::Explicit);
+        // Window boundaries are implementation details, not stream loss. A
+        // fresh decoder prevents an abandoned overlap candidate's reset from
+        // leaking a synthetic truncation into the following job's counters.
+        let mut decoder = LegacyWifiDecoder::new();
         let mut decoded = DecodeOutput::default();
         let mut failure = None;
         for (index, bytes) in job.cs8.chunks(job.config.max_chunk_samples * 2).enumerate() {
@@ -59,14 +64,29 @@ fn run_worker(worker: usize, jobs: Arc<Mutex<mpsc::Receiver<Job>>>, replies: mps
                 }
             }
         }
+        if failure.is_none() {
+            if let Some(reason) = job.boundary {
+                // Only a real segment end (EOF or gap) truncates candidates.
+                // The outer decoder publishes the boundary itself once.
+                decoded.diagnostics.extend(
+                    decoder
+                        .reset(reason)
+                        .diagnostics
+                        .into_iter()
+                        .filter(|d| !matches!(d, PhyDiagnostic::Reset(_))),
+                );
+            }
+        }
+        ofdm = sum_stats(&[ofdm, decoder.ofdm_stats()]);
+        dsss = sum_stats(&[dsss, decoder.dsss_stats()]);
         let result = failure.map_or(Ok(decoded), Err);
         if replies
             .send(Reply {
                 worker,
                 ordinal: job.ordinal,
                 result,
-                ofdm: decoder.ofdm_stats(),
-                dsss: decoder.dsss_stats(),
+                ofdm,
+                dsss,
             })
             .is_err()
         {
@@ -162,7 +182,12 @@ impl WindowedLegacyWifiDecoder {
             self.byte_start = 0;
         }
     }
-    fn submit(&mut self, core: usize, window: usize) -> RadioResult<()> {
+    fn submit(
+        &mut self,
+        core: usize,
+        window: usize,
+        boundary: Option<ResetReason>,
+    ) -> RadioResult<()> {
         let config = self
             .config
             .clone()
@@ -185,6 +210,7 @@ impl WindowedLegacyWifiDecoder {
                 config,
                 position,
                 cs8: self.bytes[self.byte_start..end].to_vec(),
+                boundary,
             })
             .map_err(|_| RadioError::Source("windowed worker queue closed".into()))?;
         self.next_job += 1;
@@ -273,11 +299,11 @@ impl WindowedLegacyWifiDecoder {
         self.position = None;
         self.continuity.reset();
     }
-    fn finish_segment(&mut self, limit: usize) -> RadioResult<DecodeOutput> {
+    fn finish_segment(&mut self, limit: usize, reason: ResetReason) -> RadioResult<DecodeOutput> {
         while self.available() != 0 {
             let core = self.available().min(CORE_SAMPLES);
             let window = self.available();
-            self.submit(core, window)?;
+            self.submit(core, window, Some(reason))?;
         }
         self.collect(true, limit)
     }
@@ -339,7 +365,7 @@ impl PhyDecoder for WindowedLegacyWifiDecoder {
         let chunk = match event {
             IqEvent::End(end) => {
                 let limit = self.config.as_ref().map_or(64, |c| c.max_pending_frames);
-                let mut output = self.finish_segment(limit)?;
+                let mut output = self.finish_segment(limit, ResetReason::End(end))?;
                 self.clear_stream();
                 self.terminal = true;
                 output
@@ -367,7 +393,7 @@ impl PhyDecoder for WindowedLegacyWifiDecoder {
         }
         let mut output = DecodeOutput::default();
         if let Some(gap) = self.continuity.observe(&chunk) {
-            output = self.finish_segment(config.max_pending_frames)?;
+            output = self.finish_segment(config.max_pending_frames, ResetReason::Gap(gap))?;
             self.clear_stream();
             output
                 .diagnostics
@@ -381,12 +407,74 @@ impl PhyDecoder for WindowedLegacyWifiDecoder {
         }
         self.bytes.extend_from_slice(chunk.cs8());
         while self.available() >= CORE_SAMPLES + MARGIN_SAMPLES {
-            self.submit(CORE_SAMPLES, CORE_SAMPLES + MARGIN_SAMPLES)?;
+            self.submit(CORE_SAMPLES, CORE_SAMPLES + MARGIN_SAMPLES, None)?;
         }
         let mut completed = self.collect(false, config.max_pending_frames)?;
         output.frames.append(&mut completed.frames);
         output.diagnostics.append(&mut completed.diagnostics);
         output.diagnostics.truncate(config.max_pending_frames);
         Ok(output)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn worker_overlap_reset_does_not_invent_stream_truncation() {
+        let (jobs, receiver) = mpsc::channel();
+        let (replies, outputs) = mpsc::channel();
+        let worker =
+            std::thread::spawn(move || run_worker(0, Arc::new(Mutex::new(receiver)), replies));
+        let config = RxConfig {
+            sample_rate_hz: 20_000_000,
+            center_frequency_hz: 2_437_000_000,
+            max_chunk_samples: 4096,
+            max_buffer_samples: 120_000,
+            max_frame_bytes: 4095,
+            max_pending_frames: 64,
+            max_capture_samples: 20_000_000,
+            max_duration: Duration::from_secs(1),
+        };
+        for (ordinal, cs8, boundary) in [
+            (
+                0,
+                include_bytes!("../../tests/fixtures/iq/ofdm-6-truncated.cs8")
+                    .iter()
+                    .map(|b| *b as i8)
+                    .collect::<Vec<_>>(),
+                None,
+            ),
+            (1, vec![0; 1024], Some(ResetReason::End(StreamEnd::Eof))),
+        ] {
+            jobs.send(Job {
+                ordinal,
+                core_start: 0,
+                core_end: cs8.len() as u64 / 2,
+                config: config.clone(),
+                position: IqPosition {
+                    epoch: 0,
+                    sequence: 0,
+                    sample_index: 0,
+                    time_anchor: None,
+                    discontinuity: None,
+                },
+                cs8,
+                boundary,
+            })
+            .unwrap();
+            let reply = outputs.recv().unwrap();
+            let output = reply.result.unwrap();
+            assert!(output.frames.is_empty());
+            assert!(!output
+                .diagnostics
+                .iter()
+                .any(|d| matches!(d, PhyDiagnostic::TruncatedFrame)));
+            assert_eq!(reply.ofdm.truncated_frames, 0);
+        }
+        drop(jobs);
+        worker.join().unwrap();
     }
 }
