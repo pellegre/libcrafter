@@ -75,17 +75,14 @@ pub struct HackRfTxStats {
 
 struct PlanState {
     offset: usize,
-    repetition: u32,
-    gap_left: usize,
     stats: HackRfTxStats,
     fault: Option<RadioError>,
     done: bool,
 }
 
 pub(super) struct TxShared {
-    waveform: Vec<u8>,
+    plan: Vec<u8>,
     repetitions: u32,
-    gap_samples: usize,
     max_samples: u64,
     deadline: Instant,
     cancelled: Arc<AtomicBool>,
@@ -120,17 +117,27 @@ impl TxShared {
                 actual: requested,
             });
         }
+        let capacity = usize::try_from(requested)
+            .ok()
+            .and_then(|samples| samples.checked_mul(2))
+            .ok_or(RadioError::Overflow {
+                context: "HackRF TX plan bytes",
+            })?;
+        let mut plan = Vec::with_capacity(capacity);
+        for repetition in 0..config.repetitions {
+            plan.extend(iq.iter().map(|value| *value as u8));
+            if repetition + 1 < config.repetitions {
+                plan.resize(plan.len() + config.inter_burst_gap_samples * 2, 0);
+            }
+        }
         Ok(Self {
-            waveform: iq.iter().map(|v| *v as u8).collect(),
+            plan,
             repetitions: config.repetitions,
-            gap_samples: config.inter_burst_gap_samples,
             max_samples: config.max_supplied_samples,
             deadline: Instant::now() + config.max_duration,
             cancelled,
             state: Mutex::new(PlanState {
                 offset: 0,
-                repetition: 0,
-                gap_left: 0,
                 stats: HackRfTxStats {
                     requested_samples: requested,
                     ..Default::default()
@@ -171,29 +178,9 @@ impl TxShared {
             return false;
         }
         state.stats.callbacks += 1;
-        let mut cursor = 0;
-        while cursor < output.len() && state.repetition < self.repetitions {
-            if state.gap_left != 0 {
-                let samples = state.gap_left.min((output.len() - cursor) / 2);
-                output[cursor..cursor + samples * 2].fill(0);
-                cursor += samples * 2;
-                state.gap_left -= samples;
-            } else {
-                let count = (self.waveform.len() - state.offset).min(output.len() - cursor);
-                output[cursor..cursor + count]
-                    .copy_from_slice(&self.waveform[state.offset..state.offset + count]);
-                cursor += count;
-                state.offset += count;
-                if state.offset == self.waveform.len() {
-                    state.offset = 0;
-                    state.repetition += 1;
-                    state.stats.completed_repetitions = state.repetition;
-                    if state.repetition < self.repetitions {
-                        state.gap_left = self.gap_samples;
-                    }
-                }
-            }
-        }
+        let cursor = (self.plan.len() - state.offset).min(output.len());
+        output[..cursor].copy_from_slice(&self.plan[state.offset..state.offset + cursor]);
+        state.offset += cursor;
         state.stats.supplied_samples += (cursor / 2) as u64;
         if state.stats.supplied_samples > self.max_samples {
             state.fault = Some(RadioError::Limit {
@@ -208,7 +195,8 @@ impl TxShared {
             output[cursor..].fill(0);
             state.stats.padded_samples += ((output.len() - cursor) / 2) as u64;
         }
-        if state.repetition == self.repetitions {
+        if state.offset == self.plan.len() {
+            state.stats.completed_repetitions = self.repetitions;
             state.done = true;
         }
         true
@@ -337,5 +325,25 @@ mod tests {
         assert!(!shared.fill(&mut [0; 2]));
         let shared = TxShared::new(&[1, 2], &config(), Arc::new(AtomicBool::new(false))).unwrap();
         assert!(!shared.fill(&mut [0; 3]));
+    }
+
+    #[test]
+    fn radio_hackrf_tx_large_plan_is_preassembled_and_chunked() {
+        let mut config = config();
+        config.repetitions = 100;
+        config.inter_burst_gap_samples = 17;
+        config.max_supplied_samples = 10_000;
+        let shared =
+            TxShared::new(&[1, 2, 3, 4], &config, Arc::new(AtomicBool::new(false))).unwrap();
+        let mut first = [0u8; 512];
+        let mut callbacks = 0;
+        while !shared.done() {
+            assert!(shared.fill(&mut first));
+            callbacks += 1;
+        }
+        let stats = shared.finish((0, 0), true).unwrap();
+        assert!(callbacks > 1);
+        assert_eq!(stats.completed_repetitions, 100);
+        assert_eq!(stats.supplied_samples, stats.requested_samples);
     }
 }
