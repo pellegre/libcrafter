@@ -122,16 +122,21 @@ pub(super) const TRELLIS_SIGNS: [[f32; 2]; 128] = {
 /// Soft Viterbi, zero initial memory, unconstrained final state so a corrupt tail
 /// is observable rather than silently forced to zero. Fixed 24x64 traceback.
 fn viterbi(coded: &[f32; 48]) -> [u8; 24] {
+    decode_bcc(&std::array::from_fn(|i| [coded[2 * i], coded[2 * i + 1]]))
+}
+
+/// Shared bounded rate-1/2 BCC traceback. Callers validate finite soft metrics.
+pub(super) fn decode_bcc<const N: usize>(coded: &[[f32; 2]; N]) -> [u8; N] {
     let mut metric = [f32::INFINITY; 64];
     metric[0] = 0.;
-    let mut history = [[0u8; 64]; 24];
-    for t in 0..24 {
+    let mut history = [[0u8; 64]; N];
+    for t in 0..N {
         let mut next = [f32::INFINITY; 64];
         for (state, cost) in metric.iter().enumerate() {
             for bit in 0..2 {
                 let register = (state << 1) | bit;
                 let [a, b] = TRELLIS_SIGNS[register];
-                let score = cost - coded[2 * t] * a - coded[2 * t + 1] * b;
+                let score = cost - coded[t][0] * a - coded[t][1] * b;
                 let dest = register & 63;
                 if score < next[dest] {
                     next[dest] = score;
@@ -144,8 +149,8 @@ fn viterbi(coded: &[f32; 48]) -> [u8; 24] {
     let mut state = (0..64)
         .min_by(|a, b| metric[*a].total_cmp(&metric[*b]))
         .unwrap();
-    let mut bits = [0; 24];
-    for t in (0..24).rev() {
+    let mut bits = [0; N];
+    for t in (0..N).rev() {
         bits[t] = (state & 1) as u8;
         state = history[t][state] as usize;
     }

@@ -63,5 +63,10 @@ reserved-bit and tail integrity, accepts the zero-length NDP indication, and
 preserves all signaled MCS/STBC/extension-stream values. Unsupported combinations
 must be checked by the receiving PHY before allocation or DATA decoding.
 This primitive alone does not decode an HT waveform or deliver modern frames.
+`decode_interleaved` accepts 96 finite soft metrics from two demapped HT-SIG
+symbols, reverses each symbol's interleaver and performs one continuous BCC
+traceback before the same integrity checks. Positive metrics favor bit 1;
+an all-zero metric vector is rejected. Common scaling is normalized to avoid
+trellis overflow without changing relative reliability.
 Its published baseline and outstanding edition review are recorded in
 `wifi-phy-evidence.json`.

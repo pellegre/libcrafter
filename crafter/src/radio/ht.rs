@@ -21,6 +21,9 @@ pub struct HtSignalFields {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HtSignalError {
+    MetricCount { required: usize, available: usize },
+    NonFiniteMetric { index: usize },
+    UnusableMetrics,
     BitCount { required: usize, available: usize },
     NonBinary { index: usize, value: u8 },
     Crc { expected: u8, received: u8 },
@@ -35,6 +38,34 @@ impl std::fmt::Display for HtSignalError {
 impl std::error::Error for HtSignalError {}
 
 impl HtSignalFields {
+    /// Recover HT-SIG from two symbols of 48 interleaved soft metrics each.
+    /// Positive favors bit 1. Metrics must be finite and in ascending data-tone
+    /// order per symbol, after channel and pilot correction and QBPSK demapping.
+    /// BCC state continues across the two symbols; integrity is then checked.
+    pub fn decode_interleaved(metrics: &[f32]) -> Result<Self, HtSignalError> {
+        if metrics.len() != 96 {
+            return Err(HtSignalError::MetricCount {
+                required: 96,
+                available: metrics.len(),
+            });
+        }
+        if let Some(index) = metrics.iter().position(|v| !v.is_finite()) {
+            return Err(HtSignalError::NonFiniteMetric { index });
+        }
+        let scale = metrics.iter().map(|v| v.abs()).fold(0f32, f32::max);
+        if scale == 0. {
+            return Err(HtSignalError::UnusableMetrics);
+        }
+        let deinterleaved: [f32; 96] = std::array::from_fn(|k| {
+            let symbol = k / 48;
+            let bit = k % 48;
+            metrics[symbol * 48 + 3 * (bit % 16) + bit / 16] / scale
+        });
+        let coded =
+            std::array::from_fn::<_, 48, _>(|i| [deinterleaved[2 * i], deinterleaved[2 * i + 1]]);
+        Self::decode(&super::signal::decode_bcc(&coded))
+    }
+
     /// Decode 48 binary bits in transmission order, after BCC decoding.
     /// No allocation or device access occurs; all bits must be exactly 0 or 1.
     pub fn decode(bits: &[u8]) -> Result<Self, HtSignalError> {
@@ -122,7 +153,12 @@ mod tests {
             let columns: Vec<_> = line.split('\t').collect();
             let bits: Vec<_> = columns[0].bytes().map(|b| b - b'0').collect();
             let f = HtSignalFields::decode(&bits).unwrap();
-            let expected: Vec<u16> = columns[1..].iter().map(|n| n.parse().unwrap()).collect();
+            let metrics: Vec<f32> = columns[11]
+                .bytes()
+                .map(|b| 2. * (b - b'0') as f32 - 1.)
+                .collect();
+            assert_eq!(HtSignalFields::decode_interleaved(&metrics), Ok(f));
+            let expected: Vec<u16> = columns[1..11].iter().map(|n| n.parse().unwrap()).collect();
             assert_eq!(
                 expected,
                 [
@@ -139,6 +175,59 @@ mod tests {
                 ]
             );
         }
+    }
+
+    #[test]
+    fn radio_ht_signal_soft_bounds_scaling_and_error_correction() {
+        let row = include_str!("../../tests/fixtures/iq/ht-signal-index.tsv")
+            .lines()
+            .nth(128)
+            .unwrap();
+        let columns: Vec<_> = row.split('\t').collect();
+        let bits: Vec<_> = columns[0].bytes().map(|b| b - b'0').collect();
+        let expected = HtSignalFields::decode(&bits).unwrap();
+        let metrics: Vec<f32> = columns[11]
+            .bytes()
+            .map(|b| 2. * (b - b'0') as f32 - 1.)
+            .collect();
+        for factor in [f32::MAX, f32::MIN_POSITIVE, f32::from_bits(1)] {
+            let scaled: Vec<_> = metrics.iter().map(|m| m * factor).collect();
+            assert_eq!(HtSignalFields::decode_interleaved(&scaled), Ok(expected));
+        }
+        for index in 0..96 {
+            let mut changed = metrics.clone();
+            changed[index] *= -0.25;
+            assert_eq!(
+                HtSignalFields::decode_interleaved(&changed),
+                Ok(expected),
+                "metric {index}"
+            );
+            for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                changed[index] = invalid;
+                assert_eq!(
+                    HtSignalFields::decode_interleaved(&changed),
+                    Err(HtSignalError::NonFiniteMetric { index })
+                );
+            }
+            assert_eq!(
+                HtSignalFields::decode_interleaved(&metrics[..index]),
+                Err(HtSignalError::MetricCount {
+                    required: 96,
+                    available: index
+                })
+            );
+        }
+        assert_eq!(
+            HtSignalFields::decode_interleaved(&[0.; 96]),
+            Err(HtSignalError::UnusableMetrics)
+        );
+        assert_eq!(
+            HtSignalFields::decode_interleaved(&[0.; 97]),
+            Err(HtSignalError::MetricCount {
+                required: 96,
+                available: 97
+            })
+        );
     }
 
     #[test]
