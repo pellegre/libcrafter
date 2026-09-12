@@ -11,6 +11,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+const HACKRF_USB_PACKET_BYTES: usize = 512;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HackRfTxConfig {
     pub serial: String,
@@ -156,10 +158,10 @@ impl TxShared {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    pub(super) fn fill(&self, output: &mut [u8]) -> bool {
+    pub(super) fn fill(&self, output: &mut [u8]) -> Option<usize> {
         let mut state = self.lock();
         if state.done {
-            return false;
+            return None;
         }
         if self.cancelled.load(Ordering::Acquire) || Instant::now() >= self.deadline {
             state.stats.cancelled = self.cancelled.load(Ordering::Relaxed);
@@ -172,14 +174,14 @@ impl TxShared {
                 .into(),
             ));
             state.done = true;
-            return false;
+            return None;
         }
         if output.is_empty() || output.len() % 2 != 0 {
             state.fault = Some(RadioError::Source(
                 "invalid HackRF TX transfer buffer".into(),
             ));
             state.done = true;
-            return false;
+            return None;
         }
         state.stats.callbacks += 1;
         let cursor = (self.plan.len() - state.offset).min(output.len());
@@ -193,17 +195,26 @@ impl TxShared {
                 actual: state.stats.supplied_samples,
             });
             state.done = true;
-            return false;
+            return None;
         }
-        if cursor < output.len() {
-            output[cursor..].fill(0);
-            state.stats.padded_samples += ((output.len() - cursor) / 2) as u64;
+        let complete = state.offset == self.plan.len();
+        let valid_length = if complete {
+            cursor
+                .div_ceil(HACKRF_USB_PACKET_BYTES)
+                .saturating_mul(HACKRF_USB_PACKET_BYTES)
+                .min(output.len())
+        } else {
+            output.len()
+        };
+        if cursor < valid_length {
+            output[cursor..valid_length].fill(0);
+            state.stats.padded_samples += ((valid_length - cursor) / 2) as u64;
         }
-        if state.offset == self.plan.len() {
+        if complete {
             state.stats.completed_repetitions = self.repetitions;
             state.done = true;
         }
-        true
+        Some(valid_length)
     }
 
     pub(super) fn done(&self) -> bool {
@@ -310,7 +321,7 @@ mod tests {
         let shared =
             TxShared::new(&[1, 2, 3, 4], &config(), Arc::new(AtomicBool::new(false))).unwrap();
         let mut output = [99; 16];
-        assert!(shared.fill(&mut output));
+        assert_eq!(shared.fill(&mut output), Some(output.len()));
         assert_eq!(output, [1, 2, 3, 4, 0, 0, 0, 0, 1, 2, 3, 4, 0, 0, 0, 0]);
         let stats = shared.finish((0, 0), true).unwrap();
         assert_eq!(
@@ -329,9 +340,9 @@ mod tests {
         invalid.tx_vga_gain_db = 48;
         assert!(invalid.validate().is_err());
         let shared = TxShared::new(&[1, 2], &config(), Arc::new(AtomicBool::new(true))).unwrap();
-        assert!(!shared.fill(&mut [0; 2]));
+        assert_eq!(shared.fill(&mut [0; 2]), None);
         let shared = TxShared::new(&[1, 2], &config(), Arc::new(AtomicBool::new(false))).unwrap();
-        assert!(!shared.fill(&mut [0; 3]));
+        assert_eq!(shared.fill(&mut [0; 3]), None);
     }
 
     #[test]
@@ -345,12 +356,28 @@ mod tests {
         let mut first = [0u8; 512];
         let mut callbacks = 0;
         while !shared.done() {
-            assert!(shared.fill(&mut first));
+            assert!(shared.fill(&mut first).is_some());
             callbacks += 1;
         }
         let stats = shared.finish((0, 0), true).unwrap();
         assert!(callbacks > 1);
         assert_eq!(stats.completed_repetitions, 100);
         assert_eq!(stats.supplied_samples, stats.requested_samples);
+    }
+
+    #[test]
+    fn radio_hackrf_tx_declares_only_finite_packet_aligned_bytes_valid() {
+        let mut config = config();
+        config.repetitions = 1;
+        let shared = TxShared::new(&[1, 2], &config, Arc::new(AtomicBool::new(false))).unwrap();
+        let mut output = vec![99; 256 * 1024];
+        assert_eq!(shared.fill(&mut output), Some(HACKRF_USB_PACKET_BYTES));
+        assert_eq!(&output[..4], &[1, 2, 0, 0]);
+        let stats = shared.finish((0, 0), true).unwrap();
+        assert_eq!(stats.supplied_samples, 1);
+        assert_eq!(
+            stats.padded_samples,
+            (HACKRF_USB_PACKET_BYTES / 2 - 1) as u64
+        );
     }
 }
