@@ -16,6 +16,8 @@ from he_prefix_iq_vectors import symbol
 # Independently transcribed Equation27-43, signed-tone order -122..122.
 LTF4 = '--+-+-+++-+++--+-----++----++-+-++++-+--++-++++--+---++++-++----+--++-+----+-+------++-----+--+++-+++-+-+-----+++---+-+++000-+-+-++-+++--+--+-+-+++-+++--+-----++------+-+----+-++--+----++-+++++++-++----+--++-+----+-+--++++--+++++-++---+---+-+-++'
 TONES = list(range(-122,-1)) + list(range(2,123))
+LTF1 = '00-000+000+000-000+000-000+000+000+000+000-000-000+000+000+000-000-000-000+000-000-000+000+000-000-000+000-000-000+000-0000000-000+000+000+000+000+000+000-000-000-000-000-000+000-000-000-000+000-000-000+000-000-000+000-000+000-000-000-000-000-00'
+LTF2 = '-0-0-0+0+0-0+0-0-0-0-0+0-0+0-0-0+0+0-0+0+0+0+0+0-0+0-0+0-0-0+0+0-0+0-0-0-0-0+0-0+0+0+0-0-0+0-0-0-0-0-0+0-0-0-0+0+0+0-0-0+000+0-0+0+0-0+0+0-0+0+0-0-0+0-0+0+0+0+0-0+0-0+0+0-0-0+0-0-0-0-0-0+0-0+0+0-0-0+0+0-0+0-0-0-0-0+0-0+0+0+0-0-0+0-0-0-0-0-0+0-0+'
 TWIDDLE = [[cmath.exp(2j*math.pi*k*t/256)/256 for k in range(-122,123)] for t in range(256)]
 
 
@@ -23,12 +25,15 @@ def ifft(freq):
     return [sum(v*w for v,w in zip(freq,row)) for row in TWIDDLE]
 
 
-def waveform(guard, case, gain, invalid=None):
+def waveform(guard, case, gain, invalid=None, ltf_size=4):
     assert len(LTF4) == 245 and LTF4.count('0') == 3
     bits = [0]*52
     for i in (0,14,34,40): bits[i] = 1
     bits[21:23] = [1,1]
     if guard == 16: bits[7] = bits[35] = 1  # Table27-19 escape: no DCM/STBC.
+    if ltf_size != 4:
+        bits[7] = bits[35] = 0
+        bits[21:23] = [0,0] if ltf_size == 1 else ([1,0] if guard == 16 else [0,1])
     bits[1] = int(case == 'beam')
     if invalid == 'ltf2': bits[21:23] = [1,0]
     if invalid == 'nsts2': bits[23] = 1
@@ -44,7 +49,10 @@ def waveform(guard, case, gain, invalid=None):
     for k,v in zip(range(-112,113,16), [-1,-1,-1,1,1,1,-1,1,1,1,-1,1,1,-1,1]):
         if k: stf_freq[k+122] = v*(1+1j)/math.sqrt(2)
     stf = [v*4*math.sqrt(52/14) for v in ifft(stf_freq)][:80]
-    ltf = [v*4*math.sqrt(52/242) for v in ifft([{'-':-1,'+':1,'0':0}[c] for c in LTF4])]
+    sequence = {1:LTF1,2:LTF2,4:LTF4}[ltf_size]
+    active = len(sequence)-sequence.count('0')
+    assert len(sequence) == 245 and active == {1:60,2:122,4:242}[ltf_size]
+    ltf = [v*4*math.sqrt(52/active) for v in ifft([{'-':-1,'+':1,'0':0}[c] for c in sequence])][:64*ltf_size]
     he_wave = stf + ltf[-guard:] + ltf
     data_start = len(prefix)+len(he_wave)
     if invalid == 'zero': he_wave[80:] = [0j]*(guard+256)
@@ -87,6 +95,16 @@ def generate(out):
         rows.append(f'{name}\t{reason}\t{hashlib.sha256(iq).hexdigest()}')
     (out/'he-training4-invalid-index.tsv').write_text('\n'.join(rows)+'\n')
     print('24 HE4x training/probe cases and5 negative cases')
+    rows = ['name\tguard\tbeam_change\tcfo\tphase\tgain\ttaps\tbeam_i\tbeam_q\tprobe_bits\tltf_start\tdata_start\tend\tsha256\tltf_size']
+    for size,guard in ((1,16),(2,16),(2,32)):
+        for case in ('flat','offset','selective','beam'):
+            for gain in (96,160,224):
+                name = f'he-training-sparse-ltf{size}-gi{guard*50}-{case}-gain{gain}'
+                iq,fields = waveform(guard,case,gain,ltf_size=size)
+                (out/f'{name}.cs8').write_bytes(iq)
+                rows.append('\t'.join(map(str,[name,*fields,hashlib.sha256(iq).hexdigest(),size])))
+    (out/'he-training-sparse-index.tsv').write_text('\n'.join(rows)+'\n')
+    print('36 sparse HE training/probe cases')
 
 
 if __name__ == '__main__':

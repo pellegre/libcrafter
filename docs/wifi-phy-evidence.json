@@ -222,6 +222,12 @@
       "fact": "HT-STF duration is 4 microseconds; its 20 MHz frequency sequence is identical to L-STF."
     },
     {
+      "id": "he-su-sparse-training",
+      "source": "ieee-80211ax-2021",
+      "anchor": "Table 27-31; Equations 27-40/41/42/58; Table 27-12",
+      "fact": "HE20 SU 1x training uses 60 active tones at multiples of four and a 64-sample useful period with 800ns GI. 2x uses 122 even tones and a 128-sample useful period with 800ns or 1600ns GI. Both sequences span signed indices -122 through 122. For one stream and one RU, waveform normalization reduces to inverse sqrt(active training tone count). Receiver inference: short-FFT channel gain converts to 256-point DATA gain by (256/NFFT)*sqrt(active/242). Complex linear interpolation is an implementation estimator, not a standard-mandated exact channel reconstruction."
+    },
+    {
       "id": "he-su-training",
       "source": "ieee-80211ax-2021",
       "anchor": "27.3.11.9 Equations27-22/23/38; 27.3.11.10 Equations27-43/55-58",

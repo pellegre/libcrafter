@@ -7,6 +7,12 @@ use std::{fs, path::PathBuf};
 fn radio_he_training4_independent_inventory() {
     for (index, count, digest, column) in [
         (
+            include_str!("fixtures/iq/he-training-sparse-index.tsv"),
+            36,
+            "aeec7245f9a6c1d79a69bc359c56607fcd520c8907b3b184ff3aa932d25c4d55",
+            13,
+        ),
+        (
             include_str!("fixtures/iq/he-training4-index.tsv"),
             24,
             "17fee2b42df2d6c47b42ed75dbb9728889e0b5396dff24406cebaaf1df295beb",

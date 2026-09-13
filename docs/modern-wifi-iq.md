@@ -366,8 +366,13 @@ The private one-stream 4x HE-LTF receiver uses the recovered SU header to locate
 training, handles 0.8us and 3.2us guards, and estimates all242 active tones with
 the 256-point transform. Independent preamble/channel-probe cases check gain,
 frequency offset, multipath and changes in spatial mapping after the legacy
-header. Sparse 1x/2x training, STBC training, DATA coding and MAC publication
-remain unfinished; channel-probe sign recovery is not frame decoding.
+header. The 1x/2x paths use short 64/128-point transforms and convert their gain
+to the 256-point DATA normalization. Complex linear interpolation fills
+untrained tones, with linear extrapolation at the band edges. This is an
+estimator, not exact reconstruction for arbitrary channels. Independent probes
+cover all three sparse SU training/guard combinations. STBC training, DATA
+coding and MAC publication remain unfinished; probe sign recovery is not frame
+decoding and does not qualify high-order modulation error performance.
 
 ## VHT BCC DATA implementation
 
