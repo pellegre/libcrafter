@@ -193,6 +193,11 @@ partial mode retains failure diagnostics and intact earlier bytes but still
 requires SERVICE and per-MPDU FCS verification. MU IQ demodulation, cross-user
 admission and streaming integration remain unfinished.
 
+The joint DCM demapper also accepts 12- and 24-data-tone halves for 26/52-tone
+RUs. Independent distance fixtures verify the even-half BPSK sign, QPSK
+conjugation, 16-QAM bit swapping and erased-observation handling. This removes
+a small-RU demapper restriction; complete MU IQ recovery remains unfinished.
+
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,
 midambles10/20, CFO/selective channels, and a damaged first aggregate member;

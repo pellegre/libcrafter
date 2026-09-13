@@ -931,7 +931,7 @@ pub(super) fn demap_dcm_for_half(
     half: usize,
 ) -> Option<[f32; 4]> {
     if !matches!(bits, 1 | 2 | 4)
-        || !matches!(half, 26 | 51 | 117)
+        || !matches!(half, 12 | 24 | 26 | 51 | 117)
         || k >= half
         || pair
             .iter()
@@ -1995,55 +1995,74 @@ mod tests {
 
     #[test]
     fn radio_he_dcm_joint_independent_metrics() {
-        let rows = include_str!("../../tests/fixtures/iq/he-dcm-metrics.tsv");
-        assert_eq!(rows.lines().skip(1).count(), 660);
-        for row in rows.lines().skip(1) {
-            let c: Vec<_> = row.split('\t').collect();
-            let bits = c[0].parse::<usize>().unwrap();
-            let k = c[1].parse().unwrap();
-            let scale = match bits {
-                1 => 1f32,
-                2 => 2f32.sqrt(),
-                _ => 10f32.sqrt(),
-            };
-            let values: Vec<f32> = c[2..8].iter().map(|v| v.parse().unwrap()).collect();
-            let pair = [
-                (
-                    ComplexSample {
-                        i: values[0] / scale,
-                        q: values[1] / scale,
-                    },
-                    values[4],
-                ),
-                (
-                    ComplexSample {
-                        i: values[2] / scale,
-                        q: values[3] / scale,
-                    },
-                    values[5],
-                ),
-            ];
-            let actual = demap_dcm(pair, bits, k).unwrap();
-            if k < 51 {
-                // Both supported halves are odd: identical indexed labels
-                // produce identical joint metrics, but bounds must differ.
-                assert_eq!(demap_dcm_for_half(pair, bits, k, 51), Some(actual));
-            }
-            for (bit, expected) in c[9]
-                .split(',')
-                .map(|v| v.parse::<f32>().unwrap())
-                .enumerate()
-            {
-                assert!(
-                    (actual[bit] - expected).abs() < 2e-5 * (1. + expected.abs()),
-                    "{row}: {actual:?}"
-                );
-                if c[8] != "-" && values[4] + values[5] > 0. {
-                    assert_eq!(u8::from(actual[bit] > 0.), c[8].as_bytes()[bit] - b'0');
+        for (rows, half) in [
+            (
+                include_str!("../../tests/fixtures/iq/he-dcm-metrics.tsv"),
+                117,
+            ),
+            (
+                include_str!("../../tests/fixtures/iq/he-dcm-half12-metrics.tsv"),
+                12,
+            ),
+            (
+                include_str!("../../tests/fixtures/iq/he-dcm-half24-metrics.tsv"),
+                24,
+            ),
+        ] {
+            assert_eq!(rows.lines().skip(1).count(), 660);
+            for row in rows.lines().skip(1) {
+                let c: Vec<_> = row.split('\t').collect();
+                let bits = c[0].parse::<usize>().unwrap();
+                let k = c[1].parse().unwrap();
+                let scale = match bits {
+                    1 => 1f32,
+                    2 => 2f32.sqrt(),
+                    _ => 10f32.sqrt(),
+                };
+                let values: Vec<f32> = c[2..8].iter().map(|v| v.parse().unwrap()).collect();
+                let pair = [
+                    (
+                        ComplexSample {
+                            i: values[0] / scale,
+                            q: values[1] / scale,
+                        },
+                        values[4],
+                    ),
+                    (
+                        ComplexSample {
+                            i: values[2] / scale,
+                            q: values[3] / scale,
+                        },
+                        values[5],
+                    ),
+                ];
+                let actual = demap_dcm_for_half(pair, bits, k, half).unwrap();
+                if half == 117 && k < 51 {
+                    // Both supported halves are odd: identical indexed labels
+                    // produce identical joint metrics, but bounds must differ.
+                    assert_eq!(demap_dcm_for_half(pair, bits, k, 51), Some(actual));
+                }
+                for (bit, expected) in c[9]
+                    .split(',')
+                    .map(|v| v.parse::<f32>().unwrap())
+                    .enumerate()
+                {
+                    assert!(
+                        (actual[bit] - expected).abs() < 2e-5 * (1. + expected.abs()),
+                        "{row}: {actual:?}"
+                    );
+                    if c[8] != "-" && values[4] + values[5] > 0. {
+                        assert_eq!(u8::from(actual[bit] > 0.), c[8].as_bytes()[bit] - b'0');
+                    }
                 }
             }
         }
         let pair = [(ComplexSample::ZERO, 1.); 2];
+        for half in [12, 24] {
+            for k in [half, usize::MAX] {
+                assert!(demap_dcm_for_half(pair, 1, k, half).is_none());
+            }
+        }
         for half in [0, 50, 52, 116, 118, usize::MAX] {
             assert!(demap_dcm_for_half(pair, 1, 0, half).is_none());
         }

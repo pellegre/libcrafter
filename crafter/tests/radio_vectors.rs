@@ -4,6 +4,23 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_small_ru_dcm_inventory() {
+    for (rows, hash) in [
+        (
+            include_str!("fixtures/iq/he-dcm-half12-metrics.tsv"),
+            "fd319f2f7a06a2d27eca46cab4c724744d4c27176cca1793aa253c63f64f1db0",
+        ),
+        (
+            include_str!("fixtures/iq/he-dcm-half24-metrics.tsv"),
+            "3ae95868dfd2ea67e5babe53aff422330fb9d1d2133d52061763980e6fc2eead",
+        ),
+    ] {
+        assert_eq!(rows.lines().skip(1).count(), 660);
+        assert_eq!(hex(&Sha256::digest(rows.as_bytes())), hash);
+    }
+}
+
+#[test]
 fn radio_he_mu_ldpc_payload_inventory() {
     let index = include_str!("fixtures/iq/he-mu-ldpc-payload.tsv");
     assert_eq!(index.lines().skip(1).count(), 438);

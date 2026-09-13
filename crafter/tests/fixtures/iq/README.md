@@ -1,5 +1,10 @@
 # Independent IQ vector contract
 
+`he-dcm-half{12,24}-metrics.tsv` contains 1320 independent exact-rational
+joint-distance cases for 26/52-tone RU DCM, including even-half BPSK parity,
+QPSK/16-QAM mappings, noise and either/both erased observations. Regenerate with
+`he_dcm_vectors.py --half 12` or `--half 24`, adding `--check` to verify.
+
 `he-mu-ldpc-payload.tsv` contains 438 independently encoded payload cases:
 433 valid, four malformed SERVICE and one damaged last codeword. They cover
 all four HE20 RU sizes, MCS0..11, applicable DCM, one stream/STBC, padding and
