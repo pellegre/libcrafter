@@ -10,6 +10,14 @@
   },
   "sources": [
     {
+      "id": "radiotap-vht-metadata",
+      "classification": "capture-metadata",
+      "authority_url": "https://www.radiotap.org/fields/VHT.html",
+      "retrieval_url": "https://raw.githubusercontent.com/radiotap/radiotap.github.io/master/fields/VHT.md",
+      "status": "complete_field_definition_reviewed",
+      "related_url": "https://raw.githubusercontent.com/radiotap/radiotap.github.io/master/fields/A-MPDU%20status.md"
+    },
+    {
       "id": "radiotap-ht-metadata",
       "classification": "capture-metadata",
       "authority_url": "https://www.radiotap.org/fields/MCS.html",
@@ -55,6 +63,12 @@
     }
   ],
   "facts": [
+    {
+      "id": "radiotap-vht-known-fields",
+      "source": "radiotap-vht-metadata",
+      "anchor": "VHT field 21 known/flags, bandwidth and mcs_nss tables; A-MPDU field 20 EOF flags",
+      "fact": "VHT metadata is 12 bytes aligned to two bytes. GI and bandwidth validity use known bits 0x0004 and 0x0040; STBC, disambiguation, LDPC extra symbol, beamforming, group ID and partial AID have distinct validity bits. Radiotap bandwidth value 0 denotes 20 MHz; these codes are not SIG-A bandwidth codes. Each user byte has NSS in its low nibble and MCS in its high nibble; NSS zero invalidates that user's MCS/coding and MCS 15 means unknown. A present user's coding bit is meaningful without a separate known bit. NSS differs from NSTS when STBC is used. Group 0/63 means SU when group is known. A-MPDU EOF is meaningful only with flag 0x0080; its value is flag 0x0040."
+    },
     {
       "id": "vht-aggregate-framing",
       "source": "ieee-80211-2020",

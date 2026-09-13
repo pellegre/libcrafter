@@ -1,6 +1,7 @@
 //! Offline workflow: exact original-byte comparisons, never packet recompilation.
 use super::artifact::*;
 use super::ht_compare::HtPhy;
+use super::vht_compare::VhtPhy;
 use crafter::{LinkType, Packet, Radiotap};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -61,11 +62,14 @@ pub struct Observation {
     pub absent_fcs: bool,
     pub rate_bps: u32,
     pub ht: Option<HtPhy>,
+    pub vht: Option<VhtPhy>,
     pub timing_uncertainty_ns: u64,
 }
 impl Observation {
     fn family(&self) -> &'static str {
-        if self.ht.is_some() {
+        if self.vht.is_some() {
+            "vht"
+        } else if self.ht.is_some() {
             "ht"
         } else {
             phy_family(self.rate_bps)
@@ -78,6 +82,7 @@ pub struct Counts {
     pub eligible: u64,
     pub absent_fcs: u64,
     pub ht_unknown_configuration: u64,
+    pub vht_unknown_configuration: u64,
     pub max_timing_uncertainty_ns: u64,
     pub excluded: BTreeMap<String, u64>,
 }
@@ -165,10 +170,28 @@ pub fn recovered_frame(
     } else {
         None
     };
-    if ht.is_none() && (!supported(rate) || v["phy"] != phy_family(rate)) {
+    let vht = if v["phy"] == "vht" {
+        let vht = match VhtPhy::recovered(v, raw.len()) {
+            Ok(vht) => vht,
+            Err(error) => return Ok(Err(error)),
+        };
+        if vht.rate_bps() != rate
+            || v["vht"]["preamble_sample_index"].as_u64() != Some(position.sample_index)
+        {
+            return Ok(Err("inconsistent_vht_metadata"));
+        }
+        Some(vht)
+    } else {
+        None
+    };
+    if (ht.is_some() && !v["vht"].is_null()) || (vht.is_some() && !v["ht"].is_null()) {
+        return Ok(Err("conflicting_phy_metadata"));
+    }
+    if ht.is_none() && vht.is_none() && (!supported(rate) || v["phy"] != phy_family(rate)) {
         return Ok(Err("unsupported_phy"));
     }
     if ht.is_none()
+        && vht.is_none()
         && phy_family(rate) != "legacy_ofdm"
         && !(v["preamble"] == "long" || (v["preamble"] == "short" && rate != 1_000_000))
     {
@@ -194,7 +217,7 @@ pub fn recovered_frame(
     let timing_uncertainty_ns = (time[1] - time[0]) / 2;
     // An aggregate's MPDUs share one PPDU interval. Do not invent individual
     // symbol timestamps from delimiter offsets or compare only its preamble.
-    let time = if ht.is_some() {
+    let time = if ht.is_some() || vht.is_some() {
         [time[0], finish_time[1]]
     } else {
         time
@@ -214,6 +237,7 @@ pub fn recovered_frame(
         absent_fcs,
         rate_bps: rate,
         ht,
+        vht,
         timing_uncertainty_ns,
     }))
 }
@@ -262,12 +286,21 @@ pub fn reference_frame(
         .map_err(|_| "unsupported_framing")?;
     let rt = packet.layer::<Radiotap>().ok_or("unsupported_framing")?;
     let present = rt.present().map_err(|_| "unsupported_framing")?;
-    if present.field_bits().any(|b| matches!(b, 21 | 23 | 24 | 34)) {
+    if present.field_bits().any(|b| matches!(b, 23 | 24 | 34)) {
         return Err("unsupported_phy");
+    }
+    let vht = rt
+        .vht_value()
+        .map(|v| VhtPhy::reference(v, rt.a_mpdu_status_value()))
+        .transpose()?;
+    if vht.is_some() && rt.mcs_value().is_some() {
+        return Err("conflicting_phy_metadata");
     }
     let ht = match rt.mcs_value() {
         Some(mcs) => Some(HtPhy::reference(mcs, rt.a_mpdu_status_value())?),
-        None if rt.a_mpdu_status_value().is_some() => return Err("unsupported_phy"),
+        None if rt.a_mpdu_status_value().is_some() && vht.is_none() => {
+            return Err("unsupported_phy")
+        }
         None => None,
     };
     // Namespace reset (bit 29) has no payload and resets the next bitmap
@@ -299,17 +332,18 @@ pub fn reference_frame(
     if flags.failed_fcs() {
         return Err("corrupt_fcs");
     }
-    if flags.bits() & 0x80 != 0 && ht.is_none() {
+    if flags.bits() & 0x80 != 0 && ht.is_none() && vht.is_none() {
         return Err("unsupported_phy");
     }
     if rt.rx_flags_value().is_some_and(|f| f.bits() & 2 != 0) {
         return Err("corrupt_phy");
     }
-    let rate = match &ht {
-        Some(ht) => ht.rate_bps(),
-        None => rt.rate_value().ok_or("unknown_rate")? as u32 * 500_000,
+    let rate = match (&ht, &vht) {
+        (Some(ht), _) => ht.rate_bps(),
+        (_, Some(vht)) => vht.rate_bps(),
+        _ => rt.rate_value().ok_or("unknown_rate")? as u32 * 500_000,
     };
-    if ht.is_none() && !supported(rate) {
+    if ht.is_none() && vht.is_none() && !supported(rate) {
         return Err("unsupported_phy");
     }
     let ch = rt.channel_value().ok_or("unknown_channel")?;
@@ -320,7 +354,7 @@ pub fn reference_frame(
     // 5GHz=0x100, dynamic CCK/OFDM=0x400; half/quarter=0xc000.
     // Rate is the observed 500-kbit/s value, never advertised capabilities.
     let modulation = ch.flags() & 0x460;
-    let expected = if ht.is_some() || phy_family(rate) == "legacy_ofdm" {
+    let expected = if ht.is_some() || vht.is_some() || phy_family(rate) == "legacy_ofdm" {
         0x40
     } else {
         0x20
@@ -352,7 +386,7 @@ pub fn reference_frame(
         },
         false,
     )?;
-    if bytes.len() < 10 || bytes.len() > 4091 {
+    if bytes.len() < 10 || bytes.len() > if vht.is_some() { 16379 } else { 4091 } {
         return Err("truncated_or_oversize");
     }
     Ok(Observation {
@@ -362,6 +396,7 @@ pub fn reference_frame(
         absent_fcs,
         rate_bps: rate,
         ht,
+        vht,
         timing_uncertainty_ns: (time[1] - time[0]) / 2,
     })
 }
@@ -377,6 +412,8 @@ fn keep(
             counts.absent_fcs += u64::from(o.absent_fcs);
             counts.ht_unknown_configuration +=
                 u64::from(o.ht.as_ref().is_some_and(HtPhy::unknown_configuration));
+            counts.vht_unknown_configuration +=
+                u64::from(o.vht.as_ref().is_some_and(VhtPhy::unknown_configuration));
             counts.max_timing_uncertainty_ns = counts
                 .max_timing_uncertainty_ns
                 .max(o.timing_uncertainty_ns);
@@ -402,29 +439,38 @@ pub fn load_recovered(path: &str, p: &Policy) -> Result<(Vec<Observation>, Count
     let mut terminal_reason = String::new();
     let mut parser_errors = 0u64;
     let mut ht_signals = 0u64;
+    let mut vht_signals = 0u64;
     let mut gaps = 0u64;
     let mut acquisition = Value::Null;
     let mut ids = BTreeSet::new();
     while let Some(v) = read_json(&mut reader)? {
         match v["kind"].as_str() {
-            Some("ht_signal") => {
-                if terminal || h["decoder"] != "wifi" || ht_signals >= p.max_observations as u64 {
-                    return Err("invalid HT diagnostic ordering or bound".into());
+            Some("ht_signal" | "vht_signal_a") => {
+                if terminal
+                    || h["decoder"] != "wifi"
+                    || ht_signals + vht_signals >= p.max_observations as u64
+                {
+                    return Err("invalid PHY diagnostic ordering or bound".into());
                 }
-                let epoch = v["epoch"].as_u64().ok_or("missing HT diagnostic epoch")?;
+                let epoch = v["epoch"].as_u64().ok_or("missing PHY diagnostic epoch")?;
                 let start = v["preamble_sample_index"]
                     .as_u64()
-                    .ok_or("missing HT diagnostic coordinate")?;
-                if !v["ht"].is_object()
+                    .ok_or("missing PHY diagnostic coordinate")?;
+                let vht = v["kind"] == "vht_signal_a";
+                if !(if vht { &v["signal_a"] } else { &v["ht"] }).is_object()
                     || v["mac_integrity"] != "not_established_by_header"
                     || !segment
                         .is_some_and(|(e, lo, hi, _)| e == epoch && start >= lo && start < hi)
                 {
-                    return Err("unqualified HT diagnostic coordinate".into());
+                    return Err("unqualified PHY diagnostic coordinate".into());
                 }
                 // Header recognition is evidence for investigation, not a valid
                 // MAC occurrence and never part of either match denominator.
-                ht_signals += 1;
+                if vht {
+                    vht_signals += 1;
+                } else {
+                    ht_signals += 1;
+                }
             }
             Some("frame") => {
                 if terminal || counts.total >= p.max_observations as u64 {
@@ -435,6 +481,9 @@ pub fn load_recovered(path: &str, p: &Policy) -> Result<(Vec<Observation>, Count
                 }
                 if v["phy"] == "ht" && h["decoder"] != "wifi" {
                     return Err("HT frames require the wifi decoder declaration".into());
+                }
+                if v["phy"] == "vht" && h["decoder"] != "wifi" {
+                    return Err("VHT frames require the wifi decoder declaration".into());
                 }
                 let id = v["ordinal"].as_u64().ok_or("missing ordinal")?;
                 if !ids.insert(id) {
@@ -562,7 +611,7 @@ pub fn load_recovered(path: &str, p: &Policy) -> Result<(Vec<Observation>, Count
     Ok((
         out,
         counts,
-        json!({"gaps":gaps,"ht_signals":ht_signals,"acquisition":acquisition,"receive_summary":summary}),
+        json!({"gaps":gaps,"ht_signals":ht_signals,"vht_signals":vht_signals,"acquisition":acquisition,"receive_summary":summary}),
     ))
 }
 pub fn load_reference(path: &str, p: &Policy) -> Result<(Vec<Observation>, Counts)> {
@@ -610,6 +659,10 @@ pub struct Match {
     pub original_mac_without_fcs_hex: String,
     pub ht: Option<HtPhy>,
     pub reference_ht: Option<HtPhy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vht: Option<VhtPhy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference_vht: Option<VhtPhy>,
 }
 fn compatible(a: &Observation, b: &Observation, w: u64) -> bool {
     a.rate_bps == b.rate_bps
@@ -618,22 +671,27 @@ fn compatible(a: &Observation, b: &Observation, w: u64) -> bool {
             (None, None) => true,
             _ => false,
         }
+        && match (&a.vht, &b.vht) {
+            (Some(a), Some(b)) => a.compatible(b),
+            (None, None) => true,
+            _ => false,
+        }
         && a.time[0] <= b.time[1].saturating_add(w)
         && b.time[0] <= a.time[1].saturating_add(w)
 }
 pub fn match_frames(a: &[Observation], b: &[Observation], window: u64) -> Vec<Match> {
-    let mut groups: BTreeMap<(&[u8], u32, bool), (Vec<&Observation>, Vec<&Observation>)> =
+    let mut groups: BTreeMap<(&[u8], u32, &str), (Vec<&Observation>, Vec<&Observation>)> =
         BTreeMap::new();
     for x in a {
         groups
-            .entry((&x.bytes, x.rate_bps, x.ht.is_some()))
+            .entry((&x.bytes, x.rate_bps, x.family()))
             .or_default()
             .0
             .push(x)
     }
     for x in b {
         groups
-            .entry((&x.bytes, x.rate_bps, x.ht.is_some()))
+            .entry((&x.bytes, x.rate_bps, x.family()))
             .or_default()
             .1
             .push(x)
@@ -642,11 +700,11 @@ pub fn match_frames(a: &[Observation], b: &[Observation], window: u64) -> Vec<Ma
     // Earliest finishing interval first; pair it with the earliest finishing
     // compatible interval on the other side. Removing one occurrence from each
     // side preserves multiplicity. Full bytes form the group key (no hash claims).
-    for ((bytes, _rate, modern), (mut left, mut right)) in groups {
+    for ((bytes, _rate, family), (mut left, mut right)) in groups {
         left.sort_by_key(|x| (x.time[1], x.id));
         right.sort_by_key(|x| (x.time[1], x.id));
-        if modern {
-            for (a, b) in ht_pairs(&left, &right, window) {
+        if matches!(family, "ht" | "vht") {
+            for (a, b) in modern_pairs(&left, &right, window) {
                 matches.push(make_match(a, b, bytes));
             }
             continue;
@@ -681,13 +739,15 @@ fn make_match(a: &Observation, b: &Observation, bytes: &[u8]) -> Match {
         original_mac_without_fcs_hex: hex(bytes),
         ht: a.ht.clone(),
         reference_ht: b.ht.clone(),
+        vht: a.vht.clone(),
+        reference_vht: b.vht.clone(),
     }
 }
-// Optional known fields make HT compatibility more general than interval
+// Optional known fields make HT/VHT compatibility more general than interval
 // overlap. Find augmenting paths instead of greedily consuming an observation
 // that may be the only compatible one for a later frame. Edges are evaluated
 // on demand: no quadratic adjacency allocation or recursive stack growth.
-fn ht_pairs<'a>(
+fn modern_pairs<'a>(
     left: &[&'a Observation],
     right: &[&'a Observation],
     window: u64,
@@ -750,7 +810,7 @@ pub fn report(
     let n = pairs.len();
     let mut families = BTreeMap::new();
     let mut rates = BTreeMap::new();
-    for family in ["dsss", "cck", "legacy_ofdm", "ht"] {
+    for family in ["dsss", "cck", "legacy_ofdm", "ht", "vht"] {
         let left: Vec<_> = a.iter().filter(|o| o.family() == family).cloned().collect();
         let right: Vec<_> = b.iter().filter(|o| o.family() == family).cloned().collect();
         families.insert(family, breakdown(&left, &right, p.match_window_ns));
@@ -772,7 +832,14 @@ pub fn report(
     }
     let au: BTreeSet<_> = a.iter().map(|o| &o.bytes).collect();
     let bu: BTreeSet<_> = b.iter().map(|o| &o.bytes).collect();
-    json!({"schema":"crafter.radio.comparison/v2","families":families,"rates":rates,"status":if ac.eligible==0 || bc.eligible==0 {"inconclusive"}else{"measured"},"policy":p,"hackrf_valid_count":ac.eligible,"eligible_dongle_count":bc.eligible,"exact_matches":n,"hackrf_fraction":if ac.eligible==0 {None}else{Some(n as f64/ac.eligible as f64)},"dongle_fraction":if bc.eligible==0 {None}else{Some(n as f64/bc.eligible as f64)},"unique_byte_overlap":au.intersection(&bu).count(),"qualification_gaps":if bc.ht_unknown_configuration>0 {vec!["reference HT format, STBC or extension-stream configuration unknown"]}else{vec![]},"hackrf":ac,"reference":bc,"evidence":evidence,"matches":pairs,"target_assessed":false})
+    let mut gaps = Vec::new();
+    if bc.ht_unknown_configuration > 0 {
+        gaps.push("reference HT format, STBC or extension-stream configuration unknown");
+    }
+    if bc.vht_unknown_configuration > 0 {
+        gaps.push("reference VHT STBC or SU/MU configuration unknown");
+    }
+    json!({"schema":"crafter.radio.comparison/v2","families":families,"rates":rates,"status":if ac.eligible==0 || bc.eligible==0 {"inconclusive"}else{"measured"},"policy":p,"hackrf_valid_count":ac.eligible,"eligible_dongle_count":bc.eligible,"exact_matches":n,"hackrf_fraction":if ac.eligible==0 {None}else{Some(n as f64/ac.eligible as f64)},"dongle_fraction":if bc.eligible==0 {None}else{Some(n as f64/bc.eligible as f64)},"unique_byte_overlap":au.intersection(&bu).count(),"qualification_gaps":gaps,"hackrf":ac,"reference":bc,"evidence":evidence,"matches":pairs,"target_assessed":false})
 }
 
 #[cfg(test)]
@@ -811,6 +878,7 @@ mod tests {
             absent_fcs: false,
             rate_bps: 6_000_000,
             ht: None,
+            vht: None,
             timing_uncertainty_ns: (t[1] - t[0]) / 2,
         }
     }
@@ -867,6 +935,168 @@ mod tests {
             reference_frame(&bytes, bytes.len() as u32, [1000, 1002], 1, &policy()).unwrap_err(),
             "unsupported_ht_configuration"
         );
+    }
+    #[test]
+    fn radio_comparison_vht_iq_to_reference_pcap() {
+        use crafter::radio::*;
+        use std::time::{Duration, SystemTime};
+        let root = std::env::temp_dir().join(format!("crafter-vht-compare-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let result = std::panic::catch_unwind(|| {
+            for name in ["vht-ampdu-3-gi800-duplicate", "vht-ampdu-3-gi800-large"] {
+                let row = include_str!("../../tests/fixtures/iq/vht-ampdu-iq-index.tsv")
+                    .lines()
+                    .find(|r| r.split('\t').next() == Some(name))
+                    .unwrap();
+                let columns: Vec<_> = row.split('\t').collect();
+                // Reference MAC bytes come from the independent fixture, not
+                // from whatever the production IQ decoder happened to return.
+                let expected: Vec<_> = columns[5].split(',').map(|s| unhex(s).unwrap()).collect();
+                let iq = std::fs::read(format!(
+                    "{}/tests/fixtures/iq/{name}.cs8",
+                    env!("CARGO_MANIFEST_DIR")
+                ))
+                .unwrap();
+                let cfg = RxConfig {
+                    sample_rate_hz: 20_000_000,
+                    center_frequency_hz: 5_180_000_000,
+                    max_chunk_samples: 100_000,
+                    max_buffer_samples: 120_000,
+                    max_frame_bytes: 16383,
+                    max_pending_frames: 8,
+                    max_capture_samples: 1_000_000,
+                    max_duration: Duration::from_secs(1),
+                };
+                let pos = IqPosition {
+                    epoch: 0,
+                    sequence: 0,
+                    sample_index: 0,
+                    discontinuity: None,
+                    time_anchor: Some(TimeAnchor {
+                        sample_index: 0,
+                        time: SystemTime::UNIX_EPOCH + Duration::from_nanos(1000),
+                        uncertainty: Duration::from_nanos(1),
+                    }),
+                };
+                let chunk = IqChunk::new(
+                    cfg.clone(),
+                    pos.clone(),
+                    iq.iter().map(|b| *b as i8).collect(),
+                )
+                .unwrap();
+                let out = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
+                assert_eq!(out.frames.len(), 2);
+                let mut records = vec![
+                    json!({"kind":"header","schema":SCHEMA,"decoder":"wifi","config":Config::from(&cfg)}),
+                    json!({"kind":"chunk","config":Config::from(&cfg),"position":Position::from(&pos),"samples":iq.len()/2,"verified_prefix":true}),
+                    json!({"kind":"vht_signal_a","epoch":0,"preamble_sample_index":37,"signal_a":{"users":{"mode":"su","mcs":3}},"mac_integrity":"not_established_by_header"}),
+                ];
+                for (i, f) in out.frames.iter().enumerate() {
+                    records.push(json!({"kind":"frame","ordinal":i+1,"config":Config::from(&f.config),"position":Position::from(&f.start),"end_sample_index":f.end_sample_index,"rate_bps":f.rate_bps,"phy":frame_phy(f),"vht":vht_metadata(f),"ampdu":ampdu_metadata(f),"fcs":"present_valid","original_mac_hex":hex(&f.bytes)}));
+                }
+                records.push(json!({"kind":"terminal","reason":"Eof"}));
+                records.push(json!({"kind":"summary","complete":true,"terminal":"Eof","decoder":{"valid_frames":2,"dropped_frames":0},"parsed_packets":2,"parser_failures":0}));
+                let receive = root.join("receive.jsonl");
+                std::fs::write(
+                    &receive,
+                    records.iter().map(|v| format!("{v}\n")).collect::<String>(),
+                )
+                .unwrap();
+                let mut p = policy();
+                p.center_frequency_hz = cfg.center_frequency_hz;
+                p.overlap_ns = [100, 10_000_000];
+                p.hackrf_capture_ns = [0, 10_000_001];
+                p.reference_capture_ns = p.hackrf_capture_ns;
+                let (left, ac, evidence) = load_recovered(receive.to_str().unwrap(), &p).unwrap();
+                assert_eq!(ac.eligible, 2);
+                assert_eq!(evidence["vht_signals"], 1);
+                let mut pcap = Vec::new();
+                pcap.extend_from_slice(&0xa1b23c4du32.to_le_bytes());
+                pcap.extend_from_slice(&2u16.to_le_bytes());
+                pcap.extend_from_slice(&4u16.to_le_bytes());
+                for n in [0u32, 0, 65535, 127] {
+                    pcap.extend_from_slice(&n.to_le_bytes());
+                }
+                let mut reference_wires = Vec::new();
+                for frame in &expected {
+                    // flags/channel, aligned A-MPDU status, VHT; 5180 MHz OFDM.
+                    let mut rt = vec![
+                        0, 0, 36, 0, 0x0a, 0, 0x30, 0, 0x10, 0, 0x3c, 0x14, 0x40, 1, 0, 0, 42, 0,
+                        0, 0, 0x80, 0, 0, 0, 255, 1, 2, 0, 0x31, 0, 0, 0, 0, 63, 0, 0,
+                    ];
+                    rt.extend_from_slice(frame);
+                    for n in [0u32, 3001, rt.len() as u32, rt.len() as u32] {
+                        pcap.extend_from_slice(&n.to_le_bytes());
+                    }
+                    pcap.extend_from_slice(&rt);
+                    reference_wires.push(rt);
+                }
+                let capture = root.join("reference.pcap");
+                std::fs::write(&capture, pcap).unwrap();
+                let (right, bc) = load_reference(capture.to_str().unwrap(), &p).unwrap();
+                assert_eq!(bc.eligible, 2, "{name}: {:?}", bc.excluded);
+                let pairs = match_frames(&left, &right, 0);
+                assert_eq!(pairs.len(), 2, "{name}");
+                assert_ne!(pairs[0].hackrf_ordinal, pairs[1].hackrf_ordinal);
+                assert_ne!(pairs[0].reference_ordinal, pairs[1].reference_ordinal);
+                assert!(pairs.iter().all(|pair| pair.phy == "vht"));
+                let report = report(left.clone(), ac, right.clone(), bc, p.clone(), evidence);
+                assert_eq!(report["families"]["vht"]["exact_matches"], 2);
+                assert_eq!(report["qualification_gaps"], json!([]));
+                let mut ht = ht_obs(90, [3000, 3002], Some(false));
+                ht.bytes = left[0].bytes.clone();
+                assert_eq!(ht.rate_bps, left[0].rate_bps);
+                assert!(match_frames(&left, &[ht], 0).is_empty());
+                let mut conflicting = reference_wires[0].clone();
+                conflicting[34] = 1; // Known partial AID conflicts, FCS remains valid.
+                let conflicting =
+                    reference_frame(&conflicting, conflicting.len() as u32, [3000, 3002], 91, &p)
+                        .unwrap();
+                assert!(match_frames(&left, &[conflicting], 0).is_empty());
+                let mut unknown = reference_wires[0].clone();
+                unknown[24] &= 0x7e; // STBC and group unknown: ignore their flag/data values.
+                unknown[26] |= 1;
+                unknown[33] = 201;
+                let unknown =
+                    reference_frame(&unknown, unknown.len() as u32, [3000, 3002], 92, &p).unwrap();
+                assert!(unknown.vht.as_ref().unwrap().unknown_configuration());
+                assert_eq!(match_frames(&left, &[unknown.clone()], 0).len(), 1);
+                let mut uc = Counts::default();
+                let mut observations = Vec::new();
+                keep(Ok(unknown), &mut uc, &mut observations);
+                assert_eq!(uc.vht_unknown_configuration, 1);
+                let r = super::report(
+                    left,
+                    Counts {
+                        total: 2,
+                        eligible: 2,
+                        ..Counts::default()
+                    },
+                    observations,
+                    uc,
+                    p,
+                    Value::Null,
+                );
+                assert!(r["qualification_gaps"][0].as_str().unwrap().contains("VHT"));
+            }
+        });
+        std::fs::remove_dir_all(&root).unwrap();
+        result.unwrap();
+    }
+    #[test]
+    fn radio_comparison_vht_optional_metadata_maximum_matching() {
+        let make = |id, aid| {
+            let mut observation = obs(id, [1000, 1002]);
+            let mut vht =
+                VhtPhy::reference([255, 1, 0, 0, 0x31, 0, 0, 0, 0, 63, 0, 0], None).unwrap();
+            vht.partial_aid = aid;
+            observation.rate_bps = vht.rate_bps();
+            observation.vht = Some(vht);
+            observation
+        };
+        let left = [make(1, Some(0)), make(2, Some(1))];
+        let right = [make(3, None), make(4, Some(0))];
+        assert_eq!(match_frames(&left, &right, 0).len(), 2);
     }
     #[test]
     fn radio_comparison_ht_optional_metadata_maximum_matching() {

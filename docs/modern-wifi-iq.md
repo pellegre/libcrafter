@@ -294,10 +294,19 @@ does not become frame bytes. `radio_receive --modern` labels these frames as
 The 54 additional complete aggregate waveforms exercise duplicate occurrences,
 bad-FCS recovery and 4100-byte MPDUs across MCS0-8 and both GIs. Streaming tests
 use one-sample, 79-sample and 4096-sample chunks, with separate gap, buffer and
-output-limit checks. The reference comparator still needs VHT radiotap metadata
-support before paired VHT hardware qualification; do not treat its HT-only
-comparison path as VHT evidence. LDPC, STBC, MU, HE/EHT, hardware qualification,
-real-time performance and modern TX remain unfinished.
+output-limit checks. Saved-artifact admission permits the same 16383-byte
+frame ceiling as the modern example, while retaining explicit allocation bounds.
+
+The example comparator now accepts VHT20 SU NSS1 BCC radiotap observations.
+It requires known bandwidth/GI and an observed MCS/NSS, interprets other fields
+only under their validity bits, and compares known configuration conflicts.
+Unknown STBC or SU/MU group information remains an explicit qualification gap.
+HT and VHT do not cross-match at equal rates; aggregate frames retain their full
+PPDU interval and one-to-one occurrence matching. Header diagnostics never enter
+the valid-frame denominator. The 5157 independent metadata vectors and an
+IQ-to-synthetic-reference-pcap workflow cover duplicate and large frames; this
+is not a substitute for paired hardware qualification. LDPC, STBC, MU, HE/EHT,
+hardware qualification, real-time performance and modern TX remain unfinished.
 
 ## VHT BCC DATA recovery increment
 

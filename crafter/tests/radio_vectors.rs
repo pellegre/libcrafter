@@ -4,6 +4,24 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_vht_reference_independent_inventory() {
+    let inventory = include_str!("fixtures/iq/vht-reference-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(inventory.as_bytes())),
+        "eeab09c47de3fbd36bba72183e3b5f4665e7253b2462a9cc3210ef52a01d9a07"
+    );
+    assert_eq!(inventory.lines().skip(1).count(), 5157);
+    let mut names = std::collections::BTreeSet::new();
+    for row in inventory.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 4);
+        assert!(names.insert(c[0]));
+        assert_eq!(c[1].len(), 24);
+        assert!(c[2].is_empty() || c[2].len() == 16);
+    }
+}
+
+#[test]
 fn radio_vht_ampdu_iq_independent_inventory() {
     let inventory = include_str!("fixtures/iq/vht-ampdu-iq-index.tsv");
     assert_eq!(

@@ -8616,6 +8616,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "vht-ampdu-delimiters.tsv"
                 | "vht-ampdu-index.tsv"
                 | "vht-ampdu-iq-index.tsv"
+                | "vht-reference-index.tsv"
                 | "ht-ampdu-index.tsv"
                 | "ht-ldpc-index.tsv"
                 | "ht-ldpc-invalid-index.tsv"

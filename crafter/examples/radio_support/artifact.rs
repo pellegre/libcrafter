@@ -68,6 +68,7 @@ pub fn vht_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
                 "coding":if ldpc {"ldpc"} else {"bcc"},
                 "guard_interval_ns":if f.short_guard_interval {400} else {800},
                 "short_gi_disambiguation":f.short_gi_disambiguation,
+                "txop_ps_not_allowed":f.txop_ps_not_allowed, "ldpc_extra_symbol":f.ldpc_extra_symbol,
                 "group_id":f.group_id, "partial_aid":partial_aid, "beamformed":beamformed,
                 "apep_length_bounds":sig_b, "service_crc_verified":sig_b.is_some(),
                 "preamble_sample_index":preamble_sample_index,
