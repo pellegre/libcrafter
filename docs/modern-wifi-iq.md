@@ -38,7 +38,17 @@ weights; LDPC restores each half's tone permutation before combination.
 Independent qualification adds 128 complete IQ cases and 660 soft-metric cases.
 The 4x-LTF/800ns signaling escape means no DCM and is not a DCM mode.
 
-HE STBC, MU/TB/ER SU, wider channels and independent
+HE20 SU STBC reception handles one DATA stream sent through two space-time
+streams, BCC MCS0–9 or LDPC MCS0–11, and the four STBC-compatible guard/LTF
+pairs. It separates channels using two HE-LTF symbols, excludes single-stream
+training pilots from that separation, tracks DATA phase with the summed pilot
+channel, and combines consecutive DATA symbols. Both symbols in the final
+pair honor post-FEC padding; midambles refresh both channels. Qualification
+adds 368 complete independent waveforms and eight invalid cases, including
+loss of either transmit branch. The finite-delay estimator includes the second
+stream's cyclic shift; it does not guarantee recovery of arbitrary channels.
+
+HE MU/TB/ER SU, wider channels and independent
 multiple DATA streams are not implemented by this receive path. Offline
 qualification uses 200 BCC and 240 LDPC complete independent waveforms; it does not establish
 HE-capable dongle interoperability, sustained real-time speed or modern TX.
@@ -425,7 +435,7 @@ path now supplies both for qualified one-stream HE SU layouts.
 
 The private HE20 SU IQ kernel now connects acquisition, training, timing,
 capacity, pilot tracking, QAM demapping, BCC deinterleaving or LDPC tone-order
-restoration and byte recovery, including one-stream DCM but not STBC. Independent full-waveform
+restoration and byte recovery, including one-stream DCM or STBC. Independent full-waveform
 cases recover exact synthetic PSDUs across all five SU guard/training pairs,
 frequency offset and multipath. LDPC removes post-FEC padding before rate
 recovery, verifies SERVICE and scans aggregates before frame publication.

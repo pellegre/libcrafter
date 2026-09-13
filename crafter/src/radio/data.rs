@@ -1728,6 +1728,12 @@ mod tests {
                 .as_slice(),
             include_bytes!("../../tests/fixtures/iq/he-dcm-iq-mcs4-ldpc-ltf4-gi3200-pad1.cs8")
                 .as_slice(),
+            include_bytes!("../../tests/fixtures/iq/he-stbc-iq-mcs0-bcc-ltf4-gi3200-pad1-flat.cs8")
+                .as_slice(),
+            include_bytes!(
+                "../../tests/fixtures/iq/he-stbc-iq-mcs11-ldpc-ltf4-gi3200-pad1-flat.cs8"
+            )
+            .as_slice(),
         ] {
             assert!(feed(&mut LegacyWifiDecoder::new(), bytes, 127)
                 .frames
@@ -1794,7 +1800,11 @@ mod tests {
             .unwrap();
             let out = feed(&mut WifiDecoder::new(), &bytes, 37);
             assert!(out.frames.is_empty(), "{name}");
-            if name.ends_with("service") || name.ends_with("ldpc") || name.ends_with("dcm") {
+            if name.ends_with("service")
+                || name.ends_with("ldpc")
+                || name.ends_with("dcm")
+                || name.ends_with("stbc")
+            {
                 assert!(out.diagnostics.contains(&PhyDiagnostic::InvalidData));
             } else if name.ends_with("truncated") {
                 assert!(out.diagnostics.contains(&PhyDiagnostic::TruncatedFrame));
@@ -1818,10 +1828,24 @@ mod tests {
     }
     #[test]
     fn radio_he_dcm_streaming_complete_aggregates() {
-        for row in include_str!("../../tests/fixtures/iq/he-dcm-iq-index.tsv")
-            .lines()
-            .skip(1)
-        {
+        he_diversity_streams(
+            include_str!("../../tests/fixtures/iq/he-dcm-iq-index.tsv"),
+            include_str!("../../tests/fixtures/iq/he-dcm-iq-invalid-index.tsv"),
+            true,
+        );
+    }
+
+    #[test]
+    fn radio_he_stbc_streaming_complete_aggregates() {
+        he_diversity_streams(
+            include_str!("../../tests/fixtures/iq/he-stbc-iq-index.tsv"),
+            include_str!("../../tests/fixtures/iq/he-stbc-iq-invalid-index.tsv"),
+            false,
+        );
+    }
+
+    fn he_diversity_streams(index: &str, invalid: &str, dcm: bool) {
+        for row in index.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
             let bytes = std::fs::read(format!(
                 "{}/tests/fixtures/iq/{}.cs8",
@@ -1853,7 +1877,9 @@ mod tests {
                 for frame in out.frames {
                     assert_eq!(frame.integrity, FrameIntegrity::ValidFcs);
                     assert!(frame.diagnostics.iter().any(|d| matches!(d,PhyDiagnostic::HeSignal{fields,..}
-                        if fields.dcm && fields.mcs==c[1].parse::<u8>().unwrap() && fields.ldpc==(c[2]=="1"))));
+                        if fields.dcm==dcm && fields.stbc!=dcm && fields.space_time_streams==if dcm {1} else {2}
+                        && fields.mcs==c[1].parse::<u8>().unwrap() && fields.ldpc==(c[2]=="1")
+                        && fields.midamble_period==if c[5]=="0" {None} else {Some(c[5].parse().unwrap())})));
                 }
                 assert_eq!(
                     decoder.ofdm_stats().invalid_fcs,
@@ -1861,10 +1887,7 @@ mod tests {
                 );
             }
         }
-        for row in include_str!("../../tests/fixtures/iq/he-dcm-iq-invalid-index.tsv")
-            .lines()
-            .skip(1)
-        {
+        for row in invalid.lines().skip(1) {
             let name = row.split('\t').next().unwrap();
             let bytes = std::fs::read(format!(
                 "{}/tests/fixtures/iq/{name}.cs8",
@@ -1874,7 +1897,9 @@ mod tests {
             let out = feed(&mut WifiDecoder::new(), &bytes, 37);
             assert!(out.frames.is_empty(), "{name}");
             assert!(
-                out.diagnostics.contains(&if name.ends_with("service") {
+                out.diagnostics.contains(&if name.ends_with("service")
+                    || name.ends_with("erased-training")
+                {
                     PhyDiagnostic::InvalidData
                 } else {
                     PhyDiagnostic::TruncatedFrame

@@ -211,6 +211,15 @@ mod tests {
                     }),
             )
             .chain(
+                include_str!("../../tests/fixtures/iq/he-stbc-iq-index.tsv")
+                    .lines()
+                    .skip(1)
+                    .filter(|r| {
+                        r.starts_with("he-stbc-iq-mcs0-bcc-ltf1-gi800-pad3-changing\t")
+                            || r.starts_with("he-stbc-iq-mcs11-ldpc-ltf4-gi3200-pad4-changing\t")
+                    }),
+            )
+            .chain(
                 include_str!("../../tests/fixtures/iq/he-dcm-iq-index.tsv")
                     .lines()
                     .skip(1)
@@ -223,7 +232,8 @@ mod tests {
             let c: Vec<_> = row.split('\t').collect();
             let midamble = c[0].starts_with("he-midamble");
             let dcm = c[0].starts_with("he-dcm");
-            let ldpc = if midamble || dcm {
+            let stbc = c[0].starts_with("he-stbc");
+            let ldpc = if midamble || dcm || stbc {
                 c[2] == "1"
             } else {
                 c[0].starts_with("he-ldpc")
@@ -240,7 +250,7 @@ mod tests {
                 .with(Dot11Metadata::new())
                 .collect_records()
                 .unwrap();
-            let expected: Vec<Vec<u8>> = c[if dcm {
+            let expected: Vec<Vec<u8>> = c[if dcm || stbc {
                 7
             } else if midamble {
                 9
@@ -273,7 +283,7 @@ mod tests {
                     .diagnostics
                     .iter()
                     .any(|d| matches!(d,PhyDiagnostic::HeSignal {fields,..} if fields.mcs==c[1].parse::<u8>().unwrap() && fields.ldpc==ldpc
-                        && fields.dcm==dcm && fields.midamble_period==if midamble || (dcm && c[5]!="0") {Some(c[5].parse().unwrap())} else {None})));
+                        && fields.dcm==dcm && fields.stbc==stbc && fields.midamble_period==if midamble || ((dcm || stbc) && c[5]!="0") {Some(c[5].parse().unwrap())} else {None})));
                 assert_eq!(record.metadata(), &record.metadata().clone());
             }
         }

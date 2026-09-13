@@ -52,7 +52,7 @@ pub(super) fn admit(
     }
     let prefix = super::he_iq::decode_su_prefix(samples, a)?;
     let h = prefix.signal;
-    if h.stbc || h.space_time_streams != 1 {
+    if h.space_time_streams != if h.stbc { 2 } else { 1 } {
         return None;
     }
     let timing = Timing::new(6_000_000, prefix.legacy_length, &h).ok()?;
@@ -120,14 +120,22 @@ pub(super) fn recover(
         super::data::feedback(&mut pilot_state);
     }
     let mut slope = 0.;
+    let group = 1 + usize::from(h.stbc);
+    let mut pending = None;
     for symbol in 0..timing.data_symbols {
         if let Some(period) = h.midamble_period.map(usize::from) {
             if symbol > 0 && symbol % period == 0 && symbol / period <= timing.midambles {
                 let cp = timing
                     .symbol_start(symbol)?
-                    .checked_sub(64 * usize::from(h.ltf_size) + trained.guard)?
+                    .checked_sub(group * (64 * usize::from(h.ltf_size) + trained.guard))?
                     .checked_sub(320)?;
-                trained.channel = super::he_training::train_field(samples, a, &h, cp)?;
+                if h.stbc {
+                    let [first, second] = super::he_training::train_stbc_field(samples, a, &h, cp)?;
+                    trained.channel = first;
+                    trained.second = Some(second);
+                } else {
+                    trained.channel = super::he_training::train_field(samples, a, &h, cp)?;
+                }
                 // The refreshed LTF includes the channel's current phase slope.
                 // DATA indices and pilot polarity do not advance over training.
                 slope = 0.;
@@ -154,7 +162,16 @@ pub(super) fn recover(
             (
                 k as f32,
                 bins[bin]
-                    .mul(trained.channel[bin].conj())
+                    .mul(
+                        trained.channel[bin]
+                            .add(
+                                trained
+                                    .second
+                                    .as_ref()
+                                    .map_or(ComplexSample::ZERO, |second| second[bin]),
+                            )
+                            .conj(),
+                    )
                     .scale(SIGNS[(symbol + j) % 8] * polarity)
                     .mul(ComplexSample::rotation(-slope * k as f32)),
             )
@@ -183,93 +200,135 @@ pub(super) fn recover(
         let delta = (w * xy - x * y) / determinant;
         let intercept = reference + (y - delta * x) / w;
         slope += delta;
-        let mut interleaved = Vec::with_capacity(c.coded_per_symbol);
-        let mut dual = Vec::with_capacity(if h.dcm { 234 } else { 0 });
-        for tone in (-122i32..=-2)
-            .chain(2..=122)
-            .filter(|k| !PILOTS.contains(k))
-        {
-            let bin = tone.rem_euclid(256) as usize;
-            let channel = trained.channel[bin];
-            let power = channel.power();
-            if !power.is_finite() {
-                return None;
-            }
-            if power < 1e-12 {
-                if h.dcm {
-                    dual.push((ComplexSample::ZERO, 0.));
+        let mut recovered = [[ComplexSample::ZERO; 256]; 2];
+        if h.stbc {
+            let corrected = std::array::from_fn(|bin| {
+                let tone = if bin > 128 {
+                    bin as i32 - 256
                 } else {
-                    interleaved.extend(std::iter::repeat(0.).take(c.bits_per_tone));
+                    bin as i32
+                };
+                bins[bin].mul(ComplexSample::rotation(-intercept - slope * tone as f32))
+            });
+            if symbol % 2 == 0 {
+                pending = Some(corrected);
+                continue;
+            }
+            let first: [ComplexSample; 256] = pending.take()?;
+            let second = trained.second.as_ref()?;
+            for tone in (-122i32..=-2)
+                .chain(2..=122)
+                .filter(|k| !PILOTS.contains(k))
+            {
+                let bin = tone.rem_euclid(256) as usize;
+                let channels = [trained.channel[bin], second[bin]];
+                if channels.iter().map(|v| v.power()).sum::<f32>() < 1e-12 {
+                    continue;
                 }
-                continue;
+                let values =
+                    super::stbc::recover_pair(channels, [first[bin], corrected[bin]]).ok()?;
+                recovered[0][bin] = values[0];
+                recovered[1][bin] = values[1];
             }
-            let v = bins[bin]
-                .mul(channel.conj())
-                .scale(1. / power)
-                .mul(ComplexSample::rotation(-intercept - slope * tone as f32));
-            if !v.power().is_finite() {
-                return None;
-            }
-            if h.dcm {
-                dual.push((v, power));
-                continue;
-            }
-            super::data::demap(
-                v.i,
-                if c.bits_per_tone == 1 {
-                    1
+        }
+        for (offset, recovered_symbol) in recovered.iter().enumerate().take(group) {
+            let symbol = symbol + 1 + offset - group;
+            let mut interleaved = Vec::with_capacity(c.coded_per_symbol);
+            let mut dual = Vec::with_capacity(if h.dcm { 234 } else { 0 });
+            for tone in (-122i32..=-2)
+                .chain(2..=122)
+                .filter(|k| !PILOTS.contains(k))
+            {
+                let bin = tone.rem_euclid(256) as usize;
+                let channel = trained.channel[bin];
+                let power = channel.power()
+                    + trained
+                        .second
+                        .as_ref()
+                        .map_or(0., |second| second[bin].power());
+                if !power.is_finite() {
+                    return None;
+                }
+                if power < 1e-12 {
+                    if h.dcm {
+                        dual.push((ComplexSample::ZERO, 0.));
+                    } else {
+                        interleaved.extend(std::iter::repeat(0.).take(c.bits_per_tone));
+                    }
+                    continue;
+                }
+                let v = if h.stbc {
+                    recovered_symbol[bin]
                 } else {
-                    c.bits_per_tone / 2
-                },
-                energy.sqrt(),
-                power,
-                &mut interleaved,
-            );
-            if c.bits_per_tone > 1 {
+                    bins[bin]
+                        .mul(channel.conj())
+                        .scale(1. / power)
+                        .mul(ComplexSample::rotation(-intercept - slope * tone as f32))
+                };
+                if !v.power().is_finite() {
+                    return None;
+                }
+                if h.dcm {
+                    dual.push((v, power));
+                    continue;
+                }
                 super::data::demap(
-                    v.q,
-                    c.bits_per_tone / 2,
+                    v.i,
+                    if c.bits_per_tone == 1 {
+                        1
+                    } else {
+                        c.bits_per_tone / 2
+                    },
                     energy.sqrt(),
                     power,
                     &mut interleaved,
                 );
+                if c.bits_per_tone > 1 {
+                    super::data::demap(
+                        v.q,
+                        c.bits_per_tone / 2,
+                        energy.sqrt(),
+                        power,
+                        &mut interleaved,
+                    );
+                }
             }
-        }
-        if h.dcm {
-            for k in 0..117 {
-                // Equation27-96 permutes each 117-tone half separately.
-                // BPSK sign parity is indexed before that permutation.
-                let tone = if h.ldpc { 9 * (k % 13) + k / 13 } else { k };
-                let metrics = super::data::demap_dcm(
-                    [*dual.get(tone)?, *dual.get(tone + 117)?],
-                    c.bits_per_tone,
-                    k,
-                )?;
-                interleaved.extend_from_slice(&metrics[..c.bits_per_tone]);
+            if h.dcm {
+                for k in 0..117 {
+                    // Equation27-96 permutes each 117-tone half separately.
+                    // BPSK sign parity is indexed before that permutation.
+                    let tone = if h.ldpc { 9 * (k % 13) + k / 13 } else { k };
+                    let metrics = super::data::demap_dcm(
+                        [*dual.get(tone)?, *dual.get(tone + 117)?],
+                        c.bits_per_tone,
+                        k,
+                    )?;
+                    interleaved.extend_from_slice(&metrics[..c.bits_per_tone]);
+                }
             }
-        }
-        if h.ldpc {
-            let ordered = if h.dcm {
-                interleaved
+            if h.ldpc {
+                let ordered = if h.dcm {
+                    interleaved
+                } else {
+                    ldpc_order(&interleaved, c.bits_per_tone)?
+                };
+                // 27.3.12.5.3: post-FEC padding follows the coded bits in the
+                // last symbol group (both symbols for STBC).
+                let count = if symbol + group >= timing.data_symbols {
+                    c.coded_last
+                } else {
+                    c.coded_per_symbol
+                };
+                coded.extend_from_slice(ordered.get(..count)?);
             } else {
-                ldpc_order(&interleaved, c.bits_per_tone)?
-            };
-            // 27.3.12.5.3: post-FEC padding follows the coded bits in the
-            // last symbol (this path admits one stream without STBC only).
-            let count = if symbol + 1 == timing.data_symbols {
-                c.coded_last
-            } else {
-                c.coded_per_symbol
-            };
-            coded.extend_from_slice(ordered.get(..count)?);
-        } else {
-            let n = c.coded_per_symbol;
-            let s = (c.bits_per_tone / 2).max(1);
-            let columns = if h.dcm { 13 } else { 26 };
-            for k in 0..n {
-                let i = 9 * c.bits_per_tone * (k % columns) + k / columns;
-                let j = s * (i / s) + (i + n - columns * i / n) % s;
-                coded.push(*interleaved.get(j)?);
+                let n = c.coded_per_symbol;
+                let s = (c.bits_per_tone / 2).max(1);
+                let columns = if h.dcm { 13 } else { 26 };
+                for k in 0..n {
+                    let i = 9 * c.bits_per_tone * (k % columns) + k / columns;
+                    let j = s * (i / s) + (i + n - columns * i / n) % s;
+                    coded.push(*interleaved.get(j)?);
+                }
             }
         }
     }
@@ -330,6 +389,44 @@ mod tests {
     }
 
     use super::*;
+    #[test]
+    fn radio_he_stbc_high_order_midamble() {
+        let name = "he-stbc-iq-mcs11-ldpc-ltf1-gi800-pad3-changing";
+        let (samples, a) = fixture(name);
+        assert!(recover(&samples[a.signal_start as usize..], &a, usize::MAX).is_some());
+    }
+    #[test]
+    fn radio_he_stbc_iq_complete_waveforms() {
+        let hex = |s: &str| -> Vec<u8> {
+            (0..s.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+                .collect()
+        };
+        let rows = include_str!("../../tests/fixtures/iq/he-stbc-iq-index.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 368);
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let (samples, a) = fixture(c[0]);
+            let input = &samples[a.signal_start as usize..];
+            let expected = hex(c[6]);
+            let admitted = admit(&input[..320], &a, expected.len(), input.len()).expect(c[0]);
+            assert!(admitted.signal.stbc);
+            assert_eq!(admitted.signal.space_time_streams, 2);
+            assert_eq!(admitted.info.data_start, c[9].parse::<u64>().unwrap());
+            assert_eq!(
+                admitted.info.end_sample_index,
+                c[10].parse::<u64>().unwrap()
+            );
+            let end = admitted.required_samples;
+            let psdu = recover(&input[..end], &a, expected.len()).expect(c[0]);
+            assert_eq!(psdu, expected, "{}", c[0]);
+            assert!(recover(&input[..end - 1], &a, expected.len()).is_none());
+            assert!(admit(&input[..320], &a, expected.len() - 1, input.len()).is_none());
+            assert!(admit(&input[..320], &a, expected.len(), end - 1).is_none());
+        }
+    }
+
     #[test]
     fn radio_he_dcm_iq_complete_waveforms() {
         let hex = |s: &str| -> Vec<u8> {
@@ -666,6 +763,7 @@ mod tests {
                 || name.ends_with("truncated")
                 || name.ends_with("ldpc")
                 || name.ends_with("dcm")
+                || name.ends_with("stbc")
                 || name.ends_with("midamble");
             assert_eq!(
                 admit(&input[..320], &a, usize::MAX, usize::MAX).is_some(),

@@ -17,5 +17,5 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - HE20 SU single stream only; STBC and other HE layouts remain unsupported. Separate wifi_he_midamble_iq and wifi_he_dcm_iq cases qualify midamble refresh and DCM.
+      - HE20 SU single stream only; other HE layouts remain unsupported. Separate wifi_he_midamble_iq, wifi_he_dcm_iq and wifi_he_stbc_iq cases qualify midamble refresh, DCM and STBC.
       - Independent offline waveforms do not establish live HE hardware qualification.

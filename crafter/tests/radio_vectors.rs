@@ -296,6 +296,41 @@ fn radio_he_training4_independent_inventory() {
 }
 
 #[test]
+fn radio_he_stbc_independent_inventory() {
+    for (index, count, digest) in [
+        (
+            include_str!("fixtures/iq/he-stbc-iq-index.tsv"),
+            368,
+            "9b365a5e85331d9e5018a014d08a4136d2aedcf31058147919e456330057f89d",
+        ),
+        (
+            include_str!("fixtures/iq/he-stbc-iq-invalid-index.tsv"),
+            8,
+            "3f865fb4a1a91c8b9c0ed3e99398460143730727da82d7e74b1ee26f507dbbc6",
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        assert_eq!(index.lines().skip(1).count(), count);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(hex(&Sha256::digest(&bytes)), *c.last().unwrap());
+            assert_eq!(bytes.len() % 2, 0);
+            if count == 368 {
+                assert_eq!(c.len(), 12);
+                assert!(c[9].parse::<usize>().unwrap() < c[10].parse::<usize>().unwrap());
+                assert!(c[10].parse::<usize>().unwrap() <= bytes.len() / 2);
+            }
+        }
+    }
+}
+
+#[test]
 fn radio_he_transform_independent_inventory() {
     let index = include_str!("fixtures/iq/he-transform-index.tsv");
     assert_eq!(

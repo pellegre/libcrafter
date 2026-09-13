@@ -1,4 +1,4 @@
-//! HE20 SU one-stream training; IEEE802.11ax-2021 27.3.11.10.
+//! HE20 SU one DATA stream, including STBC training; IEEE802.11ax-2021 27.3.11.10.
 use super::{
     he_iq::{decode_su_prefix, Prefix},
     sync::Acquisition,
@@ -14,6 +14,7 @@ const LTF4: &[u8;245] = b"--+-+-+++-+++--+-----++----++-+-++++-+--++-++++--+---+
 pub(super) struct Trained {
     pub prefix: Prefix,
     pub channel: [ComplexSample; 256],
+    pub second: Option<[ComplexSample; 256]>,
     pub data_start: u64,
     pub guard: usize,
 }
@@ -91,14 +92,21 @@ pub(super) fn train_su(samples: &[ComplexSample], a: &Acquisition) -> Option<Tra
     let prefix = decode_su_prefix(samples, a)?;
     let fields = prefix.signal;
     // L-SIG/RL-SIG/SIG-A total320 samples, then80 samples of HE-STF.
-    let channel = train_field(samples, a, &fields, 400)?;
+    let (channel, second) = if fields.stbc {
+        let [first, second] = train_stbc_field(samples, a, &fields, 400)?;
+        (first, Some(second))
+    } else {
+        (train_field(samples, a, &fields, 400)?, None)
+    };
     let guard = usize::from(fields.guard_ns) / 50;
     Some(Trained {
         prefix,
         channel,
-        data_start: a
-            .signal_start
-            .checked_add((400 + guard + 64 * usize::from(fields.ltf_size)) as u64)?,
+        second,
+        data_start: a.signal_start.checked_add(
+            (400 + (1 + usize::from(fields.stbc)) * (guard + 64 * usize::from(fields.ltf_size)))
+                as u64,
+        )?,
         guard,
     })
 }
@@ -114,6 +122,85 @@ pub(super) fn train_field(
     if fields.space_time_streams != 1 || fields.stbc {
         return None;
     }
+    let (mut channel, trained, guard) = observe_field(samples, a, fields, cp)?;
+    let energy: f32 = channel.iter().map(|v| v.power()).sum();
+    if !energy.is_finite() || energy < 1e-9 {
+        return None;
+    }
+    delay_fit(&mut channel, &trained, guard)?;
+    Some(channel)
+}
+
+/// SU uses P on DATA tones and R on pilots: the second LTF observes
+/// -h1+h2 on DATA, but -(h1+h2) on pilots (27-55..57). Never treat
+/// those pilot observations as separate-channel measurements.
+pub(super) fn train_stbc_field(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    fields: &super::he::SuSignal,
+    cp: usize,
+) -> Option<[[ComplexSample; 256]; 2]> {
+    if !fields.stbc || fields.dcm || fields.space_time_streams != 2 {
+        return None;
+    }
+    let (first, tones, guard) = observe_field(samples, a, fields, cp)?;
+    let next = cp.checked_add(guard + 64 * usize::from(fields.ltf_size))?;
+    let (second, _, _) = observe_field(samples, a, fields, next)?;
+    const PILOTS: [i32; 8] = [-116, -90, -48, -22, 22, 48, 90, 116];
+    let mut phase = ComplexSample::ZERO;
+    for &tone in tones.iter().filter(|k| PILOTS.contains(k)) {
+        let bin = tone.rem_euclid(256) as usize;
+        phase = phase.sub(second[bin].mul(first[bin].conj()));
+    }
+    if !phase.power().is_finite() {
+        return None;
+    }
+    // A pilot null cannot measure residual phase: retain the acquisition CFO.
+    let correction = ComplexSample::rotation(if phase.power() > 1e-18 {
+        -phase.phase()
+    } else {
+        0.
+    });
+    let data: Vec<_> = tones.into_iter().filter(|k| !PILOTS.contains(k)).collect();
+    let mut channels = [[ComplexSample::ZERO; 256]; 2];
+    for &tone in &data {
+        let bin = tone.rem_euclid(256) as usize;
+        let separated =
+            super::stbc::separate_training([first[bin], second[bin].mul(correction)]).ok()?;
+        channels[0][bin] = separated[0];
+        channels[1][bin] = separated[1];
+    }
+    let energy: f32 = channels.iter().flatten().map(|v| v.power()).sum();
+    if !energy.is_finite() || energy < 1e-9 {
+        return None;
+    }
+    // Remove each known STS cyclic shift for delay fitting, then restore it.
+    // Keeping a common physical delay interval avoids fitting extra noise
+    // degrees of freedom just to accommodate STS2's -400 ns shift.
+    for (stream, channel) in channels.iter_mut().enumerate() {
+        for &tone in &data {
+            let bin = tone.rem_euclid(256) as usize;
+            channel[bin] = channel[bin].mul(ComplexSample::rotation(
+                -std::f32::consts::TAU * tone as f32 * (8 * stream) as f32 / 256.,
+            ));
+        }
+        delay_fit(channel, &data, guard)?;
+        for tone in (-122i32..=-2).chain(2..=122) {
+            let bin = tone.rem_euclid(256) as usize;
+            channel[bin] = channel[bin].mul(ComplexSample::rotation(
+                std::f32::consts::TAU * tone as f32 * (8 * stream) as f32 / 256.,
+            ));
+        }
+    }
+    Some(channels)
+}
+
+fn observe_field(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    fields: &super::he::SuSignal,
+    cp: usize,
+) -> Option<([ComplexSample; 256], Vec<i32>, usize)> {
     let (sequence, nfft, guard, active) = match (fields.ltf_size, fields.guard_ns) {
         (1, 800) => (LTF1, 64, 16, 60),
         (2, 800) => (LTF2, 128, 16, 122),
@@ -140,7 +227,6 @@ pub(super) fn train_field(
     // normalizes by sqrt(active training tones), DATA uses sqrt(242).
     let scale = 256. / nfft as f32 * (active as f32 / 242.).sqrt();
     let mut channel = [ComplexSample::ZERO; 256];
-    let mut energy = 0.;
     for (i, sign) in sequence.iter().enumerate() {
         let k = (i as i32 - 122).rem_euclid(256) as usize;
         let multiplier = match sign {
@@ -150,10 +236,6 @@ pub(super) fn train_field(
         };
         let short_bin = ((i as i32 - 122) / (256 / nfft) as i32).rem_euclid(nfft as i32) as usize;
         channel[k] = bins[short_bin].scale(multiplier * scale);
-        energy += channel[k].power();
-    }
-    if !energy.is_finite() || energy < 1e-9 {
-        return None;
     }
     let trained: Vec<i32> = sequence
         .iter()
@@ -161,13 +243,51 @@ pub(super) fn train_field(
         .filter(|(_, s)| **s != b'0')
         .map(|(i, _)| i as i32 - 122)
         .collect();
-    delay_fit(&mut channel, &trained, guard)?;
-    Some(channel)
+    Some((channel, trained, guard))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radio_he_stbc_training_bounds() {
+        for row in include_str!("../../tests/fixtures/iq/he-stbc-iq-index.tsv")
+            .lines()
+            .skip(1)
+            .filter(|r| r.starts_with("he-stbc-iq-mcs0-bcc-") && r.contains("-pad1-flat\t"))
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let (samples, a) = fixture(c[0]);
+            let input = &samples[a.signal_start as usize..];
+            let trained = train_su(input, &a).expect(c[0]);
+            let fields = trained.prefix.signal;
+            let end = (trained.data_start - a.signal_start) as usize;
+            assert!(trained.second.is_some());
+            assert!(train_stbc_field(&input[..end], &a, &fields, 400).is_some());
+            assert!(train_stbc_field(&input[..end - 1], &a, &fields, 400).is_none());
+            assert!(train_stbc_field(input, &a, &fields, usize::MAX).is_none());
+            let mut bad_a = a.clone();
+            bad_a.signal_start = u64::MAX - 40;
+            assert!(train_stbc_field(input, &bad_a, &fields, 400).is_none());
+            for n in [400 + trained.guard, end - 1] {
+                for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                    let mut bad_input = input.to_vec();
+                    bad_input[n].q = bad;
+                    assert!(train_stbc_field(&bad_input, &a, &fields, 400).is_none());
+                }
+            }
+            let mut zero = input.to_vec();
+            zero[400..end].fill(ComplexSample::ZERO);
+            assert!(train_stbc_field(&zero, &a, &fields, 400).is_none());
+            let mut bad = fields;
+            bad.dcm = true;
+            assert!(train_stbc_field(input, &a, &bad, 400).is_none());
+            bad = fields;
+            bad.space_time_streams = 1;
+            assert!(train_stbc_field(input, &a, &bad, 400).is_none());
+        }
+    }
+
     fn train_su4(samples: &[ComplexSample], a: &Acquisition) -> Option<Trained> {
         let trained = train_su(samples, a)?;
         (trained.prefix.signal.ltf_size == 4).then_some(trained)
@@ -296,6 +416,18 @@ mod tests {
         {
             let name = row.split('\t').next().unwrap();
             let (samples, a) = fixture(name);
+            if name.ends_with("stbc") {
+                // Historical unsupported-mode fixture: it has a STBC header
+                // but only one LTF followed by an uncoded probe. Training
+                // estimates alone cannot qualify that probe as valid DATA.
+                assert!(
+                    decode_su_prefix(&samples[a.signal_start as usize..], &a)
+                        .unwrap()
+                        .signal
+                        .stbc
+                );
+                continue;
+            }
             assert!(
                 train_su4(&samples[a.signal_start as usize..], &a).is_none(),
                 "{name}"

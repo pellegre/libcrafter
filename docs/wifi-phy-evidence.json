@@ -316,6 +316,12 @@
       "source": "ieee-80211ax-2021",
       "anchor": "27.3.11.7.3, Figure 27-24",
       "fact": "HE-SIG-A CRC covers 42 bits. The underlying eight-bit polynomial is inherited from HT, but only four complemented output bits are transmitted, C7 first."
+    },
+    {
+      "id": "he-stbc-training-data",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.11.2.2/10, Equations 27-55..58; 27.3.12.12/13; referenced IEEE 802.11-2020 Equation 19-27, Tables 21-11/20",
+      "fact": "HE STBC maps one DATA stream to two space-time streams and excludes DCM. DATA uses the VHT conjugate/sign pair mapping. SU HE-LTF uses P on DATA tones but R (the repeated first P row) on pilots, so pilots do not independently identify the two channels. DATA pilots are copied to both STS before cyclic shifts. Two STS use two training symbols and the second stream has a -400 ns cyclic shift."
     }
   ],
   "unresolved_questions": [
