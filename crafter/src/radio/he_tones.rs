@@ -6,6 +6,23 @@ pub(super) struct Tones {
 }
 
 impl Tones {
+    /// Normal Trigger User Info RU byte, Table9-29i. MU-RTS uses a different
+    /// encoding and must be excluded by the caller. No RA range is expanded.
+    pub fn from_trigger(bandwidth: u8, allocation: u8) -> Option<Self> {
+        if bandwidth != 0 || allocation & 1 != 0 {
+            return None;
+        }
+        let code = allocation >> 1;
+        let (size, index) = match code {
+            0..=8 => (26, usize::from(code) + 1),
+            37..=40 => (52, usize::from(code) - 36),
+            53..=54 => (106, usize::from(code) - 52),
+            61 => (242, 1),
+            _ => return None,
+        };
+        Self::ru(size, index)
+    }
+
     /// Table 27-26 columns to Table 27-7 equal-size RU ordinals. User counts
     /// do not change geometry, including explicitly empty allocations.
     pub fn assignment(ru: &super::he_sig_b::HeRu20Assignment) -> Option<Self> {
@@ -138,6 +155,39 @@ impl Tones {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn radio_he_tb_trigger_ru_codepoints() {
+        // Table9-29i, encoded bytes in increasing physical RU order by size.
+        let entries = [
+            (26, &[0u8, 2, 4, 6, 8, 10, 12, 14, 16][..]),
+            (52, &[74, 76, 78, 80][..]),
+            (106, &[106, 108][..]),
+            (242, &[122][..]),
+        ];
+        for raw in 0..=255u8 {
+            let expected = entries.iter().find_map(|(size, codes)| {
+                codes
+                    .iter()
+                    .position(|&code| code == raw)
+                    .map(|index| (*size, index + 1))
+            });
+            let actual = super::Tones::from_trigger(0, raw);
+            assert_eq!(actual.is_some(), expected.is_some(), "{raw}");
+            if let Some((size, index)) = expected {
+                let reference = super::Tones::ru(size, index).unwrap();
+                let actual = actual.unwrap();
+                assert_eq!(
+                    actual.active().collect::<Vec<_>>(),
+                    reference.active().collect::<Vec<_>>()
+                );
+                assert_eq!(actual.pilots(), reference.pilots());
+            }
+            for bandwidth in [1, 2, 3, 255] {
+                assert!(super::Tones::from_trigger(bandwidth, raw).is_none());
+            }
+        }
+    }
+
     use super::Tones;
     #[test]
     fn radio_he_assignment_slot_bounds() {

@@ -5,6 +5,9 @@ LDPC extra branches are geometry checks, not puncturing-threshold/codeword
 qualification. No Rust implementation imports or receive-length inversion.
 MU receive budgets additionally follow Equations27-144..147; Table27-33
 defines two short data tones (not three) for a 26-tone RU with DCM.
+The per-RU corpora also qualify Trigger-based capacity field mapping under
+27.3.12.5.5: BCC uses the explicit final boundary; LDPC uses the indicated
+extra segment. This reuse qualifies geometry, not TB LDPC threshold policy.
 """
 import argparse
 from fractions import Fraction

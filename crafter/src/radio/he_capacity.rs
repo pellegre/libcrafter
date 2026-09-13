@@ -1,4 +1,4 @@
-//! HE20 SU/ER/MU payload geometry; IEEE802.11ax-2021 27.3.12 and27.4.3.
+//! HE20 SU/ER/MU/TB payload geometry; IEEE802.11ax-2021 27.3.12 and27.4.3.
 use super::he::SuSignal;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,6 +112,48 @@ impl Capacity {
                 pre_fec_padding: signal.pre_fec_padding,
             },
             ru_tones,
+            symbols,
+        )
+    }
+
+    /// Trigger-supplied per-user geometry, ax26.5.2.3.3 and27.3.12.5.5.
+    /// Does not establish timing, exchange matching, spatial separation or
+    /// LDPC codeword admission. RA fields describe each equal-size RA RU.
+    pub fn for_tb(
+        common: &crate::Dot11TriggerCommonFields,
+        user: &crate::Dot11TriggerUserFields,
+        symbols: usize,
+    ) -> Result<Self, Error> {
+        if !matches!(common.trigger_type, 0..=2 | 4..=6) {
+            return Err(Error::Coding);
+        }
+        let tones = super::he_tones::Tones::from_trigger(common.bandwidth, user.ru_allocation)
+            .ok_or(Error::Bandwidth)?;
+        if user.spatial_allocation > 63 {
+            return Err(Error::Streams);
+        }
+        let space_time_streams = match user.aid12 {
+            // RA replies explicitly use NUM_STS=1, not the RA count bits.
+            0 | 2045 => 1,
+            1..=2007 => ((user.spatial_allocation >> 3) + 1) * (1 + u8::from(common.stbc)),
+            _ => return Err(Error::Streams),
+        };
+        let pre_fec_padding = match common.pre_fec_padding_raw {
+            0 => 4,
+            value @ 1..=3 => value,
+            _ => return Err(Error::Padding),
+        };
+        Self::for_ru(
+            Coding {
+                mcs: user.mcs,
+                space_time_streams,
+                stbc: common.stbc,
+                dcm: user.dcm,
+                ldpc: user.ldpc,
+                ldpc_extra_segment: user.ldpc.then_some(common.ldpc_extra_segment),
+                pre_fec_padding,
+            },
+            (tones.count() + tones.pilots().len()) as u16,
             symbols,
         )
     }
@@ -265,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn radio_he_mu_capacity_independent_forward_padding() {
+    fn radio_he_mu_tb_capacity_independent_forward_padding() {
         for (ru, index, count) in [
             (
                 26,
@@ -289,6 +331,49 @@ mod tests {
             ),
         ] {
             forward_padding(index, None, count, Some(ru));
+        }
+    }
+
+    #[test]
+    fn radio_he_tb_capacity_trigger_bounds() {
+        let mut common = crate::Dot11TriggerCommonFields::default();
+        let mut user = crate::Dot11TriggerUserFields::default();
+        let baseline = Capacity::for_tb(&common, &user, 10).unwrap();
+        assert_eq!(baseline.spatial_streams, 1);
+        assert_eq!(baseline.psdu_bytes, 12);
+        for aid in [0, 2045] {
+            user.aid12 = aid;
+            for spatial in 0..64 {
+                user.spatial_allocation = spatial;
+                assert_eq!(Capacity::for_tb(&common, &user, 10), Ok(baseline));
+            }
+        }
+        user.spatial_allocation = 0;
+        for aid in [2008, 2044, 2046, 2047, 4095, u16::MAX] {
+            user.aid12 = aid;
+            assert_eq!(Capacity::for_tb(&common, &user, 10), Err(Error::Streams));
+        }
+        user.aid12 = 1;
+        for value in [4, 5, 255] {
+            common.pre_fec_padding_raw = value;
+            assert_eq!(Capacity::for_tb(&common, &user, 10), Err(Error::Padding));
+        }
+        common.pre_fec_padding_raw = 0;
+        common.ldpc_extra_segment = true;
+        assert_eq!(Capacity::for_tb(&common, &user, 10), Ok(baseline));
+        assert_eq!(Capacity::for_tb(&common, &user, 0), Err(Error::Symbols));
+        assert_eq!(
+            Capacity::for_tb(&common, &user, usize::MAX),
+            Err(Error::Overflow)
+        );
+        for code in [1, 18, 72, 82, 104, 110, 120, 124, 255] {
+            user.ru_allocation = code;
+            assert_eq!(Capacity::for_tb(&common, &user, 10), Err(Error::Bandwidth));
+        }
+        user.ru_allocation = 0;
+        for variant in [3, 7, 15, 255] {
+            common.trigger_type = variant;
+            assert_eq!(Capacity::for_tb(&common, &user, 10), Err(Error::Coding));
         }
     }
 
@@ -412,6 +497,34 @@ mod tests {
                     },
                 };
                 let result = Capacity::for_mu(&signal, &user, ru, c[7]);
+                // Same independent forward per-RU budgets, reached using real
+                // Trigger NSS, raw padding and RU fields, not forged SIG-B.
+                let common = crate::Dot11TriggerCommonFields {
+                    stbc: a.stbc,
+                    ldpc_extra_segment: c[5] != 0,
+                    pre_fec_padding_raw: (c[6] % 4) as u8,
+                    ..Default::default()
+                };
+                let trigger_user = crate::Dot11TriggerUserFields {
+                    aid12: 1,
+                    ru_allocation: match ru {
+                        26 => 0,
+                        52 => 74,
+                        106 => 106,
+                        242 => 122,
+                        _ => unreachable!(),
+                    },
+                    mcs: a.mcs,
+                    ldpc: a.ldpc,
+                    dcm: a.dcm,
+                    spatial_allocation: ((a.space_time_streams / (1 + u8::from(a.stbc))) - 1) << 3,
+                    ..Default::default()
+                };
+                assert_eq!(
+                    Capacity::for_tb(&common, &trigger_user, c[7]),
+                    result,
+                    "TB {row}"
+                );
                 if !a.ldpc {
                     signal.ldpc_extra_segment = !signal.ldpc_extra_segment;
                     assert_eq!(Capacity::for_mu(&signal, &user, ru, c[7]), result);

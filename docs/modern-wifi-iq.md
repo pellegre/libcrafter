@@ -299,6 +299,13 @@ three Trigger GI/LTF settings, LTF counts, Doppler/midambles, STBC pairs and
 packet extension, including TB's 8us STF and its distinct length rule. This
 does not establish Trigger association, per-user DATA admission or live support.
 
+Trigger per-user geometry resolves all 16 HE20 RUs from the normal User Info
+RU byte and computes BCC/LDPC payload budgets from explicit MCS, spatial-stream,
+DCM and padding fields. Random-access fields force one space-time stream;
+their RU-count bits are not mistaken for a stream count. Shared independent
+forward per-RU budget vectors check this mapping. Expanding random-access
+allocations, separating simultaneous users and recovering TB DATA remain separate.
+
 Without Trigger context, the receiver reports `UnsupportedPhy` and does not
 publish a TB frame. This is not payload decoding: RU assignment, MCS,
 coding and training context must come from the triggering exchange
