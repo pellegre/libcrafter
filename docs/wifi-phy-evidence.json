@@ -222,6 +222,12 @@
       "fact": "HT-STF duration is 4 microseconds; its 20 MHz frequency sequence is identical to L-STF."
     },
     {
+      "id": "he-bcc-iq",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.12.8/9/13/14; Tables27-35/42/43; Equations27-104/108; 27.3.13",
+      "fact": "242RU nonDCM BCC interleaving uses26 columns and9*NBPSCS rows with VHT permutations. BPSK through256QAM reuse VHT constellation mapping. Pilot tones are -116,-90,-48,-22,22,48,90,116; pilot values rotate [1,1,1,-1,-1,1,1,1] by DATA symbol index. SU DATA uses legacy polarity index n+4. One-stream/one-RU waveform normalization is1/sqrt242. Packet extension has arbitrary content but DATA average power. This kernel does not yet publish MAC frames."
+    },
+    {
       "id": "he-bcc-payload",
       "source": "ieee-80211ax-2021",
       "anchor": "27.3.12.1-5; references17.3.5.5/6 and19.3.11.6",

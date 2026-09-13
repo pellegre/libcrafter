@@ -662,7 +662,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
         Ok(out)
     }
 }
-fn feedback(state: &mut u8) -> u8 {
+pub(super) fn feedback(state: &mut u8) -> u8 {
     let bit = ((*state >> 6) ^ (*state >> 3)) & 1;
     *state = ((*state << 1) | bit) & 127;
     bit
@@ -702,7 +702,7 @@ fn constellation_energy(coded_bits: usize, carriers: usize) -> Result<f32, ()> {
     }
 }
 // Max-log bit metrics, weighted by channel power; punctures later have zero weight.
-fn demap(value: f32, width: usize, scale: f32, weight: f32, out: &mut Vec<f32>) {
+pub(super) fn demap(value: f32, width: usize, scale: f32, weight: f32, out: &mut Vec<f32>) {
     for bit in 0..width {
         let mut distance = [f32::INFINITY; 2];
         for label in 0..1 << width {

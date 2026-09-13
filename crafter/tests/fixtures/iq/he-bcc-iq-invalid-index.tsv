@@ -1,0 +1,7 @@
+name	reason	sha256
+he-bcc-iq-invalid-ldpc	ldpc	166ccc526575bbb989e68199b4cc3817f75c9b3fc5d7e9f67962fa628d74dc70
+he-bcc-iq-invalid-dcm	dcm	4fddc291d190302d92ef2f5a3755651845569367053bf02fbf96be4c661d9b0a
+he-bcc-iq-invalid-stbc	stbc	0d71912efa00d7415e49ccfb2ea7a492765bd37879b84307d978f5a2d559f6dd
+he-bcc-iq-invalid-midamble	midamble	c47a695332125bc9d2307cb7f11a71c3bd613f5bc36a98fe0ad094b991dcd20d
+he-bcc-iq-invalid-service	service	b3aa6b278d7cbd05f379b432a6deb3fcf74cdd979f700e68eae53efdb7997b3a
+he-bcc-iq-invalid-truncated	truncated	900cf516daec321e8cdc303fbe4d6f162fd7f9f601d91cc468ba03631e2c3df0

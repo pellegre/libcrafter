@@ -8598,6 +8598,8 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "he-timing-index.tsv"
                 | "he-capacity-index.tsv"
                 | "he-bcc-index.tsv"
+                | "he-bcc-iq-index.tsv"
+                | "he-bcc-iq-invalid-index.tsv"
                 | "he-training4-index.tsv"
                 | "he-training-sparse-index.tsv"
                 | "he-training4-invalid-index.tsv"
@@ -8656,6 +8658,16 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 .skip(1)
                 .chain(include_str!("fixtures/iq/dsss-index.tsv").lines().skip(1))
                 .chain(include_str!("fixtures/iq/ht-bcc-index.tsv").lines().skip(1))
+                .chain(
+                    include_str!("fixtures/iq/he-bcc-iq-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
+                .chain(
+                    include_str!("fixtures/iq/he-bcc-iq-invalid-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
                 .chain(
                     include_str!("fixtures/iq/he-training-sparse-index.tsv")
                         .lines()

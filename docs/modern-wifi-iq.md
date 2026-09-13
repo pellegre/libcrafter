@@ -344,8 +344,8 @@ A private HE SU header kernel validates the 52 decoded bits or 104 interleaved
 soft metrics, CRC, tail and reserved fields. It interprets Doppler-dependent
 stream counts and the DCM/STBC guard-interval escape combination separately
 from applied DATA modes. The 1984 independent header vectors are anchored by
-the published HE CRC example. This is not yet connected to IQ acquisition or
-DATA recovery, and does not establish HE reception or valid DATA admission.
+the published HE CRC example. Those header-only tests do not establish
+HE reception or valid DATA admission; IQ integration is described below.
 ER SU, MU and TB require their own format context and additional decoding.
 
 The private HE20 SU IQ prefix kernel now verifies L-SIG/RL-SIG agreement,
@@ -353,8 +353,8 @@ The private HE20 SU IQ prefix kernel now verifies L-SIG/RL-SIG agreement,
 It trains the four additional signaling edge tones from L-SIG/RL-SIG and
 handles HE's L-LTF power normalization. The 96 valid and 10 invalid independent
 CS8 prefixes exercise actual legacy acquisition, CFO/multipath and malformed
-signaling. They end at HE-SIG-A: HE training, DATA recovery and public streaming
-publication remain unfinished, and this is not hardware qualification.
+signaling. Those fixtures end at HE-SIG-A and do not establish DATA recovery
+or hardware qualification. Public streaming publication remains unfinished.
 
 Private 128- and 256-point receive transforms provide the longer HE-LTF and
 DATA transform periods at 20 Msps, keeping the legacy 64-point path unchanged.
@@ -370,8 +370,8 @@ header. The 1x/2x paths use short 64/128-point transforms and convert their gain
 to the 256-point DATA normalization. Complex linear interpolation fills
 untrained tones, with linear extrapolation at the band edges. This is an
 estimator, not exact reconstruction for arbitrary channels. Independent probes
-cover all three sparse SU training/guard combinations. STBC training, DATA
-coding and MAC publication remain unfinished; probe sign recovery is not frame
+cover all three sparse SU training/guard combinations. STBC training and MAC
+publication remain unfinished; probe sign recovery is not frame
 decoding and does not qualify high-order modulation error performance.
 
 HE20 SU now also has a private timing kernel deriving DATA-symbol and midamble
@@ -380,8 +380,7 @@ five SU training/guard combinations, 10/20-symbol midamble periods and 0-16us
 packet extension. Exact DATA/PE boundaries remain distinct from L-SIG's rounded
 duration; offsets exclude the optional signal extension. This is not DATA
 admission, multi-stream demodulation, midamble channel estimation or sounding
-NDP support. HE coded payload recovery and public frame publication remain
-unfinished.
+NDP support. Public frame publication remains unfinished.
 
 The private HE20 SU capacity kernel derives MCS dimensions, meaningful coded
 positions and PSDU length from symbol count and padding signaling. It enforces
@@ -397,6 +396,14 @@ the zero SERVICE field. A caller-supplied byte limit bounds payload allocation.
 Independent coded-bit cases cover MCS0-9 and all nonzero scrambler seeds.
 This does not yet connect HE IQ demodulation to frame publication; output still
 requires MAC aggregate and FCS validation. LDPC payload recovery is unfinished.
+
+The private HE20 SU IQ kernel now connects acquisition, training, timing,
+capacity, pilot tracking, QAM demapping, BCC deinterleaving and byte recovery
+for one-stream MCS0-9 without DCM, STBC or midambles. Independent full-waveform
+cases recover exact synthetic PSDUs across all five SU guard/training pairs,
+frequency offset and multipath. Public streaming publication and MAC/FCS
+admission remain unfinished, as do LDPC and the other HE layouts. These offline
+tests do not establish live hardware qualification or real-time throughput.
 
 ## VHT BCC DATA implementation
 

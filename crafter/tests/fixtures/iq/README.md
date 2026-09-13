@@ -1,5 +1,12 @@
 # Independent IQ vector contract
 
+`he-bcc-iq-index.tsv` and `he-bcc-iq-invalid-index.tsv` record 151 positive
+and six negative HE20 SU one-stream BCC IQ cases from `he_bcc_iq_vectors.py`.
+Complete PHY preambles and DATA carry synthetic PSDUs, not qualified MAC
+aggregates. Cases cover MCS0-9, all five SU training/guard pairs, frequency
+offset, multipath, pilot sequence wrap, invalid modes, SERVICE and truncation.
+Per-case gain prevents CS8 clipping; packet extensions use DATA average power.
+
 `he-bcc-index.tsv` contains 435 independent HE BCC coded-bit/PSDU cases from
 `he_bcc_vectors.py`. It covers MCS0-9, DCM filler, STBC symbol-group geometry,
 all nonzero scrambler seeds, invalid SERVICE and zero seed. Inputs are already

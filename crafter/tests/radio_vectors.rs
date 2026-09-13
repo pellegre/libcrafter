@@ -4,6 +4,41 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_bcc_iq_independent_inventory() {
+    for (index, count, digest, column) in [
+        (
+            include_str!("fixtures/iq/he-bcc-iq-index.tsv"),
+            151,
+            "631c9c12b32af13105037735d60b21d51cb91e6aa33f39f9f8d29998a34ed463",
+            12,
+        ),
+        (
+            include_str!("fixtures/iq/he-bcc-iq-invalid-index.tsv"),
+            6,
+            "d8abb836c5f7cdc76f7e74b1ea7d92a189abb947c19b2ea7648d94234e32be20",
+            2,
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        assert_eq!(index.lines().skip(1).count(), count);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(hex(&Sha256::digest(&bytes)), c[column]);
+            assert_eq!(bytes.len() % 2, 0);
+            if column == 12 {
+                assert!(bytes.len() / 2 >= c[11].parse::<usize>().unwrap());
+            }
+        }
+    }
+}
+
+#[test]
 fn radio_he_bcc_independent_inventory() {
     let index = include_str!("fixtures/iq/he-bcc-index.tsv");
     assert_eq!(
