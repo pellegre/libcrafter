@@ -154,11 +154,13 @@ pub(super) fn recover(
                     .checked_sub(group * (64 * usize::from(h.ltf_size) + trained.guard))?
                     .checked_sub(320)?;
                 if h.stbc {
-                    let [first, second] = super::he_training::train_stbc_field(samples, a, &h, cp)?;
+                    let [first, second] =
+                        super::he_training::train_stbc_for_format(samples, a, &h, cp, admitted.er)?;
                     trained.channel = first;
                     trained.second = Some(second);
                 } else {
-                    trained.channel = super::he_training::train_field(samples, a, &h, cp)?;
+                    trained.channel =
+                        super::he_training::train_for_format(samples, a, &h, cp, admitted.er)?;
                 }
                 trained.normalize_er();
                 // The refreshed LTF includes the channel's current phase slope.

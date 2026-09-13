@@ -30,13 +30,17 @@ impl Tones {
         signs[(symbol % signs.len() + pilot % signs.len()) % signs.len()]
     }
     pub fn data(self) -> impl Iterator<Item = i32> {
-        (-122..=122).filter(move |&k| {
-            (if self.upper106 {
-                k >= 17
-            } else {
-                !(-1..=1).contains(&k)
-            }) && !self.pilots().contains(&k)
-        })
+        self.active().filter(move |k| !self.pilots().contains(k))
+    }
+    pub fn active(self) -> impl Iterator<Item = i32> {
+        (-122..=122).filter(move |&k| self.contains(k))
+    }
+    pub fn contains(self, k: i32) -> bool {
+        if self.upper106 {
+            (17..=122).contains(&k)
+        } else {
+            (-122..=-2).contains(&k) || (2..=122).contains(&k)
+        }
     }
     pub fn count(self) -> usize {
         if self.upper106 {

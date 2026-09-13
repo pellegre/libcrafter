@@ -1,6 +1,7 @@
-//! HE20 SU / ER242 one DATA stream, including STBC; IEEE802.11ax-2021 27.3.11.10.
+//! HE20 SU / ER one DATA stream, including STBC; IEEE802.11ax-2021 27.3.11.10.
 use super::{
     he_iq::{decode_prefix, Prefix},
+    he_tones::Tones,
     sync::Acquisition,
     ComplexSample,
 };
@@ -41,7 +42,12 @@ impl Trained {
 /// averages quantization noise instead of amplifying it at interpolated tones.
 /// The diagonal ridge stabilizes missing DC/edge measurements. This is not a
 /// claim that channels outside the guard interval can be reconstructed.
-fn delay_fit(channel: &mut [ComplexSample; 256], tones: &[i32], guard: usize) -> Option<()> {
+fn delay_fit(
+    channel: &mut [ComplexSample; 256],
+    tones: &[i32],
+    guard: usize,
+    allocation: Tones,
+) -> Option<()> {
     let count = guard.checked_add(4)?;
     if count > 68 || tones.len() < count {
         return None;
@@ -89,7 +95,7 @@ fn delay_fit(channel: &mut [ComplexSample; 256], tones: &[i32], guard: usize) ->
             }
         }
     }
-    for tone in (-122i32..=-2).chain(2..=122) {
+    for tone in allocation.active() {
         let mut value = ComplexSample::ZERO;
         for (n, row) in normal.iter().enumerate() {
             value = value.add(row[count].mul(ComplexSample::rotation(
@@ -111,10 +117,21 @@ pub(super) fn train_su(samples: &[ComplexSample], a: &Acquisition) -> Option<Tra
     // Prefix then80 samples of HE-STF; ER repeats SIG-A (160 extra samples).
     let cp = 400 + 160 * usize::from(prefix.er);
     let (channel, second) = if fields.stbc {
-        let [first, second] = train_stbc_field(samples, a, &fields, cp)?;
+        let [first, second] = if prefix.er {
+            train_stbc_for_format(samples, a, &fields, cp, true)?
+        } else {
+            train_stbc_field(samples, a, &fields, cp)?
+        };
         (first, Some(second))
     } else {
-        (train_field(samples, a, &fields, cp)?, None)
+        (
+            if prefix.er {
+                train_for_format(samples, a, &fields, cp, true)?
+            } else {
+                train_field(samples, a, &fields, cp)?
+            },
+            None,
+        )
     };
     let guard = usize::from(fields.guard_ns) / 50;
     let mut trained = Trained {
@@ -139,15 +156,26 @@ pub(super) fn train_field(
     fields: &super::he::SuSignal,
     cp: usize,
 ) -> Option<[ComplexSample; 256]> {
+    train_for_format(samples, a, fields, cp, false)
+}
+
+pub(super) fn train_for_format(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    fields: &super::he::SuSignal,
+    cp: usize,
+    er: bool,
+) -> Option<[ComplexSample; 256]> {
+    let allocation = Tones::new(er, fields.bandwidth)?;
     if fields.space_time_streams != 1 || fields.stbc {
         return None;
     }
-    let (mut channel, trained, guard) = observe_field(samples, a, fields, cp)?;
+    let (mut channel, trained, guard) = observe_for_format(samples, a, fields, cp, er)?;
     let energy: f32 = channel.iter().map(|v| v.power()).sum();
     if !energy.is_finite() || energy < 1e-9 {
         return None;
     }
-    delay_fit(&mut channel, &trained, guard)?;
+    delay_fit(&mut channel, &trained, guard, allocation)?;
     Some(channel)
 }
 
@@ -160,15 +188,26 @@ pub(super) fn train_stbc_field(
     fields: &super::he::SuSignal,
     cp: usize,
 ) -> Option<[[ComplexSample; 256]; 2]> {
+    train_stbc_for_format(samples, a, fields, cp, false)
+}
+
+pub(super) fn train_stbc_for_format(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    fields: &super::he::SuSignal,
+    cp: usize,
+    er: bool,
+) -> Option<[[ComplexSample; 256]; 2]> {
+    let allocation = Tones::new(er, fields.bandwidth)?;
     if !fields.stbc || fields.dcm || fields.space_time_streams != 2 {
         return None;
     }
-    let (first, tones, guard) = observe_field(samples, a, fields, cp)?;
+    let (first, tones, guard) = observe_for_format(samples, a, fields, cp, er)?;
     let next = cp.checked_add(guard + 64 * usize::from(fields.ltf_size))?;
-    let (second, _, _) = observe_field(samples, a, fields, next)?;
-    const PILOTS: [i32; 8] = [-116, -90, -48, -22, 22, 48, 90, 116];
+    let (second, _, _) = observe_for_format(samples, a, fields, next, er)?;
+    let pilots = allocation.pilots();
     let mut phase = ComplexSample::ZERO;
-    for &tone in tones.iter().filter(|k| PILOTS.contains(k)) {
+    for &tone in tones.iter().filter(|k| pilots.contains(k)) {
         let bin = tone.rem_euclid(256) as usize;
         phase = phase.sub(second[bin].mul(first[bin].conj()));
     }
@@ -181,7 +220,7 @@ pub(super) fn train_stbc_field(
     } else {
         0.
     });
-    let data: Vec<_> = tones.into_iter().filter(|k| !PILOTS.contains(k)).collect();
+    let data: Vec<_> = tones.into_iter().filter(|k| !pilots.contains(k)).collect();
     let mut channels = [[ComplexSample::ZERO; 256]; 2];
     for &tone in &data {
         let bin = tone.rem_euclid(256) as usize;
@@ -204,8 +243,8 @@ pub(super) fn train_stbc_field(
                 -std::f32::consts::TAU * tone as f32 * (8 * stream) as f32 / 256.,
             ));
         }
-        delay_fit(channel, &data, guard)?;
-        for tone in (-122i32..=-2).chain(2..=122) {
+        delay_fit(channel, &data, guard, allocation)?;
+        for tone in allocation.active() {
             let bin = tone.rem_euclid(256) as usize;
             channel[bin] = channel[bin].mul(ComplexSample::rotation(
                 std::f32::consts::TAU * tone as f32 * (8 * stream) as f32 / 256.,
@@ -215,12 +254,24 @@ pub(super) fn train_stbc_field(
     Some(channels)
 }
 
+#[cfg(test)]
 fn observe_field(
     samples: &[ComplexSample],
     a: &Acquisition,
     fields: &super::he::SuSignal,
     cp: usize,
 ) -> Option<([ComplexSample; 256], Vec<i32>, usize)> {
+    observe_for_format(samples, a, fields, cp, false)
+}
+
+fn observe_for_format(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    fields: &super::he::SuSignal,
+    cp: usize,
+    er: bool,
+) -> Option<([ComplexSample; 256], Vec<i32>, usize)> {
+    let allocation = Tones::new(er, fields.bandwidth)?;
     let (sequence, nfft, guard) = match (fields.ltf_size, fields.guard_ns) {
         (1, 800) => (LTF1, 64, 16),
         (2, 800) => (LTF2, 128, 16),
@@ -249,6 +300,9 @@ fn observe_field(
     let scale = (256. / nfft as f32).sqrt();
     let mut channel = [ComplexSample::ZERO; 256];
     for (i, sign) in sequence.iter().enumerate() {
+        if !allocation.contains(i as i32 - 122) {
+            continue;
+        }
         let k = (i as i32 - 122).rem_euclid(256) as usize;
         let multiplier = match sign {
             b'+' => 1.,
@@ -263,6 +317,7 @@ fn observe_field(
         .enumerate()
         .filter(|(_, s)| **s != b'0')
         .map(|(i, _)| i as i32 - 122)
+        .filter(|tone| allocation.contains(*tone))
         .collect();
     Some((channel, trained, guard))
 }
@@ -270,6 +325,90 @@ fn observe_field(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radio_he_er106_training_channels() {
+        let (samples, mut a) = fixture("he-training4-gi800-flat-gain160");
+        let mut fields = decode_prefix(&samples[a.signal_start as usize..], &a)
+            .unwrap()
+            .signal;
+        a.signal_start = 0;
+        a.phase_origin = 0;
+        a.frequency_rad = 0.;
+        let rows = include_str!("../../tests/fixtures/iq/he-er106-training-index.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 54);
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            fields.bandwidth = 1;
+            fields.ltf_size = c[1].parse().unwrap();
+            fields.guard_ns = c[2].parse::<u16>().unwrap() * 50;
+            fields.stbc = c[3] == "1";
+            fields.space_time_streams = if fields.stbc { 2 } else { 1 };
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let wave: Vec<_> = bytes
+                .chunks_exact(2)
+                .map(|b| ComplexSample {
+                    i: b[0] as i8 as f32 / 128.,
+                    q: b[1] as i8 as f32 / 128.,
+                })
+                .collect();
+            assert_eq!(wave.len(), c[6].parse::<usize>().unwrap());
+            let recover = |input: &[ComplexSample], er| {
+                if fields.stbc {
+                    train_stbc_for_format(input, &a, &fields, 0, er).map(|v| v.to_vec())
+                } else {
+                    train_for_format(input, &a, &fields, 0, er).map(|v| vec![v])
+                }
+            };
+            assert!(recover(&wave, false).is_none());
+            assert!(recover(&wave[..wave.len() - 1], true).is_none());
+            assert!(recover(&vec![ComplexSample::ZERO; wave.len()], true).is_none());
+            let mut bad = wave.clone();
+            bad[usize::from(fields.guard_ns) / 50].i = f32::NAN;
+            assert!(recover(&bad, true).is_none());
+            let channels = recover(&wave, true).unwrap_or_else(|| panic!("{}", c[0]));
+            let gain = c[4].parse::<f32>().unwrap() / 128.
+                * 4.
+                * (52f32 / 106.).sqrt()
+                * (2. / f32::from(fields.space_time_streams)).sqrt();
+            for (stream, channel) in channels.iter().enumerate() {
+                let mut error = 0.;
+                let mut energy = 0.;
+                for (k, value) in channel.iter().enumerate().take(123).skip(17) {
+                    let expected = if stream == 0 {
+                        ComplexSample { i: 1., q: 0. }.add(if c[5] == "1" {
+                            ComplexSample { i: 0., q: 0.25 }.mul(ComplexSample::rotation(
+                                -std::f32::consts::TAU * k as f32 * 3. / 256.,
+                            ))
+                        } else {
+                            ComplexSample::ZERO
+                        })
+                    } else {
+                        ComplexSample { i: 0.55, q: 0.35 }.mul(ComplexSample::rotation(
+                            std::f32::consts::TAU * k as f32 * 8. / 256.,
+                        ))
+                    }
+                    .scale(gain);
+                    error += value.sub(expected).power();
+                    energy += expected.power();
+                }
+                assert!(
+                    (error / energy).sqrt() < 0.06,
+                    "{} stream{stream}: {}",
+                    c[0],
+                    (error / energy).sqrt()
+                );
+                assert!(channel[..17]
+                    .iter()
+                    .chain(&channel[123..])
+                    .all(|v| v.power() == 0.));
+            }
+        }
+    }
     #[test]
     fn radio_he_ltf_fractional_normalization() {
         let (samples, mut a) = fixture("he-training4-gi800-flat-gain160");

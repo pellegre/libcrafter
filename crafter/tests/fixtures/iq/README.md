@@ -69,6 +69,13 @@ pilot signs and positions. Geometry tests cover permutations and bounds, while
 the existing complete242-tone waveform corpus checks refactor compatibility.
 Upper106 admission remains disabled pending training and full-waveform tests.
 
+`he-er106-training-index.tsv` contains54 isolated upper106 HE-LTF fixtures
+from `he_er_training_vectors.py`: single-stream and two-STS STBC training,
+all compatible guard/LTF pairs, three quantization gains, and flat/selective
+channels. These fields omit the PPDU prefix and DATA; they qualify the private
+format-aware estimator and zero estimates outside the allocation, not full IQ reception.
+The ER amplitude boost, per-stream power factor, and fractional LTF normalization are included.
+
 HE sparse-LTF waveform normalization follows Equation27-5: for a242-tone RU,
 the denominator under the square root is60.5 (1x),121 (2x),or242 (4x).
 It is not the number of populated training tones (60,122,242). The training,
