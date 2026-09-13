@@ -166,6 +166,13 @@ small RUs with fewer observations than delay coefficients; this is an estimate,
 not unique recovery of arbitrary physical taps. Spatial admission, multi-stream
 training, and connection to complete MU DATA recovery remain unfinished.
 
+MU per-user capacity calculations use the User field's MCS, coding and stream
+count together with RU size and global padding/STBC signaling. They preserve
+the 26-tone DCM short-segment size of two tones, the 106/242-only BCC filler,
+and per-user application of LDPC extra segments. Independent forward padding
+cases check byte/bit budgets, not spatial consistency, codeword admission or
+complete MU payload recovery.
+
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,
 midambles10/20, CFO/selective channels, and a damaged first aggregate member;

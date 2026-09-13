@@ -1,5 +1,12 @@
 # Independent IQ vector contract
 
+`he-mu{26,52,106,242}-capacity-index.tsv` contains 30858 independent forward
+padding cases for per-user MU payload geometry. These include the special
+26-tone DCM short-segment size, BCC filler only on 106/242, STBC groups and
+per-user LDPC extra segments. They are not LDPC puncturing admission or complete
+MU IQ qualification. Regenerate/verify using `he_capacity_vectors.py --mu-tones
+SIZE` with optional `--check`.
+
 `he-mu-training-index.tsv` indexes 384 isolated single-stream RU training
 fields covering all sixteen HE20 resource units, four MU guard/training pairs,
 three quantization gains, and flat/selective channels. These are not complete

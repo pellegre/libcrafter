@@ -1,4 +1,4 @@
-//! HE20 SU / ER SU payload geometry; IEEE802.11ax-2021 27.3.12 and27.4.3.
+//! HE20 SU/ER/MU payload geometry; IEEE802.11ax-2021 27.3.12 and27.4.3.
 use super::he::SuSignal;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +33,16 @@ pub(super) enum Error {
     Overflow,
 }
 
+struct Coding {
+    mcs: u8,
+    space_time_streams: u8,
+    stbc: bool,
+    dcm: bool,
+    ldpc: bool,
+    ldpc_extra_segment: Option<bool>,
+    pre_fec_padding: u8,
+}
+
 impl Capacity {
     /// Does not check PPDU timing, header CRC, or LDPC puncturing admission.
     pub fn new(a: &SuSignal, symbols: usize) -> Result<Self, Error> {
@@ -48,6 +58,76 @@ impl Capacity {
         if er && a.mcs > if upper106 { 0 } else { 2 } {
             return Err(Error::Mcs);
         }
+        if er && a.space_time_streams != if a.stbc { 2 } else { 1 } {
+            return Err(Error::Streams);
+        }
+        Self::for_ru(
+            Coding {
+                mcs: a.mcs,
+                space_time_streams: a.space_time_streams,
+                stbc: a.stbc,
+                dcm: a.dcm,
+                ldpc: a.ldpc,
+                ldpc_extra_segment: a.ldpc_extra_segment,
+                pre_fec_padding: a.pre_fec_padding,
+            },
+            if upper106 { 106 } else { 242 },
+            symbols,
+        )
+    }
+
+    /// Header integrity, RU assignment and cross-user spatial consistency are
+    /// caller responsibilities. SIG-B MCS/DCM do not describe DATA modulation.
+    pub fn for_mu(
+        signal: &super::he_mu::MuSignal,
+        user: &super::he_sig_b::HeSigBUserFields,
+        ru_tones: u16,
+        symbols: usize,
+    ) -> Result<Self, Error> {
+        use super::he_sig_b::HeSigBUserEncoding;
+        if signal.bandwidth != 0 {
+            return Err(Error::Bandwidth);
+        }
+        let (mcs, space_time_streams, dcm, ldpc) = match user.encoding {
+            HeSigBUserEncoding::NonMu {
+                mcs,
+                space_time_streams,
+                dcm,
+                ldpc,
+                ..
+            } => (mcs, space_time_streams, dcm, ldpc),
+            HeSigBUserEncoding::MuMimo {
+                mcs, streams, ldpc, ..
+            } if !signal.stbc => (mcs, streams, false, ldpc),
+            _ => return Err(Error::Streams),
+        };
+        Self::for_ru(
+            Coding {
+                mcs,
+                space_time_streams,
+                dcm,
+                ldpc,
+                stbc: signal.stbc,
+                ldpc_extra_segment: ldpc.then_some(signal.ldpc_extra_segment),
+                pre_fec_padding: signal.pre_fec_padding,
+            },
+            ru_tones,
+            symbols,
+        )
+    }
+
+    fn for_ru(a: Coding, ru_tones: u16, symbols: usize) -> Result<Self, Error> {
+        let (data_tones, short_tones) = match (ru_tones, a.dcm) {
+            (26, false) => (24, 6),
+            (26, true) => (12, 2),
+            (52, false) => (48, 12),
+            (52, true) => (24, 6),
+            (106, false) => (102, 24),
+            (106, true) => (51, 12),
+            (242, false) => (234, 60),
+            (242, true) => (117, 30),
+            _ => return Err(Error::Bandwidth),
+        };
         let (bps, num, den) = match a.mcs {
             0 => (1, 1, 2),
             1 => (2, 1, 2),
@@ -68,9 +148,6 @@ impl Capacity {
             return Err(Error::Streams);
         }
         let nss = if a.stbc { 1 } else { sts };
-        if er && nss != 1 {
-            return Err(Error::Streams);
-        }
         if a.dcm && (!matches!(a.mcs, 0 | 1 | 3 | 4) || nss > 2) {
             return Err(Error::Mcs);
         }
@@ -85,12 +162,11 @@ impl Capacity {
         if symbols < group || symbols % group != 0 {
             return Err(Error::Symbols);
         }
-        let divisor = 1 + usize::from(a.dcm);
-        let cbps = (if upper106 { 102 } else { 234 }) / divisor * nss * bps;
+        let cbps = data_tones * nss * bps;
         // BPSK/DCM/NSS1 floors to25 (106) or58 (242); the spare coded
         // position is the arbitrary BCC filler specified in27.3.12.5.1.
         let dbps = cbps * num / den;
-        let short_cbps = (if upper106 { 24 } else { 60 }) / divisor * nss * bps;
+        let short_cbps = short_tones * nss * bps;
         let short_dbps = short_cbps * num / den;
         let extra = a.ldpc_extra_segment == Some(true);
         let (rx_symbols, rx_padding) = if extra {
@@ -140,7 +216,11 @@ impl Capacity {
             psdu_bytes: payload / 8,
             phy_pad_bits: payload % 8,
             tail_bits,
-            bcc_dcm_filler: !a.ldpc && a.dcm && a.mcs == 0 && nss == 1,
+            bcc_dcm_filler: !a.ldpc
+                && a.dcm
+                && a.mcs == 0
+                && nss == 1
+                && matches!(ru_tones, 106 | 242),
         })
     }
 }
@@ -164,6 +244,7 @@ mod tests {
             include_str!("../../tests/fixtures/iq/he-capacity-index.tsv"),
             None,
             8253,
+            None,
         );
     }
 
@@ -173,15 +254,132 @@ mod tests {
             include_str!("../../tests/fixtures/iq/he-er106-capacity-index.tsv"),
             Some(1),
             177,
+            None,
         );
         forward_padding(
             include_str!("../../tests/fixtures/iq/he-er242-capacity-index.tsv"),
             Some(0),
             619,
+            None,
         );
     }
 
-    fn forward_padding(index: &str, er_bandwidth: Option<u8>, expected: usize) {
+    #[test]
+    fn radio_he_mu_capacity_independent_forward_padding() {
+        for (ru, index, count) in [
+            (
+                26,
+                include_str!("../../tests/fixtures/iq/he-mu26-capacity-index.tsv"),
+                7078,
+            ),
+            (
+                52,
+                include_str!("../../tests/fixtures/iq/he-mu52-capacity-index.tsv"),
+                7585,
+            ),
+            (
+                106,
+                include_str!("../../tests/fixtures/iq/he-mu106-capacity-index.tsv"),
+                7942,
+            ),
+            (
+                242,
+                include_str!("../../tests/fixtures/iq/he-mu242-capacity-index.tsv"),
+                8253,
+            ),
+        ] {
+            forward_padding(index, None, count, Some(ru));
+        }
+    }
+
+    #[test]
+    fn radio_he_mu_capacity_bounds_and_short_dcm() {
+        use super::super::he_sig_b::{HeSigBUserEncoding, HeSigBUserFields};
+        let mut signal = mu_header();
+        signal.stbc = false;
+        signal.pre_fec_padding = 1;
+        signal.ldpc_extra_segment = false;
+        let mut user = HeSigBUserFields {
+            sta_id: 1,
+            encoding: HeSigBUserEncoding::NonMu {
+                space_time_streams: 1,
+                beamformed: false,
+                mcs: 0,
+                dcm: true,
+                ldpc: false,
+            },
+        };
+        let c = Capacity::for_mu(&signal, &user, 26, 10).unwrap();
+        assert_eq!(c.coded_short, 2);
+        assert_eq!(c.coded_per_symbol, 12);
+        assert!(!c.bcc_dcm_filler);
+        for size in [0, 25, 53, 105, 243, 484, u16::MAX] {
+            assert_eq!(
+                Capacity::for_mu(&signal, &user, size, 10),
+                Err(Error::Bandwidth)
+            );
+        }
+        for padding in [0, 5, 255] {
+            signal.pre_fec_padding = padding;
+            assert_eq!(
+                Capacity::for_mu(&signal, &user, 26, 10),
+                Err(Error::Padding)
+            );
+        }
+        signal.pre_fec_padding = 1;
+        assert_eq!(Capacity::for_mu(&signal, &user, 26, 0), Err(Error::Symbols));
+        assert_eq!(
+            Capacity::for_mu(&signal, &user, 26, usize::MAX),
+            Err(Error::Overflow)
+        );
+        signal.bandwidth = 1;
+        assert_eq!(
+            Capacity::for_mu(&signal, &user, 26, 10),
+            Err(Error::Bandwidth)
+        );
+        signal.bandwidth = 0;
+        user.encoding = HeSigBUserEncoding::Unused { raw_parameters: 0 };
+        assert_eq!(
+            Capacity::for_mu(&signal, &user, 26, 10),
+            Err(Error::Streams)
+        );
+        user.encoding = HeSigBUserEncoding::MuMimo {
+            spatial_configuration: 0,
+            streams: 1,
+            start_stream: 0,
+            total_streams: 2,
+            mcs: 0,
+            ldpc: false,
+        };
+        signal.stbc = true;
+        assert_eq!(
+            Capacity::for_mu(&signal, &user, 106, 10),
+            Err(Error::Streams)
+        );
+    }
+
+    fn mu_header() -> super::super::he_mu::MuSignal {
+        let bits: Vec<_> = include_str!("../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
+            .lines()
+            .nth(1)
+            .unwrap()
+            .split('\t')
+            .next()
+            .unwrap()
+            .bytes()
+            .map(|b| b - b'0')
+            .collect();
+        let mut signal = super::super::he_mu::MuSignal::decode(&bits).unwrap();
+        signal.bandwidth = 0;
+        signal
+    }
+
+    fn forward_padding(
+        index: &str,
+        er_bandwidth: Option<u8>,
+        expected: usize,
+        mu_tones: Option<u16>,
+    ) {
         let mut count = 0;
         for row in index.lines().skip(1) {
             let c: Vec<usize> = row.split('\t').map(|v| v.parse().unwrap()).collect();
@@ -194,8 +392,46 @@ mod tests {
             a.ldpc = c[4] != 0;
             a.ldpc_extra_segment = a.ldpc.then_some(c[5] != 0);
             a.pre_fec_padding = c[6] as u8;
-            let v = Capacity::for_format(&a, c[7], er_bandwidth.is_some())
-                .unwrap_or_else(|e| panic!("{row}: {e:?}"));
+            let v = if let Some(ru) = mu_tones {
+                use super::super::he_sig_b::{HeSigBUserEncoding, HeSigBUserFields};
+                let mut signal = mu_header();
+                signal.stbc = a.stbc;
+                signal.pre_fec_padding = a.pre_fec_padding;
+                signal.ldpc_extra_segment = c[5] != 0;
+                // Header modulation must not become DATA modulation.
+                signal.sig_b_mcs = 1;
+                signal.sig_b_dcm = true;
+                let mut user = HeSigBUserFields {
+                    sta_id: 1,
+                    encoding: HeSigBUserEncoding::NonMu {
+                        space_time_streams: a.space_time_streams,
+                        beamformed: false,
+                        mcs: a.mcs,
+                        dcm: a.dcm,
+                        ldpc: a.ldpc,
+                    },
+                };
+                let result = Capacity::for_mu(&signal, &user, ru, c[7]);
+                if !a.ldpc {
+                    signal.ldpc_extra_segment = !signal.ldpc_extra_segment;
+                    assert_eq!(Capacity::for_mu(&signal, &user, ru, c[7]), result);
+                }
+                if !a.stbc && !a.dcm && a.space_time_streams <= 4 && ru >= 106 {
+                    user.encoding = HeSigBUserEncoding::MuMimo {
+                        spatial_configuration: 0,
+                        streams: a.space_time_streams,
+                        start_stream: 0,
+                        total_streams: a.space_time_streams,
+                        mcs: a.mcs,
+                        ldpc: a.ldpc,
+                    };
+                    assert_eq!(Capacity::for_mu(&signal, &user, ru, c[7]), result);
+                }
+                result
+            } else {
+                Capacity::for_format(&a, c[7], er_bandwidth.is_some())
+            }
+            .unwrap_or_else(|e| panic!("{row}: {e:?}"));
             if er_bandwidth == Some(0) {
                 assert_eq!(Capacity::new(&a, c[7]), Ok(v));
             }

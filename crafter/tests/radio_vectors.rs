@@ -4,6 +4,38 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_mu_capacity_inventory() {
+    for (index, count, hash) in [
+        (
+            include_str!("fixtures/iq/he-mu26-capacity-index.tsv"),
+            7078,
+            "e18104a8e7ef0634d4389beeaaf68aa88b689ed7f0c77b125a2de7a03071a534",
+        ),
+        (
+            include_str!("fixtures/iq/he-mu52-capacity-index.tsv"),
+            7585,
+            "0425d4d62840179dc5fc17f298581ce7f5142703ae044376628439e6d3671298",
+        ),
+        (
+            include_str!("fixtures/iq/he-mu106-capacity-index.tsv"),
+            7942,
+            "23ed9964d49946e6684a6e1815579d82a07eac3f24e2a0b609092e9803802b2e",
+        ),
+        (
+            include_str!("fixtures/iq/he-mu242-capacity-index.tsv"),
+            8253,
+            "c5f05bab91ef075f49d3f05a5a71d16a9969e876f5e1c7c1e93243e6e0066642",
+        ),
+    ] {
+        assert_eq!(index.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), hash);
+        for row in index.lines().skip(1) {
+            assert_eq!(row.split('\t').count(), 19);
+        }
+    }
+}
+
+#[test]
 fn radio_he_mu_training_inventory() {
     let index = include_str!("fixtures/iq/he-mu-training-index.tsv");
     assert_eq!(index.lines().skip(1).count(), 384);
