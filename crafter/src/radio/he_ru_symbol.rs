@@ -2,6 +2,53 @@
 //! No MU-MIMO separation, header admission, FEC or MAC integrity is implied.
 use super::{he_tones::Tones, ComplexSample};
 
+pub(super) struct Observation {
+    bins: [ComplexSample; 256],
+    phase: f32,
+    slope: f32,
+}
+
+/// A bounded constant-clock retry model inferred only from received pilots.
+/// Fits carrier phase and sampling-clock slope across uniformly spaced DATA
+/// symbols; never span a midamble/channel reset. FEC and MAC still decide
+/// whether a retry is usable, not the regression residual or assumed payload.
+pub(super) fn fit_pilot_clock(observed: &[Observation]) -> Option<Vec<(f32, f32)>> {
+    if !(3..=400).contains(&observed.len()) {
+        return None;
+    }
+    let center = (observed.len() - 1) as f64 / 2.;
+    let mut previous = f64::from(observed[0].phase);
+    let (mut phase, mut phase_x, mut slope, mut slope_x, mut xx) = (0., 0., 0., 0., 0.);
+    for (n, item) in observed.iter().enumerate() {
+        if !item.phase.is_finite() || !item.slope.is_finite() {
+            return None;
+        }
+        let value = previous
+            + (f64::from(item.phase) - previous + std::f64::consts::PI)
+                .rem_euclid(std::f64::consts::TAU)
+            - std::f64::consts::PI;
+        previous = value;
+        let x = n as f64 - center;
+        phase += value;
+        phase_x += x * value;
+        slope += f64::from(item.slope);
+        slope_x += x * f64::from(item.slope);
+        xx += x * x;
+    }
+    let mut result = Vec::new();
+    result.try_reserve_exact(observed.len()).ok()?;
+    for n in 0..observed.len() {
+        let x = n as f64 - center;
+        let p = (phase / observed.len() as f64 + x * phase_x / xx) as f32;
+        let s = (slope / observed.len() as f64 + x * slope_x / xx) as f32;
+        if !p.is_finite() || !s.is_finite() {
+            return None;
+        }
+        result.push((p, s));
+    }
+    Some(result)
+}
+
 #[derive(Clone)]
 pub(super) struct Demodulator {
     tones: Tones,
@@ -103,8 +150,42 @@ impl Demodulator {
         symbol: usize,
         polarity: f32,
     ) -> Option<Vec<f32>> {
+        self.recover_observed(wave, channel, frequency_rad, elapsed, symbol, polarity)
+            .map(|(metrics, _)| metrics)
+    }
+
+    pub fn recover_observed(
+        &mut self,
+        wave: &[ComplexSample],
+        channel: &[ComplexSample; 256],
+        frequency_rad: f32,
+        elapsed: u64,
+        symbol: usize,
+        polarity: f32,
+    ) -> Option<(Vec<f32>, Observation)> {
         let (bins, intercept, slope) =
             self.observe(wave, channel, frequency_rad, elapsed, symbol, polarity)?;
+        let observation = Observation {
+            bins,
+            phase: intercept,
+            slope,
+        };
+        let ordered = self.recover_observation(&observation, channel, intercept, slope)?;
+        // A rejected symbol must not corrupt the phase tracker.
+        self.slope = slope;
+        Some((ordered, observation))
+    }
+
+    pub fn recover_observation(
+        &self,
+        observation: &Observation,
+        channel: &[ComplexSample; 256],
+        intercept: f32,
+        slope: f32,
+    ) -> Option<Vec<f32>> {
+        if !intercept.is_finite() || !slope.is_finite() {
+            return None;
+        }
         let mut observations = Vec::with_capacity(self.tones.count());
         for tone in self.tones.data() {
             let bin = tone.rem_euclid(256) as usize;
@@ -115,7 +196,7 @@ impl Demodulator {
             let value = if power < 1e-12 {
                 ComplexSample::ZERO
             } else {
-                bins[bin]
+                observation.bins[bin]
                     .mul(channel[bin].conj())
                     .scale(1. / power)
                     .mul(ComplexSample::rotation(-intercept - slope * tone as f32))
@@ -125,10 +206,7 @@ impl Demodulator {
             }
             observations.push((value, if power < 1e-12 { 0. } else { power }));
         }
-        let ordered = self.demap_observations(&observations)?;
-        // A rejected symbol must not corrupt the phase tracker.
-        self.slope = slope;
-        Some(ordered)
+        self.demap_observations(&observations)
     }
 
     /// Two consecutive useful symbols, starting at an even DATA symbol.
@@ -401,6 +479,45 @@ fn observe_with_pilot_policy(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn radio_he_tb_pilot_clock_fit_wraps_noise_and_bounds() {
+        let mut observed: Vec<_> = (0..20)
+            .map(|n| {
+                let noise = if n % 2 == 0 { 0.04 } else { -0.04 };
+                Observation {
+                    bins: [ComplexSample::ZERO; 256],
+                    phase: (0.2 + 0.4 * n as f32 + noise + std::f32::consts::PI)
+                        .rem_euclid(std::f32::consts::TAU)
+                        - std::f32::consts::PI,
+                    slope: 0.001 + 0.00001 * n as f32 + noise * 0.002,
+                }
+            })
+            .collect();
+        let fitted = fit_pilot_clock(&observed).unwrap();
+        for (n, (phase, slope)) in fitted.into_iter().enumerate() {
+            assert!((phase - (0.2 + 0.4 * n as f32)).abs() < 0.01);
+            assert!((slope - (0.001 + 0.00001 * n as f32)).abs() < 0.00002);
+        }
+        for len in 0..3 {
+            assert!(fit_pilot_clock(&observed[..len]).is_none());
+        }
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            observed[3].phase = bad;
+            assert!(fit_pilot_clock(&observed).is_none());
+        }
+        observed[3].phase = 0.;
+        observed[3].slope = f32::NAN;
+        assert!(fit_pilot_clock(&observed).is_none());
+        let oversized: Vec<_> = (0..401)
+            .map(|_| Observation {
+                bins: [ComplexSample::ZERO; 256],
+                phase: 0.,
+                slope: 0.,
+            })
+            .collect();
+        assert!(fit_pilot_clock(&oversized).is_none());
+    }
 
     #[test]
     fn radio_he_tb_pilot_null_retains_prior_slope() {

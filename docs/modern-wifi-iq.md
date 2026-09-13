@@ -350,6 +350,14 @@ or requiring a flat channel. Deterministic checks retain long-delay paths and
 compare estimates against independently generated physical channels. It does
 not guarantee high-order QAM recovery at arbitrary CS8 signal levels.
 
+For full242-tone, non-STBC high-order LDPC TB DATA without midambles, a failed
+initial decode can retry a linear carrier-phase and sampling-clock trend fitted
+to that user's received DATA pilots. The retry is bounded to 400 symbols and
+must fully converge and validate SERVICE before replacing the initial estimate.
+It uses neither a known carrier offset nor known payload bytes. Nonlinear phase
+variation is not assumed away: an unsuccessful retry retains the initial result,
+and downstream MPDU FCS checks remain mandatory.
+
 The TB kernel also exposes private header-only admission: checked L-SIG,
 RL-SIG and HE-SIG-A plus explicit Trigger fields determine the per-user DATA
 geometry and retained-sample budget before DATA buffering. Admission checks

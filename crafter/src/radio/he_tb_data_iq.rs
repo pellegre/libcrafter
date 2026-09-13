@@ -172,6 +172,18 @@ pub(super) fn recover(
             20
         });
     let mut pilot = 127;
+    let retain = !common.stbc
+        && user.ldpc
+        && !user.dcm
+        && c.bits_per_tone >= 8
+        && tones.count() == 234
+        && timing.midambles == 0;
+    let mut observed = Vec::new();
+    if retain {
+        observed
+            .try_reserve_exact(timing.data_symbols)
+            .map_err(|_| Error::Allocation)?;
+    }
     // Eq27-111: TB p[n+4], independent of the number of training symbols.
     for _ in 0..4 {
         super::data::feedback(&mut pilot);
@@ -217,30 +229,61 @@ pub(super) fn recover(
                 metrics.extend(block);
             }
         } else {
-            metrics.extend(
-                demod
-                    .recover(
-                        wave(0).ok_or(Error::Samples)?,
-                        &channel[0],
-                        a.frequency_rad,
-                        elapsed[0],
-                        symbol,
-                        polarity[0],
-                    )
-                    .ok_or(Error::Metrics)?,
-            );
+            let (block, observation) = demod
+                .recover_observed(
+                    wave(0).ok_or(Error::Samples)?,
+                    &channel[0],
+                    a.frequency_rad,
+                    elapsed[0],
+                    symbol,
+                    polarity[0],
+                )
+                .ok_or(Error::Metrics)?;
+            metrics.extend(block);
+            if retain {
+                observed.push(observation);
+            }
         }
     }
     let (psdu, failed_codewords, first_failure) = if user.ldpc {
-        let result = super::he_mu_ldpc::recover_tb(
-            common,
-            user,
-            timing.data_symbols,
-            &metrics,
-            max_psdu,
-            partial,
-        )
-        .map_err(Error::Ldpc)?;
+        let decode = |metrics: &[f32], partial| {
+            super::he_mu_ldpc::recover_tb(
+                common,
+                user,
+                timing.data_symbols,
+                metrics,
+                max_psdu,
+                partial,
+            )
+        };
+        let mut result = decode(&metrics, partial);
+        if retain && result.as_ref().map_or(true, |r| r.failed_codewords != 0) {
+            if let Some(clock) = super::he_ru_symbol::fit_pilot_clock(&observed) {
+                let mut retry = Vec::new();
+                retry
+                    .try_reserve_exact(metrics.len())
+                    .map_err(|_| Error::Allocation)?;
+                let mut usable = true;
+                for (observation, (phase, slope)) in observed.iter().zip(clock) {
+                    if let Some(block) =
+                        demod.recover_observation(observation, &channel[0], phase, slope)
+                    {
+                        retry.extend(block);
+                    } else {
+                        usable = false;
+                        break;
+                    }
+                }
+                if usable {
+                    // Keep the initial partial estimate unless this retry fully
+                    // converges and validates SERVICE. No known payload input.
+                    if let Ok(candidate) = decode(&retry, false) {
+                        result = Ok(candidate);
+                    }
+                }
+            }
+        }
+        let result = result.map_err(Error::Ldpc)?;
         (result.psdu, result.failed_codewords, result.first_failure)
     } else {
         (
