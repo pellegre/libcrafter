@@ -222,6 +222,12 @@
       "fact": "HT-STF duration is 4 microseconds; its 20 MHz frequency sequence is identical to L-STF."
     },
     {
+      "id": "he-su-capacity",
+      "source": "ieee-80211ax-2021",
+      "anchor": "Tables27-33/79-86; 27.3.12.5/9/12; Equations27-60-74/140-143",
+      "fact": "HE20 SU uses234 data tones, or117 with DCM. DCM supports MCS0/1/3/4 with1/2 spatial streams and noSTBC. BCC is limited to MCS0-9 and<=4 spatial streams; MCS10/11 requireLDPC. Short padding segments use60 or30 data tones. PSDU length floors the data budget minus16SERVICE bits and6BCC tail bits to octets; LDPC has no tail. LDPC extra-segment signaling advances padding factor or wraps4to1 while adding one STBC symbol group; receiver reverses that adjustment for the payload budget. DCM BPSK/NSS1 uses58 data bits per symbol and BCC inserts one arbitrary filler after116 coded bits."
+    },
+    {
       "id": "he-su-timing",
       "source": "ieee-80211ax-2021",
       "anchor": "Table27-12; 27.3.11.10; 27.3.12.12/16; Equations27-11/112/118-122",

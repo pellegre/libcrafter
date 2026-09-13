@@ -383,6 +383,13 @@ admission, multi-stream demodulation, midamble channel estimation or sounding
 NDP support. HE coded payload recovery and public frame publication remain
 unfinished.
 
+The private HE20 SU capacity kernel derives MCS dimensions, meaningful coded
+positions and PSDU length from symbol count and padding signaling. It enforces
+the BCC/MCS, DCM and STBC constraints and reverses the LDPC extra-segment
+adjustment before calculating payload bytes. Independent forward padding cases
+cover all MCSs and valid stream-count arithmetic. This does not implement MIMO
+reception, FEC recovery, the LDPC puncturing decision or complete DATA admission.
+
 ## VHT BCC DATA implementation
 
 The private single-encoder VHT BCC DATA recovery path uses the SIG-B CRC in

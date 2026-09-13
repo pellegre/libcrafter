@@ -4,6 +4,21 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_capacity_independent_inventory() {
+    let index = include_str!("fixtures/iq/he-capacity-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "c5f05bab91ef075f49d3f05a5a71d16a9969e876f5e1c7c1e93243e6e0066642"
+    );
+    assert_eq!(index.lines().skip(1).count(), 8253);
+    for row in index.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 19);
+        assert!(c.iter().all(|v| v.parse::<usize>().is_ok()));
+    }
+}
+
+#[test]
 fn radio_he_timing_independent_inventory() {
     let index = include_str!("fixtures/iq/he-timing-index.tsv");
     assert_eq!(
