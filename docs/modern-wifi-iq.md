@@ -149,8 +149,8 @@ not per-RU spatial admission, channel training or MU payload recovery.
 The shared HE tone geometry covers all sixteen 20 MHz resource units (nine
 26-tone, four 52-tone, two 106-tone and one 242-tone), their pilot positions
 and signs, and one-stream BCC/LDPC permutations. Its RU indices are one-based
-within each size, not SIG-B slot indices. MU channel training and payload
-integration remain unfinished; geometry alone does not recover MAC bytes.
+within each size, not SIG-B slot indices. Geometry alone does not recover MAC
+bytes; the single-stream IQ-to-PSDU integration is described below.
 
 The private SIG-B-to-RU handoff translates allocation slots into physical tone
 geometry and preserves the original contiguous User field positions, including
@@ -163,8 +163,8 @@ An isolated one-stream MU RU training kernel estimates channels for all sixteen
 HE20 allocations and all four MU guard/training pairs. Independent quantized
 LTF fields cover flat and selective channels. The regularized delay fit accepts
 small RUs with fewer observations than delay coefficients; this is an estimate,
-not unique recovery of arbitrary physical taps. Spatial admission, multi-stream
-training, and connection to complete MU DATA recovery remain unfinished.
+not unique recovery of arbitrary physical taps. Multi-stream training and
+full spatial admission remain unfinished.
 
 MU per-user capacity calculations use the User field's MCS, coding and stream
 count together with RU size and global padding/STBC signaling. They preserve
@@ -176,27 +176,27 @@ complete MU payload recovery.
 The per-user MU BCC kernel recovers PSDU bytes from already deinterleaved,
 stream-recombined soft metrics, using each user's RU capacity. Independent
 coded-bit cases cover all four RU sizes, padding/filler, STBC groups and
-SERVICE validation. Those bytes still require MAC/FCS validation; MU IQ
-demodulation and complete streaming payload integration remain unfinished.
+SERVICE validation. Those bytes still require MAC/FCS validation and streaming
+payload integration.
 
 MU LDPC layout calculation handles the common extra-segment flag differently
 from SU: a user accepts an extra segment requested by a peer, but rejects a
 missing segment it needs itself. Independent forward layouts check codeword
 sizes, shortening, puncturing and repetition. Cross-user consistency of the
-global flag and IQ integration remain separate work.
+global flag remains separate work from per-user IQ recovery.
 
 The MU LDPC payload kernel removes post-FEC padding from ordered full-symbol
 metrics, recovers codewords and validates SERVICE before returning PSDU bytes.
 Independent encoded cases cover four RU sizes, MCS0..11, applicable DCM, STBC,
 and peer-requested extra segments. Strict mode rejects failed codewords;
 partial mode retains failure diagnostics and intact earlier bytes but still
-requires SERVICE and per-MPDU FCS verification. MU IQ demodulation, cross-user
+requires SERVICE and per-MPDU FCS verification. Full cross-user spatial
 admission and streaming integration remain unfinished.
 
 The joint DCM demapper also accepts 12- and 24-data-tone halves for 26/52-tone
 RUs. Independent distance fixtures verify the even-half BPSK sign, QPSK
 conjugation, 16-QAM bit swapping and erased-observation handling. This removes
-a small-RU demapper restriction; complete MU IQ recovery remains unfinished.
+a small-RU demapper restriction; it does not itself recover packets.
 
 A private one-stream RU DATA demodulator converts a useful 256-sample symbol
 into full-symbol BCC-deinterleaved or LDPC-tone-ordered metrics. It corrects CFO,
@@ -206,6 +206,19 @@ constellations through 1024-QAM (LDPC), selective channels and one erased DCM
 half. The caller must still admit the stream, estimate its channel, supply
 the PPDU pilot polarity and remove post-FEC padding during payload recovery.
 This kernel does not yet complete MU packet or streaming integration.
+
+The private MU IQ-to-PSDU path now connects checked SIG-B, MU timing, RU
+training, pilot polarity, DATA demodulation and BCC/LDPC recovery for one
+non-STBC stream per RU. It preserves original user positions and per-user
+failures, bounds samples/PSDU allocation, and refreshes channels at midambles.
+For extra LTFs in multi-RU packets it estimates each one-stream channel from
+the first LTF; it does not average all training symbols. A 252-waveform cs8
+corpus covers all 16 HE20 RU positions, applicable DCM, constellations through
+1024-QAM with LDPC, all four guard/training pairs, extra LTF counts, midambles,
+CFO/selective channels, bad SERVICE and failed user CRC blocks. These synthetic
+PSDUs are not MAC frames. MU STBC/spatial separation, aggregate/FCS publication,
+streaming integration, mixed-coding cross-user qualification and live HE
+validation remain unfinished; this is not a full MU support claim.
 
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,

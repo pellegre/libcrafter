@@ -14,6 +14,7 @@ mod he_data_iq;
 mod he_fft;
 mod he_iq;
 mod he_mu;
+mod he_mu_data_iq;
 mod he_mu_ldpc;
 mod he_ru_symbol;
 mod he_sig_b;

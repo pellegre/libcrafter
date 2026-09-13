@@ -4,6 +4,25 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_mu_data_iq_inventory() {
+    let rows = include_str!("fixtures/iq/he-mu-data-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 252);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "c4546f53fb1a583de441d02ce13cfd9df66de5e3831a55b1f90e9dda287a4072"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/iq")
+            .join(format!("{}.cs8", c[0]));
+        let iq = fs::read(path).unwrap();
+        assert_eq!(iq.len(), 2 * c[12].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[13]);
+    }
+}
+
+#[test]
 fn radio_he_ru_symbol_inventory() {
     let rows = include_str!("fixtures/iq/he-ru-symbol.tsv");
     assert_eq!(rows.lines().skip(1).count(), 640);

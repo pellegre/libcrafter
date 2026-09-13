@@ -1,5 +1,13 @@
 # Independent IQ vector contract
 
+`he-mu-data-iq-index.tsv` indexes 252 independent MU preamble-through-DATA cs8
+waveforms with synthetic per-user PSDUs (not MAC frames). They cover all HE20
+RU positions, one stream/RU, BCC/LDPC, DCM, four guard/training pairs, extra
+LTF counts, midambles, flat/selective channels and CFO. Damaged SERVICE and
+user CRC cases preserve neighboring users. Quantization gain is capped at200
+and reduced when necessary to keep component peaks at120, without clipping.
+Regenerate with `he_mu_data_iq_vectors.py`; add `--check` to verify all bytes.
+
 `he-ru-symbol.tsv` contains 640 independently generated floating-point DATA
 symbols over all 16 HE20 RU positions, BCC/LDPC constellation orders, DCM,
 known flat/selective channels, CFO, pilot phase/slope, and erased lower DCM
