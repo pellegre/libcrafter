@@ -362,6 +362,13 @@ An independent direct DFT checks every output bin for ten input patterns, and
 analytical tests check every tone at both sizes. These arithmetic tests do not
 establish HE DATA decoding or real-time throughput.
 
+The private one-stream 4x HE-LTF receiver uses the recovered SU header to locate
+training, handles 0.8us and 3.2us guards, and estimates all242 active tones with
+the 256-point transform. Independent preamble/channel-probe cases check gain,
+frequency offset, multipath and changes in spatial mapping after the legacy
+header. Sparse 1x/2x training, STBC training, DATA coding and MAC publication
+remain unfinished; channel-probe sign recovery is not frame decoding.
+
 ## VHT BCC DATA implementation
 
 The private single-encoder VHT BCC DATA recovery path uses the SIG-B CRC in

@@ -10,6 +10,7 @@ mod dsss_tx;
 mod he;
 mod he_fft;
 mod he_iq;
+mod he_training;
 mod ht;
 mod vht;
 mod vht_iq;

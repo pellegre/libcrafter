@@ -222,6 +222,12 @@
       "fact": "HT-STF duration is 4 microseconds; its 20 MHz frequency sequence is identical to L-STF."
     },
     {
+      "id": "he-su-training",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.11.9 Equations27-22/23/38; 27.3.11.10 Equations27-43/55-58",
+      "fact": "HE SU STF lasts80 samples at20Msps, using14 nonzero tones at spacing16 with the M sequence times(1+j)/sqrt2 and zero DC. One-stream one-RU normalization is1/sqrt14. The4x HE-LTF sequence has242 nonzero tones at signedindices-122..-2 and2..122; normalization is1/sqrt242. P and R first-row/first-column factors are1 for one stream. 4x training supports800ns or3200ns GI via the SU signaling interpretation; HE fields may have different spatial mapping from pre-HE fields when Beam Change is set."
+    },
+    {
       "id": "he-transform-periods",
       "source": "ieee-80211ax-2021",
       "anchor": "Table 27-12; 27.3.11.10 Equation 27-40",

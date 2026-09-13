@@ -4,6 +4,42 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_training4_independent_inventory() {
+    for (index, count, digest, column) in [
+        (
+            include_str!("fixtures/iq/he-training4-index.tsv"),
+            24,
+            "17fee2b42df2d6c47b42ed75dbb9728889e0b5396dff24406cebaaf1df295beb",
+            13,
+        ),
+        (
+            include_str!("fixtures/iq/he-training4-invalid-index.tsv"),
+            5,
+            "13a7066808a4a502e5f2005b6cb111d280590622cb39e4061eabf4e128107631",
+            2,
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        assert_eq!(index.lines().skip(1).count(), count);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(hex(&Sha256::digest(&bytes)), c[column]);
+            assert_eq!(bytes.len() % 2, 0);
+            if column == 13 {
+                assert_eq!(bytes.len() / 2, c[12].parse::<usize>().unwrap());
+                assert_eq!(c[9].len(), 242);
+            }
+        }
+    }
+}
+
+#[test]
 fn radio_he_transform_independent_inventory() {
     let index = include_str!("fixtures/iq/he-transform-index.tsv");
     assert_eq!(

@@ -349,3 +349,12 @@ not the receiver's radix-2 implementation. Complex ramps and asymmetric inputs
 test bin ordering and phase, alongside DC, impulse and Nyquist cases. Rust
 tests additionally check every tone for both transform sizes. This is numerical
 validation for HE training/DATA primitives, not frame or throughput qualification.
+
+`he-training4-index.tsv` and its invalid counterpart contain 24 complete HE SU
+preambles followed by an uncoded channel probe, plus five malformed/truncated
+cases. The generator is `he_training_vectors.py` (`--check` verifies the corpus).
+Equation27-43 supplies the 4x LTF sequence; Equations27-22/23/38 supply HE-STF.
+Both 4x guard intervals, three gains, CFO, multipath and changed HE-field mapping
+are covered. Tests acquire timing and CFO normally, fit the observed channel
+against the independently simulated transfer function, and recover all242 probe
+signs. The probe is not a standard DATA field; there are no MAC bytes to publish.
