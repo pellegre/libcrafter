@@ -97,8 +97,8 @@ the receiver explicitly reports `UnsupportedPhy` after signaling.
 (allocation, CRC, tail) and exposes ordered RU assignments and user counts.
 All 256 allocation codes are tested; reserved and wider-than-20MHz allocations
 produce distinct errors, and empty RUs retain zero users. RU positions identify
-the first table slot, not FFT-bin indices. This bit-level kernel is not yet
-connected to SIG-B IQ demodulation or MU payload recovery.
+the first table slot, not FFT-bin indices. It is connected to the private SIG-B
+IQ kernel, but not MU payload recovery or public streaming admission.
 
 `HeSigBUserBlock` checks one/two-user blocks with their shared CRC and tail.
 It returns typed per-user results, preserving a valid neighbor when another
@@ -113,15 +113,23 @@ DCM-combined soft bits for MCS 0 through 5. It preserves puncturing across block
 boundaries while resetting each block's BCC trellis. Its 450 independent streams
 check exact bits, CRC/tail failures and encoded trailing padding. A complete
 damaged block can be skipped without losing subsequent blocks; incomplete blocks
-do not advance the cursor. SIG-B IQ demodulation and MU DATA remain pending.
+do not advance the cursor. MU DATA recovery remains pending.
 
 The private SIG-B modulation kernel now connects equalized data tones to that
 reader. It handles all ten valid MCS/DCM combinations, removes the PAPR phase
 rotation (including the BPSK/DCM exception), combines 26-tone DCM halves and
 deinterleaves BCC metrics. Independent coverage comprises 270 modulated streams
 and 1294 exhaustive input-position/constant-symbol cases, including noisy weighted
-observations and either erased DCM half. FFT, pilot tracking and end-to-end IQ
-integration remain pending; these tests are not live HE MU qualification.
+observations and either erased DCM half. These tests are not live HE MU qualification.
+
+The private SIG-B IQ kernel connects synchronization, FFT, carrier/pilot phase
+correction, edge-tone channel training and those readers. Its 172 independent IQ
+fixtures cover all valid MCS/DCM combinations, common and compressed signaling,
+empty allocations, RU-relative user contexts, count validation, and fields longer
+than 16 symbols (bounded to 36 for HE20). Failed user blocks preserve later users;
+a failed common field cannot establish allocation context. Public streaming
+integration, sampling-clock drift tracking, HE MU training/DATA and live HE
+qualification remain pending. No MAC frames are published by this kernel.
 
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,

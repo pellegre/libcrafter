@@ -21,7 +21,7 @@ fn bins(samples: &[ComplexSample], start: u64, a: &Acquisition) -> Option<[Compl
     bins_polarity(samples, start, a, 1.)
 }
 
-fn bins_polarity(
+pub(super) fn bins_polarity(
     samples: &[ComplexSample],
     start: u64,
     a: &Acquisition,

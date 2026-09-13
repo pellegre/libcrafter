@@ -1,0 +1,23 @@
+version: 1
+kind: feature
+name: wifi_he_sig_b_iq
+summary: Bounded HE20 SIG-B IQ recovery through checked common and per-user headers.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: sig-b-iq
+    source: IEEE 802.11ax-2021 27.3.11.8, Table 27-20 and Table 27-111
+    checks: [all_mcs_dcm_pairs, compressed_uncompressed, pilot_polarity, extended_edge_training, ru_contexts, long_sig_b_count, independent_iq, truncation, nonfinite, user_block_salvage]
+coverage_cases: [wifi-he-sig-b-iq]
+supported_cases:
+  - {name: wifi-he-sig-b-iq, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - Private IQ kernel validates MU SIG-A, recovers common allocation, resolves 20 MHz SIG-B length and returns ordered per-user results.
+      - Explicit 36-symbol bound; compressed MU allocations are limited to the eight users described by the spatial-configuration table.
+      - Pilot-erased symbols become zero-reliability metrics. Common failure prevents allocation inference; user-block failures preserve later checked blocks.
+      - No MU DATA or public streaming frame admission yet. Hardware qualification and sampling-clock drift tracking remain pending.

@@ -8599,6 +8599,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "he-sig-b-users.tsv"
                 | "he-sig-b-coded.tsv"
                 | "he-sig-b-modulation.tsv"
+                | "he-sigb-iq-index.tsv"
                 | "he-mu-signal-a-invalid.tsv"
                 | "he-transform-index.tsv"
                 | "he-timing-index.tsv"
@@ -8815,6 +8816,11 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 )
                 .chain(
                     include_str!("fixtures/iq/he-mu-prefix-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
+                .chain(
+                    include_str!("fixtures/iq/he-sigb-iq-index.tsv")
                         .lines()
                         .skip(1)
                 )

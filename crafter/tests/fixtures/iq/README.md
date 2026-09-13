@@ -1,5 +1,13 @@
 # Independent IQ vector contract
 
+`he-sigb-iq-index.tsv` indexes 172 independently synthesized time-domain MU
+preamble/SIG-B captures: all ten MCS/DCM combinations, compressed/uncompressed
+allocations, 1/2/8/9/17 users, empty allocations, long and padded SIG-B fields,
+CFO/selective channels, damaged common/user CRCs and invalid count layouts.
+Files end at SIG-B, without
+HE training or DATA. Regenerate with `he_sig_b_iq_vectors.py`; use `--check` to
+verify in a temporary directory. This is offline signaling qualification only.
+
 `he-sig-b-modulation.tsv` contains 270 independent modulated streams plus 1294
 single-symbol cases covering every interleaver input position. It covers all
 ten valid SIG-B MCS/DCM combinations, the PAPR rotation exception, weighted

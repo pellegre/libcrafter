@@ -16,6 +16,7 @@ mod he_iq;
 mod he_mu;
 mod he_sig_b;
 mod he_sig_b_coded;
+mod he_sig_b_iq;
 mod he_sig_b_modulation;
 pub use he_sig_b::{
     HeRu20Assignment, HeSigBCommon20Fields, HeSigBError, HeSigBUserBlock, HeSigBUserContext,
