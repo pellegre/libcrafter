@@ -7,6 +7,9 @@ directions: [backend_to_libcrafter]
 strict_bytes: true
 malformed: true
 behaviors:
+  - name: bounded-header-admission
+    source: IEEE 802.11ax-2021 Equations27-119-122/140-143
+    checks: [prefix_only_admission, exact_data_start_and_end, exact_psdu_capacity, sample_budget, byte_budget, absolute_position_overflow, unsupported_modes_before_training]
   - name: su-bcc-iq
     source: IEEE 802.11ax-2021 27.3.12.8/9/13/14, Tables27-35/42/43, Equations27-104/108
     checks: [independent_complete_preamble, all_bcc_mcs, all_su_training_guards, pilot_polarity_offset_four, rotating_eight_pilots, channel_weighted_qam, interleaving, exact_psdu_bytes, truncation, invalid_mode_rejection]
@@ -19,3 +22,4 @@ backend_support:
     notes:
       - Private one-stream non-DCM, non-STBC, no-midamble BCC IQ kernel. LDPC and other layouts remain unsupported here.
       - Raw PSDU recovery does not establish MAC aggregate/FCS admission, public streaming publication or live hardware qualification.
+      - Header-only admission returns the exact DATA reservation from the acquired L-SIG position; packet extension is not required for byte recovery. Admission does not assert payload integrity.

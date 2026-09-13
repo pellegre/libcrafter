@@ -6,6 +6,11 @@ Complete PHY preambles and DATA carry synthetic PSDUs, not qualified MAC
 aggregates. Cases cover MCS0-9, all five SU training/guard pairs, frequency
 offset, multipath, pilot sequence wrap, invalid modes, SERVICE and truncation.
 Per-case gain prevents CS8 clipping; packet extensions use DATA average power.
+The same independently recorded DATA offsets and PSDU bytes qualify header-only
+admission using only the first 320 samples from L-SIG: exact byte/sample budgets,
+large absolute capture positions, overflow and unsupported-mode rejection.
+Admission intentionally does not reject a valid header just because later DATA
+has invalid SERVICE or is truncated; full recovery still rejects those payloads.
 
 `he-bcc-index.tsv` contains 435 independent HE BCC coded-bit/PSDU cases from
 `he_bcc_vectors.py`. It covers MCS0-9, DCM filler, STBC symbol-group geometry,

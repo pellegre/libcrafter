@@ -1,11 +1,71 @@
 //! HE20 SU BCC IQ, IEEE802.11ax-2021 27.3.12.8/9/13/14.
 use super::{
     he_capacity::Capacity, he_timing::Timing, he_training::train_su, sync::Acquisition,
-    ComplexSample,
+    ComplexSample, SignalInfo,
 };
 
 const PILOTS: [i32; 8] = [-116, -90, -48, -22, 22, 48, 90, 116];
 const SIGNS: [f32; 8] = [1., 1., 1., -1., -1., 1., 1., 1.];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Admission {
+    pub signal: super::he::SuSignal,
+    pub timing: Timing,
+    pub capacity: Capacity,
+    pub info: SignalInfo,
+    /// Total retained samples starting at L-SIG, not additional capacity.
+    pub required_samples: usize,
+}
+
+/// Header-only, allocation-free admission for the currently implemented DATA
+/// layout. Input needs only L-SIG/RL-SIG/HE-SIG-A (320 samples). Timing and
+/// capacity follow IEEE802.11ax-2021 Equations27-119..122/140..143. This does
+/// not validate training, DATA, MAC framing or FCS.
+pub(super) fn admit(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    max_psdu: usize,
+    max_samples: usize,
+) -> Option<Admission> {
+    // This kernel uses the ordinary legacy preamble, not HE ER/TB layouts.
+    if a.signal_start.checked_sub(a.preamble_start)? != 320 {
+        return None;
+    }
+    let prefix = super::he_iq::decode_su_prefix(samples, a)?;
+    let h = prefix.signal;
+    if h.ldpc || h.dcm || h.stbc || h.midamble_period.is_some() || h.space_time_streams != 1 {
+        return None;
+    }
+    let timing = Timing::new(6_000_000, prefix.legacy_length, &h).ok()?;
+    let capacity = Capacity::new(&h, timing.data_symbols).ok()?;
+    let required_samples = timing.data_end.checked_sub(320)?;
+    if capacity.psdu_bytes > max_psdu || required_samples > max_samples {
+        return None;
+    }
+    let stride = 256 + usize::from(h.guard_ns) / 50;
+    let info = SignalInfo {
+        rate_bps: u32::try_from(
+            u64::try_from(capacity.data_per_symbol)
+                .ok()?
+                .checked_mul(20_000_000)?
+                / stride as u64,
+        )
+        .ok()?,
+        coded_bits_per_symbol: capacity.coded_per_symbol,
+        data_bits_per_symbol: capacity.data_per_symbol,
+        psdu_bytes: capacity.psdu_bytes,
+        data_symbols: timing.data_symbols,
+        data_start: a.preamble_start.checked_add(timing.data_start as u64)?,
+        end_sample_index: a.preamble_start.checked_add(timing.data_end as u64)?,
+    };
+    Some(Admission {
+        signal: h,
+        timing,
+        capacity,
+        info,
+        required_samples,
+    })
+}
 
 /// Input starts at L-SIG. Bytes are not yet MAC/FCS qualified.
 pub(super) fn recover(
@@ -13,21 +73,13 @@ pub(super) fn recover(
     a: &Acquisition,
     max_psdu: usize,
 ) -> Option<Vec<u8>> {
+    let admitted = admit(samples, a, max_psdu, samples.len())?;
     let trained = train_su(samples, a)?;
-    let h = trained.prefix.signal;
-    if h.ldpc || h.dcm || h.stbc || h.midamble_period.is_some() {
-        return None;
-    }
-    let timing = Timing::new(6_000_000, trained.prefix.legacy_length.into(), &h).ok()?;
-    let c = Capacity::new(&h, timing.data_symbols).ok()?;
-    if c.psdu_bytes > max_psdu || c.spatial_streams != 1 {
-        return None;
-    }
-    let offset = a.signal_start.checked_sub(a.preamble_start)?;
-    let required = timing.data_end.checked_sub(usize::try_from(offset).ok()?)?;
-    if samples.len() < required {
-        return None;
-    }
+    let h = admitted.signal;
+    let timing = admitted.timing;
+    let c = admitted.capacity;
+    debug_assert_eq!(trained.prefix.signal, h);
+    debug_assert_eq!(trained.data_start, admitted.info.data_start);
     let mut coded = Vec::new();
     coded
         .try_reserve_exact(timing.data_symbols.checked_mul(c.coded_per_symbol)?)
@@ -176,6 +228,69 @@ mod tests {
             })
             .expect("independent preamble acquisition");
         (samples, acquired)
+    }
+
+    #[test]
+    fn radio_he_bcc_header_only_admission() {
+        for row in include_str!("../../tests/fixtures/iq/he-bcc-iq-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let (samples, a) = fixture(c[0]);
+            let input = &samples[a.signal_start as usize..];
+            let bytes = c[6].len() / 2;
+            let start = c[10].parse::<u64>().unwrap();
+            let end = c[11].parse::<u64>().unwrap();
+            let required = usize::try_from(end - a.signal_start).unwrap();
+            let admitted = admit(&input[..320], &a, bytes, required).expect(c[0]);
+            assert_eq!(admitted.required_samples, required, "{}", c[0]);
+            assert_eq!(admitted.info.psdu_bytes, bytes);
+            assert_eq!(admitted.info.data_start, start);
+            assert_eq!(admitted.info.end_sample_index, end);
+            assert_eq!(admitted.info.data_symbols, c[5].parse::<usize>().unwrap());
+            assert_eq!(admitted.signal.mcs, c[1].parse::<u8>().unwrap());
+            assert_eq!(admit(input, &a, bytes, required), Some(admitted));
+            assert!(admit(&input[..319], &a, bytes, required).is_none());
+            assert!(admit(input, &a, bytes - 1, required).is_none());
+            assert!(admit(input, &a, bytes, required - 1).is_none());
+            assert!(admit(input, &a, usize::MAX, 0).is_none());
+            let mut shifted = a.clone();
+            let shift = 1u64 << 40;
+            shifted.preamble_start += shift;
+            shifted.signal_start += shift;
+            shifted.phase_origin += shift;
+            let high = admit(&input[..320], &shifted, bytes, required).unwrap();
+            assert_eq!(high.info.data_start, start + shift);
+            assert_eq!(high.info.end_sample_index, end + shift);
+            assert_eq!(high.required_samples, required);
+        }
+        let (samples, a) = fixture("he-bcc-iq-mcs0-ltf4-gi3200-flat");
+        let input = &samples[a.signal_start as usize..];
+        let mut bad = a.clone();
+        bad.preamble_start += 1;
+        assert!(admit(input, &bad, usize::MAX, usize::MAX).is_none());
+        let shift = u64::MAX - a.signal_start - 400;
+        bad = a.clone();
+        bad.preamble_start += shift;
+        bad.signal_start += shift;
+        bad.phase_origin += shift;
+        assert!(admit(input, &bad, usize::MAX, usize::MAX).is_none());
+        for row in include_str!("../../tests/fixtures/iq/he-bcc-iq-invalid-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let name = row.split('\t').next().unwrap();
+            let (samples, a) = fixture(name);
+            let input = &samples[a.signal_start as usize..];
+            // SERVICE and DATA truncation are not header errors.
+            let expected = name.ends_with("service") || name.ends_with("truncated");
+            assert_eq!(
+                admit(&input[..320], &a, usize::MAX, usize::MAX).is_some(),
+                expected,
+                "{name}"
+            );
+        }
     }
 
     #[test]
