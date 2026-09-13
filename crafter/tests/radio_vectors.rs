@@ -4,6 +4,16 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_ru_symbol_inventory() {
+    let rows = include_str!("fixtures/iq/he-ru-symbol.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 640);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "83d668c99b71dc7de1ff2bd34218fff3db454a9315b6ea628cd67ec9dbbed7a1"
+    );
+}
+
+#[test]
 fn radio_he_small_ru_dcm_inventory() {
     for (rows, hash) in [
         (

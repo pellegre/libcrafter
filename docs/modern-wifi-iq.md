@@ -198,6 +198,15 @@ RUs. Independent distance fixtures verify the even-half BPSK sign, QPSK
 conjugation, 16-QAM bit swapping and erased-observation handling. This removes
 a small-RU demapper restriction; complete MU IQ recovery remains unfinished.
 
+A private one-stream RU DATA demodulator converts a useful 256-sample symbol
+into full-symbol BCC-deinterleaved or LDPC-tone-ordered metrics. It corrects CFO,
+tracks per-RU pilot phase/slope, equalizes the supplied channel and combines
+DCM pairs. Independent floating-point waveforms cover all 16 HE20 RU positions,
+constellations through 1024-QAM (LDPC), selective channels and one erased DCM
+half. The caller must still admit the stream, estimate its channel, supply
+the PPDU pilot polarity and remove post-FEC padding during payload recovery.
+This kernel does not yet complete MU packet or streaming integration.
+
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,
 midambles10/20, CFO/selective channels, and a damaged first aggregate member;

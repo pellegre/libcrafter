@@ -1,5 +1,12 @@
 # Independent IQ vector contract
 
+`he-ru-symbol.tsv` contains 640 independently generated floating-point DATA
+symbols over all 16 HE20 RU positions, BCC/LDPC constellation orders, DCM,
+known flat/selective channels, CFO, pilot phase/slope, and erased lower DCM
+halves. The forward oracle uses interleaving, tone mapping and an inverse DFT;
+these are isolated symbols, not complete packets or hardware captures.
+Regenerate with `he_ru_symbol_vectors.py`, adding `--check` to verify.
+
 `he-dcm-half{12,24}-metrics.tsv` contains 1320 independent exact-rational
 joint-distance cases for 26/52-tone RU DCM, including even-half BPSK parity,
 QPSK/16-QAM mappings, noise and either/both erased observations. Regenerate with
