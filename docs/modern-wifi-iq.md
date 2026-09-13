@@ -1,12 +1,13 @@
-# Wi-Fi 4 IQ implementation and evidence
+# Wi-Fi IQ implementation and evidence
 
-The HT20 radio extension recovers raw IEEE 802.11 frame bytes from IQ and
-constructs single-stream transmit IQ from packets. The existing packet, radio
-source, replay, and bounded transmitter interfaces remain the integration
-boundary. Payload processing is separate from physical-layer byte recovery.
+The radio extension recovers raw IEEE 802.11 frame bytes from IQ and constructs
+supported transmit IQ from packets. The existing packet, radio source, replay,
+and bounded transmitter interfaces remain the integration boundary. Payload
+processing is separate from physical-layer byte recovery.
 
-Legacy and HT20 usage and measured coverage are documented in
-[radio.md](radio.md). VHT, HE, and EHT are outside this Wi-Fi 4 implementation.
+Production legacy and HT20 usage and measured coverage are documented in
+[radio.md](radio.md). VHT, HE, and EHT coverage on this branch is experimental
+and backed by deterministic offline evidence rather than live qualification.
 
 ## Scope
 
@@ -16,6 +17,19 @@ one-data-stream STBC, and extension training. Transmission covers the 48
 single-stream combinations of MCS0–7, BCC/LDPC, mixed long/short GI, and
 greenfield long GI. HT40 and additional independent data streams are outside
 the supported matrix.
+
+Current HE receive coverage: `WifiDecoder` and `radio_receive --modern` decode
+HE20 SU, one spatial stream, BCC MCS0–9, with all five supported HE-LTF/guard
+combinations. Repeated L-SIG detection retains the candidate through HE-SIG-A;
+validated headers bound buffering before DATA. Aggregate recovery preserves
+tag bits and received FCS and publishes only checksum-valid MPDUs. HE headers
+are available as `HeSuSignalFields` and `PhyDiagnostic::HeSignal`; receive
+artifacts use `phy: he`, an optional `he` object, and `he_signal` header records.
+
+HE LDPC, DCM, STBC, midambles, MU/TB/ER SU, wider channels and independent
+multiple DATA streams are not implemented by this receive path. Offline
+qualification uses 200 complete independent waveforms; it does not establish
+HE-capable dongle interoperability, sustained real-time speed or modern TX.
 
 ## Evidence requirements
 

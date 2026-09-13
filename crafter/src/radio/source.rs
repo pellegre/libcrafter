@@ -190,6 +190,55 @@ mod tests {
         }
     }
     #[test]
+    fn radio_he_packet_source_preserves_frames_and_metadata() {
+        for row in include_str!("../../tests/fixtures/iq/he-ampdu-iq-index.tsv")
+            .lines()
+            .skip(1)
+            .filter(|r| r.starts_with("he-ampdu-iq-mcs9-ltf4-gi3200-"))
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let source = ReaderIqSource::new(Cursor::new(bytes), config(), position()).unwrap();
+            let source = RadioPacketSource::new(source, WifiDecoder::new(), config()).unwrap();
+            let records = Sniffer::new(source)
+                .with(Dot11Metadata::new())
+                .collect_records()
+                .unwrap();
+            let expected: Vec<Vec<u8>> = c[6]
+                .split(',')
+                .map(|s| {
+                    s.as_bytes()
+                        .chunks_exact(2)
+                        .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
+                        .collect()
+                })
+                .collect();
+            assert_eq!(records.len(), expected.len());
+            for (record, bytes) in records.iter().zip(expected) {
+                assert_eq!(record.metadata().captured_bytes().unwrap(), bytes);
+                assert_eq!(
+                    record.packet().compile().unwrap().as_bytes(),
+                    &bytes[..bytes.len() - 4]
+                );
+                assert!(record.packet().layer::<Dot11>().is_some());
+                let rf = record.metadata().radio().unwrap();
+                assert_eq!(rf.stripped_fcs_bytes, 4);
+                assert_eq!(rf.start.sample_index, 37);
+                assert_eq!(rf.start.time_anchor, position().time_anchor);
+                assert!(rf
+                    .diagnostics
+                    .iter()
+                    .any(|d| matches!(d,PhyDiagnostic::HeSignal {fields,..} if fields.mcs==9)));
+                assert_eq!(record.metadata(), &record.metadata().clone());
+            }
+        }
+    }
+    #[test]
     fn radio_ht_ampdu_packet_source_keeps_duplicate_mpdus() {
         for row in include_str!("../../tests/fixtures/iq/ht-ampdu-index.tsv")
             .lines()

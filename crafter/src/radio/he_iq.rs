@@ -41,8 +41,8 @@ fn bins(samples: &[ComplexSample], start: u64, a: &Acquisition) -> Option<[Compl
 }
 
 /// Input starts at L-SIG, after ordinary legacy-preamble acquisition.
-pub(super) fn decode_su_prefix(samples: &[ComplexSample], a: &Acquisition) -> Option<Prefix> {
-    let input = samples.get(..320)?;
+pub(super) fn repeated_su_signal(samples: &[ComplexSample], a: &Acquisition) -> Option<usize> {
+    let input = samples.get(..160)?;
     let first = super::signal::decode_signal(&input[..80], a, 4095).ok()?;
     if first.rate_bps != 6_000_000 || first.psdu_bytes % 3 != 1 {
         return None;
@@ -53,9 +53,16 @@ pub(super) fn decode_su_prefix(samples: &[ComplexSample], a: &Acquisition) -> Op
     if second.rate_bps != first.rate_bps || second.psdu_bytes != first.psdu_bytes {
         return None;
     }
+    Some(first.psdu_bytes)
+}
+
+/// Decode HE SU signaling only after the repeated legacy header is checked.
+pub(super) fn decode_su_prefix(samples: &[ComplexSample], a: &Acquisition) -> Option<Prefix> {
+    let input = samples.get(..320)?;
+    let legacy_length = repeated_su_signal(input, a)?;
 
     let lsig = bins(&input[..80], a.signal_start, a)?;
-    let rlsig = bins(&input[80..160], repeated.signal_start, a)?;
+    let rlsig = bins(&input[80..160], a.signal_start.checked_add(80)?, a)?;
     // HE L-LTF already includes epsilon=sqrt(52/56), matching signaling
     // per-tone amplitude (27.3.11.4). Do not apply VHT's extra rescaling.
     let mut channel = a.channel;
@@ -91,7 +98,7 @@ pub(super) fn decode_su_prefix(samples: &[ComplexSample], a: &Acquisition) -> Op
     }
     Some(Prefix {
         signal,
-        legacy_length: first.psdu_bytes,
+        legacy_length,
         end_sample: a.signal_start.checked_add(320)?,
     })
 }

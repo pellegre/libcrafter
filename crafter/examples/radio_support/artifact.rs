@@ -26,6 +26,13 @@ pub fn frame_phy(frame: &RecoveredFrame) -> &'static str {
     if frame
         .diagnostics
         .iter()
+        .any(|d| matches!(d, PhyDiagnostic::HeSignal { .. }))
+    {
+        return "he";
+    }
+    if frame
+        .diagnostics
+        .iter()
         .any(|d| matches!(d, PhyDiagnostic::VhtSignalA { .. }))
     {
         "vht"
@@ -38,6 +45,25 @@ pub fn frame_phy(frame: &RecoveredFrame) -> &'static str {
     } else {
         phy_family(frame.rate_bps)
     }
+}
+pub fn he_signal_metadata(f: &HeSuSignalFields, preamble_sample_index: u64) -> serde_json::Value {
+    serde_json::json!({"format":"su", "mcs":f.mcs, "bandwidth_code":f.bandwidth,
+        "space_time_streams":f.space_time_streams, "guard_interval_ns":f.guard_ns,
+        "ltf_size":f.ltf_size, "coding":if f.ldpc {"ldpc"} else {"bcc"},
+        "dcm":f.dcm, "stbc":f.stbc, "midamble_period":f.midamble_period,
+        "bss_color":f.bss_color, "uplink":f.uplink, "beam_change":f.beam_change,
+        "beamformed":f.beamformed, "spatial_reuse":f.spatial_reuse, "txop":f.txop,
+        "pre_fec_padding":f.pre_fec_padding, "pe_disambiguity":f.pe_disambiguity,
+        "ldpc_extra_segment":f.ldpc_extra_segment, "preamble_sample_index":preamble_sample_index})
+}
+pub fn he_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
+    frame.diagnostics.iter().find_map(|d| match d {
+        PhyDiagnostic::HeSignal {
+            fields,
+            preamble_sample_index,
+        } => Some(he_signal_metadata(fields, *preamble_sample_index)),
+        _ => None,
+    })
 }
 pub fn vht_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
     frame.diagnostics.iter().find_map(|d| match d {

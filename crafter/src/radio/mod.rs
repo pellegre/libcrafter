@@ -15,6 +15,7 @@ mod he_fft;
 mod he_iq;
 mod he_timing;
 mod he_training;
+pub use he::{Error as HeSignalError, SuSignal as HeSuSignalFields};
 mod ht;
 mod vht;
 mod vht_iq;
@@ -267,9 +268,14 @@ pub enum ResetReason {
 }
 #[derive(Debug, Clone)]
 pub enum PhyDiagnostic {
-    /// Byte offset of this MPDU's delimiter within its HT/VHT A-MPDU PSDU.
+    /// CRC-checked HE SU signaling, not proof of DATA or MAC integrity.
+    HeSignal {
+        fields: HeSuSignalFields,
+        preamble_sample_index: u64,
+    },
+    /// Byte offset of this MPDU's delimiter within its HT/VHT/HE A-MPDU PSDU.
     /// Frame sample coordinates describe the entire containing PPDU.
-    /// Control bits preserve HT's low nibble or VHT's EOF/reserved bits;
+    /// Control bits preserve HT's low nibble or VHT/HE's EOF/Tag/reserved bits;
     /// VHT high-length bits are not control flags.
     Ampdu {
         delimiter_offset: usize,
@@ -352,6 +358,16 @@ pub enum PhyDiagnostic {
 impl PartialEq for PhyDiagnostic {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (
+                Self::HeSignal {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::HeSignal {
+                    fields: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
             (
                 Self::LdpcPartial {
                     failed_codewords: a,

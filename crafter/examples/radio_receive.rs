@@ -235,6 +235,7 @@ impl PhyDecoder for ObservedDecoder {
                 if let Some(value) =
                     ht_signal_record_with_context(diagnostic, epoch, &decoded.diagnostics)
                         .or_else(|| vht_signal_record(diagnostic, epoch))
+                        .or_else(|| he_signal_record(diagnostic, epoch))
                 {
                     emit(&self.out, value)?;
                 }
@@ -246,6 +247,9 @@ impl PhyDecoder for ObservedDecoder {
             // Do not add a null field to every existing legacy/HT artifact.
             if let Some(metadata) = vht_metadata(f) {
                 record["vht"] = metadata;
+            }
+            if let Some(metadata) = he_metadata(f) {
+                record["he"] = metadata;
             }
             emit(&self.out, record)?;
         }
@@ -260,6 +264,19 @@ impl PhyDecoder for ObservedDecoder {
     fn reset(&mut self, reason: ResetReason) -> DecodeOutput {
         self.inner.reset(reason)
     }
+}
+fn he_signal_record(diagnostic: &PhyDiagnostic, epoch: u64) -> Option<serde_json::Value> {
+    let PhyDiagnostic::HeSignal {
+        fields,
+        preamble_sample_index,
+    } = diagnostic
+    else {
+        return None;
+    };
+    Some(
+        json!({"kind":"he_signal", "phy":"he", "epoch":epoch, "preamble_sample_index":preamble_sample_index,
+        "he":he_signal_metadata(fields,*preamble_sample_index)}),
+    )
 }
 fn vht_signal_record(diagnostic: &PhyDiagnostic, epoch: u64) -> Option<serde_json::Value> {
     let PhyDiagnostic::VhtSignalA {
@@ -946,6 +963,48 @@ mod tests {
         }
     }
 
+    #[test]
+    fn radio_he_frame_artifact_metadata() {
+        let bytes = include_bytes!("../tests/fixtures/iq/he-ampdu-iq-mcs9-ltf4-gi3200-single.cs8");
+        let config = RxConfig {
+            sample_rate_hz: 20_000_000,
+            center_frequency_hz: 2_412_000_000,
+            max_chunk_samples: 10_000,
+            max_buffer_samples: 120_000,
+            max_frame_bytes: 4095,
+            max_pending_frames: 4,
+            max_capture_samples: 100_000,
+            max_duration: Duration::from_secs(1),
+        };
+        let chunk = IqChunk::new(
+            config,
+            IqPosition {
+                epoch: 7,
+                sequence: 0,
+                sample_index: 0,
+                time_anchor: None,
+                discontinuity: None,
+            },
+            bytes.iter().map(|b| *b as i8).collect(),
+        )
+        .unwrap();
+        let out = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
+        assert_eq!(out.frames.len(), 1);
+        let frame = &out.frames[0];
+        assert_eq!(frame_phy(frame), "he");
+        let metadata = he_metadata(frame).unwrap();
+        assert_eq!(metadata["mcs"], 9);
+        assert_eq!(metadata["guard_interval_ns"], 3200);
+        assert_eq!(metadata["coding"], "bcc");
+        assert_eq!(metadata["ltf_size"], 4);
+        assert!(ht_metadata(frame).is_none());
+        assert!(vht_metadata(frame).is_none());
+        assert!(out
+            .diagnostics
+            .iter()
+            .any(|d| he_signal_record(d, 7)
+                .is_some_and(|v| v["epoch"] == 7 && v["kind"] == "he_signal")));
+    }
     #[test]
     fn radio_vht_frame_artifact_metadata() {
         let bytes = include_bytes!("../tests/fixtures/iq/vht-bcc-8-gi400-case0-clean.cs8");

@@ -2,7 +2,7 @@
 //! Caller must establish SU format. This does not admit or publish DATA.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct SuSignal {
+pub struct SuSignal {
     pub beam_change: bool,
     pub uplink: bool,
     pub mcs: u8,
@@ -25,7 +25,7 @@ pub(super) struct SuSignal {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Error {
+pub enum Error {
     BitCount { available: usize },
     NonBinary { index: usize },
     Crc { expected: u8, received: u8 },

@@ -7,7 +7,8 @@ Expected PSDUs include corrupted FCS bytes; expected emitted MPDUs exclude
 those frames while retaining later valid frames. Independent preamble acquisition,
 header admission, IQ recovery and HE aggregate scanning are tested together.
 Tagged frames exercise byte framing, not negotiated acknowledgment policy.
-This corpus does not establish public streaming or hardware qualification.
+Public `WifiDecoder` tests use this corpus at two chunk sizes, and packet-source
+tests preserve original bytes and HE metadata. This is not hardware qualification.
 
 `he-bcc-iq-index.tsv` and `he-bcc-iq-invalid-index.tsv` record 151 positive
 and six negative HE20 SU one-stream BCC IQ cases from `he_bcc_iq_vectors.py`.
