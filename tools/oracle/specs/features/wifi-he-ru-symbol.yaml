@@ -7,6 +7,9 @@ directions: [backend_to_libcrafter]
 strict_bytes: true
 malformed: true
 behaviors:
+  - name: ru-stbc-symbol-pair
+    source: IEEE 802.11ax-2021 27.3.12.12-13 and IEEE 802.11-2020 21.3.10.9.4
+    checks: [all_he20_ru_positions, two_sts_one_stream, bcc_order, ldpc_order, separate_symbol_phase, branch_erasure, data_tone_erasure, atomic_tracker, dcm_rejection, bounds]
   - name: ru-symbol
     source: IEEE 802.11ax-2021 27.3.12.8-10 and 27.3.12.13
     checks: [all_he20_ru_positions, bcc_order, ldpc_order, dcm, pilot_phase_slope, selective_channel, cfo, erased_data_tones, bounds]
@@ -18,3 +21,4 @@ backend_support:
     status: partial
     notes:
       - Requires an independently admitted single stream, estimated channel and pilot polarity. Does not validate MU headers, training, FEC or MAC FCS.
+      - STBC pairs use two effective channel estimates and summed-channel pilots. No streaming STBC admission or complete MU STBC frame qualification is implied.

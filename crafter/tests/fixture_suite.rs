@@ -8622,6 +8622,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "he-dcm-half12-metrics.tsv"
                 | "he-dcm-half24-metrics.tsv"
                 | "he-ru-symbol.tsv"
+                | "he-ru-stbc-symbol.tsv"
                 | "he-mu-data-iq-index.tsv"
                 | "he-mu-ampdu-iq-index.tsv"
                 | "he-mu-compressed-iq-index.tsv"

@@ -75,6 +75,24 @@ fn radio_he_ru_symbol_inventory() {
 }
 
 #[test]
+fn radio_he_ru_stbc_symbol_inventory() {
+    let rows = include_str!("fixtures/iq/he-ru-stbc-symbol.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 880);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "f4946013515cfaa20dc6ee3f65ae2bee7ec5b8b2961aac0089c672cc5ccccf8e"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 15);
+        for j in 0..2 {
+            assert!(c[11 + j].bytes().all(|b| matches!(b, b'0' | b'1' | b'-')));
+            assert_eq!(c[13 + j].split(',').count(), 512);
+        }
+    }
+}
+
+#[test]
 fn radio_he_small_ru_dcm_inventory() {
     for (rows, hash) in [
         (
