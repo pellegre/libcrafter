@@ -14,6 +14,8 @@ behaviors:
     checks: [invalid_header_crc, invalid_reserved_bit, invalid_lsig_length, inconsistent_sig_b_service, unsupported_width_and_coding, truncated_fields, unusable_training, checked_sample_coordinates, header_only_receive_extent]
   - name: streaming-reception
     checks: [public_wifi_decoder, shared_candidate_buffer_bound, individual_fcs_valid_mpdus, vht_signaling_metadata, chunk_independence, gap_reset, output_limit, legacy_ht_compatibility, multi_mpdu_iq, duplicate_mpdu_occurrences, bad_fcs_resynchronization, mpdu_above_4095_bytes]
+  - name: artifact-admission
+    checks: [frame_limit_through_16383, above_wire_limit_rejected, zero_and_overflow_rejected, legacy_limits_preserved]
 coverage_cases: [wifi-vht20-bcc-iq]
 supported_cases:
   - {name: wifi-vht20-bcc-iq, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}

@@ -160,7 +160,7 @@ impl Config {
         // Example-side limits keep untrusted artifact metadata from requesting huge allocations.
         if c.max_chunk_samples > 262_144
             || c.max_buffer_samples > MAX_EXAMPLE_BUFFER_SAMPLES
-            || c.max_frame_bytes > 4095
+            || c.max_frame_bytes > 16383
             || c.max_pending_frames > 1024
         {
             return Err("artifact allocation bounds exceeded".into());
@@ -289,4 +289,30 @@ pub fn crc32(bytes: &[u8]) -> u32 {
 }
 pub fn valid_fcs(bytes: &[u8]) -> bool {
     bytes.len() >= 4 && crc32(&bytes[..bytes.len() - 4]).to_le_bytes() == bytes[bytes.len() - 4..]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn radio_artifact_vht_frame_allocation_bounds() {
+        let mut config = Config::from(&RxConfig {
+            sample_rate_hz: 20_000_000,
+            center_frequency_hz: 5_180_000_000,
+            max_chunk_samples: 128,
+            max_buffer_samples: 120_000,
+            max_frame_bytes: 4095,
+            max_pending_frames: 8,
+            max_capture_samples: 1_000_000,
+            max_duration: Duration::from_secs(1),
+        });
+        for limit in [4095, 4096, 16383] {
+            config.max_frame_bytes = limit;
+            assert_eq!(config.rx().unwrap().max_frame_bytes, limit);
+        }
+        for limit in [0, 16384, usize::MAX] {
+            config.max_frame_bytes = limit;
+            assert!(config.rx().is_err(), "limit={limit}");
+        }
+    }
 }
