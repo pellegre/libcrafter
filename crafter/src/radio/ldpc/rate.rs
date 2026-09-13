@@ -44,6 +44,14 @@ pub(in crate::radio) struct Recovery {
     pub failed_codewords: usize,
     pub first_failure: Option<Error>,
 }
+
+enum HeExtraPolicy {
+    Exact,
+    Required,
+    /// TB27.3.12.5.5 follows the Trigger's explicit branch, not a local
+    /// transmitter recommendation. Codeword recovery remains fully checked.
+    Signaled,
+}
 impl Layout {
     /// Encode the scrambled SERVICE and PSDU bits, then apply shortening,
     /// puncturing, and repetition in transmitted codeword order.
@@ -279,7 +287,7 @@ impl Layout {
             group,
             extra,
             initial.pre_fec_padding,
-            true,
+            HeExtraPolicy::Exact,
         )
     }
 
@@ -322,7 +330,54 @@ impl Layout {
             group,
             extra,
             initial.pre_fec_padding,
-            false,
+            HeExtraPolicy::Required,
+        )
+    }
+
+    /// TB27.3.12.5.5/Eq27-90: undo the signaled extra segment to determine
+    /// initial codeword dimensions, then transmit exactly the Trigger budget.
+    pub(super) fn he_tb(
+        common: &crate::Dot11TriggerCommonFields,
+        user: &crate::Dot11TriggerUserFields,
+        symbols: u16,
+    ) -> Result<Self, Error> {
+        use super::he_capacity::Capacity;
+        let symbols = usize::from(symbols);
+        if !user.ldpc || symbols == 0 || symbols > 400 {
+            return Err(Error::HeTiming);
+        }
+        let c = Capacity::for_tb(common, user, symbols).map_err(|_| Error::HeTiming)?;
+        let group = 1 + usize::from(common.stbc);
+        let extra = common.ldpc_extra_segment;
+        let mut initial = *common;
+        initial.ldpc_extra_segment = false;
+        let mut initial_symbols = symbols;
+        if extra {
+            if common.pre_fec_padding_raw == 1 {
+                initial.pre_fec_padding_raw = 0; // a_init=4
+                initial_symbols = symbols.checked_sub(group).ok_or(Error::HeTiming)?;
+            } else {
+                initial.pre_fec_padding_raw = if common.pre_fec_padding_raw == 0 {
+                    3
+                } else {
+                    common.pre_fec_padding_raw - 1
+                };
+            }
+        }
+        let initial_c =
+            Capacity::for_tb(&initial, user, initial_symbols).map_err(|_| Error::HeTiming)?;
+        Self::he_capacities(
+            c,
+            initial_c,
+            symbols,
+            group,
+            extra,
+            if initial.pre_fec_padding_raw == 0 {
+                4
+            } else {
+                initial.pre_fec_padding_raw
+            },
+            HeExtraPolicy::Signaled,
         )
     }
 
@@ -333,7 +388,7 @@ impl Layout {
         group: usize,
         extra: bool,
         initial_padding: u8,
-        strict_extra: bool,
+        extra_policy: HeExtraPolicy,
     ) -> Result<Self, Error> {
         let rate = match (c.rate_num, c.rate_den) {
             (1, 2) => Rate::Half,
@@ -350,7 +405,12 @@ impl Layout {
         let puncture = (count * size).saturating_sub(available + short);
         let parity = count * size * (den - num) / den;
         let needs_extra = Self::needs_extra(short, puncture, parity, rate);
-        if (needs_extra && !extra) || (strict_extra && needs_extra != extra) {
+        let admitted = match extra_policy {
+            HeExtraPolicy::Exact => needs_extra == extra,
+            HeExtraPolicy::Required => !needs_extra || extra,
+            HeExtraPolicy::Signaled => true,
+        };
+        if !admitted {
             return Err(Error::HeTiming);
         }
         let short_cbps = c.coded_short;
@@ -511,6 +571,94 @@ mod tests {
         a.bandwidth = 2;
         assert!(Layout::he_for_format(&a, 4, true).is_err());
     }
+    #[test]
+    fn radio_he_tb_ldpc_independent_layouts() {
+        let rows = include_str!("../../tests/fixtures/iq/he-tb-ldpc-layout.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 17276);
+        let mut differences = [0usize; 2];
+        for row in rows.lines().skip(1) {
+            let c: Vec<usize> = row.split('\t').map(|s| s.parse().unwrap()).collect();
+            let common = crate::Dot11TriggerCommonFields {
+                stbc: c[4] == 2,
+                pre_fec_padding_raw: (c[9] % 4) as u8,
+                ldpc_extra_segment: c[10] != 0,
+                ..Default::default()
+            };
+            let user = crate::Dot11TriggerUserFields {
+                aid12: 1,
+                ru_allocation: match c[0] {
+                    26 => 0,
+                    52 => 74,
+                    106 => 106,
+                    242 => 122,
+                    _ => unreachable!(),
+                },
+                mcs: c[1] as u8,
+                ldpc: true,
+                dcm: c[3] != 0,
+                spatial_allocation: ((c[2] - 1) << 3) as u8,
+                ..Default::default()
+            };
+            let l = Layout::he_tb(&common, &user, c[8] as u16)
+                .unwrap_or_else(|e| panic!("{row}: {e:?}"));
+            assert_eq!(
+                [
+                    l.symbols,
+                    l.codewords,
+                    l.block_bits,
+                    l.shortened_bits,
+                    l.punctured_bits,
+                    l.repeated_bits,
+                    l.payload_bits,
+                    l.transmitted_bits
+                ],
+                [c[8], c[11], c[12], c[13], c[14], c[15], c[16], c[17]],
+                "{row}"
+            );
+            assert_eq!(l.extra_symbol_group, c[10] != 0);
+            let mut totals = [0; 5];
+            for i in 0..l.codewords {
+                let word = l.word(i).unwrap();
+                for (sum, value) in totals.iter_mut().zip([
+                    word.information_bits,
+                    word.shortened_bits,
+                    word.punctured_bits,
+                    word.repeated_bits,
+                    word.transmitted_bits,
+                ]) {
+                    *sum += value;
+                }
+            }
+            assert_eq!(totals, [c[16], c[13], c[14], c[15], c[17]]);
+            assert!(l.word(l.codewords).is_none());
+            assert!(l.word(usize::MAX).is_none());
+            if c[7] != c[10] {
+                differences[c[10]] += 1;
+            }
+            for symbols in [0, 401, u16::MAX] {
+                assert_eq!(Layout::he_tb(&common, &user, symbols), Err(Error::HeTiming));
+            }
+        }
+        assert!(differences.iter().all(|n| *n > 1000));
+    }
+
+    #[test]
+    fn radio_he_tb_ldpc_rejects_invalid_trigger_geometry() {
+        let mut common = crate::Dot11TriggerCommonFields::default();
+        let mut user = crate::Dot11TriggerUserFields::default();
+        assert_eq!(Layout::he_tb(&common, &user, 4), Err(Error::HeTiming));
+        user.ldpc = true;
+        assert!(Layout::he_tb(&common, &user, 4).is_ok());
+        common.pre_fec_padding_raw = 4;
+        assert_eq!(Layout::he_tb(&common, &user, 4), Err(Error::HeTiming));
+        common.pre_fec_padding_raw = 1;
+        common.ldpc_extra_segment = true;
+        assert_eq!(Layout::he_tb(&common, &user, 1), Err(Error::HeTiming));
+        common.pre_fec_padding_raw = 0;
+        user.aid12 = 2046;
+        assert_eq!(Layout::he_tb(&common, &user, 4), Err(Error::HeTiming));
+    }
+
     #[test]
     fn radio_he_mu_ldpc_independent_layouts() {
         use crate::radio::{HeSigBUserEncoding, HeSigBUserFields};

@@ -141,6 +141,12 @@ STBC symbol pairs, packet extension and the TB-specific 8us STF. These are
 timing vectors, not captured IQ, Trigger association or TB DATA qualification.
 Regenerate with `he_tb_timing_vectors.py --write` or verify without arguments.
 
+`he-tb-ldpc-layout.tsv` contains 17276 independent forward TB rate-matching
+layouts. Both Trigger extra-segment flags are honored, including cases where
+the flag differs from the local transmitter recommendation. These qualify
+shortening/puncturing/repetition geometry, not codeword convergence or IQ.
+Regenerate with `he_tb_ldpc_layout_vectors.py --write` or verify without arguments.
+
 `he-sigb-iq-index.tsv` indexes 172 independently synthesized time-domain MU
 preamble/SIG-B captures: all ten MCS/DCM combinations, compressed/uncompressed
 allocations, 1/2/8/9/17 users, empty allocations, long and padded SIG-B fields,

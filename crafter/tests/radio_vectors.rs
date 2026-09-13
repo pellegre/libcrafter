@@ -1029,6 +1029,28 @@ fn radio_he_sig_b_iq_inventory() {
 }
 
 #[test]
+fn radio_he_tb_ldpc_layout_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-ldpc-layout.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 17276);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "eb94b26c53bf81da87093be696ce41167d7b2bc13ece458fea65f15276a56fe7"
+    );
+    let mut overrides = [0; 2];
+    for row in rows.lines().skip(1) {
+        let c: Vec<usize> = row.split('\t').map(|s| s.parse().unwrap()).collect();
+        assert_eq!(c.len(), 18);
+        assert!((1..=400).contains(&c[8]));
+        assert!(c[7] <= 1 && c[10] <= 1);
+        assert_eq!(c[11] * c[12] - c[13] - c[14] + c[15], c[17]);
+        if c[7] != c[10] {
+            overrides[c[10]] += 1;
+        }
+    }
+    assert!(overrides.iter().all(|n| *n > 1000));
+}
+
+#[test]
 fn radio_he_tb_timing_inventory() {
     let rows = include_str!("fixtures/iq/he-tb-timing.tsv");
     assert_eq!(rows.lines().skip(1).count(), 3315);

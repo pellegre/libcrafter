@@ -306,6 +306,12 @@ their RU-count bits are not mistaken for a stream count. Shared independent
 forward per-RU budget vectors check this mapping. Expanding random-access
 allocations, separating simultaneous users and recovering TB DATA remain separate.
 
+The TB LDPC layout primitive follows the Trigger's explicit extra-segment flag
+under 27.3.12.5.5, including its initial-padding reversal. Independent vectors
+pin shortening, puncturing and repetition for both flag values; existing SU/MU
+admission rules are unchanged. Layout acceptance is not codeword convergence
+and never establishes SERVICE or MAC FCS integrity.
+
 Without Trigger context, the receiver reports `UnsupportedPhy` and does not
 publish a TB frame. This is not payload decoding: RU assignment, MCS,
 coding and training context must come from the triggering exchange
