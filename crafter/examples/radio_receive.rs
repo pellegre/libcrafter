@@ -266,6 +266,16 @@ impl PhyDecoder for ObservedDecoder {
     }
 }
 fn he_signal_record(diagnostic: &PhyDiagnostic, epoch: u64) -> Option<serde_json::Value> {
+    if let PhyDiagnostic::HeMuSignal {
+        fields,
+        preamble_sample_index,
+    } = diagnostic
+    {
+        return Some(json!({"kind":"he_signal", "phy":"he", "epoch":epoch,
+            "preamble_sample_index":preamble_sample_index,
+            "mac_integrity":"not_established_by_header",
+            "he":he_mu_signal_metadata(fields, *preamble_sample_index)}));
+    }
     if let PhyDiagnostic::HeErSignal {
         fields,
         preamble_sample_index,
@@ -1014,6 +1024,67 @@ mod tests {
             .iter()
             .any(|d| he_signal_record(d, 7)
                 .is_some_and(|v| v["epoch"] == 7 && v["kind"] == "he_signal")));
+    }
+
+    #[test]
+    fn radio_he_mu_header_artifact_metadata() {
+        for row in include_str!("../tests/fixtures/iq/he-mu-prefix-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let bits: Vec<_> = c[1].bytes().map(|b| b - b'0').collect();
+            let fields = HeMuSignalFields::decode(&bits).unwrap();
+            let config = RxConfig {
+                sample_rate_hz: 20_000_000,
+                center_frequency_hz: 2_412_000_000,
+                max_chunk_samples: 1000,
+                max_buffer_samples: 1024,
+                max_frame_bytes: 4095,
+                max_pending_frames: 4,
+                max_capture_samples: 1000,
+                max_duration: Duration::from_secs(1),
+            };
+            let chunk = IqChunk::new(
+                config,
+                IqPosition {
+                    epoch: 7,
+                    sequence: 0,
+                    sample_index: 0,
+                    time_anchor: None,
+                    discontinuity: None,
+                },
+                bytes.iter().map(|b| *b as i8).collect(),
+            )
+            .unwrap();
+            let out = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
+            assert!(out.frames.is_empty());
+            let headers: Vec<_> = out
+                .diagnostics
+                .iter()
+                .filter_map(|d| he_signal_record(d, 7))
+                .collect();
+            assert_eq!(headers.len(), 1, "{}", c[0]);
+            let header = &headers[0];
+            assert_eq!(header["kind"], "he_signal");
+            assert_eq!(header["epoch"], 7);
+            assert_eq!(header["preamble_sample_index"], 37);
+            assert_eq!(header["mac_integrity"], "not_established_by_header");
+            assert_eq!(header["he"], he_mu_signal_metadata(&fields, 37));
+            assert_eq!(header["he"]["format"], "mu");
+            assert_eq!(
+                header["he"]["sig_b_symbols_or_users_raw"],
+                fields.sig_b_symbols_or_users
+            );
+            assert!(header["he"].get("mcs").is_none());
+            assert!(header["he"].get("coding").is_none());
+        }
     }
 
     #[test]

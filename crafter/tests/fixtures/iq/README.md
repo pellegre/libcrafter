@@ -1,5 +1,13 @@
 # Independent IQ vector contract
 
+`he-mu-prefix-index.tsv` contains 160 independent HE20 MU IQ prefixes, covering
+SIG-B MCS/DCM, compression, all four guard/training codes, and clean or
+frequency-offset/selective channels. Thirteen invalid cases cover legacy-header
+checks, constellation discrimination, reserved fields, CRC/tail and erasure.
+`he_mu_prefix_vectors.py --check` reproduces them. Chunked receiver tests check
+MU diagnostics, bounded storage, gap resets and no MAC delivery. These prefixes
+contain neither SIG-B nor DATA and do not qualify MU payload or live reception.
+
 `he-er-prefix-index.tsv` contains 288 independent HE ER SU preamble prefixes,
 covering both RU allocations, all allowed MCS/GI/DCM/STBC header combinations,
 BCC/LDPC flags, frequency offset/multipath and erased original SIG-A DATA

@@ -85,8 +85,13 @@ independent SU/ER242/ER106 waveforms exercise this behavior.
 `HeMuSignalFields` decodes MU SIG-A bits and interleaved metrics, with a distinct
 field layout and CRC/tail checks. It preserves the raw SIG-B count because an
 uncompressed value of 15 may mean 16 or more symbols. The 5,280 header cases and
-24 malformed cases qualify this kernel only, not MU IQ acquisition, SIG-B
-allocation decoding, or payload recovery.
+24 malformed cases qualify this kernel. The public receiver additionally
+recognizes 20 MHz MU prefixes from IQ: repeated legacy headers with length
+modulo three equal to two, followed by two BPSK SIG-A symbols. A distinct
+`HeMuSignal` diagnostic and `he.format: mu` artifact preserve the checked
+fields. The 160 independent prefixes and 13 invalid cases contain no SIG-B or
+DATA; MU allocation decoding and payload recovery remain unimplemented and
+the receiver explicitly reports `UnsupportedPhy` after signaling.
 
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,

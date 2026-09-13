@@ -592,6 +592,36 @@ fn radio_he_su_prefix_independent_inventory() {
 }
 
 #[test]
+fn radio_he_mu_prefix_inventory() {
+    for (index, count, digest) in [
+        (
+            include_str!("fixtures/iq/he-mu-prefix-index.tsv"),
+            160,
+            "7163b9ba255cfd4993d38a880b3bbd0c605c7d73198ae80fed2fbafc34a9a123",
+        ),
+        (
+            include_str!("fixtures/iq/he-mu-prefix-invalid-index.tsv"),
+            13,
+            "0a501489eff638f0c4d84086e72da628a97d92b01bcc2c5c20028f9800d27997",
+        ),
+    ] {
+        assert_eq!(index.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(bytes.len(), 1354);
+            assert_eq!(hex(&Sha256::digest(&bytes)), *c.last().unwrap());
+        }
+    }
+}
+
+#[test]
 fn radio_he_mu_signal_a_independent_inventory() {
     for (index, count, digest, columns) in [
         (

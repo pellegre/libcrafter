@@ -26,7 +26,9 @@ pub fn frame_phy(frame: &RecoveredFrame) -> &'static str {
     if frame.diagnostics.iter().any(|d| {
         matches!(
             d,
-            PhyDiagnostic::HeSignal { .. } | PhyDiagnostic::HeErSignal { .. }
+            PhyDiagnostic::HeSignal { .. }
+                | PhyDiagnostic::HeErSignal { .. }
+                | PhyDiagnostic::HeMuSignal { .. }
         )
     }) {
         return "he";
@@ -67,8 +69,27 @@ pub fn he_er_signal_metadata(
     metadata["channel_width_mhz"] = 20.into();
     metadata
 }
+pub fn he_mu_signal_metadata(
+    f: &HeMuSignalFields,
+    preamble_sample_index: u64,
+) -> serde_json::Value {
+    serde_json::json!({"format":"mu", "bandwidth_code":f.bandwidth,
+        "sig_b_mcs":f.sig_b_mcs, "sig_b_dcm":f.sig_b_dcm,
+        "sig_b_compression":f.sig_b_compression,
+        "sig_b_symbols_or_users_raw":f.sig_b_symbols_or_users,
+        "ltf_size":f.ltf_size, "ltf_symbols":f.ltf_symbols,
+        "guard_interval_ns":f.guard_ns, "midamble_period":f.midamble_period,
+        "bss_color":f.bss_color, "uplink":f.uplink, "spatial_reuse":f.spatial_reuse,
+        "txop":f.txop, "stbc":f.stbc, "pre_fec_padding":f.pre_fec_padding,
+        "pe_disambiguity":f.pe_disambiguity, "ldpc_extra_segment":f.ldpc_extra_segment,
+        "preamble_sample_index":preamble_sample_index})
+}
 pub fn he_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
     frame.diagnostics.iter().find_map(|d| match d {
+        PhyDiagnostic::HeMuSignal {
+            fields,
+            preamble_sample_index,
+        } => Some(he_mu_signal_metadata(fields, *preamble_sample_index)),
         PhyDiagnostic::HeSignal {
             fields,
             preamble_sample_index,

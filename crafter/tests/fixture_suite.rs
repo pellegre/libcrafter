@@ -8615,6 +8615,8 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "he-training-sparse-index.tsv"
                 | "he-training4-invalid-index.tsv"
                 | "he-su-prefix-index.tsv"
+                | "he-mu-prefix-index.tsv"
+                | "he-mu-prefix-invalid-index.tsv"
                 | "he-er-prefix-index.tsv"
                 | "he-er-prefix-invalid-index.tsv"
                 | "he-er-iq-index.tsv"
@@ -8804,6 +8806,16 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 )
                 .chain(
                     include_str!("fixtures/iq/he-su-prefix-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
+                .chain(
+                    include_str!("fixtures/iq/he-mu-prefix-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
+                .chain(
+                    include_str!("fixtures/iq/he-mu-prefix-invalid-index.tsv")
                         .lines()
                         .skip(1)
                 )

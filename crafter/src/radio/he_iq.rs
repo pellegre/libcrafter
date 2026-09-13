@@ -1,4 +1,4 @@
-//! HE20 SU preamble prefix; IEEE 802.11ax-2021 27.3.11/22.
+//! HE20 SU, ER SU and MU preamble prefixes; IEEE 802.11ax-2021 27.3.11/22.
 //! No DATA admission or MAC frame publication occurs here.
 use super::{
     he::SuSignal,
@@ -39,7 +39,7 @@ fn bins_polarity(
     }
     let bins = fft64(time);
     let mut pilot = ComplexSample::ZERO;
-    // p0..p3 are +1. HE SU pilots remain on the real axis.
+    // p0..p3 are +1. HE signaling pilots remain on the real axis.
     for (k, sign) in [(43, 1.), (57, 1.), (7, 1.), (21, -1.)] {
         pilot = pilot.add(bins[k].mul(a.channel[k].conj()).scale(sign * polarity));
     }
@@ -139,7 +139,33 @@ pub(super) fn decode_er_prefix(samples: &[ComplexSample], a: &Acquisition) -> Op
 pub(super) fn decode_su_prefix(samples: &[ComplexSample], a: &Acquisition) -> Option<Prefix> {
     let input = samples.get(..320)?;
     let legacy_length = repeated_su_signal(input, a)?;
+    let signal = SuSignal::decode_interleaved(&bpsk_metrics(input, a)?).ok()?;
+    if signal.bandwidth != 0 {
+        return None;
+    }
+    Some(Prefix {
+        er: false,
+        signal,
+        legacy_length,
+        end_sample: a.signal_start.checked_add(320)?,
+    })
+}
 
+/// MU shares the modulo-two L-SIG with ER, but uses two BPSK SIG-A symbols.
+/// Only 20 MHz signaling is admitted; this does not establish DATA integrity.
+pub(super) fn decode_mu_prefix(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+) -> Option<super::he_mu::MuSignal> {
+    let input = samples.get(..320)?;
+    a.signal_start.checked_add(320)?;
+    repeated_er_signal(input, a)?;
+    let signal = super::he_mu::MuSignal::decode_interleaved(&bpsk_metrics(input, a)?).ok()?;
+    (signal.bandwidth == 0).then_some(signal)
+}
+
+fn bpsk_metrics(input: &[ComplexSample], a: &Acquisition) -> Option<[f32; 104]> {
+    let input = input.get(..320)?;
     let lsig = bins(&input[..80], a.signal_start, a)?;
     let rlsig = bins(&input[80..160], a.signal_start.checked_add(80)?, a)?;
     // HE L-LTF already includes epsilon=sqrt(52/56), matching signaling
@@ -171,21 +197,70 @@ pub(super) fn decode_su_prefix(samples: &[ComplexSample], a: &Acquisition) -> Op
             return None;
         }
     }
-    let signal = SuSignal::decode_interleaved(&metrics).ok()?;
-    if signal.bandwidth != 0 {
-        return None;
-    }
-    Some(Prefix {
-        er: false,
-        signal,
-        legacy_length,
-        end_sample: a.signal_start.checked_add(320)?,
-    })
+    Some(metrics)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radio_he_mu_prefix_independent_iq() {
+        for row in include_str!("../../tests/fixtures/iq/he-mu-prefix-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let (samples, a) = fixture(c[0]);
+            let input = &samples[a.signal_start as usize..];
+            let bits: Vec<_> = c[1].bytes().map(|b| b - b'0').collect();
+            assert_eq!(
+                decode_mu_prefix(input, &a),
+                super::super::he_mu::MuSignal::decode(&bits).ok(),
+                "{}",
+                c[0]
+            );
+            assert_eq!(a.preamble_start, 37);
+            assert!(decode_su_prefix(input, &a).is_none());
+            assert!(er_marker(input, &a).is_none());
+            for end in [0, 79, 159, 239, 319] {
+                assert!(decode_mu_prefix(&input[..end], &a).is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn radio_he_mu_prefix_rejections() {
+        for index in [
+            include_str!("../../tests/fixtures/iq/he-mu-prefix-invalid-index.tsv"),
+            include_str!("../../tests/fixtures/iq/he-su-prefix-index.tsv"),
+            include_str!("../../tests/fixtures/iq/he-er-prefix-index.tsv"),
+        ] {
+            for row in index.lines().skip(1) {
+                let name = row.split('\t').next().unwrap();
+                let (samples, a) = fixture(name);
+                assert!(
+                    decode_mu_prefix(&samples[a.signal_start as usize..], &a).is_none(),
+                    "{name}"
+                );
+            }
+        }
+        let (samples, a) = fixture("he-mu-prefix-mcs0-dcm0-gi0-comp0-clean");
+        let input = &samples[a.signal_start as usize..];
+        for index in [16, 96, 176, 256, 319] {
+            for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                let mut bad = input.to_vec();
+                bad[index].i = value;
+                assert!(decode_mu_prefix(&bad, &a).is_none());
+            }
+        }
+        for offset in [40, 319] {
+            let mut overflow = a.clone();
+            overflow.signal_start = u64::MAX - offset;
+            overflow.phase_origin = overflow.signal_start - (a.signal_start - a.phase_origin);
+            assert!(decode_mu_prefix(input, &overflow).is_none());
+        }
+    }
+
     #[test]
     fn radio_he_er_prefix_independent_iq() {
         let rows = include_str!("../../tests/fixtures/iq/he-er-prefix-index.tsv");

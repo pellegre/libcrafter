@@ -26,9 +26,11 @@ in this document must not be interpreted as qualification of these HE modes.
 `HeMuSignalFields` separately decodes HE MU SIG-A bits or interleaved soft
 metrics after the caller has established the MU format. It checks CRC, tail,
 and format-specific field encodings and preserves the raw SIG-B symbol/user
-count, including the ambiguous uncompressed value 15. This signaling kernel
-does not yet connect MU IQ acquisition, SIG-B allocation decoding, or MU DATA
-recovery to `WifiDecoder`.
+count, including the ambiguous uncompressed value 15. `WifiDecoder` now recognizes
+20 MHz MU IQ prefixes and emits `PhyDiagnostic::HeMuSignal`; `radio_receive`
+records `he.format: mu` and explicitly marks MAC integrity as not established.
+SIG-B allocation decoding and MU DATA recovery remain unimplemented, so these
+candidates report `UnsupportedPhy` without publishing MAC frames.
 
 ## Boundary and scope
 

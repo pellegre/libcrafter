@@ -23,6 +23,7 @@ struct Pending {
     he: Option<HeSuSignalFields>,
     he_er: bool,
     he_candidate: bool,
+    // Modulo-two repeated L-SIG: MU or ER until constellation discrimination.
     er_candidate: bool,
     ldpc: Option<ldpc::rate::Layout>,
     greenfield: bool,
@@ -508,6 +509,20 @@ impl PhyDecoder for LegacyOfdmDecoder {
                 }
                 if p.er_candidate && matches!(p.samples.len(), 320 | 480) {
                     p.er_candidate = false;
+                    if p.samples.len() == 320 {
+                        if let Some(fields) = he_iq::decode_mu_prefix(&p.samples, &p.acquisition) {
+                            out.diagnostics.push(PhyDiagnostic::HeMuSignal {
+                                fields,
+                                preamble_sample_index: p.start.sample_index,
+                            });
+                            // SIG-B allocation and MU DATA are separate stages.
+                            out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
+                            self.stats.rejected_frames =
+                                self.stats.rejected_frames.saturating_add(1);
+                            self.pending[slot] = None;
+                            continue;
+                        }
+                    }
                     if let Some(prefix) = he_iq::decode_er_prefix(&p.samples, &p.acquisition) {
                         out.diagnostics.push(PhyDiagnostic::HeErSignal {
                             fields: prefix.signal,
@@ -1511,6 +1526,144 @@ mod vht_bcc_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radio_he_mu_streaming_headers() {
+        for row in include_str!("../../tests/fixtures/iq/he-mu-prefix-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let bits: Vec<_> = c[1].bytes().map(|b| b - b'0').collect();
+            let fields = HeMuSignalFields::decode(&bits).unwrap();
+            for size in [37, 997] {
+                let out = feed(&mut WifiDecoder::new(), &bytes, size);
+                assert!(out.frames.is_empty(), "{}", c[0]);
+                let header = PhyDiagnostic::HeMuSignal {
+                    fields,
+                    preamble_sample_index: 37,
+                };
+                assert!(
+                    out.diagnostics.contains(&header),
+                    "{} chunk{size}: {:?}",
+                    c[0],
+                    out.diagnostics
+                );
+                assert_eq!(header, header.clone());
+                assert_ne!(
+                    header,
+                    PhyDiagnostic::HeMuSignal {
+                        fields,
+                        preamble_sample_index: 38
+                    }
+                );
+                assert!(out.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy));
+                assert!(!out.diagnostics.iter().any(|d| matches!(
+                    d,
+                    PhyDiagnostic::HeSignal { .. } | PhyDiagnostic::HeErSignal { .. }
+                )));
+            }
+        }
+        for row in include_str!("../../tests/fixtures/iq/he-mu-prefix-invalid-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let name = row.split('\t').next().unwrap();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{name}.cs8",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap();
+            let out = feed(&mut WifiDecoder::new(), &bytes, 37);
+            assert!(out.frames.is_empty());
+            assert!(
+                !out.diagnostics
+                    .iter()
+                    .any(|d| matches!(d, PhyDiagnostic::HeMuSignal { .. })),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn radio_he_mu_streaming_bounds_and_gap() {
+        let bytes =
+            include_bytes!("../../tests/fixtures/iq/he-mu-prefix-mcs0-dcm0-gi0-comp0-offset.cs8");
+        let is_mu = |d: &PhyDiagnostic| matches!(d, PhyDiagnostic::HeMuSignal { .. });
+        assert!(!feed(&mut LegacyWifiDecoder::new(), bytes, 37)
+            .diagnostics
+            .iter()
+            .any(is_mu));
+        for limit in [319, 511] {
+            let mut bounded = config();
+            bounded.max_buffer_samples = limit;
+            bounded.max_chunk_samples = 37;
+            assert!(matches!(
+                feed_config(&mut WifiDecoder::new(), bytes, 37, bounded),
+                Err(RadioError::Invalid {
+                    field: "config",
+                    ..
+                })
+            ));
+        }
+        let mut bounded = config();
+        bounded.max_buffer_samples = 512;
+        bounded.max_chunk_samples = 37;
+        assert!(feed_config(&mut WifiDecoder::new(), bytes, 37, bounded)
+            .unwrap()
+            .diagnostics
+            .iter()
+            .any(is_mu));
+        for end in [400, 600, 676] {
+            assert!(!feed(&mut WifiDecoder::new(), &bytes[..2 * end], 37)
+                .diagnostics
+                .iter()
+                .any(is_mu));
+        }
+        let mut decoder = WifiDecoder::new();
+        for (sequence, sample_index, part) in [
+            (0, 0, &bytes[..1200]),
+            (1, 601, &bytes[1200..]),
+            (2, 678, &bytes[..]),
+        ] {
+            let chunk = IqChunk::new(
+                config(),
+                IqPosition {
+                    epoch: 0,
+                    sequence,
+                    sample_index,
+                    time_anchor: None,
+                    discontinuity: None,
+                },
+                part.iter().map(|v| *v as i8).collect(),
+            )
+            .unwrap();
+            let out = decoder.consume(IqEvent::Chunk(chunk)).unwrap();
+            assert!(out.frames.is_empty());
+            assert_eq!(out.diagnostics.iter().any(is_mu), sequence == 2);
+            if sequence == 1 {
+                assert!(out
+                    .diagnostics
+                    .iter()
+                    .any(|d| matches!(d, PhyDiagnostic::Reset(ResetReason::Gap(_)))));
+            }
+            if sequence == 2 {
+                assert!(out.diagnostics.iter().any(|d| matches!(
+                    d,
+                    PhyDiagnostic::HeMuSignal {
+                        preamble_sample_index: 715,
+                        ..
+                    }
+                )));
+            }
+        }
+    }
+
     #[test]
     fn radio_he_er_streaming_headers() {
         for row in include_str!("../../tests/fixtures/iq/he-er-prefix-index.tsv")
