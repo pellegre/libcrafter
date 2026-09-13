@@ -4,6 +4,33 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_vht_ldpc_rate_independent_inventory() {
+    for (data, count, digest, columns) in [
+        (
+            include_str!("fixtures/iq/vht-ldpc-rate-index.tsv"),
+            20412,
+            "a1ea0c327c1293a5ba88a6d823744b8170906ae944da2afbdec666b5ce3e49ec",
+            11,
+        ),
+        (
+            include_str!("fixtures/iq/vht-ldpc-rate-codewords.tsv"),
+            54,
+            "8c63b75d5e434a4807411b9299be4e586ebe4722aeb409ee51f5d2eec3f81bc3",
+            5,
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(data.as_bytes())), digest);
+        assert_eq!(data.lines().skip(1).count(), count);
+        let mut keys = std::collections::BTreeSet::new();
+        for row in data.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            assert_eq!(c.len(), columns);
+            assert!(keys.insert((c[0], c[1], c[2])));
+        }
+    }
+}
+
+#[test]
 fn radio_vht_reference_independent_inventory() {
     let inventory = include_str!("fixtures/iq/vht-reference-index.tsv");
     assert_eq!(

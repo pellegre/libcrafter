@@ -8623,6 +8623,8 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "ldpc-codewords.json"
                 | "ldpc-codewords.tsv"
                 | "ldpc-rate-index.tsv"
+                | "vht-ldpc-rate-index.tsv"
+                | "vht-ldpc-rate-codewords.tsv"
                 | "ldpc-rate-codewords.tsv"
                 | "dsss-index.tsv"
                 | "dsss-manifest.json"

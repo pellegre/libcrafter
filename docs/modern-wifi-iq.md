@@ -310,6 +310,14 @@ hardware qualification, real-time performance and modern TX remain unfinished.
 
 ## VHT BCC DATA recovery increment
 
+The internal LDPC rate matcher also has a VHT20 SU geometry entrypoint. Unlike
+HT, it includes PHY padding in the encoded information length, derives the
+initial symbol count from duration and the extra-symbol flag, and checks that
+the resulting puncturing decision agrees with that signaling. Independent
+forward fixtures cover 20412 geometries and 54 encoded bitstreams. This alone
+does not enable VHT LDPC IQ reception: tone demapping, SERVICE validation and
+streaming integration remain required.
+
 The private single-encoder VHT BCC DATA recovery path uses the SIG-B CRC in
 SERVICE, a nonzero scrambler seed, zero-tail termination after PHY padding,
 and the whole-octet PSDU length derived from symbol capacity. Legacy/HT

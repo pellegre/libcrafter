@@ -290,3 +290,13 @@ Hardware qualification is a separate bounded process: it must transmit the
 production waveform through the HackRF, capture it through the monitor-mode
 dongle, compare exact MAC bytes and PHY metadata, and retain its untracked run
 evidence as described in `docs/radio.md`.
+
+## VHT SU LDPC rate-matching vectors
+
+`vht-ldpc-rate-index.tsv` contains 20412 independent forward geometries for
+VHT20 MCS0-8, initial symbol counts through 1512 and one/two-symbol groups.
+`vht-ldpc-rate-codewords.tsv` contains 54 independently Gaussian-encoded
+information/transmitted streams, including PHY padding, shortening, puncturing
+and repetition. Regenerate with `vht_ldpc_rate_vectors.py` in the oracle backend;
+`--check` checks exact contents. These are internal coding fixtures, not complete
+IQ waveforms or a VHT STBC/LDPC receiver qualification claim.

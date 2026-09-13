@@ -64,6 +64,12 @@
   ],
   "facts": [
     {
+      "id": "vht-su-ldpc-rate-and-tones",
+      "source": "ieee-80211-2020",
+      "anchor": "21.3.10.5.4 Equations 21-61/62/63; 21.3.10.9.2 Table 21-19 and Equations 21-85/86",
+      "fact": "VHT SU LDPC reuses HT codeword selection and rate matching, but its encoded information includes scrambled SERVICE, PSDU and PHY padding. Npld is initial symbol count times NDBPS; initial symbols round (8*APEP_LENGTH+16) up to an STBC symbol group, and initial available coded bits are that count times NCBPS. SIG-A's extra-symbol bit records whether the puncturing rule adds a symbol group. For VHT20, LDPC tone mapping permutes whole constellation symbols with distance 4: input tone index k goes to 4*(k mod 13)+floor(k/13). BCC does not use this mapping."
+    },
+    {
       "id": "radiotap-vht-known-fields",
       "source": "radiotap-vht-metadata",
       "anchor": "VHT field 21 known/flags, bandwidth and mcs_nss tables; A-MPDU field 20 EOF flags",

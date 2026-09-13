@@ -1,4 +1,4 @@
-//! HT LDPC sizing: IEEE 802.11-2020 19.3.11.7.5, Table 19-16.
+//! HT/VHT SU LDPC sizing: IEEE 802.11-2020 19.3.11.7.5 and 21.3.10.5.4.
 //! Integer inequalities preserve the strict thresholds in Equations 19-38–40.
 use super::Rate;
 
@@ -6,6 +6,7 @@ use super::Rate;
 pub(in crate::radio) enum Error {
     EmptyPayload,
     InvalidCodedBits,
+    VhtTiming,
     PayloadBitCount { required: usize, available: usize },
     Encoding(super::Error),
     Metrics(super::Error),
@@ -196,6 +197,44 @@ impl Layout {
         }
         let group = if stbc { 2 } else { 1 };
         let payload = 8 * usize::from(bytes) + 16;
+        Ok(Self::from_payload(payload, coded, rate, group))
+    }
+    /// VHT20 SU information includes PHY padding. Timing and the extra-symbol
+    /// flag jointly identify the initial symbol count; never use HT's byte
+    /// length formula here. IEEE 802.11-2020 21.3.10.5.4.
+    pub(super) fn vht(symbols: u16, mcs: u8, stbc: bool, extra: bool) -> Result<Self, Error> {
+        let (coded, rate) = *[
+            (52, Rate::Half),
+            (104, Rate::Half),
+            (104, Rate::ThreeQuarters),
+            (208, Rate::Half),
+            (208, Rate::ThreeQuarters),
+            (312, Rate::TwoThirds),
+            (312, Rate::ThreeQuarters),
+            (312, Rate::FiveSixths),
+            (416, Rate::ThreeQuarters),
+        ]
+        .get(usize::from(mcs))
+        .ok_or(Error::InvalidCodedBits)?;
+        let symbols = usize::from(symbols);
+        let group = if stbc { 2 } else { 1 };
+        if symbols == 0 || symbols > 1512 || symbols % group != 0 {
+            return Err(Error::VhtTiming);
+        }
+        let initial = symbols
+            .checked_sub(usize::from(extra) * group)
+            .filter(|n| *n > 0)
+            .ok_or(Error::VhtTiming)?;
+        let (num, den) = rate.ratio();
+        let layout = Self::from_payload(initial * coded * num / den, coded, rate, group);
+        if layout.symbols != symbols || layout.extra_symbol_group != extra {
+            return Err(Error::VhtTiming);
+        }
+        Ok(layout)
+    }
+    // Both entrypoints bound dimensions before reaching this shared algorithm.
+    fn from_payload(payload: usize, coded: usize, rate: Rate, group: usize) -> Self {
+        let (num, den) = rate.ratio();
         let mut available = coded * group * payload.div_ceil(coded * num / den * group);
         let original = available;
         let threshold = |constant| available * den >= payload * den + constant * (den - num);
@@ -216,7 +255,7 @@ impl Layout {
             puncture = (count * size).saturating_sub(available + short);
         }
         let repeat = available.saturating_sub(parity + payload);
-        Ok(Self {
+        Self {
             symbols: available / coded,
             codewords: count,
             block_bits: size,
@@ -227,7 +266,7 @@ impl Layout {
             payload_bits: payload,
             coded_bits_per_symbol: coded,
             rate,
-        })
+        }
     }
     pub(in crate::radio) fn word(self, index: usize) -> Option<Word> {
         if index >= self.codewords {
@@ -251,6 +290,118 @@ impl Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radio_vht_ldpc_independent_geometry() {
+        let mut coverage = [0usize; 3];
+        let rows = include_str!("../../tests/fixtures/iq/vht-ldpc-rate-index.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 20412);
+        for row in rows.lines().skip(1) {
+            let c: Vec<usize> = row.split('\t').map(|v| v.parse().unwrap()).collect();
+            let result = Layout::vht(c[3] as u16, c[1] as u8, c[2] == 2, c[9] != 0);
+            if c[3] > 1512 {
+                assert_eq!(result, Err(Error::VhtTiming));
+                continue;
+            }
+            let layout = result.unwrap_or_else(|e| panic!("{row}: {e:?}"));
+            assert_eq!(
+                [
+                    layout.symbols,
+                    layout.codewords,
+                    layout.block_bits,
+                    layout.shortened_bits,
+                    layout.punctured_bits,
+                    layout.repeated_bits,
+                    usize::from(layout.extra_symbol_group),
+                    layout.payload_bits
+                ],
+                c[3..]
+            );
+            for (n, value) in [
+                layout.punctured_bits,
+                layout.repeated_bits,
+                usize::from(layout.extra_symbol_group),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                coverage[n] += usize::from(value > 0);
+            }
+            let mut totals = [0usize; 5];
+            for index in 0..layout.codewords {
+                let w = layout.word(index).unwrap();
+                for (sum, value) in totals.iter_mut().zip([
+                    w.information_bits,
+                    w.shortened_bits,
+                    w.punctured_bits,
+                    w.repeated_bits,
+                    w.transmitted_bits,
+                ]) {
+                    *sum += value;
+                }
+            }
+            assert_eq!(
+                totals,
+                [
+                    layout.payload_bits,
+                    layout.shortened_bits,
+                    layout.punctured_bits,
+                    layout.repeated_bits,
+                    layout.symbols * layout.coded_bits_per_symbol
+                ]
+            );
+            // A wrong extra-symbol flag must not reuse the same geometry.
+            assert_ne!(
+                Layout::vht(c[3] as u16, c[1] as u8, c[2] == 2, c[9] == 0),
+                Ok(layout)
+            );
+        }
+        assert!(coverage.into_iter().all(|n| n > 0));
+        for symbols in [0, 1513, u16::MAX] {
+            assert_eq!(Layout::vht(symbols, 0, false, false), Err(Error::VhtTiming));
+        }
+        for mcs in 9..=255 {
+            assert_eq!(
+                Layout::vht(12, mcs, false, false),
+                Err(Error::InvalidCodedBits)
+            );
+        }
+        assert_eq!(Layout::vht(3, 0, true, false), Err(Error::VhtTiming));
+        assert_eq!(Layout::vht(1, 0, false, true), Err(Error::VhtTiming));
+        assert_eq!(Layout::vht(2, 0, true, true), Err(Error::VhtTiming));
+    }
+    #[test]
+    fn radio_vht_ldpc_independent_recovery() {
+        let rows = include_str!("../../tests/fixtures/iq/vht-ldpc-rate-codewords.tsv");
+        let geometry = include_str!("../../tests/fixtures/iq/vht-ldpc-rate-index.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 54);
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let g: Vec<usize> = geometry
+                .lines()
+                .skip(1)
+                .find(|r| r.split('\t').take(3).eq(c[..3].iter().copied()))
+                .unwrap()
+                .split('\t')
+                .map(|v| v.parse().unwrap())
+                .collect();
+            let layout = Layout::vht(g[3] as u16, g[1] as u8, g[2] == 2, g[9] != 0).unwrap();
+            let expected: Vec<_> = c[3].bytes().map(|b| b - b'0').collect();
+            let clean: Vec<_> = c[4]
+                .bytes()
+                .map(|b| if b == b'1' { 1. } else { -1. })
+                .collect();
+            for scale in [1., f32::MAX, f32::MIN_POSITIVE] {
+                let metrics: Vec<_> = clean.iter().map(|m| m * scale).collect();
+                assert_eq!(layout.recover(&metrics, 64).unwrap().0, expected);
+            }
+            let mut damaged = clean.clone();
+            for index in [7, 53] {
+                damaged[index] *= -0.25;
+            }
+            assert_eq!(layout.recover(&damaged, 64).unwrap().0, expected);
+            assert!(layout.recover(&clean[..clean.len() - 1], 64).is_err());
+        }
+    }
     #[test]
     fn radio_ldpc_independent_rate_matched_recovery() {
         let rows: Vec<_> = include_str!("../../../tests/fixtures/iq/ldpc-rate-codewords.tsv")
