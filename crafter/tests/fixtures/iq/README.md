@@ -1,5 +1,10 @@
 # Independent IQ vector contract
 
+`he-timing-index.tsv` contains 10,252 independent HE20 SU forward timelines
+from `he_timing_vectors.py`, including per-DATA-symbol offset hashes, midamble
+insertion, all SU guard/training pairs and packet extension. These are timing
+checks, not IQ waveforms, DATA mode admission or multi-stream RX qualification.
+
 This directory contains synthetic, offline receive and transmit vectors. It contains no
 recorded network traffic. The implementation contract and primary evidence map
 are in `docs/radio.md`.

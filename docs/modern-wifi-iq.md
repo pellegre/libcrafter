@@ -374,6 +374,15 @@ cover all three sparse SU training/guard combinations. STBC training, DATA
 coding and MAC publication remain unfinished; probe sign recovery is not frame
 decoding and does not qualify high-order modulation error performance.
 
+HE20 SU now also has a private timing kernel deriving DATA-symbol and midamble
+positions from checked signaling. Independent forward timelines cover the
+five SU training/guard combinations, 10/20-symbol midamble periods and 0-16us
+packet extension. Exact DATA/PE boundaries remain distinct from L-SIG's rounded
+duration; offsets exclude the optional signal extension. This is not DATA
+admission, multi-stream demodulation, midamble channel estimation or sounding
+NDP support. HE coded payload recovery and public frame publication remain
+unfinished.
+
 ## VHT BCC DATA implementation
 
 The private single-encoder VHT BCC DATA recovery path uses the SIG-B CRC in

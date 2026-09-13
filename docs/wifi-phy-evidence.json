@@ -222,6 +222,12 @@
       "fact": "HT-STF duration is 4 microseconds; its 20 MHz frequency sequence is identical to L-STF."
     },
     {
+      "id": "he-su-timing",
+      "source": "ieee-80211ax-2021",
+      "anchor": "Table27-12; 27.3.11.10; 27.3.12.12/16; Equations27-11/112/118-122",
+      "fact": "SU uses m=2 in L-SIG duration. HE preamble in receiver duration inversion excludes legacy20us and includes RL-SIG, SIG-A, STF and LTF symbols. Receiver symbol count floors the duration quotient then subtracts PE disambiguity; PE duration floors the remaining duration to4us increments. Midambles repeat the initial HE-LTF field every10 or20 DATA symbols with NSTS<=4, but are omitted before a sole final DATA symbol or after the last symbol. STBC is restricted to one spatial stream/two space-time streams without DCM. This timing implementation does not establish DATA decoding or MIMO reception."
+    },
+    {
       "id": "he-su-sparse-training",
       "source": "ieee-80211ax-2021",
       "anchor": "Table 27-31; Equations 27-40/41/42/58; Table 27-12",
