@@ -4,6 +4,16 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_ampdu_independent_inventory() {
+    let index = include_str!("fixtures/iq/he-ampdu-index.tsv");
+    assert_eq!(index.lines().skip(1).count(), 46);
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "2967db32a13f23cb370a410ec457bb3781f7117cd21ef87bcd365b6261c2d30d"
+    );
+}
+
+#[test]
 fn radio_he_bcc_iq_independent_inventory() {
     for (index, count, digest, column) in [
         (

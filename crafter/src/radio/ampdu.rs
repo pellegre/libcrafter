@@ -1,4 +1,5 @@
-//! HT/VHT A-MPDU framing, IEEE 802.11-2020 9.7.1–2, 10.12.6–8 and Annex O.2.
+//! HT/VHT/HE A-MPDU framing, IEEE 802.11-2020 9.7.1–2, 10.12.6–8 and Annex O.2.
+//! HE EOF/Tag semantics: IEEE 802.11ax-2021 Table 9-527 and 26.6.2.
 //! Only FCS-valid MPDUs are emitted. Bad FCS resumes four-byte scanning too,
 //! so a false delimiter cannot hide a later valid MPDU inside its stated span.
 
@@ -75,6 +76,7 @@ pub(super) struct Scan<'a> {
     max_mpdu: usize,
     pending: Option<Event<'a>>,
     vht: bool,
+    he: bool,
     eof: bool,
     frame_seen: bool,
 }
@@ -92,6 +94,7 @@ impl<'a> Scan<'a> {
             max_mpdu,
             pending: None,
             vht: false,
+            he: false,
             eof: false,
             frame_seen: false,
         })
@@ -105,12 +108,31 @@ impl<'a> Scan<'a> {
             max_mpdu,
             pending: None,
             vht: true,
+            he: false,
             eof: false,
             frame_seen: false,
         }
     }
+    /// HE shares VHT's length encoding, but a nonempty tagged MPDU does not
+    /// start EOF padding. Preserve tags; acknowledgment policy is outside this
+    /// raw-byte scanner. PHY admission must bound the borrowed PSDU.
+    pub(super) fn he(bytes: &'a [u8], max_mpdu: usize) -> Self {
+        Self {
+            he: true,
+            ..Self::vht(bytes, max_mpdu)
+        }
+    }
     fn accept_order(&mut self, delimiter: Delimiter) -> bool {
         let eof = delimiter.control_bits & 1 != 0;
+        if self.he {
+            if self.eof && (!eof || delimiter.mpdu_bytes != 0) {
+                self.offset = self.bytes.len();
+                return false;
+            }
+            self.eof |= eof && delimiter.mpdu_bytes == 0;
+            self.frame_seen |= delimiter.mpdu_bytes != 0;
+            return true;
+        }
         if self.vht
             && ((self.eof && (!eof || delimiter.mpdu_bytes != 0))
                 || (self.frame_seen && eof && delimiter.mpdu_bytes != 0))
@@ -235,6 +257,51 @@ mod tests {
             .chunks_exact(2)
             .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
             .collect()
+    }
+    #[test]
+    fn radio_he_ampdu_independent_recovery() {
+        let rows = include_str!("../../tests/fixtures/iq/he-ampdu-index.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 46);
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = hex(c[1]);
+            let offsets = c[2]
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.parse::<usize>().unwrap());
+            let frames = c[3].split(',').filter(|s| !s.is_empty()).map(hex);
+            let flags = c[4]
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.parse::<u8>().unwrap());
+            let events: Vec<_> = Scan::he(&bytes, 16383).collect();
+            let actual: Vec<_> = events
+                .iter()
+                .filter_map(|e| match e {
+                    Event::Frame {
+                        delimiter_offset,
+                        control_bits,
+                        bytes,
+                    } => Some((delimiter_offset + 4, bytes.to_vec(), *control_bits)),
+                    _ => None,
+                })
+                .collect();
+            let expected: Vec<_> = offsets
+                .zip(frames)
+                .zip(flags)
+                .map(|((offset, frame), flag)| (offset, frame, flag))
+                .collect();
+            assert_eq!(actual, expected, "{}", c[0]);
+            assert_eq!(
+                events.iter().any(|e| matches!(e, Event::Invalid { .. })),
+                c[5] == "1",
+                "{}: {events:?}",
+                c[0]
+            );
+            assert!(events.len() <= bytes.len().div_ceil(4) + 1);
+            assert!(!Scan::he(&bytes, 1).any(|e| matches!(e, Event::Frame { .. })));
+        }
+        assert!(Scan::he(&[], 16383).next().is_none());
     }
     #[test]
     fn radio_vht_ampdu_independent_delimiters() {
