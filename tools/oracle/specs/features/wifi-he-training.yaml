@@ -21,4 +21,4 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - Private one-stream training only, using complex linear interpolation for untrained sparse tones. STBC/multi-stream training, DATA recovery and live qualification remain unfinished. Probe symbols are mathematical channel checks, not valid MAC frames; interpolation is an estimator, not exact recovery for arbitrary channels.
+      - Sparse training uses regularized finite-delay least-squares channel estimation. STBC/multi-stream training and live qualification remain unfinished. Probe symbols are mathematical channel checks, not valid MAC frames; the finite-delay estimator is not exact recovery for arbitrary channels.

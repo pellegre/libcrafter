@@ -63,6 +63,28 @@ def generate():
     return '\n'.join(rows)+'\n'
 
 
+def encode_information(bits, sizing, mcs):
+    _,_,_,count,n,short,punc,repeat,payload,available=sizing
+    assert len(bits)==payload
+    rate=RATES[mcs]
+    matrix=next(c for c in json.loads(FIXTURE.read_text())['codes']
+                if c['n']==n and c['rate']==[rate.numerator,rate.denominator])
+    z,k=matrix['z'],matrix['k']
+    checks=[sum(1<<(col*z+(offset+shift)%z) for col,shift in enumerate(block) if shift>=0)
+            for block in matrix['matrix'] for offset in range(z)]
+    offset=0;transmitted=''
+    for index in range(count):
+        s=short//count+(index<short%count)
+        p=punc//count+(index<punc%count)
+        r=repeat//count+(index<repeat%count)
+        data=bits[offset:offset+k-s];offset+=k-s
+        word=encode(checks,k,n,sum(int(b)<<i for i,b in enumerate(data)))
+        word=word[:k-s]+word[k:n-p]
+        transmitted+=word+''.join(word[i%len(word)] for i in range(r))
+    assert offset==payload and len(transmitted)==available
+    return list(map(int,transmitted))
+
+
 def codewords():
     matrices={(c['n'],tuple(c['rate'])):c for c in json.loads(FIXTURE.read_text())['codes']}
     rows=['mcs\tsymbols\tpadding\textra\tpayload_bits\ttransmitted_bits']

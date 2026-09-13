@@ -1598,56 +1598,64 @@ mod tests {
     fn radio_he_streaming_bounds_and_unsupported() {
         let bytes =
             include_bytes!("../../tests/fixtures/iq/he-ampdu-iq-mcs0-ltf4-gi3200-multi.cs8");
-        assert!(feed(&mut LegacyWifiDecoder::new(), bytes, 127)
-            .frames
-            .is_empty());
-        let mut interrupted = WifiDecoder::new();
-        for (sequence, sample_index, part) in [(0, 0, &bytes[..2000]), (1, 1001, &bytes[2000..])] {
-            let chunk = IqChunk::new(
-                config(),
-                IqPosition {
-                    epoch: 0,
-                    sequence,
-                    sample_index,
-                    time_anchor: None,
-                    discontinuity: None,
-                },
-                part.iter().map(|b| *b as i8).collect(),
-            )
-            .unwrap();
-            let out = interrupted.consume(IqEvent::Chunk(chunk)).unwrap();
+        for bytes in [
+            bytes.as_slice(),
+            include_bytes!("../../tests/fixtures/iq/he-ldpc-iq-mcs0-ltf4-gi3200-pad1.cs8")
+                .as_slice(),
+        ] {
+            assert!(feed(&mut LegacyWifiDecoder::new(), bytes, 127)
+                .frames
+                .is_empty());
+            let mut interrupted = WifiDecoder::new();
+            for (sequence, sample_index, part) in
+                [(0, 0, &bytes[..2000]), (1, 1001, &bytes[2000..])]
+            {
+                let chunk = IqChunk::new(
+                    config(),
+                    IqPosition {
+                        epoch: 0,
+                        sequence,
+                        sample_index,
+                        time_anchor: None,
+                        discontinuity: None,
+                    },
+                    part.iter().map(|b| *b as i8).collect(),
+                )
+                .unwrap();
+                let out = interrupted.consume(IqEvent::Chunk(chunk)).unwrap();
+                assert!(out.frames.is_empty());
+                if sequence == 1 {
+                    assert!(out
+                        .diagnostics
+                        .iter()
+                        .any(|d| matches!(d, PhyDiagnostic::Reset(ResetReason::Gap(_)))));
+                }
+            }
+            let mut small = config();
+            small.max_buffer_samples = 512;
+            small.max_chunk_samples = 127;
+            assert!(feed_config(&mut WifiDecoder::new(), bytes, 127, small)
+                .unwrap()
+                .frames
+                .is_empty());
+            let mut small = config();
+            small.max_frame_bytes = 30;
+            let out = feed_config(&mut WifiDecoder::new(), bytes, 127, small).unwrap();
             assert!(out.frames.is_empty());
-            if sequence == 1 {
-                assert!(out
-                    .diagnostics
-                    .iter()
-                    .any(|d| matches!(d, PhyDiagnostic::Reset(ResetReason::Gap(_)))));
-            }
+            assert!(out.diagnostics.iter().any(|d| matches!(
+                d,
+                PhyDiagnostic::AmpduErrors {
+                    oversized_mpdus: 2,
+                    ..
+                }
+            )));
+            let mut small = config();
+            small.max_pending_frames = 3;
+            assert!(matches!(
+                feed_config(&mut WifiDecoder::new(), bytes, 127, small),
+                Err(RadioError::Limit { .. })
+            ));
         }
-        let mut small = config();
-        small.max_buffer_samples = 512;
-        small.max_chunk_samples = 127;
-        assert!(feed_config(&mut WifiDecoder::new(), bytes, 127, small)
-            .unwrap()
-            .frames
-            .is_empty());
-        let mut small = config();
-        small.max_frame_bytes = 30;
-        let out = feed_config(&mut WifiDecoder::new(), bytes, 127, small).unwrap();
-        assert!(out.frames.is_empty());
-        assert!(out.diagnostics.iter().any(|d| matches!(
-            d,
-            PhyDiagnostic::AmpduErrors {
-                oversized_mpdus: 2,
-                ..
-            }
-        )));
-        let mut small = config();
-        small.max_pending_frames = 3;
-        assert!(matches!(
-            feed_config(&mut WifiDecoder::new(), bytes, 127, small),
-            Err(RadioError::Limit { .. })
-        ));
         for row in include_str!("../../tests/fixtures/iq/he-bcc-iq-invalid-index.tsv")
             .lines()
             .skip(1)
@@ -1660,7 +1668,7 @@ mod tests {
             .unwrap();
             let out = feed(&mut WifiDecoder::new(), &bytes, 37);
             assert!(out.frames.is_empty(), "{name}");
-            if name.ends_with("service") {
+            if name.ends_with("service") || name.ends_with("ldpc") {
                 assert!(out.diagnostics.contains(&PhyDiagnostic::InvalidData));
             } else if name.ends_with("truncated") {
                 assert!(out.diagnostics.contains(&PhyDiagnostic::TruncatedFrame));
@@ -1677,6 +1685,74 @@ mod tests {
             assert!(out.diagnostics.contains(&PhyDiagnostic::TruncatedFrame));
         }
     }
+    #[test]
+    fn radio_he_ldpc_streaming_complete_aggregates() {
+        for row in include_str!("../../tests/fixtures/iq/he-ldpc-iq-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let expected: Vec<Vec<u8>> = c[5]
+                .split(',')
+                .map(|s| {
+                    (0..s.len())
+                        .step_by(2)
+                        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+                        .collect()
+                })
+                .collect();
+            for size in [37, 997] {
+                let mut decoder = WifiDecoder::new();
+                let out = feed(&mut decoder, &bytes, size);
+                assert_eq!(
+                    out.frames
+                        .iter()
+                        .map(|f| f.bytes.clone())
+                        .collect::<Vec<_>>(),
+                    expected,
+                    "{} chunk{size}",
+                    c[0]
+                );
+                for frame in &out.frames {
+                    assert_eq!(frame.integrity, FrameIntegrity::ValidFcs);
+                    assert!(frame.diagnostics.iter().any(|d| matches!(d, PhyDiagnostic::HeSignal { fields, .. }
+                        if fields.ldpc && fields.mcs == c[1].parse::<u8>().unwrap() && fields.guard_ns == c[3].parse::<u16>().unwrap()*50)));
+                }
+                assert_eq!(
+                    decoder.ofdm_stats().invalid_fcs,
+                    c[6].parse::<u64>().unwrap()
+                );
+            }
+        }
+        for row in include_str!("../../tests/fixtures/iq/he-ldpc-iq-invalid-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let name = row.split('\t').next().unwrap();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{name}.cs8",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap();
+            let out = feed(&mut WifiDecoder::new(), &bytes, 37);
+            assert!(out.frames.is_empty(), "{name}");
+            assert!(
+                out.diagnostics.contains(&if name.ends_with("service") {
+                    PhyDiagnostic::InvalidData
+                } else {
+                    PhyDiagnostic::TruncatedFrame
+                }),
+                "{name}"
+            );
+        }
+    }
+
     #[test]
     fn radio_he_streaming_complete_aggregates() {
         for row in include_str!("../../tests/fixtures/iq/he-ampdu-iq-index.tsv")

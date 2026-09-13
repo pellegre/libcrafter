@@ -195,8 +195,15 @@ mod tests {
             .lines()
             .skip(1)
             .filter(|r| r.starts_with("he-ampdu-iq-mcs9-ltf4-gi3200-"))
+            .chain(
+                include_str!("../../tests/fixtures/iq/he-ldpc-iq-index.tsv")
+                    .lines()
+                    .skip(1)
+                    .filter(|r| r.starts_with("he-ldpc-iq-mcs11-ltf1-gi800-")),
+            )
         {
             let c: Vec<_> = row.split('\t').collect();
+            let ldpc = c[0].starts_with("he-ldpc");
             let bytes = std::fs::read(format!(
                 "{}/tests/fixtures/iq/{}.cs8",
                 env!("CARGO_MANIFEST_DIR"),
@@ -209,7 +216,7 @@ mod tests {
                 .with(Dot11Metadata::new())
                 .collect_records()
                 .unwrap();
-            let expected: Vec<Vec<u8>> = c[6]
+            let expected: Vec<Vec<u8>> = c[if ldpc { 5 } else { 6 }]
                 .split(',')
                 .map(|s| {
                     s.as_bytes()
@@ -233,7 +240,7 @@ mod tests {
                 assert!(rf
                     .diagnostics
                     .iter()
-                    .any(|d| matches!(d,PhyDiagnostic::HeSignal {fields,..} if fields.mcs==9)));
+                    .any(|d| matches!(d,PhyDiagnostic::HeSignal {fields,..} if fields.mcs==if ldpc {11} else {9} && fields.ldpc==ldpc)));
                 assert_eq!(record.metadata(), &record.metadata().clone());
             }
         }

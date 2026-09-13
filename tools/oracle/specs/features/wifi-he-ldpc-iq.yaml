@@ -1,0 +1,21 @@
+version: 1
+kind: feature
+name: wifi_he_ldpc_iq
+summary: HE20 SU single-stream LDPC complete IQ recovery.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: complete-waveforms
+    source: IEEE 802.11ax-2021 27.3.12.5.2-3, 27.3.12.9-10, 27.3.12.13-14
+    checks: [mcs_0_to_11, all_su_guard_training_pairs, extra_segments, post_fec_padding, exact_psdu, mac_fcs, truncation, storage_bounds, sparse_and_full_training_denoising, chunked_public_receiver, packet_metadata, gap_reset]
+coverage_cases: [wifi-he-ldpc-iq]
+supported_cases:
+  - {name: wifi-he-ldpc-iq, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - HE20 SU single stream only; DCM, STBC, midambles and other HE layouts remain unsupported here.
+      - Independent offline waveforms do not establish live HE hardware qualification.

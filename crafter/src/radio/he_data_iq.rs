@@ -1,4 +1,4 @@
-//! HE20 SU BCC IQ, IEEE802.11ax-2021 27.3.12.8/9/13/14.
+//! HE20 SU BCC/LDPC IQ, IEEE802.11ax-2021 27.3.12.5/8/9/10/13/14.
 use super::{
     he_capacity::Capacity, he_timing::Timing, he_training::train_su, sync::Acquisition,
     ComplexSample, SignalInfo,
@@ -52,11 +52,14 @@ pub(super) fn admit(
     }
     let prefix = super::he_iq::decode_su_prefix(samples, a)?;
     let h = prefix.signal;
-    if h.ldpc || h.dcm || h.stbc || h.midamble_period.is_some() || h.space_time_streams != 1 {
+    if h.dcm || h.stbc || h.midamble_period.is_some() || h.space_time_streams != 1 {
         return None;
     }
     let timing = Timing::new(6_000_000, prefix.legacy_length, &h).ok()?;
     let capacity = Capacity::new(&h, timing.data_symbols).ok()?;
+    if h.ldpc {
+        super::ldpc_rate::Layout::he(&h, u16::try_from(timing.data_symbols).ok()?).ok()?;
+    }
     let required_samples = timing.data_end.checked_sub(320)?;
     if capacity.psdu_bytes > max_psdu || required_samples > max_samples {
         return None;
@@ -109,6 +112,7 @@ pub(super) fn recover(
         4 => 10.,
         6 => 42.,
         8 => 170.,
+        10 => 682.,
         _ => return None,
     };
     let mut pilot_state = 127u8;
@@ -210,15 +214,34 @@ pub(super) fn recover(
                 );
             }
         }
-        let n = c.coded_per_symbol;
-        let s = (c.bits_per_tone / 2).max(1);
-        for k in 0..n {
-            let i = 9 * c.bits_per_tone * (k % 26) + k / 26;
-            let j = s * (i / s) + (i + n - 26 * i / n) % s;
-            coded.push(*interleaved.get(j)?);
+        if h.ldpc {
+            let ordered = ldpc_order(&interleaved, c.bits_per_tone)?;
+            // 27.3.12.5.3: post-FEC padding follows the coded bits in the
+            // last symbol (this path admits one stream without STBC only).
+            let count = if symbol + 1 == timing.data_symbols {
+                c.coded_last
+            } else {
+                c.coded_per_symbol
+            };
+            coded.extend_from_slice(ordered.get(..count)?);
+        } else {
+            let n = c.coded_per_symbol;
+            let s = (c.bits_per_tone / 2).max(1);
+            for k in 0..n {
+                let i = 9 * c.bits_per_tone * (k % 26) + k / 26;
+                let j = s * (i / s) + (i + n - 26 * i / n) % s;
+                coded.push(*interleaved.get(j)?);
+            }
         }
     }
-    super::he_bcc::recover(&h, timing.data_symbols, &coded, max_psdu).ok()
+    if h.ldpc {
+        let layout =
+            super::ldpc_rate::Layout::he(&h, u16::try_from(timing.data_symbols).ok()?).ok()?;
+        let (bits, _) = layout.recover(&coded, 64).ok()?;
+        super::data::descramble_psdu(bits, c.psdu_bytes).ok()
+    } else {
+        super::he_bcc::recover(&h, timing.data_symbols, &coded, max_psdu).ok()
+    }
 }
 
 #[cfg(test)]
@@ -268,6 +291,62 @@ mod tests {
     }
 
     use super::*;
+    #[test]
+    fn radio_he_ldpc_iq_complete_mac_waveforms() {
+        let hex = |s: &str| -> Vec<u8> {
+            (0..s.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+                .collect()
+        };
+        let index = include_str!("../../tests/fixtures/iq/he-ldpc-iq-index.tsv");
+        assert_eq!(index.lines().skip(1).count(), 240);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let (samples, a) = fixture(c[0]);
+            let input = &samples[a.signal_start as usize..];
+            let expected = hex(c[4]);
+            let admitted = admit(&input[..320], &a, expected.len(), input.len()).expect(c[0]);
+            assert!(admitted.signal.ldpc);
+            let end = admitted.required_samples;
+            let psdu = recover(&input[..end], &a, expected.len()).expect(c[0]);
+            assert_eq!(psdu, expected, "{}", c[0]);
+            assert!(recover(&input[..end - 1], &a, expected.len()).is_none());
+            assert!(admit(&input[..320], &a, expected.len() - 1, input.len()).is_none());
+            assert!(admit(&input[..320], &a, expected.len(), end - 1).is_none());
+            let mut frames = Vec::new();
+            let mut bad_fcs = 0;
+            for event in super::super::ampdu::Scan::he(&psdu, 16383) {
+                match event {
+                    super::super::ampdu::Event::Frame { bytes, .. } => frames.push(bytes.to_vec()),
+                    super::super::ampdu::Event::Invalid {
+                        error: super::super::ampdu::Error::BadFcs,
+                        ..
+                    } => bad_fcs += 1,
+                    _ => {}
+                }
+            }
+            assert_eq!(
+                frames,
+                c[5].split(',').map(hex).collect::<Vec<_>>(),
+                "{}",
+                c[0]
+            );
+            assert_eq!(bad_fcs, c[6].parse::<usize>().unwrap(), "{}", c[0]);
+        }
+        for row in include_str!("../../tests/fixtures/iq/he-ldpc-iq-invalid-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let name = row.split('\t').next().unwrap();
+            let (samples, a) = fixture(name);
+            assert!(
+                recover(&samples[a.signal_start as usize..], &a, 65535).is_none(),
+                "{name}"
+            );
+        }
+    }
+
     fn fixture(name: &str) -> (Vec<ComplexSample>, Acquisition) {
         let bytes = std::fs::read(format!(
             "{}/tests/fixtures/iq/{name}.cs8",
@@ -424,7 +503,8 @@ mod tests {
             let (samples, a) = fixture(name);
             let input = &samples[a.signal_start as usize..];
             // SERVICE and DATA truncation are not header errors.
-            let expected = name.ends_with("service") || name.ends_with("truncated");
+            let expected =
+                name.ends_with("service") || name.ends_with("truncated") || name.ends_with("ldpc");
             assert_eq!(
                 admit(&input[..320], &a, usize::MAX, usize::MAX).is_some(),
                 expected,

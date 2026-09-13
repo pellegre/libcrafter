@@ -20,4 +20,4 @@ backend_support:
     status: partial
     notes:
       - Rate matching and codeword recovery only. DCM, STBC and spatial-stream dimensions here do not establish IQ demodulation support.
-      - HE input metrics exclude post-FEC padding. Public HE LDPC reception remains unimplemented.
+      - HE input metrics exclude post-FEC padding. Complete IQ integration is qualified separately by wifi_he_ldpc_iq.

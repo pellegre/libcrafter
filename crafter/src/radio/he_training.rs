@@ -18,6 +18,74 @@ pub(super) struct Trained {
     pub guard: usize,
 }
 
+/// Fit a finite impulse response to sparse measurements. This receiver model
+/// includes four precursor samples and delays within the cyclic prefix; it
+/// averages quantization noise instead of amplifying it at interpolated tones.
+/// The diagonal ridge stabilizes missing DC/edge measurements. This is not a
+/// claim that channels outside the guard interval can be reconstructed.
+fn delay_fit(channel: &mut [ComplexSample; 256], tones: &[i32], guard: usize) -> Option<()> {
+    let count = guard.checked_add(4)?;
+    if count > 68 || tones.len() < count {
+        return None;
+    }
+    let mut normal = vec![vec![ComplexSample::ZERO; count + 1]; count];
+    for &tone in tones {
+        let basis: Vec<_> = (0..count)
+            .map(|n| {
+                ComplexSample::rotation(
+                    -std::f32::consts::TAU * tone as f32 * (n as f32 - 4.) / 256.,
+                )
+            })
+            .collect();
+        for i in 0..count {
+            let conjugate = basis[i].conj();
+            for (j, &v) in basis.iter().enumerate() {
+                normal[i][j] = normal[i][j].add(conjugate.mul(v));
+            }
+            normal[i][count] =
+                normal[i][count].add(conjugate.mul(channel[tone.rem_euclid(256) as usize]));
+        }
+    }
+    for (i, row) in normal.iter_mut().enumerate() {
+        row[i].i += 0.001 * tones.len() as f32;
+    }
+    // Partial-pivot complex Gaussian elimination of the regularized normal equations.
+    for col in 0..count {
+        let pivot = (col..count)
+            .max_by(|&a, &b| normal[a][col].power().total_cmp(&normal[b][col].power()))?;
+        normal.swap(col, pivot);
+        let divisor = normal[col][col];
+        if !divisor.power().is_finite() || divisor.power() < 1e-12 {
+            return None;
+        }
+        let inverse = divisor.conj().scale(1. / divisor.power());
+        let (before, rest) = normal.split_at_mut(col);
+        let (pivot_row, after) = rest.split_first_mut()?;
+        for value in &mut pivot_row[col..] {
+            *value = value.mul(inverse);
+        }
+        for row in before.iter_mut().chain(after) {
+            let factor = row[col];
+            for (value, &pivot_value) in row[col..].iter_mut().zip(&pivot_row[col..]) {
+                *value = value.sub(factor.mul(pivot_value));
+            }
+        }
+    }
+    for tone in (-122i32..=-2).chain(2..=122) {
+        let mut value = ComplexSample::ZERO;
+        for (n, row) in normal.iter().enumerate() {
+            value = value.add(row[count].mul(ComplexSample::rotation(
+                -std::f32::consts::TAU * tone as f32 * (n as f32 - 4.) / 256.,
+            )));
+        }
+        if !value.power().is_finite() {
+            return None;
+        }
+        channel[tone.rem_euclid(256) as usize] = value;
+    }
+    Some(())
+}
+
 /// Input begins at L-SIG. Reject unsupported training layouts explicitly.
 pub(super) fn train_su(samples: &[ComplexSample], a: &Acquisition) -> Option<Trained> {
     let prefix = decode_su_prefix(samples, a)?;
@@ -67,28 +135,13 @@ pub(super) fn train_su(samples: &[ComplexSample], a: &Acquisition) -> Option<Tra
     if !energy.is_finite() || energy < 1e-9 {
         return None;
     }
-    // Complex linear interpolation is a receiver estimator, not a normative
-    // channel model. Keep measured tones untouched; extrapolate at band edges.
     let trained: Vec<i32> = sequence
         .iter()
         .enumerate()
         .filter(|(_, s)| **s != b'0')
         .map(|(i, _)| i as i32 - 122)
         .collect();
-    for tone in (-122i32..=-2).chain(2..=122) {
-        if sequence[(tone + 122) as usize] != b'0' {
-            continue;
-        }
-        let upper = trained
-            .partition_point(|k| *k < tone)
-            .clamp(1, trained.len() - 1);
-        let lo = trained[upper - 1];
-        let hi = trained[upper];
-        let left = channel[lo.rem_euclid(256) as usize];
-        let right = channel[hi.rem_euclid(256) as usize];
-        channel[tone.rem_euclid(256) as usize] =
-            left.add(right.sub(left).scale((tone - lo) as f32 / (hi - lo) as f32));
-    }
+    delay_fit(&mut channel, &trained, guard)?;
     Some(Trained {
         prefix,
         channel,

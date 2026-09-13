@@ -20,5 +20,5 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - Private metric primitives. Public HE LDPC IQ reception remains unimplemented pending complete-waveform qualification.
+      - Private metric primitives; separate wifi_he_ldpc_iq fixtures qualify complete-waveform integration.
       - Inverse LDPC tone mapping is for one already separated non-DCM 242-tone RU stream, not DCM or multi-stream reception.

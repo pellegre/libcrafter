@@ -4,6 +4,36 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_ldpc_iq_independent_inventory() {
+    for (index, count, hash) in [
+        (
+            include_str!("fixtures/iq/he-ldpc-iq-index.tsv"),
+            240,
+            "45f73059bd7d5658a3bf80d232e5692ac7cf96045d309b338859502d2770179b",
+        ),
+        (
+            include_str!("fixtures/iq/he-ldpc-iq-invalid-index.tsv"),
+            6,
+            "4dc525ec58d1a8ced601edb9987988b9c75f3340358533dc985fcfb8458a75bb",
+        ),
+    ] {
+        assert_eq!(index.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), hash);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(bytes.len() % 2, 0);
+            assert_eq!(hex(&Sha256::digest(&bytes)), *c.last().unwrap());
+        }
+    }
+}
+
+#[test]
 fn radio_he_demapping_independent_inventory() {
     for (index, count, digest) in [
         (

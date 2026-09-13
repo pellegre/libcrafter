@@ -19,5 +19,5 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - Public WifiDecoder supports HE20 SU single-stream BCC without DCM, STBC or midambles. Other HE layouts remain unsupported. Offline fixtures are not live hardware qualification.
+      - These cases qualify public HE20 SU single-stream BCC without DCM, STBC or midambles. Separate wifi_he_ldpc_iq cases qualify LDPC. Offline fixtures are not live hardware qualification.
       - Tagged QoS frame bytes exercise framing semantics, not negotiated acknowledgment policy.

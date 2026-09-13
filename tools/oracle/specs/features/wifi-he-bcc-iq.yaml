@@ -20,6 +20,6 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - Private one-stream non-DCM, non-STBC, no-midamble BCC IQ kernel. LDPC and other layouts remain unsupported here.
+      - One-stream non-DCM, non-STBC, no-midamble BCC IQ cases. Separate wifi_he_ldpc_iq cases qualify LDPC integration; other layouts remain unsupported.
       - Raw PSDU recovery does not establish MAC aggregate/FCS admission, public streaming publication or live hardware qualification.
       - Header-only admission returns the exact DATA reservation from the acquired L-SIG position; packet extension is not required for byte recovery. Admission does not assert payload integrity.

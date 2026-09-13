@@ -22,17 +22,18 @@ PILOTS=[-116,-90,-48,-22,22,48,90,116]
 TONES=[k for k in training.TONES if k not in PILOTS]
 
 
-def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None):
+def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False,initial_padding=None):
     symbols=137 if long else 5
     padding=mcs%4+1
+    if initial_padding is not None: padding=initial_padding
     cbps=234*BPS[mcs];dbps=DATA[mcs]
     last=cbps if padding==4 else padding*60*BPS[mcs]
     if payload is not None:
         assert len(payload)%4==0
-        while ((symbols-1)*dbps+(dbps if padding==4 else padding*SHORT[mcs])-22)//8 < len(payload):
+        while ((symbols-1)*dbps+(dbps if padding==4 else padding*SHORT[mcs])-(16 if ldpc else 22))//8 < len(payload):
             symbols+=1
     count=(symbols-1)*dbps+(dbps if padding==4 else padding*SHORT[mcs])
-    octets,pad=divmod(count-22,8)
+    octets,pad=divmod(count-(16 if ldpc else 22),8)
     psdu=bytes((n*37+mcs*13+93)%256 for n in range(octets))
     if payload is not None:
         from vht_ampdu_vectors import delimiter
@@ -41,9 +42,17 @@ def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None):
         psdu=payload+delimiter(0,1)*(remaining//4)+b'\xa5'*(remaining%4)
     service=[0]*16
     if invalid=='service': service[7]=1
-    bits=base.scramble(service+base.bits(psdu)+[n%2 for n in range(pad)],93)+[0]*6
-    pattern=PUNCTURE[mcs] if mcs<8 else ([1,1,1,0,0,1] if mcs==8 else [1,1,1,0,0,1,1,0,0,1])
-    coded=[b for i,b in enumerate(base.encode(bits)) if pattern[i%len(pattern)]]
+    bits=base.scramble(service+base.bits(psdu)+[n%2 for n in range(pad)],93)
+    extra=0
+    if ldpc:
+        from he_ldpc_rate_vectors import layout, encode_information
+        sizing=layout(mcs,1,0,1,symbols,padding)
+        coded=encode_information(bits,sizing,mcs)
+        symbols,padding,extra=sizing[:3]
+        last=cbps if padding==4 else padding*60*BPS[mcs]
+    else:
+        pattern=PUNCTURE[mcs] if mcs<8 else ([1,1,1,0,0,1] if mcs==8 else [1,1,1,0,0,1,1,0,0,1])
+        coded=[b for i,b in enumerate(base.encode(bits+[0]*6)) if pattern[i%len(pattern)]]
     coded += [n%2 for n in range(cbps-last)]
     assert len(coded)==symbols*cbps
     preamble=720+size*64+guard
@@ -53,6 +62,7 @@ def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None):
     length=3*(rounded//80)-5
     header=[0]*52
     for i in (0,14,34,40):header[i]=1
+    if ldpc:header[33]=1;header[34]=extra
     header[3:7]=[(mcs>>i)&1 for i in range(4)]
     code={(1,16):0,(2,16):1,(2,32):2,(4,64):3,(4,16):3}[size,guard]
     header[21:23]=[code&1,code>>1]
@@ -81,12 +91,23 @@ def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None):
     for n in range(symbols):
         block=coded[n*cbps:(n+1)*cbps]
         interleaved=[0]*cbps;s=max(1,BPS[mcs]//2)
-        for k,b in enumerate(block):
-            i=9*BPS[mcs]*(k%26)+k//26
-            j=s*(i//s)+(i+cbps-26*i//cbps)%s
-            interleaved[j]=b
+        if ldpc:
+            grid=[list(range(r*26,(r+1)*26)) for r in range(9)]
+            for tone,k in enumerate(grid[r][col] for col in range(26) for r in range(9)):
+                interleaved[tone*BPS[mcs]:(tone+1)*BPS[mcs]]=block[k*BPS[mcs]:(k+1)*BPS[mcs]]
+        else:
+            for k,b in enumerate(block):
+                i=9*BPS[mcs]*(k%26)+k//26
+                j=s*(i//s)+(i+cbps-26*i//cbps)%s
+                interleaved[j]=b
         freq=[0j]*245
-        for i,k in enumerate(TONES):freq[k+122]=constellation(interleaved[i*BPS[mcs]:(i+1)*BPS[mcs]])
+        for i,k in enumerate(TONES):
+            label=interleaved[i*BPS[mcs]:(i+1)*BPS[mcs]]
+            if len(label)==10:
+                from he_demapping_vectors import AXIS
+                lookup={b:v for v,b in AXIS};b=''.join(map(str,label))
+                freq[k+122]=complex(lookup[b[:5]],lookup[b[5:]])/math.sqrt(682)
+            else:freq[k+122]=constellation(label)
         for i,k in enumerate(PILOTS):freq[k+122]=polarities[n+4]*[1,1,1,-1,-1,1,1,1][(n+i)%8]
         time=[v*4*math.sqrt(52/242) for v in training.ifft(freq)]
         wave+=time[-guard:]+time

@@ -19,16 +19,16 @@ greenfield long GI. HT40 and additional independent data streams are outside
 the supported matrix.
 
 Current HE receive coverage: `WifiDecoder` and `radio_receive --modern` decode
-HE20 SU, one spatial stream, BCC MCS0–9, with all five supported HE-LTF/guard
+HE20 SU, one spatial stream, BCC MCS0–9 and LDPC MCS0–11, with all five supported HE-LTF/guard
 combinations. Repeated L-SIG detection retains the candidate through HE-SIG-A;
 validated headers bound buffering before DATA. Aggregate recovery preserves
 tag bits and received FCS and publishes only checksum-valid MPDUs. HE headers
 are available as `HeSuSignalFields` and `PhyDiagnostic::HeSignal`; receive
 artifacts use `phy: he`, an optional `he` object, and `he_signal` header records.
 
-HE LDPC, DCM, STBC, midambles, MU/TB/ER SU, wider channels and independent
+HE DCM, STBC, midambles, MU/TB/ER SU, wider channels and independent
 multiple DATA streams are not implemented by this receive path. Offline
-qualification uses 200 complete independent waveforms; it does not establish
+qualification uses 200 BCC and 240 LDPC complete independent waveforms; it does not establish
 HE-capable dongle interoperability, sustained real-time speed or modern TX.
 
 ## Evidence requirements
@@ -381,11 +381,11 @@ training, handles 0.8us and 3.2us guards, and estimates all242 active tones with
 the 256-point transform. Independent preamble/channel-probe cases check gain,
 frequency offset, multipath and changes in spatial mapping after the legacy
 header. The 1x/2x paths use short 64/128-point transforms and convert their gain
-to the 256-point DATA normalization. Complex linear interpolation fills
-untrained tones, with linear extrapolation at the band edges. This is an
+to the 256-point DATA normalization. Finite-delay least-squares estimation fills
+untrained tones and denoises measured tones within a guard-bounded delay model. This is an
 estimator, not exact reconstruction for arbitrary channels. Independent probes
-cover all three sparse SU training/guard combinations. STBC training and MAC
-publication remain unfinished; probe sign recovery is not frame
+cover all three sparse SU training/guard combinations. STBC training
+remains unfinished; probe sign recovery alone is not frame
 decoding and does not qualify high-order modulation error performance.
 
 HE20 SU now also has a private timing kernel deriving DATA-symbol and midamble
@@ -408,15 +408,17 @@ symbol metrics. It removes post-FEC padding and DCM BPSK filler, depunctures all
 four BCC rates, applies terminated Viterbi decoding, then descrambles and checks
 the zero SERVICE field. A caller-supplied byte limit bounds payload allocation.
 Independent coded-bit cases cover MCS0-9 and all nonzero scrambler seeds.
-This does not yet connect HE IQ demodulation to frame publication; output still
-requires MAC aggregate and FCS validation. LDPC payload recovery is unfinished.
+This primitive requires MAC aggregate and FCS validation; the public receive
+path now supplies both for qualified one-stream HE SU layouts.
 
 The private HE20 SU IQ kernel now connects acquisition, training, timing,
-capacity, pilot tracking, QAM demapping, BCC deinterleaving and byte recovery
-for one-stream MCS0-9 without DCM, STBC or midambles. Independent full-waveform
+capacity, pilot tracking, QAM demapping, BCC deinterleaving or LDPC tone-order
+restoration and byte recovery without DCM, STBC or midambles. Independent full-waveform
 cases recover exact synthetic PSDUs across all five SU guard/training pairs,
-frequency offset and multipath. Public streaming publication and MAC/FCS
-admission remain unfinished, as do LDPC and the other HE layouts. These offline
+frequency offset and multipath. LDPC removes post-FEC padding before rate
+recovery, verifies SERVICE and scans aggregates before frame publication.
+Sparse training uses regularized finite-delay least-squares estimation; it is an estimator,
+not a guarantee for every propagation channel. Other HE layouts remain unfinished. These offline
 tests do not establish live hardware qualification or real-time throughput.
 
 ## VHT BCC DATA implementation
