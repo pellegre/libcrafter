@@ -92,6 +92,7 @@ pub(super) const fn dot11_mac_header_len(frame_control: Dot11FrameControl) -> us
                 DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN
             }
             DOT11_CONTROL_SUBTYPE_BLOCK_ACK_REQUEST
+            | DOT11_CONTROL_SUBTYPE_TRIGGER
             | DOT11_CONTROL_SUBTYPE_BLOCK_ACK
             | DOT11_CONTROL_SUBTYPE_RTS
             | DOT11_CONTROL_SUBTYPE_PS_POLL
@@ -121,6 +122,7 @@ pub(super) fn dot11_control_subtype_has_known_address_layout(dot11: &Dot11) -> b
         dot11.control_subtype(),
         Some(
             Dot11ControlSubtype::Ack
+                | Dot11ControlSubtype::Trigger
                 | Dot11ControlSubtype::Cts
                 | Dot11ControlSubtype::Rts
                 | Dot11ControlSubtype::PsPoll
@@ -137,6 +139,7 @@ pub(super) const fn dot11_control_subtype_has_addr2(subtype: Option<Dot11Control
         subtype,
         Some(
             Dot11ControlSubtype::Rts
+                | Dot11ControlSubtype::Trigger
                 | Dot11ControlSubtype::PsPoll
                 | Dot11ControlSubtype::CfEnd
                 | Dot11ControlSubtype::CfEndCfAck

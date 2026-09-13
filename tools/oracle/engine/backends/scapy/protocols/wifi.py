@@ -336,6 +336,7 @@ def _dot11_subtype_value(value: object) -> int:
         "authentication": 11,
         "deauthentication": 12,
         "rts": 11,
+        "trigger": 2,
         "cts": 12,
         "ack": 13,
         "data": 0,
