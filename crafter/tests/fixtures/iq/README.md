@@ -1,5 +1,15 @@
 # Independent IQ vector contract
 
+`he-mu-mixed-iq-index.tsv` indexes 336 mixed-user HE20 MAC waveforms.
+Each packet combines BCC and LDPC users with independently selected MCS and
+applicable DCM, or STBC without DATA DCM. All four initial padding boundaries
+and guard/training pairs occur on allocation codes 0, 15 and 128. SIG-B
+modulation is independent of DATA. The generator applies the common LDPC
+extra-segment decision to every user, retaining initial LDPC payload sizes
+but using final BCC payload sizes (27.3.12.5.4, equations 27-81–89).
+Expected frames and original user positions are recorded separately from IQ.
+Regenerate with `he_mu_mixed_iq_vectors.py`, adding `--check` to verify.
+
 `he-mu-compressed-iq-index.tsv` indexes 242 independent compressed one-user
 HE20 MAC waveforms (27.3.11.8.4/Table27-28). There is no Common field, and the
 raw SIG-A count remains zero while SIG-B duration varies with its modulation.

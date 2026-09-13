@@ -1893,6 +1893,20 @@ mod tests {
     fn radio_he_mu_streaming_complete_aggregates() {
         let rows = include_str!("../../tests/fixtures/iq/he-mu-ampdu-iq-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 94);
+        check_mu_aggregates(rows);
+    }
+
+    #[test]
+    fn radio_he_mu_mixed_user_complete_aggregates() {
+        let rows = include_str!("../../tests/fixtures/iq/he-mu-mixed-iq-index.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 336);
+        check_mu_aggregates(rows);
+    }
+
+    fn check_mu_aggregates(rows: &str) {
+        let mut extra_boundaries = [false; 4];
+        let mut plain_boundaries = [false; 4];
+        let mut failures = Vec::new();
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
             let bytes = std::fs::read(format!(
@@ -1916,13 +1930,15 @@ mod tests {
                 let mut cfg = config();
                 cfg.max_pending_frames = 32;
                 let out = feed_config(&mut decoder, &bytes, size, cfg).unwrap();
-                assert_eq!(
-                    out.frames.len(),
-                    expected.len(),
-                    "{} size{size}: {:?}",
-                    c[0],
-                    out.diagnostics
-                );
+                if out.frames.len() != expected.len() {
+                    failures.push(format!(
+                        "{} size{size}: {} of {} frames",
+                        c[0],
+                        out.frames.len(),
+                        expected.len()
+                    ));
+                    continue;
+                }
                 assert_eq!(
                     decoder.ofdm_stats().invalid_fcs,
                     c[8].parse().unwrap(),
@@ -1959,6 +1975,37 @@ mod tests {
                         user_index,
                         preamble_sample_index: 37
                     }));
+                    if c[0].starts_with("he-mu-mixed-") {
+                        let mode: Vec<u8> = c[2]
+                            .split(',')
+                            .nth(user_index)
+                            .unwrap()
+                            .split(':')
+                            .map(|v| v.parse().unwrap())
+                            .collect();
+                        let fields = frame
+                            .diagnostics
+                            .iter()
+                            .find_map(|d| match d {
+                                PhyDiagnostic::HeMuSigB { fields, .. } => Some(fields),
+                                _ => None,
+                            })
+                            .unwrap();
+                        let initial: usize = c[3].parse().unwrap();
+                        let extra = fields.signal.ldpc_extra_segment;
+                        let final_padding = if extra { initial % 4 + 1 } else { initial };
+                        assert_eq!(usize::from(fields.signal.pre_fec_padding), final_padding);
+                        if extra {
+                            extra_boundaries[initial - 1] = true;
+                        } else {
+                            plain_boundaries[initial - 1] = true;
+                        }
+                        assert!(matches!(fields.users[user_index].unwrap().encoding,
+                            HeSigBUserEncoding::NonMu { mcs, ldpc, dcm, space_time_streams, .. }
+                            if mcs == mode[0] && ldpc == (mode[1] != 0)
+                                && dcm == (mode[2] != 0)
+                                && space_time_streams == if c[4] == "1" { 2 } else { 1 }));
+                    }
                     assert!(frame
                         .diagnostics
                         .iter()
@@ -1970,6 +2017,11 @@ mod tests {
                 }
             }
         }
+        if rows.contains("he-mu-mixed-") {
+            assert_eq!(extra_boundaries, [true; 4]);
+            assert_eq!(plain_boundaries, [true; 4]);
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
     #[test]

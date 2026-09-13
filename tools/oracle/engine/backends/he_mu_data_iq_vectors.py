@@ -25,38 +25,56 @@ from he_ldpc_rate_vectors import layout, encode_information, damage_codeword, RA
 
 
 def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage='none',mac_payloads=None,
-             compressed=False,sig_b_mcs=0,sig_b_dcm=False,stbc=False,stbc_case='flat'):
+             compressed=False,sig_b_mcs=0,sig_b_dcm=False,stbc=False,stbc_case='flat',
+             user_modes=None,pre_fec_padding=3,sizing_trace=None):
     assert not compressed or code==192
     assert sig_b_mcs in range(6) and (not sig_b_dcm or sig_b_mcs in (0,1,3,4))
-    assert not stbc or (not dcm and nltf in (2,4,6,8))
+    assert not stbc or nltf in (2,4,6,8)
     geom={(ru,index):(data,pilots) for ru,index,data,pilots in geometry()}
     rus=[]
     for item in allocation(code)[1].split(','):
         ru,slot,users=map(int,item.split(':')); assert users==1
         index=slot if ru==26 else ({1:1,3:2,6:3,8:4}[slot] if ru==52 else (1 if slot==1 else 2) if ru==106 else 1)
         data,pilots=geom[ru,index]; rus.append((ru,data,pilots))
+    modes=[(mcs,ldpc,dcm)]*len(rus) if user_modes is None else list(user_modes)
+    assert len(modes)==len(rus) and pre_fec_padding in (1,2,3,4)
+    for user_mcs,user_ldpc,user_dcm in modes:
+        assert user_mcs in range(12 if user_ldpc else 10)
+        assert not user_dcm or user_mcs in (0,1,3,4)
+        assert not stbc or not user_dcm
     group=2 if stbc else 1
     initial=22 if period else 6 if stbc else 5
-    padding=3
+    padding=pre_fec_padding
     if mac_payloads is not None:
         assert len(mac_payloads)==len(rus)
-        def budget(ru,data):
+        def budget(ru,data,mode):
+            mcs,ldpc,dcm=mode
             cbps=len(data)*BPS[mcs]//(1+dcm)
             short=(2 if ru==26 and dcm else {26:6,52:12,106:24,242:60}[ru]//(1+dcm))*BPS[mcs]
-            return ((initial-group)*int(cbps*RATES[mcs])+group*padding*int(short*RATES[mcs])-(16 if ldpc else 22))//8
-        while any(budget(ru,data)<len(payload) for (ru,data,_),payload in zip(rus,mac_payloads)):
+            last=int(cbps*RATES[mcs]) if padding==4 else padding*int(short*RATES[mcs])
+            return ((initial-group)*int(cbps*RATES[mcs])+group*last-(16 if ldpc else 22))//8
+        while any(budget(ru,data,mode)<len(payload) for (ru,data,_),payload,mode in zip(rus,mac_payloads,modes)):
             initial+=group
         assert initial<=400
-    extra=ldpc and any(layout(mcs,1,dcm,group,initial,padding,mu_tones=ru)[2] for ru,_,_ in rus)
-    final_padding=4 if extra else padding
-    symbols=initial
+    # 27.3.12.5.4: any LDPC user's need advances the common boundary.
+    needs=[bool(ldpc and layout(mcs,1,dcm,group,initial,padding,mu_tones=ru)[2])
+           for (ru,_,_),(mcs,ldpc,dcm) in zip(rus,modes)]
+    extra=any(needs)
+    final_padding=(1 if padding==4 else padding+1) if extra else padding
+    symbols=initial+group if extra and padding==4 else initial
+    if sizing_trace is not None:
+        sizing_trace.update(initial_symbols=initial,symbols=symbols,extra=extra,user_needs=needs)
     payloads=[]; streams=[]
     for user,(ru,data,pilots) in enumerate(rus):
+        mcs,ldpc,dcm=modes[user]
         cbps=len(data)*BPS[mcs]//(1+dcm)
         short=(2 if ru==26 and dcm else {26:6,52:12,106:24,242:60}[ru]//(1+dcm))*BPS[mcs]
         rate=RATES[mcs]
         sizing=layout(mcs,1,dcm,group,initial,padding,mu_tones=ru,force_extra=extra) if ldpc else None
-        count=sizing[8] if ldpc else (initial-group)*int(cbps*rate)+group*padding*int(short*rate)
+        if sizing is not None:assert sizing[:2]==[symbols,final_padding]
+        # LDPC PSDUs retain the initial boundary; BCC uses the final one.
+        last_data=int(cbps*rate) if final_padding==4 else final_padding*int(short*rate)
+        count=sizing[8] if ldpc else (symbols-group)*int(cbps*rate)+group*last_data
         octets,phy=divmod(count-(16 if ldpc else 22),8)
         assert octets>=0
         psdu=bytes((n*37+user*11+93+mcs*13)%256 for n in range(octets))
@@ -92,7 +110,8 @@ def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage=
         streams.append(output)
     # Independent SIG-B block coding; one compressed user uses Table27-28.
     fields=[] if compressed else [checked([code>>i&1 for i in range(8)])]
-    values=[37+i | (int(stbc)<<11) | (mcs<<15) | (int(dcm)<<19) | (int(ldpc)<<20) for i in range(len(rus))]
+    values=[37+i | (int(stbc)<<11) | (mcs<<15) | (int(dcm)<<19) | (int(ldpc)<<20)
+            for i,(mcs,ldpc,dcm) in enumerate(modes)]
     for start in range(0,len(values),2):fields.append(checked([v>>i&1 for v in values[start:start+2] for i in range(21)]))
     if damage=='user-crc':fields[int(not compressed)][-10]^=1
     dbps=[26,52,78,104,156,208][sig_b_mcs]//(1+sig_b_dcm)
@@ -168,7 +187,7 @@ def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage=
     frequencies=[]
     for n in range(symbols):
         freq=[0j]*245
-        for (ru,data,pilots),stream in zip(rus,streams):
+        for (ru,data,pilots),stream,(mcs,ldpc,dcm) in zip(rus,streams,modes):
             count=len(data)//(1+dcm);cbps=count*BPS[mcs]
             bits=stream[n*cbps:(n+1)*cbps];mapped=bits.copy()
             if not ldpc:

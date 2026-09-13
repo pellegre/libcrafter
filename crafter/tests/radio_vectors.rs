@@ -4,6 +4,28 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_mu_mixed_iq_inventory() {
+    let rows = include_str!("fixtures/iq/he-mu-mixed-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 336);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "2670e2c262cb7b35e451e062b4dfd6507126b0219bc1153d669f8c05659ddd8a"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 11);
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[9].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[10]);
+    }
+}
+
+#[test]
 fn radio_he_mu_stbc_iq_inventory() {
     let rows = include_str!("fixtures/iq/he-mu-stbc-iq-index.tsv");
     assert_eq!(rows.lines().skip(1).count(), 380);

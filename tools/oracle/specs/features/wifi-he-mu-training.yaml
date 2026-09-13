@@ -9,7 +9,7 @@ malformed: true
 behaviors:
   - name: ru-stbc-training
     source: IEEE 802.11ax-2021 27.3.11.10 Equations 27-55/56/57; IEEE 802.11-2020 Equations 19-27 and 21-44/45
-    checks: [two_space_time_streams, all_signaled_ltfs, separate_pilot_matrix, cyclic_shift_compensation, held_out_model_selection, long_delay_channels, finite_bounds]
+    checks: [two_space_time_streams, all_signaled_ltfs, separate_pilot_matrix, cyclic_shift_compensation, held_out_model_selection, sparse_high_order_modulation, long_delay_channels, finite_bounds]
   - name: ru-training
     source: IEEE 802.11ax-2021 27.3.11.10 and Equations 27-5/42/43/58
     checks: [all_20mhz_rus, sparse_ltf, full_ltf, fractional_normalization, frequency_selective_channels, finite_bounds, su_er_compatibility]

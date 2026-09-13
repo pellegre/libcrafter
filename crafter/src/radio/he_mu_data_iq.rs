@@ -275,16 +275,50 @@ pub(super) fn recover(
                     }
                 }
                 if ldpc {
-                    let r = super::he_mu_ldpc::recover(
-                        &fields.signal,
-                        &user,
-                        size,
-                        timing.data_symbols,
-                        &metrics,
-                        max_psdu,
-                        partial,
-                    )
-                    .map_err(Error::Ldpc)?;
+                    let decode = |metrics: &[f32]| {
+                        super::he_mu_ldpc::recover(
+                            &fields.signal,
+                            &user,
+                            size,
+                            timing.data_symbols,
+                            metrics,
+                            max_psdu,
+                            partial,
+                        )
+                    };
+                    let mut result = decode(&metrics);
+                    if timing.midambles == 0
+                        && (result.is_err()
+                            || result.as_ref().is_ok_and(|r| r.failed_codewords > 0))
+                    {
+                        if let Some(bins) = &stbc_bins {
+                            let refined =
+                                refine_stbc_channels(bins, &channel, ru.tones, c.bits_per_tone)
+                                    .ok_or(Error::Metrics)?;
+                            let mut retry = Vec::new();
+                            retry
+                                .try_reserve_exact(metrics.len())
+                                .map_err(|_| Error::Allocation)?;
+                            for pair in bins.chunks_exact(2) {
+                                retry.extend(
+                                    demod
+                                        .recover_stbc_bins(&[pair[0], pair[1]], &refined)
+                                        .ok_or(Error::Metrics)?
+                                        .into_iter()
+                                        .flatten(),
+                                );
+                            }
+                            let candidate = decode(&retry);
+                            if candidate.as_ref().is_ok_and(|r| {
+                                result
+                                    .as_ref()
+                                    .map_or(true, |old| r.failed_codewords < old.failed_codewords)
+                            }) {
+                                result = candidate;
+                            }
+                        }
+                    }
+                    let r = result.map_err(Error::Ldpc)?;
                     Ok(Payload {
                         psdu: r.psdu,
                         failed_codewords: r.failed_codewords,
@@ -317,11 +351,98 @@ pub(super) fn recover(
     })
 }
 
+/// One decision-directed refinement, anchored by the training estimate.
+/// Only constellation decisions within a conservative distance contribute;
+/// neither these decisions nor the fitted channels establish MAC integrity.
+fn refine_stbc_channels(
+    bins: &[[ComplexSample; 256]],
+    prior: &[[ComplexSample; 256]; 2],
+    tones: super::he_tones::Tones,
+    bits: usize,
+) -> Option<[[ComplexSample; 256]; 2]> {
+    if bins.len() < 2
+        || bins.len() > 400
+        || bins.len() % 2 != 0
+        || !matches!(bits, 1 | 2 | 4 | 6 | 8 | 10)
+    {
+        return None;
+    }
+    let energy: f32 = match bits {
+        1 => 1.,
+        2 => 2.,
+        4 => 10.,
+        6 => 42.,
+        8 => 170.,
+        _ => 682.,
+    };
+    let scale = energy.sqrt();
+    let maximum = ((1usize << (bits / 2)) - 1) as f32;
+    let nearest = |v: ComplexSample| {
+        if bits == 1 {
+            ComplexSample {
+                i: if v.i < 0. { -1. } else { 1. },
+                q: 0.,
+            }
+        } else {
+            let axis = |v: f32| {
+                (2. * ((v * scale + maximum) / 2.).round().clamp(0., maximum) - maximum) / scale
+            };
+            ComplexSample {
+                i: axis(v.i),
+                q: axis(v.q),
+            }
+        }
+    };
+    let mut result = *prior;
+    for k in tones.data() {
+        let bin = k.rem_euclid(256) as usize;
+        let power = prior[0][bin].power() + prior[1][bin].power();
+        if !power.is_finite() {
+            return None;
+        }
+        if power < 1e-12 {
+            continue;
+        }
+        let mut numerator = [prior[0][bin].scale(2.), prior[1][bin].scale(2.)];
+        let mut denominator = 2.;
+        for pair in bins.chunks_exact(2) {
+            let y = [pair[0][bin], pair[1][bin]];
+            let x = super::stbc::recover_pair([prior[0][bin], prior[1][bin]], y).ok()?;
+            let s = [nearest(x[0]), nearest(x[1])];
+            let error = x[0].sub(s[0]).power().max(x[1].sub(s[1]).power()) * energy;
+            let weight = (1. - 2. * error).max(0.);
+            if weight == 0. {
+                continue;
+            }
+            denominator += weight * (s[0].power() + s[1].power());
+            numerator[0] = numerator[0].add(
+                s[0].conj()
+                    .mul(y[0])
+                    .add(s[1].conj().mul(y[1]))
+                    .scale(weight),
+            );
+            numerator[1] = numerator[1].add(s[0].mul(y[1]).sub(s[1].mul(y[0])).scale(weight));
+        }
+        let candidate = [
+            numerator[0].scale(1. / denominator),
+            numerator[1].scale(1. / denominator),
+        ];
+        let change =
+            candidate[0].sub(prior[0][bin]).power() + candidate[1].sub(prior[1][bin]).power();
+        if !change.is_finite() {
+            return None;
+        }
+        if change <= 0.25 * power {
+            result[0][bin] = candidate[0];
+            result[1][bin] = candidate[1];
+        }
+    }
+    Some(result)
+}
+
 /// Correct the common oscillator/clock once for the complete MU DATA field.
-/// Small RUs often have only two pilots, one of which may be in a deep null;
-/// fitting an independent slope to those two points amplifies its phase noise.
-/// Pool the per-RU pilot observations without pooling their physical channels.
-/// Cache at most the already-admitted 400 FFT symbols, using fallible allocation.
+/// Pool per-RU pilots without pooling their physical channels. Cache at most
+/// the already-admitted 400 FFT symbols, using fallible allocation.
 fn stbc_observations(
     samples: &[ComplexSample],
     a: &Acquisition,
@@ -409,6 +530,199 @@ fn stbc_observations(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn radio_he_mu_stbc_refinement_bounds() {
+        let tones = super::super::he_tones::Tones::ru(26, 1).unwrap();
+        let mut prior = [[ComplexSample::ZERO; 256]; 2];
+        let h = [
+            ComplexSample { i: 1., q: 0.1 },
+            ComplexSample { i: 0.4, q: -0.2 },
+        ];
+        let mut bins = vec![[ComplexSample::ZERO; 256]; 32];
+        for k in tones.data() {
+            let bin = k.rem_euclid(256) as usize;
+            for stream in 0..2 {
+                prior[stream][bin] = h[stream].scale(1.03);
+            }
+            for (n, pair) in bins.chunks_exact_mut(2).enumerate() {
+                let x0 = if n % 2 == 0 { 1. } else { -1. };
+                let x1 = if n % 3 == 0 { -1. } else { 1. };
+                pair[0][bin] = h[0].scale(x0).sub(h[1].scale(x1));
+                pair[1][bin] = h[0].scale(x1).add(h[1].scale(x0));
+            }
+        }
+        let refined = refine_stbc_channels(&bins, &prior, tones, 1).unwrap();
+        for k in tones.data() {
+            let bin = k.rem_euclid(256) as usize;
+            for stream in 0..2 {
+                assert!(
+                    refined[stream][bin].sub(h[stream]).power()
+                        < prior[stream][bin].sub(h[stream]).power() / 4.
+                );
+            }
+        }
+        assert!(refine_stbc_channels(&[], &prior, tones, 1).is_none());
+        assert!(refine_stbc_channels(&bins[..3], &prior, tones, 1).is_none());
+        assert!(
+            refine_stbc_channels(&vec![[ComplexSample::ZERO; 256]; 402], &prior, tones, 1)
+                .is_none()
+        );
+        assert!(refine_stbc_channels(&bins, &prior, tones, 3).is_none());
+        let bin = tones.data().next().unwrap().rem_euclid(256) as usize;
+        bins[0][bin].i = f32::NAN;
+        assert!(refine_stbc_channels(&bins, &prior, tones, 1).is_none());
+    }
+
+    #[test]
+    fn radio_he_mu_mixed_high_rate_channel_recovery() {
+        for name in [
+            "he-mu-mixed-a0-s1-o18-p3",
+            "he-mu-mixed-a0-s1-o20-p2",
+            "he-mu-mixed-a0-s1-o20-p3",
+        ] {
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{name}.cs8",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap();
+            let samples: Vec<_> = bytes
+                .chunks_exact(2)
+                .map(|b| ComplexSample {
+                    i: b[0] as i8 as f32 / 128.,
+                    q: b[1] as i8 as f32 / 128.,
+                })
+                .collect();
+            let mut sync = super::super::sync::Synchronizer::default();
+            let a = samples
+                .iter()
+                .enumerate()
+                .find_map(|(n, &s)| match sync.push(s, n as u64) {
+                    Some(super::super::sync::SyncEvent::Acquired(a)) => Some(a),
+                    _ => None,
+                })
+                .unwrap();
+            let input = &samples[a.signal_start as usize..];
+            let fields = super::super::he_sig_b_iq::recover(input, &a).unwrap();
+            let actual = recover(input, &a, 65535, input.len(), true).unwrap();
+            for (i, user) in actual.users.iter().enumerate() {
+                assert_eq!(
+                    user.as_ref()
+                        .unwrap_or_else(|e| panic!("{name} user{i}: {e:?}"))
+                        .failed_codewords,
+                    0
+                );
+            }
+            let timing = admit(input, &a, &fields, input.len()).unwrap();
+            let layout = fields.layout().unwrap();
+            let pilots: Vec<_> = layout
+                .iter()
+                .flat_map(|ru| ru.tones.pilots().iter().copied())
+                .collect();
+            let observations =
+                stbc_observations(input, &a, &fields, &layout, &timing, &pilots).unwrap();
+            let cp = (fields.end_sample - a.signal_start) as usize + 80;
+            let phase =
+                super::super::he_training::stbc_mu_phase(input, &a, &fields.signal, cp, &pilots)
+                    .unwrap();
+            for (index, ru) in layout.iter().enumerate() {
+                let user = fields.users[index].unwrap();
+                if !matches!(
+                    user.encoding,
+                    HeSigBUserEncoding::NonMu {
+                        mcs: 10 | 11,
+                        ldpc: true,
+                        ..
+                    }
+                ) {
+                    continue;
+                }
+                let fitted = super::super::he_training::train_stbc_ru_with_phase(
+                    input,
+                    &a,
+                    ru.tones,
+                    &fields.signal,
+                    cp,
+                    Some(&phase),
+                )
+                .unwrap();
+                let mut known = [[ComplexSample::ZERO; 256]; 2];
+                let mut correlation = ComplexSample::ZERO;
+                let mut energy = 0.;
+                for k in ru.tones.active() {
+                    let angle = std::f32::consts::TAU * k as f32 / 256.;
+                    let external = ComplexSample { i: 1., q: 0. }.add(
+                        ComplexSample { i: 0., q: 0.25 }.mul(ComplexSample::rotation(-3. * angle)),
+                    );
+                    let paths = [
+                        ComplexSample { i: 0.85, q: 0.1 }.add(
+                            ComplexSample { i: 0.2, q: -0.1 }
+                                .mul(ComplexSample::rotation(-5. * angle)),
+                        ),
+                        ComplexSample { i: 0.45, q: -0.2 }
+                            .add(
+                                ComplexSample { i: 0., q: -0.15 }
+                                    .mul(ComplexSample::rotation(-7. * angle)),
+                            )
+                            .mul(ComplexSample::rotation(8. * angle)),
+                    ];
+                    for stream in 0..2 {
+                        let h = paths[stream].mul(external).mul(ComplexSample::rotation(
+                            index as f32 * [0.31, -0.43][stream],
+                        ));
+                        let bin = k.rem_euclid(256) as usize;
+                        known[stream][bin] = h;
+                        if !ru.tones.pilots().contains(&k) {
+                            correlation = correlation.add(fitted[stream][bin].mul(h.conj()));
+                            energy += h.power();
+                        }
+                    }
+                }
+                let gain = correlation.scale(1. / energy);
+                let mut error = 0.;
+                for stream in 0..2 {
+                    for k in ru.tones.active() {
+                        let bin = k.rem_euclid(256) as usize;
+                        known[stream][bin] = known[stream][bin].mul(gain);
+                        error += known[stream][bin].sub(fitted[stream][bin]).power();
+                    }
+                }
+                let c = Capacity::for_mu(&fields.signal, &user, 26, timing.data_symbols).unwrap();
+                let demod = super::super::he_ru_symbol::Demodulator::new(
+                    ru.tones,
+                    c.bits_per_tone,
+                    true,
+                    false,
+                )
+                .unwrap();
+                let mut metrics = Vec::new();
+                for pair in observations.chunks_exact(2) {
+                    metrics.extend(
+                        demod
+                            .recover_stbc_bins(&[pair[0], pair[1]], &known)
+                            .unwrap()
+                            .into_iter()
+                            .flatten(),
+                    );
+                }
+                let recovered = super::super::he_mu_ldpc::recover(
+                    &fields.signal,
+                    &user,
+                    26,
+                    timing.data_symbols,
+                    &metrics,
+                    65535,
+                    true,
+                )
+                .unwrap();
+                assert!(
+                    (error / (energy * gain.power())).sqrt() < 0.06,
+                    "{name} user{index}"
+                );
+                assert_eq!(recovered.failed_codewords, 0);
+            }
+        }
+    }
 
     #[test]
     fn radio_he_mu_stbc_admission_and_bounds() {

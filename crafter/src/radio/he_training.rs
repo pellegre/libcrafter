@@ -517,6 +517,8 @@ pub(super) fn train_stbc_ru_with_phase(
     if !energy.is_finite() || energy < 1e-9 {
         return None;
     }
+    let observations = channels;
+    let mut selected = [guard; 2];
     for (stream, channel) in channels.iter_mut().enumerate() {
         for &tone in &data {
             let bin = tone.rem_euclid(256) as usize;
@@ -525,7 +527,7 @@ pub(super) fn train_stbc_ru_with_phase(
             ));
         }
         if allocation.count() < 234 {
-            adaptive_delay_fit(channel, &data, guard, allocation)?;
+            selected[stream] = adaptive_delay_fit(channel, &data, guard, allocation)?;
         } else {
             delay_fit(channel, &data, guard, allocation)?;
         }
@@ -535,6 +537,16 @@ pub(super) fn train_stbc_ru_with_phase(
                 std::f32::consts::TAU * tone as f32 * (8 * stream) as f32 / 256.,
             ));
         }
+    }
+    if allocation.count() < 234 {
+        channels = joint_stbc_fit(
+            &observations,
+            &pilot_channel,
+            &data,
+            pilots,
+            selected,
+            allocation,
+        )?;
     }
     // R trains the summed pilot channel directly. Preserve that observation
     // rather than deriving DATA phase from two independently interpolated
@@ -561,7 +573,7 @@ fn adaptive_delay_fit(
     tones: &[i32],
     guard: usize,
     allocation: Tones,
-) -> Option<()> {
+) -> Option<usize> {
     let observed = *channel;
     let mut best = (f32::INFINITY, guard);
     for candidate in [4, 8, 16, 32, 64].into_iter().filter(|&n| n <= guard) {
@@ -590,7 +602,95 @@ fn adaptive_delay_fit(
     if !best.0.is_finite() {
         return None;
     }
-    delay_fit(channel, tones, best.1, allocation)
+    delay_fit(channel, tones, best.1, allocation)?;
+    Some(best.1)
+}
+
+/// Fit both physical channels jointly: DATA trains each stream separately,
+/// while R pilots constrain their sum. Treating those pilots only as output
+/// replacements throws away information useful to sparse DATA interpolation.
+fn joint_stbc_fit(
+    observed: &[[ComplexSample; 256]; 2],
+    summed: &[ComplexSample; 256],
+    data: &[i32],
+    pilots: &[i32],
+    guards: [usize; 2],
+    allocation: Tones,
+) -> Option<[[ComplexSample; 256]; 2]> {
+    let counts = [guards[0].checked_add(4)?, guards[1].checked_add(4)?];
+    if counts.iter().any(|&n| n > 68) || data.is_empty() {
+        return None;
+    }
+    let count = counts[0] + counts[1];
+    let basis = |k: i32, stream: usize, n: usize| {
+        ComplexSample::rotation(
+            -std::f32::consts::TAU * k as f32 * (n as f32 - 4. - (8 * stream) as f32) / 256.,
+        )
+    };
+    let mut normal = vec![vec![ComplexSample::ZERO; count + 1]; count];
+    let mut add = |row: &[ComplexSample], value: ComplexSample| {
+        for i in 0..count {
+            for j in 0..count {
+                normal[i][j] = normal[i][j].add(row[i].conj().mul(row[j]));
+            }
+            normal[i][count] = normal[i][count].add(row[i].conj().mul(value));
+        }
+    };
+    for &k in data {
+        for stream in 0..2 {
+            let mut row = vec![ComplexSample::ZERO; count];
+            let offset = if stream == 0 { 0 } else { counts[0] };
+            for n in 0..counts[stream] {
+                row[offset + n] = basis(k, stream, n);
+            }
+            add(&row, observed[stream][k.rem_euclid(256) as usize]);
+        }
+    }
+    for &k in pilots {
+        let row: Vec<_> = (0..2)
+            .flat_map(|stream| (0..counts[stream]).map(move |n| basis(k, stream, n)))
+            .collect();
+        add(&row, summed[k.rem_euclid(256) as usize]);
+    }
+    for (i, row) in normal.iter_mut().enumerate() {
+        row[i].i += 0.001 * data.len() as f32;
+    }
+    for col in 0..count {
+        let pivot = (col..count)
+            .max_by(|&a, &b| normal[a][col].power().total_cmp(&normal[b][col].power()))?;
+        normal.swap(col, pivot);
+        let divisor = normal[col][col];
+        if !divisor.power().is_finite() || divisor.power() < 1e-12 {
+            return None;
+        }
+        let inverse = divisor.conj().scale(1. / divisor.power());
+        let (before, rest) = normal.split_at_mut(col);
+        let (pivot_row, after) = rest.split_first_mut()?;
+        for value in &mut pivot_row[col..] {
+            *value = value.mul(inverse);
+        }
+        for row in before.iter_mut().chain(after) {
+            let factor = row[col];
+            for (value, &p) in row[col..].iter_mut().zip(&pivot_row[col..]) {
+                *value = value.sub(factor.mul(p));
+            }
+        }
+    }
+    let mut result = [[ComplexSample::ZERO; 256]; 2];
+    for stream in 0..2 {
+        let offset = if stream == 0 { 0 } else { counts[0] };
+        for k in allocation.active() {
+            let mut value = ComplexSample::ZERO;
+            for n in 0..counts[stream] {
+                value = value.add(normal[offset + n][count].mul(basis(k, stream, n)));
+            }
+            if !value.power().is_finite() {
+                return None;
+            }
+            result[stream][k.rem_euclid(256) as usize] = value;
+        }
+    }
+    Some(result)
 }
 
 fn mu_stbc_training_column(count: usize, j: usize) -> Option<[ComplexSample; 2]> {

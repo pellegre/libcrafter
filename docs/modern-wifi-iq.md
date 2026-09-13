@@ -215,9 +215,19 @@ the first LTF; it does not average all training symbols. A 252-waveform cs8
 corpus covers all 16 HE20 RU positions, applicable DCM, constellations through
 1024-QAM with LDPC, all four guard/training pairs, extra LTF counts, midambles,
 CFO/selective channels, bad SERVICE and failed user CRC blocks. These synthetic
-PSDUs are not MAC frames. MU-MIMO spatial separation,
-mixed-coding cross-user qualification and live HE
-validation remain unfinished; this is not a full MU support claim.
+PSDUs are not MAC frames. MU-MIMO spatial separation and live HE validation
+remain unfinished; this is not a full MU support claim.
+
+A separate 336-waveform mixed-user MAC corpus combines independent BCC/LDPC
+MCS and applicable DCM, or STBC, across allocation codes 0/15/128. It checks
+all four common initial padding boundaries with and without LDPC extra
+segments: LDPC payloads retain the initial boundary, while BCC payloads fill
+the final boundary (27.3.12.5.4). User indices and FCS-qualified frame bytes
+are checked at two chunk sizes. Small-RU STBC channel fitting uses pilot-sum
+constraints together with the separated DATA training observations. Failed
+LDPC reception without midambles can make one conservative decision-directed
+channel-refinement retry; SERVICE and MPDU FCS remain mandatory. These are
+synthetic tests, not dongle or over-the-air HE qualification.
 
 `WifiDecoder` now retains admitted MU DATA within the shared sample budget and
 publishes per-user HE A-MPDU members only after FCS validation. A separate
