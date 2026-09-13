@@ -25,8 +25,12 @@ def generate(out, cases=None):
         cases=[(ru,mcs,ldpc,stbc,size,guard,'clean') for ru in [26,242]
         for mcs,ldpc in [(0,0),(4,0),(9,0),(0,1),(4,1),(9,1),(11,1)]
         for stbc in [0,1] for size,guard in [(2,32),(4,64)]]
+        cases=[(ru,mcs,ldpc,stbc,size,guard,
+                'below-resolution' if (ru,mcs,ldpc,stbc)==(242,11,1,1) else case)
+               for ru,mcs,ldpc,stbc,size,guard,case in cases]
         cases += [(26,4,0,0,2,32,case) for case in ['bad-trigger','wrong-context','expired','bad-fcs','no-trigger']]
         cases += [(26,4,0,0,2,32,case) for case in ['zero-duration','reserved-duration']]
+        cases += [(242,11,1,1,size,guard,'balanced') for size,guard in [(2,32),(4,64)]]
     rows=['name\tcase\tru\tmcs\tldpc\tstbc\ttrigger_end\ttb_start\ttrigger\tframes\tsamples\tsha256']
     for number,(ru,mcs,ldpc,stbc,size,guard,case) in enumerate(cases):
         payload=bytearray(); expected=[]
@@ -51,15 +55,17 @@ def generate(out, cases=None):
         mac=struct.pack('<HH',0x24,duration)+bytes.fromhex('ffffffffffff00005e005301')+struct.pack('<Q',common)+user.to_bytes(5,'little')+b'\x00\xff\xff'
         trigger=mac+struct.pack('<I',zlib.crc32(mac))
         if case=='bad-trigger':trigger=trigger[:-1]+bytes([trigger[-1]^1])
-        ap=legacy(trigger); trigger_end=64+len(ap)
+        ap=legacy(trigger)
+        if case=='balanced':ap=[v/4 for v in ap]
+        trigger_end=64+len(ap)
         wait=320 if case!='expired' else (duration+100)*20
         wave=[0j]*64+(ap if case!='no-trigger' else [0j]*len(ap))+[0j]*wait+tb+[0j]*256
         tb_start=trigger_end+wait
         wave=[v*cmath.exp(1j*(.3+2*math.pi*12000*n/20_000_000)) for n,v in enumerate(wave)]
         gain=min(220,120/max(max(abs(v.real),abs(v.imag)) for v in wave))
         iq=base.quantize(wave,scale=gain)
-        if case in ['bad-trigger','wrong-context','expired','no-trigger','zero-duration','reserved-duration']:expected=[]
-        name=f'he-tb-exchange-{number:03d}-{case}'
+        if case in ['bad-trigger','wrong-context','expired','no-trigger','zero-duration','reserved-duration','below-resolution']:expected=[]
+        name=f'he-tb-exchange-{number:03d}-{"clean" if case=="below-resolution" else case}'
         (out/f'{name}.cs8').write_bytes(iq)
         rows.append('\t'.join(map(str,[name,case,ru,mcs,ldpc,stbc,trigger_end,tb_start,
             trigger.hex() if case not in ['bad-trigger','no-trigger'] else '-',','.join(expected) or '-',len(iq)//2,hashlib.sha256(iq).hexdigest()])))

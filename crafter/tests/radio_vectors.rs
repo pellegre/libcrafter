@@ -4,6 +4,35 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_tb_exchange_quality_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-exchange-quality.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 4);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "2935c828c4e7821f079835ffd30593164f9dcc9cc2d4dd48dcb93d5a01ab48ac"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let evm = c[5].parse::<f32>().unwrap();
+        let errors = c[6].parse::<usize>().unwrap();
+        assert_eq!(c[7], "1404");
+        if c[3] == "1.00" {
+            assert!(evm > -27. && errors > 600);
+        } else {
+            assert_eq!(c[3], "0.25");
+            assert!(evm < -33. && errors < 20);
+        }
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(hex(&Sha256::digest(iq)), c[9]);
+    }
+}
+
+#[test]
 fn radio_he_tb_vht_exchange_inventory() {
     let rows = include_str!("fixtures/iq/he-tb-vht-exchange-index.tsv");
     assert_eq!(rows.lines().skip(1).count(), 24);
@@ -70,10 +99,10 @@ fn radio_he_tb_multi_exchange_inventory() {
 #[test]
 fn radio_he_tb_exchange_inventory() {
     let rows = include_str!("fixtures/iq/he-tb-exchange-index.tsv");
-    assert_eq!(rows.lines().skip(1).count(), 63);
+    assert_eq!(rows.lines().skip(1).count(), 65);
     assert_eq!(
         hex(&Sha256::digest(rows.as_bytes())),
-        "46c539fa27df1fcc0ccee9c48e9fd98d532017514d37ad0ac342189ef5ce3a68"
+        "f3e7c1fea50c48e044cf99a608e5a3acce00e446c07e35fff9f624bec502ee1d"
     );
     for row in rows.lines().skip(1) {
         let c: Vec<_> = row.split('\t').collect();

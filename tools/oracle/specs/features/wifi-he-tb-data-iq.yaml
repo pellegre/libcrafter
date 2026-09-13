@@ -22,6 +22,9 @@ behaviors:
   - name: tb-user-iq
     source: IEEE 802.11ax-2021 27.3.10, 27.3.11.10, 27.3.12.5.5, Equation 27-111
     checks: [matching_trigger_fields, bounded_timing, header_only_admission, isolated_ru_training, per_user_pilot_phase, bcc_ldpc_psdu, midamble_refresh, service_integrity, simultaneous_disjoint_ru_users]
+  - name: quantized-capture-quality
+    source: IEEE 802.11ax-2021 27.3.19.4.3-4, Table 27-49, Equation 27-127
+    checks: [exact_synthetic_carrier_and_channel, alamouti_inverse, nearest_1024qam_errors, weak_capture_rejection, balanced_capture_recovery]
 coverage_cases: [wifi-he-tb-data-iq]
 supported_cases:
   - {name: wifi-he-tb-data-iq, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
@@ -29,7 +32,7 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - Complete exchange corpora define pending streaming requirements. Inventory and byte-for-byte regeneration are not proof of receiver completion; weak full-RU MCS11 STBC exchanges 054/055 remain unresolved exact-byte targets. HT long/short-GI carriers and simultaneous-user exchanges extend the offline contract, not live qualification.
+      - Complete exchange corpora define pending streaming requirements. Inventory and byte-for-byte regeneration are not proof of receiver completion. Full-RU MCS11 STBC includes balanced positive captures and near/far CS8 captures whose post-quantization symbols remain rejection controls; valid FEC, SERVICE, and MPDU FCS are never relaxed. HT/VHT long/short-GI carriers and simultaneous-user exchanges extend the offline contract, not live qualification.
       - Isolated per-user kernel is checked against 282 independent waveforms, including SERVICE rejection and sample/payload bounds.
       - Explicit caller-established Trigger association and isolated one-DATA-stream user context are required. No spatial separation or automatic exchange matching is inferred.
       - PSDU recovery is separate from aggregate MPDU FCS checks and streaming publication.

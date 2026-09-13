@@ -765,11 +765,18 @@ records complete expected MAC bytes, Trigger/TB positions and IQ checksums.
 Negative cases include absent/bad-FCS Triggers, mismatched context, expired
 protection duration and bad response MPDU FCS. Zero and reserved Duration
 values preserve the valid Trigger MAC bytes but cannot seed response context.
-The 63 fixtures are offline exchanges, not live interoperability evidence.
-Inventory and regeneration checks establish corpus integrity, not receiver
-success. Streaming integration remains pending: weak full-RU MCS11 STBC
-cases 054/055 still fail exact response recovery in that integration. Their
-original bytes and expected MPDUs are retained as unresolved regression targets.
+The 65 fixtures are offline exchanges, not live interoperability evidence.
+Full-RU MCS11 STBC cases 054/055 preserve the original near/far CS8 bytes as
+rejection controls: exact carrier/channel/STBC inversion still measures about
+-26.3dB EVM and over 600 wrong nearest constellation symbols, so no response
+MPDU may be published without valid FEC, SERVICE and FCS. Cases 063/064 retain
+the same waveforms with balanced Trigger/response level; their roughly -33.8dB
+post-quantization EVM is recoverable and both exact response MPDUs are required.
+The EVM values characterize these deterministic fixtures, not HackRF RF limits.
+`he-tb-exchange-quality.tsv` makes those four measurements reproducible with
+exact synthetic carrier/channel/STBC knowledge. Regenerate it with
+`he_tb_exchange_quality_vectors.py`; its nearest-point errors are diagnostic
+of the stored samples, not an alternate decoder or permission to publish them.
 
 `he-tb-ht-exchange-index.tsv` adds 16 independent HT20 Trigger carriers:
 MCS0/7, BCC/LDPC, plain/aggregated MPDUs, and long/short GI. The long-GI

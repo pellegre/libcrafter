@@ -8609,6 +8609,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "he-tb-timing.tsv"
                 | "he-tb-schedule.tsv"
                 | "he-tb-exchange-index.tsv"
+                | "he-tb-exchange-quality.tsv"
                 | "he-tb-ht-exchange-index.tsv"
                 | "he-tb-vht-exchange-index.tsv"
                 | "he-tb-multi-exchange-index.tsv"
@@ -8742,6 +8743,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 include_str!("fixtures/iq/he-tb-data-iq-index.tsv"),
                 include_str!("fixtures/iq/he-tb-multi-iq-index.tsv"),
                 include_str!("fixtures/iq/he-tb-exchange-index.tsv"),
+                include_str!("fixtures/iq/he-tb-exchange-quality.tsv"),
                 include_str!("fixtures/iq/he-tb-ht-exchange-index.tsv"),
                 include_str!("fixtures/iq/he-tb-vht-exchange-index.tsv"),
                 include_str!("fixtures/iq/he-tb-multi-exchange-index.tsv"),
