@@ -1,4 +1,4 @@
-"""Independent forward HE20 SU padding, IEEE802.11ax-2021 27.3.12.2/5.
+"""Independent forward HE20 SU / ER SU padding, IEEE802.11ax-2021 27.3.12.2/5.
 
 Starts with APEP bytes, allocates symbol segments and fills MAC/PHY padding.
 LDPC extra branches are geometry checks, not puncturing-threshold/codeword
@@ -16,16 +16,18 @@ DATA=[117,234,351,468,702,936,1053,1170,1404,1560,1755,1950]
 SHORT=[30,60,90,120,180,240,270,300,360,400,450,500]
 
 
-def generate():
+def generate(er_tones=None):
     rows=['mcs\tsts\tdcm\tstbc\tldpc\textra\tpadding\tsymbols\tbps\tnss\tcbps\tdbps\tlast\tcoded\tdata\tpsdu\tphy_pad\ttail\tfiller']
     for nss in range(1,9):
+        if er_tones and nss != 1: continue
         for mcs in range(12):
+            if er_tones and mcs > (0 if er_tones==106 else 2): continue
             for dcm in ([0,1] if nss<=2 and mcs in (0,1,3,4) else [0]):
                 divisor=1+dcm
-                cbps=234*BPS[mcs]*nss//divisor
-                dbps=DATA[mcs]*nss//divisor
-                short_data=SHORT[mcs]*nss//divisor
-                short_coded=60*BPS[mcs]*nss//divisor
+                cbps=(102 if er_tones==106 else 234)*BPS[mcs]*nss//divisor
+                dbps=(51 if er_tones==106 else DATA[mcs])*nss//divisor
+                short_data=(12 if er_tones==106 else SHORT[mcs])*nss//divisor
+                short_coded=(24 if er_tones==106 else 60)*BPS[mcs]*nss//divisor
                 for stbc in ([0,1] if nss==1 and not dcm else [0]):
                     group=1+stbc
                     for ldpc in ([0,1] if nss<=4 and mcs<=9 else [1]):
@@ -64,8 +66,10 @@ def generate():
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check',action='store_true')
+    parser.add_argument('--er-tones',type=int,choices=(106,242))
     args=parser.parse_args()
-    content=generate()
-    if args.check: assert OUT.read_text()==content,'HE capacity corpus differs'
-    else: OUT.write_text(content)
+    content=generate(args.er_tones)
+    output=OUT.with_name(f'he-er{args.er_tones}-capacity-index.tsv') if args.er_tones else OUT
+    if args.check: assert output.read_text()==content,'HE capacity corpus differs'
+    else: output.write_text(content)
     print(f'{len(content.splitlines())-1} independent HE capacity cases')

@@ -66,6 +66,11 @@ accounts for ER's power boost; DATA pilots follow its longer header. Midambles
 refresh the same normalized channel estimates. The upper106-tone allocation
 still reports `UnsupportedPhy` after signaling.
 
+Private format-aware payload-capacity arithmetic now covers upper106 too:
+102 DATA tones (51 with DCM), short padding segments of24 or12 tones, and
+ER-specific MCS/stream restrictions. Its forward geometry tests do not connect
+upper106 training, codeword recovery or public frame publication yet.
+
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,
 midambles10/20, CFO/selective channels, and a damaged first aggregate member;

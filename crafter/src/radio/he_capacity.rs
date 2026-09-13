@@ -1,4 +1,4 @@
-//! HE20 SU payload geometry; IEEE802.11ax-2021 27.3.12 and27.4.3.
+//! HE20 SU / ER SU payload geometry; IEEE802.11ax-2021 27.3.12 and27.4.3.
 use super::he::SuSignal;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,8 +35,17 @@ pub(super) enum Error {
 impl Capacity {
     /// Does not check PPDU timing, header CRC, or LDPC puncturing admission.
     pub fn new(a: &SuSignal, symbols: usize) -> Result<Self, Error> {
-        if a.bandwidth != 0 {
+        Self::for_format(a, symbols, false)
+    }
+
+    /// `er` must come from verified format detection, not bandwidth alone.
+    pub fn for_format(a: &SuSignal, symbols: usize, er: bool) -> Result<Self, Error> {
+        if a.bandwidth > u8::from(er) {
             return Err(Error::Bandwidth);
+        }
+        let upper106 = er && a.bandwidth == 1;
+        if er && a.mcs > if upper106 { 0 } else { 2 } {
+            return Err(Error::Mcs);
         }
         let (bps, num, den) = match a.mcs {
             0 => (1, 1, 2),
@@ -58,6 +67,9 @@ impl Capacity {
             return Err(Error::Streams);
         }
         let nss = if a.stbc { 1 } else { sts };
+        if er && nss != 1 {
+            return Err(Error::Streams);
+        }
         if a.dcm && (!matches!(a.mcs, 0 | 1 | 3 | 4) || nss > 2) {
             return Err(Error::Mcs);
         }
@@ -72,10 +84,12 @@ impl Capacity {
         if symbols < group || symbols % group != 0 {
             return Err(Error::Symbols);
         }
-        let cbps = if a.dcm { 117 } else { 234 } * nss * bps;
-        // Table27-79 explicitly gives58, not58.5, for DCM BPSK/NSS1.
+        let divisor = 1 + usize::from(a.dcm);
+        let cbps = (if upper106 { 102 } else { 234 }) / divisor * nss * bps;
+        // BPSK/DCM/NSS1 floors to25 (106) or58 (242); the spare coded
+        // position is the arbitrary BCC filler specified in27.3.12.5.1.
         let dbps = cbps * num / den;
-        let short_cbps = if a.dcm { 30 } else { 60 } * nss * bps;
+        let short_cbps = (if upper106 { 24 } else { 60 }) / divisor * nss * bps;
         let short_dbps = short_cbps * num / den;
         let extra = a.ldpc_extra_segment == Some(true);
         let (rx_symbols, rx_padding) = if extra {
@@ -144,13 +158,33 @@ mod tests {
 
     #[test]
     fn radio_he_capacity_independent_forward_padding() {
+        forward_padding(
+            include_str!("../../tests/fixtures/iq/he-capacity-index.tsv"),
+            None,
+            8253,
+        );
+    }
+
+    #[test]
+    fn radio_he_er_capacity_independent_forward_padding() {
+        forward_padding(
+            include_str!("../../tests/fixtures/iq/he-er106-capacity-index.tsv"),
+            Some(1),
+            177,
+        );
+        forward_padding(
+            include_str!("../../tests/fixtures/iq/he-er242-capacity-index.tsv"),
+            Some(0),
+            619,
+        );
+    }
+
+    fn forward_padding(index: &str, er_bandwidth: Option<u8>, expected: usize) {
         let mut count = 0;
-        for row in include_str!("../../tests/fixtures/iq/he-capacity-index.tsv")
-            .lines()
-            .skip(1)
-        {
+        for row in index.lines().skip(1) {
             let c: Vec<usize> = row.split('\t').map(|v| v.parse().unwrap()).collect();
             let mut a = header();
+            a.bandwidth = er_bandwidth.unwrap_or(0);
             a.mcs = c[0] as u8;
             a.space_time_streams = c[1] as u8;
             a.dcm = c[2] != 0;
@@ -158,7 +192,11 @@ mod tests {
             a.ldpc = c[4] != 0;
             a.ldpc_extra_segment = a.ldpc.then_some(c[5] != 0);
             a.pre_fec_padding = c[6] as u8;
-            let v = Capacity::new(&a, c[7]).unwrap_or_else(|e| panic!("{row}: {e:?}"));
+            let v = Capacity::for_format(&a, c[7], er_bandwidth.is_some())
+                .unwrap_or_else(|e| panic!("{row}: {e:?}"));
+            if er_bandwidth == Some(0) {
+                assert_eq!(Capacity::new(&a, c[7]), Ok(v));
+            }
             assert_eq!(
                 [
                     v.bits_per_tone,
@@ -195,7 +233,56 @@ mod tests {
             }
             count += 1;
         }
-        assert_eq!(count, 8253);
+        assert_eq!(count, expected);
+    }
+
+    #[test]
+    fn radio_he_er_capacity_format_restrictions_and_bounds() {
+        for bandwidth in [0, 1] {
+            let mut a = header();
+            a.bandwidth = bandwidth;
+            for mcs in if bandwidth == 1 { 1..=255 } else { 3..=255 } {
+                a.mcs = mcs;
+                assert_eq!(Capacity::for_format(&a, 2, true), Err(Error::Mcs));
+            }
+            a.mcs = 0;
+            for sts in 2..=255 {
+                a.space_time_streams = sts;
+                assert_eq!(Capacity::for_format(&a, 2, true), Err(Error::Streams));
+            }
+            a.space_time_streams = 1;
+            assert_eq!(Capacity::for_format(&a, 0, true), Err(Error::Symbols));
+            assert_eq!(
+                Capacity::for_format(&a, usize::MAX, true),
+                Err(Error::Overflow)
+            );
+            a.space_time_streams = 2;
+            a.stbc = true;
+            assert!(Capacity::for_format(&a, 2, true).is_ok());
+            assert_eq!(Capacity::for_format(&a, 3, true), Err(Error::Symbols));
+            a.dcm = true;
+            assert_eq!(Capacity::for_format(&a, 2, true), Err(Error::Streams));
+        }
+        let mut a = header();
+        a.bandwidth = 1;
+        a.dcm = true;
+        a.pre_fec_padding = 4;
+        let c = Capacity::for_format(&a, 2, true).unwrap();
+        assert_eq!(
+            (
+                c.coded_per_symbol,
+                c.data_per_symbol,
+                c.psdu_bytes,
+                c.phy_pad_bits
+            ),
+            (51, 25, 3, 4)
+        );
+        assert!(c.bcc_dcm_filler);
+        assert_eq!(Capacity::new(&a, 2), Err(Error::Bandwidth));
+        for bandwidth in 2..=255 {
+            a.bandwidth = bandwidth;
+            assert_eq!(Capacity::for_format(&a, 2, true), Err(Error::Bandwidth));
+        }
     }
 
     #[test]

@@ -96,6 +96,12 @@ the same generator with `--er`: repeated SIG-A, the ER L-SIG remainder, one
 DATA stream with/without STBC, midambles and packet extension. Both ER tone
 allocations share these clocks. This does not qualify ER payload recovery.
 
+`he-er106-capacity-index.tsv` and `he-er242-capacity-index.tsv` add 177 and
+619 independent forward payload-capacity cases from `he_capacity_vectors.py`
+with `--er-tones 106` or `--er-tones 242`. They cover explicit ER mode limits,
+BCC/LDPC, DCM, STBC, padding boundaries and both LDPC extra-segment branches.
+These are bit-budget checks, not upper106 IQ or codeword qualification.
+
 `he-er-iq-index.tsv` and its invalid index contain 280 complete ER242 waveforms
 and 16 negative cases from `he_er_iq_vectors.py`. They cover BCC/LDPC MCS0-2,
 DCM MCS0/1, STBC, all compatible guards, four padding factors, midambles10/20,

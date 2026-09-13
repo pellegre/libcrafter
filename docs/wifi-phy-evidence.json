@@ -246,6 +246,12 @@
       "fact": "SU uses m=2 in L-SIG duration. HE preamble in receiver duration inversion excludes legacy20us and includes RL-SIG, SIG-A, STF and LTF symbols. Receiver symbol count floors the duration quotient then subtracts PE disambiguity; PE duration floors the remaining duration to4us increments. Midambles repeat the initial HE-LTF field every10 or20 DATA symbols with NSTS<=4, but are omitted before a sole final DATA symbol or after the last symbol. STBC is restricted to one spatial stream/two space-time streams without DCM. This timing implementation does not establish DATA decoding or MIMO reception."
     },
     {
+      "id": "he-er-payload-capacity",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.1.1; 27.3.2; Table27-33 (printed596 visually checked); 27.3.12.5.1; Equations27-60-74/140-143",
+      "fact": "ER supports one DATA stream, MCS0-2 on242 tones and only MCS0 on upper106. The106 allocation has102 DATA tones, halved to51 for DCM; its short segments use24 or12 DATA tones. BPSK/DCM data bits per full symbol floor to25 for106 or58 for242. With BCC a filler follows2*NDBPS coded bits. Format-aware capacity arithmetic preserves SU bandwidth semantics, reverses LDPC extra-segment signaling for PSDU length, and checks STBC grouping. Independent forward padding fixtures do not establish upper106 IQ recovery."
+    },
+    {
       "id": "he-er-242-training-data",
       "source": "ieee-80211ax-2021",
       "anchor": "27.3.10; 27.3.11.10 Equation27-58; 27.3.12.14 Equation27-108; 27.3.12.16",

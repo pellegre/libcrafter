@@ -271,6 +271,30 @@ fn radio_he_er_timing_independent_inventory() {
 }
 
 #[test]
+fn radio_he_er_capacity_independent_inventory() {
+    for (index, count, digest) in [
+        (
+            include_str!("fixtures/iq/he-er106-capacity-index.tsv"),
+            177,
+            "fb3cae1a0cbce0c7da3e23a446f82b19ff0ea5ffdbf2c8bceae01e428e302231",
+        ),
+        (
+            include_str!("fixtures/iq/he-er242-capacity-index.tsv"),
+            619,
+            "c14e68a1b1e2cfd1b4c380de74746bcfb37a2693a22993cf0482e8d51f6c4358",
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        assert_eq!(index.lines().skip(1).count(), count);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            assert_eq!(c.len(), 19);
+            assert!(c.iter().all(|v| v.parse::<usize>().is_ok()));
+        }
+    }
+}
+
+#[test]
 fn radio_he_training4_independent_inventory() {
     for (index, count, digest, column) in [
         (
