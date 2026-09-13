@@ -23,6 +23,20 @@ user CRC cases preserve neighboring users. Quantization gain is capped at200
 and reduced when necessary to keep component peaks at120, without clipping.
 Regenerate with `he_mu_data_iq_vectors.py`; add `--check` to verify all bytes.
 
+`he-mu-stbc-iq-index.tsv` indexes 380 complete HE20 MU STBC waveforms.
+Coverage includes every RU position, BCC/LDPC through their highest supported
+MCS, all four MU guard/training combinations, 2/4/6/8 LTFs, midambles with
+changing channels, either branch lost, distinct per-RU spatial mapping,
+compressed single-user signaling and MAC/FEC/header failures. Expected frames
+are exact FCS-qualified bytes, not decrypted payloads. Regenerate or verify
+using `he_mu_stbc_iq_vectors.py` with optional `--check`.
+
+`he-mu-stbc-training-long-index.tsv` adds 192 isolated fields with physical
+delays near each guard boundary, including branch losses and sparse training.
+This qualifies adaptive model selection without assuming short channels.
+Regenerate or verify with `he_mu_stbc_training_vectors.py --long-delay` and
+optional `--check`; the original 768-case corpus remains unchanged.
+
 `he-ru-stbc-symbol.tsv` contains 880 independent floating-point STBC DATA
 pairs over all sixteen HE20 RUs, BCC/LDPC constellation sizes, separate
 symbol phase/slope offsets, CFO, either branch erased, and an erased DATA

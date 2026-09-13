@@ -4,6 +4,28 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_mu_stbc_iq_inventory() {
+    let rows = include_str!("fixtures/iq/he-mu-stbc-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 380);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "d4f4f472de89387e343253bdf20652ea6655ac42b96315cdbe9ce282be3cfb5a"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 15);
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[13].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[14]);
+    }
+}
+
+#[test]
 fn radio_he_mu_compressed_iq_inventory() {
     let rows = include_str!("fixtures/iq/he-mu-compressed-iq-index.tsv");
     assert_eq!(rows.lines().skip(1).count(), 242);
@@ -223,23 +245,32 @@ fn radio_he_mu_training_inventory() {
 
 #[test]
 fn radio_he_mu_stbc_training_inventory() {
-    let index = include_str!("fixtures/iq/he-mu-stbc-training-index.tsv");
-    assert_eq!(index.lines().skip(1).count(), 768);
-    assert_eq!(
-        hex(&Sha256::digest(index.as_bytes())),
-        "7172fb83a0f1e666ed2be5b76ea27d9faccc24fa5a25baf9a47a062eccc77cb3"
-    );
-    for row in index.lines().skip(1) {
-        let c: Vec<_> = row.split('\t').collect();
-        assert_eq!(c.len(), 10);
-        let bytes = fs::read(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/iq")
-                .join(format!("{}.cs8", c[0])),
-        )
-        .unwrap();
-        assert_eq!(bytes.len(), 2 * c[8].parse::<usize>().unwrap());
-        assert_eq!(hex(&Sha256::digest(&bytes)), c[9]);
+    for (index, count, hash) in [
+        (
+            include_str!("fixtures/iq/he-mu-stbc-training-index.tsv"),
+            768,
+            "7172fb83a0f1e666ed2be5b76ea27d9faccc24fa5a25baf9a47a062eccc77cb3",
+        ),
+        (
+            include_str!("fixtures/iq/he-mu-stbc-training-long-index.tsv"),
+            192,
+            "e59558e73e714776010f4d4ece4dc5f53e97dce37fe79d60abbfdce5e83cae08",
+        ),
+    ] {
+        assert_eq!(index.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), hash);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            assert_eq!(c.len(), 10);
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(bytes.len(), 2 * c[8].parse::<usize>().unwrap());
+            assert_eq!(hex(&Sha256::digest(&bytes)), c[9]);
+        }
     }
 }
 

@@ -40,59 +40,17 @@ impl Demodulator {
         symbol: usize,
         polarity: f32,
     ) -> Option<([ComplexSample; 256], f32, f32)> {
-        if wave.len() != 256 || !frequency_rad.is_finite() || !matches!(polarity, -1. | 1.) {
+        if !matches!(polarity, -1. | 1.) {
             return None;
         }
-        elapsed.checked_add(255)?;
-        let mut time = [ComplexSample::ZERO; 256];
-        for (n, value) in time.iter_mut().enumerate() {
-            if !wave[n].power().is_finite() {
-                return None;
-            }
-            *value = wave[n].mul(ComplexSample::rotation(
-                -frequency_rad * (elapsed + n as u64) as f32,
-            ));
-        }
-        let bins = super::he_fft::fft256(time);
-        let mut pilots = Vec::with_capacity(self.tones.pilots().len());
-        let mut common = ComplexSample::ZERO;
-        for (j, &tone) in self.tones.pilots().iter().enumerate() {
-            let bin = tone.rem_euclid(256) as usize;
-            let value = bins[bin]
-                .mul(channel[bin].conj())
-                .scale(self.tones.pilot_sign(symbol, j) * polarity)
-                .mul(ComplexSample::rotation(-self.slope * tone as f32));
-            if !value.power().is_finite() {
-                return None;
-            }
-            common = common.add(value);
-            pilots.push((tone as f32, value));
-        }
-        if !common.power().is_finite() || common.power() < 1e-12 {
-            return None;
-        }
-        let reference = common.phase();
-        let (mut w, mut x, mut xx, mut y, mut xy) = (0., 0., 0., 0., 0.);
-        for (k, v) in pilots {
-            let weight = v.power().sqrt();
-            let residual = v.mul(ComplexSample::rotation(-reference)).phase();
-            w += weight;
-            x += weight * k;
-            xx += weight * k * k;
-            y += weight * residual;
-            xy += weight * k * residual;
-        }
-        let determinant = w * xx - x * x;
-        if !determinant.is_finite() || determinant < 1e-12 {
-            return None;
-        }
-        let delta = (w * xy - x * y) / determinant;
-        let intercept = reference + (y - delta * x) / w;
-        let slope = self.slope + delta;
-        if !intercept.is_finite() || !slope.is_finite() {
-            return None;
-        }
-        Some((bins, intercept, slope))
+        let pilots: Vec<_> = self
+            .tones
+            .pilots()
+            .iter()
+            .enumerate()
+            .map(|(j, &k)| (k, self.tones.pilot_sign(symbol, j) * polarity))
+            .collect();
+        observe_with_pilots(wave, channel, frequency_rad, elapsed, &pilots, self.slope)
     }
 
     /// Exactly one useful 256-sample symbol, excluding its guard interval.
@@ -177,6 +135,21 @@ impl Demodulator {
             }
             tracker.slope = slope;
         }
+        let result = self.recover_stbc_bins(&corrected, channels)?;
+        self.slope = tracker.slope;
+        Some(result)
+    }
+
+    /// Already phase-corrected consecutive DATA symbols. The PPDU caller
+    /// owns shared pilot tracking, STBC pairing and channel coherence.
+    pub fn recover_stbc_bins(
+        &self,
+        corrected: &[[ComplexSample; 256]; 2],
+        channels: &[[ComplexSample; 256]; 2],
+    ) -> Option<[Vec<f32>; 2]> {
+        if self.dcm {
+            return None;
+        }
         let mut observations = [
             Vec::with_capacity(self.tones.count()),
             Vec::with_capacity(self.tones.count()),
@@ -204,7 +177,6 @@ impl Demodulator {
             self.demap_observations(&observations[0])?,
             self.demap_observations(&observations[1])?,
         ];
-        self.slope = tracker.slope;
         Some(result)
     }
 
@@ -262,6 +234,79 @@ impl Demodulator {
         }
         Some(ordered)
     }
+}
+
+/// A common clock estimate from an explicit pilot map. MU may pool pilots
+/// across RUs after applying each RU's own rotation and estimated channel.
+pub(super) fn observe_with_pilots(
+    wave: &[ComplexSample],
+    channel: &[ComplexSample; 256],
+    frequency_rad: f32,
+    elapsed: u64,
+    pilot_map: &[(i32, f32)],
+    previous_slope: f32,
+) -> Option<([ComplexSample; 256], f32, f32)> {
+    if wave.len() != 256
+        || !frequency_rad.is_finite()
+        || !previous_slope.is_finite()
+        || pilot_map.len() < 2
+        || pilot_map.len() > 18
+    {
+        return None;
+    }
+    elapsed.checked_add(255)?;
+    let mut time = [ComplexSample::ZERO; 256];
+    for (n, value) in time.iter_mut().enumerate() {
+        if !wave[n].power().is_finite() {
+            return None;
+        }
+        *value = wave[n].mul(ComplexSample::rotation(
+            -frequency_rad * (elapsed + n as u64) as f32,
+        ));
+    }
+    let bins = super::he_fft::fft256(time);
+    let mut pilots = Vec::with_capacity(pilot_map.len());
+    let mut common = ComplexSample::ZERO;
+    for &(tone, sign) in pilot_map {
+        if !(-122..=122).contains(&tone) || !matches!(sign, -1. | 1.) {
+            return None;
+        }
+        let bin = tone.rem_euclid(256) as usize;
+        let value = bins[bin]
+            .mul(channel[bin].conj())
+            .scale(sign)
+            .mul(ComplexSample::rotation(-previous_slope * tone as f32));
+        if !value.power().is_finite() {
+            return None;
+        }
+        common = common.add(value);
+        pilots.push((tone as f32, value));
+    }
+    if !common.power().is_finite() || common.power() < 1e-12 {
+        return None;
+    }
+    let reference = common.phase();
+    let (mut w, mut x, mut xx, mut y, mut xy) = (0., 0., 0., 0., 0.);
+    for (k, v) in pilots {
+        let weight = v.power().sqrt();
+        let residual = v.mul(ComplexSample::rotation(-reference)).phase();
+        w += weight;
+        x += weight * k;
+        xx += weight * k * k;
+        y += weight * residual;
+        xy += weight * k * residual;
+    }
+    let determinant = w * xx - x * x;
+    if !determinant.is_finite() || determinant < 1e-12 {
+        return None;
+    }
+    let delta = (w * xy - x * y) / determinant;
+    let intercept = reference + (y - delta * x) / w;
+    let slope = previous_slope + delta;
+    if !intercept.is_finite() || !slope.is_finite() {
+        return None;
+    }
+    Some((bins, intercept, slope))
 }
 
 #[cfg(test)]

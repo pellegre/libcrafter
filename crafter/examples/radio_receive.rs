@@ -1101,40 +1101,58 @@ mod tests {
 
     #[test]
     fn radio_he_mu_frame_artifact_metadata() {
-        let bytes = include_bytes!("../tests/fixtures/iq/he-mu-ampdu-a0-m4-l1-d0-clean.cs8");
-        let config = RxConfig {
-            sample_rate_hz: 20_000_000,
-            center_frequency_hz: 2_412_000_000,
-            max_chunk_samples: 120000,
-            max_buffer_samples: 120000,
-            max_frame_bytes: 4095,
-            max_pending_frames: 32,
-            max_capture_samples: 120000,
-            max_duration: Duration::from_secs(1),
-        };
-        let chunk = IqChunk::new(
-            config,
-            IqPosition {
-                epoch: 7,
-                sequence: 0,
-                sample_index: 0,
-                time_anchor: None,
-                discontinuity: None,
-            },
-            bytes.iter().map(|b| *b as i8).collect(),
-        )
-        .unwrap();
-        let out = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
-        assert_eq!(out.frames.len(), 18);
-        for (n, frame) in out.frames.iter().enumerate() {
-            assert_eq!(frame_phy(frame), "he");
-            let metadata = he_metadata(frame).unwrap();
-            assert_eq!(metadata["format"], "mu");
-            assert_eq!(metadata["user_index"], n / 2);
-            assert_eq!(metadata["user"]["sta_id"], 37 + n / 2);
-            assert_eq!(metadata["user"]["mcs"], 4);
-            assert_eq!(metadata["user"]["coding"], "ldpc");
-            assert!(ampdu_metadata(frame).is_some());
+        for (bytes, stbc) in [
+            (
+                include_bytes!("../tests/fixtures/iq/he-mu-ampdu-a0-m4-l1-d0-clean.cs8").as_slice(),
+                false,
+            ),
+            (
+                include_bytes!(
+                    "../tests/fixtures/iq/he-mu-stbc-a0-m4-l1-ltf4-g16-n2-p0-c0-flat.cs8"
+                )
+                .as_slice(),
+                true,
+            ),
+        ] {
+            let config = RxConfig {
+                sample_rate_hz: 20_000_000,
+                center_frequency_hz: 2_412_000_000,
+                max_chunk_samples: 120000,
+                max_buffer_samples: 120000,
+                max_frame_bytes: 4095,
+                max_pending_frames: 32,
+                max_capture_samples: 120000,
+                max_duration: Duration::from_secs(1),
+            };
+            let chunk = IqChunk::new(
+                config,
+                IqPosition {
+                    epoch: 7,
+                    sequence: 0,
+                    sample_index: 0,
+                    time_anchor: None,
+                    discontinuity: None,
+                },
+                bytes.iter().map(|b| *b as i8).collect(),
+            )
+            .unwrap();
+            let out = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
+            assert_eq!(out.frames.len(), 18);
+            for (n, frame) in out.frames.iter().enumerate() {
+                assert_eq!(frame_phy(frame), "he");
+                let metadata = he_metadata(frame).unwrap();
+                assert_eq!(metadata["format"], "mu");
+                assert_eq!(metadata["user_index"], n / 2);
+                assert_eq!(metadata["user"]["sta_id"], 37 + n / 2);
+                assert_eq!(metadata["user"]["mcs"], 4);
+                assert_eq!(metadata["user"]["coding"], "ldpc");
+                assert_eq!(metadata["stbc"], stbc);
+                assert_eq!(
+                    metadata["user"]["space_time_streams"],
+                    if stbc { 2 } else { 1 }
+                );
+                assert!(ampdu_metadata(frame).is_some());
+            }
         }
     }
 

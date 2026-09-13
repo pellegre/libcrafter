@@ -25,27 +25,29 @@ from he_ldpc_rate_vectors import layout, encode_information, damage_codeword, RA
 
 
 def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage='none',mac_payloads=None,
-             compressed=False,sig_b_mcs=0,sig_b_dcm=False):
+             compressed=False,sig_b_mcs=0,sig_b_dcm=False,stbc=False,stbc_case='flat'):
     assert not compressed or code==192
     assert sig_b_mcs in range(6) and (not sig_b_dcm or sig_b_mcs in (0,1,3,4))
+    assert not stbc or (not dcm and nltf in (2,4,6,8))
     geom={(ru,index):(data,pilots) for ru,index,data,pilots in geometry()}
     rus=[]
     for item in allocation(code)[1].split(','):
         ru,slot,users=map(int,item.split(':')); assert users==1
         index=slot if ru==26 else ({1:1,3:2,6:3,8:4}[slot] if ru==52 else (1 if slot==1 else 2) if ru==106 else 1)
         data,pilots=geom[ru,index]; rus.append((ru,data,pilots))
-    initial=22 if period else 5
+    group=2 if stbc else 1
+    initial=22 if period else 6 if stbc else 5
     padding=3
     if mac_payloads is not None:
         assert len(mac_payloads)==len(rus)
         def budget(ru,data):
             cbps=len(data)*BPS[mcs]//(1+dcm)
             short=(2 if ru==26 and dcm else {26:6,52:12,106:24,242:60}[ru]//(1+dcm))*BPS[mcs]
-            return ((initial-1)*int(cbps*RATES[mcs])+padding*int(short*RATES[mcs])-(16 if ldpc else 22))//8
+            return ((initial-group)*int(cbps*RATES[mcs])+group*padding*int(short*RATES[mcs])-(16 if ldpc else 22))//8
         while any(budget(ru,data)<len(payload) for (ru,data,_),payload in zip(rus,mac_payloads)):
-            initial+=1
+            initial+=group
         assert initial<=400
-    extra=ldpc and any(layout(mcs,1,dcm,1,initial,padding,mu_tones=ru)[2] for ru,_,_ in rus)
+    extra=ldpc and any(layout(mcs,1,dcm,group,initial,padding,mu_tones=ru)[2] for ru,_,_ in rus)
     final_padding=4 if extra else padding
     symbols=initial
     payloads=[]; streams=[]
@@ -53,8 +55,8 @@ def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage=
         cbps=len(data)*BPS[mcs]//(1+dcm)
         short=(2 if ru==26 and dcm else {26:6,52:12,106:24,242:60}[ru]//(1+dcm))*BPS[mcs]
         rate=RATES[mcs]
-        sizing=layout(mcs,1,dcm,1,initial,padding,mu_tones=ru,force_extra=extra) if ldpc else None
-        count=sizing[8] if ldpc else (initial-1)*int(cbps*rate)+padding*int(short*rate)
+        sizing=layout(mcs,1,dcm,group,initial,padding,mu_tones=ru,force_extra=extra) if ldpc else None
+        count=sizing[8] if ldpc else (initial-group)*int(cbps*rate)+group*padding*int(short*rate)
         octets,phy=divmod(count-(16 if ldpc else 22),8)
         assert octets>=0
         psdu=bytes((n*37+user*11+93+mcs*13)%256 for n in range(octets))
@@ -83,14 +85,14 @@ def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage=
         last=cbps if final_padding==4 else final_padding*short
         output=[];cursor=0
         for n in range(symbols):
-            keep=last if n==symbols-1 else cbps
+            keep=last if n>=symbols-group else cbps
             output+=coded[cursor:cursor+keep];cursor+=keep
             output += [(n+j)%2 for j in range(cbps-keep)]
         assert cursor==len(coded)
         streams.append(output)
     # Independent SIG-B block coding; one compressed user uses Table27-28.
     fields=[] if compressed else [checked([code>>i&1 for i in range(8)])]
-    values=[37+i | (mcs<<15) | (int(dcm)<<19) | (int(ldpc)<<20) for i in range(len(rus))]
+    values=[37+i | (int(stbc)<<11) | (mcs<<15) | (int(dcm)<<19) | (int(ldpc)<<20) for i in range(len(rus))]
     for start in range(0,len(values),2):fields.append(checked([v>>i&1 for v in values[start:start+2] for i in range(21)]))
     if damage=='user-crc':fields[int(not compressed)][-10]^=1
     dbps=[26,52,78,104,156,208][sig_b_mcs]//(1+sig_b_dcm)
@@ -106,7 +108,7 @@ def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage=
     units=math.ceil(F(end-400,80));length=3*units-4
     header=[0]*52
     for start,width,value in [(1,3,sig_b_mcs),(4,1,int(sig_b_dcm)),(5,6,37),(18,4,0 if compressed else min(sigb-1,15)),(22,1,int(compressed)),(23,2,{(4,16):0,(2,16):1,(2,32):2,(4,64):3}[size,guard]),
-        (25,1,int(bool(period))),(33,1,1),(34,3,[1,2,4,6,8].index(nltf)),(37,1,int(extra)),(39,2,final_padding%4)]:put(header,start,width,value)
+        (25,1,int(bool(period))),(33,1,1),(34,3,[1,2,4,6,8].index(nltf)),(37,1,int(extra)),(38,1,int(stbc)),(39,2,final_padding%4)]:put(header,start,width,value)
     if period==20:header[36]=1
     repair(header);siga=encoded(header)
     legacy=base.interleave(base.encode(base.signal('1101',length)),1)
@@ -120,20 +122,51 @@ def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage=
         for k,s in [(-21,1),(-7,1),(7,1),(21,-1)]:freq[k+28]=s*polarities[4+n]
         time=[v*math.sqrt(52/56) for v in ht.ifft(freq)];wave+=time[-16:]+time
     total=sum(ru for ru,_,_ in rus)
+
+    def channels(k,epoch):
+        paths=[[(0,1+0j)],[(0,.4+.3j)]]
+        if stbc_case!='flat':paths=[[(0,.85+.1j),(5,.2-.1j)],[(0,.45-.2j),(7,-.15j)]]
+        if stbc_case=='first-null':paths=[[],[(0,1+0j),(5,.2j)]]
+        if stbc_case=='second-null':paths=[[(0,1+0j),(5,.2j)],[]]
+        if stbc_case=='changing' and epoch%3==1:paths=[[(0,.7-.2j),(3,.2j)],[(0,.25+.4j),(6,.1)]]
+        if stbc_case=='changing' and epoch%3==2:paths=[[(0,1-.1j),(7,-.1j)],[(0,-.2+.35j),(4,.15)]]
+        result=[sum(h*cmath.exp(-2j*math.pi*k*(d-8*branch)/256) for d,h in path)/math.sqrt(2)
+                for branch,path in enumerate(paths)]
+        if stbc_case=='ru-mapped':
+            index=next((i for i,(_,data,pilots) in enumerate(rus) if k in data or k in pilots),0)
+            result=[h*cmath.exp(1j*index*phase) for h,phase in zip(result,(.31,-.43))]
+        return result
+
     stf={k:v*(1+1j)/math.sqrt(2) for k,v in zip(range(-112,113,16),[-1,-1,-1,1,1,1,-1,1,1,1,-1,1,1,-1,1]) if k}
     freq=[0j]*245
     for ru,data,pilots in rus:
         selected=[k for k in data+pilots if k in stf]
         for k in selected:freq[k+122]=stf[k]*math.sqrt(ru/len(selected)/total)
+    if stbc:
+        for k in range(-122,123):freq[k+122]*=sum(channels(k,0))
     wave += [v*4*math.sqrt(52) for v in training.ifft(freq)][:80]
     seq={2:training.LTF2,4:training.LTF4}[size]
     active={k for _,d,p in rus for k in d+p}
     ltf=[v*4*math.sqrt(52/(total*size/4)) for v in training.ifft([{'-':-1,'+':1,'0':0}[v] if k in active else 0 for k,v in zip(range(-122,123),seq)])][:64*size]
-    signs=([1,-1,1,1,1,-1] if nltf==6 else [1,-1,1,1]*2)[:nltf]
-    training_wave=[v*s for s in signs for v in ltf[-guard:]+ltf]
-    wave+=training_wave
+    ltf_signs=([1,-1,1,1,1,-1] if nltf==6 else [1,-1,1,1]*2)[:nltf]
+    training_wave=[v*s for s in ltf_signs for v in ltf[-guard:]+ltf]
+
+    def stbc_training(epoch):
+        result=[];pilots={k for _,_,p in rus for k in p}
+        for j in range(nltf):
+            p0=ltf_signs[j]
+            p1=p0*cmath.exp(-2j*math.pi*j/6) if nltf==6 else [1,1,-1,1][j%4]
+            frequency=[0j]*245
+            for k in active:
+                h0,h1=channels(k,epoch)
+                frequency[k+122]={'-':-1,'+':1,'0':0}[seq[k+122]]*(p0*h0+(p0 if k in pilots else p1)*h1)
+            time=[v*4*math.sqrt(52/(total*size/4)) for v in training.ifft(frequency)][:64*size]
+            result+=time[-guard:]+time
+        return result
+
+    wave+=stbc_training(0) if stbc else training_wave
+    frequencies=[]
     for n in range(symbols):
-        if period and n and n%period==0 and n//period<=midambles:wave+=training_wave
         freq=[0j]*245
         for (ru,data,pilots),stream in zip(rus,streams):
             count=len(data)//(1+dcm);cbps=count*BPS[mcs]
@@ -153,6 +186,19 @@ def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage=
                     freq[data[target+count]+122]=upper
             signs={26:[1,-1],52:[1,1,1,-1],106:[1,1,1,-1],242:[1,1,1,-1,-1,1,1,1]}[ru]
             for j,k in enumerate(pilots):freq[k+122]=polarities[4+sigb+n]*signs[(n+j)%len(signs)]
+        frequencies.append(freq)
+    epoch=0
+    pilot_tones={k for _,_,p in rus for k in p}
+    for n,source in enumerate(frequencies):
+        if period and n and n%period==0 and n//period<=midambles:
+            epoch+=1
+            wave+=stbc_training(epoch) if stbc else training_wave
+        freq=source.copy()
+        if stbc:
+            for k in active:
+                h0,h1=channels(k,epoch)
+                second=source[k+122] if k in pilot_tones else frequencies[n-1 if n%2 else n+1][k+122].conjugate()*(1 if n%2 else -1)
+                freq[k+122]=h0*source[k+122]+h1*second
         time=[v*4*math.sqrt(52/total) for v in training.ifft(freq)];wave+=time[-guard:]+time
     assert len(wave)==37+end
     if impaired:wave=[(v+(.25j*wave[n-3] if n>=3 else 0))*cmath.exp(1j*(.7+.018*n)) for n,v in enumerate(wave)]

@@ -58,8 +58,12 @@ pub(super) fn admit(
         return Err(Error::Limit);
     }
     let layout = fields.layout().map_err(|_| Error::Layout)?;
-    let supported = !fields.signal.stbc
-        && (layout.len() != 1 || timing.ltf_symbols == 1)
+    // 27.3.12.12 forbids STBC throughout a PPDU containing any MU-MIMO RU.
+    if fields.signal.stbc && layout.iter().any(|ru| ru.users.len() > 1) {
+        return Err(Error::Unsupported);
+    }
+    let streams = if fields.signal.stbc { 2 } else { 1 };
+    let supported = (layout.len() != 1 || timing.ltf_symbols == streams)
         && layout.iter().any(|ru| {
             ru.users.len() == 1
                 && ru.users.clone().any(|i| {
@@ -67,9 +71,9 @@ pub(super) fn admit(
                         matches!(
                             user.encoding,
                             HeSigBUserEncoding::NonMu {
-                                space_time_streams: 1,
+                                space_time_streams,
                                 ..
-                            }
+                            } if usize::from(space_time_streams) == streams
                         ) && Capacity::for_mu(
                             &fields.signal,
                             &user,
@@ -109,6 +113,18 @@ pub(super) fn recover(
     }
     let layout = fields.layout().map_err(|_| Error::Layout)?;
     let mut users = Vec::with_capacity(fields.users.len());
+    let pilots: Vec<_> = layout
+        .iter()
+        .filter(|ru| !ru.users.is_empty())
+        .flat_map(|ru| ru.tones.pilots().iter().copied())
+        .collect();
+    let stbc_bins = if fields.signal.stbc {
+        Some(stbc_observations(
+            samples, a, &fields, &layout, &timing, &pilots,
+        )?)
+    } else {
+        None
+    };
     for ru in &layout {
         for index in ru.users.clone() {
             let result = (|| {
@@ -116,16 +132,21 @@ pub(super) fn recover(
                 let (dcm, ldpc) = match user.encoding {
                     HeSigBUserEncoding::Unused { .. } => return Err(Error::Unused),
                     HeSigBUserEncoding::NonMu {
-                        space_time_streams: 1,
+                        space_time_streams,
                         dcm,
                         ldpc,
                         ..
-                    } if !fields.signal.stbc && ru.users.len() == 1 => (dcm, ldpc),
+                    } if space_time_streams == if fields.signal.stbc { 2 } else { 1 }
+                        && ru.users.len() == 1 =>
+                    {
+                        (dcm, ldpc)
+                    }
                     _ => return Err(Error::Unsupported),
                 };
                 // 27.3.11.10: a single RU's LTF count is determined by its
                 // streams; a multi-RU PPDU may signal extra training symbols.
-                if layout.len() == 1 && timing.ltf_symbols != 1 {
+                let group = if fields.signal.stbc { 2 } else { 1 };
+                if layout.len() == 1 && timing.ltf_symbols != group {
                     return Err(Error::Layout);
                 }
                 let size = (ru.tones.count() + ru.tones.pilots().len()) as u16;
@@ -147,15 +168,36 @@ pub(super) fn recover(
                 let training =
                     timing.ltf_symbols * (64 * usize::from(fields.signal.ltf_size) + guard);
                 let train = |cp| {
-                    super::he_training::train_ru_field(
-                        samples,
-                        a,
-                        ru.tones,
-                        fields.signal.ltf_size,
-                        fields.signal.guard_ns,
-                        cp,
-                    )
-                    .ok_or(Error::Training)
+                    if fields.signal.stbc {
+                        let phase = super::he_training::stbc_mu_phase(
+                            samples,
+                            a,
+                            &fields.signal,
+                            cp,
+                            &pilots,
+                        )
+                        .ok_or(Error::Training)?;
+                        super::he_training::train_stbc_ru_with_phase(
+                            samples,
+                            a,
+                            ru.tones,
+                            &fields.signal,
+                            cp,
+                            Some(&phase),
+                        )
+                        .ok_or(Error::Training)
+                    } else {
+                        super::he_training::train_ru_field(
+                            samples,
+                            a,
+                            ru.tones,
+                            fields.signal.ltf_size,
+                            fields.signal.guard_ns,
+                            cp,
+                        )
+                        .map(|h| [h, [ComplexSample::ZERO; 256]])
+                        .ok_or(Error::Training)
+                    }
                 };
                 let cp = usize::try_from(
                     fields
@@ -166,9 +208,8 @@ pub(super) fn recover(
                 .map_err(|_| Error::Timing)?
                 .checked_add(80)
                 .ok_or(Error::Timing)?;
-                // For one stream, the first column of P4/P6/P8 and the
-                // single-stream pilot matrix has coefficient +1. Other LTF
-                // symbols may improve estimation later; no stream is omitted.
+                // Non-STBC uses the first LTF's +1 coefficient. STBC
+                // separates both channels using all signaled LTFs.
                 let mut channel = train(cp)?;
                 let mut demod =
                     super::he_ru_symbol::Demodulator::new(ru.tones, c.bits_per_tone, ldpc, dcm)
@@ -187,7 +228,7 @@ pub(super) fn recover(
                 for _ in 0..4 + fields.symbols {
                     super::data::feedback(&mut pilot);
                 }
-                for symbol in 0..timing.data_symbols {
+                for symbol in (0..timing.data_symbols).step_by(group) {
                     let offset = timing.symbol_start(symbol).ok_or(Error::Timing)?;
                     if let Some(period) = fields.signal.midamble_period.map(usize::from) {
                         if symbol > 0 && symbol % period == 0 && symbol / period <= timing.midambles
@@ -206,18 +247,32 @@ pub(super) fn recover(
                         .checked_add(start as u64)
                         .and_then(|n| n.checked_sub(a.phase_origin))
                         .ok_or(Error::Timing)?;
-                    let polarity = 1. - 2. * super::data::feedback(&mut pilot) as f32;
-                    let block = demod
-                        .recover(
-                            samples.get(start..start + 256).ok_or(Error::Samples)?,
-                            &channel,
-                            a.frequency_rad,
-                            elapsed,
-                            symbol,
-                            polarity,
-                        )
-                        .ok_or(Error::Metrics)?;
-                    metrics.extend(block);
+                    if fields.signal.stbc {
+                        let bins = stbc_bins.as_ref().ok_or(Error::Metrics)?;
+                        let pair = [
+                            *bins.get(symbol).ok_or(Error::Timing)?,
+                            *bins.get(symbol + 1).ok_or(Error::Timing)?,
+                        ];
+                        let blocks = demod
+                            .recover_stbc_bins(&pair, &channel)
+                            .ok_or(Error::Metrics)?;
+                        for block in blocks {
+                            metrics.extend(block);
+                        }
+                    } else {
+                        let polarity = 1. - 2. * super::data::feedback(&mut pilot) as f32;
+                        let block = demod
+                            .recover(
+                                samples.get(start..start + 256).ok_or(Error::Samples)?,
+                                &channel[0],
+                                a.frequency_rad,
+                                elapsed,
+                                symbol,
+                                polarity,
+                            )
+                            .ok_or(Error::Metrics)?;
+                        metrics.extend(block);
+                    }
                 }
                 if ldpc {
                     let r = super::he_mu_ldpc::recover(
@@ -262,9 +317,179 @@ pub(super) fn recover(
     })
 }
 
+/// Correct the common oscillator/clock once for the complete MU DATA field.
+/// Small RUs often have only two pilots, one of which may be in a deep null;
+/// fitting an independent slope to those two points amplifies its phase noise.
+/// Pool the per-RU pilot observations without pooling their physical channels.
+/// Cache at most the already-admitted 400 FFT symbols, using fallible allocation.
+fn stbc_observations(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    fields: &Fields,
+    layout: &[super::he_sig_b_iq::RuLayout],
+    timing: &Timing,
+    pilots: &[i32],
+) -> Result<Vec<[ComplexSample; 256]>, Error> {
+    let guard = usize::from(fields.signal.guard_ns) / 50;
+    let training = timing.ltf_symbols * (64 * usize::from(fields.signal.ltf_size) + guard);
+    let train = |cp| {
+        super::he_training::stbc_mu_pilot_channel(samples, a, &fields.signal, cp, pilots)
+            .ok_or(Error::Training)
+    };
+    let cp = usize::try_from(
+        fields
+            .end_sample
+            .checked_sub(a.signal_start)
+            .ok_or(Error::Timing)?,
+    )
+    .map_err(|_| Error::Timing)?
+    .checked_add(80)
+    .ok_or(Error::Timing)?;
+    let mut channel = train(cp)?;
+    let mut slope = 0.;
+    let mut pilot = 127;
+    for _ in 0..4 + fields.symbols {
+        super::data::feedback(&mut pilot);
+    }
+    let mut output = Vec::new();
+    output
+        .try_reserve_exact(timing.data_symbols)
+        .map_err(|_| Error::Allocation)?;
+    for symbol in 0..timing.data_symbols {
+        let offset = timing.symbol_start(symbol).ok_or(Error::Timing)?;
+        if let Some(period) = fields.signal.midamble_period.map(usize::from) {
+            if symbol > 0 && symbol % period == 0 && symbol / period <= timing.midambles {
+                channel = train(offset.checked_sub(training + 320).ok_or(Error::Timing)?)?;
+                slope = 0.;
+            }
+        }
+        let start = offset
+            .checked_add(guard)
+            .and_then(|n| n.checked_sub(320))
+            .ok_or(Error::Timing)?;
+        let elapsed = a
+            .signal_start
+            .checked_add(start as u64)
+            .and_then(|n| n.checked_sub(a.phase_origin))
+            .ok_or(Error::Timing)?;
+        let polarity = 1. - 2. * super::data::feedback(&mut pilot) as f32;
+        let pilot_map: Vec<_> = layout
+            .iter()
+            .filter(|ru| !ru.users.is_empty())
+            .flat_map(|ru| {
+                ru.tones
+                    .pilots()
+                    .iter()
+                    .enumerate()
+                    .map(move |(j, &k)| (k, ru.tones.pilot_sign(symbol, j) * polarity))
+            })
+            .collect();
+        let (mut bins, phase, next_slope) = super::he_ru_symbol::observe_with_pilots(
+            samples.get(start..start + 256).ok_or(Error::Samples)?,
+            &channel,
+            a.frequency_rad,
+            elapsed,
+            &pilot_map,
+            slope,
+        )
+        .ok_or(Error::Metrics)?;
+        slope = next_slope;
+        for k in -122i32..=122 {
+            let bin = k.rem_euclid(256) as usize;
+            bins[bin] = bins[bin].mul(ComplexSample::rotation(-phase - slope * k as f32));
+            if !bins[bin].power().is_finite() {
+                return Err(Error::Metrics);
+            }
+        }
+        output.push(bins);
+    }
+    Ok(output)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn radio_he_mu_stbc_admission_and_bounds() {
+        let bytes = include_bytes!(
+            "../../tests/fixtures/iq/he-mu-stbc-a0-m4-l1-ltf4-g16-n2-p0-c0-flat.cs8"
+        );
+        let samples: Vec<_> = bytes
+            .chunks_exact(2)
+            .map(|b| ComplexSample {
+                i: b[0] as i8 as f32 / 128.,
+                q: b[1] as i8 as f32 / 128.,
+            })
+            .collect();
+        let mut sync = super::super::sync::Synchronizer::default();
+        let a = samples
+            .iter()
+            .enumerate()
+            .find_map(|(n, &s)| match sync.push(s, n as u64) {
+                Some(super::super::sync::SyncEvent::Acquired(a)) => Some(a),
+                _ => None,
+            })
+            .unwrap();
+        let input = &samples[a.signal_start as usize..];
+        let fields = super::super::he_sig_b_iq::recover(input, &a).unwrap();
+        let prefix_end = (fields.end_sample - a.signal_start) as usize;
+        let timing = admit(&input[..prefix_end], &a, &fields, input.len()).unwrap();
+        assert_eq!(timing.data_symbols % 2, 0);
+        let strict = recover(input, &a, 65535, input.len(), false).unwrap();
+        let partial = recover(input, &a, 65535, input.len(), true).unwrap();
+        for (s, p) in strict.users.iter().zip(&partial.users) {
+            assert_eq!(s.as_ref().unwrap().psdu, p.as_ref().unwrap().psdu);
+            assert_eq!(p.as_ref().unwrap().failed_codewords, 0);
+        }
+        assert!(matches!(
+            recover(&input[..input.len() - 1], &a, 65535, input.len(), false),
+            Err(Error::Samples)
+        ));
+        assert!(matches!(
+            recover(input, &a, 65535, input.len() - 1, false),
+            Err(Error::Limit)
+        ));
+        let limited = recover(input, &a, 0, input.len(), false).unwrap();
+        assert!(limited.users.iter().all(|u| matches!(u, Err(Error::Limit))));
+        let mut erased = input.to_vec();
+        erased[prefix_end + 80..timing.data_start - 320].fill(ComplexSample::ZERO);
+        assert!(matches!(
+            recover(&erased, &a, 65535, erased.len(), false),
+            Err(Error::Training)
+        ));
+        for n in [0, 1, 3, 5, 7, 9] {
+            let mut bad = fields.clone();
+            bad.signal.ltf_symbols = n;
+            assert!(admit(input, &a, &bad, input.len()).is_err());
+        }
+        let mut bad = fields.clone();
+        bad.signal.stbc = false;
+        assert!(matches!(
+            admit(input, &a, &bad, input.len()),
+            Err(Error::Unsupported)
+        ));
+        let mut bad = fields.clone();
+        for user in bad.users.iter_mut().flatten() {
+            if let HeSigBUserEncoding::NonMu { dcm, .. } = &mut user.encoding {
+                *dcm = true;
+            }
+        }
+        assert!(matches!(
+            admit(input, &a, &bad, input.len()),
+            Err(Error::Unsupported)
+        ));
+        // A spatially shared RU forbids STBC throughout the packet.
+        let mut bad = fields;
+        bad.signal.sig_b_compression = true;
+        bad.signal.sig_b_symbols_or_users = 1;
+        bad.common = None;
+        bad.users.truncate(2);
+        assert!(matches!(
+            admit(input, &a, &bad, input.len()),
+            Err(Error::Unsupported)
+        ));
+    }
 
     #[test]
     fn radio_he_mu_complete_psdu_waveforms() {

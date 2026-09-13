@@ -311,6 +311,136 @@ pub(super) fn train_stbc_ru_field(
     fields: &super::he_mu::MuSignal,
     cp: usize,
 ) -> Option<[[ComplexSample; 256]; 2]> {
+    train_stbc_ru_with_phase(samples, a, allocation, fields, cp, None)
+}
+
+pub(super) struct StbcPhase([(f32, f32); 8]);
+
+/// All RUs share the transmitter's oscillator and symbol clock, but need not
+/// share a propagation channel or spatial mapping. Correlate each LTF pilot
+/// with itself in LTF1 before pooling; R's coefficient is common to every STS
+/// and RU (27-56). Fit a frequency slope as well as common phase so sampling
+/// clock drift is not mistaken for different per-RU oscillator phases.
+pub(super) fn stbc_mu_phase(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    fields: &super::he_mu::MuSignal,
+    cp: usize,
+    pilots: &[i32],
+) -> Option<StbcPhase> {
+    if !fields.stbc || !matches!(fields.ltf_symbols, 2 | 4 | 6 | 8) || pilots.is_empty() {
+        return None;
+    }
+    let allocation = Tones::ru(242, 1)?;
+    let (first, _, guard) =
+        observe_ru(samples, a, allocation, fields.ltf_size, fields.guard_ns, cp)?;
+    let stride = guard + 64 * usize::from(fields.ltf_size);
+    let mut corrections = [(0., 0.); 8];
+    for j in 1..usize::from(fields.ltf_symbols) {
+        let (observed, _, _) = observe_ru(
+            samples,
+            a,
+            allocation,
+            fields.ltf_size,
+            fields.guard_ns,
+            cp.checked_add(j.checked_mul(stride)?)?,
+        )?;
+        let coefficient = mu_stbc_training_column(usize::from(fields.ltf_symbols), j)?[0].conj();
+        let mut values = Vec::with_capacity(pilots.len());
+        let mut common = ComplexSample::ZERO;
+        for &k in pilots {
+            if !allocation.contains(k) {
+                return None;
+            }
+            let bin = k.rem_euclid(256) as usize;
+            let value = observed[bin].mul(first[bin].conj()).mul(coefficient);
+            if !value.power().is_finite() {
+                return None;
+            }
+            common = common.add(value);
+            values.push((k as f32, value));
+        }
+        if !common.power().is_finite() {
+            return None;
+        }
+        if common.power() < 1e-18 {
+            continue;
+        }
+        let reference = common.phase();
+        let (mut w, mut x, mut xx, mut y, mut xy) = (0., 0., 0., 0., 0.);
+        for (k, v) in values {
+            let weight = v.power().sqrt();
+            let residual = v.mul(ComplexSample::rotation(-reference)).phase();
+            w += weight;
+            x += weight * k;
+            xx += weight * k * k;
+            y += weight * residual;
+            xy += weight * k * residual;
+        }
+        let determinant = w * xx - x * x;
+        if !determinant.is_finite() {
+            return None;
+        }
+        let slope = if determinant > 1e-12 {
+            (w * xy - x * y) / determinant
+        } else {
+            0.
+        };
+        let phase = reference + (y - slope * x) / w;
+        if !slope.is_finite() || !phase.is_finite() {
+            return None;
+        }
+        corrections[j] = (phase, slope);
+    }
+    Some(StbcPhase(corrections))
+}
+
+pub(super) fn stbc_mu_pilot_channel(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    fields: &super::he_mu::MuSignal,
+    cp: usize,
+    pilots: &[i32],
+) -> Option<[ComplexSample; 256]> {
+    let phases = stbc_mu_phase(samples, a, fields, cp, pilots)?;
+    let allocation = Tones::ru(242, 1)?;
+    let stride = usize::from(fields.guard_ns) / 50 + 64 * usize::from(fields.ltf_size);
+    let count = usize::from(fields.ltf_symbols);
+    let mut channel = [ComplexSample::ZERO; 256];
+    for j in 0..count {
+        let (observed, _, _) = observe_ru(
+            samples,
+            a,
+            allocation,
+            fields.ltf_size,
+            fields.guard_ns,
+            cp.checked_add(j.checked_mul(stride)?)?,
+        )?;
+        let p = mu_stbc_training_column(count, j)?[0].conj();
+        let (phase, slope) = phases.0[j];
+        for &k in pilots {
+            let bin = k.rem_euclid(256) as usize;
+            let coefficient = ComplexSample::rotation(-phase - slope * k as f32)
+                .mul(p)
+                .scale(1. / count as f32);
+            channel[bin] = channel[bin].add(observed[bin].mul(coefficient));
+        }
+    }
+    let energy: f32 = channel.iter().map(|v| v.power()).sum();
+    if !energy.is_finite() || energy < 1e-9 {
+        return None;
+    }
+    Some(channel)
+}
+
+pub(super) fn train_stbc_ru_with_phase(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    allocation: Tones,
+    fields: &super::he_mu::MuSignal,
+    cp: usize,
+    shared: Option<&StbcPhase>,
+) -> Option<[[ComplexSample; 256]; 2]> {
     let count = usize::from(fields.ltf_symbols);
     if !fields.stbc
         || !matches!(count, 2 | 4 | 6 | 8)
@@ -331,6 +461,7 @@ pub(super) fn train_stbc_ru_field(
         .collect();
     let stride = guard + 64 * usize::from(fields.ltf_size);
     let mut channels = [[ComplexSample::ZERO; 256]; 2];
+    let mut pilot_channel = [ComplexSample::ZERO; 256];
     for j in 0..count {
         let observed = if j == 0 {
             first
@@ -355,14 +486,28 @@ pub(super) fn train_stbc_ru_field(
             return None;
         }
         // A summed-channel pilot null cannot measure residual phase.
-        let correction = ComplexSample::rotation(if phase.power() > 1e-18 {
-            -phase.phase()
-        } else {
-            0.
+        let (phase, slope) = shared.map(|v| v.0[j]).unwrap_or_else(|| {
+            (
+                if phase.power() > 1e-18 {
+                    phase.phase()
+                } else {
+                    0.
+                },
+                0.,
+            )
         });
+        for &tone in pilots {
+            let bin = tone.rem_euclid(256) as usize;
+            let coefficient = ComplexSample::rotation(-phase - slope * tone as f32)
+                .mul(p[0].conj())
+                .scale(1. / count as f32);
+            pilot_channel[bin] = pilot_channel[bin].add(observed[bin].mul(coefficient));
+        }
         for (stream, channel) in channels.iter_mut().enumerate() {
-            let coefficient = correction.mul(p[stream].conj()).scale(1. / count as f32);
             for &tone in &data {
+                let coefficient = ComplexSample::rotation(-phase - slope * tone as f32)
+                    .mul(p[stream].conj())
+                    .scale(1. / count as f32);
                 let bin = tone.rem_euclid(256) as usize;
                 channel[bin] = channel[bin].add(observed[bin].mul(coefficient));
             }
@@ -379,7 +524,11 @@ pub(super) fn train_stbc_ru_field(
                 -std::f32::consts::TAU * tone as f32 * (8 * stream) as f32 / 256.,
             ));
         }
-        delay_fit(channel, &data, guard, allocation)?;
+        if allocation.count() < 234 {
+            adaptive_delay_fit(channel, &data, guard, allocation)?;
+        } else {
+            delay_fit(channel, &data, guard, allocation)?;
+        }
         for tone in allocation.active() {
             let bin = tone.rem_euclid(256) as usize;
             channel[bin] = channel[bin].mul(ComplexSample::rotation(
@@ -387,7 +536,61 @@ pub(super) fn train_stbc_ru_field(
             ));
         }
     }
+    // R trains the summed pilot channel directly. Preserve that observation
+    // rather than deriving DATA phase from two independently interpolated
+    // pilot values, which can introduce a large phase bias near a pilot null.
+    // The individual pilot channels are not separately observable: retain the
+    // fitted difference and constrain their sum to the averaged R measurement.
+    for &tone in pilots {
+        let bin = tone.rem_euclid(256) as usize;
+        let correction = pilot_channel[bin]
+            .sub(channels[0][bin].add(channels[1][bin]))
+            .scale(0.5);
+        channels[0][bin] = channels[0][bin].add(correction);
+        channels[1][bin] = channels[1][bin].add(correction);
+    }
     Some(channels)
+}
+
+/// Select delay-model complexity from held-out training measurements, not
+/// decoded DATA or an assumed physical channel. Small RUs cannot justify all
+/// guard-interval taps just because the transmitter chose a long guard.
+/// Keep the full guard candidate so long-delay channels remain representable.
+fn adaptive_delay_fit(
+    channel: &mut [ComplexSample; 256],
+    tones: &[i32],
+    guard: usize,
+    allocation: Tones,
+) -> Option<()> {
+    let observed = *channel;
+    let mut best = (f32::INFINITY, guard);
+    for candidate in [4, 8, 16, 32, 64].into_iter().filter(|&n| n <= guard) {
+        let mut error = 0.;
+        for fold in 0..2 {
+            // Irregular holdouts avoid the delay aliasing of a decimated
+            // grid, particularly with sparse 2x training.
+            let held = |i: usize| (7 * i + i / 3 + 5 * fold) % 11 < 3;
+            let train: Vec<_> = tones
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !held(*i))
+                .map(|(_, k)| *k)
+                .collect();
+            let mut fitted = observed;
+            delay_fit(&mut fitted, &train, candidate, allocation)?;
+            for (_, &k) in tones.iter().enumerate().filter(|(i, _)| held(*i)) {
+                let bin = k.rem_euclid(256) as usize;
+                error += fitted[bin].sub(observed[bin]).power();
+            }
+        }
+        if error.is_finite() && error < best.0 {
+            best = (error, candidate);
+        }
+    }
+    if !best.0.is_finite() {
+        return None;
+    }
+    delay_fit(channel, tones, best.1, allocation)
 }
 
 fn mu_stbc_training_column(count: usize, j: usize) -> Option<[ComplexSample; 2]> {
@@ -493,92 +696,110 @@ mod tests {
             .collect();
         let mut fields = super::super::he_mu::MuSignal::decode(&bits).unwrap();
         fields.stbc = true;
-        let rows = include_str!("../../tests/fixtures/iq/he-mu-stbc-training-index.tsv");
-        assert_eq!(rows.lines().skip(1).count(), 768);
-        for row in rows.lines().skip(1) {
-            let c: Vec<_> = row.split('\t').collect();
-            let ru: u16 = c[1].parse().unwrap();
-            let allocation = Tones::ru(ru, c[2].parse().unwrap()).unwrap();
-            fields.ltf_size = c[3].parse().unwrap();
-            fields.guard_ns = c[4].parse::<u16>().unwrap() * 50;
-            fields.ltf_symbols = c[5].parse().unwrap();
-            let branch: usize = c[6].parse().unwrap();
-            let bytes = std::fs::read(format!(
-                "{}/tests/fixtures/iq/{}.cs8",
-                env!("CARGO_MANIFEST_DIR"),
-                c[0]
-            ))
-            .unwrap();
-            let wave: Vec<_> = bytes
-                .chunks_exact(2)
-                .map(|b| ComplexSample {
-                    i: b[0] as i8 as f32 / 128.,
-                    q: b[1] as i8 as f32 / 128.,
-                })
-                .collect();
-            let channels = train_stbc_ru_field(&wave, &a, allocation, &fields, 0)
-                .unwrap_or_else(|| panic!("{}", c[0]));
-            let gain = c[7].parse::<f32>().unwrap() / 128.
-                * 4.
-                * (52. / f32::from(ru)).sqrt()
-                * std::f32::consts::FRAC_1_SQRT_2;
-            let mut error = 0.;
-            let mut energy = 0.;
-            for k in allocation.active() {
-                let angle = std::f32::consts::TAU * k as f32 / 256.;
-                let expected = [
-                    if branch == 1 {
-                        ComplexSample::ZERO
-                    } else {
-                        ComplexSample { i: 1., q: 0.25 }.mul(ComplexSample::rotation(-3. * angle))
-                    },
-                    if branch == 2 {
-                        ComplexSample::ZERO
-                    } else {
-                        ComplexSample { i: 0.6, q: -0.3 }
-                            .add(
-                                ComplexSample { i: 0., q: 0.2 }
-                                    .mul(ComplexSample::rotation(-5. * angle)),
-                            )
-                            .mul(ComplexSample::rotation(8. * angle))
-                    },
-                ];
-                for stream in 0..2 {
-                    let h = expected[stream]
-                        .mul(ComplexSample::rotation(0.7))
-                        .scale(gain);
-                    error += channels[stream][k.rem_euclid(256) as usize].sub(h).power();
-                    energy += h.power();
+        for (rows, count, long_delay) in [
+            (
+                include_str!("../../tests/fixtures/iq/he-mu-stbc-training-index.tsv"),
+                768,
+                false,
+            ),
+            (
+                include_str!("../../tests/fixtures/iq/he-mu-stbc-training-long-index.tsv"),
+                192,
+                true,
+            ),
+        ] {
+            assert_eq!(rows.lines().skip(1).count(), count);
+            for row in rows.lines().skip(1) {
+                let c: Vec<_> = row.split('\t').collect();
+                let ru: u16 = c[1].parse().unwrap();
+                let allocation = Tones::ru(ru, c[2].parse().unwrap()).unwrap();
+                fields.ltf_size = c[3].parse().unwrap();
+                fields.guard_ns = c[4].parse::<u16>().unwrap() * 50;
+                fields.ltf_symbols = c[5].parse().unwrap();
+                let branch: usize = c[6].parse().unwrap();
+                let bytes = std::fs::read(format!(
+                    "{}/tests/fixtures/iq/{}.cs8",
+                    env!("CARGO_MANIFEST_DIR"),
+                    c[0]
+                ))
+                .unwrap();
+                let wave: Vec<_> = bytes
+                    .chunks_exact(2)
+                    .map(|b| ComplexSample {
+                        i: b[0] as i8 as f32 / 128.,
+                        q: b[1] as i8 as f32 / 128.,
+                    })
+                    .collect();
+                let channels = train_stbc_ru_field(&wave, &a, allocation, &fields, 0)
+                    .unwrap_or_else(|| panic!("{}", c[0]));
+                let gain = c[7].parse::<f32>().unwrap() / 128.
+                    * 4.
+                    * (52. / f32::from(ru)).sqrt()
+                    * std::f32::consts::FRAC_1_SQRT_2;
+                let mut error = 0.;
+                let mut energy = 0.;
+                for k in allocation.active() {
+                    let angle = std::f32::consts::TAU * k as f32 / 256.;
+                    let guard = f32::from(fields.guard_ns) / 50.;
+                    let expected = [
+                        if branch == 1 {
+                            ComplexSample::ZERO
+                        } else {
+                            ComplexSample { i: 1., q: 0.25 }.mul(ComplexSample::rotation(
+                                -(if long_delay { guard - 3. } else { 3. }) * angle,
+                            ))
+                        },
+                        if branch == 2 {
+                            ComplexSample::ZERO
+                        } else {
+                            ComplexSample { i: 0.6, q: -0.3 }
+                                .mul(ComplexSample::rotation(
+                                    -(if long_delay { guard - 6. } else { 0. }) * angle,
+                                ))
+                                .add(ComplexSample { i: 0., q: 0.2 }.mul(ComplexSample::rotation(
+                                    -(if long_delay { guard - 2. } else { 5. }) * angle,
+                                )))
+                                .mul(ComplexSample::rotation(8. * angle))
+                        },
+                    ];
+                    for stream in 0..2 {
+                        let h = expected[stream]
+                            .mul(ComplexSample::rotation(0.7))
+                            .scale(gain);
+                        error += channels[stream][k.rem_euclid(256) as usize].sub(h).power();
+                        energy += h.power();
+                    }
                 }
-            }
-            assert!(
-                (error / energy).sqrt() < 0.06,
-                "{}: {}",
-                c[0],
-                (error / energy).sqrt()
-            );
-            for k in -128i32..128 {
-                if !allocation.contains(k) {
-                    assert!(channels
-                        .iter()
-                        .all(|h| h[k.rem_euclid(256) as usize].power() == 0.));
+                assert!(
+                    (error / energy).sqrt() < 0.06,
+                    "{}: {}",
+                    c[0],
+                    (error / energy).sqrt()
+                );
+                for k in -128i32..128 {
+                    if !allocation.contains(k) {
+                        assert!(channels
+                            .iter()
+                            .all(|h| h[k.rem_euclid(256) as usize].power() == 0.));
+                    }
                 }
+                assert!(
+                    train_stbc_ru_field(&wave[..wave.len() - 1], &a, allocation, &fields, 0)
+                        .is_none()
+                );
+                assert!(train_stbc_ru_field(&wave, &a, allocation, &fields, usize::MAX).is_none());
+                assert!(train_stbc_ru_field(
+                    &vec![ComplexSample::ZERO; wave.len()],
+                    &a,
+                    allocation,
+                    &fields,
+                    0
+                )
+                .is_none());
+                let mut bad = wave.clone();
+                bad[wave.len() - 1].i = f32::NAN;
+                assert!(train_stbc_ru_field(&bad, &a, allocation, &fields, 0).is_none());
             }
-            assert!(
-                train_stbc_ru_field(&wave[..wave.len() - 1], &a, allocation, &fields, 0).is_none()
-            );
-            assert!(train_stbc_ru_field(&wave, &a, allocation, &fields, usize::MAX).is_none());
-            assert!(train_stbc_ru_field(
-                &vec![ComplexSample::ZERO; wave.len()],
-                &a,
-                allocation,
-                &fields,
-                0
-            )
-            .is_none());
-            let mut bad = wave.clone();
-            bad[wave.len() - 1].i = f32::NAN;
-            assert!(train_stbc_ru_field(&bad, &a, allocation, &fields, 0).is_none());
         }
         for count in [0, 1, 3, 5, 7, 9, 255] {
             fields.ltf_symbols = count;

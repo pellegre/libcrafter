@@ -48,7 +48,7 @@ adds 368 complete independent waveforms and eight invalid cases, including
 loss of either transmit branch. The finite-delay estimator includes the second
 stream's cyclic shift; it does not guarantee recovery of arbitrary channels.
 
-HE TB payloads, MU STBC/spatial separation, wider channels and independent
+HE TB payloads, MU-MIMO spatial separation, wider channels and independent
 multiple DATA streams are not implemented by this receive path. Offline
 qualification uses 200 BCC and 240 LDPC complete independent waveforms; it does not establish
 HE-capable dongle interoperability, sustained real-time speed or modern TX.
@@ -208,14 +208,14 @@ This symbol kernel alone does not establish packet integrity.
 
 The private MU IQ-to-PSDU path now connects checked SIG-B, MU timing, RU
 training, pilot polarity, DATA demodulation and BCC/LDPC recovery for one
-non-STBC stream per RU. It preserves original user positions and per-user
+DATA stream per RU, optionally with STBC. It preserves original user positions and per-user
 failures, bounds samples/PSDU allocation, and refreshes channels at midambles.
-For extra LTFs in multi-RU packets it estimates each one-stream channel from
+For extra LTFs in non-STBC multi-RU packets it estimates each channel from
 the first LTF; it does not average all training symbols. A 252-waveform cs8
 corpus covers all 16 HE20 RU positions, applicable DCM, constellations through
 1024-QAM with LDPC, all four guard/training pairs, extra LTF counts, midambles,
 CFO/selective channels, bad SERVICE and failed user CRC blocks. These synthetic
-PSDUs are not MAC frames. MU STBC/spatial separation,
+PSDUs are not MAC frames. MU-MIMO spatial separation,
 mixed-coding cross-user qualification and live HE
 validation remain unfinished; this is not a full MU support claim.
 
@@ -229,6 +229,27 @@ Combined output retains its documented completion/start/rate ordering, not
 RU order. Duplicate suppression distinguishes users even when their bytes,
 aggregate offsets and PPDU intervals are identical. This remains offline
 qualification, not proof of live HE interoperability or real-time throughput.
+
+MU STBC reception supports BCC MCS0–9 and LDPC MCS0–11 on all HE20 RU
+positions, including the MU-specific 4x-LTF/800ns combination. A single RU
+requires two LTFs; multiple RUs may signal 2/4/6/8. STBC is forbidden with
+DCM or any MU-MIMO RU. Both DATA symbols in the final pair honor post-FEC
+padding, and midambles refresh both channel estimates and common-clock tracking.
+The 380 complete-MAC fixtures cover branch loss, distinct per-RU spatial
+mapping, compressed one-user signaling, SERVICE/user-CRC/FCS rejection,
+partial LDPC salvage, and invalid single-RU LTF counts.
+
+Training phase and DATA phase/clock slope use pooled pilots, correlating each
+pilot against its own channel rather than assuming identical RU channels.
+This avoids fitting an independent slope to two noisy pilot observations in
+each small RU. R-matrix observations directly estimate summed pilot channels.
+Small-RU STBC delay-model complexity is chosen from held-out LTF measurements,
+with the full guard-length model retained; 192 separate long-delay fields
+check that this does not silently exclude channels near the guard boundary.
+The DATA path caches at most 400 phase-corrected FFT symbols (819200 bytes of
+additional bounded working storage), using fallible allocation. This does not
+increase the time-domain sample-retention limit. These remain offline receive
+results, not live HE, sustained real-time, or modern-transmit qualification.
 
 Compressed HE20 signaling with one user is independently qualified through
 MAC recovery by 242 additional waveforms. Per 27.3.11.8.4, this case uses a

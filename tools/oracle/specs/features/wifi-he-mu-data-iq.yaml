@@ -17,4 +17,4 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - One non-STBC spatial stream per RU. Preserves per-user failures. PSDUs require MAC/FCS verification before publication; streaming integration and spatial separation remain pending.
+      - One DATA stream per RU with optional STBC. Preserves per-user failures. PSDUs require MAC/FCS verification in the streaming publication path; MU-MIMO spatial separation remains unsupported.

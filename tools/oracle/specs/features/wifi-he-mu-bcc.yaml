@@ -18,4 +18,4 @@ backend_support:
     status: partial
     notes:
       - Deinterleaved and stream-recombined soft metrics only. Caller verifies signaling and spatial admission; output bytes still require MAC/FCS validation.
-      - Per-user BCC uses RU capacity and global STBC grouping; no MU IQ demodulation or complete streaming DATA integration yet.
+      - Per-user BCC uses RU capacity and global STBC grouping. This FEC kernel alone does not establish IQ demodulation or MAC integrity; those are qualified by the MU stream contracts.

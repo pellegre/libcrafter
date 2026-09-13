@@ -21,4 +21,4 @@ backend_support:
     status: partial
     notes:
       - Requires an independently admitted single stream, estimated channel and pilot polarity. Does not validate MU headers, training, FEC or MAC FCS.
-      - STBC pairs use two effective channel estimates and summed-channel pilots. No streaming STBC admission or complete MU STBC frame qualification is implied.
+      - STBC pairs use two effective channel estimates and summed-channel pilots. The MU PPDU path can supply jointly phase-corrected FFT bins; the symbol kernel alone does not establish header admission or MAC integrity.

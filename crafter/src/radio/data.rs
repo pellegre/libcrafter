@@ -1701,6 +1701,118 @@ mod vht_bcc_tests;
 mod tests {
     use super::*;
     #[test]
+    fn radio_he_mu_stbc_streaming_complete_aggregates() {
+        let rows = include_str!("../../tests/fixtures/iq/he-mu-stbc-iq-index.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 380);
+        let mut failures = Vec::new();
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let expected: Vec<Vec<u8>> = c[11]
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(|s| {
+                    (0..s.len())
+                        .step_by(2)
+                        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+                        .collect()
+                })
+                .collect();
+            let users: Vec<usize> = c[10]
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.parse().unwrap())
+                .collect();
+            for size in [37, 997] {
+                let mut decoder = WifiDecoder::new();
+                let mut cfg = config();
+                cfg.max_pending_frames = 32;
+                let out = feed_config(&mut decoder, &bytes, size, cfg).unwrap();
+                if out.frames.len() != expected.len() {
+                    failures.push(format!(
+                        "{} size{size}: {} of {} frames",
+                        c[0],
+                        out.frames.len(),
+                        expected.len()
+                    ));
+                    continue;
+                }
+                assert_eq!(
+                    decoder.ofdm_stats().invalid_fcs,
+                    c[12].parse().unwrap(),
+                    "{}",
+                    c[0]
+                );
+                let fields = out
+                    .diagnostics
+                    .iter()
+                    .find_map(|d| match d {
+                        PhyDiagnostic::HeMuSigB { fields, .. } => Some(fields),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("{}: {:?}", c[0], out.diagnostics));
+                assert!(fields.signal.stbc);
+                assert_eq!(fields.signal.ltf_size, c[4].parse().unwrap());
+                assert_eq!(fields.signal.guard_ns, c[5].parse::<u16>().unwrap() * 50);
+                assert_eq!(fields.signal.ltf_symbols, c[6].parse().unwrap());
+                assert_eq!(
+                    fields.signal.midamble_period.unwrap_or(0),
+                    c[7].parse().unwrap()
+                );
+                assert_eq!(fields.signal.sig_b_compression, c[9] == "1");
+                let mut frames: Vec<_> = out.frames.iter().collect();
+                frames.sort_by_key(|f| {
+                    f.diagnostics
+                        .iter()
+                        .find_map(|d| match d {
+                            PhyDiagnostic::HeMuUser { user_index, .. } => Some(*user_index),
+                            _ => None,
+                        })
+                        .unwrap()
+                });
+                if c[8] == "ldpc" {
+                    assert!(out.diagnostics.iter().any(|d| matches!(
+                        d,
+                        PhyDiagnostic::LdpcPartial {
+                            failed_codewords: 1
+                        }
+                    )));
+                }
+                if c[8] == "invalid-ltf" {
+                    assert!(out
+                        .diagnostics
+                        .iter()
+                        .any(|d| matches!(d, PhyDiagnostic::UnsupportedPhy)));
+                }
+                for ((frame, expected), &user) in frames.into_iter().zip(&expected).zip(&users) {
+                    assert_eq!(&frame.bytes, expected, "{} user{user}", c[0]);
+                    assert_eq!(frame.integrity, FrameIntegrity::ValidFcs);
+                    assert!(valid_fcs(&frame.bytes));
+                    assert_eq!(frame.start.sample_index, 37);
+                    assert_eq!(frame.end_sample_index, c[13].parse().unwrap());
+                    assert!(frame.diagnostics.contains(&PhyDiagnostic::HeMuUser {
+                        user_index: user,
+                        preamble_sample_index: 37
+                    }));
+                    assert!(matches!(fields.users[user].unwrap().encoding,
+                        HeSigBUserEncoding::NonMu { space_time_streams: 2, mcs, ldpc, dcm: false, .. }
+                        if mcs == c[2].parse::<u8>().unwrap() && ldpc == (c[3]=="1")));
+                    assert!(frame
+                        .diagnostics
+                        .iter()
+                        .any(|d| matches!(d, PhyDiagnostic::Ampdu { .. })));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
     fn radio_he_mu_compressed_complete_aggregates() {
         let rows = include_str!("../../tests/fixtures/iq/he-mu-compressed-iq-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 242);
@@ -1862,95 +1974,102 @@ mod tests {
 
     #[test]
     fn radio_he_mu_streaming_limits_and_eof() {
-        let bytes = include_bytes!("../../tests/fixtures/iq/he-mu-ampdu-a0-m4-l1-d0-clean.cs8");
-        assert!(feed(&mut LegacyWifiDecoder::new(), bytes, 37)
-            .frames
-            .is_empty());
-        let mut cfg = config();
-        cfg.max_pending_frames = 32;
-        let out = feed_config(
-            &mut WifiDecoder::new(),
-            &bytes[..bytes.len() - 2],
-            37,
-            cfg.clone(),
-        )
-        .unwrap();
-        assert!(out.frames.is_empty());
-        assert!(out.diagnostics.contains(&PhyDiagnostic::TruncatedFrame));
-        cfg.max_pending_frames = 3;
-        assert!(matches!(
-            feed_config(&mut WifiDecoder::new(), bytes, 997, cfg),
-            Err(RadioError::Limit { .. })
-        ));
-        for budget in [512, 1024, 4096, 120000] {
-            let mut decoder = LegacyOfdmDecoder::with_ht();
+        for bytes in [
+            include_bytes!("../../tests/fixtures/iq/he-mu-ampdu-a0-m4-l1-d0-clean.cs8").as_slice(),
+            include_bytes!(
+                "../../tests/fixtures/iq/he-mu-stbc-a0-m4-l1-ltf4-g16-n2-p0-c0-flat.cs8"
+            )
+            .as_slice(),
+        ] {
+            assert!(feed(&mut LegacyWifiDecoder::new(), bytes, 37)
+                .frames
+                .is_empty());
             let mut cfg = config();
-            cfg.max_buffer_samples = budget;
-            cfg.max_chunk_samples = 37;
             cfg.max_pending_frames = 32;
-            let mut frames = 0;
-            for (sequence, part) in bytes.chunks(74).enumerate() {
+            let out = feed_config(
+                &mut WifiDecoder::new(),
+                &bytes[..bytes.len() - 2],
+                37,
+                cfg.clone(),
+            )
+            .unwrap();
+            assert!(out.frames.is_empty());
+            assert!(out.diagnostics.contains(&PhyDiagnostic::TruncatedFrame));
+            cfg.max_pending_frames = 3;
+            assert!(matches!(
+                feed_config(&mut WifiDecoder::new(), bytes, 997, cfg),
+                Err(RadioError::Limit { .. })
+            ));
+            for budget in [512, 1024, 4096, 120000] {
+                let mut decoder = LegacyOfdmDecoder::with_ht();
+                let mut cfg = config();
+                cfg.max_buffer_samples = budget;
+                cfg.max_chunk_samples = 37;
+                cfg.max_pending_frames = 32;
+                let mut frames = 0;
+                for (sequence, part) in bytes.chunks(74).enumerate() {
+                    let chunk = IqChunk::new(
+                        cfg.clone(),
+                        IqPosition {
+                            epoch: 0,
+                            sequence: sequence as u64,
+                            sample_index: (sequence * 37) as u64,
+                            time_anchor: None,
+                            discontinuity: None,
+                        },
+                        part.iter().map(|b| *b as i8).collect(),
+                    )
+                    .unwrap();
+                    frames += decoder.consume(IqEvent::Chunk(chunk)).unwrap().frames.len();
+                    assert!(
+                        decoder
+                            .pending
+                            .iter()
+                            .flatten()
+                            .map(|p| p.samples.capacity())
+                            .sum::<usize>()
+                            <= budget
+                    );
+                }
+                if budget == 120000 {
+                    assert_eq!(frames, 18);
+                }
+            }
+            let mut cfg = config();
+            cfg.max_pending_frames = 32;
+            cfg.max_chunk_samples = 120000;
+            let mut decoder = WifiDecoder::new();
+            for (sequence, start, part) in [(0, 0, &bytes[..4000]), (1, 2001, &bytes[4002..])] {
                 let chunk = IqChunk::new(
                     cfg.clone(),
                     IqPosition {
                         epoch: 0,
-                        sequence: sequence as u64,
-                        sample_index: (sequence * 37) as u64,
+                        sequence,
+                        sample_index: start,
                         time_anchor: None,
                         discontinuity: None,
                     },
                     part.iter().map(|b| *b as i8).collect(),
                 )
                 .unwrap();
-                frames += decoder.consume(IqEvent::Chunk(chunk)).unwrap().frames.len();
-                assert!(
-                    decoder
-                        .pending
+                let out = decoder.consume(IqEvent::Chunk(chunk)).unwrap();
+                assert!(out.frames.is_empty());
+                if sequence == 1 {
+                    assert!(out
+                        .diagnostics
                         .iter()
-                        .flatten()
-                        .map(|p| p.samples.capacity())
-                        .sum::<usize>()
-                        <= budget
-                );
+                        .any(|d| matches!(d, PhyDiagnostic::Reset(ResetReason::Gap(_)))));
+                }
             }
-            if budget == 120000 {
-                assert_eq!(frames, 18);
-            }
+            decoder.reset(ResetReason::Explicit);
+            assert_eq!(
+                feed_config(&mut decoder, bytes, 997, cfg)
+                    .unwrap()
+                    .frames
+                    .len(),
+                18
+            );
         }
-        let mut cfg = config();
-        cfg.max_pending_frames = 32;
-        cfg.max_chunk_samples = 120000;
-        let mut decoder = WifiDecoder::new();
-        for (sequence, start, part) in [(0, 0, &bytes[..4000]), (1, 2001, &bytes[4002..])] {
-            let chunk = IqChunk::new(
-                cfg.clone(),
-                IqPosition {
-                    epoch: 0,
-                    sequence,
-                    sample_index: start,
-                    time_anchor: None,
-                    discontinuity: None,
-                },
-                part.iter().map(|b| *b as i8).collect(),
-            )
-            .unwrap();
-            let out = decoder.consume(IqEvent::Chunk(chunk)).unwrap();
-            assert!(out.frames.is_empty());
-            if sequence == 1 {
-                assert!(out
-                    .diagnostics
-                    .iter()
-                    .any(|d| matches!(d, PhyDiagnostic::Reset(ResetReason::Gap(_)))));
-            }
-        }
-        decoder.reset(ResetReason::Explicit);
-        assert_eq!(
-            feed_config(&mut decoder, bytes, 997, cfg)
-                .unwrap()
-                .frames
-                .len(),
-            18
-        );
     }
 
     #[test]
