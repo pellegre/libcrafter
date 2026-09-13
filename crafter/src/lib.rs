@@ -150,12 +150,12 @@ pub use protocols::exports::*;
 #[cfg(feature = "radio")]
 pub use radio::{
     DsssPlcpFields, DsssPreamble, EncodedWifiTransmission, HtCoding, HtFormat, HtGuardInterval,
-    HeSignalError, HeSuSignalFields, HtMcs, HtSignalBits, HtSignalError, HtSignalFields,
-    HtTransmission, HtTxConfig, IqSink, LegacyDsssCckRate, LegacyDsssCckTransmission,
-    LegacyDsssCckTxConfig, LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig,
-    LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink, OfdmSignalFields,
-    RadioPacketWriter, VhtSignalAError, VhtSignalAFields, VhtSignalAUsers, WifiDecoder,
-    WifiFcsPolicy, WifiTxEncoder,
+    HeMuSignalFields, HeSignalError, HeSuSignalFields, HtMcs, HtSignalBits, HtSignalError,
+    HtSignalFields, HtTransmission, HtTxConfig, IqSink, LegacyDsssCckRate,
+    LegacyDsssCckTransmission, LegacyDsssCckTxConfig, LegacyOfdmRate, LegacyOfdmTransmission,
+    LegacyOfdmTxConfig, LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink,
+    OfdmSignalFields, RadioPacketWriter, VhtSignalAError, VhtSignalAFields, VhtSignalAUsers,
+    WifiDecoder, WifiFcsPolicy, WifiTxEncoder,
 };
 #[cfg(feature = "radio-hackrf")]
 pub use radio::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};
@@ -270,8 +270,8 @@ pub mod prelude {
     pub use crate::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};
     #[cfg(feature = "radio")]
     pub use crate::{
-        HeSignalError, HeSuSignalFields, HtSignalError, HtSignalFields, VhtSignalAError,
-        VhtSignalAFields, VhtSignalAUsers, VhtSignalB20Content, VhtSignalB20Error,
+        HeMuSignalFields, HeSignalError, HeSuSignalFields, HtSignalError, HtSignalFields,
+        VhtSignalAError, VhtSignalAFields, VhtSignalAUsers, VhtSignalB20Content, VhtSignalB20Error,
         VhtSignalB20Fields,
     };
     #[cfg(feature = "whad")]

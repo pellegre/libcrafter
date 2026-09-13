@@ -23,6 +23,13 @@ HE transmission, or support for every HE format. MU and trigger-based layouts
 are separate work. The native hardware and TX qualification described elsewhere
 in this document must not be interpreted as qualification of these HE modes.
 
+`HeMuSignalFields` separately decodes HE MU SIG-A bits or interleaved soft
+metrics after the caller has established the MU format. It checks CRC, tail,
+and format-specific field encodings and preserves the raw SIG-B symbol/user
+count, including the ambiguous uncompressed value 15. This signaling kernel
+does not yet connect MU IQ acquisition, SIG-B allocation decoding, or MU DATA
+recovery to `WifiDecoder`.
+
 ## Boundary and scope
 
 IQ sources supply owned sample chunks to a stateful PHY decoder. Reconstructed

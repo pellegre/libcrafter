@@ -53,6 +53,14 @@ initial-segment inversion, extra-segment thresholds, shortening, puncturing,
 repetition and codeword recovery with post-FEC padding excluded. MCS0-11,
 DCM/STBC and stream counts here are coding dimensions, not IQ qualification.
 
+`he-mu-signal-a-index.tsv` contains 5,280 HE MU SIG-A bit/encoded-metric
+cases covering SIG-B MCS/DCM, compression and bandwidth, GI, Doppler-dependent
+LTF counts, and other field values. `he-mu-signal-a-invalid.tsv` adds 24 CRC,
+tail and reserved-field cases. Generate with `he_mu_signal_vectors.py --write`
+or verify without arguments. The raw symbol/user count is retained: an
+uncompressed value of 15 does not determine the exact SIG-B length by itself.
+These are header kernels, not MU IQ payload or hardware qualification.
+
 `he-ldpc-partial-index.tsv` contains 18 complete HE LDPC waveforms with one
 independently corrupted codeword: SU, ER242 and ER106, each plain/DCM/STBC,
 with either the first or a middle codeword damaged. A long first MPDU overlaps

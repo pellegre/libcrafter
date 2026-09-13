@@ -592,6 +592,41 @@ fn radio_he_su_prefix_independent_inventory() {
 }
 
 #[test]
+fn radio_he_mu_signal_a_independent_inventory() {
+    for (index, count, digest, columns) in [
+        (
+            include_str!("fixtures/iq/he-mu-signal-a-index.tsv"),
+            5280,
+            "6fd4084a1c8696980295f61999734e7ab05a9efdebf6fe72818bee043ba57a8a",
+            19,
+        ),
+        (
+            include_str!("fixtures/iq/he-mu-signal-a-invalid.tsv"),
+            24,
+            "c15bc730a40429bbe66af2a60ca084c39c762534ae97ea962e147d31bb785181",
+            4,
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        assert_eq!(index.lines().skip(1).count(), count);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            assert_eq!(c.len(), columns);
+            let bits = c[usize::from(columns == 4)];
+            assert_eq!(bits.len(), 52);
+            assert!(bits.bytes().all(|b| matches!(b, b'0' | b'1')));
+            if columns == 19 {
+                assert_eq!(c[1].len(), 104);
+                assert!(c[1].bytes().all(|b| matches!(b, b'0' | b'1')));
+                let bits: Vec<_> = bits.bytes().map(|b| b - b'0').collect();
+                let fields = crafter::prelude::HeMuSignalFields::decode(&bits).unwrap();
+                assert_eq!(fields.sig_b_symbols_or_users, c[8].parse::<u8>().unwrap());
+            }
+        }
+    }
+}
+
+#[test]
 fn radio_he_signal_a_independent_inventory() {
     let index = include_str!("fixtures/iq/he-signal-a-index.tsv");
     assert_eq!(

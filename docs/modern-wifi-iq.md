@@ -48,7 +48,7 @@ adds 368 complete independent waveforms and eight invalid cases, including
 loss of either transmit branch. The finite-delay estimator includes the second
 stream's cyclic shift; it does not guarantee recovery of arbitrary channels.
 
-HE MU/TB, ER upper106-tone payloads, wider channels and independent
+HE MU/TB payloads, wider channels and independent
 multiple DATA streams are not implemented by this receive path. Offline
 qualification uses 200 BCC and 240 LDPC complete independent waveforms; it does not establish
 HE-capable dongle interoperability, sustained real-time speed or modern TX.
@@ -64,17 +64,29 @@ raw payload bytes and publishes FCS-qualified MAC frames: MCS0-2 with BCC or
 LDPC, DCM on MCS0/1, and one DATA stream including STBC. Training normalization
 accounts for ER's power boost; DATA pilots follow its longer header. Midambles
 refresh the same normalized channel estimates. The upper106-tone allocation
-still reports `UnsupportedPhy` after signaling.
+also recovers MCS0 BCC/LDPC payloads, with applicable DCM, STBC and midambles.
 
 Private format-aware payload-capacity arithmetic now covers upper106 too:
 102 DATA tones (51 with DCM), short padding segments of24 or12 tones, and
-ER-specific MCS/stream restrictions. Its forward geometry tests do not connect
-upper106 training, codeword recovery or public frame publication yet.
+ER-specific MCS/stream restrictions. Allocation-aware training, BCC/LDPC
+recovery and FCS-qualified public frame publication are connected to this path.
 
 The BCC coded-bit kernel also accepts explicit ER context and recovers upper106
 PSDU bytes, removing the DCM filler after50 coded bits rather than116. The
-existing ER242 IQ path uses this entrypoint. These coded-bit tests do not yet
-connect upper106 IQ demodulation, LDPC recovery or MAC publication.
+ER242 and upper106 IQ paths use this entrypoint. The independent upper106
+corpus adds 104 complete waveforms and 16 negative cases; it tests exact
+payload recovery, chunked reception, bounds, and packet/artifact metadata.
+
+HE LDPC reception can retain intact aggregate members after another codeword
+fails. SERVICE validation remains mandatory, each delivered MPDU must pass
+FCS, and surviving frames carry partial-LDPC failure diagnostics. Eighteen
+independent SU/ER242/ER106 waveforms exercise this behavior.
+
+`HeMuSignalFields` decodes MU SIG-A bits and interleaved metrics, with a distinct
+field layout and CRC/tail checks. It preserves the raw SIG-B count because an
+uncompressed value of 15 may mean 16 or more symbols. The 5,280 header cases and
+24 malformed cases qualify this kernel only, not MU IQ acquisition, SIG-B
+allocation decoding, or payload recovery.
 
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,

@@ -79,38 +79,11 @@ impl SuSignal {
 
     /// Two interleaved 52-tone symbols; caller handles constellation rotations.
     pub fn decode_interleaved(metrics: &[f32]) -> Result<Self, Error> {
-        if metrics.len() != 104 || metrics.iter().any(|m| !m.is_finite()) {
-            return Err(Error::Metrics);
-        }
-        let scale = metrics.iter().map(|v| v.abs()).fold(0f32, f32::max);
-        if scale == 0. {
-            return Err(Error::Metrics);
-        }
-        let coded: [f32; 104] = std::array::from_fn(|k| {
-            let bit = k % 52;
-            metrics[52 * (k / 52) + 4 * (bit % 13) + bit / 13] / scale
-        });
-        let pairs: [[f32; 2]; 52] = std::array::from_fn(|i| [coded[2 * i], coded[2 * i + 1]]);
-        Self::decode(&super::signal::decode_bcc(&pairs))
+        Self::decode(&decode_interleaved_bits(metrics)?)
     }
 
     pub fn decode(bits: &[u8]) -> Result<Self, Error> {
-        if bits.len() != 52 {
-            return Err(Error::BitCount {
-                available: bits.len(),
-            });
-        }
-        if let Some(index) = bits.iter().position(|b| *b > 1) {
-            return Err(Error::NonBinary { index });
-        }
-        let expected = super::ht::crc(&bits[..42]) >> 4;
-        let received = bits[42..46].iter().fold(0, |v, b| (v << 1) | b);
-        if expected != received {
-            return Err(Error::Crc { expected, received });
-        }
-        if let Some(index) = (46..52).find(|i| bits[*i] != 0) {
-            return Err(Error::Tail { index });
-        }
+        validate_bits(bits)?;
         if bits[0] == 0 {
             return Err(Error::NotSu);
         }
@@ -171,6 +144,42 @@ impl SuSignal {
             guard_ns,
         })
     }
+}
+
+pub(super) fn decode_interleaved_bits(metrics: &[f32]) -> Result<[u8; 52], Error> {
+    if metrics.len() != 104 || metrics.iter().any(|m| !m.is_finite()) {
+        return Err(Error::Metrics);
+    }
+    let scale = metrics.iter().map(|v| v.abs()).fold(0f32, f32::max);
+    if scale == 0. {
+        return Err(Error::Metrics);
+    }
+    let coded: [f32; 104] = std::array::from_fn(|k| {
+        let bit = k % 52;
+        metrics[52 * (k / 52) + 4 * (bit % 13) + bit / 13] / scale
+    });
+    let pairs: [[f32; 2]; 52] = std::array::from_fn(|i| [coded[2 * i], coded[2 * i + 1]]);
+    Ok(super::signal::decode_bcc(&pairs))
+}
+
+pub(super) fn validate_bits(bits: &[u8]) -> Result<(), Error> {
+    if bits.len() != 52 {
+        return Err(Error::BitCount {
+            available: bits.len(),
+        });
+    }
+    if let Some(index) = bits.iter().position(|b| *b > 1) {
+        return Err(Error::NonBinary { index });
+    }
+    let expected = super::ht::crc(&bits[..42]) >> 4;
+    let received = bits[42..46].iter().fold(0, |v, b| (v << 1) | b);
+    if expected != received {
+        return Err(Error::Crc { expected, received });
+    }
+    if let Some(index) = (46..52).find(|i| bits[*i] != 0) {
+        return Err(Error::Tail { index });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
