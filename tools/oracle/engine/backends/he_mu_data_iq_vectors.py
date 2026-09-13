@@ -26,7 +26,7 @@ from he_ldpc_rate_vectors import layout, encode_information, damage_codeword, RA
 
 def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage='none',mac_payloads=None,
              compressed=False,sig_b_mcs=0,sig_b_dcm=False,stbc=False,stbc_case='flat',
-             user_modes=None,pre_fec_padding=3,sizing_trace=None):
+             user_modes=None,pre_fec_padding=3,sizing_trace=None,tb_ru=None):
     assert not compressed or code==192
     assert sig_b_mcs in range(6) and (not sig_b_dcm or sig_b_mcs in (0,1,3,4))
     assert not stbc or nltf in (2,4,6,8)
@@ -36,6 +36,12 @@ def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage=
         ru,slot,users=map(int,item.split(':')); assert users==1
         index=slot if ru==26 else ({1:1,3:2,6:3,8:4}[slot] if ru==52 else (1 if slot==1 else 2) if ru==106 else 1)
         data,pilots=geom[ru,index]; rus.append((ru,data,pilots))
+    if tb_ru is not None:
+        assert not compressed and (size,guard) in ((2,32),(4,64))
+        ru,index=tb_ru
+        data,pilots=geom[ru,index]
+        rus=[(ru,data,pilots)]
+        assert ru!=242 or nltf==1+int(stbc)
     modes=[(mcs,ldpc,dcm)]*len(rus) if user_modes is None else list(user_modes)
     assert len(modes)==len(rus) and pre_fec_padding in (1,2,3,4)
     for user_mcs,user_ldpc,user_dcm in modes:
@@ -123,13 +129,19 @@ def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage=
             ([a,b],[a],[b])[n%3] if sig_b_mcs in (2,4) else ([a,b] if n%2==0 else [a]))
     training_samples=nltf*(64*size+guard)
     midambles=(symbols-2)//period if period else 0
-    end=720+80*sigb+training_samples+symbols*(256+guard)+midambles*training_samples
-    units=math.ceil(F(end-400,80));length=3*units-4
+    if tb_ru is not None:sigb=0
+    end=(800 if tb_ru is not None else 720)+80*sigb+training_samples+symbols*(256+guard)+midambles*training_samples
+    units=math.ceil(F(end-400,80));length=3*units-(5 if tb_ru is not None else 4)
     header=[0]*52
     for start,width,value in [(1,3,sig_b_mcs),(4,1,int(sig_b_dcm)),(5,6,37),(18,4,0 if compressed else min(sigb-1,15)),(22,1,int(compressed)),(23,2,{(4,16):0,(2,16):1,(2,32):2,(4,64):3}[size,guard]),
         (25,1,int(bool(period))),(33,1,1),(34,3,[1,2,4,6,8].index(nltf)),(37,1,int(extra)),(38,1,int(stbc)),(39,2,final_padding%4)]:put(header,start,width,value)
     if period==20:header[36]=1
+    if tb_ru is not None:
+        from he_tb_signal_vectors import header as tb_header
+        header=tb_header(0,37,[0]*4,0,511)
     repair(header);siga=encoded(header)
+    if sizing_trace is not None:
+        sizing_trace.update(length=length,padding=final_padding)
     legacy=base.interleave(base.encode(base.signal('1101',length)),1)
     wave=[0j]*37+[v*math.sqrt(52/56) for v in base.preamble()]
     wave+=symbol(legacy,legacy=True)*2+symbol(siga[:52])+symbol(siga[52:])
@@ -157,13 +169,17 @@ def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage=
         return result
 
     stf={k:v*(1+1j)/math.sqrt(2) for k,v in zip(range(-112,113,16),[-1,-1,-1,1,1,1,-1,1,1,1,-1,1,1,-1,1]) if k}
+    if tb_ru is not None:
+        # ax Eq27-28: TB uses spacing8 and an8us STF, not the MU pattern.
+        m=[-1,-1,-1,1,1,1,-1,1,1,1,-1,1,1,-1,1]
+        stf={k:v*(1+1j)/math.sqrt(2) for k,v in zip(range(-120,121,8),m+[0]+[-v for v in m]) if k}
     freq=[0j]*245
     for ru,data,pilots in rus:
         selected=[k for k in data+pilots if k in stf]
         for k in selected:freq[k+122]=stf[k]*math.sqrt(ru/len(selected)/total)
     if stbc:
         for k in range(-122,123):freq[k+122]*=sum(channels(k,0))
-    wave += [v*4*math.sqrt(52) for v in training.ifft(freq)][:80]
+    wave += [v*4*math.sqrt(52) for v in training.ifft(freq)][:160 if tb_ru is not None else 80]
     seq={2:training.LTF2,4:training.LTF4}[size]
     active={k for _,d,p in rus for k in d+p}
     ltf=[v*4*math.sqrt(52/(total*size/4)) for v in training.ifft([{'-':-1,'+':1,'0':0}[v] if k in active else 0 for k,v in zip(range(-122,123),seq)])][:64*size]

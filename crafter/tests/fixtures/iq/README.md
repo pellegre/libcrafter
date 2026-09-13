@@ -1,5 +1,12 @@
 # Independent IQ vector contract
 
+`he-tb-data-iq-index.tsv` indexes 282 independent isolated-user TB waveforms.
+They cover all 16 HE20 RU positions, BCC/LDPC, one DATA stream with applicable
+DCM or STBC, both OFDMA training/guard modes, midambles, channel impairments
+and invalid SERVICE. Explicit Trigger fields accompany each waveform; these
+synthetic PSDUs are not MAC frames or automatic Trigger-association evidence.
+Generate with `he_tb_data_iq_vectors.py`; `--check` reproduces every byte.
+
 `he-tb-prefix-index.tsv` indexes 256 independently generated HE20 TB IQ
 prefixes and `he-tb-prefix-invalid-index.tsv` adds 14 negative cases.
 They exercise repeated 6 Mb/s L-SIG, modulo-three classification, SIG-A

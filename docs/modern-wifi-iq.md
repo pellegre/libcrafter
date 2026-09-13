@@ -329,6 +329,15 @@ so this isolated-user path rejects it and masked training. These kernels still
 require caller-established acquisition and positions; they do not establish
 simultaneous-user clock acquisition or end-to-end TB frame recovery.
 
+The private isolated-user TB IQ kernel now connects checked TB signaling and
+explicit Trigger fields to timing, RU training, pilot tracking and BCC/LDPC
+PSDU recovery. It uses TB's longer STF and DATA pilot offset, refreshing
+training at midambles. Its 282 independent waveforms cover all 16 RU positions,
+applicable one-stream DCM/STBC modes, both OFDMA guard/training combinations,
+channel impairments and SERVICE rejection. This is not yet streaming TB frame
+publication: exchange association, simultaneous-user acquisition and aggregate
+MPDU integrity remain separate integration requirements.
+
 Without Trigger context, the receiver reports `UnsupportedPhy` and does not
 publish a TB frame. This is not payload decoding: RU assignment, MCS,
 coding and training context must come from the triggering exchange
