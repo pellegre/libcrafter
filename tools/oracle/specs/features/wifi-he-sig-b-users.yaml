@@ -1,0 +1,23 @@
+version: 1
+kind: feature
+name: wifi_he_sig_b_users
+summary: Checked HE SIG-B user blocks and allocation-dependent user parameters.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: user-blocks
+    source: IEEE 802.11ax-2021 27.3.11.8.4 Tables 27-27 through 27-30
+    checks: [one_and_two_user_crc, tail_validation, field_layouts, unused_user_arbitrary_bits, per_user_errors, spatial_configurations, stream_offsets, context_bounds, independent_vectors]
+coverage_cases: [wifi-he-sig-b-users]
+supported_cases:
+  - {name: wifi-he-sig-b-users, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - Bit-level user-block validation only. Context comes from checked RU allocation and RU-relative user positions; no SIG-B IQ or MU DATA admission yet.
+      - CRC/tail failure rejects the block. With a valid block, a user's reserved fields or invalid context do not discard another user's result.
+      - STA-ID 2046 retains all ten remaining raw bits as unused parameters, without imposing active-user restrictions.
+      - Global STBC, DCM and FEC/MCS DATA-admission restrictions remain a separate cross-field stage.

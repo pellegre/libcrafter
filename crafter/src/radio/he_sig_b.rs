@@ -1,5 +1,6 @@
-//! HE20 SIG-B common field; IEEE 802.11ax-2021 Tables 27-24/26.
-//! Caller establishes uncompressed 20 MHz SIG-B context. No IQ/DATA admission.
+//! HE20 SIG-B common and user fields; IEEE 802.11ax-2021 Tables 27-24..30.
+//! Caller establishes bandwidth, compression and allocation context.
+//! Bit-level header validation only; no IQ/DATA admission.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeRu20Assignment {
@@ -37,6 +38,21 @@ pub enum HeSigBError {
     },
     ReservedAllocation(u8),
     WiderAllocation(u8),
+    UserCount {
+        available: usize,
+    },
+    UserContext {
+        users: u8,
+        position: u8,
+    },
+    ReservedUserMcs(u8),
+    ReservedUserBit {
+        index: usize,
+    },
+    ReservedSpatialConfiguration {
+        users: u8,
+        code: u8,
+    },
 }
 impl std::fmt::Display for HeSigBError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -44,6 +60,194 @@ impl std::fmt::Display for HeSigBError {
     }
 }
 impl std::error::Error for HeSigBError {}
+
+/// Allocation context established from SIG-A/SIG-B Common, not inferred from
+/// the user bits. MU positions are zero-based within the RU, not the block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeSigBUserContext {
+    NonMu,
+    MuMimo { users: u8, position: u8 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeSigBUserEncoding {
+    /// STA-ID 2046 makes all remaining ten bits arbitrary (Tables 27-28/29).
+    Unused { raw_parameters: u16 },
+    NonMu {
+        space_time_streams: u8,
+        beamformed: bool,
+        mcs: u8,
+        dcm: bool,
+        ldpc: bool,
+    },
+    MuMimo {
+        spatial_configuration: u8,
+        streams: u8,
+        start_stream: u8,
+        total_streams: u8,
+        mcs: u8,
+        ldpc: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeSigBUserFields {
+    pub sta_id: u16,
+    pub encoding: HeSigBUserEncoding,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeSigBUserBlock {
+    users: Vec<Result<HeSigBUserFields, HeSigBError>>,
+}
+
+impl HeSigBUserBlock {
+    /// Decode one or two 21-bit users followed by their shared CRC and tail
+    /// (Table 27-27). Integrity failure rejects the entire block; semantic
+    /// errors are per-user and preserve the other result. This is header
+    /// validation, not cross-field DATA admission or MAC integrity validation.
+    pub fn decode(bits: &[u8], contexts: &[HeSigBUserContext]) -> Result<Self, HeSigBError> {
+        if !(1..=2).contains(&contexts.len()) {
+            return Err(HeSigBError::UserCount {
+                available: contexts.len(),
+            });
+        }
+        validate_block(bits, 21 * contexts.len(), "HE SIG-B user block")?;
+        Ok(Self {
+            users: contexts
+                .iter()
+                .enumerate()
+                .map(|(i, &context)| decode_user(&bits[21 * i..21 * (i + 1)], context))
+                .collect(),
+        })
+    }
+
+    /// Results in transmitted User field order, including unused users/errors.
+    pub fn users(&self) -> &[Result<HeSigBUserFields, HeSigBError>] {
+        &self.users
+    }
+}
+
+fn decode_user(bits: &[u8], context: HeSigBUserContext) -> Result<HeSigBUserFields, HeSigBError> {
+    if let HeSigBUserContext::MuMimo { users, position } = context {
+        if !(2..=8).contains(&users) || position >= users {
+            return Err(HeSigBError::UserContext { users, position });
+        }
+    }
+    let field = |start: usize, len: usize| -> u16 {
+        bits[start..start + len]
+            .iter()
+            .enumerate()
+            .fold(0, |v, (i, b)| v | ((*b as u16) << i))
+    };
+    let sta_id = field(0, 11);
+    if sta_id == 2046 {
+        return Ok(HeSigBUserFields {
+            sta_id,
+            encoding: HeSigBUserEncoding::Unused {
+                raw_parameters: field(11, 10),
+            },
+        });
+    }
+    let mcs = field(15, 4) as u8;
+    if mcs > 11 {
+        return Err(HeSigBError::ReservedUserMcs(mcs));
+    }
+    let ldpc = bits[20] != 0;
+    let encoding = match context {
+        HeSigBUserContext::NonMu => HeSigBUserEncoding::NonMu {
+            space_time_streams: field(11, 3) as u8 + 1,
+            beamformed: bits[14] != 0,
+            mcs,
+            dcm: bits[19] != 0,
+            ldpc,
+        },
+        HeSigBUserContext::MuMimo { users, position } => {
+            if bits[19] != 0 {
+                return Err(HeSigBError::ReservedUserBit { index: 19 });
+            }
+            let code = field(11, 4) as u8;
+            let row = spatial_configuration(users, code)?;
+            HeSigBUserEncoding::MuMimo {
+                spatial_configuration: code,
+                streams: row[position as usize],
+                start_stream: row[..position as usize].iter().sum(),
+                total_streams: row.iter().sum(),
+                mcs,
+                ldpc,
+            }
+        }
+    };
+    Ok(HeSigBUserFields { sta_id, encoding })
+}
+
+fn spatial_configuration(users: u8, code: u8) -> Result<&'static [u8], HeSigBError> {
+    // IEEE 802.11ax-2021 Table 27-30, in increasing B3..B0 order.
+    const TABLE: &[&[&[u8]]] = &[
+        &[
+            &[1, 1],
+            &[2, 1],
+            &[3, 1],
+            &[4, 1],
+            &[2, 2],
+            &[3, 2],
+            &[4, 2],
+            &[3, 3],
+            &[4, 3],
+            &[4, 4],
+        ],
+        &[
+            &[1, 1, 1],
+            &[2, 1, 1],
+            &[3, 1, 1],
+            &[4, 1, 1],
+            &[2, 2, 1],
+            &[3, 2, 1],
+            &[4, 2, 1],
+            &[3, 3, 1],
+            &[4, 3, 1],
+            &[2, 2, 2],
+            &[3, 2, 2],
+            &[4, 2, 2],
+            &[3, 3, 2],
+        ],
+        &[
+            &[1, 1, 1, 1],
+            &[2, 1, 1, 1],
+            &[3, 1, 1, 1],
+            &[4, 1, 1, 1],
+            &[2, 2, 1, 1],
+            &[3, 2, 1, 1],
+            &[4, 2, 1, 1],
+            &[3, 3, 1, 1],
+            &[2, 2, 2, 1],
+            &[3, 2, 2, 1],
+            &[2, 2, 2, 2],
+        ],
+        &[
+            &[1, 1, 1, 1, 1],
+            &[2, 1, 1, 1, 1],
+            &[3, 1, 1, 1, 1],
+            &[4, 1, 1, 1, 1],
+            &[2, 2, 1, 1, 1],
+            &[3, 2, 1, 1, 1],
+            &[2, 2, 2, 1, 1],
+        ],
+        &[
+            &[1, 1, 1, 1, 1, 1],
+            &[2, 1, 1, 1, 1, 1],
+            &[3, 1, 1, 1, 1, 1],
+            &[2, 2, 1, 1, 1, 1],
+        ],
+        &[&[1, 1, 1, 1, 1, 1, 1], &[2, 1, 1, 1, 1, 1, 1]],
+        &[&[1, 1, 1, 1, 1, 1, 1, 1]],
+    ];
+    TABLE
+        .get(usize::from(users).wrapping_sub(2))
+        .and_then(|rows| rows.get(code as usize))
+        .copied()
+        .ok_or(HeSigBError::ReservedSpatialConfiguration { users, code })
+}
 
 impl HeSigBCommon20Fields {
     /// Check the 18-bit common field, including CRC and tail, then map its RUs.
@@ -170,6 +374,83 @@ fn allocation(code: u8) -> Result<Vec<HeRu20Assignment>, HeSigBError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radio_he_sig_b_users_independent() {
+        let rows = include_str!("../../tests/fixtures/iq/he-sig-b-users.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 3175);
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bits: Vec<_> = c[0].bytes().map(|b| b - b'0').collect();
+            let contexts: Vec<_> = c[1]
+                .split(';')
+                .map(|s| {
+                    if s == "nonmu" {
+                        HeSigBUserContext::NonMu
+                    } else {
+                        let (n, p) = s.split_once(':').unwrap();
+                        HeSigBUserContext::MuMimo {
+                            users: n.parse().unwrap(),
+                            position: p.parse().unwrap(),
+                        }
+                    }
+                })
+                .collect();
+            let block = HeSigBUserBlock::decode(&bits, &contexts).unwrap();
+            let actual: Vec<_> = block.users().iter().map(|user| match user {
+                Ok(HeSigBUserFields { sta_id, encoding }) => match encoding {
+                    HeSigBUserEncoding::Unused { raw_parameters } => format!("unused:{sta_id}:{raw_parameters}"),
+                    HeSigBUserEncoding::NonMu { space_time_streams, beamformed, mcs, dcm, ldpc } => format!("nonmu:{sta_id}:{space_time_streams}:{}:{mcs}:{}:{}", u8::from(*beamformed),u8::from(*dcm),u8::from(*ldpc)),
+                    HeSigBUserEncoding::MuMimo { spatial_configuration, streams, start_stream, total_streams, mcs, ldpc } => format!("mu:{sta_id}:{spatial_configuration}:{streams}:{start_stream}:{total_streams}:{mcs}:{}",u8::from(*ldpc)),
+                },
+                Err(HeSigBError::ReservedSpatialConfiguration { users, code }) => format!("spatial:{users}:{code}"),
+                Err(HeSigBError::ReservedUserMcs(mcs)) => format!("mcs:{mcs}"),
+                Err(HeSigBError::ReservedUserBit { index }) => format!("reserved:{index}"),
+                Err(HeSigBError::UserContext { users, position }) => format!("context:{users}:{position}"),
+                other => panic!("unexpected {other:?}"),
+            }).collect();
+            assert_eq!(actual.join(";"), c[2], "{row}");
+            let payload = 21 * contexts.len();
+            for index in payload..bits.len() {
+                let mut bad = bits.clone();
+                bad[index] ^= 1;
+                let error = HeSigBUserBlock::decode(&bad, &contexts).unwrap_err();
+                if index < payload + 4 {
+                    assert!(matches!(error, HeSigBError::Crc { .. }));
+                } else {
+                    assert_eq!(error, HeSigBError::Tail { index });
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn radio_he_sig_b_users_bounds() {
+        for count in [0, 3, 100] {
+            assert_eq!(
+                HeSigBUserBlock::decode(&[], &vec![HeSigBUserContext::NonMu; count]),
+                Err(HeSigBError::UserCount { available: count })
+            );
+        }
+        for count in 1..=2 {
+            let contexts = vec![HeSigBUserContext::NonMu; count];
+            let required = 21 * count + 10;
+            for available in [0, required - 1, required + 1] {
+                assert!(matches!(
+                    HeSigBUserBlock::decode(&vec![0; available], &contexts),
+                    Err(HeSigBError::BitCount { .. })
+                ));
+            }
+            for index in 0..required {
+                let mut bits = vec![0; required];
+                bits[index] = 255;
+                assert_eq!(
+                    HeSigBUserBlock::decode(&bits, &contexts),
+                    Err(HeSigBError::NonBinary { index, value: 255 })
+                );
+            }
+        }
+    }
+
     #[test]
     fn radio_he_sig_b_common_independent() {
         let rows = include_str!("../../tests/fixtures/iq/he-sig-b-common.tsv");

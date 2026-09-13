@@ -1,5 +1,12 @@
 # Independent IQ vector contract
 
+`he-sig-b-users.tsv` contains 3175 independently generated one/two-user blocks
+from IEEE 802.11ax-2021 Tables 27-27 through 27-30. It covers every spatial
+configuration and RU-relative position, reserved configurations, all 1024
+unused parameter values, non-MU fields, and independent per-user errors.
+Regenerate with `he_sig_b_user_vectors.py --write`; omit the flag to verify.
+These are bit-level vectors, not SIG-B IQ or MU DATA qualification.
+
 `he-sig-b-common.tsv` exhaustively maps all 256 HE20 SIG-B common allocation
 codes, using independent CRC polynomial division and literal Table 27-26
 templates. It records ordered RU sizes, first table slots, user counts, empty

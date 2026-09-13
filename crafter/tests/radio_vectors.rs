@@ -592,6 +592,47 @@ fn radio_he_su_prefix_independent_inventory() {
 }
 
 #[test]
+fn radio_he_sig_b_users_inventory() {
+    use crafter::prelude::{
+        HeSigBUserBlock, HeSigBUserContext, HeSigBUserEncoding, HeSigBUserFields,
+    };
+    let rows = include_str!("fixtures/iq/he-sig-b-users.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 3175);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "bfc0c7ff5fec8b4c0eca0fc694c6d60a59502115e9ebd53ede47888fd4fd5d00"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 3);
+        assert!(matches!(c[0].len(), 31 | 52));
+        assert!(c[0].bytes().all(|b| matches!(b, b'0' | b'1')));
+    }
+    let c: Vec<_> = rows.lines().nth(1).unwrap().split('\t').collect();
+    let bits: Vec<_> = c[0].bytes().map(|b| b - b'0').collect();
+    let block = HeSigBUserBlock::decode(
+        &bits,
+        &[HeSigBUserContext::MuMimo {
+            users: 2,
+            position: 0,
+        }],
+    )
+    .unwrap();
+    assert!(matches!(
+        block.users(),
+        [Ok(HeSigBUserFields {
+            sta_id: 123,
+            encoding: HeSigBUserEncoding::MuMimo {
+                streams: 1,
+                start_stream: 0,
+                total_streams: 2,
+                ..
+            }
+        })]
+    ));
+}
+
+#[test]
 fn radio_he_sig_b_common_inventory() {
     use crafter::prelude::{HeSigBCommon20Fields, HeSigBError};
     let rows = include_str!("fixtures/iq/he-sig-b-common.tsv");

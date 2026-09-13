@@ -150,12 +150,14 @@ pub use protocols::exports::*;
 #[cfg(feature = "radio")]
 pub use radio::{
     DsssPlcpFields, DsssPreamble, EncodedWifiTransmission, HtCoding, HtFormat, HtGuardInterval,
-    HeMuSignalFields, HeRu20Assignment, HeSigBCommon20Fields, HeSigBError, HeSignalError,
-    HeSuSignalFields, HtMcs, HtSignalBits, HtSignalError, HtSignalFields, HtTransmission,
-    HtTxConfig, IqSink, LegacyDsssCckRate, LegacyDsssCckTransmission, LegacyDsssCckTxConfig,
-    LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig, LegacyWifiPhy,
-    LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink, OfdmSignalFields, RadioPacketWriter,
-    VhtSignalAError, VhtSignalAFields, VhtSignalAUsers, WifiDecoder, WifiFcsPolicy, WifiTxEncoder,
+    HeMuSignalFields, HeRu20Assignment, HeSigBCommon20Fields, HeSigBError, HeSigBUserBlock,
+    HeSigBUserContext, HeSigBUserEncoding, HeSigBUserFields, HeSignalError, HeSuSignalFields,
+    HtMcs, HtSignalBits, HtSignalError, HtSignalFields,
+    HtTransmission, HtTxConfig, IqSink, LegacyDsssCckRate, LegacyDsssCckTransmission,
+    LegacyDsssCckTxConfig, LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig,
+    LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink, OfdmSignalFields,
+    RadioPacketWriter, VhtSignalAError, VhtSignalAFields, VhtSignalAUsers, WifiDecoder,
+    WifiFcsPolicy, WifiTxEncoder,
 };
 #[cfg(feature = "radio-hackrf")]
 pub use radio::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};
@@ -270,9 +272,10 @@ pub mod prelude {
     pub use crate::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};
     #[cfg(feature = "radio")]
     pub use crate::{
-        HeMuSignalFields, HeRu20Assignment, HeSigBCommon20Fields, HeSigBError, HeSignalError,
-        HeSuSignalFields, HtSignalError, HtSignalFields, VhtSignalAError, VhtSignalAFields,
-        VhtSignalAUsers, VhtSignalB20Content, VhtSignalB20Error, VhtSignalB20Fields,
+        HeMuSignalFields, HeRu20Assignment, HeSigBCommon20Fields, HeSigBError, HeSigBUserBlock,
+        HeSigBUserContext, HeSigBUserEncoding, HeSigBUserFields, HeSignalError, HeSuSignalFields,
+        HtSignalError, HtSignalFields, VhtSignalAError, VhtSignalAFields, VhtSignalAUsers,
+        VhtSignalB20Content, VhtSignalB20Error, VhtSignalB20Fields,
     };
     #[cfg(feature = "whad")]
     pub use crate::{WhadBleMode, WhadDot15d4Mode, WhadWireBuilder};

@@ -100,6 +100,14 @@ produce distinct errors, and empty RUs retain zero users. RU positions identify
 the first table slot, not FFT-bin indices. This bit-level kernel is not yet
 connected to SIG-B IQ demodulation or MU payload recovery.
 
+`HeSigBUserBlock` checks one/two-user blocks with their shared CRC and tail.
+It returns typed per-user results, preserving a valid neighbor when another
+user has reserved parameters. Allocation context supplies each user's RU-relative
+position; all 48 spatial configurations are mapped to stream counts and starting
+indices. STA-ID 2046 retains arbitrary unused bits. The 3175 independent blocks
+test these cases; global DATA admission constraints remain separate. This is
+still a bit-level kernel, not end-to-end HE MU reception.
+
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,
 midambles10/20, CFO/selective channels, and a damaged first aggregate member;

@@ -15,7 +15,10 @@ mod he_fft;
 mod he_iq;
 mod he_mu;
 mod he_sig_b;
-pub use he_sig_b::{HeRu20Assignment, HeSigBCommon20Fields, HeSigBError};
+pub use he_sig_b::{
+    HeRu20Assignment, HeSigBCommon20Fields, HeSigBError, HeSigBUserBlock, HeSigBUserContext,
+    HeSigBUserEncoding, HeSigBUserFields,
+};
 mod he_timing;
 mod he_tones;
 mod he_training;
