@@ -1,5 +1,12 @@
 # Independent IQ vector contract
 
+`he-mu-ldpc-payload.tsv` contains 438 independently encoded payload cases:
+433 valid, four malformed SERVICE and one damaged last codeword. They cover
+all four HE20 RU sizes, MCS0..11, applicable DCM, one stream/STBC, padding and
+peer-forced extra segments. These are ordered coded metrics, not complete
+MU IQ or MAC qualification. Regenerate with `he_mu_ldpc_payload_vectors.py`
+or verify with `--check`.
+
 `he-mu-ldpc-layout.tsv` contains 13696 independent forward per-user LDPC
 layouts, including extra segments requested by another user. It checks geometry,
 not MU codeword/IQ recovery or global admission. Regenerate with

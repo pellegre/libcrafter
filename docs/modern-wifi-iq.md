@@ -183,7 +183,15 @@ MU LDPC layout calculation handles the common extra-segment flag differently
 from SU: a user accepts an extra segment requested by a peer, but rejects a
 missing segment it needs itself. Independent forward layouts check codeword
 sizes, shortening, puncturing and repetition. Cross-user consistency of the
-global flag, MU codeword recovery and IQ integration remain separate work.
+global flag and IQ integration remain separate work.
+
+The MU LDPC payload kernel removes post-FEC padding from ordered full-symbol
+metrics, recovers codewords and validates SERVICE before returning PSDU bytes.
+Independent encoded cases cover four RU sizes, MCS0..11, applicable DCM, STBC,
+and peer-requested extra segments. Strict mode rejects failed codewords;
+partial mode retains failure diagnostics and intact earlier bytes but still
+requires SERVICE and per-MPDU FCS verification. MU IQ demodulation, cross-user
+admission and streaming integration remain unfinished.
 
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,
