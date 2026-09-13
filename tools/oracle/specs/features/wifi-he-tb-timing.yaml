@@ -1,0 +1,21 @@
+version: 1
+kind: feature
+name: wifi_he_tb_timing
+summary: Trigger-supplied HE20 TB training, DATA, midamble and packet-extension timing.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: tb-timing
+    source: IEEE 802.11ax-2021 9.3.1.22.1 and Equations 27-119 through 27-122
+    checks: [trigger_ul_length, trigger_ltf_guard_mapping, doppler_ltf_mapping, tb_eight_us_stf, midamble_boundaries, packet_extension, stbc_pairs, forward_timeline, invalid_bounds]
+coverage_cases: [wifi-he-tb-timing]
+supported_cases:
+  - {name: wifi-he-tb-timing, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - Timing primitive only, using explicit Trigger Common Info and checked repeated L-SIG length. No inferred SU or MU signaling.
+      - Trigger association, per-user RU/coding admission and TB DATA recovery remain separate; timing does not publish MAC bytes.

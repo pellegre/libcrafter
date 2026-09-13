@@ -8606,6 +8606,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "he-transform-index.tsv"
                 | "he-timing-index.tsv"
                 | "he-mu-timing.tsv"
+                | "he-tb-timing.tsv"
                 | "he-er-timing-index.tsv"
                 | "he-er106-capacity-index.tsv"
                 | "he-mu26-capacity-index.tsv"

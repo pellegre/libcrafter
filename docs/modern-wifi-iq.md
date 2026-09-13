@@ -293,6 +293,12 @@ Bare Trigger input excludes FCS. Radiotap's explicit FCS-present flag separates
 the trailer into `Raw`; the IQ packet source already strips verified FCS before
 MAC parsing. This MAC layer alone does not associate a Trigger with a TB reply.
 
+The internal TB timing primitive consumes explicit Trigger Common Info and
+the checked repeated L-SIG length. Independent forward timelines cover the
+three Trigger GI/LTF settings, LTF counts, Doppler/midambles, STBC pairs and
+packet extension, including TB's 8us STF and its distinct length rule. This
+does not establish Trigger association, per-user DATA admission or live support.
+
 Without Trigger context, the receiver reports `UnsupportedPhy` and does not
 publish a TB frame. This is not payload decoding: RU assignment, MCS,
 coding and training context must come from the triggering exchange

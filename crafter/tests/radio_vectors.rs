@@ -1029,6 +1029,26 @@ fn radio_he_sig_b_iq_inventory() {
 }
 
 #[test]
+fn radio_he_tb_timing_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-timing.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 3315);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "e06df64f88299449885fb0b6f53817a66082845bad769bbe9969cd684752b235"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 15);
+        let n: Vec<usize> = c[..14].iter().map(|s| s.parse().unwrap()).collect();
+        assert!(n[0] <= 2);
+        assert_eq!(n[6] % 3, 1);
+        assert!(n[6] <= 4095);
+        assert!(n[10] < n[11] && n[11] <= n[12] && n[12] <= n[13]);
+        assert_eq!(c[14].len(), 64);
+    }
+}
+
+#[test]
 fn radio_he_mu_timing_inventory() {
     let rows = include_str!("fixtures/iq/he-mu-timing.tsv");
     assert_eq!(rows.lines().skip(1).count(), 26529);

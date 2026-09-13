@@ -1,4 +1,4 @@
-//! HE20 SU / ER SU / MU timing, IEEE802.11ax-2021 Equations27-119..122.
+//! HE20 SU / ER SU / MU / TB timing, IEEE802.11ax-2021 Equations27-119..122.
 use super::he::SuSignal;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,6 +144,60 @@ impl Timing {
         })
     }
 
+    /// The caller establishes a matching Trigger exchange and checked TB
+    /// signaling. Common Info supplies timing, not per-user DATA admission.
+    pub fn for_tb(
+        rate: u32,
+        length: usize,
+        common: &crate::Dot11TriggerCommonFields,
+    ) -> Result<Self, Error> {
+        if rate != 6_000_000 {
+            return Err(Error::Rate);
+        }
+        if length > 4095 || length % 3 != 1 || length != usize::from(common.ul_length) {
+            return Err(Error::Length);
+        }
+        // MU-RTS solicits CTS; NFRP solicits NDP feedback, not TB DATA.
+        if common.bandwidth != 0 || !matches!(common.trigger_type, 0..=2 | 4..=6) {
+            return Err(Error::Format);
+        }
+        let (size, guard) = match common.gi_ltf {
+            0 => (1, 32),
+            1 => (2, 32),
+            2 => (4, 64),
+            _ => return Err(Error::Guard),
+        };
+        let code = common.ltf_symbols_midamble;
+        let (ltf_symbols, period) = if common.doppler {
+            match code {
+                0..=2 => ([1, 2, 4][usize::from(code)], Some(10)),
+                4..=6 => ([1, 2, 4][usize::from(code - 4)], Some(20)),
+                _ => return Err(Error::Midamble),
+            }
+        } else {
+            let count = [1, 2, 4, 6, 8]
+                .get(usize::from(code))
+                .copied()
+                .ok_or(Error::Streams)?;
+            (count, None)
+        };
+        if common.stbc && ltf_symbols == 1 {
+            return Err(Error::Streams);
+        }
+        Self::resolve(Layout {
+            length,
+            m: 2,
+            // TB's STF is8us, four more than the base SU timeline. No SIG-B.
+            extra_preamble: 80,
+            ltf_symbols,
+            training_samples: ltf_symbols * (64 * size + guard),
+            symbol_samples: 256 + guard,
+            period,
+            stbc: common.stbc,
+            pe_disambiguity: common.pe_disambiguity,
+        })
+    }
+
     fn resolve(layout: Layout) -> Result<Self, Error> {
         let Layout {
             length,
@@ -218,6 +272,101 @@ impl Timing {
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
+
+    #[test]
+    fn radio_he_tb_timing_forward() {
+        let rows = include_str!("../../tests/fixtures/iq/he-tb-timing.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 3315);
+        for row in rows.lines().skip(1) {
+            let columns: Vec<_> = row.split('\t').collect();
+            let c: Vec<usize> = columns[..14].iter().map(|s| s.parse().unwrap()).collect();
+            let common = crate::Dot11TriggerCommonFields {
+                gi_ltf: c[0] as u8,
+                ltf_symbols_midamble: c[1] as u8,
+                doppler: c[2] != 0,
+                stbc: c[3] != 0,
+                ul_length: c[6] as u16,
+                pe_disambiguity: c[7] != 0,
+                ..Default::default()
+            };
+            let t =
+                Timing::for_tb(6_000_000, c[6], &common).unwrap_or_else(|e| panic!("{row}: {e:?}"));
+            assert_eq!(
+                [
+                    t.ltf_symbols,
+                    t.data_symbols,
+                    t.pe_samples,
+                    t.midambles,
+                    t.data_start,
+                    t.data_end,
+                    t.packet_end,
+                    t.signaled_end
+                ],
+                [c[8], c[4], c[5], c[9], c[10], c[11], c[12], c[13]],
+                "{row}"
+            );
+            let mut hash = Sha256::new();
+            for i in 0..t.data_symbols {
+                hash.update((t.symbol_start(i).unwrap() as u32).to_le_bytes());
+            }
+            assert_eq!(format!("{:x}", hash.finalize()), columns[14], "{row}");
+            assert!(t.symbol_start(t.data_symbols).is_none());
+            assert!(t.symbol_start(usize::MAX).is_none());
+        }
+    }
+
+    #[test]
+    fn radio_he_tb_timing_rejects_inconsistent_or_reserved_context() {
+        let mut common = crate::Dot11TriggerCommonFields::default();
+        assert!(Timing::for_tb(6_000_000, 301, &common).is_ok());
+        for rate in [0, 12_000_000, u32::MAX] {
+            assert_eq!(Timing::for_tb(rate, 301, &common), Err(Error::Rate));
+        }
+        for length in [0, 1, 300, 302, 304, 4096, usize::MAX] {
+            assert_eq!(
+                Timing::for_tb(6_000_000, length, &common),
+                Err(Error::Length)
+            );
+        }
+        for variant in [3, 7, 8, 15, 255] {
+            common.trigger_type = variant;
+            assert_eq!(Timing::for_tb(6_000_000, 301, &common), Err(Error::Format));
+        }
+        common.trigger_type = 0;
+        for bandwidth in [1, 2, 3, 255] {
+            common.bandwidth = bandwidth;
+            assert_eq!(Timing::for_tb(6_000_000, 301, &common), Err(Error::Format));
+        }
+        common.bandwidth = 0;
+        for gi in [3, 4, 255] {
+            common.gi_ltf = gi;
+            assert_eq!(Timing::for_tb(6_000_000, 301, &common), Err(Error::Guard));
+        }
+        common.gi_ltf = 1;
+        for code in [5, 6, 7, 255] {
+            common.ltf_symbols_midamble = code;
+            assert_eq!(Timing::for_tb(6_000_000, 301, &common), Err(Error::Streams));
+        }
+        common.doppler = true;
+        for code in [3, 7, 8, 255] {
+            common.ltf_symbols_midamble = code;
+            assert_eq!(
+                Timing::for_tb(6_000_000, 301, &common),
+                Err(Error::Midamble)
+            );
+        }
+        common.doppler = false;
+        common.ltf_symbols_midamble = 0;
+        common.stbc = true;
+        assert_eq!(Timing::for_tb(6_000_000, 301, &common), Err(Error::Streams));
+        common.ltf_symbols_midamble = 1;
+        common.ul_length = 34;
+        assert_eq!(Timing::for_tb(6_000_000, 34, &common), Err(Error::Stbc));
+        common.stbc = false;
+        common.ul_length = 1;
+        assert_eq!(Timing::for_tb(6_000_000, 1, &common), Err(Error::Duration));
+    }
+
     fn mu_header() -> super::super::he_mu::MuSignal {
         let row = include_str!("../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
             .lines()

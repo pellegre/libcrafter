@@ -135,6 +135,12 @@ STBC symbol parity, midamble boundaries and packet extension. These test timing
 arithmetic, not per-RU admission or complete IQ transmissions. Regenerate with
 `he_mu_timing_vectors.py --write` or verify without arguments.
 
+`he-tb-timing.tsv` contains 3315 independent forward TB timelines: all three
+Trigger GI/LTF settings, signaled LTF counts, Doppler/midamble encodings,
+STBC symbol pairs, packet extension and the TB-specific 8us STF. These are
+timing vectors, not captured IQ, Trigger association or TB DATA qualification.
+Regenerate with `he_tb_timing_vectors.py --write` or verify without arguments.
+
 `he-sigb-iq-index.tsv` indexes 172 independently synthesized time-domain MU
 preamble/SIG-B captures: all ten MCS/DCM combinations, compressed/uncompressed
 allocations, 1/2/8/9/17 users, empty allocations, long and padded SIG-B fields,
