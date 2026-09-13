@@ -1,5 +1,11 @@
 # Independent IQ vector contract
 
+`he-mu-training-index.tsv` indexes 384 isolated single-stream RU training
+fields covering all sixteen HE20 resource units, four MU guard/training pairs,
+three quantization gains, and flat/selective channels. These are not complete
+MU PPDUs or MAC validation. Regenerate with `he_mu_training_vectors.py` or
+verify with `he_mu_training_vectors.py --check`.
+
 `he-mu-timing.tsv` contains 26529 independent forward MU timelines covering
 resolved SIG-B lengths, signaled LTF counts, all four MU training/guard pairs,
 STBC symbol parity, midamble boundaries and packet extension. These test timing

@@ -1,4 +1,4 @@
-//! HE20 SU / ER one DATA stream, including STBC; IEEE802.11ax-2021 27.3.11.10.
+//! HE20 SU/ER training and isolated MU RU estimation; IEEE802.11ax-2021 27.3.11.10.
 use super::{
     he_iq::{decode_prefix, Prefix},
     he_tones::Tones,
@@ -42,6 +42,8 @@ impl Trained {
 /// averages quantization noise instead of amplifying it at interpolated tones.
 /// The diagonal ridge stabilizes missing DC/edge measurements. This is not a
 /// claim that channels outside the guard interval can be reconstructed.
+/// For small RUs the system may be underdetermined; the ridge selects an
+/// estimate without claiming unique recovery of the physical delay taps.
 fn delay_fit(
     channel: &mut [ComplexSample; 256],
     tones: &[i32],
@@ -49,7 +51,7 @@ fn delay_fit(
     allocation: Tones,
 ) -> Option<()> {
     let count = guard.checked_add(4)?;
-    if count > 68 || tones.len() < count {
+    if count > 68 || tones.is_empty() {
         return None;
     }
     let mut normal = vec![vec![ComplexSample::ZERO; count + 1]; count];
@@ -272,7 +274,42 @@ fn observe_for_format(
     er: bool,
 ) -> Option<([ComplexSample; 256], Vec<i32>, usize)> {
     let allocation = Tones::new(er, fields.bandwidth)?;
-    let (sequence, nfft, guard) = match (fields.ltf_size, fields.guard_ns) {
+    observe_ru(samples, a, allocation, fields.ltf_size, fields.guard_ns, cp)
+}
+
+/// Isolated one-stream RU LTF, with spatial admission and symbol position
+/// established by the caller. No STBC/MU-MIMO separation or DATA admission.
+/// Expects the common LTF sequence polarity; any orthogonal training-matrix
+/// coefficient must be accounted for by the caller.
+pub(super) fn train_ru_field(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    allocation: Tones,
+    ltf_size: u8,
+    guard_ns: u16,
+    cp: usize,
+) -> Option<[ComplexSample; 256]> {
+    if !matches!((ltf_size, guard_ns), (2, 800 | 1600) | (4, 800 | 3200)) {
+        return None;
+    }
+    let (mut channel, tones, guard) = observe_ru(samples, a, allocation, ltf_size, guard_ns, cp)?;
+    let energy: f32 = channel.iter().map(|v| v.power()).sum();
+    if !energy.is_finite() || energy < 1e-9 {
+        return None;
+    }
+    delay_fit(&mut channel, &tones, guard, allocation)?;
+    Some(channel)
+}
+
+fn observe_ru(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    allocation: Tones,
+    ltf_size: u8,
+    guard_ns: u16,
+    cp: usize,
+) -> Option<([ComplexSample; 256], Vec<i32>, usize)> {
+    let (sequence, nfft, guard) = match (ltf_size, guard_ns) {
         (1, 800) => (LTF1, 64, 16),
         (2, 800) => (LTF2, 128, 16),
         (2, 1600) => (LTF2, 128, 32),
@@ -325,6 +362,83 @@ fn observe_for_format(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radio_he_mu_ru_training_channels() {
+        let (_, mut a) = fixture("he-training4-gi800-flat-gain160");
+        a.signal_start = 0;
+        a.phase_origin = 0;
+        a.frequency_rad = 0.;
+        let rows = include_str!("../../tests/fixtures/iq/he-mu-training-index.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 384);
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let ru: u16 = c[1].parse().unwrap();
+            let allocation = Tones::ru(ru, c[2].parse().unwrap()).unwrap();
+            let size = c[3].parse().unwrap();
+            let guard = c[4].parse::<u16>().unwrap() * 50;
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let wave: Vec<_> = bytes
+                .chunks_exact(2)
+                .map(|b| ComplexSample {
+                    i: b[0] as i8 as f32 / 128.,
+                    q: b[1] as i8 as f32 / 128.,
+                })
+                .collect();
+            let channel = train_ru_field(&wave, &a, allocation, size, guard, 0)
+                .unwrap_or_else(|| panic!("{}", c[0]));
+            let gain = c[5].parse::<f32>().unwrap() / 128. * 4. * (52. / f32::from(ru)).sqrt();
+            let mut error = 0.;
+            let mut energy = 0.;
+            for k in allocation.active() {
+                let h = ComplexSample { i: 1., q: 0. }
+                    .add(if c[6] == "1" {
+                        ComplexSample { i: 0., q: 0.25 }.mul(ComplexSample::rotation(
+                            -std::f32::consts::TAU * k as f32 * 3. / 256.,
+                        ))
+                    } else {
+                        ComplexSample::ZERO
+                    })
+                    .scale(gain);
+                error += channel[k.rem_euclid(256) as usize].sub(h).power();
+                energy += h.power();
+            }
+            assert!(
+                (error / energy).sqrt() < 0.06,
+                "{}: {}",
+                c[0],
+                (error / energy).sqrt()
+            );
+            for k in -128i32..128 {
+                if !allocation.contains(k) {
+                    assert_eq!(channel[k.rem_euclid(256) as usize].power(), 0.);
+                }
+            }
+            assert!(
+                train_ru_field(&wave[..wave.len() - 1], &a, allocation, size, guard, 0).is_none()
+            );
+            assert!(train_ru_field(&wave, &a, allocation, size, guard, usize::MAX).is_none());
+            assert!(train_ru_field(
+                &vec![ComplexSample::ZERO; wave.len()],
+                &a,
+                allocation,
+                size,
+                guard,
+                0
+            )
+            .is_none());
+            let mut bad = wave.clone();
+            bad[usize::from(guard) / 50].i = f32::NAN;
+            assert!(train_ru_field(&bad, &a, allocation, size, guard, 0).is_none());
+        }
+        for (size, guard) in [(1, 800), (2, 3200), (4, 1600), (0, 0), (255, u16::MAX)] {
+            assert!(train_ru_field(&[], &a, Tones::ru(26, 1).unwrap(), size, guard, 0).is_none());
+        }
+    }
     #[test]
     fn radio_he_er106_training_channels() {
         let (samples, mut a) = fixture("he-training4-gi800-flat-gain160");

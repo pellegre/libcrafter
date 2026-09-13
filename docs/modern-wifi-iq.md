@@ -159,6 +159,13 @@ full-band 242-tone RU. Inconsistent user counts, missing/unexpected Common
 fields, wider bandwidths and invalid slot/size combinations are rejected. This
 structural mapping does not establish spatial decodability or payload integrity.
 
+An isolated one-stream MU RU training kernel estimates channels for all sixteen
+HE20 allocations and all four MU guard/training pairs. Independent quantized
+LTF fields cover flat and selective channels. The regularized delay fit accepts
+small RUs with fewer observations than delay coefficients; this is an estimate,
+not unique recovery of arbitrary physical taps. Spatial admission, multi-stream
+training, and connection to complete MU DATA recovery remain unfinished.
+
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,
 midambles10/20, CFO/selective channels, and a damaged first aggregate member;
