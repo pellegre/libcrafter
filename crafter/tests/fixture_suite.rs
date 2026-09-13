@@ -8597,6 +8597,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "he-transform-index.tsv"
                 | "he-timing-index.tsv"
                 | "he-capacity-index.tsv"
+                | "he-bcc-index.tsv"
                 | "he-training4-index.tsv"
                 | "he-training-sparse-index.tsv"
                 | "he-training4-invalid-index.tsv"

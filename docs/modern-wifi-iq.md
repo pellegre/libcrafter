@@ -390,6 +390,14 @@ adjustment before calculating payload bytes. Independent forward padding cases
 cover all MCSs and valid stream-count arithmetic. This does not implement MIMO
 reception, FEC recovery, the LDPC puncturing decision or complete DATA admission.
 
+The private HE BCC kernel recovers PSDU bytes from deinterleaved, recombined
+symbol metrics. It removes post-FEC padding and DCM BPSK filler, depunctures all
+four BCC rates, applies terminated Viterbi decoding, then descrambles and checks
+the zero SERVICE field. A caller-supplied byte limit bounds payload allocation.
+Independent coded-bit cases cover MCS0-9 and all nonzero scrambler seeds.
+This does not yet connect HE IQ demodulation to frame publication; output still
+requires MAC aggregate and FCS validation. LDPC payload recovery is unfinished.
+
 ## VHT BCC DATA implementation
 
 The private single-encoder VHT BCC DATA recovery path uses the SIG-B CRC in

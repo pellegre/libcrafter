@@ -1206,7 +1206,7 @@ fn recover_bcc_format(
     descramble_psdu_with_service(bits, info.psdu_bytes, &service)
 }
 
-fn descramble_psdu(bits: Vec<u8>, psdu_bytes: usize) -> Result<Vec<u8>, ()> {
+pub(super) fn descramble_psdu(bits: Vec<u8>, psdu_bytes: usize) -> Result<Vec<u8>, ()> {
     descramble_psdu_with_service(bits, psdu_bytes, &[0; 16])
 }
 

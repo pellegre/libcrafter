@@ -8,6 +8,7 @@ mod data;
 mod dsss;
 mod dsss_tx;
 mod he;
+mod he_bcc;
 mod he_capacity;
 mod he_fft;
 mod he_iq;
