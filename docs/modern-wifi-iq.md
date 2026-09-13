@@ -48,7 +48,7 @@ adds 368 complete independent waveforms and eight invalid cases, including
 loss of either transmit branch. The finite-delay estimator includes the second
 stream's cyclic shift; it does not guarantee recovery of arbitrary channels.
 
-HE MU/TB payloads, wider channels and independent
+HE TB payloads, MU STBC/spatial separation, wider channels and independent
 multiple DATA streams are not implemented by this receive path. Offline
 qualification uses 200 BCC and 240 LDPC complete independent waveforms; it does not establish
 HE-capable dongle interoperability, sustained real-time speed or modern TX.
@@ -90,15 +90,15 @@ recognizes 20 MHz MU prefixes from IQ: repeated legacy headers with length
 modulo three equal to two, followed by two BPSK SIG-A symbols. A distinct
 `HeMuSignal` diagnostic and `he.format: mu` artifact preserve the checked
 fields. The 160 independent prefixes and 13 invalid cases contain no SIG-B or
-DATA; MU allocation decoding and payload recovery remain unimplemented and
-the receiver retains the candidate for SIG-B; incomplete fields report truncation.
+DATA; those prefix-only fixtures do not establish payload recovery. The receiver
+retains supported candidates for SIG-B and DATA; incomplete fields report truncation.
 
 `HeSigBCommon20Fields` validates an uncompressed 20 MHz SIG-B common field
 (allocation, CRC, tail) and exposes ordered RU assignments and user counts.
 All 256 allocation codes are tested; reserved and wider-than-20MHz allocations
 produce distinct errors, and empty RUs retain zero users. RU positions identify
 the first table slot, not FFT-bin indices. It is connected to the private SIG-B
-IQ kernel and streaming diagnostics, but not MU payload recovery.
+IQ kernel, streaming diagnostics and single-stream-per-RU payload recovery.
 
 `HeSigBUserBlock` checks one/two-user blocks with their shared CRC and tail.
 It returns typed per-user results, preserving a valid neighbor when another
@@ -113,7 +113,7 @@ DCM-combined soft bits for MCS 0 through 5. It preserves puncturing across block
 boundaries while resetting each block's BCC trellis. Its 450 independent streams
 check exact bits, CRC/tail failures and encoded trailing padding. A complete
 damaged block can be skipped without losing subsequent blocks; incomplete blocks
-do not advance the cursor. MU DATA recovery remains pending.
+do not advance the cursor. This reader itself does not recover DATA.
 
 The private SIG-B modulation kernel now connects equalized data tones to that
 reader. It handles all ten valid MCS/DCM combinations, removes the PAPR phase
@@ -128,17 +128,17 @@ fixtures cover all valid MCS/DCM combinations, common and compressed signaling,
 empty allocations, RU-relative user contexts, count validation, and fields longer
 than 16 symbols (bounded to 36 for HE20). Failed user blocks preserve later users;
 a failed common field cannot establish allocation context. Sampling-clock drift
-tracking, HE MU training/DATA and live HE
-qualification remain pending. No MAC frames are published by this kernel.
+tracking and live HE qualification remain pending. No MAC frames are published
+by this signaling kernel alone.
 
 `WifiDecoder` now retains MU candidates through SIG-B with progressive buffer
 reservations and gap/EOF handling. `PhyDiagnostic::HeMuSigB` carries
 `HeMuSigBFields`: common allocation, ordered user results, symbol count and end
 position. `HeSigBCodedError` preserves per-block failures. The `radio_receive`
 example emits `he_sig_b` records with the same information and an explicit
-header-only integrity disclaimer. Complete signaling still reports
-`UnsupportedPhy` because MU DATA is not yet recovered. Legacy-only mode is
-unchanged; no MAC frame is synthesized from a successful signaling decode.
+header-only integrity disclaimer. Supported one-stream-per-RU layouts proceed
+through DATA; wholly unsupported layouts still report `UnsupportedPhy`.
+Legacy-only mode is unchanged; successful signaling alone never emits a MAC frame.
 
 The MU timing kernel uses the resolved SIG-B duration and signaled LTF count
 to locate training, DATA symbols, midambles and packet extension. Its 26529
@@ -176,8 +176,7 @@ complete MU payload recovery.
 The per-user MU BCC kernel recovers PSDU bytes from already deinterleaved,
 stream-recombined soft metrics, using each user's RU capacity. Independent
 coded-bit cases cover all four RU sizes, padding/filler, STBC groups and
-SERVICE validation. Those bytes still require MAC/FCS validation and streaming
-payload integration.
+SERVICE validation. Those bytes require the streaming path's MAC/FCS validation.
 
 MU LDPC layout calculation handles the common extra-segment flag differently
 from SU: a user accepts an extra segment requested by a peer, but rejects a
@@ -191,7 +190,7 @@ Independent encoded cases cover four RU sizes, MCS0..11, applicable DCM, STBC,
 and peer-requested extra segments. Strict mode rejects failed codewords;
 partial mode retains failure diagnostics and intact earlier bytes but still
 requires SERVICE and per-MPDU FCS verification. Full cross-user spatial
-admission and streaming integration remain unfinished.
+admission remains unfinished.
 
 The joint DCM demapper also accepts 12- and 24-data-tone halves for 26/52-tone
 RUs. Independent distance fixtures verify the even-half BPSK sign, QPSK
@@ -205,7 +204,7 @@ DCM pairs. Independent floating-point waveforms cover all 16 HE20 RU positions,
 constellations through 1024-QAM (LDPC), selective channels and one erased DCM
 half. The caller must still admit the stream, estimate its channel, supply
 the PPDU pilot polarity and remove post-FEC padding during payload recovery.
-This kernel does not yet complete MU packet or streaming integration.
+This symbol kernel alone does not establish packet integrity.
 
 The private MU IQ-to-PSDU path now connects checked SIG-B, MU timing, RU
 training, pilot polarity, DATA demodulation and BCC/LDPC recovery for one
@@ -216,9 +215,20 @@ the first LTF; it does not average all training symbols. A 252-waveform cs8
 corpus covers all 16 HE20 RU positions, applicable DCM, constellations through
 1024-QAM with LDPC, all four guard/training pairs, extra LTF counts, midambles,
 CFO/selective channels, bad SERVICE and failed user CRC blocks. These synthetic
-PSDUs are not MAC frames. MU STBC/spatial separation, aggregate/FCS publication,
-streaming integration, mixed-coding cross-user qualification and live HE
+PSDUs are not MAC frames. MU STBC/spatial separation,
+mixed-coding cross-user qualification and live HE
 validation remain unfinished; this is not a full MU support claim.
+
+`WifiDecoder` now retains admitted MU DATA within the shared sample budget and
+publishes per-user HE A-MPDU members only after FCS validation. A separate
+94-waveform MAC corpus verifies exact frame bytes, bad-FCS/SERVICE/user-block
+salvage, partial LDPC recovery, chunking, output limits, EOF and gaps.
+`HeMuUser` identifies each frame's original user index within its accompanying
+`HeMuSigB`; artifacts include `he.user_index` and the selected `he.user` record.
+Combined output retains its documented completion/start/rate ordering, not
+RU order. Duplicate suppression distinguishes users even when their bytes,
+aggregate offsets and PPDU intervals are identical. This remains offline
+qualification, not proof of live HE interoperability or real-time throughput.
 
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,

@@ -284,6 +284,12 @@ pub enum ResetReason {
 }
 #[derive(Debug, Clone)]
 pub enum PhyDiagnostic {
+    /// Zero-based original User field position in the accompanying HeMuSigB.
+    /// Present on MU frames after per-user DATA recovery and MPDU FCS checks.
+    HeMuUser {
+        user_index: usize,
+        preamble_sample_index: u64,
+    },
     /// Checked MU SIG-B fields, including independent per-user/block failures.
     HeMuSigB {
         fields: HeMuSigBFields,
@@ -390,6 +396,16 @@ pub enum PhyDiagnostic {
 impl PartialEq for PhyDiagnostic {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (
+                Self::HeMuUser {
+                    user_index: a,
+                    preamble_sample_index: b,
+                },
+                Self::HeMuUser {
+                    user_index: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
             (
                 Self::HeMuSigB {
                     fields: a,

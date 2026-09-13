@@ -26,6 +26,7 @@ struct Pending {
     // Modulo-two repeated L-SIG: MU or ER until constellation discrimination.
     er_candidate: bool,
     mu_wait: Option<usize>,
+    mu_data_end: Option<usize>,
     ldpc: Option<ldpc::rate::Layout>,
     greenfield: bool,
 }
@@ -303,6 +304,113 @@ impl LegacyOfdmDecoder {
         }
         Ok(())
     }
+
+    fn publish_mu(
+        &mut self,
+        p: Pending,
+        config: &RxConfig,
+        out: &mut DecodeOutput,
+    ) -> RadioResult<()> {
+        let decoded = match he_mu_data_iq::recover(
+            &p.samples,
+            &p.acquisition,
+            usize::MAX,
+            p.samples.len(),
+            true,
+        ) {
+            Ok(decoded) => decoded,
+            Err(_) => {
+                self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
+                out.diagnostics.push(PhyDiagnostic::InvalidHeader);
+                return Ok(());
+            }
+        };
+        let layout = decoded.fields.layout().map_err(|_| RadioError::Invalid {
+            field: "HE MU layout",
+            reason: "recovered SIG-B has inconsistent user positions",
+        })?;
+        for (index, user) in decoded.users.into_iter().enumerate() {
+            let payload = match user {
+                Ok(payload) => payload,
+                Err(he_mu_data_iq::Error::Unused) => continue,
+                Err(error) => {
+                    self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
+                    out.diagnostics
+                        .push(if error == he_mu_data_iq::Error::Unsupported {
+                            PhyDiagnostic::UnsupportedPhy
+                        } else {
+                            PhyDiagnostic::InvalidHeader
+                        });
+                    continue;
+                }
+            };
+            let ru = layout.iter().find(|ru| ru.users.contains(&index)).unwrap();
+            let user = decoded.fields.users[index].unwrap();
+            let capacity = he_capacity::Capacity::for_mu(
+                &decoded.fields.signal,
+                &user,
+                (ru.tones.count() + ru.tones.pilots().len()) as u16,
+                decoded.timing.data_symbols,
+            )
+            .unwrap();
+            let mut diagnostics = vec![
+                PhyDiagnostic::Ofdm {
+                    frequency_offset_hz: p.acquisition.frequency_rad * 20_000_000.
+                        / std::f32::consts::TAU,
+                    training_correlation: p.acquisition.correlation,
+                },
+                PhyDiagnostic::HeMuSigB {
+                    fields: decoded.fields.clone(),
+                    preamble_sample_index: p.start.sample_index,
+                },
+                PhyDiagnostic::HeMuUser {
+                    user_index: index,
+                    preamble_sample_index: p.start.sample_index,
+                },
+            ];
+            if payload.failed_codewords != 0 {
+                let diagnostic = PhyDiagnostic::LdpcPartial {
+                    failed_codewords: payload.failed_codewords,
+                };
+                out.diagnostics.push(diagnostic.clone());
+                diagnostics.push(diagnostic);
+                if let Some(ldpc_rate::Error::Codeword {
+                    index,
+                    error:
+                        ldpc::Error::Nonconvergence {
+                            iterations,
+                            failed_checks,
+                        },
+                }) = payload.first_failure
+                {
+                    let diagnostic = PhyDiagnostic::LdpcNonconvergence {
+                        codeword: index,
+                        iterations,
+                        failed_checks,
+                    };
+                    out.diagnostics.push(diagnostic.clone());
+                    diagnostics.push(diagnostic);
+                }
+            }
+            let rate = (capacity.data_per_symbol as u64 * 20_000_000
+                / (256 + u64::from(decoded.fields.signal.guard_ns) / 50))
+                as u32;
+            let frame = RecoveredFrame {
+                bytes: payload.psdu,
+                link_type: LinkType::Ieee80211,
+                integrity: FrameIntegrity::ValidFcs,
+                config: config.clone(),
+                start: p.start.clone(),
+                end_sample_index: p.acquisition.preamble_start + decoded.timing.data_end as u64,
+                rate_bps: rate,
+                diagnostics,
+            };
+            // publish_psdu only emits HE aggregate members after their FCS
+            // passes; partial LDPC estimates never bypass this scanner.
+            self.publish_psdu(frame, Some(Aggregation::He), out)?;
+        }
+        Ok(())
+    }
 }
 impl PhyDecoder for LegacyOfdmDecoder {
     fn reset(&mut self, reason: ResetReason) -> DecodeOutput {
@@ -354,14 +462,42 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     continue;
                 };
                 p.samples.push(sample);
+                if let Some(required) = p.mu_data_end {
+                    if p.samples.len() == required {
+                        let p = self.pending[slot].take().unwrap();
+                        if let Err(error) = self.publish_mu(p, config, &mut out) {
+                            self.reset(ResetReason::Explicit);
+                            return Err(error);
+                        }
+                    }
+                    continue;
+                }
                 if let Some(required) = p.mu_wait {
                     if p.samples.len() == required {
                         match he_sig_b_iq::recover(&p.samples, &p.acquisition) {
                             Ok(fields) => {
+                                let budget = config
+                                    .max_buffer_samples
+                                    .saturating_sub(reserved)
+                                    .saturating_add(p.samples.capacity());
+                                let timing = he_mu_data_iq::admit(
+                                    &p.samples,
+                                    &p.acquisition,
+                                    &fields,
+                                    budget,
+                                );
                                 out.diagnostics.push(PhyDiagnostic::HeMuSigB {
                                     fields,
                                     preamble_sample_index: p.start.sample_index,
                                 });
+                                if let Ok(timing) = timing {
+                                    let needed = timing.data_end - 320;
+                                    if p.reserve_samples(needed, config, reserved) {
+                                        p.mu_wait = None;
+                                        p.mu_data_end = Some(needed);
+                                        continue;
+                                    }
+                                }
                                 out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
                             }
                             Err(he_sig_b_iq::Error::Truncated { required, .. })
@@ -848,6 +984,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             he_candidate: false,
                             er_candidate: false,
                             mu_wait: None,
+                            mu_data_end: None,
                             ldpc: None,
                             greenfield: false,
                         });
@@ -1564,6 +1701,182 @@ mod vht_bcc_tests;
 mod tests {
     use super::*;
     #[test]
+    fn radio_he_mu_streaming_complete_aggregates() {
+        let rows = include_str!("../../tests/fixtures/iq/he-mu-ampdu-iq-index.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 94);
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let expected: Vec<Vec<u8>> = c[7]
+                .split(',')
+                .map(|s| {
+                    (0..s.len())
+                        .step_by(2)
+                        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+                        .collect()
+                })
+                .collect();
+            let users: Vec<usize> = c[6].split(',').map(|s| s.parse().unwrap()).collect();
+            for size in [37, 997] {
+                let mut decoder = WifiDecoder::new();
+                let mut cfg = config();
+                cfg.max_pending_frames = 32;
+                let out = feed_config(&mut decoder, &bytes, size, cfg).unwrap();
+                assert_eq!(
+                    out.frames.len(),
+                    expected.len(),
+                    "{} size{size}: {:?}",
+                    c[0],
+                    out.diagnostics
+                );
+                assert_eq!(
+                    decoder.ofdm_stats().invalid_fcs,
+                    c[8].parse().unwrap(),
+                    "{}",
+                    c[0]
+                );
+                let mut frames: Vec<_> = out.frames.iter().collect();
+                frames.sort_by_key(|f| {
+                    f.diagnostics
+                        .iter()
+                        .find_map(|d| match d {
+                            PhyDiagnostic::HeMuUser { user_index, .. } => Some(*user_index),
+                            _ => None,
+                        })
+                        .unwrap()
+                });
+                if c[5] == "ldpc" {
+                    assert!(out.diagnostics.iter().any(|d| matches!(
+                        d,
+                        PhyDiagnostic::LdpcPartial {
+                            failed_codewords: 1
+                        }
+                    )));
+                }
+                for ((frame, expected), &user_index) in
+                    frames.into_iter().zip(&expected).zip(&users)
+                {
+                    assert_eq!(&frame.bytes, expected, "{} user{user_index}", c[0]);
+                    assert_eq!(frame.integrity, FrameIntegrity::ValidFcs);
+                    assert!(valid_fcs(&frame.bytes));
+                    assert_eq!(frame.start.sample_index, 37);
+                    assert_eq!(frame.end_sample_index, c[9].parse().unwrap());
+                    assert!(frame.diagnostics.contains(&PhyDiagnostic::HeMuUser {
+                        user_index,
+                        preamble_sample_index: 37
+                    }));
+                    assert!(frame
+                        .diagnostics
+                        .iter()
+                        .any(|d| matches!(d, PhyDiagnostic::HeMuSigB { .. })));
+                    assert!(frame
+                        .diagnostics
+                        .iter()
+                        .any(|d| matches!(d, PhyDiagnostic::Ampdu { .. })));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn radio_he_mu_streaming_limits_and_eof() {
+        let bytes = include_bytes!("../../tests/fixtures/iq/he-mu-ampdu-a0-m4-l1-d0-clean.cs8");
+        assert!(feed(&mut LegacyWifiDecoder::new(), bytes, 37)
+            .frames
+            .is_empty());
+        let mut cfg = config();
+        cfg.max_pending_frames = 32;
+        let out = feed_config(
+            &mut WifiDecoder::new(),
+            &bytes[..bytes.len() - 2],
+            37,
+            cfg.clone(),
+        )
+        .unwrap();
+        assert!(out.frames.is_empty());
+        assert!(out.diagnostics.contains(&PhyDiagnostic::TruncatedFrame));
+        cfg.max_pending_frames = 3;
+        assert!(matches!(
+            feed_config(&mut WifiDecoder::new(), bytes, 997, cfg),
+            Err(RadioError::Limit { .. })
+        ));
+        for budget in [512, 1024, 4096, 120000] {
+            let mut decoder = LegacyOfdmDecoder::with_ht();
+            let mut cfg = config();
+            cfg.max_buffer_samples = budget;
+            cfg.max_chunk_samples = 37;
+            cfg.max_pending_frames = 32;
+            let mut frames = 0;
+            for (sequence, part) in bytes.chunks(74).enumerate() {
+                let chunk = IqChunk::new(
+                    cfg.clone(),
+                    IqPosition {
+                        epoch: 0,
+                        sequence: sequence as u64,
+                        sample_index: (sequence * 37) as u64,
+                        time_anchor: None,
+                        discontinuity: None,
+                    },
+                    part.iter().map(|b| *b as i8).collect(),
+                )
+                .unwrap();
+                frames += decoder.consume(IqEvent::Chunk(chunk)).unwrap().frames.len();
+                assert!(
+                    decoder
+                        .pending
+                        .iter()
+                        .flatten()
+                        .map(|p| p.samples.capacity())
+                        .sum::<usize>()
+                        <= budget
+                );
+            }
+            if budget == 120000 {
+                assert_eq!(frames, 18);
+            }
+        }
+        let mut cfg = config();
+        cfg.max_pending_frames = 32;
+        cfg.max_chunk_samples = 120000;
+        let mut decoder = WifiDecoder::new();
+        for (sequence, start, part) in [(0, 0, &bytes[..4000]), (1, 2001, &bytes[4002..])] {
+            let chunk = IqChunk::new(
+                cfg.clone(),
+                IqPosition {
+                    epoch: 0,
+                    sequence,
+                    sample_index: start,
+                    time_anchor: None,
+                    discontinuity: None,
+                },
+                part.iter().map(|b| *b as i8).collect(),
+            )
+            .unwrap();
+            let out = decoder.consume(IqEvent::Chunk(chunk)).unwrap();
+            assert!(out.frames.is_empty());
+            if sequence == 1 {
+                assert!(out
+                    .diagnostics
+                    .iter()
+                    .any(|d| matches!(d, PhyDiagnostic::Reset(ResetReason::Gap(_)))));
+            }
+        }
+        decoder.reset(ResetReason::Explicit);
+        assert_eq!(
+            feed_config(&mut decoder, bytes, 997, cfg)
+                .unwrap()
+                .frames
+                .len(),
+            18
+        );
+    }
+
+    #[test]
     fn radio_he_sig_b_streaming_iq() {
         for row in include_str!("../../tests/fixtures/iq/he-sigb-iq-index.tsv")
             .lines()
@@ -1606,7 +1919,10 @@ mod tests {
                         fields.users.iter().filter(|u| u.is_err()).count(),
                         if c[5] == "user-crc" { 2 } else { 0 }
                     );
-                    assert!(out.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy));
+                    assert!(
+                        out.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy)
+                            || out.diagnostics.contains(&PhyDiagnostic::TruncatedFrame)
+                    );
                 }
                 if let Some(previous) = &previous {
                     assert_eq!(&headers, previous, "{}", c[0]);
@@ -1656,6 +1972,9 @@ mod tests {
                 );
                 for p in decoder.pending.iter().flatten() {
                     if let Some(required) = p.mu_wait {
+                        assert!(required <= p.samples.capacity());
+                    }
+                    if let Some(required) = p.mu_data_end {
                         assert!(required <= p.samples.capacity());
                     }
                 }

@@ -21,10 +21,10 @@ from he_sig_b_coded_vectors import checked, encode
 from he_sig_b_modulation_vectors import modulate
 from he_ru_symbol_vectors import geometry, point
 from he_capacity_vectors import BPS
-from he_ldpc_rate_vectors import layout, encode_information, RATES
+from he_ldpc_rate_vectors import layout, encode_information, damage_codeword, RATES
 
 
-def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage='none'):
+def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage='none',mac_payloads=None):
     geom={(ru,index):(data,pilots) for ru,index,data,pilots in geometry()}
     rus=[]
     for item in allocation(code)[1].split(','):
@@ -33,6 +33,15 @@ def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage=
         data,pilots=geom[ru,index]; rus.append((ru,data,pilots))
     initial=22 if period else 5
     padding=3
+    if mac_payloads is not None:
+        assert len(mac_payloads)==len(rus)
+        def budget(ru,data):
+            cbps=len(data)*BPS[mcs]//(1+dcm)
+            short=(2 if ru==26 and dcm else {26:6,52:12,106:24,242:60}[ru]//(1+dcm))*BPS[mcs]
+            return ((initial-1)*int(cbps*RATES[mcs])+padding*int(short*RATES[mcs])-(16 if ldpc else 22))//8
+        while any(budget(ru,data)<len(payload) for (ru,data,_),payload in zip(rus,mac_payloads)):
+            initial+=1
+        assert initial<=400
     extra=ldpc and any(layout(mcs,1,dcm,1,initial,padding,mu_tones=ru)[2] for ru,_,_ in rus)
     final_padding=4 if extra else padding
     symbols=initial
@@ -46,12 +55,18 @@ def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage=
         octets,phy=divmod(count-(16 if ldpc else 22),8)
         assert octets>=0
         psdu=bytes((n*37+user*11+93+mcs*13)%256 for n in range(octets))
+        if mac_payloads is not None:
+            from vht_ampdu_vectors import delimiter
+            remaining=octets-len(mac_payloads[user])
+            psdu=mac_payloads[user]+delimiter(0,1)*(remaining//4)+b'\xa5'*(remaining%4)
         payloads.append(psdu.hex())
         service=[0]*16
         if damage=='service' and user==0:service[7]=1
         scrambled=base.scramble(service+base.bits(psdu)+[n%2 for n in range(phy)],93)
         if ldpc:
-            coded=list(map(int,encode_information(scrambled,sizing,mcs)))
+            coded=encode_information(scrambled,sizing,mcs)
+            if damage=='ldpc' and user==0:coded=damage_codeword(coded,sizing,sizing[3]-1)
+            coded=list(map(int,coded))
         else:
             pattern=ht.PUNCTURE[mcs] if mcs<8 else ([1,1,1,0,0,1] if mcs==8 else [1,1,1,0,0,1,1,0,0,1])
             coded=[b for i,b in enumerate(base.encode(scrambled+[0]*6)) if pattern[i%len(pattern)]]

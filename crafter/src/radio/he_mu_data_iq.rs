@@ -36,6 +36,56 @@ pub(super) struct Recovered {
     pub users: Vec<Result<Payload, Error>>,
 }
 
+/// Checked SIG-B to bounded DATA retention. No payload or MAC integrity is
+/// established here; at least one RU must have a supported user layout.
+pub(super) fn admit(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    fields: &Fields,
+    max_samples: usize,
+) -> Result<Timing, Error> {
+    if a.signal_start.checked_sub(a.preamble_start) != Some(320) {
+        return Err(Error::Layout);
+    }
+    let length = super::he_iq::repeated_er_signal(samples, a).ok_or(Error::Header)?;
+    let timing = Timing::for_mu(6_000_000, length, &fields.signal, fields.symbols)
+        .map_err(|_| Error::Timing)?;
+    let needed = timing.data_end.checked_sub(320).ok_or(Error::Timing)?;
+    a.preamble_start
+        .checked_add(timing.data_end as u64)
+        .ok_or(Error::Timing)?;
+    if needed > max_samples || timing.data_symbols > 400 {
+        return Err(Error::Limit);
+    }
+    let layout = fields.layout().map_err(|_| Error::Layout)?;
+    let supported = !fields.signal.stbc
+        && (layout.len() != 1 || timing.ltf_symbols == 1)
+        && layout.iter().any(|ru| {
+            ru.users.len() == 1
+                && ru.users.clone().any(|i| {
+                    fields.users[i].is_ok_and(|user| {
+                        matches!(
+                            user.encoding,
+                            HeSigBUserEncoding::NonMu {
+                                space_time_streams: 1,
+                                ..
+                            }
+                        ) && Capacity::for_mu(
+                            &fields.signal,
+                            &user,
+                            (ru.tones.count() + ru.tones.pilots().len()) as u16,
+                            timing.data_symbols,
+                        )
+                        .is_ok()
+                    })
+                })
+        });
+    if !supported {
+        return Err(Error::Unsupported);
+    }
+    Ok(timing)
+}
+
 /// Input begins at L-SIG, not at the legacy preamble. Bounds cover the entire
 /// DATA region before per-user allocation. Header recovery does not emit frames.
 pub(super) fn recover(
@@ -49,11 +99,7 @@ pub(super) fn recover(
         return Err(Error::Layout);
     }
     let fields = super::he_sig_b_iq::recover(samples, a).map_err(|_| Error::Header)?;
-    // MU and ER share the checked modulo-two legacy length; SIG-A above
-    // independently identifies MU, not ER.
-    let length = super::he_iq::repeated_er_signal(samples, a).ok_or(Error::Header)?;
-    let timing = Timing::for_mu(6_000_000, length, &fields.signal, fields.symbols)
-        .map_err(|_| Error::Timing)?;
+    let timing = admit(samples, a, &fields, max_samples)?;
     let needed = timing.data_end.checked_sub(320).ok_or(Error::Timing)?;
     if needed > max_samples || timing.data_symbols > 400 {
         return Err(Error::Limit);

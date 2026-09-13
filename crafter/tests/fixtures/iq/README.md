@@ -1,5 +1,12 @@
 # Independent IQ vector contract
 
+`he-mu-ampdu-iq-index.tsv` indexes 94 independent MU PHY/MAC waveforms. Two
+checksummed MPDUs per user are encoded with BCC/LDPC, including DCM. Bad FCS,
+SERVICE, user-block CRC and LDPC codeword cases verify salvage without bypassing
+MAC integrity. Identical MPDUs on different RUs remain separate occurrences.
+The corpus covers all HE20 RU positions and preserves expected user indices.
+Regenerate with `he_mu_ampdu_iq_vectors.py`, adding `--check` to verify.
+
 `he-mu-data-iq-index.tsv` indexes 252 independent MU preamble-through-DATA cs8
 waveforms with synthetic per-user PSDUs (not MAC frames). They cover all HE20
 RU positions, one stream/RU, BCC/LDPC, DCM, four guard/training pairs, extra

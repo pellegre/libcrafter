@@ -86,7 +86,7 @@ pub fn he_mu_signal_metadata(
         "preamble_sample_index":preamble_sample_index})
 }
 pub fn he_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
-    frame.diagnostics.iter().find_map(|d| match d {
+    let mut metadata = frame.diagnostics.iter().find_map(|d| match d {
         PhyDiagnostic::HeMuSigB {
             fields,
             preamble_sample_index,
@@ -104,7 +104,18 @@ pub fn he_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
             preamble_sample_index,
         } => Some(he_er_signal_metadata(fields, *preamble_sample_index)),
         _ => None,
-    })
+    })?;
+    if let Some(index) = frame.diagnostics.iter().find_map(|d| match d {
+        PhyDiagnostic::HeMuUser { user_index, .. } => Some(*user_index),
+        _ => None,
+    }) {
+        metadata["user_index"] = index.into();
+        metadata["user"] = metadata["users"]
+            .get(index)
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+    }
+    Some(metadata)
 }
 
 pub fn he_sig_b_metadata(f: &HeMuSigBFields, preamble_sample_index: u64) -> serde_json::Value {
