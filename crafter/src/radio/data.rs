@@ -1544,18 +1544,14 @@ mod tests {
                 // These header-only vectors use arbitrary duration/padding,
                 // including odd STBC DATA counts. A valid SIG-A is not proof
                 // of admissible DATA geometry. No fixture contains payload.
-                if expected.bandwidth == 1 {
-                    assert!(out.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy));
-                } else {
-                    assert!(
-                        out.diagnostics.iter().any(|d| matches!(
-                            d,
-                            PhyDiagnostic::TruncatedFrame | PhyDiagnostic::UnsupportedPhy
-                        )),
-                        "{}",
-                        c[0]
-                    );
-                }
+                assert!(
+                    out.diagnostics.iter().any(|d| matches!(
+                        d,
+                        PhyDiagnostic::TruncatedFrame | PhyDiagnostic::UnsupportedPhy
+                    )),
+                    "{}",
+                    c[0]
+                );
             }
         }
         for row in include_str!("../../tests/fixtures/iq/he-er-prefix-invalid-index.tsv")
@@ -1968,6 +1964,28 @@ mod tests {
                 .as_slice(),
             include_bytes!("../../tests/fixtures/iq/he-er-iq-stbc-mcs2-ldpc-ltf4-gi3200-pad1.cs8")
                 .as_slice(),
+            include_bytes!(
+                "../../tests/fixtures/iq/he-er106-iq-plain-mcs0-bcc-ltf4-gi3200-pad1.cs8"
+            )
+            .as_slice(),
+            include_bytes!(
+                "../../tests/fixtures/iq/he-er106-iq-plain-mcs0-ldpc-ltf4-gi3200-pad1.cs8"
+            )
+            .as_slice(),
+            include_bytes!("../../tests/fixtures/iq/he-er106-iq-dcm-mcs0-bcc-ltf4-gi3200-pad1.cs8")
+                .as_slice(),
+            include_bytes!(
+                "../../tests/fixtures/iq/he-er106-iq-dcm-mcs0-ldpc-ltf4-gi3200-pad1.cs8"
+            )
+            .as_slice(),
+            include_bytes!(
+                "../../tests/fixtures/iq/he-er106-iq-stbc-mcs0-bcc-ltf4-gi3200-pad1.cs8"
+            )
+            .as_slice(),
+            include_bytes!(
+                "../../tests/fixtures/iq/he-er106-iq-stbc-mcs0-ldpc-ltf4-gi3200-pad1.cs8"
+            )
+            .as_slice(),
         ] {
             assert!(feed(&mut LegacyWifiDecoder::new(), bytes, 127)
                 .frames
@@ -2090,6 +2108,16 @@ mod tests {
         );
     }
 
+    #[test]
+    fn radio_he_er106_streaming_complete_aggregates() {
+        he_diversity_streams(
+            include_str!("../../tests/fixtures/iq/he-er106-iq-index.tsv"),
+            include_str!("../../tests/fixtures/iq/he-er106-iq-invalid-index.tsv"),
+            false,
+            true,
+        );
+    }
+
     fn he_diversity_streams(index: &str, invalid: &str, dcm: bool, er: bool) {
         for row in index.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
@@ -2131,6 +2159,7 @@ mod tests {
                             _ => return false,
                         };
                         fields.dcm == dcm
+                            && fields.bandwidth == u8::from(c[0].starts_with("he-er106-"))
                             && fields.stbc == stbc
                             && fields.space_time_streams == 1 + u8::from(stbc)
                             && fields.mcs == c[1].parse::<u8>().unwrap()

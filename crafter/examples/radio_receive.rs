@@ -1050,6 +1050,11 @@ mod tests {
         for row in include_str!("../tests/fixtures/iq/he-er-iq-index.tsv")
             .lines()
             .skip(1)
+            .chain(
+                include_str!("../tests/fixtures/iq/he-er106-iq-index.tsv")
+                    .lines()
+                    .skip(1),
+            )
             .filter(|r| {
                 let name = r.split('\t').next().unwrap();
                 name.contains("-mcs0-") && name.ends_with("-ltf4-gi3200-pad3")
@@ -1090,7 +1095,14 @@ mod tests {
                 assert_eq!(frame_phy(frame), "he");
                 let metadata = he_metadata(frame).unwrap();
                 assert_eq!(metadata["format"], "er_su");
-                assert_eq!(metadata["ru_tones"], 242);
+                assert_eq!(
+                    metadata["ru_tones"],
+                    if c[0].starts_with("he-er106-") {
+                        106
+                    } else {
+                        242
+                    }
+                );
                 assert_eq!(metadata["channel_width_mhz"], 20);
                 assert_eq!(metadata["mcs"], 0);
                 assert_eq!(metadata["coding"], if c[2] == "1" { "ldpc" } else { "bcc" });

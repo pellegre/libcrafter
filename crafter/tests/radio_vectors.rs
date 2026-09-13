@@ -480,6 +480,16 @@ fn radio_he_stbc_independent_inventory() {
 fn radio_he_er_iq_independent_inventory() {
     for (index, count, digest) in [
         (
+            include_str!("fixtures/iq/he-er106-iq-index.tsv"),
+            104,
+            "01ee9000428eddb43d7a3e53aecc8ab8e880ac496a055ff7bfd44ae59806aa7a",
+        ),
+        (
+            include_str!("fixtures/iq/he-er106-iq-invalid-index.tsv"),
+            16,
+            "de14caf79bcc26c530515c7b6138dde298d724c2e39a9f2a1a75546cad41f8a9",
+        ),
+        (
             include_str!("fixtures/iq/he-er-iq-index.tsv"),
             280,
             "2f8d73cbc26f8fbd3008c437d49a830da27102ab411cc108ef90556be001de07",
@@ -502,7 +512,7 @@ fn radio_he_er_iq_independent_inventory() {
             .unwrap();
             assert_eq!(hex(&Sha256::digest(&bytes)), *c.last().unwrap());
             assert_eq!(bytes.len() % 2, 0);
-            if count == 280 {
+            if count == 280 || count == 104 {
                 assert_eq!(c.len(), 14);
                 assert!(c[9].parse::<usize>().unwrap() < c[10].parse::<usize>().unwrap());
                 assert!(c[10].parse::<usize>().unwrap() <= bytes.len() / 2);

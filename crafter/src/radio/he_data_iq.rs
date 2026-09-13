@@ -1,4 +1,4 @@
-//! HE20 SU / ER242 BCC/LDPC IQ, IEEE802.11ax-2021 27.3.12.5/8/9/10/13/14.
+//! HE20 SU / ER BCC/LDPC IQ, IEEE802.11ax-2021 27.3.12.5/8/9/10/13/14.
 use super::{
     he_capacity::Capacity, he_timing::Timing, he_training::train_su, sync::Acquisition,
     ComplexSample, SignalInfo,
@@ -71,7 +71,12 @@ pub(super) fn admit(
         Timing::new(6_000_000, prefix.legacy_length, &h)
     }
     .ok()?;
-    let capacity = Capacity::new(&h, timing.data_symbols).ok()?;
+    let capacity = if prefix.er {
+        Capacity::for_format(&h, timing.data_symbols, true)
+    } else {
+        Capacity::new(&h, timing.data_symbols)
+    }
+    .ok()?;
     if h.ldpc {
         let symbols = u16::try_from(timing.data_symbols).ok()?;
         if prefix.er {
@@ -443,6 +448,15 @@ mod tests {
             include_str!("../../tests/fixtures/iq/he-er-iq-index.tsv"),
             true,
             280,
+        );
+    }
+
+    #[test]
+    fn radio_he_er106_iq_complete_waveforms() {
+        complete_waveforms(
+            include_str!("../../tests/fixtures/iq/he-er106-iq-index.tsv"),
+            true,
+            104,
         );
     }
 

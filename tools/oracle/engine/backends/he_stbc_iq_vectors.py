@@ -21,13 +21,19 @@ from vht_bcc_iq_vectors import constellation
 from vht_ampdu_vectors import delimiter
 
 
-def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None, er=False):
+def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None, er=False, upper106=False):
     if er: assert mcs in (0,1,2)
+    if upper106: assert er and mcs==0
+    ru=106 if upper106 else 242
+    pilots=[22,48,90,116] if upper106 else PILOTS
+    tones=[k for k in range(17,123) if k not in pilots] if upper106 else TONES
+    columns=17 if upper106 else 26
+    distance=6 if upper106 else 9
     assert (size, guard) in ((1,16),(2,16),(2,32),(4,64))
     nsym=42 if period==20 else 22 if period else 4
     wire,frames=payload(padding==4)
-    dbps=DATA[mcs]; cbps=234*BPS[mcs]
-    last_data=dbps if padding==4 else padding*SHORT[mcs]
+    dbps=51 if upper106 else DATA[mcs]; cbps=len(tones)*BPS[mcs]
+    last_data=dbps if padding==4 else padding*(12 if upper106 else SHORT[mcs])
     while ((nsym-2)*dbps+2*last_data-(16 if ldpc else 22))//8 < len(wire): nsym+=2
     octets,pad=divmod((nsym-2)*dbps+2*last_data-(16 if ldpc else 22),8)
     remaining=octets-len(wire)
@@ -38,13 +44,13 @@ def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None, e
     extra=0
     if ldpc:
         from he_ldpc_rate_vectors import layout,encode_information
-        sizing=layout(mcs,1,0,2,nsym,padding)
+        sizing=layout(mcs,1,0,2,nsym,padding,106 if upper106 else None)
         coded=encode_information(bits,sizing,mcs)
         nsym,padding,extra=sizing[:3]
     else:
         pattern=PUNCTURE[mcs] if mcs<8 else ([1,1,1,0,0,1] if mcs==8 else [1,1,1,0,0,1,1,0,0,1])
         coded=[v for i,v in enumerate(base.encode(bits+[0]*6)) if pattern[i%len(pattern)]]
-    last=cbps if padding==4 else padding*60*BPS[mcs]
+    last=cbps if padding==4 else padding*(24 if upper106 else 60)*BPS[mcs]
     split=(nsym-2)*cbps
     coded=coded[:split]+coded[split:split+last]+[i%2 for i in range(cbps-last)]+coded[split+last:]+[i%2 for i in range(cbps-last)]
     assert len(coded)==nsym*cbps and nsym%2==0
@@ -56,6 +62,7 @@ def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None, e
     rounded=80*math.ceil((data_end+pe-400)/80)
     length=3*(rounded//80)-5+er
     header=[0]*52
+    header[19]=int(upper106)
     for i in (0,1,14,23,34,35,40):header[i]=1
     header[3:7]=[(mcs>>i)&1 for i in range(4)]
     header[33]=int(ldpc);header[34]=extra if ldpc else 1
@@ -92,10 +99,10 @@ def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None, e
 
     stf=[(0j,0j)]*245
     for k,v in zip(range(-112,113,16),[-1,-1,-1,1,1,1,-1,1,1,1,-1,1,1,-1,1]):
-        if k:stf[k+122]=(v*(1+1j)/math.sqrt(2),)*2
-    wave += [v*boost for v in emit(stf,14,80,0)]
+        if k and (not upper106 or k>=17):stf[k+122]=(v*(1+1j)/math.sqrt(2),)*2
+    wave += [v*boost for v in emit(stf,6 if upper106 else 14,80,0)]
     sequence={1:training.LTF1,2:training.LTF2,4:training.LTF4}[size]
-    active=242*size/4  # Equation27-5, not the populated-tone count.
+    active=ru*size/4  # Equation27-5, not the populated-tone count.
 
     def ltf_field(epoch):
         field=[]
@@ -103,8 +110,9 @@ def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None, e
             freq=[]
             for k,sign in zip(range(-122,123),sequence):
                 v={'-':-1,'+':1,'0':0}[sign]
+                if upper106 and k<17:v=0
                 # P rows: [1,-1], [1,1]; R repeats row1 on pilots.
-                freq.append((v*(-1 if col else 1),v*(-1 if col and k in PILOTS else 1)))
+                freq.append((v*(-1 if col else 1),v*(-1 if col and k in pilots else 1)))
             time=[v*boost for v in emit(freq,active,size*64,epoch)]
             field+=time[-guard:]+time
         return field
@@ -115,16 +123,16 @@ def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None, e
     for n in range(nsym):
         block=coded[n*cbps:(n+1)*cbps];interleaved=[0]*cbps;s=max(1,BPS[mcs]//2)
         if ldpc:
-            grid=[list(range(r*26,(r+1)*26)) for r in range(9)]
-            for tone,k in enumerate([grid[r][col] for col in range(26) for r in range(9)]):
+            grid=[list(range(r*columns,(r+1)*columns)) for r in range(distance)]
+            for tone,k in enumerate([grid[r][col] for col in range(columns) for r in range(distance)]):
                 interleaved[tone*BPS[mcs]:(tone+1)*BPS[mcs]]=block[k*BPS[mcs]:(k+1)*BPS[mcs]]
         else:
             for k,b in enumerate(block):
-                i=9*BPS[mcs]*(k%26)+k//26
-                j=s*(i//s)+(i+cbps-26*i//cbps)%s
+                i=distance*BPS[mcs]*(k%columns)+k//columns
+                j=s*(i//s)+(i+cbps-columns*i//cbps)%s
                 interleaved[j]=b
         freq={}
-        for i,k in enumerate(TONES):
+        for i,k in enumerate(tones):
             label=interleaved[i*BPS[mcs]:(i+1)*BPS[mcs]]
             if len(label)==10:
                 from he_demapping_vectors import AXIS
@@ -139,13 +147,14 @@ def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None, e
         if n in insertions:
             epoch+=1;refresh.append(len(wave));wave+=ltf_field(epoch)
         freq=[(0j,0j)]*245
-        for k in TONES:
+        for k in tones:
             x=constellations[n][k]
             y=constellations[n-1 if n%2 else n+1][k].conjugate()*(1 if n%2 else -1)
             freq[k+122]=(x,y)
-        for j,k in enumerate(PILOTS):
-            freq[k+122]=(polarities[n+pilot_offset]*[1,1,1,-1,-1,1,1,1][(n+j)%8],)*2
-        time=emit(freq,242,256,epoch)
+        signs=[1,1,1,-1] if upper106 else [1,1,1,-1,-1,1,1,1]
+        for j,k in enumerate(pilots):
+            freq[k+122]=(polarities[n+pilot_offset]*signs[(n+j)%len(signs)],)*2
+        time=emit(freq,ru,256,epoch)
         wave+=time[-guard:]+time
     assert len(wave)==37+data_end
     if invalid=='truncated':wave=wave[:-1]

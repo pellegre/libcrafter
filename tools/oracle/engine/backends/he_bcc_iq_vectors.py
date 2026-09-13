@@ -24,17 +24,22 @@ TONES=[k for k in training.TONES if k not in PILOTS]
 
 
 def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False,initial_padding=None,
-             midamble_period=None,initial_symbols=None,dcm=False,er=False):
+             midamble_period=None,initial_symbols=None,dcm=False,er=False,upper106=False):
     if er: assert mcs in (0,1,2)
+    if upper106: assert er and mcs==0
+    ru=106 if upper106 else 242
+    pilots=[22,48,90,116] if upper106 else PILOTS
+    tones=[k for k in range(17,123) if k not in pilots] if upper106 else TONES
+    short_tones=24 if upper106 else 60
     symbols=137 if long else 5
     if initial_symbols is not None: symbols=initial_symbols
     padding=mcs%4+1
     if initial_padding is not None: padding=initial_padding
     if dcm: assert mcs in (0,1,3,4) and (size,guard)!=(4,16)
-    nsd=117 if dcm else 234
-    cbps=nsd*BPS[mcs];dbps=DATA[mcs]//(1+dcm)
-    short=SHORT[mcs]//(1+dcm)
-    last=cbps if padding==4 else padding*(30 if dcm else 60)*BPS[mcs]
+    nsd=len(tones)//(1+dcm)
+    cbps=nsd*BPS[mcs];dbps=(51 if upper106 else DATA[mcs])//(1+dcm)
+    short=(12 if upper106 else SHORT[mcs])//(1+dcm)
+    last=cbps if padding==4 else padding*(short_tones//(1+dcm))*BPS[mcs]
     if payload is not None:
         assert len(payload)%4==0
         while ((symbols-1)*dbps+(dbps if padding==4 else padding*short)-(16 if ldpc else 22))//8 < len(payload):
@@ -53,19 +58,20 @@ def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False
     extra=0
     if ldpc:
         from he_ldpc_rate_vectors import layout, encode_information
-        sizing=layout(mcs,1,int(dcm),1,symbols,padding)
+        sizing=layout(mcs,1,int(dcm),1,symbols,padding,106 if upper106 else None)
         coded=encode_information(bits,sizing,mcs)
         symbols,padding,extra=sizing[:3]
-        last=cbps if padding==4 else padding*(30 if dcm else 60)*BPS[mcs]
+        last=cbps if padding==4 else padding*(short_tones//(1+dcm))*BPS[mcs]
     else:
         pattern=PUNCTURE[mcs] if mcs<8 else ([1,1,1,0,0,1] if mcs==8 else [1,1,1,0,0,1,1,0,0,1])
         coded=[b for i,b in enumerate(base.encode(bits+[0]*6)) if pattern[i%len(pattern)]]
         if dcm and mcs==0:
             with_filler=[]
-            for start in range(0,len(coded),116):
-                block=coded[start:start+116]
+            stride=2*dbps
+            for start in range(0,len(coded),stride):
+                block=coded[start:start+stride]
                 with_filler+=block
-                if len(block)==116:with_filler.append((start//116)%2)
+                if len(block)==stride:with_filler.append((start//stride)%2)
             coded=with_filler
     coded += [n%2 for n in range(cbps-last)]
     assert len(coded)==symbols*cbps
@@ -76,6 +82,7 @@ def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False
     rounded=80*math.ceil((data_end+pe-400)/80)
     length=3*(rounded//80)-5+er
     header=[0]*52
+    header[19]=int(upper106)
     for i in (0,14,34,40):header[i]=1
     if ldpc:header[33]=1;header[34]=extra
     if dcm:header[7]=1
@@ -103,11 +110,11 @@ def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False
     boost=math.sqrt(2) if er else 1
     stf=[0j]*245
     for k,v in zip(range(-112,113,16),[-1,-1,-1,1,1,1,-1,1,1,1,-1,1,1,-1,1]):
-        if k:stf[k+122]=v*(1+1j)/math.sqrt(2)
-    wave += [v*4*math.sqrt(52/14)*boost for v in training.ifft(stf)][:80]
+        if k and (not upper106 or k>=17):stf[k+122]=v*(1+1j)/math.sqrt(2)
+    wave += [v*4*math.sqrt(52/(6 if upper106 else 14))*boost for v in training.ifft(stf)][:80]
     seq={1:training.LTF1,2:training.LTF2,4:training.LTF4}[size]
-    active=242*size/4  # Equation27-5, not the populated-tone count.
-    ltf=[v*4*math.sqrt(52/active)*boost for v in training.ifft([{'-':-1,'+':1,'0':0}[v] for v in seq])][:size*64]
+    active=ru*size/4  # Equation27-5, not the populated-tone count.
+    ltf=[v*4*math.sqrt(52/active)*boost for v in training.ifft([{'-':-1,'+':1,'0':0}[v] if not upper106 or k>=17 else 0 for k,v in zip(range(-122,123),seq)])][:size*64]
     wave+=ltf[-guard:]+ltf
     assert len(wave)==37+preamble
     pilot_offset=6 if er else 4
@@ -120,19 +127,20 @@ def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False
         block=coded[n*cbps:(n+1)*cbps]
         interleaved=[0]*cbps;s=max(1,BPS[mcs]//2)
         if ldpc:
-            columns=nsd//9
-            grid=[list(range(r*columns,(r+1)*columns)) for r in range(9)]
-            source_order=[grid[r][col] for col in range(columns) for r in range(9)]
+            distance=(3 if dcm else 6) if upper106 else 9
+            columns=nsd//distance
+            grid=[list(range(r*columns,(r+1)*columns)) for r in range(distance)]
+            source_order=[grid[r][col] for col in range(columns) for r in range(distance)]
             for tone,k in enumerate(source_order):
                 interleaved[tone*BPS[mcs]:(tone+1)*BPS[mcs]]=block[k*BPS[mcs]:(k+1)*BPS[mcs]]
         else:
-            columns=13 if dcm else 26
+            columns=17 if upper106 else 13 if dcm else 26
             for k,b in enumerate(block):
-                i=9*BPS[mcs]*(k%columns)+k//columns
+                i=(cbps//columns)*(k%columns)+k//columns
                 j=s*(i//s)+(i+cbps-columns*i//cbps)%s
                 interleaved[j]=b
         freq=[0j]*245
-        for i,k in enumerate(TONES[:nsd]):
+        for i,k in enumerate(tones[:nsd]):
             label=interleaved[i*BPS[mcs]:(i+1)*BPS[mcs]]
             if len(label)==10:
                 from he_demapping_vectors import AXIS
@@ -141,12 +149,13 @@ def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False
             else:freq[k+122]=constellation(label)
             if dcm:
                 logical=source_order[i] if ldpc else i
-                if BPS[mcs]==1:upper=freq[k+122]*(-1 if (logical+117)%2 else 1)
+                if BPS[mcs]==1:upper=freq[k+122]*(-1 if (logical+nsd)%2 else 1)
                 elif BPS[mcs]==2:upper=freq[k+122].conjugate()
                 else:upper=constellation([label[1],label[0],label[3],label[2]])
-                freq[TONES[i+117]+122]=upper
-        for i,k in enumerate(PILOTS):freq[k+122]=polarities[n+pilot_offset]*[1,1,1,-1,-1,1,1,1][(n+i)%8]
-        time=[v*4*math.sqrt(52/242) for v in training.ifft(freq)]
+                freq[tones[i+nsd]+122]=upper
+        signs=[1,1,1,-1] if upper106 else [1,1,1,-1,-1,1,1,1]
+        for i,k in enumerate(pilots):freq[k+122]=polarities[n+pilot_offset]*signs[(n+i)%len(signs)]
+        time=[v*4*math.sqrt(52/ru) for v in training.ifft(freq)]
         wave+=time[-guard:]+time
     assert len(wave)==37+data_end
     if invalid=='truncated':wave=wave[:-1]

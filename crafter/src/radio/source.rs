@@ -232,6 +232,11 @@ mod tests {
                 include_str!("../../tests/fixtures/iq/he-er-iq-index.tsv")
                     .lines()
                     .skip(1)
+                    .chain(
+                        include_str!("../../tests/fixtures/iq/he-er106-iq-index.tsv")
+                            .lines()
+                            .skip(1),
+                    )
                     .filter(|r| {
                         let name = r.split('\t').next().unwrap();
                         name.contains("-mcs0-") && name.ends_with("-ltf4-gi3200-pad3")
@@ -239,7 +244,7 @@ mod tests {
             )
         {
             let c: Vec<_> = row.split('\t').collect();
-            let er = c[0].starts_with("he-er-iq");
+            let er = c[0].starts_with("he-er");
             let midamble = c[0].starts_with("he-midamble");
             let dcm = if er {
                 c[11] == "1"
@@ -304,6 +309,7 @@ mod tests {
                         _ => return false,
                     };
                     fields.mcs == c[1].parse::<u8>().unwrap()
+                        && fields.bandwidth == u8::from(c[0].starts_with("he-er106-"))
                         && fields.ldpc == ldpc
                         && fields.dcm == dcm
                         && fields.stbc == stbc
