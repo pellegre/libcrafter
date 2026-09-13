@@ -43,7 +43,8 @@ def generate(out, cases=None):
             payload+=b'\xc7'*(-len(payload)%4)
         trace={}; nltf=1+stbc
         tb,_,_=waveform(192,mcs,bool(ldpc),False,size,guard,nltf=nltf,stbc=bool(stbc),
-            tb_ru=(ru,1),mac_payloads=[payload],sizing_trace=trace,return_complex=True)
+            tb_ru=(ru,1),mac_payloads=[payload],sizing_trace=trace,return_complex=True,
+            bss_color=38 if case=='wrong-color' else 37)
         tb=tb[37:]
         common=(trace['length']<<4)|((1 if size==2 else 2)<<20)|((nltf-1)<<23)|(stbc<<26)|(int(trace['extra'])<<27)|((trace['padding']%4)<<34)|(511<<54)
         if case=='wrong-context':common^=1<<54
@@ -64,7 +65,7 @@ def generate(out, cases=None):
         wave=[v*cmath.exp(1j*(.3+2*math.pi*12000*n/20_000_000)) for n,v in enumerate(wave)]
         gain=min(220,120/max(max(abs(v.real),abs(v.imag)) for v in wave))
         iq=base.quantize(wave,scale=gain)
-        if case in ['bad-trigger','wrong-context','expired','no-trigger','zero-duration','reserved-duration','below-resolution']:expected=[]
+        if case in ['bad-trigger','wrong-context','wrong-color','expired','no-trigger','zero-duration','reserved-duration','below-resolution']:expected=[]
         name=f'he-tb-exchange-{number:03d}-{"clean" if case=="below-resolution" else case}'
         (out/f'{name}.cs8').write_bytes(iq)
         rows.append('\t'.join(map(str,[name,case,ru,mcs,ldpc,stbc,trigger_end,tb_start,

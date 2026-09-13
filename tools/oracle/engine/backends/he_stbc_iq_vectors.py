@@ -21,7 +21,8 @@ from vht_bcc_iq_vectors import constellation
 from vht_ampdu_vectors import delimiter
 
 
-def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None, er=False, upper106=False,damaged_codeword=None,aggregate=None):
+def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None, er=False, upper106=False,damaged_codeword=None,aggregate=None,bss_color=0,return_complex=False):
+    assert 0 <= bss_color < 64
     if er: assert mcs in (0,1,2)
     if upper106: assert er and mcs==0
     ru=106 if upper106 else 242
@@ -68,6 +69,7 @@ def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None, e
     header[19]=int(upper106)
     for i in (0,1,14,23,34,35,40):header[i]=1
     header[3:7]=[(mcs>>i)&1 for i in range(4)]
+    header[8:14]=[(bss_color>>i)&1 for i in range(6)]
     header[33]=int(ldpc);header[34]=extra if ldpc else 1
     code={(1,16):0,(2,16):1,(2,32):2,(4,64):3}[size,guard]
     header[21:23]=[code&1,code>>1]
@@ -172,7 +174,8 @@ def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None, e
     cfo=0 if case=='flat' else .018
     samples=[v*cmath.exp(1j*(.7+cfo*n)) for n,v in enumerate(wave)]
     gain=min(220,math.floor(120/max(max(abs(v.real),abs(v.imag)) for v in samples)))
-    return base.quantize(samples,scale=gain),psdu,frames,data_start+37,data_end+37
+    iq=samples if return_complex else base.quantize(samples,scale=gain)
+    return iq,psdu,frames,data_start+37,data_end+37
 
 
 def generate(out):

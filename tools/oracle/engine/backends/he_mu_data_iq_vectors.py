@@ -27,7 +27,8 @@ from he_ldpc_rate_vectors import layout, encode_information, damage_codeword, RA
 def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage='none',mac_payloads=None,
              compressed=False,sig_b_mcs=0,sig_b_dcm=False,stbc=False,stbc_case='flat',
              user_modes=None,pre_fec_padding=3,sizing_trace=None,tb_ru=None,
-             tb_user_number=0,return_complex=False):
+             tb_user_number=0,return_complex=False,bss_color=37):
+    assert 0 <= bss_color < 64
     assert not compressed or code==192
     assert sig_b_mcs in range(6) and (not sig_b_dcm or sig_b_mcs in (0,1,3,4))
     assert not stbc or nltf in (2,4,6,8)
@@ -134,12 +135,12 @@ def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage=
     end=(800 if tb_ru is not None else 720)+80*sigb+training_samples+symbols*(256+guard)+midambles*training_samples
     units=math.ceil(F(end-400,80));length=3*units-(5 if tb_ru is not None else 4)
     header=[0]*52
-    for start,width,value in [(1,3,sig_b_mcs),(4,1,int(sig_b_dcm)),(5,6,37),(18,4,0 if compressed else min(sigb-1,15)),(22,1,int(compressed)),(23,2,{(4,16):0,(2,16):1,(2,32):2,(4,64):3}[size,guard]),
+    for start,width,value in [(1,3,sig_b_mcs),(4,1,int(sig_b_dcm)),(5,6,bss_color),(18,4,0 if compressed else min(sigb-1,15)),(22,1,int(compressed)),(23,2,{(4,16):0,(2,16):1,(2,32):2,(4,64):3}[size,guard]),
         (25,1,int(bool(period))),(33,1,1),(34,3,[1,2,4,6,8].index(nltf)),(37,1,int(extra)),(38,1,int(stbc)),(39,2,final_padding%4)]:put(header,start,width,value)
     if period==20:header[36]=1
     if tb_ru is not None:
         from he_tb_signal_vectors import header as tb_header
-        header=tb_header(0,37,[0]*4,0,511)
+        header=tb_header(0,bss_color,[0]*4,0,511)
     repair(header);siga=encoded(header)
     if sizing_trace is not None:
         sizing_trace.update(length=length,padding=final_padding)

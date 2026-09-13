@@ -791,6 +791,13 @@ Triggers per aggregate, and long/short GI. The final index column records
 Trigger count; long GI expects both TB response MPDUs, whereas short GI
 must not seed context. This is offline evidence only, not 5GHz RF validation.
 
+`he-tb-he-exchange-index.tsv` adds 12 HE SU and HE ER SU Trigger exchanges
+from `he_tb_he_exchange_vectors.py`. It covers BCC/LDPC, plain/DCM carriers,
+matching carrier/response BSS color, a mismatched-color rejection, and the
+prohibition on using an STBC PPDU as Trigger context. The Trigger MPDU itself
+must still be recovered in every case. These synthetic exchanges do not
+establish negotiated or live HE interoperability.
+
 ## HE STBC IQ corpus
 
 `he-stbc-iq-index.tsv` inventories 368 independent HE20 SU STBC waveforms:

@@ -24,7 +24,9 @@ TONES=[k for k in training.TONES if k not in PILOTS]
 
 
 def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False,initial_padding=None,
-             midamble_period=None,initial_symbols=None,dcm=False,er=False,upper106=False,damaged_codeword=None):
+             midamble_period=None,initial_symbols=None,dcm=False,er=False,upper106=False,damaged_codeword=None,
+             bss_color=0,return_complex=False):
+    assert 0 <= bss_color < 64
     if er: assert mcs in (0,1,2)
     if upper106: assert er and mcs==0
     ru=106 if upper106 else 242
@@ -93,6 +95,7 @@ def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False
         assert midamble_period in (10,20)
         header[41]=1;header[25]=int(midamble_period==20)
     header[3:7]=[(mcs>>i)&1 for i in range(4)]
+    header[8:14]=[(bss_color>>i)&1 for i in range(6)]
     code={(1,16):0,(2,16):1,(2,32):2,(4,64):3,(4,16):3}[size,guard]
     header[21:23]=[code&1,code>>1]
     if (size,guard)==(4,16):header[7]=header[35]=1
@@ -186,7 +189,8 @@ def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False
     if invalid=='truncated-midamble':samples=samples[:refresh[0]+size*64+guard-1]
     gain=min(200,math.floor(120/max(max(abs(v.real),abs(v.imag)) for v in samples)))
     assert all(max(abs(v.real),abs(v.imag))*gain<127 for v in samples)
-    return base.quantize(samples,scale=gain),[mcs,size,guard,padding,symbols,psdu.hex(),cfo,
+    iq=samples if return_complex else base.quantize(samples,scale=gain)
+    return iq,[mcs,size,guard,padding,symbols,psdu.hex(),cfo,
         ';'.join(f'{d}:{h.real}:{h.imag}' for d,h in taps),gain,37+preamble,37+data_end]
 
 

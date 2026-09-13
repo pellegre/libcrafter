@@ -3332,6 +3332,75 @@ mod tests {
         );
     }
 
+    #[test]
+    fn radio_he_tb_he_trigger_carriers() {
+        let rows = include_str!("../../tests/fixtures/iq/he-tb-he-exchange-index.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 12);
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let unhex = |s: &str| {
+                s.as_bytes()
+                    .chunks_exact(2)
+                    .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
+                    .collect::<Vec<_>>()
+            };
+            let mut expected = vec![unhex(c[8])];
+            if c[9] != "-" {
+                expected.extend(c[9].split(',').map(unhex));
+            }
+            let iq = std::fs::read(root.join(format!("{}.cs8", c[0]))).unwrap();
+            for chunk in [7, 128, 4096] {
+                let output = feed_config(&mut WifiDecoder::new(), &iq, chunk, config()).unwrap();
+                assert_eq!(
+                    output.frames.iter().map(|f| &f.bytes).collect::<Vec<_>>(),
+                    expected.iter().collect::<Vec<_>>(),
+                    "{} chunk{chunk}: {:?}",
+                    c[0],
+                    output.diagnostics
+                );
+                let carrier = output.frames.first().unwrap();
+                let fields = carrier
+                    .diagnostics
+                    .iter()
+                    .find_map(|d| match d {
+                        PhyDiagnostic::HeSignal { fields, .. } if c[12] == "su" => Some(fields),
+                        PhyDiagnostic::HeErSignal { fields, .. } if c[12] == "er" => Some(fields),
+                        _ => None,
+                    })
+                    .unwrap();
+                assert_eq!(fields.mcs, c[13].parse::<u8>().unwrap());
+                assert_eq!(fields.ldpc, c[14] == "1");
+                assert_eq!(fields.dcm, c[15] == "1");
+                assert_eq!(fields.stbc, c[16] == "1");
+                assert_eq!(fields.bss_color, c[17].parse::<u8>().unwrap());
+                if c[1] == "clean" {
+                    for frame in output.frames.iter().skip(1) {
+                        assert!(valid_fcs(&frame.bytes));
+                        assert_eq!(frame.start.sample_index, c[7].parse::<u64>().unwrap());
+                        assert!(frame.diagnostics.iter().any(|d| matches!(
+                            d,
+                            PhyDiagnostic::HeTbUser {
+                                trigger_preamble_sample_index: 64,
+                                ..
+                            }
+                        )));
+                    }
+                } else {
+                    assert_eq!(output.frames.len(), 1);
+                    assert!(output
+                        .diagnostics
+                        .iter()
+                        .any(|d| matches!(d, PhyDiagnostic::HeTbSignal { .. })));
+                    assert!(!output.frames.iter().any(|frame| frame
+                        .diagnostics
+                        .iter()
+                        .any(|d| matches!(d, PhyDiagnostic::HeTbUser { .. }))));
+                }
+            }
+        }
+    }
+
     fn check_he_tb_trigger_carriers(rows: &str, count: usize) {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
         assert_eq!(rows.lines().skip(1).count(), count);
