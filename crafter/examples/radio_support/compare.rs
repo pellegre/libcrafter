@@ -943,8 +943,19 @@ mod tests {
         let root = std::env::temp_dir().join(format!("crafter-vht-compare-{}", std::process::id()));
         std::fs::create_dir(&root).unwrap();
         let result = std::panic::catch_unwind(|| {
-            for name in ["vht-ampdu-3-gi800-duplicate", "vht-ampdu-3-gi800-large"] {
-                let row = include_str!("../../tests/fixtures/iq/vht-ampdu-iq-index.tsv")
+            for name in [
+                "vht-ampdu-3-gi800-duplicate",
+                "vht-ampdu-3-gi800-large",
+                "vht-ldpc-3-gi800-duplicate",
+                "vht-ldpc-3-gi800-large",
+            ] {
+                let ldpc = name.starts_with("vht-ldpc-");
+                let inventory = if ldpc {
+                    include_str!("../../tests/fixtures/iq/vht-ldpc-iq-index.tsv")
+                } else {
+                    include_str!("../../tests/fixtures/iq/vht-ampdu-iq-index.tsv")
+                };
+                let row = inventory
                     .lines()
                     .find(|r| r.split('\t').next() == Some(name))
                     .unwrap();
@@ -1024,6 +1035,10 @@ mod tests {
                         0, 0, 36, 0, 0x0a, 0, 0x30, 0, 0x10, 0, 0x3c, 0x14, 0x40, 1, 0, 0, 42, 0,
                         0, 0, 0x80, 0, 0, 0, 255, 1, 2, 0, 0x31, 0, 0, 0, 0, 63, 0, 0,
                     ];
+                    if ldpc {
+                        rt[32] = 1; // Present user's coding is LDPC.
+                        rt[24] &= !16; // This synthetic reference leaves extra-symbol validity unknown.
+                    }
                     rt.extend_from_slice(frame);
                     for n in [0u32, 3001, rt.len() as u32, rt.len() as u32] {
                         pcap.extend_from_slice(&n.to_le_bytes());
@@ -1040,6 +1055,12 @@ mod tests {
                 assert_ne!(pairs[0].hackrf_ordinal, pairs[1].hackrf_ordinal);
                 assert_ne!(pairs[0].reference_ordinal, pairs[1].reference_ordinal);
                 assert!(pairs.iter().all(|pair| pair.phy == "vht"));
+                assert!(pairs
+                    .iter()
+                    .all(|pair| pair.vht.as_ref().unwrap().ldpc == ldpc));
+                let mut wrong_coding = right[0].clone();
+                wrong_coding.vht.as_mut().unwrap().ldpc = !ldpc;
+                assert!(match_frames(&left, &[wrong_coding], 0).is_empty());
                 let report = report(left.clone(), ac, right.clone(), bc, p.clone(), evidence);
                 assert_eq!(report["families"]["vht"]["exact_matches"], 2);
                 assert_eq!(report["qualification_gaps"], json!([]));

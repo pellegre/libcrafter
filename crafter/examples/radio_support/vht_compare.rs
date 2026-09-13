@@ -70,9 +70,7 @@ impl VhtPhy {
             return Err("unsupported_vht_mcs");
         }
         // For a present user, coding is valid without a separate known bit.
-        if v[8] & 1 != 0 {
-            return Err("unsupported_vht_ldpc");
-        }
+        let ldpc = v[8] & 1 != 0;
         let stbc = (known & 1 != 0).then_some(v[2] & 1 != 0);
         if stbc == Some(true) {
             return Err("unsupported_vht_stbc");
@@ -87,7 +85,9 @@ impl VhtPhy {
         }
         let short_gi = v[2] & 4 != 0;
         let disambiguation = (known & 8 != 0).then_some(v[2] & 8 != 0);
-        if (!short_gi && disambiguation == Some(true)) || (known & 16 != 0 && v[2] & 16 != 0) {
+        if (!short_gi && disambiguation == Some(true))
+            || (!ldpc && known & 16 != 0 && v[2] & 16 != 0)
+        {
             return Err("inconsistent_vht_flags");
         }
         let mut eof = None;
@@ -104,7 +104,7 @@ impl VhtPhy {
         Ok(Self {
             bandwidth_mhz: 20,
             spatial_streams: 1,
-            ldpc: false,
+            ldpc,
             mcs,
             short_gi,
             stbc,
@@ -128,7 +128,7 @@ impl VhtPhy {
         if h["bandwidth_code"] != 0
             || h["space_time_streams"] != 1
             || h["stbc"] != false
-            || h["coding"] != "bcc"
+            || (h["coding"] != "bcc" && h["coding"] != "ldpc")
         {
             return Err("unsupported_vht_configuration");
         }
@@ -159,7 +159,8 @@ impl VhtPhy {
         };
         let txop_ps_not_allowed = optional_bool("txop_ps_not_allowed")?;
         let ldpc_extra_symbol = optional_bool("ldpc_extra_symbol")?;
-        if ldpc_extra_symbol == Some(true) {
+        let ldpc = h["coding"] == "ldpc";
+        if !ldpc && ldpc_extra_symbol == Some(true) {
             return Err("inconsistent_vht_flags");
         }
         let bounds = h["apep_length_bounds"]
@@ -192,7 +193,7 @@ impl VhtPhy {
         Ok(Self {
             bandwidth_mhz: 20,
             spatial_streams: 1,
-            ldpc: false,
+            ldpc,
             mcs,
             short_gi,
             stbc: Some(false),

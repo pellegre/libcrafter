@@ -449,6 +449,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             debug_assert_eq!(Some(decoded.signal_a), p.vht);
                             debug_assert_eq!(decoded.info, info);
                             vht_signal_b = Some(decoded.signal_b);
+                            partial_stats.extend(decoded.coding);
                             (decoded.bytes, decoded.tracking)
                         })
                     } else if let Some(fields) = p.ht {
@@ -784,6 +785,58 @@ pub(super) fn decode_vht_bcc_data(
     Ok((recover_vht_bcc(&coded, info, sig_b)?, tracking))
 }
 
+pub(super) fn decode_vht_ldpc_data(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    info: SignalInfo,
+    guard: usize,
+    sig_b: VhtSignalB20Fields,
+    layout: ldpc_rate::Layout,
+) -> Result<(Vec<u8>, PhyDiagnostic, Vec<PhyDiagnostic>), ()> {
+    if layout.symbols != info.data_symbols
+        || layout.coded_bits_per_symbol != info.coded_bits_per_symbol
+        || layout.payload_bits.checked_sub(16).ok_or(())? / 8 != info.psdu_bytes
+    {
+        return Err(());
+    }
+    let (coded, tracking) =
+        demodulate_data_format(samples, a, info, Some(guard), false, PilotFormat::Vht, None)?;
+    // VHT PSDUs contain aggregates. Damaged codewords must not prevent recovery
+    // of another MPDU, but every published MPDU still requires a valid FCS.
+    let recovered = layout.recover_partial(&coded, 64).map_err(|_| ())?;
+    let mut diagnostics = vec![PhyDiagnostic::Ldpc {
+        codewords: layout.codewords,
+        iterations: recovered.iterations,
+    }];
+    if recovered.failed_codewords != 0 {
+        diagnostics.push(PhyDiagnostic::LdpcPartial {
+            failed_codewords: recovered.failed_codewords,
+        });
+        if let Some(ldpc_rate::Error::Codeword {
+            index,
+            error:
+                ldpc::Error::Nonconvergence {
+                    iterations,
+                    failed_checks,
+                },
+        }) = recovered.first_failure
+        {
+            diagnostics.push(PhyDiagnostic::LdpcNonconvergence {
+                codeword: index,
+                iterations,
+                failed_checks,
+            });
+        }
+    }
+    let mut service = [0; 16];
+    let crc = sig_b.expected_service_crc().ok_or(())?;
+    for (i, bit) in service[8..].iter_mut().enumerate() {
+        *bit = crc >> (7 - i) & 1;
+    }
+    let bytes = descramble_psdu_with_service(recovered.bits, info.psdu_bytes, &service)?;
+    Ok((bytes, tracking, diagnostics))
+}
+
 fn demodulate_data_format(
     samples: &[ComplexSample],
     a: &Acquisition,
@@ -953,7 +1006,16 @@ fn demodulate_data_format(
         for block in std::iter::once(interleaved).chain(companion) {
             let n = info.coded_bits_per_symbol;
             if !bcc_interleaving {
-                coded.extend(block);
+                if format == PilotFormat::Vht {
+                    // Inverse VHT20 LDPC constellation-group permutation,
+                    // 21.3.10.9.2: transmitted t(k)=4*(k%13)+floor(k/13).
+                    for k in 0..52 {
+                        let tone = 4 * (k % 13) + k / 13;
+                        coded.extend_from_slice(&block[tone * nbpsc..(tone + 1) * nbpsc]);
+                    }
+                } else {
+                    coded.extend(block);
+                }
                 continue;
             }
             let s = (nbpsc / 2).max(1);
@@ -1432,14 +1494,84 @@ mod tests {
     }
     #[test]
     fn radio_vht_streaming_aggregate_iq() {
+        verify_vht_aggregates(
+            include_str!("../../tests/fixtures/iq/vht-ampdu-iq-index.tsv"),
+            54,
+            false,
+        );
+    }
+    #[test]
+    fn radio_vht_ldpc_streaming_iq() {
+        verify_vht_aggregates(
+            include_str!("../../tests/fixtures/iq/vht-ldpc-iq-index.tsv"),
+            73,
+            true,
+        );
+    }
+    #[test]
+    fn radio_vht_ldpc_streaming_rejection_and_bounds() {
+        for row in include_str!("../../tests/fixtures/iq/vht-ldpc-iq-invalid-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let name = row.split('\t').next().unwrap();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{name}.cs8",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap();
+            assert!(
+                feed(&mut WifiDecoder::new(), &bytes, 79).frames.is_empty(),
+                "{name}"
+            );
+        }
+        let bytes = include_bytes!("../../tests/fixtures/iq/vht-ldpc-0-gi800-large.cs8");
+        let mut cfg = config();
+        cfg.max_chunk_samples = 79;
+        cfg.max_buffer_samples = 800;
+        assert!(feed_config(&mut WifiDecoder::new(), bytes, 79, cfg)
+            .unwrap()
+            .frames
+            .is_empty());
+        let out = feed(&mut WifiDecoder::new(), bytes, 79);
+        assert_eq!(out.frames.len(), 1); // 4100-byte first MPDU exceeds config's4095 bound.
+        assert_eq!(out.frames[0].bytes.len(), 56);
+        let mut decoder = WifiDecoder::new();
+        for (sequence, start, end) in [(0, 0, 700), (1, 701, bytes.len() / 2)] {
+            let mut cfg = config();
+            cfg.max_chunk_samples = bytes.len() / 2;
+            let chunk = IqChunk::new(
+                cfg,
+                IqPosition {
+                    epoch: 0,
+                    sequence,
+                    sample_index: start as u64,
+                    time_anchor: None,
+                    discontinuity: None,
+                },
+                bytes[2 * start..2 * end].iter().map(|b| *b as i8).collect(),
+            )
+            .unwrap();
+            assert!(decoder
+                .consume(IqEvent::Chunk(chunk))
+                .unwrap()
+                .frames
+                .is_empty());
+        }
+        assert!(decoder
+            .consume(IqEvent::End(StreamEnd::Eof))
+            .unwrap()
+            .frames
+            .is_empty());
+    }
+    fn verify_vht_aggregates(rows: &str, count: usize, ldpc: bool) {
         let hex = |s: &str| {
             s.as_bytes()
                 .chunks_exact(2)
                 .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
                 .collect::<Vec<_>>()
         };
-        let rows = include_str!("../../tests/fixtures/iq/vht-ampdu-iq-index.tsv");
-        assert_eq!(rows.lines().skip(1).count(), 54);
+        assert_eq!(rows.lines().skip(1).count(), count);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
             let bytes = std::fs::read(format!(
@@ -1466,6 +1598,17 @@ mod tests {
                     out.diagnostics
                 );
                 for (frame, offset) in out.frames.iter().zip(&offsets) {
+                    assert_eq!(
+                        frame.diagnostics.iter().any(|d| matches!(
+                            d,
+                            PhyDiagnostic::LdpcPartial {
+                                failed_codewords: 1
+                            }
+                        )),
+                        c[0].ends_with("bad-codeword")
+                    );
+                    assert_eq!(frame.diagnostics.iter().any(|d| matches!(d,PhyDiagnostic::Ldpc { codewords,iterations } if *codewords>0 && *iterations<=64*codewords)),ldpc);
+                    assert!(frame.diagnostics.iter().any(|d| matches!(d,PhyDiagnostic::VhtSignalA { fields,.. } if matches!(fields.users,VhtSignalAUsers::Single {ldpc: coding,mcs,..} if coding==ldpc && mcs==c[1].parse::<u8>().unwrap()))));
                     assert_eq!(frame.start.sample_index, 37);
                     assert_eq!(frame.end_sample_index, c[7].parse::<u64>().unwrap());
                     assert_eq!(frame.integrity, FrameIntegrity::ValidFcs);

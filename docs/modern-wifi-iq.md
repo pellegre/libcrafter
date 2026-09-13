@@ -297,15 +297,15 @@ use one-sample, 79-sample and 4096-sample chunks, with separate gap, buffer and
 output-limit checks. Saved-artifact admission permits the same 16383-byte
 frame ceiling as the modern example, while retaining explicit allocation bounds.
 
-The example comparator now accepts VHT20 SU NSS1 BCC radiotap observations.
+The example comparator now accepts VHT20 SU NSS1 BCC/LDPC radiotap observations.
 It requires known bandwidth/GI and an observed MCS/NSS, interprets other fields
 only under their validity bits, and compares known configuration conflicts.
 Unknown STBC or SU/MU group information remains an explicit qualification gap.
 HT and VHT do not cross-match at equal rates; aggregate frames retain their full
 PPDU interval and one-to-one occurrence matching. Header diagnostics never enter
-the valid-frame denominator. The 5157 independent metadata vectors and an
+the valid-frame denominator. The 9253 independent metadata vectors and an
 IQ-to-synthetic-reference-pcap workflow cover duplicate and large frames; this
-is not a substitute for paired hardware qualification. LDPC, STBC, MU, HE/EHT,
+is not a substitute for paired hardware qualification. STBC, MU, HE/EHT,
 hardware qualification, real-time performance and modern TX remain unfinished.
 
 ## VHT BCC DATA recovery increment
@@ -314,9 +314,15 @@ The internal LDPC rate matcher also has a VHT20 SU geometry entrypoint. Unlike
 HT, it includes PHY padding in the encoded information length, derives the
 initial symbol count from duration and the extra-symbol flag, and checks that
 the resulting puncturing decision agrees with that signaling. Independent
-forward fixtures cover 20412 geometries and 54 encoded bitstreams. This alone
-does not enable VHT LDPC IQ reception: tone demapping, SERVICE validation and
-streaming integration remain required.
+forward fixtures cover 20412 geometries and 54 encoded bitstreams.
+
+VHT LDPC now connects that rate matcher to the same bounded streaming path.
+It reverses the VHT20 whole-constellation tone permutation, verifies the SERVICE
+CRC against SIG-B, and scans the recovered PSDU with per-MPDU FCS validation.
+Partial LDPC estimates carry explicit coding diagnostics; they never bypass FCS.
+Seventy-three independent waveforms cover both GIs, MCS0-8, extra-symbol groups,
+duplicates, large MPDUs, corrupt FCS, a damaged LDPC codeword and CFO/multipath. This is offline receive
+validation, not VHT STBC/MU or hardware qualification.
 
 The private single-encoder VHT BCC DATA recovery path uses the SIG-B CRC in
 SERVICE, a nonzero scrambler seed, zero-tail termination after PHY padding,

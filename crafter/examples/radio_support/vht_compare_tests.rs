@@ -8,7 +8,7 @@ fn hex(s: &str) -> Vec<u8> {
 #[test]
 fn radio_vht_reference_independent_metadata() {
     let rows = include_str!("../../tests/fixtures/iq/vht-reference-index.tsv");
-    assert_eq!(rows.lines().skip(1).count(), 5157);
+    assert_eq!(rows.lines().skip(1).count(), 9253);
     for row in rows.lines().skip(1) {
         let c: Vec<_> = row.split('\t').collect();
         let expected: Value = serde_json::from_str(c[3]).unwrap();
@@ -47,7 +47,7 @@ fn radio_vht_recovered_fields_and_bounds() {
         ("bandwidth_code", serde_json::json!(1)),
         ("space_time_streams", serde_json::json!(2)),
         ("stbc", serde_json::json!(true)),
-        ("coding", serde_json::json!("ldpc")),
+        ("coding", serde_json::json!("unknown")),
         ("guard_interval_ns", serde_json::json!(1600)),
         ("short_gi_disambiguation", Value::Null),
         ("group_id", serde_json::json!(1)),
@@ -75,6 +75,14 @@ fn radio_vht_recovered_fields_and_bounds() {
         invalid["ampdu"]["delimiter_offset"] = bad;
         assert!(VhtPhy::recovered(&invalid, 60).is_err());
     }
+    let mut ldpc = value.clone();
+    ldpc["vht"]["coding"] = serde_json::json!("ldpc");
+    ldpc["vht"]["ldpc_extra_symbol"] = serde_json::json!(true);
+    let decoded = VhtPhy::recovered(&ldpc, 60).unwrap();
+    let reference_ldpc =
+        VhtPhy::reference([255, 1, 20, 0, 129, 0, 0, 0, 1, 63, 0, 0], None).unwrap();
+    assert!(decoded.compatible(&reference_ldpc));
+    assert!(!decoded.compatible(&reference));
     let mut old = value;
     old["vht"]
         .as_object_mut()

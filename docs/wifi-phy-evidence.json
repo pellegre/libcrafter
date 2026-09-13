@@ -64,6 +64,12 @@
   ],
   "facts": [
     {
+      "id": "vht-ldpc-receive-length",
+      "source": "ieee-80211-2020",
+      "anchor": "21.3.20 Equations 21-107/108; forward construction 21.3.10.5.4",
+      "fact": "VHT LDPC receive length is the whole-octet capacity after removing the 16 SERVICE bits from initial-symbol-count times NDBPS; unlike BCC it removes no tail bits. The LDPC extra flag accounts for one extra symbol without STBC or two with STBC, consistently with the forward coding procedure. A decoded SIG-B must be checked against the CRC carried in descrambled SERVICE; final incomplete octets are discarded as padding."
+    },
+    {
       "id": "vht-su-ldpc-rate-and-tones",
       "source": "ieee-80211-2020",
       "anchor": "21.3.10.5.4 Equations 21-61/62/63; 21.3.10.9.2 Table 21-19 and Equations 21-85/86",

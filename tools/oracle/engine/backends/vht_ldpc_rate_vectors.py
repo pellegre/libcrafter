@@ -5,6 +5,7 @@ SIG-A interpretation. Gaussian parity encoding is independent of Rust recovery.
 """
 import argparse
 from fractions import Fraction as F
+from functools import lru_cache
 import hashlib
 import json
 import math
@@ -52,6 +53,37 @@ def generate():
                 result = layout(initial,mcs,group)
                 rows.append('\t'.join(map(str,[initial,mcs,group,*result])))
     return '\n'.join(rows)+'\n'
+
+
+def encode_information(information, initial, mcs, group=1):
+    return list(_encode_information(tuple(information),initial,mcs,group))
+
+
+@lru_cache(maxsize=128)
+def _encode_information(information, initial, mcs, group):
+    """Encode arbitrary information bits using independent Gaussian parity."""
+    symbols,count,n,short,puncture,repeat,_,payload = layout(initial,mcs,group)
+    assert len(information) == payload
+    coded,rate = PARAMETERS[mcs]
+    matrices = {(c['n'],tuple(c['rate'])):c for c in json.loads(FIXTURE.read_text())['codes']}
+    matrix = matrices[n,(rate.numerator,rate.denominator)]
+    z,k = matrix['z'],matrix['k']
+    checks = [sum(1 << (col*z+(offset+shift)%z)
+                  for col,shift in enumerate(block) if shift >= 0)
+              for block in matrix['matrix'] for offset in range(z)]
+    offset,transmitted = 0,''
+    for index in range(count):
+        s = short//count + (index < short%count)
+        p = puncture//count + (index < puncture%count)
+        r = repeat//count + (index < repeat%count)
+        bits = information[offset:offset+k-s]
+        assert len(bits) == k-s
+        offset += len(bits)
+        word = encode(checks,k,n,sum(int(b)<<i for i,b in enumerate(bits)))
+        word = word[:k-s]+word[k:n-p]
+        transmitted += word + ''.join(word[i%len(word)] for i in range(r))
+    assert offset == payload and len(transmitted) == symbols*coded
+    return tuple(int(b) for b in transmitted)
 
 
 def codewords():

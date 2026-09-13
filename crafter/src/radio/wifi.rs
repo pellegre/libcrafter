@@ -1,7 +1,7 @@
 //! Combined receive-only legacy and opt-in modern PHY dispatch.
 use super::*;
 
-/// Combined legacy, HT20 one-DATA-stream BCC/LDPC and VHT20 SISO BCC receiver.
+/// Combined legacy, HT20 one-DATA-stream BCC/LDPC and VHT20 SISO BCC/LDPC receiver.
 ///
 /// HT MCS 0–7, BCC and LDPC, valid long/short guard intervals, mixed and
 /// greenfield formats, nonaggregated PSDUs, A-MPDUs, one-data-stream STBC and
@@ -9,7 +9,7 @@ use super::*;
 /// `max_pending_frames` must accommodate the returned MPDUs plus two reserved
 /// child slots. Overflow is an explicit error, never a truncated aggregate.
 /// VHT supports SU MCS 0–8, both guard intervals, S-MPDU and A-MPDU framing.
-/// VHT LDPC/STBC/MU, additional independent DATA streams, wider channels, HE
+/// VHT STBC/MU, additional independent DATA streams, wider channels, HE
 /// and EHT are not yet decoded. This implements the same `PhyDecoder`
 /// packet-source interface and shares the bounds and output ordering of
 /// `LegacyWifiDecoder`.

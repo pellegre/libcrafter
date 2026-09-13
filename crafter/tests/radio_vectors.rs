@@ -4,6 +4,37 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_vht_ldpc_iq_independent_inventory() {
+    let index = include_str!("fixtures/iq/vht-ldpc-iq-index.tsv");
+    let invalid = include_str!("fixtures/iq/vht-ldpc-iq-invalid-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "a027fff896f1a7cb96767e47d417aff5fe8b3484ff4aeab6917531f1c73aa693"
+    );
+    assert_eq!(
+        hex(&Sha256::digest(invalid.as_bytes())),
+        "9edb13a9c24d5ce8ec5413f567786e9f1484e3641d6f1e18c38cfe6eadfbacd3"
+    );
+    assert_eq!(index.lines().skip(1).count(), 73);
+    assert_eq!(invalid.lines().skip(1).count(), 3);
+    let mut names = std::collections::BTreeSet::new();
+    for (rows, column) in [(index, 6), (invalid, 2)] {
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            assert!(names.insert(c[0]));
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(hex(&Sha256::digest(&bytes)), c[column]);
+            assert_eq!(bytes.len() % 2, 0);
+        }
+    }
+}
+
+#[test]
 fn radio_vht_ldpc_rate_independent_inventory() {
     for (data, count, digest, columns) in [
         (
@@ -35,9 +66,9 @@ fn radio_vht_reference_independent_inventory() {
     let inventory = include_str!("fixtures/iq/vht-reference-index.tsv");
     assert_eq!(
         hex(&Sha256::digest(inventory.as_bytes())),
-        "eeab09c47de3fbd36bba72183e3b5f4665e7253b2462a9cc3210ef52a01d9a07"
+        "7afd5d9d695fb22d8e078ecb5d707d0ee86821c78f59e9b93a9169417137e840"
     );
-    assert_eq!(inventory.lines().skip(1).count(), 5157);
+    assert_eq!(inventory.lines().skip(1).count(), 9253);
     let mut names = std::collections::BTreeSet::new();
     for row in inventory.lines().skip(1) {
         let c: Vec<_> = row.split('\t').collect();

@@ -204,6 +204,12 @@ mod tests {
                     .skip(1)
                     .filter(|row| row.starts_with("vht-ampdu-8-gi800-duplicate\t")),
             )
+            .chain(
+                include_str!("../../tests/fixtures/iq/vht-ldpc-iq-index.tsv")
+                    .lines()
+                    .skip(1)
+                    .filter(|row| row.starts_with("vht-ldpc-8-gi800-duplicate\t")),
+            )
         {
             let fields: Vec<_> = row.split('\t').collect();
             let bytes = std::fs::read(format!(

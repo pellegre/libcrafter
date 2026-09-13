@@ -49,12 +49,13 @@ def vht_symbol(bits, nbpsc, pilot_symbol, polarity, guard=16):
     return time[-guard:] + time
 
 
-def waveform(mcs, guard, extra, corruption=None, apep_override=None):
+def waveform(mcs, guard, extra, corruption=None, apep_override=None, ldpc=False):
     nbpsc, ndbps = PARAMETERS[mcs]
     mpdu = base.frame(extra)
     apep = delimiter(len(mpdu), 1) + mpdu if apep_override is None else apep_override
-    symbols = (16 + 8 * len(apep) + 6 + ndbps - 1) // ndbps
-    psdu_len, phy_pad = divmod(symbols * ndbps - 22, 8)
+    symbols = (16 + 8 * len(apep) + (0 if ldpc else 6) + ndbps - 1) // ndbps
+    initial_symbols = symbols
+    psdu_len, phy_pad = divmod(symbols * ndbps - (16 if ldpc else 22), 8)
     psdu = bytearray(apep)
     while len(psdu) < psdu_len and len(psdu) % 4:
         psdu.append(0xa5)
@@ -63,14 +64,30 @@ def waveform(mcs, guard, extra, corruption=None, apep_override=None):
     psdu.extend(b'\x5a' * (psdu_len - len(psdu)))
     sigb = little((len(apep) + 3) // 4, 17) + [1] * 3
     data = [0] * 8 + crc(sigb) + base.bits(psdu) + [0] * phy_pad
-    encoded = base.encode(base.scramble(data, 93) + [0] * 6)
-    pattern = PUNCTURE[mcs]
-    coded = [b for i, b in enumerate(encoded) if pattern[i % len(pattern)]]
+    extra_symbol = False
+    if ldpc:
+        from vht_ldpc_rate_vectors import layout, encode_information
+        sizing = layout(initial_symbols,mcs,1)
+        symbols,extra_symbol = sizing[0],bool(sizing[6])
+        if corruption == 'service': data[8] ^= 1
+        coded = encode_information(base.scramble(data,93),initial_symbols,mcs)
+        if corruption == 'codeword':
+            _,count,n,short,puncture,repeat,_,_ = sizing
+            assert count > 2
+            size = lambda i: n-(short//count+(i<short%count))-(puncture//count+(i<puncture%count))+(repeat//count+(i<repeat%count))
+            start,length = size(0),size(1)
+            noise = hashlib.shake_256(b'vht-unrecoverable-codeword-1').digest((length+7)//8)
+            coded[start:start+length] = base.bits(noise)[:length]
+    else:
+        encoded = base.encode(base.scramble(data, 93) + [0] * 6)
+        pattern = PUNCTURE[mcs]
+        coded = [b for i, b in enumerate(encoded) if pattern[i % len(pattern)]]
     assert len(coded) == symbols * 52 * nbpsc
     short = int(guard == 8)
     disambiguation = int(short and symbols % 10 == 9)
     siga = little(0, 2) + [1, 0] + little(63, 6) + little(0, 12) + [1, 1]
-    siga += [short, disambiguation, 0, 0] + little(mcs, 4) + [0, 1]
+    siga += [short, disambiguation, int(ldpc), int(extra_symbol)] + little(mcs, 4) + [0, 1]
+    if corruption == 'extra_flag': siga[27] ^= 1
     if corruption == 'mcs9': siga[28:32] = little(9, 4)
     if corruption == 'ldpc': siga[26] = 1
     if corruption == 'stbc': siga[3] = 1
@@ -102,7 +119,14 @@ def waveform(mcs, guard, extra, corruption=None, apep_override=None):
     data_start = len(wave)
     assert data_start == 837
     for symbol in range(symbols):
-        block = ht.interleave(coded[symbol * 52 * nbpsc:(symbol + 1) * 52 * nbpsc], nbpsc)
+        block = coded[symbol * 52 * nbpsc:(symbol + 1) * 52 * nbpsc]
+        if ldpc:
+            # Write constellation groups row-wise into a 4x13 matrix, read by
+            # columns. Do not apply the BCC bit interleaver to LDPC.
+            groups = [block[n:n+nbpsc] for n in range(0,len(block),nbpsc)]
+            block = [b for col in range(13) for row in range(4) for b in groups[row*13+col]]
+        else:
+            block = ht.interleave(block, nbpsc)
         wave += vht_symbol(block, nbpsc, symbol, polarities[symbol + 4], guard)
     data_end = len(wave)
     signaled_end = 37 + 400 + 80 * (lsig_length // 3 + 1)

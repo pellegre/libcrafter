@@ -20,5 +20,5 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - Reference eligibility follows the currently implemented VHT20 SU one-stream BCC receive subset; excluded LDPC, STBC, MU or wider-channel observations are not coverage claims.
+      - Reference eligibility follows the currently implemented VHT20 SU one-stream BCC/LDPC receive subset; excluded STBC, MU or wider-channel observations are not coverage claims.
       - Unknown STBC or group information may support a byte match but remains an explicit qualification gap.

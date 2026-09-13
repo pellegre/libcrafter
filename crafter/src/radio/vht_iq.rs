@@ -1,4 +1,4 @@
-//! VHT20 SISO BCC IQ kernel. Streaming admission and MPDU publication are separate.
+//! VHT20 SISO IQ kernel. Streaming admission and MPDU publication are separate.
 //! IEEE 802.11-2020 21.3.8/10/20; source map in docs/wifi-phy-evidence.json.
 use super::{
     sync::{fft64, Acquisition},
@@ -85,6 +85,7 @@ pub(super) struct Decoded {
     pub info: SignalInfo,
     pub bytes: Vec<u8>,
     pub tracking: PhyDiagnostic,
+    pub coding: Vec<PhyDiagnostic>,
 }
 
 /// Header-only admission gives the streaming receiver its exact reservation
@@ -99,13 +100,13 @@ pub(super) fn admit(
     let VhtSignalAUsers::Single {
         space_time_streams: 1,
         mcs,
-        ldpc: false,
+        ldpc,
         ..
     } = fields.users
     else {
         return Err(());
     };
-    if fields.bandwidth_code != 0 || fields.stbc || fields.ldpc_extra_symbol {
+    if fields.bandwidth_code != 0 || fields.stbc || (!ldpc && fields.ldpc_extra_symbol) {
         return Err(());
     }
     let (nbpsc, ndbps) = *[
@@ -130,8 +131,23 @@ pub(super) fn admit(
         false,
     )
     .map_err(|_| ())?;
-    let count = timing.data_symbols.checked_mul(ndbps).ok_or(())?;
-    let psdu_bytes = count.checked_sub(22).ok_or(())? / 8;
+    let psdu_bytes = if ldpc {
+        let layout = super::ldpc_rate::Layout::vht(
+            u16::try_from(timing.data_symbols).map_err(|_| ())?,
+            mcs,
+            false,
+            fields.ldpc_extra_symbol,
+        )
+        .map_err(|_| ())?;
+        layout.payload_bits.checked_sub(16).ok_or(())? / 8
+    } else {
+        timing
+            .data_symbols
+            .checked_mul(ndbps)
+            .and_then(|n| n.checked_sub(22))
+            .ok_or(())?
+            / 8
+    };
     let data_offset = timing.data_start.checked_sub(320).ok_or(())?;
     let end_offset = timing.data_end.checked_sub(320).ok_or(())?;
     let info = SignalInfo {
@@ -174,19 +190,32 @@ pub(super) fn decode(samples: &[ComplexSample], a: &Acquisition) -> Result<Decod
     if sig_b.apep_length_bounds().ok_or(())?.0 as usize > info.psdu_bytes {
         return Err(());
     }
-    let (bytes, tracking) = super::data::decode_vht_bcc_data(
-        samples.get(data_offset..end_offset).ok_or(())?,
-        &trained,
-        info,
-        if fields.short_guard_interval { 8 } else { 16 },
-        sig_b,
-    )?;
+    let data = samples.get(data_offset..end_offset).ok_or(())?;
+    let guard = if fields.short_guard_interval { 8 } else { 16 };
+    let (bytes, tracking, coding) = if let VhtSignalAUsers::Single {
+        ldpc: true, mcs, ..
+    } = fields.users
+    {
+        let layout = super::ldpc_rate::Layout::vht(
+            u16::try_from(info.data_symbols).map_err(|_| ())?,
+            mcs,
+            false,
+            fields.ldpc_extra_symbol,
+        )
+        .map_err(|_| ())?;
+        super::data::decode_vht_ldpc_data(data, &trained, info, guard, sig_b, layout)?
+    } else {
+        let (bytes, tracking) =
+            super::data::decode_vht_bcc_data(data, &trained, info, guard, sig_b)?;
+        (bytes, tracking, Vec::new())
+    };
     Ok(Decoded {
         signal_a: fields,
         signal_b: sig_b,
         info,
         bytes,
         tracking,
+        coding,
     })
 }
 

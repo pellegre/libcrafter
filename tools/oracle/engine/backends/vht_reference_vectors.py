@@ -1,7 +1,7 @@
 """Independent radiotap VHT eligibility/known-field fixtures.
 
 Authority: radiotap.org/fields/VHT.html and fields/A-MPDU%20status.html.
-Eligibility is the implemented VHT20 SU NSS1 BCC subset, not all valid VHT.
+Eligibility is the implemented VHT20 SU NSS1 BCC/LDPC subset, not all valid VHT.
 """
 import argparse
 import json
@@ -28,15 +28,15 @@ def generate():
         requirements = [
             known & 0x44 == 0x44, bandwidth & 31 == 0,
             users[0] & 15 == 1, all(user & 15 == 0 for user in users[1:]),
-            users[0] >> 4 <= 8, coding & 1 == 0, stbc is not True,
+            users[0] >> 4 <= 8, stbc is not True,
             observed_group in (None, 0, 63), observed_aid is None or observed_aid <= 511,
-            short or disambiguation is not True, extra is not True,
+            short or disambiguation is not True, bool(coding & 1) or extra is not True,
             ampdu_flags is None or (ampdu_flags & 0x10 == 0 and ampdu_flags & 3 != 3),
         ]
         expected = None
         if all(requirements):
             expected = dict(
-                bandwidth_mhz=20, spatial_streams=1, ldpc=False,
+                bandwidth_mhz=20, spatial_streams=1, ldpc=bool(coding & 1),
                 mcs=users[0] >> 4, short_gi=short, stbc=stbc,
                 group_id=observed_group, partial_aid=observed_aid,
                 beamformed=observed(32, bool(flags & 32)),
@@ -52,9 +52,10 @@ def generate():
 
     for known in range(512):
         for flags in (0, 4, 12, 32, 1, 16, 0x3b, 0xff):
-            emit(f'known-{known}-flags-{flags}', known, flags, 0xe0,
-                 ((known % 9) << 4 | 1, 0xf0, 0xf0, 0xf0), 0xfe,
-                 63 if known & 128 else 201, 511 if known & 256 else 65535)
+            for coding in (0xfe,0xff):
+                emit(f'known-{known}-flags-{flags}-coding-{coding}', known, flags, 0xe0,
+                     ((known % 9) << 4 | 1, 0xf0, 0xf0, 0xf0), coding,
+                     63 if known & 128 else 201, 511 if known & 256 else 65535)
     for flags in range(256):
         emit(f'ampdu-{flags}', ampdu_flags=flags)
     for mcs in range(16):

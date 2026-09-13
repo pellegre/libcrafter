@@ -7,6 +7,9 @@ directions: [backend_to_libcrafter]
 strict_bytes: true
 malformed: true
 behaviors:
+  - name: vht20-su-ldpc-iq
+    source: IEEE 802.11-2020 21.3.10.5.4, 21.3.10.9.2 and 21.3.20
+    checks: [tone_permutation, service_crc, exact_psdu, aggregate_fcs, both_guard_intervals, extra_symbol_group, bounded_streaming, independent_iq]
   - name: vht20-su-ldpc-geometry
     source: IEEE 802.11-2020 21.3.10.5.4 Equations 21-61 through 21-63 and 19.3.11.7.5
     checks: [encoded_phy_padding, extra_symbol_flag, symbol_grouping, bounded_dimensions, shortening, puncturing, repetition, independent_geometry, exact_recovery]
@@ -18,5 +21,5 @@ backend_support:
     status: partial
     notes:
       - Independent forward geometry covers 20412 cases and Gaussian parity encoding supplies 54 exact recovery bitstreams.
-      - This increment covers internal SU rate matching only, not complete LDPC IQ reception or hardware qualification.
-      - VHT LDPC tone mapping, SERVICE validation and streaming admission remain separate integration requirements.
+      - Complete SU SISO IQ reception covers 73 independent waveforms; VHT STBC/MU and hardware qualification remain outside this increment.
+      - SERVICE and per-MPDU FCS remain mandatory even when partial LDPC estimates recover an unaffected aggregate member.
