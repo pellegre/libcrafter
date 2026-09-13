@@ -720,6 +720,18 @@ impl PhyDecoder for LegacyOfdmDecoder {
                 }
                 if p.he_candidate && p.samples.len() == 320 {
                     p.he_candidate = false;
+                    if let Some(fields) = he_iq::decode_tb_prefix(&p.samples, &p.acquisition) {
+                        out.diagnostics.push(PhyDiagnostic::HeTbSignal {
+                            fields,
+                            preamble_sample_index: p.start.sample_index,
+                        });
+                        // Do not reinterpret a checked TB header as legacy DATA
+                        // or invent RU/MCS parameters absent a matching Trigger.
+                        out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
+                        self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
+                        self.pending[slot] = None;
+                        continue;
+                    }
                     if let Some(prefix) = he_iq::decode_su_prefix(&p.samples, &p.acquisition) {
                         out.diagnostics.push(PhyDiagnostic::HeSignal {
                             fields: prefix.signal,
@@ -2288,6 +2300,73 @@ mod tests {
             .is_empty());
     }
     #[test]
+    fn radio_he_tb_streaming_headers() {
+        for row in include_str!("../../tests/fixtures/iq/he-tb-prefix-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let bits: Vec<_> = c[1].bytes().map(|b| b - b'0').collect();
+            let fields = HeTbSignalFields::decode(&bits).unwrap();
+            for size in [37, 997] {
+                let out = feed(&mut WifiDecoder::new(), &bytes, size);
+                assert!(out.frames.is_empty(), "{}", c[0]);
+                let header = PhyDiagnostic::HeTbSignal {
+                    fields,
+                    preamble_sample_index: 37,
+                };
+                assert_eq!(
+                    out.diagnostics.iter().filter(|d| **d == header).count(),
+                    1,
+                    "{} chunk{size}: {:?}",
+                    c[0],
+                    out.diagnostics
+                );
+                assert_eq!(header, header.clone());
+                assert_ne!(
+                    header,
+                    PhyDiagnostic::HeTbSignal {
+                        fields,
+                        preamble_sample_index: 38
+                    }
+                );
+                assert!(out.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy));
+                assert!(!out.diagnostics.iter().any(|d| matches!(
+                    d,
+                    PhyDiagnostic::HeSignal { .. }
+                        | PhyDiagnostic::HeMuSignal { .. }
+                        | PhyDiagnostic::HeErSignal { .. }
+                )));
+            }
+        }
+        for row in include_str!("../../tests/fixtures/iq/he-tb-prefix-invalid-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let name = row.split('\t').next().unwrap();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{name}.cs8",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap();
+            let out = feed(&mut WifiDecoder::new(), &bytes, 37);
+            assert!(out.frames.is_empty());
+            assert!(
+                !out.diagnostics
+                    .iter()
+                    .any(|d| matches!(d, PhyDiagnostic::HeTbSignal { .. })),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
     fn radio_he_mu_streaming_headers() {
         for row in include_str!("../../tests/fixtures/iq/he-mu-prefix-index.tsv")
             .lines()
@@ -2349,6 +2428,73 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn radio_he_tb_streaming_bounds_and_gap() {
+        let bytes = include_bytes!("../../tests/fixtures/iq/he-tb-prefix-v0-a1-offset.cs8");
+        let is_tb = |d: &PhyDiagnostic| matches!(d, PhyDiagnostic::HeTbSignal { .. });
+        assert!(!feed(&mut LegacyWifiDecoder::new(), bytes, 37)
+            .diagnostics
+            .iter()
+            .any(is_tb));
+        let mut bounded = config();
+        bounded.max_buffer_samples = 512;
+        bounded.max_chunk_samples = 37;
+        assert!(feed_config(&mut WifiDecoder::new(), bytes, 37, bounded)
+            .unwrap()
+            .diagnostics
+            .iter()
+            .any(is_tb));
+        for end in [400, 600, 676] {
+            assert!(!feed(&mut WifiDecoder::new(), &bytes[..2 * end], 37)
+                .diagnostics
+                .iter()
+                .any(is_tb));
+        }
+        let mut decoder = WifiDecoder::new();
+        for (sequence, sample_index, part) in [
+            (0, 0, &bytes[..1200]),
+            (1, 601, &bytes[1200..]),
+            (2, 678, &bytes[..]),
+        ] {
+            let chunk = IqChunk::new(
+                config(),
+                IqPosition {
+                    epoch: 0,
+                    sequence,
+                    sample_index,
+                    time_anchor: None,
+                    discontinuity: None,
+                },
+                part.iter().map(|b| *b as i8).collect(),
+            )
+            .unwrap();
+            let out = decoder.consume(IqEvent::Chunk(chunk)).unwrap();
+            assert!(out.frames.is_empty());
+            assert_eq!(out.diagnostics.iter().any(is_tb), sequence == 2);
+            if sequence == 1 {
+                assert!(out
+                    .diagnostics
+                    .iter()
+                    .any(|d| matches!(d, PhyDiagnostic::Reset(ResetReason::Gap(_)))));
+            }
+            if sequence == 2 {
+                assert!(out.diagnostics.iter().any(|d| matches!(
+                    d,
+                    PhyDiagnostic::HeTbSignal {
+                        preamble_sample_index: 715,
+                        ..
+                    }
+                )));
+            }
+        }
+        assert!(!decoder
+            .consume(IqEvent::End(StreamEnd::Eof))
+            .unwrap()
+            .diagnostics
+            .iter()
+            .any(is_tb));
     }
 
     #[test]

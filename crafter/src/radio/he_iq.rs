@@ -1,4 +1,4 @@
-//! HE20 SU, ER SU and MU preamble prefixes; IEEE 802.11ax-2021 27.3.11/22.
+//! HE20 SU, ER SU, MU and TB preamble prefixes; IEEE 802.11ax-2021 27.3.11/22.
 //! No DATA admission or MAC frame publication occurs here.
 use super::{
     he::SuSignal,
@@ -164,6 +164,18 @@ pub(super) fn decode_mu_prefix(
     (signal.bandwidth == 0).then_some(signal)
 }
 
+/// TB shares the modulo-one L-SIG with SU. DATA needs a separate Trigger.
+pub(super) fn decode_tb_prefix(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+) -> Option<super::he_tb::TbSignal> {
+    let input = samples.get(..320)?;
+    a.signal_start.checked_add(320)?;
+    repeated_su_signal(input, a)?;
+    let signal = super::he_tb::TbSignal::decode_interleaved(&bpsk_metrics(input, a)?).ok()?;
+    (signal.bandwidth == 0).then_some(signal)
+}
+
 fn bpsk_metrics(input: &[ComplexSample], a: &Acquisition) -> Option<[f32; 104]> {
     let input = input.get(..320)?;
     let lsig = bins(&input[..80], a.signal_start, a)?;
@@ -203,6 +215,65 @@ fn bpsk_metrics(input: &[ComplexSample], a: &Acquisition) -> Option<[f32; 104]> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radio_he_tb_prefix_independent_iq() {
+        for row in include_str!("../../tests/fixtures/iq/he-tb-prefix-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let (samples, a) = fixture(c[0]);
+            let input = &samples[a.signal_start as usize..];
+            let bits: Vec<_> = c[1].bytes().map(|b| b - b'0').collect();
+            assert_eq!(
+                decode_tb_prefix(input, &a),
+                super::super::he_tb::TbSignal::decode(&bits).ok(),
+                "{}",
+                c[0]
+            );
+            assert_eq!(a.preamble_start, 37);
+            assert!(decode_su_prefix(input, &a).is_none());
+            assert!(decode_mu_prefix(input, &a).is_none());
+            for end in [0, 79, 159, 239, 319] {
+                assert!(decode_tb_prefix(&input[..end], &a).is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn radio_he_tb_prefix_rejections() {
+        for index in [
+            include_str!("../../tests/fixtures/iq/he-tb-prefix-invalid-index.tsv"),
+            include_str!("../../tests/fixtures/iq/he-su-prefix-index.tsv"),
+            include_str!("../../tests/fixtures/iq/he-mu-prefix-index.tsv"),
+            include_str!("../../tests/fixtures/iq/he-er-prefix-index.tsv"),
+        ] {
+            for row in index.lines().skip(1) {
+                let name = row.split('\t').next().unwrap();
+                let (samples, a) = fixture(name);
+                assert!(
+                    decode_tb_prefix(&samples[a.signal_start as usize..], &a).is_none(),
+                    "{name}"
+                );
+            }
+        }
+        let (samples, a) = fixture("he-tb-prefix-v0-a0-clean");
+        let input = &samples[a.signal_start as usize..];
+        for index in [16, 96, 176, 256, 319] {
+            for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                let mut bad = input.to_vec();
+                bad[index].i = value;
+                assert!(decode_tb_prefix(&bad, &a).is_none());
+            }
+        }
+        for offset in [40, 319] {
+            let mut overflow = a.clone();
+            overflow.signal_start = u64::MAX - offset;
+            overflow.phase_origin = overflow.signal_start - (a.signal_start - a.phase_origin);
+            assert!(decode_tb_prefix(input, &overflow).is_none());
+        }
+    }
+
     #[test]
     fn radio_he_mu_prefix_independent_iq() {
         for row in include_str!("../../tests/fixtures/iq/he-mu-prefix-index.tsv")

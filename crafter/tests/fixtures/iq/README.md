@@ -1,5 +1,16 @@
 # Independent IQ vector contract
 
+`he-tb-prefix-index.tsv` indexes 256 independently generated HE20 TB IQ
+prefixes and `he-tb-prefix-invalid-index.tsv` adds 14 negative cases.
+They exercise repeated 6 Mb/s L-SIG, modulo-three classification, SIG-A
+format/CRC/tail/spatial copies, all BSS colors, uniform attenuation and
+CFO/multipath. Invalid cases include wider signaling, wrong rate/repetition,
+QBPSK or erased signaling. Each capture is 677 complex cs8 samples, including
+a 37-sample leading offset. There is no HE training or DATA: these qualify
+recognition and header artifacts, not per-user simultaneous transmission,
+Trigger context or payload recovery. Regenerate with `he_tb_prefix_vectors.py`;
+use `--check` for byte-for-byte reproduction.
+
 `he-tb-signal-a-index.tsv` contains 2048 independently encoded HE TB SIG-A
 headers, covering all 512 values of the nine Trigger-supplied reserved bits.
 The four bandwidth codes, color/TXOP values and required 20/40 MHz spatial

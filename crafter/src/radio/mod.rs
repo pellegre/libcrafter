@@ -286,6 +286,11 @@ pub enum ResetReason {
 }
 #[derive(Debug, Clone)]
 pub enum PhyDiagnostic {
+    /// Checked HE TB signaling only; DATA requires matching Trigger context.
+    HeTbSignal {
+        fields: HeTbSignalFields,
+        preamble_sample_index: u64,
+    },
     /// Zero-based original User field position in the accompanying HeMuSigB.
     /// Present on MU frames after per-user DATA recovery and MPDU FCS checks.
     HeMuUser {
@@ -398,6 +403,16 @@ pub enum PhyDiagnostic {
 impl PartialEq for PhyDiagnostic {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (
+                Self::HeTbSignal {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::HeTbSignal {
+                    fields: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
             (
                 Self::HeMuUser {
                     user_index: a,

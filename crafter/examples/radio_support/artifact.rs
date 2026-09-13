@@ -70,6 +70,14 @@ pub fn he_er_signal_metadata(
     metadata["channel_width_mhz"] = 20.into();
     metadata
 }
+pub fn he_tb_signal_metadata(
+    f: &HeTbSignalFields,
+    preamble_sample_index: u64,
+) -> serde_json::Value {
+    serde_json::json!({"format":"tb", "bandwidth_code":f.bandwidth,
+        "bss_color":f.bss_color, "spatial_reuse":f.spatial_reuse, "txop":f.txop,
+        "trigger_reserved":f.trigger_reserved, "preamble_sample_index":preamble_sample_index})
+}
 pub fn he_mu_signal_metadata(
     f: &HeMuSignalFields,
     preamble_sample_index: u64,

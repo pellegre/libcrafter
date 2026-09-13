@@ -280,7 +280,12 @@ The TB SIG-A bit/metric primitive (`HeTbSignalFields`) checks the shared HE
 CRC and tail, TB Format, reserved bit 23 and 20/40 MHz spatial-reuse copies.
 It preserves all nine SIG-A2 bits supplied by the Trigger instead of assuming
 a constant. Independent fixtures cover 2048 valid headers and 57 rejections.
-This is not TB prefix acquisition or payload decoding: RU assignment, MCS,
+`WifiDecoder` additionally recognizes HE20 TB IQ prefixes and emits
+`PhyDiagnostic::HeTbSignal`; artifacts use `he.format: tb` without invented
+DATA settings. Independent qualification covers 256 prefixes with attenuation,
+CFO and multipath, 14 invalid prefixes, chunk boundaries and capture gaps.
+Without Trigger context, the receiver reports `UnsupportedPhy` and does not
+publish a TB frame. This is not payload decoding: RU assignment, MCS,
 coding and training context must come from the triggering exchange
 (27.3.2.6, Table 27-21), not be guessed from this header.
 
