@@ -1,5 +1,12 @@
 # Independent IQ vector contract
 
+`he-tb-multi-iq-index.tsv` indexes 276 simultaneous-user TB captures: two,
+four or nine disjoint RUs, independent payloads and per-user channels/phase,
+with optional unequal gain and residual carrier offsets spanning +/-350Hz.
+The generator sums complex user waveforms before signed-eight-bit quantization.
+These synthetic PSDUs do not establish Trigger association or MAC integrity.
+Reproduce with `he_tb_multi_iq_vectors.py --check`.
+
 `he-tb-data-iq-index.tsv` indexes 282 independent isolated-user TB waveforms.
 They cover all 16 HE20 RU positions, BCC/LDPC, one DATA stream with applicable
 DCM or STBC, both OFDMA training/guard modes, midambles, channel impairments

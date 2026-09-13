@@ -26,7 +26,8 @@ from he_ldpc_rate_vectors import layout, encode_information, damage_codeword, RA
 
 def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage='none',mac_payloads=None,
              compressed=False,sig_b_mcs=0,sig_b_dcm=False,stbc=False,stbc_case='flat',
-             user_modes=None,pre_fec_padding=3,sizing_trace=None,tb_ru=None):
+             user_modes=None,pre_fec_padding=3,sizing_trace=None,tb_ru=None,
+             tb_user_number=0,return_complex=False):
     assert not compressed or code==192
     assert sig_b_mcs in range(6) and (not sig_b_dcm or sig_b_mcs in (0,1,3,4))
     assert not stbc or nltf in (2,4,6,8)
@@ -83,7 +84,7 @@ def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage=
         count=sizing[8] if ldpc else (symbols-group)*int(cbps*rate)+group*last_data
         octets,phy=divmod(count-(16 if ldpc else 22),8)
         assert octets>=0
-        psdu=bytes((n*37+user*11+93+mcs*13)%256 for n in range(octets))
+        psdu=bytes((n*37+(user+tb_user_number)*11+93+mcs*13)%256 for n in range(octets))
         if mac_payloads is not None:
             from vht_ampdu_vectors import delimiter
             remaining=octets-len(mac_payloads[user])
@@ -237,6 +238,7 @@ def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage=
         time=[v*4*math.sqrt(52/total) for v in training.ifft(freq)];wave+=time[-guard:]+time
     assert len(wave)==37+end
     if impaired:wave=[(v+(.25j*wave[n-3] if n>=3 else 0))*cmath.exp(1j*(.7+.018*n)) for n,v in enumerate(wave)]
+    if return_complex:return wave,payloads,symbols
     gain=min(200,120/max(max(abs(v.real),abs(v.imag)) for v in wave))
     return base.quantize(wave,scale=gain),payloads,symbols
 

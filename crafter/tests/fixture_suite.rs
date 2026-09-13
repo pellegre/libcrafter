@@ -8631,6 +8631,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "he-ru-stbc-symbol.tsv"
                 | "he-mu-data-iq-index.tsv"
                 | "he-tb-data-iq-index.tsv"
+                | "he-tb-multi-iq-index.tsv"
                 | "he-mu-ampdu-iq-index.tsv"
                 | "he-mu-mixed-iq-index.tsv"
                 | "he-mu-stbc-iq-index.tsv"
@@ -8734,6 +8735,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 include_str!("fixtures/iq/he-mu-stbc-iq-index.tsv"),
                 include_str!("fixtures/iq/he-mu-data-iq-index.tsv"),
                 include_str!("fixtures/iq/he-tb-data-iq-index.tsv"),
+                include_str!("fixtures/iq/he-tb-multi-iq-index.tsv"),
                 include_str!("fixtures/iq/ht-bcc-index.tsv"),
                 include_str!("fixtures/iq/he-dcm-iq-index.tsv"),
                 include_str!("fixtures/iq/he-dcm-iq-invalid-index.tsv"),

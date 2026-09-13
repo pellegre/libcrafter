@@ -28,8 +28,9 @@ pub(super) struct Recovered {
     pub first_failure: Option<super::ldpc_rate::Error>,
 }
 
-/// Input begins at L-SIG. The supplied acquisition is for this transmitter;
-/// it must not silently reuse another simultaneous user's oscillator estimate.
+/// Input begins at L-SIG. Common pre-HE acquisition provides coarse carrier
+/// correction; this user's RU pilots track its residual phase independently.
+/// No separation of overlapping spatial users is inferred.
 pub(super) fn recover(
     samples: &[ComplexSample],
     a: &Acquisition,
@@ -100,9 +101,16 @@ pub(super) fn recover(
     };
     // TB's 8us STF ends at PPDU sample800, or480 relative to L-SIG.
     let mut channel = train(480)?;
-    let mut demod =
-        super::he_ru_symbol::Demodulator::new(tones, c.bits_per_tone, user.ldpc, user.dcm)
-            .ok_or(Error::Unsupported)?;
+    // CS8's1/128 quantization step gives complex FFT-domain variance
+    // 256 * 2 * (1/128)^2 /12. Guard-bin observations can raise this floor.
+    let mut demod = super::he_ru_symbol::Demodulator::for_tb(
+        tones,
+        c.bits_per_tone,
+        user.ldpc,
+        user.dcm,
+        256. / (6. * 128. * 128.),
+    )
+    .ok_or(Error::Unsupported)?;
     let mut metrics = Vec::new();
     metrics
         .try_reserve_exact(
@@ -210,6 +218,93 @@ pub(super) fn recover(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn radio_he_tb_simultaneous_ru_users() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
+        let rows = std::fs::read_to_string(root.join("he-tb-multi-iq-index.tsv")).unwrap();
+        assert_eq!(rows.lines().skip(1).count(), 276);
+        let mut failures = Vec::new();
+        let mut users = 0;
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let number = |i: usize| c[i].parse::<usize>().unwrap();
+            let ru = number(1);
+            let nltf = number(9);
+            let period = number(10);
+            let common = Dot11TriggerCommonFields {
+                ul_length: number(11) as u16,
+                gi_ltf: if number(7) == 2 { 1 } else { 2 },
+                ltf_symbols_midamble: ([1, 2, 4, 6, 8].iter().position(|&v| v == nltf).unwrap()
+                    + if period == 20 { 4 } else { 0 }) as u8,
+                stbc: number(6) != 0,
+                doppler: period != 0,
+                pre_fec_padding_raw: number(12) as u8,
+                ldpc_extra_segment: number(13) != 0,
+                ..Default::default()
+            };
+            let bytes = std::fs::read(root.join(format!("{}.cs8", c[0]))).unwrap();
+            let samples: Vec<_> = bytes
+                .chunks_exact(2)
+                .map(|b| ComplexSample {
+                    i: b[0] as i8 as f32 / 128.,
+                    q: b[1] as i8 as f32 / 128.,
+                })
+                .collect();
+            let mut sync = super::super::sync::Synchronizer::default();
+            let Some(a) =
+                samples
+                    .iter()
+                    .enumerate()
+                    .find_map(|(n, &s)| match sync.push(s, n as u64) {
+                        Some(super::super::sync::SyncEvent::Acquired(a)) => Some(a),
+                        _ => None,
+                    })
+            else {
+                failures.push(format!("{} acquisition", c[0]));
+                continue;
+            };
+            let input = &samples[a.signal_start as usize..];
+            let expected: Vec<_> = c[16].split(',').collect();
+            assert_eq!(expected.len(), number(2));
+            for (index, expected) in expected.into_iter().enumerate() {
+                users += 1;
+                let user = Dot11TriggerUserFields {
+                    aid12: (index + 1) as u16,
+                    ru_allocation: (2
+                        * (index
+                            + match ru {
+                                26 => 0,
+                                52 => 37,
+                                106 => 53,
+                                _ => unreachable!(),
+                            })) as u8,
+                    mcs: number(3) as u8,
+                    ldpc: number(4) != 0,
+                    dcm: number(5) != 0,
+                    ..Default::default()
+                };
+                let expected: Vec<_> = expected
+                    .as_bytes()
+                    .chunks_exact(2)
+                    .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
+                    .collect();
+                match recover(input, &a, &common, &user, 65535, input.len(), false) {
+                    Ok(result) if result.psdu == expected && result.failed_codewords == 0 => {}
+                    Ok(_) => failures.push(format!("{} user{index}: bytes", c[0])),
+                    Err(e) => failures.push(format!("{} user{index}: {e:?}", c[0])),
+                }
+            }
+        }
+        assert_eq!(users, 1380);
+        assert!(
+            failures.is_empty(),
+            "{}/{} failures: {:?}",
+            failures.len(),
+            users,
+            &failures[..failures.len().min(30)]
+        );
+    }
 
     #[test]
     fn radio_he_tb_isolated_user_iq() {

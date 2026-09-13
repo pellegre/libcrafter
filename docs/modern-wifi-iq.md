@@ -335,8 +335,18 @@ PSDU recovery. It uses TB's longer STF and DATA pilot offset, refreshing
 training at midambles. Its 282 independent waveforms cover all 16 RU positions,
 applicable one-stream DCM/STBC modes, both OFDMA guard/training combinations,
 channel impairments and SERVICE rejection. This is not yet streaming TB frame
-publication: exchange association, simultaneous-user acquisition and aggregate
+publication: exchange association and aggregate
 MPDU integrity remain separate integration requirements.
+
+An additional 276 independently generated captures sum simultaneous users
+before CS8 quantization and check all 1380 distinct recovered payloads. They
+cover disjoint 26-, 52- and 106-tone allocations, per-user carrier offsets,
+gain and phase differences, STBC and midambles. A two-pilot noise-confidence
+check prevents a weak pilot from corrupting the slope estimate, while retaining
+weak but noise-free slope evidence. These cases use a common MCS/coding and RU
+size within each capture; mixed scheduling, relative timing and sampling-clock
+offsets still need qualification. This is offline kernel evidence, not live
+or streaming TB frame qualification.
 
 Without Trigger context, the receiver reports `UnsupportedPhy` and does not
 publish a TB frame. This is not payload decoding: RU assignment, MCS,

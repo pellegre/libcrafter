@@ -120,6 +120,27 @@ fn radio_he_mu_ampdu_iq_inventory() {
 }
 
 #[test]
+fn radio_he_tb_multi_iq_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-multi-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 276);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "3471098cd4db5843780e94b2729477cb150a9d5950593a48b0da9a462b44cff7"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[17].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[18]);
+    }
+}
+
+#[test]
 fn radio_he_tb_data_iq_inventory() {
     let rows = include_str!("fixtures/iq/he-tb-data-iq-index.tsv");
     assert_eq!(rows.lines().skip(1).count(), 282);

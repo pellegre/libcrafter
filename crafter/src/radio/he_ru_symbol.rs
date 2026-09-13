@@ -9,6 +9,8 @@ pub(super) struct Demodulator {
     ldpc: bool,
     dcm: bool,
     slope: f32,
+    // FFT-domain noise floor and constellation-energy SNR target.
+    pilot_quality: Option<(f32, f32)>,
 }
 
 impl Demodulator {
@@ -22,7 +24,34 @@ impl Demodulator {
             ldpc,
             dcm,
             slope: 0.,
+            pilot_quality: None,
         })
+    }
+
+    pub fn for_tb(
+        tones: Tones,
+        bits: usize,
+        ldpc: bool,
+        dcm: bool,
+        quantization_noise: f32,
+    ) -> Option<Self> {
+        if !quantization_noise.is_finite() || quantization_noise < 0. {
+            return None;
+        }
+        let mut result = Self::new(tones, bits, ldpc, dcm)?;
+        // Unit-power QAM has a half-decision interval of1/sqrt(energy).
+        // Higher-order constellations therefore require cleaner pilot phase.
+        let energy = match bits {
+            1 => 1.,
+            2 => 2.,
+            4 => 10.,
+            6 => 42.,
+            8 => 170.,
+            10 => 682.,
+            _ => return None,
+        };
+        result.pilot_quality = Some((quantization_noise, energy));
+        Some(result)
     }
 
     /// Reset after a new channel estimate (including a midamble).
@@ -50,7 +79,15 @@ impl Demodulator {
             .enumerate()
             .map(|(j, &k)| (k, self.tones.pilot_sign(symbol, j) * polarity))
             .collect();
-        observe_with_pilots(wave, channel, frequency_rad, elapsed, &pilots, self.slope)
+        observe_with_pilot_policy(
+            wave,
+            channel,
+            frequency_rad,
+            elapsed,
+            &pilots,
+            self.slope,
+            self.pilot_quality,
+        )
     }
 
     /// Exactly one useful 256-sample symbol, excluding its guard interval.
@@ -246,6 +283,26 @@ pub(super) fn observe_with_pilots(
     pilot_map: &[(i32, f32)],
     previous_slope: f32,
 ) -> Option<([ComplexSample; 256], f32, f32)> {
+    observe_with_pilot_policy(
+        wave,
+        channel,
+        frequency_rad,
+        elapsed,
+        pilot_map,
+        previous_slope,
+        None,
+    )
+}
+
+fn observe_with_pilot_policy(
+    wave: &[ComplexSample],
+    channel: &[ComplexSample; 256],
+    frequency_rad: f32,
+    elapsed: u64,
+    pilot_map: &[(i32, f32)],
+    previous_slope: f32,
+    quality: Option<(f32, f32)>,
+) -> Option<([ComplexSample; 256], f32, f32)> {
     if wave.len() != 256
         || !frequency_rad.is_finite()
         || !previous_slope.is_finite()
@@ -265,8 +322,24 @@ pub(super) fn observe_with_pilots(
         ));
     }
     let bins = super::he_fft::fft256(time);
+    // HE20 leaves these guard/DC bins unmodulated, even with other RUs active.
+    // A median limits the influence of one interferer on the noise estimate.
+    let noise = if let Some((floor, _)) = quality {
+        let mut powers = [
+            0, 1, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 255,
+        ]
+        .map(|k| bins[k].power());
+        powers.sort_by(f32::total_cmp);
+        (0.75 * (powers[6] + powers[7])).max(floor)
+    } else {
+        0.
+    };
     let mut pilots = Vec::with_capacity(pilot_map.len());
     let mut common = ComplexSample::ZERO;
+    let strongest = pilot_map
+        .iter()
+        .map(|&(k, _)| channel[k.rem_euclid(256) as usize].power())
+        .fold(0., f32::max);
     for &(tone, sign) in pilot_map {
         if !(-122..=122).contains(&tone) || !matches!(sign, -1. | 1.) {
             return None;
@@ -279,6 +352,17 @@ pub(super) fn observe_with_pilots(
         if !value.power().is_finite() {
             return None;
         }
+        // A weak, noisy summed STBC pilot is not useful slope evidence.
+        // With two pilots an unconstrained line passes through both phases
+        // regardless of weight. Retain the prior slope if only one survives;
+        // do not substitute a different TB transmitter's pilot phase.
+        if pilot_map.len() == 2
+            && quality.is_some_and(|(_, required_snr)| {
+                channel[bin].power() * 2. < strongest && channel[bin].power() < required_snr * noise
+            })
+        {
+            continue;
+        }
         common = common.add(value);
         pilots.push((tone as f32, value));
     }
@@ -286,6 +370,7 @@ pub(super) fn observe_with_pilots(
         return None;
     }
     let reference = common.phase();
+    let single = pilots.len() == 1;
     let (mut w, mut x, mut xx, mut y, mut xy) = (0., 0., 0., 0., 0.);
     for (k, v) in pilots {
         let weight = v.power().sqrt();
@@ -297,10 +382,14 @@ pub(super) fn observe_with_pilots(
         xy += weight * k * residual;
     }
     let determinant = w * xx - x * x;
-    if !determinant.is_finite() || determinant < 1e-12 {
+    if !determinant.is_finite() || (!single && determinant < 1e-12) {
         return None;
     }
-    let delta = (w * xy - x * y) / determinant;
+    let delta = if single {
+        0.
+    } else {
+        (w * xy - x * y) / determinant
+    };
     let intercept = reference + (y - delta * x) / w;
     let slope = previous_slope + delta;
     if !intercept.is_finite() || !slope.is_finite() {
@@ -312,6 +401,64 @@ pub(super) fn observe_with_pilots(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn radio_he_tb_pilot_null_retains_prior_slope() {
+        let tones = Tones::ru(26, 2).unwrap();
+        for floor in [-1., f32::NAN, f32::INFINITY] {
+            assert!(Demodulator::for_tb(tones, 10, true, false, floor).is_none());
+        }
+        let map: [(i32, f32); 2] = [(-90, 1.), (-76, -1.)];
+        let mut channel = [ComplexSample::ZERO; 256];
+        channel[166].i = 1.;
+        channel[180].i = 0.01;
+        let prior = 0.0043;
+        let wave: Vec<_> = (0..256)
+            .map(|n| {
+                map.iter()
+                    .enumerate()
+                    .fold(ComplexSample::ZERO, |v, (j, &(k, sign))| {
+                        let phase = std::f32::consts::TAU * k as f32 * n as f32 / 256.
+                            + 0.4
+                            + prior * k as f32
+                            + if j == 1 { 1.2 } else { 0. };
+                        v.add(
+                            channel[k.rem_euclid(256) as usize]
+                                .scale(sign / 256.)
+                                .mul(ComplexSample::rotation(phase)),
+                        )
+                    })
+                    .add(
+                        [
+                            0, 1, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 255,
+                        ]
+                        .iter()
+                        .fold(ComplexSample::ZERO, |v, &k| {
+                            v.add(
+                                ComplexSample::rotation(
+                                    std::f32::consts::TAU * k as f32 * n as f32 / 256.,
+                                )
+                                .scale(0.05 / 256.),
+                            )
+                        }),
+                    )
+            })
+            .collect();
+        let (_, phase, slope) =
+            observe_with_pilot_policy(&wave, &channel, 0., 0, &map, prior, Some((0., 64.)))
+                .unwrap();
+        assert!((phase - 0.4).abs() < 1e-5);
+        assert_eq!(slope, prior);
+        let empty = [ComplexSample::ZERO; 256];
+        assert!(
+            observe_with_pilot_policy(&wave, &empty, 0., 0, &map, prior, Some((0., 64.))).is_none()
+        );
+        let mut bad = channel;
+        bad[180].i = f32::NAN;
+        assert!(
+            observe_with_pilot_policy(&wave, &bad, 0., 0, &map, prior, Some((0., 64.))).is_none()
+        );
+    }
 
     #[test]
     fn radio_he_ru_independent_stbc_iq_pairs() {
@@ -388,6 +535,19 @@ mod tests {
                 }
             }
             assert!((demod.slope - if case == 0 { 0. } else { 0.0043 }).abs() < 1e-5);
+            // Weak but noise-free pilots still contain slope information.
+            // TB's null rejection must not freeze a valid clock estimate.
+            let mut tb = Demodulator::for_tb(tones, bits, ldpc, false, 0.).unwrap();
+            let tb_actual = tb
+                .recover_stbc_pair(wave, &channels, cfo, times, symbol, polarity)
+                .unwrap();
+            for j in 0..2 {
+                for (&got, &reference) in tb_actual[j].iter().zip(&actual[j]) {
+                    assert!(got.is_finite());
+                    assert_eq!(got > 0., reference > 0., "TB {:?}", &c[..11]);
+                }
+            }
+            assert!((tb.slope - if case == 0 { 0. } else { 0.0043 }).abs() < 1e-5);
             let repeated = demod
                 .recover_stbc_pair(wave, &channels, cfo, times, symbol, polarity)
                 .unwrap();
