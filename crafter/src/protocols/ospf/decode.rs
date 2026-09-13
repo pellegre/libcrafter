@@ -454,7 +454,10 @@ fn decode_link_state_update_body(body: &[u8]) -> Result<OspfLinkStateUpdate> {
     // count is reached. Each LSA's body is preserved verbatim as `OspfLsaBody::Raw`
     // (later steps dispatch typed LSA bodies).
     let mut rest = &body[OSPF_LSU_COUNT_LEN..];
-    let mut lsas = Vec::with_capacity(num_lsas as usize);
+    // A wire count may be intentionally inconsistent with the available bytes.
+    // Preserve it, but never reserve storage for LSAs the input cannot contain.
+    let capacity = (num_lsas as usize).min(rest.len() / OSPF_LSA_HEADER_LEN);
+    let mut lsas = Vec::with_capacity(capacity);
     let mut parsed: u64 = 0;
     while !rest.is_empty() && parsed < u64::from(num_lsas) {
         // Decode the 20-octet header and read its declared LSA length, which
@@ -891,6 +894,41 @@ mod tests {
         OSPF_TYPE_HELLO, OSPF_TYPE_LINK_STATE_ACK, OSPF_VERSION_2,
     };
     use crate::protocols::ospf::Ospfv2;
+
+    #[test]
+    fn ospf_decode_lsu_extreme_count_is_input_bounded() {
+        for count in [1, u32::MAX] {
+            for lsas in [
+                Vec::new(),
+                vec![OspfLsa::new(
+                    OspfLsaHeader::new().ls_type(99),
+                    OspfLsaBody::Raw(vec![0xde, 0xad]),
+                )],
+            ] {
+                let actual_count = lsas.len();
+                let bytes =
+                    Packet::from_layer(Ospfv2::link_state_update().with_link_state_update(|u| {
+                        *u = u.clone().lsas(lsas.clone()).num_lsas(count);
+                    }))
+                    .compile()
+                    .unwrap();
+                let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes()).unwrap();
+                let ospf = decoded.layer::<Ospfv2>().unwrap();
+                let OspfBody::LinkStateUpdate(update) = &ospf.body else {
+                    panic!("expected a link state update");
+                };
+                assert_eq!(update.num_lsas_value(), count);
+                assert_eq!(update.lsas_value().len(), actual_count);
+                assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+            }
+        }
+        let mut truncated = u32::MAX.to_be_bytes().to_vec();
+        truncated.push(0);
+        assert!(matches!(
+            decode_link_state_update_body(&truncated),
+            Err(CrafterError::BufferTooShort { .. })
+        ));
+    }
 
     /// A buffer one octet short of the 24-octet common header is a structured
     /// truncation error (context `"ospf header"`), never a panic (RFC 2328

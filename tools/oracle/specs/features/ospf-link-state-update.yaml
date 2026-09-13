@@ -144,3 +144,8 @@ backend_support:
       - The typed LSA bodies cover Router (A.4.2), Network (A.4.3), Summary
         (A.4.4), and AS-External (A.4.5); NSSA and Opaque LSAs are owned by
         follow-on feature coverage.
+      - Decoder allocation is bounded by available input, not the untrusted
+        declared LSA count. Extreme counts remain preserved, including for
+        empty updates; incomplete LSA headers remain structured errors.
+        This resource policy is checked by Rust regressions, not the
+        well-formed reference-backend sampling cases above.
