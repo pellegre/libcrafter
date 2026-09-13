@@ -507,7 +507,17 @@ pub(super) fn train_tb_ru_field(
     {
         return None;
     }
-    train_ru_field(samples, a, allocation, fields.ltf_size, fields.guard_ns, cp)
+    if allocation.count() < 234 {
+        return train_ru_field(samples, a, allocation, fields.ltf_size, fields.guard_ns, cp);
+    }
+    let (mut channel, tones, guard) =
+        observe_ru(samples, a, allocation, fields.ltf_size, fields.guard_ns, cp)?;
+    let energy: f32 = channel.iter().map(|v| v.power()).sum();
+    if !energy.is_finite() || energy < 1e-9 {
+        return None;
+    }
+    adaptive_delay_fit(&mut channel, &tones, guard, allocation)?;
+    Some(channel)
 }
 
 /// Isolated TB STBC RU: use only this user's pilot phase, never a phase pooled
@@ -658,8 +668,8 @@ fn train_stbc_ru_layout(
 }
 
 /// Select delay-model complexity from held-out training measurements, not
-/// decoded DATA or an assumed physical channel. Small RUs cannot justify all
-/// guard-interval taps just because the transmitter chose a long guard.
+/// decoded DATA or an assumed physical channel. Neither narrow allocations nor
+/// noisy full-band training justify all guard-interval taps solely from the GI.
 /// Keep the full guard candidate so long-delay channels remain representable.
 fn adaptive_delay_fit(
     channel: &mut [ComplexSample; 256],
@@ -870,6 +880,59 @@ fn observe_ru(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn radio_he_tb_full_ru_delay_selection_preserves_long_paths() {
+        let allocation = super::Tones::ru(242, 1).unwrap();
+        for step in [1, 2] {
+            let tones: Vec<_> = allocation.active().filter(|k| k % step == 0).collect();
+            for delay in [0, 24, 50] {
+                let mut truth = [super::ComplexSample::ZERO; 256];
+                let mut observed = truth;
+                let mut state = 0x4321u32;
+                for k in allocation.active() {
+                    let bin = k.rem_euclid(256) as usize;
+                    truth[bin] = super::ComplexSample { i: 1., q: 0. }.add(
+                        super::ComplexSample::rotation(
+                            -std::f32::consts::TAU * k as f32 * delay as f32 / 256.,
+                        )
+                        .scale(0.25),
+                    );
+                    let mut noise = || {
+                        state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                        (state as f64 / u32::MAX as f64 - 0.5) as f32 * 0.04
+                    };
+                    observed[bin] = truth[bin].add(super::ComplexSample {
+                        i: noise(),
+                        q: noise(),
+                    });
+                }
+                let mut fitted = observed;
+                let selected =
+                    super::adaptive_delay_fit(&mut fitted, &tones, 64, allocation).unwrap();
+                let error = |h: &[super::ComplexSample; 256]| {
+                    allocation
+                        .active()
+                        .map(|k| {
+                            h[k.rem_euclid(256) as usize]
+                                .sub(truth[k.rem_euclid(256) as usize])
+                                .power()
+                        })
+                        .sum::<f32>()
+                };
+                assert!(
+                    error(&fitted) / 242. < 0.03f32.powi(2),
+                    "step={step} delay={delay} selected={selected}"
+                );
+                if delay == 0 {
+                    let mut fixed = observed;
+                    super::delay_fit(&mut fixed, &tones, 64, allocation).unwrap();
+                    assert!(error(&fitted) < error(&fixed));
+                } else {
+                    assert!(selected >= delay);
+                }
+            }
+        }
+    }
     use super::*;
     #[test]
     fn radio_he_tb_training_mode_admission() {
@@ -1121,6 +1184,7 @@ mod tests {
                 .collect();
             let channel = train_ru_field(&wave, &a, allocation, size, guard, 0)
                 .unwrap_or_else(|| panic!("{}", c[0]));
+            let mut trained_channels = vec![channel];
             if guard >= 1600 {
                 let mut common = crate::Dot11TriggerCommonFields {
                     gi_ltf: if size == 2 { 1 } else { 2 },
@@ -1131,36 +1195,43 @@ mod tests {
                     let tb = train_tb_ru_field(&wave, &a, allocation, &common, 0);
                     if ru == 242 && code != 0 {
                         assert!(tb.is_none());
+                    } else if ru == 242 {
+                        // TB selects model complexity from held-out LTF tones.
+                        // Check against the same independent physical channel,
+                        // not bit equality with the fixed-delay MU estimator.
+                        trained_channels.push(tb.unwrap());
                     } else {
                         assert_eq!(tb, Some(channel), "TB {}", c[0]);
                     }
                 }
             }
             let gain = c[5].parse::<f32>().unwrap() / 128. * 4. * (52. / f32::from(ru)).sqrt();
-            let mut error = 0.;
-            let mut energy = 0.;
-            for k in allocation.active() {
-                let h = ComplexSample { i: 1., q: 0. }
-                    .add(if c[6] == "1" {
-                        ComplexSample { i: 0., q: 0.25 }.mul(ComplexSample::rotation(
-                            -std::f32::consts::TAU * k as f32 * 3. / 256.,
-                        ))
-                    } else {
-                        ComplexSample::ZERO
-                    })
-                    .scale(gain);
-                error += channel[k.rem_euclid(256) as usize].sub(h).power();
-                energy += h.power();
-            }
-            assert!(
-                (error / energy).sqrt() < 0.06,
-                "{}: {}",
-                c[0],
-                (error / energy).sqrt()
-            );
-            for k in -128i32..128 {
-                if !allocation.contains(k) {
-                    assert_eq!(channel[k.rem_euclid(256) as usize].power(), 0.);
+            for channel in trained_channels {
+                let mut error = 0.;
+                let mut energy = 0.;
+                for k in allocation.active() {
+                    let h = ComplexSample { i: 1., q: 0. }
+                        .add(if c[6] == "1" {
+                            ComplexSample { i: 0., q: 0.25 }.mul(ComplexSample::rotation(
+                                -std::f32::consts::TAU * k as f32 * 3. / 256.,
+                            ))
+                        } else {
+                            ComplexSample::ZERO
+                        })
+                        .scale(gain);
+                    error += channel[k.rem_euclid(256) as usize].sub(h).power();
+                    energy += h.power();
+                }
+                assert!(
+                    (error / energy).sqrt() < 0.06,
+                    "{}: {}",
+                    c[0],
+                    (error / energy).sqrt()
+                );
+                for k in -128i32..128 {
+                    if !allocation.contains(k) {
+                        assert_eq!(channel[k.rem_euclid(256) as usize].power(), 0.);
+                    }
                 }
             }
             assert!(

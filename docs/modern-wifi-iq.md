@@ -342,6 +342,14 @@ channel impairments and SERVICE rejection. This is not yet streaming TB frame
 publication: exchange association and aggregate
 MPDU integrity remain separate integration requirements.
 
+Full242-tone non-STBC TB training selects its finite-delay model using held-out
+LTF observations, then refits all observed tones. The candidate set retains the
+full guard interval rather than assuming every propagation channel is short.
+This reduces noise fitting in weak training without using known payload bytes
+or requiring a flat channel. Deterministic checks retain long-delay paths and
+compare estimates against independently generated physical channels. It does
+not guarantee high-order QAM recovery at arbitrary CS8 signal levels.
+
 The TB kernel also exposes private header-only admission: checked L-SIG,
 RL-SIG and HE-SIG-A plus explicit Trigger fields determine the per-user DATA
 geometry and retained-sample budget before DATA buffering. Admission checks
