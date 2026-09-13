@@ -28,18 +28,29 @@ pub(super) struct Recovered {
     pub first_failure: Option<super::ldpc_rate::Error>,
 }
 
-/// Input begins at L-SIG. Common pre-HE acquisition provides coarse carrier
-/// correction; this user's RU pilots track its residual phase independently.
-/// No separation of overlapping spatial users is inferred.
-pub(super) fn recover(
+#[derive(Clone, Copy)]
+pub(super) struct Admission {
+    pub signal: super::he_tb::TbSignal,
+    pub timing: Timing,
+    pub capacity: Capacity,
+    /// Total retained samples from L-SIG through DATA, excluding packet extension.
+    pub required_samples: usize,
+    tones: super::he_tones::Tones,
+    size: usize,
+    guard: usize,
+}
+
+/// Admit from only L-SIG/RL-SIG/HE-SIG-A (320 samples), before retaining DATA.
+/// Uses the same checked Trigger geometry as recovery; neither acquisition nor
+/// header agreement proves that the caller selected the correct exchange.
+pub(super) fn admit(
     samples: &[ComplexSample],
     a: &Acquisition,
     common: &Dot11TriggerCommonFields,
     user: &Dot11TriggerUserFields,
     max_psdu: usize,
     max_samples: usize,
-    partial: bool,
-) -> Result<Recovered, Error> {
+) -> Result<Admission, Error> {
     if a.signal_start.checked_sub(a.preamble_start) != Some(320) {
         return Err(Error::Timing);
     }
@@ -55,13 +66,10 @@ pub(super) fn recover(
     let timing = Timing::for_tb(6_000_000, length, common).map_err(|_| Error::Timing)?;
     let needed = timing.data_end.checked_sub(320).ok_or(Error::Timing)?;
     a.preamble_start
-        .checked_add(timing.data_end as u64)
+        .checked_add(timing.packet_end as u64)
         .ok_or(Error::Timing)?;
     if needed > max_samples || timing.data_symbols > 400 {
         return Err(Error::Limit);
-    }
-    if samples.len() < needed {
-        return Err(Error::Samples);
     }
     let (size, guard) = match common.gi_ltf {
         1 if !common.masked_ltf => (2, 32),
@@ -89,6 +97,42 @@ pub(super) fn recover(
         super::ldpc_rate::Layout::he_tb(common, user, timing.data_symbols as u16)
             .map_err(|_| Error::Unsupported)?;
     }
+    Ok(Admission {
+        signal,
+        timing,
+        capacity: c,
+        required_samples: needed,
+        tones,
+        size,
+        guard,
+    })
+}
+
+/// Input begins at L-SIG. Common pre-HE acquisition provides coarse carrier
+/// correction; this user's RU pilots track its residual phase independently.
+/// No separation of overlapping spatial users is inferred.
+pub(super) fn recover(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    common: &Dot11TriggerCommonFields,
+    user: &Dot11TriggerUserFields,
+    max_psdu: usize,
+    max_samples: usize,
+    partial: bool,
+) -> Result<Recovered, Error> {
+    let Admission {
+        signal,
+        timing,
+        capacity: c,
+        required_samples,
+        tones,
+        size,
+        guard,
+    } = admit(samples, a, common, user, max_psdu, max_samples)?;
+    if samples.len() < required_samples {
+        return Err(Error::Samples);
+    }
+    let group = 1 + usize::from(common.stbc);
     let training = timing.ltf_symbols * (64 * size + guard);
     let train = |cp| {
         if common.stbc {
@@ -361,6 +405,62 @@ mod tests {
                 })
                 .unwrap_or_else(|| panic!("{} acquisition", c[0]));
             let input = &samples[a.signal_start as usize..];
+            let header = &input[..320];
+            let admitted = admit(header, &a, &common, &user, 65535, input.len()).unwrap();
+            assert_eq!(admitted.required_samples, input.len(), "{}", c[0]);
+            assert_eq!(admitted.timing.data_symbols, number(14));
+            assert_eq!(admitted.capacity.psdu_bytes, c[16].len() / 2);
+            assert!(admit(
+                header,
+                &a,
+                &common,
+                &user,
+                admitted.capacity.psdu_bytes,
+                admitted.required_samples
+            )
+            .is_ok());
+            assert!(matches!(
+                admit(
+                    header,
+                    &a,
+                    &common,
+                    &user,
+                    65535,
+                    admitted.required_samples - 1
+                ),
+                Err(Error::Limit)
+            ));
+            if admitted.capacity.psdu_bytes > 0 {
+                assert!(matches!(
+                    admit(
+                        header,
+                        &a,
+                        &common,
+                        &user,
+                        admitted.capacity.psdu_bytes - 1,
+                        input.len()
+                    ),
+                    Err(Error::Limit)
+                ));
+            }
+            for cut in [0, 79, 159, 239, 319] {
+                assert!(matches!(
+                    admit(&header[..cut], &a, &common, &user, 65535, input.len()),
+                    Err(Error::Header)
+                ));
+            }
+            let mut shifted = a.clone();
+            let delta = u64::MAX - 800 - a.preamble_start;
+            shifted.preamble_start += delta;
+            shifted.signal_start += delta;
+            shifted.phase_origin += delta;
+            // L-SIG's legacy duration check may reject this before TB timing;
+            // either layer must prevent an absolute sample-index overflow.
+            assert!(admit(header, &shifted, &common, &user, 65535, input.len()).is_err());
+            assert!(matches!(
+                recover(header, &a, &common, &user, 65535, input.len(), false),
+                Err(Error::Samples)
+            ));
             let result = recover(input, &a, &common, &user, 65535, input.len(), false);
             if c[15] == "service" {
                 assert!(
@@ -400,6 +500,10 @@ mod tests {
             let mut masked = common;
             masked.masked_ltf = true;
             assert!(matches!(
+                admit(header, &a, &masked, &user, 65535, input.len()),
+                Err(Error::Unsupported)
+            ));
+            assert!(matches!(
                 recover(input, &a, &masked, &user, 65535, input.len(), false),
                 Err(Error::Unsupported)
             ));
@@ -430,6 +534,10 @@ mod tests {
             }
             let mut bad = common;
             bad.sig_a2_reserved ^= 1;
+            assert!(matches!(
+                admit(header, &a, &bad, &user, 65535, input.len()),
+                Err(Error::Context)
+            ));
             assert!(matches!(
                 recover(input, &a, &bad, &user, 65535, input.len(), false),
                 Err(Error::Context)

@@ -338,6 +338,12 @@ channel impairments and SERVICE rejection. This is not yet streaming TB frame
 publication: exchange association and aggregate
 MPDU integrity remain separate integration requirements.
 
+The TB kernel also exposes private header-only admission: checked L-SIG,
+RL-SIG and HE-SIG-A plus explicit Trigger fields determine the per-user DATA
+geometry and retained-sample budget before DATA buffering. Admission checks
+payload/sample limits and absolute packet-end overflow; it does not establish
+Trigger association, training quality, SERVICE validity or MPDU FCS integrity.
+
 An additional 276 independently generated captures sum simultaneous users
 before CS8 quantization and check all 1380 distinct recovered payloads. They
 cover disjoint 26-, 52- and 106-tone allocations, per-user carrier offsets,
