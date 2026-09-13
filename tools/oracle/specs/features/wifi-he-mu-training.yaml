@@ -1,12 +1,15 @@
 version: 1
 kind: feature
 name: wifi_he_mu_training
-summary: HE20 single-stream allocation-specific LTF channel estimation.
+summary: HE20 allocation-specific one-stream and two-STS STBC LTF channel estimation.
 layers: [dot11]
 directions: [backend_to_libcrafter]
 strict_bytes: true
 malformed: true
 behaviors:
+  - name: ru-stbc-training
+    source: IEEE 802.11ax-2021 27.3.11.10 Equations 27-55/56/57; IEEE 802.11-2020 Equations 19-27 and 21-44/45
+    checks: [two_space_time_streams, all_signaled_ltfs, separate_pilot_matrix, cyclic_shift_compensation, finite_bounds]
   - name: ru-training
     source: IEEE 802.11ax-2021 27.3.11.10 and Equations 27-5/42/43/58
     checks: [all_20mhz_rus, sparse_ltf, full_ltf, fractional_normalization, frequency_selective_channels, finite_bounds, su_er_compatibility]
@@ -19,3 +22,4 @@ backend_support:
     notes:
       - Isolated single-stream RU training kernel. Caller establishes spatial admission and LTF position; no complete MU payload recovery.
       - Small RUs use a regularized delay-domain estimate, not a claim of unique recovery of arbitrary physical taps from undersampled training.
+      - Isolated MU STBC training uses all 2/4/6/8 LTFs and separate DATA and pilot matrices; streaming MU STBC admission and DATA combining remain unsupported.

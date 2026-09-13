@@ -204,6 +204,28 @@ fn radio_he_mu_training_inventory() {
 }
 
 #[test]
+fn radio_he_mu_stbc_training_inventory() {
+    let index = include_str!("fixtures/iq/he-mu-stbc-training-index.tsv");
+    assert_eq!(index.lines().skip(1).count(), 768);
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "7172fb83a0f1e666ed2be5b76ea27d9faccc24fa5a25baf9a47a062eccc77cb3"
+    );
+    for row in index.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 10);
+        let bytes = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(bytes.len(), 2 * c[8].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(&bytes)), c[9]);
+    }
+}
+
+#[test]
 fn radio_he_ldpc_partial_inventory() {
     let index = include_str!("fixtures/iq/he-ldpc-partial-index.tsv");
     assert_eq!(index.lines().skip(1).count(), 18);

@@ -66,6 +66,15 @@ three quantization gains, and flat/selective channels. These are not complete
 MU PPDUs or MAC validation. Regenerate with `he_mu_training_vectors.py` or
 verify with `he_mu_training_vectors.py --check`.
 
+`he-mu-stbc-training-index.tsv` indexes 768 isolated two-STS MU training
+fields: all sixteen HE20 RUs, four guard/training pairs, 2/4/6/8 LTFs,
+and both channels present or either branch erased. Independent direct-DFT
+waveforms include physical delay taps, STS cyclic shifts, CFO, phase drift,
+and cs8 quantization. Channel estimates are checked against the physical
+channels, including pilot interpolation. These are not complete MU STBC
+packets or live radio qualification. Regenerate or verify using
+`he_mu_stbc_training_vectors.py` with optional `--check`.
+
 `he-mu-timing.tsv` contains 26529 independent forward MU timelines covering
 resolved SIG-B lengths, signaled LTF counts, all four MU training/guard pairs,
 STBC symbol parity, midamble boundaries and packet extension. These test timing

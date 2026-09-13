@@ -8616,6 +8616,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "he-mu242-capacity-index.tsv"
                 | "he-er106-training-index.tsv"
                 | "he-mu-training-index.tsv"
+                | "he-mu-stbc-training-index.tsv"
                 | "he-mu-ldpc-layout.tsv"
                 | "he-mu-ldpc-payload.tsv"
                 | "he-dcm-half12-metrics.tsv"
@@ -8804,6 +8805,11 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 )
                 .chain(
                     include_str!("fixtures/iq/he-mu-training-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
+                .chain(
+                    include_str!("fixtures/iq/he-mu-stbc-training-index.tsv")
                         .lines()
                         .skip(1)
                 )
