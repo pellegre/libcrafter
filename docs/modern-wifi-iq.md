@@ -146,6 +146,12 @@ independent forward timelines cover all four MU guard/training pairs and STBC
 parity without inheriting SU-only restrictions. This is timing arithmetic,
 not per-RU spatial admission, channel training or MU payload recovery.
 
+The shared HE tone geometry covers all sixteen 20 MHz resource units (nine
+26-tone, four 52-tone, two 106-tone and one 242-tone), their pilot positions
+and signs, and one-stream BCC/LDPC permutations. Its RU indices are one-based
+within each size, not SIG-B slot indices. MU channel training and payload
+integration remain unfinished; geometry alone does not recover MAC bytes.
+
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,
 midambles10/20, CFO/selective channels, and a damaged first aggregate member;

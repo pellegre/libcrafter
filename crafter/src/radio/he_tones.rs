@@ -1,7 +1,8 @@
-//! HE20 SU/ER tone geometry, IEEE 802.11ax-2021 Tables 27-35/36/40/41.
+//! HE20 tone geometry, IEEE 802.11ax-2021 Tables 27-7 and 27-35..43.
 #[derive(Clone, Copy)]
 pub(super) struct Tones {
-    upper106: bool,
+    size: u16,
+    index: usize,
 }
 
 impl Tones {
@@ -10,22 +11,50 @@ impl Tones {
         if bandwidth > u8::from(er) {
             return None;
         }
-        Some(Self {
-            upper106: er && bandwidth == 1,
-        })
+        Self::ru(
+            if er && bandwidth == 1 { 106 } else { 242 },
+            if er && bandwidth == 1 { 2 } else { 1 },
+        )
+    }
+    /// One-based RU index within its size, NOT the SIG-B first 26-tone slot.
+    pub fn ru(size: u16, index: usize) -> Option<Self> {
+        let count = match size {
+            26 => 9,
+            52 => 4,
+            106 => 2,
+            242 => 1,
+            _ => return None,
+        };
+        (1..=count).contains(&index).then_some(Self { size, index })
     }
     pub fn pilots(self) -> &'static [i32] {
-        if self.upper106 {
-            &[22, 48, 90, 116]
-        } else {
-            &[-116, -90, -48, -22, 22, 48, 90, 116]
+        match self.size {
+            26 => &[
+                [-116, -102],
+                [-90, -76],
+                [-62, -48],
+                [-36, -22],
+                [-10, 10],
+                [22, 36],
+                [48, 62],
+                [76, 90],
+                [102, 116],
+            ][self.index - 1],
+            52 => &[
+                [-116, -102, -90, -76],
+                [-62, -48, -36, -22],
+                [22, 36, 48, 62],
+                [76, 90, 102, 116],
+            ][self.index - 1],
+            106 => &[[-116, -90, -48, -22], [22, 48, 90, 116]][self.index - 1],
+            _ => &[-116, -90, -48, -22, 22, 48, 90, 116],
         }
     }
     pub fn pilot_sign(self, symbol: usize, pilot: usize) -> f32 {
-        let signs: &[f32] = if self.upper106 {
-            &[1., 1., 1., -1.]
-        } else {
-            &[1., 1., 1., -1., -1., 1., 1., 1.]
+        let signs: &[f32] = match self.size {
+            26 => &[1., -1.],
+            52 | 106 => &[1., 1., 1., -1.],
+            _ => &[1., 1., 1., -1., -1., 1., 1., 1.],
         };
         signs[(symbol % signs.len() + pilot % signs.len()) % signs.len()]
     }
@@ -36,36 +65,44 @@ impl Tones {
         (-122..=122).filter(move |&k| self.contains(k))
     }
     pub fn contains(self, k: i32) -> bool {
-        if self.upper106 {
-            (17..=122).contains(&k)
-        } else {
-            (-122..=-2).contains(&k) || (2..=122).contains(&k)
-        }
+        let (lo, hi) = match self.size {
+            26 if self.index == 5 => return (-16..=-4).contains(&k) || (4..=16).contains(&k),
+            26 => [
+                (-121, -96),
+                (-95, -70),
+                (-68, -43),
+                (-42, -17),
+                (0, 0),
+                (17, 42),
+                (43, 68),
+                (70, 95),
+                (96, 121),
+            ][self.index - 1],
+            52 => [(-121, -70), (-68, -17), (17, 68), (70, 121)][self.index - 1],
+            106 => [(-122, -17), (17, 122)][self.index - 1],
+            _ => return (-122..=-2).contains(&k) || (2..=122).contains(&k),
+        };
+        (lo..=hi).contains(&k)
     }
     pub fn count(self) -> usize {
-        if self.upper106 {
-            102
-        } else {
-            234
-        }
+        usize::from(self.size) - self.pilots().len()
     }
     pub fn ldpc_tone(self, k: usize, dcm: bool) -> Option<usize> {
         let count = self.count() / (1 + usize::from(dcm));
         if k >= count {
             return None;
         }
-        let distance = if self.upper106 {
-            if dcm {
-                3
-            } else {
-                6
-            }
-        } else {
-            9
+        let distance = match (self.size, dcm) {
+            (26, _) | (52, true) => 1,
+            (52, false) | (106, true) => 3,
+            (106, false) => 6,
+            _ => 9,
         };
         let columns = count / distance;
         Some(distance * (k % columns) + k / columns)
     }
+    /// One-stream BCC interleaving; additional spatial-stream rotation is not
+    /// represented by this mapping and must not be inferred from RU geometry.
     pub fn bcc_bit(self, k: usize, bits: usize, dcm: bool) -> Option<usize> {
         if !matches!(bits, 1 | 2 | 4 | 6 | 8) {
             return None;
@@ -74,12 +111,11 @@ impl Tones {
         if k >= count {
             return None;
         }
-        let columns = if self.upper106 {
-            17
-        } else if dcm {
-            13
-        } else {
-            26
+        let columns = match self.size {
+            26 => 8 / (1 + usize::from(dcm)),
+            52 => 16 / (1 + usize::from(dcm)),
+            106 => 17,
+            _ => 26 / (1 + usize::from(dcm)),
         };
         let i = (count / columns) * (k % columns) + k / columns;
         let s = (bits / 2).max(1);
@@ -90,6 +126,120 @@ impl Tones {
 #[cfg(test)]
 mod tests {
     use super::Tones;
+    #[test]
+    fn radio_he_mu_all_resource_units() {
+        // Independent signed-tone masks, transcribed from Table 27-7. Pilots
+        // are checked separately against Tables 27-37/39/41/42, not inferred
+        // from the production RU constructor.
+        type Case<'a> = (u16, usize, &'a [(i32, i32)], &'a [i32]);
+        let cases: &[Case<'_>] = &[
+            (26, 1, &[(-121, -96)], &[-116, -102]),
+            (26, 2, &[(-95, -70)], &[-90, -76]),
+            (26, 3, &[(-68, -43)], &[-62, -48]),
+            (26, 4, &[(-42, -17)], &[-36, -22]),
+            (26, 5, &[(-16, -4), (4, 16)], &[-10, 10]),
+            (26, 6, &[(17, 42)], &[22, 36]),
+            (26, 7, &[(43, 68)], &[48, 62]),
+            (26, 8, &[(70, 95)], &[76, 90]),
+            (26, 9, &[(96, 121)], &[102, 116]),
+            (52, 1, &[(-121, -70)], &[-116, -102, -90, -76]),
+            (52, 2, &[(-68, -17)], &[-62, -48, -36, -22]),
+            (52, 3, &[(17, 68)], &[22, 36, 48, 62]),
+            (52, 4, &[(70, 121)], &[76, 90, 102, 116]),
+            (106, 1, &[(-122, -17)], &[-116, -90, -48, -22]),
+            (106, 2, &[(17, 122)], &[22, 48, 90, 116]),
+            (
+                242,
+                1,
+                &[(-122, -2), (2, 122)],
+                &[-116, -90, -48, -22, 22, 48, 90, 116],
+            ),
+        ];
+        for &(size, index, ranges, pilots) in cases {
+            let t = Tones::ru(size, index).unwrap();
+            let active: Vec<_> = ranges.iter().flat_map(|&(a, b)| a..=b).collect();
+            assert_eq!(t.active().collect::<Vec<_>>(), active);
+            assert_eq!(active.len(), usize::from(size));
+            assert_eq!(t.pilots(), pilots);
+            for k in -256..=256 {
+                assert_eq!(t.contains(k), active.contains(&k));
+            }
+            assert!(!t.contains(i32::MIN));
+            assert!(!t.contains(i32::MAX));
+            let data: Vec<_> = active.into_iter().filter(|k| !pilots.contains(k)).collect();
+            assert_eq!(t.data().collect::<Vec<_>>(), data);
+            assert_eq!(t.count(), data.len());
+            let signs: &[f32] = match size {
+                26 => &[1., -1.],
+                242 => &[1., 1., 1., -1., -1., 1., 1., 1.],
+                _ => &[1., 1., 1., -1.],
+            };
+            for n in 0..32 {
+                for p in 0..pilots.len() {
+                    assert_eq!(t.pilot_sign(n, p), signs[(n + p) % signs.len()]);
+                }
+            }
+            for dcm in [false, true] {
+                let count = data.len() / if dcm { 2 } else { 1 };
+                let distance = match (size, dcm) {
+                    (26, _) | (52, true) => 1,
+                    (52, false) | (106, true) => 3,
+                    (106, false) => 6,
+                    _ => 9,
+                };
+                let expected: Vec<_> = (0..distance)
+                    .flat_map(|r| (0..count / distance).map(move |c| c * distance + r))
+                    .collect();
+                assert_eq!(
+                    (0..count)
+                        .map(|k| t.ldpc_tone(k, dcm).unwrap())
+                        .collect::<Vec<_>>(),
+                    expected
+                );
+                assert!(t.ldpc_tone(count, dcm).is_none());
+                for bits in [1, 2, 4, 6, 8] {
+                    // Independent matrix traversal plus per-column rotations
+                    // (Table 27-35), checking exact order, not just bijection.
+                    let columns = match (size, dcm) {
+                        (26, false) => 8,
+                        (26, true) => 4,
+                        (52, false) => 16,
+                        (52, true) => 8,
+                        (106, _) => 17,
+                        (242, false) => 26,
+                        _ => 13,
+                    };
+                    let rows = count * bits / columns;
+                    let group = (bits / 2).max(1);
+                    for column in 0..columns {
+                        for row in 0..rows {
+                            let position = column * rows + row;
+                            let base = position / group * group;
+                            let rotated = (position % group + group - column % group) % group;
+                            assert_eq!(
+                                t.bcc_bit(row * columns + column, bits, dcm),
+                                Some(base + rotated)
+                            );
+                        }
+                    }
+                    let mut mapped: Vec<_> = (0..count * bits)
+                        .map(|k| t.bcc_bit(k, bits, dcm).unwrap())
+                        .collect();
+                    mapped.sort_unstable();
+                    assert_eq!(mapped, (0..count * bits).collect::<Vec<_>>());
+                    assert!(t.bcc_bit(count * bits, bits, dcm).is_none());
+                }
+            }
+        }
+        for (size, max) in [(26, 9), (52, 4), (106, 2), (242, 1)] {
+            for index in [0, max + 1, usize::MAX] {
+                assert!(Tones::ru(size, index).is_none());
+            }
+        }
+        for size in [0, 25, 53, 105, 243, 484, u16::MAX] {
+            assert!(Tones::ru(size, 1).is_none());
+        }
+    }
     #[test]
     fn radio_he_tone_geometry_and_permutations() {
         assert!(Tones::new(false, 1).is_none());
