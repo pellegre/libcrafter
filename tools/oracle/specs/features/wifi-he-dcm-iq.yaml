@@ -7,6 +7,9 @@ directions: [backend_to_libcrafter]
 strict_bytes: true
 malformed: true
 behaviors:
+  - name: allocation-geometry
+    source: IEEE 802.11ax-2021 Tables27-35,27-36,27-40,27-41
+    checks: [explicit_er_context, upper106_data_and_pilot_indices, bcc_permutation, ldpc_permutation, dcm_half_bounds, legacy242_compatibility]
   - name: dual-carrier-recovery
     source: IEEE 802.11ax-2021 27.3.12.5.1, 27.3.12.8-10, 27.3.12.15
     checks: [bpsk_sign_parity, qpsk_conjugation, qam16_bit_permutation, weighted_joint_metrics, faded_branch, half_tone_ldpc_permutation, bcc_interleaving, bpsk_filler, mcs_0_1_3_4, valid_guard_training_pairs, midambles, exact_mac_bytes]
@@ -19,3 +22,4 @@ backend_support:
     notes:
       - One spatial stream, HE20 SU only. STBC and independent multi-stream reception are separate work.
       - Offline independent IQ qualification is not live RF interoperability or throughput qualification.
+      - Upper106 tone geometry alone does not enable or qualify full IQ reception.

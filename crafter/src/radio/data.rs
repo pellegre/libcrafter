@@ -862,13 +862,24 @@ fn constellation_energy(coded_bits: usize, carriers: usize) -> Result<f32, ()> {
 /// IEEE802.11ax-2021 27.3.12.9: BPSK parity, QPSK conjugate, 16-QAM
 /// adjacent-bit exchange. Combining joint label distances preserves the
 /// sign/magnitude dependency of the 16-QAM permutation.
+#[cfg(test)]
 pub(super) fn demap_dcm(
     pair: [(ComplexSample, f32); 2],
     bits: usize,
     k: usize,
 ) -> Option<[f32; 4]> {
+    demap_dcm_for_half(pair, bits, k, 117)
+}
+
+pub(super) fn demap_dcm_for_half(
+    pair: [(ComplexSample, f32); 2],
+    bits: usize,
+    k: usize,
+    half: usize,
+) -> Option<[f32; 4]> {
     if !matches!(bits, 1 | 2 | 4)
-        || k >= 117
+        || !matches!(half, 51 | 117)
+        || k >= half
         || pair
             .iter()
             .any(|(v, w)| !v.power().is_finite() || !w.is_finite() || *w < 0.)
@@ -893,7 +904,7 @@ pub(super) fn demap_dcm(
     for label in 0..1 << bits {
         let lower = point(label);
         let upper = match bits {
-            1 => lower.scale(if (k + 117) % 2 == 0 { 1. } else { -1. }),
+            1 => lower.scale(if (k + half) % 2 == 0 { 1. } else { -1. }),
             2 => lower.conj(),
             _ => point(((label & 5) << 1) | ((label & 10) >> 1)),
         };
@@ -1669,6 +1680,11 @@ mod tests {
                 ),
             ];
             let actual = demap_dcm(pair, bits, k).unwrap();
+            if k < 51 {
+                // Both supported halves are odd: identical indexed labels
+                // produce identical joint metrics, but bounds must differ.
+                assert_eq!(demap_dcm_for_half(pair, bits, k, 51), Some(actual));
+            }
             for (bit, expected) in c[9]
                 .split(',')
                 .map(|v| v.parse::<f32>().unwrap())
@@ -1684,6 +1700,12 @@ mod tests {
             }
         }
         let pair = [(ComplexSample::ZERO, 1.); 2];
+        for half in [0, 50, 52, 116, 118, usize::MAX] {
+            assert!(demap_dcm_for_half(pair, 1, 0, half).is_none());
+        }
+        for k in [51, 117, usize::MAX] {
+            assert!(demap_dcm_for_half(pair, 1, k, 51).is_none());
+        }
         for bits in [0, 3, 5, usize::MAX] {
             assert!(demap_dcm(pair, bits, 0).is_none());
         }

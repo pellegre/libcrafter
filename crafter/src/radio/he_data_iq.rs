@@ -4,23 +4,32 @@ use super::{
     ComplexSample, SignalInfo,
 };
 
-const PILOTS: [i32; 8] = [-116, -90, -48, -22, 22, 48, 90, 116];
-const SIGNS: [f32; 8] = [1., 1., 1., -1., -1., 1., 1., 1.];
-
 /// Restore constellation groups to LDPC order for one non-DCM 242-tone RU
 /// stream. Input is ascending DATA-tone order (pilots excluded). IEEE802.11ax
 /// Table27-36/Equation27-95: DTM=9, NSD=234, t(k)=9*(k mod26)+floor(k/26).
 pub(super) fn ldpc_order(metrics: &[f32], bits_per_tone: usize) -> Option<Vec<f32>> {
+    ldpc_order_for_tones(
+        metrics,
+        bits_per_tone,
+        super::he_tones::Tones::new(false, 0)?,
+    )
+}
+
+fn ldpc_order_for_tones(
+    metrics: &[f32],
+    bits_per_tone: usize,
+    tones: super::he_tones::Tones,
+) -> Option<Vec<f32>> {
     if !matches!(bits_per_tone, 1 | 2 | 4 | 6 | 8 | 10)
-        || metrics.len() != 234 * bits_per_tone
+        || metrics.len() != tones.count() * bits_per_tone
         || metrics.iter().any(|v| !v.is_finite())
     {
         return None;
     }
     let mut ordered = Vec::new();
     ordered.try_reserve_exact(metrics.len()).ok()?;
-    for k in 0..234 {
-        let start = (9 * (k % 26) + k / 26) * bits_per_tone;
+    for k in 0..tones.count() {
+        let start = tones.ldpc_tone(k, false)? * bits_per_tone;
         ordered.extend_from_slice(&metrics[start..start + bits_per_tone]);
     }
     Some(ordered)
@@ -113,6 +122,7 @@ pub(super) fn recover(
     let h = admitted.signal;
     let timing = admitted.timing;
     let c = admitted.capacity;
+    let tones = super::he_tones::Tones::new(admitted.er, h.bandwidth)?;
     debug_assert_eq!(trained.prefix.signal, h);
     debug_assert_eq!(trained.data_start, admitted.info.data_start);
     let mut coded = Vec::new();
@@ -172,7 +182,9 @@ pub(super) fn recover(
         let bins = super::he_fft::fft256(time);
         let polarity = 1. - 2. * super::data::feedback(&mut pilot_state) as f32;
         let pilots: [(f32, ComplexSample); 8] = std::array::from_fn(|j| {
-            let k = PILOTS[j];
+            let Some(&k) = tones.pilots().get(j) else {
+                return (0., ComplexSample::ZERO);
+            };
             let bin = k.rem_euclid(256) as usize;
             (
                 k as f32,
@@ -187,7 +199,7 @@ pub(super) fn recover(
                             )
                             .conj(),
                     )
-                    .scale(SIGNS[(symbol + j) % 8] * polarity)
+                    .scale(tones.pilot_sign(symbol, j) * polarity)
                     .mul(ComplexSample::rotation(-slope * k as f32)),
             )
         });
@@ -199,7 +211,7 @@ pub(super) fn recover(
         }
         let reference = common.phase();
         let (mut w, mut x, mut xx, mut y, mut xy) = (0., 0., 0., 0., 0.);
-        for (k, v) in pilots {
+        for (k, v) in pilots.into_iter().take(tones.pilots().len()) {
             let weight = v.power().sqrt();
             let residual = v.mul(ComplexSample::rotation(-reference)).phase();
             w += weight;
@@ -231,10 +243,7 @@ pub(super) fn recover(
             }
             let first: [ComplexSample; 256] = pending.take()?;
             let second = trained.second.as_ref()?;
-            for tone in (-122i32..=-2)
-                .chain(2..=122)
-                .filter(|k| !PILOTS.contains(k))
-            {
+            for tone in tones.data() {
                 let bin = tone.rem_euclid(256) as usize;
                 let channels = [trained.channel[bin], second[bin]];
                 if channels.iter().map(|v| v.power()).sum::<f32>() < 1e-12 {
@@ -249,11 +258,8 @@ pub(super) fn recover(
         for (offset, recovered_symbol) in recovered.iter().enumerate().take(group) {
             let symbol = symbol + 1 + offset - group;
             let mut interleaved = Vec::with_capacity(c.coded_per_symbol);
-            let mut dual = Vec::with_capacity(if h.dcm { 234 } else { 0 });
-            for tone in (-122i32..=-2)
-                .chain(2..=122)
-                .filter(|k| !PILOTS.contains(k))
-            {
+            let mut dual = Vec::with_capacity(if h.dcm { tones.count() } else { 0 });
+            for tone in tones.data() {
                 let bin = tone.rem_euclid(256) as usize;
                 let channel = trained.channel[bin];
                 let power = channel.power()
@@ -309,14 +315,16 @@ pub(super) fn recover(
                 }
             }
             if h.dcm {
-                for k in 0..117 {
+                let half = tones.count() / 2;
+                for k in 0..half {
                     // Equation27-96 permutes each 117-tone half separately.
                     // BPSK sign parity is indexed before that permutation.
-                    let tone = if h.ldpc { 9 * (k % 13) + k / 13 } else { k };
-                    let metrics = super::data::demap_dcm(
-                        [*dual.get(tone)?, *dual.get(tone + 117)?],
+                    let tone = if h.ldpc { tones.ldpc_tone(k, true)? } else { k };
+                    let metrics = super::data::demap_dcm_for_half(
+                        [*dual.get(tone)?, *dual.get(tone + half)?],
                         c.bits_per_tone,
                         k,
+                        half,
                     )?;
                     interleaved.extend_from_slice(&metrics[..c.bits_per_tone]);
                 }
@@ -325,7 +333,11 @@ pub(super) fn recover(
                 let ordered = if h.dcm {
                     interleaved
                 } else {
-                    ldpc_order(&interleaved, c.bits_per_tone)?
+                    if h.bandwidth == 0 {
+                        ldpc_order(&interleaved, c.bits_per_tone)?
+                    } else {
+                        ldpc_order_for_tones(&interleaved, c.bits_per_tone, tones)?
+                    }
                 };
                 // 27.3.12.5.3: post-FEC padding follows the coded bits in the
                 // last symbol group (both symbols for STBC).
@@ -337,11 +349,8 @@ pub(super) fn recover(
                 coded.extend_from_slice(ordered.get(..count)?);
             } else {
                 let n = c.coded_per_symbol;
-                let s = (c.bits_per_tone / 2).max(1);
-                let columns = if h.dcm { 13 } else { 26 };
                 for k in 0..n {
-                    let i = 9 * c.bits_per_tone * (k % columns) + k / columns;
-                    let j = s * (i / s) + (i + n - columns * i / n) % s;
+                    let j = tones.bcc_bit(k, c.bits_per_tone, h.dcm)?;
                     coded.push(*interleaved.get(j)?);
                 }
             }

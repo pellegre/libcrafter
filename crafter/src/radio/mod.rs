@@ -14,6 +14,7 @@ mod he_data_iq;
 mod he_fft;
 mod he_iq;
 mod he_timing;
+mod he_tones;
 mod he_training;
 pub use he::{Error as HeSignalError, SuSignal as HeSuSignalFields};
 mod ht;

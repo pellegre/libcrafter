@@ -62,6 +62,13 @@ STBC, shortened final segments, extra segments and multi-codeword payloads.
 They qualify coding geometry and recovery, not upper-106-tone IQ reception
 or live hardware operation (IEEE 802.11ax-2021 27.3.12.5.2).
 
+The private HE DATA tone-layout helper also represents ER upper106 geometry:
+tones17..122 with pilots22/48/90/116, 102 DATA tones, and 51-tone DCM halves.
+Tables27-35/36 define its BCC and LDPC permutations; Tables27-40/41 define
+pilot signs and positions. Geometry tests cover permutations and bounds, while
+the existing complete242-tone waveform corpus checks refactor compatibility.
+Upper106 admission remains disabled pending training and full-waveform tests.
+
 `he-ampdu-iq-index.tsv` records 200 complete HE20 SU BCC PHY/MAC IQ cases
 from `he_ampdu_iq_vectors.py`: MCS0-9, all five training/guard pairs, single
 and multiple QoS MPDUs, mixed tags, EOF padding and intentionally bad FCS.
