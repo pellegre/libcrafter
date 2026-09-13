@@ -69,6 +69,13 @@ pilot signs and positions. Geometry tests cover permutations and bounds, while
 the existing complete242-tone waveform corpus checks refactor compatibility.
 Upper106 admission remains disabled pending training and full-waveform tests.
 
+HE sparse-LTF waveform normalization follows Equation27-5: for a242-tone RU,
+the denominator under the square root is60.5 (1x),121 (2x),or242 (4x).
+It is not the number of populated training tones (60,122,242). The training,
+BCC, LDPC, aggregate, midamble, DCM, STBC and ER waveform corpora use these
+normative values. A direct unquantized tone test checks absolute receiver gain
+at all five guard/training combinations, independently of successful decoding.
+
 `he-ampdu-iq-index.tsv` records 200 complete HE20 SU BCC PHY/MAC IQ cases
 from `he_ampdu_iq_vectors.py`: MCS0-9, all five training/guard pairs, single
 and multiple QoS MPDUs, mixed tags, EOF padding and intentionally bad FCS.

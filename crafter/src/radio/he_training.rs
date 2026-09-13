@@ -221,12 +221,12 @@ fn observe_field(
     fields: &super::he::SuSignal,
     cp: usize,
 ) -> Option<([ComplexSample; 256], Vec<i32>, usize)> {
-    let (sequence, nfft, guard, active) = match (fields.ltf_size, fields.guard_ns) {
-        (1, 800) => (LTF1, 64, 16, 60),
-        (2, 800) => (LTF2, 128, 16, 122),
-        (2, 1600) => (LTF2, 128, 32, 122),
-        (4, 800) => (LTF4, 256, 16, 242),
-        (4, 3200) => (LTF4, 256, 64, 242),
+    let (sequence, nfft, guard) = match (fields.ltf_size, fields.guard_ns) {
+        (1, 800) => (LTF1, 64, 16),
+        (2, 800) => (LTF2, 128, 16),
+        (2, 1600) => (LTF2, 128, 32),
+        (4, 800) => (LTF4, 256, 16),
+        (4, 3200) => (LTF4, 256, 64),
         _ => return None,
     };
     let useful = cp.checked_add(guard)?;
@@ -243,9 +243,10 @@ fn observe_field(
         128 => bins[..128].copy_from_slice(&super::he_fft::fft128(time[..128].try_into().ok()?)),
         _ => bins = super::he_fft::fft256(time),
     }
-    // Convert the short-LTF FFT gain to the 256-point DATA gain. Equation27-58
-    // normalizes by sqrt(active training tones), DATA uses sqrt(242).
-    let scale = 256. / nfft as f32 * (active as f32 / 242.).sqrt();
+    // Equations27-5/58 define K_HE-LTF = K_RU * nfft/256, without rounding.
+    // This differs from counting populated tones (60.5/121 versus60/122).
+    // Compensate both that normalization and the shorter FFT's gain.
+    let scale = (256. / nfft as f32).sqrt();
     let mut channel = [ComplexSample::ZERO; 256];
     for (i, sign) in sequence.iter().enumerate() {
         let k = (i as i32 - 122).rem_euclid(256) as usize;
@@ -269,6 +270,51 @@ fn observe_field(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radio_he_ltf_fractional_normalization() {
+        let (samples, mut a) = fixture("he-training4-gi800-flat-gain160");
+        let mut fields = decode_prefix(&samples[a.signal_start as usize..], &a)
+            .unwrap()
+            .signal;
+        a.frequency_rad = 0.;
+        for (size, guard_ns, norm, sequence) in [
+            (1, 800, 60.5f64, LTF1),
+            (2, 800, 121., LTF2),
+            (2, 1600, 121., LTF2),
+            (4, 800, 242., LTF4),
+            (4, 3200, 242., LTF4),
+        ] {
+            fields.ltf_size = size;
+            fields.guard_ns = guard_ns;
+            let guard = usize::from(guard_ns) / 50;
+            let nfft = 64 * usize::from(size);
+            // One known modulated tone, evaluated directly from Eq27-58 in
+            // double precision. Absolute gain detects the populated-count bug
+            // independently of equalization, quantization and channel fitting.
+            let tone = 28usize;
+            let sign = match sequence[tone + 122] {
+                b'+' => 1.,
+                b'-' => -1.,
+                _ => panic!("unmodulated"),
+            };
+            let mut wave = vec![ComplexSample::ZERO; guard + nfft];
+            for n in 0..nfft {
+                let phase = std::f64::consts::TAU * tone as f64 * n as f64 / 256.;
+                let amplitude = sign / (256. * norm.sqrt());
+                wave[guard + n] = ComplexSample {
+                    i: (amplitude * phase.cos()) as f32,
+                    q: (amplitude * phase.sin()) as f32,
+                };
+            }
+            let (channel, _, _) = observe_field(&wave, &a, &fields, 0).unwrap();
+            assert!(
+                (channel[tone].i - 1. / 242f32.sqrt()).abs() < 1e-6,
+                "ltf{size}: {:?}",
+                channel[tone]
+            );
+            assert!(channel[tone].q.abs() < 1e-6);
+        }
+    }
     #[test]
     fn radio_he_stbc_training_bounds() {
         for row in include_str!("../../tests/fixtures/iq/he-stbc-iq-index.tsv")

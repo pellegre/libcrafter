@@ -106,7 +106,7 @@ def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False
         if k:stf[k+122]=v*(1+1j)/math.sqrt(2)
     wave += [v*4*math.sqrt(52/14)*boost for v in training.ifft(stf)][:80]
     seq={1:training.LTF1,2:training.LTF2,4:training.LTF4}[size]
-    active=len(seq)-seq.count('0')
+    active=242*size/4  # Equation27-5, not the populated-tone count.
     ltf=[v*4*math.sqrt(52/active)*boost for v in training.ifft([{'-':-1,'+':1,'0':0}[v] for v in seq])][:size*64]
     wave+=ltf[-guard:]+ltf
     assert len(wave)==37+preamble

@@ -95,7 +95,7 @@ def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None, e
         if k:stf[k+122]=(v*(1+1j)/math.sqrt(2),)*2
     wave += [v*boost for v in emit(stf,14,80,0)]
     sequence={1:training.LTF1,2:training.LTF2,4:training.LTF4}[size]
-    active=len(sequence)-sequence.count('0')
+    active=242*size/4  # Equation27-5, not the populated-tone count.
 
     def ltf_field(epoch):
         field=[]

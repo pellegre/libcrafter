@@ -11,8 +11,8 @@ behaviors:
     source: IEEE 802.11ax-2021 27.3.11.9-10, Equations 27-22/23/38/43/55-58
     checks: [source_training_sequence, both_4x_guard_intervals, prefix_acquisition, cfo, multipath, beam_change, zero_channel_rejection, checked_sample_bounds]
   - name: he-su-sparse-training
-    source: IEEE 802.11ax-2021 Table 27-31, Equations 27-41/42/58
-    checks: [sparse_source_sequences, short_transform_normalization, all_su_guard_combinations, complex_channel_interpolation, channel_probe_signs]
+    source: IEEE 802.11ax-2021 Table 27-31, Equations 27-5/41/42/58
+    checks: [sparse_source_sequences, short_transform_normalization, fractional_ltf_normalization_not_populated_tone_count, all_su_guard_combinations, complex_channel_interpolation, channel_probe_signs]
 coverage_cases: [wifi-he-su-4x-training, wifi-he-su-sparse-training]
 supported_cases:
   - {name: wifi-he-su-4x-training, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}

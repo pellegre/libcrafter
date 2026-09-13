@@ -52,7 +52,9 @@ def waveform(guard, case, gain, invalid=None, ltf_size=4):
     sequence = {1:LTF1,2:LTF2,4:LTF4}[ltf_size]
     active = len(sequence)-sequence.count('0')
     assert len(sequence) == 245 and active == {1:60,2:122,4:242}[ltf_size]
-    ltf = [v*4*math.sqrt(52/active) for v in ifft([{'-':-1,'+':1,'0':0}[c] for c in sequence])][:64*ltf_size]
+    # Equation27-5: fractional RU-size normalization, not populated tones.
+    normalization = 242*ltf_size/4
+    ltf = [v*4*math.sqrt(52/normalization) for v in ifft([{'-':-1,'+':1,'0':0}[c] for c in sequence])][:64*ltf_size]
     he_wave = stf + ltf[-guard:] + ltf
     data_start = len(prefix)+len(he_wave)
     if invalid == 'zero': he_wave[80:] = [0j]*(guard+256)

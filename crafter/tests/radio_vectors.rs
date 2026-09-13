@@ -14,7 +14,7 @@ fn radio_he_dcm_independent_inventory() {
         (
             include_str!("fixtures/iq/he-dcm-iq-index.tsv"),
             128,
-            "836e013ebdf29e085818ac5cc64e94b96766d1a6b14d7775ed6f55843592c8c1",
+            "fc4b672976f41c179d3cf8a388bb6d4e9844fd4c6f7141c2f41695a7d80e3e56",
         ),
         (
             include_str!("fixtures/iq/he-dcm-iq-invalid-index.tsv"),
@@ -47,12 +47,12 @@ fn radio_he_midamble_iq_independent_inventory() {
         (
             include_str!("fixtures/iq/he-midamble-iq-index.tsv"),
             270,
-            "cd969fa750dd20c147858221dd79bbfe02522db82ac90efaec84164f54993d5e",
+            "5a4c886d78ab0221da3492c3d20eea3cb3fc4b159b999617c73966bbc7928b68",
         ),
         (
             include_str!("fixtures/iq/he-midamble-iq-invalid-index.tsv"),
             12,
-            "890dad7a7f91bfde9088613efbf03e7838f938f422a41c5b07ed5584fb8ff1e8",
+            "712df6a3e8b59e6c9e5c1b4bd2f1e074d241121c490f1b83b509194c75b1b1b7",
         ),
     ] {
         assert_eq!(index.lines().skip(1).count(), count);
@@ -77,7 +77,7 @@ fn radio_he_ldpc_iq_independent_inventory() {
         (
             include_str!("fixtures/iq/he-ldpc-iq-index.tsv"),
             240,
-            "45f73059bd7d5658a3bf80d232e5692ac7cf96045d309b338859502d2770179b",
+            "91595117b54d5fa281949454db33da970a0de962c00032006ca4bac5cfbb54c0",
         ),
         (
             include_str!("fixtures/iq/he-ldpc-iq-invalid-index.tsv"),
@@ -164,7 +164,7 @@ fn radio_he_ampdu_iq_independent_inventory() {
     assert_eq!(index.lines().skip(1).count(), 200);
     assert_eq!(
         hex(&Sha256::digest(index.as_bytes())),
-        "478ff461f7a3d34c47eef80098dd6f5cc421620706bfb7aa1afa5a0184153a98"
+        "026a46f976ab82f571e98d74fd26a1934a72491828951b7cfb1219e628998656"
     );
     for row in index.lines().skip(1) {
         let c: Vec<_> = row.split('\t').collect();
@@ -195,7 +195,7 @@ fn radio_he_bcc_iq_independent_inventory() {
         (
             include_str!("fixtures/iq/he-bcc-iq-index.tsv"),
             151,
-            "631c9c12b32af13105037735d60b21d51cb91e6aa33f39f9f8d29998a34ed463",
+            "cc482b26bee4c614f2b91222802d3b92fac3c7edf10d0142d9b154ff4be9eb18",
             12,
         ),
         (
@@ -348,7 +348,7 @@ fn radio_he_training4_independent_inventory() {
         (
             include_str!("fixtures/iq/he-training-sparse-index.tsv"),
             36,
-            "aeec7245f9a6c1d79a69bc359c56607fcd520c8907b3b184ff3aa932d25c4d55",
+            "1c5741c605b8de45d5bb3f1eb0bc8c61acc6bad4b6fd3f5938dcf7dfe9c94595",
             13,
         ),
         (
@@ -426,7 +426,7 @@ fn radio_he_stbc_independent_inventory() {
         (
             include_str!("fixtures/iq/he-stbc-iq-index.tsv"),
             368,
-            "9b365a5e85331d9e5018a014d08a4136d2aedcf31058147919e456330057f89d",
+            "6a450e01748022ca63e1aa30836c81d74d731ea28bdffa30e84eae119abef1d9",
         ),
         (
             include_str!("fixtures/iq/he-stbc-iq-invalid-index.tsv"),
@@ -461,7 +461,7 @@ fn radio_he_er_iq_independent_inventory() {
         (
             include_str!("fixtures/iq/he-er-iq-index.tsv"),
             280,
-            "9ddd63fc1d78289cadea451faa83690af80256458ea12069c1edb9d1cddb95c0",
+            "2f8d73cbc26f8fbd3008c437d49a830da27102ab411cc108ef90556be001de07",
         ),
         (
             include_str!("fixtures/iq/he-er-iq-invalid-index.tsv"),
