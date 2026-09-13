@@ -222,6 +222,12 @@
       "fact": "HT-STF duration is 4 microseconds; its 20 MHz frequency sequence is identical to L-STF."
     },
     {
+      "id": "he-su-siga-layout",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.11.7.2-4 Tables 27-18 and 27-19; 27.3.12.8 Table 27-35",
+      "fact": "HE SU signaling contains 26+26 bits, with 42 CRC-protected bits, four CRC bits and six zero tail bits. Reserved bits A1.B14 and A2.B14 are one; BCC requires A2.B8 one. Doppler changes NSTS and midamble interpretation. DCM=STBC=1 with GI/LTF code3 means neither applied and 4x LTF with 0.8us GI; other codes in that combination are reserved. Signaling BPSK interleaving uses 13 columns and 4 rows, with continuous rate-half BCC over both symbols. Format context must distinguish SU from MU, TB and ER SU before interpreting these fields."
+    },
+    {
       "id": "he-siga-crc",
       "source": "ieee-80211ax-2021",
       "anchor": "27.3.11.7.3, Figure 27-24",

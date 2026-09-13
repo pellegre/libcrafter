@@ -7,6 +7,7 @@ mod ampdu;
 mod data;
 mod dsss;
 mod dsss_tx;
+mod he;
 mod ht;
 mod vht;
 mod vht_iq;

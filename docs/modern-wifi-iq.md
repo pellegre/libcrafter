@@ -338,6 +338,16 @@ fields. Reference metadata distinguishes NSS1 from NSTS2 when STBC is known;
 unknown STBC remains a qualification gap. Live reception and STBC transmission
 are not established by these offline simulations.
 
+## HE SU signaling kernel increment
+
+A private HE SU header kernel validates the 52 decoded bits or 104 interleaved
+soft metrics, CRC, tail and reserved fields. It interprets Doppler-dependent
+stream counts and the DCM/STBC guard-interval escape combination separately
+from applied DATA modes. The 1984 independent header vectors are anchored by
+the published HE CRC example. This is not yet connected to IQ acquisition or
+DATA recovery, and does not establish HE reception or valid DATA admission.
+ER SU, MU and TB require their own format context and additional decoding.
+
 ## VHT BCC DATA implementation
 
 The private single-encoder VHT BCC DATA recovery path uses the SIG-B CRC in
