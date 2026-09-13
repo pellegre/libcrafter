@@ -4,6 +4,37 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_vht_stbc_iq_independent_inventory() {
+    let index = include_str!("fixtures/iq/vht-stbc-iq-index.tsv");
+    let invalid = include_str!("fixtures/iq/vht-stbc-iq-invalid-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "d475eeb97bab4cbf0bd773ce40c6efe638dad84baddd473392e5523d27958dd8"
+    );
+    assert_eq!(
+        hex(&Sha256::digest(invalid.as_bytes())),
+        "291f1204bea7af0b7f5f3a9bd2a2e8849d49b0ad58afa64dfe46b015ba3c7bc2"
+    );
+    assert_eq!(index.lines().skip(1).count(), 110);
+    assert_eq!(invalid.lines().skip(1).count(), 9);
+    let mut names = std::collections::BTreeSet::new();
+    for (rows, column) in [(index, 6), (invalid, 2)] {
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            assert!(names.insert(c[0]));
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(hex(&Sha256::digest(&bytes)), c[column]);
+            assert_eq!(bytes.len() % 2, 0);
+        }
+    }
+}
+
+#[test]
 fn radio_vht_ldpc_iq_independent_inventory() {
     let index = include_str!("fixtures/iq/vht-ldpc-iq-index.tsv");
     let invalid = include_str!("fixtures/iq/vht-ldpc-iq-invalid-index.tsv");
@@ -66,7 +97,7 @@ fn radio_vht_reference_independent_inventory() {
     let inventory = include_str!("fixtures/iq/vht-reference-index.tsv");
     assert_eq!(
         hex(&Sha256::digest(inventory.as_bytes())),
-        "7afd5d9d695fb22d8e078ecb5d707d0ee86821c78f59e9b93a9169417137e840"
+        "6d04d84d617e203eb9690468bd89690f91f6c378f208d3a204201ae9f190ceed"
     );
     assert_eq!(inventory.lines().skip(1).count(), 9253);
     let mut names = std::collections::BTreeSet::new();

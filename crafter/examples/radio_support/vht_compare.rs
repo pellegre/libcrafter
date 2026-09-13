@@ -72,9 +72,6 @@ impl VhtPhy {
         // For a present user, coding is valid without a separate known bit.
         let ldpc = v[8] & 1 != 0;
         let stbc = (known & 1 != 0).then_some(v[2] & 1 != 0);
-        if stbc == Some(true) {
-            return Err("unsupported_vht_stbc");
-        }
         let group_id = (known & 0x80 != 0).then_some(v[9]);
         if group_id.is_some_and(|g| g != 0 && g != 63) {
             return Err("unsupported_vht_group");
@@ -86,6 +83,7 @@ impl VhtPhy {
         let short_gi = v[2] & 4 != 0;
         let disambiguation = (known & 8 != 0).then_some(v[2] & 8 != 0);
         if (!short_gi && disambiguation == Some(true))
+            || (stbc == Some(true) && disambiguation == Some(true))
             || (!ldpc && known & 16 != 0 && v[2] & 16 != 0)
         {
             return Err("inconsistent_vht_flags");
@@ -125,9 +123,9 @@ impl VhtPhy {
             .as_u64()
             .filter(|n| *n <= 8)
             .ok_or("unsupported_vht_mcs")? as u8;
+        let stbc = h["stbc"].as_bool().ok_or("unknown_vht_stbc")?;
         if h["bandwidth_code"] != 0
-            || h["space_time_streams"] != 1
-            || h["stbc"] != false
+            || h["space_time_streams"] != if stbc { 2 } else { 1 }
             || (h["coding"] != "bcc" && h["coding"] != "ldpc")
         {
             return Err("unsupported_vht_configuration");
@@ -140,7 +138,7 @@ impl VhtPhy {
         let disambiguation = h["short_gi_disambiguation"]
             .as_bool()
             .ok_or("unknown_vht_disambiguation")?;
-        if !short_gi && disambiguation {
+        if (!short_gi || stbc) && disambiguation {
             return Err("inconsistent_vht_flags");
         }
         let group_id = h["group_id"]
@@ -196,7 +194,7 @@ impl VhtPhy {
             ldpc,
             mcs,
             short_gi,
-            stbc: Some(false),
+            stbc: Some(stbc),
             group_id: Some(group_id),
             partial_aid: Some(partial_aid),
             beamformed: Some(beamformed),

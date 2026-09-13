@@ -1,4 +1,4 @@
-//! VHT20 SISO IQ kernel. Streaming admission and MPDU publication are separate.
+//! VHT20 one-DATA-stream IQ kernel. Admission and MPDU publication are separate.
 //! IEEE 802.11-2020 21.3.8/10/20; source map in docs/wifi-phy-evidence.json.
 use super::{
     sync::{fft64, Acquisition},
@@ -98,7 +98,7 @@ pub(super) fn admit(
         super::signal::decode_signal(samples.get(..80).ok_or(())?, a, 4095).map_err(|_| ())?;
     let fields = signal_a(samples.get(80..240).ok_or(())?, a).ok_or(())?;
     let VhtSignalAUsers::Single {
-        space_time_streams: 1,
+        space_time_streams,
         mcs,
         ldpc,
         ..
@@ -106,7 +106,10 @@ pub(super) fn admit(
     else {
         return Err(());
     };
-    if fields.bandwidth_code != 0 || fields.stbc || (!ldpc && fields.ldpc_extra_symbol) {
+    if fields.bandwidth_code != 0
+        || space_time_streams != if fields.stbc { 2 } else { 1 }
+        || (!ldpc && fields.ldpc_extra_symbol)
+    {
         return Err(());
     }
     let (nbpsc, ndbps) = *[
@@ -125,17 +128,17 @@ pub(super) fn admit(
     let timing = super::vht_timing::Timing::new(
         legacy.rate_bps,
         legacy.psdu_bytes,
-        1,
+        space_time_streams,
         fields.short_guard_interval,
         fields.short_gi_disambiguation,
-        false,
+        fields.stbc,
     )
     .map_err(|_| ())?;
     let psdu_bytes = if ldpc {
         let layout = super::ldpc_rate::Layout::vht(
             u16::try_from(timing.data_symbols).map_err(|_| ())?,
             mcs,
-            false,
+            fields.stbc,
             fields.ldpc_extra_symbol,
         )
         .map_err(|_| ())?;
@@ -175,21 +178,36 @@ pub(super) fn decode(samples: &[ComplexSample], a: &Acquisition) -> Result<Decod
             .ok_or(())?,
     )
     .map_err(|_| ())?;
-    let trained = super::ht::train_single_stream(
+    let composite = super::ht::train_single_stream(
         samples.get(320..400).ok_or(())?,
         a.signal_start.checked_add(320).ok_or(())?,
         a,
     )
     .ok_or(())?;
+    let sig_b_offset = data_offset.checked_sub(80).ok_or(())?;
     let sig_b = signal_b(
-        samples.get(400..480).ok_or(())?,
-        a.signal_start.checked_add(400).ok_or(())?,
-        &trained,
+        samples.get(sig_b_offset..data_offset).ok_or(())?,
+        a.signal_start.checked_add(sig_b_offset as u64).ok_or(())?,
+        &composite,
     )
     .ok_or(())?;
     if sig_b.apep_length_bounds().ok_or(())?.0 as usize > info.psdu_bytes {
         return Err(());
     }
+    let (trained, second) = if fields.stbc {
+        // DATA tones use HT's first two P columns. VHT pilot rows instead
+        // observe hsum,-hsum: separation yields hsum,0 on those four tones.
+        // Keep the unseparated first-LTF composite above for SIG-B.
+        let (first, second) = super::ht::train_stbc_second(
+            composite,
+            samples.get(400..480).ok_or(())?,
+            a.signal_start.checked_add(400).ok_or(())?,
+        )
+        .ok_or(())?;
+        (first, Some(second))
+    } else {
+        (composite, None)
+    };
     let data = samples.get(data_offset..end_offset).ok_or(())?;
     let guard = if fields.short_guard_interval { 8 } else { 16 };
     let (bytes, tracking, coding) = if let VhtSignalAUsers::Single {
@@ -199,14 +217,22 @@ pub(super) fn decode(samples: &[ComplexSample], a: &Acquisition) -> Result<Decod
         let layout = super::ldpc_rate::Layout::vht(
             u16::try_from(info.data_symbols).map_err(|_| ())?,
             mcs,
-            false,
+            fields.stbc,
             fields.ldpc_extra_symbol,
         )
         .map_err(|_| ())?;
-        super::data::decode_vht_ldpc_data(data, &trained, info, guard, sig_b, layout)?
+        super::data::decode_vht_ldpc_data(
+            data,
+            &trained,
+            info,
+            guard,
+            sig_b,
+            layout,
+            second.as_ref(),
+        )?
     } else {
         let (bytes, tracking) =
-            super::data::decode_vht_bcc_data(data, &trained, info, guard, sig_b)?;
+            super::data::decode_vht_bcc_data(data, &trained, info, guard, sig_b, second.as_ref())?;
         (bytes, tracking, Vec::new())
     };
     Ok(Decoded {

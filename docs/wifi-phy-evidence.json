@@ -64,6 +64,12 @@
   ],
   "facts": [
     {
+      "id": "vht-one-data-stream-stbc",
+      "source": "ieee-80211-2020",
+      "anchor": "Tables 21-10/11/20; 21.3.8.3.5 Equations 21-40/41/43; 21.3.8.3.6 Equation 21-47; 21.3.10.10 Equation 21-91",
+      "fact": "VHT SU STBC maps one DATA stream to two space-time streams using the same conjugate-pair operation as HT. Two VHT-LTF data columns use the first two HT P-matrix columns, but every training pilot row repeats P's first row. Thus the two training pilot observations are the combined channel and its negative. SIG-B DATA uses the first P column, and its pilots are common across streams; for two streams both observe the combined channel. VHT20 DATA pilots use the single-stream rotating pattern regardless of STBC, unlike HT's two-stream pilot patterns. With two transmit chains, pre-VHT cyclic shifts are 0/-200 ns and VHT shifts are 0/-400 ns."
+    },
+    {
       "id": "vht-ldpc-receive-length",
       "source": "ieee-80211-2020",
       "anchor": "21.3.20 Equations 21-107/108; forward construction 21.3.10.5.4",

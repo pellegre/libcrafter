@@ -305,7 +305,7 @@ HT and VHT do not cross-match at equal rates; aggregate frames retain their full
 PPDU interval and one-to-one occurrence matching. Header diagnostics never enter
 the valid-frame denominator. The 9253 independent metadata vectors and an
 IQ-to-synthetic-reference-pcap workflow cover duplicate and large frames; this
-is not a substitute for paired hardware qualification. STBC, MU, HE/EHT,
+is not a substitute for paired hardware qualification. MU, HE/EHT,
 hardware qualification, real-time performance and modern TX remain unfinished.
 
 ## VHT BCC DATA recovery increment
@@ -323,6 +323,22 @@ Partial LDPC estimates carry explicit coding diagnostics; they never bypass FCS.
 Seventy-three independent waveforms cover both GIs, MCS0-8, extra-symbol groups,
 duplicates, large MPDUs, corrupt FCS, a damaged LDPC codeword and CFO/multipath. This is offline receive
 validation, not VHT STBC/MU or hardware qualification.
+
+## VHT one-DATA-stream STBC receiver increment
+
+The VHT receiver also handles two space-time streams carrying one DATA stream.
+It separates two LTF DATA columns while retaining the combined channel for
+SIG-B and the common VHT pilots. DATA uses the existing two-symbol STBC solver,
+not HT's different two-stream pilot patterns. Both BCC and LDPC preserve even
+symbol grouping and independent MPDU FCS checks. The 110 complete independent
+two-transmitter/one-receiver simulations cover all nine MCS values, both GIs,
+large and duplicate frames, CFO/multipath and damaged-codeword recovery.
+Nine negative waveforms test malformed signaling and incomplete or corrupt
+fields. Reference metadata distinguishes NSS1 from NSTS2 when STBC is known;
+unknown STBC remains a qualification gap. Live reception and STBC transmission
+are not established by these offline simulations.
+
+## VHT BCC DATA implementation
 
 The private single-encoder VHT BCC DATA recovery path uses the SIG-B CRC in
 SERVICE, a nonzero scrambler seed, zero-tail termination after PHY padding,

@@ -95,6 +95,30 @@ fn radio_vht_recovered_fields_and_bounds() {
     assert!(VhtPhy::recovered(&old, 60).unwrap().compatible(&reference));
 }
 #[test]
+fn radio_vht_stbc_metadata_uses_spatial_not_space_time_streams() {
+    for ldpc in [false, true] {
+        let mut value = recovered();
+        value["vht"]["stbc"] = serde_json::json!(true);
+        value["vht"]["space_time_streams"] = serde_json::json!(2);
+        value["vht"]["coding"] = serde_json::json!(if ldpc { "ldpc" } else { "bcc" });
+        let actual = VhtPhy::recovered(&value, 60).unwrap();
+        let reference =
+            VhtPhy::reference([255, 1, 5, 0, 129, 0, 0, 0, u8::from(ldpc), 63, 0, 0], None)
+                .unwrap();
+        assert_eq!(actual.spatial_streams, 1);
+        assert_eq!(actual.stbc, Some(true));
+        assert!(actual.compatible(&reference));
+        value["vht"]["short_gi_disambiguation"] = serde_json::json!(true);
+        assert!(VhtPhy::recovered(&value, 60).is_err());
+        assert!(VhtPhy::reference(
+            [255, 1, 13, 0, 129, 0, 0, 0, u8::from(ldpc), 63, 0, 0],
+            None
+        )
+        .is_err());
+    }
+}
+
+#[test]
 fn radio_vht_unknown_fields_and_conflicts() {
     let actual = VhtPhy::recovered(&recovered(), 60).unwrap();
     let unknown = VhtPhy::reference(

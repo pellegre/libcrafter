@@ -779,9 +779,17 @@ pub(super) fn decode_vht_bcc_data(
     info: SignalInfo,
     guard: usize,
     sig_b: VhtSignalB20Fields,
+    stbc_second: Option<&[ComplexSample; 64]>,
 ) -> Result<(Vec<u8>, PhyDiagnostic), ()> {
-    let (coded, tracking) =
-        demodulate_data_format(samples, a, info, Some(guard), true, PilotFormat::Vht, None)?;
+    let (coded, tracking) = demodulate_data_format(
+        samples,
+        a,
+        info,
+        Some(guard),
+        true,
+        PilotFormat::Vht,
+        stbc_second,
+    )?;
     Ok((recover_vht_bcc(&coded, info, sig_b)?, tracking))
 }
 
@@ -792,6 +800,7 @@ pub(super) fn decode_vht_ldpc_data(
     guard: usize,
     sig_b: VhtSignalB20Fields,
     layout: ldpc_rate::Layout,
+    stbc_second: Option<&[ComplexSample; 64]>,
 ) -> Result<(Vec<u8>, PhyDiagnostic, Vec<PhyDiagnostic>), ()> {
     if layout.symbols != info.data_symbols
         || layout.coded_bits_per_symbol != info.coded_bits_per_symbol
@@ -799,8 +808,15 @@ pub(super) fn decode_vht_ldpc_data(
     {
         return Err(());
     }
-    let (coded, tracking) =
-        demodulate_data_format(samples, a, info, Some(guard), false, PilotFormat::Vht, None)?;
+    let (coded, tracking) = demodulate_data_format(
+        samples,
+        a,
+        info,
+        Some(guard),
+        false,
+        PilotFormat::Vht,
+        stbc_second,
+    )?;
     // VHT PSDUs contain aggregates. Damaged codewords must not prevent recovery
     // of another MPDU, but every published MPDU still requires a valid FCS.
     let recovered = layout.recover_partial(&coded, 64).map_err(|_| ())?;
@@ -897,7 +913,10 @@ fn demodulate_data_format(
                 j
             }];
             let bin = k.rem_euclid(64) as usize;
-            let corrected = if let Some(second) = stbc_second {
+            // VHT training retains the combined pilot channel in `a`; its
+            // pilots use the NSS1 pattern even with two STS. HT is different.
+            let corrected = if let Some(second) = stbc_second.filter(|_| format != PilotFormat::Vht)
+            {
                 let prediction = a.channel[bin]
                     .scale([1., 1., -1., -1.][(symbol + j) % 4])
                     .add(second[bin].scale([1., -1., -1., 1.][(symbol + j) % 4]))
@@ -1564,6 +1583,36 @@ mod tests {
             .frames
             .is_empty());
     }
+    #[test]
+    fn radio_vht_stbc_streaming_iq() {
+        let rows = include_str!("../../tests/fixtures/iq/vht-stbc-iq-index.tsv");
+        for coding in ["0", "1"] {
+            let selected = std::iter::once(rows.lines().next().unwrap())
+                .chain(
+                    rows.lines()
+                        .skip(1)
+                        .filter(|r| r.split('\t').nth(9) == Some(coding)),
+                )
+                .collect::<Vec<_>>()
+                .join("\n");
+            verify_vht_aggregates(&selected, 55, coding == "1");
+        }
+        for row in include_str!("../../tests/fixtures/iq/vht-stbc-iq-invalid-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let name = row.split('\t').next().unwrap();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{name}.cs8",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap();
+            assert!(
+                feed(&mut WifiDecoder::new(), &bytes, 79).frames.is_empty(),
+                "{name}"
+            );
+        }
+    }
     fn verify_vht_aggregates(rows: &str, count: usize, ldpc: bool) {
         let hex = |s: &str| {
             s.as_bytes()
@@ -1605,10 +1654,11 @@ mod tests {
                                 failed_codewords: 1
                             }
                         )),
-                        c[0].ends_with("bad-codeword")
+                        c[0].ends_with("codeword")
                     );
                     assert_eq!(frame.diagnostics.iter().any(|d| matches!(d,PhyDiagnostic::Ldpc { codewords,iterations } if *codewords>0 && *iterations<=64*codewords)),ldpc);
                     assert!(frame.diagnostics.iter().any(|d| matches!(d,PhyDiagnostic::VhtSignalA { fields,.. } if matches!(fields.users,VhtSignalAUsers::Single {ldpc: coding,mcs,..} if coding==ldpc && mcs==c[1].parse::<u8>().unwrap()))));
+                    assert!(frame.diagnostics.iter().any(|d| matches!(d,PhyDiagnostic::VhtSignalA { fields,.. } if fields.stbc==c[0].starts_with("vht-stbc-"))));
                     assert_eq!(frame.start.sample_index, 37);
                     assert_eq!(frame.end_sample_index, c[7].parse::<u64>().unwrap());
                     assert_eq!(frame.integrity, FrameIntegrity::ValidFcs);

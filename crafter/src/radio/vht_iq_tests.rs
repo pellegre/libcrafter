@@ -32,6 +32,49 @@ fn acquire(samples: &[ComplexSample]) -> Acquisition {
         .expect("legacy preamble acquisition")
 }
 #[test]
+fn radio_vht_stbc_full_iq_kernel() {
+    let rows = include_str!("../../tests/fixtures/iq/vht-stbc-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 110);
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let samples = read_samples(c[0]);
+        let a = acquire(&samples);
+        let start = a.signal_start as usize;
+        let (fields, info) = admit(&samples[start..start + 240], &a)
+            .unwrap_or_else(|_| panic!("{} admission", c[0]));
+        assert!(fields.stbc);
+        assert!(matches!(
+            fields.users,
+            VhtSignalAUsers::Single {
+                space_time_streams: 2,
+                ..
+            }
+        ));
+        let decoded = decode(&samples[start..], &a).unwrap_or_else(|_| panic!("{} recovery", c[0]));
+        assert_eq!(decoded.info, info);
+        assert_eq!(info.data_start, 917);
+        assert_eq!(info.end_sample_index, c[7].parse::<u64>().unwrap());
+        assert_eq!(info.psdu_bytes, decoded.bytes.len());
+        if c[0].ends_with("codeword") {
+            let offset = c[4].parse::<usize>().unwrap();
+            let expected = hex(c[5]);
+            assert_eq!(&decoded.bytes[offset..offset + expected.len()], &expected);
+        } else {
+            assert_eq!(decoded.bytes, hex(c[3]), "{}", c[0]);
+        }
+        assert_eq!(
+            decoded.coding.iter().any(|d| matches!(
+                d,
+                PhyDiagnostic::LdpcPartial {
+                    failed_codewords: 1
+                }
+            )),
+            c[0].ends_with("codeword")
+        );
+    }
+}
+
+#[test]
 fn radio_vht_ldpc_full_iq_kernel() {
     let rows = include_str!("../../tests/fixtures/iq/vht-ldpc-iq-index.tsv");
     assert_eq!(rows.lines().skip(1).count(), 73);

@@ -28,9 +28,10 @@ def generate():
         requirements = [
             known & 0x44 == 0x44, bandwidth & 31 == 0,
             users[0] & 15 == 1, all(user & 15 == 0 for user in users[1:]),
-            users[0] >> 4 <= 8, stbc is not True,
+            users[0] >> 4 <= 8,
             observed_group in (None, 0, 63), observed_aid is None or observed_aid <= 511,
             short or disambiguation is not True, bool(coding & 1) or extra is not True,
+            stbc is not True or disambiguation is not True,
             ampdu_flags is None or (ampdu_flags & 0x10 == 0 and ampdu_flags & 3 != 3),
         ]
         expected = None

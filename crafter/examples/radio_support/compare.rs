@@ -948,9 +948,16 @@ mod tests {
                 "vht-ampdu-3-gi800-large",
                 "vht-ldpc-3-gi800-duplicate",
                 "vht-ldpc-3-gi800-large",
+                "vht-stbc-3-bcc-gi800-duplicate",
+                "vht-stbc-3-bcc-gi800-large",
+                "vht-stbc-3-ldpc-gi800-duplicate",
+                "vht-stbc-3-ldpc-gi800-large",
             ] {
-                let ldpc = name.starts_with("vht-ldpc-");
-                let inventory = if ldpc {
+                let ldpc = name.contains("-ldpc-");
+                let stbc = name.starts_with("vht-stbc-");
+                let inventory = if stbc {
+                    include_str!("../../tests/fixtures/iq/vht-stbc-iq-index.tsv")
+                } else if ldpc {
                     include_str!("../../tests/fixtures/iq/vht-ldpc-iq-index.tsv")
                 } else {
                     include_str!("../../tests/fixtures/iq/vht-ampdu-iq-index.tsv")
@@ -1039,6 +1046,9 @@ mod tests {
                         rt[32] = 1; // Present user's coding is LDPC.
                         rt[24] &= !16; // This synthetic reference leaves extra-symbol validity unknown.
                     }
+                    if stbc {
+                        rt[26] |= 1;
+                    }
                     rt.extend_from_slice(frame);
                     for n in [0u32, 3001, rt.len() as u32, rt.len() as u32] {
                         pcap.extend_from_slice(&n.to_le_bytes());
@@ -1058,6 +1068,9 @@ mod tests {
                 assert!(pairs
                     .iter()
                     .all(|pair| pair.vht.as_ref().unwrap().ldpc == ldpc));
+                assert!(pairs
+                    .iter()
+                    .all(|pair| pair.vht.as_ref().unwrap().stbc == Some(stbc)));
                 let mut wrong_coding = right[0].clone();
                 wrong_coding.vht.as_mut().unwrap().ldpc = !ldpc;
                 assert!(match_frames(&left, &[wrong_coding], 0).is_empty());
