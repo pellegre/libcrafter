@@ -1,5 +1,14 @@
 # Independent IQ vector contract
 
+`he-dcm-metrics.tsv` contains 660 independent rational-distance cases for
+BPSK, QPSK and 16-QAM DCM pairs, including off-grid points, weighted branches
+and erasures. `he-dcm-iq-index.tsv` contains 128 complete BCC/LDPC waveforms
+covering MCS0/1/3/4, the four compatible training/guard pairs, padding factors,
+midambles and corrupted FCS. Eight invalid SERVICE/truncated cases accompany it.
+`he_dcm_vectors.py --check` and `he_dcm_iq_vectors.py --check` reproduce them.
+These qualify joint demapping, LDPC half-tone mapping, BCC interleaving and
+BPSK filler handling, not independent multiple spatial streams or live RF.
+
 `he-midamble-iq-index.tsv` contains 270 complete HE20 SU BCC/LDPC waveforms
 with periods of 10 or 20 DATA symbols and channel changes at training boundaries.
 It covers every currently qualified SU MCS/GI/LTF combination, short Doppler

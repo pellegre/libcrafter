@@ -797,6 +797,62 @@ fn constellation_energy(coded_bits: usize, carriers: usize) -> Result<f32, ()> {
         _ => Err(()),
     }
 }
+/// Joint max-log metrics for a HE242-RU DCM pair, before LDPC tone mapping.
+/// IEEE802.11ax-2021 27.3.12.9: BPSK parity, QPSK conjugate, 16-QAM
+/// adjacent-bit exchange. Combining joint label distances preserves the
+/// sign/magnitude dependency of the 16-QAM permutation.
+pub(super) fn demap_dcm(
+    pair: [(ComplexSample, f32); 2],
+    bits: usize,
+    k: usize,
+) -> Option<[f32; 4]> {
+    if !matches!(bits, 1 | 2 | 4)
+        || k >= 117
+        || pair
+            .iter()
+            .any(|(v, w)| !v.power().is_finite() || !w.is_finite() || *w < 0.)
+    {
+        return None;
+    }
+    let width = (bits / 2).max(1);
+    let scale = match bits {
+        1 => 1f32,
+        2 => 2f32.sqrt(),
+        _ => 10f32.sqrt(),
+    };
+    let point = |label| ComplexSample {
+        i: axis(label, width) / scale,
+        q: if bits == 1 {
+            0.
+        } else {
+            axis(label >> width, width) / scale
+        },
+    };
+    let mut minimum = [[f32::INFINITY; 2]; 4];
+    for label in 0..1 << bits {
+        let lower = point(label);
+        let upper = match bits {
+            1 => lower.scale(if (k + 117) % 2 == 0 { 1. } else { -1. }),
+            2 => lower.conj(),
+            _ => point(((label & 5) << 1) | ((label & 10) >> 1)),
+        };
+        let distance =
+            pair[0].0.sub(lower).power() * pair[0].1 + pair[1].0.sub(upper).power() * pair[1].1;
+        if !distance.is_finite() {
+            return None;
+        }
+        for (bit, minima) in minimum.iter_mut().enumerate().take(bits) {
+            let value = (label >> bit) & 1;
+            minima[value] = minima[value].min(distance);
+        }
+    }
+    let mut metrics = [0.; 4];
+    for bit in 0..bits {
+        metrics[bit] = minimum[bit][0] - minimum[bit][1];
+    }
+    Some(metrics)
+}
+
 // Max-log bit metrics, weighted by channel power; punctures later have zero weight.
 pub(super) fn demap(value: f32, width: usize, scale: f32, weight: f32, out: &mut Vec<f32>) {
     for bit in 0..width {
@@ -1383,6 +1439,72 @@ mod vht_bcc_tests;
 mod tests {
     use super::*;
     #[test]
+    fn radio_he_dcm_joint_independent_metrics() {
+        let rows = include_str!("../../tests/fixtures/iq/he-dcm-metrics.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 660);
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bits = c[0].parse::<usize>().unwrap();
+            let k = c[1].parse().unwrap();
+            let scale = match bits {
+                1 => 1f32,
+                2 => 2f32.sqrt(),
+                _ => 10f32.sqrt(),
+            };
+            let values: Vec<f32> = c[2..8].iter().map(|v| v.parse().unwrap()).collect();
+            let pair = [
+                (
+                    ComplexSample {
+                        i: values[0] / scale,
+                        q: values[1] / scale,
+                    },
+                    values[4],
+                ),
+                (
+                    ComplexSample {
+                        i: values[2] / scale,
+                        q: values[3] / scale,
+                    },
+                    values[5],
+                ),
+            ];
+            let actual = demap_dcm(pair, bits, k).unwrap();
+            for (bit, expected) in c[9]
+                .split(',')
+                .map(|v| v.parse::<f32>().unwrap())
+                .enumerate()
+            {
+                assert!(
+                    (actual[bit] - expected).abs() < 2e-5 * (1. + expected.abs()),
+                    "{row}: {actual:?}"
+                );
+                if c[8] != "-" && values[4] + values[5] > 0. {
+                    assert_eq!(u8::from(actual[bit] > 0.), c[8].as_bytes()[bit] - b'0');
+                }
+            }
+        }
+        let pair = [(ComplexSample::ZERO, 1.); 2];
+        for bits in [0, 3, 5, usize::MAX] {
+            assert!(demap_dcm(pair, bits, 0).is_none());
+        }
+        for k in [117, usize::MAX] {
+            assert!(demap_dcm(pair, 4, k).is_none());
+        }
+        for value in [-1., f32::NAN, f32::INFINITY] {
+            let mut bad = pair;
+            bad[1].1 = value;
+            assert!(demap_dcm(bad, 4, 0).is_none());
+        }
+        let mut bad = pair;
+        bad[0].0.i = f32::NAN;
+        assert!(demap_dcm(bad, 4, 0).is_none());
+        assert_eq!(
+            demap_dcm([(ComplexSample::ZERO, 0.); 2], 4, 0),
+            Some([0.; 4])
+        );
+    }
+
+    #[test]
     fn radio_he_qam_independent_metrics() {
         let index = include_str!("../../tests/fixtures/iq/he-qam-index.tsv");
         assert_eq!(index.lines().skip(1).count(), 1313);
@@ -1602,6 +1724,10 @@ mod tests {
             bytes.as_slice(),
             include_bytes!("../../tests/fixtures/iq/he-ldpc-iq-mcs0-ltf4-gi3200-pad1.cs8")
                 .as_slice(),
+            include_bytes!("../../tests/fixtures/iq/he-dcm-iq-mcs0-bcc-ltf4-gi3200-pad1.cs8")
+                .as_slice(),
+            include_bytes!("../../tests/fixtures/iq/he-dcm-iq-mcs4-ldpc-ltf4-gi3200-pad1.cs8")
+                .as_slice(),
         ] {
             assert!(feed(&mut LegacyWifiDecoder::new(), bytes, 127)
                 .frames
@@ -1668,7 +1794,7 @@ mod tests {
             .unwrap();
             let out = feed(&mut WifiDecoder::new(), &bytes, 37);
             assert!(out.frames.is_empty(), "{name}");
-            if name.ends_with("service") || name.ends_with("ldpc") {
+            if name.ends_with("service") || name.ends_with("ldpc") || name.ends_with("dcm") {
                 assert!(out.diagnostics.contains(&PhyDiagnostic::InvalidData));
             } else if name.ends_with("truncated") {
                 assert!(out.diagnostics.contains(&PhyDiagnostic::TruncatedFrame));
@@ -1690,6 +1816,74 @@ mod tests {
             assert!(out.diagnostics.contains(&PhyDiagnostic::TruncatedFrame));
         }
     }
+    #[test]
+    fn radio_he_dcm_streaming_complete_aggregates() {
+        for row in include_str!("../../tests/fixtures/iq/he-dcm-iq-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let expected: Vec<Vec<u8>> = c[7]
+                .split(',')
+                .map(|s| {
+                    (0..s.len())
+                        .step_by(2)
+                        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+                        .collect()
+                })
+                .collect();
+            for size in [37, 997] {
+                let mut decoder = WifiDecoder::new();
+                let out = feed(&mut decoder, &bytes, size);
+                assert_eq!(
+                    out.frames
+                        .iter()
+                        .map(|f| f.bytes.clone())
+                        .collect::<Vec<_>>(),
+                    expected,
+                    "{} chunk{size}",
+                    c[0]
+                );
+                for frame in out.frames {
+                    assert_eq!(frame.integrity, FrameIntegrity::ValidFcs);
+                    assert!(frame.diagnostics.iter().any(|d| matches!(d,PhyDiagnostic::HeSignal{fields,..}
+                        if fields.dcm && fields.mcs==c[1].parse::<u8>().unwrap() && fields.ldpc==(c[2]=="1"))));
+                }
+                assert_eq!(
+                    decoder.ofdm_stats().invalid_fcs,
+                    c[8].parse::<u64>().unwrap()
+                );
+            }
+        }
+        for row in include_str!("../../tests/fixtures/iq/he-dcm-iq-invalid-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let name = row.split('\t').next().unwrap();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{name}.cs8",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap();
+            let out = feed(&mut WifiDecoder::new(), &bytes, 37);
+            assert!(out.frames.is_empty(), "{name}");
+            assert!(
+                out.diagnostics.contains(&if name.ends_with("service") {
+                    PhyDiagnostic::InvalidData
+                } else {
+                    PhyDiagnostic::TruncatedFrame
+                }),
+                "{name}"
+            );
+        }
+    }
+
     #[test]
     fn radio_he_midamble_gap_resets_training() {
         let bytes = include_bytes!(

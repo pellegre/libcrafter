@@ -52,7 +52,7 @@ pub(super) fn admit(
     }
     let prefix = super::he_iq::decode_su_prefix(samples, a)?;
     let h = prefix.signal;
-    if h.dcm || h.stbc || h.space_time_streams != 1 {
+    if h.stbc || h.space_time_streams != 1 {
         return None;
     }
     let timing = Timing::new(6_000_000, prefix.legacy_length, &h).ok()?;
@@ -184,6 +184,7 @@ pub(super) fn recover(
         let intercept = reference + (y - delta * x) / w;
         slope += delta;
         let mut interleaved = Vec::with_capacity(c.coded_per_symbol);
+        let mut dual = Vec::with_capacity(if h.dcm { 234 } else { 0 });
         for tone in (-122i32..=-2)
             .chain(2..=122)
             .filter(|k| !PILOTS.contains(k))
@@ -195,7 +196,11 @@ pub(super) fn recover(
                 return None;
             }
             if power < 1e-12 {
-                interleaved.extend(std::iter::repeat(0.).take(c.bits_per_tone));
+                if h.dcm {
+                    dual.push((ComplexSample::ZERO, 0.));
+                } else {
+                    interleaved.extend(std::iter::repeat(0.).take(c.bits_per_tone));
+                }
                 continue;
             }
             let v = bins[bin]
@@ -204,6 +209,10 @@ pub(super) fn recover(
                 .mul(ComplexSample::rotation(-intercept - slope * tone as f32));
             if !v.power().is_finite() {
                 return None;
+            }
+            if h.dcm {
+                dual.push((v, power));
+                continue;
             }
             super::data::demap(
                 v.i,
@@ -226,8 +235,25 @@ pub(super) fn recover(
                 );
             }
         }
+        if h.dcm {
+            for k in 0..117 {
+                // Equation27-96 permutes each 117-tone half separately.
+                // BPSK sign parity is indexed before that permutation.
+                let tone = if h.ldpc { 9 * (k % 13) + k / 13 } else { k };
+                let metrics = super::data::demap_dcm(
+                    [*dual.get(tone)?, *dual.get(tone + 117)?],
+                    c.bits_per_tone,
+                    k,
+                )?;
+                interleaved.extend_from_slice(&metrics[..c.bits_per_tone]);
+            }
+        }
         if h.ldpc {
-            let ordered = ldpc_order(&interleaved, c.bits_per_tone)?;
+            let ordered = if h.dcm {
+                interleaved
+            } else {
+                ldpc_order(&interleaved, c.bits_per_tone)?
+            };
             // 27.3.12.5.3: post-FEC padding follows the coded bits in the
             // last symbol (this path admits one stream without STBC only).
             let count = if symbol + 1 == timing.data_symbols {
@@ -239,9 +265,10 @@ pub(super) fn recover(
         } else {
             let n = c.coded_per_symbol;
             let s = (c.bits_per_tone / 2).max(1);
+            let columns = if h.dcm { 13 } else { 26 };
             for k in 0..n {
-                let i = 9 * c.bits_per_tone * (k % 26) + k / 26;
-                let j = s * (i / s) + (i + n - 26 * i / n) % s;
+                let i = 9 * c.bits_per_tone * (k % columns) + k / columns;
+                let j = s * (i / s) + (i + n - columns * i / n) % s;
                 coded.push(*interleaved.get(j)?);
             }
         }
@@ -303,6 +330,51 @@ mod tests {
     }
 
     use super::*;
+    #[test]
+    fn radio_he_dcm_iq_complete_waveforms() {
+        let hex = |s: &str| -> Vec<u8> {
+            (0..s.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+                .collect()
+        };
+        let rows = include_str!("../../tests/fixtures/iq/he-dcm-iq-index.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 128);
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let (samples, a) = fixture(c[0]);
+            let input = &samples[a.signal_start as usize..];
+            let expected = hex(c[6]);
+            let admitted = admit(&input[..320], &a, expected.len(), input.len()).expect(c[0]);
+            assert!(admitted.signal.dcm);
+            let end = admitted.required_samples;
+            let psdu = recover(&input[..end], &a, expected.len()).expect(c[0]);
+            assert_eq!(psdu, expected, "{}", c[0]);
+            assert!(recover(&input[..end - 1], &a, expected.len()).is_none());
+            assert!(admit(&input[..320], &a, expected.len() - 1, input.len()).is_none());
+            assert!(admit(&input[..320], &a, expected.len(), end - 1).is_none());
+            let mut frames = Vec::new();
+            let mut bad_fcs = 0;
+            for event in super::super::ampdu::Scan::he(&psdu, 16383) {
+                match event {
+                    super::super::ampdu::Event::Frame { bytes, .. } => frames.push(bytes.to_vec()),
+                    super::super::ampdu::Event::Invalid {
+                        error: super::super::ampdu::Error::BadFcs,
+                        ..
+                    } => bad_fcs += 1,
+                    _ => {}
+                }
+            }
+            assert_eq!(
+                frames,
+                c[7].split(',').map(hex).collect::<Vec<_>>(),
+                "{}",
+                c[0]
+            );
+            assert_eq!(bad_fcs, c[8].parse::<usize>().unwrap());
+        }
+    }
+
     #[test]
     fn radio_he_midamble_iq_channel_refresh() {
         let hex = |s: &str| -> Vec<u8> {
@@ -593,6 +665,7 @@ mod tests {
             let expected = name.ends_with("service")
                 || name.ends_with("truncated")
                 || name.ends_with("ldpc")
+                || name.ends_with("dcm")
                 || name.ends_with("midamble");
             assert_eq!(
                 admit(&input[..320], &a, usize::MAX, usize::MAX).is_some(),

@@ -17,5 +17,5 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - HE20 SU one stream; DCM, STBC and other HE layouts remain separate work.
+      - HE20 SU one stream; separate wifi_he_dcm_iq cases qualify DCM with midambles. STBC and other HE layouts remain separate work.
       - Piecewise varying independent channels qualify refresh behavior, not arbitrary Doppler tracking or live RF interoperability.

@@ -4,6 +4,44 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_dcm_independent_inventory() {
+    for (index, count, hash) in [
+        (
+            include_str!("fixtures/iq/he-dcm-metrics.tsv"),
+            660,
+            "c2033d5a6d75eb4aff85721511bf60fa2125038fd59a096a965be4ba99f873be",
+        ),
+        (
+            include_str!("fixtures/iq/he-dcm-iq-index.tsv"),
+            128,
+            "836e013ebdf29e085818ac5cc64e94b96766d1a6b14d7775ed6f55843592c8c1",
+        ),
+        (
+            include_str!("fixtures/iq/he-dcm-iq-invalid-index.tsv"),
+            8,
+            "fc26ea65326669bb2c605af7e37885d58e30360e4cf42e89ac851f0470f499f5",
+        ),
+    ] {
+        assert_eq!(index.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), hash);
+        if count == 660 {
+            continue;
+        }
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(bytes.len() % 2, 0);
+            assert_eq!(hex(&Sha256::digest(&bytes)), *c.last().unwrap());
+        }
+    }
+}
+
+#[test]
 fn radio_he_midamble_iq_independent_inventory() {
     for (index, count, hash) in [
         (

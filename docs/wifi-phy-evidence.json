@@ -300,6 +300,12 @@
       "fact": "Midambles repeat the preamble HE-LTF fields after groups of10 or20 DATA symbols, excluding after the last symbol and before a sole last symbol. DATA scrambling and encoding do not change. Doppler may be set even when a short PPDU contains no midamble. The receiver reuses the LTF estimator at the independently derived offsets, keeps DATA pilot indices and absolute CFO phase, and resets the residual phase-slope estimate after each refresh. Piecewise FIR-channel fixtures qualify this estimator behavior, not arbitrary Doppler tracking."
     },
     {
+      "id": "he-dcm-paired-recovery",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.12.5.1, 27.3.12.8-10 Tables27-35-36 Equation27-96; Table27-79",
+      "fact": "HE242 DCM pairs117 lower DATA tones with117 upper tones. BPSK upper symbols use sign(-1)^(k+117); QPSK uses conjugation; 16-QAM exchanges adjacent label bits. LDPC permutes each half separately with DTM_DCM=9 before transmission. BCC instead uses13 interleaver columns and9*NBPSCS rows, and BPSK one-stream BCC inserts a filler after116 coded bits. The receiver combines joint label distances weighted by channel power. Supported MCSs are0/1/3/4; DCM cannot be combined with STBC. Table27-79 specifies58 data bits for one-stream DCM BPSK."
+    },
+    {
       "id": "he-aggregate-tag-order",
       "source": "ieee-80211ax-2021",
       "anchor": "9.7.1 Table 9-527; 10.12.6-7; 26.6.2",
