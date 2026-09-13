@@ -246,6 +246,12 @@
       "fact": "SU uses m=2 in L-SIG duration. HE preamble in receiver duration inversion excludes legacy20us and includes RL-SIG, SIG-A, STF and LTF symbols. Receiver symbol count floors the duration quotient then subtracts PE disambiguity; PE duration floors the remaining duration to4us increments. Midambles repeat the initial HE-LTF field every10 or20 DATA symbols with NSTS<=4, but are omitted before a sole final DATA symbol or after the last symbol. STBC is restricted to one spatial stream/two space-time streams without DCM. This timing implementation does not establish DATA decoding or MIMO reception."
     },
     {
+      "id": "he-er-su-timing",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.1.1; Table27-12; Equations27-11/118-122 (printed622 visually checked)",
+      "fact": "ER SU uses m=1 in L-SIG duration and four SIG-A symbols (16us), adding160 samples at20Msps relative to SU. Duration inversion uses (L_LENGTH+4)/3 legacy symbols, with a preamble160 samples longer. ER supports one DATA stream, optionally mapped to two space-time streams with STBC. Its242-tone and upper106-tone allocations share the DATA symbol clock and preamble duration. Independent forward timelines check DATA, midamble and PE offsets; this primitive does not establish ER payload recovery."
+    },
+    {
       "id": "he-su-sparse-training",
       "source": "ieee-80211ax-2021",
       "anchor": "Table 27-31; Equations 27-40/41/42/58; Table 27-12",

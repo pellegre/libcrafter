@@ -1,4 +1,4 @@
-//! HE20 SU timing, IEEE802.11ax-2021 Equations27-119..122.
+//! HE20 SU / ER SU timing, IEEE802.11ax-2021 Equations27-119..122.
 use super::he::SuSignal;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,17 +32,25 @@ pub(super) enum Error {
 impl Timing {
     /// Header integrity must already be checked. Timing is not DATA admission.
     pub fn new(rate: u32, length: usize, a: &SuSignal) -> Result<Self, Error> {
+        Self::for_format(rate, length, a, false)
+    }
+
+    /// Format must already be identified and its (possibly repeated) header checked.
+    pub fn for_format(rate: u32, length: usize, a: &SuSignal, er: bool) -> Result<Self, Error> {
         if rate != 6_000_000 {
             return Err(Error::Rate);
         }
-        if length > 4095 || length % 3 != 1 {
+        if length > 4095 || length % 3 != 1 + usize::from(er) {
             return Err(Error::Length);
         }
-        if a.bandwidth != 0 {
+        if a.bandwidth > u8::from(er) {
             return Err(Error::Format);
         }
         let sts = usize::from(a.space_time_streams);
         if !(1..=8).contains(&sts) || (a.stbc && (sts != 2 || a.dcm)) {
+            return Err(Error::Streams);
+        }
+        if er && sts != 1 + usize::from(a.stbc) {
             return Err(Error::Streams);
         }
         let guard = match (a.ltf_size, a.guard_ns) {
@@ -63,10 +71,12 @@ impl Timing {
         let training_samples = ltf_symbols * (64 * usize::from(a.ltf_size) + guard);
         let symbol_samples = 256 + guard;
         // L-SIG rounded duration excludes legacy20us. HE preamble here starts
-        // at RL-SIG:4us + SIG-A8us + STF4us + LTF(s). SU uses m=2.
-        let rounded = (length + 5) / 3 * 80;
+        // at RL-SIG:4us + SIG-A8us + STF4us + LTF(s). SU uses m=2;
+        // ER uses m=1 and repeats SIG-A, adding 8us (160 samples).
+        let repeat_samples = 160 * usize::from(er);
+        let rounded = (length + 5 - usize::from(er)) / 3 * 80;
         let available = rounded
-            .checked_sub(320 + training_samples)
+            .checked_sub(320 + repeat_samples + training_samples)
             .ok_or(Error::Duration)?;
         let b = usize::from(a.pe_disambiguity);
         let midambles = period.map_or(0, |p| {
@@ -93,7 +103,7 @@ impl Timing {
         if pe_samples > 320 {
             return Err(Error::Duration);
         }
-        let data_start = 720 + training_samples;
+        let data_start = 720 + repeat_samples + training_samples;
         let data_end = data_start + data_symbols * symbol_samples + midambles * training_samples;
         Ok(Self {
             ltf_symbols,
@@ -138,11 +148,25 @@ mod tests {
 
     #[test]
     fn radio_he_timing_independent_forward_timeline() {
+        forward_timeline(
+            include_str!("../../tests/fixtures/iq/he-timing-index.tsv"),
+            false,
+            10252,
+        );
+    }
+
+    #[test]
+    fn radio_he_er_timing_independent_forward_timeline() {
+        forward_timeline(
+            include_str!("../../tests/fixtures/iq/he-er-timing-index.tsv"),
+            true,
+            2479,
+        );
+    }
+
+    fn forward_timeline(index: &str, er: bool, expected: usize) {
         let mut count = 0;
-        for row in include_str!("../../tests/fixtures/iq/he-timing-index.tsv")
-            .lines()
-            .skip(1)
-        {
+        for row in index.lines().skip(1) {
             let fields: Vec<_> = row.split('\t').collect();
             let c: Vec<usize> = fields[..15].iter().map(|v| v.parse().unwrap()).collect();
             let mut a = header();
@@ -152,7 +176,12 @@ mod tests {
             a.midamble_period = (c[3] != 0).then_some(c[3] as u8);
             a.stbc = c[4] != 0;
             a.pe_disambiguity = c[8] != 0;
-            let t = Timing::new(6_000_000, c[7], &a).unwrap_or_else(|e| panic!("{row}: {e:?}"));
+            let t = Timing::for_format(6_000_000, c[7], &a, er)
+                .unwrap_or_else(|e| panic!("{row}: {e:?}"));
+            if er {
+                a.bandwidth = 1;
+                assert_eq!(Timing::for_format(6_000_000, c[7], &a, true), Ok(t));
+            }
             assert_eq!(
                 [
                     t.data_symbols,
@@ -176,7 +205,53 @@ mod tests {
             assert!(t.symbol_start(usize::MAX).is_none());
             count += 1;
         }
-        assert_eq!(count, 10252);
+        assert_eq!(count, expected);
+    }
+
+    #[test]
+    fn radio_he_er_timing_invalid_fields_and_lengths() {
+        let mut a = header();
+        for rate in [0, 12_000_000, u32::MAX] {
+            assert_eq!(Timing::for_format(rate, 302, &a, true), Err(Error::Rate));
+        }
+        for length in [0, 1, 3, 301, 4095, 4096, usize::MAX] {
+            assert_eq!(
+                Timing::for_format(6_000_000, length, &a, true),
+                Err(Error::Length)
+            );
+        }
+        for sts in [0, 2, 3, 8, 9, 255] {
+            a.space_time_streams = sts;
+            assert_eq!(
+                Timing::for_format(6_000_000, 302, &a, true),
+                Err(Error::Streams)
+            );
+        }
+        a = header();
+        for bandwidth in [2, 3, 255] {
+            a.bandwidth = bandwidth;
+            assert_eq!(
+                Timing::for_format(6_000_000, 302, &a, true),
+                Err(Error::Format)
+            );
+        }
+        a = header();
+        for length in 0..=4095 {
+            for b in [false, true] {
+                a.pe_disambiguity = b;
+                if let Ok(t) = Timing::for_format(6_000_000, length, &a, true) {
+                    assert_eq!((t.packet_end - 400).div_ceil(80) * 3 - 4, length);
+                    assert_eq!(
+                        t.pe_samples + t.signaled_end - t.packet_end >= t.symbol_samples,
+                        b
+                    );
+                    assert_eq!(
+                        t.symbol_start(t.data_symbols - 1).unwrap() + t.symbol_samples,
+                        t.data_end
+                    );
+                }
+            }
+        }
     }
 
     #[test]

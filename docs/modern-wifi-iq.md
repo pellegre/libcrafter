@@ -394,6 +394,10 @@ from applied DATA modes. The 1984 independent header vectors are anchored by
 the published HE CRC example. Those header-only tests do not establish
 HE reception or valid DATA admission; IQ integration is described below.
 ER SU, MU and TB require their own format context and additional decoding.
+ER SU now has independently tested private DATA/midamble/packet-extension
+timing for both tone allocations, including its repeated SIG-A duration. The
+public receiver still stops after ER signaling; payload recovery is not yet
+connected. Timing fixtures alone do not qualify IQ-to-byte recovery.
 
 The private HE20 SU IQ prefix kernel now verifies L-SIG/RL-SIG agreement,
 6Mb/s signaling and the SU/TB length remainder before interpreting SU SIG-A.

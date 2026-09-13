@@ -91,6 +91,11 @@ from `he_timing_vectors.py`, including per-DATA-symbol offset hashes, midamble
 insertion, all SU guard/training pairs and packet extension. These are timing
 checks, not IQ waveforms, DATA mode admission or multi-stream RX qualification.
 
+`he-er-timing-index.tsv` adds 2,479 independent ER SU forward timelines from
+the same generator with `--er`: repeated SIG-A, the ER L-SIG remainder, one
+DATA stream with/without STBC, midambles and packet extension. Both ER tone
+allocations share these clocks. This does not qualify ER payload recovery.
+
 This directory contains synthetic, offline receive and transmit vectors. It contains no
 recorded network traffic. The implementation contract and primary evidence map
 are in `docs/radio.md`.

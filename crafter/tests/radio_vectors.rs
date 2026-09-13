@@ -254,6 +254,23 @@ fn radio_he_timing_independent_inventory() {
 }
 
 #[test]
+fn radio_he_er_timing_independent_inventory() {
+    let index = include_str!("fixtures/iq/he-er-timing-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "9cc92600184627e1c6b8ac72b3b016a1c1d3458f7470a6935cda32b3cd811baa"
+    );
+    assert_eq!(index.lines().skip(1).count(), 2479);
+    for row in index.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 16);
+        assert!(c[..15].iter().all(|v| v.parse::<usize>().is_ok()));
+        assert_eq!(c[15].len(), 64);
+        assert!(c[15].bytes().all(|b| b.is_ascii_hexdigit()));
+    }
+}
+
+#[test]
 fn radio_he_training4_independent_inventory() {
     for (index, count, digest, column) in [
         (
