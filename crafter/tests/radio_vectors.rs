@@ -592,6 +592,33 @@ fn radio_he_su_prefix_independent_inventory() {
 }
 
 #[test]
+fn radio_he_sig_b_common_inventory() {
+    use crafter::prelude::{HeSigBCommon20Fields, HeSigBError};
+    let rows = include_str!("fixtures/iq/he-sig-b-common.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 256);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "763265fe78ae7fe9a0bff9c93972e856931d1aa5eaae9c9ae0efc205f8e34051"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 5);
+        assert_eq!(c[1].len(), 18);
+        assert!(c[1].bytes().all(|b| matches!(b, b'0' | b'1')));
+        let bits: Vec<_> = c[1].bytes().map(|b| b - b'0').collect();
+        match HeSigBCommon20Fields::decode(&bits) {
+            Ok(fields) => {
+                assert_eq!(c[2], "ok");
+                assert_eq!(fields.user_count(), c[4].parse::<u8>().unwrap());
+            }
+            Err(HeSigBError::ReservedAllocation(_)) => assert_eq!(c[2], "reserved"),
+            Err(HeSigBError::WiderAllocation(_)) => assert_eq!(c[2], "wider"),
+            other => panic!("unexpected result: {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn radio_he_mu_prefix_inventory() {
     for (index, count, digest) in [
         (

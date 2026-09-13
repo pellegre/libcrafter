@@ -1,5 +1,12 @@
 # Independent IQ vector contract
 
+`he-sig-b-common.tsv` exhaustively maps all 256 HE20 SIG-B common allocation
+codes, using independent CRC polynomial division and literal Table 27-26
+templates. It records ordered RU sizes, first table slots, user counts, empty
+RUs, and distinct reserved/wider classifications. Generate with
+`he_sig_b_common_vectors.py --write` or verify without arguments. These are
+18-bit common-field fixtures, not SIG-B IQ or MU payload qualification.
+
 `he-mu-prefix-index.tsv` contains 160 independent HE20 MU IQ prefixes, covering
 SIG-B MCS/DCM, compression, all four guard/training codes, and clean or
 frequency-offset/selective channels. Thirteen invalid cases cover legacy-header

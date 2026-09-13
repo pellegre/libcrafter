@@ -93,6 +93,13 @@ fields. The 160 independent prefixes and 13 invalid cases contain no SIG-B or
 DATA; MU allocation decoding and payload recovery remain unimplemented and
 the receiver explicitly reports `UnsupportedPhy` after signaling.
 
+`HeSigBCommon20Fields` validates an uncompressed 20 MHz SIG-B common field
+(allocation, CRC, tail) and exposes ordered RU assignments and user counts.
+All 256 allocation codes are tested; reserved and wider-than-20MHz allocations
+produce distinct errors, and empty RUs retain zero users. RU positions identify
+the first table slot, not FFT-bin indices. This bit-level kernel is not yet
+connected to SIG-B IQ demodulation or MU payload recovery.
+
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,
 midambles10/20, CFO/selective channels, and a damaged first aggregate member;
