@@ -24,7 +24,7 @@ TONES=[k for k in training.TONES if k not in PILOTS]
 
 
 def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False,initial_padding=None,
-             midamble_period=None,initial_symbols=None,dcm=False,er=False,upper106=False):
+             midamble_period=None,initial_symbols=None,dcm=False,er=False,upper106=False,damaged_codeword=None):
     if er: assert mcs in (0,1,2)
     if upper106: assert er and mcs==0
     ru=106 if upper106 else 242
@@ -60,6 +60,9 @@ def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False
         from he_ldpc_rate_vectors import layout, encode_information
         sizing=layout(mcs,1,int(dcm),1,symbols,padding,106 if upper106 else None)
         coded=encode_information(bits,sizing,mcs)
+        if damaged_codeword is not None:
+            from he_ldpc_rate_vectors import damage_codeword
+            coded=damage_codeword(coded,sizing,damaged_codeword)
         symbols,padding,extra=sizing[:3]
         last=cbps if padding==4 else padding*(short_tones//(1+dcm))*BPS[mcs]
     else:

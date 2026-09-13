@@ -87,6 +87,19 @@ def encode_information(bits, sizing, mcs):
     return list(map(int,transmitted))
 
 
+def damage_codeword(coded, sizing, index):
+    """Independent transmitted-word boundaries; replace one word, not neighbors."""
+    _,_,_,count,n,short,punc,repeat,_,_=sizing
+    assert 0<=index<count
+    lengths=[n-(short//count+(i<short%count))-(punc//count+(i<punc%count))
+             +repeat//count+(i<repeat%count) for i in range(count)]
+    assert sum(lengths)==len(coded)
+    start=sum(lengths[:index]);length=lengths[index]
+    raw=hashlib.shake_256(f'he-damaged-word-{index}-{length}'.encode()).digest((length+7)//8)
+    replacement=[b>>i&1 for b in raw for i in range(8)][:length]
+    return coded[:start]+replacement+coded[start+length:]
+
+
 def codewords():
     matrices={(c['n'],tuple(c['rate'])):c for c in json.loads(FIXTURE.read_text())['codes']}
     rows=['mcs\tsymbols\tpadding\textra\tpayload_bits\ttransmitted_bits']

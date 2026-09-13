@@ -21,7 +21,7 @@ from vht_bcc_iq_vectors import constellation
 from vht_ampdu_vectors import delimiter
 
 
-def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None, er=False, upper106=False):
+def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None, er=False, upper106=False,damaged_codeword=None,aggregate=None):
     if er: assert mcs in (0,1,2)
     if upper106: assert er and mcs==0
     ru=106 if upper106 else 242
@@ -31,7 +31,7 @@ def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None, e
     distance=6 if upper106 else 9
     assert (size, guard) in ((1,16),(2,16),(2,32),(4,64))
     nsym=42 if period==20 else 22 if period else 4
-    wire,frames=payload(padding==4)
+    wire,frames=payload(padding==4) if aggregate is None else aggregate
     dbps=51 if upper106 else DATA[mcs]; cbps=len(tones)*BPS[mcs]
     last_data=dbps if padding==4 else padding*(12 if upper106 else SHORT[mcs])
     while ((nsym-2)*dbps+2*last_data-(16 if ldpc else 22))//8 < len(wire): nsym+=2
@@ -46,6 +46,9 @@ def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None, e
         from he_ldpc_rate_vectors import layout,encode_information
         sizing=layout(mcs,1,0,2,nsym,padding,106 if upper106 else None)
         coded=encode_information(bits,sizing,mcs)
+        if damaged_codeword is not None:
+            from he_ldpc_rate_vectors import damage_codeword
+            coded=damage_codeword(coded,sizing,damaged_codeword)
         nsym,padding,extra=sizing[:3]
     else:
         pattern=PUNCTURE[mcs] if mcs<8 else ([1,1,1,0,0,1] if mcs==8 else [1,1,1,0,0,1,1,0,0,1])

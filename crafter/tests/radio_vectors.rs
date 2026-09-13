@@ -4,6 +4,27 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_ldpc_partial_inventory() {
+    let index = include_str!("fixtures/iq/he-ldpc-partial-index.tsv");
+    assert_eq!(index.lines().skip(1).count(), 18);
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "de9e4120ff11daca41416a987b04e0236b3dfef5261c3462d76a06cd290a8425"
+    );
+    for row in index.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let bytes = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(bytes.len() % 2, 0);
+        assert_eq!(hex(&Sha256::digest(&bytes)), c[5]);
+    }
+}
+
+#[test]
 fn radio_he_er106_training_inventory() {
     let index = include_str!("fixtures/iq/he-er106-training-index.tsv");
     assert_eq!(index.lines().skip(1).count(), 54);

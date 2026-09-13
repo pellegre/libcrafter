@@ -567,8 +567,9 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     let mut partial_stats = Vec::new();
                     let mut vht_signal_b = None;
                     let decoded = if let Some(fields) = p.he {
-                        he_data_iq::recover(&p.samples, &p.acquisition, info.psdu_bytes)
-                            .map(|bytes| {
+                        he_data_iq::recover_aggregate(&p.samples, &p.acquisition, info.psdu_bytes)
+                            .map(|(bytes, diagnostics)| {
+                                partial_stats.extend(diagnostics);
                                 (
                                     bytes,
                                     if p.he_er {
@@ -2116,6 +2117,58 @@ mod tests {
             false,
             true,
         );
+    }
+
+    #[test]
+    fn radio_he_ldpc_partial_aggregate_recovery() {
+        let rows = include_str!("../../tests/fixtures/iq/he-ldpc-partial-index.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 18);
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            for chunk in [37, 997] {
+                let mut decoder = WifiDecoder::new();
+                let out = feed(&mut decoder, &bytes, chunk);
+                if c[4] == "-" {
+                    assert!(out.frames.is_empty(), "{}", c[0]);
+                    continue;
+                }
+                let expected: Vec<_> = (0..c[4].len())
+                    .step_by(2)
+                    .map(|i| u8::from_str_radix(&c[4][i..i + 2], 16).unwrap())
+                    .collect();
+                assert_eq!(out.frames.len(), 1, "{}: {:?}", c[0], out.diagnostics);
+                assert_eq!(out.frames[0].bytes, expected, "{}", c[0]);
+                assert_eq!(out.frames[0].integrity, FrameIntegrity::ValidFcs);
+                for diagnostics in [&out.diagnostics, &out.frames[0].diagnostics] {
+                    assert!(
+                        diagnostics.iter().any(|d| matches!(
+                            d,
+                            PhyDiagnostic::LdpcPartial {
+                                failed_codewords: 1
+                            }
+                        )),
+                        "{}: {:?}",
+                        c[0],
+                        diagnostics
+                    );
+                }
+                assert!(
+                    out.frames[0].diagnostics.iter().any(|d| matches!(
+                        d,
+                        PhyDiagnostic::LdpcNonconvergence { codeword: 1, .. }
+                    )),
+                    "{}",
+                    c[0]
+                );
+                assert!(decoder.ofdm_stats().invalid_fcs > 0, "{}", c[0]);
+            }
+        }
     }
 
     fn he_diversity_streams(index: &str, invalid: &str, dcm: bool, er: bool) {

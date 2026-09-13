@@ -53,6 +53,14 @@ initial-segment inversion, extra-segment thresholds, shortening, puncturing,
 repetition and codeword recovery with post-FEC padding excluded. MCS0-11,
 DCM/STBC and stream counts here are coding dimensions, not IQ qualification.
 
+`he-ldpc-partial-index.tsv` contains 18 complete HE LDPC waveforms with one
+independently corrupted codeword: SU, ER242 and ER106, each plain/DCM/STBC,
+with either the first or a middle codeword damaged. A long first MPDU overlaps
+the middle damaged word while a later MPDU remains intact. These check bounded
+partial recovery, SERVICE validation, per-MPDU FCS and failure diagnostics.
+Reproduce with `he_ldpc_partial_vectors.py --check`. Estimated PSDU bits are
+not treated as verified frames; the existing aggregate scanner validates FCS.
+
 `he-er106-ldpc-rate-index.tsv` and `he-er242-ldpc-rate-index.tsv` add
 705 and 1,839 independent extended-range sizing cases. Their corresponding
 `-codewords.tsv` files contain 57 and 159 independently Gaussian-encoded

@@ -117,11 +117,29 @@ pub(super) fn admit(
 }
 
 /// Input starts at L-SIG. Bytes are not yet MAC/FCS qualified.
+#[cfg(test)]
 pub(super) fn recover(
     samples: &[ComplexSample],
     a: &Acquisition,
     max_psdu: usize,
 ) -> Option<Vec<u8>> {
+    recover_impl(samples, a, max_psdu, false).map(|r| r.0)
+}
+
+pub(super) fn recover_aggregate(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    max_psdu: usize,
+) -> Option<(Vec<u8>, Vec<super::PhyDiagnostic>)> {
+    recover_impl(samples, a, max_psdu, true)
+}
+
+fn recover_impl(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    max_psdu: usize,
+    partial: bool,
+) -> Option<(Vec<u8>, Vec<super::PhyDiagnostic>)> {
     let admitted = admit(samples, a, max_psdu, samples.len())?;
     let mut trained = train_su(samples, a)?;
     let h = admitted.signal;
@@ -371,12 +389,52 @@ pub(super) fn recover(
             super::ldpc_rate::Layout::he(&h, symbols)
         }
         .ok()?;
-        let (bits, _) = layout.recover(&coded, 64).ok()?;
-        super::data::descramble_psdu(bits, c.psdu_bytes).ok()
+        let recovered = if partial {
+            layout.recover_partial(&coded, 64).ok()?
+        } else {
+            let (bits, iterations) = layout.recover(&coded, 64).ok()?;
+            super::ldpc_rate::Recovery {
+                bits,
+                iterations,
+                failed_codewords: 0,
+                first_failure: None,
+            }
+        };
+        let mut diagnostics = Vec::new();
+        if recovered.failed_codewords != 0 {
+            diagnostics.push(super::PhyDiagnostic::LdpcPartial {
+                failed_codewords: recovered.failed_codewords,
+            });
+            if let Some(super::ldpc_rate::Error::Codeword {
+                index,
+                error:
+                    super::ldpc::Error::Nonconvergence {
+                        iterations,
+                        failed_checks,
+                    },
+            }) = recovered.first_failure
+            {
+                diagnostics.push(super::PhyDiagnostic::LdpcNonconvergence {
+                    codeword: index,
+                    iterations,
+                    failed_checks,
+                });
+            }
+        }
+        // Estimates are not verified MPDUs: SERVICE must pass here and each
+        // delivered aggregate member must pass the existing scanner's FCS.
+        Some((
+            super::data::descramble_psdu(recovered.bits, c.psdu_bytes).ok()?,
+            diagnostics,
+        ))
     } else if admitted.er {
-        super::he_bcc::recover_for_format(&h, timing.data_symbols, &coded, max_psdu, true).ok()
+        super::he_bcc::recover_for_format(&h, timing.data_symbols, &coded, max_psdu, true)
+            .ok()
+            .map(|v| (v, Vec::new()))
     } else {
-        super::he_bcc::recover(&h, timing.data_symbols, &coded, max_psdu).ok()
+        super::he_bcc::recover(&h, timing.data_symbols, &coded, max_psdu)
+            .ok()
+            .map(|v| (v, Vec::new()))
     }
 }
 

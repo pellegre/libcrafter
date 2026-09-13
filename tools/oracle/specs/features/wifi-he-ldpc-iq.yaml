@@ -7,15 +7,20 @@ directions: [backend_to_libcrafter]
 strict_bytes: true
 malformed: true
 behaviors:
+  - name: damaged-codeword-aggregate-salvage
+    source: IEEE 802.11ax-2021 27.3.12.5.2 and 9.7.1; bounded receiver recovery policy
+    checks: [service_validation, independent_codeword_corruption, surviving_mpdu_fcs, partial_diagnostics, no_unverified_frame_delivery]
   - name: complete-waveforms
     source: IEEE 802.11ax-2021 27.3.12.5.2-3, 27.3.12.9-10, 27.3.12.13-14
     checks: [mcs_0_to_11, all_su_guard_training_pairs, extra_segments, post_fec_padding, exact_psdu, mac_fcs, truncation, storage_bounds, sparse_and_full_training_denoising, chunked_public_receiver, packet_metadata, gap_reset]
-coverage_cases: [wifi-he-ldpc-iq]
+coverage_cases: [wifi-he-ldpc-iq, wifi-he-ldpc-partial-aggregate]
 supported_cases:
   - {name: wifi-he-ldpc-iq, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+  - {name: wifi-he-ldpc-partial-aggregate, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
 backend_support:
   libcrafter:
     status: partial
     notes:
       - HE20 SU single stream only; other HE layouts remain unsupported. Separate wifi_he_midamble_iq, wifi_he_dcm_iq and wifi_he_stbc_iq cases qualify midamble refresh, DCM and STBC.
       - Independent offline waveforms do not establish live HE hardware qualification.
+      - Partial LDPC recovery is exercised by 18 independently generated SU, ER242 and ER106 waveforms with plain, DCM and STBC data. Estimated bits are never delivered without SERVICE validation and per-MPDU FCS validation.
