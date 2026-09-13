@@ -4,6 +4,38 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_mu_bcc_inventory() {
+    for (index, count, hash) in [
+        (
+            include_str!("fixtures/iq/he-mu26-bcc-index.tsv"),
+            415,
+            "dc24a7449da2de47df006b5178192aca6d744c14f93d4e9664b6f579b8dcb7e5",
+        ),
+        (
+            include_str!("fixtures/iq/he-mu52-bcc-index.tsv"),
+            429,
+            "5b3a3aa667caa137a6202365abd5543ef154f4f309a30c240d675582e0a6da81",
+        ),
+        (
+            include_str!("fixtures/iq/he-mu106-bcc-index.tsv"),
+            435,
+            "3c9ff693017ddbb4194df4d8228376ff8c46a16cfc9b38c62aa934e5768a21ee",
+        ),
+        (
+            include_str!("fixtures/iq/he-mu242-bcc-index.tsv"),
+            435,
+            "34be3a132c4d76b30cbdbd65082a379b9cb708adfdbb05b035b1197dab8635f4",
+        ),
+    ] {
+        assert_eq!(index.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), hash);
+        for row in index.lines().skip(1) {
+            assert_eq!(row.split('\t').count(), 10);
+        }
+    }
+}
+
+#[test]
 fn radio_he_mu_capacity_inventory() {
     for (index, count, hash) in [
         (

@@ -35,6 +35,33 @@ pub(super) fn recover_for_format(
         return Err(Error::Coding);
     }
     let c = Capacity::for_format(a, symbols, er).map_err(|_| Error::Capacity)?;
+    recover_capacity(c, symbols, usize::from(a.stbc) + 1, metrics, max_psdu)
+}
+
+/// Per-user MU metrics, already deinterleaved and stream-recombined. This
+/// checks SERVICE, not MAC/FCS integrity, and does not admit spatial layouts.
+pub(super) fn recover_mu(
+    signal: &super::he_mu::MuSignal,
+    user: &super::he_sig_b::HeSigBUserFields,
+    ru_tones: u16,
+    symbols: usize,
+    metrics: &[f32],
+    max_psdu: usize,
+) -> Result<Vec<u8>, Error> {
+    let c = Capacity::for_mu(signal, user, ru_tones, symbols).map_err(|_| Error::Capacity)?;
+    if c.tail_bits != 6 {
+        return Err(Error::Coding);
+    }
+    recover_capacity(c, symbols, usize::from(signal.stbc) + 1, metrics, max_psdu)
+}
+
+fn recover_capacity(
+    c: Capacity,
+    symbols: usize,
+    group: usize,
+    metrics: &[f32],
+    max_psdu: usize,
+) -> Result<Vec<u8>, Error> {
     if c.psdu_bytes > max_psdu {
         return Err(Error::Limit);
     }
@@ -44,7 +71,6 @@ pub(super) fn recover_for_format(
     if metrics.iter().any(|v| !v.is_finite()) {
         return Err(Error::Metrics);
     }
-    let group = if a.stbc { 2 } else { 1 };
     let mut coded = Vec::new();
     coded
         .try_reserve_exact(c.coded_bits)
@@ -128,6 +154,143 @@ pub(super) fn recover_for_format(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radio_he_mu_bcc_independent_payloads() {
+        use crate::radio::{HeSigBUserEncoding, HeSigBUserFields};
+        let bits: Vec<_> = include_str!("../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
+            .lines()
+            .nth(1)
+            .unwrap()
+            .split('\t')
+            .next()
+            .unwrap()
+            .bytes()
+            .map(|b| b - b'0')
+            .collect();
+        let mut signal = super::super::he_mu::MuSignal::decode(&bits).unwrap();
+        signal.bandwidth = 0;
+        signal.sig_b_mcs = 1;
+        signal.sig_b_dcm = true;
+        signal.ldpc_extra_segment = true; // BCC ignores this global LDPC flag.
+        for (ru, index, total) in [
+            (
+                26,
+                include_str!("../../tests/fixtures/iq/he-mu26-bcc-index.tsv"),
+                415,
+            ),
+            (
+                52,
+                include_str!("../../tests/fixtures/iq/he-mu52-bcc-index.tsv"),
+                429,
+            ),
+            (
+                106,
+                include_str!("../../tests/fixtures/iq/he-mu106-bcc-index.tsv"),
+                435,
+            ),
+            (
+                242,
+                include_str!("../../tests/fixtures/iq/he-mu242-bcc-index.tsv"),
+                435,
+            ),
+        ] {
+            assert_eq!(index.lines().skip(1).count(), total);
+            for (n, input) in index.lines().skip(1).enumerate() {
+                let (a, symbols, expected, metrics, valid) = row(input);
+                signal.stbc = a.stbc;
+                signal.pre_fec_padding = a.pre_fec_padding;
+                let user = HeSigBUserFields {
+                    sta_id: 1,
+                    encoding: HeSigBUserEncoding::NonMu {
+                        space_time_streams: a.space_time_streams,
+                        beamformed: false,
+                        mcs: a.mcs,
+                        dcm: a.dcm,
+                        ldpc: false,
+                    },
+                };
+                let result = recover_mu(&signal, &user, ru, symbols, &metrics, 65535);
+                if valid {
+                    assert_eq!(result, Ok(expected.clone()), "ru{ru} case{n}");
+                } else {
+                    assert_eq!(result, Err(Error::Service), "ru{ru} case{n}");
+                }
+                assert_eq!(
+                    recover_mu(
+                        &signal,
+                        &user,
+                        ru,
+                        symbols,
+                        &metrics[..metrics.len() - 1],
+                        65535
+                    ),
+                    Err(Error::Length)
+                );
+                if !expected.is_empty() {
+                    assert_eq!(
+                        recover_mu(&signal, &user, ru, symbols, &metrics, expected.len() - 1),
+                        Err(Error::Limit)
+                    );
+                }
+                if n % 100 == 0 {
+                    let scaled: Vec<_> = metrics.iter().map(|v| v * 1e-20).collect();
+                    assert_eq!(
+                        recover_mu(&signal, &user, ru, symbols, &scaled, 65535),
+                        result
+                    );
+                    let mut bad = metrics.clone();
+                    bad[0] = f32::NAN;
+                    assert_eq!(
+                        recover_mu(&signal, &user, ru, symbols, &bad, 65535),
+                        Err(Error::Metrics)
+                    );
+                    assert_eq!(
+                        recover_mu(&signal, &user, ru, symbols, &vec![0.; metrics.len()], 65535),
+                        Err(Error::Metrics)
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn radio_he_mu_bcc_rejects_other_coding() {
+        use crate::radio::{HeSigBUserEncoding, HeSigBUserFields};
+        let bits: Vec<_> = include_str!("../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
+            .lines()
+            .nth(1)
+            .unwrap()
+            .split('\t')
+            .next()
+            .unwrap()
+            .bytes()
+            .map(|b| b - b'0')
+            .collect();
+        let mut signal = super::super::he_mu::MuSignal::decode(&bits).unwrap();
+        signal.bandwidth = 0;
+        signal.stbc = false;
+        signal.pre_fec_padding = 4;
+        signal.ldpc_extra_segment = false;
+        let mut user = HeSigBUserFields {
+            sta_id: 1,
+            encoding: HeSigBUserEncoding::NonMu {
+                space_time_streams: 1,
+                beamformed: false,
+                mcs: 0,
+                dcm: false,
+                ldpc: true,
+            },
+        };
+        assert_eq!(
+            recover_mu(&signal, &user, 26, 10, &[], 65535),
+            Err(Error::Coding)
+        );
+        user.encoding = HeSigBUserEncoding::Unused { raw_parameters: 0 };
+        assert_eq!(
+            recover_mu(&signal, &user, 26, 10, &[], 65535),
+            Err(Error::Capacity)
+        );
+    }
+
     fn row(input: &str) -> (SuSignal, usize, Vec<u8>, Vec<f32>, bool) {
         let c: Vec<_> = input.split('\t').collect();
         let mut a = SuSignal::decode(

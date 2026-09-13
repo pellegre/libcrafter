@@ -173,6 +173,12 @@ and per-user application of LDPC extra segments. Independent forward padding
 cases check byte/bit budgets, not spatial consistency, codeword admission or
 complete MU payload recovery.
 
+The per-user MU BCC kernel recovers PSDU bytes from already deinterleaved,
+stream-recombined soft metrics, using each user's RU capacity. Independent
+coded-bit cases cover all four RU sizes, padding/filler, STBC groups and
+SERVICE validation. Those bytes still require MAC/FCS validation; MU IQ
+demodulation and complete streaming payload integration remain unfinished.
+
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,
 midambles10/20, CFO/selective channels, and a damaged first aggregate member;

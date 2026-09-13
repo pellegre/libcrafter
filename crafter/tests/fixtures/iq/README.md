@@ -1,5 +1,11 @@
 # Independent IQ vector contract
 
+`he-mu{26,52,106,242}-bcc-index.tsv` contains 1714 independent per-user BCC
+payload vectors with post-FEC padding, applicable DCM filler, STBC groups,
+scrambler seeds and malformed SERVICE. These are coded-bit/PSDU vectors, not
+complete MAC or IQ packets. Regenerate with `he_bcc_vectors.py --mu-tones SIZE`
+or verify by adding `--check`.
+
 `he-mu{26,52,106,242}-capacity-index.tsv` contains 30858 independent forward
 padding cases for per-user MU payload geometry. These include the special
 26-tone DCM short-segment size, BCC filler only on 106/242, STBC groups and
