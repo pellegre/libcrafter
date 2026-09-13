@@ -4,9 +4,16 @@ import unittest
 
 from tools.oracle.engine.backends.scapy.protocols.wifi import _dot11_bytes
 from tools.oracle.engine.protocols.wifi import _dot11_frame_control_for_case
+from tools.oracle.engine.backends.dot11_trigger import basic_trigger_body
 
 
 class TriggerHeaderTest(unittest.TestCase):
+    def test_basic_body_literal_layout(self):
+        # Common: UL Length=1, GI/LTF=1, SIG-A2 Reserved=511.
+        # User: AID=1, all other bits zero; Basic dependent byte; padding.
+        self.assertEqual(basic_trigger_body(b""), bytes.fromhex(
+            "100010000000c07f 0100000000 00 ffff"))
+
     def test_trigger_case_selects_control_subtype_two(self):
         self.assertEqual(
             _dot11_frame_control_for_case("dot11-trigger-header", ["dot11", "payload"]),

@@ -15,7 +15,39 @@ pub(crate) fn decode_dot11_with_registry(
     registry: &ProtocolRegistry,
     bytes: &[u8],
 ) -> Result<Packet> {
+    decode_dot11_with_registry_fcs(registry, bytes, false)
+}
+
+/// FCS context currently affects typed Trigger bodies only. Other MAC paths
+/// retain their existing tail/decryption contract.
+pub(crate) fn decode_dot11_with_registry_fcs(
+    registry: &ProtocolRegistry,
+    bytes: &[u8],
+    fcs_present: bool,
+) -> Result<Packet> {
     let (dot11, tail) = decode_dot11(bytes)?;
+    let trigger = dot11.control_subtype() == Some(Dot11ControlSubtype::Trigger)
+        && dot11.frame_control_value().protocol_version() == 0;
+    if trigger {
+        let (body, fcs) = if fcs_present {
+            let split = tail.len().checked_sub(4).ok_or_else(|| {
+                CrafterError::buffer_too_short("dot11.trigger.fcs", 4, tail.len())
+            })?;
+            tail.split_at(split)
+        } else {
+            (tail, &[][..])
+        };
+        let mut packet = Packet::new().push(dot11);
+        // Preserve existing header-only MAC decoding. A scheduling context
+        // requires a present, parsed Dot11Trigger layer.
+        if !body.is_empty() {
+            packet = packet.push(Dot11Trigger::decode(body)?);
+        }
+        if !fcs.is_empty() {
+            packet = packet.push(Raw::from_bytes(fcs));
+        }
+        return Ok(packet);
+    }
     let decode_llc_snap = dot11_should_dispatch_llc_snap(&dot11);
     let packet = Packet::new().push(dot11);
 

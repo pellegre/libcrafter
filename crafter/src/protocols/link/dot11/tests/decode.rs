@@ -683,7 +683,12 @@ fn dot11_trigger_header_preserves_body_and_rejects_short_transmitter() {
         layer.addr2_value().unwrap().octets(),
         [0, 0, 0x5e, 0, 0x53, 2]
     );
-    assert_eq!(packet.layer::<Raw>().unwrap().as_bytes(), &wire[16..]);
+    let trigger = packet.layer::<Dot11Trigger>().unwrap();
+    assert_eq!(trigger.common.ul_length, 301);
+    assert_eq!(
+        trigger.remainder,
+        Dot11TriggerRemainder::Padding(vec![255, 255])
+    );
     assert_eq!(packet.compile().unwrap().as_bytes(), &wire);
     assert!(layer.bssid().is_none());
     assert!(layer.sequence_control_value().is_none());
@@ -692,6 +697,31 @@ fn dot11_trigger_header_preserves_body_and_rejects_short_transmitter() {
             Packet::decode_from_link(LinkType::Ieee80211, &wire[..available]).unwrap_err(),
             CrafterError::buffer_too_short("dot11.header", 16, available)
         );
+    }
+}
+
+#[test]
+fn dot11_trigger_radiotap_fcs_is_not_a_scheduled_user() {
+    // A nine-octet radiotap header with only Flags present. Failed-FCS is
+    // metadata, not permission to reinterpret the trailer as scheduling data.
+    for flags in [0x10, 0x50] {
+        let mut wire = vec![0, 0, 9, 0, 2, 0, 0, 0, flags];
+        wire.extend([
+            0x24, 0, 0, 0, 0, 0, 0x5e, 0, 0x53, 1, 0, 0, 0x5e, 0, 0x53, 2,
+        ]);
+        wire.extend([0xd0, 0x12, 0, 0, 0, 0, 0xc0, 0x7f]);
+        wire.extend([1, 0, 0, 0, 0, 0xa5]);
+        wire.extend([2, 0, 0, 0]);
+        let packet = Packet::decode_from_link(LinkType::Radiotap, &wire).unwrap();
+        let trigger = packet.layer::<Dot11Trigger>().unwrap();
+        assert_eq!(trigger.users.len(), 1);
+        assert_eq!(trigger.users[0].fields.aid12, 1);
+        assert_eq!(packet.layer::<Raw>().unwrap().as_bytes(), &[2, 0, 0, 0]);
+        assert_eq!(packet.compile().unwrap().as_bytes(), wire);
+        // Without explicit FCS framing, four bytes are a truncated user, not
+        // a trailer guessed from their position or contents.
+        wire[8] = 0;
+        assert!(Packet::decode_from_link(LinkType::Radiotap, &wire).is_err());
     }
 }
 

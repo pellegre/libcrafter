@@ -284,6 +284,15 @@ a constant. Independent fixtures cover 2048 valid headers and 57 rejections.
 `PhyDiagnostic::HeTbSignal`; artifacts use `he.format: tb` without invented
 DATA settings. Independent qualification covers 256 prefixes with attenuation,
 CFO and multipath, 14 invalid prefixes, chunk boundaries and capture gaps.
+`Dot11Trigger` now exposes the preceding MAC Trigger body's Common Info and
+normal User Info fields through the ordinary `Packet` stack. Basic, BFRP,
+MU-BAR (compressed and Multi-TID), MU-RTS, BSRP, GCR MU-BAR and BQRP boundaries
+are parsed; NFRP and unknown variant/BAR layouts remain lossless opaque bytes.
+Reserved values and padding are preserved, not treated as scheduling approval.
+Bare Trigger input excludes FCS. Radiotap's explicit FCS-present flag separates
+the trailer into `Raw`; the IQ packet source already strips verified FCS before
+MAC parsing. This MAC layer alone does not associate a Trigger with a TB reply.
+
 Without Trigger context, the receiver reports `UnsupportedPhy` and does not
 publish a TB frame. This is not payload decoding: RU assignment, MCS,
 coding and training context must come from the triggering exchange

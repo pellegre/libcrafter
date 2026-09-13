@@ -522,7 +522,7 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "ble_adv"
     } else if layer.as_any().is::<Tls>() {
         "tls"
-    } else if layer.as_any().is::<Raw>() {
+    } else if layer.as_any().is::<Raw>() || layer.as_any().is::<Dot11Trigger>() {
         "payload"
     } else {
         layer.name()
@@ -693,6 +693,14 @@ fn normalized_layer_fields(
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Tls>() {
         return tls_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<Dot11Trigger>() {
+        // The existing MAC oracle compares its body as exact payload bytes;
+        // native_layers above retains the typed scheduling-field inspection.
+        let bytes = Packet::from_layer(layer.clone())
+            .compile()
+            .expect("Trigger compilation preserves bytes");
+        return payload_fields(&Raw::from_bytes(bytes.as_bytes()));
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Raw>() {
         return payload_fields(layer);
