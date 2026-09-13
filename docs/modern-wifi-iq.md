@@ -53,6 +53,17 @@ multiple DATA streams are not implemented by this receive path. Offline
 qualification uses 200 BCC and 240 LDPC complete independent waveforms; it does not establish
 HE-capable dongle interoperability, sustained real-time speed or modern TX.
 
+HE ER SU signaling is recognized separately: repeated L-SIG with length modulo
+three equal to two, a QBPSK second SIG-A symbol, and four SIG-A symbols. Header
+combining restores the originals' interleaving while repeats remain in coded
+order. `PhyDiagnostic::HeErSignal` carries the shared SU/ER header fields;
+its Bandwidth code identifies a 242-tone or upper 106-tone allocation within
+20 MHz, not a wider channel. Receive artifacts use `he.format: er_su` with
+explicit `ru_tones` and `channel_width_mhz`. This increment reports
+`UnsupportedPhy` after the validated ER header: ER training, DATA demodulation,
+and MAC publication are not connected yet. Its 288 positive and 18 negative
+prefix fixtures contain no DATA and do not establish complete ER reception.
+
 ## Evidence requirements
 
 Normative PHY layouts, code matrices, timing and modulation rules use the

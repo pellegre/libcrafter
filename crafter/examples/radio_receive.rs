@@ -266,6 +266,19 @@ impl PhyDecoder for ObservedDecoder {
     }
 }
 fn he_signal_record(diagnostic: &PhyDiagnostic, epoch: u64) -> Option<serde_json::Value> {
+    if let PhyDiagnostic::HeErSignal {
+        fields,
+        preamble_sample_index,
+    } = diagnostic
+    {
+        let mut metadata = he_signal_metadata(fields, *preamble_sample_index);
+        metadata["format"] = json!("er_su");
+        metadata["ru_tones"] = json!(if fields.bandwidth == 0 { 242 } else { 106 });
+        metadata["channel_width_mhz"] = json!(20);
+        return Some(
+            json!({"kind":"he_signal","phy":"he","epoch":epoch,"preamble_sample_index":preamble_sample_index,"he":metadata}),
+        );
+    }
     let PhyDiagnostic::HeSignal {
         fields,
         preamble_sample_index,
@@ -1004,6 +1017,35 @@ mod tests {
             .iter()
             .any(|d| he_signal_record(d, 7)
                 .is_some_and(|v| v["epoch"] == 7 && v["kind"] == "he_signal")));
+    }
+
+    #[test]
+    fn radio_he_er_header_artifact_metadata() {
+        for row in include_str!("../tests/fixtures/iq/he-er-prefix-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let bits: Vec<_> = c[1].bytes().map(|v| v - b'0').collect();
+            let fields = HeSuSignalFields::decode_er(&bits).unwrap();
+            let d = PhyDiagnostic::HeErSignal {
+                fields,
+                preamble_sample_index: 37,
+            };
+            let header = he_signal_record(&d, 7).unwrap();
+            assert_eq!(header["kind"], "he_signal");
+            assert_eq!(header["phy"], "he");
+            assert_eq!(header["epoch"], 7);
+            assert_eq!(header["he"]["format"], "er_su");
+            assert_eq!(header["he"]["channel_width_mhz"], 20);
+            assert_eq!(
+                header["he"]["ru_tones"],
+                if fields.bandwidth == 0 { 242 } else { 106 }
+            );
+            assert_eq!(header["he"]["mcs"], fields.mcs);
+            assert_eq!(header["he"]["stbc"], fields.stbc);
+            assert_eq!(header["he"]["dcm"], fields.dcm);
+        }
     }
     #[test]
     fn radio_vht_frame_artifact_metadata() {

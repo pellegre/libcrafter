@@ -1,5 +1,5 @@
-//! HE SU header kernel; IEEE 802.11ax-2021 Tables 27-18/19/35.
-//! Caller must establish SU format. This does not admit or publish DATA.
+//! HE SU/ER SU header kernel; IEEE 802.11ax-2021 Tables 27-18/19/35.
+//! Caller must establish the format. This does not admit or publish DATA.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SuSignal {
@@ -8,6 +8,7 @@ pub struct SuSignal {
     pub mcs: u8,
     pub bss_color: u8,
     pub spatial_reuse: u8,
+    /// Raw field: SU channel-width code, or ER SU allocation (0=242, 1=upper106).
     pub bandwidth: u8,
     pub space_time_streams: u8,
     pub midamble_period: Option<u8>,
@@ -38,6 +39,44 @@ pub enum Error {
 }
 
 impl SuSignal {
+    /// Four derotated 52-tone symbols in A1/A1-R/A2/A2-R order.
+    /// Originals are interleaved; repeats bypass interleaving (27.3.11.7.4).
+    pub fn decode_er_repeated(metrics: &[f32]) -> Result<Self, Error> {
+        if metrics.len() != 208 || metrics.iter().any(|m| !m.is_finite()) {
+            return Err(Error::Metrics);
+        }
+        let scale = metrics.iter().map(|v| v.abs()).fold(0f32, f32::max);
+        if scale == 0. {
+            return Err(Error::Metrics);
+        }
+        let coded: [f32; 104] = std::array::from_fn(|k| {
+            let base = (k / 52) * 104;
+            let bit = k % 52;
+            metrics[base + 4 * (bit % 13) + bit / 13] / scale + metrics[base + 52 + bit] / scale
+        });
+        let pairs = std::array::from_fn::<_, 52, _>(|i| [coded[2 * i], coded[2 * i + 1]]);
+        Self::decode_er(&super::signal::decode_bcc(&pairs))
+    }
+
+    /// Shared bit layout, with the ER-specific reserved values checked.
+    pub fn decode_er(bits: &[u8]) -> Result<Self, Error> {
+        let fields = Self::decode(bits)?;
+        if fields.bandwidth > 1 {
+            return Err(Error::Reserved { index: 19 });
+        }
+        if fields.mcs > if fields.bandwidth == 0 { 2 } else { 0 } {
+            return Err(Error::ReservedMcs(fields.mcs));
+        }
+        // 27.1.1: ER is single spatial stream; STBC uses two space-time streams.
+        if fields.space_time_streams != if fields.stbc { 2 } else { 1 } {
+            return Err(Error::Reserved { index: 23 });
+        }
+        if fields.dcm && fields.mcs == 2 {
+            return Err(Error::Reserved { index: 7 });
+        }
+        Ok(fields)
+    }
+
     /// Two interleaved 52-tone symbols; caller handles constellation rotations.
     pub fn decode_interleaved(metrics: &[f32]) -> Result<Self, Error> {
         if metrics.len() != 104 || metrics.iter().any(|m| !m.is_finite()) {
@@ -137,6 +176,46 @@ impl SuSignal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radio_he_er_repeated_header_metrics() {
+        for row in include_str!("../../tests/fixtures/iq/he-er-prefix-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let bits: Vec<_> = c[1].bytes().map(|v| v - b'0').collect();
+            let expected = SuSignal::decode_er(&bits).unwrap();
+            for scale in [f32::MIN_POSITIVE, 1., f32::MAX] {
+                let metrics: Vec<_> = c[2]
+                    .bytes()
+                    .map(|v| if v == b'1' { scale } else { -scale })
+                    .collect();
+                assert_eq!(SuSignal::decode_er_repeated(&metrics), Ok(expected));
+                for erased in [[0, 2], [1, 3]] {
+                    let mut remaining = metrics.clone();
+                    for n in erased {
+                        remaining[n * 52..(n + 1) * 52].fill(0.);
+                    }
+                    assert_eq!(SuSignal::decode_er_repeated(&remaining), Ok(expected));
+                }
+            }
+        }
+        for length in [0, 51, 104, 207, 209] {
+            assert_eq!(
+                SuSignal::decode_er_repeated(&vec![1.; length]),
+                Err(Error::Metrics)
+            );
+        }
+        assert_eq!(
+            SuSignal::decode_er_repeated(&[0.; 208]),
+            Err(Error::Metrics)
+        );
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut metrics = [1.; 208];
+            metrics[104] = value;
+            assert_eq!(SuSignal::decode_er_repeated(&metrics), Err(Error::Metrics));
+        }
+    }
 
     fn repair(bits: &mut [u8]) {
         let crc = super::super::ht::crc(&bits[..42]);

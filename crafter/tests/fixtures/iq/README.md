@@ -1,5 +1,14 @@
 # Independent IQ vector contract
 
+`he-er-prefix-index.tsv` contains 288 independent HE ER SU preamble prefixes,
+covering both RU allocations, all allowed MCS/GI/DCM/STBC header combinations,
+BCC/LDPC flags, frequency offset/multipath and erased original SIG-A DATA
+tones. Repeats bypass interleaving; the second SIG-A DATA constellation is
+QBPSK, but pilots remain BPSK with their correct polarity sequence. The 18
+negative cases cover reserved values, CRC/tail, repeated legacy-header checks,
+rotation and truncation. `he_er_prefix_vectors.py --check` reproduces them.
+These are signaling-only fixtures, not full ER DATA or MAC qualification.
+
 `he-dcm-metrics.tsv` contains 660 independent rational-distance cases for
 BPSK, QPSK and 16-QAM DCM pairs, including off-grid points, weighted branches
 and erasures. `he-dcm-iq-index.tsv` contains 128 complete BCC/LDPC waveforms

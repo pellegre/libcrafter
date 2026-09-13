@@ -318,6 +318,12 @@
       "fact": "HE-SIG-A CRC covers 42 bits. The underlying eight-bit polynomial is inherited from HT, but only four complemented output bits are transmitted, C7 first."
     },
     {
+      "id": "he-er-prefix",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.1.1; 27.3.11.3-7/22; Table27-18; Figure27-25; Equations27-11/12/18",
+      "fact": "ER SU uses L-SIG length modulo three equal to two, and A1/A1-R/A2/A2-R signaling. Only A1-R DATA tones are QBPSK. Original halves are interleaved; repeated halves bypass interleaving. Pilots retain the polarity sequence. L-STF/L-LTF have a sqrt(2) boost, L-SIG/RL-SIG boost only their four added edge tones, and SIG-A has no such boost. ER permits one spatial stream, MCS0-2 on242 or MCS0 on upper106 within20MHz; STBC may use two space-time streams. Signaling integrity does not qualify DATA."
+    },
+    {
       "id": "he-stbc-training-data",
       "source": "ieee-80211ax-2021",
       "anchor": "27.3.11.2.2/10, Equations 27-55..58; 27.3.12.12/13; referenced IEEE 802.11-2020 Equation 19-27, Tables 21-11/20",

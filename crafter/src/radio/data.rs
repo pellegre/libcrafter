@@ -22,6 +22,7 @@ struct Pending {
     vht: Option<VhtSignalAFields>,
     he: Option<HeSuSignalFields>,
     he_candidate: bool,
+    er_candidate: bool,
     ldpc: Option<ldpc::rate::Layout>,
     greenfield: bool,
 }
@@ -431,6 +432,19 @@ impl PhyDecoder for LegacyOfdmDecoder {
                         }
                         continue;
                     }
+                    if self.ht_enabled
+                        && he_iq::repeated_er_signal(&p.samples, &p.acquisition).is_some()
+                    {
+                        if p.reserve_samples(320, config, reserved) {
+                            p.er_candidate = true;
+                        } else {
+                            self.stats.rejected_frames =
+                                self.stats.rejected_frames.saturating_add(1);
+                            out.diagnostics.push(PhyDiagnostic::InvalidHeader);
+                            self.pending[slot] = None;
+                        }
+                        continue;
+                    }
                     if let Some(fields) = super::ht::decode_iq(&p.samples[80..240], &p.acquisition)
                     {
                         out.diagnostics.push(PhyDiagnostic::HtSignal {
@@ -477,6 +491,40 @@ impl PhyDecoder for LegacyOfdmDecoder {
                         }
                         p.samples
                             .reserve_exact(required.saturating_sub(p.samples.len()));
+                    }
+                }
+                if p.er_candidate
+                    && p.samples.len() == 320
+                    && he_iq::er_marker(&p.samples, &p.acquisition).is_some()
+                {
+                    if !p.reserve_samples(480, config, reserved) {
+                        self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
+                        out.diagnostics.push(PhyDiagnostic::InvalidHeader);
+                        self.pending[slot] = None;
+                    }
+                    continue;
+                }
+                if p.er_candidate && matches!(p.samples.len(), 320 | 480) {
+                    p.er_candidate = false;
+                    if let Some(prefix) = he_iq::decode_er_prefix(&p.samples, &p.acquisition) {
+                        out.diagnostics.push(PhyDiagnostic::HeErSignal {
+                            fields: prefix.signal,
+                            preamble_sample_index: p.start.sample_index,
+                        });
+                        // ER DATA layouts are connected in a separate increment.
+                        out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
+                        self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
+                        self.pending[slot] = None;
+                        continue;
+                    }
+                    let info = p.info.unwrap();
+                    if info.psdu_bytes > config.max_frame_bytes
+                        || !p.reserve_samples(80 + info.data_symbols * 80, config, reserved)
+                    {
+                        self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
+                        out.diagnostics.push(PhyDiagnostic::InvalidHeader);
+                        self.pending[slot] = None;
+                        continue;
                     }
                 }
                 if p.he_candidate && p.samples.len() == 320 {
@@ -734,6 +782,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             vht: None,
                             he: None,
                             he_candidate: false,
+                            er_candidate: false,
                             ldpc: None,
                             greenfield: false,
                         });
@@ -1438,6 +1487,131 @@ mod vht_bcc_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radio_he_er_streaming_headers() {
+        for row in include_str!("../../tests/fixtures/iq/he-er-prefix-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let bits: Vec<_> = c[1].bytes().map(|v| v - b'0').collect();
+            let expected = HeSuSignalFields::decode_er(&bits).unwrap();
+            for size in [37, 997] {
+                let out = feed(&mut WifiDecoder::new(), &bytes, size);
+                assert!(out.frames.is_empty());
+                let header = PhyDiagnostic::HeErSignal {
+                    fields: expected,
+                    preamble_sample_index: 37,
+                };
+                assert!(out.diagnostics.contains(&header), "{} chunk{size}", c[0]);
+                assert_eq!(header, header.clone());
+                assert_ne!(
+                    header,
+                    PhyDiagnostic::HeSignal {
+                        fields: expected,
+                        preamble_sample_index: 37
+                    }
+                );
+                assert!(out.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy));
+            }
+        }
+        for row in include_str!("../../tests/fixtures/iq/he-er-prefix-invalid-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let name = row.split('\t').next().unwrap();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{name}.cs8",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap();
+            let out = feed(&mut WifiDecoder::new(), &bytes, 37);
+            assert!(
+                !out.diagnostics
+                    .iter()
+                    .any(|d| matches!(d, PhyDiagnostic::HeErSignal { .. })),
+                "{name}"
+            );
+            assert!(out.frames.is_empty());
+        }
+    }
+
+    #[test]
+    fn radio_he_er_streaming_bounds_and_gap() {
+        let bytes = include_bytes!(
+            "../../tests/fixtures/iq/he-er-prefix-bw1-mcs0-gi0-plain-bcc-offset.cs8"
+        );
+        let out = feed(&mut LegacyWifiDecoder::new(), bytes, 37);
+        assert!(!out
+            .diagnostics
+            .iter()
+            .any(|d| matches!(d, PhyDiagnostic::HeErSignal { .. })));
+        for limit in [239, 319, 479] {
+            let mut small = config();
+            small.max_buffer_samples = limit;
+            small.max_chunk_samples = 37;
+            assert!(matches!(
+                feed_config(&mut WifiDecoder::new(), bytes, 37, small),
+                Err(RadioError::Invalid {
+                    field: "config",
+                    ..
+                })
+            ));
+        }
+        // Combined Wi-Fi reserves 128 samples for DSSS, leaving 480 for ER.
+        for limit in [512, 608] {
+            let mut minimum = config();
+            minimum.max_buffer_samples = limit;
+            minimum.max_chunk_samples = 37;
+            let out = feed_config(&mut WifiDecoder::new(), bytes, 37, minimum).unwrap();
+            assert_eq!(
+                out.diagnostics
+                    .iter()
+                    .any(|d| matches!(d, PhyDiagnostic::HeErSignal { .. })),
+                limit == 608
+            );
+        }
+        for end in [400, 600, 700, 836] {
+            let out = feed(&mut WifiDecoder::new(), &bytes[..end * 2], 37);
+            assert!(!out
+                .diagnostics
+                .iter()
+                .any(|d| matches!(d, PhyDiagnostic::HeErSignal { .. })));
+        }
+        let mut decoder = WifiDecoder::new();
+        for (sequence, sample_index, part) in [(0, 0, &bytes[..1400]), (1, 701, &bytes[1400..])] {
+            let chunk = IqChunk::new(
+                config(),
+                IqPosition {
+                    epoch: 0,
+                    sequence,
+                    sample_index,
+                    time_anchor: None,
+                    discontinuity: None,
+                },
+                part.iter().map(|v| *v as i8).collect(),
+            )
+            .unwrap();
+            let out = decoder.consume(IqEvent::Chunk(chunk)).unwrap();
+            assert!(!out
+                .diagnostics
+                .iter()
+                .any(|d| matches!(d, PhyDiagnostic::HeErSignal { .. })));
+            if sequence == 1 {
+                assert!(out
+                    .diagnostics
+                    .iter()
+                    .any(|d| matches!(d, PhyDiagnostic::Reset(ResetReason::Gap(_)))));
+            }
+        }
+    }
+
     #[test]
     fn radio_he_dcm_joint_independent_metrics() {
         let rows = include_str!("../../tests/fixtures/iq/he-dcm-metrics.tsv");

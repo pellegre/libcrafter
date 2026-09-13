@@ -268,6 +268,12 @@ pub enum ResetReason {
 }
 #[derive(Debug, Clone)]
 pub enum PhyDiagnostic {
+    /// CRC-checked HE ER SU signaling. `bandwidth` selects 242/upper106 tones,
+    /// not a wider RF channel. This does not establish DATA or MAC integrity.
+    HeErSignal {
+        fields: HeSuSignalFields,
+        preamble_sample_index: u64,
+    },
     /// CRC-checked HE SU signaling, not proof of DATA or MAC integrity.
     HeSignal {
         fields: HeSuSignalFields,
@@ -358,6 +364,16 @@ pub enum PhyDiagnostic {
 impl PartialEq for PhyDiagnostic {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (
+                Self::HeErSignal {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::HeErSignal {
+                    fields: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
             (
                 Self::HeSignal {
                     fields: a,

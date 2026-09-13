@@ -296,6 +296,42 @@ fn radio_he_training4_independent_inventory() {
 }
 
 #[test]
+fn radio_he_er_prefix_independent_inventory() {
+    for (index, count, digest) in [
+        (
+            include_str!("fixtures/iq/he-er-prefix-index.tsv"),
+            288,
+            "55590eb00e6989408b5cdf26114004a7ab57e588e7872dea33d59c864cddebd8",
+        ),
+        (
+            include_str!("fixtures/iq/he-er-prefix-invalid-index.tsv"),
+            18,
+            "a52d69814d68e8f805efd7efd6d44eb3e3c00eca65c2565ffc40e938d3fe4f66",
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        assert_eq!(index.lines().skip(1).count(), count);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(hex(&Sha256::digest(&bytes)), *c.last().unwrap());
+            assert_eq!(bytes.len() % 2, 0);
+            if count == 288 {
+                assert_eq!(c.len(), 6);
+                assert_eq!(c[1].len(), 52);
+                assert_eq!(c[2].len(), 208);
+                assert_eq!(bytes.len() / 2, c[4].parse::<usize>().unwrap());
+            }
+        }
+    }
+}
+
+#[test]
 fn radio_he_stbc_independent_inventory() {
     for (index, count, digest) in [
         (
