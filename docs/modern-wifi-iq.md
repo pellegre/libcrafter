@@ -276,6 +276,14 @@ midambles10/20, CFO/selective channels, and a damaged first aggregate member;
 independent offline waveforms establish neither live HE dongle comparison nor
 real-time throughput or ER transmission.
 
+The TB SIG-A bit/metric primitive (`HeTbSignalFields`) checks the shared HE
+CRC and tail, TB Format, reserved bit 23 and 20/40 MHz spatial-reuse copies.
+It preserves all nine SIG-A2 bits supplied by the Trigger instead of assuming
+a constant. Independent fixtures cover 2048 valid headers and 57 rejections.
+This is not TB prefix acquisition or payload decoding: RU assignment, MCS,
+coding and training context must come from the triggering exchange
+(27.3.2.6, Table 27-21), not be guessed from this header.
+
 ## Evidence requirements
 
 Normative PHY layouts, code matrices, timing and modulation rules use the

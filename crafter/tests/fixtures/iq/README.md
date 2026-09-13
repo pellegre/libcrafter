@@ -1,5 +1,16 @@
 # Independent IQ vector contract
 
+`he-tb-signal-a-index.tsv` contains 2048 independently encoded HE TB SIG-A
+headers, covering all 512 values of the nine Trigger-supplied reserved bits.
+The four bandwidth codes, color/TXOP values and required 20/40 MHz spatial
+reuse copies are checked. The companion `he-tb-signal-a-invalid.tsv` has 57
+CRC, tail, format, reserved-bit and inconsistent-copy cases. These are bit
+and interleaved soft-metric tests, not complete TB IQ or DATA qualification.
+HE's transmitted CRC nibble does not detect every single-bit change: tests
+preserve the blind spots in Trigger-supplied bits 40/41, while the spatial-copy
+check detects a blind-spot change at bit 18 for a 20 MHz header.
+Use `he_tb_signal_vectors.py --write` to regenerate; omit `--write` to verify.
+
 `he-mu-mixed-iq-index.tsv` indexes 336 mixed-user HE20 MAC waveforms.
 Each packet combines BCC and LDPC users with independently selected MCS and
 applicable DCM, or STBC without DATA DCM. All four initial padding boundaries

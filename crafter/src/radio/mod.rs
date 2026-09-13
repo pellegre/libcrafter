@@ -21,6 +21,7 @@ mod he_sig_b;
 mod he_sig_b_coded;
 mod he_sig_b_iq;
 mod he_sig_b_modulation;
+mod he_tb;
 pub use he_sig_b::{
     HeRu20Assignment, HeSigBCommon20Fields, HeSigBError, HeSigBUserBlock, HeSigBUserContext,
     HeSigBUserEncoding, HeSigBUserFields,
@@ -32,6 +33,7 @@ mod he_tones;
 mod he_training;
 pub use he::{Error as HeSignalError, SuSignal as HeSuSignalFields};
 pub use he_mu::MuSignal as HeMuSignalFields;
+pub use he_tb::{Error as HeTbSignalError, TbSignal as HeTbSignalFields};
 mod ht;
 mod vht;
 mod vht_iq;

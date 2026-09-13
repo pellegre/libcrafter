@@ -4,6 +4,36 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_tb_public_exports() {
+    use crafter::prelude::{HeSignalError, HeTbSignalError, HeTbSignalFields};
+    assert!(matches!(
+        HeTbSignalFields::decode(&[]),
+        Err(HeTbSignalError::Signal(HeSignalError::BitCount {
+            available: 0
+        }))
+    ));
+}
+
+#[test]
+fn radio_he_tb_signal_inventory() {
+    for (rows, count, digest) in [
+        (
+            include_str!("fixtures/iq/he-tb-signal-a-index.tsv"),
+            2048,
+            "b465f1d4313572c4073ed8f094d2c3506f25ad1032e30fc1ef59a8cd01307ccc",
+        ),
+        (
+            include_str!("fixtures/iq/he-tb-signal-a-invalid.tsv"),
+            57,
+            "e23f2d8662814b7eb19c0d3bb65993348d93bbb796518892b4879a15128938da",
+        ),
+    ] {
+        assert_eq!(rows.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(rows.as_bytes())), digest);
+    }
+}
+
+#[test]
 fn radio_he_mu_mixed_iq_inventory() {
     let rows = include_str!("fixtures/iq/he-mu-mixed-iq-index.tsv");
     assert_eq!(rows.lines().skip(1).count(), 336);
