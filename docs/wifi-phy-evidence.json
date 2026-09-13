@@ -288,6 +288,12 @@
       "fact": "HE encodes scrambled SERVICE, PSDU and pre-FEC padding without BCC tail bits. Initial available coded positions use the last padding segment, not complete OFDM symbols. The inherited puncturing thresholds select an extra segment: initial factor3 adds the remaining full-symbol portion; other factors add one short segment per STBC-group symbol. Factor4 wraps to1 and adds a symbol group. Codeword count/size and shortening precede this adjustment; puncturing is recomputed afterward. Post-FEC padding is excluded from LDPC observations. Rate-matching geometry and codeword tests do not establish HE LDPC IQ reception."
     },
     {
+      "id": "he-1024qam-ldpc-tones",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.12.9 Figures27-37-40; 27.3.12.10 Table27-36 Equation27-95",
+      "fact": "HE 1024-QAM uses five label bits per axis and normalization 1/sqrt(682). For a non-DCM 242-tone RU, LDPC tone mapping has NSD=234 and DTM=9: transmitted data-tone index t(k)=9*(k mod26)+floor(k/26). Indices exclude pilots. Independent constellation and transpose fixtures qualify private demapping primitives, not complete LDPC IQ reception, DCM or spatial-stream separation."
+    },
+    {
       "id": "he-aggregate-tag-order",
       "source": "ieee-80211ax-2021",
       "anchor": "9.7.1 Table 9-527; 10.12.6-7; 26.6.2",

@@ -8640,6 +8640,8 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "vht-ldpc-rate-index.tsv"
                 | "he-ldpc-rate-index.tsv"
                 | "he-ldpc-rate-codewords.tsv"
+                | "he-qam-index.tsv"
+                | "he-ldpc-tones.tsv"
                 | "vht-ldpc-iq-index.tsv"
                 | "vht-stbc-iq-index.tsv"
                 | "vht-stbc-iq-invalid-index.tsv"

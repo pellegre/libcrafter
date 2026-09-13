@@ -770,6 +770,16 @@ fn axis(label: usize, width: usize) -> f32 {
                         - (2. * ((label >> 2) & 1) as f32 - 1.)
                             * (3. - 2. * ((label >> 3) & 1) as f32)))
         }
+        // IEEE802.11ax-2021 Figures27-37..40; b0..b4 form I, b5..b9 Q.
+        5 => {
+            sign * (16.
+                - (2. * ((label >> 1) & 1) as f32 - 1.)
+                    * (8.
+                        - (2. * ((label >> 2) & 1) as f32 - 1.)
+                            * (4.
+                                - (2. * ((label >> 3) & 1) as f32 - 1.)
+                                    * (3. - 2. * ((label >> 4) & 1) as f32))))
+        }
         _ => unreachable!("validated modulation width"),
     }
 }
@@ -1372,6 +1382,42 @@ mod vht_bcc_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn radio_he_qam_independent_metrics() {
+        let index = include_str!("../../tests/fixtures/iq/he-qam-index.tsv");
+        assert_eq!(index.lines().skip(1).count(), 1313);
+        let scale = 682f32.sqrt();
+        let mut energy = 0.;
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            assert_eq!(c.len(), 13);
+            let i: f32 = c[0].parse().unwrap();
+            let q: f32 = c[1].parse().unwrap();
+            if c[2] != "-" {
+                energy += (i * i + q * q) / 682.;
+            }
+            for weight in [0., 0.125, 1., 7.] {
+                let mut out = Vec::new();
+                demap(i / scale, 5, scale, weight, &mut out);
+                demap(q / scale, 5, scale, weight, &mut out);
+                assert_eq!(out.len(), 10);
+                for (bit, actual) in out.into_iter().enumerate() {
+                    let expected = c[3 + bit].parse::<f32>().unwrap() * weight;
+                    assert!(
+                        (actual - expected).abs() <= 2e-5 * (1. + expected.abs()),
+                        "{row}: bit={bit} weight={weight} actual={actual} expected={expected}"
+                    );
+                    if weight == 0. {
+                        assert_eq!(actual, 0.);
+                    } else if c[2] != "-" {
+                        assert_eq!(u8::from(actual > 0.), c[2].as_bytes()[bit] - b'0');
+                    }
+                }
+            }
+        }
+        assert!((energy / 1024. - 1.).abs() < 1e-6);
+    }
+
     #[test]
     fn radio_vht_qam_independent_metrics() {
         let index = include_str!("../../tests/fixtures/iq/vht-qam-index.tsv");

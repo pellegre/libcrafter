@@ -7,6 +7,25 @@ use super::{
 const PILOTS: [i32; 8] = [-116, -90, -48, -22, 22, 48, 90, 116];
 const SIGNS: [f32; 8] = [1., 1., 1., -1., -1., 1., 1., 1.];
 
+/// Restore constellation groups to LDPC order for one non-DCM 242-tone RU
+/// stream. Input is ascending DATA-tone order (pilots excluded). IEEE802.11ax
+/// Table27-36/Equation27-95: DTM=9, NSD=234, t(k)=9*(k mod26)+floor(k/26).
+pub(super) fn ldpc_order(metrics: &[f32], bits_per_tone: usize) -> Option<Vec<f32>> {
+    if !matches!(bits_per_tone, 1 | 2 | 4 | 6 | 8 | 10)
+        || metrics.len() != 234 * bits_per_tone
+        || metrics.iter().any(|v| !v.is_finite())
+    {
+        return None;
+    }
+    let mut ordered = Vec::new();
+    ordered.try_reserve_exact(metrics.len()).ok()?;
+    for k in 0..234 {
+        let start = (9 * (k % 26) + k / 26) * bits_per_tone;
+        ordered.extend_from_slice(&metrics[start..start + bits_per_tone]);
+    }
+    Some(ordered)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Admission {
     pub signal: super::he::SuSignal,
@@ -204,6 +223,50 @@ pub(super) fn recover(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn radio_he_ldpc_independent_tone_order() {
+        let rows: Vec<_> = include_str!("../../tests/fixtures/iq/he-ldpc-tones.tsv")
+            .lines()
+            .skip(1)
+            .map(|row| {
+                let (source, tone) = row.split_once('\t').unwrap();
+                (
+                    source.parse::<usize>().unwrap(),
+                    tone.parse::<usize>().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(rows.len(), 234);
+        for width in [1, 2, 4, 6, 8, 10] {
+            let mut wire = vec![0.; 234 * width];
+            for &(source, tone) in &rows {
+                for bit in 0..width {
+                    wire[tone * width + bit] = (source * width + bit) as f32 - 500.;
+                }
+            }
+            let expected: Vec<_> = (0..234 * width).map(|i| i as f32 - 500.).collect();
+            assert_eq!(super::ldpc_order(&wire, width), Some(expected));
+            assert!(super::ldpc_order(&wire[..wire.len() - 1], width).is_none());
+            wire.push(0.);
+            assert!(super::ldpc_order(&wire, width).is_none());
+            wire.pop();
+            for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                wire[0] = value;
+                assert!(super::ldpc_order(&wire, width).is_none());
+            }
+            for value in [0., -0., f32::MAX, f32::MIN_POSITIVE] {
+                wire.fill(value);
+                assert!(super::ldpc_order(&wire, width)
+                    .unwrap()
+                    .iter()
+                    .all(|actual| actual.to_bits() == value.to_bits()));
+            }
+        }
+        for width in [0, 3, 5, usize::MAX] {
+            assert!(super::ldpc_order(&[], width).is_none());
+        }
+    }
+
     use super::*;
     fn fixture(name: &str) -> (Vec<ComplexSample>, Acquisition) {
         let bytes = std::fs::read(format!(

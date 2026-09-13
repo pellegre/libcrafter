@@ -1,5 +1,14 @@
 # Independent IQ vector contract
 
+`he-qam-index.tsv` contains all 1,024 HE constellation labels and 289 off-grid
+points with independent rational-distance soft metrics. `he-ldpc-tones.tsv`
+enumerates all 234 DATA-tone positions using a matrix-transpose oracle.
+`he_demapping_vectors.py --check` reproduces both from IEEE 802.11ax-2021
+Figures 27-37 through 27-40, Table 27-36 and Equation 27-95. Tests cover
+normalization, channel weights, bit-group preservation and invalid inputs.
+These are private non-DCM demapping primitives, not full HE LDPC IQ or live
+hardware qualification; public HE LDPC admission remains disabled.
+
 `he-ldpc-rate-index.tsv` contains 17,583 independent forward HE20 SU LDPC
 sizing cases; `he-ldpc-rate-codewords.tsv` contains 72 Gaussian-encoded
 bitstreams. `he_ldpc_rate_vectors.py --check` reproduces both. These qualify
