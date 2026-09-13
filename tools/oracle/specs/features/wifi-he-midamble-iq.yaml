@@ -1,0 +1,21 @@
+version: 1
+kind: feature
+name: wifi_he_midamble_iq
+summary: HE20 SU one-stream BCC and LDPC midamble channel refresh.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: training-refresh
+    source: IEEE 802.11ax-2021 27.3.12.16 Equation27-112 Figures27-41-42
+    checks: [period_10_and_20, all_guard_training_pairs, bcc_and_ldpc, changing_channel, unchanged_data_pilot_sequence, no_midamble_before_sole_last_symbol, doppler_without_midambles, exact_mac_bytes, midamble_truncation, erased_training]
+coverage_cases: [wifi-he-midamble-iq]
+supported_cases:
+  - {name: wifi-he-midamble-iq, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - HE20 SU one stream; DCM, STBC and other HE layouts remain separate work.
+      - Piecewise varying independent channels qualify refresh behavior, not arbitrary Doppler tracking or live RF interoperability.

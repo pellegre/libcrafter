@@ -201,9 +201,23 @@ mod tests {
                     .skip(1)
                     .filter(|r| r.starts_with("he-ldpc-iq-mcs11-ltf1-gi800-")),
             )
+            .chain(
+                include_str!("../../tests/fixtures/iq/he-midamble-iq-index.tsv")
+                    .lines()
+                    .skip(1)
+                    .filter(|r| {
+                        r.starts_with("he-midamble-iq-mcs11-ldpc-ltf1-gi800-p10-n12\t")
+                            || r.starts_with("he-midamble-iq-mcs0-bcc-ltf1-gi800-p10-n12\t")
+                    }),
+            )
         {
             let c: Vec<_> = row.split('\t').collect();
-            let ldpc = c[0].starts_with("he-ldpc");
+            let midamble = c[0].starts_with("he-midamble");
+            let ldpc = if midamble {
+                c[2] == "1"
+            } else {
+                c[0].starts_with("he-ldpc")
+            };
             let bytes = std::fs::read(format!(
                 "{}/tests/fixtures/iq/{}.cs8",
                 env!("CARGO_MANIFEST_DIR"),
@@ -216,15 +230,21 @@ mod tests {
                 .with(Dot11Metadata::new())
                 .collect_records()
                 .unwrap();
-            let expected: Vec<Vec<u8>> = c[if ldpc { 5 } else { 6 }]
-                .split(',')
-                .map(|s| {
-                    s.as_bytes()
-                        .chunks_exact(2)
-                        .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
-                        .collect()
-                })
-                .collect();
+            let expected: Vec<Vec<u8>> = c[if midamble {
+                9
+            } else if ldpc {
+                5
+            } else {
+                6
+            }]
+            .split(',')
+            .map(|s| {
+                s.as_bytes()
+                    .chunks_exact(2)
+                    .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
+                    .collect()
+            })
+            .collect();
             assert_eq!(records.len(), expected.len());
             for (record, bytes) in records.iter().zip(expected) {
                 assert_eq!(record.metadata().captured_bytes().unwrap(), bytes);
@@ -240,7 +260,8 @@ mod tests {
                 assert!(rf
                     .diagnostics
                     .iter()
-                    .any(|d| matches!(d,PhyDiagnostic::HeSignal {fields,..} if fields.mcs==if ldpc {11} else {9} && fields.ldpc==ldpc)));
+                    .any(|d| matches!(d,PhyDiagnostic::HeSignal {fields,..} if fields.mcs==c[1].parse::<u8>().unwrap() && fields.ldpc==ldpc
+                        && fields.midamble_period==if midamble {Some(c[5].parse().unwrap())} else {None})));
                 assert_eq!(record.metadata(), &record.metadata().clone());
             }
         }

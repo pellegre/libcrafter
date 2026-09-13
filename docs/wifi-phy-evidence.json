@@ -294,6 +294,12 @@
       "fact": "HE 1024-QAM uses five label bits per axis and normalization 1/sqrt(682). For a non-DCM 242-tone RU, LDPC tone mapping has NSD=234 and DTM=9: transmitted data-tone index t(k)=9*(k mod26)+floor(k/26). Indices exclude pilots. Independent constellation and transpose fixtures qualify private demapping primitives, not complete LDPC IQ reception, DCM or spatial-stream separation."
     },
     {
+      "id": "he-midamble-channel-refresh",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.12.16 Equation27-112 Figures27-41-42; 27.3.12.13-14",
+      "fact": "Midambles repeat the preamble HE-LTF fields after groups of10 or20 DATA symbols, excluding after the last symbol and before a sole last symbol. DATA scrambling and encoding do not change. Doppler may be set even when a short PPDU contains no midamble. The receiver reuses the LTF estimator at the independently derived offsets, keeps DATA pilot indices and absolute CFO phase, and resets the residual phase-slope estimate after each refresh. Piecewise FIR-channel fixtures qualify this estimator behavior, not arbitrary Doppler tracking."
+    },
+    {
       "id": "he-aggregate-tag-order",
       "source": "ieee-80211ax-2021",
       "anchor": "9.7.1 Table 9-527; 10.12.6-7; 26.6.2",

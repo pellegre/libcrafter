@@ -5,6 +5,7 @@ optional aligned payload input supports the separate complete MAC corpus.
 Direct IDFT, source training and independently encoded payload; no receiver use.
 """
 import argparse
+import bisect
 import cmath
 import hashlib
 import math
@@ -22,8 +23,10 @@ PILOTS=[-116,-90,-48,-22,22,48,90,116]
 TONES=[k for k in training.TONES if k not in PILOTS]
 
 
-def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False,initial_padding=None):
+def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False,initial_padding=None,
+             midamble_period=None,initial_symbols=None):
     symbols=137 if long else 5
+    if initial_symbols is not None: symbols=initial_symbols
     padding=mcs%4+1
     if initial_padding is not None: padding=initial_padding
     cbps=234*BPS[mcs];dbps=DATA[mcs]
@@ -56,13 +59,17 @@ def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False
     coded += [n%2 for n in range(cbps-last)]
     assert len(coded)==symbols*cbps
     preamble=720+size*64+guard
-    data_end=preamble+symbols*(256+guard)
+    insertions=[n for n in range(1,symbols-1) if midamble_period and n%midamble_period==0]
+    data_end=preamble+symbols*(256+guard)+len(insertions)*(size*64+guard)
     pe=80*(mcs%5)
     rounded=80*math.ceil((data_end+pe-400)/80)
     length=3*(rounded//80)-5
     header=[0]*52
     for i in (0,14,34,40):header[i]=1
     if ldpc:header[33]=1;header[34]=extra
+    if midamble_period:
+        assert midamble_period in (10,20)
+        header[41]=1;header[25]=int(midamble_period==20)
     header[3:7]=[(mcs>>i)&1 for i in range(4)]
     code={(1,16):0,(2,16):1,(2,32):2,(4,64):3,(4,16):3}[size,guard]
     header[21:23]=[code&1,code>>1]
@@ -88,7 +95,11 @@ def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False
     wave+=ltf[-guard:]+ltf
     assert len(wave)==37+preamble
     polarities=[1-2*b for b in base.scramble([0]*(symbols+4),127)]
+    refresh=[]
     for n in range(symbols):
+        if n in insertions:
+            refresh.append(len(wave))
+            wave+=ltf[-guard:]+ltf
         block=coded[n*cbps:(n+1)*cbps]
         interleaved=[0]*cbps;s=max(1,BPS[mcs]//2)
         if ldpc:
@@ -124,7 +135,17 @@ def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False
     if case=='selective':taps +=[(5,.35+.2j),(11,-.2j)]
     cfo=0 if case=='flat' else .018
     phase=0 if case=='flat' else .7
-    samples=[sum(h*wave[n-d] for d,h in taps if n>=d)*cmath.exp(1j*(phase+cfo*n)) for n in range(len(wave))]
+    if case=='changing':
+        channels=[[(0,1+0j),(5,.35+.2j),(11,-.2j)],
+                  [(0,.65+.2j),(7,.3-.1j),(11,.15j)],
+                  [(0,1.1-.1j),(3,-.2+.1j)]]
+        samples=[sum(h*wave[n-d] for d,h in channels[bisect.bisect_right(refresh,n)%3] if n>=d)
+                 *cmath.exp(1j*(phase+cfo*n)) for n in range(len(wave))]
+    else:
+        samples=[sum(h*wave[n-d] for d,h in taps if n>=d)*cmath.exp(1j*(phase+cfo*n)) for n in range(len(wave))]
+    if invalid=='erased-midamble':
+        start=refresh[0];samples[start:start+size*64+guard]=[0j]*(size*64+guard)
+    if invalid=='truncated-midamble':samples=samples[:refresh[0]+size*64+guard-1]
     gain=min(200,math.floor(120/max(max(abs(v.real),abs(v.imag)) for v in samples)))
     assert all(max(abs(v.real),abs(v.imag))*gain<127 for v in samples)
     return base.quantize(samples,scale=gain),[mcs,size,guard,padding,symbols,psdu.hex(),cfo,

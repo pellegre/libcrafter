@@ -52,7 +52,7 @@ pub(super) fn admit(
     }
     let prefix = super::he_iq::decode_su_prefix(samples, a)?;
     let h = prefix.signal;
-    if h.dcm || h.stbc || h.midamble_period.is_some() || h.space_time_streams != 1 {
+    if h.dcm || h.stbc || h.space_time_streams != 1 {
         return None;
     }
     let timing = Timing::new(6_000_000, prefix.legacy_length, &h).ok()?;
@@ -96,7 +96,7 @@ pub(super) fn recover(
     max_psdu: usize,
 ) -> Option<Vec<u8>> {
     let admitted = admit(samples, a, max_psdu, samples.len())?;
-    let trained = train_su(samples, a)?;
+    let mut trained = train_su(samples, a)?;
     let h = admitted.signal;
     let timing = admitted.timing;
     let c = admitted.capacity;
@@ -121,6 +121,18 @@ pub(super) fn recover(
     }
     let mut slope = 0.;
     for symbol in 0..timing.data_symbols {
+        if let Some(period) = h.midamble_period.map(usize::from) {
+            if symbol > 0 && symbol % period == 0 && symbol / period <= timing.midambles {
+                let cp = timing
+                    .symbol_start(symbol)?
+                    .checked_sub(64 * usize::from(h.ltf_size) + trained.guard)?
+                    .checked_sub(320)?;
+                trained.channel = super::he_training::train_field(samples, a, &h, cp)?;
+                // The refreshed LTF includes the channel's current phase slope.
+                // DATA indices and pilot polarity do not advance over training.
+                slope = 0.;
+            }
+        }
         let absolute = a
             .preamble_start
             .checked_add(timing.symbol_start(symbol)? as u64)?
@@ -291,6 +303,81 @@ mod tests {
     }
 
     use super::*;
+    #[test]
+    fn radio_he_midamble_iq_channel_refresh() {
+        let hex = |s: &str| -> Vec<u8> {
+            (0..s.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+                .collect()
+        };
+        let rows = include_str!("../../tests/fixtures/iq/he-midamble-iq-index.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 270);
+        let mut no_midambles = 0;
+        let mut multiple = 0;
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let (samples, a) = fixture(c[0]);
+            let input = &samples[a.signal_start as usize..];
+            let expected = hex(c[8]);
+            let admitted = admit(&input[..320], &a, expected.len(), input.len()).expect(c[0]);
+            assert_eq!(admitted.signal.midamble_period, Some(c[5].parse().unwrap()));
+            assert_eq!(admitted.timing.data_symbols, c[6].parse::<usize>().unwrap());
+            assert_eq!(admitted.timing.midambles, c[7].parse::<usize>().unwrap());
+            no_midambles += usize::from(admitted.timing.midambles == 0);
+            multiple += usize::from(admitted.timing.midambles > 1);
+            let end = admitted.required_samples;
+            let psdu = recover(&input[..end], &a, expected.len()).expect(c[0]);
+            assert_eq!(psdu, expected, "{}", c[0]);
+            assert!(admit(&input[..320], &a, expected.len() - 1, input.len()).is_none());
+            assert!(admit(&input[..320], &a, expected.len(), end - 1).is_none());
+            assert!(recover(&input[..end - 1], &a, expected.len()).is_none());
+            let frames: Vec<_> = super::super::ampdu::Scan::he(&psdu, 16383)
+                .filter_map(|e| match e {
+                    super::super::ampdu::Event::Frame { bytes, .. } => Some(bytes.to_vec()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                frames,
+                c[9].split(',').map(hex).collect::<Vec<_>>(),
+                "{}",
+                c[0]
+            );
+        }
+        assert!(no_midambles > 0 && multiple > 0);
+        let (samples, a) = fixture("he-midamble-iq-mcs0-bcc-ltf1-gi800-p10-n12");
+        let input = &samples[a.signal_start as usize..];
+        let admitted = admit(&input[..320], &a, 65535, input.len()).unwrap();
+        let h = admitted.signal;
+        let span = 64 * usize::from(h.ltf_size) + usize::from(h.guard_ns) / 50;
+        let cp = admitted.timing.symbol_start(10).unwrap() - span - 320;
+        assert!(super::super::he_training::train_field(input, &a, &h, cp).is_some());
+        assert!(
+            super::super::he_training::train_field(&input[..cp + span - 1], &a, &h, cp).is_none()
+        );
+        assert!(super::super::he_training::train_field(input, &a, &h, usize::MAX).is_none());
+        let mut bad = a.clone();
+        bad.signal_start = u64::MAX;
+        assert!(super::super::he_training::train_field(input, &bad, &h, cp).is_none());
+        let mut erased = input.to_vec();
+        erased[cp..cp + span].fill(ComplexSample::ZERO);
+        assert!(super::super::he_training::train_field(&erased, &a, &h, cp).is_none());
+        erased[cp + span - 1].i = f32::NAN;
+        assert!(super::super::he_training::train_field(&erased, &a, &h, cp).is_none());
+        for row in include_str!("../../tests/fixtures/iq/he-midamble-iq-invalid-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let name = row.split('\t').next().unwrap();
+            let (samples, a) = fixture(name);
+            assert!(
+                recover(&samples[a.signal_start as usize..], &a, 65535).is_none(),
+                "{name}"
+            );
+        }
+    }
+
     #[test]
     fn radio_he_ldpc_iq_complete_mac_waveforms() {
         let hex = |s: &str| -> Vec<u8> {
@@ -503,8 +590,10 @@ mod tests {
             let (samples, a) = fixture(name);
             let input = &samples[a.signal_start as usize..];
             // SERVICE and DATA truncation are not header errors.
-            let expected =
-                name.ends_with("service") || name.ends_with("truncated") || name.ends_with("ldpc");
+            let expected = name.ends_with("service")
+                || name.ends_with("truncated")
+                || name.ends_with("ldpc")
+                || name.ends_with("midamble");
             assert_eq!(
                 admit(&input[..320], &a, usize::MAX, usize::MAX).is_some(),
                 expected,
@@ -555,8 +644,11 @@ mod tests {
         {
             let name = row.split('\t').next().unwrap();
             let (samples, a) = fixture(name);
-            assert!(
-                recover(&samples[a.signal_start as usize..], &a, 65535).is_none(),
+            // Historical unsupported-layout fixture: Doppler with only five
+            // DATA symbols is valid and contains no inserted training.
+            assert_eq!(
+                recover(&samples[a.signal_start as usize..], &a, 65535).is_some(),
+                name.ends_with("midamble"),
                 "{name}"
             );
         }

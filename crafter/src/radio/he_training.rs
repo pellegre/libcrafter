@@ -90,6 +90,27 @@ fn delay_fit(channel: &mut [ComplexSample; 256], tones: &[i32], guard: usize) ->
 pub(super) fn train_su(samples: &[ComplexSample], a: &Acquisition) -> Option<Trained> {
     let prefix = decode_su_prefix(samples, a)?;
     let fields = prefix.signal;
+    // L-SIG/RL-SIG/SIG-A total320 samples, then80 samples of HE-STF.
+    let channel = train_field(samples, a, &fields, 400)?;
+    let guard = usize::from(fields.guard_ns) / 50;
+    Some(Trained {
+        prefix,
+        channel,
+        data_start: a
+            .signal_start
+            .checked_add((400 + guard + 64 * usize::from(fields.ltf_size)) as u64)?,
+        guard,
+    })
+}
+
+/// A preamble LTF or identical midamble field. `cp` is relative to L-SIG;
+/// absolute phase uses the original acquisition, not a restarted CFO clock.
+pub(super) fn train_field(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    fields: &super::he::SuSignal,
+    cp: usize,
+) -> Option<[ComplexSample; 256]> {
     if fields.space_time_streams != 1 || fields.stbc {
         return None;
     }
@@ -101,9 +122,8 @@ pub(super) fn train_su(samples: &[ComplexSample], a: &Acquisition) -> Option<Tra
         (4, 3200) => (LTF4, 256, 64, 242),
         _ => return None,
     };
-    // L-SIG/RL-SIG/SIG-A total320 samples, then80 samples of HE-STF.
-    let useful = 400 + guard;
-    let wave = samples.get(useful..useful + nfft)?;
+    let useful = cp.checked_add(guard)?;
+    let wave = samples.get(useful..useful.checked_add(nfft)?)?;
     let start = a.signal_start.checked_add(useful as u64)?;
     let mut time = [ComplexSample::ZERO; 256];
     for (n, value) in time.iter_mut().take(nfft).enumerate() {
@@ -142,12 +162,7 @@ pub(super) fn train_su(samples: &[ComplexSample], a: &Acquisition) -> Option<Tra
         .map(|(i, _)| i as i32 - 122)
         .collect();
     delay_fit(&mut channel, &trained, guard)?;
-    Some(Trained {
-        prefix,
-        channel,
-        data_start: start.checked_add(nfft as u64)?,
-        guard,
-    })
+    Some(channel)
 }
 
 #[cfg(test)]

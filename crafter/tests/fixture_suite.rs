@@ -8644,6 +8644,8 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "he-ldpc-tones.tsv"
                 | "he-ldpc-iq-index.tsv"
                 | "he-ldpc-iq-invalid-index.tsv"
+                | "he-midamble-iq-index.tsv"
+                | "he-midamble-iq-invalid-index.tsv"
                 | "vht-ldpc-iq-index.tsv"
                 | "vht-stbc-iq-index.tsv"
                 | "vht-stbc-iq-invalid-index.tsv"
@@ -8666,6 +8668,16 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 .skip(1)
                 .chain(include_str!("fixtures/iq/dsss-index.tsv").lines().skip(1))
                 .chain(include_str!("fixtures/iq/ht-bcc-index.tsv").lines().skip(1))
+                .chain(
+                    include_str!("fixtures/iq/he-midamble-iq-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
+                .chain(
+                    include_str!("fixtures/iq/he-midamble-iq-invalid-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
                 .chain(
                     include_str!("fixtures/iq/he-ldpc-iq-index.tsv")
                         .lines()

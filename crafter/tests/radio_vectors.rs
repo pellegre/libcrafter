@@ -4,6 +4,36 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_midamble_iq_independent_inventory() {
+    for (index, count, hash) in [
+        (
+            include_str!("fixtures/iq/he-midamble-iq-index.tsv"),
+            270,
+            "cd969fa750dd20c147858221dd79bbfe02522db82ac90efaec84164f54993d5e",
+        ),
+        (
+            include_str!("fixtures/iq/he-midamble-iq-invalid-index.tsv"),
+            12,
+            "890dad7a7f91bfde9088613efbf03e7838f938f422a41c5b07ed5584fb8ff1e8",
+        ),
+    ] {
+        assert_eq!(index.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), hash);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(bytes.len() % 2, 0);
+            assert_eq!(hex(&Sha256::digest(&bytes)), *c.last().unwrap());
+        }
+    }
+}
+
+#[test]
 fn radio_he_ldpc_iq_independent_inventory() {
     for (index, count, hash) in [
         (

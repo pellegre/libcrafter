@@ -26,7 +26,12 @@ tag bits and received FCS and publishes only checksum-valid MPDUs. HE headers
 are available as `HeSuSignalFields` and `PhyDiagnostic::HeSignal`; receive
 artifacts use `phy: he`, an optional `he` object, and `he_signal` header records.
 
-HE DCM, STBC, midambles, MU/TB/ER SU, wider channels and independent
+The one-stream HE SU path also refreshes channel estimates at 10/20-symbol
+midambles, preserving DATA pilot indices and absolute CFO phase. Doppler-marked
+short packets with no inserted midamble are accepted. Independent qualification
+adds 270 complete changing-channel waveforms and 12 invalid training cases.
+
+HE DCM, STBC, MU/TB/ER SU, wider channels and independent
 multiple DATA streams are not implemented by this receive path. Offline
 qualification uses 200 BCC and 240 LDPC complete independent waveforms; it does not establish
 HE-capable dongle interoperability, sustained real-time speed or modern TX.
@@ -393,7 +398,7 @@ positions from checked signaling. Independent forward timelines cover the
 five SU training/guard combinations, 10/20-symbol midamble periods and 0-16us
 packet extension. Exact DATA/PE boundaries remain distinct from L-SIG's rounded
 duration; offsets exclude the optional signal extension. This is not DATA
-admission, multi-stream demodulation, midamble channel estimation or sounding
+admission, multi-stream demodulation or sounding
 NDP support. Public frame publication remains unfinished.
 
 The private HE20 SU capacity kernel derives MCS dimensions, meaningful coded
@@ -413,13 +418,21 @@ path now supplies both for qualified one-stream HE SU layouts.
 
 The private HE20 SU IQ kernel now connects acquisition, training, timing,
 capacity, pilot tracking, QAM demapping, BCC deinterleaving or LDPC tone-order
-restoration and byte recovery without DCM, STBC or midambles. Independent full-waveform
+restoration and byte recovery without DCM or STBC. Independent full-waveform
 cases recover exact synthetic PSDUs across all five SU guard/training pairs,
 frequency offset and multipath. LDPC removes post-FEC padding before rate
 recovery, verifies SERVICE and scans aggregates before frame publication.
 Sparse training uses regularized finite-delay least-squares estimation; it is an estimator,
 not a guarantee for every propagation channel. Other HE layouts remain unfinished. These offline
 tests do not establish live hardware qualification or real-time throughput.
+
+Midambles reuse the same single-stream LTF estimator as initial training.
+Their position follows DATA-symbol timing, including the exception for a sole
+last DATA symbol. The estimator refreshes amplitude and phase response and
+restarts its residual slope estimate without restarting DATA pilots, the
+scrambler or FEC. Tests use piecewise FIR channel changes, both periods, all
+five GI/LTF pairs, BCC MCS0–9 and LDPC MCS0–11, and long pilot-sequence wraps.
+This does not guarantee tracking of arbitrary channel variation between midambles.
 
 ## VHT BCC DATA implementation
 

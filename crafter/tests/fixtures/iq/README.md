@@ -1,5 +1,15 @@
 # Independent IQ vector contract
 
+`he-midamble-iq-index.tsv` contains 270 complete HE20 SU BCC/LDPC waveforms
+with periods of 10 or 20 DATA symbols and channel changes at training boundaries.
+It covers every currently qualified SU MCS/GI/LTF combination, short Doppler
+packets with no midamble, final-symbol insertion exceptions, multiple refreshes
+and long pilot-sequence wraps. Twelve invalid cases erase or truncate training.
+`he_midamble_iq_vectors.py --check` independently reproduces both inventories.
+The historical `he-bcc-iq-invalid-midamble` fixture is now recognized as a valid
+short Doppler-marked PHY carrying an arbitrary, non-MAC PSDU; its filename is
+retained for fixture compatibility. These tests are not live RF qualification.
+
 `he-ldpc-iq-index.tsv` contains 240 complete HE20 SU one-stream LDPC waveforms
 covering MCS0–11, all five guard/training pairs, four initial padding factors,
 tagged aggregates and deliberately corrupted FCS. Six invalid SERVICE/truncated

@@ -1672,6 +1672,11 @@ mod tests {
                 assert!(out.diagnostics.contains(&PhyDiagnostic::InvalidData));
             } else if name.ends_with("truncated") {
                 assert!(out.diagnostics.contains(&PhyDiagnostic::TruncatedFrame));
+            } else if name.ends_with("midamble") {
+                // Valid short Doppler-marked PHY, but its synthetic PSDU
+                // contains no valid MAC aggregate.
+                assert!(!out.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy));
+                assert!(out.diagnostics.iter().any(|d| matches!(d, PhyDiagnostic::HeSignal {fields,..} if fields.midamble_period==Some(10))));
             } else {
                 assert!(
                     out.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy),
@@ -1685,6 +1690,106 @@ mod tests {
             assert!(out.diagnostics.contains(&PhyDiagnostic::TruncatedFrame));
         }
     }
+    #[test]
+    fn radio_he_midamble_gap_resets_training() {
+        let bytes = include_bytes!(
+            "../../tests/fixtures/iq/he-midamble-iq-mcs0-bcc-ltf1-gi800-p10-n12.cs8"
+        );
+        // First midamble CP starts at sample3557; interrupt its useful LTF.
+        let cut = 3587;
+        let mut decoder = WifiDecoder::new();
+        for (sequence, sample_index, part) in [
+            (0, 0, &bytes[..cut * 2]),
+            (1, (cut + 1) as u64, &bytes[(cut + 1) * 2..]),
+        ] {
+            let chunk = IqChunk::new(
+                config(),
+                IqPosition {
+                    epoch: 0,
+                    sequence,
+                    sample_index,
+                    time_anchor: None,
+                    discontinuity: None,
+                },
+                part.iter().map(|b| *b as i8).collect(),
+            )
+            .unwrap();
+            let out = decoder.consume(IqEvent::Chunk(chunk)).unwrap();
+            assert!(out.frames.is_empty());
+            if sequence == 1 {
+                assert!(out
+                    .diagnostics
+                    .iter()
+                    .any(|d| matches!(d, PhyDiagnostic::Reset(ResetReason::Gap(_)))));
+            }
+        }
+        assert_eq!(feed(&mut decoder, bytes, 997).frames.len(), 2);
+    }
+
+    #[test]
+    fn radio_he_midamble_streaming_complete_aggregates() {
+        for row in include_str!("../../tests/fixtures/iq/he-midamble-iq-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let expected: Vec<Vec<u8>> = c[9]
+                .split(',')
+                .map(|s| {
+                    (0..s.len())
+                        .step_by(2)
+                        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+                        .collect()
+                })
+                .collect();
+            for size in [37, 997] {
+                let out = feed(&mut WifiDecoder::new(), &bytes, size);
+                assert_eq!(
+                    out.frames
+                        .iter()
+                        .map(|f| f.bytes.clone())
+                        .collect::<Vec<_>>(),
+                    expected,
+                    "{} chunk{size}",
+                    c[0]
+                );
+                for frame in out.frames {
+                    assert_eq!(frame.integrity, FrameIntegrity::ValidFcs);
+                    assert!(frame.diagnostics.iter().any(|d| matches!(d, PhyDiagnostic::HeSignal {fields,..}
+                        if fields.mcs==c[1].parse::<u8>().unwrap() && fields.ldpc==(c[2]=="1") && fields.midamble_period==Some(c[5].parse().unwrap()))));
+                }
+            }
+        }
+        for row in include_str!("../../tests/fixtures/iq/he-midamble-iq-invalid-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let name = row.split('\t').next().unwrap();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{name}.cs8",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap();
+            let out = feed(&mut WifiDecoder::new(), &bytes, 37);
+            assert!(out.frames.is_empty(), "{name}");
+            assert!(
+                out.diagnostics
+                    .contains(&if name.ends_with("truncated-midamble") {
+                        PhyDiagnostic::TruncatedFrame
+                    } else {
+                        PhyDiagnostic::InvalidData
+                    }),
+                "{name}"
+            );
+        }
+    }
+
     #[test]
     fn radio_he_ldpc_streaming_complete_aggregates() {
         for row in include_str!("../../tests/fixtures/iq/he-ldpc-iq-index.tsv")
