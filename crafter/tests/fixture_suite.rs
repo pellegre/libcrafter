@@ -8623,6 +8623,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "he-ru-symbol.tsv"
                 | "he-mu-data-iq-index.tsv"
                 | "he-mu-ampdu-iq-index.tsv"
+                | "he-mu-compressed-iq-index.tsv"
                 | "he-er242-capacity-index.tsv"
                 | "he-er106-bcc-index.tsv"
                 | "he-er242-bcc-index.tsv"
@@ -8715,6 +8716,11 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 .lines()
                 .skip(1)
                 .chain(include_str!("fixtures/iq/dsss-index.tsv").lines().skip(1))
+                .chain(
+                    include_str!("fixtures/iq/he-mu-compressed-iq-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
                 .chain(
                     include_str!("fixtures/iq/he-mu-ampdu-iq-index.tsv")
                         .lines()

@@ -24,7 +24,10 @@ from he_capacity_vectors import BPS
 from he_ldpc_rate_vectors import layout, encode_information, damage_codeword, RATES
 
 
-def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage='none',mac_payloads=None):
+def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage='none',mac_payloads=None,
+             compressed=False,sig_b_mcs=0,sig_b_dcm=False):
+    assert not compressed or code==192
+    assert sig_b_mcs in range(6) and (not sig_b_dcm or sig_b_mcs in (0,1,3,4))
     geom={(ru,index):(data,pilots) for ru,index,data,pilots in geometry()}
     rus=[]
     for item in allocation(code)[1].split(','):
@@ -85,20 +88,24 @@ def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage=
             output += [(n+j)%2 for j in range(cbps-keep)]
         assert cursor==len(coded)
         streams.append(output)
-    # SIG-B MCS0, independent BCC block encoding, noncompressed allocation.
-    fields=[checked([code>>i&1 for i in range(8)])]
+    # Independent SIG-B block coding; one compressed user uses Table27-28.
+    fields=[] if compressed else [checked([code>>i&1 for i in range(8)])]
     values=[37+i | (mcs<<15) | (int(dcm)<<19) | (int(ldpc)<<20) for i in range(len(rus))]
     for start in range(0,len(values),2):fields.append(checked([v>>i&1 for v in values[start:start+2] for i in range(21)]))
-    if damage=='user-crc':fields[1][-10]^=1
-    nb=sum(map(len,fields));sigb=math.ceil(nb/26)
-    coded=[bit for field in fields for pair in encode(field) for bit in pair]
-    coded += [bit for pair in encode([0]*(sigb*26-nb)) for bit in pair]
+    if damage=='user-crc':fields[int(not compressed)][-10]^=1
+    dbps=[26,52,78,104,156,208][sig_b_mcs]//(1+sig_b_dcm)
+    nb=sum(map(len,fields));sigb=math.ceil(nb/dbps)
+    pairs=[pair for field in fields for pair in encode(field)] + encode([0]*(sigb*dbps-nb))
+    coded=[]
+    for n,(a,b) in enumerate(pairs):
+        coded.extend([a,b] if sig_b_mcs in (0,1,3) else
+            ([a,b],[a],[b])[n%3] if sig_b_mcs in (2,4) else ([a,b] if n%2==0 else [a]))
     training_samples=nltf*(64*size+guard)
     midambles=(symbols-2)//period if period else 0
     end=720+80*sigb+training_samples+symbols*(256+guard)+midambles*training_samples
     units=math.ceil(F(end-400,80));length=3*units-4
     header=[0]*52
-    for start,width,value in [(5,6,37),(18,4,min(sigb-1,15)),(23,2,{(4,16):0,(2,16):1,(2,32):2,(4,64):3}[size,guard]),
+    for start,width,value in [(1,3,sig_b_mcs),(4,1,int(sig_b_dcm)),(5,6,37),(18,4,0 if compressed else min(sigb-1,15)),(22,1,int(compressed)),(23,2,{(4,16):0,(2,16):1,(2,32):2,(4,64):3}[size,guard]),
         (25,1,int(bool(period))),(33,1,1),(34,3,[1,2,4,6,8].index(nltf)),(37,1,int(extra)),(39,2,final_padding%4)]:put(header,start,width,value)
     if period==20:header[36]=1
     repair(header);siga=encoded(header)
@@ -106,10 +113,10 @@ def waveform(code,mcs,ldpc,dcm,size,guard,impaired=False,nltf=1,period=0,damage=
     wave=[0j]*37+[v*math.sqrt(52/56) for v in base.preamble()]
     wave+=symbol(legacy,legacy=True)*2+symbol(siga[:52])+symbol(siga[52:])
     polarities=[1-2*b for b in base.scramble([0]*(4+sigb+symbols),127)]
-    points=[complex(*map(float,p.split(','))) for p in modulate(''.join(map(str,coded)),0,False).split(';')]
+    points=[complex(*map(float,p.split(','))) for p in modulate(''.join(map(str,coded)),sig_b_mcs,sig_b_dcm).split(';')]
     for n in range(sigb):
         freq=[0j]*57
-        for k,v in zip(ht.CARRIERS,points[52*n:52*(n+1)]):freq[k+28]=v
+        for k,v in zip(ht.CARRIERS,points[52*n:52*(n+1)]):freq[k+28]=v/math.sqrt([1,2,2,10,10,42][sig_b_mcs])
         for k,s in [(-21,1),(-7,1),(7,1),(21,-1)]:freq[k+28]=s*polarities[4+n]
         time=[v*math.sqrt(52/56) for v in ht.ifft(freq)];wave+=time[-16:]+time
     total=sum(ru for ru,_,_ in rus)

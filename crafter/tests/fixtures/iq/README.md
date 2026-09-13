@@ -1,5 +1,13 @@
 # Independent IQ vector contract
 
+`he-mu-compressed-iq-index.tsv` indexes 242 independent compressed one-user
+HE20 MAC waveforms (27.3.11.8.4/Table27-28). There is no Common field, and the
+raw SIG-A count remains zero while SIG-B duration varies with its modulation.
+All 10 SIG-B MCS/DCM pairs occur across DATA modes and all four guard/training
+pairs. Clean, bad-FCS and bad-user-CRC cases qualify exact frame recovery and
+rejection, not multi-user spatial separation. Regenerate with
+`he_mu_compressed_iq_vectors.py`, adding `--check` to verify.
+
 `he-mu-ampdu-iq-index.tsv` indexes 94 independent MU PHY/MAC waveforms. Two
 checksummed MPDUs per user are encoded with BCC/LDPC, including DCM. Bad FCS,
 SERVICE, user-block CRC and LDPC codeword cases verify salvage without bypassing

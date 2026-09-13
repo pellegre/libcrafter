@@ -230,6 +230,14 @@ RU order. Duplicate suppression distinguishes users even when their bytes,
 aggregate offsets and PPDU intervals are identical. This remains offline
 qualification, not proof of live HE interoperability or real-time throughput.
 
+Compressed HE20 signaling with one user is independently qualified through
+MAC recovery by 242 additional waveforms. Per 27.3.11.8.4, this case uses a
+non-MU-MIMO User field on the full 242-tone RU, with no Common field. Tests
+cover all 10 SIG-B MCS/DCM choices across DATA modes and all four guard/training
+pairs, inferred SIG-B duration, CFO/selective channels, bad FCS and failed user
+CRC. The zero raw user-count code must not be interpreted as one SIG-B symbol.
+This does not qualify compressed multi-user spatial separation.
+
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,
 midambles10/20, CFO/selective channels, and a damaged first aggregate member;

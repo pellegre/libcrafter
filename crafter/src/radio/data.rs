@@ -1701,6 +1701,83 @@ mod vht_bcc_tests;
 mod tests {
     use super::*;
     #[test]
+    fn radio_he_mu_compressed_complete_aggregates() {
+        let rows = include_str!("../../tests/fixtures/iq/he-mu-compressed-iq-index.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 242);
+        let mut signaling = std::collections::BTreeSet::new();
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            signaling.insert((c[6].parse::<u8>().unwrap(), c[7] == "1"));
+            let expected: Vec<Vec<u8>> = if c[10] == "-" {
+                Vec::new()
+            } else {
+                c[10]
+                    .split(',')
+                    .map(|s| {
+                        (0..s.len())
+                            .step_by(2)
+                            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+                            .collect()
+                    })
+                    .collect()
+            };
+            for size in [37, 997] {
+                let mut decoder = WifiDecoder::new();
+                let out = feed(&mut decoder, &bytes, size);
+                assert_eq!(
+                    out.frames
+                        .iter()
+                        .map(|f| f.bytes.clone())
+                        .collect::<Vec<_>>(),
+                    expected,
+                    "{} size{size}",
+                    c[0]
+                );
+                assert_eq!(
+                    decoder.ofdm_stats().invalid_fcs,
+                    u64::from(c[9] == "bad-fcs"),
+                    "{}",
+                    c[0]
+                );
+                let fields = out
+                    .diagnostics
+                    .iter()
+                    .find_map(|d| match d {
+                        PhyDiagnostic::HeMuSigB { fields, .. } => Some(fields),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("{}: {:?}", c[0], out.diagnostics));
+                assert!(fields.common.is_none());
+                assert!(fields.signal.sig_b_compression);
+                assert_eq!(fields.signal.sig_b_symbols_or_users, 0);
+                assert_eq!(fields.symbols, c[8].parse().unwrap());
+                assert_eq!(fields.users.len(), 1);
+                if c[9] == "user-crc" {
+                    assert!(fields.users[0].is_err());
+                }
+                for frame in &out.frames {
+                    assert_eq!(frame.integrity, FrameIntegrity::ValidFcs);
+                    assert_eq!(frame.end_sample_index, c[11].parse().unwrap());
+                    assert!(frame.diagnostics.contains(&PhyDiagnostic::HeMuUser {
+                        user_index: 0,
+                        preamble_sample_index: 37
+                    }));
+                    assert!(matches!(fields.users[0].unwrap().encoding,
+                        HeSigBUserEncoding::NonMu { space_time_streams: 1, mcs, ldpc, dcm, .. }
+                        if mcs == c[1].parse::<u8>().unwrap() && ldpc == (c[2] == "1") && dcm == (c[3] == "1")));
+                }
+            }
+        }
+        assert_eq!(signaling.len(), 10);
+    }
+
+    #[test]
     fn radio_he_mu_streaming_complete_aggregates() {
         let rows = include_str!("../../tests/fixtures/iq/he-mu-ampdu-iq-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 94);
