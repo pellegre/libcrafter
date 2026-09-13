@@ -240,6 +240,15 @@ impl Layout {
     /// forward puncturing threshold. Payload includes pre-FEC padding, not tail.
     /// PHY timing/admission and stream recombination remain caller obligations.
     pub(super) fn he(a: &super::he::SuSignal, symbols: u16) -> Result<Self, Error> {
+        Self::he_for_format(a, symbols, false)
+    }
+
+    /// Format is independently verified; ER bandwidth identifies 242/upper 106 tones.
+    pub(super) fn he_for_format(
+        a: &super::he::SuSignal,
+        symbols: u16,
+        er: bool,
+    ) -> Result<Self, Error> {
         use super::he_capacity::Capacity;
         let symbols = usize::from(symbols);
         // Even the shortest HE20 SU preamble/GI cannot fit >400 DATA symbols
@@ -247,7 +256,7 @@ impl Layout {
         if !a.ldpc || symbols == 0 || symbols > 400 {
             return Err(Error::HeTiming);
         }
-        let c = Capacity::new(a, symbols).map_err(|_| Error::HeTiming)?;
+        let c = Capacity::for_format(a, symbols, er).map_err(|_| Error::HeTiming)?;
         let rate = match (c.rate_num, c.rate_den) {
             (1, 2) => Rate::Half,
             (2, 3) => Rate::TwoThirds,
@@ -268,7 +277,8 @@ impl Layout {
                 initial.pre_fec_padding -= 1;
             }
         }
-        let initial_c = Capacity::new(&initial, initial_symbols).map_err(|_| Error::HeTiming)?;
+        let initial_c =
+            Capacity::for_format(&initial, initial_symbols, er).map_err(|_| Error::HeTiming)?;
         let payload = initial_c.data_bits;
         let available = initial_c.coded_bits;
         let (num, den) = rate.ratio();
@@ -279,7 +289,7 @@ impl Layout {
         if Self::needs_extra(short, puncture, parity, rate) != extra {
             return Err(Error::HeTiming);
         }
-        let short_cbps = (if a.dcm { 30 } else { 60 }) * c.spatial_streams * c.bits_per_tone;
+        let short_cbps = c.coded_short;
         let expected = available
             + if extra {
                 group
@@ -388,20 +398,75 @@ mod tests {
     }
     #[test]
     fn radio_he_ldpc_independent_geometry() {
+        he_geometry(
+            include_str!("../../tests/fixtures/iq/he-ldpc-rate-index.tsv"),
+            None,
+        );
+    }
+    #[test]
+    fn radio_he_er_ldpc_independent_geometry() {
+        he_geometry(
+            include_str!("../../tests/fixtures/iq/he-er106-ldpc-rate-index.tsv"),
+            Some(1),
+        );
+        he_geometry(
+            include_str!("../../tests/fixtures/iq/he-er242-ldpc-rate-index.tsv"),
+            Some(0),
+        );
+        for bandwidth in [0, 1] {
+            let mut a = he_header();
+            a.bandwidth = bandwidth;
+            for symbols in [0, 401, u16::MAX] {
+                assert_eq!(
+                    Layout::he_for_format(&a, symbols, true),
+                    Err(Error::HeTiming)
+                );
+            }
+            for mcs in (if bandwidth == 1 { 1 } else { 3 })..=12 {
+                a.mcs = mcs;
+                assert!(Layout::he_for_format(&a, 4, true).is_err());
+            }
+            a.mcs = 0;
+            a.space_time_streams = 2;
+            assert!(Layout::he_for_format(&a, 4, true).is_err());
+            a.stbc = true;
+            a.dcm = true;
+            assert!(Layout::he_for_format(&a, 4, true).is_err());
+            a = he_header();
+            a.bandwidth = bandwidth;
+            a.ldpc = false;
+            assert!(Layout::he_for_format(&a, 4, true).is_err());
+            a.ldpc = true;
+            a.ldpc_extra_segment = None;
+            assert!(Layout::he_for_format(&a, 4, true).is_err());
+            a.ldpc_extra_segment = Some(false);
+            a.pre_fec_padding = 0;
+            assert!(Layout::he_for_format(&a, 4, true).is_err());
+        }
+        let mut a = he_header();
+        a.bandwidth = 2;
+        assert!(Layout::he_for_format(&a, 4, true).is_err());
+    }
+    fn he_geometry(rows: &str, er_bandwidth: Option<u8>) {
         let mut coverage = [false; 7];
-        for row in include_str!("../../tests/fixtures/iq/he-ldpc-rate-index.tsv")
-            .lines()
-            .skip(1)
-        {
+        for row in rows.lines().skip(1) {
             let c: Vec<usize> = row.split('\t').map(|s| s.parse().unwrap()).collect();
             let mut a = he_header();
+            a.bandwidth = er_bandwidth.unwrap_or(0);
             a.mcs = c[0] as u8;
             a.stbc = c[3] == 2;
             a.space_time_streams = if a.stbc { 2 } else { c[1] as u8 };
             a.dcm = c[2] != 0;
             a.pre_fec_padding = c[7] as u8;
             a.ldpc_extra_segment = Some(c[8] != 0);
-            let l = Layout::he(&a, c[6] as u16).unwrap_or_else(|e| panic!("{row}: {e:?}"));
+            let l = Layout::he_for_format(&a, c[6] as u16, er_bandwidth.is_some())
+                .unwrap_or_else(|e| panic!("{row}: {e:?}"));
+            if er_bandwidth == Some(0) {
+                assert_eq!(Layout::he(&a, c[6] as u16), Ok(l));
+            }
+            if er_bandwidth == Some(1) {
+                assert!(Layout::he(&a, c[6] as u16).is_err());
+            }
             assert_eq!(
                 [
                     l.symbols,
@@ -452,7 +517,10 @@ mod tests {
             coverage[5] |= l.punctured_bits > 0;
             coverage[6] |= l.repeated_bits > 0;
             a.ldpc_extra_segment = Some(c[8] == 0);
-            assert_ne!(Layout::he(&a, c[6] as u16), Ok(l));
+            assert_ne!(
+                Layout::he_for_format(&a, c[6] as u16, er_bandwidth.is_some()),
+                Ok(l)
+            );
         }
         assert!(coverage.into_iter().all(|b| b));
         let mut a = he_header();
@@ -473,6 +541,53 @@ mod tests {
         a = he_header();
         a.bandwidth = 1;
         assert!(Layout::he(&a, 4).is_err());
+    }
+    #[test]
+    fn radio_he_er_ldpc_independent_codeword_recovery() {
+        for (bandwidth, rows) in [
+            (
+                1,
+                include_str!("../../tests/fixtures/iq/he-er106-ldpc-rate-codewords.tsv"),
+            ),
+            (
+                0,
+                include_str!("../../tests/fixtures/iq/he-er242-ldpc-rate-codewords.tsv"),
+            ),
+        ] {
+            for row in rows.lines().skip(1) {
+                let c: Vec<_> = row.split('\t').collect();
+                let mut a = he_header();
+                a.bandwidth = bandwidth;
+                a.mcs = c[0].parse().unwrap();
+                a.dcm = c[1] == "1";
+                a.stbc = c[2] == "2";
+                a.space_time_streams = if a.stbc { 2 } else { 1 };
+                a.pre_fec_padding = c[4].parse().unwrap();
+                a.ldpc_extra_segment = Some(c[5] == "1");
+                let l = Layout::he_for_format(&a, c[3].parse().unwrap(), true).unwrap();
+                let expected: Vec<_> = c[6].bytes().map(|b| b - b'0').collect();
+                let bits: Vec<f32> = c[7]
+                    .bytes()
+                    .map(|b| if b == b'1' { 1. } else { -1. })
+                    .collect();
+                for scale in [1., f32::MAX, f32::MIN_POSITIVE] {
+                    let metrics: Vec<_> = bits.iter().map(|b| b * scale).collect();
+                    assert_eq!(l.recover(&metrics, 64).unwrap().0, expected);
+                }
+                let mut noisy = bits.clone();
+                noisy[7] *= -0.25;
+                assert_eq!(l.recover(&noisy, 64).unwrap().0, expected);
+                assert!(l.recover(&bits[..bits.len() - 1], 64).is_err());
+                let mut bad = bits.clone();
+                bad.push(1.);
+                assert!(l.recover(&bad, 64).is_err());
+                for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                    bad = bits.clone();
+                    bad[0] = value;
+                    assert!(l.recover(&bad, 64).is_err());
+                }
+            }
+        }
     }
     #[test]
     fn radio_he_ldpc_independent_codeword_recovery() {

@@ -64,7 +64,13 @@ pub(super) fn admit(
     .ok()?;
     let capacity = Capacity::new(&h, timing.data_symbols).ok()?;
     if h.ldpc {
-        super::ldpc_rate::Layout::he(&h, u16::try_from(timing.data_symbols).ok()?).ok()?;
+        let symbols = u16::try_from(timing.data_symbols).ok()?;
+        if prefix.er {
+            super::ldpc_rate::Layout::he_for_format(&h, symbols, true)
+        } else {
+            super::ldpc_rate::Layout::he(&h, symbols)
+        }
+        .ok()?;
     }
     let required_samples = timing.data_end.checked_sub(320)?;
     if capacity.psdu_bytes > max_psdu || required_samples > max_samples {
@@ -342,8 +348,13 @@ pub(super) fn recover(
         }
     }
     if h.ldpc {
-        let layout =
-            super::ldpc_rate::Layout::he(&h, u16::try_from(timing.data_symbols).ok()?).ok()?;
+        let symbols = u16::try_from(timing.data_symbols).ok()?;
+        let layout = if admitted.er {
+            super::ldpc_rate::Layout::he_for_format(&h, symbols, true)
+        } else {
+            super::ldpc_rate::Layout::he(&h, symbols)
+        }
+        .ok()?;
         let (bits, _) = layout.recover(&coded, 64).ok()?;
         super::data::descramble_psdu(bits, c.psdu_bytes).ok()
     } else if admitted.er {

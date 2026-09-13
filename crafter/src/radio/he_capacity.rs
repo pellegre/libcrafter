@@ -8,6 +8,7 @@ pub(super) struct Capacity {
     pub rate_num: usize,
     pub rate_den: usize,
     pub coded_per_symbol: usize,
+    pub coded_short: usize,
     pub data_per_symbol: usize,
     /// Meaningful coded positions in each last STBC-group symbol, before
     /// post-FEC padding; includes the special BCC/DCM BPSK filler when present.
@@ -131,6 +132,7 @@ impl Capacity {
             rate_num: num,
             rate_den: den,
             coded_per_symbol: cbps,
+            coded_short: short_cbps,
             data_per_symbol: dbps,
             coded_last,
             coded_bits,

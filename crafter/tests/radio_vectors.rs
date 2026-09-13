@@ -124,6 +124,26 @@ fn radio_he_demapping_independent_inventory() {
 fn radio_he_ldpc_rate_independent_inventory() {
     for (index, count, digest) in [
         (
+            include_str!("fixtures/iq/he-er106-ldpc-rate-index.tsv"),
+            705,
+            "00044320324bb055031a989cd8f5b9f44df5a1321362a8e797c30e3dd6250301",
+        ),
+        (
+            include_str!("fixtures/iq/he-er106-ldpc-rate-codewords.tsv"),
+            57,
+            "df509abf995e77c32bfde8a0a9553d972c5aa67a7be083b3c6f100547340076d",
+        ),
+        (
+            include_str!("fixtures/iq/he-er242-ldpc-rate-index.tsv"),
+            1839,
+            "3cc66fe044aff08f68a479f60873e4adf18c9fe4199a3f5d67803334e1b76aea",
+        ),
+        (
+            include_str!("fixtures/iq/he-er242-ldpc-rate-codewords.tsv"),
+            159,
+            "13150f2c9fafb59a916915a99b715828a8621214cc34ebb0e614b66bf7487258",
+        ),
+        (
             include_str!("fixtures/iq/he-ldpc-rate-index.tsv"),
             17583,
             "cd67b4b225fd05e1ffd694ecd9c7aabca00cedc34cf231fe57bbeacbf505221b",

@@ -53,6 +53,15 @@ initial-segment inversion, extra-segment thresholds, shortening, puncturing,
 repetition and codeword recovery with post-FEC padding excluded. MCS0-11,
 DCM/STBC and stream counts here are coding dimensions, not IQ qualification.
 
+`he-er106-ldpc-rate-index.tsv` and `he-er242-ldpc-rate-index.tsv` add
+705 and 1,839 independent extended-range sizing cases. Their corresponding
+`-codewords.tsv` files contain 57 and 159 independently Gaussian-encoded
+bitstreams. Reproduce with `he_ldpc_rate_vectors.py --er-tones 106 --check`
+and `--er-tones 242 --check`. These cover the ER MCS restrictions, DCM,
+STBC, shortened final segments, extra segments and multi-codeword payloads.
+They qualify coding geometry and recovery, not upper-106-tone IQ reception
+or live hardware operation (IEEE 802.11ax-2021 27.3.12.5.2).
+
 `he-ampdu-iq-index.tsv` records 200 complete HE20 SU BCC PHY/MAC IQ cases
 from `he_ampdu_iq_vectors.py`: MCS0-9, all five training/guard pairs, single
 and multiple QoS MPDUs, mixed tags, EOF padding and intentionally bad FCS.
