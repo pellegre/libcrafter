@@ -346,6 +346,8 @@ pub(super) fn recover(
             super::ldpc_rate::Layout::he(&h, u16::try_from(timing.data_symbols).ok()?).ok()?;
         let (bits, _) = layout.recover(&coded, 64).ok()?;
         super::data::descramble_psdu(bits, c.psdu_bytes).ok()
+    } else if admitted.er {
+        super::he_bcc::recover_for_format(&h, timing.data_symbols, &coded, max_psdu, true).ok()
     } else {
         super::he_bcc::recover(&h, timing.data_symbols, &coded, max_psdu).ok()
     }

@@ -20,10 +20,21 @@ pub(super) fn recover(
     metrics: &[f32],
     max_psdu: usize,
 ) -> Result<Vec<u8>, Error> {
+    recover_for_format(a, symbols, metrics, max_psdu, false)
+}
+
+/// ER format must come from validated signaling. This does not demodulate IQ.
+pub(super) fn recover_for_format(
+    a: &SuSignal,
+    symbols: usize,
+    metrics: &[f32],
+    max_psdu: usize,
+    er: bool,
+) -> Result<Vec<u8>, Error> {
     if a.ldpc {
         return Err(Error::Coding);
     }
-    let c = Capacity::new(a, symbols).map_err(|_| Error::Capacity)?;
+    let c = Capacity::for_format(a, symbols, er).map_err(|_| Error::Capacity)?;
     if c.psdu_bytes > max_psdu {
         return Err(Error::Limit);
     }
@@ -45,8 +56,9 @@ pub(super) fn recover(
             c.coded_per_symbol
         };
         for (j, value) in block[..keep].iter().enumerate() {
-            // 27.3.12.5.1: one filler after116 coded bits, only DCM BPSK/NSS1.
-            if c.bcc_dcm_filler && j == 116 {
+            // 27.3.12.5.1: filler after2*NDBPS (50 for106,116 for242),
+            // only DCM BPSK/NSS1. Exclude it before soft-metric normalization.
+            if c.bcc_dcm_filler && j == 2 * c.data_per_symbol {
                 continue;
             }
             coded.push(*value);
@@ -143,13 +155,38 @@ mod tests {
 
     #[test]
     fn radio_he_bcc_independent_payloads_and_service() {
+        payloads(
+            include_str!("../../tests/fixtures/iq/he-bcc-index.tsv"),
+            None,
+            435,
+        );
+    }
+
+    #[test]
+    fn radio_he_er_bcc_independent_payloads_and_service() {
+        payloads(
+            include_str!("../../tests/fixtures/iq/he-er106-bcc-index.tsv"),
+            Some(1),
+            165,
+        );
+        payloads(
+            include_str!("../../tests/fixtures/iq/he-er242-bcc-index.tsv"),
+            Some(0),
+            225,
+        );
+    }
+
+    fn payloads(index: &str, er_bandwidth: Option<u8>, total: usize) {
         let mut count = 0;
-        for input in include_str!("../../tests/fixtures/iq/he-bcc-index.tsv")
-            .lines()
-            .skip(1)
-        {
-            let (a, symbols, expected, metrics, valid) = row(input);
-            let result = recover(&a, symbols, &metrics, 65535);
+        for input in index.lines().skip(1) {
+            let (mut a, symbols, expected, metrics, valid) = row(input);
+            a.bandwidth = er_bandwidth.unwrap_or(0);
+            let result = recover_for_format(&a, symbols, &metrics, 65535, er_bandwidth.is_some());
+            if er_bandwidth == Some(1) {
+                assert_eq!(recover(&a, symbols, &metrics, 65535), Err(Error::Capacity));
+            } else {
+                assert_eq!(recover(&a, symbols, &metrics, 65535), result);
+            }
             if valid {
                 assert_eq!(result.unwrap(), expected, "case{count}");
             } else {
@@ -157,20 +194,40 @@ mod tests {
             }
             count += 1;
         }
-        assert_eq!(count, 435);
+        assert_eq!(count, total);
     }
 
     #[test]
     fn radio_he_bcc_soft_metrics_padding_and_bounds() {
-        let cases = include_str!("../../tests/fixtures/iq/he-bcc-index.tsv");
+        soft_bounds(
+            include_str!("../../tests/fixtures/iq/he-bcc-index.tsv"),
+            None,
+        );
+    }
+
+    #[test]
+    fn radio_he_er_bcc_soft_metrics_padding_and_bounds() {
+        soft_bounds(
+            include_str!("../../tests/fixtures/iq/he-er106-bcc-index.tsv"),
+            Some(1),
+        );
+        soft_bounds(
+            include_str!("../../tests/fixtures/iq/he-er242-bcc-index.tsv"),
+            Some(0),
+        );
+    }
+
+    fn soft_bounds(cases: &str, er_bandwidth: Option<u8>) {
         for input in cases
             .lines()
             .skip(1)
             .filter(|l| l.starts_with("0\t1\t0\t"))
-            .take(24)
+            .take(32)
         {
-            let (a, symbols, expected, metrics, _) = row(input);
-            let c = Capacity::new(&a, symbols).unwrap();
+            let (mut a, symbols, expected, metrics, _) = row(input);
+            a.bandwidth = er_bandwidth.unwrap_or(0);
+            let er = er_bandwidth.is_some();
+            let c = Capacity::for_format(&a, symbols, er).unwrap();
             for scale in [1e-20, 1., 1e20] {
                 let mut soft: Vec<_> = metrics
                     .iter()
@@ -185,32 +242,38 @@ mod tests {
                             *value = f32::MAX;
                         }
                     }
-                    if c.bcc_dcm_filler && (s < symbols - 1 || c.coded_last == 117) {
-                        block[116] = -f32::MAX;
+                    if c.bcc_dcm_filler && (s < symbols - 1 || c.coded_last == c.coded_per_symbol) {
+                        block[2 * c.data_per_symbol] = -f32::MAX;
                     }
                 }
                 assert_eq!(
-                    recover(&a, symbols, &soft, expected.len()).unwrap(),
+                    recover_for_format(&a, symbols, &soft, expected.len(), er).unwrap(),
                     expected
                 );
             }
             assert_eq!(
-                recover(&a, symbols, &metrics, expected.len() - 1),
+                recover_for_format(&a, symbols, &metrics, expected.len() - 1, er),
                 Err(Error::Limit)
             );
             assert_eq!(
-                recover(&a, symbols, &metrics[..metrics.len() - 1], 65535),
+                recover_for_format(&a, symbols, &metrics[..metrics.len() - 1], 65535, er),
                 Err(Error::Length)
             );
-            for value in [0., f32::NAN, f32::INFINITY] {
+            for value in [0., f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
                 let bad = vec![value; metrics.len()];
-                assert_eq!(recover(&a, symbols, &bad, 65535), Err(Error::Metrics));
+                assert_eq!(
+                    recover_for_format(&a, symbols, &bad, 65535, er),
+                    Err(Error::Metrics)
+                );
             }
             let mut ldpc = a;
             ldpc.ldpc = true;
-            assert_eq!(recover(&ldpc, symbols, &metrics, 65535), Err(Error::Coding));
             assert_eq!(
-                recover(&a, usize::MAX, &metrics, usize::MAX),
+                recover_for_format(&ldpc, symbols, &metrics, 65535, er),
+                Err(Error::Coding)
+            );
+            assert_eq!(
+                recover_for_format(&a, usize::MAX, &metrics, usize::MAX, er),
                 Err(Error::Capacity)
             );
         }

@@ -102,6 +102,13 @@ with `--er-tones 106` or `--er-tones 242`. They cover explicit ER mode limits,
 BCC/LDPC, DCM, STBC, padding boundaries and both LDPC extra-segment branches.
 These are bit-budget checks, not upper106 IQ or codeword qualification.
 
+`he-er106-bcc-index.tsv` and `he-er242-bcc-index.tsv` contain 165 and225
+independent BCC coded-bit cases from `he_bcc_vectors.py --er-tones 106|242`.
+They cover exact PSDUs, all nonzero scrambler seeds, malformed SERVICE/zero
+seed, DCM filler and STBC-group post-FEC padding. Tests additionally exercise
+soft-metric scales, unused extreme-valued positions and allocation limits.
+These fixtures are not complete IQ or MAC frames.
+
 `he-er-iq-index.tsv` and its invalid index contain 280 complete ER242 waveforms
 and 16 negative cases from `he_er_iq_vectors.py`. They cover BCC/LDPC MCS0-2,
 DCM MCS0/1, STBC, all compatible guards, four padding factors, midambles10/20,

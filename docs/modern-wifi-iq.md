@@ -71,6 +71,11 @@ Private format-aware payload-capacity arithmetic now covers upper106 too:
 ER-specific MCS/stream restrictions. Its forward geometry tests do not connect
 upper106 training, codeword recovery or public frame publication yet.
 
+The BCC coded-bit kernel also accepts explicit ER context and recovers upper106
+PSDU bytes, removing the DCM filler after50 coded bits rather than116. The
+existing ER242 IQ path uses this entrypoint. These coded-bit tests do not yet
+connect upper106 IQ demodulation, LDPC recovery or MAC publication.
+
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,
 midambles10/20, CFO/selective channels, and a damaged first aggregate member;

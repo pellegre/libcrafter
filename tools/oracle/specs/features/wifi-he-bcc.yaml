@@ -1,7 +1,7 @@
 version: 1
 kind: feature
 name: wifi_he_bcc
-summary: Recover HE20 SU PSDU bytes from deinterleaved BCC metrics.
+summary: Recover HE20 SU and ER SU PSDU bytes from deinterleaved BCC metrics.
 layers: [dot11]
 directions: [backend_to_libcrafter]
 strict_bytes: true
@@ -10,9 +10,13 @@ behaviors:
   - name: coded-payload-recovery
     source: IEEE 802.11ax-2021 27.3.12.1-5; IEEE 802.11-2020 17.3.5.5/6 and19.3.11.6
     checks: [all_bcc_rates, pre_fec_tail_placement, post_fec_discard, dcm_bpsk_filler, service_validation, seed_recovery, finite_metrics, bounded_allocation]
-coverage_cases: [wifi-he-su-bcc]
+  - name: er-coded-payload-recovery
+    source: IEEE 802.11ax-2021 27.1.1, 27.3.12.5.1, Table27-33
+    checks: [explicit_er_context, upper106_filler_position, er242_compatibility, all_scrambler_seeds, post_fec_discard, malformed_service, bounded_allocation]
+coverage_cases: [wifi-he-su-bcc, wifi-he-er-bcc]
 supported_cases:
   - {name: wifi-he-su-bcc, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+  - {name: wifi-he-er-bcc, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
 backend_support:
   libcrafter:
     status: partial

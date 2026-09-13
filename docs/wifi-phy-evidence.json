@@ -231,7 +231,7 @@
       "id": "he-bcc-payload",
       "source": "ieee-80211ax-2021",
       "anchor": "27.3.12.1-5; references17.3.5.5/6 and19.3.11.6",
-      "fact": "HE BCC uses one encoder. SERVICE and PSDU plus pre-FEC PHY padding are scrambled; six zero tail bits follow that padding and terminate the encoder. Puncturing uses the legacy1/2,2/3,3/4 patterns and HT5/6 pattern. Post-FEC padding follows meaningful coded bits in each last STBC-group symbol. DCM BPSK/NSS1 in242RU inserts one arbitrary filler after116 coded bits. SERVICE is16 zero bits before scrambling with a nonzero seed. These facts do not establish IQ or MAC/FCS qualification."
+      "fact": "HE BCC uses one encoder. SERVICE and PSDU plus pre-FEC PHY padding are scrambled; six zero tail bits follow that padding and terminate the encoder. Puncturing uses the legacy1/2,2/3,3/4 patterns and HT5/6 pattern. Post-FEC padding follows meaningful coded bits in each last STBC-group symbol. DCM BPSK/NSS1 inserts one arbitrary filler after2*NDBPS coded bits:50 for106RU or116 for242RU. ER context must be established before using the shared bandwidth field as an RU selector. SERVICE is16 zero bits before scrambling with a nonzero seed. These facts do not establish IQ or MAC/FCS qualification."
     },
     {
       "id": "he-su-capacity",

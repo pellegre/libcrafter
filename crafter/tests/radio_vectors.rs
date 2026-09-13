@@ -295,6 +295,34 @@ fn radio_he_er_capacity_independent_inventory() {
 }
 
 #[test]
+fn radio_he_er_bcc_independent_inventory() {
+    for (index, count, digest) in [
+        (
+            include_str!("fixtures/iq/he-er106-bcc-index.tsv"),
+            165,
+            "43bf9010944133740b9aa9c9260d055e1c19ae4e1f140b69396f9aa5969a1547",
+        ),
+        (
+            include_str!("fixtures/iq/he-er242-bcc-index.tsv"),
+            225,
+            "aff08147ebfd2cd26e6dd5052f2a6d84c2285013a75aff4830673ff3ae75865f",
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        assert_eq!(index.lines().skip(1).count(), count);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            assert_eq!(c.len(), 10);
+            assert!(c[..7].iter().all(|v| v.parse::<usize>().is_ok()));
+            assert_eq!(c[7].len() % 2, 0);
+            assert!(c[7].bytes().all(|b| b.is_ascii_hexdigit()));
+            assert!(c[8].bytes().all(|b| b == b'0' || b == b'1'));
+            assert!(matches!(c[9], "0" | "1"));
+        }
+    }
+}
+
+#[test]
 fn radio_he_training4_independent_inventory() {
     for (index, count, digest, column) in [
         (
