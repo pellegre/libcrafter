@@ -1,5 +1,12 @@
 # Independent IQ vector contract
 
+`he-sig-b-modulation.tsv` contains 270 independent modulated streams plus 1294
+single-symbol cases covering every interleaver input position. It covers all
+ten valid SIG-B MCS/DCM combinations, the PAPR rotation exception, weighted
+noisy observations, either erased DCM half, and checked BCC/header recovery.
+Coordinates are before constellation normalization, not time-domain IQ.
+Regenerate with `he_sig_b_modulation_vectors.py --write` or verify without flags.
+
 `he-sig-b-coded.tsv` contains 450 independent punctured BCC streams covering
 all six SIG-B MCS values, with/without common fields, odd/even user counts,
 empty allocations, CRC/tail damage and arbitrary encoded trailing padding. Regenerate with

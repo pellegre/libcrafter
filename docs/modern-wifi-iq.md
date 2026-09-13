@@ -115,6 +115,14 @@ check exact bits, CRC/tail failures and encoded trailing padding. A complete
 damaged block can be skipped without losing subsequent blocks; incomplete blocks
 do not advance the cursor. SIG-B IQ demodulation and MU DATA remain pending.
 
+The private SIG-B modulation kernel now connects equalized data tones to that
+reader. It handles all ten valid MCS/DCM combinations, removes the PAPR phase
+rotation (including the BPSK/DCM exception), combines 26-tone DCM halves and
+deinterleaves BCC metrics. Independent coverage comprises 270 modulated streams
+and 1294 exhaustive input-position/constant-symbol cases, including noisy weighted
+observations and either erased DCM half. FFT, pilot tracking and end-to-end IQ
+integration remain pending; these tests are not live HE MU qualification.
+
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,
 midambles10/20, CFO/selective channels, and a damaged first aggregate member;

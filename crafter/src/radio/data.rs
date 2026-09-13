@@ -894,7 +894,7 @@ pub(super) fn demap_dcm_for_half(
     half: usize,
 ) -> Option<[f32; 4]> {
     if !matches!(bits, 1 | 2 | 4)
-        || !matches!(half, 51 | 117)
+        || !matches!(half, 26 | 51 | 117)
         || k >= half
         || pair
             .iter()
