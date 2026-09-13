@@ -30,6 +30,7 @@ pub fn frame_phy(frame: &RecoveredFrame) -> &'static str {
                 | PhyDiagnostic::HeErSignal { .. }
                 | PhyDiagnostic::HeMuSignal { .. }
                 | PhyDiagnostic::HeMuSigB { .. }
+                | PhyDiagnostic::HeTbSignal { .. }
         )
     }) {
         return "he";
@@ -95,6 +96,10 @@ pub fn he_mu_signal_metadata(
 }
 pub fn he_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
     let mut metadata = frame.diagnostics.iter().find_map(|d| match d {
+        PhyDiagnostic::HeTbSignal {
+            fields,
+            preamble_sample_index,
+        } => Some(he_tb_signal_metadata(fields, *preamble_sample_index)),
         PhyDiagnostic::HeMuSigB {
             fields,
             preamble_sample_index,
@@ -113,6 +118,27 @@ pub fn he_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
         } => Some(he_er_signal_metadata(fields, *preamble_sample_index)),
         _ => None,
     })?;
+    if let Some((common, user, index, trigger)) = frame.diagnostics.iter().find_map(|d| match d {
+        PhyDiagnostic::HeTbUser {
+            common,
+            user,
+            user_index,
+            trigger_preamble_sample_index,
+            ..
+        } => Some((common, user, *user_index, *trigger_preamble_sample_index)),
+        _ => None,
+    }) {
+        metadata["user_index"] = index.into();
+        metadata["trigger_preamble_sample_index"] = trigger.into();
+        metadata["trigger_common_bits"] = common.bits().into();
+        metadata["effective_user_bits"] = user.bits().into();
+        metadata["ru_allocation"] = user.ru_allocation.into();
+        metadata["aid12"] = user.aid12.into();
+        metadata["mcs"] = user.mcs.into();
+        metadata["coding"] = (if user.ldpc { "ldpc" } else { "bcc" }).into();
+        metadata["dcm"] = user.dcm.into();
+        metadata["stbc"] = common.stbc.into();
+    }
     if let Some(index) = frame.diagnostics.iter().find_map(|d| match d {
         PhyDiagnostic::HeMuUser { user_index, .. } => Some(*user_index),
         _ => None,

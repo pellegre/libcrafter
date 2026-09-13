@@ -12,7 +12,9 @@ use super::*;
 /// S-MPDU and A-MPDU framing.
 /// HE20 SU/ER supports BCC/LDPC, DCM, one-DATA-stream STBC and midambles
 /// for admitted layouts; detailed coverage is in `docs/modern-wifi-iq.md`.
-/// HE MU recovers FCS-checked aggregates for one non-STBC stream per RU.
+/// HE MU recovers FCS-checked aggregates for one DATA stream per RU, including STBC.
+/// HE TB uses recently decoded eligible Trigger fields for one DATA stream per
+/// disjoint RU, including STBC. Context matching is not BSS authentication.
 /// Other HE layouts, VHT MU,
 /// additional independent DATA streams, wider channels and EHT are not yet decoded.
 /// This implements the same `PhyDecoder` packet-source interface
@@ -190,7 +192,16 @@ pub(super) fn same_occurrence(a: &RecoveredFrame, b: &RecoveredFrame) -> bool {
         && a.end_sample_index == b.end_sample_index
         && aggregate_offset(a) == aggregate_offset(b)
         && mu_user(a) == mu_user(b)
+        && tb_user(a) == tb_user(b)
         && a.bytes == b.bytes
+}
+fn tb_user(frame: &RecoveredFrame) -> Option<(usize, u8)> {
+    frame.diagnostics.iter().find_map(|d| match d {
+        PhyDiagnostic::HeTbUser {
+            user_index, user, ..
+        } => Some((*user_index, user.ru_allocation)),
+        _ => None,
+    })
 }
 fn mu_user(frame: &RecoveredFrame) -> Option<usize> {
     frame.diagnostics.iter().find_map(|d| match d {

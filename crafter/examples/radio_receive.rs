@@ -1221,6 +1221,60 @@ mod tests {
     }
 
     #[test]
+    fn radio_he_tb_frame_artifact_metadata() {
+        let bytes = include_bytes!("../tests/fixtures/iq/he-tb-exchange-004-clean.cs8");
+        let config = RxConfig {
+            sample_rate_hz: 20_000_000,
+            center_frequency_hz: 2_412_000_000,
+            max_chunk_samples: bytes.len() / 2,
+            max_buffer_samples: 120_000,
+            max_frame_bytes: 4095,
+            max_pending_frames: 64,
+            max_capture_samples: bytes.len() as u64 / 2,
+            max_duration: Duration::from_secs(1),
+        };
+        let chunk = IqChunk::new(
+            config,
+            IqPosition {
+                epoch: 7,
+                sequence: 0,
+                sample_index: 0,
+                time_anchor: None,
+                discontinuity: None,
+            },
+            bytes.iter().map(|b| *b as i8).collect(),
+        )
+        .unwrap();
+        let out = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
+        assert_eq!(out.frames.len(), 3);
+        assert_eq!(frame_phy(&out.frames[0]), "legacy_ofdm");
+        assert!(he_metadata(&out.frames[0]).is_none());
+        for frame in &out.frames[1..] {
+            assert_eq!(frame_phy(frame), "he");
+            assert_eq!(frame.integrity, FrameIntegrity::ValidFcs);
+            let metadata = he_metadata(frame).unwrap();
+            assert_eq!(metadata["format"], "tb");
+            assert_eq!(metadata["mcs"], 4);
+            assert_eq!(metadata["coding"], "bcc");
+            assert_eq!(metadata["stbc"], false);
+            assert_eq!(metadata["ru_allocation"], 0);
+            assert_eq!(metadata["aid12"], 1);
+            assert_eq!(metadata["trigger_preamble_sample_index"], 64);
+            assert_eq!(metadata["preamble_sample_index"], frame.start.sample_index);
+            let (common, user) = frame
+                .diagnostics
+                .iter()
+                .find_map(|d| match d {
+                    PhyDiagnostic::HeTbUser { common, user, .. } => Some((common, user)),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(metadata["trigger_common_bits"], common.bits());
+            assert_eq!(metadata["effective_user_bits"], user.bits());
+        }
+    }
+
+    #[test]
     fn radio_he_mu_header_artifact_metadata() {
         for row in include_str!("../tests/fixtures/iq/he-mu-prefix-index.tsv")
             .lines()

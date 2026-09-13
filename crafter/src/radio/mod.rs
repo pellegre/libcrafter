@@ -22,6 +22,7 @@ mod he_sig_b_coded;
 mod he_sig_b_iq;
 mod he_sig_b_modulation;
 mod he_tb;
+mod he_tb_context;
 mod he_tb_data_iq;
 mod he_tb_schedule;
 pub use he_sig_b::{
@@ -288,6 +289,16 @@ pub enum ResetReason {
 }
 #[derive(Debug, Clone)]
 pub enum PhyDiagnostic {
+    /// Trigger parameters used for this RU. Matching is not BSS authentication.
+    HeTbUser {
+        common: crate::Dot11TriggerCommonFields,
+        /// Effective per-RU parameters; an RA range's RU byte is expanded.
+        user: crate::Dot11TriggerUserFields,
+        /// Position of the original User Info, shared by all RUs in an RA range.
+        user_index: usize,
+        trigger_preamble_sample_index: u64,
+        preamble_sample_index: u64,
+    },
     /// Checked HE TB signaling only; DATA requires matching Trigger context.
     HeTbSignal {
         fields: HeTbSignalFields,
@@ -405,6 +416,22 @@ pub enum PhyDiagnostic {
 impl PartialEq for PhyDiagnostic {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (
+                Self::HeTbUser {
+                    common: a,
+                    user: b,
+                    user_index: c,
+                    trigger_preamble_sample_index: d,
+                    preamble_sample_index: e,
+                },
+                Self::HeTbUser {
+                    common: f,
+                    user: g,
+                    user_index: h,
+                    trigger_preamble_sample_index: i,
+                    preamble_sample_index: j,
+                },
+            ) => a == f && b == g && c == h && d == i && e == j,
             (
                 Self::HeTbSignal {
                     fields: a,

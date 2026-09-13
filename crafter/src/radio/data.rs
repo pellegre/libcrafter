@@ -27,10 +27,36 @@ struct Pending {
     er_candidate: bool,
     mu_wait: Option<usize>,
     mu_data_end: Option<usize>,
+    tb: Option<(he_tb_context::Context, usize)>,
     ldpc: Option<ldpc::rate::Layout>,
     greenfield: bool,
 }
 impl Pending {
+    fn trigger_timing(&self) -> Option<(u64, Option<u8>)> {
+        if self
+            .ht
+            .is_some_and(|h| h.short_guard_interval || h.stbc != 0)
+            || self.vht.is_some_and(|h| h.short_guard_interval || h.stbc)
+        {
+            return None;
+        }
+        if let Some(h) = self.he {
+            if h.stbc {
+                return None;
+            }
+            let prefix = he_iq::decode_prefix(&self.samples, &self.acquisition)?;
+            let timing =
+                he_timing::Timing::for_format(6_000_000, prefix.legacy_length, &h, self.he_er)
+                    .ok()?;
+            return Some((
+                self.acquisition
+                    .preamble_start
+                    .checked_add(timing.packet_end as u64)?,
+                Some(h.bss_color),
+            ));
+        }
+        Some((self.info?.end_sample_index, None))
+    }
     fn reserve_samples(&mut self, required: usize, config: &RxConfig, reserved: usize) -> bool {
         required.saturating_sub(self.samples.capacity())
             <= config.max_buffer_samples.saturating_sub(reserved)
@@ -190,6 +216,7 @@ pub struct LegacyOfdmDecoder {
     // Dispatcher output budget is not a capture reconfiguration. Changing
     // RxConfig between internal slices would discard an in-flight PPDU.
     output_allowance: Option<usize>,
+    triggers: std::collections::VecDeque<he_tb_context::Context>,
 }
 impl LegacyOfdmDecoder {
     pub fn new() -> Self {
@@ -214,6 +241,7 @@ impl LegacyOfdmDecoder {
         &mut self,
         mut frame: RecoveredFrame,
         aggregate: Option<Aggregation>,
+        trigger_timing: Option<(u64, Option<u8>)>,
         out: &mut DecodeOutput,
     ) -> RadioResult<()> {
         let limit = self
@@ -258,6 +286,7 @@ impl LegacyOfdmDecoder {
                             delimiter_offset,
                             control_bits,
                         });
+                        self.remember_trigger(&recovered, trigger_timing);
                         out.frames.push(recovered);
                         self.stats.valid_frames = self.stats.valid_frames.saturating_add(1);
                     }
@@ -283,6 +312,7 @@ impl LegacyOfdmDecoder {
         } else if valid_fcs(&frame.bytes) {
             self.stats.valid_frames = self.stats.valid_frames.saturating_add(1);
             if out.frames.len() < limit {
+                self.remember_trigger(&frame, trigger_timing);
                 out.frames.push(frame);
             } else if self.ht_enabled {
                 return Err(RadioError::Limit {
@@ -301,6 +331,117 @@ impl LegacyOfdmDecoder {
         } else {
             self.stats.invalid_fcs = self.stats.invalid_fcs.saturating_add(1);
             out.diagnostics.push(PhyDiagnostic::InvalidFcs);
+        }
+        Ok(())
+    }
+
+    fn remember_trigger(&mut self, frame: &RecoveredFrame, timing: Option<(u64, Option<u8>)>) {
+        if !self.ht_enabled {
+            return;
+        }
+        let Some((end, color)) = timing else {
+            return;
+        };
+        let Some(context) = he_tb_context::Context::from_frame(frame, end, color) else {
+            return;
+        };
+        self.triggers.retain(|t| !t.expired(end));
+        if self.triggers.len() == 16 {
+            self.triggers.pop_front();
+        }
+        self.triggers.push_back(context);
+    }
+
+    fn publish_tb(
+        &mut self,
+        p: Pending,
+        config: &RxConfig,
+        out: &mut DecodeOutput,
+    ) -> RadioResult<()> {
+        let (context, _) = p.tb.as_ref().unwrap();
+        for allocation in context.schedule.allocations().filter(|a| a.eligible) {
+            let result = match he_tb_data_iq::recover(
+                &p.samples,
+                &p.acquisition,
+                &context.common,
+                &allocation.fields,
+                usize::MAX,
+                p.samples.len(),
+                true,
+            ) {
+                Ok(value) => value,
+                Err(error) => {
+                    self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
+                    out.diagnostics
+                        .push(if error == he_tb_data_iq::Error::Unsupported {
+                            PhyDiagnostic::UnsupportedPhy
+                        } else {
+                            PhyDiagnostic::InvalidHeader
+                        });
+                    continue;
+                }
+            };
+            let capacity = he_capacity::Capacity::for_tb(
+                &context.common,
+                &allocation.fields,
+                result.timing.data_symbols,
+            )
+            .unwrap();
+            let mut diagnostics = vec![
+                PhyDiagnostic::Ofdm {
+                    frequency_offset_hz: p.acquisition.frequency_rad * 20_000_000.
+                        / std::f32::consts::TAU,
+                    training_correlation: p.acquisition.correlation,
+                },
+                PhyDiagnostic::HeTbSignal {
+                    fields: result.signal,
+                    preamble_sample_index: p.start.sample_index,
+                },
+                PhyDiagnostic::HeTbUser {
+                    common: context.common,
+                    user: allocation.fields,
+                    user_index: allocation.user_index,
+                    trigger_preamble_sample_index: context.trigger_start,
+                    preamble_sample_index: p.start.sample_index,
+                },
+            ];
+            if result.failed_codewords != 0 {
+                let diagnostic = PhyDiagnostic::LdpcPartial {
+                    failed_codewords: result.failed_codewords,
+                };
+                out.diagnostics.push(diagnostic.clone());
+                diagnostics.push(diagnostic);
+                if let Some(ldpc_rate::Error::Codeword {
+                    index,
+                    error:
+                        ldpc::Error::Nonconvergence {
+                            iterations,
+                            failed_checks,
+                        },
+                }) = result.first_failure
+                {
+                    let diagnostic = PhyDiagnostic::LdpcNonconvergence {
+                        codeword: index,
+                        iterations,
+                        failed_checks,
+                    };
+                    out.diagnostics.push(diagnostic.clone());
+                    diagnostics.push(diagnostic);
+                }
+            }
+            let frame = RecoveredFrame {
+                bytes: result.psdu,
+                link_type: LinkType::Ieee80211,
+                integrity: FrameIntegrity::ValidFcs,
+                config: config.clone(),
+                start: p.start.clone(),
+                end_sample_index: p.acquisition.preamble_start + result.timing.data_end as u64,
+                rate_bps: (capacity.data_per_symbol as u64 * 20_000_000
+                    / if context.common.gi_ltf == 1 { 288 } else { 320 })
+                    as u32,
+                diagnostics,
+            };
+            self.publish_psdu(frame, Some(Aggregation::He), None, out)?;
         }
         Ok(())
     }
@@ -407,7 +548,11 @@ impl LegacyOfdmDecoder {
             };
             // publish_psdu only emits HE aggregate members after their FCS
             // passes; partial LDPC estimates never bypass this scanner.
-            self.publish_psdu(frame, Some(Aggregation::He), out)?;
+            let trigger_timing = (!decoded.fields.signal.stbc).then_some((
+                p.acquisition.preamble_start + decoded.timing.packet_end as u64,
+                Some(decoded.fields.signal.bss_color),
+            ));
+            self.publish_psdu(frame, Some(Aggregation::He), trigger_timing, out)?;
         }
         Ok(())
     }
@@ -423,6 +568,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
             out.diagnostics.push(PhyDiagnostic::TruncatedFrame);
         }
         self.sync.reset();
+        self.triggers.clear();
         self.continuity.reset();
         self.terminal = matches!(reason, ResetReason::End(_));
         out.diagnostics.push(PhyDiagnostic::Reset(reason));
@@ -462,6 +608,16 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     continue;
                 };
                 p.samples.push(sample);
+                if let Some((_, required)) = &p.tb {
+                    if p.samples.len() == *required {
+                        let p = self.pending[slot].take().unwrap();
+                        if let Err(error) = self.publish_tb(p, config, &mut out) {
+                            self.reset(ResetReason::Explicit);
+                            return Err(error);
+                        }
+                    }
+                    continue;
+                }
                 if let Some(required) = p.mu_data_end {
                     if p.samples.len() == required {
                         let p = self.pending[slot].take().unwrap();
@@ -725,6 +881,37 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             fields,
                             preamble_sample_index: p.start.sample_index,
                         });
+                        let budget = config
+                            .max_buffer_samples
+                            .saturating_sub(reserved)
+                            .saturating_add(p.samples.capacity());
+                        let candidate = self.triggers.iter().rev().find_map(|context| {
+                            if !context.matches(p.start.sample_index, &fields) {
+                                return None;
+                            }
+                            context
+                                .schedule
+                                .allocations()
+                                .filter(|a| a.eligible)
+                                .find_map(|allocation| {
+                                    he_tb_data_iq::admit(
+                                        &p.samples,
+                                        &p.acquisition,
+                                        &context.common,
+                                        &allocation.fields,
+                                        usize::MAX,
+                                        budget,
+                                    )
+                                    .ok()
+                                    .map(|admitted| (context.clone(), admitted.required_samples))
+                                })
+                        });
+                        if let Some((context, required)) = candidate {
+                            if p.reserve_samples(required, config, reserved) {
+                                p.tb = Some((context, required));
+                                continue;
+                            }
+                        }
                         // Do not reinterpret a checked TB header as legacy DATA
                         // or invent RU/MCS parameters absent a matching Trigger.
                         out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
@@ -762,6 +949,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                 {
                     let p = self.pending[slot].take().unwrap();
                     let info = p.info.unwrap();
+                    let trigger_timing = p.trigger_timing();
                     let (mut coding_stats, mut coding_failure) = (None, None);
                     let mut partial_stats = Vec::new();
                     let mut vht_signal_b = None;
@@ -936,6 +1124,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                 } else {
                                     p.ht.filter(|f| f.aggregation).map(|_| Aggregation::Ht)
                                 },
+                                trigger_timing,
                                 &mut out,
                             ) {
                                 self.reset(ResetReason::Explicit);
@@ -997,6 +1186,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             er_candidate: false,
                             mu_wait: None,
                             mu_data_end: None,
+                            tb: None,
                             ldpc: None,
                             greenfield: false,
                         });
@@ -2971,6 +3161,286 @@ mod tests {
             assert!(valid_fcs(&actual), "{}", c[0]);
         }
     }
+    #[test]
+    fn radio_he_tb_streaming_trigger_exchanges() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
+        let rows = std::fs::read_to_string(root.join("he-tb-exchange-index.tsv")).unwrap();
+        assert_eq!(rows.lines().skip(1).count(), 65);
+        let mut failures = Vec::new();
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let iq = std::fs::read(root.join(format!("{}.cs8", c[0]))).unwrap();
+            let unhex = |s: &str| {
+                s.as_bytes()
+                    .chunks_exact(2)
+                    .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
+                    .collect::<Vec<_>>()
+            };
+            let mut expected = Vec::new();
+            if c[8] != "-" {
+                expected.push(unhex(c[8]));
+            }
+            if c[9] != "-" {
+                expected.extend(c[9].split(',').map(unhex));
+            }
+            for size in [7, 128, 4096] {
+                let mut decoder = LegacyOfdmDecoder::with_ht();
+                let mut cfg = config();
+                cfg.max_pending_frames = 64;
+                let output = feed_config(&mut decoder, &iq, size, cfg).unwrap();
+                if output.frames.iter().map(|f| &f.bytes).collect::<Vec<_>>()
+                    != expected.iter().collect::<Vec<_>>()
+                {
+                    failures.push(format!("{} chunk{size}: {:?}", c[0], output.diagnostics));
+                    continue;
+                }
+                for frame in output
+                    .frames
+                    .iter()
+                    .filter(|f| f.bytes.first() != Some(&0x24))
+                {
+                    assert!(valid_fcs(&frame.bytes));
+                    assert!(frame.diagnostics.iter().any(|d| matches!(d, PhyDiagnostic::HeTbUser {user,..} if user.mcs == c[3].parse::<u8>().unwrap())));
+                    assert_eq!(frame.start.sample_index, c[7].parse::<u64>().unwrap());
+                }
+            }
+            if c[1] == "clean" && c[2] == "26" && c[3] == "0" && c[4] == "0" && c[5] == "0" {
+                let split = 2 * c[7].parse::<usize>().unwrap();
+                for reason in [
+                    ResetReason::Explicit,
+                    ResetReason::Gap(Discontinuity {
+                        reason: GapReason::SourceLoss,
+                        loss: SampleLoss::Unknown,
+                    }),
+                    ResetReason::End(StreamEnd::Eof),
+                ] {
+                    let mut decoder = LegacyOfdmDecoder::with_ht();
+                    let chunk = IqChunk::new(
+                        config(),
+                        IqPosition {
+                            epoch: 0,
+                            sequence: 0,
+                            sample_index: 0,
+                            time_anchor: None,
+                            discontinuity: None,
+                        },
+                        iq[..split].iter().map(|b| *b as i8).collect(),
+                    )
+                    .unwrap();
+                    let prefix = decoder.consume(IqEvent::Chunk(chunk)).unwrap();
+                    assert_eq!(prefix.frames.len(), 1);
+                    assert!(!decoder.triggers.is_empty());
+                    let frame = &prefix.frames[0];
+                    let end = c[6].parse::<u64>().unwrap();
+                    let context = he_tb_context::Context::from_frame(frame, end, Some(37)).unwrap();
+                    let mut signal = he_tb::TbSignal {
+                        bss_color: 37,
+                        bandwidth: 0,
+                        spatial_reuse: [0; 4],
+                        txop: 0,
+                        trigger_reserved: 511,
+                    };
+                    let expires = end
+                        + 120
+                        + u64::from(u16::from_le_bytes([frame.bytes[2], frame.bytes[3]])) * 20;
+                    assert!(!context.matches(end, &signal));
+                    assert!(context.matches(expires - 1, &signal));
+                    assert!(!context.matches(expires, &signal));
+                    signal.bss_color = 38;
+                    assert!(!context.matches(end + 320, &signal));
+                    assert!(he_tb_context::Context::from_frame(frame, u64::MAX, None).is_none());
+                    decoder.reset(reason);
+                    assert!(decoder.triggers.is_empty());
+                    decoder.reset(ResetReason::Explicit);
+                    let output = feed(&mut decoder, &iq[split..], 128);
+                    assert!(output.frames.is_empty());
+                }
+            }
+            if c[1] == "below-resolution" {
+                let output = feed(&mut WifiDecoder::new(), &iq, 128);
+                assert_eq!(output.frames.len(), 1, "{}", c[0]);
+                assert!(output
+                    .diagnostics
+                    .iter()
+                    .any(|d| matches!(d, PhyDiagnostic::HeTbSignal { .. })));
+                assert!(!output
+                    .diagnostics
+                    .iter()
+                    .any(|d| matches!(d, PhyDiagnostic::HeTbUser { .. })));
+            }
+            let mut combined = WifiDecoder::new();
+            let mut cfg = config();
+            cfg.max_pending_frames = 64;
+            let output = feed_config(&mut combined, &iq, 4096, cfg).unwrap();
+            if output.frames.iter().map(|f| &f.bytes).collect::<Vec<_>>()
+                != expected.iter().collect::<Vec<_>>()
+            {
+                failures.push(format!("{} combined", c[0]));
+            }
+        }
+        assert!(failures.is_empty(), "{failures:?}");
+    }
+
+    #[test]
+    fn radio_he_tb_streaming_resource_bounds() {
+        let bytes = include_bytes!("../../tests/fixtures/iq/he-tb-exchange-000-clean.cs8");
+        let mut small = config();
+        small.max_frame_bytes = 37; // 36-byte Trigger fits; both 38-byte MPDUs do not.
+        let out = feed_config(&mut WifiDecoder::new(), bytes, 128, small).unwrap();
+        assert_eq!(out.frames.len(), 1);
+        assert_eq!(out.frames[0].bytes[0], 0x24);
+        assert!(out.diagnostics.iter().any(|d| matches!(
+            d,
+            PhyDiagnostic::AmpduErrors {
+                oversized_mpdus: 2,
+                ..
+            }
+        )));
+
+        let mut small = config();
+        small.max_buffer_samples = 1600;
+        small.max_chunk_samples = 128;
+        let out = feed_config(&mut WifiDecoder::new(), bytes, 128, small).unwrap();
+        assert_eq!(out.frames.len(), 1);
+        assert_eq!(out.frames[0].bytes[0], 0x24);
+        assert!(out
+            .diagnostics
+            .iter()
+            .any(|d| matches!(d, PhyDiagnostic::UnsupportedPhy)));
+
+        let mut small = config();
+        small.max_pending_frames = 3; // One output slot plus two dispatcher reservations.
+        assert!(matches!(
+            feed_config(&mut WifiDecoder::new(), bytes, 128, small),
+            Err(RadioError::Limit { .. })
+        ));
+    }
+
+    #[test]
+    fn radio_he_tb_ht_trigger_carriers() {
+        check_he_tb_trigger_carriers(
+            include_str!("../../tests/fixtures/iq/he-tb-ht-exchange-index.tsv"),
+            16,
+        );
+    }
+
+    #[test]
+    fn radio_he_tb_vht_trigger_carriers() {
+        check_he_tb_trigger_carriers(
+            include_str!("../../tests/fixtures/iq/he-tb-vht-exchange-index.tsv"),
+            24,
+        );
+    }
+
+    fn check_he_tb_trigger_carriers(rows: &str, count: usize) {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
+        assert_eq!(rows.lines().skip(1).count(), count);
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let unhex = |s: &str| {
+                s.as_bytes()
+                    .chunks_exact(2)
+                    .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
+                    .collect::<Vec<_>>()
+            };
+            let triggers = c.get(12).map_or(1, |n| n.parse::<usize>().unwrap());
+            let mut expected = vec![unhex(c[8]); triggers];
+            if c[9] != "-" {
+                expected.extend(c[9].split(',').map(unhex));
+            }
+            let iq = std::fs::read(root.join(format!("{}.cs8", c[0]))).unwrap();
+            for chunk in [7, 128, 4096] {
+                let mut decoder = WifiDecoder::new();
+                let output = feed_config(&mut decoder, &iq, chunk, config()).unwrap();
+                assert_eq!(
+                    output.frames.iter().map(|f| &f.bytes).collect::<Vec<_>>(),
+                    expected.iter().collect::<Vec<_>>(),
+                    "{} chunk{chunk}: {:?}",
+                    c[0],
+                    output.diagnostics
+                );
+                for frame in output.frames.iter().skip(triggers) {
+                    assert!(valid_fcs(&frame.bytes));
+                    assert_eq!(frame.start.sample_index, c[7].parse::<u64>().unwrap());
+                    assert!(frame.diagnostics.iter().any(|d| matches!(d,
+                        PhyDiagnostic::HeTbUser { trigger_preamble_sample_index: 64, user, .. } if user.mcs == 4)));
+                }
+                if c[1] == "short-gi" {
+                    assert!(output
+                        .diagnostics
+                        .iter()
+                        .any(|d| matches!(d, PhyDiagnostic::HeTbSignal { .. })));
+                    assert!(!output
+                        .diagnostics
+                        .iter()
+                        .any(|d| matches!(d, PhyDiagnostic::HeTbUser { .. })));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn radio_he_tb_streaming_simultaneous_exchanges() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
+        let rows = std::fs::read_to_string(root.join("he-tb-multi-exchange-index.tsv")).unwrap();
+        assert_eq!(rows.lines().skip(1).count(), 12);
+        let mut frames = 0;
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let iq = std::fs::read(root.join(format!("{}.cs8", c[0]))).unwrap();
+            let unhex = |s: &str| {
+                s.as_bytes()
+                    .chunks_exact(2)
+                    .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
+                    .collect::<Vec<_>>()
+            };
+            let mut expected = vec![unhex(c[7])];
+            expected.extend(c[8].split(',').map(unhex));
+            assert_eq!(expected.len(), 1 + 2 * c[2].parse::<usize>().unwrap());
+            for size in [7, 128, 4096] {
+                let mut cfg = config();
+                cfg.max_pending_frames = 64;
+                let out = feed_config(&mut WifiDecoder::new(), &iq, size, cfg).unwrap();
+                assert_eq!(
+                    out.frames.iter().map(|f| &f.bytes).collect::<Vec<_>>(),
+                    expected.iter().collect::<Vec<_>>(),
+                    "{} chunk{size}",
+                    c[0]
+                );
+                for (index, frame) in out.frames.iter().skip(1).enumerate() {
+                    assert!(valid_fcs(&frame.bytes));
+                    assert_eq!(frame.start.sample_index, c[6].parse::<u64>().unwrap());
+                    let (user, user_index, trigger) = frame
+                        .diagnostics
+                        .iter()
+                        .find_map(|d| match d {
+                            PhyDiagnostic::HeTbUser {
+                                user,
+                                user_index,
+                                trigger_preamble_sample_index,
+                                ..
+                            } => Some((user, *user_index, *trigger_preamble_sample_index)),
+                            _ => None,
+                        })
+                        .unwrap();
+                    assert_eq!(user_index, if c[5] == "1" { 0 } else { index / 2 });
+                    let start = match c[1] {
+                        "26" => 0,
+                        "52" => 37,
+                        "106" => 53,
+                        _ => unreachable!(),
+                    };
+                    assert_eq!(usize::from(user.ru_allocation), 2 * (start + index / 2));
+                    assert_eq!(trigger, 64);
+                    assert_eq!(user.mcs, 4);
+                    assert_eq!(user.ldpc, c[3] == "1");
+                }
+            }
+            frames += expected.len() - 1;
+        }
+        assert_eq!(frames, 120);
+    }
+
     fn config() -> RxConfig {
         RxConfig {
             sample_rate_hz: 20_000_000,

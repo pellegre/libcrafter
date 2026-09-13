@@ -48,10 +48,28 @@ adds 368 complete independent waveforms and eight invalid cases, including
 loss of either transmit branch. The finite-delay estimator includes the second
 stream's cyclic shift; it does not guarantee recovery of arbitrary channels.
 
-HE TB payloads, MU-MIMO spatial separation, wider channels and independent
-multiple DATA streams are not implemented by this receive path. Offline
-qualification uses 200 BCC and 240 LDPC complete independent waveforms; it does not establish
-HE-capable dongle interoperability, sustained real-time speed or modern TX.
+HE20 TB reception uses a recently recovered, FCS-valid Basic Trigger to obtain
+the RU, MCS, coding, DCM, STBC, training and padding fields that are absent from
+the TB PHY header. The bounded streaming decoder accepts Trigger frames carried
+by legacy OFDM and supported long-GI HT/VHT PPDUs, expands eligible scheduled or
+random-access RUs, and decodes one DATA stream on each disjoint RU. It publishes
+only aggregate members with valid MPDU FCS and records the effective user fields,
+original User Info index, and Trigger/response sample coordinates.
+
+The exchange corpus covers 65 single-user sequences and 12 simultaneous-user
+sequences with 120 response MPDUs across two, four or nine RUs. It includes
+BCC/LDPC, DCM, STBC, carrier/context failures, duration bounds, output/sample
+limits, and input chunking. Separate HT and VHT carrier corpora cover BCC/LDPC,
+aggregation and the prohibition on short-GI Trigger carriers. Near/far MCS11
+STBC captures whose final CS8 representation has hundreds of genie-aided
+nearest-symbol errors are retained as rejection controls; balanced captures of
+the same modes recover exact bytes without weakening FEC, SERVICE, or FCS.
+
+Trigger-based reception still lacks TRS Control scheduling, combination of
+distinct Trigger User Info carried in separate A-MPDUs of one HE MU PPDU, and
+spatial separation of overlapping independent DATA streams. Wider channels,
+sustained real-time speed, live HE-capable reference qualification and modern
+TX also remain unfinished.
 
 HE ER SU signaling is recognized separately: repeated L-SIG with length modulo
 three equal to two, a QBPSK second SIG-A symbol, and four SIG-A symbols. Header
