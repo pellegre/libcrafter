@@ -633,6 +633,27 @@ fn radio_he_sig_b_users_inventory() {
 }
 
 #[test]
+fn radio_he_sig_b_coded_inventory() {
+    let rows = include_str!("fixtures/iq/he-sig-b-coded.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 450);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "52ca8c6824a55ceeaa182bf24b6d8b4f73c02fc57c9893fd1d7520f29163b035"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 7);
+        assert!(c[0].parse::<u8>().unwrap() <= 5);
+        for bits in c[4].split(';') {
+            assert!(matches!(bits.len(), 18 | 31 | 52));
+            assert!(bits.bytes().all(|b| matches!(b, b'0' | b'1')));
+        }
+        assert!(c[5].bytes().all(|b| matches!(b, b'0' | b'1')));
+        assert!(c[6].parse::<usize>().unwrap() < c[5].len());
+    }
+}
+
+#[test]
 fn radio_he_sig_b_common_inventory() {
     use crafter::prelude::{HeSigBCommon20Fields, HeSigBError};
     let rows = include_str!("fixtures/iq/he-sig-b-common.tsv");

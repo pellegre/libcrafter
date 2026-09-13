@@ -1,5 +1,11 @@
 # Independent IQ vector contract
 
+`he-sig-b-coded.tsv` contains 450 independent punctured BCC streams covering
+all six SIG-B MCS values, with/without common fields, odd/even user counts,
+empty allocations, CRC/tail damage and arbitrary encoded trailing padding. Regenerate with
+`he_sig_b_coded_vectors.py --write` or verify without arguments. These are
+deinterleaved coded bits, not IQ or end-to-end MU payload qualification.
+
 `he-sig-b-users.tsv` contains 3175 independently generated one/two-user blocks
 from IEEE 802.11ax-2021 Tables 27-27 through 27-30. It covers every spatial
 configuration and RU-relative position, reserved configurations, all 1024

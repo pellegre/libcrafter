@@ -108,6 +108,13 @@ indices. STA-ID 2046 retains arbitrary unused bits. The 3175 independent blocks
 test these cases; global DATA admission constraints remain separate. This is
 still a bit-level kernel, not end-to-end HE MU reception.
 
+The private SIG-B coded-block reader recovers those fields from deinterleaved,
+DCM-combined soft bits for MCS 0 through 5. It preserves puncturing across block
+boundaries while resetting each block's BCC trellis. Its 450 independent streams
+check exact bits, CRC/tail failures and encoded trailing padding. A complete
+damaged block can be skipped without losing subsequent blocks; incomplete blocks
+do not advance the cursor. SIG-B IQ demodulation and MU DATA remain pending.
+
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,
 midambles10/20, CFO/selective channels, and a damaged first aggregate member;
