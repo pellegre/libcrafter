@@ -4,6 +4,19 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_mu_ldpc_layout_inventory() {
+    let index = include_str!("fixtures/iq/he-mu-ldpc-layout.tsv");
+    assert_eq!(index.lines().skip(1).count(), 13696);
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "379299de2562c00b4529df9649cb0f9378501647d6534a761bf5c256c4c2d79c"
+    );
+    for row in index.lines().skip(1) {
+        assert_eq!(row.split('\t').count(), 18);
+    }
+}
+
+#[test]
 fn radio_he_mu_bcc_inventory() {
     for (index, count, hash) in [
         (

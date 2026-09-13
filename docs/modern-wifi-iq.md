@@ -179,6 +179,12 @@ coded-bit cases cover all four RU sizes, padding/filler, STBC groups and
 SERVICE validation. Those bytes still require MAC/FCS validation; MU IQ
 demodulation and complete streaming payload integration remain unfinished.
 
+MU LDPC layout calculation handles the common extra-segment flag differently
+from SU: a user accepts an extra segment requested by a peer, but rejects a
+missing segment it needs itself. Independent forward layouts check codeword
+sizes, shortening, puncturing and repetition. Cross-user consistency of the
+global flag, MU codeword recovery and IQ integration remain separate work.
+
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,
 midambles10/20, CFO/selective channels, and a damaged first aggregate member;

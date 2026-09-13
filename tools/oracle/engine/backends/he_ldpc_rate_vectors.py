@@ -16,12 +16,17 @@ OUT=Path(__file__).resolve().parents[4]/'crafter/tests/fixtures/iq'
 RATES=[F(1,2),F(1,2),F(3,4),F(1,2),F(3,4),F(2,3),F(3,4),F(5,6),F(3,4),F(5,6),F(3,4),F(5,6)]
 
 
-def layout(mcs,nss,dcm,group,initial,padding,er_tones=None):
+def layout(mcs,nss,dcm,group,initial,padding,er_tones=None,mu_tones=None,force_extra=False):
     rate=RATES[mcs]
     coded=(102 if er_tones==106 else 234)*BPS[mcs]*nss//(1+dcm)
     short_coded=(24 if er_tones==106 else 60)*BPS[mcs]*nss//(1+dcm)
     data=(51 if er_tones==106 else DATA[mcs])*nss//(1+dcm)
     short_data=(12 if er_tones==106 else SHORT[mcs])*nss//(1+dcm)
+    if mu_tones:
+        coded={26:24,52:48,106:102,242:234}[mu_tones]*BPS[mcs]*nss//(1+dcm)
+        nsd_short=2 if mu_tones==26 and dcm else {26:6,52:12,106:24,242:60}[mu_tones]//(1+dcm)
+        short_coded=nsd_short*BPS[mcs]*nss
+        data=int(coded*rate);short_data=int(short_coded*rate)
     payload=(initial-group)*data+group*(data if padding==4 else padding*short_data)
     available=(initial-group)*coded+group*(coded if padding==4 else padding*short_coded)
     if available<=648:
@@ -37,6 +42,7 @@ def layout(mcs,nss,dcm,group,initial,padding,er_tones=None):
     parity=count*size*(1-rate)
     extra=((puncture>parity/10 and short<F(6,5)*puncture*rate/(1-rate))
            or puncture>3*parity/10)
+    extra=extra or force_extra
     symbols=initial
     if extra:
         available+=group*(coded-3*short_coded if padding==3 else short_coded)

@@ -257,13 +257,6 @@ impl Layout {
             return Err(Error::HeTiming);
         }
         let c = Capacity::for_format(a, symbols, er).map_err(|_| Error::HeTiming)?;
-        let rate = match (c.rate_num, c.rate_den) {
-            (1, 2) => Rate::Half,
-            (2, 3) => Rate::TwoThirds,
-            (3, 4) => Rate::ThreeQuarters,
-            (5, 6) => Rate::FiveSixths,
-            _ => return Err(Error::InvalidCodedBits),
-        };
         let group = if a.stbc { 2 } else { 1 };
         let extra = a.ldpc_extra_segment.ok_or(Error::HeTiming)?;
         let mut initial = *a;
@@ -279,6 +272,76 @@ impl Layout {
         }
         let initial_c =
             Capacity::for_format(&initial, initial_symbols, er).map_err(|_| Error::HeTiming)?;
+        Self::he_capacities(
+            c,
+            initial_c,
+            symbols,
+            group,
+            extra,
+            initial.pre_fec_padding,
+            true,
+        )
+    }
+
+    /// MU's common extra flag can be requested by another LDPC user. The
+    /// caller establishes cross-user signaling consistency and spatial admission.
+    pub(super) fn he_mu(
+        signal: &super::he_mu::MuSignal,
+        user: &super::he_sig_b::HeSigBUserFields,
+        ru_tones: u16,
+        symbols: u16,
+    ) -> Result<Self, Error> {
+        use super::he_capacity::Capacity;
+        let symbols = usize::from(symbols);
+        if symbols == 0 || symbols > 400 {
+            return Err(Error::HeTiming);
+        }
+        let c = Capacity::for_mu(signal, user, ru_tones, symbols).map_err(|_| Error::HeTiming)?;
+        if c.tail_bits != 0 {
+            return Err(Error::HeTiming);
+        }
+        let group = usize::from(signal.stbc) + 1;
+        let extra = signal.ldpc_extra_segment;
+        let mut initial = *signal;
+        initial.ldpc_extra_segment = false;
+        let mut initial_symbols = symbols;
+        if extra {
+            if initial.pre_fec_padding == 1 {
+                initial.pre_fec_padding = 4;
+                initial_symbols = symbols.checked_sub(group).ok_or(Error::HeTiming)?;
+            } else {
+                initial.pre_fec_padding -= 1;
+            }
+        }
+        let initial_c = Capacity::for_mu(&initial, user, ru_tones, initial_symbols)
+            .map_err(|_| Error::HeTiming)?;
+        Self::he_capacities(
+            c,
+            initial_c,
+            symbols,
+            group,
+            extra,
+            initial.pre_fec_padding,
+            false,
+        )
+    }
+
+    fn he_capacities(
+        c: super::he_capacity::Capacity,
+        initial_c: super::he_capacity::Capacity,
+        symbols: usize,
+        group: usize,
+        extra: bool,
+        initial_padding: u8,
+        strict_extra: bool,
+    ) -> Result<Self, Error> {
+        let rate = match (c.rate_num, c.rate_den) {
+            (1, 2) => Rate::Half,
+            (2, 3) => Rate::TwoThirds,
+            (3, 4) => Rate::ThreeQuarters,
+            (5, 6) => Rate::FiveSixths,
+            _ => return Err(Error::InvalidCodedBits),
+        };
         let payload = initial_c.data_bits;
         let available = initial_c.coded_bits;
         let (num, den) = rate.ratio();
@@ -286,14 +349,15 @@ impl Layout {
         let short = (count * size * num / den).saturating_sub(payload);
         let puncture = (count * size).saturating_sub(available + short);
         let parity = count * size * (den - num) / den;
-        if Self::needs_extra(short, puncture, parity, rate) != extra {
+        let needs_extra = Self::needs_extra(short, puncture, parity, rate);
+        if (needs_extra && !extra) || (strict_extra && needs_extra != extra) {
             return Err(Error::HeTiming);
         }
         let short_cbps = c.coded_short;
         let expected = available
             + if extra {
                 group
-                    * if initial.pre_fec_padding == 3 {
+                    * if initial_padding == 3 {
                         c.coded_per_symbol - 3 * short_cbps
                     } else {
                         short_cbps
@@ -447,6 +511,96 @@ mod tests {
         a.bandwidth = 2;
         assert!(Layout::he_for_format(&a, 4, true).is_err());
     }
+    #[test]
+    fn radio_he_mu_ldpc_independent_layouts() {
+        use crate::radio::{HeSigBUserEncoding, HeSigBUserFields};
+        let bits: Vec<_> = include_str!("../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
+            .lines()
+            .nth(1)
+            .unwrap()
+            .split('\t')
+            .next()
+            .unwrap()
+            .bytes()
+            .map(|b| b - b'0')
+            .collect();
+        let mut signal = super::super::he_mu::MuSignal::decode(&bits).unwrap();
+        signal.bandwidth = 0;
+        let rows = include_str!("../../tests/fixtures/iq/he-mu-ldpc-layout.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 13696);
+        let mut peer_extra = 0;
+        for row in rows.lines().skip(1) {
+            let c: Vec<usize> = row.split('\t').map(|s| s.parse().unwrap()).collect();
+            signal.stbc = c[4] == 2;
+            signal.pre_fec_padding = c[9] as u8;
+            signal.ldpc_extra_segment = c[10] != 0;
+            let user = HeSigBUserFields {
+                sta_id: 1,
+                encoding: HeSigBUserEncoding::NonMu {
+                    space_time_streams: (c[2] * c[4]) as u8,
+                    beamformed: false,
+                    mcs: c[1] as u8,
+                    dcm: c[3] != 0,
+                    ldpc: true,
+                },
+            };
+            let l = Layout::he_mu(&signal, &user, c[0] as u16, c[8] as u16)
+                .unwrap_or_else(|e| panic!("{row}: {e:?}"));
+            assert_eq!(
+                [
+                    l.symbols,
+                    l.codewords,
+                    l.block_bits,
+                    l.shortened_bits,
+                    l.punctured_bits,
+                    l.repeated_bits,
+                    l.payload_bits,
+                    l.transmitted_bits
+                ],
+                [c[8], c[11], c[12], c[13], c[14], c[15], c[16], c[17]],
+                "{row}"
+            );
+            assert_eq!(l.extra_symbol_group, c[10] != 0);
+            let mut totals = [0; 5];
+            for n in 0..l.codewords {
+                let w = l.word(n).unwrap();
+                for (sum, v) in totals.iter_mut().zip([
+                    w.information_bits,
+                    w.shortened_bits,
+                    w.punctured_bits,
+                    w.repeated_bits,
+                    w.transmitted_bits,
+                ]) {
+                    *sum += v;
+                }
+            }
+            assert_eq!(totals, [c[16], c[13], c[14], c[15], c[17]]);
+            assert!(l.word(l.codewords).is_none());
+            if c[7] == 0 && c[10] == 1 {
+                peer_extra += 1;
+                if c[0] == 242 {
+                    let mut su = he_header();
+                    su.mcs = c[1] as u8;
+                    su.space_time_streams = (c[2] * c[4]) as u8;
+                    su.stbc = signal.stbc;
+                    su.dcm = c[3] != 0;
+                    su.pre_fec_padding = signal.pre_fec_padding;
+                    su.ldpc_extra_segment = Some(true);
+                    assert_eq!(Layout::he(&su, c[8] as u16), Err(Error::HeTiming));
+                }
+            }
+            signal.pre_fec_padding = c[6] as u8;
+            signal.ldpc_extra_segment = false;
+            let initial = Layout::he_mu(&signal, &user, c[0] as u16, c[5] as u16);
+            assert_eq!(initial.is_err(), c[7] != 0, "{row}");
+            assert_eq!(
+                Layout::he_mu(&signal, &user, c[0] as u16, 401),
+                Err(Error::HeTiming)
+            );
+        }
+        assert!(peer_extra > 1000);
+    }
+
     fn he_geometry(rows: &str, er_bandwidth: Option<u8>) {
         let mut coverage = [false; 7];
         for row in rows.lines().skip(1) {

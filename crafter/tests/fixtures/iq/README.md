@@ -1,5 +1,10 @@
 # Independent IQ vector contract
 
+`he-mu-ldpc-layout.tsv` contains 13696 independent forward per-user LDPC
+layouts, including extra segments requested by another user. It checks geometry,
+not MU codeword/IQ recovery or global admission. Regenerate with
+`he_mu_ldpc_layout_vectors.py` or verify with `--check`.
+
 `he-mu{26,52,106,242}-bcc-index.tsv` contains 1714 independent per-user BCC
 payload vectors with post-FEC padding, applicable DCM filler, STBC groups,
 scrambler seeds and malformed SERVICE. These are coded-bit/PSDU vectors, not
