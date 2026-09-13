@@ -646,10 +646,17 @@ fn public_api_dot11() -> crafter::Result<()> {
         .with_subtype(DOT11_DATA_SUBTYPE_QOS_DATA)
         .with_to_ds(true)
         .with_from_ds(true)
-        .with_protected(true);
+        .with_protected(true)
+        .with_order(true);
     let sequence_control = Dot11SequenceControl::new()
         .with_sequence_number(0x123)
         .with_fragment_number(7);
+    let trs = Dot11TrsControl::new()
+        .with_ul_data_symbols_raw(7)
+        .with_ru_allocation(122)
+        .with_ap_tx_power(20)
+        .with_target_receive_power(17)
+        .with_mcs(3);
 
     let dot11 = Dot11::qos_data()
         .frame_control(frame_control)
@@ -659,20 +666,25 @@ fn public_api_dot11() -> crafter::Result<()> {
         .addr3(destination)
         .addr4(source)
         .sequence_control(sequence_control)
-        .qos_control(0xabcd);
+        .qos_control(0xabcd)
+        .ht_control(trs.ht_control());
     let packet = dot11.clone() / Raw::from("wifi");
     let compiled = packet.compile()?;
 
     assert_eq!(
         compiled.as_bytes().len(),
-        DOT11_DATA_ADDR4_HEADER_LEN + DOT11_QOS_CONTROL_LEN + 4
+        DOT11_DATA_ADDR4_HEADER_LEN + DOT11_QOS_CONTROL_LEN + DOT11_HT_CONTROL_LEN + 4
     );
     assert_eq!(&compiled.as_bytes()[0..2], &frame_control.compile());
+    let decoded = Packet::decode_from_link(LinkType::Ieee80211, compiled.as_bytes())?;
+    assert_eq!(decoded.layer::<Dot11>().unwrap().trs_control(), Some(trs));
+    assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
     assert_eq!(dot11.frame_type(), Dot11FrameType::Data);
     assert_eq!(dot11.data_subtype(), Some(Dot11DataSubtype::QosData));
     assert_eq!(dot11.source(), Some(source));
     assert_eq!(dot11.destination(), Some(destination));
     assert_eq!(dot11.bssid(), None);
+    assert_eq!(dot11.trs_control(), Some(trs));
     assert!(dot11.is_protected());
     assert_eq!(
         dot11.sequence_control_value().unwrap().sequence_number(),

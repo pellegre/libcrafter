@@ -1,5 +1,6 @@
 //! IEEE 802.11 MAC layer scaffolding.
 
+mod a_control;
 mod codec;
 mod constants;
 mod element;
@@ -15,6 +16,7 @@ mod subtype;
 mod trigger;
 mod util;
 
+pub use self::a_control::Dot11TrsControl;
 pub(crate) use self::codec::decode_dot11_with_registry;
 pub(crate) use self::codec::decode_dot11_with_registry_fcs;
 use self::codec::{read_mac_at, read_u16_le_at};

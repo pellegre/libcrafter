@@ -570,6 +570,12 @@ impl Dot11 {
         self.ht_control.value().copied()
     }
 
+    /// Typed TRS Control value when the HT Control field uses the HE variant
+    /// and its A-Control entry has Control ID zero.
+    pub fn trs_control(&self) -> Option<Dot11TrsControl> {
+        Dot11TrsControl::from_ht_control(self.ht_control_value()?)
+    }
+
     /// Raw fixed management-field bytes.
     pub fn fixed_parameters_value(&self) -> &[u8] {
         &self.fixed_parameters

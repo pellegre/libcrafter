@@ -10,6 +10,9 @@ behaviors:
   - name: trigger-body
     source: IEEE 802.11ax-2021 9.3.1.22 and 9.3.1.7; IEEE 802.11-2020 9.3.1.7
     checks: [common_user_bit_mapping, variant_boundaries, padding_preserved, unknown_body_preserved, structured_truncation, radiotap_fcs_boundary, packet_roundtrip]
+  - name: trs-control
+    source: IEEE 802.11ax-2021 9.2.4.6.3a, 9.2.4.6a.1, and 26.5.2.3.4
+    checks: [he_variant_mapping, control_id_mapping, trs_information_mapping, reserved_preserved, packet_roundtrip]
 coverage_cases: [dot11-trigger-body]
 supported_cases:
   - {name: dot11-trigger-body, directions: [backend_to_libcrafter, libcrafter_to_backend, roundtrip], byte_policy: strict_bytes, contract_only: true}
@@ -18,4 +21,5 @@ backend_support:
     status: partial
     notes:
       - Common fields and normal HE User Info layouts are typed; NFRP user bodies and unknown variant/BAR boundaries remain opaque and byte-preserved.
-      - This does not admit TB IQ DATA, validate scheduling policy, or infer context for TRS-triggered responses.
+      - HE-variant TRS Control fields are typed and preserved; other A-Control identifiers remain available through the raw HT Control value.
+      - MAC parsing does not itself admit TB IQ DATA or validate response scheduling policy.
