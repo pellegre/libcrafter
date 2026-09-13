@@ -318,6 +318,17 @@ SERVICE rejection, padding, finite-input limits and partial LDPC failure
 accounting. These kernels do not demodulate TB IQ or publish frames: Trigger
 association, training, per-user clock tracking and MPDU FCS checks remain required.
 
+Trigger-configured isolated-RU training now estimates one DATA stream or its
+two STBC channels using the 2x-LTF/1600ns and 4x-LTF/3200ns modes. Independent
+RU training waveforms check channel recovery, including either missing STBC
+branch and long-delay channels. TB training uses only the selected user's pilot
+phase, never the MU estimator's phase pooled across RUs. Extra training symbols
+are accepted for OFDMA; a full 242-tone allocation requires the count for its
+admitted streams. Table 27-31 restricts 1x-LTF/1600ns to full-bandwidth UL MU-MIMO,
+so this isolated-user path rejects it and masked training. These kernels still
+require caller-established acquisition and positions; they do not establish
+simultaneous-user clock acquisition or end-to-end TB frame recovery.
+
 Without Trigger context, the receiver reports `UnsupportedPhy` and does not
 publish a TB frame. This is not payload decoding: RU assignment, MCS,
 coding and training context must come from the triggering exchange

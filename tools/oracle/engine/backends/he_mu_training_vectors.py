@@ -1,6 +1,8 @@
 """Isolated HE20 one-stream RU LTFs; ax-2021 Tables27-7, Eq27-5/42/43/58.
 
 Independent inverse DFT and frequency-domain channel, not complete MU packets.
+The 1600/3200ns subset also checks isolated TB first-LTF channels: per-user
+normalization in Eq27-59 is equivalent here. No simultaneous-user acquisition.
 """
 import argparse
 import cmath

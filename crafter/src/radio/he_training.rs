@@ -441,6 +441,99 @@ pub(super) fn train_stbc_ru_with_phase(
     cp: usize,
     shared: Option<&StbcPhase>,
 ) -> Option<[[ComplexSample; 256]; 2]> {
+    train_stbc_ru_layout(
+        samples,
+        a,
+        allocation,
+        RuTraining {
+            stbc: fields.stbc,
+            ltf_symbols: fields.ltf_symbols,
+            ltf_size: fields.ltf_size,
+            guard_ns: fields.guard_ns,
+        },
+        cp,
+        shared,
+    )
+}
+
+#[derive(Clone, Copy)]
+struct RuTraining {
+    stbc: bool,
+    ltf_symbols: u8,
+    ltf_size: u8,
+    guard_ns: u16,
+}
+
+fn tb_ru_training(common: &crate::Dot11TriggerCommonFields) -> Option<RuTraining> {
+    if common.bandwidth != 0 || common.masked_ltf || !matches!(common.trigger_type, 0..=2 | 4..=6) {
+        return None;
+    }
+    // Table27-31: 1x1600 is full-bandwidth UL MU-MIMO, not isolated OFDMA.
+    let (ltf_size, guard_ns) = match common.gi_ltf {
+        1 => (2, 1600),
+        2 => (4, 3200),
+        _ => return None,
+    };
+    let code = common.ltf_symbols_midamble;
+    let ltf_symbols = if common.doppler {
+        match code {
+            0..=2 => [1, 2, 4][usize::from(code)],
+            4..=6 => [1, 2, 4][usize::from(code - 4)],
+            _ => return None,
+        }
+    } else {
+        *[1, 2, 4, 6, 8].get(usize::from(code))?
+    };
+    Some(RuTraining {
+        stbc: common.stbc,
+        ltf_symbols,
+        ltf_size,
+        guard_ns,
+    })
+}
+
+/// Isolated TB RU, one DATA stream. The caller establishes the user's RU,
+/// starting stream zero, sample position and acquisition; no exchange is inferred.
+pub(super) fn train_tb_ru_field(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    allocation: Tones,
+    common: &crate::Dot11TriggerCommonFields,
+    cp: usize,
+) -> Option<[ComplexSample; 256]> {
+    let fields = tb_ru_training(common)?;
+    if fields.stbc
+        || (allocation.count() + allocation.pilots().len() == 242 && fields.ltf_symbols != 1)
+    {
+        return None;
+    }
+    train_ru_field(samples, a, allocation, fields.ltf_size, fields.guard_ns, cp)
+}
+
+/// Isolated TB STBC RU: use only this user's pilot phase, never a phase pooled
+/// across independent transmitters. No masked or spatial MU-MIMO separation.
+pub(super) fn train_tb_stbc_ru_field(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    allocation: Tones,
+    common: &crate::Dot11TriggerCommonFields,
+    cp: usize,
+) -> Option<[[ComplexSample; 256]; 2]> {
+    let fields = tb_ru_training(common)?;
+    if allocation.count() + allocation.pilots().len() == 242 && fields.ltf_symbols != 2 {
+        return None;
+    }
+    train_stbc_ru_layout(samples, a, allocation, fields, cp, None)
+}
+
+fn train_stbc_ru_layout(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+    allocation: Tones,
+    fields: RuTraining,
+    cp: usize,
+    shared: Option<&StbcPhase>,
+) -> Option<[[ComplexSample; 256]; 2]> {
     let count = usize::from(fields.ltf_symbols);
     if !fields.stbc
         || !matches!(count, 2 | 4 | 6 | 8)
@@ -779,7 +872,67 @@ fn observe_ru(
 mod tests {
     use super::*;
     #[test]
-    fn radio_he_mu_stbc_ru_training_channels() {
+    fn radio_he_tb_training_mode_admission() {
+        let mut common = crate::Dot11TriggerCommonFields::default();
+        for (gi, size, guard) in [(1, 2, 1600), (2, 4, 3200)] {
+            common.gi_ltf = gi;
+            for doppler in [false, true] {
+                common.doppler = doppler;
+                for code in 0..8 {
+                    common.ltf_symbols_midamble = code;
+                    let expected = if doppler {
+                        [
+                            Some(1),
+                            Some(2),
+                            Some(4),
+                            None,
+                            Some(1),
+                            Some(2),
+                            Some(4),
+                            None,
+                        ][usize::from(code)]
+                    } else {
+                        [
+                            Some(1),
+                            Some(2),
+                            Some(4),
+                            Some(6),
+                            Some(8),
+                            None,
+                            None,
+                            None,
+                        ][usize::from(code)]
+                    };
+                    let result = tb_ru_training(&common);
+                    assert_eq!(result.map(|v| v.ltf_symbols), expected);
+                    if let Some(result) = result {
+                        assert_eq!((result.ltf_size, result.guard_ns), (size, guard));
+                    }
+                }
+            }
+        }
+        common = crate::Dot11TriggerCommonFields::default();
+        for gi in [0, 3, 4, 255] {
+            common.gi_ltf = gi;
+            assert!(tb_ru_training(&common).is_none());
+        }
+        common.gi_ltf = 1;
+        common.masked_ltf = true;
+        assert!(tb_ru_training(&common).is_none());
+        common.masked_ltf = false;
+        for bandwidth in [1, 2, 3, 255] {
+            common.bandwidth = bandwidth;
+            assert!(tb_ru_training(&common).is_none());
+        }
+        common.bandwidth = 0;
+        for variant in [3, 7, 15, 255] {
+            common.trigger_type = variant;
+            assert!(tb_ru_training(&common).is_none());
+        }
+    }
+
+    #[test]
+    fn radio_he_mu_tb_stbc_ru_training_channels() {
         let (_, mut a) = fixture("he-training4-gi800-flat-gain160");
         a.signal_start = 0;
         a.phase_origin = 0;
@@ -832,6 +985,38 @@ mod tests {
                     .collect();
                 let channels = train_stbc_ru_field(&wave, &a, allocation, &fields, 0)
                     .unwrap_or_else(|| panic!("{}", c[0]));
+                if fields.guard_ns >= 1600 {
+                    let common = crate::Dot11TriggerCommonFields {
+                        stbc: true,
+                        gi_ltf: if fields.ltf_size == 2 { 1 } else { 2 },
+                        ltf_symbols_midamble: match fields.ltf_symbols {
+                            2 => 1,
+                            4 => 2,
+                            6 => 3,
+                            8 => 4,
+                            _ => unreachable!(),
+                        },
+                        ..Default::default()
+                    };
+                    let tb = train_tb_stbc_ru_field(&wave, &a, allocation, &common, 0);
+                    if ru == 242 && fields.ltf_symbols != 2 {
+                        assert!(tb.is_none());
+                    } else {
+                        assert_eq!(tb, Some(channels), "TB {}", c[0]);
+                        assert!(train_tb_stbc_ru_field(
+                            &wave[..wave.len() - 1],
+                            &a,
+                            allocation,
+                            &common,
+                            0
+                        )
+                        .is_none());
+                        assert!(
+                            train_tb_stbc_ru_field(&wave, &a, allocation, &common, usize::MAX)
+                                .is_none()
+                        );
+                    }
+                }
                 let gain = c[7].parse::<f32>().unwrap() / 128.
                     * 4.
                     * (52. / f32::from(ru)).sqrt()
@@ -908,7 +1093,7 @@ mod tests {
     }
 
     #[test]
-    fn radio_he_mu_ru_training_channels() {
+    fn radio_he_mu_tb_ru_training_channels() {
         let (_, mut a) = fixture("he-training4-gi800-flat-gain160");
         a.signal_start = 0;
         a.phase_origin = 0;
@@ -936,6 +1121,21 @@ mod tests {
                 .collect();
             let channel = train_ru_field(&wave, &a, allocation, size, guard, 0)
                 .unwrap_or_else(|| panic!("{}", c[0]));
+            if guard >= 1600 {
+                let mut common = crate::Dot11TriggerCommonFields {
+                    gi_ltf: if size == 2 { 1 } else { 2 },
+                    ..Default::default()
+                };
+                for code in 0..=4 {
+                    common.ltf_symbols_midamble = code;
+                    let tb = train_tb_ru_field(&wave, &a, allocation, &common, 0);
+                    if ru == 242 && code != 0 {
+                        assert!(tb.is_none());
+                    } else {
+                        assert_eq!(tb, Some(channel), "TB {}", c[0]);
+                    }
+                }
+            }
             let gain = c[5].parse::<f32>().unwrap() / 128. * 4. * (52. / f32::from(ru)).sqrt();
             let mut error = 0.;
             let mut energy = 0.;

@@ -2,6 +2,8 @@
 
 IEEE802.11ax-2021 Eq27-55..58; base Eq19-27/21-44/45.
 Two physical channels, STS2 cyclic shift, R pilots, direct inverse DFT.
+The 1600/3200ns subset also checks isolated TB channels under Eq27-59;
+full-bandwidth TB uses two LTFs for these two STS. No multi-user CFO evidence.
 """
 import argparse
 import cmath
