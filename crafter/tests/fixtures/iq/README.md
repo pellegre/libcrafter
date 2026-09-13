@@ -147,6 +147,12 @@ the flag differs from the local transmitter recommendation. These qualify
 shortening/puncturing/repetition geometry, not codeword convergence or IQ.
 Regenerate with `he_tb_ldpc_layout_vectors.py --write` or verify without arguments.
 
+`he-tb-ldpc-payload.tsv` contains 677 independently encoded soft-metric payload
+cases: 672 valid cases spanning all four HE20 RU sizes, MCS/DCM/STBC and both
+explicit Trigger extra flags; four invalid SERVICE cases and one damaged final
+codeword. This is not an IQ/MAC capture. Regenerate using
+`he_tb_ldpc_payload_vectors.py --write` or verify without arguments.
+
 `he-sigb-iq-index.tsv` indexes 172 independently synthesized time-domain MU
 preamble/SIG-B captures: all ten MCS/DCM combinations, compressed/uncompressed
 allocations, 1/2/8/9/17 users, empty allocations, long and padded SIG-B fields,

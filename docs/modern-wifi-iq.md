@@ -312,6 +312,12 @@ pin shortening, puncturing and repetition for both flag values; existing SU/MU
 admission rules are unchanged. Layout acceptance is not codeword convergence
 and never establishes SERVICE or MAC FCS integrity.
 
+The TB BCC/LDPC payload kernels consume already-demapped per-user soft metrics
+and explicit Trigger fields. Independent fixtures cover exact PSDU bytes,
+SERVICE rejection, padding, finite-input limits and partial LDPC failure
+accounting. These kernels do not demodulate TB IQ or publish frames: Trigger
+association, training, per-user clock tracking and MPDU FCS checks remain required.
+
 Without Trigger context, the receiver reports `UnsupportedPhy` and does not
 publish a TB frame. This is not payload decoding: RU assignment, MCS,
 coding and training context must come from the triggering exchange

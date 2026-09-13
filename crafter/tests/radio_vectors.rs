@@ -1029,6 +1029,30 @@ fn radio_he_sig_b_iq_inventory() {
 }
 
 #[test]
+fn radio_he_tb_ldpc_payload_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-ldpc-payload.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 677);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "df539c30f8395a7bc2c3dee2cc3b3016074d98763601c8d3281f8555087b64a1"
+    );
+    let mut counts = [0; 3];
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 10);
+        assert!(c[9].bytes().all(|b| b == b'0' || b == b'1'));
+        assert_eq!(c[8].len() % 2, 0);
+        counts[match c[7] {
+            "ok" => 0,
+            "service" => 1,
+            "damage" => 2,
+            _ => panic!("unknown TB status"),
+        }] += 1;
+    }
+    assert_eq!(counts, [672, 4, 1]);
+}
+
+#[test]
 fn radio_he_tb_ldpc_layout_inventory() {
     let rows = include_str!("fixtures/iq/he-tb-ldpc-layout.tsv");
     assert_eq!(rows.lines().skip(1).count(), 17276);

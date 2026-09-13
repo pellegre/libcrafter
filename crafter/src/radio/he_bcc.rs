@@ -55,6 +55,22 @@ pub(super) fn recover_mu(
     recover_capacity(c, symbols, usize::from(signal.stbc) + 1, metrics, max_psdu)
 }
 
+/// Trigger-configured per-user metrics, already deinterleaved/recombined.
+/// This returns PSDU estimates with checked SERVICE, not FCS-qualified frames.
+pub(super) fn recover_tb(
+    common: &crate::Dot11TriggerCommonFields,
+    user: &crate::Dot11TriggerUserFields,
+    symbols: usize,
+    metrics: &[f32],
+    max_psdu: usize,
+) -> Result<Vec<u8>, Error> {
+    let c = Capacity::for_tb(common, user, symbols).map_err(|_| Error::Capacity)?;
+    if c.tail_bits != 6 {
+        return Err(Error::Coding);
+    }
+    recover_capacity(c, symbols, usize::from(common.stbc) + 1, metrics, max_psdu)
+}
+
 fn recover_capacity(
     c: Capacity,
     symbols: usize,
@@ -155,7 +171,7 @@ fn recover_capacity(
 mod tests {
     use super::*;
     #[test]
-    fn radio_he_mu_bcc_independent_payloads() {
+    fn radio_he_mu_tb_bcc_independent_payloads() {
         use crate::radio::{HeSigBUserEncoding, HeSigBUserFields};
         let bits: Vec<_> = include_str!("../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
             .lines()
@@ -210,6 +226,74 @@ mod tests {
                     },
                 };
                 let result = recover_mu(&signal, &user, ru, symbols, &metrics, 65535);
+                let common = crate::Dot11TriggerCommonFields {
+                    stbc: a.stbc,
+                    pre_fec_padding_raw: a.pre_fec_padding % 4,
+                    ldpc_extra_segment: true, // BCC ignores the common LDPC flag.
+                    ..Default::default()
+                };
+                let trigger_user = crate::Dot11TriggerUserFields {
+                    aid12: 1,
+                    ru_allocation: match ru {
+                        26 => 0,
+                        52 => 74,
+                        106 => 106,
+                        242 => 122,
+                        _ => unreachable!(),
+                    },
+                    mcs: a.mcs,
+                    dcm: a.dcm,
+                    spatial_allocation: ((a.space_time_streams / (1 + u8::from(a.stbc))) - 1) << 3,
+                    ..Default::default()
+                };
+                assert_eq!(
+                    recover_tb(&common, &trigger_user, symbols, &metrics, 65535),
+                    result,
+                    "TB ru{ru} case{n}"
+                );
+                assert_eq!(
+                    recover_tb(
+                        &common,
+                        &trigger_user,
+                        symbols,
+                        &metrics[..metrics.len() - 1],
+                        65535
+                    ),
+                    Err(Error::Length)
+                );
+                if !expected.is_empty() {
+                    assert_eq!(
+                        recover_tb(
+                            &common,
+                            &trigger_user,
+                            symbols,
+                            &metrics,
+                            expected.len() - 1
+                        ),
+                        Err(Error::Limit)
+                    );
+                }
+                if n % 100 == 0 {
+                    let mut bad = metrics.clone();
+                    bad[0] = f32::NAN;
+                    assert_eq!(
+                        recover_tb(&common, &trigger_user, symbols, &bad, 65535),
+                        Err(Error::Metrics)
+                    );
+                    assert_eq!(
+                        recover_tb(
+                            &common,
+                            &trigger_user,
+                            symbols,
+                            &vec![0.; metrics.len()],
+                            65535
+                        ),
+                        Err(Error::Metrics)
+                    );
+                    let mut ldpc = trigger_user;
+                    ldpc.ldpc = true;
+                    assert!(recover_tb(&common, &ldpc, symbols, &metrics, 65535).is_err());
+                }
                 if valid {
                     assert_eq!(result, Ok(expected.clone()), "ru{ru} case{n}");
                 } else {
