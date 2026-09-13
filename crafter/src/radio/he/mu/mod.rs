@@ -1,6 +1,11 @@
 //! HE MU SIG-A; IEEE 802.11ax-2021 Table 27-20 and 27.3.11.7.3-4.
 //! Caller establishes MU format. This kernel does not admit DATA.
-use super::he::{decode_interleaved_bits, validate_bits, Error};
+
+pub(in crate::radio) mod data;
+pub(in crate::radio) mod ldpc;
+pub(in crate::radio) mod sig_b;
+
+use super::{decode_interleaved_bits, validate_bits, Error};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MuSignal {
@@ -97,7 +102,7 @@ mod tests {
 
     #[test]
     fn radio_he_mu_independent_headers() {
-        let index = include_str!("../../tests/fixtures/iq/he-mu-signal-a-index.tsv");
+        let index = include_str!("../../../../tests/fixtures/iq/he-mu-signal-a-index.tsv");
         for row in index.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
             let bits: Vec<_> = c[0].bytes().map(|b| b - b'0').collect();
@@ -135,7 +140,7 @@ mod tests {
 
     #[test]
     fn radio_he_mu_invalid_headers() {
-        let index = include_str!("../../tests/fixtures/iq/he-mu-signal-a-invalid.tsv");
+        let index = include_str!("../../../../tests/fixtures/iq/he-mu-signal-a-invalid.tsv");
         for row in index.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
             let bits: Vec<_> = c[1].bytes().map(|b| b - b'0').collect();

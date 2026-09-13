@@ -1,24 +1,22 @@
 //! HE20 SU / ER BCC/LDPC IQ, IEEE802.11ax-2021 27.3.12.5/8/9/10/13/14.
-use super::{
-    he_capacity::Capacity, he_timing::Timing, he_training::train_su, sync::Acquisition,
-    ComplexSample, SignalInfo,
-};
+use super::{capacity::Capacity, timing::Timing, training::train_su};
+use crate::radio::{sync::Acquisition, ComplexSample, SignalInfo};
 
 /// Restore constellation groups to LDPC order for one non-DCM 242-tone RU
 /// stream. Input is ascending DATA-tone order (pilots excluded). IEEE802.11ax
 /// Table27-36/Equation27-95: DTM=9, NSD=234, t(k)=9*(k mod26)+floor(k/26).
-pub(super) fn ldpc_order(metrics: &[f32], bits_per_tone: usize) -> Option<Vec<f32>> {
+pub(in crate::radio) fn ldpc_order(metrics: &[f32], bits_per_tone: usize) -> Option<Vec<f32>> {
     ldpc_order_for_tones(
         metrics,
         bits_per_tone,
-        super::he_tones::Tones::new(false, 0)?,
+        crate::radio::he::ru::Tones::new(false, 0)?,
     )
 }
 
 fn ldpc_order_for_tones(
     metrics: &[f32],
     bits_per_tone: usize,
-    tones: super::he_tones::Tones,
+    tones: crate::radio::he::ru::Tones,
 ) -> Option<Vec<f32>> {
     if !matches!(bits_per_tone, 1 | 2 | 4 | 6 | 8 | 10)
         || metrics.len() != tones.count() * bits_per_tone
@@ -36,9 +34,9 @@ fn ldpc_order_for_tones(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Admission {
+pub(in crate::radio) struct Admission {
     pub er: bool,
-    pub signal: super::he::SuSignal,
+    pub signal: super::SuSignal,
     pub timing: Timing,
     pub capacity: Capacity,
     pub info: SignalInfo,
@@ -50,7 +48,7 @@ pub(super) struct Admission {
 /// layout. Input needs L-SIG/RL-SIG/HE-SIG-A (320 SU or 480 ER samples). Timing and
 /// capacity follow IEEE802.11ax-2021 Equations27-119..122/140..143. This does
 /// not validate training, DATA, MAC framing or FCS.
-pub(super) fn admit(
+pub(in crate::radio) fn admit(
     samples: &[ComplexSample],
     a: &Acquisition,
     max_psdu: usize,
@@ -60,7 +58,7 @@ pub(super) fn admit(
     if a.signal_start.checked_sub(a.preamble_start)? != 320 {
         return None;
     }
-    let prefix = super::he_iq::decode_prefix(samples, a)?;
+    let prefix = crate::radio::he::iq::decode_prefix(samples, a)?;
     let h = prefix.signal;
     if h.space_time_streams != if h.stbc { 2 } else { 1 } {
         return None;
@@ -80,9 +78,9 @@ pub(super) fn admit(
     if h.ldpc {
         let symbols = u16::try_from(timing.data_symbols).ok()?;
         if prefix.er {
-            super::ldpc_rate::Layout::he_for_format(&h, symbols, true)
+            crate::radio::ldpc_rate::Layout::he_for_format(&h, symbols, true)
         } else {
-            super::ldpc_rate::Layout::he(&h, symbols)
+            crate::radio::ldpc_rate::Layout::he(&h, symbols)
         }
         .ok()?;
     }
@@ -118,7 +116,7 @@ pub(super) fn admit(
 
 /// Input starts at L-SIG. Bytes are not yet MAC/FCS qualified.
 #[cfg(test)]
-pub(super) fn recover(
+pub(in crate::radio) fn recover(
     samples: &[ComplexSample],
     a: &Acquisition,
     max_psdu: usize,
@@ -126,11 +124,11 @@ pub(super) fn recover(
     recover_impl(samples, a, max_psdu, false).map(|r| r.0)
 }
 
-pub(super) fn recover_aggregate(
+pub(in crate::radio) fn recover_aggregate(
     samples: &[ComplexSample],
     a: &Acquisition,
     max_psdu: usize,
-) -> Option<(Vec<u8>, Vec<super::PhyDiagnostic>)> {
+) -> Option<(Vec<u8>, Vec<crate::radio::PhyDiagnostic>)> {
     recover_impl(samples, a, max_psdu, true)
 }
 
@@ -139,13 +137,13 @@ fn recover_impl(
     a: &Acquisition,
     max_psdu: usize,
     partial: bool,
-) -> Option<(Vec<u8>, Vec<super::PhyDiagnostic>)> {
+) -> Option<(Vec<u8>, Vec<crate::radio::PhyDiagnostic>)> {
     let admitted = admit(samples, a, max_psdu, samples.len())?;
     let mut trained = train_su(samples, a)?;
     let h = admitted.signal;
     let timing = admitted.timing;
     let c = admitted.capacity;
-    let tones = super::he_tones::Tones::new(admitted.er, h.bandwidth)?;
+    let tones = crate::radio::he::ru::Tones::new(admitted.er, h.bandwidth)?;
     debug_assert_eq!(trained.prefix.signal, h);
     debug_assert_eq!(trained.data_start, admitted.info.data_start);
     let mut coded = Vec::new();
@@ -164,7 +162,7 @@ fn recover_impl(
     let mut pilot_state = 127u8;
     // Equation27-108: two legacy SIGNALs plus two/four SIG-A symbols.
     for _ in 0..4 + 2 * usize::from(admitted.er) {
-        super::data::feedback(&mut pilot_state);
+        crate::radio::data::feedback(&mut pilot_state);
     }
     let mut slope = 0.;
     let group = 1 + usize::from(h.stbc);
@@ -177,13 +175,23 @@ fn recover_impl(
                     .checked_sub(group * (64 * usize::from(h.ltf_size) + trained.guard))?
                     .checked_sub(320)?;
                 if h.stbc {
-                    let [first, second] =
-                        super::he_training::train_stbc_for_format(samples, a, &h, cp, admitted.er)?;
+                    let [first, second] = crate::radio::he::training::train_stbc_for_format(
+                        samples,
+                        a,
+                        &h,
+                        cp,
+                        admitted.er,
+                    )?;
                     trained.channel = first;
                     trained.second = Some(second);
                 } else {
-                    trained.channel =
-                        super::he_training::train_for_format(samples, a, &h, cp, admitted.er)?;
+                    trained.channel = crate::radio::he::training::train_for_format(
+                        samples,
+                        a,
+                        &h,
+                        cp,
+                        admitted.er,
+                    )?;
                 }
                 trained.normalize_er();
                 // The refreshed LTF includes the channel's current phase slope.
@@ -204,8 +212,8 @@ fn recover_impl(
                 .checked_sub(a.phase_origin)?;
             *v = wave[n].mul(ComplexSample::rotation(-a.frequency_rad * elapsed as f32));
         }
-        let bins = super::he_fft::fft256(time);
-        let polarity = 1. - 2. * super::data::feedback(&mut pilot_state) as f32;
+        let bins = crate::radio::he::fft::fft256(time);
+        let polarity = 1. - 2. * crate::radio::data::feedback(&mut pilot_state) as f32;
         let pilots: [(f32, ComplexSample); 8] = std::array::from_fn(|j| {
             let Some(&k) = tones.pilots().get(j) else {
                 return (0., ComplexSample::ZERO);
@@ -275,7 +283,8 @@ fn recover_impl(
                     continue;
                 }
                 let values =
-                    super::stbc::recover_pair(channels, [first[bin], corrected[bin]]).ok()?;
+                    crate::radio::stbc::recover_pair(channels, [first[bin], corrected[bin]])
+                        .ok()?;
                 recovered[0][bin] = values[0];
                 recovered[1][bin] = values[1];
             }
@@ -318,7 +327,7 @@ fn recover_impl(
                     dual.push((v, power));
                     continue;
                 }
-                super::data::demap(
+                crate::radio::data::demap(
                     v.i,
                     if c.bits_per_tone == 1 {
                         1
@@ -330,7 +339,7 @@ fn recover_impl(
                     &mut interleaved,
                 );
                 if c.bits_per_tone > 1 {
-                    super::data::demap(
+                    crate::radio::data::demap(
                         v.q,
                         c.bits_per_tone / 2,
                         energy.sqrt(),
@@ -345,7 +354,7 @@ fn recover_impl(
                     // Equation27-96 permutes each 117-tone half separately.
                     // BPSK sign parity is indexed before that permutation.
                     let tone = if h.ldpc { tones.ldpc_tone(k, true)? } else { k };
-                    let metrics = super::data::demap_dcm_for_half(
+                    let metrics = crate::radio::data::demap_dcm_for_half(
                         [*dual.get(tone)?, *dual.get(tone + half)?],
                         c.bits_per_tone,
                         k,
@@ -384,16 +393,16 @@ fn recover_impl(
     if h.ldpc {
         let symbols = u16::try_from(timing.data_symbols).ok()?;
         let layout = if admitted.er {
-            super::ldpc_rate::Layout::he_for_format(&h, symbols, true)
+            crate::radio::ldpc_rate::Layout::he_for_format(&h, symbols, true)
         } else {
-            super::ldpc_rate::Layout::he(&h, symbols)
+            crate::radio::ldpc_rate::Layout::he(&h, symbols)
         }
         .ok()?;
         let recovered = if partial {
             layout.recover_partial(&coded, 64).ok()?
         } else {
             let (bits, iterations) = layout.recover(&coded, 64).ok()?;
-            super::ldpc_rate::Recovery {
+            crate::radio::ldpc_rate::Recovery {
                 bits,
                 iterations,
                 failed_codewords: 0,
@@ -402,19 +411,19 @@ fn recover_impl(
         };
         let mut diagnostics = Vec::new();
         if recovered.failed_codewords != 0 {
-            diagnostics.push(super::PhyDiagnostic::LdpcPartial {
+            diagnostics.push(crate::radio::PhyDiagnostic::LdpcPartial {
                 failed_codewords: recovered.failed_codewords,
             });
-            if let Some(super::ldpc_rate::Error::Codeword {
+            if let Some(crate::radio::ldpc_rate::Error::Codeword {
                 index,
                 error:
-                    super::ldpc::Error::Nonconvergence {
+                    crate::radio::ldpc::Error::Nonconvergence {
                         iterations,
                         failed_checks,
                     },
             }) = recovered.first_failure
             {
-                diagnostics.push(super::PhyDiagnostic::LdpcNonconvergence {
+                diagnostics.push(crate::radio::PhyDiagnostic::LdpcNonconvergence {
                     codeword: index,
                     iterations,
                     failed_checks,
@@ -424,15 +433,15 @@ fn recover_impl(
         // Estimates are not verified MPDUs: SERVICE must pass here and each
         // delivered aggregate member must pass the existing scanner's FCS.
         Some((
-            super::data::descramble_psdu(recovered.bits, c.psdu_bytes).ok()?,
+            crate::radio::data::descramble_psdu(recovered.bits, c.psdu_bytes).ok()?,
             diagnostics,
         ))
     } else if admitted.er {
-        super::he_bcc::recover_for_format(&h, timing.data_symbols, &coded, max_psdu, true)
+        crate::radio::he::bcc::recover_for_format(&h, timing.data_symbols, &coded, max_psdu, true)
             .ok()
             .map(|v| (v, Vec::new()))
     } else {
-        super::he_bcc::recover(&h, timing.data_symbols, &coded, max_psdu)
+        crate::radio::he::bcc::recover(&h, timing.data_symbols, &coded, max_psdu)
             .ok()
             .map(|v| (v, Vec::new()))
     }
@@ -442,7 +451,7 @@ fn recover_impl(
 mod tests {
     #[test]
     fn radio_he_ldpc_independent_tone_order() {
-        let rows: Vec<_> = include_str!("../../tests/fixtures/iq/he-ldpc-tones.tsv")
+        let rows: Vec<_> = include_str!("../../../tests/fixtures/iq/he-ldpc-tones.tsv")
             .lines()
             .skip(1)
             .map(|row| {
@@ -494,7 +503,7 @@ mod tests {
     #[test]
     fn radio_he_stbc_iq_complete_waveforms() {
         complete_waveforms(
-            include_str!("../../tests/fixtures/iq/he-stbc-iq-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-stbc-iq-index.tsv"),
             false,
             368,
         );
@@ -503,7 +512,7 @@ mod tests {
     #[test]
     fn radio_he_er_iq_complete_waveforms() {
         complete_waveforms(
-            include_str!("../../tests/fixtures/iq/he-er-iq-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-er-iq-index.tsv"),
             true,
             280,
         );
@@ -512,7 +521,7 @@ mod tests {
     #[test]
     fn radio_he_er106_iq_complete_waveforms() {
         complete_waveforms(
-            include_str!("../../tests/fixtures/iq/he-er106-iq-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-er106-iq-index.tsv"),
             true,
             104,
         );
@@ -566,7 +575,7 @@ mod tests {
                 .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
                 .collect()
         };
-        let rows = include_str!("../../tests/fixtures/iq/he-dcm-iq-index.tsv");
+        let rows = include_str!("../../../tests/fixtures/iq/he-dcm-iq-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 128);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
@@ -583,11 +592,11 @@ mod tests {
             assert!(admit(&input[..320], &a, expected.len(), end - 1).is_none());
             let mut frames = Vec::new();
             let mut bad_fcs = 0;
-            for event in super::super::ampdu::Scan::he(&psdu, 16383) {
+            for event in crate::radio::ampdu::Scan::he(&psdu, 16383) {
                 match event {
-                    super::super::ampdu::Event::Frame { bytes, .. } => frames.push(bytes.to_vec()),
-                    super::super::ampdu::Event::Invalid {
-                        error: super::super::ampdu::Error::BadFcs,
+                    crate::radio::ampdu::Event::Frame { bytes, .. } => frames.push(bytes.to_vec()),
+                    crate::radio::ampdu::Event::Invalid {
+                        error: crate::radio::ampdu::Error::BadFcs,
                         ..
                     } => bad_fcs += 1,
                     _ => {}
@@ -611,7 +620,7 @@ mod tests {
                 .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
                 .collect()
         };
-        let rows = include_str!("../../tests/fixtures/iq/he-midamble-iq-index.tsv");
+        let rows = include_str!("../../../tests/fixtures/iq/he-midamble-iq-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 270);
         let mut no_midambles = 0;
         let mut multiple = 0;
@@ -632,9 +641,9 @@ mod tests {
             assert!(admit(&input[..320], &a, expected.len() - 1, input.len()).is_none());
             assert!(admit(&input[..320], &a, expected.len(), end - 1).is_none());
             assert!(recover(&input[..end - 1], &a, expected.len()).is_none());
-            let frames: Vec<_> = super::super::ampdu::Scan::he(&psdu, 16383)
+            let frames: Vec<_> = crate::radio::ampdu::Scan::he(&psdu, 16383)
                 .filter_map(|e| match e {
-                    super::super::ampdu::Event::Frame { bytes, .. } => Some(bytes.to_vec()),
+                    crate::radio::ampdu::Event::Frame { bytes, .. } => Some(bytes.to_vec()),
                     _ => None,
                 })
                 .collect();
@@ -652,20 +661,20 @@ mod tests {
         let h = admitted.signal;
         let span = 64 * usize::from(h.ltf_size) + usize::from(h.guard_ns) / 50;
         let cp = admitted.timing.symbol_start(10).unwrap() - span - 320;
-        assert!(super::super::he_training::train_field(input, &a, &h, cp).is_some());
+        assert!(crate::radio::he::training::train_field(input, &a, &h, cp).is_some());
         assert!(
-            super::super::he_training::train_field(&input[..cp + span - 1], &a, &h, cp).is_none()
+            crate::radio::he::training::train_field(&input[..cp + span - 1], &a, &h, cp).is_none()
         );
-        assert!(super::super::he_training::train_field(input, &a, &h, usize::MAX).is_none());
+        assert!(crate::radio::he::training::train_field(input, &a, &h, usize::MAX).is_none());
         let mut bad = a.clone();
         bad.signal_start = u64::MAX;
-        assert!(super::super::he_training::train_field(input, &bad, &h, cp).is_none());
+        assert!(crate::radio::he::training::train_field(input, &bad, &h, cp).is_none());
         let mut erased = input.to_vec();
         erased[cp..cp + span].fill(ComplexSample::ZERO);
-        assert!(super::super::he_training::train_field(&erased, &a, &h, cp).is_none());
+        assert!(crate::radio::he::training::train_field(&erased, &a, &h, cp).is_none());
         erased[cp + span - 1].i = f32::NAN;
-        assert!(super::super::he_training::train_field(&erased, &a, &h, cp).is_none());
-        for row in include_str!("../../tests/fixtures/iq/he-midamble-iq-invalid-index.tsv")
+        assert!(crate::radio::he::training::train_field(&erased, &a, &h, cp).is_none());
+        for row in include_str!("../../../tests/fixtures/iq/he-midamble-iq-invalid-index.tsv")
             .lines()
             .skip(1)
         {
@@ -686,7 +695,7 @@ mod tests {
                 .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
                 .collect()
         };
-        let index = include_str!("../../tests/fixtures/iq/he-ldpc-iq-index.tsv");
+        let index = include_str!("../../../tests/fixtures/iq/he-ldpc-iq-index.tsv");
         assert_eq!(index.lines().skip(1).count(), 240);
         for row in index.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
@@ -703,11 +712,11 @@ mod tests {
             assert!(admit(&input[..320], &a, expected.len(), end - 1).is_none());
             let mut frames = Vec::new();
             let mut bad_fcs = 0;
-            for event in super::super::ampdu::Scan::he(&psdu, 16383) {
+            for event in crate::radio::ampdu::Scan::he(&psdu, 16383) {
                 match event {
-                    super::super::ampdu::Event::Frame { bytes, .. } => frames.push(bytes.to_vec()),
-                    super::super::ampdu::Event::Invalid {
-                        error: super::super::ampdu::Error::BadFcs,
+                    crate::radio::ampdu::Event::Frame { bytes, .. } => frames.push(bytes.to_vec()),
+                    crate::radio::ampdu::Event::Invalid {
+                        error: crate::radio::ampdu::Error::BadFcs,
                         ..
                     } => bad_fcs += 1,
                     _ => {}
@@ -721,7 +730,7 @@ mod tests {
             );
             assert_eq!(bad_fcs, c[6].parse::<usize>().unwrap(), "{}", c[0]);
         }
-        for row in include_str!("../../tests/fixtures/iq/he-ldpc-iq-invalid-index.tsv")
+        for row in include_str!("../../../tests/fixtures/iq/he-ldpc-iq-invalid-index.tsv")
             .lines()
             .skip(1)
         {
@@ -747,12 +756,12 @@ mod tests {
                 q: v[1] as i8 as f32 / 128.,
             })
             .collect();
-        let mut sync = super::super::sync::Synchronizer::default();
+        let mut sync = crate::radio::sync::Synchronizer::default();
         let acquired = samples
             .iter()
             .enumerate()
             .find_map(|(i, v)| match sync.push(*v, i as u64) {
-                Some(super::super::sync::SyncEvent::Acquired(a)) => Some(a),
+                Some(crate::radio::sync::SyncEvent::Acquired(a)) => Some(a),
                 _ => None,
             })
             .expect("independent preamble acquisition");
@@ -767,7 +776,7 @@ mod tests {
                 .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
                 .collect()
         }
-        let rows = include_str!("../../tests/fixtures/iq/he-ampdu-iq-index.tsv");
+        let rows = include_str!("../../../tests/fixtures/iq/he-ampdu-iq-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 200);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
@@ -778,11 +787,11 @@ mod tests {
             let psdu =
                 recover(&input[..admitted.required_samples], &a, expected_psdu.len()).expect(c[0]);
             assert_eq!(psdu, expected_psdu, "{}", c[0]);
-            let events: Vec<_> = super::super::ampdu::Scan::he(&psdu, 16383).collect();
+            let events: Vec<_> = crate::radio::ampdu::Scan::he(&psdu, 16383).collect();
             let actual: Vec<_> = events
                 .iter()
                 .filter_map(|e| match e {
-                    super::super::ampdu::Event::Frame {
+                    crate::radio::ampdu::Event::Frame {
                         delimiter_offset,
                         control_bits,
                         bytes,
@@ -816,8 +825,8 @@ mod tests {
                 .filter(|e| {
                     matches!(
                         e,
-                        super::super::ampdu::Event::Invalid {
-                            error: super::super::ampdu::Error::BadFcs,
+                        crate::radio::ampdu::Event::Invalid {
+                            error: crate::radio::ampdu::Error::BadFcs,
                             ..
                         }
                     )
@@ -828,7 +837,7 @@ mod tests {
                 assert!(
                     !events
                         .iter()
-                        .any(|e| matches!(e, super::super::ampdu::Event::Invalid { .. })),
+                        .any(|e| matches!(e, crate::radio::ampdu::Event::Invalid { .. })),
                     "{}",
                     c[0]
                 );
@@ -838,7 +847,7 @@ mod tests {
 
     #[test]
     fn radio_he_bcc_header_only_admission() {
-        for row in include_str!("../../tests/fixtures/iq/he-bcc-iq-index.tsv")
+        for row in include_str!("../../../tests/fixtures/iq/he-bcc-iq-index.tsv")
             .lines()
             .skip(1)
         {
@@ -882,7 +891,7 @@ mod tests {
         bad.signal_start += shift;
         bad.phase_origin += shift;
         assert!(admit(input, &bad, usize::MAX, usize::MAX).is_none());
-        for row in include_str!("../../tests/fixtures/iq/he-bcc-iq-invalid-index.tsv")
+        for row in include_str!("../../../tests/fixtures/iq/he-bcc-iq-invalid-index.tsv")
             .lines()
             .skip(1)
         {
@@ -907,7 +916,7 @@ mod tests {
     #[test]
     fn radio_he_bcc_iq_independent_complete_waveforms() {
         let mut count = 0;
-        for row in include_str!("../../tests/fixtures/iq/he-bcc-iq-index.tsv")
+        for row in include_str!("../../../tests/fixtures/iq/he-bcc-iq-index.tsv")
             .lines()
             .skip(1)
         {
@@ -940,7 +949,7 @@ mod tests {
 
     #[test]
     fn radio_he_bcc_iq_invalid_layouts_and_bounds() {
-        for row in include_str!("../../tests/fixtures/iq/he-bcc-iq-invalid-index.tsv")
+        for row in include_str!("../../../tests/fixtures/iq/he-bcc-iq-invalid-index.tsv")
             .lines()
             .skip(1)
         {

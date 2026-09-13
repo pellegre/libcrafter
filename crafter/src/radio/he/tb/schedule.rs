@@ -1,13 +1,13 @@
 //! HE20 Trigger allocation geometry, ax-2021 9.3.1.22.1 and26.5.4.2.
 //! No exchange association, spatial separation or DATA integrity is inferred.
-use super::he_tones::Tones;
+use crate::radio::he::ru::Tones;
 use crate::{Dot11Trigger, Dot11TriggerRemainder, Dot11TriggerUserFields};
 
 // Explicit receiver resource bound, not a general MAC parser restriction.
 const MAX_ALLOCATIONS: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Error {
+pub(in crate::radio) enum Error {
     Unsupported,
     Opaque,
     Limit,
@@ -15,7 +15,7 @@ pub(super) enum Error {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct Allocation {
+pub(in crate::radio) struct Allocation {
     pub user_index: usize,
     /// Original fields, except the RU byte selects this particular RA-RU.
     pub fields: Dot11TriggerUserFields,
@@ -24,7 +24,7 @@ pub(super) struct Allocation {
 }
 
 #[derive(Clone)]
-pub(super) struct Schedule {
+pub(in crate::radio) struct Schedule {
     allocations: [Option<Allocation>; MAX_ALLOCATIONS],
     len: usize,
 }
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn radio_he_tb_schedule_independent_geometry() {
-        let rows = include_str!("../../tests/fixtures/iq/he-tb-schedule.tsv");
+        let rows = include_str!("../../../../tests/fixtures/iq/he-tb-schedule.tsv");
         let mut count = 0;
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();

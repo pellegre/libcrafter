@@ -8,35 +8,15 @@ mod data;
 mod dsss;
 mod dsss_tx;
 mod he;
-mod he_bcc;
-mod he_capacity;
-mod he_data_iq;
-mod he_fft;
-mod he_iq;
-mod he_mu;
-mod he_mu_data_iq;
-mod he_mu_ldpc;
-mod he_ru_symbol;
-mod he_sig_b;
-mod he_sig_b_coded;
-mod he_sig_b_iq;
-mod he_sig_b_modulation;
-mod he_tb;
-mod he_tb_context;
-mod he_tb_data_iq;
-mod he_tb_schedule;
-pub use he_sig_b::{
+pub use he::mu::sig_b::coded::Error as HeSigBCodedError;
+pub use he::mu::sig_b::iq::Fields as HeMuSigBFields;
+pub use he::mu::sig_b::{
     HeRu20Assignment, HeSigBCommon20Fields, HeSigBError, HeSigBUserBlock, HeSigBUserContext,
     HeSigBUserEncoding, HeSigBUserFields,
 };
-pub use he_sig_b_coded::Error as HeSigBCodedError;
-pub use he_sig_b_iq::Fields as HeMuSigBFields;
-mod he_timing;
-mod he_tones;
-mod he_training;
+pub use he::mu::MuSignal as HeMuSignalFields;
+pub use he::tb::{Error as HeTbSignalError, TbSignal as HeTbSignalFields};
 pub use he::{Error as HeSignalError, SuSignal as HeSuSignalFields};
-pub use he_mu::MuSignal as HeMuSignalFields;
-pub use he_tb::{Error as HeTbSignalError, TbSignal as HeTbSignalFields};
 mod ht;
 mod vht;
 mod vht_iq;

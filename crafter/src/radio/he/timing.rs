@@ -1,8 +1,8 @@
 //! HE20 SU / ER SU / MU / TB timing, IEEE802.11ax-2021 Equations27-119..122.
-use super::he::SuSignal;
+use super::SuSignal;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Timing {
+pub(in crate::radio) struct Timing {
     pub ltf_symbols: usize,
     pub data_symbols: usize,
     pub midambles: usize,
@@ -18,7 +18,7 @@ pub(super) struct Timing {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Error {
+pub(in crate::radio) enum Error {
     Rate,
     Length,
     Format,
@@ -104,7 +104,7 @@ impl Timing {
     pub fn for_mu(
         rate: u32,
         length: usize,
-        a: &super::he_mu::MuSignal,
+        a: &crate::radio::he::mu::MuSignal,
         sig_b_symbols: usize,
     ) -> Result<Self, Error> {
         if rate != 6_000_000 {
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn radio_he_tb_timing_forward() {
-        let rows = include_str!("../../tests/fixtures/iq/he-tb-timing.tsv");
+        let rows = include_str!("../../../tests/fixtures/iq/he-tb-timing.tsv");
         assert_eq!(rows.lines().skip(1).count(), 3315);
         for row in rows.lines().skip(1) {
             let columns: Vec<_> = row.split('\t').collect();
@@ -367,8 +367,8 @@ mod tests {
         assert_eq!(Timing::for_tb(6_000_000, 1, &common), Err(Error::Duration));
     }
 
-    fn mu_header() -> super::super::he_mu::MuSignal {
-        let row = include_str!("../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
+    fn mu_header() -> crate::radio::he::mu::MuSignal {
+        let row = include_str!("../../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
             .lines()
             .nth(1)
             .unwrap();
@@ -379,12 +379,12 @@ mod tests {
             .bytes()
             .map(|b| b - b'0')
             .collect();
-        super::super::he_mu::MuSignal::decode(&bits).unwrap()
+        crate::radio::he::mu::MuSignal::decode(&bits).unwrap()
     }
 
     #[test]
     fn radio_he_mu_timing_forward() {
-        let rows = include_str!("../../tests/fixtures/iq/he-mu-timing.tsv");
+        let rows = include_str!("../../../tests/fixtures/iq/he-mu-timing.tsv");
         assert_eq!(rows.lines().skip(1).count(), 26529);
         for row in rows.lines().skip(1) {
             let columns: Vec<_> = row.split('\t').collect();
@@ -488,7 +488,7 @@ mod tests {
     #[test]
     fn radio_he_timing_independent_forward_timeline() {
         forward_timeline(
-            include_str!("../../tests/fixtures/iq/he-timing-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-timing-index.tsv"),
             false,
             10252,
         );
@@ -497,7 +497,7 @@ mod tests {
     #[test]
     fn radio_he_er_timing_independent_forward_timeline() {
         forward_timeline(
-            include_str!("../../tests/fixtures/iq/he-er-timing-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-er-timing-index.tsv"),
             true,
             2479,
         );

@@ -1,8 +1,9 @@
 //! One-stream HE20 RU DATA, including STBC, ax-2021 27.3.12.8-13.
 //! No MU-MIMO separation, header admission, FEC or MAC integrity is implied.
-use super::{he_tones::Tones, ComplexSample};
+use super::Tones;
+use crate::radio::ComplexSample;
 
-pub(super) struct Observation {
+pub(in crate::radio) struct Observation {
     bins: [ComplexSample; 256],
     phase: f32,
     slope: f32,
@@ -12,7 +13,7 @@ pub(super) struct Observation {
 /// Fits carrier phase and sampling-clock slope across uniformly spaced DATA
 /// symbols; never span a midamble/channel reset. FEC and MAC still decide
 /// whether a retry is usable, not the regression residual or assumed payload.
-pub(super) fn fit_pilot_clock(observed: &[Observation]) -> Option<Vec<(f32, f32)>> {
+pub(in crate::radio) fn fit_pilot_clock(observed: &[Observation]) -> Option<Vec<(f32, f32)>> {
     if !(3..=400).contains(&observed.len()) {
         return None;
     }
@@ -50,7 +51,7 @@ pub(super) fn fit_pilot_clock(observed: &[Observation]) -> Option<Vec<(f32, f32)
 }
 
 #[derive(Clone)]
-pub(super) struct Demodulator {
+pub(in crate::radio) struct Demodulator {
     tones: Tones,
     bits: usize,
     ldpc: bool,
@@ -278,7 +279,7 @@ impl Demodulator {
             let values = if power < 1e-12 {
                 [ComplexSample::ZERO; 2]
             } else {
-                super::stbc::recover_pair(
+                crate::radio::stbc::recover_pair(
                     [channels[0][k], channels[1][k]],
                     [corrected[0][k], corrected[1][k]],
                 )
@@ -316,7 +317,7 @@ impl Demodulator {
                 k
             };
             if self.dcm {
-                let metrics = super::data::demap_dcm_for_half(
+                let metrics = crate::radio::data::demap_dcm_for_half(
                     [observations[tone], observations[tone + count]],
                     self.bits,
                     k,
@@ -325,7 +326,7 @@ impl Demodulator {
                 mapped.extend_from_slice(&metrics[..self.bits]);
             } else {
                 let (v, power) = observations[tone];
-                super::data::demap(
+                crate::radio::data::demap(
                     v.i,
                     (self.bits / 2).max(1),
                     energy.sqrt(),
@@ -333,7 +334,13 @@ impl Demodulator {
                     &mut mapped,
                 );
                 if self.bits > 1 {
-                    super::data::demap(v.q, self.bits / 2, energy.sqrt(), power, &mut mapped);
+                    crate::radio::data::demap(
+                        v.q,
+                        self.bits / 2,
+                        energy.sqrt(),
+                        power,
+                        &mut mapped,
+                    );
                 }
             }
         }
@@ -353,7 +360,7 @@ impl Demodulator {
 
 /// A common clock estimate from an explicit pilot map. MU may pool pilots
 /// across RUs after applying each RU's own rotation and estimated channel.
-pub(super) fn observe_with_pilots(
+pub(in crate::radio) fn observe_with_pilots(
     wave: &[ComplexSample],
     channel: &[ComplexSample; 256],
     frequency_rad: f32,
@@ -399,7 +406,7 @@ fn observe_with_pilot_policy(
             -frequency_rad * (elapsed + n as u64) as f32,
         ));
     }
-    let bins = super::he_fft::fft256(time);
+    let bins = crate::radio::he::fft::fft256(time);
     // HE20 leaves these guard/DC bins unmodulated, even with other RUs active.
     // A median limits the influence of one interferer on the noise estimate.
     let noise = if let Some((floor, _)) = quality {
@@ -579,7 +586,7 @@ mod tests {
 
     #[test]
     fn radio_he_ru_independent_stbc_iq_pairs() {
-        let rows = include_str!("../../tests/fixtures/iq/he-ru-stbc-symbol.tsv");
+        let rows = include_str!("../../../../tests/fixtures/iq/he-ru-stbc-symbol.tsv");
         assert_eq!(rows.lines().skip(1).count(), 880);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
@@ -745,7 +752,7 @@ mod tests {
 
     #[test]
     fn radio_he_ru_independent_iq_symbols() {
-        let rows = include_str!("../../tests/fixtures/iq/he-ru-symbol.tsv");
+        let rows = include_str!("../../../../tests/fixtures/iq/he-ru-symbol.tsv");
         assert_eq!(rows.lines().skip(1).count(), 640);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();

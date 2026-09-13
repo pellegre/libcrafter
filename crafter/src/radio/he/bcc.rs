@@ -1,8 +1,9 @@
 //! HE BCC payload kernel, IEEE802.11ax-2021 27.3.12.1-5.
-use super::{he::SuSignal, he_capacity::Capacity, signal::TRELLIS_SIGNS};
+use super::{capacity::Capacity, SuSignal};
+use crate::radio::signal::TRELLIS_SIGNS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Error {
+pub(in crate::radio) enum Error {
     Coding,
     Capacity,
     Length,
@@ -14,7 +15,7 @@ pub(super) enum Error {
 
 /// Metrics are deinterleaved, stream-recombined symbol blocks, positive for1.
 /// PSDU output is not MAC/FCS qualified. Caller supplies a payload allocation cap.
-pub(super) fn recover(
+pub(in crate::radio) fn recover(
     a: &SuSignal,
     symbols: usize,
     metrics: &[f32],
@@ -24,7 +25,7 @@ pub(super) fn recover(
 }
 
 /// ER format must come from validated signaling. This does not demodulate IQ.
-pub(super) fn recover_for_format(
+pub(in crate::radio) fn recover_for_format(
     a: &SuSignal,
     symbols: usize,
     metrics: &[f32],
@@ -40,9 +41,9 @@ pub(super) fn recover_for_format(
 
 /// Per-user MU metrics, already deinterleaved and stream-recombined. This
 /// checks SERVICE, not MAC/FCS integrity, and does not admit spatial layouts.
-pub(super) fn recover_mu(
-    signal: &super::he_mu::MuSignal,
-    user: &super::he_sig_b::HeSigBUserFields,
+pub(in crate::radio) fn recover_mu(
+    signal: &crate::radio::he::mu::MuSignal,
+    user: &crate::radio::he::mu::sig_b::HeSigBUserFields,
     ru_tones: u16,
     symbols: usize,
     metrics: &[f32],
@@ -57,7 +58,7 @@ pub(super) fn recover_mu(
 
 /// Trigger-configured per-user metrics, already deinterleaved/recombined.
 /// This returns PSDU estimates with checked SERVICE, not FCS-qualified frames.
-pub(super) fn recover_tb(
+pub(in crate::radio) fn recover_tb(
     common: &crate::Dot11TriggerCommonFields,
     user: &crate::Dot11TriggerUserFields,
     symbols: usize,
@@ -164,7 +165,7 @@ fn recover_capacity(
         bits[t] = (state & 1) as u8;
         state = row[state] as usize;
     }
-    super::data::descramble_psdu(bits, c.psdu_bytes).map_err(|_| Error::Service)
+    crate::radio::data::descramble_psdu(bits, c.psdu_bytes).map_err(|_| Error::Service)
 }
 
 #[cfg(test)]
@@ -173,7 +174,7 @@ mod tests {
     #[test]
     fn radio_he_mu_tb_bcc_independent_payloads() {
         use crate::radio::{HeSigBUserEncoding, HeSigBUserFields};
-        let bits: Vec<_> = include_str!("../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
+        let bits: Vec<_> = include_str!("../../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
             .lines()
             .nth(1)
             .unwrap()
@@ -183,7 +184,7 @@ mod tests {
             .bytes()
             .map(|b| b - b'0')
             .collect();
-        let mut signal = super::super::he_mu::MuSignal::decode(&bits).unwrap();
+        let mut signal = crate::radio::he::mu::MuSignal::decode(&bits).unwrap();
         signal.bandwidth = 0;
         signal.sig_b_mcs = 1;
         signal.sig_b_dcm = true;
@@ -191,22 +192,22 @@ mod tests {
         for (ru, index, total) in [
             (
                 26,
-                include_str!("../../tests/fixtures/iq/he-mu26-bcc-index.tsv"),
+                include_str!("../../../tests/fixtures/iq/he-mu26-bcc-index.tsv"),
                 415,
             ),
             (
                 52,
-                include_str!("../../tests/fixtures/iq/he-mu52-bcc-index.tsv"),
+                include_str!("../../../tests/fixtures/iq/he-mu52-bcc-index.tsv"),
                 429,
             ),
             (
                 106,
-                include_str!("../../tests/fixtures/iq/he-mu106-bcc-index.tsv"),
+                include_str!("../../../tests/fixtures/iq/he-mu106-bcc-index.tsv"),
                 435,
             ),
             (
                 242,
-                include_str!("../../tests/fixtures/iq/he-mu242-bcc-index.tsv"),
+                include_str!("../../../tests/fixtures/iq/he-mu242-bcc-index.tsv"),
                 435,
             ),
         ] {
@@ -339,7 +340,7 @@ mod tests {
     #[test]
     fn radio_he_mu_bcc_rejects_other_coding() {
         use crate::radio::{HeSigBUserEncoding, HeSigBUserFields};
-        let bits: Vec<_> = include_str!("../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
+        let bits: Vec<_> = include_str!("../../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
             .lines()
             .nth(1)
             .unwrap()
@@ -349,7 +350,7 @@ mod tests {
             .bytes()
             .map(|b| b - b'0')
             .collect();
-        let mut signal = super::super::he_mu::MuSignal::decode(&bits).unwrap();
+        let mut signal = crate::radio::he::mu::MuSignal::decode(&bits).unwrap();
         signal.bandwidth = 0;
         signal.stbc = false;
         signal.pre_fec_padding = 4;
@@ -403,7 +404,7 @@ mod tests {
     #[test]
     fn radio_he_bcc_independent_payloads_and_service() {
         payloads(
-            include_str!("../../tests/fixtures/iq/he-bcc-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-bcc-index.tsv"),
             None,
             435,
         );
@@ -412,12 +413,12 @@ mod tests {
     #[test]
     fn radio_he_er_bcc_independent_payloads_and_service() {
         payloads(
-            include_str!("../../tests/fixtures/iq/he-er106-bcc-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-er106-bcc-index.tsv"),
             Some(1),
             165,
         );
         payloads(
-            include_str!("../../tests/fixtures/iq/he-er242-bcc-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-er242-bcc-index.tsv"),
             Some(0),
             225,
         );
@@ -447,7 +448,7 @@ mod tests {
     #[test]
     fn radio_he_bcc_soft_metrics_padding_and_bounds() {
         soft_bounds(
-            include_str!("../../tests/fixtures/iq/he-bcc-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-bcc-index.tsv"),
             None,
         );
     }
@@ -455,11 +456,11 @@ mod tests {
     #[test]
     fn radio_he_er_bcc_soft_metrics_padding_and_bounds() {
         soft_bounds(
-            include_str!("../../tests/fixtures/iq/he-er106-bcc-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-er106-bcc-index.tsv"),
             Some(1),
         );
         soft_bounds(
-            include_str!("../../tests/fixtures/iq/he-er242-bcc-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-er242-bcc-index.tsv"),
             Some(0),
         );
     }

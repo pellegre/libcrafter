@@ -1,6 +1,8 @@
 //! HE SIG-B 27.3.11.8.5: reset BCC per block, puncture the concatenated output.
 //! Input is already deinterleaved and DCM-combined; positive metrics favor one.
-use super::he_sig_b::{HeSigBCommon20Fields, HeSigBError, HeSigBUserBlock, HeSigBUserContext};
+use crate::radio::he::mu::sig_b::{
+    HeSigBCommon20Fields, HeSigBError, HeSigBUserBlock, HeSigBUserContext,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
@@ -17,7 +19,7 @@ impl std::fmt::Display for Error {
 }
 impl std::error::Error for Error {}
 
-pub(super) struct Blocks<'a> {
+pub(in crate::radio) struct Blocks<'a> {
     metrics: &'a [f32],
     pattern: &'static [u8],
     cursor: usize,
@@ -25,7 +27,7 @@ pub(super) struct Blocks<'a> {
 }
 
 impl<'a> Blocks<'a> {
-    pub(super) fn new(metrics: &'a [f32], mcs: u8) -> Result<Self, Error> {
+    pub(in crate::radio) fn new(metrics: &'a [f32], mcs: u8) -> Result<Self, Error> {
         // Table 27-111. DCM changes the mapper, not the BCC puncturing rate.
         let pattern: &[u8] = match mcs {
             0 | 1 | 3 => &[1, 1],
@@ -44,15 +46,15 @@ impl<'a> Blocks<'a> {
         })
     }
 
-    pub(super) fn consumed(&self) -> usize {
+    pub(in crate::radio) fn consumed(&self) -> usize {
         self.cursor
     }
 
-    pub(super) fn common(&mut self) -> Result<HeSigBCommon20Fields, Error> {
+    pub(in crate::radio) fn common(&mut self) -> Result<HeSigBCommon20Fields, Error> {
         HeSigBCommon20Fields::decode(&self.bits::<18>()?).map_err(Error::Header)
     }
 
-    pub(super) fn users(
+    pub(in crate::radio) fn users(
         &mut self,
         contexts: &[HeSigBUserContext],
     ) -> Result<HeSigBUserBlock, Error> {
@@ -102,7 +104,7 @@ impl<'a> Blocks<'a> {
         }
         // Leave final-state selection unconstrained so invalid tail bits are
         // observable by the checked parser instead of silently forced to zero.
-        Ok(super::signal::decode_bcc(&pairs))
+        Ok(crate::radio::signal::decode_bcc(&pairs))
     }
 }
 
@@ -121,7 +123,7 @@ mod tests {
 
     #[test]
     fn radio_he_sig_b_coded_erasure_and_truncation() {
-        for row in include_str!("../../tests/fixtures/iq/he-sig-b-coded.tsv")
+        for row in include_str!("../../../../../tests/fixtures/iq/he-sig-b-coded.tsv")
             .lines()
             .skip(1)
         {
@@ -178,7 +180,7 @@ mod tests {
 
     #[test]
     fn radio_he_sig_b_coded_independent() {
-        let rows = include_str!("../../tests/fixtures/iq/he-sig-b-coded.tsv");
+        let rows = include_str!("../../../../../tests/fixtures/iq/he-sig-b-coded.tsv");
         assert_eq!(rows.lines().skip(1).count(), 450);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();

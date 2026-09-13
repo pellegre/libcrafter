@@ -1,11 +1,15 @@
 //! Trigger-configured isolated HE20 TB user DATA, IEEE802.11ax-2021 27.3.
 //! Caller establishes exchange association and no overlapping spatial users.
 //! Returned PSDUs are not MAC/FCS-qualified frames.
-use super::{he_capacity::Capacity, he_timing::Timing, sync::Acquisition, ComplexSample};
+use crate::radio::{
+    he::{capacity::Capacity, timing::Timing},
+    sync::Acquisition,
+    ComplexSample,
+};
 use crate::{Dot11TriggerCommonFields, Dot11TriggerUserFields};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Error {
+pub(in crate::radio) enum Error {
     Header,
     Context,
     Timing,
@@ -15,27 +19,27 @@ pub(super) enum Error {
     Training,
     Metrics,
     Allocation,
-    Bcc(super::he_bcc::Error),
-    Ldpc(super::he_mu_ldpc::Error),
+    Bcc(crate::radio::he::bcc::Error),
+    Ldpc(crate::radio::he::mu::ldpc::Error),
 }
 
 #[derive(Debug)]
-pub(super) struct Recovered {
-    pub signal: super::he_tb::TbSignal,
+pub(in crate::radio) struct Recovered {
+    pub signal: crate::radio::he::tb::TbSignal,
     pub timing: Timing,
     pub psdu: Vec<u8>,
     pub failed_codewords: usize,
-    pub first_failure: Option<super::ldpc_rate::Error>,
+    pub first_failure: Option<crate::radio::ldpc_rate::Error>,
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct Admission {
-    pub signal: super::he_tb::TbSignal,
+pub(in crate::radio) struct Admission {
+    pub signal: crate::radio::he::tb::TbSignal,
     pub timing: Timing,
     pub capacity: Capacity,
     /// Total retained samples from L-SIG through DATA, excluding packet extension.
     pub required_samples: usize,
-    tones: super::he_tones::Tones,
+    tones: crate::radio::he::ru::Tones,
     size: usize,
     guard: usize,
 }
@@ -43,7 +47,7 @@ pub(super) struct Admission {
 /// Admit from only L-SIG/RL-SIG/HE-SIG-A (320 samples), before retaining DATA.
 /// Uses the same checked Trigger geometry as recovery; neither acquisition nor
 /// header agreement proves that the caller selected the correct exchange.
-pub(super) fn admit(
+pub(in crate::radio) fn admit(
     samples: &[ComplexSample],
     a: &Acquisition,
     common: &Dot11TriggerCommonFields,
@@ -54,8 +58,8 @@ pub(super) fn admit(
     if a.signal_start.checked_sub(a.preamble_start) != Some(320) {
         return Err(Error::Timing);
     }
-    let signal = super::he_iq::decode_tb_prefix(samples, a).ok_or(Error::Header)?;
-    let length = super::he_iq::repeated_su_signal(samples, a).ok_or(Error::Header)?;
+    let signal = crate::radio::he::iq::decode_tb_prefix(samples, a).ok_or(Error::Header)?;
+    let length = crate::radio::he::iq::repeated_su_signal(samples, a).ok_or(Error::Header)?;
     if signal.bandwidth != common.bandwidth
         || signal.trigger_reserved != common.sig_a2_reserved
         || signal.spatial_reuse
@@ -76,7 +80,7 @@ pub(super) fn admit(
         2 if !common.masked_ltf => (4, 64),
         _ => return Err(Error::Unsupported),
     };
-    let tones = super::he_tones::Tones::from_trigger(common.bandwidth, user.ru_allocation)
+    let tones = crate::radio::he::ru::Tones::from_trigger(common.bandwidth, user.ru_allocation)
         .ok_or(Error::Unsupported)?;
     let c = Capacity::for_tb(common, user, timing.data_symbols).map_err(|_| Error::Unsupported)?;
     // RA count bits are not spatial-stream indices. Scheduled isolated users
@@ -94,7 +98,7 @@ pub(super) fn admit(
         return Err(Error::Limit);
     }
     if user.ldpc {
-        super::ldpc_rate::Layout::he_tb(common, user, timing.data_symbols as u16)
+        crate::radio::ldpc_rate::Layout::he_tb(common, user, timing.data_symbols as u16)
             .map_err(|_| Error::Unsupported)?;
     }
     Ok(Admission {
@@ -111,7 +115,7 @@ pub(super) fn admit(
 /// Input begins at L-SIG. Common pre-HE acquisition provides coarse carrier
 /// correction; this user's RU pilots track its residual phase independently.
 /// No separation of overlapping spatial users is inferred.
-pub(super) fn recover(
+pub(in crate::radio) fn recover(
     samples: &[ComplexSample],
     a: &Acquisition,
     common: &Dot11TriggerCommonFields,
@@ -136,9 +140,9 @@ pub(super) fn recover(
     let training = timing.ltf_symbols * (64 * size + guard);
     let train = |cp| {
         if common.stbc {
-            super::he_training::train_tb_stbc_ru_field(samples, a, tones, common, cp)
+            crate::radio::he::training::train_tb_stbc_ru_field(samples, a, tones, common, cp)
         } else {
-            super::he_training::train_tb_ru_field(samples, a, tones, common, cp)
+            crate::radio::he::training::train_tb_ru_field(samples, a, tones, common, cp)
                 .map(|h| [h, [ComplexSample::ZERO; 256]])
         }
         .ok_or(Error::Training)
@@ -147,7 +151,7 @@ pub(super) fn recover(
     let mut channel = train(480)?;
     // CS8's1/128 quantization step gives complex FFT-domain variance
     // 256 * 2 * (1/128)^2 /12. Guard-bin observations can raise this floor.
-    let mut demod = super::he_ru_symbol::Demodulator::for_tb(
+    let mut demod = crate::radio::he::ru::symbol::Demodulator::for_tb(
         tones,
         c.bits_per_tone,
         user.ldpc,
@@ -186,7 +190,7 @@ pub(super) fn recover(
     }
     // Eq27-111: TB p[n+4], independent of the number of training symbols.
     for _ in 0..4 {
-        super::data::feedback(&mut pilot);
+        crate::radio::data::feedback(&mut pilot);
     }
     for symbol in (0..timing.data_symbols).step_by(group) {
         let offset = timing.symbol_start(symbol).ok_or(Error::Timing)?;
@@ -208,7 +212,7 @@ pub(super) fn recover(
                 .checked_add(starts[j] as u64)
                 .and_then(|n| n.checked_sub(a.phase_origin))
                 .ok_or(Error::Timing)?;
-            polarity[j] = 1. - 2. * super::data::feedback(&mut pilot) as f32;
+            polarity[j] = 1. - 2. * crate::radio::data::feedback(&mut pilot) as f32;
         }
         let wave = |j: usize| samples.get(starts[j]..starts[j].checked_add(256)?);
         if common.stbc {
@@ -247,7 +251,7 @@ pub(super) fn recover(
     }
     let (psdu, failed_codewords, first_failure) = if user.ldpc {
         let decode = |metrics: &[f32], partial| {
-            super::he_mu_ldpc::recover_tb(
+            crate::radio::he::mu::ldpc::recover_tb(
                 common,
                 user,
                 timing.data_symbols,
@@ -258,7 +262,7 @@ pub(super) fn recover(
         };
         let mut result = decode(&metrics, partial);
         if retain && result.as_ref().map_or(true, |r| r.failed_codewords != 0) {
-            if let Some(clock) = super::he_ru_symbol::fit_pilot_clock(&observed) {
+            if let Some(clock) = crate::radio::he::ru::symbol::fit_pilot_clock(&observed) {
                 let mut retry = Vec::new();
                 retry
                     .try_reserve_exact(metrics.len())
@@ -287,8 +291,14 @@ pub(super) fn recover(
         (result.psdu, result.failed_codewords, result.first_failure)
     } else {
         (
-            super::he_bcc::recover_tb(common, user, timing.data_symbols, &metrics, max_psdu)
-                .map_err(Error::Bcc)?,
+            crate::radio::he::bcc::recover_tb(
+                common,
+                user,
+                timing.data_symbols,
+                &metrics,
+                max_psdu,
+            )
+            .map_err(Error::Bcc)?,
             0,
             None,
         )
@@ -338,13 +348,13 @@ mod tests {
                     q: b[1] as i8 as f32 / 128.,
                 })
                 .collect();
-            let mut sync = super::super::sync::Synchronizer::default();
+            let mut sync = crate::radio::sync::Synchronizer::default();
             let Some(a) =
                 samples
                     .iter()
                     .enumerate()
                     .find_map(|(n, &s)| match sync.push(s, n as u64) {
-                        Some(super::super::sync::SyncEvent::Acquired(a)) => Some(a),
+                        Some(crate::radio::sync::SyncEvent::Acquired(a)) => Some(a),
                         _ => None,
                     })
             else {
@@ -438,12 +448,12 @@ mod tests {
                     q: b[1] as i8 as f32 / 128.,
                 })
                 .collect();
-            let mut sync = super::super::sync::Synchronizer::default();
+            let mut sync = crate::radio::sync::Synchronizer::default();
             let a = samples
                 .iter()
                 .enumerate()
                 .find_map(|(n, &s)| match sync.push(s, n as u64) {
-                    Some(super::super::sync::SyncEvent::Acquired(a)) => Some(a),
+                    Some(crate::radio::sync::SyncEvent::Acquired(a)) => Some(a),
                     _ => None,
                 })
                 .unwrap_or_else(|| panic!("{} acquisition", c[0]));
@@ -509,8 +519,8 @@ mod tests {
                 assert!(
                     matches!(
                         result,
-                        Err(Error::Bcc(super::super::he_bcc::Error::Service)
-                            | Error::Ldpc(super::super::he_mu_ldpc::Error::Service))
+                        Err(Error::Bcc(crate::radio::he::bcc::Error::Service)
+                            | Error::Ldpc(crate::radio::he::mu::ldpc::Error::Service))
                     ),
                     "{}: {result:?}",
                     c[0]

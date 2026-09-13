@@ -1,16 +1,20 @@
 //! HE20 SIG-B IQ, IEEE802.11ax-2021 27.3.11.8. No MU DATA admission.
 use super::{
-    he_iq::{bins_polarity, decode_mu_prefix},
-    he_mu::MuSignal,
-    he_sig_b::{HeSigBCommon20Fields, HeSigBUserContext, HeSigBUserFields},
-    he_sig_b_coded::{Blocks, Error as BlockError},
-    he_sig_b_modulation::Modulation,
+    coded::{Blocks, Error as BlockError},
+    modulation::Modulation,
+    HeSigBCommon20Fields, HeSigBUserContext, HeSigBUserFields,
+};
+use crate::radio::{
+    he::{
+        iq::{bins_polarity, decode_mu_prefix},
+        mu::MuSignal,
+    },
     sync::Acquisition,
     ComplexSample,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Error {
+pub(in crate::radio) enum Error {
     Prefix,
     Layout,
     Samples,
@@ -32,14 +36,14 @@ pub struct Fields {
 
 /// Frequency-ordered RU geometry and positions in the original User field
 /// array. Failed headers keep their positions; an empty RU has an empty range.
-pub(super) struct RuLayout {
-    pub tones: super::he_tones::Tones,
+pub(in crate::radio) struct RuLayout {
+    pub tones: crate::radio::he::ru::Tones,
     pub users: std::ops::Range<usize>,
 }
 
 impl Fields {
     /// Structural handoff only, not spatial-stream or DATA admission.
-    pub(super) fn layout(&self) -> Result<Vec<RuLayout>, Error> {
+    pub(in crate::radio) fn layout(&self) -> Result<Vec<RuLayout>, Error> {
         if self.signal.bandwidth != 0 {
             return Err(Error::Layout);
         }
@@ -49,7 +53,7 @@ impl Fields {
                 return Err(Error::Layout);
             }
             return Ok(vec![RuLayout {
-                tones: super::he_tones::Tones::ru(242, 1).ok_or(Error::Layout)?,
+                tones: crate::radio::he::ru::Tones::ru(242, 1).ok_or(Error::Layout)?,
                 users: 0..count,
             }]);
         }
@@ -62,7 +66,7 @@ impl Fields {
             .rus()
             .iter()
             .map(|ru| {
-                let tones = super::he_tones::Tones::assignment(ru).ok_or(Error::Layout)?;
+                let tones = crate::radio::he::ru::Tones::assignment(ru).ok_or(Error::Layout)?;
                 let end = offset + usize::from(ru.users);
                 let users = offset..end;
                 offset = end;
@@ -74,7 +78,10 @@ impl Fields {
 
 /// Input begins at L-SIG. Only complete SIG-B fields are returned; successful
 /// headers establish neither training/DATA admissibility nor MAC integrity.
-pub(super) fn recover(samples: &[ComplexSample], a: &Acquisition) -> Result<Fields, Error> {
+pub(in crate::radio) fn recover(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+) -> Result<Fields, Error> {
     let signal = decode_mu_prefix(samples, a).ok_or(Error::Prefix)?;
     let mode = Modulation::new(signal.sig_b_mcs, signal.sig_b_dcm).ok_or(Error::Layout)?;
     let dbps = [26usize, 52, 78, 104, 156, 208][signal.sig_b_mcs as usize]
@@ -188,12 +195,12 @@ fn demodulate(
     }
     let mut state = 127;
     for _ in 0..4 {
-        super::data::feedback(&mut state);
+        crate::radio::data::feedback(&mut state);
     }
     let mut metrics = Vec::with_capacity(symbols * mode.coded_per_symbol());
     for symbol in 0..symbols {
         let offset = 320 + symbol * 80;
-        let polarity = 1. - 2. * f32::from(super::data::feedback(&mut state));
+        let polarity = 1. - 2. * f32::from(crate::radio::data::feedback(&mut state));
         if let Some(bins) = bins_polarity(
             &input[offset..offset + 80],
             a.signal_start + offset as u64,
@@ -230,21 +237,22 @@ mod tests {
 
     #[test]
     fn radio_he_mu_user_layout_all_allocations() {
-        let bits: Vec<_> = include_str!("../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
-            .lines()
-            .nth(1)
-            .unwrap()
-            .split('\t')
-            .next()
-            .unwrap()
-            .bytes()
-            .map(|b| b - b'0')
-            .collect();
+        let bits: Vec<_> =
+            include_str!("../../../../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
+                .lines()
+                .nth(1)
+                .unwrap()
+                .split('\t')
+                .next()
+                .unwrap()
+                .bytes()
+                .map(|b| b - b'0')
+                .collect();
         let mut signal = MuSignal::decode(&bits).unwrap();
         signal.bandwidth = 0;
         signal.sig_b_compression = false;
         let mut checked = 0;
-        for row in include_str!("../../tests/fixtures/iq/he-sig-b-common.tsv")
+        for row in include_str!("../../../../../tests/fixtures/iq/he-sig-b-common.tsv")
             .lines()
             .skip(1)
         {
@@ -359,7 +367,7 @@ mod tests {
 
     #[test]
     fn radio_he_sig_b_iq_independent() {
-        let rows = include_str!("../../tests/fixtures/iq/he-sigb-iq-index.tsv");
+        let rows = include_str!("../../../../../tests/fixtures/iq/he-sigb-iq-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 172);
         let mut long = false;
         for row in rows.lines().skip(1) {

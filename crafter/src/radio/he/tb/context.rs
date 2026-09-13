@@ -1,9 +1,10 @@
 //! Bounded candidate context, not authenticated BSS or exact SIFS association.
-use super::{he_tb_schedule::Schedule, RecoveredFrame};
+use super::schedule::Schedule;
+use crate::radio::RecoveredFrame;
 use crate::{Dot11, Dot11Trigger, Dot11TriggerCommonFields, LinkType, Packet};
 
 #[derive(Clone)]
-pub(super) struct Context {
+pub(in crate::radio) struct Context {
     pub common: Dot11TriggerCommonFields,
     pub schedule: Schedule,
     pub trigger_start: u64,
@@ -16,7 +17,7 @@ impl Context {
     /// Caller supplies true PPDU end (including PE, excluding signal extension)
     /// and has excluded prohibited triggering carriers under ax26.5.2.2.1.
     pub fn from_frame(frame: &RecoveredFrame, packet_end: u64, color: Option<u8>) -> Option<Self> {
-        if frame.bytes.first().copied()? != 0x24 || !super::data::valid_fcs(&frame.bytes) {
+        if frame.bytes.first().copied()? != 0x24 || !crate::radio::data::valid_fcs(&frame.bytes) {
             return None;
         }
         let packet = Packet::decode_from_link(
@@ -56,7 +57,7 @@ impl Context {
         })
     }
 
-    pub fn matches(&self, start: u64, signal: &super::he_tb::TbSignal) -> bool {
+    pub fn matches(&self, start: u64, signal: &crate::radio::he::tb::TbSignal) -> bool {
         start > self.packet_end
             && start < self.expires
             && self.color.map_or(true, |color| color == signal.bss_color)

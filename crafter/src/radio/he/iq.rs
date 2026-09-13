@@ -1,19 +1,22 @@
 //! HE20 SU, ER SU, MU and TB preamble prefixes; IEEE 802.11ax-2021 27.3.11/22.
 //! No DATA admission or MAC frame publication occurs here.
-use super::{
-    he::SuSignal,
+use super::SuSignal;
+use crate::radio::{
     sync::{fft64, Acquisition},
     ComplexSample,
 };
 
-pub(super) struct Prefix {
+pub(in crate::radio) struct Prefix {
     pub er: bool,
     pub signal: SuSignal,
     pub legacy_length: usize,
     pub end_sample: u64,
 }
 
-pub(super) fn decode_prefix(samples: &[ComplexSample], a: &Acquisition) -> Option<Prefix> {
+pub(in crate::radio) fn decode_prefix(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+) -> Option<Prefix> {
     decode_su_prefix(samples, a).or_else(|| decode_er_prefix(samples, a))
 }
 
@@ -21,7 +24,7 @@ fn bins(samples: &[ComplexSample], start: u64, a: &Acquisition) -> Option<[Compl
     bins_polarity(samples, start, a, 1.)
 }
 
-pub(super) fn bins_polarity(
+pub(in crate::radio) fn bins_polarity(
     samples: &[ComplexSample],
     start: u64,
     a: &Acquisition,
@@ -55,23 +58,29 @@ pub(super) fn bins_polarity(
 }
 
 /// Input starts at L-SIG, after ordinary legacy-preamble acquisition.
-pub(super) fn repeated_su_signal(samples: &[ComplexSample], a: &Acquisition) -> Option<usize> {
+pub(in crate::radio) fn repeated_su_signal(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+) -> Option<usize> {
     repeated_signal(samples, a, 1)
 }
 
-pub(super) fn repeated_er_signal(samples: &[ComplexSample], a: &Acquisition) -> Option<usize> {
+pub(in crate::radio) fn repeated_er_signal(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+) -> Option<usize> {
     repeated_signal(samples, a, 2)
 }
 
 fn repeated_signal(samples: &[ComplexSample], a: &Acquisition, remainder: usize) -> Option<usize> {
     let input = samples.get(..160)?;
-    let first = super::signal::decode_signal(&input[..80], a, 4095).ok()?;
+    let first = crate::radio::signal::decode_signal(&input[..80], a, 4095).ok()?;
     if first.rate_bps != 6_000_000 || first.psdu_bytes % 3 != remainder {
         return None;
     }
     let mut repeated = a.clone();
     repeated.signal_start = a.signal_start.checked_add(80)?;
-    let second = super::signal::decode_signal(&input[80..160], &repeated, 4095).ok()?;
+    let second = crate::radio::signal::decode_signal(&input[80..160], &repeated, 4095).ok()?;
     if second.rate_bps != first.rate_bps || second.psdu_bytes != first.psdu_bytes {
         return None;
     }
@@ -80,7 +89,7 @@ fn repeated_signal(samples: &[ComplexSample], a: &Acquisition, remainder: usize)
 
 /// ER is distinguished from MU by QBPSK DATA tones in the second symbol
 /// after RL-SIG. Its pilots remain BPSK (27.3.11.7.4/27.3.22).
-pub(super) fn er_marker(samples: &[ComplexSample], a: &Acquisition) -> Option<()> {
+pub(in crate::radio) fn er_marker(samples: &[ComplexSample], a: &Acquisition) -> Option<()> {
     let observed = bins(samples.get(240..320)?, a.signal_start.checked_add(240)?, a)?;
     let (mut real, mut quadrature) = (0., 0.);
     for tone in (-26i32..=26).filter(|k| ![-21, -7, 0, 7, 21].contains(k)) {
@@ -94,7 +103,10 @@ pub(super) fn er_marker(samples: &[ComplexSample], a: &Acquisition) -> Option<()
 }
 
 /// Input begins at L-SIG; four SIG-A symbols occupy 480 samples in total.
-pub(super) fn decode_er_prefix(samples: &[ComplexSample], a: &Acquisition) -> Option<Prefix> {
+pub(in crate::radio) fn decode_er_prefix(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+) -> Option<Prefix> {
     let input = samples.get(..480)?;
     let legacy_length = repeated_er_signal(input, a)?;
     er_marker(input, a)?;
@@ -136,7 +148,10 @@ pub(super) fn decode_er_prefix(samples: &[ComplexSample], a: &Acquisition) -> Op
 }
 
 /// Decode HE SU signaling only after the repeated legacy header is checked.
-pub(super) fn decode_su_prefix(samples: &[ComplexSample], a: &Acquisition) -> Option<Prefix> {
+pub(in crate::radio) fn decode_su_prefix(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+) -> Option<Prefix> {
     let input = samples.get(..320)?;
     let legacy_length = repeated_su_signal(input, a)?;
     let signal = SuSignal::decode_interleaved(&bpsk_metrics(input, a)?).ok()?;
@@ -153,26 +168,28 @@ pub(super) fn decode_su_prefix(samples: &[ComplexSample], a: &Acquisition) -> Op
 
 /// MU shares the modulo-two L-SIG with ER, but uses two BPSK SIG-A symbols.
 /// Only 20 MHz signaling is admitted; this does not establish DATA integrity.
-pub(super) fn decode_mu_prefix(
+pub(in crate::radio) fn decode_mu_prefix(
     samples: &[ComplexSample],
     a: &Acquisition,
-) -> Option<super::he_mu::MuSignal> {
+) -> Option<crate::radio::he::mu::MuSignal> {
     let input = samples.get(..320)?;
     a.signal_start.checked_add(320)?;
     repeated_er_signal(input, a)?;
-    let signal = super::he_mu::MuSignal::decode_interleaved(&bpsk_metrics(input, a)?).ok()?;
+    let signal =
+        crate::radio::he::mu::MuSignal::decode_interleaved(&bpsk_metrics(input, a)?).ok()?;
     (signal.bandwidth == 0).then_some(signal)
 }
 
 /// TB shares the modulo-one L-SIG with SU. DATA needs a separate Trigger.
-pub(super) fn decode_tb_prefix(
+pub(in crate::radio) fn decode_tb_prefix(
     samples: &[ComplexSample],
     a: &Acquisition,
-) -> Option<super::he_tb::TbSignal> {
+) -> Option<crate::radio::he::tb::TbSignal> {
     let input = samples.get(..320)?;
     a.signal_start.checked_add(320)?;
     repeated_su_signal(input, a)?;
-    let signal = super::he_tb::TbSignal::decode_interleaved(&bpsk_metrics(input, a)?).ok()?;
+    let signal =
+        crate::radio::he::tb::TbSignal::decode_interleaved(&bpsk_metrics(input, a)?).ok()?;
     (signal.bandwidth == 0).then_some(signal)
 }
 
@@ -217,7 +234,7 @@ mod tests {
     use super::*;
     #[test]
     fn radio_he_tb_prefix_independent_iq() {
-        for row in include_str!("../../tests/fixtures/iq/he-tb-prefix-index.tsv")
+        for row in include_str!("../../../tests/fixtures/iq/he-tb-prefix-index.tsv")
             .lines()
             .skip(1)
         {
@@ -227,7 +244,7 @@ mod tests {
             let bits: Vec<_> = c[1].bytes().map(|b| b - b'0').collect();
             assert_eq!(
                 decode_tb_prefix(input, &a),
-                super::super::he_tb::TbSignal::decode(&bits).ok(),
+                crate::radio::he::tb::TbSignal::decode(&bits).ok(),
                 "{}",
                 c[0]
             );
@@ -243,10 +260,10 @@ mod tests {
     #[test]
     fn radio_he_tb_prefix_rejections() {
         for index in [
-            include_str!("../../tests/fixtures/iq/he-tb-prefix-invalid-index.tsv"),
-            include_str!("../../tests/fixtures/iq/he-su-prefix-index.tsv"),
-            include_str!("../../tests/fixtures/iq/he-mu-prefix-index.tsv"),
-            include_str!("../../tests/fixtures/iq/he-er-prefix-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-tb-prefix-invalid-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-su-prefix-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-mu-prefix-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-er-prefix-index.tsv"),
         ] {
             for row in index.lines().skip(1) {
                 let name = row.split('\t').next().unwrap();
@@ -276,7 +293,7 @@ mod tests {
 
     #[test]
     fn radio_he_mu_prefix_independent_iq() {
-        for row in include_str!("../../tests/fixtures/iq/he-mu-prefix-index.tsv")
+        for row in include_str!("../../../tests/fixtures/iq/he-mu-prefix-index.tsv")
             .lines()
             .skip(1)
         {
@@ -286,7 +303,7 @@ mod tests {
             let bits: Vec<_> = c[1].bytes().map(|b| b - b'0').collect();
             assert_eq!(
                 decode_mu_prefix(input, &a),
-                super::super::he_mu::MuSignal::decode(&bits).ok(),
+                crate::radio::he::mu::MuSignal::decode(&bits).ok(),
                 "{}",
                 c[0]
             );
@@ -302,9 +319,9 @@ mod tests {
     #[test]
     fn radio_he_mu_prefix_rejections() {
         for index in [
-            include_str!("../../tests/fixtures/iq/he-mu-prefix-invalid-index.tsv"),
-            include_str!("../../tests/fixtures/iq/he-su-prefix-index.tsv"),
-            include_str!("../../tests/fixtures/iq/he-er-prefix-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-mu-prefix-invalid-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-su-prefix-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-er-prefix-index.tsv"),
         ] {
             for row in index.lines().skip(1) {
                 let name = row.split('\t').next().unwrap();
@@ -334,7 +351,7 @@ mod tests {
 
     #[test]
     fn radio_he_er_prefix_independent_iq() {
-        let rows = include_str!("../../tests/fixtures/iq/he-er-prefix-index.tsv");
+        let rows = include_str!("../../../tests/fixtures/iq/he-er-prefix-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 288);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
@@ -360,7 +377,7 @@ mod tests {
 
     #[test]
     fn radio_he_er_prefix_rejections() {
-        for row in include_str!("../../tests/fixtures/iq/he-er-prefix-invalid-index.tsv")
+        for row in include_str!("../../../tests/fixtures/iq/he-er-prefix-invalid-index.tsv")
             .lines()
             .skip(1)
         {
@@ -398,12 +415,12 @@ mod tests {
                 q: b[1] as i8 as f32 / 128.,
             })
             .collect();
-        let mut sync = super::super::sync::Synchronizer::default();
+        let mut sync = crate::radio::sync::Synchronizer::default();
         let a = samples
             .iter()
             .enumerate()
             .find_map(|(n, s)| match sync.push(*s, n as u64) {
-                Some(super::super::sync::SyncEvent::Acquired(a)) => Some(a),
+                Some(crate::radio::sync::SyncEvent::Acquired(a)) => Some(a),
                 _ => None,
             })
             .expect("independent legacy acquisition");
@@ -412,7 +429,7 @@ mod tests {
 
     #[test]
     fn radio_he_su_prefix_independent_iq() {
-        let rows: Vec<_> = include_str!("../../tests/fixtures/iq/he-su-prefix-index.tsv")
+        let rows: Vec<_> = include_str!("../../../tests/fixtures/iq/he-su-prefix-index.tsv")
             .lines()
             .skip(1)
             .collect();
@@ -432,7 +449,7 @@ mod tests {
 
     #[test]
     fn radio_he_su_prefix_rejections() {
-        for row in include_str!("../../tests/fixtures/iq/he-su-prefix-invalid-index.tsv")
+        for row in include_str!("../../../tests/fixtures/iq/he-su-prefix-invalid-index.tsv")
             .lines()
             .skip(1)
         {

@@ -1,17 +1,17 @@
 //! Equalized HE SIG-B data tones; ax-2021 Eq 27-21, Tables 27-35/111.
-use super::{
+use crate::radio::{
     data::{demap, demap_dcm_for_half},
     ComplexSample,
 };
 
 #[derive(Debug, Clone, Copy)]
-pub(super) struct Modulation {
+pub(in crate::radio) struct Modulation {
     bits: usize,
     dcm: bool,
 }
 
 impl Modulation {
-    pub(super) fn new(mcs: u8, dcm: bool) -> Option<Self> {
+    pub(in crate::radio) fn new(mcs: u8, dcm: bool) -> Option<Self> {
         if mcs > 5 || (dcm && !matches!(mcs, 0 | 1 | 3 | 4)) {
             return None;
         }
@@ -21,14 +21,14 @@ impl Modulation {
         })
     }
 
-    pub(super) fn coded_per_symbol(self) -> usize {
+    pub(in crate::radio) fn coded_per_symbol(self) -> usize {
         52 * self.bits / (1 + usize::from(self.dcm))
     }
 
     /// Values are constellation-normalized and pilot/channel-corrected, with
     /// nonnegative reliability weights. Returns deinterleaved BCC metrics.
     /// Zero-weight/erased tones are allowed; no header or MAC integrity claim.
-    pub(super) fn decode(self, tones: &[(ComplexSample, f32)]) -> Option<Vec<f32>> {
+    pub(in crate::radio) fn decode(self, tones: &[(ComplexSample, f32)]) -> Option<Vec<f32>> {
         if tones.len() != 52
             || tones
                 .iter()
@@ -95,13 +95,13 @@ impl Modulation {
 mod tests {
     use super::*;
     use crate::radio::{
-        he_sig_b_coded::{Blocks, Error},
+        he::mu::sig_b::coded::{Blocks, Error},
         HeSigBCommon20Fields, HeSigBUserBlock, HeSigBUserContext,
     };
 
     #[test]
     fn radio_he_sig_b_modulation_independent_streams() {
-        let rows = include_str!("../../tests/fixtures/iq/he-sig-b-modulation.tsv");
+        let rows = include_str!("../../../../../tests/fixtures/iq/he-sig-b-modulation.tsv");
         assert_eq!(rows.lines().skip(1).count(), 1564);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();

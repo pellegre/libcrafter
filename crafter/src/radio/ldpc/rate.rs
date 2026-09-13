@@ -257,7 +257,7 @@ impl Layout {
         symbols: u16,
         er: bool,
     ) -> Result<Self, Error> {
-        use super::he_capacity::Capacity;
+        use super::he::capacity::Capacity;
         let symbols = usize::from(symbols);
         // Even the shortest HE20 SU preamble/GI cannot fit >400 DATA symbols
         // under the 12-bit L-SIG duration bound. This also bounds integer math.
@@ -294,12 +294,12 @@ impl Layout {
     /// MU's common extra flag can be requested by another LDPC user. The
     /// caller establishes cross-user signaling consistency and spatial admission.
     pub(super) fn he_mu(
-        signal: &super::he_mu::MuSignal,
-        user: &super::he_sig_b::HeSigBUserFields,
+        signal: &super::he::mu::MuSignal,
+        user: &super::he::mu::sig_b::HeSigBUserFields,
         ru_tones: u16,
         symbols: u16,
     ) -> Result<Self, Error> {
-        use super::he_capacity::Capacity;
+        use super::he::capacity::Capacity;
         let symbols = usize::from(symbols);
         if symbols == 0 || symbols > 400 {
             return Err(Error::HeTiming);
@@ -341,7 +341,7 @@ impl Layout {
         user: &crate::Dot11TriggerUserFields,
         symbols: u16,
     ) -> Result<Self, Error> {
-        use super::he_capacity::Capacity;
+        use super::he::capacity::Capacity;
         let symbols = usize::from(symbols);
         if !user.ldpc || symbols == 0 || symbols > 400 {
             return Err(Error::HeTiming);
@@ -382,8 +382,8 @@ impl Layout {
     }
 
     fn he_capacities(
-        c: super::he_capacity::Capacity,
-        initial_c: super::he_capacity::Capacity,
+        c: super::he::capacity::Capacity,
+        initial_c: super::he::capacity::Capacity,
         symbols: usize,
         group: usize,
         extra: bool,
@@ -672,7 +672,7 @@ mod tests {
             .bytes()
             .map(|b| b - b'0')
             .collect();
-        let mut signal = super::super::he_mu::MuSignal::decode(&bits).unwrap();
+        let mut signal = super::super::he::mu::MuSignal::decode(&bits).unwrap();
         signal.bandwidth = 0;
         let rows = include_str!("../../tests/fixtures/iq/he-mu-ldpc-layout.tsv");
         assert_eq!(rows.lines().skip(1).count(), 13696);

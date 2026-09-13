@@ -1,13 +1,12 @@
 //! Per-user HE20 MU/TB LDPC payloads; ax-2021 27.3.12.4/5. No IQ admission.
-use super::{
-    he_capacity::Capacity,
-    he_mu::MuSignal,
-    he_sig_b::HeSigBUserFields,
-    ldpc_rate::{Layout, Recovery},
+use super::{sig_b::HeSigBUserFields, MuSignal};
+use crate::radio::{
+    he::capacity::Capacity,
+    ldpc_rate::{self, Layout, Recovery},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Error {
+pub(in crate::radio) enum Error {
     Capacity,
     Coding,
     Length,
@@ -15,22 +14,22 @@ pub(super) enum Error {
     Metrics,
     Allocation,
     Service,
-    Fec(super::ldpc_rate::Error),
+    Fec(ldpc_rate::Error),
 }
 
 #[derive(Debug)]
-pub(super) struct Recovered {
+pub(in crate::radio) struct Recovered {
     pub psdu: Vec<u8>,
     pub iterations: usize,
     pub failed_codewords: usize,
-    pub first_failure: Option<super::ldpc_rate::Error>,
+    pub first_failure: Option<ldpc_rate::Error>,
 }
 
 /// Full-symbol metrics, already tone-demapped and stream-recombined, positive
 /// for one. Removes post-FEC padding from every last STBC-group symbol. Neither
 /// strict convergence nor partial estimates establish MAC integrity: callers
 /// must verify every emitted MPDU's FCS. SERVICE is mandatory in both modes.
-pub(super) fn recover(
+pub(in crate::radio) fn recover(
     signal: &MuSignal,
     user: &HeSigBUserFields,
     ru_tones: u16,
@@ -58,7 +57,7 @@ pub(super) fn recover(
 
 /// Explicit Trigger-controlled TB coding. Neither strict nor partial recovery
 /// establishes MAC integrity; each published aggregate member still needs FCS.
-pub(super) fn recover_tb(
+pub(in crate::radio) fn recover_tb(
     common: &crate::Dot11TriggerCommonFields,
     user: &crate::Dot11TriggerUserFields,
     symbols: usize,
@@ -119,8 +118,8 @@ fn recover_layout(
             first_failure: None,
         }
     };
-    let psdu =
-        super::data::descramble_psdu(recovered.bits, c.psdu_bytes).map_err(|_| Error::Service)?;
+    let psdu = crate::radio::data::descramble_psdu(recovered.bits, c.psdu_bytes)
+        .map_err(|_| Error::Service)?;
     Ok(Recovered {
         psdu,
         iterations: recovered.iterations,
@@ -137,7 +136,7 @@ mod tests {
     #[test]
     fn radio_he_tb_ldpc_payloads() {
         let mut counts = [0usize; 3];
-        for (index, row) in include_str!("../../tests/fixtures/iq/he-tb-ldpc-payload.tsv")
+        for (index, row) in include_str!("../../../../tests/fixtures/iq/he-tb-ldpc-payload.tsv")
             .lines()
             .skip(1)
             .enumerate()
@@ -264,7 +263,7 @@ mod tests {
 
     #[test]
     fn radio_he_mu_ldpc_payloads() {
-        let bits: Vec<_> = include_str!("../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
+        let bits: Vec<_> = include_str!("../../../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
             .lines()
             .nth(1)
             .unwrap()
@@ -281,7 +280,7 @@ mod tests {
         let mut damaged = 0;
         let mut service = 0;
         let mut valid = 0;
-        for (n, row) in include_str!("../../tests/fixtures/iq/he-mu-ldpc-payload.tsv")
+        for (n, row) in include_str!("../../../../tests/fixtures/iq/he-mu-ldpc-payload.tsv")
             .lines()
             .skip(1)
             .enumerate()

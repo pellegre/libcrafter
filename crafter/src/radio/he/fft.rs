@@ -1,6 +1,6 @@
 //! Fixed-size HE receive transforms; periods in IEEE 802.11ax-2021 Table27-12.
 //! Natural-order, unnormalized forward transform. Negative tone k uses bin N+k.
-use super::ComplexSample;
+use crate::radio::ComplexSample;
 use std::{f32::consts::TAU, sync::OnceLock};
 
 fn transform<const N: usize>(mut input: [ComplexSample; N]) -> [ComplexSample; N] {
@@ -30,11 +30,11 @@ fn transform<const N: usize>(mut input: [ComplexSample; N]) -> [ComplexSample; N
     input
 }
 
-pub(super) fn fft128(input: [ComplexSample; 128]) -> [ComplexSample; 128] {
+pub(in crate::radio) fn fft128(input: [ComplexSample; 128]) -> [ComplexSample; 128] {
     transform(input)
 }
 
-pub(super) fn fft256(input: [ComplexSample; 256]) -> [ComplexSample; 256] {
+pub(in crate::radio) fn fft256(input: [ComplexSample; 256]) -> [ComplexSample; 256] {
     transform(input)
 }
 
@@ -44,7 +44,7 @@ mod tests {
 
     #[test]
     fn radio_he_fft_independent_direct_dft() {
-        let mut rows = include_str!("../../tests/fixtures/iq/he-transform-index.tsv")
+        let mut rows = include_str!("../../../tests/fixtures/iq/he-transform-index.tsv")
             .lines()
             .skip(1);
         let mut cases = 0;

@@ -1,6 +1,11 @@
 //! HE TB SIG-A; IEEE 802.11ax-2021 Table 27-21 and 27.3.11.7.3-4.
 //! Trigger-supplied RU, MCS, coding and training parameters are not inferred.
-use super::he::{decode_interleaved_bits, validate_bits, Error as SharedError};
+
+pub(in crate::radio) mod context;
+pub(in crate::radio) mod data;
+pub(in crate::radio) mod schedule;
+
+use super::{decode_interleaved_bits, validate_bits, Error as SharedError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -78,7 +83,7 @@ mod tests {
 
     #[test]
     fn radio_he_tb_crc_truncation_limits() {
-        let row = include_str!("../../tests/fixtures/iq/he-tb-signal-a-index.tsv")
+        let row = include_str!("../../../../tests/fixtures/iq/he-tb-signal-a-index.tsv")
             .lines()
             .nth(1)
             .unwrap();
@@ -104,7 +109,7 @@ mod tests {
 
     #[test]
     fn radio_he_tb_independent_headers() {
-        let rows = include_str!("../../tests/fixtures/iq/he-tb-signal-a-index.tsv");
+        let rows = include_str!("../../../../tests/fixtures/iq/he-tb-signal-a-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 2048);
         let mut reserved = [false; 512];
         for row in rows.lines().skip(1) {
@@ -137,7 +142,7 @@ mod tests {
 
     #[test]
     fn radio_he_tb_header_rejections() {
-        let rows = include_str!("../../tests/fixtures/iq/he-tb-signal-a-invalid.tsv");
+        let rows = include_str!("../../../../tests/fixtures/iq/he-tb-signal-a-invalid.tsv");
         assert_eq!(rows.lines().skip(1).count(), 57);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();

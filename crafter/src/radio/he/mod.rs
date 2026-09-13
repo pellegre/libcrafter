@@ -1,6 +1,17 @@
 //! HE SU/ER SU header kernel; IEEE 802.11ax-2021 Tables 27-18/19/35.
 //! Caller must establish the format. This does not admit or publish DATA.
 
+pub(in crate::radio) mod bcc;
+pub(in crate::radio) mod capacity;
+pub(in crate::radio) mod data;
+pub(in crate::radio) mod fft;
+pub(in crate::radio) mod iq;
+pub(in crate::radio) mod mu;
+pub(in crate::radio) mod ru;
+pub(in crate::radio) mod tb;
+pub(in crate::radio) mod timing;
+pub(in crate::radio) mod training;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SuSignal {
     pub beam_change: bool,
@@ -146,7 +157,7 @@ impl SuSignal {
     }
 }
 
-pub(super) fn decode_interleaved_bits(metrics: &[f32]) -> Result<[u8; 52], Error> {
+pub(in crate::radio) fn decode_interleaved_bits(metrics: &[f32]) -> Result<[u8; 52], Error> {
     if metrics.len() != 104 || metrics.iter().any(|m| !m.is_finite()) {
         return Err(Error::Metrics);
     }
@@ -162,7 +173,7 @@ pub(super) fn decode_interleaved_bits(metrics: &[f32]) -> Result<[u8; 52], Error
     Ok(super::signal::decode_bcc(&pairs))
 }
 
-pub(super) fn validate_bits(bits: &[u8]) -> Result<(), Error> {
+pub(in crate::radio) fn validate_bits(bits: &[u8]) -> Result<(), Error> {
     if bits.len() != 52 {
         return Err(Error::BitCount {
             available: bits.len(),
@@ -187,7 +198,7 @@ mod tests {
     use super::*;
     #[test]
     fn radio_he_er_repeated_header_metrics() {
-        for row in include_str!("../../tests/fixtures/iq/he-er-prefix-index.tsv")
+        for row in include_str!("../../../tests/fixtures/iq/he-er-prefix-index.tsv")
             .lines()
             .skip(1)
         {
@@ -235,7 +246,7 @@ mod tests {
 
     #[test]
     fn radio_he_su_independent_headers_and_metrics() {
-        let rows: Vec<_> = include_str!("../../tests/fixtures/iq/he-signal-a-index.tsv")
+        let rows: Vec<_> = include_str!("../../../tests/fixtures/iq/he-signal-a-index.tsv")
             .lines()
             .skip(1)
             .collect();
@@ -291,7 +302,7 @@ mod tests {
 
     #[test]
     fn radio_he_su_rejects_invalid_inputs() {
-        let row = include_str!("../../tests/fixtures/iq/he-signal-a-index.tsv")
+        let row = include_str!("../../../tests/fixtures/iq/he-signal-a-index.tsv")
             .lines()
             .nth(1)
             .unwrap();

@@ -1,6 +1,9 @@
 //! HE20 tone geometry, IEEE 802.11ax-2021 Tables 27-7 and 27-35..43.
+
+pub(in crate::radio) mod symbol;
+
 #[derive(Clone, Copy)]
-pub(super) struct Tones {
+pub(in crate::radio) struct Tones {
     size: u16,
     index: usize,
 }
@@ -25,7 +28,7 @@ impl Tones {
 
     /// Table 27-26 columns to Table 27-7 equal-size RU ordinals. User counts
     /// do not change geometry, including explicitly empty allocations.
-    pub fn assignment(ru: &super::he_sig_b::HeRu20Assignment) -> Option<Self> {
+    pub fn assignment(ru: &crate::radio::he::mu::sig_b::HeRu20Assignment) -> Option<Self> {
         let index = match (ru.tones, ru.first_slot) {
             (26, slot @ 1..=9) => usize::from(slot),
             (52, 1) | (106, 1) | (242, 1) => 1,
@@ -191,7 +194,7 @@ mod tests {
     use super::Tones;
     #[test]
     fn radio_he_assignment_slot_bounds() {
-        use crate::radio::he_sig_b::HeRu20Assignment;
+        use crate::radio::he::mu::sig_b::HeRu20Assignment;
         for size in [0, 26, 52, 106, 242, 484, u16::MAX] {
             for slot in 0..=u8::MAX {
                 let expected = match size {

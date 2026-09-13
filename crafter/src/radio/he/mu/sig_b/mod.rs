@@ -2,6 +2,10 @@
 //! Caller establishes bandwidth, compression and allocation context.
 //! Bit-level header validation only; no IQ/DATA admission.
 
+pub(in crate::radio) mod coded;
+pub(in crate::radio) mod iq;
+pub(in crate::radio) mod modulation;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeRu20Assignment {
     pub tones: u16,
@@ -286,7 +290,7 @@ fn validate_block(bits: &[u8], payload: usize, context: &'static str) -> Result<
     if let Some((index, &value)) = bits.iter().enumerate().find(|(_, b)| **b > 1) {
         return Err(HeSigBError::NonBinary { index, value });
     }
-    let expected = super::ht::crc(&bits[..payload]) >> 4;
+    let expected = crate::radio::ht::crc(&bits[..payload]) >> 4;
     let received = bits[payload..payload + 4]
         .iter()
         .fold(0, |v, b| (v << 1) | b);
@@ -376,7 +380,7 @@ mod tests {
     use super::*;
     #[test]
     fn radio_he_sig_b_users_independent() {
-        let rows = include_str!("../../tests/fixtures/iq/he-sig-b-users.tsv");
+        let rows = include_str!("../../../../../tests/fixtures/iq/he-sig-b-users.tsv");
         assert_eq!(rows.lines().skip(1).count(), 3175);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
@@ -453,7 +457,7 @@ mod tests {
 
     #[test]
     fn radio_he_sig_b_common_independent() {
-        let rows = include_str!("../../tests/fixtures/iq/he-sig-b-common.tsv");
+        let rows = include_str!("../../../../../tests/fixtures/iq/he-sig-b-common.tsv");
         assert_eq!(rows.lines().skip(1).count(), 256);
         let mut totals = [0; 3];
         for row in rows.lines().skip(1) {

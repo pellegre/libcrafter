@@ -1,10 +1,9 @@
 //! HE20 SU/ER training and isolated MU RU estimation; IEEE802.11ax-2021 27.3.11.10.
 use super::{
-    he_iq::{decode_prefix, Prefix},
-    he_tones::Tones,
-    sync::Acquisition,
-    ComplexSample,
+    iq::{decode_prefix, Prefix},
+    ru::Tones,
 };
+use crate::radio::{sync::Acquisition, ComplexSample};
 
 // Equation27-43, exactly245 signed tones in ascending order -122..122.
 // Equations27-41/42 use the same signed-tone order, with sparse training.
@@ -12,7 +11,7 @@ const LTF1: &[u8;245] = b"00-000+000+000-000+000-000+000+000+000+000-000-000+000
 const LTF2: &[u8;245] = b"-0-0-0+0+0-0+0-0-0-0-0+0-0+0-0-0+0+0-0+0+0+0+0+0-0+0-0+0-0-0+0+0-0+0-0-0-0-0+0-0+0+0+0-0-0+0-0-0-0-0-0+0-0-0-0+0+0+0-0-0+000+0-0+0+0-0+0+0-0+0+0-0-0+0-0+0+0+0+0-0+0-0+0+0-0-0+0-0-0-0-0-0+0-0+0+0-0-0+0+0-0+0-0-0-0-0+0-0+0+0+0-0-0+0-0-0-0-0-0+0-0+";
 const LTF4: &[u8;245] = b"--+-+-+++-+++--+-----++----++-+-++++-+--++-++++--+---++++-++----+--++-+----+-+------++-----+--+++-+++-+-+-----+++---+-+++000-+-+-++-+++--+--+-+-+++-+++--+-----++------+-+----+-++--+----++-+++++++-++----+--++-+----+-+--++++--+++++-++---+---+-+-++";
 
-pub(super) struct Trained {
+pub(in crate::radio) struct Trained {
     pub prefix: Prefix,
     pub channel: [ComplexSample; 256],
     pub second: Option<[ComplexSample; 256]>,
@@ -113,7 +112,7 @@ fn delay_fit(
 }
 
 /// Input begins at L-SIG. Reject unsupported training layouts explicitly.
-pub(super) fn train_su(samples: &[ComplexSample], a: &Acquisition) -> Option<Trained> {
+pub(in crate::radio) fn train_su(samples: &[ComplexSample], a: &Acquisition) -> Option<Trained> {
     let prefix = decode_prefix(samples, a)?;
     let fields = prefix.signal;
     // Prefix then80 samples of HE-STF; ER repeats SIG-A (160 extra samples).
@@ -152,19 +151,19 @@ pub(super) fn train_su(samples: &[ComplexSample], a: &Acquisition) -> Option<Tra
 
 /// A preamble LTF or identical midamble field. `cp` is relative to L-SIG;
 /// absolute phase uses the original acquisition, not a restarted CFO clock.
-pub(super) fn train_field(
+pub(in crate::radio) fn train_field(
     samples: &[ComplexSample],
     a: &Acquisition,
-    fields: &super::he::SuSignal,
+    fields: &super::SuSignal,
     cp: usize,
 ) -> Option<[ComplexSample; 256]> {
     train_for_format(samples, a, fields, cp, false)
 }
 
-pub(super) fn train_for_format(
+pub(in crate::radio) fn train_for_format(
     samples: &[ComplexSample],
     a: &Acquisition,
-    fields: &super::he::SuSignal,
+    fields: &super::SuSignal,
     cp: usize,
     er: bool,
 ) -> Option<[ComplexSample; 256]> {
@@ -184,19 +183,19 @@ pub(super) fn train_for_format(
 /// SU uses P on DATA tones and R on pilots: the second LTF observes
 /// -h1+h2 on DATA, but -(h1+h2) on pilots (27-55..57). Never treat
 /// those pilot observations as separate-channel measurements.
-pub(super) fn train_stbc_field(
+pub(in crate::radio) fn train_stbc_field(
     samples: &[ComplexSample],
     a: &Acquisition,
-    fields: &super::he::SuSignal,
+    fields: &super::SuSignal,
     cp: usize,
 ) -> Option<[[ComplexSample; 256]; 2]> {
     train_stbc_for_format(samples, a, fields, cp, false)
 }
 
-pub(super) fn train_stbc_for_format(
+pub(in crate::radio) fn train_stbc_for_format(
     samples: &[ComplexSample],
     a: &Acquisition,
-    fields: &super::he::SuSignal,
+    fields: &super::SuSignal,
     cp: usize,
     er: bool,
 ) -> Option<[[ComplexSample; 256]; 2]> {
@@ -227,7 +226,8 @@ pub(super) fn train_stbc_for_format(
     for &tone in &data {
         let bin = tone.rem_euclid(256) as usize;
         let separated =
-            super::stbc::separate_training([first[bin], second[bin].mul(correction)]).ok()?;
+            crate::radio::stbc::separate_training([first[bin], second[bin].mul(correction)])
+                .ok()?;
         channels[0][bin] = separated[0];
         channels[1][bin] = separated[1];
     }
@@ -260,7 +260,7 @@ pub(super) fn train_stbc_for_format(
 fn observe_field(
     samples: &[ComplexSample],
     a: &Acquisition,
-    fields: &super::he::SuSignal,
+    fields: &super::SuSignal,
     cp: usize,
 ) -> Option<([ComplexSample; 256], Vec<i32>, usize)> {
     observe_for_format(samples, a, fields, cp, false)
@@ -269,7 +269,7 @@ fn observe_field(
 fn observe_for_format(
     samples: &[ComplexSample],
     a: &Acquisition,
-    fields: &super::he::SuSignal,
+    fields: &super::SuSignal,
     cp: usize,
     er: bool,
 ) -> Option<([ComplexSample; 256], Vec<i32>, usize)> {
@@ -281,7 +281,7 @@ fn observe_for_format(
 /// established by the caller. No STBC/MU-MIMO separation or DATA admission.
 /// Expects the common LTF sequence polarity; any orthogonal training-matrix
 /// coefficient must be accounted for by the caller.
-pub(super) fn train_ru_field(
+pub(in crate::radio) fn train_ru_field(
     samples: &[ComplexSample],
     a: &Acquisition,
     allocation: Tones,
@@ -304,27 +304,27 @@ pub(super) fn train_ru_field(
 /// Separate the two STBC channels of one MU RU using all signaled LTFs.
 /// The caller establishes STBC/STS admission and the RU's LTF position.
 /// DATA uses P, pilots use R (27-55..57); P6 is complex, not P4 repeated.
-pub(super) fn train_stbc_ru_field(
+pub(in crate::radio) fn train_stbc_ru_field(
     samples: &[ComplexSample],
     a: &Acquisition,
     allocation: Tones,
-    fields: &super::he_mu::MuSignal,
+    fields: &crate::radio::he::mu::MuSignal,
     cp: usize,
 ) -> Option<[[ComplexSample; 256]; 2]> {
     train_stbc_ru_with_phase(samples, a, allocation, fields, cp, None)
 }
 
-pub(super) struct StbcPhase([(f32, f32); 8]);
+pub(in crate::radio) struct StbcPhase([(f32, f32); 8]);
 
 /// All RUs share the transmitter's oscillator and symbol clock, but need not
 /// share a propagation channel or spatial mapping. Correlate each LTF pilot
 /// with itself in LTF1 before pooling; R's coefficient is common to every STS
 /// and RU (27-56). Fit a frequency slope as well as common phase so sampling
 /// clock drift is not mistaken for different per-RU oscillator phases.
-pub(super) fn stbc_mu_phase(
+pub(in crate::radio) fn stbc_mu_phase(
     samples: &[ComplexSample],
     a: &Acquisition,
-    fields: &super::he_mu::MuSignal,
+    fields: &crate::radio::he::mu::MuSignal,
     cp: usize,
     pilots: &[i32],
 ) -> Option<StbcPhase> {
@@ -395,10 +395,10 @@ pub(super) fn stbc_mu_phase(
     Some(StbcPhase(corrections))
 }
 
-pub(super) fn stbc_mu_pilot_channel(
+pub(in crate::radio) fn stbc_mu_pilot_channel(
     samples: &[ComplexSample],
     a: &Acquisition,
-    fields: &super::he_mu::MuSignal,
+    fields: &crate::radio::he::mu::MuSignal,
     cp: usize,
     pilots: &[i32],
 ) -> Option<[ComplexSample; 256]> {
@@ -433,11 +433,11 @@ pub(super) fn stbc_mu_pilot_channel(
     Some(channel)
 }
 
-pub(super) fn train_stbc_ru_with_phase(
+pub(in crate::radio) fn train_stbc_ru_with_phase(
     samples: &[ComplexSample],
     a: &Acquisition,
     allocation: Tones,
-    fields: &super::he_mu::MuSignal,
+    fields: &crate::radio::he::mu::MuSignal,
     cp: usize,
     shared: Option<&StbcPhase>,
 ) -> Option<[[ComplexSample; 256]; 2]> {
@@ -494,7 +494,7 @@ fn tb_ru_training(common: &crate::Dot11TriggerCommonFields) -> Option<RuTraining
 
 /// Isolated TB RU, one DATA stream. The caller establishes the user's RU,
 /// starting stream zero, sample position and acquisition; no exchange is inferred.
-pub(super) fn train_tb_ru_field(
+pub(in crate::radio) fn train_tb_ru_field(
     samples: &[ComplexSample],
     a: &Acquisition,
     allocation: Tones,
@@ -522,7 +522,7 @@ pub(super) fn train_tb_ru_field(
 
 /// Isolated TB STBC RU: use only this user's pilot phase, never a phase pooled
 /// across independent transmitters. No masked or spatial MU-MIMO separation.
-pub(super) fn train_tb_stbc_ru_field(
+pub(in crate::radio) fn train_tb_stbc_ru_field(
     samples: &[ComplexSample],
     a: &Acquisition,
     allocation: Tones,
@@ -846,9 +846,10 @@ fn observe_ru(
     }
     let mut bins = [ComplexSample::ZERO; 256];
     match nfft {
-        64 => bins[..64].copy_from_slice(&super::sync::fft64(time[..64].try_into().ok()?)),
-        128 => bins[..128].copy_from_slice(&super::he_fft::fft128(time[..128].try_into().ok()?)),
-        _ => bins = super::he_fft::fft256(time),
+        64 => bins[..64].copy_from_slice(&crate::radio::sync::fft64(time[..64].try_into().ok()?)),
+        128 => bins[..128]
+            .copy_from_slice(&crate::radio::he::fft::fft128(time[..128].try_into().ok()?)),
+        _ => bins = crate::radio::he::fft::fft256(time),
     }
     // Equations27-5/58 define K_HE-LTF = K_RU * nfft/256, without rounding.
     // This differs from counting populated tones (60.5/121 versus60/122).
@@ -1000,7 +1001,7 @@ mod tests {
         a.signal_start = 0;
         a.phase_origin = 0;
         a.frequency_rad = 0.018;
-        let bits: Vec<_> = include_str!("../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
+        let bits: Vec<_> = include_str!("../../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
             .lines()
             .nth(1)
             .unwrap()
@@ -1010,16 +1011,16 @@ mod tests {
             .bytes()
             .map(|b| b - b'0')
             .collect();
-        let mut fields = super::super::he_mu::MuSignal::decode(&bits).unwrap();
+        let mut fields = crate::radio::he::mu::MuSignal::decode(&bits).unwrap();
         fields.stbc = true;
         for (rows, count, long_delay) in [
             (
-                include_str!("../../tests/fixtures/iq/he-mu-stbc-training-index.tsv"),
+                include_str!("../../../tests/fixtures/iq/he-mu-stbc-training-index.tsv"),
                 768,
                 false,
             ),
             (
-                include_str!("../../tests/fixtures/iq/he-mu-stbc-training-long-index.tsv"),
+                include_str!("../../../tests/fixtures/iq/he-mu-stbc-training-long-index.tsv"),
                 192,
                 true,
             ),
@@ -1161,7 +1162,7 @@ mod tests {
         a.signal_start = 0;
         a.phase_origin = 0;
         a.frequency_rad = 0.;
-        let rows = include_str!("../../tests/fixtures/iq/he-mu-training-index.tsv");
+        let rows = include_str!("../../../tests/fixtures/iq/he-mu-training-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 384);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
@@ -1264,7 +1265,7 @@ mod tests {
         a.signal_start = 0;
         a.phase_origin = 0;
         a.frequency_rad = 0.;
-        let rows = include_str!("../../tests/fixtures/iq/he-er106-training-index.tsv");
+        let rows = include_str!("../../../tests/fixtures/iq/he-er106-training-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 54);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
@@ -1386,7 +1387,7 @@ mod tests {
     }
     #[test]
     fn radio_he_stbc_training_bounds() {
-        for row in include_str!("../../tests/fixtures/iq/he-stbc-iq-index.tsv")
+        for row in include_str!("../../../tests/fixtures/iq/he-stbc-iq-index.tsv")
             .lines()
             .skip(1)
             .filter(|r| r.starts_with("he-stbc-iq-mcs0-bcc-") && r.contains("-pad1-flat\t"))
@@ -1440,12 +1441,12 @@ mod tests {
                 q: b[1] as i8 as f32 / 128.,
             })
             .collect();
-        let mut sync = super::super::sync::Synchronizer::default();
+        let mut sync = crate::radio::sync::Synchronizer::default();
         let a = samples
             .iter()
             .enumerate()
             .find_map(|(i, s)| match sync.push(*s, i as u64) {
-                Some(super::super::sync::SyncEvent::Acquired(a)) => Some(a),
+                Some(crate::radio::sync::SyncEvent::Acquired(a)) => Some(a),
                 _ => None,
             })
             .expect("independent preamble acquisition");
@@ -1454,11 +1455,11 @@ mod tests {
 
     #[test]
     fn radio_he_training4_independent_channels_and_probe() {
-        let rows: Vec<_> = include_str!("../../tests/fixtures/iq/he-training4-index.tsv")
+        let rows: Vec<_> = include_str!("../../../tests/fixtures/iq/he-training4-index.tsv")
             .lines()
             .skip(1)
             .chain(
-                include_str!("../../tests/fixtures/iq/he-training-sparse-index.tsv")
+                include_str!("../../../tests/fixtures/iq/he-training-sparse-index.tsv")
                     .lines()
                     .skip(1),
             )
@@ -1523,7 +1524,7 @@ mod tests {
                 let elapsed = start as u64 + n as u64 - a.phase_origin;
                 samples[start + n].mul(ComplexSample::rotation(-a.frequency_rad * elapsed as f32))
             });
-            let observed = super::super::he_fft::fft256(time);
+            let observed = crate::radio::he::fft::fft256(time);
             let mut corrected = Vec::new();
             let mut common = ComplexSample::ZERO;
             for (tone, bit) in (-122i32..=-2).chain(2..=122).zip(c[9].bytes()) {
@@ -1545,7 +1546,7 @@ mod tests {
 
     #[test]
     fn radio_he_training4_bounds_and_invalid_modes() {
-        for row in include_str!("../../tests/fixtures/iq/he-training4-invalid-index.tsv")
+        for row in include_str!("../../../tests/fixtures/iq/he-training4-invalid-index.tsv")
             .lines()
             .skip(1)
         {
@@ -1556,7 +1557,7 @@ mod tests {
                 // but only one LTF followed by an uncoded probe. Training
                 // estimates alone cannot qualify that probe as valid DATA.
                 assert!(
-                    super::super::he_iq::decode_su_prefix(&samples[a.signal_start as usize..], &a)
+                    crate::radio::he::iq::decode_su_prefix(&samples[a.signal_start as usize..], &a)
                         .unwrap()
                         .signal
                         .stbc
@@ -1580,7 +1581,7 @@ mod tests {
 
     #[test]
     fn radio_he_training_sparse_bounds_and_nonfinite() {
-        for row in include_str!("../../tests/fixtures/iq/he-training-sparse-index.tsv")
+        for row in include_str!("../../../tests/fixtures/iq/he-training-sparse-index.tsv")
             .lines()
             .skip(1)
         {

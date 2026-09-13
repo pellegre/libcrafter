@@ -27,7 +27,7 @@ struct Pending {
     er_candidate: bool,
     mu_wait: Option<usize>,
     mu_data_end: Option<usize>,
-    tb: Option<(he_tb_context::Context, usize)>,
+    tb: Option<(he::tb::context::Context, usize)>,
     ldpc: Option<ldpc::rate::Layout>,
     greenfield: bool,
 }
@@ -44,9 +44,9 @@ impl Pending {
             if h.stbc {
                 return None;
             }
-            let prefix = he_iq::decode_prefix(&self.samples, &self.acquisition)?;
+            let prefix = he::iq::decode_prefix(&self.samples, &self.acquisition)?;
             let timing =
-                he_timing::Timing::for_format(6_000_000, prefix.legacy_length, &h, self.he_er)
+                he::timing::Timing::for_format(6_000_000, prefix.legacy_length, &h, self.he_er)
                     .ok()?;
             return Some((
                 self.acquisition
@@ -70,8 +70,7 @@ impl Pending {
             .max_buffer_samples
             .saturating_sub(reserved)
             .saturating_add(self.samples.capacity());
-        let Some(admitted) =
-            he_data_iq::admit(&self.samples, &self.acquisition, usize::MAX, budget)
+        let Some(admitted) = he::data::admit(&self.samples, &self.acquisition, usize::MAX, budget)
         else {
             return false;
         };
@@ -216,7 +215,7 @@ pub struct LegacyOfdmDecoder {
     // Dispatcher output budget is not a capture reconfiguration. Changing
     // RxConfig between internal slices would discard an in-flight PPDU.
     output_allowance: Option<usize>,
-    triggers: std::collections::VecDeque<he_tb_context::Context>,
+    triggers: std::collections::VecDeque<he::tb::context::Context>,
 }
 impl LegacyOfdmDecoder {
     pub fn new() -> Self {
@@ -342,7 +341,7 @@ impl LegacyOfdmDecoder {
         let Some((end, color)) = timing else {
             return;
         };
-        let Some(context) = he_tb_context::Context::from_frame(frame, end, color) else {
+        let Some(context) = he::tb::context::Context::from_frame(frame, end, color) else {
             return;
         };
         self.triggers.retain(|t| !t.expired(end));
@@ -360,7 +359,7 @@ impl LegacyOfdmDecoder {
     ) -> RadioResult<()> {
         let (context, _) = p.tb.as_ref().unwrap();
         for allocation in context.schedule.allocations().filter(|a| a.eligible) {
-            let result = match he_tb_data_iq::recover(
+            let result = match he::tb::data::recover(
                 &p.samples,
                 &p.acquisition,
                 &context.common,
@@ -373,7 +372,7 @@ impl LegacyOfdmDecoder {
                 Err(error) => {
                     self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
                     out.diagnostics
-                        .push(if error == he_tb_data_iq::Error::Unsupported {
+                        .push(if error == he::tb::data::Error::Unsupported {
                             PhyDiagnostic::UnsupportedPhy
                         } else {
                             PhyDiagnostic::InvalidHeader
@@ -381,7 +380,7 @@ impl LegacyOfdmDecoder {
                     continue;
                 }
             };
-            let capacity = he_capacity::Capacity::for_tb(
+            let capacity = he::capacity::Capacity::for_tb(
                 &context.common,
                 &allocation.fields,
                 result.timing.data_symbols,
@@ -452,7 +451,7 @@ impl LegacyOfdmDecoder {
         config: &RxConfig,
         out: &mut DecodeOutput,
     ) -> RadioResult<()> {
-        let decoded = match he_mu_data_iq::recover(
+        let decoded = match he::mu::data::recover(
             &p.samples,
             &p.acquisition,
             usize::MAX,
@@ -473,11 +472,11 @@ impl LegacyOfdmDecoder {
         for (index, user) in decoded.users.into_iter().enumerate() {
             let payload = match user {
                 Ok(payload) => payload,
-                Err(he_mu_data_iq::Error::Unused) => continue,
+                Err(he::mu::data::Error::Unused) => continue,
                 Err(error) => {
                     self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
                     out.diagnostics
-                        .push(if error == he_mu_data_iq::Error::Unsupported {
+                        .push(if error == he::mu::data::Error::Unsupported {
                             PhyDiagnostic::UnsupportedPhy
                         } else {
                             PhyDiagnostic::InvalidHeader
@@ -487,7 +486,7 @@ impl LegacyOfdmDecoder {
             };
             let ru = layout.iter().find(|ru| ru.users.contains(&index)).unwrap();
             let user = decoded.fields.users[index].unwrap();
-            let capacity = he_capacity::Capacity::for_mu(
+            let capacity = he::capacity::Capacity::for_mu(
                 &decoded.fields.signal,
                 &user,
                 (ru.tones.count() + ru.tones.pilots().len()) as u16,
@@ -630,13 +629,13 @@ impl PhyDecoder for LegacyOfdmDecoder {
                 }
                 if let Some(required) = p.mu_wait {
                     if p.samples.len() == required {
-                        match he_sig_b_iq::recover(&p.samples, &p.acquisition) {
+                        match he::mu::sig_b::iq::recover(&p.samples, &p.acquisition) {
                             Ok(fields) => {
                                 let budget = config
                                     .max_buffer_samples
                                     .saturating_sub(reserved)
                                     .saturating_add(p.samples.capacity());
-                                let timing = he_mu_data_iq::admit(
+                                let timing = he::mu::data::admit(
                                     &p.samples,
                                     &p.acquisition,
                                     &fields,
@@ -656,7 +655,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                 }
                                 out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
                             }
-                            Err(he_sig_b_iq::Error::Truncated { required, .. })
+                            Err(he::mu::sig_b::iq::Error::Truncated { required, .. })
                                 if required > p.samples.len()
                                     && p.reserve_samples(required, config, reserved) =>
                             {
@@ -740,7 +739,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                 }
                 if p.samples.len() == 240 && p.info.is_some_and(|info| info.rate_bps == 6_000_000) {
                     if self.ht_enabled
-                        && he_iq::repeated_su_signal(&p.samples, &p.acquisition).is_some()
+                        && he::iq::repeated_su_signal(&p.samples, &p.acquisition).is_some()
                     {
                         if p.reserve_samples(320, config, reserved) {
                             p.he_candidate = true;
@@ -753,7 +752,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                         continue;
                     }
                     if self.ht_enabled
-                        && he_iq::repeated_er_signal(&p.samples, &p.acquisition).is_some()
+                        && he::iq::repeated_er_signal(&p.samples, &p.acquisition).is_some()
                     {
                         if p.reserve_samples(320, config, reserved) {
                             p.er_candidate = true;
@@ -815,7 +814,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                 }
                 if p.er_candidate
                     && p.samples.len() == 320
-                    && he_iq::er_marker(&p.samples, &p.acquisition).is_some()
+                    && he::iq::er_marker(&p.samples, &p.acquisition).is_some()
                 {
                     if !p.reserve_samples(480, config, reserved) {
                         self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
@@ -827,15 +826,15 @@ impl PhyDecoder for LegacyOfdmDecoder {
                 if p.er_candidate && matches!(p.samples.len(), 320 | 480) {
                     p.er_candidate = false;
                     if p.samples.len() == 320 {
-                        if let Some(fields) = he_iq::decode_mu_prefix(&p.samples, &p.acquisition) {
+                        if let Some(fields) = he::iq::decode_mu_prefix(&p.samples, &p.acquisition) {
                             out.diagnostics.push(PhyDiagnostic::HeMuSignal {
                                 fields,
                                 preamble_sample_index: p.start.sample_index,
                             });
                             // Reserve only the next required SIG-B boundary;
                             // the common allocation can extend a raw count of15.
-                            match he_sig_b_iq::recover(&p.samples, &p.acquisition) {
-                                Err(he_sig_b_iq::Error::Truncated { required, .. })
+                            match he::mu::sig_b::iq::recover(&p.samples, &p.acquisition) {
+                                Err(he::mu::sig_b::iq::Error::Truncated { required, .. })
                                     if required > p.samples.len()
                                         && p.reserve_samples(required, config, reserved) =>
                                 {
@@ -851,7 +850,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             continue;
                         }
                     }
-                    if let Some(prefix) = he_iq::decode_er_prefix(&p.samples, &p.acquisition) {
+                    if let Some(prefix) = he::iq::decode_er_prefix(&p.samples, &p.acquisition) {
                         out.diagnostics.push(PhyDiagnostic::HeErSignal {
                             fields: prefix.signal,
                             preamble_sample_index: p.start.sample_index,
@@ -876,7 +875,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                 }
                 if p.he_candidate && p.samples.len() == 320 {
                     p.he_candidate = false;
-                    if let Some(fields) = he_iq::decode_tb_prefix(&p.samples, &p.acquisition) {
+                    if let Some(fields) = he::iq::decode_tb_prefix(&p.samples, &p.acquisition) {
                         out.diagnostics.push(PhyDiagnostic::HeTbSignal {
                             fields,
                             preamble_sample_index: p.start.sample_index,
@@ -894,7 +893,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                 .allocations()
                                 .filter(|a| a.eligible)
                                 .find_map(|allocation| {
-                                    he_tb_data_iq::admit(
+                                    he::tb::data::admit(
                                         &p.samples,
                                         &p.acquisition,
                                         &context.common,
@@ -919,7 +918,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                         self.pending[slot] = None;
                         continue;
                     }
-                    if let Some(prefix) = he_iq::decode_su_prefix(&p.samples, &p.acquisition) {
+                    if let Some(prefix) = he::iq::decode_su_prefix(&p.samples, &p.acquisition) {
                         out.diagnostics.push(PhyDiagnostic::HeSignal {
                             fields: prefix.signal,
                             preamble_sample_index: p.start.sample_index,
@@ -954,7 +953,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     let mut partial_stats = Vec::new();
                     let mut vht_signal_b = None;
                     let decoded = if let Some(fields) = p.he {
-                        he_data_iq::recover_aggregate(&p.samples, &p.acquisition, info.psdu_bytes)
+                        he::data::recover_aggregate(&p.samples, &p.acquisition, info.psdu_bytes)
                             .map(|(bytes, diagnostics)| {
                                 partial_stats.extend(diagnostics);
                                 (
@@ -3232,8 +3231,9 @@ mod tests {
                     assert!(!decoder.triggers.is_empty());
                     let frame = &prefix.frames[0];
                     let end = c[6].parse::<u64>().unwrap();
-                    let context = he_tb_context::Context::from_frame(frame, end, Some(37)).unwrap();
-                    let mut signal = he_tb::TbSignal {
+                    let context =
+                        he::tb::context::Context::from_frame(frame, end, Some(37)).unwrap();
+                    let mut signal = he::tb::TbSignal {
                         bss_color: 37,
                         bandwidth: 0,
                         spatial_reuse: [0; 4],
@@ -3248,7 +3248,7 @@ mod tests {
                     assert!(!context.matches(expires, &signal));
                     signal.bss_color = 38;
                     assert!(!context.matches(end + 320, &signal));
-                    assert!(he_tb_context::Context::from_frame(frame, u64::MAX, None).is_none());
+                    assert!(he::tb::context::Context::from_frame(frame, u64::MAX, None).is_none());
                     decoder.reset(reason);
                     assert!(decoder.triggers.is_empty());
                     decoder.reset(ResetReason::Explicit);

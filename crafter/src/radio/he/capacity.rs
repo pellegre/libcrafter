@@ -1,8 +1,8 @@
 //! HE20 SU/ER/MU/TB payload geometry; IEEE802.11ax-2021 27.3.12 and27.4.3.
-use super::he::SuSignal;
+use super::SuSignal;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Capacity {
+pub(in crate::radio) struct Capacity {
     pub bits_per_tone: usize,
     pub spatial_streams: usize,
     pub rate_num: usize,
@@ -23,7 +23,7 @@ pub(super) struct Capacity {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Error {
+pub(in crate::radio) enum Error {
     Bandwidth,
     Mcs,
     Streams,
@@ -79,12 +79,12 @@ impl Capacity {
     /// Header integrity, RU assignment and cross-user spatial consistency are
     /// caller responsibilities. SIG-B MCS/DCM do not describe DATA modulation.
     pub fn for_mu(
-        signal: &super::he_mu::MuSignal,
-        user: &super::he_sig_b::HeSigBUserFields,
+        signal: &crate::radio::he::mu::MuSignal,
+        user: &crate::radio::he::mu::sig_b::HeSigBUserFields,
         ru_tones: u16,
         symbols: usize,
     ) -> Result<Self, Error> {
-        use super::he_sig_b::HeSigBUserEncoding;
+        use crate::radio::he::mu::sig_b::HeSigBUserEncoding;
         if signal.bandwidth != 0 {
             return Err(Error::Bandwidth);
         }
@@ -127,7 +127,7 @@ impl Capacity {
         if !matches!(common.trigger_type, 0..=2 | 4..=6) {
             return Err(Error::Coding);
         }
-        let tones = super::he_tones::Tones::from_trigger(common.bandwidth, user.ru_allocation)
+        let tones = crate::radio::he::ru::Tones::from_trigger(common.bandwidth, user.ru_allocation)
             .ok_or(Error::Bandwidth)?;
         if user.spatial_allocation > 63 {
             return Err(Error::Streams);
@@ -283,7 +283,7 @@ mod tests {
     #[test]
     fn radio_he_capacity_independent_forward_padding() {
         forward_padding(
-            include_str!("../../tests/fixtures/iq/he-capacity-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-capacity-index.tsv"),
             None,
             8253,
             None,
@@ -293,13 +293,13 @@ mod tests {
     #[test]
     fn radio_he_er_capacity_independent_forward_padding() {
         forward_padding(
-            include_str!("../../tests/fixtures/iq/he-er106-capacity-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-er106-capacity-index.tsv"),
             Some(1),
             177,
             None,
         );
         forward_padding(
-            include_str!("../../tests/fixtures/iq/he-er242-capacity-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-er242-capacity-index.tsv"),
             Some(0),
             619,
             None,
@@ -311,22 +311,22 @@ mod tests {
         for (ru, index, count) in [
             (
                 26,
-                include_str!("../../tests/fixtures/iq/he-mu26-capacity-index.tsv"),
+                include_str!("../../../tests/fixtures/iq/he-mu26-capacity-index.tsv"),
                 7078,
             ),
             (
                 52,
-                include_str!("../../tests/fixtures/iq/he-mu52-capacity-index.tsv"),
+                include_str!("../../../tests/fixtures/iq/he-mu52-capacity-index.tsv"),
                 7585,
             ),
             (
                 106,
-                include_str!("../../tests/fixtures/iq/he-mu106-capacity-index.tsv"),
+                include_str!("../../../tests/fixtures/iq/he-mu106-capacity-index.tsv"),
                 7942,
             ),
             (
                 242,
-                include_str!("../../tests/fixtures/iq/he-mu242-capacity-index.tsv"),
+                include_str!("../../../tests/fixtures/iq/he-mu242-capacity-index.tsv"),
                 8253,
             ),
         ] {
@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn radio_he_mu_capacity_bounds_and_short_dcm() {
-        use super::super::he_sig_b::{HeSigBUserEncoding, HeSigBUserFields};
+        use crate::radio::he::mu::sig_b::{HeSigBUserEncoding, HeSigBUserFields};
         let mut signal = mu_header();
         signal.stbc = false;
         signal.pre_fec_padding = 1;
@@ -443,8 +443,8 @@ mod tests {
         );
     }
 
-    fn mu_header() -> super::super::he_mu::MuSignal {
-        let bits: Vec<_> = include_str!("../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
+    fn mu_header() -> crate::radio::he::mu::MuSignal {
+        let bits: Vec<_> = include_str!("../../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
             .lines()
             .nth(1)
             .unwrap()
@@ -454,7 +454,7 @@ mod tests {
             .bytes()
             .map(|b| b - b'0')
             .collect();
-        let mut signal = super::super::he_mu::MuSignal::decode(&bits).unwrap();
+        let mut signal = crate::radio::he::mu::MuSignal::decode(&bits).unwrap();
         signal.bandwidth = 0;
         signal
     }
@@ -478,7 +478,7 @@ mod tests {
             a.ldpc_extra_segment = a.ldpc.then_some(c[5] != 0);
             a.pre_fec_padding = c[6] as u8;
             let v = if let Some(ru) = mu_tones {
-                use super::super::he_sig_b::{HeSigBUserEncoding, HeSigBUserFields};
+                use crate::radio::he::mu::sig_b::{HeSigBUserEncoding, HeSigBUserFields};
                 let mut signal = mu_header();
                 signal.stbc = a.stbc;
                 signal.pre_fec_padding = a.pre_fec_padding;

@@ -1,12 +1,14 @@
 //! HE20 MU single-stream RUs, ax-2021 27.3.11.8/10 and 27.3.12.
 //! Returned PSDUs are not MAC/FCS qualified. No spatial separation is inferred.
-use super::{
-    he_capacity::Capacity, he_sig_b::HeSigBUserEncoding, he_sig_b_iq::Fields, he_timing::Timing,
-    sync::Acquisition, ComplexSample,
+use super::sig_b::{iq::Fields, HeSigBUserEncoding};
+use crate::radio::{
+    he::{capacity::Capacity, timing::Timing},
+    sync::Acquisition,
+    ComplexSample,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Error {
+pub(in crate::radio) enum Error {
     Header,
     Timing,
     Layout,
@@ -17,19 +19,19 @@ pub(super) enum Error {
     Training,
     Metrics,
     Allocation,
-    Bcc(super::he_bcc::Error),
-    Ldpc(super::he_mu_ldpc::Error),
+    Bcc(crate::radio::he::bcc::Error),
+    Ldpc(crate::radio::he::mu::ldpc::Error),
 }
 
 #[derive(Debug)]
-pub(super) struct Payload {
+pub(in crate::radio) struct Payload {
     pub psdu: Vec<u8>,
     pub failed_codewords: usize,
-    pub first_failure: Option<super::ldpc_rate::Error>,
+    pub first_failure: Option<crate::radio::ldpc_rate::Error>,
 }
 
 #[derive(Debug)]
-pub(super) struct Recovered {
+pub(in crate::radio) struct Recovered {
     pub fields: Fields,
     pub timing: Timing,
     /// Original SIG-B order, including unused users and failed headers.
@@ -38,7 +40,7 @@ pub(super) struct Recovered {
 
 /// Checked SIG-B to bounded DATA retention. No payload or MAC integrity is
 /// established here; at least one RU must have a supported user layout.
-pub(super) fn admit(
+pub(in crate::radio) fn admit(
     samples: &[ComplexSample],
     a: &Acquisition,
     fields: &Fields,
@@ -47,7 +49,7 @@ pub(super) fn admit(
     if a.signal_start.checked_sub(a.preamble_start) != Some(320) {
         return Err(Error::Layout);
     }
-    let length = super::he_iq::repeated_er_signal(samples, a).ok_or(Error::Header)?;
+    let length = crate::radio::he::iq::repeated_er_signal(samples, a).ok_or(Error::Header)?;
     let timing = Timing::for_mu(6_000_000, length, &fields.signal, fields.symbols)
         .map_err(|_| Error::Timing)?;
     let needed = timing.data_end.checked_sub(320).ok_or(Error::Timing)?;
@@ -92,7 +94,7 @@ pub(super) fn admit(
 
 /// Input begins at L-SIG, not at the legacy preamble. Bounds cover the entire
 /// DATA region before per-user allocation. Header recovery does not emit frames.
-pub(super) fn recover(
+pub(in crate::radio) fn recover(
     samples: &[ComplexSample],
     a: &Acquisition,
     max_psdu: usize,
@@ -102,7 +104,7 @@ pub(super) fn recover(
     if a.signal_start.checked_sub(a.preamble_start) != Some(320) {
         return Err(Error::Layout);
     }
-    let fields = super::he_sig_b_iq::recover(samples, a).map_err(|_| Error::Header)?;
+    let fields = crate::radio::he::mu::sig_b::iq::recover(samples, a).map_err(|_| Error::Header)?;
     let timing = admit(samples, a, &fields, max_samples)?;
     let needed = timing.data_end.checked_sub(320).ok_or(Error::Timing)?;
     if needed > max_samples || timing.data_symbols > 400 {
@@ -156,7 +158,7 @@ pub(super) fn recover(
                     return Err(Error::Limit);
                 }
                 if ldpc {
-                    super::ldpc_rate::Layout::he_mu(
+                    crate::radio::ldpc_rate::Layout::he_mu(
                         &fields.signal,
                         &user,
                         size,
@@ -169,7 +171,7 @@ pub(super) fn recover(
                     timing.ltf_symbols * (64 * usize::from(fields.signal.ltf_size) + guard);
                 let train = |cp| {
                     if fields.signal.stbc {
-                        let phase = super::he_training::stbc_mu_phase(
+                        let phase = crate::radio::he::training::stbc_mu_phase(
                             samples,
                             a,
                             &fields.signal,
@@ -177,7 +179,7 @@ pub(super) fn recover(
                             &pilots,
                         )
                         .ok_or(Error::Training)?;
-                        super::he_training::train_stbc_ru_with_phase(
+                        crate::radio::he::training::train_stbc_ru_with_phase(
                             samples,
                             a,
                             ru.tones,
@@ -187,7 +189,7 @@ pub(super) fn recover(
                         )
                         .ok_or(Error::Training)
                     } else {
-                        super::he_training::train_ru_field(
+                        crate::radio::he::training::train_ru_field(
                             samples,
                             a,
                             ru.tones,
@@ -211,9 +213,13 @@ pub(super) fn recover(
                 // Non-STBC uses the first LTF's +1 coefficient. STBC
                 // separates both channels using all signaled LTFs.
                 let mut channel = train(cp)?;
-                let mut demod =
-                    super::he_ru_symbol::Demodulator::new(ru.tones, c.bits_per_tone, ldpc, dcm)
-                        .ok_or(Error::Unsupported)?;
+                let mut demod = crate::radio::he::ru::symbol::Demodulator::new(
+                    ru.tones,
+                    c.bits_per_tone,
+                    ldpc,
+                    dcm,
+                )
+                .ok_or(Error::Unsupported)?;
                 let mut metrics = Vec::new();
                 metrics
                     .try_reserve_exact(
@@ -226,7 +232,7 @@ pub(super) fn recover(
                 let mut pilot = 127;
                 // Equation27-108: L-SIG + RL-SIG + two SIG-A + SIG-B.
                 for _ in 0..4 + fields.symbols {
-                    super::data::feedback(&mut pilot);
+                    crate::radio::data::feedback(&mut pilot);
                 }
                 for symbol in (0..timing.data_symbols).step_by(group) {
                     let offset = timing.symbol_start(symbol).ok_or(Error::Timing)?;
@@ -260,7 +266,7 @@ pub(super) fn recover(
                             metrics.extend(block);
                         }
                     } else {
-                        let polarity = 1. - 2. * super::data::feedback(&mut pilot) as f32;
+                        let polarity = 1. - 2. * crate::radio::data::feedback(&mut pilot) as f32;
                         let block = demod
                             .recover(
                                 samples.get(start..start + 256).ok_or(Error::Samples)?,
@@ -276,7 +282,7 @@ pub(super) fn recover(
                 }
                 if ldpc {
                     let decode = |metrics: &[f32]| {
-                        super::he_mu_ldpc::recover(
+                        crate::radio::he::mu::ldpc::recover(
                             &fields.signal,
                             &user,
                             size,
@@ -325,7 +331,7 @@ pub(super) fn recover(
                         first_failure: r.first_failure,
                     })
                 } else {
-                    let psdu = super::he_bcc::recover_mu(
+                    let psdu = crate::radio::he::bcc::recover_mu(
                         &fields.signal,
                         &user,
                         size,
@@ -357,7 +363,7 @@ pub(super) fn recover(
 fn refine_stbc_channels(
     bins: &[[ComplexSample; 256]],
     prior: &[[ComplexSample; 256]; 2],
-    tones: super::he_tones::Tones,
+    tones: crate::radio::he::ru::Tones,
     bits: usize,
 ) -> Option<[[ComplexSample; 256]; 2]> {
     if bins.len() < 2
@@ -407,7 +413,7 @@ fn refine_stbc_channels(
         let mut denominator = 2.;
         for pair in bins.chunks_exact(2) {
             let y = [pair[0][bin], pair[1][bin]];
-            let x = super::stbc::recover_pair([prior[0][bin], prior[1][bin]], y).ok()?;
+            let x = crate::radio::stbc::recover_pair([prior[0][bin], prior[1][bin]], y).ok()?;
             let s = [nearest(x[0]), nearest(x[1])];
             let error = x[0].sub(s[0]).power().max(x[1].sub(s[1]).power()) * energy;
             let weight = (1. - 2. * error).max(0.);
@@ -447,14 +453,14 @@ fn stbc_observations(
     samples: &[ComplexSample],
     a: &Acquisition,
     fields: &Fields,
-    layout: &[super::he_sig_b_iq::RuLayout],
+    layout: &[crate::radio::he::mu::sig_b::iq::RuLayout],
     timing: &Timing,
     pilots: &[i32],
 ) -> Result<Vec<[ComplexSample; 256]>, Error> {
     let guard = usize::from(fields.signal.guard_ns) / 50;
     let training = timing.ltf_symbols * (64 * usize::from(fields.signal.ltf_size) + guard);
     let train = |cp| {
-        super::he_training::stbc_mu_pilot_channel(samples, a, &fields.signal, cp, pilots)
+        crate::radio::he::training::stbc_mu_pilot_channel(samples, a, &fields.signal, cp, pilots)
             .ok_or(Error::Training)
     };
     let cp = usize::try_from(
@@ -470,7 +476,7 @@ fn stbc_observations(
     let mut slope = 0.;
     let mut pilot = 127;
     for _ in 0..4 + fields.symbols {
-        super::data::feedback(&mut pilot);
+        crate::radio::data::feedback(&mut pilot);
     }
     let mut output = Vec::new();
     output
@@ -493,7 +499,7 @@ fn stbc_observations(
             .checked_add(start as u64)
             .and_then(|n| n.checked_sub(a.phase_origin))
             .ok_or(Error::Timing)?;
-        let polarity = 1. - 2. * super::data::feedback(&mut pilot) as f32;
+        let polarity = 1. - 2. * crate::radio::data::feedback(&mut pilot) as f32;
         let pilot_map: Vec<_> = layout
             .iter()
             .filter(|ru| !ru.users.is_empty())
@@ -505,7 +511,7 @@ fn stbc_observations(
                     .map(move |(j, &k)| (k, ru.tones.pilot_sign(symbol, j) * polarity))
             })
             .collect();
-        let (mut bins, phase, next_slope) = super::he_ru_symbol::observe_with_pilots(
+        let (mut bins, phase, next_slope) = crate::radio::he::ru::symbol::observe_with_pilots(
             samples.get(start..start + 256).ok_or(Error::Samples)?,
             &channel,
             a.frequency_rad,
@@ -533,7 +539,7 @@ mod tests {
 
     #[test]
     fn radio_he_mu_stbc_refinement_bounds() {
-        let tones = super::super::he_tones::Tones::ru(26, 1).unwrap();
+        let tones = crate::radio::he::ru::Tones::ru(26, 1).unwrap();
         let mut prior = [[ComplexSample::ZERO; 256]; 2];
         let h = [
             ComplexSample { i: 1., q: 0.1 },
@@ -593,17 +599,17 @@ mod tests {
                     q: b[1] as i8 as f32 / 128.,
                 })
                 .collect();
-            let mut sync = super::super::sync::Synchronizer::default();
+            let mut sync = crate::radio::sync::Synchronizer::default();
             let a = samples
                 .iter()
                 .enumerate()
                 .find_map(|(n, &s)| match sync.push(s, n as u64) {
-                    Some(super::super::sync::SyncEvent::Acquired(a)) => Some(a),
+                    Some(crate::radio::sync::SyncEvent::Acquired(a)) => Some(a),
                     _ => None,
                 })
                 .unwrap();
             let input = &samples[a.signal_start as usize..];
-            let fields = super::super::he_sig_b_iq::recover(input, &a).unwrap();
+            let fields = crate::radio::he::mu::sig_b::iq::recover(input, &a).unwrap();
             let actual = recover(input, &a, 65535, input.len(), true).unwrap();
             for (i, user) in actual.users.iter().enumerate() {
                 assert_eq!(
@@ -623,7 +629,7 @@ mod tests {
                 stbc_observations(input, &a, &fields, &layout, &timing, &pilots).unwrap();
             let cp = (fields.end_sample - a.signal_start) as usize + 80;
             let phase =
-                super::super::he_training::stbc_mu_phase(input, &a, &fields.signal, cp, &pilots)
+                crate::radio::he::training::stbc_mu_phase(input, &a, &fields.signal, cp, &pilots)
                     .unwrap();
             for (index, ru) in layout.iter().enumerate() {
                 let user = fields.users[index].unwrap();
@@ -637,7 +643,7 @@ mod tests {
                 ) {
                     continue;
                 }
-                let fitted = super::super::he_training::train_stbc_ru_with_phase(
+                let fitted = crate::radio::he::training::train_stbc_ru_with_phase(
                     input,
                     &a,
                     ru.tones,
@@ -688,7 +694,7 @@ mod tests {
                     }
                 }
                 let c = Capacity::for_mu(&fields.signal, &user, 26, timing.data_symbols).unwrap();
-                let demod = super::super::he_ru_symbol::Demodulator::new(
+                let demod = crate::radio::he::ru::symbol::Demodulator::new(
                     ru.tones,
                     c.bits_per_tone,
                     true,
@@ -705,7 +711,7 @@ mod tests {
                             .flatten(),
                     );
                 }
-                let recovered = super::super::he_mu_ldpc::recover(
+                let recovered = crate::radio::he::mu::ldpc::recover(
                     &fields.signal,
                     &user,
                     26,
@@ -727,7 +733,7 @@ mod tests {
     #[test]
     fn radio_he_mu_stbc_admission_and_bounds() {
         let bytes = include_bytes!(
-            "../../tests/fixtures/iq/he-mu-stbc-a0-m4-l1-ltf4-g16-n2-p0-c0-flat.cs8"
+            "../../../../tests/fixtures/iq/he-mu-stbc-a0-m4-l1-ltf4-g16-n2-p0-c0-flat.cs8"
         );
         let samples: Vec<_> = bytes
             .chunks_exact(2)
@@ -736,17 +742,17 @@ mod tests {
                 q: b[1] as i8 as f32 / 128.,
             })
             .collect();
-        let mut sync = super::super::sync::Synchronizer::default();
+        let mut sync = crate::radio::sync::Synchronizer::default();
         let a = samples
             .iter()
             .enumerate()
             .find_map(|(n, &s)| match sync.push(s, n as u64) {
-                Some(super::super::sync::SyncEvent::Acquired(a)) => Some(a),
+                Some(crate::radio::sync::SyncEvent::Acquired(a)) => Some(a),
                 _ => None,
             })
             .unwrap();
         let input = &samples[a.signal_start as usize..];
-        let fields = super::super::he_sig_b_iq::recover(input, &a).unwrap();
+        let fields = crate::radio::he::mu::sig_b::iq::recover(input, &a).unwrap();
         let prefix_end = (fields.end_sample - a.signal_start) as usize;
         let timing = admit(&input[..prefix_end], &a, &fields, input.len()).unwrap();
         assert_eq!(timing.data_symbols % 2, 0);
@@ -807,7 +813,7 @@ mod tests {
 
     #[test]
     fn radio_he_mu_complete_psdu_waveforms() {
-        let rows = include_str!("../../tests/fixtures/iq/he-mu-data-iq-index.tsv");
+        let rows = include_str!("../../../../tests/fixtures/iq/he-mu-data-iq-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 252);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
@@ -824,12 +830,12 @@ mod tests {
                     q: b[1] as i8 as f32 / 128.,
                 })
                 .collect();
-            let mut sync = super::super::sync::Synchronizer::default();
+            let mut sync = crate::radio::sync::Synchronizer::default();
             let a = samples
                 .iter()
                 .enumerate()
                 .find_map(|(n, &s)| match sync.push(s, n as u64) {
-                    Some(super::super::sync::SyncEvent::Acquired(a)) => Some(a),
+                    Some(crate::radio::sync::SyncEvent::Acquired(a)) => Some(a),
                     _ => None,
                 })
                 .unwrap();
@@ -859,8 +865,8 @@ mod tests {
                     assert!(
                         matches!(
                             user,
-                            Err(Error::Bcc(super::super::he_bcc::Error::Service)
-                                | Error::Ldpc(super::super::he_mu_ldpc::Error::Service))
+                            Err(Error::Bcc(crate::radio::he::bcc::Error::Service)
+                                | Error::Ldpc(crate::radio::he::mu::ldpc::Error::Service))
                         ),
                         "{}: {user:?}",
                         c[0]
