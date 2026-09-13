@@ -303,8 +303,12 @@ Trigger per-user geometry resolves all 16 HE20 RUs from the normal User Info
 RU byte and computes BCC/LDPC payload budgets from explicit MCS, spatial-stream,
 DCM and padding fields. Random-access fields force one space-time stream;
 their RU-count bits are not mistaken for a stream count. Shared independent
-forward per-RU budget vectors check this mapping. Expanding random-access
-allocations, separating simultaneous users and recovering TB DATA remain separate.
+forward per-RU budget vectors check this mapping. A private bounded schedule
+expands contiguous same-size random-access ranges and retains the originating
+User Info index. It marks overlapping, unallocated and unsupported spatial
+entries ineligible without dropping a separate disjoint RU. Independent tables
+cover 2304 range and overlap cases. This does not separate spatial users or
+associate a Trigger with a received TB transmission.
 
 The TB LDPC layout primitive follows the Trigger's explicit extra-segment flag
 under 27.3.12.5.5, including its initial-padding reversal. Independent vectors

@@ -23,6 +23,7 @@ mod he_sig_b_iq;
 mod he_sig_b_modulation;
 mod he_tb;
 mod he_tb_data_iq;
+mod he_tb_schedule;
 pub use he_sig_b::{
     HeRu20Assignment, HeSigBCommon20Fields, HeSigBError, HeSigBUserBlock, HeSigBUserContext,
     HeSigBUserEncoding, HeSigBUserFields,

@@ -4,6 +4,16 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_tb_schedule_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-schedule.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 2304);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "b5c863fa4068859d05329925c58a1c1fcac060d951096b450c7b4f34b1f8a5e8"
+    );
+}
+
+#[test]
 fn radio_he_tb_public_exports() {
     use crafter::prelude::{HeSignalError, HeTbSignalError, HeTbSignalFields};
     assert!(matches!(

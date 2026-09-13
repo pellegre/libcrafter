@@ -8607,6 +8607,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "he-timing-index.tsv"
                 | "he-mu-timing.tsv"
                 | "he-tb-timing.tsv"
+                | "he-tb-schedule.tsv"
                 | "he-tb-ldpc-layout.tsv"
                 | "he-tb-ldpc-payload.tsv"
                 | "he-er-timing-index.tsv"
