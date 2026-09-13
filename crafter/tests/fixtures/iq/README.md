@@ -1,5 +1,14 @@
 # Independent IQ vector contract
 
+`he-ampdu-iq-index.tsv` records 200 complete HE20 SU BCC PHY/MAC IQ cases
+from `he_ampdu_iq_vectors.py`: MCS0-9, all five training/guard pairs, single
+and multiple QoS MPDUs, mixed tags, EOF padding and intentionally bad FCS.
+Expected PSDUs include corrupted FCS bytes; expected emitted MPDUs exclude
+those frames while retaining later valid frames. Independent preamble acquisition,
+header admission, IQ recovery and HE aggregate scanning are tested together.
+Tagged frames exercise byte framing, not negotiated acknowledgment policy.
+This corpus does not establish public streaming or hardware qualification.
+
 `he-bcc-iq-index.tsv` and `he-bcc-iq-invalid-index.tsv` record 151 positive
 and six negative HE20 SU one-stream BCC IQ cases from `he_bcc_iq_vectors.py`.
 Complete PHY preambles and DATA carry synthetic PSDUs, not qualified MAC

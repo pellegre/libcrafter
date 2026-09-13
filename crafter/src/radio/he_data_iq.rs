@@ -231,6 +231,83 @@ mod tests {
     }
 
     #[test]
+    fn radio_he_bcc_iq_complete_mac_aggregates() {
+        fn hex(s: &str) -> Vec<u8> {
+            (0..s.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+                .collect()
+        }
+        let rows = include_str!("../../tests/fixtures/iq/he-ampdu-iq-index.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 200);
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let (samples, a) = fixture(c[0]);
+            let input = &samples[a.signal_start as usize..];
+            let expected_psdu = hex(c[4]);
+            let admitted = admit(&input[..320], &a, expected_psdu.len(), input.len()).expect(c[0]);
+            let psdu =
+                recover(&input[..admitted.required_samples], &a, expected_psdu.len()).expect(c[0]);
+            assert_eq!(psdu, expected_psdu, "{}", c[0]);
+            let events: Vec<_> = super::super::ampdu::Scan::he(&psdu, 16383).collect();
+            let actual: Vec<_> = events
+                .iter()
+                .filter_map(|e| match e {
+                    super::super::ampdu::Event::Frame {
+                        delimiter_offset,
+                        control_bits,
+                        bytes,
+                    } => Some((delimiter_offset + 4, bytes.to_vec(), *control_bits)),
+                    _ => None,
+                })
+                .collect();
+            let expected: Vec<_> = c[5]
+                .split(',')
+                .zip(c[6].split(','))
+                .zip(c[7].split(','))
+                .map(|((offset, bytes), tag)| {
+                    (
+                        offset.parse::<usize>().unwrap(),
+                        hex(bytes),
+                        tag.parse::<u8>().unwrap(),
+                    )
+                })
+                .collect();
+            assert_eq!(actual, expected, "{}", c[0]);
+            for (_, bytes, _) in &actual {
+                // The raw 802.11 link decoder expects FCS out of band; the
+                // recovered byte contract above deliberately retains it.
+                let mac = &bytes[..bytes.len() - 4];
+                let packet =
+                    crate::Packet::decode_from_link(crate::LinkType::Ieee80211, mac).expect(c[0]);
+                assert_eq!(packet.compile().unwrap().as_bytes(), mac, "{}", c[0]);
+            }
+            let bad_fcs = events
+                .iter()
+                .filter(|e| {
+                    matches!(
+                        e,
+                        super::super::ampdu::Event::Invalid {
+                            error: super::super::ampdu::Error::BadFcs,
+                            ..
+                        }
+                    )
+                })
+                .count();
+            assert_eq!(bad_fcs, c[8].parse::<usize>().unwrap(), "{}", c[0]);
+            if c[8] == "0" {
+                assert!(
+                    !events
+                        .iter()
+                        .any(|e| matches!(e, super::super::ampdu::Event::Invalid { .. })),
+                    "{}",
+                    c[0]
+                );
+            }
+        }
+    }
+
+    #[test]
     fn radio_he_bcc_header_only_admission() {
         for row in include_str!("../../tests/fixtures/iq/he-bcc-iq-index.tsv")
             .lines()

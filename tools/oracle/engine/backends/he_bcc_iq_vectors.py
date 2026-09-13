@@ -1,6 +1,7 @@
 """Independent HE20 SU one-stream BCC IQ, IEEE802.11ax-2021 27.3.
 
-Complete PHY waveforms with synthetic PSDUs, not MAC aggregate qualification.
+Default corpus uses synthetic PSDUs, not MAC aggregate qualification. The
+optional aligned payload input supports the separate complete MAC corpus.
 Direct IDFT, source training and independently encoded payload; no receiver use.
 """
 import argparse
@@ -21,14 +22,23 @@ PILOTS=[-116,-90,-48,-22,22,48,90,116]
 TONES=[k for k in training.TONES if k not in PILOTS]
 
 
-def waveform(mcs,size,guard,case,invalid=None,long=False):
+def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None):
     symbols=137 if long else 5
     padding=mcs%4+1
     cbps=234*BPS[mcs];dbps=DATA[mcs]
     last=cbps if padding==4 else padding*60*BPS[mcs]
+    if payload is not None:
+        assert len(payload)%4==0
+        while ((symbols-1)*dbps+(dbps if padding==4 else padding*SHORT[mcs])-22)//8 < len(payload):
+            symbols+=1
     count=(symbols-1)*dbps+(dbps if padding==4 else padding*SHORT[mcs])
     octets,pad=divmod(count-22,8)
     psdu=bytes((n*37+mcs*13+93)%256 for n in range(octets))
+    if payload is not None:
+        from vht_ampdu_vectors import delimiter
+        remaining=octets-len(payload)
+        # HE MAC padding fills whole PSDU octets before PHY padding/tail.
+        psdu=payload+delimiter(0,1)*(remaining//4)+b'\xa5'*(remaining%4)
     service=[0]*16
     if invalid=='service': service[7]=1
     bits=base.scramble(service+base.bits(psdu)+[n%2 for n in range(pad)],93)+[0]*6
