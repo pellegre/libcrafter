@@ -1,7 +1,7 @@
 //! Combined receive-only legacy and opt-in modern PHY dispatch.
 use super::*;
 
-/// Combined legacy, HT20/VHT20 BCC/LDPC and HE20 SU BCC receiver.
+/// Combined legacy, HT20/VHT20 BCC/LDPC and HE20 receiver.
 ///
 /// HT MCS 0–7, BCC and LDPC, valid long/short guard intervals, mixed and
 /// greenfield formats, nonaggregated PSDUs, A-MPDUs, one-data-stream STBC and
@@ -10,8 +10,10 @@ use super::*;
 /// child slots. Overflow is an explicit error, never a truncated aggregate.
 /// VHT supports SU MCS 0–8, both guard intervals, one-DATA-stream STBC,
 /// S-MPDU and A-MPDU framing.
-/// HE20 SU supports one-stream BCC MCS0–9 and all five SU training/guard
-/// combinations, without DCM, STBC or midambles. Other HE layouts, VHT MU,
+/// HE20 SU/ER supports BCC/LDPC, DCM, one-DATA-stream STBC and midambles
+/// for admitted layouts; detailed coverage is in `docs/modern-wifi-iq.md`.
+/// HE MU currently reports SIG-A/SIG-B diagnostics, not recovered DATA.
+/// Other HE layouts, VHT MU,
 /// additional independent DATA streams, wider channels and EHT are not yet decoded.
 /// This implements the same `PhyDecoder` packet-source interface
 /// and shares the bounds and output ordering of `LegacyWifiDecoder`.

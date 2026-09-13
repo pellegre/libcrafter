@@ -25,6 +25,7 @@ struct Pending {
     he_candidate: bool,
     // Modulo-two repeated L-SIG: MU or ER until constellation discrimination.
     er_candidate: bool,
+    mu_wait: Option<usize>,
     ldpc: Option<ldpc::rate::Layout>,
     greenfield: bool,
 }
@@ -353,6 +354,30 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     continue;
                 };
                 p.samples.push(sample);
+                if let Some(required) = p.mu_wait {
+                    if p.samples.len() == required {
+                        match he_sig_b_iq::recover(&p.samples, &p.acquisition) {
+                            Ok(fields) => {
+                                out.diagnostics.push(PhyDiagnostic::HeMuSigB {
+                                    fields,
+                                    preamble_sample_index: p.start.sample_index,
+                                });
+                                out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
+                            }
+                            Err(he_sig_b_iq::Error::Truncated { required, .. })
+                                if required > p.samples.len()
+                                    && p.reserve_samples(required, config, reserved) =>
+                            {
+                                p.mu_wait = Some(required);
+                                continue;
+                            }
+                            _ => out.diagnostics.push(PhyDiagnostic::InvalidHeader),
+                        }
+                        self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
+                        self.pending[slot] = None;
+                    }
+                    continue;
+                }
                 if p.info.is_none() && p.samples.len() == 80 {
                     match decode_signal(
                         &p.samples,
@@ -515,11 +540,22 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                 fields,
                                 preamble_sample_index: p.start.sample_index,
                             });
-                            // SIG-B allocation and MU DATA are separate stages.
-                            out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
-                            self.stats.rejected_frames =
-                                self.stats.rejected_frames.saturating_add(1);
-                            self.pending[slot] = None;
+                            // Reserve only the next required SIG-B boundary;
+                            // the common allocation can extend a raw count of15.
+                            match he_sig_b_iq::recover(&p.samples, &p.acquisition) {
+                                Err(he_sig_b_iq::Error::Truncated { required, .. })
+                                    if required > p.samples.len()
+                                        && p.reserve_samples(required, config, reserved) =>
+                                {
+                                    p.mu_wait = Some(required)
+                                }
+                                _ => {
+                                    out.diagnostics.push(PhyDiagnostic::InvalidHeader);
+                                    self.stats.rejected_frames =
+                                        self.stats.rejected_frames.saturating_add(1);
+                                    self.pending[slot] = None;
+                                }
+                            }
                             continue;
                         }
                     }
@@ -811,6 +847,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             he_er: false,
                             he_candidate: false,
                             er_candidate: false,
+                            mu_wait: None,
                             ldpc: None,
                             greenfield: false,
                         });
@@ -1527,6 +1564,163 @@ mod vht_bcc_tests;
 mod tests {
     use super::*;
     #[test]
+    fn radio_he_sig_b_streaming_iq() {
+        for row in include_str!("../../tests/fixtures/iq/he-sigb-iq-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let mut previous = None;
+            for size in [37, 997] {
+                let out = feed(&mut WifiDecoder::new(), &bytes, size);
+                assert!(out.frames.is_empty());
+                let headers: Vec<_> = out
+                    .diagnostics
+                    .iter()
+                    .filter(|d| matches!(d, PhyDiagnostic::HeMuSigB { .. }))
+                    .cloned()
+                    .collect();
+                if matches!(c[5], "common-crc" | "short-count" | "too-many") {
+                    assert!(headers.is_empty(), "{}", c[0]);
+                    assert!(out.diagnostics.contains(&PhyDiagnostic::InvalidHeader));
+                } else {
+                    assert_eq!(headers.len(), 1, "{}: {:?}", c[0], out.diagnostics);
+                    let PhyDiagnostic::HeMuSigB {
+                        fields,
+                        preamble_sample_index,
+                    } = &headers[0]
+                    else {
+                        unreachable!()
+                    };
+                    assert_eq!(*preamble_sample_index, 37);
+                    assert_eq!(fields.end_sample, bytes.len() as u64 / 2);
+                    assert_eq!(fields.symbols, c[4].parse::<usize>().unwrap());
+                    assert_eq!(fields.users.len(), c[3].parse::<usize>().unwrap());
+                    assert_eq!(
+                        fields.users.iter().filter(|u| u.is_err()).count(),
+                        if c[5] == "user-crc" { 2 } else { 0 }
+                    );
+                    assert!(out.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy));
+                }
+                if let Some(previous) = &previous {
+                    assert_eq!(&headers, previous, "{}", c[0]);
+                }
+                previous = Some(headers);
+            }
+        }
+    }
+
+    #[test]
+    fn radio_he_sig_b_streaming_bounds_and_gap() {
+        let bytes =
+            include_bytes!("../../tests/fixtures/iq/he-sigb-iq-m0-d1-a191-u0-i0-none-e0.cs8");
+        let is_sig_b = |d: &PhyDiagnostic| matches!(d, PhyDiagnostic::HeMuSigB { .. });
+        // Inspect the actual pending allocations at every input boundary.
+        for limit in [512, 1024, 2048, 4096] {
+            let mut decoder = LegacyOfdmDecoder::with_ht();
+            let mut bounded = config();
+            bounded.max_buffer_samples = limit;
+            bounded.max_chunk_samples = 37;
+            for (sequence, part) in bytes.chunks(74).enumerate() {
+                let chunk = IqChunk::new(
+                    bounded.clone(),
+                    IqPosition {
+                        epoch: 0,
+                        sequence: sequence as u64,
+                        sample_index: (sequence * 37) as u64,
+                        time_anchor: None,
+                        discontinuity: None,
+                    },
+                    part.iter().map(|b| *b as i8).collect(),
+                )
+                .unwrap();
+                assert!(decoder
+                    .consume(IqEvent::Chunk(chunk))
+                    .unwrap()
+                    .frames
+                    .is_empty());
+                assert!(
+                    decoder
+                        .pending
+                        .iter()
+                        .flatten()
+                        .map(|p| p.samples.capacity())
+                        .sum::<usize>()
+                        <= limit
+                );
+                for p in decoder.pending.iter().flatten() {
+                    if let Some(required) = p.mu_wait {
+                        assert!(required <= p.samples.capacity());
+                    }
+                }
+            }
+        }
+        assert!(!feed(&mut LegacyWifiDecoder::new(), bytes, 37)
+            .diagnostics
+            .iter()
+            .any(is_sig_b));
+        for limit in [512, 1024, 2048] {
+            let mut bounded = config();
+            bounded.max_buffer_samples = limit;
+            bounded.max_chunk_samples = 37;
+            let out = feed_config(&mut WifiDecoder::new(), bytes, 37, bounded).unwrap();
+            assert!(!out.diagnostics.iter().any(is_sig_b));
+            assert!(out.diagnostics.contains(&PhyDiagnostic::InvalidHeader));
+            assert!(out.frames.is_empty());
+        }
+        let out = feed(&mut WifiDecoder::new(), &bytes[..bytes.len() - 2], 37);
+        assert!(!out.diagnostics.iter().any(is_sig_b));
+        assert!(out.diagnostics.contains(&PhyDiagnostic::TruncatedFrame));
+        let mut decoder = WifiDecoder::new();
+        for (sequence, index, part) in [
+            (0, 0, &bytes[..1600]),
+            (1, 801, &bytes[1600..]),
+            (2, bytes.len() as u64 / 2 + 1, &bytes[..]),
+        ] {
+            let chunk = IqChunk::new(
+                config(),
+                IqPosition {
+                    epoch: 0,
+                    sequence,
+                    sample_index: index,
+                    time_anchor: None,
+                    discontinuity: None,
+                },
+                part.iter().map(|b| *b as i8).collect(),
+            )
+            .unwrap();
+            let out = decoder.consume(IqEvent::Chunk(chunk)).unwrap();
+            assert!(out.frames.is_empty());
+            assert_eq!(out.diagnostics.iter().any(is_sig_b), sequence == 2);
+            if sequence == 1 {
+                assert!(out
+                    .diagnostics
+                    .iter()
+                    .any(|d| matches!(d, PhyDiagnostic::Reset(ResetReason::Gap(_)))));
+            }
+            if sequence == 2 {
+                assert!(out.diagnostics.iter().any(|d| matches!(d,PhyDiagnostic::HeMuSigB { preamble_sample_index,.. } if *preamble_sample_index==index+37)));
+            }
+        }
+        assert!(!decoder
+            .consume(IqEvent::End(StreamEnd::Eof))
+            .unwrap()
+            .diagnostics
+            .iter()
+            .any(is_sig_b));
+        assert!(decoder
+            .consume(IqEvent::End(StreamEnd::Eof))
+            .unwrap()
+            .diagnostics
+            .is_empty());
+    }
+    #[test]
     fn radio_he_mu_streaming_headers() {
         for row in include_str!("../../tests/fixtures/iq/he-mu-prefix-index.tsv")
             .lines()
@@ -1562,7 +1756,7 @@ mod tests {
                         preamble_sample_index: 38
                     }
                 );
-                assert!(out.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy));
+                assert!(out.diagnostics.contains(&PhyDiagnostic::TruncatedFrame));
                 assert!(!out.diagnostics.iter().any(|d| matches!(
                     d,
                     PhyDiagnostic::HeSignal { .. } | PhyDiagnostic::HeErSignal { .. }

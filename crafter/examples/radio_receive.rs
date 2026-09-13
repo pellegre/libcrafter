@@ -266,6 +266,15 @@ impl PhyDecoder for ObservedDecoder {
     }
 }
 fn he_signal_record(diagnostic: &PhyDiagnostic, epoch: u64) -> Option<serde_json::Value> {
+    if let PhyDiagnostic::HeMuSigB {
+        fields,
+        preamble_sample_index,
+    } = diagnostic
+    {
+        return Some(json!({"kind":"he_sig_b","phy":"he","epoch":epoch,
+            "preamble_sample_index":preamble_sample_index,"mac_integrity":"not_established_by_header",
+            "he":he_sig_b_metadata(fields,*preamble_sample_index)}));
+    }
     if let PhyDiagnostic::HeMuSignal {
         fields,
         preamble_sample_index,
@@ -297,6 +306,70 @@ fn he_signal_record(diagnostic: &PhyDiagnostic, epoch: u64) -> Option<serde_json
         json!({"kind":"he_signal", "phy":"he", "epoch":epoch, "preamble_sample_index":preamble_sample_index,
         "he":he_signal_metadata(fields,*preamble_sample_index)}),
     )
+}
+
+#[cfg(test)]
+#[test]
+fn radio_he_sig_b_artifact_metadata() {
+    for (name, users, errors, symbols) in [
+        ("he-sigb-iq-m0-d1-a191-u0-i0-none-e0", 17, 0, 36),
+        ("he-sigb-iq-m0-d0-a0-u0-i1-user-crc-e0", 9, 2, 10),
+        ("he-sigb-iq-m5-d0-a-1-u8-i1-none-e0", 8, 0, 1),
+    ] {
+        let bytes = std::fs::read(format!(
+            "{}/tests/fixtures/iq/{name}.cs8",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let config = RxConfig {
+            sample_rate_hz: 20_000_000,
+            center_frequency_hz: 2_412_000_000,
+            max_chunk_samples: 10000,
+            max_buffer_samples: 120000,
+            max_frame_bytes: 4095,
+            max_pending_frames: 4,
+            max_capture_samples: 100000,
+            max_duration: Duration::from_secs(1),
+        };
+        let chunk = IqChunk::new(
+            config,
+            IqPosition {
+                epoch: 7,
+                sequence: 0,
+                sample_index: 0,
+                time_anchor: None,
+                discontinuity: None,
+            },
+            bytes.iter().map(|b| *b as i8).collect(),
+        )
+        .unwrap();
+        let out = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
+        assert!(out.frames.is_empty());
+        let records: Vec<_> = out
+            .diagnostics
+            .iter()
+            .filter_map(|d| he_signal_record(d, 7))
+            .filter(|r| r["kind"] == "he_sig_b")
+            .collect();
+        assert_eq!(records.len(), 1, "{name}");
+        let record = &records[0];
+        assert_eq!(record["epoch"], 7);
+        assert_eq!(record["preamble_sample_index"], 37);
+        assert_eq!(record["mac_integrity"], "not_established_by_header");
+        assert_eq!(record["he"]["sig_b_symbols"], symbols);
+        assert_eq!(record["he"]["sig_b_end_sample_index"], bytes.len() / 2);
+        let results = record["he"]["users"].as_array().unwrap();
+        assert_eq!(results.len(), users);
+        assert_eq!(
+            results.iter().filter(|r| r["status"] == "error").count(),
+            errors
+        );
+        for (i, r) in results.iter().enumerate().skip(errors) {
+            assert_eq!(r["sta_id"], 37 + i);
+            assert_eq!(r["mcs"], i % 12);
+        }
+        assert!(record["he"].get("mcs").is_none());
+    }
 }
 fn vht_signal_record(diagnostic: &PhyDiagnostic, epoch: u64) -> Option<serde_json::Value> {
     let PhyDiagnostic::VhtSignalA {

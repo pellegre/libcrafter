@@ -19,8 +19,10 @@ pub(super) enum Error {
     Common(BlockError),
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct Fields {
+/// Recovered HE20 SIG-B signaling. User errors retain transmitted positions;
+/// successful headers do not establish DATA admissibility or MAC integrity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fields {
     pub signal: MuSignal,
     pub common: Option<HeSigBCommon20Fields>,
     pub users: Vec<Result<HeSigBUserFields, BlockError>>,

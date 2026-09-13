@@ -17,5 +17,5 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - HE20 MU SIG-A recognition only. SIG-B allocation and MU DATA recovery are not yet admitted; checked headers report UnsupportedPhy and publish no MAC frames.
+      - This contract covers HE20 MU SIG-A recognition. The streaming receiver now waits for SIG-B after reporting SIG-A; prefix-only EOF reports truncation. Complete SIG-B still reports UnsupportedPhy because MU DATA is pending, with no MAC publication.
       - Prefix fixtures are independent offline evidence, not live radio or throughput qualification.

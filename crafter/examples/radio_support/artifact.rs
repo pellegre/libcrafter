@@ -29,6 +29,7 @@ pub fn frame_phy(frame: &RecoveredFrame) -> &'static str {
             PhyDiagnostic::HeSignal { .. }
                 | PhyDiagnostic::HeErSignal { .. }
                 | PhyDiagnostic::HeMuSignal { .. }
+                | PhyDiagnostic::HeMuSigB { .. }
         )
     }) {
         return "he";
@@ -86,6 +87,10 @@ pub fn he_mu_signal_metadata(
 }
 pub fn he_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
     frame.diagnostics.iter().find_map(|d| match d {
+        PhyDiagnostic::HeMuSigB {
+            fields,
+            preamble_sample_index,
+        } => Some(he_sig_b_metadata(fields, *preamble_sample_index)),
         PhyDiagnostic::HeMuSignal {
             fields,
             preamble_sample_index,
@@ -100,6 +105,25 @@ pub fn he_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
         } => Some(he_er_signal_metadata(fields, *preamble_sample_index)),
         _ => None,
     })
+}
+
+pub fn he_sig_b_metadata(f: &HeMuSigBFields, preamble_sample_index: u64) -> serde_json::Value {
+    let mut metadata = he_mu_signal_metadata(&f.signal, preamble_sample_index);
+    metadata["sig_b_symbols"] = f.symbols.into();
+    metadata["sig_b_end_sample_index"] = f.end_sample.into();
+    metadata["common"]=f.common.as_ref().map(|c| serde_json::json!({
+        "allocation_code":c.allocation_code(),"rus":c.rus().iter().map(|r| serde_json::json!({"tones":r.tones,"first_slot":r.first_slot,"users":r.users})).collect::<Vec<_>>()
+    })).into();
+    metadata["users"]=f.users.iter().enumerate().map(|(position,result)| {
+        let Ok(user)=result else { return serde_json::json!({"position":position,"status":"error","error":format!("{:?}",result.as_ref().unwrap_err())}); };
+        let mut record=match user.encoding {
+            HeSigBUserEncoding::Unused { raw_parameters } => serde_json::json!({"allocation":"unused","raw_parameters":raw_parameters}),
+            HeSigBUserEncoding::NonMu { space_time_streams,beamformed,mcs,dcm,ldpc } => serde_json::json!({"allocation":"non_mu","space_time_streams":space_time_streams,"beamformed":beamformed,"mcs":mcs,"dcm":dcm,"coding":if ldpc {"ldpc"} else {"bcc"}}),
+            HeSigBUserEncoding::MuMimo { spatial_configuration,streams,start_stream,total_streams,mcs,ldpc } => serde_json::json!({"allocation":"mu_mimo","spatial_configuration":spatial_configuration,"streams":streams,"start_stream":start_stream,"total_streams":total_streams,"mcs":mcs,"coding":if ldpc {"ldpc"} else {"bcc"}}),
+        };
+        record["position"]=position.into();record["status"]="checked".into();record["sta_id"]=user.sta_id.into();record
+    }).collect::<Vec<_>>().into();
+    metadata
 }
 pub fn vht_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
     frame.diagnostics.iter().find_map(|d| match d {

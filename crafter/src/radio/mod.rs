@@ -22,6 +22,8 @@ pub use he_sig_b::{
     HeRu20Assignment, HeSigBCommon20Fields, HeSigBError, HeSigBUserBlock, HeSigBUserContext,
     HeSigBUserEncoding, HeSigBUserFields,
 };
+pub use he_sig_b_coded::Error as HeSigBCodedError;
+pub use he_sig_b_iq::Fields as HeMuSigBFields;
 mod he_timing;
 mod he_tones;
 mod he_training;
@@ -279,6 +281,11 @@ pub enum ResetReason {
 }
 #[derive(Debug, Clone)]
 pub enum PhyDiagnostic {
+    /// Checked MU SIG-B fields, including independent per-user/block failures.
+    HeMuSigB {
+        fields: HeMuSigBFields,
+        preamble_sample_index: u64,
+    },
     /// CRC-checked HE MU signaling, not proof of SIG-B or DATA integrity.
     HeMuSignal {
         fields: HeMuSignalFields,
@@ -380,6 +387,16 @@ pub enum PhyDiagnostic {
 impl PartialEq for PhyDiagnostic {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (
+                Self::HeMuSigB {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::HeMuSigB {
+                    fields: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
             (
                 Self::HeMuSignal {
                     fields: a,

@@ -17,6 +17,6 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - Common-field bit kernel only; caller establishes 20 MHz and uncompressed SIG-B context. No SIG-B IQ demodulation or MU DATA admission yet.
+      - Common-field bit kernel only; caller establishes 20 MHz and uncompressed SIG-B context. IQ and streaming integration have separate contracts; MU DATA admission remains pending.
       - RU positions use the first slot in Table 27-26 (1 through 9), not FFT-bin indices. Empty central RUs are retained with zero users.
       - The table's printed decimal range 72-29 is interpreted using its unambiguous binary prefix 01001yyy, meaning 72 through 79.

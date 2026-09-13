@@ -3,13 +3,19 @@
 use super::he_sig_b::{HeSigBCommon20Fields, HeSigBError, HeSigBUserBlock, HeSigBUserContext};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Error {
+pub enum Error {
     Mcs(u8),
     NonFinite { index: usize },
     Truncated { required: usize, available: usize },
     Erased,
     Header(HeSigBError),
 }
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "HE SIG-B coded block: {self:?}")
+    }
+}
+impl std::error::Error for Error {}
 
 pub(super) struct Blocks<'a> {
     metrics: &'a [f32],

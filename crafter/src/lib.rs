@@ -150,9 +150,9 @@ pub use protocols::exports::*;
 #[cfg(feature = "radio")]
 pub use radio::{
     DsssPlcpFields, DsssPreamble, EncodedWifiTransmission, HtCoding, HtFormat, HtGuardInterval,
-    HeMuSignalFields, HeRu20Assignment, HeSigBCommon20Fields, HeSigBError, HeSigBUserBlock,
-    HeSigBUserContext, HeSigBUserEncoding, HeSigBUserFields, HeSignalError, HeSuSignalFields,
-    HtMcs, HtSignalBits, HtSignalError, HtSignalFields,
+    HeSigBCodedError, HeSigBCommon20Fields, HeSigBError, HeSigBUserBlock, HeSigBUserContext,
+    HeMuSigBFields, HeMuSignalFields, HeRu20Assignment, HeSigBUserEncoding, HeSigBUserFields,
+    HeSignalError, HeSuSignalFields, HtMcs, HtSignalBits, HtSignalError, HtSignalFields,
     HtTransmission, HtTxConfig, IqSink, LegacyDsssCckRate, LegacyDsssCckTransmission,
     LegacyDsssCckTxConfig, LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig,
     LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink, OfdmSignalFields,
@@ -272,10 +272,11 @@ pub mod prelude {
     pub use crate::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};
     #[cfg(feature = "radio")]
     pub use crate::{
-        HeMuSignalFields, HeRu20Assignment, HeSigBCommon20Fields, HeSigBError, HeSigBUserBlock,
-        HeSigBUserContext, HeSigBUserEncoding, HeSigBUserFields, HeSignalError, HeSuSignalFields,
-        HtSignalError, HtSignalFields, VhtSignalAError, VhtSignalAFields, VhtSignalAUsers,
-        VhtSignalB20Content, VhtSignalB20Error, VhtSignalB20Fields,
+        HeMuSigBFields, HeMuSignalFields, HeRu20Assignment, HeSigBCodedError, HeSigBCommon20Fields,
+        HeSigBError, HeSigBUserBlock, HeSigBUserContext, HeSigBUserEncoding, HeSigBUserFields,
+        HeSignalError, HeSuSignalFields, HtSignalError, HtSignalFields, VhtSignalAError,
+        VhtSignalAFields, VhtSignalAUsers, VhtSignalB20Content, VhtSignalB20Error,
+        VhtSignalB20Fields,
     };
     #[cfg(feature = "whad")]
     pub use crate::{WhadBleMode, WhadDot15d4Mode, WhadWireBuilder};

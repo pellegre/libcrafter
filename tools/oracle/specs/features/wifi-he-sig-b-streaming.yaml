@@ -1,0 +1,23 @@
+version: 1
+kind: feature
+name: wifi_he_sig_b_streaming
+summary: Bounded streaming HE MU SIG-B recovery and inspectable signaling diagnostics.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: streaming-sig-b
+    source: IEEE 802.11ax-2021 27.3.11.8; libcrafter bounded radio contract
+    checks: [chunk_invariance, progressive_reservation, no_legacy_fallback_after_mu, gaps, end_truncation, buffer_limits, ordered_user_errors, artifact_metadata, no_mac_publication]
+coverage_cases: [wifi-he-sig-b-streaming]
+supported_cases:
+  - {name: wifi-he-sig-b-streaming, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - MU SIG-A is reported immediately. Candidates then wait for complete SIG-B, with reservations bounded by the shared receive budget.
+      - EOF during SIG-B reports truncation rather than claiming the complete MU transmission was decoded. Gaps discard partial state.
+      - Complete SIG-B produces typed common/user diagnostics, followed by UnsupportedPhy because MU DATA remains unimplemented.
+      - Legacy-only reception remains opt-out. No MAC bytes or integrity claims are synthesized from signaling.

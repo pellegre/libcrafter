@@ -20,4 +20,4 @@ backend_support:
       - Private equalized-tone kernel. Exactly 52 data tones in ascending signed-subcarrier order, excluding DC and pilots.
       - Removes SIG-B PAPR rotation before DCM joint demapping; BPSK with DCM is exempt from that rotation.
       - DCM uses 26-tone halves, not the 51/117-tone halves of HE DATA.
-      - Independent modulated streams connect to the coded-block and checked-header readers. FFT, pilot tracking, IQ integration and MU DATA remain pending.
+      - Independent modulated streams connect to the coded-block and checked-header readers. FFT and IQ integration have separate contracts; MU DATA remains pending.

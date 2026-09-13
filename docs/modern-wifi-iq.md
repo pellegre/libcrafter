@@ -91,14 +91,14 @@ modulo three equal to two, followed by two BPSK SIG-A symbols. A distinct
 `HeMuSignal` diagnostic and `he.format: mu` artifact preserve the checked
 fields. The 160 independent prefixes and 13 invalid cases contain no SIG-B or
 DATA; MU allocation decoding and payload recovery remain unimplemented and
-the receiver explicitly reports `UnsupportedPhy` after signaling.
+the receiver retains the candidate for SIG-B; incomplete fields report truncation.
 
 `HeSigBCommon20Fields` validates an uncompressed 20 MHz SIG-B common field
 (allocation, CRC, tail) and exposes ordered RU assignments and user counts.
 All 256 allocation codes are tested; reserved and wider-than-20MHz allocations
 produce distinct errors, and empty RUs retain zero users. RU positions identify
 the first table slot, not FFT-bin indices. It is connected to the private SIG-B
-IQ kernel, but not MU payload recovery or public streaming admission.
+IQ kernel and streaming diagnostics, but not MU payload recovery.
 
 `HeSigBUserBlock` checks one/two-user blocks with their shared CRC and tail.
 It returns typed per-user results, preserving a valid neighbor when another
@@ -127,9 +127,18 @@ correction, edge-tone channel training and those readers. Its 172 independent IQ
 fixtures cover all valid MCS/DCM combinations, common and compressed signaling,
 empty allocations, RU-relative user contexts, count validation, and fields longer
 than 16 symbols (bounded to 36 for HE20). Failed user blocks preserve later users;
-a failed common field cannot establish allocation context. Public streaming
-integration, sampling-clock drift tracking, HE MU training/DATA and live HE
+a failed common field cannot establish allocation context. Sampling-clock drift
+tracking, HE MU training/DATA and live HE
 qualification remain pending. No MAC frames are published by this kernel.
+
+`WifiDecoder` now retains MU candidates through SIG-B with progressive buffer
+reservations and gap/EOF handling. `PhyDiagnostic::HeMuSigB` carries
+`HeMuSigBFields`: common allocation, ordered user results, symbol count and end
+position. `HeSigBCodedError` preserves per-block failures. The `radio_receive`
+example emits `he_sig_b` records with the same information and an explicit
+header-only integrity disclaimer. Complete signaling still reports
+`UnsupportedPhy` because MU DATA is not yet recovered. Legacy-only mode is
+unchanged; no MAC frame is synthesized from a successful signaling decode.
 
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,
