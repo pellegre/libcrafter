@@ -7,9 +7,15 @@ directions: [backend_to_libcrafter]
 strict_bytes: true
 malformed: true
 behaviors:
+  - name: streaming-trigger-context
+    source: IEEE 802.11-2020 9.2.4.2; IEEE 802.11ax-2021 9.2.5.2, 26.5.2.2.1, 27.3.15.3
+    checks: [fcs_valid_trigger_only, protection_duration_search_window, signaling_context_match, reset_clears_context, bounded_data_retention, per_mpdu_fcs_publication, simultaneous_scheduled_and_ra_ru_frames]
   - name: trigger-schedule
     source: IEEE 802.11ax-2021 9.3.1.22.1 Figures 9-64e/f, 26.5.2.2, 26.5.4.2
     checks: [contiguous_same_size_ra_expansion, more_ra_not_stream_count, bounded_schedule, overlapping_users_not_separated, unallocated_ru_not_decoded, opaque_schedule_rejected]
+  - name: ht-trigger-carrier
+    source: IEEE 802.11ax-2021 26.5.2.2.1; IEEE 802.11-2020 19.3
+    checks: [long_gi_ht_trigger_context, bcc_and_ldpc_carrier, plain_and_aggregate_carrier, short_gi_does_not_seed_context]
   - name: tb-user-iq
     source: IEEE 802.11ax-2021 27.3.10, 27.3.11.10, 27.3.12.5.5, Equation 27-111
     checks: [matching_trigger_fields, bounded_timing, header_only_admission, isolated_ru_training, per_user_pilot_phase, bcc_ldpc_psdu, midamble_refresh, service_integrity, simultaneous_disjoint_ru_users]
@@ -20,6 +26,7 @@ backend_support:
   libcrafter:
     status: partial
     notes:
+      - Complete exchange corpora define pending streaming requirements. Inventory and byte-for-byte regeneration are not proof of receiver completion; weak full-RU MCS11 STBC exchanges 054/055 remain unresolved exact-byte targets. HT long/short-GI carriers and simultaneous-user exchanges extend the offline contract, not live qualification.
       - Isolated per-user kernel is checked against 282 independent waveforms, including SERVICE rejection and sample/payload bounds.
       - Explicit caller-established Trigger association and isolated one-DATA-stream user context are required. No spatial separation or automatic exchange matching is inferred.
       - PSDU recovery is separate from aggregate MPDU FCS checks and streaming publication.

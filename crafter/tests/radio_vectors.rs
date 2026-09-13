@@ -4,6 +4,69 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_tb_ht_exchange_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-ht-exchange-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 16);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "4b900e1f6a6d59b54cf488d183edd978620460add7e554913e46f9fbd012a021"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[10].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[11]);
+    }
+}
+
+#[test]
+fn radio_he_tb_multi_exchange_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-multi-exchange-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 12);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "cb2e23a2d796d2e58698542f230973b50ed5bd8fe880d67768694c36ded94787"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[9].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[10]);
+    }
+}
+
+#[test]
+fn radio_he_tb_exchange_inventory() {
+    let rows = include_str!("fixtures/iq/he-tb-exchange-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 63);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "46c539fa27df1fcc0ccee9c48e9fd98d532017514d37ad0ac342189ef5ce3a68"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        let iq = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/iq")
+                .join(format!("{}.cs8", c[0])),
+        )
+        .unwrap();
+        assert_eq!(iq.len(), 2 * c[10].parse::<usize>().unwrap());
+        assert_eq!(hex(&Sha256::digest(iq)), c[11]);
+    }
+}
+
+#[test]
 fn radio_he_tb_schedule_inventory() {
     let rows = include_str!("fixtures/iq/he-tb-schedule.tsv");
     assert_eq!(rows.lines().skip(1).count(), 2304);

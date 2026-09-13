@@ -1,5 +1,13 @@
 # Independent IQ vector contract
 
+`he-tb-multi-exchange-index.tsv` contains 12 synthetic Basic Trigger exchanges
+with simultaneous two-, four- or nine-user TB responses on disjoint RUs.
+There are 120 expected response MPDUs, independent per-user phase/carrier/channel
+impairments, BCC/LDPC and one-DATA-stream STBC cases, and contiguous random-access
+RU schedules. Sum complex users before the single CS8 quantization. Common MCS4,
+common RU size and 2x-LTF/1600ns guard are coverage limits. Reproduce with
+`he_tb_multi_exchange_vectors.py --check`; no live interoperability is implied.
+
 `he-tb-multi-iq-index.tsv` indexes 276 simultaneous-user TB captures: two,
 four or nine disjoint RUs, independent payloads and per-user channels/phase,
 with optional unequal gain and residual carrier offsets spanning +/-350Hz.
@@ -750,6 +758,25 @@ conditions. These mathematical probes are not valid HE DATA or MAC frames.
 `he_tb_schedule_vectors.py`: every HE20 starting RU, RA count and More flag for
 both random-access AIDs, plus all pairs of RU supports. It tests range expansion
 and overlap detection, not RF acquisition, MAC association or spatial separation.
+
+`he-tb-exchange-index.tsv` inventories synthetic legacy OFDM Basic Triggers
+followed by HE20 TB aggregates from `he_tb_exchange_vectors.py`. The index
+records complete expected MAC bytes, Trigger/TB positions and IQ checksums.
+Negative cases include absent/bad-FCS Triggers, mismatched context, expired
+protection duration and bad response MPDU FCS. Zero and reserved Duration
+values preserve the valid Trigger MAC bytes but cannot seed response context.
+The 63 fixtures are offline exchanges, not live interoperability evidence.
+Inventory and regeneration checks establish corpus integrity, not receiver
+success. Streaming integration remains pending: weak full-RU MCS11 STBC
+cases 054/055 still fail exact response recovery in that integration. Their
+original bytes and expected MPDUs are retained as unresolved regression targets.
+
+`he-tb-ht-exchange-index.tsv` adds 16 independent HT20 Trigger carriers:
+MCS0/7, BCC/LDPC, plain/aggregated MPDUs, and long/short GI. The long-GI
+cases expect both HE TB response MPDUs; short-GI carriers still yield their
+Trigger bytes but must not seed context (ax26.5.2.2.1). The generator is
+`he_tb_ht_exchange_vectors.py`. These synthetic exchanges do not establish
+recipient capability negotiation or live HT-to-HE interoperability.
 
 ## HE STBC IQ corpus
 
