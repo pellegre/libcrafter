@@ -228,12 +228,30 @@ mod tests {
                             || r.starts_with("he-dcm-iq-mcs4-ldpc-ltf4-gi3200-pad4\t")
                     }),
             )
+            .chain(
+                include_str!("../../tests/fixtures/iq/he-er-iq-index.tsv")
+                    .lines()
+                    .skip(1)
+                    .filter(|r| {
+                        let name = r.split('\t').next().unwrap();
+                        name.contains("-mcs0-") && name.ends_with("-ltf4-gi3200-pad3")
+                    }),
+            )
         {
             let c: Vec<_> = row.split('\t').collect();
+            let er = c[0].starts_with("he-er-iq");
             let midamble = c[0].starts_with("he-midamble");
-            let dcm = c[0].starts_with("he-dcm");
-            let stbc = c[0].starts_with("he-stbc");
-            let ldpc = if midamble || dcm || stbc {
+            let dcm = if er {
+                c[11] == "1"
+            } else {
+                c[0].starts_with("he-dcm")
+            };
+            let stbc = if er {
+                c[12] == "1"
+            } else {
+                c[0].starts_with("he-stbc")
+            };
+            let ldpc = if midamble || dcm || stbc || er {
                 c[2] == "1"
             } else {
                 c[0].starts_with("he-ldpc")
@@ -250,7 +268,7 @@ mod tests {
                 .with(Dot11Metadata::new())
                 .collect_records()
                 .unwrap();
-            let expected: Vec<Vec<u8>> = c[if dcm || stbc {
+            let expected: Vec<Vec<u8>> = c[if dcm || stbc || er {
                 7
             } else if midamble {
                 9
@@ -279,11 +297,23 @@ mod tests {
                 assert_eq!(rf.stripped_fcs_bytes, 4);
                 assert_eq!(rf.start.sample_index, 37);
                 assert_eq!(rf.start.time_anchor, position().time_anchor);
-                assert!(rf
-                    .diagnostics
-                    .iter()
-                    .any(|d| matches!(d,PhyDiagnostic::HeSignal {fields,..} if fields.mcs==c[1].parse::<u8>().unwrap() && fields.ldpc==ldpc
-                        && fields.dcm==dcm && fields.stbc==stbc && fields.midamble_period==if midamble || ((dcm || stbc) && c[5]!="0") {Some(c[5].parse().unwrap())} else {None})));
+                assert!(rf.diagnostics.iter().any(|d| {
+                    let fields = match d {
+                        PhyDiagnostic::HeSignal { fields, .. } if !er => fields,
+                        PhyDiagnostic::HeErSignal { fields, .. } if er => fields,
+                        _ => return false,
+                    };
+                    fields.mcs == c[1].parse::<u8>().unwrap()
+                        && fields.ldpc == ldpc
+                        && fields.dcm == dcm
+                        && fields.stbc == stbc
+                        && fields.midamble_period
+                            == if midamble || ((dcm || stbc || er) && c[5] != "0") {
+                                Some(c[5].parse().unwrap())
+                            } else {
+                                None
+                            }
+                }));
                 assert_eq!(record.metadata(), &record.metadata().clone());
             }
         }

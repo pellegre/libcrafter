@@ -7,9 +7,14 @@ use super::{
 };
 
 pub(super) struct Prefix {
+    pub er: bool,
     pub signal: SuSignal,
     pub legacy_length: usize,
     pub end_sample: u64,
+}
+
+pub(super) fn decode_prefix(samples: &[ComplexSample], a: &Acquisition) -> Option<Prefix> {
+    decode_su_prefix(samples, a).or_else(|| decode_er_prefix(samples, a))
 }
 
 fn bins(samples: &[ComplexSample], start: u64, a: &Acquisition) -> Option<[ComplexSample; 64]> {
@@ -123,6 +128,7 @@ pub(super) fn decode_er_prefix(samples: &[ComplexSample], a: &Acquisition) -> Op
         }
     }
     Some(Prefix {
+        er: true,
         signal: SuSignal::decode_er_repeated(&metrics).ok()?,
         legacy_length,
         end_sample: a.signal_start.checked_add(480)?,
@@ -170,6 +176,7 @@ pub(super) fn decode_su_prefix(samples: &[ComplexSample], a: &Acquisition) -> Op
         return None;
     }
     Some(Prefix {
+        er: false,
         signal,
         legacy_length,
         end_sample: a.signal_start.checked_add(320)?,

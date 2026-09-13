@@ -23,11 +23,12 @@ pub fn phy_family(rate: u32) -> &'static str {
 }
 /// PHY family comes from validated signaling when available, not rate guessing.
 pub fn frame_phy(frame: &RecoveredFrame) -> &'static str {
-    if frame
-        .diagnostics
-        .iter()
-        .any(|d| matches!(d, PhyDiagnostic::HeSignal { .. }))
-    {
+    if frame.diagnostics.iter().any(|d| {
+        matches!(
+            d,
+            PhyDiagnostic::HeSignal { .. } | PhyDiagnostic::HeErSignal { .. }
+        )
+    }) {
         return "he";
     }
     if frame
@@ -56,12 +57,26 @@ pub fn he_signal_metadata(f: &HeSuSignalFields, preamble_sample_index: u64) -> s
         "pre_fec_padding":f.pre_fec_padding, "pe_disambiguity":f.pe_disambiguity,
         "ldpc_extra_segment":f.ldpc_extra_segment, "preamble_sample_index":preamble_sample_index})
 }
+pub fn he_er_signal_metadata(
+    f: &HeSuSignalFields,
+    preamble_sample_index: u64,
+) -> serde_json::Value {
+    let mut metadata = he_signal_metadata(f, preamble_sample_index);
+    metadata["format"] = "er_su".into();
+    metadata["ru_tones"] = (if f.bandwidth == 0 { 242 } else { 106 }).into();
+    metadata["channel_width_mhz"] = 20.into();
+    metadata
+}
 pub fn he_metadata(frame: &RecoveredFrame) -> Option<serde_json::Value> {
     frame.diagnostics.iter().find_map(|d| match d {
         PhyDiagnostic::HeSignal {
             fields,
             preamble_sample_index,
         } => Some(he_signal_metadata(fields, *preamble_sample_index)),
+        PhyDiagnostic::HeErSignal {
+            fields,
+            preamble_sample_index,
+        } => Some(he_er_signal_metadata(fields, *preamble_sample_index)),
         _ => None,
     })
 }

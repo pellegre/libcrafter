@@ -21,6 +21,7 @@ struct Pending {
     ht: Option<HtSignalFields>,
     vht: Option<VhtSignalAFields>,
     he: Option<HeSuSignalFields>,
+    he_er: bool,
     he_candidate: bool,
     er_candidate: bool,
     ldpc: Option<ldpc::rate::Layout>,
@@ -50,6 +51,7 @@ impl Pending {
         }
         self.info = Some(admitted.info);
         self.he = Some(admitted.signal);
+        self.he_er = admitted.er;
         true
     }
     fn configure_vht(&mut self, config: &RxConfig, reserved: usize) -> bool {
@@ -511,7 +513,9 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             fields: prefix.signal,
                             preamble_sample_index: p.start.sample_index,
                         });
-                        // ER DATA layouts are connected in a separate increment.
+                        if p.configure_he(config, reserved) {
+                            continue;
+                        }
                         out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
                         self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
                         self.pending[slot] = None;
@@ -567,9 +571,16 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             .map(|bytes| {
                                 (
                                     bytes,
-                                    PhyDiagnostic::HeSignal {
-                                        fields,
-                                        preamble_sample_index: p.start.sample_index,
+                                    if p.he_er {
+                                        PhyDiagnostic::HeErSignal {
+                                            fields,
+                                            preamble_sample_index: p.start.sample_index,
+                                        }
+                                    } else {
+                                        PhyDiagnostic::HeSignal {
+                                            fields,
+                                            preamble_sample_index: p.start.sample_index,
+                                        }
                                     },
                                 )
                             })
@@ -781,6 +792,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             ht: None,
                             vht: None,
                             he: None,
+                            he_er: false,
                             he_candidate: false,
                             er_candidate: false,
                             ldpc: None,
@@ -1518,7 +1530,21 @@ mod tests {
                         preamble_sample_index: 37
                     }
                 );
-                assert!(out.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy));
+                // These header-only vectors use arbitrary duration/padding,
+                // including odd STBC DATA counts. A valid SIG-A is not proof
+                // of admissible DATA geometry. No fixture contains payload.
+                if expected.bandwidth == 1 {
+                    assert!(out.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy));
+                } else {
+                    assert!(
+                        out.diagnostics.iter().any(|d| matches!(
+                            d,
+                            PhyDiagnostic::TruncatedFrame | PhyDiagnostic::UnsupportedPhy
+                        )),
+                        "{}",
+                        c[0]
+                    );
+                }
             }
         }
         for row in include_str!("../../tests/fixtures/iq/he-er-prefix-invalid-index.tsv")
@@ -1908,6 +1934,18 @@ mod tests {
                 "../../tests/fixtures/iq/he-stbc-iq-mcs11-ldpc-ltf4-gi3200-pad1-flat.cs8"
             )
             .as_slice(),
+            include_bytes!("../../tests/fixtures/iq/he-er-iq-plain-mcs0-bcc-ltf4-gi3200-pad1.cs8")
+                .as_slice(),
+            include_bytes!("../../tests/fixtures/iq/he-er-iq-plain-mcs2-ldpc-ltf4-gi3200-pad1.cs8")
+                .as_slice(),
+            include_bytes!("../../tests/fixtures/iq/he-er-iq-dcm-mcs0-bcc-ltf4-gi3200-pad1.cs8")
+                .as_slice(),
+            include_bytes!("../../tests/fixtures/iq/he-er-iq-dcm-mcs1-ldpc-ltf4-gi3200-pad1.cs8")
+                .as_slice(),
+            include_bytes!("../../tests/fixtures/iq/he-er-iq-stbc-mcs0-bcc-ltf4-gi3200-pad1.cs8")
+                .as_slice(),
+            include_bytes!("../../tests/fixtures/iq/he-er-iq-stbc-mcs2-ldpc-ltf4-gi3200-pad1.cs8")
+                .as_slice(),
         ] {
             assert!(feed(&mut LegacyWifiDecoder::new(), bytes, 127)
                 .frames
@@ -2006,6 +2044,7 @@ mod tests {
             include_str!("../../tests/fixtures/iq/he-dcm-iq-index.tsv"),
             include_str!("../../tests/fixtures/iq/he-dcm-iq-invalid-index.tsv"),
             true,
+            false,
         );
     }
 
@@ -2015,12 +2054,25 @@ mod tests {
             include_str!("../../tests/fixtures/iq/he-stbc-iq-index.tsv"),
             include_str!("../../tests/fixtures/iq/he-stbc-iq-invalid-index.tsv"),
             false,
+            false,
         );
     }
 
-    fn he_diversity_streams(index: &str, invalid: &str, dcm: bool) {
+    #[test]
+    fn radio_he_er_streaming_complete_aggregates() {
+        he_diversity_streams(
+            include_str!("../../tests/fixtures/iq/he-er-iq-index.tsv"),
+            include_str!("../../tests/fixtures/iq/he-er-iq-invalid-index.tsv"),
+            false,
+            true,
+        );
+    }
+
+    fn he_diversity_streams(index: &str, invalid: &str, dcm: bool, er: bool) {
         for row in index.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
+            let stbc = if er { c[12] == "1" } else { !dcm };
+            let dcm = if er { c[11] == "1" } else { dcm };
             let bytes = std::fs::read(format!(
                 "{}/tests/fixtures/iq/{}.cs8",
                 env!("CARGO_MANIFEST_DIR"),
@@ -2050,10 +2102,24 @@ mod tests {
                 );
                 for frame in out.frames {
                     assert_eq!(frame.integrity, FrameIntegrity::ValidFcs);
-                    assert!(frame.diagnostics.iter().any(|d| matches!(d,PhyDiagnostic::HeSignal{fields,..}
-                        if fields.dcm==dcm && fields.stbc!=dcm && fields.space_time_streams==if dcm {1} else {2}
-                        && fields.mcs==c[1].parse::<u8>().unwrap() && fields.ldpc==(c[2]=="1")
-                        && fields.midamble_period==if c[5]=="0" {None} else {Some(c[5].parse().unwrap())})));
+                    assert!(frame.diagnostics.iter().any(|d| {
+                        let fields = match d {
+                            PhyDiagnostic::HeSignal { fields, .. } if !er => fields,
+                            PhyDiagnostic::HeErSignal { fields, .. } if er => fields,
+                            _ => return false,
+                        };
+                        fields.dcm == dcm
+                            && fields.stbc == stbc
+                            && fields.space_time_streams == 1 + u8::from(stbc)
+                            && fields.mcs == c[1].parse::<u8>().unwrap()
+                            && fields.ldpc == (c[2] == "1")
+                            && fields.midamble_period
+                                == if c[5] == "0" {
+                                    None
+                                } else {
+                                    Some(c[5].parse().unwrap())
+                                }
+                    }));
                 }
                 assert_eq!(
                     decoder.ofdm_stats().invalid_fcs,

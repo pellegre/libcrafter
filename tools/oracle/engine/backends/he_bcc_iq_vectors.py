@@ -24,7 +24,8 @@ TONES=[k for k in training.TONES if k not in PILOTS]
 
 
 def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False,initial_padding=None,
-             midamble_period=None,initial_symbols=None,dcm=False):
+             midamble_period=None,initial_symbols=None,dcm=False,er=False):
+    if er: assert mcs in (0,1,2)
     symbols=137 if long else 5
     if initial_symbols is not None: symbols=initial_symbols
     padding=mcs%4+1
@@ -68,12 +69,12 @@ def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False
             coded=with_filler
     coded += [n%2 for n in range(cbps-last)]
     assert len(coded)==symbols*cbps
-    preamble=720+size*64+guard
+    preamble=720+160*er+size*64+guard
     insertions=[n for n in range(1,symbols-1) if midamble_period and n%midamble_period==0]
     data_end=preamble+symbols*(256+guard)+len(insertions)*(size*64+guard)
     pe=80*(mcs%5)
     rounded=80*math.ceil((data_end+pe-400)/80)
-    length=3*(rounded//80)-5
+    length=3*(rounded//80)-5+er
     header=[0]*52
     for i in (0,14,34,40):header[i]=1
     if ldpc:header[33]=1;header[34]=extra
@@ -96,16 +97,21 @@ def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False
     legacy=base.interleave(base.encode(base.signal('1101',length)),1)
     wave=[0j]*37+[v*math.sqrt(52/56) for v in base.preamble()]
     wave+=symbol(legacy,legacy=True)*2+symbol(encoded[:52])+symbol(encoded[52:])
+    if er:
+        from he_er_prefix_vectors import prefix_wave
+        wave=prefix_wave(header,length)
+    boost=math.sqrt(2) if er else 1
     stf=[0j]*245
     for k,v in zip(range(-112,113,16),[-1,-1,-1,1,1,1,-1,1,1,1,-1,1,1,-1,1]):
         if k:stf[k+122]=v*(1+1j)/math.sqrt(2)
-    wave += [v*4*math.sqrt(52/14) for v in training.ifft(stf)][:80]
+    wave += [v*4*math.sqrt(52/14)*boost for v in training.ifft(stf)][:80]
     seq={1:training.LTF1,2:training.LTF2,4:training.LTF4}[size]
     active=len(seq)-seq.count('0')
-    ltf=[v*4*math.sqrt(52/active) for v in training.ifft([{'-':-1,'+':1,'0':0}[v] for v in seq])][:size*64]
+    ltf=[v*4*math.sqrt(52/active)*boost for v in training.ifft([{'-':-1,'+':1,'0':0}[v] for v in seq])][:size*64]
     wave+=ltf[-guard:]+ltf
     assert len(wave)==37+preamble
-    polarities=[1-2*b for b in base.scramble([0]*(symbols+4),127)]
+    pilot_offset=6 if er else 4
+    polarities=[1-2*b for b in base.scramble([0]*(symbols+pilot_offset),127)]
     refresh=[]
     for n in range(symbols):
         if n in insertions:
@@ -139,7 +145,7 @@ def waveform(mcs,size,guard,case,invalid=None,long=False,payload=None,ldpc=False
                 elif BPS[mcs]==2:upper=freq[k+122].conjugate()
                 else:upper=constellation([label[1],label[0],label[3],label[2]])
                 freq[TONES[i+117]+122]=upper
-        for i,k in enumerate(PILOTS):freq[k+122]=polarities[n+4]*[1,1,1,-1,-1,1,1,1][(n+i)%8]
+        for i,k in enumerate(PILOTS):freq[k+122]=polarities[n+pilot_offset]*[1,1,1,-1,-1,1,1,1][(n+i)%8]
         time=[v*4*math.sqrt(52/242) for v in training.ifft(freq)]
         wave+=time[-guard:]+time
     assert len(wave)==37+data_end

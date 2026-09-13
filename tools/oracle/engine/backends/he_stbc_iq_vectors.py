@@ -21,7 +21,8 @@ from vht_bcc_iq_vectors import constellation
 from vht_ampdu_vectors import delimiter
 
 
-def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None):
+def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None, er=False):
+    if er: assert mcs in (0,1,2)
     assert (size, guard) in ((1,16),(2,16),(2,32),(4,64))
     nsym=42 if period==20 else 22 if period else 4
     wire,frames=payload(padding==4)
@@ -49,11 +50,11 @@ def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None):
     assert len(coded)==nsym*cbps and nsym%2==0
     training_span=2*(size*64+guard)
     insertions=[n for n in range(1,nsym-1) if period and n%period==0]
-    data_start=720+training_span
+    data_start=720+160*er+training_span
     data_end=data_start+nsym*(256+guard)+len(insertions)*training_span
     pe=80*(mcs%5)
     rounded=80*math.ceil((data_end+pe-400)/80)
-    length=3*(rounded//80)-5
+    length=3*(rounded//80)-5+er
     header=[0]*52
     for i in (0,1,14,23,34,35,40):header[i]=1
     header[3:7]=[(mcs>>i)&1 for i in range(4)]
@@ -68,6 +69,10 @@ def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None):
     legacy=base.interleave(base.encode(base.signal('1101',length)),1)
     wave=[0j]*37+[v*math.sqrt(52/56) for v in base.preamble()]
     wave+=symbol(legacy,legacy=True)*2+symbol(encoded[:52])+symbol(encoded[52:])
+    if er:
+        from he_er_prefix_vectors import prefix_wave
+        wave=prefix_wave(header,length)
+    boost=math.sqrt(2) if er else 1
 
     def channels(k, epoch):
         taps=[[(0,1+0j)],[(0,.4+.3j)]]
@@ -88,7 +93,7 @@ def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None):
     stf=[(0j,0j)]*245
     for k,v in zip(range(-112,113,16),[-1,-1,-1,1,1,1,-1,1,1,1,-1,1,1,-1,1]):
         if k:stf[k+122]=(v*(1+1j)/math.sqrt(2),)*2
-    wave+=emit(stf,14,80,0)
+    wave += [v*boost for v in emit(stf,14,80,0)]
     sequence={1:training.LTF1,2:training.LTF2,4:training.LTF4}[size]
     active=len(sequence)-sequence.count('0')
 
@@ -100,7 +105,7 @@ def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None):
                 v={'-':-1,'+':1,'0':0}[sign]
                 # P rows: [1,-1], [1,1]; R repeats row1 on pilots.
                 freq.append((v*(-1 if col else 1),v*(-1 if col and k in PILOTS else 1)))
-            time=emit(freq,active,size*64,epoch)
+            time=[v*boost for v in emit(freq,active,size*64,epoch)]
             field+=time[-guard:]+time
         return field
 
@@ -127,7 +132,8 @@ def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None):
                 freq[k]=complex(lookup[b[:5]],lookup[b[5:]])/math.sqrt(682)
             else:freq[k]=constellation(label)
         constellations.append(freq)
-    polarities=[1-2*b for b in base.scramble([0]*(nsym+4),127)]
+    pilot_offset=6 if er else 4
+    polarities=[1-2*b for b in base.scramble([0]*(nsym+pilot_offset),127)]
     refresh=[];epoch=0
     for n in range(nsym):
         if n in insertions:
@@ -138,7 +144,7 @@ def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None):
             y=constellations[n-1 if n%2 else n+1][k].conjugate()*(1 if n%2 else -1)
             freq[k+122]=(x,y)
         for j,k in enumerate(PILOTS):
-            freq[k+122]=(polarities[n+4]*[1,1,1,-1,-1,1,1,1][(n+j)%8],)*2
+            freq[k+122]=(polarities[n+pilot_offset]*[1,1,1,-1,-1,1,1,1][(n+j)%8],)*2
         time=emit(freq,242,256,epoch)
         wave+=time[-guard:]+time
     assert len(wave)==37+data_end
@@ -148,7 +154,8 @@ def waveform(mcs, size, guard, ldpc, padding, case, period=None, invalid=None):
         power=sum(abs(v)**2 for v in time)/len(time)
         pe_power=sum(abs(v)**2 for v in extension)/pe
         wave += [v*math.sqrt(power/pe_power) for v in extension]
-    if invalid=='erased-training':wave[757:757+training_span]=[0j]*training_span
+    if invalid=='erased-training':
+        start=data_start+37-training_span;wave[start:start+training_span]=[0j]*training_span
     if invalid=='truncated-midamble':wave=wave[:refresh[0]+training_span-1]
     cfo=0 if case=='flat' else .018
     samples=[v*cmath.exp(1j*(.7+cfo*n)) for n,v in enumerate(wave)]

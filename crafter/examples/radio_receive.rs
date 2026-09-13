@@ -271,10 +271,7 @@ fn he_signal_record(diagnostic: &PhyDiagnostic, epoch: u64) -> Option<serde_json
         preamble_sample_index,
     } = diagnostic
     {
-        let mut metadata = he_signal_metadata(fields, *preamble_sample_index);
-        metadata["format"] = json!("er_su");
-        metadata["ru_tones"] = json!(if fields.bandwidth == 0 { 242 } else { 106 });
-        metadata["channel_width_mhz"] = json!(20);
+        let metadata = he_er_signal_metadata(fields, *preamble_sample_index);
         return Some(
             json!({"kind":"he_signal","phy":"he","epoch":epoch,"preamble_sample_index":preamble_sample_index,"he":metadata}),
         );
@@ -1045,6 +1042,69 @@ mod tests {
             assert_eq!(header["he"]["mcs"], fields.mcs);
             assert_eq!(header["he"]["stbc"], fields.stbc);
             assert_eq!(header["he"]["dcm"], fields.dcm);
+        }
+    }
+
+    #[test]
+    fn radio_he_er_frame_artifact_metadata() {
+        for row in include_str!("../tests/fixtures/iq/he-er-iq-index.tsv")
+            .lines()
+            .skip(1)
+            .filter(|r| {
+                let name = r.split('\t').next().unwrap();
+                name.contains("-mcs0-") && name.ends_with("-ltf4-gi3200-pad3")
+            })
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = std::fs::read(format!(
+                "{}/tests/fixtures/iq/{}.cs8",
+                env!("CARGO_MANIFEST_DIR"),
+                c[0]
+            ))
+            .unwrap();
+            let config = RxConfig {
+                sample_rate_hz: 20_000_000,
+                center_frequency_hz: 2_412_000_000,
+                max_chunk_samples: 100_000,
+                max_buffer_samples: 120_000,
+                max_frame_bytes: 4095,
+                max_pending_frames: 4,
+                max_capture_samples: 100_000,
+                max_duration: Duration::from_secs(1),
+            };
+            let chunk = IqChunk::new(
+                config,
+                IqPosition {
+                    epoch: 7,
+                    sequence: 0,
+                    sample_index: 0,
+                    time_anchor: None,
+                    discontinuity: None,
+                },
+                bytes.iter().map(|v| *v as i8).collect(),
+            )
+            .unwrap();
+            let out = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
+            assert_eq!(out.frames.len(), 2, "{}", c[0]);
+            for frame in &out.frames {
+                assert_eq!(frame_phy(frame), "he");
+                let metadata = he_metadata(frame).unwrap();
+                assert_eq!(metadata["format"], "er_su");
+                assert_eq!(metadata["ru_tones"], 242);
+                assert_eq!(metadata["channel_width_mhz"], 20);
+                assert_eq!(metadata["mcs"], 0);
+                assert_eq!(metadata["coding"], if c[2] == "1" { "ldpc" } else { "bcc" });
+                assert_eq!(metadata["dcm"], c[11] == "1");
+                assert_eq!(metadata["stbc"], c[12] == "1");
+                assert_eq!(metadata["midamble_period"], 10);
+                assert!(ht_metadata(frame).is_none());
+                assert!(vht_metadata(frame).is_none());
+                assert!(out
+                    .diagnostics
+                    .iter()
+                    .filter_map(|d| he_signal_record(d, 7))
+                    .any(|header| header["he"] == metadata));
+            }
         }
     }
     #[test]

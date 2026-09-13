@@ -45,6 +45,29 @@ def header(mcs,bw,gi,mode,ldpc,variant):
     return bits
 
 
+def ofdm(data,legacy=False,index=0,rotation=1,erase=False):
+    freq=[0j]*57
+    for k,b in zip(base.CARRIERS if legacy else ht.CARRIERS,data):
+        freq[k+28]=0 if erase else (2*b-1)*rotation
+    if legacy:
+        for k,v in zip([-28,-27,27,28],[-1,-1,-1,1]):freq[k+28]=v*math.sqrt(2)
+    polarity=[1,1,1,1,-1,-1][index]
+    for k,v in [(-21,1),(-7,1),(7,1),(21,-1)]:freq[k+28]=v*polarity
+    time=[v*math.sqrt(52/56) for v in ht.ifft(freq)]
+    return time[-16:]+time
+
+
+def prefix_wave(bits,length):
+    """Full unquantized ER prefix, including the corpus's 37 leading samples."""
+    coded=symbols(bits)
+    legacy=base.interleave(base.encode(base.signal('1101',length)),1)
+    wave=[0j]*37+[v*math.sqrt(2*52/56) for v in base.preamble()]
+    wave+=ofdm(legacy,legacy=True,index=0)+ofdm(legacy,legacy=True,index=1)
+    for n in range(4):
+        wave+=ofdm(coded[n*52:(n+1)*52],index=n+2,rotation=1j if n==1 else 1)
+    return wave
+
+
 def waveform(bits,condition,invalid=None):
     bits=bits.copy()
     if invalid=='format':bits[0]=0
@@ -63,17 +86,6 @@ def waveform(bits,condition,invalid=None):
     lsig=base.signal('0101' if invalid=='rate' else '1101',length)
     rlsig=base.signal('1101',length+(3 if invalid=='repeat' else 0))
     if invalid=='parity':rlsig[17]^=1
-
-    def ofdm(data,legacy=False,index=0,rotation=1,erase=False):
-        freq=[0j]*57
-        for k,b in zip(base.CARRIERS if legacy else ht.CARRIERS,data):
-            freq[k+28]=0 if erase else (2*b-1)*rotation
-        if legacy:
-            for k,v in zip([-28,-27,27,28],[-1,-1,-1,1]):freq[k+28]=v*math.sqrt(2)
-        polarity=[1,1,1,1,-1,-1][index]
-        for k,v in [(-21,1),(-7,1),(7,1),(21,-1)]:freq[k+28]=v*polarity
-        time=[v*math.sqrt(52/56) for v in ht.ifft(freq)]
-        return time[-16:]+time
 
     wave=[0j]*37+[v*math.sqrt(2*52/56) for v in base.preamble()]
     wave+=ofdm(base.interleave(base.encode(lsig),1),legacy=True,index=0)

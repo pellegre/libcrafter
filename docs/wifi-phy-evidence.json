@@ -246,6 +246,12 @@
       "fact": "SU uses m=2 in L-SIG duration. HE preamble in receiver duration inversion excludes legacy20us and includes RL-SIG, SIG-A, STF and LTF symbols. Receiver symbol count floors the duration quotient then subtracts PE disambiguity; PE duration floors the remaining duration to4us increments. Midambles repeat the initial HE-LTF field every10 or20 DATA symbols with NSTS<=4, but are omitted before a sole final DATA symbol or after the last symbol. STBC is restricted to one spatial stream/two space-time streams without DCM. This timing implementation does not establish DATA decoding or MIMO reception."
     },
     {
+      "id": "he-er-242-training-data",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.10; 27.3.11.10 Equation27-58; 27.3.12.14 Equation27-108; 27.3.12.16",
+      "fact": "ER STF/LTF amplitudes are boosted by sqrt2 relative to DATA; the receiver divides trained channel estimates by sqrt2. Midambles repeat the initial LTF and require the same correction. DATA pilot polarity uses n+2+N_HE-SIG-A+N_HE-SIG-B, hence n+6 for ER's four-symbol SIG-A with no SIG-B. The242-tone DATA mapping, BCC/LDPC, DCM and STBC kernels share SU geometry after ER timing and scaling are restored. Independent complete waveforms validate raw bytes and aggregate FCS offline, not RF interoperability."
+    },
+    {
       "id": "he-er-su-timing",
       "source": "ieee-80211ax-2021",
       "anchor": "27.1.1; Table27-12; Equations27-11/118-122 (printed622 visually checked)",

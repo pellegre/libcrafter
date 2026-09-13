@@ -1,4 +1,4 @@
-//! HE20 SU BCC/LDPC IQ, IEEE802.11ax-2021 27.3.12.5/8/9/10/13/14.
+//! HE20 SU / ER242 BCC/LDPC IQ, IEEE802.11ax-2021 27.3.12.5/8/9/10/13/14.
 use super::{
     he_capacity::Capacity, he_timing::Timing, he_training::train_su, sync::Acquisition,
     ComplexSample, SignalInfo,
@@ -28,6 +28,7 @@ pub(super) fn ldpc_order(metrics: &[f32], bits_per_tone: usize) -> Option<Vec<f3
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Admission {
+    pub er: bool,
     pub signal: super::he::SuSignal,
     pub timing: Timing,
     pub capacity: Capacity,
@@ -37,7 +38,7 @@ pub(super) struct Admission {
 }
 
 /// Header-only, allocation-free admission for the currently implemented DATA
-/// layout. Input needs only L-SIG/RL-SIG/HE-SIG-A (320 samples). Timing and
+/// layout. Input needs L-SIG/RL-SIG/HE-SIG-A (320 SU or 480 ER samples). Timing and
 /// capacity follow IEEE802.11ax-2021 Equations27-119..122/140..143. This does
 /// not validate training, DATA, MAC framing or FCS.
 pub(super) fn admit(
@@ -46,16 +47,21 @@ pub(super) fn admit(
     max_psdu: usize,
     max_samples: usize,
 ) -> Option<Admission> {
-    // This kernel uses the ordinary legacy preamble, not HE ER/TB layouts.
+    // Both SU and ER retain the legacy preamble's 320-sample L-SIG offset.
     if a.signal_start.checked_sub(a.preamble_start)? != 320 {
         return None;
     }
-    let prefix = super::he_iq::decode_su_prefix(samples, a)?;
+    let prefix = super::he_iq::decode_prefix(samples, a)?;
     let h = prefix.signal;
     if h.space_time_streams != if h.stbc { 2 } else { 1 } {
         return None;
     }
-    let timing = Timing::new(6_000_000, prefix.legacy_length, &h).ok()?;
+    let timing = if prefix.er {
+        Timing::for_format(6_000_000, prefix.legacy_length, &h, true)
+    } else {
+        Timing::new(6_000_000, prefix.legacy_length, &h)
+    }
+    .ok()?;
     let capacity = Capacity::new(&h, timing.data_symbols).ok()?;
     if h.ldpc {
         super::ldpc_rate::Layout::he(&h, u16::try_from(timing.data_symbols).ok()?).ok()?;
@@ -81,6 +87,7 @@ pub(super) fn admit(
         end_sample_index: a.preamble_start.checked_add(timing.data_end as u64)?,
     };
     Some(Admission {
+        er: prefix.er,
         signal: h,
         timing,
         capacity,
@@ -116,7 +123,8 @@ pub(super) fn recover(
         _ => return None,
     };
     let mut pilot_state = 127u8;
-    for _ in 0..4 {
+    // Equation27-108: two legacy SIGNALs plus two/four SIG-A symbols.
+    for _ in 0..4 + 2 * usize::from(admitted.er) {
         super::data::feedback(&mut pilot_state);
     }
     let mut slope = 0.;
@@ -136,6 +144,7 @@ pub(super) fn recover(
                 } else {
                     trained.channel = super::he_training::train_field(samples, a, &h, cp)?;
                 }
+                trained.normalize_er();
                 // The refreshed LTF includes the channel's current phase slope.
                 // DATA indices and pilot polarity do not advance over training.
                 slope = 0.;
@@ -397,22 +406,42 @@ mod tests {
     }
     #[test]
     fn radio_he_stbc_iq_complete_waveforms() {
+        complete_waveforms(
+            include_str!("../../tests/fixtures/iq/he-stbc-iq-index.tsv"),
+            false,
+            368,
+        );
+    }
+
+    #[test]
+    fn radio_he_er_iq_complete_waveforms() {
+        complete_waveforms(
+            include_str!("../../tests/fixtures/iq/he-er-iq-index.tsv"),
+            true,
+            280,
+        );
+    }
+
+    fn complete_waveforms(rows: &str, er: bool, count: usize) {
         let hex = |s: &str| -> Vec<u8> {
             (0..s.len())
                 .step_by(2)
                 .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
                 .collect()
         };
-        let rows = include_str!("../../tests/fixtures/iq/he-stbc-iq-index.tsv");
-        assert_eq!(rows.lines().skip(1).count(), 368);
+        assert_eq!(rows.lines().skip(1).count(), count);
+        let header_samples = if er { 480 } else { 320 };
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
             let (samples, a) = fixture(c[0]);
             let input = &samples[a.signal_start as usize..];
             let expected = hex(c[6]);
-            let admitted = admit(&input[..320], &a, expected.len(), input.len()).expect(c[0]);
-            assert!(admitted.signal.stbc);
-            assert_eq!(admitted.signal.space_time_streams, 2);
+            let admitted =
+                admit(&input[..header_samples], &a, expected.len(), input.len()).expect(c[0]);
+            assert_eq!(admitted.er, er);
+            let stbc = !er || c[12] == "1";
+            assert_eq!(admitted.signal.stbc, stbc);
+            assert_eq!(admitted.signal.space_time_streams, 1 + u8::from(stbc));
             assert_eq!(admitted.info.data_start, c[9].parse::<u64>().unwrap());
             assert_eq!(
                 admitted.info.end_sample_index,
@@ -422,8 +451,14 @@ mod tests {
             let psdu = recover(&input[..end], &a, expected.len()).expect(c[0]);
             assert_eq!(psdu, expected, "{}", c[0]);
             assert!(recover(&input[..end - 1], &a, expected.len()).is_none());
-            assert!(admit(&input[..320], &a, expected.len() - 1, input.len()).is_none());
-            assert!(admit(&input[..320], &a, expected.len(), end - 1).is_none());
+            assert!(admit(
+                &input[..header_samples],
+                &a,
+                expected.len() - 1,
+                input.len()
+            )
+            .is_none());
+            assert!(admit(&input[..header_samples], &a, expected.len(), end - 1).is_none());
         }
     }
 

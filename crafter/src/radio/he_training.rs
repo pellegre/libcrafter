@@ -1,6 +1,6 @@
-//! HE20 SU one DATA stream, including STBC training; IEEE802.11ax-2021 27.3.11.10.
+//! HE20 SU / ER242 one DATA stream, including STBC; IEEE802.11ax-2021 27.3.11.10.
 use super::{
-    he_iq::{decode_su_prefix, Prefix},
+    he_iq::{decode_prefix, Prefix},
     sync::Acquisition,
     ComplexSample,
 };
@@ -17,6 +17,23 @@ pub(super) struct Trained {
     pub second: Option<[ComplexSample; 256]>,
     pub data_start: u64,
     pub guard: usize,
+}
+
+impl Trained {
+    /// ER LTFs, including midambles, have sqrt2 amplitude relative to DATA
+    /// (27.3.10, 27-58). Restore the DATA channel scale after each estimate.
+    pub fn normalize_er(&mut self) {
+        if self.prefix.er {
+            for value in &mut self.channel {
+                *value = value.scale(std::f32::consts::FRAC_1_SQRT_2);
+            }
+            if let Some(second) = &mut self.second {
+                for value in second {
+                    *value = value.scale(std::f32::consts::FRAC_1_SQRT_2);
+                }
+            }
+        }
+    }
 }
 
 /// Fit a finite impulse response to sparse measurements. This receiver model
@@ -89,26 +106,29 @@ fn delay_fit(channel: &mut [ComplexSample; 256], tones: &[i32], guard: usize) ->
 
 /// Input begins at L-SIG. Reject unsupported training layouts explicitly.
 pub(super) fn train_su(samples: &[ComplexSample], a: &Acquisition) -> Option<Trained> {
-    let prefix = decode_su_prefix(samples, a)?;
+    let prefix = decode_prefix(samples, a)?;
     let fields = prefix.signal;
-    // L-SIG/RL-SIG/SIG-A total320 samples, then80 samples of HE-STF.
+    // Prefix then80 samples of HE-STF; ER repeats SIG-A (160 extra samples).
+    let cp = 400 + 160 * usize::from(prefix.er);
     let (channel, second) = if fields.stbc {
-        let [first, second] = train_stbc_field(samples, a, &fields, 400)?;
+        let [first, second] = train_stbc_field(samples, a, &fields, cp)?;
         (first, Some(second))
     } else {
-        (train_field(samples, a, &fields, 400)?, None)
+        (train_field(samples, a, &fields, cp)?, None)
     };
     let guard = usize::from(fields.guard_ns) / 50;
-    Some(Trained {
+    let mut trained = Trained {
         prefix,
         channel,
         second,
         data_start: a.signal_start.checked_add(
-            (400 + (1 + usize::from(fields.stbc)) * (guard + 64 * usize::from(fields.ltf_size)))
+            (cp + (1 + usize::from(fields.stbc)) * (guard + 64 * usize::from(fields.ltf_size)))
                 as u64,
         )?,
         guard,
-    })
+    };
+    trained.normalize_er();
+    Some(trained)
 }
 
 /// A preamble LTF or identical midamble field. `cp` is relative to L-SIG;
@@ -421,7 +441,7 @@ mod tests {
                 // but only one LTF followed by an uncoded probe. Training
                 // estimates alone cannot qualify that probe as valid DATA.
                 assert!(
-                    decode_su_prefix(&samples[a.signal_start as usize..], &a)
+                    super::super::he_iq::decode_su_prefix(&samples[a.signal_start as usize..], &a)
                         .unwrap()
                         .signal
                         .stbc

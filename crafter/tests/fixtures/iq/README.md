@@ -96,6 +96,14 @@ the same generator with `--er`: repeated SIG-A, the ER L-SIG remainder, one
 DATA stream with/without STBC, midambles and packet extension. Both ER tone
 allocations share these clocks. This does not qualify ER payload recovery.
 
+`he-er-iq-index.tsv` and its invalid index contain 280 complete ER242 waveforms
+and 16 negative cases from `he_er_iq_vectors.py`. They cover BCC/LDPC MCS0-2,
+DCM MCS0/1, STBC, all compatible guards, four padding factors, midambles10/20,
+selective channels/CFO, exact PSDUs and independently framed aggregate members.
+ER training is boosted while DATA is not, and pilots account for the repeated
+header. One bad member must not discard a valid following member. These are
+synthetic offline fixtures, not upper106 or live-radio qualification.
+
 This directory contains synthetic, offline receive and transmit vectors. It contains no
 recorded network traffic. The implementation contract and primary evidence map
 are in `docs/radio.md`.

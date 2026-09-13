@@ -48,7 +48,7 @@ adds 368 complete independent waveforms and eight invalid cases, including
 loss of either transmit branch. The finite-delay estimator includes the second
 stream's cyclic shift; it does not guarantee recovery of arbitrary channels.
 
-HE MU/TB/ER SU, wider channels and independent
+HE MU/TB, ER upper106-tone payloads, wider channels and independent
 multiple DATA streams are not implemented by this receive path. Offline
 qualification uses 200 BCC and 240 LDPC complete independent waveforms; it does not establish
 HE-capable dongle interoperability, sustained real-time speed or modern TX.
@@ -59,10 +59,19 @@ combining restores the originals' interleaving while repeats remain in coded
 order. `PhyDiagnostic::HeErSignal` carries the shared SU/ER header fields;
 its Bandwidth code identifies a 242-tone or upper 106-tone allocation within
 20 MHz, not a wider channel. Receive artifacts use `he.format: er_su` with
-explicit `ru_tones` and `channel_width_mhz`. This increment reports
-`UnsupportedPhy` after the validated ER header: ER training, DATA demodulation,
-and MAC publication are not connected yet. Its 288 positive and 18 negative
-prefix fixtures contain no DATA and do not establish complete ER reception.
+explicit `ru_tones` and `channel_width_mhz`. The 242-tone ER path now recovers
+raw payload bytes and publishes FCS-qualified MAC frames: MCS0-2 with BCC or
+LDPC, DCM on MCS0/1, and one DATA stream including STBC. Training normalization
+accounts for ER's power boost; DATA pilots follow its longer header. Midambles
+refresh the same normalized channel estimates. The upper106-tone allocation
+still reports `UnsupportedPhy` after signaling.
+
+The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
+280-packet ER242 corpus covers all applicable guard/training pairs, padding,
+midambles10/20, CFO/selective channels, and a damaged first aggregate member;
+16 invalid cases cover SERVICE, truncation and erased STBC training. These
+independent offline waveforms establish neither live HE dongle comparison nor
+real-time throughput or ER transmission.
 
 ## Evidence requirements
 
@@ -394,10 +403,10 @@ from applied DATA modes. The 1984 independent header vectors are anchored by
 the published HE CRC example. Those header-only tests do not establish
 HE reception or valid DATA admission; IQ integration is described below.
 ER SU, MU and TB require their own format context and additional decoding.
-ER SU now has independently tested private DATA/midamble/packet-extension
-timing for both tone allocations, including its repeated SIG-A duration. The
-public receiver still stops after ER signaling; payload recovery is not yet
-connected. Timing fixtures alone do not qualify IQ-to-byte recovery.
+ER SU has independently tested private DATA/midamble/packet-extension timing
+for both tone allocations, including its repeated SIG-A duration. ER242 payload
+recovery is connected as described above; upper106 still stops after signaling.
+Timing fixtures alone do not qualify IQ-to-byte recovery.
 
 The private HE20 SU IQ prefix kernel now verifies L-SIG/RL-SIG agreement,
 6Mb/s signaling and the SU/TB length remainder before interpreting SU SIG-A.
