@@ -1,5 +1,12 @@
 # Independent IQ vector contract
 
+`he-ldpc-rate-index.tsv` contains 17,583 independent forward HE20 SU LDPC
+sizing cases; `he-ldpc-rate-codewords.tsv` contains 72 Gaussian-encoded
+bitstreams. `he_ldpc_rate_vectors.py --check` reproduces both. These qualify
+initial-segment inversion, extra-segment thresholds, shortening, puncturing,
+repetition and codeword recovery with post-FEC padding excluded. MCS0-11,
+DCM/STBC and stream counts here are coding dimensions, not IQ qualification.
+
 `he-ampdu-iq-index.tsv` records 200 complete HE20 SU BCC PHY/MAC IQ cases
 from `he_ampdu_iq_vectors.py`: MCS0-9, all five training/guard pairs, single
 and multiple QoS MPDUs, mixed tags, EOF padding and intentionally bad FCS.

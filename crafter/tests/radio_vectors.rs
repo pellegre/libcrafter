@@ -4,6 +4,24 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_ldpc_rate_independent_inventory() {
+    for (index, count, digest) in [
+        (
+            include_str!("fixtures/iq/he-ldpc-rate-index.tsv"),
+            17583,
+            "cd67b4b225fd05e1ffd694ecd9c7aabca00cedc34cf231fe57bbeacbf505221b",
+        ),
+        (
+            include_str!("fixtures/iq/he-ldpc-rate-codewords.tsv"),
+            72,
+            "a666cf70157524543010190b6f30d0ceb97be2749782087113aad9e8bbf678f1",
+        ),
+    ] {
+        assert_eq!(index.lines().skip(1).count(), count);
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+    }
+}
+#[test]
 fn radio_he_ampdu_iq_independent_inventory() {
     let index = include_str!("fixtures/iq/he-ampdu-iq-index.tsv");
     assert_eq!(index.lines().skip(1).count(), 200);

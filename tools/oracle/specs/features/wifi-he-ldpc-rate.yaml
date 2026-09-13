@@ -1,0 +1,23 @@
+version: 1
+kind: feature
+name: wifi_he_ldpc_rate
+summary: HE20 SU LDPC codeword sizing and extra-segment admission.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: sizing
+    source: IEEE 802.11ax-2021 27.3.12.5.2 Equations27-68-74 and IEEE 802.11-2020 19.3.11.7.5
+    checks: [independent_forward_segments, all_mcs, codeword_lengths, shortening, puncturing, repetition, extra_segment_wrap, wrong_extra_flag, per_word_totals, input_bounds]
+  - name: recovery
+    checks: [independent_gaussian_encoding, exact_information_bits, metric_scaling, weak_bit_correction, metric_length, nonfinite_rejection]
+coverage_cases: [wifi-he-ldpc-rate]
+supported_cases:
+  - {name: wifi-he-ldpc-rate, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - Rate matching and codeword recovery only. DCM, STBC and spatial-stream dimensions here do not establish IQ demodulation support.
+      - HE input metrics exclude post-FEC padding. Public HE LDPC reception remains unimplemented.

@@ -7,6 +7,7 @@ pub(in crate::radio) enum Error {
     EmptyPayload,
     InvalidCodedBits,
     VhtTiming,
+    HeTiming,
     PayloadBitCount { required: usize, available: usize },
     Encoding(super::Error),
     Metrics(super::Error),
@@ -29,9 +30,12 @@ pub(in crate::radio) struct Layout {
     pub shortened_bits: usize,
     pub punctured_bits: usize,
     pub repeated_bits: usize,
+    /// HT/VHT add a full symbol group; HE adds one padding segment.
     pub extra_symbol_group: bool,
     pub payload_bits: usize,
     pub coded_bits_per_symbol: usize,
+    /// Actual FEC observations, excluding HE post-FEC padding.
+    pub transmitted_bits: usize,
     pub rate: Rate,
 }
 pub(in crate::radio) struct Recovery {
@@ -98,7 +102,7 @@ impl Layout {
     }
     fn recover_impl(self, metrics: &[f32], limit: usize, partial: bool) -> Result<Recovery, Error> {
         use super::{Code, Error as CodeError};
-        let required = self.symbols * self.coded_bits_per_symbol;
+        let required = self.transmitted_bits;
         if metrics.len() != required {
             return Err(Error::Metrics(CodeError::MetricCount {
                 required,
@@ -232,25 +236,104 @@ impl Layout {
         }
         Ok(layout)
     }
-    // Both entrypoints bound dimensions before reaching this shared algorithm.
-    fn from_payload(payload: usize, coded: usize, rate: Rate, group: usize) -> Self {
+    /// HE20 SU: invert extra-segment signaling, then validate it against the
+    /// forward puncturing threshold. Payload includes pre-FEC padding, not tail.
+    /// PHY timing/admission and stream recombination remain caller obligations.
+    pub(super) fn he(a: &super::he::SuSignal, symbols: u16) -> Result<Self, Error> {
+        use super::he_capacity::Capacity;
+        let symbols = usize::from(symbols);
+        // Even the shortest HE20 SU preamble/GI cannot fit >400 DATA symbols
+        // under the 12-bit L-SIG duration bound. This also bounds integer math.
+        if !a.ldpc || symbols == 0 || symbols > 400 {
+            return Err(Error::HeTiming);
+        }
+        let c = Capacity::new(a, symbols).map_err(|_| Error::HeTiming)?;
+        let rate = match (c.rate_num, c.rate_den) {
+            (1, 2) => Rate::Half,
+            (2, 3) => Rate::TwoThirds,
+            (3, 4) => Rate::ThreeQuarters,
+            (5, 6) => Rate::FiveSixths,
+            _ => return Err(Error::InvalidCodedBits),
+        };
+        let group = if a.stbc { 2 } else { 1 };
+        let extra = a.ldpc_extra_segment.ok_or(Error::HeTiming)?;
+        let mut initial = *a;
+        initial.ldpc_extra_segment = Some(false);
+        let mut initial_symbols = symbols;
+        if extra {
+            if a.pre_fec_padding == 1 {
+                initial.pre_fec_padding = 4;
+                initial_symbols = symbols.checked_sub(group).ok_or(Error::HeTiming)?;
+            } else {
+                initial.pre_fec_padding -= 1;
+            }
+        }
+        let initial_c = Capacity::new(&initial, initial_symbols).map_err(|_| Error::HeTiming)?;
+        let payload = initial_c.data_bits;
+        let available = initial_c.coded_bits;
         let (num, den) = rate.ratio();
-        let mut available = coded * group * payload.div_ceil(coded * num / den * group);
-        let original = available;
+        let (count, size) = Self::dimensions(payload, available, rate);
+        let short = (count * size * num / den).saturating_sub(payload);
+        let puncture = (count * size).saturating_sub(available + short);
+        let parity = count * size * (den - num) / den;
+        if Self::needs_extra(short, puncture, parity, rate) != extra {
+            return Err(Error::HeTiming);
+        }
+        let short_cbps = (if a.dcm { 30 } else { 60 }) * c.spatial_streams * c.bits_per_tone;
+        let expected = available
+            + if extra {
+                group
+                    * if initial.pre_fec_padding == 3 {
+                        c.coded_per_symbol - 3 * short_cbps
+                    } else {
+                        short_cbps
+                    }
+            } else {
+                0
+            };
+        if expected != c.coded_bits || payload != c.data_bits {
+            return Err(Error::HeTiming);
+        }
+        Ok(Self {
+            symbols,
+            codewords: count,
+            block_bits: size,
+            shortened_bits: short,
+            punctured_bits: (count * size).saturating_sub(expected + short),
+            repeated_bits: expected.saturating_sub(parity + payload),
+            extra_symbol_group: extra,
+            payload_bits: payload,
+            coded_bits_per_symbol: c.coded_per_symbol,
+            transmitted_bits: expected,
+            rate,
+        })
+    }
+    fn dimensions(payload: usize, available: usize, rate: Rate) -> (usize, usize) {
+        let (num, den) = rate.ratio();
         let threshold = |constant| available * den >= payload * den + constant * (den - num);
-        let (count, size) = match available {
+        match available {
             0..=648 => (1, if threshold(912) { 1296 } else { 648 }),
             649..=1296 => (1, if threshold(1464) { 1944 } else { 1296 }),
             1297..=1944 => (1, 1944),
             1945..=2592 => (2, if threshold(2916) { 1944 } else { 1296 }),
             _ => (payload.div_ceil(1944 * num / den), 1944),
-        };
+        }
+    }
+    fn needs_extra(short: usize, puncture: usize, parity: usize, rate: Rate) -> bool {
+        let (num, den) = rate.ratio();
+        (10 * puncture > parity && 5 * short * (den - num) < 6 * puncture * num)
+            || 10 * puncture > 3 * parity
+    }
+    // Entry points bound dimensions before reaching the shared algorithms.
+    fn from_payload(payload: usize, coded: usize, rate: Rate, group: usize) -> Self {
+        let (num, den) = rate.ratio();
+        let mut available = coded * group * payload.div_ceil(coded * num / den * group);
+        let original = available;
+        let (count, size) = Self::dimensions(payload, available, rate);
         let short = (count * size * num / den).saturating_sub(payload);
         let mut puncture = (count * size).saturating_sub(available + short);
         let parity = count * size * (den - num) / den;
-        if (10 * puncture > parity && 5 * short * (den - num) < 6 * puncture * num)
-            || 10 * puncture > 3 * parity
-        {
+        if Self::needs_extra(short, puncture, parity, rate) {
             available += coded * group;
             puncture = (count * size).saturating_sub(available + short);
         }
@@ -265,6 +348,7 @@ impl Layout {
             extra_symbol_group: available != original,
             payload_bits: payload,
             coded_bits_per_symbol: coded,
+            transmitted_bits: available,
             rate,
         }
     }
@@ -290,6 +374,144 @@ impl Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn he_header() -> super::super::he::SuSignal {
+        let mut a = super::super::he::SuSignal::decode(
+            &b"1000000000000010000000000000000000100000100111000000"
+                .iter()
+                .map(|b| b - b'0')
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        a.ldpc = true;
+        a.ldpc_extra_segment = Some(false);
+        a
+    }
+    #[test]
+    fn radio_he_ldpc_independent_geometry() {
+        let mut coverage = [false; 7];
+        for row in include_str!("../../tests/fixtures/iq/he-ldpc-rate-index.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<usize> = row.split('\t').map(|s| s.parse().unwrap()).collect();
+            let mut a = he_header();
+            a.mcs = c[0] as u8;
+            a.stbc = c[3] == 2;
+            a.space_time_streams = if a.stbc { 2 } else { c[1] as u8 };
+            a.dcm = c[2] != 0;
+            a.pre_fec_padding = c[7] as u8;
+            a.ldpc_extra_segment = Some(c[8] != 0);
+            let l = Layout::he(&a, c[6] as u16).unwrap_or_else(|e| panic!("{row}: {e:?}"));
+            assert_eq!(
+                [
+                    l.symbols,
+                    l.codewords,
+                    l.block_bits,
+                    l.shortened_bits,
+                    l.punctured_bits,
+                    l.repeated_bits,
+                    usize::from(l.extra_symbol_group),
+                    l.payload_bits,
+                    l.transmitted_bits
+                ],
+                [c[6], c[9], c[10], c[11], c[12], c[13], c[8], c[14], c[15]],
+                "{row}"
+            );
+            let mut totals = [0usize; 5];
+            for i in 0..l.codewords {
+                let w = l.word(i).unwrap();
+                for (sum, v) in totals.iter_mut().zip([
+                    w.information_bits,
+                    w.shortened_bits,
+                    w.punctured_bits,
+                    w.repeated_bits,
+                    w.transmitted_bits,
+                ]) {
+                    *sum += v;
+                }
+            }
+            assert_eq!(
+                totals,
+                [
+                    l.payload_bits,
+                    l.shortened_bits,
+                    l.punctured_bits,
+                    l.repeated_bits,
+                    l.transmitted_bits
+                ]
+            );
+            assert!(l.word(l.codewords).is_none());
+            coverage[match l.block_bits {
+                648 => 0,
+                1296 => 1,
+                1944 => 2,
+                _ => panic!("block"),
+            }] = true;
+            coverage[3] |= c[8] != 0 && c[5] == 4;
+            coverage[4] |= c[8] != 0 && c[5] == 3;
+            coverage[5] |= l.punctured_bits > 0;
+            coverage[6] |= l.repeated_bits > 0;
+            a.ldpc_extra_segment = Some(c[8] == 0);
+            assert_ne!(Layout::he(&a, c[6] as u16), Ok(l));
+        }
+        assert!(coverage.into_iter().all(|b| b));
+        let mut a = he_header();
+        for symbols in [0, 401, u16::MAX] {
+            assert_eq!(Layout::he(&a, symbols), Err(Error::HeTiming));
+        }
+        a.ldpc = false;
+        assert_eq!(Layout::he(&a, 4), Err(Error::HeTiming));
+        a = he_header();
+        a.ldpc_extra_segment = None;
+        assert!(Layout::he(&a, 4).is_err());
+        a = he_header();
+        a.pre_fec_padding = 0;
+        assert!(Layout::he(&a, 4).is_err());
+        a = he_header();
+        a.mcs = 12;
+        assert!(Layout::he(&a, 4).is_err());
+        a = he_header();
+        a.bandwidth = 1;
+        assert!(Layout::he(&a, 4).is_err());
+    }
+    #[test]
+    fn radio_he_ldpc_independent_codeword_recovery() {
+        let rows = include_str!("../../tests/fixtures/iq/he-ldpc-rate-codewords.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 72);
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let mut a = he_header();
+            a.mcs = c[0].parse().unwrap();
+            a.pre_fec_padding = c[2].parse().unwrap();
+            a.ldpc_extra_segment = Some(c[3] == "1");
+            let l = Layout::he(&a, c[1].parse().unwrap()).unwrap();
+            let expected: Vec<_> = c[4].bytes().map(|b| b - b'0').collect();
+            let bits: Vec<f32> = c[5]
+                .bytes()
+                .map(|b| if b == b'1' { 1. } else { -1. })
+                .collect();
+            for scale in [1., f32::MAX, f32::MIN_POSITIVE] {
+                let metrics: Vec<_> = bits.iter().map(|b| b * scale).collect();
+                assert_eq!(
+                    l.recover(&metrics, 64).unwrap().0,
+                    expected,
+                    "{} {}",
+                    c[0],
+                    c[1]
+                );
+            }
+            assert!(l.recover(&bits[..bits.len() - 1], 64).is_err());
+            let mut noisy = bits.clone();
+            noisy[7] *= -0.25;
+            assert_eq!(l.recover(&noisy, 64).unwrap().0, expected);
+            let mut bad = bits.clone();
+            bad.push(1.);
+            assert!(l.recover(&bad, 64).is_err());
+            bad = bits.clone();
+            bad[0] = f32::NAN;
+            assert!(l.recover(&bad, 64).is_err());
+        }
+    }
     #[test]
     fn radio_vht_ldpc_independent_geometry() {
         let mut coverage = [0usize; 3];

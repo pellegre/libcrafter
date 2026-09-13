@@ -282,6 +282,12 @@
       "fact": "HE SU signaling contains 26+26 bits, with 42 CRC-protected bits, four CRC bits and six zero tail bits. Reserved bits A1.B14 and A2.B14 are one; BCC requires A2.B8 one. Doppler changes NSTS and midamble interpretation. DCM=STBC=1 with GI/LTF code3 means neither applied and 4x LTF with 0.8us GI; other codes in that combination are reserved. Signaling BPSK interleaving uses 13 columns and 4 rows, with continuous rate-half BCC over both symbols. Format context must distinguish SU from MU, TB and ER SU before interpreting these fields."
     },
     {
+      "id": "he-ldpc-rate-matching",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.12.5.2 Equations27-68-74; inherited IEEE802.11-2020 19.3.11.7.5 Table19-16",
+      "fact": "HE encodes scrambled SERVICE, PSDU and pre-FEC padding without BCC tail bits. Initial available coded positions use the last padding segment, not complete OFDM symbols. The inherited puncturing thresholds select an extra segment: initial factor3 adds the remaining full-symbol portion; other factors add one short segment per STBC-group symbol. Factor4 wraps to1 and adds a symbol group. Codeword count/size and shortening precede this adjustment; puncturing is recomputed afterward. Post-FEC padding is excluded from LDPC observations. Rate-matching geometry and codeword tests do not establish HE LDPC IQ reception."
+    },
+    {
       "id": "he-aggregate-tag-order",
       "source": "ieee-80211ax-2021",
       "anchor": "9.7.1 Table 9-527; 10.12.6-7; 26.6.2",
