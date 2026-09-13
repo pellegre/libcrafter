@@ -16,6 +16,9 @@ behaviors:
   - name: ht-trigger-carrier
     source: IEEE 802.11ax-2021 26.5.2.2.1; IEEE 802.11-2020 19.3
     checks: [long_gi_ht_trigger_context, bcc_and_ldpc_carrier, plain_and_aggregate_carrier, short_gi_does_not_seed_context]
+  - name: vht-trigger-carrier
+    source: IEEE 802.11ax-2021 26.5.2.2.1; IEEE 802.11-2020 21.3
+    checks: [long_gi_vht_trigger_context, bcc_and_ldpc_carrier, repeated_identical_triggers, short_gi_does_not_seed_context]
   - name: tb-user-iq
     source: IEEE 802.11ax-2021 27.3.10, 27.3.11.10, 27.3.12.5.5, Equation 27-111
     checks: [matching_trigger_fields, bounded_timing, header_only_admission, isolated_ru_training, per_user_pilot_phase, bcc_ldpc_psdu, midamble_refresh, service_integrity, simultaneous_disjoint_ru_users]

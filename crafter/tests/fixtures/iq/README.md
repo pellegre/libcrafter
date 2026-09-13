@@ -778,6 +778,12 @@ Trigger bytes but must not seed context (ax26.5.2.2.1). The generator is
 `he_tb_ht_exchange_vectors.py`. These synthetic exchanges do not establish
 recipient capability negotiation or live HT-to-HE interoperability.
 
+`he-tb-vht-exchange-index.tsv` adds 24 VHT20 Trigger exchanges from
+`he_tb_vht_exchange_vectors.py`: MCS0/4/8, BCC/LDPC, one or two identical
+Triggers per aggregate, and long/short GI. The final index column records
+Trigger count; long GI expects both TB response MPDUs, whereas short GI
+must not seed context. This is offline evidence only, not 5GHz RF validation.
+
 ## HE STBC IQ corpus
 
 `he-stbc-iq-index.tsv` inventories 368 independent HE20 SU STBC waveforms:
