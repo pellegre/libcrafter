@@ -1,0 +1,22 @@
+version: 1
+kind: feature
+name: wifi_he_mu_timing
+summary: HE20 MU training, DATA, midamble and packet-extension timing.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: mu-timing
+    source: IEEE 802.11ax-2021 Table 27-20 and Equations 27-119 through 27-122
+    checks: [resolved_sig_b_duration, signaled_ltf_count, mu_guard_pairs, midamble_boundaries, packet_extension, stbc_pairs, forward_timeline, invalid_bounds, su_er_compatibility]
+coverage_cases: [wifi-he-mu-timing]
+supported_cases:
+  - {name: wifi-he-mu-timing, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - Timing kernel only. Caller supplies verified MU signaling and the resolved SIG-B symbol count, not the raw four-bit count.
+      - MU uses its signaled LTF count and m=1 duration rule. It does not inherit SU-only guard restrictions or interpret SIG-B DCM as DATA DCM.
+      - Per-RU spatial admission, channel training, coding and DATA recovery remain separate; no MAC bytes are published by timing.

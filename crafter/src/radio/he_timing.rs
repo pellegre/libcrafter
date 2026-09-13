@@ -1,4 +1,4 @@
-//! HE20 SU / ER SU timing, IEEE802.11ax-2021 Equations27-119..122.
+//! HE20 SU / ER SU / MU timing, IEEE802.11ax-2021 Equations27-119..122.
 use super::he::SuSignal;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +27,18 @@ pub(super) enum Error {
     Midamble,
     Duration,
     Stbc,
+}
+
+struct Layout {
+    length: usize,
+    m: usize,
+    extra_preamble: usize,
+    ltf_symbols: usize,
+    training_samples: usize,
+    symbol_samples: usize,
+    period: Option<usize>,
+    stbc: bool,
+    pe_disambiguity: bool,
 }
 
 impl Timing {
@@ -74,11 +86,81 @@ impl Timing {
         // at RL-SIG:4us + SIG-A8us + STF4us + LTF(s). SU uses m=2;
         // ER uses m=1 and repeats SIG-A, adding 8us (160 samples).
         let repeat_samples = 160 * usize::from(er);
-        let rounded = (length + 5 - usize::from(er)) / 3 * 80;
+        Self::resolve(Layout {
+            length,
+            m: if er { 1 } else { 2 },
+            extra_preamble: repeat_samples,
+            ltf_symbols,
+            training_samples,
+            symbol_samples,
+            period,
+            stbc: a.stbc,
+            pe_disambiguity: a.pe_disambiguity,
+        })
+    }
+
+    /// MU SIG-B duration is already resolved from checked signaling. Spatial
+    /// consistency across RUs and DATA decoding are separate admission checks.
+    pub fn for_mu(
+        rate: u32,
+        length: usize,
+        a: &super::he_mu::MuSignal,
+        sig_b_symbols: usize,
+    ) -> Result<Self, Error> {
+        if rate != 6_000_000 {
+            return Err(Error::Rate);
+        }
+        if length > 4095 || length % 3 != 2 {
+            return Err(Error::Length);
+        }
+        if a.bandwidth != 0 || !(1..=36).contains(&sig_b_symbols) {
+            return Err(Error::Format);
+        }
+        let ltf_symbols = usize::from(a.ltf_symbols);
+        if !matches!(ltf_symbols, 1 | 2 | 4 | 6 | 8) || (a.stbc && ltf_symbols == 1) {
+            return Err(Error::Streams);
+        }
+        let guard = match (a.ltf_size, a.guard_ns) {
+            (2, 800) | (4, 800) => 16,
+            (2, 1600) => 32,
+            (4, 3200) => 64,
+            _ => return Err(Error::Guard),
+        };
+        let period = match a.midamble_period {
+            None => None,
+            Some(p @ (10 | 20)) if ltf_symbols <= 4 => Some(usize::from(p)),
+            _ => return Err(Error::Midamble),
+        };
+        Self::resolve(Layout {
+            length,
+            m: 1,
+            extra_preamble: 80 * sig_b_symbols,
+            ltf_symbols,
+            training_samples: ltf_symbols * (64 * usize::from(a.ltf_size) + guard),
+            symbol_samples: 256 + guard,
+            period,
+            stbc: a.stbc,
+            pe_disambiguity: a.pe_disambiguity,
+        })
+    }
+
+    fn resolve(layout: Layout) -> Result<Self, Error> {
+        let Layout {
+            length,
+            m,
+            extra_preamble: repeat_samples,
+            ltf_symbols,
+            training_samples,
+            symbol_samples,
+            period,
+            stbc,
+            pe_disambiguity,
+        } = layout;
+        let rounded = (length + m + 3) / 3 * 80;
         let available = rounded
             .checked_sub(320 + repeat_samples + training_samples)
             .ok_or(Error::Duration)?;
-        let b = usize::from(a.pe_disambiguity);
+        let b = usize::from(pe_disambiguity);
         let midambles = period.map_or(0, |p| {
             available.saturating_sub((b + 2) * symbol_samples)
                 / (p * symbol_samples + training_samples)
@@ -92,7 +174,7 @@ impl Timing {
         if data_symbols == 0 {
             return Err(Error::Duration);
         } // Sounding NDP is separate.
-        if a.stbc && data_symbols % 2 != 0 {
+        if stbc && data_symbols % 2 != 0 {
             return Err(Error::Stbc);
         }
         if period.map_or(0, |p| data_symbols.saturating_sub(2) / p) != midambles {
@@ -136,6 +218,114 @@ impl Timing {
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
+    fn mu_header() -> super::super::he_mu::MuSignal {
+        let row = include_str!("../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
+            .lines()
+            .nth(1)
+            .unwrap();
+        let bits: Vec<_> = row
+            .split('\t')
+            .next()
+            .unwrap()
+            .bytes()
+            .map(|b| b - b'0')
+            .collect();
+        super::super::he_mu::MuSignal::decode(&bits).unwrap()
+    }
+
+    #[test]
+    fn radio_he_mu_timing_forward() {
+        let rows = include_str!("../../tests/fixtures/iq/he-mu-timing.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 26529);
+        for row in rows.lines().skip(1) {
+            let columns: Vec<_> = row.split('\t').collect();
+            let c: Vec<usize> = columns[..15].iter().map(|s| s.parse().unwrap()).collect();
+            let mut a = mu_header();
+            a.bandwidth = 0;
+            a.ltf_symbols = c[0] as u8;
+            a.ltf_size = c[1] as u8;
+            a.guard_ns = c[2] as u16;
+            a.midamble_period = (c[3] != 0).then_some(c[3] as u8);
+            a.stbc = c[4] != 0;
+            a.pe_disambiguity = c[9] != 0;
+            let t = Timing::for_mu(6_000_000, c[8], &a, c[5])
+                .unwrap_or_else(|e| panic!("{row}: {e:?}"));
+            assert_eq!(
+                [
+                    t.ltf_symbols,
+                    t.data_symbols,
+                    t.pe_samples,
+                    t.midambles,
+                    t.data_start,
+                    t.data_end,
+                    t.packet_end,
+                    t.signaled_end
+                ],
+                [c[0], c[6], c[7], c[10], c[11], c[12], c[13], c[14]],
+                "{row}"
+            );
+            let mut hash = Sha256::new();
+            for i in 0..t.data_symbols {
+                hash.update((t.symbol_start(i).unwrap() as u32).to_le_bytes());
+            }
+            assert_eq!(format!("{:x}", hash.finalize()), columns[15], "{row}");
+            assert!(t.symbol_start(t.data_symbols).is_none());
+            assert!(t.symbol_start(usize::MAX).is_none());
+        }
+    }
+
+    #[test]
+    fn radio_he_mu_timing_bounds() {
+        let mut a = mu_header();
+        a.bandwidth = 0;
+        a.ltf_symbols = 2;
+        a.ltf_size = 4;
+        a.guard_ns = 800;
+        a.midamble_period = None;
+        a.stbc = false;
+        a.pe_disambiguity = false;
+        for rate in [0, 12_000_000, u32::MAX] {
+            assert_eq!(Timing::for_mu(rate, 302, &a, 1), Err(Error::Rate));
+        }
+        for length in [0, 1, 3, 301, 4095, 4096, usize::MAX] {
+            assert_eq!(Timing::for_mu(6_000_000, length, &a, 1), Err(Error::Length));
+        }
+        for count in [0, 37, usize::MAX] {
+            assert_eq!(
+                Timing::for_mu(6_000_000, 302, &a, count),
+                Err(Error::Format)
+            );
+        }
+        a.bandwidth = 1;
+        assert_eq!(Timing::for_mu(6_000_000, 302, &a, 1), Err(Error::Format));
+        a.bandwidth = 0;
+        for count in [0, 3, 5, 7, 9, 255] {
+            a.ltf_symbols = count;
+            assert_eq!(Timing::for_mu(6_000_000, 302, &a, 1), Err(Error::Streams));
+        }
+        a.ltf_symbols = 2;
+        for (size, gi) in [(1, 800), (2, 3200), (4, 1600), (255, 800)] {
+            a.ltf_size = size;
+            a.guard_ns = gi;
+            assert_eq!(Timing::for_mu(6_000_000, 302, &a, 1), Err(Error::Guard));
+        }
+        a.ltf_size = 4;
+        a.guard_ns = 800;
+        a.midamble_period = Some(11);
+        assert_eq!(Timing::for_mu(6_000_000, 302, &a, 1), Err(Error::Midamble));
+        a.midamble_period = Some(10);
+        a.ltf_symbols = 6;
+        assert_eq!(Timing::for_mu(6_000_000, 302, &a, 1), Err(Error::Midamble));
+        a.midamble_period = None;
+        a.ltf_symbols = 2;
+        a.stbc = true;
+        assert_eq!(Timing::for_mu(6_000_000, 44, &a, 1), Err(Error::Stbc));
+        a.ltf_symbols = 1;
+        assert_eq!(Timing::for_mu(6_000_000, 302, &a, 1), Err(Error::Streams));
+        a.ltf_symbols = 2;
+        a.stbc = false;
+        assert_eq!(Timing::for_mu(6_000_000, 2, &a, 1), Err(Error::Duration));
+    }
     fn header() -> SuSignal {
         SuSignal::decode(
             &b"1000000000000010000000000000000000100000100111000000"

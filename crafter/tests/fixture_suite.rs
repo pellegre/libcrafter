@@ -8603,6 +8603,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "he-mu-signal-a-invalid.tsv"
                 | "he-transform-index.tsv"
                 | "he-timing-index.tsv"
+                | "he-mu-timing.tsv"
                 | "he-er-timing-index.tsv"
                 | "he-er106-capacity-index.tsv"
                 | "he-er106-training-index.tsv"

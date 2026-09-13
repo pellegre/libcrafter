@@ -706,6 +706,26 @@ fn radio_he_sig_b_iq_inventory() {
 }
 
 #[test]
+fn radio_he_mu_timing_inventory() {
+    let rows = include_str!("fixtures/iq/he-mu-timing.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 26529);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "2dfa1adafa5ea32f957aa72d74f51e0746a6ad8987f55849a10ab6d5fa9e85f9"
+    );
+    for row in rows.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 16);
+        let n: Vec<usize> = c[..15].iter().map(|s| s.parse().unwrap()).collect();
+        assert!((1..=36).contains(&n[5]));
+        assert_eq!(n[8] % 3, 2);
+        assert!(n[8] <= 4095);
+        assert!(n[11] < n[12] && n[12] <= n[13] && n[13] <= n[14]);
+        assert_eq!(c[15].len(), 64);
+    }
+}
+
+#[test]
 fn radio_he_sig_b_common_inventory() {
     use crafter::prelude::{HeSigBCommon20Fields, HeSigBError};
     let rows = include_str!("fixtures/iq/he-sig-b-common.tsv");

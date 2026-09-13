@@ -140,6 +140,12 @@ header-only integrity disclaimer. Complete signaling still reports
 `UnsupportedPhy` because MU DATA is not yet recovered. Legacy-only mode is
 unchanged; no MAC frame is synthesized from a successful signaling decode.
 
+The MU timing kernel uses the resolved SIG-B duration and signaled LTF count
+to locate training, DATA symbols, midambles and packet extension. Its 26529
+independent forward timelines cover all four MU guard/training pairs and STBC
+parity without inheriting SU-only restrictions. This is timing arithmetic,
+not per-RU spatial admission, channel training or MU payload recovery.
+
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,
 midambles10/20, CFO/selective channels, and a damaged first aggregate member;
