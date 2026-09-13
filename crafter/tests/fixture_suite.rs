@@ -8594,6 +8594,8 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "ofdm-clock-manifest.json"
                 | "ht-signal-index.tsv"
                 | "he-signal-a-index.tsv"
+                | "he-su-prefix-index.tsv"
+                | "he-su-prefix-invalid-index.tsv"
                 | "vht-signal-a-index.tsv"
                 | "vht-signal-b20-index.tsv"
                 | "vht-timing-index.tsv"
@@ -8647,6 +8649,16 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 .skip(1)
                 .chain(include_str!("fixtures/iq/dsss-index.tsv").lines().skip(1))
                 .chain(include_str!("fixtures/iq/ht-bcc-index.tsv").lines().skip(1))
+                .chain(
+                    include_str!("fixtures/iq/he-su-prefix-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
+                .chain(
+                    include_str!("fixtures/iq/he-su-prefix-invalid-index.tsv")
+                        .lines()
+                        .skip(1)
+                )
                 .chain(
                     include_str!("fixtures/iq/vht-stbc-iq-index.tsv")
                         .lines()

@@ -222,6 +222,18 @@
       "fact": "HT-STF duration is 4 microseconds; its 20 MHz frequency sequence is identical to L-STF."
     },
     {
+      "id": "he-data-coding-limits",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.12.5",
+      "fact": "HE BCC uses one encoder, at most four spatial streams and MCS0-9, with RU sizes at most242 tones. MCS10/11 and larger RUs require LDPC. Header interpretation does not substitute for these DATA admission checks. The IQ prefix corpus selects LDPC for MCS10/11."
+    },
+    {
+      "id": "he-su-prefix",
+      "source": "ieee-80211ax-2021",
+      "anchor": "27.3.11.3-7, Table 27-16, Figure 27-25; 27.3.22",
+      "fact": "HE L-SIG and RL-SIG repeat the same header with valid parity and 6Mb/s rate; LENGTH remainder1 selects SU/TB, with HE-SIG-A Format1 selecting SU. SU HE-SIG-A has two real-axis BPSK symbols. L-SIG edge tones -28,-27,27,28 carry -1,-1,-1,1, repeated in RL-SIG. L-LTF normalization uses52 tones and an additional epsilon=sqrt(52/56), making its per-tone amplitude match 56-tone signaling; L-STF also has that epsilon. Pilot polarities use indices0,1,2,3 for these four signaling symbols. These checks do not establish DATA integrity or admit every signaled mode."
+    },
+    {
       "id": "he-su-siga-layout",
       "source": "ieee-80211ax-2021",
       "anchor": "27.3.11.7.2-4 Tables 27-18 and 27-19; 27.3.12.8 Table 27-35",

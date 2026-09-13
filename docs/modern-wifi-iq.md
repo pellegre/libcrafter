@@ -348,6 +348,14 @@ the published HE CRC example. This is not yet connected to IQ acquisition or
 DATA recovery, and does not establish HE reception or valid DATA admission.
 ER SU, MU and TB require their own format context and additional decoding.
 
+The private HE20 SU IQ prefix kernel now verifies L-SIG/RL-SIG agreement,
+6Mb/s signaling and the SU/TB length remainder before interpreting SU SIG-A.
+It trains the four additional signaling edge tones from L-SIG/RL-SIG and
+handles HE's L-LTF power normalization. The 96 valid and 10 invalid independent
+CS8 prefixes exercise actual legacy acquisition, CFO/multipath and malformed
+signaling. They end at HE-SIG-A: HE training, DATA recovery and public streaming
+publication remain unfinished, and this is not hardware qualification.
+
 ## VHT BCC DATA implementation
 
 The private single-encoder VHT BCC DATA recovery path uses the SIG-B CRC in

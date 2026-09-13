@@ -4,6 +4,38 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_su_prefix_independent_inventory() {
+    for (index, count, digest, column) in [
+        (
+            include_str!("fixtures/iq/he-su-prefix-index.tsv"),
+            96,
+            "44e3444fee65a4b73e6ad033813221360838c996ab691df664e5d0f4580a34bc",
+            4,
+        ),
+        (
+            include_str!("fixtures/iq/he-su-prefix-invalid-index.tsv"),
+            10,
+            "50525a89cdd9af70d1cc80e7ed923f68bf3bb0b75b45c877d1f648fc2d287fb4",
+            2,
+        ),
+    ] {
+        assert_eq!(hex(&Sha256::digest(index.as_bytes())), digest);
+        assert_eq!(index.lines().skip(1).count(), count);
+        for row in index.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let bytes = fs::read(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/iq")
+                    .join(format!("{}.cs8", c[0])),
+            )
+            .unwrap();
+            assert_eq!(bytes.len(), 1354);
+            assert_eq!(hex(&Sha256::digest(&bytes)), c[column]);
+        }
+    }
+}
+
+#[test]
 fn radio_he_signal_a_independent_inventory() {
     let index = include_str!("fixtures/iq/he-signal-a-index.tsv");
     assert_eq!(
