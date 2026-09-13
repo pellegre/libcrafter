@@ -152,6 +152,13 @@ and signs, and one-stream BCC/LDPC permutations. Its RU indices are one-based
 within each size, not SIG-B slot indices. MU channel training and payload
 integration remain unfinished; geometry alone does not recover MAC bytes.
 
+The private SIG-B-to-RU handoff translates allocation slots into physical tone
+geometry and preserves the original contiguous User field positions, including
+failed headers and empty allocations. Compressed HE20 signaling maps to one
+full-band 242-tone RU. Inconsistent user counts, missing/unexpected Common
+fields, wider bandwidths and invalid slot/size combinations are rejected. This
+structural mapping does not establish spatial decodability or payload integrity.
+
 The 288 positive and 18 negative prefix fixtures contain no DATA. A separate
 280-packet ER242 corpus covers all applicable guard/training pairs, padding,
 midambles10/20, CFO/selective channels, and a damaged first aggregate member;

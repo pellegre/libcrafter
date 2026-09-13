@@ -6,6 +6,19 @@ pub(super) struct Tones {
 }
 
 impl Tones {
+    /// Table 27-26 columns to Table 27-7 equal-size RU ordinals. User counts
+    /// do not change geometry, including explicitly empty allocations.
+    pub fn assignment(ru: &super::he_sig_b::HeRu20Assignment) -> Option<Self> {
+        let index = match (ru.tones, ru.first_slot) {
+            (26, slot @ 1..=9) => usize::from(slot),
+            (52, 1) | (106, 1) | (242, 1) => 1,
+            (52, 3) | (106, 6) => 2,
+            (52, 6) => 3,
+            (52, 8) => 4,
+            _ => return None,
+        };
+        Self::ru(ru.tones, index)
+    }
     /// Bandwidth bits have allocation meaning only in independently verified ER.
     pub fn new(er: bool, bandwidth: u8) -> Option<Self> {
         if bandwidth > u8::from(er) {
@@ -126,6 +139,32 @@ impl Tones {
 #[cfg(test)]
 mod tests {
     use super::Tones;
+    #[test]
+    fn radio_he_assignment_slot_bounds() {
+        use crate::radio::he_sig_b::HeRu20Assignment;
+        for size in [0, 26, 52, 106, 242, 484, u16::MAX] {
+            for slot in 0..=u8::MAX {
+                let expected = match size {
+                    26 => (1..=9).contains(&slot),
+                    52 => [1, 3, 6, 8].contains(&slot),
+                    106 => [1, 6].contains(&slot),
+                    242 => slot == 1,
+                    _ => false,
+                };
+                for users in [0, 1, 8] {
+                    assert_eq!(
+                        Tones::assignment(&HeRu20Assignment {
+                            tones: size,
+                            first_slot: slot,
+                            users
+                        })
+                        .is_some(),
+                        expected
+                    );
+                }
+            }
+        }
+    }
     #[test]
     fn radio_he_mu_all_resource_units() {
         // Independent signed-tone masks, transcribed from Table 27-7. Pilots

@@ -30,6 +30,48 @@ pub struct Fields {
     pub end_sample: u64,
 }
 
+/// Frequency-ordered RU geometry and positions in the original User field
+/// array. Failed headers keep their positions; an empty RU has an empty range.
+pub(super) struct RuLayout {
+    pub tones: super::he_tones::Tones,
+    pub users: std::ops::Range<usize>,
+}
+
+impl Fields {
+    /// Structural handoff only, not spatial-stream or DATA admission.
+    pub(super) fn layout(&self) -> Result<Vec<RuLayout>, Error> {
+        if self.signal.bandwidth != 0 {
+            return Err(Error::Layout);
+        }
+        if self.signal.sig_b_compression {
+            let count = usize::from(self.signal.sig_b_symbols_or_users) + 1;
+            if self.common.is_some() || count > 8 || self.users.len() != count {
+                return Err(Error::Layout);
+            }
+            return Ok(vec![RuLayout {
+                tones: super::he_tones::Tones::ru(242, 1).ok_or(Error::Layout)?,
+                users: 0..count,
+            }]);
+        }
+        let common = self.common.as_ref().ok_or(Error::Layout)?;
+        if self.users.len() != usize::from(common.user_count()) {
+            return Err(Error::Layout);
+        }
+        let mut offset = 0;
+        common
+            .rus()
+            .iter()
+            .map(|ru| {
+                let tones = super::he_tones::Tones::assignment(ru).ok_or(Error::Layout)?;
+                let end = offset + usize::from(ru.users);
+                let users = offset..end;
+                offset = end;
+                Ok(RuLayout { tones, users })
+            })
+            .collect()
+    }
+}
+
 /// Input begins at L-SIG. Only complete SIG-B fields are returned; successful
 /// headers establish neither training/DATA admissibility nor MAC integrity.
 pub(super) fn recover(samples: &[ComplexSample], a: &Acquisition) -> Result<Fields, Error> {
@@ -186,6 +228,110 @@ mod tests {
         HeSigBError, HeSigBUserEncoding,
     };
 
+    #[test]
+    fn radio_he_mu_user_layout_all_allocations() {
+        let bits: Vec<_> = include_str!("../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
+            .lines()
+            .nth(1)
+            .unwrap()
+            .split('\t')
+            .next()
+            .unwrap()
+            .bytes()
+            .map(|b| b - b'0')
+            .collect();
+        let mut signal = MuSignal::decode(&bits).unwrap();
+        signal.bandwidth = 0;
+        signal.sig_b_compression = false;
+        let mut checked = 0;
+        for row in include_str!("../../tests/fixtures/iq/he-sig-b-common.tsv")
+            .lines()
+            .skip(1)
+        {
+            let c: Vec<_> = row.split('\t').collect();
+            if c[2] != "ok" {
+                continue;
+            }
+            let common_bits: Vec<_> = c[1].bytes().map(|b| b - b'0').collect();
+            let common = HeSigBCommon20Fields::decode(&common_bits).unwrap();
+            let count: usize = c[4].parse().unwrap();
+            // Erased user headers must not shift subsequent users into a
+            // different allocation, even when all headers are erased.
+            let mut fields = Fields {
+                signal,
+                common: Some(common),
+                users: vec![Err(BlockError::Erased); count],
+                symbols: 1,
+                end_sample: 0,
+            };
+            let layout = fields.layout().unwrap();
+            let expected: Vec<_> = c[3].split(',').collect();
+            assert_eq!(layout.len(), expected.len());
+            let mut offset = 0;
+            let mut occupied = std::collections::BTreeSet::new();
+            for (ru, spec) in layout.iter().zip(expected) {
+                let n: Vec<usize> = spec.split(':').map(|s| s.parse().unwrap()).collect();
+                assert_eq!(ru.users, offset..offset + n[2]);
+                offset += n[2];
+                assert!(fields.users[ru.users.clone()].iter().all(Result::is_err));
+                assert_eq!(ru.tones.active().count(), n[0]);
+                let expected_first = match (n[0], n[1]) {
+                    (26, 1) | (52, 1) => -121,
+                    (26, 2) => -95,
+                    (26, 3) | (52, 3) => -68,
+                    (26, 4) => -42,
+                    (26, 5) => -16,
+                    (26, 6) | (52, 6) | (106, 6) => 17,
+                    (26, 7) => 43,
+                    (26, 8) | (52, 8) => 70,
+                    (26, 9) => 96,
+                    (106, 1) | (242, 1) => -122,
+                    _ => panic!("{spec}"),
+                };
+                assert_eq!(ru.tones.active().next(), Some(expected_first));
+                for tone in ru.tones.active() {
+                    assert!(occupied.insert(tone), "{row}");
+                }
+            }
+            assert_eq!(offset, count);
+            fields.users.push(Err(BlockError::Erased));
+            assert!(matches!(fields.layout(), Err(Error::Layout)));
+            fields.users.truncate(count.saturating_sub(1));
+            if count != 0 {
+                assert!(matches!(fields.layout(), Err(Error::Layout)));
+            }
+            checked += 1;
+        }
+        assert_eq!(checked, 186);
+        let mut fields = Fields {
+            signal,
+            common: None,
+            users: vec![],
+            symbols: 1,
+            end_sample: 0,
+        };
+        assert!(matches!(fields.layout(), Err(Error::Layout)));
+        fields.signal.sig_b_compression = true;
+        for count in 1..=8 {
+            fields.signal.sig_b_symbols_or_users = count - 1;
+            fields.users = vec![Err(BlockError::Erased); usize::from(count)];
+            let layout = fields.layout().unwrap();
+            assert_eq!(layout.len(), 1);
+            assert_eq!(layout[0].users, 0..usize::from(count));
+            assert_eq!(layout[0].tones.active().count(), 242);
+        }
+        for raw in [8, 15, 255] {
+            fields.signal.sig_b_symbols_or_users = raw;
+            assert!(matches!(fields.layout(), Err(Error::Layout)));
+        }
+        fields.signal.sig_b_symbols_or_users = 7;
+        fields.signal.bandwidth = 1;
+        assert!(matches!(fields.layout(), Err(Error::Layout)));
+        fields.signal.bandwidth = 0;
+        fields.common = Some(HeSigBCommon20Fields::decode(&[0; 18]).unwrap());
+        assert!(matches!(fields.layout(), Err(Error::Layout)));
+    }
+
     fn fixture(name: &str) -> (Vec<ComplexSample>, Acquisition) {
         let bytes = std::fs::read(format!(
             "{}/tests/fixtures/iq/{name}.cs8",
@@ -237,6 +383,18 @@ mod tests {
                 continue;
             }
             let fields = result.unwrap_or_else(|e| panic!("{}: {e:?}", c[0]));
+            let layout = fields.layout().unwrap();
+            assert_eq!(
+                layout.iter().map(|ru| ru.users.len()).sum::<usize>(),
+                fields.users.len()
+            );
+            assert_eq!(
+                layout
+                    .iter()
+                    .flat_map(|ru| ru.users.clone())
+                    .collect::<Vec<_>>(),
+                (0..fields.users.len()).collect::<Vec<_>>()
+            );
             let bits: Vec<_> = c[1].bytes().map(|b| b - b'0').collect();
             assert_eq!(fields.signal, MuSignal::decode(&bits).unwrap());
             assert_eq!(fields.symbols, c[4].parse::<usize>().unwrap(), "{}", c[0]);

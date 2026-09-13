@@ -1,0 +1,21 @@
+version: 1
+kind: feature
+name: wifi_he_mu_user_layout
+summary: Associate HE20 SIG-B user positions with physical resource units.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: user-layout
+    source: IEEE 802.11ax-2021 Tables 27-7/26 and 27.3.11.8.4 ordering steps a through c
+    checks: [slot_to_ru_index, frequency_order, compressed_full_band, empty_rus, damaged_user_positions, exact_user_count, invalid_layout]
+coverage_cases: [wifi-he-mu-user-layout]
+supported_cases:
+  - {name: wifi-he-mu-user-layout, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - Private handoff from checked SIG-B fields to physical tones and unchanged user-position ranges, including empty allocations.
+      - Does not infer spatial admissibility or MAC integrity. Channel training and MU DATA remain unfinished.
