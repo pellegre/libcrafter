@@ -222,6 +222,12 @@
       "fact": "HT-STF duration is 4 microseconds; its 20 MHz frequency sequence is identical to L-STF."
     },
     {
+      "id": "he-transform-periods",
+      "source": "ieee-80211ax-2021",
+      "anchor": "Table 27-12; 27.3.11.10 Equation 27-40",
+      "fact": "The HE DATA DFT period is12.8us with78.125kHz spacing. HE-LTF1x/2x/4x useful durations are3.2/6.4/12.8us. At20Msps these correspond to64/128/256 samples; GI samples are separate. Private natural-order unnormalized forward transforms support subsequent channel estimation and DATA demapping without changing legacy64-point processing."
+    },
+    {
       "id": "he-data-coding-limits",
       "source": "ieee-80211ax-2021",
       "anchor": "27.3.12.5",

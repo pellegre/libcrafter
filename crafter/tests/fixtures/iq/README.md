@@ -341,3 +341,11 @@ CFO/multipath, repeated-header mismatches, format/width exclusions, parity/CRC,
 tail and rotated-constellation rejection. HE L-STF/L-LTF include the epsilon
 power factor from 27.3.11.3-4. These files intentionally have no HE training or
 DATA field and do not establish full HE reception.
+
+`he-transform-index.tsv` supplies 1920 input/output pairs for ten mathematical
+128/256-point transform cases. `he_fft_vectors.py --write` generates the file;
+without flags it checks it. The reference uses a double-precision direct DFT,
+not the receiver's radix-2 implementation. Complex ramps and asymmetric inputs
+test bin ordering and phase, alongside DC, impulse and Nyquist cases. Rust
+tests additionally check every tone for both transform sizes. This is numerical
+validation for HE training/DATA primitives, not frame or throughput qualification.

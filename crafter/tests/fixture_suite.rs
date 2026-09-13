@@ -8594,6 +8594,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "ofdm-clock-manifest.json"
                 | "ht-signal-index.tsv"
                 | "he-signal-a-index.tsv"
+                | "he-transform-index.tsv"
                 | "he-su-prefix-index.tsv"
                 | "he-su-prefix-invalid-index.tsv"
                 | "vht-signal-a-index.tsv"

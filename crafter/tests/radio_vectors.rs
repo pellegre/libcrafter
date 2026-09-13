@@ -4,6 +4,23 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_he_transform_independent_inventory() {
+    let index = include_str!("fixtures/iq/he-transform-index.tsv");
+    assert_eq!(
+        hex(&Sha256::digest(index.as_bytes())),
+        "4c2f58473a40a86af3e90fbfaf56ad71ba0a5d6f1ad2d50824c91c82cb52c312"
+    );
+    assert_eq!(index.lines().skip(1).count(), 1920);
+    for row in index.lines().skip(1) {
+        let c: Vec<_> = row.split('\t').collect();
+        assert_eq!(c.len(), 7);
+        assert!(matches!(c[1], "128" | "256"));
+        assert!(c[2].parse::<usize>().unwrap() < c[1].parse::<usize>().unwrap());
+        assert!(c[3..].iter().all(|s| s.parse::<f64>().unwrap().is_finite()));
+    }
+}
+
+#[test]
 fn radio_he_su_prefix_independent_inventory() {
     for (index, count, digest, column) in [
         (

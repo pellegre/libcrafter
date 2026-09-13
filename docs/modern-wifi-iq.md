@@ -356,6 +356,12 @@ CS8 prefixes exercise actual legacy acquisition, CFO/multipath and malformed
 signaling. They end at HE-SIG-A: HE training, DATA recovery and public streaming
 publication remain unfinished, and this is not hardware qualification.
 
+Private 128- and 256-point receive transforms provide the longer HE-LTF and
+DATA transform periods at 20 Msps, keeping the legacy 64-point path unchanged.
+An independent direct DFT checks every output bin for ten input patterns, and
+analytical tests check every tone at both sizes. These arithmetic tests do not
+establish HE DATA decoding or real-time throughput.
+
 ## VHT BCC DATA implementation
 
 The private single-encoder VHT BCC DATA recovery path uses the SIG-B CRC in
