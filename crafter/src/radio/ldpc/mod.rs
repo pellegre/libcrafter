@@ -1,8 +1,7 @@
 //! Bounded HT LDPC codeword primitive. Rate matching and IQ dispatch are separate.
 //! IEEE 802.11-2020 19.3.11.7.3–4 and Annex F define the parity constraints;
 //! normalized min-sum is a receiver implementation choice, not a wire rule.
-#![allow(dead_code)] // Connected to HT DATA after independent codeword qualification.
-
+mod encoder;
 mod matrices;
 pub(super) mod rate;
 
@@ -24,10 +23,28 @@ impl Rate {
             Self::FiveSixths => (5, 6),
         }
     }
+
+    fn index(self) -> usize {
+        match self {
+            Self::Half => 0,
+            Self::TwoThirds => 1,
+            Self::ThreeQuarters => 2,
+            Self::FiveSixths => 3,
+        }
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Error {
     CodeLength,
+    InformationCount {
+        required: usize,
+        available: usize,
+    },
+    NonBinaryInformation {
+        index: usize,
+        value: u8,
+    },
+    SingularParity,
     MetricCount {
         required: usize,
         available: usize,
@@ -43,9 +60,10 @@ pub(super) enum Error {
     },
 }
 pub(super) struct Code {
-    n: usize,
-    k: usize,
-    checks: Vec<Vec<usize>>,
+    pub(super) n: usize,
+    pub(super) k: usize,
+    rate: Rate,
+    pub(super) checks: Vec<Vec<usize>>,
 }
 pub(super) struct Estimate {
     pub bits: Vec<u8>,
@@ -87,18 +105,23 @@ impl Code {
         Ok(Self {
             n,
             k: n * num / den,
+            rate,
             checks,
         })
     }
-    fn failed_checks(&self, bits: &[u8]) -> usize {
+    pub(super) fn failed_checks(&self, bits: &[u8]) -> usize {
         self.checks
             .iter()
             .filter(|row| row.iter().fold(0, |p, &i| p ^ bits[i]) != 0)
             .count()
     }
+    pub(super) fn encode(&self, information: &[u8]) -> Result<Vec<u8>, Error> {
+        encoder::encode(self, information)
+    }
     /// Positive input favors one, consistent with the OFDM demapper. At most
     /// 64 layered normalized-min-sum iterations; only zero-syndrome words exit.
     /// This is not MAC integrity: the caller must still validate SERVICE/FCS.
+    #[cfg(test)]
     pub(super) fn decode(&self, metrics: &[f32], limit: usize) -> Result<(Vec<u8>, usize), Error> {
         let estimate = self.estimate(metrics, limit)?;
         if estimate.failed_checks != 0 {
@@ -219,6 +242,7 @@ mod tests {
                 let bits: Vec<_> = word.bytes().map(|b| b - b'0').collect();
                 assert_eq!(bits.len(), n);
                 assert_eq!(code.failed_checks(&bits), 0);
+                assert_eq!(code.encode(&bits[..k]).unwrap(), bits);
                 let clean: Vec<_> = bits
                     .iter()
                     .map(|&b| if b == 1 { 4. } else { -4. })
@@ -241,6 +265,19 @@ mod tests {
     fn radio_ldpc_input_and_iteration_bounds() {
         assert!(matches!(Code::new(650, Rate::Half), Err(Error::CodeLength)));
         let code = Code::new(648, Rate::Half).unwrap();
+        assert!(matches!(
+            code.encode(&[]),
+            Err(Error::InformationCount { .. })
+        ));
+        let mut invalid = vec![0; 324];
+        invalid[17] = 2;
+        assert_eq!(
+            code.encode(&invalid),
+            Err(Error::NonBinaryInformation {
+                index: 17,
+                value: 2
+            })
+        );
         assert!(matches!(
             code.decode(&[], 64),
             Err(Error::MetricCount { .. })

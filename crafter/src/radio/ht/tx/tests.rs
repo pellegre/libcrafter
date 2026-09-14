@@ -89,6 +89,66 @@ fn radio_ht_tx_matches_independent_greenfield_waveforms() {
 }
 
 #[test]
+fn radio_ht_tx_matches_independent_ldpc_waveforms() {
+    let index = include_str!("../../../../tests/fixtures/iq/ht-ldpc-index.tsv");
+    let mut cases = 0;
+    for row in index.lines().skip(1).filter(|row| row.contains("-clean")) {
+        let columns: Vec<_> = row.split('\t').collect();
+        let psdu = bytes(columns[4]);
+        let mut config =
+            HtTxConfig::new(HtMcs::try_from(columns[1].parse::<u8>().unwrap()).unwrap())
+                .with_coding(HtCoding::Ldpc);
+        config.guard_interval = match columns[2] {
+            "8" => HtGuardInterval::Short,
+            "16" => HtGuardInterval::Long,
+            _ => panic!(),
+        };
+        config.leading_samples = 37;
+        config.trailing_samples = 64;
+        let tx = HtTransmission::encode(
+            &psdu[..psdu.len() - 4],
+            Some(psdu[psdu.len() - 4..].try_into().unwrap()),
+            &config,
+        )
+        .unwrap();
+        assert_eq!(tx.data_symbols, columns[3].parse::<usize>().unwrap());
+        assert_iq(columns[0], &tx.cs8);
+        cases += 1;
+    }
+    assert_eq!(cases, 32);
+}
+
+#[test]
+fn radio_ht_tx_matches_independent_greenfield_ldpc_waveforms() {
+    let index = include_str!("../../../../tests/fixtures/iq/ht-greenfield-index.tsv");
+    let mut cases = 0;
+    for row in index
+        .lines()
+        .skip(1)
+        .filter(|row| row.contains("-ldpc-") && row.contains("-clean"))
+    {
+        let columns: Vec<_> = row.split('\t').collect();
+        let psdu = bytes(columns[4]);
+        let mut config =
+            HtTxConfig::new(HtMcs::try_from(columns[1].parse::<u8>().unwrap()).unwrap())
+                .with_format(HtFormat::Greenfield)
+                .with_coding(HtCoding::Ldpc);
+        config.leading_samples = 37;
+        config.trailing_samples = 64;
+        let tx = HtTransmission::encode(
+            &psdu[..psdu.len() - 4],
+            Some(psdu[psdu.len() - 4..].try_into().unwrap()),
+            &config,
+        )
+        .unwrap();
+        assert_eq!(tx.data_symbols, columns[3].parse::<usize>().unwrap());
+        assert_iq(columns[0], &tx.cs8);
+        cases += 1;
+    }
+    assert_eq!(cases, 16);
+}
+
+#[test]
 fn radio_ht_tx_bounds_overrides_and_formats() {
     let mac = b"wifi four";
     let config = HtTxConfig::new(HtMcs::Mcs7);
@@ -134,9 +194,9 @@ fn radio_ht_tx_bounds_overrides_and_formats() {
             ..
         })
     ));
-    assert!(
-        HtTransmission::encode(mac, None, &config.clone().with_coding(HtCoding::Ldpc)).is_err()
-    );
+    let ldpc =
+        HtTransmission::encode(mac, None, &config.clone().with_coding(HtCoding::Ldpc)).unwrap();
+    assert_eq!(ldpc.coding, HtCoding::Ldpc);
     assert!(HtTransmission::encode(
         mac,
         None,

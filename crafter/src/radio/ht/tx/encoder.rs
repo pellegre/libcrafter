@@ -6,6 +6,7 @@ use super::{
 };
 use crate::radio::ht::HtSignalFields;
 use crate::radio::{
+    ldpc,
     ofdm_tx::{self as ofdm, Complex},
     RadioError, RadioResult,
 };
@@ -66,39 +67,66 @@ impl HtTransmission {
         );
 
         let (bits_per_subcarrier, data_bits_per_symbol) = config.mcs.parameters();
-        let payload_bits = psdu_len
-            .checked_mul(8)
-            .and_then(|value| value.checked_add(22))
-            .ok_or(RadioError::Overflow {
-                context: "HT DATA bits",
-            })?;
-        let symbols = payload_bits.div_ceil(data_bits_per_symbol);
-        let data_bits_len =
-            symbols
-                .checked_mul(data_bits_per_symbol)
-                .ok_or(RadioError::Overflow {
-                    context: "HT padded DATA bits",
-                })?;
+        let (symbols, coded) = match config.coding {
+            HtCoding::Bcc => {
+                let payload_bits = psdu_len
+                    .checked_mul(8)
+                    .and_then(|value| value.checked_add(22))
+                    .ok_or(RadioError::Overflow {
+                        context: "HT DATA bits",
+                    })?;
+                let symbols = payload_bits.div_ceil(data_bits_per_symbol);
+                let data_bits_len =
+                    symbols
+                        .checked_mul(data_bits_per_symbol)
+                        .ok_or(RadioError::Overflow {
+                            context: "HT padded DATA bits",
+                        })?;
+                let mut data = vec![0; 16];
+                ofdm::append_lsb_bits(&mut data, &psdu);
+                data.resize(data_bits_len, 0);
+                let mut scrambled = ofdm::scramble(&data, config.scrambler_seed);
+                let tail_start = 16 + psdu_len * 8;
+                scrambled[tail_start..tail_start + 6].fill(0);
+                (
+                    symbols,
+                    puncture(&ofdm::convolutional_encode(&scrambled), config.mcs),
+                )
+            }
+            HtCoding::Ldpc => {
+                use ldpc::Rate::*;
+                let rate = [
+                    Half,
+                    Half,
+                    ThreeQuarters,
+                    Half,
+                    ThreeQuarters,
+                    TwoThirds,
+                    ThreeQuarters,
+                    FiveSixths,
+                ][config.mcs.index() as usize];
+                let layout = ldpc::rate::Layout::new(
+                    psdu_len as u16,
+                    (52 * bits_per_subcarrier) as u16,
+                    rate,
+                    false,
+                )
+                .map_err(|error| RadioError::Source(format!("HT LDPC rate matching: {error:?}")))?;
+                let mut data = vec![0; 16];
+                ofdm::append_lsb_bits(&mut data, &psdu);
+                let scrambled = ofdm::scramble(&data, config.scrambler_seed);
+                let coded = layout
+                    .encode(&scrambled)
+                    .map_err(|error| RadioError::Source(format!("HT LDPC encoding: {error:?}")))?;
+                (layout.symbols, coded)
+            }
+        };
         let guard = config.guard_interval.samples();
         let data_samples = symbols
             .checked_mul(64 + guard)
             .ok_or(RadioError::Overflow {
                 context: "HT DATA samples",
             })?;
-
-        if config.coding == HtCoding::Ldpc {
-            return Err(RadioError::Invalid {
-                field: "coding",
-                reason: "HT LDPC transmission is not available",
-            });
-        }
-        let mut data = vec![0; 16];
-        ofdm::append_lsb_bits(&mut data, &psdu);
-        data.resize(data_bits_len, 0);
-        let mut scrambled = ofdm::scramble(&data, config.scrambler_seed);
-        let tail_start = 16 + psdu_len * 8;
-        scrambled[tail_start..tail_start + 6].fill(0);
-        let coded = puncture(&ofdm::convolutional_encode(&scrambled), config.mcs);
 
         let derived_fields = HtSignalFields {
             mcs: config.mcs.index(),
@@ -108,7 +136,7 @@ impl HtTransmission {
             not_sounding: true,
             aggregation: false,
             stbc: 0,
-            ldpc: false,
+            ldpc: config.coding == HtCoding::Ldpc,
             short_guard_interval: config.guard_interval == HtGuardInterval::Short,
             extension_spatial_streams: 0,
         };
@@ -186,9 +214,11 @@ impl HtTransmission {
             .collect();
         let coded_bits_per_symbol = 52 * bits_per_subcarrier;
         for (symbol, coded_symbol) in coded.chunks_exact(coded_bits_per_symbol).enumerate() {
-            let interleaved = ht_interleave(coded_symbol, bits_per_subcarrier);
+            let interleaved = (config.coding == HtCoding::Bcc)
+                .then(|| ht_interleave(coded_symbol, bits_per_subcarrier));
+            let mapped = interleaved.as_deref().unwrap_or(coded_symbol);
             wave.extend(ht_data_symbol(
-                &interleaved,
+                mapped,
                 bits_per_subcarrier,
                 polarities[symbol + pilot_offset],
                 symbol,

@@ -1,12 +1,13 @@
 //! HT LDPC sizing: IEEE 802.11-2020 19.3.11.7.5, Table 19-16.
 //! Integer inequalities preserve the strict thresholds in Equations 19-38–40.
-#![allow(dead_code)] // Integrated after independent rate-matching qualification.
 use super::Rate;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::radio) enum Error {
     EmptyPayload,
     InvalidCodedBits,
+    PayloadBitCount { required: usize, available: usize },
+    Encoding(super::Error),
     Metrics(super::Error),
     Codeword { index: usize, error: super::Error },
     Shortening { index: usize },
@@ -39,6 +40,41 @@ pub(in crate::radio) struct Recovery {
     pub first_failure: Option<Error>,
 }
 impl Layout {
+    /// Encode the scrambled SERVICE and PSDU bits, then apply shortening,
+    /// puncturing, and repetition in transmitted codeword order.
+    pub(in crate::radio) fn encode(self, bits: &[u8]) -> Result<Vec<u8>, Error> {
+        if bits.len() != self.payload_bits {
+            return Err(Error::PayloadBitCount {
+                required: self.payload_bits,
+                available: bits.len(),
+            });
+        }
+        let code = super::Code::new(self.block_bits, self.rate).map_err(Error::Encoding)?;
+        let (num, den) = self.rate.ratio();
+        let information_bits = self.block_bits * num / den;
+        let mut output = Vec::with_capacity(self.symbols * self.coded_bits_per_symbol);
+        let mut offset = 0;
+        for index in 0..self.codewords {
+            let spec = self.word(index).unwrap();
+            let end = offset + spec.information_bits;
+            let mut information = Vec::with_capacity(information_bits);
+            information.extend_from_slice(&bits[offset..end]);
+            information.resize(information_bits, 0);
+            let word = code.encode(&information).map_err(Error::Encoding)?;
+            output.extend_from_slice(&word[..spec.information_bits]);
+            output
+                .extend_from_slice(&word[information_bits..self.block_bits - spec.punctured_bits]);
+            let base = output.len() - (self.block_bits - spec.shortened_bits - spec.punctured_bits);
+            for repeat in 0..spec.repeated_bits {
+                output.push(output[base + repeat % (self.block_bits - spec.shortened_bits)]);
+            }
+            offset = end;
+        }
+        debug_assert_eq!(offset, bits.len());
+        debug_assert_eq!(output.len(), self.symbols * self.coded_bits_per_symbol);
+        Ok(output)
+    }
+
     /// Restore omitted known-zero information bits and erased parity, combine
     /// repeated observations, and recover the concatenated information stream.
     /// Input is in transmitted codeword order (LDPC bypasses BCC interleaving).
@@ -241,6 +277,8 @@ mod tests {
                 .bytes()
                 .map(|b| if b == b'1' { 1. } else { -1. })
                 .collect();
+            let transmitted: Vec<_> = c[4].bytes().map(|b| b - b'0').collect();
+            assert_eq!(layout.encode(&expected).unwrap(), transmitted);
             for scale in [1., f32::MAX, f32::MIN_POSITIVE] {
                 let metrics: Vec<_> = clean.iter().map(|v| v * scale).collect();
                 let (actual, iterations) = layout.recover(&metrics, 64).unwrap_or_else(|e| {
@@ -365,6 +403,14 @@ mod tests {
         assert_eq!(
             Layout::new(1, 52, Rate::TwoThirds, false),
             Err(Error::InvalidCodedBits)
+        );
+        let layout = Layout::new(1, 52, Rate::Half, false).unwrap();
+        assert_eq!(
+            layout.encode(&[]),
+            Err(Error::PayloadBitCount {
+                required: 24,
+                available: 0
+            })
         );
         for rate in [
             Rate::Half,
