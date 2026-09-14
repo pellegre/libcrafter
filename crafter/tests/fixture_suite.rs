@@ -8634,6 +8634,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "eht-data-ldpc-index.tsv"
                 | "eht-data-ldpc-payload-index.tsv"
                 | "eht-data-ldpc-iq-index.tsv"
+                | "eht-tb-exchange-index.tsv"
                 | "he-signal-a-index.tsv"
                 | "he-mu-signal-a-index.tsv"
                 | "he-tb-signal-a-index.tsv"
@@ -8794,6 +8795,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 include_str!("fixtures/iq/he-tb-multi-exchange-index.tsv"),
                 include_str!("fixtures/iq/he-tb-mu-carrier-exchange-index.tsv"),
                 include_str!("fixtures/iq/he-tb-trs-exchange-index.tsv"),
+                include_str!("fixtures/iq/eht-tb-exchange-index.tsv"),
                 include_str!("fixtures/iq/ht-bcc-index.tsv"),
                 include_str!("fixtures/iq/he-dcm-iq-index.tsv"),
                 include_str!("fixtures/iq/he-dcm-iq-invalid-index.tsv"),
