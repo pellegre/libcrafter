@@ -1,8 +1,9 @@
-//! Packet-shaped offline legacy Wi-Fi IQ transmission.
+//! Packet-shaped Wi-Fi IQ transmission with offline and explicit live sinks.
 
 use super::{
-    DsssPreamble, LegacyDsssCckRate, LegacyDsssCckTransmission, LegacyDsssCckTxConfig,
-    LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig, RadioError, RadioResult,
+    DsssPreamble, HtTransmission, HtTxConfig, LegacyDsssCckRate, LegacyDsssCckTransmission,
+    LegacyDsssCckTxConfig, LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig, RadioError,
+    RadioResult,
 };
 use crate::{
     wire::{BackendKind, PacketRecord, PacketWriter, WireError, WriteReport},
@@ -105,50 +106,134 @@ impl LegacyWifiTransmission {
     }
 }
 
+/// Common behavior of an owned, already encoded Wi-Fi IQ transmission.
+pub trait EncodedWifiTransmission: Clone {
+    fn mac_bytes(&self) -> &[u8];
+    fn psdu_bytes(&self) -> &[u8];
+    fn cs8(&self) -> &[i8];
+
+    fn sample_count(&self) -> usize {
+        self.cs8().len() / 2
+    }
+}
+
+impl EncodedWifiTransmission for LegacyWifiTransmission {
+    fn mac_bytes(&self) -> &[u8] {
+        self.mac_bytes()
+    }
+
+    fn psdu_bytes(&self) -> &[u8] {
+        self.psdu_bytes()
+    }
+
+    fn cs8(&self) -> &[i8] {
+        self.cs8()
+    }
+}
+
+impl EncodedWifiTransmission for HtTransmission {
+    fn mac_bytes(&self) -> &[u8] {
+        &self.mac_bytes
+    }
+
+    fn psdu_bytes(&self) -> &[u8] {
+        &self.psdu_bytes
+    }
+
+    fn cs8(&self) -> &[i8] {
+        &self.cs8
+    }
+}
+
+/// PHY configuration that can encode one compiled MAC frame.
+pub trait WifiTxEncoder: Clone {
+    type Transmission: EncodedWifiTransmission;
+
+    fn encode_mac(&self, mac_bytes: &[u8]) -> RadioResult<Self::Transmission>;
+}
+
+impl WifiTxEncoder for LegacyWifiTxConfig {
+    type Transmission = LegacyWifiTransmission;
+
+    fn encode_mac(&self, mac_bytes: &[u8]) -> RadioResult<Self::Transmission> {
+        let fcs = match self.fcs {
+            WifiFcsPolicy::Auto => None,
+            WifiFcsPolicy::Explicit(bytes) => Some(bytes),
+        };
+        match self.phy {
+            LegacyWifiPhy::Ofdm(rate) => {
+                let mut config = self.ofdm.clone();
+                config.rate = rate;
+                LegacyOfdmTransmission::encode(mac_bytes, fcs, &config)
+                    .map(LegacyWifiTransmission::Ofdm)
+            }
+            LegacyWifiPhy::DsssCck { rate, preamble } => {
+                let mut config = self.dsss_cck.clone();
+                config.rate = rate;
+                config.preamble = preamble;
+                LegacyDsssCckTransmission::encode(mac_bytes, fcs, &config)
+                    .map(LegacyWifiTransmission::DsssCck)
+            }
+        }
+    }
+}
+
+impl WifiTxEncoder for HtTxConfig {
+    type Transmission = HtTransmission;
+
+    fn encode_mac(&self, mac_bytes: &[u8]) -> RadioResult<Self::Transmission> {
+        let fcs = match self.fcs {
+            WifiFcsPolicy::Auto => None,
+            WifiFcsPolicy::Explicit(bytes) => Some(bytes),
+        };
+        HtTransmission::encode(mac_bytes, fcs, self)
+    }
+}
+
 /// Backend contract for already encoded, owned Wi-Fi IQ.
-pub trait IqSink {
-    fn write(&mut self, transmission: &LegacyWifiTransmission) -> RadioResult<()>;
+pub trait IqSink<T: EncodedWifiTransmission = LegacyWifiTransmission> {
+    fn write(&mut self, transmission: &T) -> RadioResult<()>;
 }
 
 /// Deterministic sink retaining every accepted transmission.
 #[derive(Debug, Clone, Default)]
-pub struct MemoryIqSink {
-    transmissions: Vec<LegacyWifiTransmission>,
+pub struct MemoryIqSink<T: EncodedWifiTransmission = LegacyWifiTransmission> {
+    transmissions: Vec<T>,
 }
 
-impl MemoryIqSink {
+impl<T: EncodedWifiTransmission> MemoryIqSink<T> {
     pub const fn new() -> Self {
         Self {
             transmissions: Vec::new(),
         }
     }
 
-    pub fn transmissions(&self) -> &[LegacyWifiTransmission] {
+    pub fn transmissions(&self) -> &[T] {
         &self.transmissions
     }
 
-    pub fn into_transmissions(self) -> Vec<LegacyWifiTransmission> {
+    pub fn into_transmissions(self) -> Vec<T> {
         self.transmissions
     }
 }
 
-impl IqSink for MemoryIqSink {
-    fn write(&mut self, transmission: &LegacyWifiTransmission) -> RadioResult<()> {
+impl<T: EncodedWifiTransmission> IqSink<T> for MemoryIqSink<T> {
+    fn write(&mut self, transmission: &T) -> RadioResult<()> {
         self.transmissions.push(transmission.clone());
         Ok(())
     }
 }
 
-/// Packet writer compiling a bare `Dot11` stack into one legacy IQ waveform.
+/// Packet writer compiling a bare `Dot11` stack into one configured Wi-Fi waveform.
 #[derive(Debug, Clone)]
-pub struct RadioPacketWriter<S> {
-    config: LegacyWifiTxConfig,
+pub struct RadioPacketWriter<S, C: WifiTxEncoder = LegacyWifiTxConfig> {
+    config: C,
     sink: S,
-    last: Option<LegacyWifiTransmission>,
+    last: Option<C::Transmission>,
 }
 
-impl<S> RadioPacketWriter<S> {
-    pub const fn new(config: LegacyWifiTxConfig, sink: S) -> Self {
+impl<S, C: WifiTxEncoder> RadioPacketWriter<S, C> {
+    pub const fn new(config: C, sink: S) -> Self {
         Self {
             config,
             sink,
@@ -156,7 +241,7 @@ impl<S> RadioPacketWriter<S> {
         }
     }
 
-    pub const fn config(&self) -> &LegacyWifiTxConfig {
+    pub const fn config(&self) -> &C {
         &self.config
     }
 
@@ -168,7 +253,7 @@ impl<S> RadioPacketWriter<S> {
         &mut self.sink
     }
 
-    pub const fn last_transmission(&self) -> Option<&LegacyWifiTransmission> {
+    pub const fn last_transmission(&self) -> Option<&C::Transmission> {
         self.last.as_ref()
     }
 
@@ -177,8 +262,12 @@ impl<S> RadioPacketWriter<S> {
     }
 }
 
-impl<S: IqSink> RadioPacketWriter<S> {
-    pub fn encode_record(&self, record: &PacketRecord) -> RadioResult<LegacyWifiTransmission> {
+impl<S, C> RadioPacketWriter<S, C>
+where
+    C: WifiTxEncoder,
+    S: IqSink<C::Transmission>,
+{
+    pub fn encode_record(&self, record: &PacketRecord) -> RadioResult<C::Transmission> {
         if !record
             .packet()
             .get(0)
@@ -186,36 +275,22 @@ impl<S: IqSink> RadioPacketWriter<S> {
         {
             return Err(RadioError::Invalid {
                 field: "packet",
-                reason: "legacy Wi-Fi IQ transmission requires a bare Dot11 root",
+                reason: "Wi-Fi IQ transmission requires a bare Dot11 root",
             });
         }
         let compiled = record
             .packet()
             .compile()
             .map_err(|error| RadioError::Source(error.to_string()))?;
-        let fcs = match self.config.fcs {
-            WifiFcsPolicy::Auto => None,
-            WifiFcsPolicy::Explicit(bytes) => Some(bytes),
-        };
-        match self.config.phy {
-            LegacyWifiPhy::Ofdm(rate) => {
-                let mut config = self.config.ofdm.clone();
-                config.rate = rate;
-                LegacyOfdmTransmission::encode(compiled.as_bytes(), fcs, &config)
-                    .map(LegacyWifiTransmission::Ofdm)
-            }
-            LegacyWifiPhy::DsssCck { rate, preamble } => {
-                let mut config = self.config.dsss_cck.clone();
-                config.rate = rate;
-                config.preamble = preamble;
-                LegacyDsssCckTransmission::encode(compiled.as_bytes(), fcs, &config)
-                    .map(LegacyWifiTransmission::DsssCck)
-            }
-        }
+        self.config.encode_mac(compiled.as_bytes())
     }
 }
 
-impl<S: IqSink> PacketWriter for RadioPacketWriter<S> {
+impl<S, C> PacketWriter for RadioPacketWriter<S, C>
+where
+    C: WifiTxEncoder,
+    S: IqSink<C::Transmission>,
+{
     fn write_record(&mut self, record: &PacketRecord) -> crate::wire::Result<WriteReport> {
         let transmission = self
             .encode_record(record)

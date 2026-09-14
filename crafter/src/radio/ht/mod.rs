@@ -3,6 +3,10 @@
 
 mod training;
 pub(in crate::radio) use training::{train_single_stream, train_stbc_second};
+mod tx;
+pub use tx::{
+    HtCoding, HtFormat, HtGuardInterval, HtMcs, HtSignalBits, HtTransmission, HtTxConfig,
+};
 
 /// Integrity-checked HT-SIG fields. This does not qualify the signaled PHY mode
 /// for reception: MCS, STBC and stream combinations need separate validation.
@@ -41,6 +45,33 @@ impl std::fmt::Display for HtSignalError {
 impl std::error::Error for HtSignalError {}
 
 impl HtSignalFields {
+    /// Encode the complete 48-bit HT-SIG field in transmission order, including
+    /// the mandatory CRC and zero tail.
+    pub fn encode(self) -> [u8; 48] {
+        fn field(bits: &mut [u8; 48], start: usize, length: usize, value: u16) {
+            for bit in 0..length {
+                bits[start + bit] = ((value >> bit) & 1) as u8;
+            }
+        }
+        let mut bits = [0; 48];
+        field(&mut bits, 0, 7, u16::from(self.mcs));
+        bits[7] = u8::from(self.channel_width_40_mhz);
+        field(&mut bits, 8, 16, self.psdu_bytes);
+        bits[24] = u8::from(self.smoothing);
+        bits[25] = u8::from(self.not_sounding);
+        bits[26] = 1;
+        bits[27] = u8::from(self.aggregation);
+        field(&mut bits, 28, 2, u16::from(self.stbc));
+        bits[30] = u8::from(self.ldpc);
+        bits[31] = u8::from(self.short_guard_interval);
+        field(&mut bits, 32, 2, u16::from(self.extension_spatial_streams));
+        let integrity = crc(&bits[..34]);
+        for bit in 0..8 {
+            bits[34 + bit] = (integrity >> (7 - bit)) & 1;
+        }
+        bits
+    }
+
     /// Recover HT-SIG from two symbols of 48 interleaved soft metrics each.
     /// Positive favors bit 1. Metrics must be finite and in ascending data-tone
     /// order per symbol, after channel and pilot correction and QBPSK demapping.
@@ -219,6 +250,7 @@ mod tests {
             let columns: Vec<_> = line.split('\t').collect();
             let bits: Vec<_> = columns[0].bytes().map(|b| b - b'0').collect();
             let f = HtSignalFields::decode(&bits).unwrap();
+            assert_eq!(f.encode().as_slice(), bits);
             let metrics: Vec<f32> = columns[11]
                 .bytes()
                 .map(|b| 2. * (b - b'0') as f32 - 1.)

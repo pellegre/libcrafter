@@ -90,3 +90,26 @@ fn hackrf_offline_preparation_requires_no_device() {
     let transmission = writer.encode_record(&PacketRecord::new(packet())).unwrap();
     assert_eq!(transmission.sample_count() * 2, transmission.cs8().len());
 }
+
+#[test]
+fn ht20_uses_the_same_packet_writer_and_iq_sink() {
+    let record = PacketRecord::new(packet());
+    let compiled = record.packet().compile().unwrap();
+    let mut writer = RadioPacketWriter::new(
+        HtTxConfig::new(HtMcs::Mcs7)
+            .with_guard_interval(HtGuardInterval::Short)
+            .with_fcs(WifiFcsPolicy::Explicit([1, 2, 3, 4])),
+        MemoryIqSink::new(),
+    );
+    let report = writer.write_record(&record).unwrap();
+    let transmission = writer.last_transmission().unwrap();
+    assert_eq!(transmission.mac_bytes, compiled.as_bytes());
+    assert_eq!(
+        &transmission.psdu_bytes[transmission.psdu_bytes.len() - 4..],
+        &[1, 2, 3, 4]
+    );
+    assert_eq!(transmission.mcs, HtMcs::Mcs7);
+    assert_eq!(transmission.guard_interval, HtGuardInterval::Short);
+    assert_eq!(report.bytes_written(), transmission.cs8.len());
+    assert_eq!(writer.sink().transmissions(), &[transmission.clone()]);
+}

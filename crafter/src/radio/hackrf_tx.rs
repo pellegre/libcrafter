@@ -1,7 +1,7 @@
 //! Explicit, bounded HackRF transmission of encoded legacy Wi-Fi IQ.
 
 #[cfg(feature = "radio-hackrf")]
-use super::{IqSink, LegacyWifiTransmission};
+use super::{EncodedWifiTransmission, IqSink};
 use super::{RadioError, RadioResult};
 use std::{
     sync::{
@@ -284,8 +284,8 @@ impl HackRfTxSink {
 }
 
 #[cfg(feature = "radio-hackrf")]
-impl IqSink for HackRfTxSink {
-    fn write(&mut self, tx: &LegacyWifiTransmission) -> RadioResult<()> {
+impl<T: EncodedWifiTransmission> IqSink<T> for HackRfTxSink {
+    fn write(&mut self, tx: &T) -> RadioResult<()> {
         self.cancelled.store(false, Ordering::Release);
         let shared = Arc::new(TxShared::new(
             tx.cs8(),

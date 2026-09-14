@@ -9,7 +9,10 @@ mod dsss;
 mod dsss_tx;
 mod ht;
 mod ldpc;
-pub use ht::{HtSignalError, HtSignalFields};
+pub use ht::{
+    HtCoding, HtFormat, HtGuardInterval, HtMcs, HtSignalBits, HtSignalError, HtSignalFields,
+    HtTransmission, HtTxConfig,
+};
 #[cfg(any(feature = "radio-hackrf", test))]
 mod hackrf;
 #[cfg(any(feature = "radio-hackrf", test))]
@@ -40,8 +43,8 @@ pub use replay::{MemoryIqSource, ReaderIqSource};
 pub use signal::SignalInfo;
 pub use source::{RadioPacketSource, RadioReceiveMetadata};
 pub use tx::{
-    IqSink, LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink,
-    RadioPacketWriter, WifiFcsPolicy,
+    EncodedWifiTransmission, IqSink, LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig,
+    MemoryIqSink, RadioPacketWriter, WifiFcsPolicy, WifiTxEncoder,
 };
 pub use wifi::{LegacyWifiDecoder, WifiDecoder};
 pub use windowed::WindowedLegacyWifiDecoder;
