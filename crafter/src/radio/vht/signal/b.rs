@@ -181,5 +181,5 @@ impl VhtSignalB20Fields {
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "b_tests.rs"]
 mod tests;

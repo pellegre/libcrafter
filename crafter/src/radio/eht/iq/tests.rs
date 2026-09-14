@@ -34,7 +34,9 @@ fn radio_eht_prefix_independent_iq() {
         assert!(crate::radio::he::prefix::repeated_su_signal(input, &acquisition).is_none());
         assert!(crate::radio::he::prefix::repeated_er_signal(input, &acquisition).is_none());
         assert!(crate::radio::ht::decode_iq(&input[80..240], &acquisition).is_none());
-        assert!(crate::radio::vht::iq::signal_a(&input[80..240], &acquisition).is_none());
+        assert!(
+            crate::radio::vht::data::Receiver::signal_a(&input[80..240], &acquisition).is_none()
+        );
     }
 }
 

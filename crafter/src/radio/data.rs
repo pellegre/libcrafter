@@ -133,7 +133,8 @@ impl Pending {
         true
     }
     fn configure_vht(&mut self, config: &RxConfig, reserved: usize) -> bool {
-        let Ok((fields, info)) = vht::iq::admit(&self.samples, &self.acquisition) else {
+        let Ok((fields, info)) = vht::data::Receiver::admit(&self.samples, &self.acquisition)
+        else {
             return false;
         };
         let Some(required) = info
@@ -1088,7 +1089,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     }
                     if let Some(fields) = self
                         .ht_enabled
-                        .then(|| vht::iq::signal_a(&p.samples[80..240], &p.acquisition))
+                        .then(|| vht::data::Receiver::signal_a(&p.samples[80..240], &p.acquisition))
                         .flatten()
                     {
                         out.diagnostics.push(PhyDiagnostic::VhtSignalA {
@@ -1346,7 +1347,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                         })
                         .ok_or(())
                     } else if p.vht.is_some() {
-                        vht::iq::decode(&p.samples, &p.acquisition).map(|decoded| {
+                        vht::data::Receiver::decode(&p.samples, &p.acquisition).map(|decoded| {
                             debug_assert_eq!(Some(decoded.signal_a), p.vht);
                             debug_assert_eq!(decoded.info, info);
                             vht_signal_b = Some(decoded.signal_b);

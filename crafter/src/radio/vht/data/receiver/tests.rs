@@ -33,7 +33,7 @@ fn acquire(samples: &[ComplexSample]) -> Acquisition {
 }
 #[test]
 fn radio_vht_stbc_full_iq_kernel() {
-    let rows = include_str!("../../../../tests/fixtures/iq/vht-stbc-iq-index.tsv");
+    let rows = include_str!("../../../../../tests/fixtures/iq/vht-stbc-iq-index.tsv");
     assert_eq!(rows.lines().skip(1).count(), 110);
     for row in rows.lines().skip(1) {
         let c: Vec<_> = row.split('\t').collect();
@@ -76,7 +76,7 @@ fn radio_vht_stbc_full_iq_kernel() {
 
 #[test]
 fn radio_vht_ldpc_full_iq_kernel() {
-    let rows = include_str!("../../../../tests/fixtures/iq/vht-ldpc-iq-index.tsv");
+    let rows = include_str!("../../../../../tests/fixtures/iq/vht-ldpc-iq-index.tsv");
     assert_eq!(rows.lines().skip(1).count(), 73);
     let mut extra = [false; 2];
     for row in rows.lines().skip(1) {
@@ -114,7 +114,7 @@ fn radio_vht_ldpc_full_iq_kernel() {
         );
     }
     assert_eq!(extra, [true, true]);
-    for row in include_str!("../../../../tests/fixtures/iq/vht-ldpc-iq-invalid-index.tsv")
+    for row in include_str!("../../../../../tests/fixtures/iq/vht-ldpc-iq-invalid-index.tsv")
         .lines()
         .skip(1)
     {
@@ -130,7 +130,7 @@ fn radio_vht_ldpc_full_iq_kernel() {
 
 #[test]
 fn radio_vht_bcc_full_iq_kernel() {
-    let inventory = include_str!("../../../../tests/fixtures/iq/vht-bcc-iq-index.tsv");
+    let inventory = include_str!("../../../../../tests/fixtures/iq/vht-bcc-iq-index.tsv");
     assert_eq!(inventory.lines().skip(1).count(), 108);
     for row in inventory.lines().skip(1) {
         let c: Vec<_> = row.split('\t').collect();
@@ -168,7 +168,7 @@ fn radio_vht_bcc_full_iq_kernel() {
 
 #[test]
 fn radio_vht_iq_truncation_and_unusable_fields() {
-    let invalid = include_str!("../../../../tests/fixtures/iq/vht-bcc-iq-invalid-index.tsv");
+    let invalid = include_str!("../../../../../tests/fixtures/iq/vht-bcc-iq-invalid-index.tsv");
     assert_eq!(invalid.lines().skip(1).count(), 8);
     for row in invalid.lines().skip(1) {
         let name = row.split('\t').next().unwrap();
@@ -187,7 +187,7 @@ fn radio_vht_iq_truncation_and_unusable_fields() {
             "{name}"
         );
     }
-    let row = include_str!("../../../../tests/fixtures/iq/vht-bcc-iq-index.tsv")
+    let row = include_str!("../../../../../tests/fixtures/iq/vht-bcc-iq-index.tsv")
         .lines()
         .nth(1)
         .unwrap();

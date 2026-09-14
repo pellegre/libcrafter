@@ -8,7 +8,7 @@ use crate::radio::{
     ComplexSample, PhyDiagnostic, SignalInfo,
 };
 
-use super::{VhtSignalAFields, VhtSignalAUsers, VhtSignalB20Fields};
+use crate::radio::vht::{VhtSignalAFields, VhtSignalAUsers, VhtSignalB20Fields};
 
 fn corrected_bins(
     samples: &[ComplexSample],
@@ -42,10 +42,7 @@ fn corrected_bins(
     Some(equalized)
 }
 
-pub(in crate::radio) fn signal_a(
-    samples: &[ComplexSample],
-    a: &Acquisition,
-) -> Option<VhtSignalAFields> {
+fn signal_a(samples: &[ComplexSample], a: &Acquisition) -> Option<VhtSignalAFields> {
     if samples.len() != 160 {
         return None;
     }
@@ -96,12 +93,32 @@ pub(in crate::radio) struct Decoded {
     pub coding: Vec<PhyDiagnostic>,
 }
 
+/// VHT20 DATA receiver façade.
+pub(in crate::radio) struct Receiver;
+
+impl Receiver {
+    pub fn signal_a(
+        samples: &[ComplexSample],
+        acquisition: &Acquisition,
+    ) -> Option<VhtSignalAFields> {
+        signal_a(samples, acquisition)
+    }
+
+    pub fn admit(
+        samples: &[ComplexSample],
+        acquisition: &Acquisition,
+    ) -> Result<(VhtSignalAFields, SignalInfo), ()> {
+        admit(samples, acquisition)
+    }
+
+    pub fn decode(samples: &[ComplexSample], acquisition: &Acquisition) -> Result<Decoded, ()> {
+        decode(samples, acquisition)
+    }
+}
+
 /// Header-only admission gives the streaming receiver its exact reservation
 /// before training or DATA arrives. It does not assert payload integrity.
-pub(in crate::radio) fn admit(
-    samples: &[ComplexSample],
-    a: &Acquisition,
-) -> Result<(VhtSignalAFields, SignalInfo), ()> {
+fn admit(samples: &[ComplexSample], a: &Acquisition) -> Result<(VhtSignalAFields, SignalInfo), ()> {
     let legacy = signal::decode_signal(samples.get(..80).ok_or(())?, a, 4095).map_err(|_| ())?;
     let fields = signal_a(samples.get(80..240).ok_or(())?, a).ok_or(())?;
     let VhtSignalAUsers::Single {
@@ -175,7 +192,7 @@ pub(in crate::radio) fn admit(
 
 /// Samples begin at L-SIG and may include trailing samples. Acquisition must
 /// come from the legacy preamble; no fixture timing or frequency hint is used.
-pub(in crate::radio) fn decode(samples: &[ComplexSample], a: &Acquisition) -> Result<Decoded, ()> {
+fn decode(samples: &[ComplexSample], a: &Acquisition) -> Result<Decoded, ()> {
     let (fields, info) = admit(samples, a)?;
     let data_offset =
         usize::try_from(info.data_start.checked_sub(a.signal_start).ok_or(())?).map_err(|_| ())?;
