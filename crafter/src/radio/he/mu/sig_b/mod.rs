@@ -4,7 +4,8 @@
 
 pub(in crate::radio) mod coded;
 pub(in crate::radio) mod iq;
-pub(in crate::radio) mod modulation;
+#[cfg(test)]
+mod modulation;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeRu20Assignment {

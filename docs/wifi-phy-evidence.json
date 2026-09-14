@@ -116,6 +116,14 @@
       "sha256": "cf3644a31e3472aa1e593dbd384833d2178e501b82a8d3fcdd580ee4d9691b0a",
       "status": "reviewed",
       "reviewed_clauses": ["D5 first EHT-SIG encoding-block example"]
+    },
+    {
+      "id": "ieee-tgbe-eht-sig-encoding-resolution",
+      "classification": "official-working-group-comment-resolution",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/21/11-21-1386-01-00be-eht-sig-cr-on-p802-11be-d1-0-36-3-12-8-6.doc",
+      "sha256": "63f5e0ad19d8f428eb99747abb94e75aa638478c6b9a027befbbc2632faced24",
+      "status": "reviewed",
+      "reviewed_clauses": ["36.3.12.8.6 coding rate and interleaver clarification"]
     }
   ],
   "facts": [
@@ -135,7 +143,13 @@
       "id": "eht-sig-non-ofdma-first-block",
       "source": "ieee-tgbe-eht-sig-draft-text",
       "anchor": "36.3.11.8.4-5; Table 36-38 in 11-21/1148r1; D5 example in 11-24/0260r1",
-      "fact": "The first 52-bit EHT-SIG encoding block for non-OFDMA signaling contains 20 common bits, the first 22-bit non-MU user field, a four-bit CRC over the preceding 42 bits, and six zero tail bits. The common portion carries spatial reuse, EHT-LTF size and guard interval, EHT-LTF count, LDPC-extra-symbol, pre-FEC padding, packet-extension disambiguity, Disregard bits, and number of users. The user portion carries STA-ID, MCS, NSS, beamforming, coding, and a preserved reserved/disregard bit. The published D5 example's protected bits independently produce CRC 1110. The current parser admits only the single-user U-SIG context and this first block; OFDMA, MU-MIMO, IQ recovery and EHT DATA remain separate work. Published-standard clause review remains required before final qualification."
+      "fact": "The first 52-bit EHT-SIG encoding block for non-OFDMA signaling contains 20 common bits, the first 22-bit non-MU user field, a four-bit CRC over the preceding 42 bits, and six zero tail bits. The common portion carries spatial reuse, EHT-LTF size and guard interval, EHT-LTF count, LDPC-extra-symbol, pre-FEC padding, packet-extension disambiguity, Disregard bits, and number of users. The user portion carries STA-ID, MCS, NSS, beamforming, coding, and a preserved reserved/disregard bit. The published D5 example's protected bits independently produce CRC 1110. The current parser and IQ receiver admit only the single-user U-SIG context and this first block; OFDMA, MU-MIMO and EHT DATA remain separate work. Published-standard clause review remains required before final qualification."
+    },
+    {
+      "id": "eht-sig-encoding-modulation",
+      "source": "ieee-tgbe-eht-sig-encoding-resolution",
+      "anchor": "36.3.12.8.6; related waveform equation and content-channel text in 11-21/0140r2",
+      "fact": "EHT-SIG MCS values 0, 1, 3 and 15 all use rate-one-half BCC. MCS15 is MCS0 with DCM. EHT-SIG uses the same BCC interleaver parameters as HE-SIG-A/HE-SIG-B, 52 data tones per 4 microsecond OFDM symbol, an 0.8 microsecond guard interval, and pilot sequence position n+4. Its upper-half PAPR rotation follows the HE-SIG-B rule except that MCS15 uses unity PAPR rotation. For a 52-bit single-user encoding block in 20 MHz, the resulting EHT-SIG lengths are two, one, one and four symbols for MCS0, MCS1, MCS3 and MCS15 respectively."
     },
     {
       "id": "vht-one-data-stream-stbc",

@@ -1,10 +1,7 @@
 //! HE20 SU, ER SU, MU and TB preamble prefixes; IEEE 802.11ax-2021 27.3.11/22.
 //! No DATA admission or MAC frame publication occurs here.
 use super::SuSignal;
-use crate::radio::{
-    sync::{fft64, Acquisition},
-    ComplexSample,
-};
+use crate::radio::{signaling::corrected_bins, sync::Acquisition, ComplexSample};
 
 pub(in crate::radio) struct Prefix {
     pub er: bool,
@@ -21,40 +18,7 @@ pub(in crate::radio) fn decode_prefix(
 }
 
 fn bins(samples: &[ComplexSample], start: u64, a: &Acquisition) -> Option<[ComplexSample; 64]> {
-    bins_polarity(samples, start, a, 1.)
-}
-
-pub(in crate::radio) fn bins_polarity(
-    samples: &[ComplexSample],
-    start: u64,
-    a: &Acquisition,
-    polarity: f32,
-) -> Option<[ComplexSample; 64]> {
-    if samples.len() != 80 {
-        return None;
-    }
-    let mut time = [ComplexSample::ZERO; 64];
-    for (n, value) in time.iter_mut().enumerate() {
-        let elapsed = start
-            .checked_add(16 + n as u64)?
-            .checked_sub(a.phase_origin)?;
-        *value = samples[16 + n].mul(ComplexSample::rotation(-a.frequency_rad * elapsed as f32));
-    }
-    let bins = fft64(time);
-    let mut pilot = ComplexSample::ZERO;
-    // p0..p3 are +1. HE signaling pilots remain on the real axis.
-    for (k, sign) in [(43, 1.), (57, 1.), (7, 1.), (21, -1.)] {
-        pilot = pilot.add(bins[k].mul(a.channel[k].conj()).scale(sign * polarity));
-    }
-    if !pilot.power().is_finite() || pilot.power() < 1e-12 {
-        return None;
-    }
-    let rotation = ComplexSample::rotation(-pilot.phase());
-    let corrected = bins.map(|v| v.mul(rotation));
-    corrected
-        .iter()
-        .all(|v| v.power().is_finite())
-        .then_some(corrected)
+    corrected_bins(samples, start, a, 1.)
 }
 
 /// Input starts at L-SIG, after ordinary legacy-preamble acquisition.
@@ -124,7 +88,7 @@ pub(in crate::radio) fn decode_er_prefix(
     for symbol in 0..4 {
         let offset = 160 + symbol * 80;
         // p2/p3=+1, p4/p5=-1. Rotation applies to DATA tones, never pilots.
-        let observed = bins_polarity(
+        let observed = corrected_bins(
             &input[offset..offset + 80],
             a.signal_start.checked_add(offset as u64)?,
             a,

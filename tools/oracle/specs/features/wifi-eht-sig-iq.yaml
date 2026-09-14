@@ -1,0 +1,24 @@
+version: 1
+kind: feature
+name: wifi_eht_sig_iq
+summary: Non-OFDMA single-user EHT-SIG recovery from 20 Msps IQ.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: signaling-modulation
+    source: IEEE 802.11 TGbe 11-21/0140r2 and 11-21/1386r1 36.3.11.8.6
+    checks: [mcs0, mcs1, mcs3, mcs15_dcm, rate_half_bcc, he_signal_interleaver, fifty_two_data_tones, pilot_polarity]
+  - name: first-block-iq
+    source: IEEE 802.11 TGbe 11-21/0140r2 36.3.11.8.4-6
+    checks: [twenty_mhz, single_user_context, symbol_count, channel_equalization, crc, tail, exact_sample_coordinates, impairments, rejection_controls]
+coverage_cases: [wifi-eht-sig-iq]
+supported_cases:
+  - {name: wifi-eht-sig-iq, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - The receiver recovers the first EHT-SIG encoding block for a 20 MHz non-OFDMA single-user PPDU.
+      - OFDMA, MU-MIMO, EHT training, EHT DATA, streaming dispatch and live qualification remain separate work.

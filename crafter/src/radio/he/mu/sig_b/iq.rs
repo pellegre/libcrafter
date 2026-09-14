@@ -1,14 +1,11 @@
 //! HE20 SIG-B IQ, IEEE802.11ax-2021 27.3.11.8. No MU DATA admission.
 use super::{
     coded::{Blocks, Error as BlockError},
-    modulation::Modulation,
     HeSigBCommon20Fields, HeSigBUserContext, HeSigBUserFields,
 };
 use crate::radio::{
-    he::{
-        iq::{bins_polarity, decode_mu_prefix},
-        mu::MuSignal,
-    },
+    he::{iq::decode_mu_prefix, mu::MuSignal},
+    signaling::{corrected_bins, Modulation},
     sync::Acquisition,
     ComplexSample,
 };
@@ -182,9 +179,9 @@ fn demodulate(
     if input.iter().any(|v| !v.power().is_finite()) {
         return Err(Error::Samples);
     }
-    let lsig = bins_polarity(&input[..80], a.signal_start, a, 1.).ok_or(Error::Samples)?;
+    let lsig = corrected_bins(&input[..80], a.signal_start, a, 1.).ok_or(Error::Samples)?;
     let repeated =
-        bins_polarity(&input[80..160], a.signal_start + 80, a, 1.).ok_or(Error::Samples)?;
+        corrected_bins(&input[80..160], a.signal_start + 80, a, 1.).ok_or(Error::Samples)?;
     let mut channel = a.channel;
     // L-SIG and RL-SIG provide the four tones outside ordinary L-LTF coverage.
     for (k, sign) in [(36, -1.), (37, -1.), (27, -1.), (28, 1.)] {
@@ -201,7 +198,7 @@ fn demodulate(
     for symbol in 0..symbols {
         let offset = 320 + symbol * 80;
         let polarity = 1. - 2. * f32::from(crate::radio::data::feedback(&mut state));
-        if let Some(bins) = bins_polarity(
+        if let Some(bins) = corrected_bins(
             &input[offset..offset + 80],
             a.signal_start + offset as u64,
             a,
