@@ -38,7 +38,7 @@ fn case(row: &str) -> (Capacity, usize, Vec<f32>, Vec<u8>) {
 
 #[test]
 fn radio_eht_data_bcc_independent_payloads() {
-    let rows = include_str!("../../../../../../tests/fixtures/iq/eht-data-bcc-index.tsv");
+    let rows = include_str!("../../../../../tests/fixtures/iq/eht-data-bcc-index.tsv");
     assert_eq!(rows.lines().skip(1).count(), 88);
     for row in rows.lines().skip(1) {
         let (capacity, symbols, metrics, expected) = case(row);
@@ -57,7 +57,7 @@ fn radio_eht_data_bcc_independent_payloads() {
 
 #[test]
 fn radio_eht_data_bcc_rejects_coding_metrics_and_service() {
-    let row = include_str!("../../../../../../tests/fixtures/iq/eht-data-bcc-index.tsv")
+    let row = include_str!("../../../../../tests/fixtures/iq/eht-data-bcc-index.tsv")
         .lines()
         .nth(1)
         .unwrap();

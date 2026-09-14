@@ -44,6 +44,37 @@ enum EhtStage {
     Data(Box<eht::data::Admission>),
 }
 
+fn append_ldpc_diagnostics(
+    failed_codewords: usize,
+    first_failure: Option<ldpc::rate::Error>,
+    diagnostics: &mut Vec<PhyDiagnostic>,
+    out: &mut DecodeOutput,
+) {
+    if failed_codewords == 0 {
+        return;
+    }
+    let partial = PhyDiagnostic::LdpcPartial { failed_codewords };
+    out.diagnostics.push(partial.clone());
+    diagnostics.push(partial);
+    if let Some(ldpc::rate::Error::Codeword {
+        index,
+        error:
+            ldpc::Error::Nonconvergence {
+                iterations,
+                failed_checks,
+            },
+    }) = first_failure
+    {
+        let nonconvergence = PhyDiagnostic::LdpcNonconvergence {
+            codeword: index,
+            iterations,
+            failed_checks,
+        };
+        out.diagnostics.push(nonconvergence.clone());
+        diagnostics.push(nonconvergence);
+    }
+}
+
 impl Pending {
     fn trigger_carrier(&self) -> Option<he::tb::context::Carrier> {
         if self
@@ -405,55 +436,101 @@ impl LegacyOfdmDecoder {
                 return Ok(());
             }
         };
-        let eht::SignalFields::NonOfdma(fields) = &recovered.admission.trained.signal.signal else {
-            unreachable!("EHT DATA admission excludes OFDMA")
-        };
-        let mut diagnostics = vec![
-            PhyDiagnostic::Ofdm {
-                frequency_offset_hz: p.acquisition.frequency_rad * 20_000_000.
-                    / std::f32::consts::TAU,
-                training_correlation: p.acquisition.correlation,
-            },
-            PhyDiagnostic::EhtSignal {
-                fields: fields.clone(),
-                preamble_sample_index: p.start.sample_index,
-            },
-        ];
-        if recovered.failed_codewords != 0 {
-            let diagnostic = PhyDiagnostic::LdpcPartial {
-                failed_codewords: recovered.failed_codewords,
-            };
-            out.diagnostics.push(diagnostic.clone());
-            diagnostics.push(diagnostic);
-            if let Some(ldpc::rate::Error::Codeword {
-                index,
-                error:
-                    ldpc::Error::Nonconvergence {
-                        iterations,
-                        failed_checks,
-                    },
-            }) = recovered.first_failure
-            {
-                let diagnostic = PhyDiagnostic::LdpcNonconvergence {
-                    codeword: index,
-                    iterations,
-                    failed_checks,
+        match recovered {
+            eht::data::Recovered::NonOfdma(recovered) => {
+                let eht::SignalFields::NonOfdma(fields) =
+                    &recovered.admission.trained.signal.signal
+                else {
+                    unreachable!("non-OFDMA admission retains non-OFDMA signaling")
                 };
-                out.diagnostics.push(diagnostic.clone());
-                diagnostics.push(diagnostic);
+                let mut diagnostics = vec![
+                    PhyDiagnostic::Ofdm {
+                        frequency_offset_hz: p.acquisition.frequency_rad * 20_000_000.
+                            / std::f32::consts::TAU,
+                        training_correlation: p.acquisition.correlation,
+                    },
+                    PhyDiagnostic::EhtSignal {
+                        fields: fields.clone(),
+                        preamble_sample_index: p.start.sample_index,
+                    },
+                ];
+                append_ldpc_diagnostics(
+                    recovered.failed_codewords,
+                    recovered.first_failure,
+                    &mut diagnostics,
+                    out,
+                );
+                let frame = RecoveredFrame {
+                    bytes: recovered.psdu,
+                    link_type: LinkType::Ieee80211,
+                    integrity: FrameIntegrity::ValidFcs,
+                    config: config.clone(),
+                    start: p.start,
+                    end_sample_index: recovered.admission.info.end_sample_index,
+                    rate_bps: recovered.admission.info.rate_bps,
+                    diagnostics,
+                };
+                self.publish_psdu(frame, Some(Aggregation::Eht), None, out)
+            }
+            eht::data::Recovered::Ofdma(recovered) => {
+                let eht::SignalFields::Ofdma(fields) = &recovered.admission.trained.signal.signal
+                else {
+                    unreachable!("OFDMA admission retains OFDMA signaling")
+                };
+                for user in recovered.users {
+                    let payload = match user {
+                        Ok(payload) => payload,
+                        Err(error) => {
+                            self.stats.rejected_frames =
+                                self.stats.rejected_frames.saturating_add(1);
+                            out.diagnostics.push(match error {
+                                eht::data::Error::UnsupportedFormat
+                                | eht::data::Error::Modulation(_)
+                                | eht::data::Error::Coding
+                                | eht::data::Error::FrameLimit
+                                | eht::data::Error::SampleLimit => PhyDiagnostic::UnsupportedPhy,
+                                _ => PhyDiagnostic::InvalidHeader,
+                            });
+                            continue;
+                        }
+                    };
+                    let mut diagnostics = vec![
+                        PhyDiagnostic::Ofdm {
+                            frequency_offset_hz: p.acquisition.frequency_rad * 20_000_000.
+                                / std::f32::consts::TAU,
+                            training_correlation: p.acquisition.correlation,
+                        },
+                        PhyDiagnostic::EhtOfdmaSignal {
+                            fields: fields.clone(),
+                            preamble_sample_index: p.start.sample_index,
+                        },
+                        PhyDiagnostic::EhtOfdmaUser {
+                            user_index: payload.user_index,
+                            resource: payload.resource,
+                            preamble_sample_index: p.start.sample_index,
+                        },
+                    ];
+                    append_ldpc_diagnostics(
+                        payload.failed_codewords,
+                        payload.first_failure,
+                        &mut diagnostics,
+                        out,
+                    );
+                    let frame = RecoveredFrame {
+                        bytes: payload.psdu,
+                        link_type: LinkType::Ieee80211,
+                        integrity: FrameIntegrity::ValidFcs,
+                        config: config.clone(),
+                        start: p.start.clone(),
+                        end_sample_index: payload.info.end_sample_index,
+                        rate_bps: payload.info.rate_bps,
+                        diagnostics,
+                    };
+                    self.publish_psdu(frame, Some(Aggregation::Eht), None, out)?;
+                }
+                Ok(())
             }
         }
-        let frame = RecoveredFrame {
-            bytes: recovered.psdu,
-            link_type: LinkType::Ieee80211,
-            integrity: FrameIntegrity::ValidFcs,
-            config: config.clone(),
-            start: p.start.clone(),
-            end_sample_index: recovered.admission.info.end_sample_index,
-            rate_bps: recovered.admission.info.rate_bps,
-            diagnostics,
-        };
-        self.publish_psdu(frame, Some(Aggregation::Eht), None, out)
     }
 
     fn publish_tb(
@@ -845,12 +922,12 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                 match eht::data::Receiver::admit(trained, usize::MAX, budget) {
                                     Ok(admission)
                                         if p.reserve_samples(
-                                            admission.required_samples,
+                                            admission.required_samples(),
                                             config,
                                             reserved,
                                         ) =>
                                     {
-                                        p.info = Some(admission.info);
+                                        p.info = Some(admission.info());
                                         p.eht = Some(EhtStage::Data(Box::new(admission)));
                                         continue;
                                     }
@@ -873,12 +950,12 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     continue;
                 }
                 if let Some(EhtStage::Data(admission)) = p.eht.as_ref() {
-                    if p.samples.len() == admission.required_samples {
+                    if p.samples.len() == admission.required_samples() {
                         let mut p = self.pending[slot].take().unwrap();
                         let Some(EhtStage::Data(admission)) = p.eht.take() else {
                             unreachable!()
                         };
-                        debug_assert_eq!(p.info, Some(admission.info));
+                        debug_assert_eq!(p.info, Some(admission.info()));
                         if let Err(error) = self.publish_eht(p, *admission, config, &mut out) {
                             self.reset(ResetReason::Explicit);
                             return Err(error);

@@ -1,9 +1,16 @@
 //! EHT20 DATA timing, payload geometry, and IQ recovery.
 
+mod bcc;
+mod capacity;
 mod non_ofdma;
+mod ofdma;
+mod receiver;
 mod scrambler;
+mod timing;
 
-pub(in crate::radio) use non_ofdma::{Admission, Capacity, Receiver};
+pub(in crate::radio) use capacity::Capacity;
+pub(in crate::radio) use receiver::{Admission, Receiver, Recovered};
+pub(super) use timing::Timing;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::radio) enum Error {
@@ -22,4 +29,5 @@ pub(in crate::radio) enum Error {
     Service,
     Truncated { required: usize, available: usize },
     Samples,
+    User,
 }

@@ -293,6 +293,12 @@ pub enum PhyDiagnostic {
         fields: EhtOfdmaSignal,
         preamble_sample_index: u64,
     },
+    /// One independently recovered EHT OFDMA User field and its allocation.
+    EhtOfdmaUser {
+        user_index: usize,
+        resource: EhtResourceUnit,
+        preamble_sample_index: u64,
+    },
     /// Trigger parameters used for this RU. Matching is not BSS authentication.
     HeTbUser {
         common: crate::Dot11TriggerCommonFields,
@@ -450,6 +456,18 @@ impl PartialEq for PhyDiagnostic {
                     preamble_sample_index: d,
                 },
             ) => a == c && b == d,
+            (
+                Self::EhtOfdmaUser {
+                    user_index: a,
+                    resource: b,
+                    preamble_sample_index: c,
+                },
+                Self::EhtOfdmaUser {
+                    user_index: d,
+                    resource: e,
+                    preamble_sample_index: f,
+                },
+            ) => a == d && b == e && c == f,
             (
                 Self::HeTbUser {
                     common: a,

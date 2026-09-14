@@ -19,16 +19,24 @@ impl Timing {
         if fields.legacy_length > 4095 || fields.legacy_length % 3 != 0 {
             return Err(Error::Length);
         }
-        let SignalFields::NonOfdma(signal) = &fields.signal else {
-            return Err(Error::UnsupportedFormat);
+        let (ltf_mode, ltf_symbols, pe_disambiguity) = match &fields.signal {
+            SignalFields::NonOfdma(signal) => (
+                signal.common.ltf_mode,
+                signal.common.ltf_symbols,
+                signal.common.pe_disambiguity,
+            ),
+            SignalFields::Ofdma(signal) => (
+                signal.common.ltf_mode,
+                signal.common.ltf_symbols,
+                signal.common.pe_disambiguity,
+            ),
         };
-        let common = signal.common;
-        let guard = usize::from(common.ltf_mode.guard_interval_ns()) / 50;
+        let guard = usize::from(ltf_mode.guard_interval_ns()) / 50;
         let symbol_samples = 256usize.checked_add(guard).ok_or(Error::Overflow)?;
-        let training_samples = usize::from(common.ltf_symbols)
+        let training_samples = usize::from(ltf_symbols)
             .checked_mul(
                 64usize
-                    .checked_mul(usize::from(common.ltf_mode.size()))
+                    .checked_mul(usize::from(ltf_mode.size()))
                     .and_then(|useful| useful.checked_add(guard))
                     .ok_or(Error::Overflow)?,
             )
@@ -45,7 +53,7 @@ impl Timing {
             .and_then(|value| value.checked_add(training_samples))
             .ok_or(Error::Overflow)?;
         let available = rounded.checked_sub(fixed).ok_or(Error::Duration)?;
-        let disambiguity = usize::from(common.pe_disambiguity);
+        let disambiguity = usize::from(pe_disambiguity);
         let data_symbols = (available / symbol_samples)
             .checked_sub(disambiguity)
             .filter(|symbols| *symbols > 0)

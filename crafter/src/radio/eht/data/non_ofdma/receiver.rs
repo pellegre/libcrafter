@@ -140,7 +140,7 @@ impl Receiver {
             )
         } else {
             (
-                super::bcc::recover(
+                crate::radio::eht::data::bcc::recover(
                     admission.capacity,
                     admission.timing.data_symbols,
                     &metrics,

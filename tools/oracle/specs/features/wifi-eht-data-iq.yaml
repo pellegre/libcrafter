@@ -21,4 +21,4 @@ backend_support:
     status: partial
     notes:
       - One-stream non-OFDMA BCC and LDPC recovery is implemented for complete 20 MHz captures. MCS 13 has bit-level coverage but is not claimed robust from eight-bit IQ.
-      - OFDMA RU/MRU DATA and overlapping MU-MIMO spatial separation remain separate work.
+      - OFDMA DATA is tracked by the separate wifi_eht_ofdma_data_iq contract.

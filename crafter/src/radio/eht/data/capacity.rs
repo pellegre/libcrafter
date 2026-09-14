@@ -1,5 +1,8 @@
 use super::Error;
-use crate::radio::eht::{sig::iq::SignalFields, EhtNonOfdmaUsers};
+use crate::radio::eht::{
+    sig::iq::SignalFields, EhtNonMuUser, EhtNonOfdmaUsers, EhtOfdmaCommon, EhtResourceUnit,
+    EhtRuSize,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Modulation {
@@ -38,6 +41,46 @@ impl Modulation {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Geometry {
+    data_tones: usize,
+    short_tones: usize,
+}
+
+impl Geometry {
+    fn full_band(dcm: bool) -> Self {
+        Self {
+            data_tones: if dcm { 117 } else { 234 },
+            short_tones: if dcm { 30 } else { 60 },
+        }
+    }
+
+    fn for_resource(resource: EhtResourceUnit, dcm: bool) -> Result<Self, Error> {
+        let mut result = Self {
+            data_tones: 0,
+            short_tones: 0,
+        };
+        for component in resource.components() {
+            let (data, short) = match (component.size(), dcm) {
+                (EhtRuSize::Ru26, false) => (24, 6),
+                (EhtRuSize::Ru26, true) => (12, 2),
+                (EhtRuSize::Ru52, false) => (48, 12),
+                (EhtRuSize::Ru52, true) => (24, 6),
+                (EhtRuSize::Ru106, false) => (102, 24),
+                (EhtRuSize::Ru106, true) => (51, 12),
+                (EhtRuSize::Ru242, false) => (234, 60),
+                (EhtRuSize::Ru242, true) => (117, 30),
+            };
+            result.data_tones = result.data_tones.checked_add(data).ok_or(Error::Overflow)?;
+            result.short_tones = result
+                .short_tones
+                .checked_add(short)
+                .ok_or(Error::Overflow)?;
+        }
+        Ok(result)
+    }
+}
+
 /// One-stream EHT20 payload and post-FEC padding geometry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::radio) struct Capacity {
@@ -60,6 +103,7 @@ pub(in crate::radio) struct Capacity {
 }
 
 impl Capacity {
+    /// Construct the one-user non-OFDMA DATA geometry.
     pub fn new(fields: &crate::radio::eht::sig::iq::Fields, symbols: usize) -> Result<Self, Error> {
         let SignalFields::NonOfdma(signal) = &fields.signal else {
             return Err(Error::UnsupportedFormat);
@@ -71,23 +115,68 @@ impl Capacity {
             return Err(Error::UnsupportedFormat);
         }
         let modulation = Modulation::new(user.mcs)?;
+        Self::for_user(
+            user,
+            modulation,
+            Geometry::full_band(modulation.dcm),
+            signal.common.pre_fec_padding_factor,
+            signal.common.ldpc_extra_symbol,
+            symbols,
+        )
+    }
+
+    /// Construct one independently decodable OFDMA user's RU or MRU geometry.
+    /// Header integrity, allocation ownership and channel training remain the
+    /// receiver's responsibility.
+    pub fn for_ofdma(
+        common: &EhtOfdmaCommon,
+        user: &EhtNonMuUser,
+        resource: EhtResourceUnit,
+        symbols: usize,
+    ) -> Result<Self, Error> {
+        if resource.user_count() != 1 || user.space_time_streams != 1 {
+            return Err(Error::UnsupportedFormat);
+        }
+        let modulation = Modulation::new(user.mcs)?;
+        Self::for_user(
+            user,
+            modulation,
+            Geometry::for_resource(resource, modulation.dcm)?,
+            common.pre_fec_padding_factor,
+            common.ldpc_extra_symbol,
+            symbols,
+        )
+    }
+
+    fn for_user(
+        user: &EhtNonMuUser,
+        modulation: Modulation,
+        geometry: Geometry,
+        pre_fec_padding_factor: u8,
+        ldpc_extra_symbol: bool,
+        symbols: usize,
+    ) -> Result<Self, Error> {
         if !user.ldpc && user.mcs > 9 && user.mcs != 15 {
             return Err(Error::Coding);
         }
         if symbols == 0 {
             return Err(Error::Duration);
         }
-        let padding = usize::from(signal.common.pre_fec_padding_factor);
+        let padding = usize::from(pre_fec_padding_factor);
         if !(1..=4).contains(&padding) {
             return Err(Error::Padding);
         }
-        let data_tones = if modulation.dcm { 117 } else { 234 };
-        let short_tones = if modulation.dcm { 30 } else { 60 };
-        let coded_per_symbol = data_tones * modulation.bits_per_tone;
-        let coded_short = short_tones * modulation.bits_per_tone;
+        let coded_per_symbol = geometry
+            .data_tones
+            .checked_mul(modulation.bits_per_tone)
+            .ok_or(Error::Overflow)?;
+        let coded_short = geometry
+            .short_tones
+            .checked_mul(modulation.bits_per_tone)
+            .ok_or(Error::Overflow)?;
         let data_per_symbol = coded_per_symbol * modulation.rate_num / modulation.rate_den;
         let data_short = coded_short * modulation.rate_num / modulation.rate_den;
-        let extra = user.ldpc && signal.common.ldpc_extra_symbol;
+        let extra = user.ldpc && ldpc_extra_symbol;
         let (payload_symbols, payload_padding) = if extra {
             if padding == 1 {
                 (symbols.checked_sub(1).ok_or(Error::Duration)?, 4)
@@ -136,7 +225,7 @@ impl Capacity {
             psdu_bytes: payload_bits / 8,
             phy_pad_bits: payload_bits % 8,
             tail_bits,
-            bcc_dcm_filler: !user.ldpc && user.mcs == 15,
+            bcc_dcm_filler: !user.ldpc && user.mcs == 15 && coded_per_symbol % 2 != 0,
         })
     }
 }

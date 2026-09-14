@@ -28,7 +28,7 @@ fn config() -> RxConfig {
         max_chunk_samples: 10000,
         max_buffer_samples: 120000,
         max_frame_bytes: 4095,
-        max_pending_frames: 4,
+        max_pending_frames: 16,
         max_capture_samples: 1000000,
         max_duration: Duration::from_secs(1),
     }

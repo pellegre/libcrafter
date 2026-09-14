@@ -1,10 +1,8 @@
-//! Single-user EHT20 non-OFDMA DATA recovery.
+//! EHT20 downlink OFDMA DATA recovery by independently decodable resource.
 
 mod iq;
-mod ldpc;
 mod receiver;
 #[cfg(test)]
 mod tests;
 
-use super::{Capacity, Error, Timing};
 pub(in crate::radio) use receiver::{Admission, Receiver, Recovered};
