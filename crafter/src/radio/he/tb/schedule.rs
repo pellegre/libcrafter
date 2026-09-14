@@ -112,21 +112,47 @@ impl Schedule {
         // Count every allocation, including unsupported spatial entries and
         // explicitly unallocated RUs. Never admit just the first spatial user
         // of a shared RU, or silently discard evidence of an overlap.
-        for i in 0..result.len {
-            for j in 0..i {
-                let a = result.allocations[i].unwrap();
-                let b = result.allocations[j].unwrap();
-                if a.tones.active().any(|k| b.tones.contains(k)) {
-                    result.allocations[i].as_mut().unwrap().eligible = false;
-                    result.allocations[j].as_mut().unwrap().eligible = false;
-                }
-            }
-        }
+        result.invalidate_overlaps();
         Ok(result)
     }
 
     pub fn allocations(&self) -> impl Iterator<Item = &Allocation> {
         self.allocations[..self.len].iter().flatten()
+    }
+
+    pub fn merge(&mut self, other: &Self) -> Result<(), Error> {
+        if self.same_allocations(other) {
+            return Ok(());
+        }
+        if self.len.checked_add(other.len).ok_or(Error::Limit)? > MAX_ALLOCATIONS {
+            return Err(Error::Limit);
+        }
+        for allocation in other.allocations() {
+            self.allocations[self.len] = Some(*allocation);
+            self.len += 1;
+        }
+        self.invalidate_overlaps();
+        Ok(())
+    }
+
+    fn same_allocations(&self, other: &Self) -> bool {
+        self.len == other.len
+            && self.allocations().zip(other.allocations()).all(|(a, b)| {
+                a.user_index == b.user_index && a.fields == b.fields && a.eligible == b.eligible
+            })
+    }
+
+    fn invalidate_overlaps(&mut self) {
+        for i in 0..self.len {
+            for j in 0..i {
+                let a = self.allocations[i].unwrap();
+                let b = self.allocations[j].unwrap();
+                if a.tones.active().any(|k| b.tones.contains(k)) {
+                    self.allocations[i].as_mut().unwrap().eligible = false;
+                    self.allocations[j].as_mut().unwrap().eligible = false;
+                }
+            }
+        }
     }
 }
 
@@ -254,6 +280,48 @@ mod tests {
         assert!(matches!(
             Schedule::from_trs(control.with_ru_allocation(u8::MAX), false),
             Err(Error::Ru)
+        ));
+    }
+
+    #[test]
+    fn radio_he_tb_schedule_combines_distinct_carrier_aggregates() {
+        let mut combined = Schedule::from_trigger(&trigger(&[(1, 0, 0)])).unwrap();
+        let duplicate = combined.clone();
+        combined.merge(&duplicate).unwrap();
+        assert_eq!(combined.allocations().count(), 1);
+
+        combined
+            .merge(&Schedule::from_trigger(&trigger(&[(2, 2, 0)])).unwrap())
+            .unwrap();
+        assert_eq!(
+            combined
+                .allocations()
+                .map(|allocation| (allocation.fields.aid12, allocation.eligible))
+                .collect::<Vec<_>>(),
+            vec![(1, true), (2, true)]
+        );
+
+        combined
+            .merge(&Schedule::from_trigger(&trigger(&[(3, 0, 0)])).unwrap())
+            .unwrap();
+        assert_eq!(
+            combined
+                .allocations()
+                .map(|allocation| (allocation.fields.aid12, allocation.eligible))
+                .collect::<Vec<_>>(),
+            vec![(1, false), (2, true), (3, false)]
+        );
+
+        let first: Vec<_> = (0..9)
+            .map(|index| (index + 1, 2 * index as u8, 0))
+            .collect();
+        let second: Vec<_> = (0..9)
+            .map(|index| (index + 10, 2 * index as u8, 0))
+            .collect();
+        let mut bounded = Schedule::from_trigger(&trigger(&first)).unwrap();
+        assert!(matches!(
+            bounded.merge(&Schedule::from_trigger(&trigger(&second)).unwrap()),
+            Err(Error::Limit)
         ));
     }
 

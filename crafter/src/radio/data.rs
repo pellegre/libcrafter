@@ -559,7 +559,7 @@ impl LegacyOfdmDecoder {
             // passes; partial LDPC estimates never bypass this scanner.
             let trigger_carrier = match user.encoding {
                 HeSigBUserEncoding::NonMu { dcm, .. } if !decoded.fields.signal.stbc => {
-                    he::tb::context::Carrier::he(
+                    he::tb::context::Carrier::he_mu(
                         p.acquisition.preamble_start + decoded.timing.packet_end as u64,
                         decoded.fields.signal.bss_color,
                         dcm,
@@ -903,9 +903,22 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             .saturating_sub(reserved)
                             .saturating_add(p.samples.capacity());
                         let legacy_length = he::iq::repeated_su_signal(&p.samples, &p.acquisition);
-                        let candidate = self.triggers.iter().rev().find_map(|context| {
-                            let context =
-                                context.resolve(p.start.sample_index, &fields, legacy_length?)?;
+                        let candidate = legacy_length.and_then(|legacy_length| {
+                            let mut contexts =
+                                self.triggers.iter().rev().filter(|context| {
+                                    context.matches(p.start.sample_index, &fields)
+                                });
+                            let first = contexts.next()?;
+                            let mut context =
+                                first.resolve(p.start.sample_index, &fields, legacy_length)?;
+                            for other in contexts {
+                                if !first.same_carrier(other) {
+                                    break;
+                                }
+                                let other =
+                                    other.resolve(p.start.sample_index, &fields, legacy_length)?;
+                                context.merge(&other).ok()?;
+                            }
                             let admitted = context
                                 .schedule
                                 .allocations()
@@ -3484,6 +3497,82 @@ mod tests {
                                 && common.gi_ltf == if c[7] == "2" { 1 } else { 2 }
                     )));
                 } else {
+                    assert!(output
+                        .diagnostics
+                        .iter()
+                        .any(|diagnostic| matches!(diagnostic, PhyDiagnostic::HeTbSignal { .. })));
+                    assert!(!output.frames.iter().any(|frame| frame
+                        .diagnostics
+                        .iter()
+                        .any(|diagnostic| matches!(diagnostic, PhyDiagnostic::HeTbUser { .. }))));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn radio_he_tb_combines_mu_carrier_aggregates() {
+        let rows = include_str!("../../tests/fixtures/iq/he-tb-mu-carrier-exchange-index.tsv");
+        assert_eq!(rows.lines().skip(1).count(), 5);
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
+        for row in rows.lines().skip(1) {
+            let c: Vec<_> = row.split('\t').collect();
+            let unhex = |s: &str| {
+                s.as_bytes()
+                    .chunks_exact(2)
+                    .map(|b| u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap())
+                    .collect::<Vec<_>>()
+            };
+            let mut carriers: Vec<_> = c[4].split(',').map(unhex).collect();
+            carriers.sort();
+            let mut responses: Vec<_> = c[5]
+                .split(',')
+                .filter(|value| *value != "-")
+                .map(unhex)
+                .collect();
+            responses.sort();
+            let iq = std::fs::read(root.join(format!("{}.cs8", c[0]))).unwrap();
+            for chunk in [7, 128, 4096] {
+                let mut cfg = config();
+                cfg.max_pending_frames = 16;
+                let output = feed_config(&mut WifiDecoder::new(), &iq, chunk, cfg).unwrap();
+                let mut actual_carriers = output.frames[..carriers.len()]
+                    .iter()
+                    .map(|frame| frame.bytes.clone())
+                    .collect::<Vec<_>>();
+                actual_carriers.sort();
+                assert_eq!(actual_carriers, carriers, "{} carrier chunk{chunk}", c[0]);
+                let mut actual_responses = output.frames[carriers.len()..]
+                    .iter()
+                    .map(|frame| frame.bytes.clone())
+                    .collect::<Vec<_>>();
+                actual_responses.sort();
+                assert_eq!(actual_responses, responses, "{} chunk{chunk}", c[0]);
+                let mut carrier_users = output.frames[..carriers.len()]
+                    .iter()
+                    .filter_map(|carrier| {
+                        carrier
+                            .diagnostics
+                            .iter()
+                            .find_map(|diagnostic| match diagnostic {
+                                PhyDiagnostic::HeMuUser {
+                                    user_index,
+                                    preamble_sample_index: 64,
+                                } => Some(*user_index),
+                                _ => None,
+                            })
+                    })
+                    .collect::<Vec<_>>();
+                carrier_users.sort();
+                assert_eq!(carrier_users, vec![0, 1, 2]);
+                for response in &output.frames[carriers.len()..] {
+                    assert_eq!(response.start.sample_index, c[3].parse::<u64>().unwrap());
+                    assert!(response
+                        .diagnostics
+                        .iter()
+                        .any(|diagnostic| matches!(diagnostic, PhyDiagnostic::HeTbUser { .. })));
+                }
+                if c[1] == "incompatible" {
                     assert!(output
                         .diagnostics
                         .iter()

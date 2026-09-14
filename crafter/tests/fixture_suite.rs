@@ -8661,6 +8661,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "he-mu-prefix-invalid-index.tsv"
                 | "he-tb-prefix-index.tsv"
                 | "he-tb-prefix-invalid-index.tsv"
+                | "he-tb-mu-carrier-exchange-index.tsv"
                 | "he-tb-trs-exchange-index.tsv"
                 | "he-er-prefix-index.tsv"
                 | "he-er-prefix-invalid-index.tsv"
@@ -8750,6 +8751,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 include_str!("fixtures/iq/he-tb-vht-exchange-index.tsv"),
                 include_str!("fixtures/iq/he-tb-he-exchange-index.tsv"),
                 include_str!("fixtures/iq/he-tb-multi-exchange-index.tsv"),
+                include_str!("fixtures/iq/he-tb-mu-carrier-exchange-index.tsv"),
                 include_str!("fixtures/iq/he-tb-trs-exchange-index.tsv"),
                 include_str!("fixtures/iq/ht-bcc-index.tsv"),
                 include_str!("fixtures/iq/he-dcm-iq-index.tsv"),

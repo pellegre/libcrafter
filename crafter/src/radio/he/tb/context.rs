@@ -1,5 +1,5 @@
 //! Bounded candidate context, not authenticated BSS or exact SIFS association.
-use super::schedule::Schedule;
+use super::schedule::{self, Schedule};
 use crate::radio::RecoveredFrame;
 use crate::{Dot11, Dot11Trigger, Dot11TriggerCommonFields, Dot11TrsControl, LinkType, Packet};
 
@@ -8,6 +8,7 @@ pub(in crate::radio) struct Carrier {
     packet_end: u64,
     color: Option<u8>,
     he_response: Option<HeResponse>,
+    combines_aggregates: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -16,16 +17,45 @@ struct HeResponse {
     gi_ltf: u8,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::radio) enum MergeError {
+    Carrier,
+    Common,
+    Schedule(schedule::Error),
+}
+
 impl Carrier {
     pub fn legacy(packet_end: u64) -> Self {
         Self {
             packet_end,
             color: None,
             he_response: None,
+            combines_aggregates: false,
         }
     }
 
     pub fn he(packet_end: u64, color: u8, dcm: bool, ltf_size: u8, guard_ns: u16) -> Option<Self> {
+        Self::he_with_scope(packet_end, color, dcm, ltf_size, guard_ns, false)
+    }
+
+    pub fn he_mu(
+        packet_end: u64,
+        color: u8,
+        dcm: bool,
+        ltf_size: u8,
+        guard_ns: u16,
+    ) -> Option<Self> {
+        Self::he_with_scope(packet_end, color, dcm, ltf_size, guard_ns, true)
+    }
+
+    fn he_with_scope(
+        packet_end: u64,
+        color: u8,
+        dcm: bool,
+        ltf_size: u8,
+        guard_ns: u16,
+        combines_aggregates: bool,
+    ) -> Option<Self> {
         let gi_ltf = match (ltf_size, guard_ns) {
             (4, 3200) | (2, 1600) => 2,
             (1 | 2 | 4, 800) => 1,
@@ -35,6 +65,7 @@ impl Carrier {
             packet_end,
             color: Some(color),
             he_response: Some(HeResponse { dcm, gi_ltf }),
+            combines_aggregates,
         })
     }
 
@@ -52,6 +83,7 @@ pub(in crate::radio) struct Context {
     expires: u64,
     color: Option<u8>,
     trs: Option<Dot11TrsControl>,
+    combines_aggregates: bool,
 }
 
 impl Context {
@@ -130,6 +162,7 @@ impl Context {
             expires,
             color: carrier.color,
             trs,
+            combines_aggregates: carrier.combines_aggregates,
         })
     }
 
@@ -172,6 +205,33 @@ impl Context {
             && start < self.expires
             && self.color.map_or(true, |color| color == signal.bss_color)
     }
+
+    pub fn same_carrier(&self, other: &Self) -> bool {
+        self.combines_aggregates
+            && other.combines_aggregates
+            && self.trigger_start == other.trigger_start
+            && self.packet_end == other.packet_end
+            && self.color == other.color
+    }
+
+    pub fn merge(&mut self, other: &Self) -> Result<(), MergeError> {
+        if !self.same_carrier(other) {
+            return Err(MergeError::Carrier);
+        }
+        let normalize = |mut common: Dot11TriggerCommonFields| {
+            common.trigger_type = 0;
+            common.more_tf = false;
+            common.cs_required = false;
+            common
+        };
+        if normalize(self.common) != normalize(other.common) {
+            return Err(MergeError::Common);
+        }
+        self.schedule
+            .merge(&other.schedule)
+            .map_err(MergeError::Schedule)
+    }
+
     pub fn expired(&self, at: u64) -> bool {
         at >= self.expires
     }
@@ -213,6 +273,7 @@ mod tests {
                         expires: 1000,
                         color: Some(37),
                         trs: Some(trs),
+                        combines_aggregates: false,
                     };
                     let resolved = context.resolve(101, &signal, length).unwrap_or_else(|| {
                         panic!(
@@ -246,6 +307,7 @@ mod tests {
             expires: 1000,
             color: Some(37),
             trs: Some(trs),
+            combines_aggregates: false,
         };
         let mut signal = crate::radio::he::tb::TbSignal {
             bss_color: 38,
@@ -258,5 +320,14 @@ mod tests {
         signal.bss_color = 37;
         assert!(context.resolve(100, &signal, 301).is_none());
         assert!(context.resolve(1000, &signal, 301).is_none());
+
+        let mut first = context.clone();
+        let mut second = context.clone();
+        assert!(!first.same_carrier(&second));
+        first.combines_aggregates = true;
+        second.combines_aggregates = true;
+        assert!(first.same_carrier(&second));
+        second.common.ul_length ^= 1;
+        assert_eq!(first.merge(&second), Err(MergeError::Common));
     }
 }

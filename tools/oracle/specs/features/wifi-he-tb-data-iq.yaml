@@ -25,6 +25,9 @@ behaviors:
   - name: trs-control-context
     source: IEEE 802.11ax-2021 9.2.4.6a.1, 26.5.2.2, 26.5.2.3.4, and 27.3.12.5.4
     checks: [he_carrier_only, individual_address, ru_and_mcs, carrier_dcm, carrier_bss_color, derived_ltf_and_guard, one_ltf, bcc_for_he20_ru, fixed_spatial_reuse, fixed_sig_a2_reserved, ul_data_symbols, packet_extension_disambiguation, invalid_context_rejection]
+  - name: he-mu-multi-aggregate-context
+    source: IEEE 802.11ax-2021 26.5.2.2 and 26.5.2.2.4
+    checks: [same_ppdu_identity, compatible_common_fields, distinct_schedule_combination, repeated_schedule_deduplication, trigger_and_trs_combination, overlapping_ru_exclusion, incompatible_context_rejection]
   - name: tb-user-iq
     source: IEEE 802.11ax-2021 27.3.10, 27.3.11.10, 27.3.12.5.5, Equation 27-111
     checks: [matching_trigger_fields, bounded_timing, header_only_admission, isolated_ru_training, per_user_pilot_phase, bcc_ldpc_psdu, midamble_refresh, service_integrity, simultaneous_disjoint_ru_users]
@@ -41,7 +44,7 @@ backend_support:
       - Bounded streaming reception uses FCS-valid Trigger or HE-carried TRS Control context to publish only FCS-valid response MPDUs. Full-RU MCS11 STBC includes balanced positive captures and near/far CS8 captures whose post-quantization symbols remain rejection controls; valid FEC, SERVICE, and MPDU FCS are never relaxed. HT/VHT/HE carrier and simultaneous-user exchanges extend the offline contract, not live qualification.
       - Isolated per-user kernel is checked against 282 independent waveforms, including SERVICE rejection and sample/payload bounds.
       - The isolated per-user kernel requires explicit caller-established Trigger association and one-DATA-stream user context. It does not perform spatial separation or automatic exchange matching.
-      - Header-only admission checks explicit Trigger context, per-user geometry and retained-sample/payload limits before DATA buffering; aggregate scanning and per-MPDU FCS validation remain the streaming publisher's responsibility.
+      - Header-only admission checks resolved Trigger or TRS context, per-user geometry and retained-sample/payload limits before DATA buffering; aggregate scanning and per-MPDU FCS validation remain the streaming publisher's responsibility.
       - Schedule expansion retains original User Info indices, expands same-size RA ranges, and marks overlapping or unsupported spatial entries ineligible while preserving independent disjoint allocations. Schedule geometry alone is not exchange association or payload admission.
       - 276 independently summed and quantized captures recover 1380 simultaneous disjoint-RU user payloads, including per-user carrier offsets and STBC pilot nulls. Each capture uses one RU size and common MCS/coding; relative timing and sampling-clock offsets remain unqualified.
       - Two-pilot tracking retains the prior slope when a weaker pilot is below a constellation-dependent noise threshold. Independent user oscillators are never replaced by a pooled downlink phase estimator.

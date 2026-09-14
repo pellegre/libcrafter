@@ -48,13 +48,14 @@ adds 368 complete independent waveforms and eight invalid cases, including
 loss of either transmit branch. The finite-delay estimator includes the second
 stream's cyclic shift; it does not guarantee recovery of arbitrary channels.
 
-HE20 TB reception uses a recently recovered, FCS-valid Basic Trigger to obtain
-the RU, MCS, coding, DCM, STBC, training and padding fields that are absent from
-the TB PHY header. The bounded streaming decoder accepts Trigger frames carried
-by legacy OFDM and supported long-GI HT/VHT PPDUs, expands eligible scheduled or
-random-access RUs, and decodes one DATA stream on each disjoint RU. It publishes
-only aggregate members with valid MPDU FCS and records the effective user fields,
-original User Info index, and Trigger/response sample coordinates.
+HE20 TB reception uses a recently recovered, FCS-valid Trigger or TRS Control
+field to obtain the RU, MCS, coding, DCM, training and padding fields that are
+absent from the TB PHY header. The bounded streaming decoder accepts Trigger
+frames carried by legacy OFDM and supported long-GI HT/VHT/HE PPDUs, expands
+eligible scheduled or random-access RUs, and decodes one DATA stream on each
+disjoint RU. It publishes only aggregate members with valid MPDU FCS and records
+the effective user fields, original User Info index, and trigger/response sample
+coordinates.
 
 The exchange corpus covers 65 single-user sequences and 12 simultaneous-user
 sequences with 120 response MPDUs across two, four or nine RUs. It includes
@@ -65,11 +66,20 @@ STBC captures whose final CS8 representation has hundreds of genie-aided
 nearest-symbol errors are retained as rejection controls; balanced captures of
 the same modes recover exact bytes without weakening FEC, SERVICE, or FCS.
 
-Trigger-based reception still lacks TRS Control scheduling, combination of
-distinct Trigger User Info carried in separate A-MPDUs of one HE MU PPDU, and
-spatial separation of overlapping independent DATA streams. Wider channels,
-sustained real-time speed, live HE-capable reference qualification and modern
-TX also remain unfinished.
+TRS scheduling derives the response BSS color and DCM from its HE SU, ER SU, or
+MU carrier and derives the required LTF/guard pair from that carrier's timing.
+The response must agree on its symbol count, fixed spatial-reuse value, and
+SIG-A2 reserved bits. Thirteen complete exchanges cover all HE20 RU sizes,
+carrier timing combinations, DCM, and negative association cases.
+
+Distinct compatible Trigger and TRS allocations carried in separate A-MPDUs of
+one HE MU PPDU are combined for the following response. Repeated schedules are
+deduplicated; incompatible common fields and overlapping allocations are not
+used for byte recovery. Five complete multi-A-MPDU exchanges cover these cases.
+
+HE TB reception still lacks spatial separation of overlapping independent DATA
+streams. Wider channels, sustained real-time speed, live HE-capable reference
+qualification and modern TX also remain unfinished.
 
 HE ER SU signaling is recognized separately: repeated L-SIG with length modulo
 three equal to two, a QBPSK second SIG-A symbol, and four SIG-A symbols. Header
