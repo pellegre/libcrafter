@@ -1,8 +1,9 @@
 use super::*;
 use crate::radio::eht::{
     sig::iq::{Fields, SignalFields},
-    training::Trained,
-    EhtLtfMode, EhtNonOfdmaSignal, EhtNonOfdmaUsers, EhtOfdmaSignal, EhtUsigFields,
+    training::{Trained, TrainedResource},
+    EhtLtfMode, EhtNonOfdmaSignal, EhtNonOfdmaUsers, EhtOfdmaSignal, EhtResourceUnit,
+    EhtUsigFields,
 };
 use crate::radio::ComplexSample;
 
@@ -218,7 +219,11 @@ fn radio_eht_data_receiver_admits_bounded_training() {
     let data_start = 37 + timing.data_start as u64;
     let trained = Trained {
         signal: fields.clone(),
-        channel: [ComplexSample { i: 1., q: 0. }; 256],
+        resources: vec![TrainedResource {
+            resource: EhtResourceUnit::full_band(1).unwrap(),
+            users: 0..1,
+            channel: Some([ComplexSample { i: 1., q: 0. }; 256]),
+        }],
         data_start,
         guard,
     };
@@ -235,7 +240,11 @@ fn radio_eht_data_receiver_admits_bounded_training() {
 
     let make = |start| Trained {
         signal: fields.clone(),
-        channel: [ComplexSample { i: 1., q: 0. }; 256],
+        resources: vec![TrainedResource {
+            resource: EhtResourceUnit::full_band(1).unwrap(),
+            users: 0..1,
+            channel: Some([ComplexSample { i: 1., q: 0. }; 256]),
+        }],
         data_start: start,
         guard,
     };

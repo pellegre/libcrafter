@@ -99,6 +99,13 @@ pub struct EhtResourceUnit {
 }
 
 impl EhtResourceUnit {
+    pub(in crate::radio) const fn full_band(users: u8) -> Option<Self> {
+        if users == 0 || users > 8 {
+            return None;
+        }
+        Some(Self::ru(EhtRuComponent::new(EhtRuSize::Ru242, 1), users))
+    }
+
     pub(super) const fn ru(component: EhtRuComponent, users: u8) -> Self {
         Self {
             components: [component, component],

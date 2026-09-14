@@ -41,6 +41,13 @@ impl<'a> Demodulator<'a> {
     pub fn recover(self) -> Result<Vec<f32>, Error> {
         let tones =
             crate::radio::resource_unit::Tones::ru(242, 1).ok_or(Error::UnsupportedFormat)?;
+        let channel = self
+            .admission
+            .trained
+            .resources
+            .first()
+            .and_then(|resource| resource.channel.as_ref())
+            .ok_or(Error::Training)?;
         let capacity = self.admission.capacity;
         let mut demodulator = crate::radio::resource_unit::symbol::Demodulator::new(
             tones,
@@ -91,7 +98,7 @@ impl<'a> Demodulator<'a> {
                 demodulator
                     .recover(
                         wave,
-                        &self.admission.trained.channel,
+                        channel,
                         self.acquisition.frequency_rad,
                         elapsed,
                         symbol,

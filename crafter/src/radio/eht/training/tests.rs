@@ -17,6 +17,14 @@ fn corpus() -> Vec<u8> {
     .unwrap()
 }
 
+fn ofdma_corpus() -> Vec<u8> {
+    std::fs::read(format!(
+        "{}/tests/fixtures/iq/eht-ofdma-training-iq.cs8",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap()
+}
+
 #[test]
 fn radio_eht_training_streaming_dispatch() {
     let rows = include_str!("../../../../tests/fixtures/iq/eht-training-iq-index.tsv");
@@ -79,18 +87,78 @@ fn radio_eht_training_independent_waveforms() {
         assert_eq!(trained.guard, columns[5].parse::<usize>().unwrap());
         assert_eq!(trained.data_start, columns[9].parse::<u64>().unwrap());
         assert_eq!(trained.data_start as usize, samples.len());
+        assert_eq!(trained.resources.len(), 1);
+        let channel = trained.resources[0].channel.as_ref().unwrap();
         let energy: f32 = tones
             .active()
-            .map(|tone| trained.channel[tone.rem_euclid(256) as usize].power())
+            .map(|tone| channel[tone.rem_euclid(256) as usize].power())
             .sum();
         assert!(energy.is_finite() && energy > 1., "{}", columns[0]);
         for tone in -128i32..128 {
-            let value = trained.channel[tone.rem_euclid(256) as usize];
+            let value = channel[tone.rem_euclid(256) as usize];
             assert!(value.power().is_finite(), "{} tone {tone}", columns[0]);
             if !tones.contains(tone) {
                 assert_eq!(value, crate::radio::ComplexSample::ZERO, "{}", columns[0]);
             }
         }
+    }
+}
+
+#[test]
+fn radio_eht_ofdma_training_independent_waveforms() {
+    let rows = include_str!("../../../../tests/fixtures/iq/eht-ofdma-training-iq-index.tsv");
+    let corpus = ofdma_corpus();
+    assert_eq!(rows.lines().skip(1).count(), 116);
+    for row in rows.lines().skip(1) {
+        let columns: Vec<_> = row.split('\t').collect();
+        let offset: usize = columns[16].parse().unwrap();
+        let length: usize = columns[17].parse().unwrap();
+        let (samples, acquisition) = fixture(&corpus[offset..offset + length]);
+        let input = &samples[acquisition.signal_start as usize..];
+        let signal = SignalReceiver::recover(input, &acquisition).expect(columns[0]);
+        let result = Receiver::recover(input, &acquisition, signal.clone());
+        if columns[6] == "0" {
+            assert!(
+                matches!(result, Err(Error::UnsupportedFormat)),
+                "{}",
+                columns[0]
+            );
+            continue;
+        }
+        let trained = result.expect(columns[0]);
+        assert_eq!(trained.signal, signal, "{}", columns[0]);
+        assert_eq!(trained.guard, columns[11].parse::<usize>().unwrap());
+        assert_eq!(trained.data_start, columns[14].parse::<u64>().unwrap());
+        assert_eq!(trained.data_start as usize, samples.len());
+        let SignalFields::Ofdma(fields) = &trained.signal.signal else {
+            panic!("{} was not OFDMA", columns[0])
+        };
+        assert_eq!(fields.common.allocation.code(), columns[3].parse().unwrap());
+        assert_eq!(trained.resources.len(), columns[4].parse().unwrap());
+        let mut user = 0;
+        for (actual, &expected) in trained
+            .resources
+            .iter()
+            .zip(fields.common.allocation.resources())
+        {
+            assert_eq!(actual.resource, expected, "{}", columns[0]);
+            let end = user + usize::from(expected.user_count());
+            assert_eq!(actual.users, user..end, "{}", columns[0]);
+            user = end;
+            let channel = actual.channel.as_ref().expect(columns[0]);
+            let mut energy = 0.;
+            for tone in -128i16..=127 {
+                let value = channel[tone.rem_euclid(256) as usize];
+                assert!(value.power().is_finite(), "{} tone {tone}", columns[0]);
+                if expected.contains_tone(tone) {
+                    energy += value.power();
+                } else {
+                    assert_eq!(value, crate::radio::ComplexSample::ZERO, "{}", columns[0]);
+                }
+            }
+            assert!(energy > 1., "{}", columns[0]);
+        }
+        assert_eq!(user, fields.users.len());
     }
 }
 
@@ -146,7 +214,7 @@ fn radio_eht_training_rejects_incomplete_and_unsupported_layouts() {
 }
 
 #[test]
-fn radio_eht_training_rejects_ofdma_and_mu_mimo() {
+fn radio_eht_training_waits_for_ofdma_and_rejects_mu_mimo() {
     for (index, corpus_name, offset_column, length_column) in [
         (
             include_str!("../../../../tests/fixtures/iq/eht-mu-sig-iq-index.tsv"),
@@ -172,9 +240,11 @@ fn radio_eht_training_rejects_ofdma_and_mu_mimo() {
         let (samples, acquisition) = fixture(&corpus[offset..offset + length]);
         let input = &samples[acquisition.signal_start as usize..];
         let signal = SignalReceiver::recover(input, &acquisition).unwrap();
-        assert!(matches!(
-            Receiver::recover(input, &acquisition, signal),
-            Err(Error::UnsupportedFormat)
-        ));
+        let result = Receiver::recover(input, &acquisition, signal);
+        if corpus_name.starts_with("eht-ofdma") {
+            assert!(matches!(result, Err(Error::Truncated { .. })));
+        } else {
+            assert!(matches!(result, Err(Error::UnsupportedFormat)));
+        }
     }
 }

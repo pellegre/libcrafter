@@ -32,6 +32,12 @@ impl Receiver {
         else {
             return Err(Error::UnsupportedFormat);
         };
+        if trained.resources.len() != 1
+            || trained.resources[0].users != (0..1)
+            || trained.resources[0].channel.is_none()
+        {
+            return Err(Error::Training);
+        }
         let ltf_stride = 64u64
             .checked_mul(u64::from(signal.common.ltf_mode.size()))
             .and_then(|useful| useful.checked_add(trained.guard as u64))
