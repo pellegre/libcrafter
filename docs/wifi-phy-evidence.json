@@ -110,6 +110,22 @@
       "reviewed_clauses": ["Table 36-38 EHT-SIG encoding-block CRC"]
     },
     {
+      "id": "ieee-tgbe-eht-sig-user-block-resolution",
+      "classification": "official-working-group-comment-resolution",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/21/11-21-0298-03-00be-cr-on-d0-3-eht-sig-36-3-11-8-5.doc",
+      "sha256": "6511c3f99863eb62b2a731bf29d257b608e37ca41577a1fcaccd23eb08f176a3",
+      "status": "reviewed",
+      "reviewed_clauses": ["36.3.11.8.5 non-OFDMA User Block construction"]
+    },
+    {
+      "id": "ieee-tgbe-eht-sig-mu-user-resolution",
+      "classification": "official-working-group-ballot-resolution",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/23/11-23-0533-02-00be-lb271-cr-for-eht-sig-part-2.doc",
+      "sha256": "b93f14d8706ef5d5e32d1776fb8d5a8d2b645cd30e3f359a1ae9c1bc1db2f3ca",
+      "status": "reviewed",
+      "reviewed_clauses": ["Table 36-41 MU-MIMO User field"]
+    },
+    {
       "id": "ieee-tgbe-eht-sig-sa-resolution",
       "classification": "official-working-group-ballot-resolution",
       "authority_url": "https://mentor.ieee.org/802.11/dcn/24/11-24-0260-01-00be-sa-ballots-cr-for-eht-sig-and-annex-z.docx",
@@ -143,7 +159,7 @@
       "id": "eht-sig-non-ofdma-first-block",
       "source": "ieee-tgbe-eht-sig-draft-text",
       "anchor": "36.3.11.8.4-5; Table 36-38 in 11-21/1148r1; D5 example in 11-24/0260r1",
-      "fact": "The first 52-bit EHT-SIG encoding block for non-OFDMA signaling contains 20 common bits, the first 22-bit non-MU user field, a four-bit CRC over the preceding 42 bits, and six zero tail bits. The common portion carries spatial reuse, EHT-LTF size and guard interval, EHT-LTF count, LDPC-extra-symbol, pre-FEC padding, packet-extension disambiguity, Disregard bits, and number of users. The user portion carries STA-ID, MCS, NSS, beamforming, coding, and a preserved reserved/disregard bit. The published D5 example's protected bits independently produce CRC 1110. The current parser and IQ receiver admit only the single-user U-SIG context and this first block; OFDMA, MU-MIMO and EHT DATA remain separate work. Published-standard clause review remains required before final qualification."
+      "fact": "The first 52-bit EHT-SIG encoding block for non-OFDMA signaling contains 20 common bits, the first 22-bit user field, a four-bit CRC over the preceding 42 bits, and six zero tail bits. The common portion carries spatial reuse, EHT-LTF size and guard interval, EHT-LTF count, LDPC-extra-symbol, pre-FEC padding, packet-extension disambiguity, Disregard bits, and number of users. The published D5 example's protected bits independently produce CRC 1110. A single-user field carries STA-ID, MCS, NSS, beamforming, coding, and a preserved reserved/disregard bit. For non-OFDMA MU-MIMO, the first and remaining fields instead carry STA-ID, MCS, coding, and a raw spatial-configuration index; remaining users are grouped into independently protected one- or two-user blocks. The bit parser covers complete chains of two through eight MU-MIMO users, while the IQ receiver currently admits only the single-user context. OFDMA and EHT DATA remain separate work. Published-standard clause review remains required before final qualification."
     },
     {
       "id": "eht-sig-encoding-modulation",

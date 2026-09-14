@@ -8,7 +8,10 @@ mod test_support;
 mod usig;
 
 pub(in crate::radio) use sig::iq::{Error as SignalIqError, Receiver as SignalReceiver};
-pub use sig::{EhtLtfMode, EhtNonMuUser, EhtNonOfdmaSignal, EhtSigError};
+pub use sig::{
+    EhtLtfMode, EhtMuMimoUser, EhtNonMuUser, EhtNonOfdmaCommon, EhtNonOfdmaSignal,
+    EhtNonOfdmaUsers, EhtSigError,
+};
 pub use usig::{
     EhtMuPpduType, EhtMuUsigFields, EhtSigMcs, EhtTbUsigFields, EhtUsigError, EhtUsigFields,
     EhtUsigFormat,

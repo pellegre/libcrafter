@@ -438,17 +438,17 @@ with the format-specific EHT-SIG or spatial-reuse fields. The companion IQ
 prefix kernel checks the 6 Mb/s modulo-zero L-SIG and repeated RL-SIG, then
 equalizes and decodes both U-SIG symbols. The combined streaming receiver emits
 an `EhtUsig` diagnostic for a validated prefix and does not reinterpret it as
-legacy DATA. It does not yet decode EHT-SIG or recover EHT DATA.
+legacy DATA. For supported non-OFDMA single-user prefixes it continues through
+EHT-SIG; it does not yet recover EHT DATA.
 
-`EhtNonOfdmaSignal::decode` interprets the first 52-bit EHT-SIG encoding block
-when U-SIG identifies a non-OFDMA single-user PPDU. It validates the block CRC
-and tail, then returns the common training, padding and packet-extension fields
-together with the first non-MU user record. Its IQ receiver covers all four
-EHT-SIG modulation choices (MCS0, MCS1, MCS3 and MCS15/DCM), checks the U-SIG
-symbol count and recovers that block from a complete 20 MHz single-user prefix.
-The streaming receiver reserves the advertised EHT-SIG boundary and emits an
-`EhtSignal` diagnostic only after the block passes CRC and tail validation.
-OFDMA and MU-MIMO EHT-SIG layouts, training and EHT DATA recovery remain
+`EhtNonOfdmaSignal::decode` interprets complete non-OFDMA EHT-SIG content
+channels. It validates the common-plus-first-user block and every remaining
+one- or two-user block independently, returning typed single-user fields or two
+through eight MU-MIMO user records. Its IQ receiver currently covers the
+single-user form with all four EHT-SIG modulation choices (MCS0, MCS1, MCS3 and
+MCS15/DCM), checks the U-SIG symbol count and recovers the block from a complete
+20 MHz prefix. The streaming receiver emits `EhtSignal` only after CRC and tail
+validation. OFDMA EHT-SIG, MU-MIMO IQ recovery, training and EHT DATA remain
 pending.
 
 ## HT-SIG primitive

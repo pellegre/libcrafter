@@ -25,7 +25,7 @@ pub(in crate::radio) enum Error {
 }
 
 /// Integrity-checked EHT signaling recovered directly from IQ.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::radio) struct Fields {
     pub usig: EhtUsigFields,
     pub signal: EhtNonOfdmaSignal,

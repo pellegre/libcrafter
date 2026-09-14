@@ -9,8 +9,9 @@ mod dsss;
 mod dsss_tx;
 mod eht;
 pub use eht::{
-    EhtLtfMode, EhtMuPpduType, EhtMuUsigFields, EhtNonMuUser, EhtNonOfdmaSignal, EhtSigError,
-    EhtSigMcs, EhtTbUsigFields, EhtUsigError, EhtUsigFields, EhtUsigFormat,
+    EhtLtfMode, EhtMuMimoUser, EhtMuPpduType, EhtMuUsigFields, EhtNonMuUser, EhtNonOfdmaCommon,
+    EhtNonOfdmaSignal, EhtNonOfdmaUsers, EhtSigError, EhtSigMcs, EhtTbUsigFields, EhtUsigError,
+    EhtUsigFields, EhtUsigFormat,
 };
 mod he;
 pub use he::mu::sig_b::coded::Error as HeSigBCodedError;
@@ -279,7 +280,7 @@ pub enum PhyDiagnostic {
         fields: EhtUsigFields,
         preamble_sample_index: u64,
     },
-    /// Integrity-checked EHT-SIG for a non-OFDMA single-user PPDU.
+    /// Integrity-checked EHT-SIG for a non-OFDMA PPDU.
     EhtSignal {
         fields: EhtNonOfdmaSignal,
         preamble_sample_index: u64,

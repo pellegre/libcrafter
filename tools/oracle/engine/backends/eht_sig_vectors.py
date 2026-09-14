@@ -1,7 +1,8 @@
-"""Independent EHT-SIG non-OFDMA single-user encoding blocks.
+"""Independent EHT-SIG non-OFDMA encoding blocks.
 
-IEEE 802.11 TGbe 11-21/0140r2 and 11-21/1148r1. The generator
-constructs fields and CRCs without importing the production Rust parser.
+IEEE 802.11 TGbe 11-21/0140r2, 11-21/0298r3, 11-21/1148r1 and
+11-23/0533r2. The generator constructs fields, user blocks and CRCs without
+importing the production Rust parser.
 """
 import argparse
 from pathlib import Path
@@ -11,6 +12,7 @@ from he_signal_vectors import checksum
 
 
 OUT = Path(__file__).resolve().parents[4] / "crafter/tests/fixtures/iq/eht-sig-index.tsv"
+MU_OUT = Path(__file__).resolve().parents[4] / "crafter/tests/fixtures/iq/eht-mu-sig-index.tsv"
 
 
 def repair(bits):
@@ -57,7 +59,62 @@ def block(case):
     ]
 
 
-def generate():
+def protected(payload):
+    bits = payload + [0] * 10
+    value = checksum(payload)
+    bits[len(payload):len(payload) + 4] = [
+        (value >> shift) & 1 for shift in (3, 2, 1, 0)
+    ]
+    return bits
+
+
+def mu_user(case, position):
+    bits = [0] * 22
+    sta_id = (case * 977 + position * 619 + 17) % 2046
+    mcs = (case * 7 + position * 3) % 14
+    ldpc = (case + position) % 2
+    spatial = (case * 13 + position * 11) % 64
+    put(bits, 0, 11, sta_id)
+    put(bits, 11, 4, mcs)
+    put(bits, 15, 1, ldpc)
+    put(bits, 16, 6, spatial)
+    return bits, (sta_id, mcs, ldpc, spatial)
+
+
+def mu_blocks(case, users):
+    common = [0] * 20
+    spatial = case % 16
+    ltf_mode = (case // 2) % 4
+    ltf_code = (case // 4) % 5
+    extra = (case // 8) % 2
+    padding_code = (case // 16) % 4
+    pe = (case // 32) % 2
+    disregard = (case * 11 + 3) % 16
+    put(common, 0, 4, spatial)
+    put(common, 4, 2, ltf_mode)
+    put(common, 6, 3, ltf_code)
+    put(common, 9, 1, extra)
+    put(common, 10, 2, padding_code)
+    put(common, 12, 1, pe)
+    put(common, 13, 4, disregard)
+    put(common, 17, 3, users - 1)
+    fields = [mu_user(case, position) for position in range(users)]
+    bits = protected(common + fields[0][0])
+    for start in range(1, users, 2):
+        payload = fields[start][0]
+        if start + 1 < users:
+            payload += fields[start + 1][0]
+        bits += protected(payload)
+    ltf_size, guard = [(2, 800), (2, 1600), (4, 800), (4, 3200)][ltf_mode]
+    ltf_symbols = [1, 2, 4, 6, 8][ltf_code]
+    padding = 4 if padding_code == 0 else padding_code
+    return bits, [
+        spatial, ltf_mode, ltf_size, guard, ltf_symbols, extra, padding, pe,
+        disregard, users,
+    ], [field[1] for field in fields]
+
+
+def generate_single():
     published = [int(value) for value in "".join(
         "1111 11 010 1 10 0 1111 010 10000101101 0101 1 100000".split()
     )]
@@ -74,13 +131,37 @@ def generate():
     return "\n".join(rows) + "\n"
 
 
+def generate_multi():
+    rows = [
+        "usig\tbits\tspatial\tltf_mode\tltf_size\tguard\tltf_symbols\textra\tpadding\tpe\tdisregard\tusers\tuser_fields"
+    ]
+    dbps = [26, 52, 104, 13]
+    for users in range(2, 9):
+        for case in range(256):
+            seed = (users - 2) * 256 + case
+            bits, common, fields = mu_blocks(seed, users)
+            raw_mcs = seed % 4
+            symbols = (len(bits) + dbps[raw_mcs] - 1) // dbps[raw_mcs]
+            usig, _ = mu_header(seed, 0, 0, 2, raw_mcs, symbols)
+            rows.append("\t".join([
+                "".join(map(str, usig)),
+                "".join(map(str, bits)),
+                *map(str, common),
+                ";".join(":".join(map(str, field)) for field in fields),
+            ]))
+    return "\n".join(rows) + "\n"
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
-    result = generate()
+    single = generate_single()
+    multi = generate_multi()
     if args.write:
-        OUT.write_text(result)
+        OUT.write_text(single)
+        MU_OUT.write_text(multi)
     else:
-        assert OUT.read_text() == result, "EHT-SIG inventory differs"
-    print("2048 independent EHT-SIG encoding blocks verified")
+        assert OUT.read_text() == single, "EHT-SIG SU inventory differs"
+        assert MU_OUT.read_text() == multi, "EHT-SIG MU inventory differs"
+    print("2048 single-user and 1792 MU-MIMO EHT-SIG block chains verified")

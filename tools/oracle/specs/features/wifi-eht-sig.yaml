@@ -1,7 +1,7 @@
 version: 1
 kind: feature
 name: wifi_eht_sig
-summary: EHT-SIG non-OFDMA single-user encoding-block interpretation.
+summary: EHT-SIG non-OFDMA encoding-block interpretation.
 layers: [dot11]
 directions: [backend_to_libcrafter]
 strict_bytes: true
@@ -13,6 +13,9 @@ behaviors:
   - name: encoding-block-integrity
     source: IEEE 802.11 TGbe 11-21/1148r1 Table 36-38
     checks: [forty_two_protected_bits, four_bit_crc, six_zero_tail_bits, format_context]
+  - name: mu-mimo-user-blocks
+    source: IEEE 802.11 TGbe 11-21/0298r3 and 11-23/0533r2
+    checks: [two_through_eight_users, one_and_two_user_blocks, per_block_crc, per_block_tail, sta_id, mcs, coding, spatial_configuration]
 coverage_cases: [wifi-eht-sig]
 supported_cases:
   - {name: wifi-eht-sig, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
@@ -20,5 +23,5 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - The parser covers the first EHT-SIG encoding block for non-OFDMA single-user signaling; OFDMA and non-OFDMA MU-MIMO blocks remain pending.
-      - This is bit-level signaling coverage; IQ recovery and EHT DATA are separate stages.
+      - The parser covers complete non-OFDMA single-user and two-through-eight-user MU-MIMO block chains; OFDMA remains pending.
+      - MU-MIMO IQ recovery, OFDMA signaling and EHT DATA are separate stages.
