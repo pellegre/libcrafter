@@ -24,7 +24,7 @@ impl EhtNonMuUser {
     }
 }
 
-/// User parameters for a non-OFDMA MU-MIMO allocation.
+/// User parameters for a MU-MIMO allocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EhtMuMimoUser {
     pub sta_id: u16,

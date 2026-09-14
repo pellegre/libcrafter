@@ -1,4 +1,4 @@
-use super::{block::EncodingBlock, EhtSigError};
+use super::super::{block::EncodingBlock, EhtSigError};
 
 /// EHT-LTF size and guard-interval combination advertised by EHT-SIG.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
