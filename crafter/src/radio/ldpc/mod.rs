@@ -2,7 +2,11 @@
 //! IEEE 802.11-2020 19.3.11.7.3–4 and Annex F define the parity constraints;
 //! normalized min-sum is a receiver implementation choice, not a wire rule.
 #![allow(dead_code)] // Connected to HT DATA after independent codeword qualification.
-use super::ldpc_matrices::*;
+
+mod matrices;
+pub(super) mod rate;
+
+use matrices::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Rate {
@@ -178,7 +182,7 @@ mod tests {
     use super::*;
     #[test]
     fn radio_ldpc_independent_codewords_and_correction() {
-        let entries: Vec<_> = include_str!("../../tests/fixtures/iq/ldpc-codewords.tsv")
+        let entries: Vec<_> = include_str!("../../../tests/fixtures/iq/ldpc-codewords.tsv")
             .lines()
             .skip(1)
             .collect();
