@@ -1,4 +1,4 @@
-"""Independent HE Basic Trigger body encoder (IEEE802.11ax-2021 9.3.1.22).
+"""Independent HE/EHT Basic Trigger body encoders.
 
 This is a wire oracle, not an RF scheduling policy. Synthetic parameters only.
 """
@@ -18,3 +18,31 @@ def basic_trigger_body(entropy: bytes) -> bytes:
     common = (length << 4) | (1 << 20) | (511 << 54)
     user = aid | (mcs << 21)
     return struct.pack("<Q", common) + user.to_bytes(5, "little") + b"\0\xff\xff"
+
+
+def eht_basic_trigger_body() -> bytes:
+    """Emit one source-fixed EHT Basic Trigger scheduling record.
+
+    The first User Info is the AID 2007 Special User Info. Both User Info
+    records carry Basic Trigger's one-octet dependent field.
+    """
+    common = (
+        (301 << 4)
+        | (1 << 17)
+        | (1 << 20)
+        | (1 << 27)
+        | (42 << 28)
+        | (2 << 34)
+        | (1 << 36)
+        | (0x4321 << 37)
+        | (127 << 56)
+    )
+    special = 2007 | (3 << 17) | (12 << 21) | (4095 << 25)
+    user = 37 | (4 << 12) | (1 << 20) | (11 << 21) | (68 << 32)
+    return (
+        struct.pack("<Q", common)
+        + special.to_bytes(5, "little")
+        + b"\x5a"
+        + user.to_bytes(5, "little")
+        + b"\xa5\xff\x0f"
+    )

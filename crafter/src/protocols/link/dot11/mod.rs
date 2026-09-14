@@ -35,8 +35,10 @@ pub use self::qos_control::Dot11QosControl;
 pub use self::sequence_control::Dot11SequenceControl;
 pub use self::subtype::{Dot11ControlSubtype, Dot11DataSubtype, Dot11ManagementSubtype};
 pub use self::trigger::{
-    Dot11Trigger, Dot11TriggerCommonFields, Dot11TriggerRemainder, Dot11TriggerUser,
-    Dot11TriggerUserFields,
+    Dot11EhtTrigger, Dot11EhtTriggerCommonFields, Dot11EhtTriggerSpecialUser,
+    Dot11EhtTriggerSpecialUserFields, Dot11EhtTriggerUser, Dot11EhtTriggerUserFields,
+    Dot11EhtTriggerUserInfo, Dot11Trigger, Dot11TriggerCommonFields, Dot11TriggerRemainder,
+    Dot11TriggerUser, Dot11TriggerUserFields,
 };
 
 #[cfg(test)]

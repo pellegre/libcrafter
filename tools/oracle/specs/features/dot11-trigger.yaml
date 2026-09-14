@@ -1,7 +1,7 @@
 version: 1
 kind: feature
 name: dot11_trigger
-summary: Typed HE Trigger scheduling fields with lossless opaque extensions.
+summary: Typed HE and EHT Trigger scheduling fields with lossless opaque extensions.
 layers: [dot11]
 directions: [backend_to_libcrafter, libcrafter_to_backend, roundtrip]
 strict_bytes: true
@@ -10,6 +10,9 @@ behaviors:
   - name: trigger-body
     source: IEEE 802.11ax-2021 9.3.1.22 and 9.3.1.7; IEEE 802.11-2020 9.3.1.7
     checks: [common_user_bit_mapping, variant_boundaries, padding_preserved, unknown_body_preserved, structured_truncation, radiotap_fcs_boundary, packet_roundtrip]
+  - name: eht-trigger-body
+    source: IEEE 802.11be-2024 9.3.1.22.1; IEEE 802.11-22/0202r0
+    checks: [eht_common_bit_mapping, special_user_info_mapping, eht_user_bit_mapping, eht_variant_classification, special_user_first, he_eht_schedule_separation, packet_roundtrip]
   - name: trs-control
     source: IEEE 802.11ax-2021 9.2.4.6.3a, 9.2.4.6a.1, and 26.5.2.3.4
     checks: [he_variant_mapping, control_id_mapping, trs_information_mapping, reserved_preserved, packet_roundtrip]
@@ -20,6 +23,6 @@ backend_support:
   libcrafter:
     status: partial
     notes:
-      - Common fields and normal HE User Info layouts are typed; NFRP user bodies and unknown variant/BAR boundaries remain opaque and byte-preserved.
+      - Common fields and normal HE User Info layouts are typed; EHT common, Special User Info, and normal EHT User Info layouts have typed variant views; NFRP user bodies and unknown variant/BAR boundaries remain opaque and byte-preserved.
       - HE-variant TRS Control fields are typed and preserved; other A-Control identifiers remain available through the raw HT Control value.
       - MAC parsing does not itself admit TB IQ DATA or validate response scheduling policy.

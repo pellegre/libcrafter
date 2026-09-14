@@ -59,7 +59,14 @@ impl Schedule {
     }
 
     pub fn from_trigger(trigger: &Dot11Trigger) -> Result<Self, Error> {
-        if trigger.common.bandwidth != 0 || !matches!(trigger.common.trigger_type, 0..=2 | 4..=6) {
+        // B55=0 announces EHT's leading Special User Info field. A malformed
+        // HE discriminator with B55=1 is retained here so later header/context
+        // agreement rejects or poisons it instead of silently reusing an older
+        // schedule from the same aggregate.
+        if trigger.common.sig_a2_reserved & 2 == 0
+            || trigger.common.bandwidth != 0
+            || !matches!(trigger.common.trigger_type, 0..=2 | 4..=6)
+        {
             return Err(Error::Unsupported);
         }
         // An undecidable trailing User Info can overlap an earlier allocation.
@@ -370,6 +377,13 @@ mod tests {
         wide.common.bandwidth = 1;
         assert!(matches!(
             Schedule::from_trigger(&wide),
+            Err(Error::Unsupported)
+        ));
+
+        let mut eht = trigger(&[(1, 0, 0)]);
+        eht.common.sig_a2_reserved &= !3;
+        assert!(matches!(
+            Schedule::from_trigger(&eht),
             Err(Error::Unsupported)
         ));
     }
