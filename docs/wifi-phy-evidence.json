@@ -1,6 +1,6 @@
 {
   "schema": "crafter.wifi-phy-evidence/v1",
-  "reviewed_at": "2026-09-12",
+  "reviewed_at": "2026-09-13",
   "scope": "Raw Wi-Fi PHY bytes; RX correctness before performance and TX",
   "rfc_discovery": {
     "query": "IEEE 802.11 Wi-Fi PHY",
@@ -60,9 +60,31 @@
       "doi": "10.1109/IEEESTD.2024.11090080",
       "status": "publication_verified_full_text_requires_ieee_sign_in",
       "reviewed_clauses": []
+    },
+    {
+      "id": "ieee-tgbe-usig-draft-text",
+      "classification": "official-working-group-draft-text",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/21/11-21-0049-01-00be-pdt-phy-update-to-preamble-u-sig-for-d0-3.docx",
+      "sha256": "e9264fc06fd5020f81f1b6e1565b8c54d3d845c98cf2abb32ce13b3710fc38e6",
+      "status": "selected_normative_text_reviewed_final_publication_audit_pending",
+      "reviewed_clauses": ["36.3.11.7 U-SIG content, CRC, encoding and modulation"]
+    },
+    {
+      "id": "ieee-tgbe-usig-lb275-resolution",
+      "classification": "official-working-group-ballot-resolution",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/23/11-23-1425-01-00be-lb275-comment-resolution-on-u-sig.docx",
+      "sha256": "15c3464bd3f244384beff217a99ab7a3f97a6569bf44cd125fd7e1bbaab5b56a",
+      "status": "reviewed",
+      "reviewed_clauses": ["36.3.12.7.2 U-SIG content"]
     }
   ],
   "facts": [
+    {
+      "id": "eht-usig-fields",
+      "source": "ieee-tgbe-usig-draft-text",
+      "anchor": "36.3.11.7 Tables36-19/21; CRC computation; encoding and modulation; later LB275 resolution 11-23/1425r1",
+      "fact": "EHT U-SIG carries two 26-bit parts, encoded continuously with rate-half BCC and the 52-tone interleaver. Its CRC protects the first 42 information bits and is followed by six zero tail bits. PHY version zero identifies EHT. UL/DL together with the two-bit PPDU type distinguishes EHT MU OFDMA, single-user, non-OFDMA MU-MIMO and EHT TB interpretations. For EHT MU, the version-dependent fields also carry puncturing information, EHT-SIG MCS and EHT-SIG symbol count; for EHT TB they carry two spatial-reuse values. The current parser checks integrity and Validate states but does not itself admit or decode EHT DATA. Published-standard clause review remains required before final qualification."
+    },
     {
       "id": "vht-one-data-stream-stbc",
       "source": "ieee-80211-2020",

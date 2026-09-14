@@ -1,0 +1,24 @@
+version: 1
+kind: feature
+name: wifi_eht_usig
+summary: Integrity-checked EHT universal signaling fields before IQ or DATA admission.
+layers: [dot11]
+directions: [backend_to_libcrafter]
+strict_bytes: true
+malformed: true
+behaviors:
+  - name: universal-signal-fields
+    source: IEEE 802.11 TGbe 11-21/0049r1 36.3.11.7
+    checks: [phy_version, bandwidth, direction, bss_color, txop, ppdu_type, puncturing, eht_sig_mcs, eht_sig_symbols, spatial_reuse]
+  - name: integrity-and-coding
+    source: IEEE 802.11 TGbe 11-21/0049r1 36.3.11.7 and 11-23/1425r1 36.3.12.7.2
+    checks: [independent_crc, continuous_rate_half_bcc, per_symbol_interleaving, validate_states, tail, exact_bit_and_metric_counts]
+coverage_cases: [wifi-eht-usig]
+supported_cases:
+  - {name: wifi-eht-usig, directions: [backend_to_libcrafter], byte_policy: strict_bytes, contract_only: true}
+backend_support:
+  libcrafter:
+    status: partial
+    notes:
+      - U-SIG bit and soft-metric kernel only; streaming IQ classification, EHT-SIG, EHT DATA and live qualification remain separate work.
+      - The contract covers all U-SIG bandwidth codes, while complete HackRF reception is limited to 20 MHz PPDUs.

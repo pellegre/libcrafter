@@ -7,6 +7,11 @@ mod ampdu;
 mod data;
 mod dsss;
 mod dsss_tx;
+mod eht;
+pub use eht::{
+    EhtMuPpduType, EhtMuUsigFields, EhtSigMcs, EhtTbUsigFields, EhtUsigError, EhtUsigFields,
+    EhtUsigFormat,
+};
 mod he;
 pub use he::mu::sig_b::coded::Error as HeSigBCodedError;
 pub use he::mu::sig_b::iq::Fields as HeMuSigBFields;

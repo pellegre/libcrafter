@@ -429,6 +429,16 @@ or overflowing captures remain diagnostic evidence, not passing qualification.
 Raw captures and device-specific live evidence remain in operator-owned
 artifacts rather than the repository.
 
+## EHT U-SIG primitive
+
+`EhtUsigFields::decode` validates the 52 post-BCC U-SIG bits shared by EHT MU
+and EHT TB PPDUs. It checks the PHY version, CRC, tail and Validate states and
+returns the common bandwidth, direction, BSS color and TXOP fields together
+with the format-specific EHT-SIG or spatial-reuse fields. The companion soft
+metric entrypoint performs the continuous rate-half BCC and per-symbol 52-tone
+deinterleaving. This is a header kernel: it does not yet classify streaming IQ,
+decode EHT-SIG or recover EHT DATA.
+
 ## HT-SIG primitive
 
 `HtSignalFields::decode` validates exactly 48 post-BCC binary bits in
