@@ -46,6 +46,7 @@ mod parallel;
 pub use parallel::{ParallelLegacyWifiDecoder, ParallelWifiDecoder};
 mod replay;
 mod signal;
+mod signaling;
 mod source;
 mod stbc;
 mod sync;

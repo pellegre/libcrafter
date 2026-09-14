@@ -1,102 +1,13 @@
-//! Equalized HE SIG-B data tones; ax-2021 Eq 27-21, Tables 27-35/111.
-use crate::radio::{
-    data::{demap, demap_dcm_for_half},
-    ComplexSample,
-};
+//! HE SIG-B uses the shared 52-tone signaling modulation primitive.
 
-#[derive(Debug, Clone, Copy)]
-pub(in crate::radio) struct Modulation {
-    bits: usize,
-    dcm: bool,
-}
-
-impl Modulation {
-    pub(in crate::radio) fn new(mcs: u8, dcm: bool) -> Option<Self> {
-        if mcs > 5 || (dcm && !matches!(mcs, 0 | 1 | 3 | 4)) {
-            return None;
-        }
-        Some(Self {
-            bits: [1, 2, 2, 4, 4, 6][mcs as usize],
-            dcm,
-        })
-    }
-
-    pub(in crate::radio) fn coded_per_symbol(self) -> usize {
-        52 * self.bits / (1 + usize::from(self.dcm))
-    }
-
-    /// Values are constellation-normalized and pilot/channel-corrected, with
-    /// nonnegative reliability weights. Returns deinterleaved BCC metrics.
-    /// Zero-weight/erased tones are allowed; no header or MAC integrity claim.
-    pub(in crate::radio) fn decode(self, tones: &[(ComplexSample, f32)]) -> Option<Vec<f32>> {
-        if tones.len() != 52
-            || tones
-                .iter()
-                .any(|(v, w)| !v.power().is_finite() || !w.is_finite() || *w < 0.)
-        {
-            return None;
-        }
-        let corrected: [(ComplexSample, f32); 52] = std::array::from_fn(|k| {
-            let (v, w) = tones[k];
-            // Eq 27-21: lower half unchanged, alternating upper-half sign,
-            // except MCS0+DCM where Gamma is one everywhere.
-            (
-                v.scale(if k >= 26 && k % 2 == 1 && !(self.bits == 1 && self.dcm) {
-                    -1.
-                } else {
-                    1.
-                }),
-                w,
-            )
-        });
-        let count = self.coded_per_symbol();
-        let mut interleaved = Vec::with_capacity(count);
-        if self.dcm {
-            for k in 0..26 {
-                let metrics =
-                    demap_dcm_for_half([corrected[k], corrected[k + 26]], self.bits, k, 26)?;
-                interleaved.extend_from_slice(&metrics[..self.bits]);
-            }
-        } else {
-            let width = (self.bits / 2).max(1);
-            let scale = match self.bits {
-                1 => 1f32,
-                2 => 2.,
-                4 => 10.,
-                6 => 42.,
-                _ => return None,
-            }
-            .sqrt();
-            for (v, w) in corrected {
-                demap(v.i, width, scale, w, &mut interleaved);
-                if self.bits != 1 {
-                    demap(v.q, width, scale, w, &mut interleaved);
-                }
-            }
-        }
-        if interleaved.iter().any(|m| !m.is_finite()) {
-            return None;
-        }
-        let s = (self.bits / 2).max(1);
-        Some(
-            (0..count)
-                .map(|k| {
-                    // 13 columns, 4*NBPSCS rows (2*NBPSCS with DCM).
-                    let i = (count / 13) * (k % 13) + k / 13;
-                    let j = s * (i / s) + (i + count - 13 * i / count) % s;
-                    interleaved[j]
-                })
-                .collect(),
-        )
-    }
-}
+pub(in crate::radio) use crate::radio::signaling::Modulation;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::radio::{
         he::mu::sig_b::coded::{Blocks, Error},
-        HeSigBCommon20Fields, HeSigBUserBlock, HeSigBUserContext,
+        ComplexSample, HeSigBCommon20Fields, HeSigBUserBlock, HeSigBUserContext,
     };
 
     #[test]
@@ -107,7 +18,7 @@ mod tests {
             let c: Vec<_> = row.split('\t').collect();
             let mcs = c[0].parse().unwrap();
             let mode = Modulation::new(mcs, c[1] == "1").unwrap();
-            let energy: f32 = match mode.bits {
+            let energy: f32 = match mode.bits_per_subcarrier() {
                 1 => 1.,
                 2 => 2.,
                 4 => 10.,
