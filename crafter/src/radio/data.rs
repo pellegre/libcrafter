@@ -420,7 +420,7 @@ impl LegacyOfdmDecoder {
                 };
                 out.diagnostics.push(diagnostic.clone());
                 diagnostics.push(diagnostic);
-                if let Some(ldpc_rate::Error::Codeword {
+                if let Some(ldpc::rate::Error::Codeword {
                     index,
                     error:
                         ldpc::Error::Nonconvergence {
@@ -524,7 +524,7 @@ impl LegacyOfdmDecoder {
                 };
                 out.diagnostics.push(diagnostic.clone());
                 diagnostics.push(diagnostic);
-                if let Some(ldpc_rate::Error::Codeword {
+                if let Some(ldpc::rate::Error::Codeword {
                     index,
                     error:
                         ldpc::Error::Nonconvergence {
@@ -1446,7 +1446,7 @@ pub(super) fn decode_vht_ldpc_data(
     info: SignalInfo,
     guard: usize,
     sig_b: VhtSignalB20Fields,
-    layout: ldpc_rate::Layout,
+    layout: ldpc::rate::Layout,
     stbc_second: Option<&[ComplexSample; 64]>,
 ) -> Result<(Vec<u8>, PhyDiagnostic, Vec<PhyDiagnostic>), ()> {
     if layout.symbols != info.data_symbols
@@ -1475,7 +1475,7 @@ pub(super) fn decode_vht_ldpc_data(
         diagnostics.push(PhyDiagnostic::LdpcPartial {
             failed_codewords: recovered.failed_codewords,
         });
-        if let Some(ldpc_rate::Error::Codeword {
+        if let Some(ldpc::rate::Error::Codeword {
             index,
             error:
                 ldpc::Error::Nonconvergence {

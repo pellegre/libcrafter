@@ -214,7 +214,12 @@ impl Layout {
     /// VHT20 SU information includes PHY padding. Timing and the extra-symbol
     /// flag jointly identify the initial symbol count; never use HT's byte
     /// length formula here. IEEE 802.11-2020 21.3.10.5.4.
-    pub(super) fn vht(symbols: u16, mcs: u8, stbc: bool, extra: bool) -> Result<Self, Error> {
+    pub(in crate::radio) fn vht(
+        symbols: u16,
+        mcs: u8,
+        stbc: bool,
+        extra: bool,
+    ) -> Result<Self, Error> {
         let (coded, rate) = *[
             (52, Rate::Half),
             (104, Rate::Half),
@@ -247,17 +252,20 @@ impl Layout {
     /// HE20 SU: invert extra-segment signaling, then validate it against the
     /// forward puncturing threshold. Payload includes pre-FEC padding, not tail.
     /// PHY timing/admission and stream recombination remain caller obligations.
-    pub(super) fn he(a: &super::he::SuSignal, symbols: u16) -> Result<Self, Error> {
+    pub(in crate::radio) fn he(
+        a: &crate::radio::he::SuSignal,
+        symbols: u16,
+    ) -> Result<Self, Error> {
         Self::he_for_format(a, symbols, false)
     }
 
     /// Format is independently verified; ER bandwidth identifies 242/upper 106 tones.
-    pub(super) fn he_for_format(
-        a: &super::he::SuSignal,
+    pub(in crate::radio) fn he_for_format(
+        a: &crate::radio::he::SuSignal,
         symbols: u16,
         er: bool,
     ) -> Result<Self, Error> {
-        use super::he::capacity::Capacity;
+        use crate::radio::he::capacity::Capacity;
         let symbols = usize::from(symbols);
         // Even the shortest HE20 SU preamble/GI cannot fit >400 DATA symbols
         // under the 12-bit L-SIG duration bound. This also bounds integer math.
@@ -293,13 +301,13 @@ impl Layout {
 
     /// MU's common extra flag can be requested by another LDPC user. The
     /// caller establishes cross-user signaling consistency and spatial admission.
-    pub(super) fn he_mu(
-        signal: &super::he::mu::MuSignal,
-        user: &super::he::mu::sig_b::HeSigBUserFields,
+    pub(in crate::radio) fn he_mu(
+        signal: &crate::radio::he::mu::MuSignal,
+        user: &crate::radio::he::mu::sig_b::HeSigBUserFields,
         ru_tones: u16,
         symbols: u16,
     ) -> Result<Self, Error> {
-        use super::he::capacity::Capacity;
+        use crate::radio::he::capacity::Capacity;
         let symbols = usize::from(symbols);
         if symbols == 0 || symbols > 400 {
             return Err(Error::HeTiming);
@@ -336,12 +344,12 @@ impl Layout {
 
     /// TB27.3.12.5.5/Eq27-90: undo the signaled extra segment to determine
     /// initial codeword dimensions, then transmit exactly the Trigger budget.
-    pub(super) fn he_tb(
+    pub(in crate::radio) fn he_tb(
         common: &crate::Dot11TriggerCommonFields,
         user: &crate::Dot11TriggerUserFields,
         symbols: u16,
     ) -> Result<Self, Error> {
-        use super::he::capacity::Capacity;
+        use crate::radio::he::capacity::Capacity;
         let symbols = usize::from(symbols);
         if !user.ldpc || symbols == 0 || symbols > 400 {
             return Err(Error::HeTiming);
@@ -382,8 +390,8 @@ impl Layout {
     }
 
     fn he_capacities(
-        c: super::he::capacity::Capacity,
-        initial_c: super::he::capacity::Capacity,
+        c: crate::radio::he::capacity::Capacity,
+        initial_c: crate::radio::he::capacity::Capacity,
         symbols: usize,
         group: usize,
         extra: bool,
@@ -508,8 +516,8 @@ impl Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn he_header() -> super::super::he::SuSignal {
-        let mut a = super::super::he::SuSignal::decode(
+    fn he_header() -> crate::radio::he::SuSignal {
+        let mut a = crate::radio::he::SuSignal::decode(
             &b"1000000000000010000000000000000000100000100111000000"
                 .iter()
                 .map(|b| b - b'0')
@@ -523,18 +531,18 @@ mod tests {
     #[test]
     fn radio_he_ldpc_independent_geometry() {
         he_geometry(
-            include_str!("../../tests/fixtures/iq/he-ldpc-rate-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-ldpc-rate-index.tsv"),
             None,
         );
     }
     #[test]
     fn radio_he_er_ldpc_independent_geometry() {
         he_geometry(
-            include_str!("../../tests/fixtures/iq/he-er106-ldpc-rate-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-er106-ldpc-rate-index.tsv"),
             Some(1),
         );
         he_geometry(
-            include_str!("../../tests/fixtures/iq/he-er242-ldpc-rate-index.tsv"),
+            include_str!("../../../tests/fixtures/iq/he-er242-ldpc-rate-index.tsv"),
             Some(0),
         );
         for bandwidth in [0, 1] {
@@ -573,7 +581,7 @@ mod tests {
     }
     #[test]
     fn radio_he_tb_ldpc_independent_layouts() {
-        let rows = include_str!("../../tests/fixtures/iq/he-tb-ldpc-layout.tsv");
+        let rows = include_str!("../../../tests/fixtures/iq/he-tb-ldpc-layout.tsv");
         assert_eq!(rows.lines().skip(1).count(), 17276);
         let mut differences = [0usize; 2];
         for row in rows.lines().skip(1) {
@@ -662,7 +670,7 @@ mod tests {
     #[test]
     fn radio_he_mu_ldpc_independent_layouts() {
         use crate::radio::{HeSigBUserEncoding, HeSigBUserFields};
-        let bits: Vec<_> = include_str!("../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
+        let bits: Vec<_> = include_str!("../../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
             .lines()
             .nth(1)
             .unwrap()
@@ -672,9 +680,9 @@ mod tests {
             .bytes()
             .map(|b| b - b'0')
             .collect();
-        let mut signal = super::super::he::mu::MuSignal::decode(&bits).unwrap();
+        let mut signal = crate::radio::he::mu::MuSignal::decode(&bits).unwrap();
         signal.bandwidth = 0;
-        let rows = include_str!("../../tests/fixtures/iq/he-mu-ldpc-layout.tsv");
+        let rows = include_str!("../../../tests/fixtures/iq/he-mu-ldpc-layout.tsv");
         assert_eq!(rows.lines().skip(1).count(), 13696);
         let mut peer_extra = 0;
         for row in rows.lines().skip(1) {
@@ -849,11 +857,11 @@ mod tests {
         for (bandwidth, rows) in [
             (
                 1,
-                include_str!("../../tests/fixtures/iq/he-er106-ldpc-rate-codewords.tsv"),
+                include_str!("../../../tests/fixtures/iq/he-er106-ldpc-rate-codewords.tsv"),
             ),
             (
                 0,
-                include_str!("../../tests/fixtures/iq/he-er242-ldpc-rate-codewords.tsv"),
+                include_str!("../../../tests/fixtures/iq/he-er242-ldpc-rate-codewords.tsv"),
             ),
         ] {
             for row in rows.lines().skip(1) {
@@ -893,7 +901,7 @@ mod tests {
     }
     #[test]
     fn radio_he_ldpc_independent_codeword_recovery() {
-        let rows = include_str!("../../tests/fixtures/iq/he-ldpc-rate-codewords.tsv");
+        let rows = include_str!("../../../tests/fixtures/iq/he-ldpc-rate-codewords.tsv");
         assert_eq!(rows.lines().skip(1).count(), 72);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
@@ -932,7 +940,7 @@ mod tests {
     #[test]
     fn radio_vht_ldpc_independent_geometry() {
         let mut coverage = [0usize; 3];
-        let rows = include_str!("../../tests/fixtures/iq/vht-ldpc-rate-index.tsv");
+        let rows = include_str!("../../../tests/fixtures/iq/vht-ldpc-rate-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 20412);
         for row in rows.lines().skip(1) {
             let c: Vec<usize> = row.split('\t').map(|v| v.parse().unwrap()).collect();
@@ -1010,8 +1018,8 @@ mod tests {
     }
     #[test]
     fn radio_vht_ldpc_independent_recovery() {
-        let rows = include_str!("../../tests/fixtures/iq/vht-ldpc-rate-codewords.tsv");
-        let geometry = include_str!("../../tests/fixtures/iq/vht-ldpc-rate-index.tsv");
+        let rows = include_str!("../../../tests/fixtures/iq/vht-ldpc-rate-codewords.tsv");
+        let geometry = include_str!("../../../tests/fixtures/iq/vht-ldpc-rate-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 54);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();

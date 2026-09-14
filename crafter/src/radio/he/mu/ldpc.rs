@@ -2,7 +2,7 @@
 use super::{sig_b::HeSigBUserFields, MuSignal};
 use crate::radio::{
     he::capacity::Capacity,
-    ldpc_rate::{self, Layout, Recovery},
+    ldpc::rate::{self, Layout, Recovery},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,7 +14,7 @@ pub(in crate::radio) enum Error {
     Metrics,
     Allocation,
     Service,
-    Fec(ldpc_rate::Error),
+    Fec(rate::Error),
 }
 
 #[derive(Debug)]
@@ -22,7 +22,7 @@ pub(in crate::radio) struct Recovered {
     pub psdu: Vec<u8>,
     pub iterations: usize,
     pub failed_codewords: usize,
-    pub first_failure: Option<ldpc_rate::Error>,
+    pub first_failure: Option<rate::Error>,
 }
 
 /// Full-symbol metrics, already tone-demapped and stream-recombined, positive

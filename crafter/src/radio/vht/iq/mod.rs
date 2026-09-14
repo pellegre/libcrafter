@@ -1,7 +1,9 @@
 //! VHT20 one-DATA-stream IQ kernel. Admission and MPDU publication are separate.
 //! IEEE 802.11-2020 21.3.8/10/20; source map in docs/wifi-phy-evidence.json.
 use crate::radio::{
-    data, ht, ldpc_rate, signal,
+    data, ht,
+    ldpc::rate,
+    signal,
     sync::{fft64, Acquisition},
     ComplexSample, PhyDiagnostic, SignalInfo,
 };
@@ -140,7 +142,7 @@ pub(in crate::radio) fn admit(
     )
     .map_err(|_| ())?;
     let psdu_bytes = if ldpc {
-        let layout = ldpc_rate::Layout::vht(
+        let layout = rate::Layout::vht(
             u16::try_from(timing.data_symbols).map_err(|_| ())?,
             mcs,
             fields.stbc,
@@ -219,7 +221,7 @@ pub(in crate::radio) fn decode(samples: &[ComplexSample], a: &Acquisition) -> Re
         ldpc: true, mcs, ..
     } = fields.users
     {
-        let layout = ldpc_rate::Layout::vht(
+        let layout = rate::Layout::vht(
             u16::try_from(info.data_symbols).map_err(|_| ())?,
             mcs,
             fields.stbc,

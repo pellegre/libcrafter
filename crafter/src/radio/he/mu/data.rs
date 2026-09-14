@@ -27,7 +27,7 @@ pub(in crate::radio) enum Error {
 pub(in crate::radio) struct Payload {
     pub psdu: Vec<u8>,
     pub failed_codewords: usize,
-    pub first_failure: Option<crate::radio::ldpc_rate::Error>,
+    pub first_failure: Option<crate::radio::ldpc::rate::Error>,
 }
 
 #[derive(Debug)]
@@ -158,7 +158,7 @@ pub(in crate::radio) fn recover(
                     return Err(Error::Limit);
                 }
                 if ldpc {
-                    crate::radio::ldpc_rate::Layout::he_mu(
+                    crate::radio::ldpc::rate::Layout::he_mu(
                         &fields.signal,
                         &user,
                         size,

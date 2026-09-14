@@ -29,7 +29,7 @@ pub(in crate::radio) struct Recovered {
     pub timing: Timing,
     pub psdu: Vec<u8>,
     pub failed_codewords: usize,
-    pub first_failure: Option<crate::radio::ldpc_rate::Error>,
+    pub first_failure: Option<crate::radio::ldpc::rate::Error>,
 }
 
 #[derive(Clone, Copy)]
@@ -98,7 +98,7 @@ pub(in crate::radio) fn admit(
         return Err(Error::Limit);
     }
     if user.ldpc {
-        crate::radio::ldpc_rate::Layout::he_tb(common, user, timing.data_symbols as u16)
+        crate::radio::ldpc::rate::Layout::he_tb(common, user, timing.data_symbols as u16)
             .map_err(|_| Error::Unsupported)?;
     }
     Ok(Admission {

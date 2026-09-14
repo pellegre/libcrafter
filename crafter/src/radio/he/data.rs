@@ -78,9 +78,9 @@ pub(in crate::radio) fn admit(
     if h.ldpc {
         let symbols = u16::try_from(timing.data_symbols).ok()?;
         if prefix.er {
-            crate::radio::ldpc_rate::Layout::he_for_format(&h, symbols, true)
+            crate::radio::ldpc::rate::Layout::he_for_format(&h, symbols, true)
         } else {
-            crate::radio::ldpc_rate::Layout::he(&h, symbols)
+            crate::radio::ldpc::rate::Layout::he(&h, symbols)
         }
         .ok()?;
     }
@@ -393,16 +393,16 @@ fn recover_impl(
     if h.ldpc {
         let symbols = u16::try_from(timing.data_symbols).ok()?;
         let layout = if admitted.er {
-            crate::radio::ldpc_rate::Layout::he_for_format(&h, symbols, true)
+            crate::radio::ldpc::rate::Layout::he_for_format(&h, symbols, true)
         } else {
-            crate::radio::ldpc_rate::Layout::he(&h, symbols)
+            crate::radio::ldpc::rate::Layout::he(&h, symbols)
         }
         .ok()?;
         let recovered = if partial {
             layout.recover_partial(&coded, 64).ok()?
         } else {
             let (bits, iterations) = layout.recover(&coded, 64).ok()?;
-            crate::radio::ldpc_rate::Recovery {
+            crate::radio::ldpc::rate::Recovery {
                 bits,
                 iterations,
                 failed_codewords: 0,
@@ -414,7 +414,7 @@ fn recover_impl(
             diagnostics.push(crate::radio::PhyDiagnostic::LdpcPartial {
                 failed_codewords: recovered.failed_codewords,
             });
-            if let Some(crate::radio::ldpc_rate::Error::Codeword {
+            if let Some(crate::radio::ldpc::rate::Error::Codeword {
                 index,
                 error:
                     crate::radio::ldpc::Error::Nonconvergence {
