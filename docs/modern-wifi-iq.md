@@ -1,42 +1,28 @@
-# Modern Wi-Fi IQ implementation contract
+# Wi-Fi 4 IQ implementation and evidence
 
-The modern radio extension recovers raw IEEE 802.11 frame bytes from IQ and
-constructs transmit IQ from packets. It does not decrypt payloads. The existing
-packet, radio source, replay, and bounded transmitter interfaces remain the
-integration boundary.
+The HT20 radio extension recovers raw IEEE 802.11 frame bytes from IQ and
+constructs single-stream transmit IQ from packets. The existing packet, radio
+source, replay, and bounded transmitter interfaces remain the integration
+boundary. Payload processing is separate from physical-layer byte recovery.
 
-This is a development contract, not a claim of implemented modern support.
-The legacy implementation and its measured coverage are documented in
-[radio.md](radio.md).
+Legacy and HT20 usage and measured coverage are documented in
+[radio.md](radio.md). VHT, HE, and EHT are outside this Wi-Fi 4 implementation.
 
-## Scope and order
+## Scope
 
-The intended scope is applicable 20 MHz HT, VHT, HE and EHT reception and
-transmission with one receive channel. A single data stream can still use
-space-time coding; spatial-stream count alone does not establish whether a
-particular implementation can recover the transmission. Unsupported spatial
-arrangements and bandwidths must be identified explicitly.
-
-Implementation proceeds through three gates:
-
-1. Recover correct bytes, including aggregate MPDU boundaries and individual
-   FCS validation. Use independently generated intermediate and complete IQ
-   vectors, then paired radio/reference captures and exact replay. Repair
-   correctness failures before optimizing.
-2. Sustain more than 20 million complex samples per second on representative
-   modern and legacy traffic. Verify frame occurrences as well as throughput,
-   memory bounds, sample continuity, queue growth and delivery latency.
-3. Encode packet-derived modern waveforms, preserve explicit field overrides,
-   and validate finite transmissions with independent receivers. Agreement
-   between the library's own encoder and decoder is supplementary evidence.
+Reception covers 20 MHz HT MCS0–7 with BCC or LDPC, mixed and greenfield
+formats, valid long/short guard intervals, nonaggregated PSDUs, A-MPDUs,
+one-data-stream STBC, and extension training. Transmission covers the 48
+single-stream combinations of MCS0–7, BCC/LDPC, mixed long/short GI, and
+greenfield long GI. HT40 and additional independent data streams are outside
+the supported matrix.
 
 ## Evidence requirements
 
-Normative PHY layouts, code matrices, timing and modulation rules require a
-reviewed source map before implementation. HT/VHT/HE/EHT each need an explicit
-matrix of supported signaling, coding, modulation, guard intervals, aggregation
-and spatial arrangements. An unimplemented or unverified matrix entry must not
-be presented as supported.
+Normative PHY layouts, code matrices, timing and modulation rules use the
+reviewed source map in `wifi-phy-evidence.json`. The implemented HT matrix is
+covered by independent signaling, coding, modulation, guard-interval,
+aggregation, and spatial-arrangement fixtures.
 
 Reference capture metadata is conditional: absent or unknown coding, bandwidth,
 STBC or format information must remain unknown. Recover additional parameters
@@ -50,11 +36,9 @@ with verified IQ intervals. A saved pcap and IQ file in the same capture session
 do not prove that an individual reference frame was recorded in IQ. Incomplete
 or overflowing captures remain diagnostic evidence, not passing qualification.
 
-HT/VHT-capable reference hardware does not establish HE/EHT interoperability.
-Independent offline work can proceed, but missing capable-reference live
-evidence remains an explicit qualification gap. Raw captures, credentials,
-device identities and execution topology belong in operator-owned artifacts,
-never in the repository.
+Raw captures and device-specific live evidence remain in operator-owned
+artifacts rather than the repository.
+
 ## HT-SIG primitive
 
 `HtSignalFields::decode` validates exactly 48 post-BCC binary bits in
@@ -80,9 +64,9 @@ carrier-offset/multipath conditions. The kernel test supplies timing/CFO to
 isolate DATA correctness; the separate streaming test must acquire both from
 IQ and checks exact bytes and sample boundaries with three chunk sizes.
 
-This BCC increment does not qualify aggregation, STBC, additional streams,
-greenfield, VHT, HE, EHT, live interoperability, real-time throughput, or modern
-transmission. Those remain required work under the full contract above.
+Aggregation, greenfield, supported STBC, extension training, and transmission
+coverage are described in the sections below. Additional independent streams
+and HT40 remain outside the supported matrix.
 
 ## LDPC codeword increment
 
@@ -107,11 +91,10 @@ PSDU bytes, FCS, sample boundaries and coding metadata. Independent malformed
 controls target nonconvergence, invalid SERVICE and bad MAC FCS. No BCC
 interleaving or tail-bit rules are applied to LDPC DATA.
 
-New `PhyDiagnostic::Ldpc` and `LdpcNonconvergence` variants expose codeword
+`PhyDiagnostic::Ldpc` and `LdpcNonconvergence` variants expose codeword
 effort and bounded parity failures. Downstream exhaustive matches must add
-arms for these variants. These diagnostics do not establish calibrated RF
-quality or live interoperability. Live qualification remains required work,
-along with the broader formats in the contract above.
+arms for these variants. These diagnostics and offline fixtures do not by
+themselves establish calibrated RF quality or live interoperability.
 The legacy receiver recognizes mixed-format HT-SIG after shared legacy
 training and emits `PhyDiagnostic::HtSignal` with its original preamble sample
 index, followed by `UnsupportedPhy`. It does not deliver the HT payload as a
@@ -190,8 +173,8 @@ requires an additional downstream exhaustive-match arm. The existing receive
 example preserves `ht.format = "greenfield"` in frame and header records;
 the comparator checks this against known radiotap format flags. Header-only
 diagnostics do not establish MAC integrity. Legacy-only decoder defaults do
-not gain greenfield frame delivery. Live greenfield interoperability and the
-remaining formats, throughput and modern TX are not qualified by these tests.
+not gain greenfield frame delivery. Live interoperability and sustained
+throughput require separate evidence.
 
 ## HT STBC receiver increment
 
@@ -226,9 +209,10 @@ The existing receive records preserve STBC metadata and the reference
 comparator accepts known STBC=1 without treating unknown reference flags
 as zero. Greenfield STBC short-GI applicability remains an explicit source
 question; extension training is covered by the increment below, while additional
-independent data streams remain unsupported. These offline tests do not establish live STBC interoperability,
-real-time throughput or modern TX support. Generating two synthetic transmit
-channels for a receive fixture does not enable two-chain HackRF transmission.
+independent data streams remain unsupported. These offline tests do not
+establish live STBC interoperability or real-time throughput. Generating two
+synthetic transmit channels for a receive fixture does not enable two-chain
+HackRF transmission.
 
 ## HT extension-training receiver increment
 
@@ -248,6 +232,31 @@ cover this admission path. This is independent-fixture evidence, not live
 extension-training qualification. Greenfield short-GI applicability with
 additional training remains an explicit source question.
 
+## HT20 transmitter
+
+`HtTxConfig`, `HtTransmission`, and the shared `RadioPacketWriter` encode bare
+typed 802.11 packets into bounded 20 Msps CS8 waveforms without opening a
+device. The transmitter supports the 48 single-stream HT20 combinations of
+MCS0–7, BCC/LDPC, mixed long/short GI, and greenfield long GI. It appends a
+derived FCS by default, preserves an explicit FCS verbatim, derives HT-SIG and
+mixed-format L-SIG, and retains explicit signaling overrides.
+
+Independent complete-waveform fixtures cover all 32 mixed BCC cases, 32 mixed
+LDPC cases, 16 greenfield BCC cases, and 16 greenfield LDPC cases across two
+PSDU lengths. LDPC parity and rate matching additionally cover all twelve code
+matrices, 36 codewords, and 48 rate-matched streams. The closed live matrix uses
+100-byte PSDUs and requires exact reference MAC bytes plus compatible HT
+metadata for every case. The same bounded `IqSink` interface serves memory and
+HackRF output.
+
+Revision `a55ad8bc374be562d10dea0d376737f3f41ad2b2` passed the repository's
+three-run aggregate verifier. Every run recovered all 48 planned raw MAC byte
+sequences through an independent monitor receiver with matching MCS and guard
+interval metadata, exact HackRF sample supply, zero firmware shortfalls, and
+zero kernel capture drops. Optional radiotap coding and format fields were
+compared only when the reference driver marked them known; absent reference FCS
+remains recorded as such.
+
 ## Existing example and replay workflow
 
 The receive example's leading `--modern` flag selects `WifiDecoder`, including
@@ -264,7 +273,7 @@ Modern recording writes `decoder: "wifi"` in the existing v2 IQ header. Replay
 without an override preserves that selection. `--modern` can explicitly decode
 an older recording through the new receiver; original IQ and recorded bounds
 are preserved. Modern replay cannot use legacy parallel/windowed dispatch.
-New raw/live modern configurations reserve1024 output slots; older recordings
+New raw/live modern configurations reserve 1024 output slots; older recordings
 retain their original output limit and may fail explicitly if an aggregate
 exceeds it. No samples are discarded to make an overflowing replay pass.
 
