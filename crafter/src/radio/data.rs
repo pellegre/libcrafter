@@ -503,6 +503,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                 bytes,
                                 link_type: LinkType::Ieee80211,
                                 integrity: FrameIntegrity::ValidFcs,
+                                framing: super::FrameFraming { trailer_bytes: 4 },
                                 config: config.clone(),
                                 start: p.start,
                                 end_sample_index: info.end_sample_index,

@@ -13,7 +13,7 @@ fn packet() -> Packet {
 }
 
 #[test]
-fn writer_compiles_packet_appends_fcs_and_reports_cs8() {
+fn writer_compiles_packet_appends_fcs_and_reports_packet_and_sample_units() {
     let record = PacketRecord::new(packet());
     let compiled = record.packet().compile().unwrap();
     let mut writer = RadioPacketWriter::new(
@@ -28,8 +28,12 @@ fn writer_compiles_packet_appends_fcs_and_reports_cs8() {
         compiled.as_bytes()
     );
     assert_eq!(tx.psdu_bytes().len(), compiled.as_bytes().len() + 4);
-    assert_eq!(report.bytes_requested(), tx.cs8().len());
-    assert_eq!(report.bytes_written(), tx.cs8().len());
+    assert_eq!(report.bytes_requested(), compiled.as_bytes().len());
+    assert_eq!(report.bytes_written(), compiled.as_bytes().len());
+    assert_eq!(
+        report.radio_outcome().unwrap().samples_supplied,
+        Some(tx.sample_count() as u64)
+    );
     assert!(report.is_dry_run());
 }
 
@@ -112,7 +116,11 @@ fn ht20_uses_the_same_packet_writer_and_iq_sink() {
     );
     assert_eq!(transmission.mcs, HtMcs::Mcs7);
     assert_eq!(transmission.guard_interval, HtGuardInterval::Short);
-    assert_eq!(report.bytes_written(), transmission.cs8.len());
+    assert_eq!(report.bytes_written(), compiled.as_bytes().len());
+    assert_eq!(
+        report.radio_outcome().unwrap().samples_supplied,
+        Some((transmission.cs8.len() / 2) as u64)
+    );
     assert_eq!(
         writer.sink().transmissions(),
         std::slice::from_ref(transmission)

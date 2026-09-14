@@ -1,8 +1,8 @@
-//! Bounded, receive-only IQ contracts. No device is opened by this module.
+//! Bounded sample transport and packet codec contracts.
 //!
 //! Sources transfer owned interleaved signed eight-bit I/Q storage. DSP consumes
 //! normalized samples lazily: each component is divided by 128, giving [-1, 1).
-//! IQ is never a packet layer; only recovered MAC bytes cross the packet boundary.
+//! IQ is never a packet layer; recovered frames cross the typed packet boundary.
 mod ampdu;
 mod data;
 mod dsss;
@@ -43,8 +43,9 @@ pub use replay::{MemoryIqSource, ReaderIqSource};
 pub use signal::SignalInfo;
 pub use source::{RadioPacketSource, RadioReceiveMetadata};
 pub use tx::{
-    EncodedWifiTransmission, IqSink, LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig,
-    MemoryIqSink, RadioPacketWriter, WifiFcsPolicy, WifiTxEncoder,
+    EncodedSamples, EncodedWifiTransmission, IqSink, IqSinkOutcome, LegacyWifiPhy,
+    LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink, OwnedSamples, PacketEncoder,
+    RadioPacketWriter, SampleCompletion, SampleFormat, WifiFcsPolicy, WifiTxEncoder,
 };
 pub use wifi::{LegacyWifiDecoder, WifiDecoder};
 pub use windowed::{WindowedLegacyWifiDecoder, WindowedWifiDecoder};
@@ -452,12 +453,18 @@ pub enum FrameIntegrity {
     InvalidFcs,
     FcsAbsent,
 }
-/// Original recovered bytes including a received FCS when integrity says present.
+/// Codec-declared trailer length, independent of whether its integrity passed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FrameFraming {
+    pub trailer_bytes: usize,
+}
+/// Original recovered bytes; the codec declares capture-only trailer framing.
 #[derive(Debug, Clone)]
 pub struct RecoveredFrame {
     pub bytes: Vec<u8>,
     pub link_type: LinkType,
     pub integrity: FrameIntegrity,
+    pub framing: FrameFraming,
     pub config: RxConfig,
     pub start: IqPosition,
     pub end_sample_index: u64,

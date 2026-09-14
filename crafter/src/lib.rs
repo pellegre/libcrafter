@@ -149,11 +149,12 @@ pub use packet::{
 pub use protocols::exports::*;
 #[cfg(feature = "radio")]
 pub use radio::{
-    DsssPlcpFields, DsssPreamble, EncodedWifiTransmission, HtCoding, HtFormat, HtGuardInterval,
-    HtMcs, HtSignalBits, HtSignalError, HtSignalFields, HtTransmission, HtTxConfig, IqSink,
-    LegacyDsssCckRate, LegacyDsssCckTransmission, LegacyDsssCckTxConfig, LegacyOfdmRate,
-    LegacyOfdmTransmission, LegacyOfdmTxConfig, LegacyWifiPhy, LegacyWifiTransmission,
-    LegacyWifiTxConfig, MemoryIqSink, OfdmSignalFields, RadioPacketWriter, WifiDecoder,
+    DsssPlcpFields, DsssPreamble, EncodedSamples, EncodedWifiTransmission, HtCoding, HtFormat,
+    HtGuardInterval, HtMcs, HtSignalBits, HtSignalError, HtSignalFields, HtTransmission,
+    HtTxConfig, IqSink, IqSinkOutcome, LegacyDsssCckRate, LegacyDsssCckTransmission,
+    LegacyDsssCckTxConfig, LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig,
+    LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink, OfdmSignalFields,
+    OwnedSamples, PacketEncoder, RadioPacketWriter, SampleCompletion, SampleFormat, WifiDecoder,
     WifiFcsPolicy, WifiTxEncoder,
 };
 #[cfg(feature = "radio-hackrf")]
@@ -256,11 +257,12 @@ pub mod prelude {
     };
     #[cfg(feature = "radio")]
     pub use crate::{
-        DsssPlcpFields, DsssPreamble, EncodedWifiTransmission, HtCoding, HtFormat, HtGuardInterval,
-        HtMcs, HtSignalBits, HtTransmission, HtTxConfig, IqSink, LegacyDsssCckRate,
-        LegacyDsssCckTransmission, LegacyDsssCckTxConfig, LegacyOfdmRate, LegacyOfdmTransmission,
-        LegacyOfdmTxConfig, LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig,
-        MemoryIqSink, OfdmSignalFields, RadioPacketWriter, WifiDecoder, WifiFcsPolicy,
+        DsssPlcpFields, DsssPreamble, EncodedSamples, EncodedWifiTransmission, HtCoding, HtFormat,
+        HtGuardInterval, HtMcs, HtSignalBits, HtTransmission, HtTxConfig, IqSink, IqSinkOutcome,
+        LegacyDsssCckRate, LegacyDsssCckTransmission, LegacyDsssCckTxConfig, LegacyOfdmRate,
+        LegacyOfdmTransmission, LegacyOfdmTxConfig, LegacyWifiPhy, LegacyWifiTransmission,
+        LegacyWifiTxConfig, MemoryIqSink, OfdmSignalFields, OwnedSamples, PacketEncoder,
+        RadioPacketWriter, SampleCompletion, SampleFormat, WifiDecoder, WifiFcsPolicy,
         WifiTxEncoder,
     };
     #[cfg(feature = "radio-hackrf")]
