@@ -972,9 +972,17 @@ emitted core-owned occurrences. The configured sample buffer must cover the asse
 and one in-flight window per worker; insufficient bounds fail before samples
 are retained.
 
-Use `--parallel-windows` to select four window workers in the receive example.
+`WindowedWifiDecoder::new(workers)?` uses the same ownership and ordering rules
+with the complete Wi-Fi 4 decoder in every worker. Its 80 ms cores carry a
+longer overlap sufficient for a maximum-length one-stream HT20 MCS 0 aggregate,
+including STBC. HT, legacy OFDM, DSSS, and CCK frames therefore retain the same
+raw bytes and PHY metadata as serial `WifiDecoder` output, including when a PPDU
+crosses a core boundary.
+
+Use `--parallel-windows` to select four legacy window workers in the receive
+example, or `--parallel-windows --modern` for Wi-Fi 4.
 Use `--benchmark-artifact saved.iq windowed-3` or `windowed-4` for controlled
-offline measurement. Windowed
+legacy measurement; `wifi-windowed-3` and `wifi-windowed-4` select Wi-Fi 4. Windowed
 frames retain their original coordinates and enter `RadioPacketSource` through
 the normal `PhyDecoder` interface. Larger worker counts increase bounded memory
 and can help only when the assigned CPUs provide corresponding execution time.

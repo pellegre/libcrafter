@@ -23,10 +23,12 @@ pub(super) fn run(path: &str, mode: &str, frames_path: Option<&str>) -> Result<(
         "parallel" => Box::new(ParallelLegacyWifiDecoder::new()?),
         "windowed-3" => Box::new(WindowedLegacyWifiDecoder::new(3)?),
         "windowed-4" => Box::new(WindowedLegacyWifiDecoder::new(4)?),
+        "wifi-windowed-3" => Box::new(WindowedWifiDecoder::new(3)?),
+        "wifi-windowed-4" => Box::new(WindowedWifiDecoder::new(4)?),
         "ofdm" => Box::new(LegacyOfdmDecoder::new()),
         "dsss" => Box::new(DsssCckDecoder::new()),
         _ => return Err(
-            "benchmark mode must be wifi, wifi-parallel, wifi-parallel-dsss, combined, parallel, parallel-dsss, windowed-3, windowed-4, ofdm, or dsss"
+            "benchmark mode must be wifi, wifi-parallel, wifi-parallel-dsss, wifi-windowed-3, wifi-windowed-4, combined, parallel, parallel-dsss, windowed-3, windowed-4, ofdm, or dsss"
                 .into(),
         ),
     };
