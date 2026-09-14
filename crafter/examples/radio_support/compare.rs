@@ -1,9 +1,7 @@
 //! Offline workflow: exact original-byte comparisons, never packet recompilation.
-#[path = "ht_compare.rs"]
-mod ht_compare;
 use super::artifact::*;
+use super::ht_compare::HtPhy;
 use crafter::{LinkType, Packet, Radiotap};
-use ht_compare::HtPhy;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{

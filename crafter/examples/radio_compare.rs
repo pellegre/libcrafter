@@ -3,6 +3,8 @@
 mod artifact;
 #[path = "radio_support/compare.rs"]
 mod compare;
+#[path = "radio_support/ht_compare.rs"]
+mod ht_compare;
 #[path = "radio_support/transmit_compare.rs"]
 mod transmit_compare;
 fn main() -> artifact::Result<()> {
