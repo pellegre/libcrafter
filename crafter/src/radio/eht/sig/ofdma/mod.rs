@@ -5,7 +5,9 @@ mod common;
 #[cfg(test)]
 mod tests;
 
-pub use allocation::{EhtOfdmaUserKind, EhtRuAllocation20};
+pub use allocation::{
+    EhtOfdmaUserKind, EhtResourceUnit, EhtRuAllocation20, EhtRuComponent, EhtRuSize,
+};
 pub use common::EhtOfdmaCommon;
 
 use super::super::{EhtMuPpduType, EhtUsigFields, EhtUsigFormat};

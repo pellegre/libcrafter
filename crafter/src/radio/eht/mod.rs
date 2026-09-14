@@ -15,7 +15,7 @@ pub(in crate::radio) use sig::iq::{
 pub use sig::{
     EhtLtfMode, EhtMuMimoUser, EhtNonMuUser, EhtNonOfdmaCommon, EhtNonOfdmaSignal,
     EhtNonOfdmaUsers, EhtOfdmaCommon, EhtOfdmaSignal, EhtOfdmaUser, EhtOfdmaUserKind,
-    EhtRuAllocation20, EhtSigError,
+    EhtResourceUnit, EhtRuAllocation20, EhtRuComponent, EhtRuSize, EhtSigError,
 };
 pub use usig::{
     EhtMuPpduType, EhtMuUsigFields, EhtSigMcs, EhtTbUsigFields, EhtUsigError, EhtUsigFields,

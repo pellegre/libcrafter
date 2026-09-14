@@ -11,6 +11,7 @@ import math
 from pathlib import Path
 
 from eht_usig_vectors import mu_header, put
+from eht_ofdma_ru_vectors import ALLOCATIONS
 from he_signal_vectors import checksum
 from ht_bcc_vectors import PUNCTURE
 from ldpc_vectors import FIXTURE as LDPC_FIXTURE, encode as ldpc_encode
@@ -49,15 +50,8 @@ LDPC_CODES = {
 }
 
 OFDMA_USERS = {
-    **dict(enumerate([
-        9, 8, 8, 7, 8, 7, 7, 6, 8, 7, 7, 6, 7, 6, 6, 5, 6, 5, 5, 4,
-        6, 5, 5, 4, 4, 3,
-    ])),
-    **dict(enumerate([
-        7, 6, 6, 5, 7, 6, 6, 5, 4, 4, 5, 4, 4, 3, 2, 5, 4, 4, 3, 2,
-        3, 3, 5, 4,
-    ], start=32)),
-    **{code: code - 63 for code in range(64, 72)},
+    code: sum(resource.users for resource in resources)
+    for code, resources in ALLOCATIONS.items()
 }
 
 
@@ -678,7 +672,7 @@ if __name__ == "__main__":
         assert DATA_LDPC_OUT.read_text() == data_ldpc, "EHT DATA LDPC inventory differs"
         assert DATA_LDPC_PAYLOAD_OUT.read_text() == data_ldpc_payloads, "EHT DATA LDPC payload inventory differs"
     print(
-        "2048 single-user, 1792 MU-MIMO and 928 OFDMA EHT-SIG "
+        f"2048 single-user, 1792 MU-MIMO and {len(OFDMA_USERS) * 16} OFDMA EHT-SIG "
         f"block chains, {len(data_timing.splitlines()) - 1} DATA timelines and "
         f"{len(data_capacity.splitlines()) - 1} DATA capacities, and "
         f"{len(data_bcc.splitlines()) - 1} DATA BCC payloads, and "

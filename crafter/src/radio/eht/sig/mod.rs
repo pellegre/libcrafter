@@ -13,6 +13,7 @@ pub use common::EhtLtfMode;
 pub use error::EhtSigError;
 pub use non_ofdma::{EhtNonOfdmaCommon, EhtNonOfdmaSignal, EhtNonOfdmaUsers};
 pub use ofdma::{
-    EhtOfdmaCommon, EhtOfdmaSignal, EhtOfdmaUser, EhtOfdmaUserKind, EhtRuAllocation20,
+    EhtOfdmaCommon, EhtOfdmaSignal, EhtOfdmaUser, EhtOfdmaUserKind, EhtResourceUnit,
+    EhtRuAllocation20, EhtRuComponent, EhtRuSize,
 };
 pub use user::{EhtMuMimoUser, EhtNonMuUser};

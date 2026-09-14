@@ -8610,6 +8610,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
                 | "eht-mu-sig-iq-index.tsv"
                 | "eht-mu-sig-iq-invalid-index.tsv"
                 | "eht-ofdma-sig-index.tsv"
+                | "eht-ofdma-ru-index.tsv"
                 | "eht-ofdma-sig-iq-index.tsv"
                 | "eht-ofdma-sig-iq-invalid-index.tsv"
                 | "eht-training-iq-index.tsv"

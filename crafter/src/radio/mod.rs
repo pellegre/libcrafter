@@ -12,8 +12,8 @@ mod eht;
 pub use eht::{
     EhtLtfMode, EhtMuMimoUser, EhtMuPpduType, EhtMuUsigFields, EhtNonMuUser, EhtNonOfdmaCommon,
     EhtNonOfdmaSignal, EhtNonOfdmaUsers, EhtOfdmaCommon, EhtOfdmaSignal, EhtOfdmaUser,
-    EhtOfdmaUserKind, EhtRuAllocation20, EhtSigError, EhtSigMcs, EhtTbUsigFields, EhtUsigError,
-    EhtUsigFields, EhtUsigFormat,
+    EhtOfdmaUserKind, EhtResourceUnit, EhtRuAllocation20, EhtRuComponent, EhtRuSize, EhtSigError,
+    EhtSigMcs, EhtTbUsigFields, EhtUsigError, EhtUsigFields, EhtUsigFormat,
 };
 mod he;
 pub use he::mu::sig_b::coded::Error as HeSigBCodedError;
