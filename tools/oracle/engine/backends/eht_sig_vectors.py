@@ -9,6 +9,8 @@ from pathlib import Path
 
 from eht_usig_vectors import mu_header, put
 from he_signal_vectors import checksum
+from ht_bcc_vectors import PUNCTURE
+import ofdm_vectors as base
 
 
 OUT = Path(__file__).resolve().parents[4] / "crafter/tests/fixtures/iq/eht-sig-index.tsv"
@@ -16,6 +18,7 @@ MU_OUT = Path(__file__).resolve().parents[4] / "crafter/tests/fixtures/iq/eht-mu
 OFDMA_OUT = Path(__file__).resolve().parents[4] / "crafter/tests/fixtures/iq/eht-ofdma-sig-index.tsv"
 DATA_TIMING_OUT = Path(__file__).resolve().parents[4] / "crafter/tests/fixtures/iq/eht-data-timing-index.tsv"
 DATA_CAPACITY_OUT = Path(__file__).resolve().parents[4] / "crafter/tests/fixtures/iq/eht-data-capacity-index.tsv"
+DATA_BCC_OUT = Path(__file__).resolve().parents[4] / "crafter/tests/fixtures/iq/eht-data-bcc-index.tsv"
 
 OFDMA_USERS = {
     **dict(enumerate([
@@ -339,6 +342,102 @@ def generate_data_capacity():
     return "\n".join(rows) + "\n"
 
 
+def eht_scramble(bits, seed):
+    assert 0 < seed < 2048
+    state = seed
+    output = []
+    for bit in bits:
+        generated = state >> 10
+        feedback = ((state >> 10) ^ (state >> 8)) & 1
+        state = ((state << 1) | feedback) & 0x7ff
+        output.append(bit ^ generated)
+    return output
+
+
+def generate_data_bcc():
+    modes = {
+        0: (1, 1, 2),
+        1: (2, 1, 2),
+        2: (2, 3, 4),
+        3: (4, 1, 2),
+        4: (4, 3, 4),
+        5: (6, 2, 3),
+        6: (6, 3, 4),
+        7: (6, 5, 6),
+        8: (8, 3, 4),
+        9: (8, 5, 6),
+        15: (1, 1, 2),
+    }
+    rows = [
+        "mcs\tpadding\tsymbols\tseed\tbits_per_tone\trate_num\trate_den\tcoded_per_symbol\tcoded_short\tdata_per_symbol\tcoded_last\tcoded_bits\tdata_bits\tpsdu_bytes\tphy_pad_bits\ttail_bits\tpsdu\tcoded"
+    ]
+    for mcs, (bits_per_tone, rate_num, rate_den) in modes.items():
+        dcm = mcs == 15
+        data_tones = 117 if dcm else 234
+        short_tones = 30 if dcm else 60
+        coded_per_symbol = data_tones * bits_per_tone
+        coded_short = short_tones * bits_per_tone
+        data_per_symbol = coded_per_symbol * rate_num // rate_den
+        data_short = coded_short * rate_num // rate_den
+        puncturing = (
+            PUNCTURE[mcs]
+            if mcs < 8
+            else ([1, 1, 1, 0, 0, 1] if mcs == 8 else
+                  [1, 1, 1, 0, 0, 1, 1, 0, 0, 1])
+        )
+        if mcs == 15:
+            puncturing = [1, 1]
+        for padding in range(1, 5):
+            for symbols in (3, 5):
+                coded_last = (
+                    coded_per_symbol if padding == 4 else padding * coded_short
+                )
+                data_last = (
+                    data_per_symbol if padding == 4 else padding * data_short
+                )
+                coded_bits = (symbols - 1) * coded_per_symbol + coded_last
+                data_bits = (symbols - 1) * data_per_symbol + data_last
+                payload_bits = data_bits - 22
+                psdu_bytes, phy_pad_bits = divmod(payload_bits, 8)
+                seed = 1 + (mcs * 131 + padding * 257 + symbols * 509) % 2047
+                psdu = bytes(
+                    (index * 37 + seed + mcs * 13) % 256
+                    for index in range(psdu_bytes)
+                )
+                information = [0] * 16 + base.bits(psdu) + [
+                    (seed + index) & 1 for index in range(phy_pad_bits)
+                ]
+                scrambled = eht_scramble(information, seed) + [0] * 6
+                encoded = base.encode(scrambled)
+                fec = [
+                    bit for index, bit in enumerate(encoded)
+                    if puncturing[index % len(puncturing)]
+                ]
+                output = []
+                cursor = 0
+                for symbol in range(symbols):
+                    keep = coded_last if symbol == symbols - 1 else coded_per_symbol
+                    filler = int(dcm and keep == coded_per_symbol)
+                    amount = keep - filler
+                    output.extend(fec[cursor:cursor + amount])
+                    cursor += amount
+                    if filler:
+                        output.append((seed + symbol) & 1)
+                    output.extend(
+                        (seed + symbol + index) & 1
+                        for index in range(coded_per_symbol - keep)
+                    )
+                assert cursor == len(fec)
+                assert len(output) == symbols * coded_per_symbol
+                rows.append("\t".join(map(str, [
+                    mcs, padding, symbols, seed, bits_per_tone, rate_num,
+                    rate_den, coded_per_symbol, coded_short, data_per_symbol,
+                    coded_last, coded_bits, data_bits, psdu_bytes, phy_pad_bits,
+                    6, psdu.hex(), "".join(map(str, output)),
+                ])))
+    return "\n".join(rows) + "\n"
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", action="store_true")
@@ -348,20 +447,24 @@ if __name__ == "__main__":
     ofdma = generate_ofdma()
     data_timing = generate_data_timing()
     data_capacity = generate_data_capacity()
+    data_bcc = generate_data_bcc()
     if args.write:
         OUT.write_text(single)
         MU_OUT.write_text(multi)
         OFDMA_OUT.write_text(ofdma)
         DATA_TIMING_OUT.write_text(data_timing)
         DATA_CAPACITY_OUT.write_text(data_capacity)
+        DATA_BCC_OUT.write_text(data_bcc)
     else:
         assert OUT.read_text() == single, "EHT-SIG SU inventory differs"
         assert MU_OUT.read_text() == multi, "EHT-SIG MU inventory differs"
         assert OFDMA_OUT.read_text() == ofdma, "EHT-SIG OFDMA inventory differs"
         assert DATA_TIMING_OUT.read_text() == data_timing, "EHT DATA timing inventory differs"
         assert DATA_CAPACITY_OUT.read_text() == data_capacity, "EHT DATA capacity inventory differs"
+        assert DATA_BCC_OUT.read_text() == data_bcc, "EHT DATA BCC inventory differs"
     print(
         "2048 single-user, 1792 MU-MIMO and 928 OFDMA EHT-SIG "
         f"block chains, {len(data_timing.splitlines()) - 1} DATA timelines and "
-        f"{len(data_capacity.splitlines()) - 1} DATA capacities verified"
+        f"{len(data_capacity.splitlines()) - 1} DATA capacities, and "
+        f"{len(data_bcc.splitlines()) - 1} DATA BCC payloads verified"
     )

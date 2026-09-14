@@ -1,7 +1,9 @@
 //! EHT20 DATA timing, payload geometry, and IQ recovery.
 
+mod bcc;
 mod capacity;
 mod receiver;
+mod scrambler;
 #[cfg(test)]
 mod tests;
 mod timing;
@@ -22,4 +24,6 @@ pub(in crate::radio) enum Error {
     Training,
     FrameLimit,
     SampleLimit,
+    Fec,
+    Service,
 }
