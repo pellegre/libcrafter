@@ -1,8 +1,9 @@
 use super::super::{block::EncodingBlock, common::Overflow, EhtLtfMode, EhtSigError};
+use super::EhtRuAllocation20;
 
-/// Common EHT-SIG parameters shared by non-OFDMA users.
+/// U-SIG overflow and RU allocation from a 20 MHz OFDMA common block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EhtNonOfdmaCommon {
+pub struct EhtOfdmaCommon {
     pub spatial_reuse: u8,
     pub ltf_mode: EhtLtfMode,
     pub ltf_symbols: u8,
@@ -10,10 +11,10 @@ pub struct EhtNonOfdmaCommon {
     pub pre_fec_padding_factor: u8,
     pub pe_disambiguity: bool,
     pub disregard: u8,
-    pub users: u8,
+    pub allocation: EhtRuAllocation20,
 }
 
-impl EhtNonOfdmaCommon {
+impl EhtOfdmaCommon {
     pub(super) fn decode(block: &EncodingBlock<'_>) -> Result<Self, EhtSigError> {
         let fields = Overflow::decode(block)?;
         Ok(Self {
@@ -24,7 +25,7 @@ impl EhtNonOfdmaCommon {
             pre_fec_padding_factor: fields.pre_fec_padding_factor,
             pe_disambiguity: fields.pe_disambiguity,
             disregard: fields.disregard,
-            users: block.field(17, 3) as u8 + 1,
+            allocation: EhtRuAllocation20::decode(block.field(17, 9))?,
         })
     }
 }

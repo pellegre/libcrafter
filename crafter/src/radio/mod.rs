@@ -10,7 +10,8 @@ mod dsss_tx;
 mod eht;
 pub use eht::{
     EhtLtfMode, EhtMuMimoUser, EhtMuPpduType, EhtMuUsigFields, EhtNonMuUser, EhtNonOfdmaCommon,
-    EhtNonOfdmaSignal, EhtNonOfdmaUsers, EhtSigError, EhtSigMcs, EhtTbUsigFields, EhtUsigError,
+    EhtNonOfdmaSignal, EhtNonOfdmaUsers, EhtOfdmaCommon, EhtOfdmaSignal, EhtOfdmaUser,
+    EhtOfdmaUserKind, EhtRuAllocation20, EhtSigError, EhtSigMcs, EhtTbUsigFields, EhtUsigError,
     EhtUsigFields, EhtUsigFormat,
 };
 mod he;

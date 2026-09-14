@@ -4,7 +4,7 @@ mod common;
 #[cfg(test)]
 mod tests;
 
-pub use common::{EhtLtfMode, EhtNonOfdmaCommon};
+pub use common::EhtNonOfdmaCommon;
 
 use super::super::{EhtMuPpduType, EhtUsigFields, EhtUsigFormat};
 use super::{block::EncodingBlock, EhtMuMimoUser, EhtNonMuUser, EhtSigError};

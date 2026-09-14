@@ -10,6 +10,8 @@ pub enum EhtSigError {
         value: u8,
     },
     UnsupportedFormat,
+    Bandwidth(u8),
+    RuAllocation(u16),
     UserCount(u8),
     LtfSymbols(u8),
     MuMimoStaId {
