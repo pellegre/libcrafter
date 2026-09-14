@@ -25,9 +25,26 @@ fn radio_eht_training_streaming_dispatch() {
         let columns: Vec<_> = row.split('\t').collect();
         let offset: usize = columns[11].parse().unwrap();
         let length: usize = columns[12].parse().unwrap();
+        let fixture_bytes = &corpus[offset..offset + length];
+        let (samples, acquisition) = fixture(fixture_bytes);
+        let input = &samples[acquisition.signal_start as usize..];
+        let signal = SignalReceiver::recover(input, &acquisition).unwrap();
+        let trained = Receiver::recover(input, &acquisition, signal).unwrap();
+        let expected =
+            match crate::radio::eht::data::Receiver::admit(trained, usize::MAX, usize::MAX) {
+                Ok(_) => PhyDiagnostic::TruncatedFrame,
+                Err(
+                    crate::radio::eht::data::Error::UnsupportedFormat
+                    | crate::radio::eht::data::Error::Modulation(_)
+                    | crate::radio::eht::data::Error::Coding
+                    | crate::radio::eht::data::Error::FrameLimit
+                    | crate::radio::eht::data::Error::SampleLimit,
+                ) => PhyDiagnostic::UnsupportedPhy,
+                Err(_) => PhyDiagnostic::InvalidHeader,
+            };
         let output = crate::radio::eht::test_support::feed(
             &mut WifiDecoder::new(),
-            &corpus[offset..offset + length],
+            fixture_bytes,
             [1, 37, 128, 997].get(index).copied().unwrap_or(997),
         );
         assert!(output.frames.is_empty(), "{}", columns[0]);
@@ -35,9 +52,8 @@ fn radio_eht_training_streaming_dispatch() {
             .diagnostics
             .iter()
             .any(|diagnostic| matches!(diagnostic, PhyDiagnostic::EhtSignal { .. })));
-        assert!(output.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy));
         assert!(
-            !output.diagnostics.contains(&PhyDiagnostic::InvalidHeader),
+            output.diagnostics.contains(&expected),
             "{}: {:?}",
             columns[0],
             output.diagnostics

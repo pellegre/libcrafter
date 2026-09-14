@@ -14,6 +14,8 @@ from he_signal_vectors import checksum
 OUT = Path(__file__).resolve().parents[4] / "crafter/tests/fixtures/iq/eht-sig-index.tsv"
 MU_OUT = Path(__file__).resolve().parents[4] / "crafter/tests/fixtures/iq/eht-mu-sig-index.tsv"
 OFDMA_OUT = Path(__file__).resolve().parents[4] / "crafter/tests/fixtures/iq/eht-ofdma-sig-index.tsv"
+DATA_TIMING_OUT = Path(__file__).resolve().parents[4] / "crafter/tests/fixtures/iq/eht-data-timing-index.tsv"
+DATA_CAPACITY_OUT = Path(__file__).resolve().parents[4] / "crafter/tests/fixtures/iq/eht-data-capacity-index.tsv"
 
 OFDMA_USERS = {
     **dict(enumerate([
@@ -241,6 +243,102 @@ def generate_ofdma():
     return "\n".join(rows) + "\n"
 
 
+def generate_data_timing():
+    rows = [
+        "length\tsig_symbols\tltf_mode\tltf_size\tguard\tltf_symbols\tpe_disambiguity\tdata_symbols\tpe_samples\tdata_start\tdata_end\tpacket_end\tsignaled_end"
+    ]
+    lengths = [*range(3, 4096, 30), 4095]
+    for sig_symbols in (1, 2, 7, 16, 32):
+        for ltf_mode, (ltf_size, guard) in enumerate(
+            ((2, 16), (2, 32), (4, 16), (4, 64))
+        ):
+            for ltf_symbols in (1, 2, 4, 6, 8):
+                for pe_disambiguity in (0, 1):
+                    training = ltf_symbols * (64 * ltf_size + guard)
+                    fixed = 320 + 80 * sig_symbols + training
+                    stride = 256 + guard
+                    for length in lengths:
+                        rounded = (length + 3) // 3 * 80
+                        available = rounded - fixed
+                        if available < 0:
+                            continue
+                        data_symbols = available // stride - pe_disambiguity
+                        if data_symbols <= 0:
+                            continue
+                        data_start = 720 + 80 * sig_symbols + training
+                        data_end = data_start + data_symbols * stride
+                        pe_samples = (available - data_symbols * stride) // 80 * 80
+                        if pe_samples > 320:
+                            continue
+                        rows.append("\t".join(map(str, [
+                            length, sig_symbols, ltf_mode, ltf_size, guard,
+                            ltf_symbols, pe_disambiguity, data_symbols,
+                            pe_samples, data_start, data_end,
+                            data_end + pe_samples, 400 + rounded,
+                        ])))
+    return "\n".join(rows) + "\n"
+
+
+def generate_data_capacity():
+    modes = {
+        0: (1, 1, 2, 0),
+        1: (2, 1, 2, 0),
+        2: (2, 3, 4, 0),
+        3: (4, 1, 2, 0),
+        4: (4, 3, 4, 0),
+        5: (6, 2, 3, 0),
+        6: (6, 3, 4, 0),
+        7: (6, 5, 6, 0),
+        8: (8, 3, 4, 0),
+        9: (8, 5, 6, 0),
+        10: (10, 3, 4, 0),
+        11: (10, 5, 6, 0),
+        12: (12, 3, 4, 0),
+        13: (12, 5, 6, 0),
+        15: (1, 1, 2, 1),
+    }
+    rows = [
+        "mcs\tldpc\textra\tpadding\tsymbols\tbits_per_tone\trate_num\trate_den\tdcm\tcoded_per_symbol\tcoded_short\tdata_per_symbol\tcoded_last\tcoded_bits\tdata_bits\tpsdu_bytes\tphy_pad_bits\ttail_bits\tbcc_dcm_filler"
+    ]
+    for mcs, (bits, rate_num, rate_den, dcm) in modes.items():
+        for ldpc in (0, 1):
+            if not ldpc and mcs not in (*range(10), 15):
+                continue
+            for extra in (0, 1):
+                for padding in (1, 2, 3, 4):
+                    for symbols in (1, 2, 3, 4, 7, 16, 31, 64, 127, 256, 400):
+                        data_tones = 117 if dcm else 234
+                        short_tones = 30 if dcm else 60
+                        cbps = data_tones * bits
+                        short_cbps = short_tones * bits
+                        dbps = cbps * rate_num // rate_den
+                        short_dbps = short_cbps * rate_num // rate_den
+                        effective_extra = bool(ldpc and extra)
+                        if effective_extra and padding == 1:
+                            payload_symbols, payload_padding = symbols - 1, 4
+                        elif effective_extra:
+                            payload_symbols, payload_padding = symbols, padding - 1
+                        else:
+                            payload_symbols, payload_padding = symbols, padding
+                        if payload_symbols < 1:
+                            continue
+                        data_last = dbps if payload_padding == 4 else payload_padding * short_dbps
+                        data_bits = (payload_symbols - 1) * dbps + data_last
+                        tail = 0 if ldpc else 6
+                        payload = data_bits - 16 - tail
+                        if payload < 0:
+                            continue
+                        coded_last = cbps if padding == 4 else padding * short_cbps
+                        coded_bits = (symbols - 1) * cbps + coded_last
+                        rows.append("\t".join(map(str, [
+                            mcs, ldpc, extra, padding, symbols, bits, rate_num,
+                            rate_den, dcm, cbps, short_cbps, dbps, coded_last,
+                            coded_bits, data_bits, payload // 8, payload % 8,
+                            tail, int(not ldpc and mcs == 15),
+                        ])))
+    return "\n".join(rows) + "\n"
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", action="store_true")
@@ -248,15 +346,22 @@ if __name__ == "__main__":
     single = generate_single()
     multi = generate_multi()
     ofdma = generate_ofdma()
+    data_timing = generate_data_timing()
+    data_capacity = generate_data_capacity()
     if args.write:
         OUT.write_text(single)
         MU_OUT.write_text(multi)
         OFDMA_OUT.write_text(ofdma)
+        DATA_TIMING_OUT.write_text(data_timing)
+        DATA_CAPACITY_OUT.write_text(data_capacity)
     else:
         assert OUT.read_text() == single, "EHT-SIG SU inventory differs"
         assert MU_OUT.read_text() == multi, "EHT-SIG MU inventory differs"
         assert OFDMA_OUT.read_text() == ofdma, "EHT-SIG OFDMA inventory differs"
+        assert DATA_TIMING_OUT.read_text() == data_timing, "EHT DATA timing inventory differs"
+        assert DATA_CAPACITY_OUT.read_text() == data_capacity, "EHT DATA capacity inventory differs"
     print(
         "2048 single-user, 1792 MU-MIMO and 928 OFDMA EHT-SIG "
-        "block chains verified"
+        f"block chains, {len(data_timing.splitlines()) - 1} DATA timelines and "
+        f"{len(data_capacity.splitlines()) - 1} DATA capacities verified"
     )

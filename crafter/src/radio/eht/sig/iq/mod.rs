@@ -34,6 +34,7 @@ pub(in crate::radio) enum SignalFields {
 pub(in crate::radio) struct Fields {
     pub usig: EhtUsigFields,
     pub signal: SignalFields,
+    pub legacy_length: usize,
     pub symbols: usize,
     pub end_sample: u64,
 }

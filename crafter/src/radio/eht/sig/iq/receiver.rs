@@ -72,6 +72,7 @@ pub(in crate::radio) struct Receiver<'a> {
     samples: &'a [ComplexSample],
     acquisition: &'a Acquisition,
     usig: EhtUsigFields,
+    legacy_length: usize,
     format: Format,
     mode: Mode,
     symbols: usize,
@@ -115,6 +116,7 @@ impl<'a> Receiver<'a> {
             samples: &samples[..required],
             acquisition,
             usig: prefix.fields,
+            legacy_length: prefix.legacy_length,
             format,
             mode,
             symbols,
@@ -146,6 +148,7 @@ impl<'a> Receiver<'a> {
         Ok(Fields {
             usig: self.usig,
             signal,
+            legacy_length: self.legacy_length,
             symbols: self.symbols,
             end_sample: self.acquisition.signal_start + self.required as u64,
         })

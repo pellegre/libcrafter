@@ -1,4 +1,4 @@
-//! Legacy and opt-in HT/VHT/HE DATA receive paths plus EHT prefix recognition.
+//! Legacy and opt-in HT/VHT/HE DATA receive paths plus EHT receive staging.
 //! Source map: docs/wifi-phy-evidence.json.
 use super::{
     signal::{decode_signal, TRELLIS_SIGNS},
@@ -24,7 +24,7 @@ struct Pending {
     he: Option<HeSuSignalFields>,
     he_er: bool,
     he_candidate: bool,
-    eht: Option<EhtPending>,
+    eht: Option<EhtStage>,
     // Modulo-two repeated L-SIG: MU or ER until constellation discrimination.
     er_candidate: bool,
     mu_wait: Option<usize>,
@@ -34,11 +34,14 @@ struct Pending {
     greenfield: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EhtPending {
+enum EhtStage {
     Prefix,
     Signal(usize),
-    Training(usize),
+    Training {
+        required: usize,
+        signal: eht::ReceivedSignal,
+    },
+    Data(Box<eht::data::Admission>),
 }
 
 impl Pending {
@@ -697,7 +700,8 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     }
                     continue;
                 }
-                if let Some(EhtPending::Signal(required)) = p.eht {
+                if let Some(EhtStage::Signal(required)) = p.eht.as_ref() {
+                    let required = *required;
                     if p.samples.len() == required {
                         match eht::SignalReceiver::recover(&p.samples, &p.acquisition) {
                             Ok(fields) => {
@@ -706,16 +710,16 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                     &p.acquisition,
                                     fields.clone(),
                                 );
-                                out.diagnostics.push(match fields.signal {
+                                out.diagnostics.push(match &fields.signal {
                                     eht::SignalFields::NonOfdma(fields) => {
                                         PhyDiagnostic::EhtSignal {
-                                            fields,
+                                            fields: fields.clone(),
                                             preamble_sample_index: p.start.sample_index,
                                         }
                                     }
                                     eht::SignalFields::Ofdma(fields) => {
                                         PhyDiagnostic::EhtOfdmaSignal {
-                                            fields,
+                                            fields: fields.clone(),
                                             preamble_sample_index: p.start.sample_index,
                                         }
                                     }
@@ -725,7 +729,10 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                         if required > p.samples.len()
                                             && p.reserve_samples(required, config, reserved) =>
                                     {
-                                        p.eht = Some(EhtPending::Training(required));
+                                        p.eht = Some(EhtStage::Training {
+                                            required,
+                                            signal: fields,
+                                        });
                                         continue;
                                     }
                                     Err(
@@ -742,20 +749,55 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     }
                     continue;
                 }
-                if let Some(EhtPending::Training(required)) = p.eht {
+                if let Some(EhtStage::Training { required, signal }) = p.eht.as_ref() {
+                    let (required, signal) = (*required, signal.clone());
                     if p.samples.len() == required {
+                        let result =
+                            eht::training::Receiver::recover(&p.samples, &p.acquisition, signal);
+                        let budget = config
+                            .max_buffer_samples
+                            .saturating_sub(reserved)
+                            .saturating_add(p.samples.capacity());
+                        match result {
+                            Ok(trained) => {
+                                match eht::data::Receiver::admit(trained, usize::MAX, budget) {
+                                    Ok(admission)
+                                        if p.reserve_samples(
+                                            admission.required_samples,
+                                            config,
+                                            reserved,
+                                        ) =>
+                                    {
+                                        p.info = Some(admission.info);
+                                        p.eht = Some(EhtStage::Data(Box::new(admission)));
+                                        continue;
+                                    }
+                                    Ok(_)
+                                    | Err(
+                                        eht::data::Error::UnsupportedFormat
+                                        | eht::data::Error::Modulation(_)
+                                        | eht::data::Error::Coding
+                                        | eht::data::Error::FrameLimit
+                                        | eht::data::Error::SampleLimit,
+                                    ) => out.diagnostics.push(PhyDiagnostic::UnsupportedPhy),
+                                    Err(_) => out.diagnostics.push(PhyDiagnostic::InvalidHeader),
+                                }
+                            }
+                            Err(_) => out.diagnostics.push(PhyDiagnostic::InvalidHeader),
+                        }
+                        self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
+                        self.pending[slot] = None;
+                    }
+                    continue;
+                }
+                if let Some(EhtStage::Data(admission)) = p.eht.as_ref() {
+                    if p.samples.len() == admission.required_samples {
                         let p = self.pending[slot].take().unwrap();
-                        let result = eht::SignalReceiver::recover(&p.samples, &p.acquisition)
-                            .map_err(|_| ())
-                            .and_then(|fields| {
-                                eht::training::Receiver::recover(&p.samples, &p.acquisition, fields)
-                                    .map_err(|_| ())
-                            });
-                        out.diagnostics.push(if result.is_ok() {
-                            PhyDiagnostic::UnsupportedPhy
-                        } else {
-                            PhyDiagnostic::InvalidHeader
-                        });
+                        let Some(EhtStage::Data(admission)) = p.eht else {
+                            unreachable!()
+                        };
+                        debug_assert_eq!(p.info, Some(admission.info));
+                        out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
                         self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
                     }
                     continue;
@@ -833,7 +875,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                         && eht::iq::repeated_legacy_signal(&p.samples, &p.acquisition).is_some()
                     {
                         if p.reserve_samples(320, config, reserved) {
-                            p.eht = Some(EhtPending::Prefix);
+                            p.eht = Some(EhtStage::Prefix);
                         } else {
                             self.stats.rejected_frames =
                                 self.stats.rejected_frames.saturating_add(1);
@@ -916,7 +958,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             .reserve_exact(required.saturating_sub(p.samples.len()));
                     }
                 }
-                if p.eht == Some(EhtPending::Prefix) && p.samples.len() == 320 {
+                if matches!(p.eht.as_ref(), Some(EhtStage::Prefix)) && p.samples.len() == 320 {
                     p.eht = None;
                     if let Some(prefix) = eht::iq::decode_prefix(&p.samples, &p.acquisition) {
                         out.diagnostics.push(PhyDiagnostic::EhtUsig {
@@ -928,7 +970,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                 if required > p.samples.len()
                                     && p.reserve_samples(required, config, reserved) =>
                             {
-                                p.eht = Some(EhtPending::Signal(required));
+                                p.eht = Some(EhtStage::Signal(required));
                             }
                             Err(
                                 eht::SignalIqError::UnsupportedFormat
