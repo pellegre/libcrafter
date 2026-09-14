@@ -149,10 +149,12 @@ pub use packet::{
 pub use protocols::exports::*;
 #[cfg(feature = "radio")]
 pub use radio::{
-    DsssPlcpFields, DsssPreamble, HtSignalError, HtSignalFields, IqSink, LegacyDsssCckRate,
-    LegacyDsssCckTransmission, LegacyDsssCckTxConfig, LegacyOfdmRate, LegacyOfdmTransmission,
-    LegacyOfdmTxConfig, LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink,
-    OfdmSignalFields, RadioPacketWriter, WifiDecoder, WifiFcsPolicy,
+    DsssPlcpFields, DsssPreamble, EncodedWifiTransmission, HtCoding, HtFormat, HtGuardInterval,
+    HtMcs, HtSignalBits, HtSignalError, HtSignalFields, HtTransmission, HtTxConfig, IqSink,
+    LegacyDsssCckRate, LegacyDsssCckTransmission, LegacyDsssCckTxConfig, LegacyOfdmRate,
+    LegacyOfdmTransmission, LegacyOfdmTxConfig, LegacyWifiPhy, LegacyWifiTransmission,
+    LegacyWifiTxConfig, MemoryIqSink, OfdmSignalFields, RadioPacketWriter, WifiDecoder,
+    WifiFcsPolicy, WifiTxEncoder,
 };
 #[cfg(feature = "radio-hackrf")]
 pub use radio::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};
@@ -254,10 +256,12 @@ pub mod prelude {
     };
     #[cfg(feature = "radio")]
     pub use crate::{
-        DsssPlcpFields, DsssPreamble, IqSink, LegacyDsssCckRate, LegacyDsssCckTransmission,
-        LegacyDsssCckTxConfig, LegacyOfdmRate, LegacyOfdmTransmission, LegacyOfdmTxConfig,
-        LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig, MemoryIqSink, OfdmSignalFields,
-        RadioPacketWriter, WifiDecoder, WifiFcsPolicy,
+        DsssPlcpFields, DsssPreamble, EncodedWifiTransmission, HtCoding, HtFormat, HtGuardInterval,
+        HtMcs, HtSignalBits, HtTransmission, HtTxConfig, IqSink, LegacyDsssCckRate,
+        LegacyDsssCckTransmission, LegacyDsssCckTxConfig, LegacyOfdmRate, LegacyOfdmTransmission,
+        LegacyOfdmTxConfig, LegacyWifiPhy, LegacyWifiTransmission, LegacyWifiTxConfig,
+        MemoryIqSink, OfdmSignalFields, RadioPacketWriter, WifiDecoder, WifiFcsPolicy,
+        WifiTxEncoder,
     };
     #[cfg(feature = "radio-hackrf")]
     pub use crate::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};

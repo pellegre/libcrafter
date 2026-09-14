@@ -2,13 +2,13 @@
 use super::{RadioError, RadioResult};
 use std::f64::consts::{PI, SQRT_2};
 
-const SAMPLE_RATE_HZ: u32 = 20_000_000;
+pub(in crate::radio) const SAMPLE_RATE_HZ: u32 = 20_000_000;
 const DATA_CARRIERS: [i32; 48] = [
     -26, -25, -24, -23, -22, -20, -19, -18, -17, -16, -15, -14, -13, -12, -11, -10, -9, -8, -6, -5,
     -4, -3, -2, -1, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24,
     25, 26,
 ];
-const LONG_TRAINING: [i8; 53] = [
+pub(in crate::radio) const LONG_TRAINING: [i8; 53] = [
     1, 1, -1, -1, 1, 1, -1, 1, -1, 1, 1, 1, 1, 1, 1, -1, -1, 1, 1, -1, 1, -1, 1, 1, 1, 1, 0, 1, -1,
     -1, 1, 1, -1, 1, -1, 1, -1, -1, -1, -1, -1, 1, 1, -1, -1, 1, -1, 1, -1, 1, 1, 1, 1,
 ];
@@ -266,16 +266,16 @@ fn validate_config(config: &LegacyOfdmTxConfig) -> RadioResult<()> {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct Complex {
-    re: f64,
-    im: f64,
+pub(in crate::radio) struct Complex {
+    pub(in crate::radio) re: f64,
+    pub(in crate::radio) im: f64,
 }
 
 impl Complex {
-    const ZERO: Self = Self { re: 0.0, im: 0.0 };
+    pub(in crate::radio) const ZERO: Self = Self { re: 0.0, im: 0.0 };
 }
 
-fn crc32(bytes: &[u8]) -> u32 {
+pub(in crate::radio) fn crc32(bytes: &[u8]) -> u32 {
     let mut crc = !0u32;
     for byte in bytes {
         crc ^= *byte as u32;
@@ -286,7 +286,7 @@ fn crc32(bytes: &[u8]) -> u32 {
     !crc
 }
 
-fn append_lsb_bits(out: &mut Vec<u8>, bytes: &[u8]) {
+pub(in crate::radio) fn append_lsb_bits(out: &mut Vec<u8>, bytes: &[u8]) {
     for byte in bytes {
         for bit in 0..8 {
             out.push((byte >> bit) & 1);
@@ -294,7 +294,7 @@ fn append_lsb_bits(out: &mut Vec<u8>, bytes: &[u8]) {
     }
 }
 
-fn convolutional_encode(bits: &[u8]) -> Vec<u8> {
+pub(in crate::radio) fn convolutional_encode(bits: &[u8]) -> Vec<u8> {
     let mut state = 0usize;
     let mut out = Vec::with_capacity(bits.len() * 2);
     for bit in bits {
@@ -305,7 +305,7 @@ fn convolutional_encode(bits: &[u8]) -> Vec<u8> {
     out
 }
 
-fn interleave(bits: &[u8], nbpsc: usize) -> Vec<u8> {
+pub(in crate::radio) fn interleave(bits: &[u8], nbpsc: usize) -> Vec<u8> {
     let n = bits.len();
     let s = (nbpsc / 2).max(1);
     let mut out = vec![0; n];
@@ -317,7 +317,7 @@ fn interleave(bits: &[u8], nbpsc: usize) -> Vec<u8> {
     out
 }
 
-fn scramble(bits: &[u8], mut seed: u8) -> Vec<u8> {
+pub(in crate::radio) fn scramble(bits: &[u8], mut seed: u8) -> Vec<u8> {
     bits.iter()
         .map(|bit| {
             let feedback = ((seed >> 6) ^ (seed >> 3)) & 1;
@@ -327,7 +327,7 @@ fn scramble(bits: &[u8], mut seed: u8) -> Vec<u8> {
         .collect()
 }
 
-fn signal_bits(rate: [u8; 4], length: usize) -> [u8; 24] {
+pub(in crate::radio) fn signal_bits(rate: [u8; 4], length: usize) -> [u8; 24] {
     let mut out = [0; 24];
     out[..4].copy_from_slice(&rate);
     for bit in 0..12 {
@@ -350,7 +350,7 @@ fn puncture(coded: &[u8], rate: LegacyOfdmRate) -> Vec<u8> {
         .collect()
 }
 
-fn constellation(bits: &[u8]) -> Complex {
+pub(in crate::radio) fn constellation(bits: &[u8]) -> Complex {
     if bits.len() == 1 {
         return Complex {
             re: (2 * bits[0] as i32 - 1) as f64,
@@ -382,7 +382,7 @@ fn constellation(bits: &[u8]) -> Complex {
     }
 }
 
-fn ifft(freq: &[Complex; 53]) -> [Complex; 64] {
+pub(in crate::radio) fn ifft(freq: &[Complex; 53]) -> [Complex; 64] {
     std::array::from_fn(|time| {
         let mut out = Complex::ZERO;
         for (index, value) in freq.iter().enumerate() {
@@ -402,7 +402,7 @@ fn ifft(freq: &[Complex; 53]) -> [Complex; 64] {
     })
 }
 
-fn preamble() -> Vec<Complex> {
+pub(in crate::radio) fn preamble() -> Vec<Complex> {
     let mut short_freq = [Complex::ZERO; 53];
     let short_values = [1, -1, 1, -1, -1, 1, 0, -1, -1, 1, 1, 1, 1];
     for (carrier, value) in (-24..=24).step_by(4).zip(short_values) {
@@ -428,7 +428,7 @@ fn preamble() -> Vec<Complex> {
     out
 }
 
-fn ofdm_symbol(bits: &[u8], nbpsc: usize, polarity: i8) -> Vec<Complex> {
+pub(in crate::radio) fn ofdm_symbol(bits: &[u8], nbpsc: usize, polarity: i8) -> Vec<Complex> {
     let mut freq = [Complex::ZERO; 53];
     for (index, carrier) in DATA_CARRIERS.iter().enumerate() {
         freq[(*carrier + 26) as usize] = constellation(&bits[index * nbpsc..(index + 1) * nbpsc]);
@@ -443,7 +443,7 @@ fn ofdm_symbol(bits: &[u8], nbpsc: usize, polarity: i8) -> Vec<Complex> {
     out
 }
 
-fn quantize(wave: &[Complex], scale: f64) -> Vec<i8> {
+pub(in crate::radio) fn quantize(wave: &[Complex], scale: f64) -> Vec<i8> {
     let mut out = Vec::with_capacity(wave.len() * 2);
     for sample in wave {
         for axis in [sample.re, sample.im] {
