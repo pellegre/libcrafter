@@ -4,7 +4,7 @@ import unittest
 
 from tools.oracle.engine.backends.scapy.protocols.wifi import _dot11_bytes
 from tools.oracle.engine.protocols.wifi import _dot11_frame_control_for_case
-from tools.oracle.engine.backends.dot11_trigger import basic_trigger_body
+from tools.oracle.engine.backends.wifi.trigger import basic_trigger_body
 
 
 class TriggerHeaderTest(unittest.TestCase):

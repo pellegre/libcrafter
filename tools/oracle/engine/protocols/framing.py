@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from ..backends.dot11_trigger import basic_trigger_body
+from ..backends.wifi.trigger import basic_trigger_body
 
 from ..sampling import (
     _SamplingContext,
