@@ -159,6 +159,7 @@ enum SelectedDecoder {
     Wifi(LegacyWifiDecoder),
     Modern(WifiDecoder),
     Parallel(ParallelLegacyWifiDecoder),
+    ParallelModern(ParallelWifiDecoder),
     Windowed(WindowedLegacyWifiDecoder),
 }
 impl SelectedDecoder {
@@ -168,6 +169,7 @@ impl SelectedDecoder {
             Self::Wifi(d) => d.consume(event),
             Self::Modern(d) => d.consume(event),
             Self::Parallel(d) => d.consume(event),
+            Self::ParallelModern(d) => d.consume(event),
             Self::Windowed(d) => d.consume(event),
         }
     }
@@ -177,6 +179,7 @@ impl SelectedDecoder {
             Self::Wifi(d) => d.reset(reason),
             Self::Modern(d) => d.reset(reason),
             Self::Parallel(d) => d.reset(reason),
+            Self::ParallelModern(d) => d.reset(reason),
             Self::Windowed(d) => d.reset(reason),
         }
     }
@@ -186,6 +189,7 @@ impl SelectedDecoder {
             Self::Wifi(d) => (d.ofdm_stats(), d.dsss_stats()),
             Self::Modern(d) => (d.ofdm_stats(), d.dsss_stats()),
             Self::Parallel(d) => (d.ofdm_stats(), d.dsss_stats()),
+            Self::ParallelModern(d) => (d.ofdm_stats(), d.dsss_stats()),
             Self::Windowed(d) => (d.ofdm_stats(), d.dsss_stats()),
         };
         DecoderStats {
@@ -209,7 +213,12 @@ impl PhyDecoder for ObservedDecoder {
             IqEvent::Chunk(_) => None,
         };
         let diagnostic_epoch = match &event {
-            IqEvent::Chunk(chunk) if matches!(self.inner, SelectedDecoder::Modern(_)) => {
+            IqEvent::Chunk(chunk)
+                if matches!(
+                    self.inner,
+                    SelectedDecoder::Modern(_) | SelectedDecoder::ParallelModern(_)
+                ) =>
+            {
                 Some(chunk.position().epoch)
             }
             _ => None,
@@ -284,8 +293,8 @@ fn receive(
     dispatch: Dispatch,
     modern: bool,
 ) -> Result<()> {
-    if modern && (ofdm_only || dispatch != Dispatch::Serial) {
-        return Err("modern decoding requires serial combined dispatch".into());
+    if modern && (ofdm_only || dispatch == Dispatch::Windowed) {
+        return Err("modern decoding supports serial or PHY-parallel dispatch".into());
     }
     let out = Rc::new(RefCell::new(BufWriter::new(std::io::stdout())));
     let header = json!({"kind":"header","schema":SCHEMA,"config":Config::from(&config),"decoder":if modern {"wifi"} else if ofdm_only {"ofdm"} else {"legacy_wifi"},"dispatch":dispatch.label(),"time_basis":if software_start.is_some(){"software_bracket_only"}else{"recorded_anchor_or_unknown"}});
@@ -305,7 +314,11 @@ fn receive(
         software_start,
     };
     let decoder = ObservedDecoder {
-        inner: if modern {
+        inner: if modern && dispatch == Dispatch::ParallelDsss {
+            SelectedDecoder::ParallelModern(ParallelWifiDecoder::with_parallel_dsss()?)
+        } else if modern && dispatch == Dispatch::Parallel {
+            SelectedDecoder::ParallelModern(ParallelWifiDecoder::new()?)
+        } else if modern {
             SelectedDecoder::Modern(WifiDecoder::new())
         } else if dispatch == Dispatch::Windowed {
             SelectedDecoder::Windowed(WindowedLegacyWifiDecoder::new(4)?)
@@ -536,7 +549,7 @@ fn main() -> Result<()> {
         return match args.as_slice() {
             [_, path, mode] => benchmark::run(path, mode, None),
             [_, path, mode, frames] => benchmark::run(path, mode, Some(frames)),
-            _ => Err("use --benchmark-artifact FILE wifi|combined|parallel|parallel-dsss|windowed-3|windowed-4|ofdm|dsss [FRAMES_JSONL]".into()),
+            _ => Err("use --benchmark-artifact FILE wifi|wifi-parallel|wifi-parallel-dsss|combined|parallel|parallel-dsss|windowed-3|windowed-4|ofdm|dsss [FRAMES_JSONL]".into()),
         };
     }
     let capture_only_mode = if args.first().map(String::as_str) == Some("--capture-only") {
@@ -575,8 +588,8 @@ fn main() -> Result<()> {
     if dispatch != Dispatch::Serial && ofdm_only {
         return Err("parallel dispatch and --ofdm-only are mutually exclusive".into());
     }
-    if modern && (ofdm_only || dispatch != Dispatch::Serial) {
-        return Err("--modern requires serial combined dispatch".into());
+    if modern && (ofdm_only || dispatch == Dispatch::Windowed) {
+        return Err("--modern supports serial, --parallel or --parallel-dsss dispatch".into());
     }
     let iq_path = if args.len() >= 2 && args[args.len() - 2] == "--save-iq" {
         let path = args.pop();

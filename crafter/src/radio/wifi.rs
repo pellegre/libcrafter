@@ -178,7 +178,7 @@ impl PhyDecoder for LegacyWifiDecoder {
         Ok(out)
     }
 }
-fn same_occurrence(a: &RecoveredFrame, b: &RecoveredFrame) -> bool {
+pub(super) fn same_occurrence(a: &RecoveredFrame, b: &RecoveredFrame) -> bool {
     a.start.epoch == b.start.epoch
         && a.start.sample_index == b.start.sample_index
         && a.end_sample_index == b.end_sample_index

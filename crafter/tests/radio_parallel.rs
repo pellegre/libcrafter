@@ -149,6 +149,51 @@ fn parallel_frames_enter_the_existing_packet_source() {
 }
 
 #[test]
+fn parallel_wifi_preserves_ht_frames_and_metadata() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq");
+    for name in [
+        "ht-bcc-0-gi800-len100-clean",
+        "ht-ldpc-7-gi800-len100-clean",
+        "ht-greenfield-7-ldpc-len100-clean",
+        "ht-stbc-7-ldpc-gf-gi800-len100-clean",
+        "ht-extension-7-bcc-mf-gi800-stbc0-ess3-len100-clean",
+        "ht-ampdu-7-gi800-ldpc-duplicate",
+    ] {
+        let bytes = std::fs::read(root.join(format!("{name}.cs8"))).unwrap();
+        for size in [127, 4096] {
+            let mut source =
+                ReaderIqSource::new(Cursor::new(&bytes), config(size), position()).unwrap();
+            let mut serial = WifiDecoder::new();
+            let mut parallel = ParallelWifiDecoder::new().unwrap();
+            let mut split = ParallelWifiDecoder::with_parallel_dsss().unwrap();
+            let mut expected = Vec::new();
+            let mut actual = Vec::new();
+            let mut split_actual = Vec::new();
+            loop {
+                let event = source.next_event().unwrap();
+                let end = matches!(event, IqEvent::End(_));
+                expected.extend(serial.consume(clone_event(&event)).unwrap().frames);
+                actual.extend(parallel.consume(clone_event(&event)).unwrap().frames);
+                split_actual.extend(split.consume(event).unwrap().frames);
+                if end {
+                    break;
+                }
+            }
+            assert_eq!(
+                format!("{actual:?}"),
+                format!("{expected:?}"),
+                "{name}, chunk={size}"
+            );
+            assert_eq!(
+                format!("{split_actual:?}"),
+                format!("{expected:?}"),
+                "{name}, chunk={size}, split DSSS"
+            );
+        }
+    }
+}
+
+#[test]
 fn windowed_parallelism_preserves_frames_across_core_boundaries() {
     const CORE: usize = 2_000_000;
     let packet = include_bytes!("fixtures/iq/dsss-10-long-clean-48.cs8");
