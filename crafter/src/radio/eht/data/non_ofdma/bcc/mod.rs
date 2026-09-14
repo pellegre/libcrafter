@@ -1,4 +1,5 @@
-use super::{scrambler::Descrambler, Capacity, Error};
+use super::{Capacity, Error};
+use crate::radio::eht::data::scrambler::Descrambler;
 
 #[cfg(test)]
 mod tests;

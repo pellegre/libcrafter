@@ -1,18 +1,9 @@
 //! EHT20 DATA timing, payload geometry, and IQ recovery.
 
-mod bcc;
-mod capacity;
-mod iq;
-mod ldpc;
-mod receiver;
+mod non_ofdma;
 mod scrambler;
-#[cfg(test)]
-mod tests;
-mod timing;
 
-pub(in crate::radio) use capacity::Capacity;
-pub(in crate::radio) use receiver::{Admission, Receiver};
-pub(in crate::radio) use timing::Timing;
+pub(in crate::radio) use non_ofdma::{Admission, Capacity, Receiver};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::radio) enum Error {

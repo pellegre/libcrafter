@@ -37,7 +37,7 @@ fn first_mpdu(psdu: &[u8]) -> &[u8] {
 
 #[test]
 fn radio_eht_data_bcc_independent_iq_waveforms() {
-    let rows = include_str!("../../../../../tests/fixtures/iq/eht-data-bcc-iq-index.tsv");
+    let rows = include_str!("../../../../../../tests/fixtures/iq/eht-data-bcc-iq-index.tsv");
     let corpus = corpus();
     assert_eq!(rows.lines().skip(1).count(), 352);
     for row in rows.lines().skip(1) {
@@ -79,7 +79,7 @@ fn radio_eht_data_bcc_independent_iq_waveforms() {
 
 #[test]
 fn radio_eht_data_bcc_streams_raw_mpdu_bytes() {
-    let rows = include_str!("../../../../../tests/fixtures/iq/eht-data-bcc-iq-index.tsv");
+    let rows = include_str!("../../../../../../tests/fixtures/iq/eht-data-bcc-iq-index.tsv");
     let corpus = corpus();
     for (index, row) in rows.lines().skip(1).enumerate() {
         let columns: Vec<_> = row.split('\t').collect();
@@ -125,7 +125,7 @@ fn radio_eht_data_bcc_streams_raw_mpdu_bytes() {
 
 #[test]
 fn radio_eht_data_ldpc_independent_iq_waveforms() {
-    let rows = include_str!("../../../../../tests/fixtures/iq/eht-data-ldpc-iq-index.tsv");
+    let rows = include_str!("../../../../../../tests/fixtures/iq/eht-data-ldpc-iq-index.tsv");
     let corpus = ldpc_corpus();
     assert_eq!(rows.lines().skip(1).count(), 432);
     for row in rows.lines().skip(1) {
@@ -163,7 +163,7 @@ fn radio_eht_data_ldpc_independent_iq_waveforms() {
 
 #[test]
 fn radio_eht_data_ldpc_streams_raw_mpdu_bytes() {
-    let rows = include_str!("../../../../../tests/fixtures/iq/eht-data-ldpc-iq-index.tsv");
+    let rows = include_str!("../../../../../../tests/fixtures/iq/eht-data-ldpc-iq-index.tsv");
     let corpus = ldpc_corpus();
     for (index, row) in rows.lines().skip(1).enumerate() {
         let columns: Vec<_> = row.split('\t').collect();
@@ -210,7 +210,7 @@ fn radio_eht_data_ldpc_streams_raw_mpdu_bytes() {
 #[test]
 fn radio_eht_data_iq_rejects_truncation_timing_and_nonfinite_samples() {
     let columns: Vec<_> =
-        include_str!("../../../../../tests/fixtures/iq/eht-data-bcc-iq-index.tsv")
+        include_str!("../../../../../../tests/fixtures/iq/eht-data-bcc-iq-index.tsv")
             .lines()
             .nth(1)
             .unwrap()

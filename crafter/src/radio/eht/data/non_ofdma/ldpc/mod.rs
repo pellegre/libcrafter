@@ -1,4 +1,5 @@
-use super::{scrambler::Descrambler, Capacity, Error};
+use super::{Capacity, Error};
+use crate::radio::eht::data::scrambler::Descrambler;
 use crate::radio::ldpc::rate::{self, Layout, Recovery};
 
 #[cfg(test)]

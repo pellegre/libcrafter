@@ -12,7 +12,7 @@ fn bits(text: &str) -> Vec<u8> {
 }
 
 fn single_user() -> Fields {
-    let columns: Vec<_> = include_str!("../../../../tests/fixtures/iq/eht-sig-index.tsv")
+    let columns: Vec<_> = include_str!("../../../../../tests/fixtures/iq/eht-sig-index.tsv")
         .lines()
         .nth(1)
         .unwrap()
@@ -30,7 +30,7 @@ fn single_user() -> Fields {
 }
 
 fn ofdma() -> Fields {
-    let columns: Vec<_> = include_str!("../../../../tests/fixtures/iq/eht-ofdma-sig-index.tsv")
+    let columns: Vec<_> = include_str!("../../../../../tests/fixtures/iq/eht-ofdma-sig-index.tsv")
         .lines()
         .nth(1)
         .unwrap()
@@ -66,7 +66,7 @@ fn user(fields: &mut Fields) -> &mut crate::radio::EhtNonMuUser {
 
 #[test]
 fn radio_eht_data_timing_independent_inventory() {
-    let rows = include_str!("../../../../tests/fixtures/iq/eht-data-timing-index.tsv");
+    let rows = include_str!("../../../../../tests/fixtures/iq/eht-data-timing-index.tsv");
     assert_eq!(rows.lines().skip(1).count(), 18_990);
     for row in rows.lines().skip(1) {
         let values: Vec<usize> = row
@@ -131,7 +131,7 @@ fn radio_eht_data_timing_rejects_invalid_layouts() {
 
 #[test]
 fn radio_eht_data_capacity_independent_inventory() {
-    let rows = include_str!("../../../../tests/fixtures/iq/eht-data-capacity-index.tsv");
+    let rows = include_str!("../../../../../tests/fixtures/iq/eht-data-capacity-index.tsv");
     assert_eq!(rows.lines().skip(1).count(), 2_269);
     for row in rows.lines().skip(1) {
         let values: Vec<usize> = row
