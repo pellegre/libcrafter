@@ -1,6 +1,6 @@
 //! Shared one-stream HE/EHT20 RU DATA symbol processing.
 //! No MU-MIMO separation, header admission, FEC or MAC integrity is implied.
-use super::Tones;
+use super::{TonePlan, Tones};
 use crate::radio::ComplexSample;
 
 pub(in crate::radio) struct Observation {
@@ -52,7 +52,7 @@ pub(in crate::radio) fn fit_pilot_clock(observed: &[Observation]) -> Option<Vec<
 
 #[derive(Clone)]
 pub(in crate::radio) struct Demodulator {
-    tones: Tones,
+    tones: TonePlan,
     bits: usize,
     ldpc: bool,
     dcm: bool,
@@ -63,6 +63,20 @@ pub(in crate::radio) struct Demodulator {
 
 impl Demodulator {
     pub fn new(tones: Tones, bits: usize, ldpc: bool, dcm: bool) -> Option<Self> {
+        Self::with_plan(TonePlan::ru(tones), bits, ldpc, dcm)
+    }
+
+    pub fn for_small_mru(
+        first: Tones,
+        second: Tones,
+        bits: usize,
+        ldpc: bool,
+        dcm: bool,
+    ) -> Option<Self> {
+        Self::with_plan(TonePlan::small_mru(first, second)?, bits, ldpc, dcm)
+    }
+
+    fn with_plan(tones: TonePlan, bits: usize, ldpc: bool, dcm: bool) -> Option<Self> {
         if !matches!(bits, 1 | 2 | 4 | 6 | 8 | 10 | 12)
             || (!ldpc && bits >= 10)
             || (dcm && bits > 4)
@@ -325,7 +339,7 @@ impl Demodulator {
                 let metrics = crate::radio::data::demap_dcm_for_half(
                     [observations[tone], observations[tone + count]],
                     self.bits,
-                    k,
+                    tone,
                     count,
                 )?;
                 mapped.extend_from_slice(&metrics[..self.bits]);

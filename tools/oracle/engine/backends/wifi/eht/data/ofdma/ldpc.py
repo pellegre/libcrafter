@@ -10,10 +10,7 @@ from pathlib import Path
 
 import tools.oracle.engine.backends.wifi.he.training as training
 import tools.oracle.engine.backends.wifi.ofdm.base as base
-from tools.oracle.engine.backends.wifi.eht.data.ofdma.bcc import (
-    PILOT_SIGNS,
-    tones,
-)
+from tools.oracle.engine.backends.wifi.eht.data.ofdma.resource import Geometry
 from tools.oracle.engine.backends.wifi.eht.signal.ofdma.allocation import ALLOCATIONS
 from tools.oracle.engine.backends.wifi.eht.data.non_ofdma.ldpc import encode as ldpc_encode
 from tools.oracle.engine.backends.wifi.eht.data.non_ofdma.model import MODES as DATA_MODES
@@ -38,20 +35,11 @@ OUT = IQ_FIXTURES
 MCS_VALUES = tuple(mcs for mcs in DATA_MODES if mcs not in (12, 13))
 
 
-def geometry(component, mcs):
+def coding_geometry(resource, mcs):
     bits, numerator, denominator, dcm = DATA_MODES[mcs]
-    data, _ = tones(component)
-    data_tones = len(data) // (1 + dcm)
-    short_tones = {
-        (26, 0): 6,
-        (26, 1): 2,
-        (52, 0): 12,
-        (52, 1): 6,
-        (106, 0): 24,
-        (106, 1): 12,
-        (242, 0): 60,
-        (242, 1): 30,
-    }[component.size, dcm]
+    geometry = Geometry.for_resource(resource)
+    data_tones = len(geometry.data) // (1 + dcm)
+    short_tones = geometry.short_tones(bool(dcm))
     coded = data_tones * bits
     coded_short = short_tones * bits
     return bits, numerator, denominator, bool(dcm), coded, coded_short
@@ -74,8 +62,8 @@ def dimensions(payload, available, numerator, denominator):
     return math.ceil(Fraction(payload, information)), 1944
 
 
-def rate_layout(component, mcs, initial_symbols, initial_padding, extra):
-    bits, numerator, denominator, dcm, coded, coded_short = geometry(component, mcs)
+def rate_layout(resource, mcs, initial_symbols, initial_padding, extra):
+    bits, numerator, denominator, dcm, coded, coded_short = coding_geometry(resource, mcs)
     data = coded * numerator // denominator
     data_short = coded_short * numerator // denominator
     payload = (initial_symbols - 1) * data
@@ -137,12 +125,12 @@ def choose_layouts(resources, mcs_values, ltf_mode, signal_symbols, initial_padd
     stride = [272, 288, 272, 320][ltf_mode]
     for initial_symbols in range(1, 401):
         initial = [
-            rate_layout(resource.components[0], mcs, initial_symbols, initial_padding, False)
+            rate_layout(resource, mcs, initial_symbols, initial_padding, False)
             for resource, mcs in zip(resources, mcs_values)
         ]
         extra = any(layout["needs_extra"] for layout in initial)
         layouts = [
-            rate_layout(resource.components[0], mcs, initial_symbols, initial_padding, extra)
+            rate_layout(resource, mcs, initial_symbols, initial_padding, extra)
             for resource, mcs in zip(resources, mcs_values)
         ]
         symbols = layouts[0]["symbols"]
@@ -201,7 +189,7 @@ def point(bits):
     return complex(labels[label[:width]], labels[label[width:]]) / math.sqrt(energy)
 
 
-def encode_payload(component, mcs, layout, psdu, seed):
+def encode_payload(mcs, layout, psdu, seed):
     assert len(psdu) == layout["psdu_bytes"]
     information = [0] * 16 + base.bits(psdu)
     information += [(seed + index) & 1 for index in range(layout["phy_pad"])]
@@ -228,48 +216,37 @@ def encode_payload(component, mcs, layout, psdu, seed):
 def data_symbol(resources, encoded, layouts, symbol, polarity, guard):
     frequency = [0j] * 245
     for resource, coded, layout in zip(resources, encoded, layouts):
-        component = resource.components[0]
-        data, pilots = tones(component)
+        geometry = Geometry.for_resource(resource)
         start = symbol * layout["coded"]
         block = coded[start : start + layout["coded"]]
-        mapped_tones = len(data) // (1 + int(layout["dcm"]))
-        distance = {
-            (26, False): 1,
-            (26, True): 1,
-            (52, False): 3,
-            (52, True): 1,
-            (106, False): 6,
-            (106, True): 3,
-            (242, False): 9,
-            (242, True): 9,
-        }[component.size, layout["dcm"]]
-        columns = mapped_tones // distance
+        mapped_tones = len(geometry.data) // (1 + int(layout["dcm"]))
         for index in range(mapped_tones):
-            target = distance * (index % columns) + index // columns
+            target = geometry.ldpc_target(index, layout["dcm"])
             label = block[index * layout["bits"] : (index + 1) * layout["bits"]]
             lower = point(label)
-            frequency[data[target] + 122] = lower
+            frequency[geometry.data[target] + 122] = lower
             if layout["dcm"]:
-                frequency[data[target + mapped_tones] + 122] = lower * (
+                frequency[geometry.data[target + mapped_tones] + 122] = lower * (
                     -1 if (target + mapped_tones) % 2 else 1
                 )
-        signs = PILOT_SIGNS[component.size]
-        for index, tone in enumerate(pilots):
-            frequency[tone + 122] = polarity * signs[(symbol + index) % len(signs)]
+        for index, tone in enumerate(geometry.pilots):
+            frequency[tone + 122] = polarity * geometry.pilot_sign(symbol, index)
     wave = [value * 4 * math.sqrt(52 / 242) for value in training.ifft(frequency)]
     return wave[-guard:] + wave
 
 
 def waveform(case, allocation, ltf_mode, impaired):
     resources = ALLOCATIONS[allocation]
-    assert all(len(resource.components) == 1 and resource.users == 1 for resource in resources)
+    assert all(resource.users == 1 for resource in resources)
     if allocation == 64:
         mcs_values = [(9, 10, 11, 12)[ltf_mode]]
     else:
-        mcs_values = [
-            MCS_VALUES[(case + index) % len(MCS_VALUES)]
-            for index in range(len(resources))
-        ]
+        mcs_values = []
+        for index, resource in enumerate(resources):
+            if len(resource.components) == 2:
+                mcs_values.append((0, 5, 9, 15)[ltf_mode])
+            else:
+                mcs_values.append(MCS_VALUES[(case + index) % len(MCS_VALUES)])
     signal_mcs = case % len(MODES)
     provisional = signaling_blocks(case, allocation, mcs_values, ltf_mode, 4, False)
     signal_symbols = math.ceil(sum(map(len, provisional)) / MODES[signal_mcs][2])
@@ -302,7 +279,7 @@ def waveform(case, allocation, ltf_mode, impaired):
             psdu += delimiter(0, 1)
         psdu += b"\xA5" * (layout["psdu_bytes"] - len(psdu))
         seed = 1 + (case * 149 + index * 263) % 2047
-        encoded.append(encode_payload(resource.components[0], mcs, layout, psdu, seed))
+        encoded.append(encode_payload(mcs, layout, psdu, seed))
         psdus.append(bytes(psdu))
         mpdus.append(mpdu)
     pilot_bits = base.scramble([0] * (4 + signal_symbols + symbols), 127)
@@ -354,7 +331,7 @@ def generate(out):
         "legacy_length\tguard\tltf_start\tdata_start\tdata_end\timpaired\t"
         "offset\tbytes\tsha256"
     ]
-    for position, allocation in enumerate((0, 24, 25, 64)):
+    for position, allocation in enumerate((0, 24, 25, 48, 55, 64)):
         for ltf_mode in range(4):
             impaired = (position + ltf_mode) % 2 != 0
             case = 786432 + position * 32 + ltf_mode * 3

@@ -92,18 +92,28 @@ fn radio_eht_data_bcc_iq_independent_inventory() {
 }
 
 #[test]
+fn radio_eht_ofdma_data_resource_geometry_oracle_inventory() {
+    let generator =
+        include_bytes!("../../tools/oracle/engine/backends/wifi/eht/data/ofdma/resource.py");
+    assert_eq!(
+        hex(&Sha256::digest(generator)),
+        "d8b7836aa7778a38fc75734d3c6910ba2ad45bbf546096ee95689850b0f82099"
+    );
+}
+
+#[test]
 fn radio_eht_ofdma_data_bcc_iq_independent_inventory() {
     let generator = include_bytes!("../../tools/oracle/engine/backends/wifi/eht/data/ofdma/bcc.py");
     assert_eq!(
         hex(&Sha256::digest(generator)),
-        "76c8bbbe472e2796a808a98319fdc7bcac1cdfbcda1bd6ee076c444dbc072840"
+        "129ee46edde7be262dadd313e683418612e9d4ddc4f2790115b35321492fd22d"
     );
 
     let rows = include_str!("fixtures/iq/eht-ofdma-data-bcc-iq-index.tsv");
-    assert_eq!(rows.lines().skip(1).count(), 32);
+    assert_eq!(rows.lines().skip(1).count(), 48);
     assert_eq!(
         hex(&Sha256::digest(rows.as_bytes())),
-        "b698a5476a44c2f24d27fbdf82ec0a67745902a4f778563208a4d5f64d0f9134"
+        "a814f5817a0e9e9945ff86bee29868f678c3c1aa350cb3c13caa7212ba7f1ae6"
     );
     let corpus = fs::read(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -112,13 +122,13 @@ fn radio_eht_ofdma_data_bcc_iq_independent_inventory() {
     .unwrap();
     assert_eq!(
         hex(&Sha256::digest(&corpus)),
-        "2a5ec41737ff2d5e53c35a0b8e1f0db1859e0122eac414fbc009930ef6ae054f"
+        "de8ad3de08317e1645ab18520387d89c17a1d6f12c55ded6e057e2a46b061e24"
     );
     let mut cursor = 0;
     for row in rows.lines().skip(1) {
         let columns: Vec<_> = row.split('\t').collect();
         assert_eq!(columns.len(), 19);
-        assert!(matches!(columns[3], "0" | "24" | "25" | "64"));
+        assert!(matches!(columns[3], "0" | "24" | "25" | "48" | "55" | "64"));
         let offset: usize = columns[16].parse().unwrap();
         let length: usize = columns[17].parse().unwrap();
         assert_eq!(offset, cursor);
@@ -134,14 +144,14 @@ fn radio_eht_ofdma_data_ldpc_iq_independent_inventory() {
         include_bytes!("../../tools/oracle/engine/backends/wifi/eht/data/ofdma/ldpc.py");
     assert_eq!(
         hex(&Sha256::digest(generator)),
-        "987bccd6ae9413389c9e5666301d7f47a9ed8a9ea19f43f8019b931db118040a"
+        "c240eb9c69c0e71b92f1ab7e866f2a6858805eac08cc766b1012fdc316f29406"
     );
 
     let rows = include_str!("fixtures/iq/eht-ofdma-data-ldpc-iq-index.tsv");
-    assert_eq!(rows.lines().skip(1).count(), 16);
+    assert_eq!(rows.lines().skip(1).count(), 24);
     assert_eq!(
         hex(&Sha256::digest(rows.as_bytes())),
-        "594ce7576365b708903460e1acb2c0ce538f40eacd6c1558a59097d8619d3c5b"
+        "e2abd40f156fd2049a2a2749e9484dbef746bc1063f28a004b90f7a2fde0309a"
     );
     let corpus = fs::read(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -150,13 +160,13 @@ fn radio_eht_ofdma_data_ldpc_iq_independent_inventory() {
     .unwrap();
     assert_eq!(
         hex(&Sha256::digest(&corpus)),
-        "019a377b483f2760fc5aa95fa5b9905bccd245b4662293a9f7ed45f86ba5911a"
+        "39bb00fef1701f54e86499948ffd9afaa61a25728bf8aaeaeef423f4f8faf243"
     );
     let mut cursor = 0;
     for row in rows.lines().skip(1) {
         let columns: Vec<_> = row.split('\t').collect();
         assert_eq!(columns.len(), 22);
-        assert!(matches!(columns[3], "0" | "24" | "25" | "64"));
+        assert!(matches!(columns[3], "0" | "24" | "25" | "48" | "55" | "64"));
         let mcs: Vec<_> = columns[5]
             .split(',')
             .map(|value| value.parse::<u8>().unwrap())

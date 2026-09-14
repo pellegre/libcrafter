@@ -16,6 +16,9 @@ behaviors:
   - name: per-user-ldpc-recovery
     source: IEEE 802.11be-2024 Clauses 36.3.12.6 and 36.3.12.9; IEEE 802.11 TGbe 11-21/0566r0 and 11-23/1025r1
     checks: [mcs0_through_12, mcs15, dcm, ldpc_tone_mapping, rate_matching, common_extra_symbol, exact_raw_psdu_bytes]
+  - name: joint-mru-data-recovery
+    source: IEEE 802.11be-2024 Table 36-48 and Clauses 36.3.12.8-36.3.12.9; IEEE 802.11 TGbe 11-20/0566r48, 11-20/0773r2 and 11-20/1119r0
+    checks: [ru52_plus_ru26, ru106_plus_ru26, joint_bcc_interleaving, joint_ldpc_tone_mapping, dcm, exact_raw_psdu_bytes]
   - name: stream-boundary-recovery
     source: IEEE 802.11be-2024 Clauses 36.3.10 and 36.3.12; IEEE 802.11 TGbe 11-21/1153r2 and 11-23/1598r1
     checks: [all_eht_ltf_modes, arbitrary_input_chunks, exact_sample_coordinates, cfo, multipath]
@@ -28,5 +31,5 @@ backend_support:
     notes:
       - Ordinary disjoint 26-, 52-, 106-, and 242-tone single-component RUs with one spatial stream and BCC or LDPC coding are recovered from complete 20 MHz captures.
       - MCS 13 has bit-level coverage but is not claimed robust from eight-bit IQ; MCS 12 has exact IQ coverage on a full 242-tone RU.
-      - Multi-RU joint mapping remains a separate DATA path.
+      - Joint 52+26- and 106+26-tone MRUs with one spatial stream use whole-MRU BCC interleaving or LDPC tone mapping, including MCS 15 DCM.
       - Overlapping MU-MIMO users require independent receive chains and are outside the single-HackRF receive contract.

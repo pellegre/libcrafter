@@ -1658,7 +1658,7 @@ pub(super) fn demap_dcm_for_half(
     half: usize,
 ) -> Option<[f32; 4]> {
     if !matches!(bits, 1 | 2 | 4)
-        || !matches!(half, 12 | 24 | 26 | 51 | 117)
+        || !matches!(half, 12 | 24 | 26 | 36 | 51 | 63 | 117)
         || k >= half
         || pair
             .iter()
@@ -3330,7 +3330,7 @@ mod tests {
                 ];
                 let actual = demap_dcm_for_half(pair, bits, k, half).unwrap();
                 if half == 117 && k < 51 {
-                    // Both supported halves are odd: identical indexed labels
+                    // Both single-RU halves are odd: identical indexed labels
                     // produce identical joint metrics, but bounds must differ.
                     assert_eq!(demap_dcm_for_half(pair, bits, k, 51), Some(actual));
                 }
@@ -3350,7 +3350,8 @@ mod tests {
             }
         }
         let pair = [(ComplexSample::ZERO, 1.); 2];
-        for half in [12, 24] {
+        for half in [12, 24, 26, 36, 51, 63, 117] {
+            assert!(demap_dcm_for_half(pair, 1, 0, half).is_some());
             for k in [half, usize::MAX] {
                 assert!(demap_dcm_for_half(pair, 1, k, half).is_none());
             }

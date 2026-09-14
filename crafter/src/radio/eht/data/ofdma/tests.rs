@@ -75,7 +75,7 @@ fn radio_eht_ofdma_data_admits_each_independent_ru() {
             .allocation
             .resources()
             .iter()
-            .map(|resource| resource.components().len() == 1)
+            .map(|resource| resource.user_count() == 1)
             .collect();
         let timing = super::super::Timing::new(&trained.signal).expect(columns[0]);
         let SignalFields::Ofdma(fields) = &trained.signal.signal else {
@@ -87,7 +87,7 @@ fn radio_eht_ofdma_data_admits_each_independent_ru() {
             .resources()
             .iter()
             .zip(&fields.users)
-            .filter(|(resource, _)| resource.components().len() == 1)
+            .filter(|(resource, _)| resource.user_count() == 1)
         {
             let Ok(EhtOfdmaUser::NonMu(user)) = user else {
                 continue;
@@ -101,13 +101,17 @@ fn radio_eht_ofdma_data_admits_each_independent_ru() {
         for (user, supported) in admitted.users.iter().zip(expected) {
             assert_eq!(user.is_ok(), supported, "{}", columns[0]);
             let Ok(user) = user else { continue };
-            let size = user.resource.components()[0].size();
-            let coded = match size {
-                EhtRuSize::Ru26 => 24,
-                EhtRuSize::Ru52 => 48,
-                EhtRuSize::Ru106 => 102,
-                EhtRuSize::Ru242 => 234,
-            };
+            let coded: usize = user
+                .resource
+                .components()
+                .iter()
+                .map(|component| match component.size() {
+                    EhtRuSize::Ru26 => 24,
+                    EhtRuSize::Ru52 => 48,
+                    EhtRuSize::Ru106 => 102,
+                    EhtRuSize::Ru242 => 234,
+                })
+                .sum();
             assert_eq!(user.capacity.coded_per_symbol, coded, "{}", columns[0]);
             assert_eq!(user.capacity.data_per_symbol, coded / 2, "{}", columns[0]);
             assert_eq!(user.info.data_start, admitted.trained.data_start);
@@ -183,7 +187,7 @@ fn radio_eht_ofdma_data_rejects_bounds_and_missing_training() {
 fn radio_eht_ofdma_data_bcc_independent_iq_waveforms() {
     let rows = include_str!("../../../../../tests/fixtures/iq/eht-ofdma-data-bcc-iq-index.tsv");
     let corpus = data_corpus();
-    assert_eq!(rows.lines().skip(1).count(), 32);
+    assert_eq!(rows.lines().skip(1).count(), 48);
     for row in rows.lines().skip(1) {
         let columns: Vec<_> = row.split('\t').collect();
         let offset: usize = columns[16].parse().unwrap();
@@ -272,7 +276,7 @@ fn radio_eht_ofdma_data_bcc_streams_each_raw_mpdu() {
 fn radio_eht_ofdma_data_ldpc_independent_iq_waveforms() {
     let rows = include_str!("../../../../../tests/fixtures/iq/eht-ofdma-data-ldpc-iq-index.tsv");
     let corpus = ldpc_data_corpus();
-    assert_eq!(rows.lines().skip(1).count(), 16);
+    assert_eq!(rows.lines().skip(1).count(), 24);
     for row in rows.lines().skip(1) {
         let columns: Vec<_> = row.split('\t').collect();
         let offset: usize = columns[19].parse().unwrap();

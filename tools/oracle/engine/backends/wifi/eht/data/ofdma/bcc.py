@@ -14,10 +14,7 @@ from pathlib import Path
 
 import tools.oracle.engine.backends.wifi.ofdm.base as base
 import tools.oracle.engine.backends.wifi.he.training as training
-from tools.oracle.engine.backends.wifi.eht.signal.ofdma.allocation import (
-    ALLOCATIONS,
-    component_tones,
-)
+from tools.oracle.engine.backends.wifi.eht.signal.ofdma.allocation import ALLOCATIONS
 from tools.oracle.engine.backends.wifi.eht.signal.fields import protected
 from tools.oracle.engine.backends.wifi.eht.signal.waveform import (
     MODES,
@@ -25,6 +22,7 @@ from tools.oracle.engine.backends.wifi.eht.signal.waveform import (
     prefix,
     signaling,
 )
+from tools.oracle.engine.backends.wifi.eht.data.ofdma.resource import Geometry
 from tools.oracle.engine.backends.wifi.eht.usig import mu_header, put
 from tools.oracle.engine.backends.wifi.ht.bcc import PUNCTURE
 from tools.oracle.engine.backends.wifi.paths import IQ_FIXTURES
@@ -46,42 +44,6 @@ DATA_MODES = {
     9: (8, 5, 6, False),
     15: (1, 1, 2, True),
 }
-PILOTS = {
-    26: (
-        (-116, -102),
-        (-90, -76),
-        (-62, -48),
-        (-36, -22),
-        (-10, 10),
-        (22, 36),
-        (48, 62),
-        (76, 90),
-        (102, 116),
-    ),
-    52: (
-        (-116, -102, -90, -76),
-        (-62, -48, -36, -22),
-        (22, 36, 48, 62),
-        (76, 90, 102, 116),
-    ),
-    106: ((-116, -90, -48, -22), (22, 48, 90, 116)),
-    242: ((-116, -90, -48, -22, 22, 48, 90, 116),),
-}
-PILOT_SIGNS = {
-    26: (1, -1),
-    52: (1, 1, 1, -1),
-    106: (1, 1, 1, -1),
-    242: (1, 1, 1, -1, -1, 1, 1, 1),
-}
-
-
-def tones(component):
-    active = sorted(component_tones(component))
-    pilots = PILOTS[component.size][component.index - 1]
-    data = tuple(tone for tone in active if tone not in pilots)
-    assert len(active) == component.size
-    assert len(data) == {26: 24, 52: 48, 106: 102, 242: 234}[component.size]
-    return data, pilots
 
 
 def scramble(bits, seed):
@@ -96,20 +58,11 @@ def scramble(bits, seed):
     return output
 
 
-def capacity(component, mcs, symbols):
+def capacity(resource, mcs, symbols):
     bits, numerator, denominator, dcm = DATA_MODES[mcs]
-    data, _ = tones(component)
-    data_tones = len(data) // (1 + int(dcm))
-    short_tones = {
-        (26, False): 6,
-        (26, True): 2,
-        (52, False): 12,
-        (52, True): 6,
-        (106, False): 24,
-        (106, True): 12,
-        (242, False): 60,
-        (242, True): 30,
-    }[component.size, dcm]
+    geometry = Geometry.for_resource(resource)
+    data_tones = len(geometry.data) // (1 + int(dcm))
+    short_tones = geometry.short_tones(dcm)
     coded = data_tones * bits
     coded_short = short_tones * bits
     payload = symbols * (coded * numerator // denominator) - 22
@@ -126,8 +79,8 @@ def capacity(component, mcs, symbols):
     }
 
 
-def encode_payload(component, mcs, symbols, psdu, seed):
-    layout = capacity(component, mcs, symbols)
+def encode_payload(resource, mcs, symbols, psdu, seed):
+    layout = capacity(resource, mcs, symbols)
     assert len(psdu) == layout["psdu_bytes"]
     information = [0] * 16 + base.bits(psdu)
     information += [(seed + index) & 1 for index in range(layout["phy_pad"])]
@@ -156,26 +109,9 @@ def encode_payload(component, mcs, symbols, psdu, seed):
         cursor += keep
         if layout["filler"]:
             output.append((seed + symbol) & 1)
-    assert cursor == len(fec), (component, mcs, layout, cursor, len(fec))
+    assert cursor == len(fec), (resource, mcs, layout, cursor, len(fec))
     assert len(output) == symbols * layout["coded"]
     return output, layout
-
-
-def interleave(bits, size, bits_per_tone, dcm):
-    columns = {26: 8, 52: 16, 106: 17, 242: 26}[size]
-    if dcm and size != 106:
-        columns //= 2
-    span = len(bits)
-    significance = max(bits_per_tone // 2, 1)
-    output = [0] * span
-    for index, bit in enumerate(bits):
-        transposed = (span // columns) * (index % columns) + index // columns
-        target = (
-            significance * (transposed // significance)
-            + (transposed + span - columns * transposed // span) % significance
-        )
-        output[target] = bit
-    return output
 
 
 def point(bits):
@@ -187,29 +123,26 @@ def point(bits):
 def data_symbol(resources, encoded, layouts, symbol, polarity, guard):
     frequency = [0j] * 245
     for resource, coded, layout in zip(resources, encoded, layouts):
-        component = resource.components[0]
-        data, pilots = tones(component)
+        geometry = Geometry.for_resource(resource)
         start = symbol * layout["coded"]
-        block = interleave(
+        block = geometry.bcc_interleave(
             coded[start : start + layout["coded"]],
-            component.size,
             layout["bits"],
             layout["dcm"],
         )
-        mapped_tones = len(data) // (1 + int(layout["dcm"]))
+        mapped_tones = len(geometry.data) // (1 + int(layout["dcm"]))
         for index in range(mapped_tones):
             label = block[
                 index * layout["bits"] : (index + 1) * layout["bits"]
             ]
             lower = point(label)
-            frequency[data[index] + 122] = lower
+            frequency[geometry.data[index] + 122] = lower
             if layout["dcm"]:
-                frequency[data[index + mapped_tones] + 122] = lower * (
+                frequency[geometry.data[index + mapped_tones] + 122] = lower * (
                     -1 if (index + mapped_tones) % 2 else 1
                 )
-        signs = PILOT_SIGNS[component.size]
-        for index, tone in enumerate(pilots):
-            frequency[tone + 122] = polarity * signs[(symbol + index) % len(signs)]
+        for index, tone in enumerate(geometry.pilots):
+            frequency[tone + 122] = polarity * geometry.pilot_sign(symbol, index)
     wave = [value * 4 * math.sqrt(52 / 242) for value in training.ifft(frequency)]
     return wave[-guard:] + wave
 
@@ -247,8 +180,13 @@ def signaling_blocks(case, allocation, data_mcs, ltf_mode):
 
 def waveform(case, allocation, ltf_mode, impaired):
     resources = ALLOCATIONS[allocation]
-    assert all(len(resource.components) == 1 and resource.users == 1 for resource in resources)
-    mcs = [tuple(DATA_MODES)[(case + index) % len(DATA_MODES)] for index in range(len(resources))]
+    assert all(resource.users == 1 for resource in resources)
+    mcs = []
+    for index, resource in enumerate(resources):
+        if len(resource.components) == 2:
+            mcs.append((0, 5, 9, 15)[(ltf_mode + 2 * int(impaired)) % 4])
+        else:
+            mcs.append(tuple(DATA_MODES)[(case + index) % len(DATA_MODES)])
     blocks = signaling_blocks(case, allocation, mcs, ltf_mode)
     signal_mcs = case % len(MODES)
     signal_symbols = math.ceil(sum(map(len, blocks)) / MODES[signal_mcs][2])
@@ -268,8 +206,7 @@ def waveform(case, allocation, ltf_mode, impaired):
     psdus = []
     mpdus = []
     for index, (resource, user_mcs) in enumerate(zip(resources, mcs)):
-        component = resource.components[0]
-        layout = capacity(component, user_mcs, data_symbols)
+        layout = capacity(resource, user_mcs, data_symbols)
         mpdu = base.frame(index)
         psdu = bytearray(delimiter(len(mpdu)) + mpdu)
         psdu += b"\xA5" * min(-len(psdu) % 4, layout["psdu_bytes"] - len(psdu))
@@ -277,7 +214,7 @@ def waveform(case, allocation, ltf_mode, impaired):
             psdu += delimiter(0, 1)
         psdu += b"\xA5" * (layout["psdu_bytes"] - len(psdu))
         seed = 1 + (case * 149 + index * 263) % 2047
-        coded, checked = encode_payload(component, user_mcs, data_symbols, psdu, seed)
+        coded, checked = encode_payload(resource, user_mcs, data_symbols, psdu, seed)
         assert checked == layout
         encoded.append(coded)
         layouts.append(layout)
@@ -328,7 +265,7 @@ def generate(out):
         "signal_symbols\tdata_symbols\tlegacy_length\tguard\tltf_start\t"
         "data_start\tdata_end\timpaired\toffset\tbytes\tsha256"
     ]
-    for position, allocation in enumerate((0, 24, 25, 64)):
+    for position, allocation in enumerate((0, 24, 25, 48, 55, 64)):
         for ltf_mode in range(4):
             for impaired in (False, True):
                 case = 524288 + position * 32 + ltf_mode * 2 + int(impaired)

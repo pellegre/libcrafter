@@ -1,7 +1,9 @@
 //! Shared HE/EHT 20 MHz resource-unit tone geometry and symbol processing.
 
 mod he;
+mod plan;
 pub(in crate::radio) mod symbol;
+pub(in crate::radio) use plan::TonePlan;
 
 #[derive(Clone, Copy)]
 pub(in crate::radio) struct Tones {
@@ -43,6 +45,9 @@ impl Tones {
             106 => &[[-116, -90, -48, -22], [22, 48, 90, 116]][self.index - 1],
             _ => &[-116, -90, -48, -22, 22, 48, 90, 116],
         }
+    }
+    pub fn size(self) -> u16 {
+        self.size
     }
     pub fn pilot_sign(self, symbol: usize, pilot: usize) -> f32 {
         let signs: &[f32] = match self.size {

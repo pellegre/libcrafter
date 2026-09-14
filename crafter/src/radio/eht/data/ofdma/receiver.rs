@@ -97,7 +97,7 @@ impl Receiver {
             }
             for user_index in cursor..end {
                 let admitted = (|| {
-                    if resource.user_count() != 1 || resource.components().len() != 1 {
+                    if resource.user_count() != 1 {
                         return Err(Error::UnsupportedFormat);
                     }
                     let user = match signal.users.get(user_index) {

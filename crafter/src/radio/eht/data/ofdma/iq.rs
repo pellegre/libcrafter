@@ -39,14 +39,9 @@ impl<'a> Demodulator<'a> {
     }
 
     pub fn recover(self) -> Result<Vec<f32>, Error> {
-        let component = self
-            .user
-            .resource
-            .components()
-            .first()
-            .filter(|_| self.user.resource.components().len() == 1)
-            .ok_or(Error::UnsupportedFormat)?;
-        let tones = Tones::ru(component.tone_count(), usize::from(component.index()))
+        let components = self.user.resource.components();
+        let first = components.first().ok_or(Error::UnsupportedFormat)?;
+        let first = Tones::ru(first.tone_count(), usize::from(first.index()))
             .ok_or(Error::UnsupportedFormat)?;
         let channel = self
             .admission
@@ -56,12 +51,26 @@ impl<'a> Demodulator<'a> {
             .and_then(|resource| resource.channel.as_ref())
             .ok_or(Error::Training)?;
         let capacity = self.user.capacity;
-        let mut demodulator = crate::radio::resource_unit::symbol::Demodulator::new(
-            tones,
-            capacity.bits_per_tone,
-            capacity.ldpc,
-            capacity.dcm,
-        )
+        let mut demodulator = match components {
+            [_] => crate::radio::resource_unit::symbol::Demodulator::new(
+                first,
+                capacity.bits_per_tone,
+                capacity.ldpc,
+                capacity.dcm,
+            ),
+            [_, second] => {
+                let second = Tones::ru(second.tone_count(), usize::from(second.index()))
+                    .ok_or(Error::UnsupportedFormat)?;
+                crate::radio::resource_unit::symbol::Demodulator::for_small_mru(
+                    first,
+                    second,
+                    capacity.bits_per_tone,
+                    capacity.ldpc,
+                    capacity.dcm,
+                )
+            }
+            _ => None,
+        }
         .ok_or(Error::Modulation(capacity.mcs))?;
         let required_metrics = self
             .admission
