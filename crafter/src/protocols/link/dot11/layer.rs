@@ -787,6 +787,11 @@ impl Dot11 {
         dot11_required_header_len(frame_control)
     }
 
+    /// MAC header size, excluding management body fields and capture padding.
+    pub fn mac_header_len_for(frame_control: Dot11FrameControl) -> usize {
+        dot11_mac_header_len(frame_control)
+    }
+
     /// Read frame control from `bytes`, compute the minimum header length, and
     /// return a structured error when the buffer is truncated before that
     /// boundary.

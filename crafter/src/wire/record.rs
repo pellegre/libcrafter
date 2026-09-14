@@ -272,6 +272,7 @@ pub struct PacketMetadata {
     emitted_len: Option<u32>,
     link_type: Option<LinkType>,
     pcap_link_type: Option<PcapLinkType>,
+    wifi_capture: Option<super::interface::WifiCaptureMetadata>,
     medium: Option<MediumMetadata>,
     #[cfg(feature = "radio")]
     radio: Option<crate::radio::RadioReceiveMetadata>,
@@ -281,6 +282,16 @@ pub struct PacketMetadata {
 }
 
 impl PacketMetadata {
+    /// Original Wi-Fi framing and integrity evidence retained by normalization.
+    pub const fn wifi_capture(&self) -> Option<&super::interface::WifiCaptureMetadata> {
+        self.wifi_capture.as_ref()
+    }
+
+    /// Attach capture framing evidence without replacing the original bytes.
+    pub fn with_wifi_capture(mut self, capture: super::interface::WifiCaptureMetadata) -> Self {
+        self.wifi_capture = Some(capture);
+        self
+    }
     /// Create empty metadata.
     pub fn new() -> Self {
         Self::default()
@@ -564,6 +575,7 @@ impl Default for PacketMetadata {
             emitted_len: None,
             link_type: None,
             pcap_link_type: None,
+            wifi_capture: None,
             medium: None,
             #[cfg(feature = "radio")]
             radio: None,

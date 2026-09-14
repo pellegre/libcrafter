@@ -64,9 +64,12 @@ impl PacketTransform for Dot11Metadata {
     }
 }
 
-fn metadata_from_packet(packet: &Packet, existing: Option<WifiMetadata>) -> Option<WifiMetadata> {
+pub(crate) fn metadata_from_packet(
+    packet: &Packet,
+    existing: Option<WifiMetadata>,
+) -> Option<WifiMetadata> {
+    let mut found = existing.is_some();
     let mut wifi = existing.unwrap_or_default();
-    let mut found = false;
 
     if let Some(radiotap) = packet.layer::<Radiotap>() {
         if let Some(channel) = radiotap.channel_value() {
@@ -108,13 +111,14 @@ fn metadata_from_packet(packet: &Packet, existing: Option<WifiMetadata>) -> Opti
         }
 
         let protected = dot11.is_protected();
-        wifi = wifi
-            .with_protected(protected)
-            .with_decrypt_state(if protected {
+        wifi = wifi.with_protected(protected);
+        if wifi.decrypt_state().is_none() {
+            wifi = wifi.with_decrypt_state(if protected {
                 WifiDecryptState::NotAttempted
             } else {
                 WifiDecryptState::NotRequired
             });
+        }
 
         for tag in dot11.tagged_parameters() {
             match tag.id() {
