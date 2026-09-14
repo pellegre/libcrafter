@@ -1,6 +1,7 @@
 //! Exact comparison of an offline transmit manifest with a radiotap capture.
 
 use super::artifact::{hex, read_json, unhex, valid_fcs, Result};
+use super::ht_compare::HtPhy;
 use crafter::{LinkType, Packet, Radiotap};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -14,7 +15,7 @@ use std::{
 pub const PLAN_SCHEMA: &str = "crafter.radio.transmit/v1";
 pub const REPORT_SCHEMA: &str = "crafter.radio.transmit-comparison/v1";
 pub const QUALIFICATION_SCHEMA: &str = "crafter.radio.transmit-qualification/v1";
-const MATRIX_CASE_IDS: [&str; 15] = [
+const LEGACY_MATRIX_CASE_IDS: [&str; 15] = [
     "ofdm-6-long",
     "ofdm-9-long",
     "ofdm-12-long",
@@ -32,19 +33,127 @@ const MATRIX_CASE_IDS: [&str; 15] = [
     "cck-11-short",
 ];
 
+fn matrix_case_ids(family: &str) -> Result<BTreeSet<String>> {
+    match family {
+        "legacy" => Ok(LEGACY_MATRIX_CASE_IDS
+            .into_iter()
+            .map(str::to_owned)
+            .collect()),
+        "ht20" => {
+            let mut ids = BTreeSet::new();
+            for format in ["mixed", "greenfield"] {
+                for coding in ["bcc", "ldpc"] {
+                    for guard in ["gi800", "gi400"] {
+                        if format == "greenfield" && guard == "gi400" {
+                            continue;
+                        }
+                        for mcs in 0..8 {
+                            ids.insert(format!("ht20-{format}-{coding}-mcs{mcs}-{guard}"));
+                        }
+                    }
+                }
+            }
+            Ok(ids)
+        }
+        _ => Err(format!("unknown transmit family: {family}").into()),
+    }
+}
+
+#[derive(Debug, Clone)]
+enum PlannedPhy {
+    Legacy {
+        rate_bps: u32,
+        short_preamble: bool,
+    },
+    Ht20 {
+        mcs: u8,
+        short_gi: bool,
+        ldpc: bool,
+        greenfield: bool,
+    },
+}
+
+impl PlannedPhy {
+    fn matches(&self, observed: &ObservedPhy) -> bool {
+        fn agrees<T: PartialEq>(observed: Option<T>, planned: T) -> bool {
+            match observed {
+                Some(observed) => observed == planned,
+                None => true,
+            }
+        }
+        match (self, observed) {
+            (
+                Self::Legacy {
+                    rate_bps,
+                    short_preamble,
+                },
+                ObservedPhy::Legacy {
+                    rate_bps: observed_rate,
+                    short_preamble: observed_short,
+                },
+            ) => rate_bps == observed_rate && short_preamble == observed_short,
+            (
+                Self::Ht20 {
+                    mcs,
+                    short_gi,
+                    ldpc,
+                    greenfield,
+                },
+                ObservedPhy::Ht20(observed),
+            ) => {
+                observed.mcs == *mcs
+                    && observed.short_gi == *short_gi
+                    && agrees(observed.ldpc, *ldpc)
+                    && agrees(observed.greenfield, *greenfield)
+                    && agrees(observed.stbc, 0)
+                    && agrees(observed.extension_spatial_streams, 0)
+                    && agrees(observed.aggregation, false)
+            }
+            _ => false,
+        }
+    }
+
+    fn metadata(&self) -> Value {
+        match self {
+            Self::Legacy {
+                rate_bps,
+                short_preamble,
+            } => json!({
+                "phy":"legacy", "rate_bps":rate_bps,
+                "preamble":if *short_preamble {"short"} else {"long"}
+            }),
+            Self::Ht20 {
+                mcs,
+                short_gi,
+                ldpc,
+                greenfield,
+            } => json!({
+                "phy":"ht20", "mcs":mcs,
+                "guard_interval_ns":if *short_gi {400} else {800},
+                "coding":if *ldpc {"ldpc"} else {"bcc"},
+                "preamble":if *greenfield {"greenfield"} else {"mixed"}
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct PlannedCase {
     id: String,
     mac: Vec<u8>,
-    rate_bps: u32,
-    short: bool,
+    phy: PlannedPhy,
+}
+
+#[derive(Debug, Clone)]
+enum ObservedPhy {
+    Legacy { rate_bps: u32, short_preamble: bool },
+    Ht20(HtPhy),
 }
 
 #[derive(Debug, Clone)]
 struct Observed {
     mac: Vec<u8>,
-    rate_bps: u32,
-    short: bool,
+    phy: ObservedPhy,
     fcs: &'static str,
 }
 
@@ -67,14 +176,68 @@ fn load_plan(path: &str) -> Result<Vec<PlannedCase>> {
                 if cases.iter().any(|case: &PlannedCase| case.id == id) {
                     return Err("duplicate transmit case".into());
                 }
+                let rate_bps = value["rate_bps"]
+                    .as_u64()
+                    .and_then(|v| u32::try_from(v).ok())
+                    .ok_or("invalid rate")?;
+                let phy = if value["phy"] == "ht20" {
+                    let mcs = value["mcs"]
+                        .as_u64()
+                        .filter(|value| *value < 8)
+                        .ok_or("invalid HT MCS")? as u8;
+                    let short_gi = match value["guard_interval_ns"].as_u64() {
+                        Some(400) => true,
+                        Some(800) => false,
+                        _ => return Err("invalid HT guard interval".into()),
+                    };
+                    let ldpc = match value["coding"].as_str() {
+                        Some("bcc") => false,
+                        Some("ldpc") => true,
+                        _ => return Err("invalid HT coding".into()),
+                    };
+                    let greenfield = match value["preamble"].as_str() {
+                        Some("mixed") => false,
+                        Some("greenfield") if !short_gi => true,
+                        _ => return Err("invalid HT preamble".into()),
+                    };
+                    let expected_rate = HtPhy {
+                        mcs,
+                        short_gi,
+                        ldpc: Some(ldpc),
+                        stbc: Some(0),
+                        greenfield: Some(greenfield),
+                        extension_spatial_streams: Some(0),
+                        aggregation: Some(false),
+                        ampdu_reference: None,
+                        delimiter_offset: None,
+                    }
+                    .rate_bps();
+                    if rate_bps != expected_rate {
+                        return Err("inconsistent HT rate".into());
+                    }
+                    PlannedPhy::Ht20 {
+                        mcs,
+                        short_gi,
+                        ldpc,
+                        greenfield,
+                    }
+                } else if matches!(value["phy"].as_str(), Some("legacy_ofdm" | "dsss" | "cck")) {
+                    let short_preamble = match value["preamble"].as_str() {
+                        Some("short") => true,
+                        Some("long") => false,
+                        _ => return Err("invalid legacy preamble".into()),
+                    };
+                    PlannedPhy::Legacy {
+                        rate_bps,
+                        short_preamble,
+                    }
+                } else {
+                    return Err("unknown planned PHY".into());
+                };
                 cases.push(PlannedCase {
                     id,
                     mac: unhex(value["mac_hex"].as_str().ok_or("missing MAC bytes")?)?,
-                    rate_bps: value["rate_bps"]
-                        .as_u64()
-                        .and_then(|v| u32::try_from(v).ok())
-                        .ok_or("invalid rate")?,
-                    short: value["preamble"] == "short",
+                    phy,
                 });
             }
             Some("summary") => summary = Some(value),
@@ -107,11 +270,22 @@ fn observed_frame(data: &[u8], original_len: u32) -> std::result::Result<Observe
     {
         return Err("invalid_fcs_or_phy");
     }
-    let rate_bps = u32::from(radiotap.rate_value().ok_or("missing_rate")?) * 500_000;
-    let short = flags.bits() & 2 != 0;
-    if rate_bps == 1_000_000 && short {
-        return Err("invalid_preamble");
-    }
+    let phy = match radiotap.mcs_value() {
+        Some(mcs) => ObservedPhy::Ht20(
+            HtPhy::reference(mcs, radiotap.a_mpdu_status_value()).map_err(|_| "unsupported_ht")?,
+        ),
+        None => {
+            let rate_bps = u32::from(radiotap.rate_value().ok_or("missing_rate")?) * 500_000;
+            let short_preamble = flags.bits() & 2 != 0;
+            if rate_bps == 1_000_000 && short_preamble {
+                return Err("invalid_preamble");
+            }
+            ObservedPhy::Legacy {
+                rate_bps,
+                short_preamble,
+            }
+        }
+    };
     let mut mac = data[header_len..].to_vec();
     let fcs = if flags.fcs_present() {
         if !valid_fcs(&mac) {
@@ -122,12 +296,7 @@ fn observed_frame(data: &[u8], original_len: u32) -> std::result::Result<Observe
     } else {
         "absent"
     };
-    Ok(Observed {
-        mac,
-        rate_bps,
-        short,
-        fcs,
-    })
+    Ok(Observed { mac, phy, fcs })
 }
 
 fn compare_cases(
@@ -138,18 +307,28 @@ fn compare_cases(
     let mut available = observed.to_vec();
     let mut results = Vec::with_capacity(cases.len());
     for case in cases {
-        let exact = available.iter().position(|frame| {
-            frame.mac == case.mac && frame.rate_bps == case.rate_bps && frame.short == case.short
-        });
+        let exact = available
+            .iter()
+            .position(|frame| frame.mac == case.mac && case.phy.matches(&frame.phy));
         let bytes_only = available.iter().any(|frame| frame.mac == case.mac);
         let match_value = exact.map(|index| available.remove(index));
-        results.push(json!({
-            "case_id": case.id, "rate_bps": case.rate_bps,
-            "preamble": if case.short {"short"} else {"long"},
+        let mut result = json!({
+            "case_id": case.id,
             "status": if match_value.is_some() {"passed"} else if bytes_only {"metadata_mismatch"} else {"missing"},
             "fcs": match_value.as_ref().map(|frame| frame.fcs),
             "mac_hex": hex(&case.mac)
-        }));
+        });
+        result
+            .as_object_mut()
+            .expect("comparison result is an object")
+            .extend(
+                case.phy
+                    .metadata()
+                    .as_object()
+                    .expect("PHY metadata is an object")
+                    .clone(),
+            );
+        results.push(result);
     }
     let passed = results
         .iter()
@@ -231,14 +410,16 @@ fn verified_file(base: &Path, value: &Value, label: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn verify_transmit(path: &Path) -> Result<BTreeSet<String>> {
+fn verify_transmit(path: &Path) -> Result<(String, BTreeSet<String>)> {
     let mut reader = BufReader::new(File::open(path)?);
     let header = read_json(&mut reader)?.ok_or("empty live transmit artifact")?;
+    let family = header["family"].as_str().unwrap_or("legacy");
+    let expected = matrix_case_ids(family)?;
     if header["schema"] != PLAN_SCHEMA
         || header["kind"] != "header"
         || header["offline"] != false
         || match header["case_count"].as_u64() {
-            Some(count) => count == 0 || count > 15,
+            Some(count) => count == 0 || count > expected.len() as u64,
             None => true,
         }
     {
@@ -266,9 +447,8 @@ fn verify_transmit(path: &Path) -> Result<BTreeSet<String>> {
         }
     }
     let declared = header["case_count"].as_u64().unwrap() as usize;
-    let expected = MATRIX_CASE_IDS.into_iter().collect::<BTreeSet<_>>();
     if cases.len() != declared
-        || !cases.iter().all(|id| expected.contains(id.as_str()))
+        || !cases.iter().all(|id| expected.contains(id))
         || match summary.as_ref() {
             Some(value) => value["complete"] != true || value["terminal"] != "complete",
             None => true,
@@ -276,7 +456,7 @@ fn verify_transmit(path: &Path) -> Result<BTreeSet<String>> {
     {
         return Err("incomplete live transmit artifact".into());
     }
-    Ok(cases)
+    Ok((family.to_owned(), cases))
 }
 
 pub fn verify_qualification(path: &str) -> Result<Value> {
@@ -284,6 +464,8 @@ pub fn verify_qualification(path: &str) -> Result<Value> {
     if value["schema"] != QUALIFICATION_SCHEMA || value["complete"] != true {
         return Err("invalid or incomplete transmit qualification".into());
     }
+    let family = value["family"].as_str().unwrap_or("legacy");
+    let expected_cases = matrix_case_ids(family)?;
     let runs = value["runs"]
         .as_array()
         .ok_or("missing qualification runs")?;
@@ -332,8 +514,8 @@ pub fn verify_qualification(path: &str) -> Result<Value> {
         let report: Value = serde_json::from_reader(File::open(&comparison)?)?;
         if report["schema"] != REPORT_SCHEMA
             || report["status"] != "passed"
-            || report["required_cases"] != 15
-            || report["passed_cases"] != 15
+            || report["required_cases"] != expected_cases.len()
+            || report["passed_cases"] != expected_cases.len()
         {
             return Err(
                 format!("qualification comparison failed: {}", comparison.display()).into(),
@@ -350,7 +532,7 @@ pub fn verify_qualification(path: &str) -> Result<Value> {
                     .flatten()
             })
             .collect::<BTreeSet<_>>();
-        if passed_ids != MATRIX_CASE_IDS.into_iter().map(str::to_owned).collect() {
+        if passed_ids != expected_cases {
             return Err(format!("qualification comparison matrix failed: {id}").into());
         }
         let transmits = run["transmits"]
@@ -365,19 +547,23 @@ pub fn verify_qualification(path: &str) -> Result<Value> {
             if !transmit_paths.insert(transmit_path.clone()) {
                 return Err(format!("qualification transmit reused by run: {id}").into());
             }
-            transmitted_cases.extend(verify_transmit(&transmit_path)?);
+            let (transmit_family, cases) = verify_transmit(&transmit_path)?;
+            if transmit_family != family {
+                return Err(format!("qualification transmit family differs: {id}").into());
+            }
+            transmitted_cases.extend(cases);
         }
-        if transmitted_cases != MATRIX_CASE_IDS.into_iter().map(str::to_owned).collect() {
+        if transmitted_cases != expected_cases {
             return Err(format!("qualification run transmit matrix is incomplete: {id}").into());
         }
         verified.push(json!({
             "id": id, "comparison": comparison.strip_prefix(base)?.display().to_string(),
             "capture_bytes": capture.metadata()?.len(), "transmit_artifacts": transmits.len(),
-            "passed_cases": 15
+            "passed_cases": expected_cases.len()
         }));
     }
     Ok(
-        json!({"schema":QUALIFICATION_SCHEMA,"status":"passed","verified_runs":verified.len(),"runs":verified}),
+        json!({"schema":QUALIFICATION_SCHEMA,"family":family,"status":"passed","verified_runs":verified.len(),"runs":verified}),
     )
 }
 
@@ -393,15 +579,50 @@ mod tests {
         PlannedCase {
             id: id.into(),
             mac: vec![byte],
-            rate_bps: rate,
-            short,
+            phy: PlannedPhy::Legacy {
+                rate_bps: rate,
+                short_preamble: short,
+            },
         }
     }
     fn seen(byte: u8, rate: u32, short: bool) -> Observed {
         Observed {
             mac: vec![byte],
-            rate_bps: rate,
-            short,
+            phy: ObservedPhy::Legacy {
+                rate_bps: rate,
+                short_preamble: short,
+            },
+            fcs: "absent",
+        }
+    }
+
+    fn planned_ht(byte: u8, mcs: u8, short_gi: bool, ldpc: bool) -> PlannedCase {
+        PlannedCase {
+            id: format!("ht-{mcs}"),
+            mac: vec![byte],
+            phy: PlannedPhy::Ht20 {
+                mcs,
+                short_gi,
+                ldpc,
+                greenfield: false,
+            },
+        }
+    }
+
+    fn seen_ht(byte: u8, mcs: u8, short_gi: bool, ldpc: Option<bool>) -> Observed {
+        Observed {
+            mac: vec![byte],
+            phy: ObservedPhy::Ht20(HtPhy {
+                mcs,
+                short_gi,
+                ldpc,
+                stbc: Some(0),
+                greenfield: Some(false),
+                extension_spatial_streams: Some(0),
+                aggregation: None,
+                ampdu_reference: None,
+                delimiter_offset: None,
+            }),
             fcs: "absent",
         }
     }
@@ -425,6 +646,31 @@ mod tests {
     }
 
     #[test]
+    fn matching_ht_requires_mcs_gi_and_known_coding_to_agree() {
+        let case = planned_ht(1, 7, true, true);
+        let report = compare_cases(
+            std::slice::from_ref(&case),
+            &[seen_ht(1, 7, true, Some(true))],
+            BTreeMap::new(),
+        );
+        assert_eq!(report["passed_cases"], 1);
+
+        let mismatch = compare_cases(
+            std::slice::from_ref(&case),
+            &[seen_ht(1, 7, false, Some(true))],
+            BTreeMap::new(),
+        );
+        assert_eq!(mismatch["cases"][0]["status"], "metadata_mismatch");
+
+        let unknown_coding = compare_cases(
+            std::slice::from_ref(&case),
+            &[seen_ht(1, 7, true, None)],
+            BTreeMap::new(),
+        );
+        assert_eq!(unknown_coding["passed_cases"], 1);
+    }
+
+    #[test]
     fn qualification_transmit_artifacts_allow_subsets_and_reject_shortfalls() {
         let root = std::env::temp_dir().join(format!(
             "crafter-transmit-qualification-{}-{}",
@@ -445,11 +691,26 @@ mod tests {
         )
         };
         fs::write(&path, artifact(0)).unwrap();
-        let cases = verify_transmit(&path).unwrap();
+        let (family, cases) = verify_transmit(&path).unwrap();
+        assert_eq!(family, "legacy");
         assert_eq!(cases.len(), 2);
         assert!(cases.contains("ofdm-54-long"));
         fs::write(&path, artifact(1)).unwrap();
         assert!(verify_transmit(&path).is_err());
+
+        fs::write(
+            &path,
+            format!(
+                "{{\"schema\":\"{PLAN_SCHEMA}\",\"kind\":\"header\",\"family\":\"ht20\",\"case_count\":2,\"offline\":false}}\n\
+                 {{\"schema\":\"{PLAN_SCHEMA}\",\"kind\":\"case\",\"case_id\":\"ht20-mixed-bcc-mcs0-gi800\",\"terminal\":\"complete\",\"requested_samples\":10,\"supplied_samples\":10,\"completed_repetitions\":1,\"firmware_shortfalls\":0,\"stopped\":true}}\n\
+                 {{\"schema\":\"{PLAN_SCHEMA}\",\"kind\":\"case\",\"case_id\":\"ht20-greenfield-ldpc-mcs7-gi800\",\"terminal\":\"complete\",\"requested_samples\":10,\"supplied_samples\":10,\"completed_repetitions\":1,\"firmware_shortfalls\":0,\"stopped\":true}}\n\
+                 {{\"schema\":\"{PLAN_SCHEMA}\",\"kind\":\"summary\",\"complete\":true,\"terminal\":\"complete\"}}\n"
+            ),
+        )
+        .unwrap();
+        let (family, cases) = verify_transmit(&path).unwrap();
+        assert_eq!(family, "ht20");
+        assert_eq!(cases.len(), 2);
         fs::remove_dir_all(root).unwrap();
     }
 }

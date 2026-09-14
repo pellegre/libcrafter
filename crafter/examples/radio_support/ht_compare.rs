@@ -116,11 +116,14 @@ impl HtPhy {
             let offset = value["ampdu"]["delimiter_offset"]
                 .as_u64()
                 .ok_or("missing_ampdu_offset")?;
+            let end = offset
+                .checked_add(4)
+                .and_then(|n| n.checked_add(raw_len as u64));
             if offset % 4 != 0
-                || offset
-                    .checked_add(4)
-                    .and_then(|n| n.checked_add(raw_len as u64))
-                    .is_none_or(|n| n > length)
+                || match end {
+                    Some(end) => end > length,
+                    None => true,
+                }
             {
                 return Err("invalid_ampdu_offset");
             }
