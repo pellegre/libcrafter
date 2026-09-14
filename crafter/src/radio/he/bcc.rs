@@ -1,6 +1,5 @@
 //! HE BCC payload kernel, IEEE802.11ax-2021 27.3.12.1-5.
 use super::{capacity::Capacity, SuSignal};
-use crate::radio::signal::TRELLIS_SIGNS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::radio) enum Error {
@@ -82,90 +81,30 @@ fn recover_capacity(
     if c.psdu_bytes > max_psdu {
         return Err(Error::Limit);
     }
-    if symbols.checked_mul(c.coded_per_symbol) != Some(metrics.len()) {
-        return Err(Error::Length);
-    }
-    if metrics.iter().any(|v| !v.is_finite()) {
-        return Err(Error::Metrics);
-    }
-    let mut coded = Vec::new();
-    coded
-        .try_reserve_exact(c.coded_bits)
-        .map_err(|_| Error::Allocation)?;
-    for (i, block) in metrics.chunks_exact(c.coded_per_symbol).enumerate() {
-        let keep = if i >= symbols - group {
-            c.coded_last
-        } else {
-            c.coded_per_symbol
-        };
-        for (j, value) in block[..keep].iter().enumerate() {
-            // 27.3.12.5.1: filler after2*NDBPS (50 for106,116 for242),
-            // only DCM BPSK/NSS1. Exclude it before soft-metric normalization.
-            if c.bcc_dcm_filler && j == 2 * c.data_per_symbol {
-                continue;
-            }
-            coded.push(*value);
-        }
-    }
-    let scale = coded.iter().map(|v| v.abs()).fold(0f32, f32::max);
-    if scale == 0. {
-        return Err(Error::Metrics);
-    }
-    let pattern: &[u8] = match (c.rate_num, c.rate_den) {
-        (1, 2) => &[1, 1],
-        (2, 3) => &[1, 1, 1, 0],
-        (3, 4) => &[1, 1, 1, 0, 0, 1],
-        (5, 6) => &[1, 1, 1, 0, 0, 1, 1, 0, 0, 1],
-        _ => return Err(Error::Coding),
-    };
-    let mut history = Vec::new();
-    history
-        .try_reserve_exact(c.data_bits)
-        .map_err(|_| Error::Allocation)?;
-    history.resize(c.data_bits, [0u8; 64]);
-    let mut costs = [f32::INFINITY; 64];
-    costs[0] = 0.;
-    let mut cursor = 0;
-    for (t, row) in history.iter_mut().enumerate() {
-        let mut pair = [0.; 2];
-        for (j, value) in pair.iter_mut().enumerate() {
-            if pattern[(2 * t + j) % pattern.len()] != 0 {
-                *value = *coded.get(cursor).ok_or(Error::Length)? / scale;
-                cursor += 1;
-            }
-        }
-        let mut next = [f32::INFINITY; 64];
-        for (state, cost) in costs.iter().enumerate() {
-            for bit in 0..2 {
-                let reg = (state << 1) | bit;
-                let signs = TRELLIS_SIGNS[reg];
-                let score = cost - pair[0] * signs[0] - pair[1] * signs[1];
-                if score < next[reg & 63] {
-                    next[reg & 63] = score;
-                    row[reg & 63] = state as u8;
-                }
-            }
-        }
-        let minimum = next.iter().copied().fold(f32::INFINITY, f32::min);
-        for v in &mut next {
-            *v -= minimum;
-        }
-        costs = next;
-    }
-    if cursor != coded.len() {
-        return Err(Error::Length);
-    }
-    // HE tail is after pre-FEC PHY padding and terminates the encoder.
-    let mut state = 0;
-    let mut bits = Vec::new();
-    bits.try_reserve_exact(c.data_bits)
-        .map_err(|_| Error::Allocation)?;
-    bits.resize(c.data_bits, 0);
-    for (t, row) in history.iter().enumerate().rev() {
-        bits[t] = (state & 1) as u8;
-        state = row[state] as usize;
-    }
+    let decoder = crate::radio::bcc::Decoder::new(crate::radio::bcc::Parameters {
+        symbols,
+        symbol_group: group,
+        coded_per_symbol: c.coded_per_symbol,
+        coded_last: c.coded_last,
+        data_per_symbol: c.data_per_symbol,
+        data_bits: c.data_bits,
+        rate_num: c.rate_num,
+        rate_den: c.rate_den,
+        dcm_filler: c.bcc_dcm_filler,
+    })
+    .map_err(map_error)?;
+    let bits = decoder.recover(metrics).map_err(map_error)?;
     crate::radio::data::descramble_psdu(bits, c.psdu_bytes).map_err(|_| Error::Service)
+}
+
+fn map_error(error: crate::radio::bcc::Error) -> Error {
+    match error {
+        crate::radio::bcc::Error::Parameters => Error::Capacity,
+        crate::radio::bcc::Error::Coding => Error::Coding,
+        crate::radio::bcc::Error::Length => Error::Length,
+        crate::radio::bcc::Error::Metrics => Error::Metrics,
+        crate::radio::bcc::Error::Allocation => Error::Allocation,
+    }
 }
 
 #[cfg(test)]

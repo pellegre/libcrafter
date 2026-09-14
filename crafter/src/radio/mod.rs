@@ -4,6 +4,7 @@
 //! normalized samples lazily: each component is divided by 128, giving [-1, 1).
 //! IQ is never a packet layer; only recovered MAC bytes cross the packet boundary.
 mod ampdu;
+mod bcc;
 mod data;
 mod dsss;
 mod dsss_tx;
