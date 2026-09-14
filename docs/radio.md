@@ -1,12 +1,11 @@
-# Legacy Wi-Fi IQ receive and transmit
+# Wi-Fi IQ receive and transmit
 
-The optional `radio` feature decodes legacy OFDM and DSSS/CCK IQ into ordinary
-libcrafter packets and encodes bare typed Wi-Fi packets as owned CS8 waveforms at
-a 20 Msps source clock. It supports offline replay and generation without
-hardware; `radio-hackrf` adds explicit bounded native reception and transmission. Three independent
-paired live runs qualified DSSS and CCK agreement with a separate Wi-Fi receiver;
-the earlier OFDM qualification and its replay regression evidence are retained
-separately below.
+The optional `radio` feature decodes legacy OFDM, DSSS/CCK, and 20 MHz Wi-Fi 4
+(HT20) IQ into ordinary libcrafter packets. It also encodes bare typed Wi-Fi
+packets as owned CS8 waveforms at a 20 Msps source clock. It supports offline
+replay and generation without hardware; `radio-hackrf` adds explicit bounded
+native reception and transmission. Live qualification evidence is described
+below.
 
 ## Boundary and scope
 
@@ -16,9 +15,10 @@ never a `Raw` packet layer. Original recovered bytes remain available even when
 the parsed packet is later modified. RF context coexists with Wi-Fi metadata.
 
 `IqSource` supplies `IqEvent` values to a `PhyDecoder`. The provided
-`ReaderIqSource` reads signed interleaved 8-bit I/Q. `LegacyWifiDecoder` combines
-OFDM and DSSS/CCK reception; `LegacyOfdmDecoder` and `DsssCckDecoder` select one
-receiver explicitly. Each reconstructs FCS-valid `RecoveredFrame` values.
+`ReaderIqSource` reads signed interleaved 8-bit I/Q. `WifiDecoder` combines
+legacy reception with HT20; `LegacyWifiDecoder` combines OFDM and DSSS/CCK;
+`LegacyOfdmDecoder` and `DsssCckDecoder` select one legacy receiver explicitly.
+Each reconstructs FCS-valid `RecoveredFrame` values.
 `RadioPacketSource::new(source, decoder, bounds)` implements the ordinary
 `PacketSource` contract and can be consumed by `Sniffer`. It calls
 `Packet::decode_from_link(LinkType::Ieee80211, ...)` after stripping the verified
@@ -27,24 +27,27 @@ FCS-bearing bytes and additive `RadioReceiveMetadata`; Wi-Fi annotations remain
 available independently. Future sources can implement `IqSource` without
 changing the PHY decoder or the packet parser.
 
-Supported modes are legacy OFDM with 20 MHz channel spacing (including ERP-OFDM)
+Supported legacy modes are OFDM with 20 MHz channel spacing (including ERP-OFDM)
 and DSSS/CCK at 1, 2, 5.5 and 11 Mbps. Long preambles support all four
-DSSS/CCK rates; short preambles support 2, 5.5 and 11 Mbps. DSSS-OFDM, PBCC,
-HT, VHT, HE, half-clocked and quarter-clocked OFDM remain unsupported. A valid
-legacy SIGNAL alone does not prove a supported frame:
-later PHY formats can share a legacy preamble. DATA integrity must also pass.
-There is no decryption, association, authentication, scanning, retransmission,
-rate-control, or other Wi-Fi state-machine API. Radiotap monitor injection is a
-separate link-layer path; native packet-to-IQ transmission is described below.
+DSSS/CCK rates; short preambles support 2, 5.5 and 11 Mbps. HT20 reception
+supports MCS 0–7, BCC and LDPC, mixed and greenfield formats, valid 400/800 ns
+guard intervals, nonaggregated PSDUs, A-MPDUs, one-data-stream STBC, and
+extension training. Additional data streams, HT40, VHT, HE, EHT, DSSS-OFDM,
+PBCC, and reduced-clock OFDM remain unsupported by this decoder. A valid legacy
+SIGNAL alone does not prove a legacy frame because HT mixed format shares its
+preamble; signaling and DATA integrity must also pass. The radio layer's job is
+to recover raw MAC bytes. Association, rate control, and other Wi-Fi state
+machines are separate surfaces. Radiotap monitor injection is a separate
+link-layer path; native packet-to-IQ transmission is described below.
 
 ## Packet-shaped IQ transmission
 
-`RadioPacketWriter<S>` implements the ordinary `PacketWriter` contract for a
-bare `Dot11 / ...` packet stack. `encode_record()` compiles the packet without
-opening hardware and returns an owned `LegacyWifiTransmission`; `write_record()`
-passes that value to an `IqSink`. `MemoryIqSink` is the deterministic offline
-sink. A radiotap root is rejected because radiotap is capture metadata rather
-than part of the transmitted MAC frame.
+`RadioPacketWriter` implements the ordinary `PacketWriter` contract for a bare
+`Dot11 / ...` packet stack. `encode_record()` compiles the packet without
+opening hardware and returns an owned transmission selected by its encoder;
+`write_record()` passes that value to an `IqSink`. `MemoryIqSink` is the
+deterministic offline sink. A radiotap root is rejected because radiotap is
+capture metadata rather than part of the transmitted MAC frame.
 
 ```rust
 use crafter::prelude::*;
@@ -63,13 +66,15 @@ assert_eq!(tx.sample_count() * 2, tx.cs8().len());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-The closed transmit matrix has fifteen cases: OFDM at 6, 9, 12, 18, 24, 36,
-48, and 54 Mb/s; DSSS/CCK at 1, 2, 5.5, and 11 Mb/s with a long preamble; and
-2, 5.5, and 11 Mb/s with a short preamble. Short-preamble 1 Mb/s is rejected.
-Every mode produces signed, interleaved 8-bit I/Q (`I0,Q0,I1,Q1,...`) at exactly
-20,000,000 complex samples per second. One complex sample therefore occupies
-two bytes. Literal WAV/RIFF files, later HT/VHT/HE PHYs, DSSS-OFDM, PBCC, and
-reduced-clock PHYs are outside this surface.
+The closed legacy transmit matrix has fifteen cases: OFDM at 6, 9, 12, 18, 24,
+36, 48, and 54 Mb/s; DSSS/CCK at 1, 2, 5.5, and 11 Mb/s with a long preamble;
+and 2, 5.5, and 11 Mb/s with a short preamble. The HT20 matrix has 48 cases:
+MCS 0–7 with BCC or LDPC; mixed format with 400 or 800 ns guard intervals; and
+greenfield format with its valid 800 ns guard interval. HT20 transmission is
+single-stream. Every mode produces signed, interleaved 8-bit I/Q
+(`I0,Q0,I1,Q1,...`) at exactly 20,000,000 complex samples per second. One
+complex sample therefore occupies two bytes. Literal WAV/RIFF files, HT40,
+VHT/HE/EHT, DSSS-OFDM, PBCC, and reduced-clock PHYs are outside this surface.
 
 `WifiFcsPolicy::Auto` appends a derived IEEE 802.11 FCS. `Explicit([u8; 4])`
 places those four bytes on the wire unchanged, including an intentionally bad
@@ -96,6 +101,8 @@ complete matrix and non-overwriting CS8 files:
 cargo run -p crafter --features radio --example radio_transmit
 cargo run -p crafter --features radio --example radio_transmit -- \
   --matrix --save-iq target/radio-transmit/offline
+cargo run -p crafter --features radio --example radio_transmit -- \
+  --matrix --family ht20 --save-iq target/radio-transmit/ht20
 ```
 
 Its JSON Lines schema is `crafter.radio.transmit/v1`: a header declares the
@@ -124,7 +131,7 @@ cargo run --release -p crafter --features radio-hackrf --example radio_transmit 
   --live-hackrf --serial SERIAL --frequency-hz HZ --sample-rate-hz 20000000 \
   --filter-hz HZ --tx-gain-db DB --amplifier false --antenna-power false \
   --max-duration-ms MS --max-samples N --repetitions N --gap-samples N \
-  --case-gap-ms MS --ofdm-scale SCALE --case-id all --matrix true
+  --case-gap-ms MS --ofdm-scale SCALE --case-id all --matrix true --family ht20
 ```
 
 The native callback owns its waveform and initializes every valid transfer
@@ -150,16 +157,20 @@ FCS only when radiotap says it is present and the trailer verifies. With absent
 FCS it compares every captured MAC byte to the planned MAC bytes and labels
 integrity `absent`; that match is useful but does not prove FCS integrity.
 
-An eligible match requires complete normalized MAC-byte equality plus the
-observed legacy rate and short/long preamble state. Matching consumes capture
-occurrences one-to-one, so repeated receptions of one case cannot cover another
-case. The comparison output uses `crafter.radio.transmit-comparison/v1` and
-must report all 15 cases passed. Final `crafter.radio.transmit-qualification/v1`
-evidence requires at least three independent bounded runs from one unchanged
-candidate revision. Each run must cover all fifteen cases, have complete
-transmit and capture artifacts, contain no underrun, shortfall, truncation,
-bad-FCS, rate/preamble mismatch, timeout, cancellation, or cleanup failure, and
-record successful restoration of external state.
+An eligible match requires complete normalized MAC-byte equality. Legacy cases
+also require the observed rate and short/long preamble state. HT20 cases require
+the MCS and guard interval; coding and mixed/greenfield format must agree when
+the reference driver marks those radiotap fields as known. Matching consumes
+capture occurrences one-to-one, so repeated receptions of one case cannot
+cover another case. The comparison output uses
+`crafter.radio.transmit-comparison/v1` and must report every case in the selected
+family passed: 15 for legacy or 48 for HT20. Final
+`crafter.radio.transmit-qualification/v1` evidence requires at least three
+independent bounded runs from one unchanged candidate revision. Each run must
+cover its complete family, have complete transmit and capture artifacts,
+contain no underrun, shortfall, truncation, bad-FCS, PHY-metadata mismatch,
+timeout, cancellation, or cleanup failure, and record successful restoration
+of external state.
 
 Keep the aggregate, comparisons, CS8 files, pcaps, device settings, and cleanup
 receipts in ignored storage such as `target/`. Do not commit VM aliases, device
@@ -170,15 +181,16 @@ REPORT.json` creates one comparison; `radio_compare
 --verify-transmit-qualification QUALIFICATION.json` verifies the aggregate and
 its referenced files.
 
-The qualification aggregate has a lowercase 40-hex `revision` and at least
-three uniquely named runs. Each run repeats that revision and provides a
-nonempty `settings` object, `cleanup:true`, `invalidating_failures:0`, and
-`capture`, `comparison`, and `transmits` file records. A file record is
-`{"path":"relative/child","sha256":"..."}`. The verifier rejects absolute
-or parent paths, empty files, digest changes, incomplete comparison matrices,
-and live transmit artifacts with missing cases, duplicate cases, shortfalls,
-sample-count disagreement, cancellation, or an incomplete stop. Multiple
-bounded transmit artifacts may jointly cover the fifteen cases in one run.
+The qualification aggregate has a lowercase 40-hex `revision`, a `family` of
+`legacy` or `ht20`, and at least three uniquely named runs. Each run repeats
+that revision and provides a nonempty `settings` object, `cleanup:true`,
+`invalidating_failures:0`, and `capture`, `comparison`, and `transmits` file
+records. A file record is `{"path":"relative/child","sha256":"..."}`. The
+verifier rejects absolute or parent paths, empty files, digest changes,
+incomplete comparison matrices, cross-family artifacts, and live transmit
+artifacts with missing cases, duplicate cases, shortfalls, sample-count
+disagreement, cancellation, or an incomplete stop. Multiple bounded transmit
+artifacts may jointly cover the selected matrix in one run.
 
 Revision `11b4d1fccf647a4ecf30e5906de25acbd55a6747` passed this
 qualification in three independent bounded runs. Every run produced exact MAC
@@ -189,6 +201,19 @@ radiotap rate, and DSSS/CCK preamble agreement while recording FCS integrity as
 absent. The runs used 20 Msps, a 20 MHz filter, disabled RF amplifier and
 antenna power, OFDM TX gain 47 dB, OFDM scale 450 except scale 400 at 48 Mb/s,
 and DSSS/CCK TX gains of 20, 30, or 47 dB as recorded per bounded artifact.
+
+HT20 revision `a55ad8bc374be562d10dea0d376737f3f41ad2b2` also passed three
+independent bounded runs. Each run matched exact 100-byte PSDUs for all 48
+single-stream combinations: MCS0–7, BCC/LDPC, mixed format at both guard
+intervals, and greenfield format at 800 ns. MCS and guard interval agreed in
+the reference metadata; optional coding and format fields were checked when
+the reference driver marked them known. All accepted transmit artifacts had
+exact requested/supplied sample counts, zero firmware shortfalls, zero kernel
+capture drops, disabled RF amplifier and antenna power, and successful state
+restoration. Reference captures omitted FCS, so this qualifies raw MAC bytes
+and applicable HT metadata while retaining FCS integrity as absent. The matrix
+used 20 Msps, 20 MHz channels, TX gain 47 dB, and scale 300; bounded targeted
+retries were retained as part of each run.
 
 ## Primary evidence
 
