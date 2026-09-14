@@ -8586,6 +8586,17 @@ fn assert_fixture_filename_convention(relative: &Path) {
 
     if category == "iq" {
         assert_eq!(relative.components().count(), 2, "IQ fixtures must be flat");
+        if let Some(base_name) = file_name.strip_suffix("-index.tsv") {
+            assert_lower_dash_name(base_name, relative_str);
+            return;
+        }
+        if let Some(base_name) = file_name.strip_suffix(".cs8") {
+            let sibling_index = format!("iq/{base_name}-index.tsv");
+            if fixture_path(&sibling_index).is_file() {
+                assert_lower_dash_name(base_name, relative_str);
+                return;
+            }
+        }
         if matches!(
             file_name,
             "ramp.cs8"
