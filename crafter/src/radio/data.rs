@@ -19,7 +19,7 @@ struct Pending {
     samples: Vec<ComplexSample>,
     info: Option<SignalInfo>,
     ht: Option<HtSignalFields>,
-    ldpc: Option<ldpc_rate::Layout>,
+    ldpc: Option<ldpc::rate::Layout>,
     greenfield: bool,
 }
 impl Pending {
@@ -63,7 +63,7 @@ impl Pending {
                 ThreeQuarters,
                 FiveSixths,
             ][fields.mcs as usize];
-            let Ok(layout) = ldpc_rate::Layout::new(
+            let Ok(layout) = ldpc::rate::Layout::new(
                 fields.psdu_bytes,
                 (52 * nbpsc) as u16,
                 rate,
@@ -433,7 +433,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                         partial_stats.push(PhyDiagnostic::LdpcPartial {
                                             failed_codewords: recovered.failed_codewords,
                                         });
-                                        if let Some(ldpc_rate::Error::Codeword {
+                                        if let Some(ldpc::rate::Error::Codeword {
                                             index,
                                             error:
                                                 ldpc::Error::Nonconvergence {
@@ -522,7 +522,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             self.stats.rejected_frames =
                                 self.stats.rejected_frames.saturating_add(1);
                             out.diagnostics.push(PhyDiagnostic::InvalidData);
-                            if let Some(ldpc_rate::Error::Codeword {
+                            if let Some(ldpc::rate::Error::Codeword {
                                 index,
                                 error:
                                     ldpc::Error::Nonconvergence {

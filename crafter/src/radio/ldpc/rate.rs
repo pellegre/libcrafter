@@ -1,23 +1,18 @@
 //! HT LDPC sizing: IEEE 802.11-2020 19.3.11.7.5, Table 19-16.
 //! Integer inequalities preserve the strict thresholds in Equations 19-38–40.
 #![allow(dead_code)] // Integrated after independent rate-matching qualification.
-use super::ldpc::Rate;
+use super::Rate;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Error {
+pub(in crate::radio) enum Error {
     EmptyPayload,
     InvalidCodedBits,
-    Metrics(super::ldpc::Error),
-    Codeword {
-        index: usize,
-        error: super::ldpc::Error,
-    },
-    Shortening {
-        index: usize,
-    },
+    Metrics(super::Error),
+    Codeword { index: usize, error: super::Error },
+    Shortening { index: usize },
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Word {
+pub(in crate::radio) struct Word {
     pub information_bits: usize,
     pub shortened_bits: usize,
     pub punctured_bits: usize,
@@ -25,7 +20,7 @@ pub(super) struct Word {
     pub transmitted_bits: usize,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Layout {
+pub(in crate::radio) struct Layout {
     pub symbols: usize,
     pub codewords: usize,
     pub block_bits: usize,
@@ -37,7 +32,7 @@ pub(super) struct Layout {
     pub coded_bits_per_symbol: usize,
     pub rate: Rate,
 }
-pub(super) struct Recovery {
+pub(in crate::radio) struct Recovery {
     pub bits: Vec<u8>,
     pub iterations: usize,
     pub failed_codewords: usize,
@@ -47,17 +42,25 @@ impl Layout {
     /// Restore omitted known-zero information bits and erased parity, combine
     /// repeated observations, and recover the concatenated information stream.
     /// Input is in transmitted codeword order (LDPC bypasses BCC interleaving).
-    pub(super) fn recover(self, metrics: &[f32], limit: usize) -> Result<(Vec<u8>, usize), Error> {
+    pub(in crate::radio) fn recover(
+        self,
+        metrics: &[f32],
+        limit: usize,
+    ) -> Result<(Vec<u8>, usize), Error> {
         let recovered = self.recover_impl(metrics, limit, false)?;
         Ok((recovered.bits, recovered.iterations))
     }
     /// Retain bounded estimates across damaged codewords for A-MPDU scanning.
     /// The caller must validate SERVICE and every delivered MPDU's FCS.
-    pub(super) fn recover_partial(self, metrics: &[f32], limit: usize) -> Result<Recovery, Error> {
+    pub(in crate::radio) fn recover_partial(
+        self,
+        metrics: &[f32],
+        limit: usize,
+    ) -> Result<Recovery, Error> {
         self.recover_impl(metrics, limit, true)
     }
     fn recover_impl(self, metrics: &[f32], limit: usize, partial: bool) -> Result<Recovery, Error> {
-        use super::ldpc::{Code, Error as CodeError};
+        use super::{Code, Error as CodeError};
         let required = self.symbols * self.coded_bits_per_symbol;
         if metrics.len() != required {
             return Err(Error::Metrics(CodeError::MetricCount {
@@ -141,7 +144,12 @@ impl Layout {
     }
     /// u16 dimensions bound all arithmetic even on 32-bit hosts. The enclosing
     /// PHY must additionally validate that its MCS actually permits `coded`.
-    pub(super) fn new(bytes: u16, coded: u16, rate: Rate, stbc: bool) -> Result<Self, Error> {
+    pub(in crate::radio) fn new(
+        bytes: u16,
+        coded: u16,
+        rate: Rate,
+        stbc: bool,
+    ) -> Result<Self, Error> {
         if bytes == 0 {
             return Err(Error::EmptyPayload);
         }
@@ -185,7 +193,7 @@ impl Layout {
             rate,
         })
     }
-    pub(super) fn word(self, index: usize) -> Option<Word> {
+    pub(in crate::radio) fn word(self, index: usize) -> Option<Word> {
         if index >= self.codewords {
             return None;
         }
@@ -209,7 +217,7 @@ mod tests {
     use super::*;
     #[test]
     fn radio_ldpc_independent_rate_matched_recovery() {
-        let rows: Vec<_> = include_str!("../../tests/fixtures/iq/ldpc-rate-codewords.tsv")
+        let rows: Vec<_> = include_str!("../../../tests/fixtures/iq/ldpc-rate-codewords.tsv")
             .lines()
             .skip(1)
             .collect();
@@ -246,9 +254,7 @@ mod tests {
             }
             assert!(matches!(
                 layout.recover(&clean[..clean.len() - 1], 64),
-                Err(Error::Metrics(
-                    super::super::ldpc::Error::MetricCount { .. }
-                ))
+                Err(Error::Metrics(super::super::Error::MetricCount { .. }))
             ));
             let mut damaged = clean.clone();
             for index in [7, 53] {
@@ -269,19 +275,19 @@ mod tests {
             invalid[3] = f32::NAN;
             assert_eq!(
                 layout.recover(&invalid, 64),
-                Err(Error::Metrics(super::super::ldpc::Error::NonFiniteMetric {
+                Err(Error::Metrics(super::super::Error::NonFiniteMetric {
                     index: 3
                 }))
             );
             assert_eq!(
                 layout.recover(&vec![0.; clean.len()], 64),
-                Err(Error::Metrics(super::super::ldpc::Error::UnusableMetrics))
+                Err(Error::Metrics(super::super::Error::UnusableMetrics))
             );
         }
     }
     #[test]
     fn radio_ldpc_independent_rate_matching_geometry() {
-        let rows: Vec<_> = include_str!("../../tests/fixtures/iq/ldpc-rate-index.tsv")
+        let rows: Vec<_> = include_str!("../../../tests/fixtures/iq/ldpc-rate-index.tsv")
             .lines()
             .skip(1)
             .collect();

@@ -1,5 +1,7 @@
-// IEEE 802.11-2020 Annex F, Tables F-1/F-2/F-3; right-shifted identity blocks.
-// -1 denotes the zero submatrix. Evidence: docs/wifi-phy-evidence.json.
+//! IEEE 802.11-2020 Annex F parity-check matrices.
+//!
+//! Entries are right-shifted identity blocks; -1 denotes the zero submatrix.
+//! Evidence: docs/wifi-phy-evidence.json.
 pub(super) const H_648_1_2: [[i8; 24]; 12] = [
     [
         0, -1, -1, -1, 0, 0, -1, -1, 0, -1, -1, 0, 1, 0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
