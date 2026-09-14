@@ -92,6 +92,30 @@
       "sha256": "5893d143ca57349daba0490fb9bdb4f5ee5bdc6e8094da947e2f0feef3804c82",
       "status": "reviewed",
       "reviewed_clauses": ["36.3.12.6 RL-SIG"]
+    },
+    {
+      "id": "ieee-tgbe-eht-sig-draft-text",
+      "classification": "official-working-group-draft-text",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/21/11-21-0140-02-00be-pdt-eht-preamble-eht-sig-for-d04.docx",
+      "sha256": "b2acffb28a801577a9163c2feab706c3b943221ef0856974731ecdffd185ae8a",
+      "status": "selected_normative_text_reviewed_final_publication_audit_pending",
+      "reviewed_clauses": ["36.3.11.8.4-5 EHT-SIG content and non-OFDMA encoding"]
+    },
+    {
+      "id": "ieee-tgbe-eht-sig-crc-resolution",
+      "classification": "official-working-group-comment-resolution",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/21/11-21-1148-01-00be-pdt-eht-sig-crc-reference.doc",
+      "sha256": "11b26b9879271dd9ebf4c5fbca871773e3fc2507d7cc7f5afa4f327638cd6a10",
+      "status": "reviewed",
+      "reviewed_clauses": ["Table 36-38 EHT-SIG encoding-block CRC"]
+    },
+    {
+      "id": "ieee-tgbe-eht-sig-sa-resolution",
+      "classification": "official-working-group-ballot-resolution",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/24/11-24-0260-01-00be-sa-ballots-cr-for-eht-sig-and-annex-z.docx",
+      "sha256": "cf3644a31e3472aa1e593dbd384833d2178e501b82a8d3fcdd580ee4d9691b0a",
+      "status": "reviewed",
+      "reviewed_clauses": ["D5 first EHT-SIG encoding-block example"]
     }
   ],
   "facts": [
@@ -106,6 +130,12 @@
       "source": "ieee-tgbe-usig-draft-text",
       "anchor": "36.3.11.7 Tables36-19/21; CRC computation; encoding and modulation; later LB275 resolution 11-23/1425r1",
       "fact": "EHT U-SIG carries two 26-bit parts, encoded continuously with rate-half BCC and the 52-tone interleaver. Its CRC protects the first 42 information bits and is followed by six zero tail bits. PHY version zero identifies EHT. UL/DL together with the two-bit PPDU type distinguishes EHT MU OFDMA, single-user, non-OFDMA MU-MIMO and EHT TB interpretations. For EHT MU, the version-dependent fields also carry puncturing information, EHT-SIG MCS and EHT-SIG symbol count; for EHT TB they carry two spatial-reuse values. The current parser checks integrity and Validate states but does not itself admit or decode EHT DATA. Published-standard clause review remains required before final qualification."
+    },
+    {
+      "id": "eht-sig-non-ofdma-first-block",
+      "source": "ieee-tgbe-eht-sig-draft-text",
+      "anchor": "36.3.11.8.4-5; Table 36-38 in 11-21/1148r1; D5 example in 11-24/0260r1",
+      "fact": "The first 52-bit EHT-SIG encoding block for non-OFDMA signaling contains 20 common bits, the first 22-bit non-MU user field, a four-bit CRC over the preceding 42 bits, and six zero tail bits. The common portion carries spatial reuse, EHT-LTF size and guard interval, EHT-LTF count, LDPC-extra-symbol, pre-FEC padding, packet-extension disambiguity, Disregard bits, and number of users. The user portion carries STA-ID, MCS, NSS, beamforming, coding, and a preserved reserved/disregard bit. The published D5 example's protected bits independently produce CRC 1110. The current parser admits only the single-user U-SIG context and this first block; OFDMA, MU-MIMO, IQ recovery and EHT DATA remain separate work. Published-standard clause review remains required before final qualification."
     },
     {
       "id": "vht-one-data-stream-stbc",

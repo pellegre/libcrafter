@@ -429,7 +429,7 @@ or overflowing captures remain diagnostic evidence, not passing qualification.
 Raw captures and device-specific live evidence remain in operator-owned
 artifacts rather than the repository.
 
-## EHT U-SIG primitive
+## EHT signaling primitives
 
 `EhtUsigFields::decode` validates the 52 post-BCC U-SIG bits shared by EHT MU
 and EHT TB PPDUs. It checks the PHY version, CRC, tail and Validate states and
@@ -439,6 +439,12 @@ prefix kernel checks the 6 Mb/s modulo-zero L-SIG and repeated RL-SIG, then
 equalizes and decodes both U-SIG symbols. The combined streaming receiver emits
 an `EhtUsig` diagnostic for a validated prefix and does not reinterpret it as
 legacy DATA. It does not yet decode EHT-SIG or recover EHT DATA.
+
+`EhtNonOfdmaSignal::decode` interprets the first 52-bit EHT-SIG encoding block
+when U-SIG identifies a non-OFDMA single-user PPDU. It validates the block CRC
+and tail, then returns the common training, padding and packet-extension fields
+together with the first non-MU user record. OFDMA and MU-MIMO EHT-SIG layouts,
+EHT-SIG recovery from IQ, training and EHT DATA recovery remain pending.
 
 ## HT-SIG primitive
 

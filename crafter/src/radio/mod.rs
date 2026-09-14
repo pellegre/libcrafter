@@ -9,8 +9,8 @@ mod dsss;
 mod dsss_tx;
 mod eht;
 pub use eht::{
-    EhtMuPpduType, EhtMuUsigFields, EhtSigMcs, EhtTbUsigFields, EhtUsigError, EhtUsigFields,
-    EhtUsigFormat,
+    EhtLtfMode, EhtMuPpduType, EhtMuUsigFields, EhtNonMuUser, EhtNonOfdmaSignal, EhtSigError,
+    EhtSigMcs, EhtTbUsigFields, EhtUsigError, EhtUsigFields, EhtUsigFormat,
 };
 mod he;
 pub use he::mu::sig_b::coded::Error as HeSigBCodedError;
