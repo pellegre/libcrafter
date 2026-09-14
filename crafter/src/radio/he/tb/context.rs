@@ -183,11 +183,9 @@ impl Context {
             let mut candidate = self.clone();
             candidate.common.ul_length = legacy_length.try_into().ok()?;
             candidate.common.pe_disambiguity = pe_disambiguity;
-            let Ok(timing) = crate::radio::he::timing::Timing::for_tb(
-                6_000_000,
-                legacy_length,
-                &candidate.common,
-            ) else {
+            let Ok(timing) =
+                crate::radio::he::data::Timing::for_tb(6_000_000, legacy_length, &candidate.common)
+            else {
                 continue;
             };
             if timing.data_symbols == usize::from(trs.ul_data_symbols()) {
@@ -282,7 +280,7 @@ mod tests {
                     });
                     assert_eq!(resolved.common.ul_length, length as u16);
                     assert_eq!(
-                        crate::radio::he::timing::Timing::for_tb(
+                        crate::radio::he::data::Timing::for_tb(
                             6_000_000,
                             length,
                             &resolved.common,

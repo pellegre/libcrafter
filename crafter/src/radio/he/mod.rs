@@ -1,14 +1,11 @@
 //! HE SU/ER SU header kernel; IEEE 802.11ax-2021 Tables 27-18/19/35.
 //! Caller must establish the format. This does not admit or publish DATA.
 
-pub(in crate::radio) mod bcc;
-pub(in crate::radio) mod capacity;
 pub(in crate::radio) mod data;
 pub(in crate::radio) mod fft;
-pub(in crate::radio) mod iq;
 pub(in crate::radio) mod mu;
+pub(in crate::radio) mod prefix;
 pub(in crate::radio) mod tb;
-pub(in crate::radio) mod timing;
 pub(in crate::radio) mod training;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

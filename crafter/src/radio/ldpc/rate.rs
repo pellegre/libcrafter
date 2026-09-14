@@ -64,8 +64,8 @@ struct SegmentCapacity {
     data_bits: usize,
 }
 
-impl From<crate::radio::he::capacity::Capacity> for SegmentCapacity {
-    fn from(value: crate::radio::he::capacity::Capacity) -> Self {
+impl From<crate::radio::he::data::Capacity> for SegmentCapacity {
+    fn from(value: crate::radio::he::data::Capacity) -> Self {
         Self {
             rate_num: value.rate_num,
             rate_den: value.rate_den,
@@ -303,7 +303,7 @@ impl Layout {
         symbols: u16,
         er: bool,
     ) -> Result<Self, Error> {
-        use crate::radio::he::capacity::Capacity;
+        use crate::radio::he::data::Capacity;
         let symbols = usize::from(symbols);
         // Even the shortest HE20 SU preamble/GI cannot fit >400 DATA symbols
         // under the 12-bit L-SIG duration bound. This also bounds integer math.
@@ -346,7 +346,7 @@ impl Layout {
         ru_tones: u16,
         symbols: u16,
     ) -> Result<Self, Error> {
-        use crate::radio::he::capacity::Capacity;
+        use crate::radio::he::data::Capacity;
         let symbols = usize::from(symbols);
         if symbols == 0 || symbols > 400 {
             return Err(Error::HeTiming);
@@ -389,7 +389,7 @@ impl Layout {
         user: &crate::Dot11TriggerUserFields,
         symbols: u16,
     ) -> Result<Self, Error> {
-        use crate::radio::he::capacity::Capacity;
+        use crate::radio::he::data::Capacity;
         let symbols = usize::from(symbols);
         if !user.ldpc || symbols == 0 || symbols > 400 {
             return Err(Error::HeTiming);

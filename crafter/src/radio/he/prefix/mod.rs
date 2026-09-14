@@ -198,7 +198,7 @@ mod tests {
     use super::*;
     #[test]
     fn radio_he_tb_prefix_independent_iq() {
-        for row in include_str!("../../../tests/fixtures/iq/he-tb-prefix-index.tsv")
+        for row in include_str!("../../../../tests/fixtures/iq/he-tb-prefix-index.tsv")
             .lines()
             .skip(1)
         {
@@ -224,10 +224,10 @@ mod tests {
     #[test]
     fn radio_he_tb_prefix_rejections() {
         for index in [
-            include_str!("../../../tests/fixtures/iq/he-tb-prefix-invalid-index.tsv"),
-            include_str!("../../../tests/fixtures/iq/he-su-prefix-index.tsv"),
-            include_str!("../../../tests/fixtures/iq/he-mu-prefix-index.tsv"),
-            include_str!("../../../tests/fixtures/iq/he-er-prefix-index.tsv"),
+            include_str!("../../../../tests/fixtures/iq/he-tb-prefix-invalid-index.tsv"),
+            include_str!("../../../../tests/fixtures/iq/he-su-prefix-index.tsv"),
+            include_str!("../../../../tests/fixtures/iq/he-mu-prefix-index.tsv"),
+            include_str!("../../../../tests/fixtures/iq/he-er-prefix-index.tsv"),
         ] {
             for row in index.lines().skip(1) {
                 let name = row.split('\t').next().unwrap();
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn radio_he_mu_prefix_independent_iq() {
-        for row in include_str!("../../../tests/fixtures/iq/he-mu-prefix-index.tsv")
+        for row in include_str!("../../../../tests/fixtures/iq/he-mu-prefix-index.tsv")
             .lines()
             .skip(1)
         {
@@ -283,9 +283,9 @@ mod tests {
     #[test]
     fn radio_he_mu_prefix_rejections() {
         for index in [
-            include_str!("../../../tests/fixtures/iq/he-mu-prefix-invalid-index.tsv"),
-            include_str!("../../../tests/fixtures/iq/he-su-prefix-index.tsv"),
-            include_str!("../../../tests/fixtures/iq/he-er-prefix-index.tsv"),
+            include_str!("../../../../tests/fixtures/iq/he-mu-prefix-invalid-index.tsv"),
+            include_str!("../../../../tests/fixtures/iq/he-su-prefix-index.tsv"),
+            include_str!("../../../../tests/fixtures/iq/he-er-prefix-index.tsv"),
         ] {
             for row in index.lines().skip(1) {
                 let name = row.split('\t').next().unwrap();
@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn radio_he_er_prefix_independent_iq() {
-        let rows = include_str!("../../../tests/fixtures/iq/he-er-prefix-index.tsv");
+        let rows = include_str!("../../../../tests/fixtures/iq/he-er-prefix-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 288);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn radio_he_er_prefix_rejections() {
-        for row in include_str!("../../../tests/fixtures/iq/he-er-prefix-invalid-index.tsv")
+        for row in include_str!("../../../../tests/fixtures/iq/he-er-prefix-invalid-index.tsv")
             .lines()
             .skip(1)
         {
@@ -393,7 +393,7 @@ mod tests {
 
     #[test]
     fn radio_he_su_prefix_independent_iq() {
-        let rows: Vec<_> = include_str!("../../../tests/fixtures/iq/he-su-prefix-index.tsv")
+        let rows: Vec<_> = include_str!("../../../../tests/fixtures/iq/he-su-prefix-index.tsv")
             .lines()
             .skip(1)
             .collect();
@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn radio_he_su_prefix_rejections() {
-        for row in include_str!("../../../tests/fixtures/iq/he-su-prefix-invalid-index.tsv")
+        for row in include_str!("../../../../tests/fixtures/iq/he-su-prefix-invalid-index.tsv")
             .lines()
             .skip(1)
         {

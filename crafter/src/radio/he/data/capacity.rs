@@ -1,5 +1,5 @@
 //! HE20 SU/ER/MU/TB payload geometry; IEEE802.11ax-2021 27.3.12 and27.4.3.
-use super::SuSignal;
+use super::super::SuSignal;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::radio) struct Capacity {
@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn radio_he_capacity_independent_forward_padding() {
         forward_padding(
-            include_str!("../../../tests/fixtures/iq/he-capacity-index.tsv"),
+            include_str!("../../../../tests/fixtures/iq/he-capacity-index.tsv"),
             None,
             8253,
             None,
@@ -296,13 +296,13 @@ mod tests {
     #[test]
     fn radio_he_er_capacity_independent_forward_padding() {
         forward_padding(
-            include_str!("../../../tests/fixtures/iq/he-er106-capacity-index.tsv"),
+            include_str!("../../../../tests/fixtures/iq/he-er106-capacity-index.tsv"),
             Some(1),
             177,
             None,
         );
         forward_padding(
-            include_str!("../../../tests/fixtures/iq/he-er242-capacity-index.tsv"),
+            include_str!("../../../../tests/fixtures/iq/he-er242-capacity-index.tsv"),
             Some(0),
             619,
             None,
@@ -314,22 +314,22 @@ mod tests {
         for (ru, index, count) in [
             (
                 26,
-                include_str!("../../../tests/fixtures/iq/he-mu26-capacity-index.tsv"),
+                include_str!("../../../../tests/fixtures/iq/he-mu26-capacity-index.tsv"),
                 7078,
             ),
             (
                 52,
-                include_str!("../../../tests/fixtures/iq/he-mu52-capacity-index.tsv"),
+                include_str!("../../../../tests/fixtures/iq/he-mu52-capacity-index.tsv"),
                 7585,
             ),
             (
                 106,
-                include_str!("../../../tests/fixtures/iq/he-mu106-capacity-index.tsv"),
+                include_str!("../../../../tests/fixtures/iq/he-mu106-capacity-index.tsv"),
                 7942,
             ),
             (
                 242,
-                include_str!("../../../tests/fixtures/iq/he-mu242-capacity-index.tsv"),
+                include_str!("../../../../tests/fixtures/iq/he-mu242-capacity-index.tsv"),
                 8253,
             ),
         ] {
@@ -447,7 +447,7 @@ mod tests {
     }
 
     fn mu_header() -> crate::radio::he::mu::MuSignal {
-        let bits: Vec<_> = include_str!("../../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
+        let bits: Vec<_> = include_str!("../../../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
             .lines()
             .nth(1)
             .unwrap()

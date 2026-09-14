@@ -1,5 +1,5 @@
 //! HE20 SU/ER training and isolated MU RU estimation; IEEE802.11ax-2021 27.3.11.10.
-use super::iq::{decode_prefix, Prefix};
+use super::prefix::{decode_prefix, Prefix};
 use crate::radio::{resource_unit::Tones, sync::Acquisition, ComplexSample};
 
 // Equation27-43, exactly245 signed tones in ascending order -122..122.
@@ -998,7 +998,7 @@ mod tests {
         a.signal_start = 0;
         a.phase_origin = 0;
         a.frequency_rad = 0.018;
-        let bits: Vec<_> = include_str!("../../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
+        let bits: Vec<_> = include_str!("../../../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
             .lines()
             .nth(1)
             .unwrap()
@@ -1012,12 +1012,12 @@ mod tests {
         fields.stbc = true;
         for (rows, count, long_delay) in [
             (
-                include_str!("../../../tests/fixtures/iq/he-mu-stbc-training-index.tsv"),
+                include_str!("../../../../tests/fixtures/iq/he-mu-stbc-training-index.tsv"),
                 768,
                 false,
             ),
             (
-                include_str!("../../../tests/fixtures/iq/he-mu-stbc-training-long-index.tsv"),
+                include_str!("../../../../tests/fixtures/iq/he-mu-stbc-training-long-index.tsv"),
                 192,
                 true,
             ),
@@ -1159,7 +1159,7 @@ mod tests {
         a.signal_start = 0;
         a.phase_origin = 0;
         a.frequency_rad = 0.;
-        let rows = include_str!("../../../tests/fixtures/iq/he-mu-training-index.tsv");
+        let rows = include_str!("../../../../tests/fixtures/iq/he-mu-training-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 384);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
@@ -1262,7 +1262,7 @@ mod tests {
         a.signal_start = 0;
         a.phase_origin = 0;
         a.frequency_rad = 0.;
-        let rows = include_str!("../../../tests/fixtures/iq/he-er106-training-index.tsv");
+        let rows = include_str!("../../../../tests/fixtures/iq/he-er106-training-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 54);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
@@ -1384,7 +1384,7 @@ mod tests {
     }
     #[test]
     fn radio_he_stbc_training_bounds() {
-        for row in include_str!("../../../tests/fixtures/iq/he-stbc-iq-index.tsv")
+        for row in include_str!("../../../../tests/fixtures/iq/he-stbc-iq-index.tsv")
             .lines()
             .skip(1)
             .filter(|r| r.starts_with("he-stbc-iq-mcs0-bcc-") && r.contains("-pad1-flat\t"))
@@ -1452,11 +1452,11 @@ mod tests {
 
     #[test]
     fn radio_he_training4_independent_channels_and_probe() {
-        let rows: Vec<_> = include_str!("../../../tests/fixtures/iq/he-training4-index.tsv")
+        let rows: Vec<_> = include_str!("../../../../tests/fixtures/iq/he-training4-index.tsv")
             .lines()
             .skip(1)
             .chain(
-                include_str!("../../../tests/fixtures/iq/he-training-sparse-index.tsv")
+                include_str!("../../../../tests/fixtures/iq/he-training-sparse-index.tsv")
                     .lines()
                     .skip(1),
             )
@@ -1543,7 +1543,7 @@ mod tests {
 
     #[test]
     fn radio_he_training4_bounds_and_invalid_modes() {
-        for row in include_str!("../../../tests/fixtures/iq/he-training4-invalid-index.tsv")
+        for row in include_str!("../../../../tests/fixtures/iq/he-training4-invalid-index.tsv")
             .lines()
             .skip(1)
         {
@@ -1554,10 +1554,13 @@ mod tests {
                 // but only one LTF followed by an uncoded probe. Training
                 // estimates alone cannot qualify that probe as valid DATA.
                 assert!(
-                    crate::radio::he::iq::decode_su_prefix(&samples[a.signal_start as usize..], &a)
-                        .unwrap()
-                        .signal
-                        .stbc
+                    crate::radio::he::prefix::decode_su_prefix(
+                        &samples[a.signal_start as usize..],
+                        &a,
+                    )
+                    .unwrap()
+                    .signal
+                    .stbc
                 );
                 continue;
             }
@@ -1578,7 +1581,7 @@ mod tests {
 
     #[test]
     fn radio_he_training_sparse_bounds_and_nonfinite() {
-        for row in include_str!("../../../tests/fixtures/iq/he-training-sparse-index.tsv")
+        for row in include_str!("../../../../tests/fixtures/iq/he-training-sparse-index.tsv")
             .lines()
             .skip(1)
         {

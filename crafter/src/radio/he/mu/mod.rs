@@ -2,7 +2,6 @@
 //! Caller establishes MU format. This kernel does not admit DATA.
 
 pub(in crate::radio) mod data;
-pub(in crate::radio) mod ldpc;
 pub(in crate::radio) mod sig_b;
 
 use super::{decode_interleaved_bits, validate_bits, Error};

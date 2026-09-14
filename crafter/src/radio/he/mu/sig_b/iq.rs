@@ -4,7 +4,7 @@ use super::{
     HeSigBCommon20Fields, HeSigBUserContext, HeSigBUserFields,
 };
 use crate::radio::{
-    he::{iq::decode_mu_prefix, mu::MuSignal},
+    he::{mu::MuSignal, prefix::decode_mu_prefix},
     signaling::{corrected_bins, Modulation},
     sync::Acquisition,
     ComplexSample,

@@ -1,8 +1,8 @@
 //! HE20 MU single-stream RUs, ax-2021 27.3.11.8/10 and 27.3.12.
 //! Returned PSDUs are not MAC/FCS qualified. No spatial separation is inferred.
-use super::sig_b::{iq::Fields, HeSigBUserEncoding};
+use super::super::sig_b::{iq::Fields, HeSigBUserEncoding};
 use crate::radio::{
-    he::{capacity::Capacity, timing::Timing},
+    he::data::{Capacity, Timing},
     sync::Acquisition,
     ComplexSample,
 };
@@ -19,8 +19,8 @@ pub(in crate::radio) enum Error {
     Training,
     Metrics,
     Allocation,
-    Bcc(crate::radio::he::bcc::Error),
-    Ldpc(crate::radio::he::mu::ldpc::Error),
+    Bcc(crate::radio::he::data::bcc::Error),
+    Ldpc(crate::radio::he::data::ldpc::Error),
 }
 
 #[derive(Debug)]
@@ -38,9 +38,33 @@ pub(in crate::radio) struct Recovered {
     pub users: Vec<Result<Payload, Error>>,
 }
 
+/// HE MU DATA receiver façade.
+pub(in crate::radio) struct Receiver;
+
+impl Receiver {
+    pub fn admit(
+        samples: &[ComplexSample],
+        acquisition: &Acquisition,
+        fields: &Fields,
+        max_samples: usize,
+    ) -> Result<Timing, Error> {
+        admit(samples, acquisition, fields, max_samples)
+    }
+
+    pub fn recover(
+        samples: &[ComplexSample],
+        acquisition: &Acquisition,
+        max_psdu: usize,
+        max_samples: usize,
+        partial: bool,
+    ) -> Result<Recovered, Error> {
+        recover(samples, acquisition, max_psdu, max_samples, partial)
+    }
+}
+
 /// Checked SIG-B to bounded DATA retention. No payload or MAC integrity is
 /// established here; at least one RU must have a supported user layout.
-pub(in crate::radio) fn admit(
+fn admit(
     samples: &[ComplexSample],
     a: &Acquisition,
     fields: &Fields,
@@ -49,7 +73,7 @@ pub(in crate::radio) fn admit(
     if a.signal_start.checked_sub(a.preamble_start) != Some(320) {
         return Err(Error::Layout);
     }
-    let length = crate::radio::he::iq::repeated_er_signal(samples, a).ok_or(Error::Header)?;
+    let length = crate::radio::he::prefix::repeated_er_signal(samples, a).ok_or(Error::Header)?;
     let timing = Timing::for_mu(6_000_000, length, &fields.signal, fields.symbols)
         .map_err(|_| Error::Timing)?;
     let needed = timing.data_end.checked_sub(320).ok_or(Error::Timing)?;
@@ -94,7 +118,7 @@ pub(in crate::radio) fn admit(
 
 /// Input begins at L-SIG, not at the legacy preamble. Bounds cover the entire
 /// DATA region before per-user allocation. Header recovery does not emit frames.
-pub(in crate::radio) fn recover(
+fn recover(
     samples: &[ComplexSample],
     a: &Acquisition,
     max_psdu: usize,
@@ -282,7 +306,7 @@ pub(in crate::radio) fn recover(
                 }
                 if ldpc {
                     let decode = |metrics: &[f32]| {
-                        crate::radio::he::mu::ldpc::recover(
+                        crate::radio::he::data::ldpc::recover(
                             &fields.signal,
                             &user,
                             size,
@@ -331,7 +355,7 @@ pub(in crate::radio) fn recover(
                         first_failure: r.first_failure,
                     })
                 } else {
-                    let psdu = crate::radio::he::bcc::recover_mu(
+                    let psdu = crate::radio::he::data::bcc::recover_mu(
                         &fields.signal,
                         &user,
                         size,
@@ -712,7 +736,7 @@ mod tests {
                             .flatten(),
                     );
                 }
-                let recovered = crate::radio::he::mu::ldpc::recover(
+                let recovered = crate::radio::he::data::ldpc::recover(
                     &fields.signal,
                     &user,
                     26,
@@ -734,7 +758,7 @@ mod tests {
     #[test]
     fn radio_he_mu_stbc_admission_and_bounds() {
         let bytes = include_bytes!(
-            "../../../../tests/fixtures/iq/he-mu-stbc-a0-m4-l1-ltf4-g16-n2-p0-c0-flat.cs8"
+            "../../../../../tests/fixtures/iq/he-mu-stbc-a0-m4-l1-ltf4-g16-n2-p0-c0-flat.cs8"
         );
         let samples: Vec<_> = bytes
             .chunks_exact(2)
@@ -814,7 +838,7 @@ mod tests {
 
     #[test]
     fn radio_he_mu_complete_psdu_waveforms() {
-        let rows = include_str!("../../../../tests/fixtures/iq/he-mu-data-iq-index.tsv");
+        let rows = include_str!("../../../../../tests/fixtures/iq/he-mu-data-iq-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 252);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
@@ -866,8 +890,8 @@ mod tests {
                     assert!(
                         matches!(
                             user,
-                            Err(Error::Bcc(crate::radio::he::bcc::Error::Service)
-                                | Error::Ldpc(crate::radio::he::mu::ldpc::Error::Service))
+                            Err(Error::Bcc(crate::radio::he::data::bcc::Error::Service)
+                                | Error::Ldpc(crate::radio::he::data::ldpc::Error::Service))
                         ),
                         "{}: {user:?}",
                         c[0]

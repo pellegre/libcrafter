@@ -1,7 +1,7 @@
 //! Per-user HE20 MU/TB LDPC payloads; ax-2021 27.3.12.4/5. No IQ admission.
-use super::{sig_b::HeSigBUserFields, MuSignal};
 use crate::radio::{
-    he::capacity::Capacity,
+    he::data::Capacity,
+    he::mu::{sig_b::HeSigBUserFields, MuSignal},
     ldpc::rate::{self, Layout, Recovery},
 };
 

@@ -2,7 +2,7 @@
 //! Caller establishes exchange association and no overlapping spatial users.
 //! Returned PSDUs are not MAC/FCS-qualified frames.
 use crate::radio::{
-    he::{capacity::Capacity, timing::Timing},
+    he::data::{Capacity, Timing},
     sync::Acquisition,
     ComplexSample,
 };
@@ -19,8 +19,8 @@ pub(in crate::radio) enum Error {
     Training,
     Metrics,
     Allocation,
-    Bcc(crate::radio::he::bcc::Error),
-    Ldpc(crate::radio::he::mu::ldpc::Error),
+    Bcc(crate::radio::he::data::bcc::Error),
+    Ldpc(crate::radio::he::data::ldpc::Error),
 }
 
 #[derive(Debug)]
@@ -44,10 +44,46 @@ pub(in crate::radio) struct Admission {
     guard: usize,
 }
 
+/// HE trigger-based DATA receiver façade.
+pub(in crate::radio) struct Receiver;
+
+impl Receiver {
+    pub fn admit(
+        samples: &[ComplexSample],
+        acquisition: &Acquisition,
+        common: &Dot11TriggerCommonFields,
+        user: &Dot11TriggerUserFields,
+        max_psdu: usize,
+        max_samples: usize,
+    ) -> Result<Admission, Error> {
+        admit(samples, acquisition, common, user, max_psdu, max_samples)
+    }
+
+    pub fn recover(
+        samples: &[ComplexSample],
+        acquisition: &Acquisition,
+        common: &Dot11TriggerCommonFields,
+        user: &Dot11TriggerUserFields,
+        max_psdu: usize,
+        max_samples: usize,
+        partial: bool,
+    ) -> Result<Recovered, Error> {
+        recover(
+            samples,
+            acquisition,
+            common,
+            user,
+            max_psdu,
+            max_samples,
+            partial,
+        )
+    }
+}
+
 /// Admit from only L-SIG/RL-SIG/HE-SIG-A (320 samples), before retaining DATA.
 /// Uses the same checked Trigger geometry as recovery; neither acquisition nor
 /// header agreement proves that the caller selected the correct exchange.
-pub(in crate::radio) fn admit(
+fn admit(
     samples: &[ComplexSample],
     a: &Acquisition,
     common: &Dot11TriggerCommonFields,
@@ -58,8 +94,8 @@ pub(in crate::radio) fn admit(
     if a.signal_start.checked_sub(a.preamble_start) != Some(320) {
         return Err(Error::Timing);
     }
-    let signal = crate::radio::he::iq::decode_tb_prefix(samples, a).ok_or(Error::Header)?;
-    let length = crate::radio::he::iq::repeated_su_signal(samples, a).ok_or(Error::Header)?;
+    let signal = crate::radio::he::prefix::decode_tb_prefix(samples, a).ok_or(Error::Header)?;
+    let length = crate::radio::he::prefix::repeated_su_signal(samples, a).ok_or(Error::Header)?;
     if signal.bandwidth != common.bandwidth
         || signal.trigger_reserved != common.sig_a2_reserved
         || signal.spatial_reuse
@@ -116,7 +152,7 @@ pub(in crate::radio) fn admit(
 /// Input begins at L-SIG. Common pre-HE acquisition provides coarse carrier
 /// correction; this user's RU pilots track its residual phase independently.
 /// No separation of overlapping spatial users is inferred.
-pub(in crate::radio) fn recover(
+fn recover(
     samples: &[ComplexSample],
     a: &Acquisition,
     common: &Dot11TriggerCommonFields,
@@ -252,7 +288,7 @@ pub(in crate::radio) fn recover(
     }
     let (psdu, failed_codewords, first_failure) = if user.ldpc {
         let decode = |metrics: &[f32], partial| {
-            crate::radio::he::mu::ldpc::recover_tb(
+            crate::radio::he::data::ldpc::recover_tb(
                 common,
                 user,
                 timing.data_symbols,
@@ -292,7 +328,7 @@ pub(in crate::radio) fn recover(
         (result.psdu, result.failed_codewords, result.first_failure)
     } else {
         (
-            crate::radio::he::bcc::recover_tb(
+            crate::radio::he::data::bcc::recover_tb(
                 common,
                 user,
                 timing.data_symbols,
@@ -520,8 +556,8 @@ mod tests {
                 assert!(
                     matches!(
                         result,
-                        Err(Error::Bcc(crate::radio::he::bcc::Error::Service)
-                            | Error::Ldpc(crate::radio::he::mu::ldpc::Error::Service))
+                        Err(Error::Bcc(crate::radio::he::data::bcc::Error::Service)
+                            | Error::Ldpc(crate::radio::he::data::ldpc::Error::Service))
                     ),
                     "{}: {result:?}",
                     c[0]

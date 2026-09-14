@@ -1,5 +1,5 @@
 //! HE BCC payload kernel, IEEE802.11ax-2021 27.3.12.1-5.
-use super::{capacity::Capacity, SuSignal};
+use super::{super::SuSignal, capacity::Capacity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::radio) enum Error {
@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn radio_he_mu_tb_bcc_independent_payloads() {
         use crate::radio::{HeSigBUserEncoding, HeSigBUserFields};
-        let bits: Vec<_> = include_str!("../../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
+        let bits: Vec<_> = include_str!("../../../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
             .lines()
             .nth(1)
             .unwrap()
@@ -131,22 +131,22 @@ mod tests {
         for (ru, index, total) in [
             (
                 26,
-                include_str!("../../../tests/fixtures/iq/he-mu26-bcc-index.tsv"),
+                include_str!("../../../../tests/fixtures/iq/he-mu26-bcc-index.tsv"),
                 415,
             ),
             (
                 52,
-                include_str!("../../../tests/fixtures/iq/he-mu52-bcc-index.tsv"),
+                include_str!("../../../../tests/fixtures/iq/he-mu52-bcc-index.tsv"),
                 429,
             ),
             (
                 106,
-                include_str!("../../../tests/fixtures/iq/he-mu106-bcc-index.tsv"),
+                include_str!("../../../../tests/fixtures/iq/he-mu106-bcc-index.tsv"),
                 435,
             ),
             (
                 242,
-                include_str!("../../../tests/fixtures/iq/he-mu242-bcc-index.tsv"),
+                include_str!("../../../../tests/fixtures/iq/he-mu242-bcc-index.tsv"),
                 435,
             ),
         ] {
@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn radio_he_mu_bcc_rejects_other_coding() {
         use crate::radio::{HeSigBUserEncoding, HeSigBUserFields};
-        let bits: Vec<_> = include_str!("../../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
+        let bits: Vec<_> = include_str!("../../../../tests/fixtures/iq/he-mu-signal-a-index.tsv")
             .lines()
             .nth(1)
             .unwrap()
@@ -343,7 +343,7 @@ mod tests {
     #[test]
     fn radio_he_bcc_independent_payloads_and_service() {
         payloads(
-            include_str!("../../../tests/fixtures/iq/he-bcc-index.tsv"),
+            include_str!("../../../../tests/fixtures/iq/he-bcc-index.tsv"),
             None,
             435,
         );
@@ -352,12 +352,12 @@ mod tests {
     #[test]
     fn radio_he_er_bcc_independent_payloads_and_service() {
         payloads(
-            include_str!("../../../tests/fixtures/iq/he-er106-bcc-index.tsv"),
+            include_str!("../../../../tests/fixtures/iq/he-er106-bcc-index.tsv"),
             Some(1),
             165,
         );
         payloads(
-            include_str!("../../../tests/fixtures/iq/he-er242-bcc-index.tsv"),
+            include_str!("../../../../tests/fixtures/iq/he-er242-bcc-index.tsv"),
             Some(0),
             225,
         );
@@ -387,7 +387,7 @@ mod tests {
     #[test]
     fn radio_he_bcc_soft_metrics_padding_and_bounds() {
         soft_bounds(
-            include_str!("../../../tests/fixtures/iq/he-bcc-index.tsv"),
+            include_str!("../../../../tests/fixtures/iq/he-bcc-index.tsv"),
             None,
         );
     }
@@ -395,11 +395,11 @@ mod tests {
     #[test]
     fn radio_he_er_bcc_soft_metrics_padding_and_bounds() {
         soft_bounds(
-            include_str!("../../../tests/fixtures/iq/he-er106-bcc-index.tsv"),
+            include_str!("../../../../tests/fixtures/iq/he-er106-bcc-index.tsv"),
             Some(1),
         );
         soft_bounds(
-            include_str!("../../../tests/fixtures/iq/he-er242-bcc-index.tsv"),
+            include_str!("../../../../tests/fixtures/iq/he-er242-bcc-index.tsv"),
             Some(0),
         );
     }

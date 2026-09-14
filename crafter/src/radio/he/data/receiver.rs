@@ -1,11 +1,12 @@
 //! HE20 SU / ER BCC/LDPC IQ, IEEE802.11ax-2021 27.3.12.5/8/9/10/13/14.
-use super::{capacity::Capacity, timing::Timing, training::train_su};
+use super::{capacity::Capacity, timing::Timing};
+use crate::radio::he::training::train_su;
 use crate::radio::{sync::Acquisition, ComplexSample, SignalInfo};
 
 /// Restore constellation groups to LDPC order for one non-DCM 242-tone RU
 /// stream. Input is ascending DATA-tone order (pilots excluded). IEEE802.11ax
 /// Table27-36/Equation27-95: DTM=9, NSD=234, t(k)=9*(k mod26)+floor(k/26).
-pub(in crate::radio) fn ldpc_order(metrics: &[f32], bits_per_tone: usize) -> Option<Vec<f32>> {
+fn ldpc_order(metrics: &[f32], bits_per_tone: usize) -> Option<Vec<f32>> {
     ldpc_order_for_tones(
         metrics,
         bits_per_tone,
@@ -36,7 +37,7 @@ fn ldpc_order_for_tones(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::radio) struct Admission {
     pub er: bool,
-    pub signal: super::SuSignal,
+    pub signal: crate::radio::he::SuSignal,
     pub timing: Timing,
     pub capacity: Capacity,
     pub info: SignalInfo,
@@ -44,11 +45,33 @@ pub(in crate::radio) struct Admission {
     pub required_samples: usize,
 }
 
+/// HE SU/ER DATA receiver façade.
+pub(in crate::radio) struct Receiver;
+
+impl Receiver {
+    pub fn admit(
+        samples: &[ComplexSample],
+        acquisition: &Acquisition,
+        max_psdu: usize,
+        max_samples: usize,
+    ) -> Option<Admission> {
+        admit(samples, acquisition, max_psdu, max_samples)
+    }
+
+    pub fn recover_aggregate(
+        samples: &[ComplexSample],
+        acquisition: &Acquisition,
+        max_psdu: usize,
+    ) -> Option<(Vec<u8>, Vec<crate::radio::PhyDiagnostic>)> {
+        recover_aggregate(samples, acquisition, max_psdu)
+    }
+}
+
 /// Header-only, allocation-free admission for the currently implemented DATA
 /// layout. Input needs L-SIG/RL-SIG/HE-SIG-A (320 SU or 480 ER samples). Timing and
 /// capacity follow IEEE802.11ax-2021 Equations27-119..122/140..143. This does
 /// not validate training, DATA, MAC framing or FCS.
-pub(in crate::radio) fn admit(
+fn admit(
     samples: &[ComplexSample],
     a: &Acquisition,
     max_psdu: usize,
@@ -58,7 +81,7 @@ pub(in crate::radio) fn admit(
     if a.signal_start.checked_sub(a.preamble_start)? != 320 {
         return None;
     }
-    let prefix = crate::radio::he::iq::decode_prefix(samples, a)?;
+    let prefix = crate::radio::he::prefix::decode_prefix(samples, a)?;
     let h = prefix.signal;
     if h.space_time_streams != if h.stbc { 2 } else { 1 } {
         return None;
@@ -116,15 +139,11 @@ pub(in crate::radio) fn admit(
 
 /// Input starts at L-SIG. Bytes are not yet MAC/FCS qualified.
 #[cfg(test)]
-pub(in crate::radio) fn recover(
-    samples: &[ComplexSample],
-    a: &Acquisition,
-    max_psdu: usize,
-) -> Option<Vec<u8>> {
+fn recover(samples: &[ComplexSample], a: &Acquisition, max_psdu: usize) -> Option<Vec<u8>> {
     recover_impl(samples, a, max_psdu, false).map(|r| r.0)
 }
 
-pub(in crate::radio) fn recover_aggregate(
+fn recover_aggregate(
     samples: &[ComplexSample],
     a: &Acquisition,
     max_psdu: usize,
@@ -437,11 +456,17 @@ fn recover_impl(
             diagnostics,
         ))
     } else if admitted.er {
-        crate::radio::he::bcc::recover_for_format(&h, timing.data_symbols, &coded, max_psdu, true)
-            .ok()
-            .map(|v| (v, Vec::new()))
+        crate::radio::he::data::bcc::recover_for_format(
+            &h,
+            timing.data_symbols,
+            &coded,
+            max_psdu,
+            true,
+        )
+        .ok()
+        .map(|v| (v, Vec::new()))
     } else {
-        crate::radio::he::bcc::recover(&h, timing.data_symbols, &coded, max_psdu)
+        crate::radio::he::data::bcc::recover(&h, timing.data_symbols, &coded, max_psdu)
             .ok()
             .map(|v| (v, Vec::new()))
     }
@@ -451,7 +476,7 @@ fn recover_impl(
 mod tests {
     #[test]
     fn radio_he_ldpc_independent_tone_order() {
-        let rows: Vec<_> = include_str!("../../../tests/fixtures/iq/he-ldpc-tones.tsv")
+        let rows: Vec<_> = include_str!("../../../../tests/fixtures/iq/he-ldpc-tones.tsv")
             .lines()
             .skip(1)
             .map(|row| {
@@ -503,7 +528,7 @@ mod tests {
     #[test]
     fn radio_he_stbc_iq_complete_waveforms() {
         complete_waveforms(
-            include_str!("../../../tests/fixtures/iq/he-stbc-iq-index.tsv"),
+            include_str!("../../../../tests/fixtures/iq/he-stbc-iq-index.tsv"),
             false,
             368,
         );
@@ -512,7 +537,7 @@ mod tests {
     #[test]
     fn radio_he_er_iq_complete_waveforms() {
         complete_waveforms(
-            include_str!("../../../tests/fixtures/iq/he-er-iq-index.tsv"),
+            include_str!("../../../../tests/fixtures/iq/he-er-iq-index.tsv"),
             true,
             280,
         );
@@ -521,7 +546,7 @@ mod tests {
     #[test]
     fn radio_he_er106_iq_complete_waveforms() {
         complete_waveforms(
-            include_str!("../../../tests/fixtures/iq/he-er106-iq-index.tsv"),
+            include_str!("../../../../tests/fixtures/iq/he-er106-iq-index.tsv"),
             true,
             104,
         );
@@ -575,7 +600,7 @@ mod tests {
                 .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
                 .collect()
         };
-        let rows = include_str!("../../../tests/fixtures/iq/he-dcm-iq-index.tsv");
+        let rows = include_str!("../../../../tests/fixtures/iq/he-dcm-iq-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 128);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
@@ -620,7 +645,7 @@ mod tests {
                 .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
                 .collect()
         };
-        let rows = include_str!("../../../tests/fixtures/iq/he-midamble-iq-index.tsv");
+        let rows = include_str!("../../../../tests/fixtures/iq/he-midamble-iq-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 270);
         let mut no_midambles = 0;
         let mut multiple = 0;
@@ -674,7 +699,7 @@ mod tests {
         assert!(crate::radio::he::training::train_field(&erased, &a, &h, cp).is_none());
         erased[cp + span - 1].i = f32::NAN;
         assert!(crate::radio::he::training::train_field(&erased, &a, &h, cp).is_none());
-        for row in include_str!("../../../tests/fixtures/iq/he-midamble-iq-invalid-index.tsv")
+        for row in include_str!("../../../../tests/fixtures/iq/he-midamble-iq-invalid-index.tsv")
             .lines()
             .skip(1)
         {
@@ -695,7 +720,7 @@ mod tests {
                 .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
                 .collect()
         };
-        let index = include_str!("../../../tests/fixtures/iq/he-ldpc-iq-index.tsv");
+        let index = include_str!("../../../../tests/fixtures/iq/he-ldpc-iq-index.tsv");
         assert_eq!(index.lines().skip(1).count(), 240);
         for row in index.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
@@ -730,7 +755,7 @@ mod tests {
             );
             assert_eq!(bad_fcs, c[6].parse::<usize>().unwrap(), "{}", c[0]);
         }
-        for row in include_str!("../../../tests/fixtures/iq/he-ldpc-iq-invalid-index.tsv")
+        for row in include_str!("../../../../tests/fixtures/iq/he-ldpc-iq-invalid-index.tsv")
             .lines()
             .skip(1)
         {
@@ -776,7 +801,7 @@ mod tests {
                 .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
                 .collect()
         }
-        let rows = include_str!("../../../tests/fixtures/iq/he-ampdu-iq-index.tsv");
+        let rows = include_str!("../../../../tests/fixtures/iq/he-ampdu-iq-index.tsv");
         assert_eq!(rows.lines().skip(1).count(), 200);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
@@ -847,7 +872,7 @@ mod tests {
 
     #[test]
     fn radio_he_bcc_header_only_admission() {
-        for row in include_str!("../../../tests/fixtures/iq/he-bcc-iq-index.tsv")
+        for row in include_str!("../../../../tests/fixtures/iq/he-bcc-iq-index.tsv")
             .lines()
             .skip(1)
         {
@@ -891,7 +916,7 @@ mod tests {
         bad.signal_start += shift;
         bad.phase_origin += shift;
         assert!(admit(input, &bad, usize::MAX, usize::MAX).is_none());
-        for row in include_str!("../../../tests/fixtures/iq/he-bcc-iq-invalid-index.tsv")
+        for row in include_str!("../../../../tests/fixtures/iq/he-bcc-iq-invalid-index.tsv")
             .lines()
             .skip(1)
         {
@@ -916,7 +941,7 @@ mod tests {
     #[test]
     fn radio_he_bcc_iq_independent_complete_waveforms() {
         let mut count = 0;
-        for row in include_str!("../../../tests/fixtures/iq/he-bcc-iq-index.tsv")
+        for row in include_str!("../../../../tests/fixtures/iq/he-bcc-iq-index.tsv")
             .lines()
             .skip(1)
         {
@@ -949,7 +974,7 @@ mod tests {
 
     #[test]
     fn radio_he_bcc_iq_invalid_layouts_and_bounds() {
-        for row in include_str!("../../../tests/fixtures/iq/he-bcc-iq-invalid-index.tsv")
+        for row in include_str!("../../../../tests/fixtures/iq/he-bcc-iq-invalid-index.tsv")
             .lines()
             .skip(1)
         {
