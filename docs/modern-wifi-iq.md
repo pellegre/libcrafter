@@ -434,10 +434,10 @@ artifacts rather than the repository.
 `EhtUsigFields::decode` validates the 52 post-BCC U-SIG bits shared by EHT MU
 and EHT TB PPDUs. It checks the PHY version, CRC, tail and Validate states and
 returns the common bandwidth, direction, BSS color and TXOP fields together
-with the format-specific EHT-SIG or spatial-reuse fields. The companion soft
-metric entrypoint performs the continuous rate-half BCC and per-symbol 52-tone
-deinterleaving. This is a header kernel: it does not yet classify streaming IQ,
-decode EHT-SIG or recover EHT DATA.
+with the format-specific EHT-SIG or spatial-reuse fields. The companion IQ
+prefix kernel checks the 6 Mb/s modulo-zero L-SIG and repeated RL-SIG, then
+equalizes and decodes both U-SIG symbols. This does not yet wire EHT into the
+streaming dispatcher, decode EHT-SIG or recover EHT DATA.
 
 ## HT-SIG primitive
 

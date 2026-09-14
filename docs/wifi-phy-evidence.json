@@ -76,9 +76,31 @@
       "sha256": "15c3464bd3f244384beff217a99ab7a3f97a6569bf44cd125fd7e1bbaab5b56a",
       "status": "reviewed",
       "reviewed_clauses": ["36.3.12.7.2 U-SIG content"]
+    },
+    {
+      "id": "ieee-tgbe-eht-preamble-draft-text",
+      "classification": "official-working-group-draft-text",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/21/11-21-0002-02-00be-pdt-phy-eht-preamble-l-stf-l-ltf-l-sig-and-rl-sig-update.docx",
+      "sha256": "24c587e3051df798b77a331ed87705df2367d7795323bbe42f0d727c0250e2c5",
+      "status": "selected_normative_text_reviewed_final_publication_audit_pending",
+      "reviewed_clauses": ["EHT L-SIG and RL-SIG"]
+    },
+    {
+      "id": "ieee-tgbe-rlsig-cc36-resolution",
+      "classification": "official-working-group-comment-resolution",
+      "authority_url": "https://mentor.ieee.org/802.11/dcn/21/11-21-1101-01-00be-cc36-cr-for-36-3-12-6-rl-sig.docx",
+      "sha256": "5893d143ca57349daba0490fb9bdb4f5ee5bdc6e8094da947e2f0feef3804c82",
+      "status": "reviewed",
+      "reviewed_clauses": ["36.3.12.6 RL-SIG"]
     }
   ],
   "facts": [
+    {
+      "id": "eht-preamble-classification",
+      "source": "ieee-tgbe-eht-preamble-draft-text",
+      "anchor": "L-SIG and RL-SIG draft text; later CC36 resolution 11-21/1101r1",
+      "fact": "An EHT PPDU uses a 6 Mb/s L-SIG whose LENGTH is divisible by three, followed by an RL-SIG that repeats L-SIG. This combination separates EHT from non-HT, HT, VHT and HE before the two BPSK U-SIG symbols are interpreted. A 20 MHz observation can recover duplicated pre-EHT signaling even when U-SIG declares a wider PPDU, but that does not make the uncaptured wider DATA recoverable."
+    },
     {
       "id": "eht-usig-fields",
       "source": "ieee-tgbe-usig-draft-text",
