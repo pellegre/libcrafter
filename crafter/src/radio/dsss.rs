@@ -152,6 +152,7 @@ impl Samples {
         self.end += 1;
         self.begin = self.begin.max(self.end.saturating_sub(64));
     }
+    #[inline(always)]
     fn at(&self, time: f64) -> Option<ComplexSample> {
         // Source coordinates are nonnegative. Truncation therefore supplies
         // floor without a libm call or a floating-point-to-i128 conversion.
@@ -228,6 +229,7 @@ impl Samples {
         Some((sum.scale(1. / 11.), quality))
     }
 }
+
 // Two within-chip phases, each modeled by three neighboring chips.
 type ChannelModel = ([ComplexSample; 6], [f32; 2]);
 
@@ -360,6 +362,7 @@ impl ChannelTraining {
 #[derive(Clone)]
 struct Track {
     previous: ComplexSample,
+    symbols: u8,
     descrambler: Descrambler,
     shift: u16,
     run: usize,
@@ -377,6 +380,7 @@ impl Default for Track {
     fn default() -> Self {
         Self {
             previous: ComplexSample::ZERO,
+            symbols: 0,
             descrambler: Descrambler::default(),
             shift: 0,
             run: 0,
@@ -414,6 +418,7 @@ impl Track {
         let start = start();
         let delta = symbol.mul(self.previous.conj());
         self.previous = symbol;
+        self.symbols = self.symbols.saturating_add(1);
         if let Some(short) = self.short {
             if matches!(self.header[0], 55 | 110) && self.bits >= if short { 16 } else { 32 } {
                 self.channel_training
@@ -456,8 +461,10 @@ impl Track {
             return None;
         }
         let bit = u8::from(delta.i < 0.);
-        let residual = delta.scale(if bit == 0 { 1. } else { -1. }).phase();
-        self.frequency = 0.95 * self.frequency + 0.05 * residual;
+        if self.symbols >= 4 {
+            let residual = delta.scale(if bit == 0 { 1. } else { -1. }).phase();
+            self.frequency = 0.95 * self.frequency + 0.05 * residual;
+        }
         let plain = self.descrambler.bit(bit);
         self.shift = (self.shift >> 1) | (u16::from(plain) << 15);
         // SYNC must precede the complete SFD, not merely resemble its last bits.
