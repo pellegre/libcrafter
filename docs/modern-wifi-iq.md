@@ -446,8 +446,10 @@ and tail, then returns the common training, padding and packet-extension fields
 together with the first non-MU user record. Its IQ receiver covers all four
 EHT-SIG modulation choices (MCS0, MCS1, MCS3 and MCS15/DCM), checks the U-SIG
 symbol count and recovers that block from a complete 20 MHz single-user prefix.
-OFDMA and MU-MIMO EHT-SIG layouts, streaming dispatch, training and EHT DATA
-recovery remain pending.
+The streaming receiver reserves the advertised EHT-SIG boundary and emits an
+`EhtSignal` diagnostic only after the block passes CRC and tail validation.
+OFDMA and MU-MIMO EHT-SIG layouts, training and EHT DATA recovery remain
+pending.
 
 ## HT-SIG primitive
 

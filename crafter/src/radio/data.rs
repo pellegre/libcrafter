@@ -24,7 +24,7 @@ struct Pending {
     he: Option<HeSuSignalFields>,
     he_er: bool,
     he_candidate: bool,
-    eht_candidate: bool,
+    eht: Option<EhtPending>,
     // Modulo-two repeated L-SIG: MU or ER until constellation discrimination.
     er_candidate: bool,
     mu_wait: Option<usize>,
@@ -33,6 +33,13 @@ struct Pending {
     ldpc: Option<ldpc::rate::Layout>,
     greenfield: bool,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EhtPending {
+    Prefix,
+    Signal(usize),
+}
+
 impl Pending {
     fn trigger_carrier(&self) -> Option<he::tb::context::Carrier> {
         if self
@@ -689,6 +696,23 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     }
                     continue;
                 }
+                if let Some(EhtPending::Signal(required)) = p.eht {
+                    if p.samples.len() == required {
+                        match eht::SignalReceiver::recover(&p.samples, &p.acquisition) {
+                            Ok(fields) => {
+                                out.diagnostics.push(PhyDiagnostic::EhtSignal {
+                                    fields: fields.signal,
+                                    preamble_sample_index: p.start.sample_index,
+                                });
+                                out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
+                            }
+                            Err(_) => out.diagnostics.push(PhyDiagnostic::InvalidHeader),
+                        }
+                        self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
+                        self.pending[slot] = None;
+                    }
+                    continue;
+                }
                 if p.info.is_none() && p.samples.len() == 80 {
                     match decode_signal(
                         &p.samples,
@@ -762,7 +786,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                         && eht::iq::repeated_legacy_signal(&p.samples, &p.acquisition).is_some()
                     {
                         if p.reserve_samples(320, config, reserved) {
-                            p.eht_candidate = true;
+                            p.eht = Some(EhtPending::Prefix);
                         } else {
                             self.stats.rejected_frames =
                                 self.stats.rejected_frames.saturating_add(1);
@@ -845,18 +869,36 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             .reserve_exact(required.saturating_sub(p.samples.len()));
                     }
                 }
-                if p.eht_candidate && p.samples.len() == 320 {
-                    p.eht_candidate = false;
+                if p.eht == Some(EhtPending::Prefix) && p.samples.len() == 320 {
+                    p.eht = None;
                     if let Some(prefix) = eht::iq::decode_prefix(&p.samples, &p.acquisition) {
                         out.diagnostics.push(PhyDiagnostic::EhtUsig {
                             fields: prefix.fields,
                             preamble_sample_index: p.start.sample_index,
                         });
-                        // U-SIG establishes EHT, so do not reinterpret this as
-                        // legacy DATA while EHT-SIG/DATA support is incomplete.
-                        out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
-                        self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
-                        self.pending[slot] = None;
+                        match eht::SignalReceiver::recover(&p.samples, &p.acquisition) {
+                            Err(eht::SignalIqError::Truncated { required, .. })
+                                if required > p.samples.len()
+                                    && p.reserve_samples(required, config, reserved) =>
+                            {
+                                p.eht = Some(EhtPending::Signal(required));
+                            }
+                            Err(
+                                eht::SignalIqError::UnsupportedFormat
+                                | eht::SignalIqError::Bandwidth(_),
+                            ) => {
+                                out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
+                                self.stats.rejected_frames =
+                                    self.stats.rejected_frames.saturating_add(1);
+                                self.pending[slot] = None;
+                            }
+                            _ => {
+                                out.diagnostics.push(PhyDiagnostic::InvalidHeader);
+                                self.stats.rejected_frames =
+                                    self.stats.rejected_frames.saturating_add(1);
+                                self.pending[slot] = None;
+                            }
+                        }
                         continue;
                     }
                     // A legacy DATA symbol can accidentally resemble RL-SIG.
@@ -1255,7 +1297,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             he: None,
                             he_er: false,
                             he_candidate: false,
-                            eht_candidate: false,
+                            eht: None,
                             er_candidate: false,
                             mu_wait: None,
                             mu_data_end: None,

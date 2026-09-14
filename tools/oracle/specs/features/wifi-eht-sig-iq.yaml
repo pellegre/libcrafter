@@ -21,4 +21,4 @@ backend_support:
     status: partial
     notes:
       - The receiver recovers the first EHT-SIG encoding block for a 20 MHz non-OFDMA single-user PPDU.
-      - OFDMA, MU-MIMO, EHT training, EHT DATA, streaming dispatch and live qualification remain separate work.
+      - OFDMA, MU-MIMO, EHT training, EHT DATA and live qualification remain separate work.

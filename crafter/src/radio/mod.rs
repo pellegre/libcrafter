@@ -279,6 +279,11 @@ pub enum PhyDiagnostic {
         fields: EhtUsigFields,
         preamble_sample_index: u64,
     },
+    /// Integrity-checked EHT-SIG for a non-OFDMA single-user PPDU.
+    EhtSignal {
+        fields: EhtNonOfdmaSignal,
+        preamble_sample_index: u64,
+    },
     /// Trigger parameters used for this RU. Matching is not BSS authentication.
     HeTbUser {
         common: crate::Dot11TriggerCommonFields,
@@ -412,6 +417,16 @@ impl PartialEq for PhyDiagnostic {
                     preamble_sample_index: b,
                 },
                 Self::EhtUsig {
+                    fields: c,
+                    preamble_sample_index: d,
+                },
+            ) => a == c && b == d,
+            (
+                Self::EhtSignal {
+                    fields: a,
+                    preamble_sample_index: b,
+                },
+                Self::EhtSignal {
                     fields: c,
                     preamble_sample_index: d,
                 },

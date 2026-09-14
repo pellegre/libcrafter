@@ -1,5 +1,4 @@
 //! EHT-SIG recovery for 20 MHz non-OFDMA single-user PPDUs.
-#![allow(dead_code)] // The next receiver stage connects this qualified IQ kernel.
 
 use super::super::{
     EhtMuPpduType, EhtNonOfdmaSignal, EhtSigError, EhtSigMcs, EhtUsigFields, EhtUsigFormat,
@@ -57,7 +56,7 @@ impl Mode {
     }
 }
 
-struct Receiver<'a> {
+pub(in crate::radio) struct Receiver<'a> {
     samples: &'a [ComplexSample],
     acquisition: &'a Acquisition,
     usig: EhtUsigFields,
@@ -66,6 +65,13 @@ struct Receiver<'a> {
 }
 
 impl<'a> Receiver<'a> {
+    pub(in crate::radio) fn recover(
+        samples: &'a [ComplexSample],
+        acquisition: &'a Acquisition,
+    ) -> Result<Fields, Error> {
+        Self::new(samples, acquisition)?.decode()
+    }
+
     fn new(samples: &'a [ComplexSample], acquisition: &'a Acquisition) -> Result<Self, Error> {
         let prefix = super::super::iq::decode_prefix(samples, acquisition).ok_or(Error::Prefix)?;
         if prefix.fields.bandwidth_code != 0 {
@@ -190,13 +196,4 @@ impl<'a> Receiver<'a> {
             .then_some(metrics)
             .ok_or(Error::Samples)
     }
-}
-
-/// Recover the first EHT-SIG encoding block after validating the complete
-/// 20 MHz EHT prefix. Input begins at L-SIG.
-pub(in crate::radio) fn recover(
-    samples: &[ComplexSample],
-    acquisition: &Acquisition,
-) -> Result<Fields, Error> {
-    Receiver::new(samples, acquisition)?.decode()
 }
