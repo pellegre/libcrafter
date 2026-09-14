@@ -3,13 +3,14 @@ use super::*;
 
 /// Combined legacy and HT20 one-stream BCC/LDPC receiver.
 ///
-/// HT MCS 0–7, both coding families and both guard intervals are supported for
-/// nonaggregated PSDUs and HT A-MPDUs. `max_frame_bytes` bounds each MPDU;
+/// HT MCS 0–7, BCC and LDPC, valid long/short guard intervals, mixed and
+/// greenfield formats, nonaggregated PSDUs, A-MPDUs, one-data-stream STBC and
+/// extension training are supported. `max_frame_bytes` bounds each MPDU;
 /// `max_pending_frames` must accommodate the returned MPDUs plus two reserved
 /// child slots. Overflow is an explicit error, never a truncated aggregate.
-/// STBC, additional streams, HT40, greenfield, VHT, HE and EHT are not
-/// yet decoded. This implements the same `PhyDecoder` packet-source interface
-/// and shares the bounds and output ordering of `LegacyWifiDecoder`.
+/// Additional data streams, HT40, VHT, HE and EHT are not decoded. This
+/// implements the same `PhyDecoder` packet-source interface and shares the
+/// bounds and output ordering of `LegacyWifiDecoder`.
 pub struct WifiDecoder {
     inner: LegacyWifiDecoder,
 }

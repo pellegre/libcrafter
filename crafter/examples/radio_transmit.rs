@@ -165,13 +165,16 @@ fn packet(case_id: &str) -> Packet {
         .chain(ht20_cases(true))
         .position(|case| case.id == case_id)
         .expect("case ID comes from the closed transmit matrix") as u8;
+    let payload = (0..72)
+        .map(|offset| case_tag.wrapping_add(offset))
+        .collect::<Vec<_>>();
     let dot11 = Dot11::data();
     dot11
         .addr1(MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 0x01]))
         .addr2(MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 0x02]))
         .addr3(MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 0x03]))
         .sequence_number(0x321)
-        / Raw::from(vec![case_tag])
+        / Raw::from(payload)
 }
 
 fn labels(phy: LegacyWifiPhy) -> (&'static str, u32, &'static str) {
