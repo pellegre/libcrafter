@@ -7,53 +7,52 @@ use std::{
 };
 
 const LEGACY_CORE_SAMPLES: usize = 2_000_000;
-const WIFI4_CORE_SAMPLES: usize = 1_600_000;
+const DSSS_CORE_SAMPLES: usize = 2_000_000;
 const LEGACY_MARGIN_SAMPLES: usize = 3_840 + 4_095 * 8 * 20 + 64;
-// One-stream HT20 MCS 0 with STBC has the longest supported Wi-Fi 4 PSDU.
-// The margin includes its maximum 65,535-byte aggregate and ample preamble room.
-const WIFI4_MARGIN_SAMPLES: usize = 3_840 + ((16 + 8 * 65_535 + 6 + 51) / 52) * 160;
+// One-stream HT20 MCS 0 with STBC has the longest supported Wi-Fi 4 allocation.
+const WIFI4_OFDM_BUFFER_SAMPLES: usize = 3_840 + ((16 + 8 * 65_535 + 6 + 51) / 52) * 160;
 
 #[derive(Clone, Copy)]
 enum WindowProfile {
     Legacy,
-    Wifi4,
+    Dsss,
 }
 impl WindowProfile {
     fn core_samples(self) -> usize {
         match self {
             Self::Legacy => LEGACY_CORE_SAMPLES,
-            Self::Wifi4 => WIFI4_CORE_SAMPLES,
+            Self::Dsss => DSSS_CORE_SAMPLES,
         }
     }
     fn margin_samples(self) -> usize {
         match self {
             Self::Legacy => LEGACY_MARGIN_SAMPLES,
-            Self::Wifi4 => WIFI4_MARGIN_SAMPLES,
+            Self::Dsss => LEGACY_MARGIN_SAMPLES,
         }
     }
 }
 
 enum WindowDecoder {
     Legacy(LegacyWifiDecoder),
-    Wifi4(WifiDecoder),
+    Dsss(DsssCckDecoder),
 }
 impl WindowDecoder {
     fn new(profile: WindowProfile) -> Self {
         match profile {
             WindowProfile::Legacy => Self::Legacy(LegacyWifiDecoder::new()),
-            WindowProfile::Wifi4 => Self::Wifi4(WifiDecoder::new()),
+            WindowProfile::Dsss => Self::Dsss(DsssCckDecoder::new()),
         }
     }
     fn ofdm_stats(&self) -> DecoderStats {
         match self {
             Self::Legacy(decoder) => decoder.ofdm_stats(),
-            Self::Wifi4(decoder) => decoder.ofdm_stats(),
+            Self::Dsss(_) => DecoderStats::default(),
         }
     }
     fn dsss_stats(&self) -> DecoderStats {
         match self {
             Self::Legacy(decoder) => decoder.dsss_stats(),
-            Self::Wifi4(decoder) => decoder.dsss_stats(),
+            Self::Dsss(decoder) => decoder.stats(),
         }
     }
 }
@@ -61,13 +60,13 @@ impl PhyDecoder for WindowDecoder {
     fn reset(&mut self, reason: ResetReason) -> DecodeOutput {
         match self {
             Self::Legacy(decoder) => decoder.reset(reason),
-            Self::Wifi4(decoder) => decoder.reset(reason),
+            Self::Dsss(decoder) => decoder.reset(reason),
         }
     }
     fn consume(&mut self, event: IqEvent) -> RadioResult<DecodeOutput> {
         match self {
             Self::Legacy(decoder) => decoder.consume(event),
-            Self::Wifi4(decoder) => decoder.consume(event),
+            Self::Dsss(decoder) => decoder.consume(event),
         }
     }
 }
@@ -84,6 +83,8 @@ struct Job {
 struct Reply {
     worker: usize,
     ordinal: u64,
+    epoch: u64,
+    core_end: u64,
     result: RadioResult<DecodeOutput>,
     ofdm: DecoderStats,
     dsss: DecoderStats,
@@ -152,6 +153,8 @@ fn run_worker(
             .send(Reply {
                 worker,
                 ordinal: job.ordinal,
+                epoch: job.position.epoch,
+                core_end: job.core_end,
                 result,
                 ofdm,
                 dsss,
@@ -186,6 +189,7 @@ pub struct WindowedLegacyWifiDecoder {
     worker_dsss: Vec<DecoderStats>,
     workers: usize,
     profile: WindowProfile,
+    watermark: Option<(u64, u64)>,
 }
 
 impl WindowedLegacyWifiDecoder {
@@ -238,6 +242,7 @@ impl WindowedLegacyWifiDecoder {
             worker_dsss: vec![DecoderStats::default(); workers],
             workers,
             profile,
+            watermark: None,
         })
     }
     pub fn ofdm_stats(&self) -> DecoderStats {
@@ -245,6 +250,16 @@ impl WindowedLegacyWifiDecoder {
     }
     pub fn dsss_stats(&self) -> DecoderStats {
         self.dsss
+    }
+    fn required_buffer_samples(&self) -> RadioResult<usize> {
+        (self.workers + 1)
+            .checked_mul(self.profile.core_samples() + self.profile.margin_samples())
+            .ok_or(RadioError::Overflow {
+                context: "windowed sample buffer bound",
+            })
+    }
+    fn watermark(&self) -> Option<(u64, u64)> {
+        self.watermark
     }
     fn available(&self) -> usize {
         (self.bytes.len() - self.byte_start) / 2
@@ -353,6 +368,7 @@ impl WindowedLegacyWifiDecoder {
             }
             output.frames.extend(decoded.frames);
             output.diagnostics.extend(decoded.diagnostics);
+            self.watermark = Some((reply.epoch, reply.core_end));
             self.next_output += 1;
         }
         output.frames.sort_by_key(|frame| {
@@ -392,6 +408,7 @@ impl WindowedLegacyWifiDecoder {
         }
         self.ready.clear();
         self.next_output = self.next_job;
+        self.watermark = None;
     }
 }
 
@@ -451,11 +468,7 @@ impl PhyDecoder for WindowedLegacyWifiDecoder {
         let config = chunk.config();
         let core_samples = self.profile.core_samples();
         let margin_samples = self.profile.margin_samples();
-        let required_buffer = (self.workers + 1)
-            .checked_mul(core_samples + margin_samples)
-            .ok_or(RadioError::Overflow {
-                context: "windowed sample buffer bound",
-            })?;
+        let required_buffer = self.required_buffer_samples()?;
         if config.sample_rate_hz != 20_000_000
             || config.max_buffer_samples < required_buffer
             || config.max_pending_frames < 3
@@ -494,31 +507,154 @@ impl PhyDecoder for WindowedLegacyWifiDecoder {
 
 /// Parallel Wi-Fi 4 and legacy decoding over bounded overlapping time windows.
 ///
-/// Each worker runs an independent [`WifiDecoder`]. Windows overlap far enough
-/// to finish the longest supported HT20 aggregate; only the worker whose core
+/// One streaming worker handles legacy/HT OFDM while the remaining workers
+/// decode overlapping DSSS/CCK time windows. Only the DSSS worker whose core
 /// owns a preamble emits that occurrence.
 pub struct WindowedWifiDecoder {
-    inner: WindowedLegacyWifiDecoder,
+    ofdm: LegacyOfdmDecoder,
+    dsss: WindowedLegacyWifiDecoder,
+    config: Option<RxConfig>,
+    continuity: IqContinuity,
+    pending: Vec<RecoveredFrame>,
 }
 impl WindowedWifiDecoder {
     pub fn new(workers: usize) -> RadioResult<Self> {
+        if !(2..=32).contains(&workers) {
+            return Err(RadioError::Invalid {
+                field: "workers",
+                reason: "windowed Wi-Fi 4 requires 2..=32 total workers",
+            });
+        }
         Ok(Self {
-            inner: WindowedLegacyWifiDecoder::configured(workers, WindowProfile::Wifi4)?,
+            ofdm: LegacyOfdmDecoder::with_ht(),
+            dsss: WindowedLegacyWifiDecoder::configured(workers - 1, WindowProfile::Dsss)?,
+            config: None,
+            continuity: IqContinuity::default(),
+            pending: Vec::new(),
         })
     }
     pub fn ofdm_stats(&self) -> DecoderStats {
-        self.inner.ofdm_stats()
+        self.ofdm.stats()
     }
     pub fn dsss_stats(&self) -> DecoderStats {
-        self.inner.dsss_stats()
+        self.dsss.dsss_stats()
+    }
+    fn reset_both(&mut self, reason: ResetReason) -> DecodeOutput {
+        self.config = None;
+        self.continuity.reset();
+        self.pending.clear();
+        let mut output = self.ofdm.reset(reason);
+        output
+            .diagnostics
+            .extend(self.dsss.reset(reason).diagnostics);
+        output
+    }
+    fn collect(
+        &mut self,
+        first: RadioResult<DecodeOutput>,
+        second: RadioResult<DecodeOutput>,
+        config: Option<&RxConfig>,
+        flush: bool,
+    ) -> RadioResult<DecodeOutput> {
+        let (mut first, second) = match (first, second) {
+            (Ok(first), Ok(second)) => (first, second),
+            (Err(error), _) | (_, Err(error)) => return Err(error),
+        };
+        let Some(config) = config else {
+            first.frames.extend(second.frames);
+            first.diagnostics.extend(second.diagnostics);
+            return Ok(first);
+        };
+        let new_frames = first.frames.len() + second.frames.len();
+        if self.pending.len() + new_frames > config.max_pending_frames {
+            return Err(RadioError::Limit {
+                context: "windowed Wi-Fi 4 pending frames",
+                limit: config.max_pending_frames as u64,
+                actual: (self.pending.len() + new_frames) as u64,
+            });
+        }
+        self.pending.extend(first.frames);
+        self.pending.extend(second.frames);
+        for frame in &mut self.pending {
+            frame.config = config.clone();
+        }
+        self.pending.sort_by_key(|frame| {
+            (
+                frame.start.epoch,
+                frame.end_sample_index,
+                frame.start.sample_index,
+                frame.rate_bps,
+            )
+        });
+        let ready = if flush {
+            self.pending.len()
+        } else if let Some((epoch, end)) = self.dsss.watermark() {
+            self.pending.partition_point(|frame| {
+                frame.start.epoch < epoch
+                    || (frame.start.epoch == epoch && frame.end_sample_index <= end)
+            })
+        } else {
+            0
+        };
+        first.frames = self.pending.drain(..ready).collect();
+        first.diagnostics.extend(second.diagnostics);
+        first.diagnostics.truncate(config.max_pending_frames);
+        Ok(first)
     }
 }
 impl PhyDecoder for WindowedWifiDecoder {
     fn reset(&mut self, reason: ResetReason) -> DecodeOutput {
-        self.inner.reset(reason)
+        self.reset_both(reason)
     }
     fn consume(&mut self, event: IqEvent) -> RadioResult<DecodeOutput> {
-        self.inner.consume(event)
+        let chunk = match event {
+            IqEvent::End(end) => {
+                let config = self.config.take();
+                let first = self.ofdm.consume(IqEvent::End(end));
+                let second = self.dsss.consume(IqEvent::End(end));
+                let result = self.collect(first, second, config.as_ref(), true);
+                self.continuity.reset();
+                return result;
+            }
+            IqEvent::Chunk(chunk) => chunk,
+        };
+        let config = chunk.config().clone();
+        let dsss_buffer = self.dsss.required_buffer_samples()?;
+        let required_buffer =
+            dsss_buffer
+                .checked_add(WIFI4_OFDM_BUFFER_SAMPLES)
+                .ok_or(RadioError::Overflow {
+                    context: "windowed Wi-Fi 4 sample buffer bound",
+                })?;
+        if config.sample_rate_hz != 20_000_000
+            || config.max_buffer_samples < required_buffer
+            || config.max_pending_frames < 6
+        {
+            self.reset_both(ResetReason::Explicit);
+            return Err(RadioError::Invalid {
+                field: "config",
+                reason: "windowed Wi-Fi 4 requires 20 Msps and bounded OFDM, DSSS-window, and output storage",
+            });
+        }
+        let dsss_slots = (config.max_pending_frames / 4).max(3);
+        let mut dsss_config = config.clone();
+        dsss_config.max_buffer_samples = dsss_buffer;
+        dsss_config.max_pending_frames = dsss_slots;
+        let mut ofdm_config = config.clone();
+        ofdm_config.max_buffer_samples = config.max_buffer_samples - dsss_buffer;
+        ofdm_config.max_pending_frames = config.max_pending_frames - dsss_slots;
+        let position = chunk.position().clone();
+        let flush = self.continuity.observe(&chunk).is_some();
+        self.config = Some(config.clone());
+        let first = IqChunk::new(ofdm_config, position.clone(), chunk.cs8().to_vec())
+            .and_then(|chunk| self.ofdm.consume(IqEvent::Chunk(chunk)));
+        let second = IqChunk::new(dsss_config, position, chunk.cs8().to_vec())
+            .and_then(|chunk| self.dsss.consume(IqEvent::Chunk(chunk)));
+        let result = self.collect(first, second, Some(&config), flush);
+        if result.is_err() {
+            self.reset_both(ResetReason::Explicit);
+        }
+        result
     }
 }
 
