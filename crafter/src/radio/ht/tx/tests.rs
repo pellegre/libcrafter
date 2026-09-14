@@ -26,6 +26,13 @@ fn assert_iq(case: &str, actual: &[i8]) {
 }
 
 #[test]
+fn radio_ht_tx_rates_cover_long_and_short_guard_intervals() {
+    assert_eq!(HtMcs::Mcs0.rate_bps(HtGuardInterval::Long), 6_500_000);
+    assert_eq!(HtMcs::Mcs7.rate_bps(HtGuardInterval::Long), 65_000_000);
+    assert_eq!(HtMcs::Mcs7.rate_bps(HtGuardInterval::Short), 72_222_222);
+}
+
+#[test]
 fn radio_ht_tx_matches_independent_bcc_waveforms() {
     let index = include_str!("../../../../tests/fixtures/iq/ht-bcc-index.tsv");
     let mut cases = 0;

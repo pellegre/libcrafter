@@ -34,7 +34,7 @@ impl HtMcs {
 
     pub const fn rate_bps(self, guard_interval: HtGuardInterval) -> u32 {
         let (_, data_bits) = self.parameters();
-        data_bits as u32 * 20_000_000 / guard_interval.symbol_samples() as u32
+        (data_bits as u64 * 20_000_000 / guard_interval.symbol_samples() as u64) as u32
     }
 
     pub(super) const fn parameters(self) -> (usize, usize) {
