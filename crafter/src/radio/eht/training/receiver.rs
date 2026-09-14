@@ -4,7 +4,7 @@ use crate::radio::{
         sig::iq::{Fields as SignalFields, SignalFields as SignalKind},
         EhtNonOfdmaUsers,
     },
-    he::ru::Tones,
+    resource_unit::Tones,
     sync::Acquisition,
     ComplexSample,
 };
@@ -108,7 +108,7 @@ impl<'a> Receiver<'a> {
 
     fn train(self) -> Result<Trained, Error> {
         debug_assert!(self.layout.ltf_symbols > 0);
-        let allocation = Tones::new(false, 0).ok_or(Error::UnsupportedFormat)?;
+        let allocation = Tones::ru(242, 1).ok_or(Error::UnsupportedFormat)?;
         let channel = crate::radio::he::training::train_ru_field(
             self.samples,
             self.acquisition,

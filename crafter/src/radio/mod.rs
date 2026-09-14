@@ -48,6 +48,7 @@ pub use hackrf_tx::{HackRfTxConfig, HackRfTxSink, HackRfTxStats};
 mod parallel;
 pub use parallel::{ParallelLegacyWifiDecoder, ParallelWifiDecoder};
 mod replay;
+mod resource_unit;
 mod signal;
 mod signaling;
 mod source;

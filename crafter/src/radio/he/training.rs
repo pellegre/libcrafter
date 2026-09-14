@@ -1,9 +1,6 @@
 //! HE20 SU/ER training and isolated MU RU estimation; IEEE802.11ax-2021 27.3.11.10.
-use super::{
-    iq::{decode_prefix, Prefix},
-    ru::Tones,
-};
-use crate::radio::{sync::Acquisition, ComplexSample};
+use super::iq::{decode_prefix, Prefix};
+use crate::radio::{resource_unit::Tones, sync::Acquisition, ComplexSample};
 
 // Equation27-43, exactly245 signed tones in ascending order -122..122.
 // Equations27-41/42 use the same signed-tone order, with sparse training.
@@ -167,7 +164,7 @@ pub(in crate::radio) fn train_for_format(
     cp: usize,
     er: bool,
 ) -> Option<[ComplexSample; 256]> {
-    let allocation = Tones::new(er, fields.bandwidth)?;
+    let allocation = Tones::for_he_su(er, fields.bandwidth)?;
     if fields.space_time_streams != 1 || fields.stbc {
         return None;
     }
@@ -199,7 +196,7 @@ pub(in crate::radio) fn train_stbc_for_format(
     cp: usize,
     er: bool,
 ) -> Option<[[ComplexSample; 256]; 2]> {
-    let allocation = Tones::new(er, fields.bandwidth)?;
+    let allocation = Tones::for_he_su(er, fields.bandwidth)?;
     if !fields.stbc || fields.dcm || fields.space_time_streams != 2 {
         return None;
     }
@@ -273,7 +270,7 @@ fn observe_for_format(
     cp: usize,
     er: bool,
 ) -> Option<([ComplexSample; 256], Vec<i32>, usize)> {
-    let allocation = Tones::new(er, fields.bandwidth)?;
+    let allocation = Tones::for_he_su(er, fields.bandwidth)?;
     observe_ru(samples, a, allocation, fields.ltf_size, fields.guard_ns, cp)
 }
 

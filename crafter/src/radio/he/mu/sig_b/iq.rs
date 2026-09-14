@@ -34,7 +34,7 @@ pub struct Fields {
 /// Frequency-ordered RU geometry and positions in the original User field
 /// array. Failed headers keep their positions; an empty RU has an empty range.
 pub(in crate::radio) struct RuLayout {
-    pub tones: crate::radio::he::ru::Tones,
+    pub tones: crate::radio::resource_unit::Tones,
     pub users: std::ops::Range<usize>,
 }
 
@@ -50,7 +50,7 @@ impl Fields {
                 return Err(Error::Layout);
             }
             return Ok(vec![RuLayout {
-                tones: crate::radio::he::ru::Tones::ru(242, 1).ok_or(Error::Layout)?,
+                tones: crate::radio::resource_unit::Tones::ru(242, 1).ok_or(Error::Layout)?,
                 users: 0..count,
             }]);
         }
@@ -63,7 +63,8 @@ impl Fields {
             .rus()
             .iter()
             .map(|ru| {
-                let tones = crate::radio::he::ru::Tones::assignment(ru).ok_or(Error::Layout)?;
+                let tones = crate::radio::resource_unit::Tones::from_he_assignment(ru)
+                    .ok_or(Error::Layout)?;
                 let end = offset + usize::from(ru.users);
                 let users = offset..end;
                 offset = end;

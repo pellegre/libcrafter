@@ -5,7 +5,7 @@ use crate::radio::{
         test_support::fixture,
         EhtNonOfdmaUsers,
     },
-    he::ru::Tones,
+    resource_unit::Tones,
     PhyDiagnostic, WifiDecoder,
 };
 
@@ -66,7 +66,7 @@ fn radio_eht_training_independent_waveforms() {
     let rows = include_str!("../../../../tests/fixtures/iq/eht-training-iq-index.tsv");
     let corpus = corpus();
     assert_eq!(rows.lines().skip(1).count(), 160);
-    let tones = Tones::new(false, 0).unwrap();
+    let tones = Tones::ru(242, 1).unwrap();
     for row in rows.lines().skip(1) {
         let columns: Vec<_> = row.split('\t').collect();
         let offset: usize = columns[11].parse().unwrap();

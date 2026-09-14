@@ -1,4 +1,4 @@
-//! One-stream HE20 RU DATA, including STBC, ax-2021 27.3.12.8-13.
+//! Shared one-stream HE/EHT20 RU DATA symbol processing.
 //! No MU-MIMO separation, header admission, FEC or MAC integrity is implied.
 use super::Tones;
 use crate::radio::ComplexSample;
@@ -591,7 +591,7 @@ mod tests {
 
     #[test]
     fn radio_he_ru_independent_stbc_iq_pairs() {
-        let rows = include_str!("../../../../tests/fixtures/iq/he-ru-stbc-symbol.tsv");
+        let rows = include_str!("../../../tests/fixtures/iq/he-ru-stbc-symbol.tsv");
         assert_eq!(rows.lines().skip(1).count(), 880);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();
@@ -757,7 +757,7 @@ mod tests {
 
     #[test]
     fn radio_he_ru_independent_iq_symbols() {
-        let rows = include_str!("../../../../tests/fixtures/iq/he-ru-symbol.tsv");
+        let rows = include_str!("../../../tests/fixtures/iq/he-ru-symbol.tsv");
         assert_eq!(rows.lines().skip(1).count(), 640);
         for row in rows.lines().skip(1) {
             let c: Vec<_> = row.split('\t').collect();

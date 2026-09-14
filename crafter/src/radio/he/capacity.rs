@@ -127,8 +127,11 @@ impl Capacity {
         if !matches!(common.trigger_type, 0..=2 | 4..=6) {
             return Err(Error::Coding);
         }
-        let tones = crate::radio::he::ru::Tones::from_trigger(common.bandwidth, user.ru_allocation)
-            .ok_or(Error::Bandwidth)?;
+        let tones = crate::radio::resource_unit::Tones::from_he_trigger(
+            common.bandwidth,
+            user.ru_allocation,
+        )
+        .ok_or(Error::Bandwidth)?;
         if user.spatial_allocation > 63 {
             return Err(Error::Streams);
         }

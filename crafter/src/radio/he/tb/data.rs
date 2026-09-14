@@ -39,7 +39,7 @@ pub(in crate::radio) struct Admission {
     pub capacity: Capacity,
     /// Total retained samples from L-SIG through DATA, excluding packet extension.
     pub required_samples: usize,
-    tones: crate::radio::he::ru::Tones,
+    tones: crate::radio::resource_unit::Tones,
     size: usize,
     guard: usize,
 }
@@ -80,8 +80,9 @@ pub(in crate::radio) fn admit(
         2 if !common.masked_ltf => (4, 64),
         _ => return Err(Error::Unsupported),
     };
-    let tones = crate::radio::he::ru::Tones::from_trigger(common.bandwidth, user.ru_allocation)
-        .ok_or(Error::Unsupported)?;
+    let tones =
+        crate::radio::resource_unit::Tones::from_he_trigger(common.bandwidth, user.ru_allocation)
+            .ok_or(Error::Unsupported)?;
     let c = Capacity::for_tb(common, user, timing.data_symbols).map_err(|_| Error::Unsupported)?;
     // RA count bits are not spatial-stream indices. Scheduled isolated users
     // start at STS zero; other allocations require spatial separation.
@@ -151,7 +152,7 @@ pub(in crate::radio) fn recover(
     let mut channel = train(480)?;
     // CS8's1/128 quantization step gives complex FFT-domain variance
     // 256 * 2 * (1/128)^2 /12. Guard-bin observations can raise this floor.
-    let mut demod = crate::radio::he::ru::symbol::Demodulator::for_tb(
+    let mut demod = crate::radio::resource_unit::symbol::Demodulator::for_tb(
         tones,
         c.bits_per_tone,
         user.ldpc,
@@ -262,7 +263,7 @@ pub(in crate::radio) fn recover(
         };
         let mut result = decode(&metrics, partial);
         if retain && result.as_ref().map_or(true, |r| r.failed_codewords != 0) {
-            if let Some(clock) = crate::radio::he::ru::symbol::fit_pilot_clock(&observed) {
+            if let Some(clock) = crate::radio::resource_unit::symbol::fit_pilot_clock(&observed) {
                 let mut retry = Vec::new();
                 retry
                     .try_reserve_exact(metrics.len())

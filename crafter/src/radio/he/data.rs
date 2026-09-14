@@ -9,14 +9,14 @@ pub(in crate::radio) fn ldpc_order(metrics: &[f32], bits_per_tone: usize) -> Opt
     ldpc_order_for_tones(
         metrics,
         bits_per_tone,
-        crate::radio::he::ru::Tones::new(false, 0)?,
+        crate::radio::resource_unit::Tones::for_he_su(false, 0)?,
     )
 }
 
 fn ldpc_order_for_tones(
     metrics: &[f32],
     bits_per_tone: usize,
-    tones: crate::radio::he::ru::Tones,
+    tones: crate::radio::resource_unit::Tones,
 ) -> Option<Vec<f32>> {
     if !matches!(bits_per_tone, 1 | 2 | 4 | 6 | 8 | 10)
         || metrics.len() != tones.count() * bits_per_tone
@@ -143,7 +143,7 @@ fn recover_impl(
     let h = admitted.signal;
     let timing = admitted.timing;
     let c = admitted.capacity;
-    let tones = crate::radio::he::ru::Tones::new(admitted.er, h.bandwidth)?;
+    let tones = crate::radio::resource_unit::Tones::for_he_su(admitted.er, h.bandwidth)?;
     debug_assert_eq!(trained.prefix.signal, h);
     debug_assert_eq!(trained.data_start, admitted.info.data_start);
     let mut coded = Vec::new();

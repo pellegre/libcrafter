@@ -7,7 +7,6 @@ pub(in crate::radio) mod data;
 pub(in crate::radio) mod fft;
 pub(in crate::radio) mod iq;
 pub(in crate::radio) mod mu;
-pub(in crate::radio) mod ru;
 pub(in crate::radio) mod tb;
 pub(in crate::radio) mod timing;
 pub(in crate::radio) mod training;

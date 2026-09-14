@@ -1,5 +1,6 @@
-//! HE20 tone geometry, IEEE 802.11ax-2021 Tables 27-7 and 27-35..43.
+//! Shared HE/EHT 20 MHz resource-unit tone geometry and symbol processing.
 
+mod he;
 pub(in crate::radio) mod symbol;
 
 #[derive(Clone, Copy)]
@@ -9,46 +10,6 @@ pub(in crate::radio) struct Tones {
 }
 
 impl Tones {
-    /// Normal Trigger User Info RU byte, Table9-29i. MU-RTS uses a different
-    /// encoding and must be excluded by the caller. No RA range is expanded.
-    pub fn from_trigger(bandwidth: u8, allocation: u8) -> Option<Self> {
-        if bandwidth != 0 || allocation & 1 != 0 {
-            return None;
-        }
-        let code = allocation >> 1;
-        let (size, index) = match code {
-            0..=8 => (26, usize::from(code) + 1),
-            37..=40 => (52, usize::from(code) - 36),
-            53..=54 => (106, usize::from(code) - 52),
-            61 => (242, 1),
-            _ => return None,
-        };
-        Self::ru(size, index)
-    }
-
-    /// Table 27-26 columns to Table 27-7 equal-size RU ordinals. User counts
-    /// do not change geometry, including explicitly empty allocations.
-    pub fn assignment(ru: &crate::radio::he::mu::sig_b::HeRu20Assignment) -> Option<Self> {
-        let index = match (ru.tones, ru.first_slot) {
-            (26, slot @ 1..=9) => usize::from(slot),
-            (52, 1) | (106, 1) | (242, 1) => 1,
-            (52, 3) | (106, 6) => 2,
-            (52, 6) => 3,
-            (52, 8) => 4,
-            _ => return None,
-        };
-        Self::ru(ru.tones, index)
-    }
-    /// Bandwidth bits have allocation meaning only in independently verified ER.
-    pub fn new(er: bool, bandwidth: u8) -> Option<Self> {
-        if bandwidth > u8::from(er) {
-            return None;
-        }
-        Self::ru(
-            if er && bandwidth == 1 { 106 } else { 242 },
-            if er && bandwidth == 1 { 2 } else { 1 },
-        )
-    }
     /// One-based RU index within its size, NOT the SIG-B first 26-tone slot.
     pub fn ru(size: u16, index: usize) -> Option<Self> {
         let count = match size {
@@ -174,7 +135,7 @@ mod tests {
                     .position(|&code| code == raw)
                     .map(|index| (*size, index + 1))
             });
-            let actual = super::Tones::from_trigger(0, raw);
+            let actual = super::Tones::from_he_trigger(0, raw);
             assert_eq!(actual.is_some(), expected.is_some(), "{raw}");
             if let Some((size, index)) = expected {
                 let reference = super::Tones::ru(size, index).unwrap();
@@ -186,7 +147,7 @@ mod tests {
                 assert_eq!(actual.pilots(), reference.pilots());
             }
             for bandwidth in [1, 2, 3, 255] {
-                assert!(super::Tones::from_trigger(bandwidth, raw).is_none());
+                assert!(super::Tones::from_he_trigger(bandwidth, raw).is_none());
             }
         }
     }
@@ -206,7 +167,7 @@ mod tests {
                 };
                 for users in [0, 1, 8] {
                     assert_eq!(
-                        Tones::assignment(&HeRu20Assignment {
+                        Tones::from_he_assignment(&HeRu20Assignment {
                             tones: size,
                             first_slot: slot,
                             users
@@ -334,10 +295,10 @@ mod tests {
     }
     #[test]
     fn radio_he_tone_geometry_and_permutations() {
-        assert!(Tones::new(false, 1).is_none());
-        assert!(Tones::new(true, 2).is_none());
+        assert!(Tones::for_he_su(false, 1).is_none());
+        assert!(Tones::for_he_su(true, 2).is_none());
         for upper in [false, true] {
-            let tones = Tones::new(true, u8::from(upper)).unwrap();
+            let tones = Tones::for_he_su(true, u8::from(upper)).unwrap();
             if upper {
                 assert_eq!(tones.pilots(), &[22, 48, 90, 116]);
                 for symbol in 0..16 {

@@ -1,6 +1,6 @@
 //! HE20 Trigger allocation geometry, ax-2021 9.3.1.22.1 and26.5.4.2.
 //! No exchange association, spatial separation or DATA integrity is inferred.
-use crate::radio::he::ru::Tones;
+use crate::radio::resource_unit::Tones;
 use crate::{Dot11Trigger, Dot11TriggerRemainder, Dot11TriggerUserFields, Dot11TrsControl};
 
 // Explicit receiver resource bound, not a general MAC parser restriction.
@@ -34,7 +34,7 @@ impl Schedule {
         if control.reserved() || (dcm && control.mcs() == 2) {
             return Err(Error::Unsupported);
         }
-        let tones = Tones::from_trigger(0, control.ru_allocation()).ok_or(Error::Ru)?;
+        let tones = Tones::from_he_trigger(0, control.ru_allocation()).ok_or(Error::Ru)?;
         let allocation = Allocation {
             user_index: 0,
             fields: Dot11TriggerUserFields {
@@ -78,7 +78,7 @@ impl Schedule {
             if !matches!(fields.aid12, 0..=2007 | 2045 | 2046) {
                 return Err(Error::Unsupported);
             }
-            let first = Tones::from_trigger(0, fields.ru_allocation).ok_or(Error::Ru)?;
+            let first = Tones::from_he_trigger(0, fields.ru_allocation).ok_or(Error::Ru)?;
             let random = matches!(fields.aid12, 0 | 2045);
             let count = if random {
                 usize::from(fields.spatial_allocation & 31) + 1
@@ -90,7 +90,7 @@ impl Schedule {
                     .ru_allocation
                     .checked_add((2 * offset) as u8)
                     .ok_or(Error::Ru)?;
-                let tones = Tones::from_trigger(0, code).ok_or(Error::Ru)?;
+                let tones = Tones::from_he_trigger(0, code).ok_or(Error::Ru)?;
                 if tones.count() != first.count() {
                     return Err(Error::Ru);
                 }

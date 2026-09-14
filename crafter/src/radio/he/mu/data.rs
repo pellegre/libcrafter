@@ -213,7 +213,7 @@ pub(in crate::radio) fn recover(
                 // Non-STBC uses the first LTF's +1 coefficient. STBC
                 // separates both channels using all signaled LTFs.
                 let mut channel = train(cp)?;
-                let mut demod = crate::radio::he::ru::symbol::Demodulator::new(
+                let mut demod = crate::radio::resource_unit::symbol::Demodulator::new(
                     ru.tones,
                     c.bits_per_tone,
                     ldpc,
@@ -363,7 +363,7 @@ pub(in crate::radio) fn recover(
 fn refine_stbc_channels(
     bins: &[[ComplexSample; 256]],
     prior: &[[ComplexSample; 256]; 2],
-    tones: crate::radio::he::ru::Tones,
+    tones: crate::radio::resource_unit::Tones,
     bits: usize,
 ) -> Option<[[ComplexSample; 256]; 2]> {
     if bins.len() < 2
@@ -511,15 +511,16 @@ fn stbc_observations(
                     .map(move |(j, &k)| (k, ru.tones.pilot_sign(symbol, j) * polarity))
             })
             .collect();
-        let (mut bins, phase, next_slope) = crate::radio::he::ru::symbol::observe_with_pilots(
-            samples.get(start..start + 256).ok_or(Error::Samples)?,
-            &channel,
-            a.frequency_rad,
-            elapsed,
-            &pilot_map,
-            slope,
-        )
-        .ok_or(Error::Metrics)?;
+        let (mut bins, phase, next_slope) =
+            crate::radio::resource_unit::symbol::observe_with_pilots(
+                samples.get(start..start + 256).ok_or(Error::Samples)?,
+                &channel,
+                a.frequency_rad,
+                elapsed,
+                &pilot_map,
+                slope,
+            )
+            .ok_or(Error::Metrics)?;
         slope = next_slope;
         for k in -122i32..=122 {
             let bin = k.rem_euclid(256) as usize;
@@ -539,7 +540,7 @@ mod tests {
 
     #[test]
     fn radio_he_mu_stbc_refinement_bounds() {
-        let tones = crate::radio::he::ru::Tones::ru(26, 1).unwrap();
+        let tones = crate::radio::resource_unit::Tones::ru(26, 1).unwrap();
         let mut prior = [[ComplexSample::ZERO; 256]; 2];
         let h = [
             ComplexSample { i: 1., q: 0.1 },
@@ -694,7 +695,7 @@ mod tests {
                     }
                 }
                 let c = Capacity::for_mu(&fields.signal, &user, 26, timing.data_symbols).unwrap();
-                let demod = crate::radio::he::ru::symbol::Demodulator::new(
+                let demod = crate::radio::resource_unit::symbol::Demodulator::new(
                     ru.tones,
                     c.bits_per_tone,
                     true,
