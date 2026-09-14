@@ -55,6 +55,7 @@ pub(crate) const DEFAULT_INTERFACE_NONBLOCKING: bool = false;
 pub struct OfflinePcapSource {
     path: PathBuf,
     filter: Option<String>,
+    normalize_wifi: bool,
     inner: OfflinePcapSourceInner,
 }
 
@@ -94,6 +95,7 @@ impl OfflinePcapSource {
         Ok(Self {
             path,
             filter,
+            normalize_wifi: false,
             inner,
         })
     }
@@ -101,6 +103,12 @@ impl OfflinePcapSource {
     /// File backing this offline source.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Normalize Wi-Fi framing before payload decoding on subsequent reads.
+    pub fn normalized_wifi(mut self) -> Self {
+        self.normalize_wifi = true;
+        self
     }
 
     /// Configured BPF filter, if this source is filtered.
@@ -119,7 +127,15 @@ impl OfflinePcapSource {
 impl PacketSource for OfflinePcapSource {
     fn next_record(&mut self) -> WireResult<Option<PacketRecord>> {
         self.next_pcap_record()?
-            .map(|record| pcap_record_to_packet_record(self.path(), record))
+            .map(|record| {
+                if self.normalize_wifi {
+                    Ok(crate::wire::normalized_wifi_pcap_record(record)?
+                        .with_backend(BackendKind::PcapFile)
+                        .with_file(self.path()))
+                } else {
+                    pcap_record_to_packet_record(self.path(), record)
+                }
+            })
             .transpose()
     }
 }
@@ -259,6 +275,7 @@ impl PcapInterfaceSourceBuilder {
             promisc: self.promisc,
             immediate: self.immediate,
             nonblocking: self.nonblocking,
+            normalize_wifi: false,
             inner,
         })
     }
@@ -274,10 +291,16 @@ pub struct PcapInterfaceSource {
     promisc: bool,
     immediate: bool,
     nonblocking: bool,
+    normalize_wifi: bool,
     inner: LibpcapCapture,
 }
 
 impl PcapInterfaceSource {
+    /// Normalize Wi-Fi framing before payload decoding on subsequent reads.
+    pub fn normalized_wifi(mut self) -> Self {
+        self.normalize_wifi = true;
+        self
+    }
     /// Create a builder for a live pcap interface packet source.
     pub fn builder(interface: impl Into<String>) -> PcapInterfaceSourceBuilder {
         PcapInterfaceSourceBuilder::new(interface)
@@ -328,7 +351,15 @@ impl PacketSource for PcapInterfaceSource {
     fn next_record(&mut self) -> WireResult<Option<PacketRecord>> {
         self.inner
             .next_record()?
-            .map(|record| pcap_interface_record_to_packet_record(self.interface(), record))
+            .map(|record| {
+                if self.normalize_wifi {
+                    Ok(crate::wire::normalized_wifi_pcap_record(record)?
+                        .with_backend(BackendKind::PcapInterface)
+                        .with_interface(self.interface()))
+                } else {
+                    pcap_interface_record_to_packet_record(self.interface(), record)
+                }
+            })
             .transpose()
     }
 }
@@ -611,6 +642,11 @@ fn pcap_interface_record_to_packet_record(
 }
 
 fn record_pcap_link_type(record: &PacketRecord) -> Option<PcapLinkType> {
+    // Normalized records keep the original pcap link type as provenance.
+    // Their emitted representation is determined by the current packet root.
+    if record.metadata().wifi_capture().is_some() {
+        return packet_pcap_link_type(record);
+    }
     record
         .metadata()
         .pcap_link_type()

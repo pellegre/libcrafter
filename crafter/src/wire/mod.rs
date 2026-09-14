@@ -19,6 +19,7 @@
 pub mod backend;
 pub mod dot11_metadata;
 mod error;
+pub mod interface;
 pub mod ip;
 pub mod packet_wire;
 pub mod record;
@@ -30,6 +31,11 @@ mod transform_contract;
 pub mod transmitter;
 pub mod wpa;
 pub mod writer;
+
+pub use interface::{
+    normalize_wifi_record, normalized_wifi_pcap_record, CaptureFcs, InterfaceMode, MonitorWriter,
+    NormalizedWifiSource, PacketFormat, WifiCaptureMetadata,
+};
 
 pub use backend::raw_socket::RawSocketWriter;
 #[cfg(feature = "whad")]

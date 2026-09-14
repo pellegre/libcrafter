@@ -1,0 +1,41 @@
+version: 1
+kind: feature
+name: packet_interface
+summary: Explicit packet formats and opt-in Wi-Fi capture normalization with retained evidence.
+layers: [radiotap, dot11, payload]
+directions: [backend_to_libcrafter, libcrafter_to_backend]
+strict_bytes: true
+malformed: false
+behaviors:
+  - name: normalized-wifi
+    checks:
+      - bare_and_radiotap_packets_agree
+      - original_capture_bytes_lengths_timestamp_and_link_type_preserved
+      - radiotap_fields_and_unknown_fields_retained
+      - capture_padding_removed_before_payload_decode
+      - fcs_removed_only_with_explicit_presence_evidence
+      - unknown_integrity_and_hardware_decryption_remain_unknown
+      - truncated_fcs_never_consumes_payload
+      - protected_flag_preserved
+  - name: monitor-output
+    checks:
+      - bare_dot11_wrapped_for_driver
+      - explicit_radiotap_overrides_preserved
+      - incompatible_roots_rejected
+  - name: packet-format
+    checks:
+      - managed_and_ethernet_formats_are_ethernet
+      - monitor_and_wifi_iq_formats_are_dot11
+      - raw_capture_constructors_preserve_existing_behavior
+coverage_cases:
+  - crafter-normalized-wifi-equivalence
+  - crafter-normalized-wifi-provenance
+  - crafter-normalized-wifi-fcs-padding
+  - crafter-monitor-driver-framing
+supported_cases: []
+backend_support:
+  libcrafter:
+    status: planned
+    notes:
+      - Deterministic adapter coverage is in crafter/tests/packet_interface.rs.
+      - Standard radiotap does not identify hardware decryption; no decryption state is inferred.
