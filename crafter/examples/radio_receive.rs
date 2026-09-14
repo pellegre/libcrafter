@@ -161,6 +161,7 @@ enum SelectedDecoder {
     Parallel(ParallelLegacyWifiDecoder),
     ParallelModern(ParallelWifiDecoder),
     Windowed(WindowedLegacyWifiDecoder),
+    WindowedModern(WindowedWifiDecoder),
 }
 impl SelectedDecoder {
     fn consume(&mut self, event: IqEvent) -> RadioResult<DecodeOutput> {
@@ -171,6 +172,7 @@ impl SelectedDecoder {
             Self::Parallel(d) => d.consume(event),
             Self::ParallelModern(d) => d.consume(event),
             Self::Windowed(d) => d.consume(event),
+            Self::WindowedModern(d) => d.consume(event),
         }
     }
     fn reset(&mut self, reason: ResetReason) -> DecodeOutput {
@@ -181,6 +183,7 @@ impl SelectedDecoder {
             Self::Parallel(d) => d.reset(reason),
             Self::ParallelModern(d) => d.reset(reason),
             Self::Windowed(d) => d.reset(reason),
+            Self::WindowedModern(d) => d.reset(reason),
         }
     }
     fn stats(&self) -> DecoderStats {
@@ -191,6 +194,7 @@ impl SelectedDecoder {
             Self::Parallel(d) => (d.ofdm_stats(), d.dsss_stats()),
             Self::ParallelModern(d) => (d.ofdm_stats(), d.dsss_stats()),
             Self::Windowed(d) => (d.ofdm_stats(), d.dsss_stats()),
+            Self::WindowedModern(d) => (d.ofdm_stats(), d.dsss_stats()),
         };
         DecoderStats {
             valid_frames: a.valid_frames.saturating_add(b.valid_frames),
@@ -216,7 +220,9 @@ impl PhyDecoder for ObservedDecoder {
             IqEvent::Chunk(chunk)
                 if matches!(
                     self.inner,
-                    SelectedDecoder::Modern(_) | SelectedDecoder::ParallelModern(_)
+                    SelectedDecoder::Modern(_)
+                        | SelectedDecoder::ParallelModern(_)
+                        | SelectedDecoder::WindowedModern(_)
                 ) =>
             {
                 Some(chunk.position().epoch)
@@ -293,8 +299,8 @@ fn receive(
     dispatch: Dispatch,
     modern: bool,
 ) -> Result<()> {
-    if modern && (ofdm_only || dispatch == Dispatch::Windowed) {
-        return Err("modern decoding supports serial or PHY-parallel dispatch".into());
+    if modern && ofdm_only {
+        return Err("Wi-Fi 4 decoding includes OFDM and DSSS/CCK".into());
     }
     let out = Rc::new(RefCell::new(BufWriter::new(std::io::stdout())));
     let header = json!({"kind":"header","schema":SCHEMA,"config":Config::from(&config),"decoder":if modern {"wifi"} else if ofdm_only {"ofdm"} else {"legacy_wifi"},"dispatch":dispatch.label(),"time_basis":if software_start.is_some(){"software_bracket_only"}else{"recorded_anchor_or_unknown"}});
@@ -318,6 +324,8 @@ fn receive(
             SelectedDecoder::ParallelModern(ParallelWifiDecoder::with_parallel_dsss()?)
         } else if modern && dispatch == Dispatch::Parallel {
             SelectedDecoder::ParallelModern(ParallelWifiDecoder::new()?)
+        } else if modern && dispatch == Dispatch::Windowed {
+            SelectedDecoder::WindowedModern(WindowedWifiDecoder::new(4)?)
         } else if modern {
             SelectedDecoder::Modern(WifiDecoder::new())
         } else if dispatch == Dispatch::Windowed {
@@ -398,9 +406,9 @@ impl ArtifactSource {
         let dispatch = match h.get("dispatch").and_then(serde_json::Value::as_str) {
             None if h.get("dispatch").is_none() => Dispatch::Serial,
             Some("serial") => Dispatch::Serial,
-            Some("parallel") if !ofdm_only && !modern => Dispatch::Parallel,
-            Some("parallel_dsss") if !ofdm_only && !modern => Dispatch::ParallelDsss,
-            Some("windowed") if !ofdm_only && !modern => Dispatch::Windowed,
+            Some("parallel") if !ofdm_only => Dispatch::Parallel,
+            Some("parallel_dsss") if !ofdm_only => Dispatch::ParallelDsss,
+            Some("windowed") if !ofdm_only => Dispatch::Windowed,
             _ => return Err("unsupported or conflicting IQ dispatch".into()),
         };
         let config: Config = serde_json::from_value(h["config"].clone())?;
@@ -549,7 +557,7 @@ fn main() -> Result<()> {
         return match args.as_slice() {
             [_, path, mode] => benchmark::run(path, mode, None),
             [_, path, mode, frames] => benchmark::run(path, mode, Some(frames)),
-            _ => Err("use --benchmark-artifact FILE wifi|wifi-parallel|wifi-parallel-dsss|combined|parallel|parallel-dsss|windowed-3|windowed-4|ofdm|dsss [FRAMES_JSONL]".into()),
+            _ => Err("use --benchmark-artifact FILE wifi|wifi-parallel|wifi-parallel-dsss|wifi-windowed-3|wifi-windowed-4|combined|parallel|parallel-dsss|windowed-3|windowed-4|ofdm|dsss [FRAMES_JSONL]".into()),
         };
     }
     let capture_only_mode = if args.first().map(String::as_str) == Some("--capture-only") {
@@ -588,8 +596,8 @@ fn main() -> Result<()> {
     if dispatch != Dispatch::Serial && ofdm_only {
         return Err("parallel dispatch and --ofdm-only are mutually exclusive".into());
     }
-    if modern && (ofdm_only || dispatch == Dispatch::Windowed) {
-        return Err("--modern supports serial, --parallel or --parallel-dsss dispatch".into());
+    if modern && ofdm_only {
+        return Err("--modern and --ofdm-only are mutually exclusive".into());
     }
     let iq_path = if args.len() >= 2 && args[args.len() - 2] == "--save-iq" {
         let path = args.pop();
@@ -852,9 +860,13 @@ mod tests {
         for (decoder, dispatch, expected) in [
             ("wifi", None, Some(Dispatch::Serial)),
             ("wifi", Some(json!("serial")), Some(Dispatch::Serial)),
-            ("wifi", Some(json!("parallel")), None),
-            ("wifi", Some(json!("parallel_dsss")), None),
-            ("wifi", Some(json!("windowed")), None),
+            ("wifi", Some(json!("parallel")), Some(Dispatch::Parallel)),
+            (
+                "wifi",
+                Some(json!("parallel_dsss")),
+                Some(Dispatch::ParallelDsss),
+            ),
+            ("wifi", Some(json!("windowed")), Some(Dispatch::Windowed)),
             ("legacy_wifi", None, Some(Dispatch::Serial)),
             ("legacy_wifi", Some(json!("serial")), Some(Dispatch::Serial)),
             (

@@ -1,4 +1,4 @@
-//! Coarse-grained parallel legacy Wi-Fi decoding over overlapping time windows.
+//! Coarse-grained parallel Wi-Fi decoding over bounded overlapping time windows.
 use super::*;
 use std::{
     collections::BTreeMap,
@@ -6,8 +6,71 @@ use std::{
     thread::JoinHandle,
 };
 
-const CORE_SAMPLES: usize = 2_000_000;
-const MARGIN_SAMPLES: usize = 3_840 + 4_095 * 8 * 20 + 64;
+const LEGACY_CORE_SAMPLES: usize = 2_000_000;
+const WIFI4_CORE_SAMPLES: usize = 1_600_000;
+const LEGACY_MARGIN_SAMPLES: usize = 3_840 + 4_095 * 8 * 20 + 64;
+// One-stream HT20 MCS 0 with STBC has the longest supported Wi-Fi 4 PSDU.
+// The margin includes its maximum 65,535-byte aggregate and ample preamble room.
+const WIFI4_MARGIN_SAMPLES: usize = 3_840 + ((16 + 8 * 65_535 + 6 + 51) / 52) * 160;
+
+#[derive(Clone, Copy)]
+enum WindowProfile {
+    Legacy,
+    Wifi4,
+}
+impl WindowProfile {
+    fn core_samples(self) -> usize {
+        match self {
+            Self::Legacy => LEGACY_CORE_SAMPLES,
+            Self::Wifi4 => WIFI4_CORE_SAMPLES,
+        }
+    }
+    fn margin_samples(self) -> usize {
+        match self {
+            Self::Legacy => LEGACY_MARGIN_SAMPLES,
+            Self::Wifi4 => WIFI4_MARGIN_SAMPLES,
+        }
+    }
+}
+
+enum WindowDecoder {
+    Legacy(LegacyWifiDecoder),
+    Wifi4(WifiDecoder),
+}
+impl WindowDecoder {
+    fn new(profile: WindowProfile) -> Self {
+        match profile {
+            WindowProfile::Legacy => Self::Legacy(LegacyWifiDecoder::new()),
+            WindowProfile::Wifi4 => Self::Wifi4(WifiDecoder::new()),
+        }
+    }
+    fn ofdm_stats(&self) -> DecoderStats {
+        match self {
+            Self::Legacy(decoder) => decoder.ofdm_stats(),
+            Self::Wifi4(decoder) => decoder.ofdm_stats(),
+        }
+    }
+    fn dsss_stats(&self) -> DecoderStats {
+        match self {
+            Self::Legacy(decoder) => decoder.dsss_stats(),
+            Self::Wifi4(decoder) => decoder.dsss_stats(),
+        }
+    }
+}
+impl PhyDecoder for WindowDecoder {
+    fn reset(&mut self, reason: ResetReason) -> DecodeOutput {
+        match self {
+            Self::Legacy(decoder) => decoder.reset(reason),
+            Self::Wifi4(decoder) => decoder.reset(reason),
+        }
+    }
+    fn consume(&mut self, event: IqEvent) -> RadioResult<DecodeOutput> {
+        match self {
+            Self::Legacy(decoder) => decoder.consume(event),
+            Self::Wifi4(decoder) => decoder.consume(event),
+        }
+    }
+}
 
 struct Job {
     ordinal: u64,
@@ -26,7 +89,12 @@ struct Reply {
     dsss: DecoderStats,
 }
 
-fn run_worker(worker: usize, jobs: Arc<Mutex<mpsc::Receiver<Job>>>, replies: mpsc::Sender<Reply>) {
+fn run_worker(
+    worker: usize,
+    profile: WindowProfile,
+    jobs: Arc<Mutex<mpsc::Receiver<Job>>>,
+    replies: mpsc::Sender<Reply>,
+) {
     let mut ofdm = DecoderStats::default();
     let mut dsss = DecoderStats::default();
     loop {
@@ -37,7 +105,7 @@ fn run_worker(worker: usize, jobs: Arc<Mutex<mpsc::Receiver<Job>>>, replies: mps
         // Window boundaries are implementation details, not stream loss. A
         // fresh decoder prevents an abandoned overlap candidate's reset from
         // leaking a synthetic truncation into the following job's counters.
-        let mut decoder = LegacyWifiDecoder::new();
+        let mut decoder = WindowDecoder::new(profile);
         let mut decoded = DecodeOutput::default();
         let mut failure = None;
         for (index, bytes) in job.cs8.chunks(job.config.max_chunk_samples * 2).enumerate() {
@@ -117,10 +185,14 @@ pub struct WindowedLegacyWifiDecoder {
     worker_ofdm: Vec<DecoderStats>,
     worker_dsss: Vec<DecoderStats>,
     workers: usize,
+    profile: WindowProfile,
 }
 
 impl WindowedLegacyWifiDecoder {
     pub fn new(workers: usize) -> RadioResult<Self> {
+        Self::configured(workers, WindowProfile::Legacy)
+    }
+    fn configured(workers: usize, profile: WindowProfile) -> RadioResult<Self> {
         if !(1..=32).contains(&workers) {
             return Err(RadioError::Invalid {
                 field: "workers",
@@ -139,7 +211,7 @@ impl WindowedLegacyWifiDecoder {
             threads.push(
                 std::thread::Builder::new()
                     .name(format!("crafter-wifi-window-{index}"))
-                    .spawn(move || run_worker(index, receiver, sender))
+                    .spawn(move || run_worker(index, profile, receiver, sender))
                     .map_err(|e| RadioError::Source(format!("Wi-Fi worker creation: {e}")))?,
             );
         }
@@ -165,6 +237,7 @@ impl WindowedLegacyWifiDecoder {
             worker_ofdm: vec![DecoderStats::default(); workers],
             worker_dsss: vec![DecoderStats::default(); workers],
             workers,
+            profile,
         })
     }
     pub fn ofdm_stats(&self) -> DecoderStats {
@@ -301,7 +374,7 @@ impl WindowedLegacyWifiDecoder {
     }
     fn finish_segment(&mut self, limit: usize, reason: ResetReason) -> RadioResult<DecodeOutput> {
         while self.available() != 0 {
-            let core = self.available().min(CORE_SAMPLES);
+            let core = self.available().min(self.profile.core_samples());
             let window = self.available();
             self.submit(core, window, Some(reason))?;
         }
@@ -376,8 +449,10 @@ impl PhyDecoder for WindowedLegacyWifiDecoder {
             IqEvent::Chunk(chunk) => chunk,
         };
         let config = chunk.config();
+        let core_samples = self.profile.core_samples();
+        let margin_samples = self.profile.margin_samples();
         let required_buffer = (self.workers + 1)
-            .checked_mul(CORE_SAMPLES + MARGIN_SAMPLES)
+            .checked_mul(core_samples + margin_samples)
             .ok_or(RadioError::Overflow {
                 context: "windowed sample buffer bound",
             })?;
@@ -406,14 +481,44 @@ impl PhyDecoder for WindowedLegacyWifiDecoder {
             self.sample_start = chunk.position().sample_index;
         }
         self.bytes.extend_from_slice(chunk.cs8());
-        while self.available() >= CORE_SAMPLES + MARGIN_SAMPLES {
-            self.submit(CORE_SAMPLES, CORE_SAMPLES + MARGIN_SAMPLES, None)?;
+        while self.available() >= core_samples + margin_samples {
+            self.submit(core_samples, core_samples + margin_samples, None)?;
         }
         let mut completed = self.collect(false, config.max_pending_frames)?;
         output.frames.append(&mut completed.frames);
         output.diagnostics.append(&mut completed.diagnostics);
         output.diagnostics.truncate(config.max_pending_frames);
         Ok(output)
+    }
+}
+
+/// Parallel Wi-Fi 4 and legacy decoding over bounded overlapping time windows.
+///
+/// Each worker runs an independent [`WifiDecoder`]. Windows overlap far enough
+/// to finish the longest supported HT20 aggregate; only the worker whose core
+/// owns a preamble emits that occurrence.
+pub struct WindowedWifiDecoder {
+    inner: WindowedLegacyWifiDecoder,
+}
+impl WindowedWifiDecoder {
+    pub fn new(workers: usize) -> RadioResult<Self> {
+        Ok(Self {
+            inner: WindowedLegacyWifiDecoder::configured(workers, WindowProfile::Wifi4)?,
+        })
+    }
+    pub fn ofdm_stats(&self) -> DecoderStats {
+        self.inner.ofdm_stats()
+    }
+    pub fn dsss_stats(&self) -> DecoderStats {
+        self.inner.dsss_stats()
+    }
+}
+impl PhyDecoder for WindowedWifiDecoder {
+    fn reset(&mut self, reason: ResetReason) -> DecodeOutput {
+        self.inner.reset(reason)
+    }
+    fn consume(&mut self, event: IqEvent) -> RadioResult<DecodeOutput> {
+        self.inner.consume(event)
     }
 }
 
@@ -426,8 +531,14 @@ mod tests {
     fn worker_overlap_reset_does_not_invent_stream_truncation() {
         let (jobs, receiver) = mpsc::channel();
         let (replies, outputs) = mpsc::channel();
-        let worker =
-            std::thread::spawn(move || run_worker(0, Arc::new(Mutex::new(receiver)), replies));
+        let worker = std::thread::spawn(move || {
+            run_worker(
+                0,
+                WindowProfile::Legacy,
+                Arc::new(Mutex::new(receiver)),
+                replies,
+            )
+        });
         let config = RxConfig {
             sample_rate_hz: 20_000_000,
             center_frequency_hz: 2_437_000_000,

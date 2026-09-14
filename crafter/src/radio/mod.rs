@@ -47,7 +47,7 @@ pub use tx::{
     MemoryIqSink, RadioPacketWriter, WifiFcsPolicy, WifiTxEncoder,
 };
 pub use wifi::{LegacyWifiDecoder, WifiDecoder};
-pub use windowed::WindowedLegacyWifiDecoder;
+pub use windowed::{WindowedLegacyWifiDecoder, WindowedWifiDecoder};
 
 use crate::LinkType;
 use std::{
