@@ -1,5 +1,6 @@
 //! EHT-SIG content and encoding-block interpretation.
 
+mod coded;
 pub(in crate::radio) mod iq;
 mod non_ofdma;
 

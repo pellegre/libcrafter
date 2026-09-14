@@ -1,4 +1,4 @@
-//! EHT-SIG recovery for 20 MHz non-OFDMA single-user PPDUs.
+//! EHT-SIG recovery for 20 MHz non-OFDMA PPDUs.
 
 use super::super::{
     EhtMuPpduType, EhtNonOfdmaSignal, EhtSigError, EhtSigMcs, EhtUsigFields, EhtUsigFormat,
@@ -21,6 +21,7 @@ pub(in crate::radio) enum Error {
     Truncated { required: usize, available: usize },
     Samples,
     Overflow,
+    Coded(super::coded::Error),
     Signal(EhtSigError),
 }
 
@@ -36,7 +37,7 @@ pub(in crate::radio) struct Fields {
 #[derive(Debug, Clone, Copy)]
 struct Mode {
     modulation: Modulation,
-    symbols: usize,
+    data_bits_per_symbol: usize,
 }
 
 impl Mode {
@@ -48,10 +49,9 @@ impl Mode {
             EhtSigMcs::Mcs0Dcm => (0, true),
         };
         let modulation = Modulation::new(mcs, dcm).expect("EHT-SIG MCS is defined");
-        let data_bits = modulation.coded_per_symbol() / 2;
         Self {
             modulation,
-            symbols: 52usize.div_ceil(data_bits),
+            data_bits_per_symbol: modulation.coded_per_symbol() / 2,
         }
     }
 }
@@ -61,6 +61,7 @@ pub(in crate::radio) struct Receiver<'a> {
     acquisition: &'a Acquisition,
     usig: EhtUsigFields,
     mode: Mode,
+    symbols: usize,
     required: usize,
 }
 
@@ -80,18 +81,16 @@ impl<'a> Receiver<'a> {
         let EhtUsigFormat::Mu(fields) = prefix.fields.format else {
             return Err(Error::UnsupportedFormat);
         };
-        if fields.ppdu_type != EhtMuPpduType::SingleUser {
+        if !matches!(
+            fields.ppdu_type,
+            EhtMuPpduType::SingleUser | EhtMuPpduType::DownlinkMuMimo
+        ) {
             return Err(Error::UnsupportedFormat);
         }
         let mode = Mode::new(fields.eht_sig_mcs);
-        if usize::from(fields.eht_sig_symbols) != mode.symbols {
-            return Err(Error::SymbolCount {
-                required: mode.symbols,
-                advertised: fields.eht_sig_symbols,
-            });
-        }
+        let symbols = usize::from(fields.eht_sig_symbols);
         let required = 320usize
-            .checked_add(80usize.checked_mul(mode.symbols).ok_or(Error::Overflow)?)
+            .checked_add(80usize.checked_mul(symbols).ok_or(Error::Overflow)?)
             .ok_or(Error::Overflow)?;
         acquisition
             .signal_start
@@ -108,28 +107,37 @@ impl<'a> Receiver<'a> {
             acquisition,
             usig: prefix.fields,
             mode,
+            symbols,
             required,
         })
     }
 
     fn decode(self) -> Result<Fields, Error> {
         let metrics = self.metrics()?;
-        let scale = metrics[..104]
-            .iter()
-            .map(|metric| metric.abs())
-            .fold(0f32, f32::max);
-        if !scale.is_finite() || scale == 0. {
-            return Err(Error::Samples);
+        let mut blocks = super::coded::Blocks::new(&metrics).map_err(Error::Coded)?;
+        let first = blocks.bits::<52>().map_err(Error::Coded)?;
+        let required_bits =
+            EhtNonOfdmaSignal::required_bits(&first, &self.usig).map_err(Error::Signal)?;
+        let required_symbols = required_bits.div_ceil(self.mode.data_bits_per_symbol);
+        if self.symbols != required_symbols {
+            return Err(Error::SymbolCount {
+                required: required_symbols,
+                advertised: self.symbols as u8,
+            });
         }
-        let pairs = std::array::from_fn::<_, 52, _>(|index| {
-            [metrics[2 * index] / scale, metrics[2 * index + 1] / scale]
-        });
-        let bits = crate::radio::signal::decode_bcc(&pairs);
+        let mut bits = Vec::with_capacity(required_bits);
+        bits.extend(first);
+        while required_bits - bits.len() >= 54 {
+            bits.extend(blocks.bits::<54>().map_err(Error::Coded)?);
+        }
+        if required_bits - bits.len() == 32 {
+            bits.extend(blocks.bits::<32>().map_err(Error::Coded)?);
+        }
         let signal = EhtNonOfdmaSignal::decode(&bits, &self.usig).map_err(Error::Signal)?;
         Ok(Fields {
             usig: self.usig,
             signal,
-            symbols: self.mode.symbols,
+            symbols: self.symbols,
             end_sample: self.acquisition.signal_start + self.required as u64,
         })
     }
@@ -161,11 +169,10 @@ impl<'a> Receiver<'a> {
             crate::radio::data::feedback(&mut pilot_state);
         }
         let mut metrics = Vec::with_capacity(
-            self.mode
-                .symbols
+            self.symbols
                 .saturating_mul(self.mode.modulation.coded_per_symbol()),
         );
-        for symbol in 0..self.mode.symbols {
+        for symbol in 0..self.symbols {
             let offset = 320 + 80 * symbol;
             let polarity = 1. - 2. * f32::from(crate::radio::data::feedback(&mut pilot_state));
             let bins = corrected_bins(

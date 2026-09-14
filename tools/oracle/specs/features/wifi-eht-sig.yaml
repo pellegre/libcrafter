@@ -24,4 +24,4 @@ backend_support:
     status: partial
     notes:
       - The parser covers complete non-OFDMA single-user and two-through-eight-user MU-MIMO block chains; OFDMA remains pending.
-      - MU-MIMO IQ recovery, OFDMA signaling and EHT DATA are separate stages.
+      - OFDMA signaling and EHT DATA are separate stages.
