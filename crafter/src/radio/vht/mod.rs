@@ -1,6 +1,12 @@
 //! VHT-SIG-A interpretation, IEEE 802.11-2020 21.3.8.3.3 Table 21-12.
 //! Edition caveats and source inventory: docs/wifi-phy-evidence.json.
 
+pub(in crate::radio) mod iq;
+mod sig_b;
+pub(in crate::radio) mod timing;
+
+pub use sig_b::{VhtSignalB20Content, VhtSignalB20Error, VhtSignalB20Fields};
+
 /// Group-dependent fields. Absent MU users have no observed coding mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VhtSignalAUsers {
@@ -175,7 +181,7 @@ mod tests {
 
     #[test]
     fn radio_vht_signal_a_independent_fields_and_soft_recovery() {
-        let rows: Vec<_> = include_str!("../../tests/fixtures/iq/vht-signal-a-index.tsv")
+        let rows: Vec<_> = include_str!("../../../tests/fixtures/iq/vht-signal-a-index.tsv")
             .lines()
             .skip(1)
             .collect();
@@ -235,7 +241,7 @@ mod tests {
 
     #[test]
     fn radio_vht_signal_a_input_and_reserved_bounds() {
-        let rows: Vec<_> = include_str!("../../tests/fixtures/iq/vht-signal-a-index.tsv")
+        let rows: Vec<_> = include_str!("../../../tests/fixtures/iq/vht-signal-a-index.tsv")
             .lines()
             .skip(1)
             .collect();

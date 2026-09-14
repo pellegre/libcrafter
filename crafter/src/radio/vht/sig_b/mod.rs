@@ -102,7 +102,7 @@ impl VhtSignalB20Fields {
             std::array::from_fn(|k| metrics[4 * (k % 13) + k / 13] / scale);
         let pairs =
             std::array::from_fn::<_, 26, _>(|i| [deinterleaved[2 * i], deinterleaved[2 * i + 1]]);
-        Self::decode(&super::signal::decode_bcc(&pairs), multi_user)
+        Self::decode(&crate::radio::signal::decode_bcc(&pairs), multi_user)
     }
 
     /// Interpret exactly 26 binary bits. This cannot verify the header's CRC:
@@ -140,7 +140,7 @@ impl VhtSignalB20Fields {
         };
         Ok(Self {
             content,
-            service_crc: Some(super::ht::crc(&bits[..20])),
+            service_crc: Some(crate::radio::ht::crc(&bits[..20])),
         })
     }
 
@@ -181,5 +181,5 @@ impl VhtSignalB20Fields {
 }
 
 #[cfg(test)]
-#[path = "vht_sig_b_tests.rs"]
+#[path = "tests.rs"]
 mod tests;

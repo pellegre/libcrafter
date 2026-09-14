@@ -5,7 +5,7 @@ fn bits(text: &str) -> Vec<u8> {
 
 #[test]
 fn radio_vht_sig_b_independent_recovery_and_service() {
-    let rows: Vec<_> = include_str!("../../tests/fixtures/iq/vht-signal-b20-index.tsv")
+    let rows: Vec<_> = include_str!("../../../../tests/fixtures/iq/vht-signal-b20-index.tsv")
         .lines()
         .skip(1)
         .collect();
@@ -79,7 +79,7 @@ fn radio_vht_sig_b_independent_recovery_and_service() {
 
 #[test]
 fn radio_vht_sig_b_input_bounds() {
-    let row: Vec<_> = include_str!("../../tests/fixtures/iq/vht-signal-b20-index.tsv")
+    let row: Vec<_> = include_str!("../../../../tests/fixtures/iq/vht-signal-b20-index.tsv")
         .lines()
         .nth(1)
         .unwrap()

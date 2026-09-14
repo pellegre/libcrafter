@@ -45,7 +45,7 @@ fn case(row: &str) -> (SignalInfo, VhtSignalB20Fields, Vec<f32>, Vec<u8>, bool) 
 
 #[test]
 fn radio_vht_bcc_independent_data_recovery() {
-    let index = include_str!("../../tests/fixtures/iq/vht-bcc-data-index.tsv");
+    let index = include_str!("../../../../tests/fixtures/iq/vht-bcc-data-index.tsv");
     assert_eq!(index.lines().skip(1).count(), 316);
     for row in index.lines().skip(1) {
         let (info, sig_b, coded, expected, valid) = case(row);
@@ -82,7 +82,7 @@ fn radio_vht_bcc_independent_data_recovery() {
 
 #[test]
 fn radio_vht_bcc_rejects_invalid_inputs() {
-    let row = include_str!("../../tests/fixtures/iq/vht-bcc-data-index.tsv")
+    let row = include_str!("../../../../tests/fixtures/iq/vht-bcc-data-index.tsv")
         .lines()
         .nth(1)
         .unwrap();

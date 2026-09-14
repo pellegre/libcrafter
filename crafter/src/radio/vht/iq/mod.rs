@@ -1,9 +1,12 @@
 //! VHT20 one-DATA-stream IQ kernel. Admission and MPDU publication are separate.
 //! IEEE 802.11-2020 21.3.8/10/20; source map in docs/wifi-phy-evidence.json.
-use super::{
+use crate::radio::{
+    data, ht, ldpc_rate, signal,
     sync::{fft64, Acquisition},
-    *,
+    ComplexSample, PhyDiagnostic, SignalInfo,
 };
+
+use super::{VhtSignalAFields, VhtSignalAUsers, VhtSignalB20Fields};
 
 fn corrected_bins(
     samples: &[ComplexSample],
@@ -37,7 +40,10 @@ fn corrected_bins(
     Some(equalized)
 }
 
-pub(super) fn signal_a(samples: &[ComplexSample], a: &Acquisition) -> Option<VhtSignalAFields> {
+pub(in crate::radio) fn signal_a(
+    samples: &[ComplexSample],
+    a: &Acquisition,
+) -> Option<VhtSignalAFields> {
     if samples.len() != 160 {
         return None;
     }
@@ -79,7 +85,7 @@ pub(super) fn signal_b(
     VhtSignalB20Fields::decode_interleaved(&metrics, false).ok()
 }
 
-pub(super) struct Decoded {
+pub(in crate::radio) struct Decoded {
     pub signal_a: VhtSignalAFields,
     pub signal_b: VhtSignalB20Fields,
     pub info: SignalInfo,
@@ -90,12 +96,11 @@ pub(super) struct Decoded {
 
 /// Header-only admission gives the streaming receiver its exact reservation
 /// before training or DATA arrives. It does not assert payload integrity.
-pub(super) fn admit(
+pub(in crate::radio) fn admit(
     samples: &[ComplexSample],
     a: &Acquisition,
 ) -> Result<(VhtSignalAFields, SignalInfo), ()> {
-    let legacy =
-        super::signal::decode_signal(samples.get(..80).ok_or(())?, a, 4095).map_err(|_| ())?;
+    let legacy = signal::decode_signal(samples.get(..80).ok_or(())?, a, 4095).map_err(|_| ())?;
     let fields = signal_a(samples.get(80..240).ok_or(())?, a).ok_or(())?;
     let VhtSignalAUsers::Single {
         space_time_streams,
@@ -125,7 +130,7 @@ pub(super) fn admit(
     ]
     .get(usize::from(mcs))
     .ok_or(())?;
-    let timing = super::vht_timing::Timing::new(
+    let timing = super::timing::Timing::new(
         legacy.rate_bps,
         legacy.psdu_bytes,
         space_time_streams,
@@ -135,7 +140,7 @@ pub(super) fn admit(
     )
     .map_err(|_| ())?;
     let psdu_bytes = if ldpc {
-        let layout = super::ldpc_rate::Layout::vht(
+        let layout = ldpc_rate::Layout::vht(
             u16::try_from(timing.data_symbols).map_err(|_| ())?,
             mcs,
             fields.stbc,
@@ -168,7 +173,7 @@ pub(super) fn admit(
 
 /// Samples begin at L-SIG and may include trailing samples. Acquisition must
 /// come from the legacy preamble; no fixture timing or frequency hint is used.
-pub(super) fn decode(samples: &[ComplexSample], a: &Acquisition) -> Result<Decoded, ()> {
+pub(in crate::radio) fn decode(samples: &[ComplexSample], a: &Acquisition) -> Result<Decoded, ()> {
     let (fields, info) = admit(samples, a)?;
     let data_offset =
         usize::try_from(info.data_start.checked_sub(a.signal_start).ok_or(())?).map_err(|_| ())?;
@@ -178,7 +183,7 @@ pub(super) fn decode(samples: &[ComplexSample], a: &Acquisition) -> Result<Decod
             .ok_or(())?,
     )
     .map_err(|_| ())?;
-    let composite = super::ht::train_single_stream(
+    let composite = ht::train_single_stream(
         samples.get(320..400).ok_or(())?,
         a.signal_start.checked_add(320).ok_or(())?,
         a,
@@ -198,7 +203,7 @@ pub(super) fn decode(samples: &[ComplexSample], a: &Acquisition) -> Result<Decod
         // DATA tones use HT's first two P columns. VHT pilot rows instead
         // observe hsum,-hsum: separation yields hsum,0 on those four tones.
         // Keep the unseparated first-LTF composite above for SIG-B.
-        let (first, second) = super::ht::train_stbc_second(
+        let (first, second) = ht::train_stbc_second(
             composite,
             samples.get(400..480).ok_or(())?,
             a.signal_start.checked_add(400).ok_or(())?,
@@ -214,25 +219,17 @@ pub(super) fn decode(samples: &[ComplexSample], a: &Acquisition) -> Result<Decod
         ldpc: true, mcs, ..
     } = fields.users
     {
-        let layout = super::ldpc_rate::Layout::vht(
+        let layout = ldpc_rate::Layout::vht(
             u16::try_from(info.data_symbols).map_err(|_| ())?,
             mcs,
             fields.stbc,
             fields.ldpc_extra_symbol,
         )
         .map_err(|_| ())?;
-        super::data::decode_vht_ldpc_data(
-            data,
-            &trained,
-            info,
-            guard,
-            sig_b,
-            layout,
-            second.as_ref(),
-        )?
+        data::decode_vht_ldpc_data(data, &trained, info, guard, sig_b, layout, second.as_ref())?
     } else {
         let (bytes, tracking) =
-            super::data::decode_vht_bcc_data(data, &trained, info, guard, sig_b, second.as_ref())?;
+            data::decode_vht_bcc_data(data, &trained, info, guard, sig_b, second.as_ref())?;
         (bytes, tracking, Vec::new())
     };
     Ok(Decoded {
@@ -246,5 +243,5 @@ pub(super) fn decode(samples: &[ComplexSample], a: &Acquisition) -> Result<Decod
 }
 
 #[cfg(test)]
-#[path = "vht_iq_tests.rs"]
+#[path = "tests.rs"]
 mod tests;

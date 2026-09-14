@@ -88,7 +88,7 @@ impl Pending {
         true
     }
     fn configure_vht(&mut self, config: &RxConfig, reserved: usize) -> bool {
-        let Ok((fields, info)) = vht_iq::admit(&self.samples, &self.acquisition) else {
+        let Ok((fields, info)) = vht::iq::admit(&self.samples, &self.acquisition) else {
             return false;
         };
         let Some(required) = info
@@ -798,7 +798,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     }
                     if let Some(fields) = self
                         .ht_enabled
-                        .then(|| vht_iq::signal_a(&p.samples[80..240], &p.acquisition))
+                        .then(|| vht::iq::signal_a(&p.samples[80..240], &p.acquisition))
                         .flatten()
                     {
                         out.diagnostics.push(PhyDiagnostic::VhtSignalA {
@@ -1005,7 +1005,7 @@ impl PhyDecoder for LegacyOfdmDecoder {
                             })
                             .ok_or(())
                     } else if p.vht.is_some() {
-                        vht_iq::decode(&p.samples, &p.acquisition).map(|decoded| {
+                        vht::iq::decode(&p.samples, &p.acquisition).map(|decoded| {
                             debug_assert_eq!(Some(decoded.signal_a), p.vht);
                             debug_assert_eq!(decoded.info, info);
                             vht_signal_b = Some(decoded.signal_b);
@@ -1927,7 +1927,7 @@ pub(super) fn valid_fcs(bytes: &[u8]) -> bool {
 }
 
 #[cfg(test)]
-#[path = "vht_bcc_data_tests.rs"]
+#[path = "vht/tests/bcc.rs"]
 mod vht_bcc_tests;
 
 #[cfg(test)]

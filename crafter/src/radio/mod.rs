@@ -19,11 +19,10 @@ pub use he::tb::{Error as HeTbSignalError, TbSignal as HeTbSignalFields};
 pub use he::{Error as HeSignalError, SuSignal as HeSuSignalFields};
 mod ht;
 mod vht;
-mod vht_iq;
-mod vht_sig_b;
-mod vht_timing;
-pub use vht::{VhtSignalAError, VhtSignalAFields, VhtSignalAUsers};
-pub use vht_sig_b::{VhtSignalB20Content, VhtSignalB20Error, VhtSignalB20Fields};
+pub use vht::{
+    VhtSignalAError, VhtSignalAFields, VhtSignalAUsers, VhtSignalB20Content, VhtSignalB20Error,
+    VhtSignalB20Fields,
+};
 mod ldpc;
 pub use ht::{
     HtCoding, HtFormat, HtGuardInterval, HtMcs, HtSignalBits, HtSignalError, HtSignalFields,

@@ -82,7 +82,7 @@ mod tests {
     use super::*;
     #[test]
     fn radio_vht_timing_independent_forward_cases() {
-        let rows: Vec<_> = include_str!("../../tests/fixtures/iq/vht-timing-index.tsv")
+        let rows: Vec<_> = include_str!("../../../tests/fixtures/iq/vht-timing-index.tsv")
             .lines()
             .skip(1)
             .collect();
