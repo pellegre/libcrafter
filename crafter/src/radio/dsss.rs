@@ -72,6 +72,7 @@ struct Samples {
     ring: [ComplexSample; 80],
     kernels: [[f32x4; 8]; 256],
     coarse_kernels: [[f32x4; 4]; 11],
+    alternate_kernels: [[f32x4; 3]; 11],
     begin: u64,
     end: u64,
 }
@@ -111,6 +112,23 @@ impl Samples {
                 *coefficient /= gain;
             }
         }
+        let mut alternate_kernels = [[0.; 6]; 11];
+        for (phase, kernel) in alternate_kernels.iter_mut().enumerate() {
+            let fraction = GRID_PHASES[phase] as f32 / 256.;
+            for (k, coefficient) in kernel.iter_mut().enumerate() {
+                let x = k as f32 - 2. - fraction;
+                let sinc = if x.abs() < 1e-6 {
+                    1.
+                } else {
+                    (PI * x).sin() / (PI * x)
+                };
+                *coefficient = sinc * (0.5 + 0.5 * (PI * x / 3.).cos());
+            }
+            let gain: f32 = kernel.iter().sum();
+            for coefficient in kernel {
+                *coefficient /= gain;
+            }
+        }
         Self {
             ring: [ComplexSample::ZERO; 80],
             // Each SIMD lane pair consumes one complex sample. Duplicate
@@ -126,6 +144,16 @@ impl Samples {
                 })
             }),
             coarse_kernels: coarse_kernels.map(|kernel| {
+                std::array::from_fn(|k| {
+                    f32x4::new([
+                        kernel[2 * k],
+                        kernel[2 * k],
+                        kernel[2 * k + 1],
+                        kernel[2 * k + 1],
+                    ])
+                })
+            }),
+            alternate_kernels: alternate_kernels.map(|kernel| {
                 std::array::from_fn(|k| {
                     f32x4::new([
                         kernel[2 * k],
@@ -190,6 +218,18 @@ impl Samples {
         ))
     }
     #[inline]
+    fn at_alternate_grid(&self, center: u64, phase: usize) -> Option<ComplexSample> {
+        let start = center.checked_sub(2)?;
+        if start < self.begin || start > self.end.checked_sub(6)? {
+            return None;
+        }
+        let offset = (start % 64) as usize;
+        Some(Self::dot_six(
+            &self.ring[offset..offset + 6],
+            &self.alternate_kernels[phase],
+        ))
+    }
+    #[inline]
     fn at_window(&self, start: u64, phase: usize) -> ComplexSample {
         let offset = (start % 64) as usize;
         Self::dot(&self.ring[offset..offset + 16], &self.kernels[phase])
@@ -210,6 +250,18 @@ impl Samples {
                 values[k + 3].q,
             ]) * weights[pair + 1];
         }
+        let a = a.to_array();
+        let b = b.to_array();
+        ComplexSample {
+            i: ((a[0] + a[2]) + b[0]) + b[2],
+            q: ((a[1] + a[3]) + b[1]) + b[3],
+        }
+    }
+    #[inline(always)]
+    fn dot_six(values: &[ComplexSample], weights: &[f32x4; 3]) -> ComplexSample {
+        let a = f32x4::new([values[0].i, values[0].q, values[1].i, values[1].q]) * weights[0]
+            + f32x4::new([values[4].i, values[4].q, values[5].i, values[5].q]) * weights[2];
+        let b = f32x4::new([values[2].i, values[2].q, values[3].i, values[3].q]) * weights[1];
         let a = a.to_array();
         let b = b.to_array();
         ComplexSample {
@@ -649,7 +701,12 @@ impl Acquisition {
                     .ok_or(RadioError::Overflow {
                         context: "DSSS internal chip clock",
                     })?;
-                let Some(chip) = self.samples.at_grid(center, phase) else {
+                let chip = if !SPLIT && chip_index % 2 == 1 {
+                    self.samples.at_alternate_grid(center, phase)
+                } else {
+                    self.samples.at_grid(center, phase)
+                };
+                let Some(chip) = chip else {
                     self.first_chip = None;
                     self.chip_power = [0.; 2];
                     continue;
@@ -1005,9 +1062,17 @@ mod tests {
                     // incremental rational cursor across chunk/ring boundaries.
                     let center = origin + index * 10 / 11;
                     let phase = (index * 10 % 11) as usize;
+                    let expected = if index % 2 == 1 {
+                        acquisition
+                            .samples
+                            .at_alternate_grid(center, phase)
+                            .unwrap()
+                    } else {
+                        acquisition.samples.at_grid(center, phase).unwrap()
+                    };
                     assert_eq!(
                         acquisition.chips[(index % 32) as usize],
-                        acquisition.samples.at_grid(center, phase).unwrap(),
+                        expected,
                         "origin {origin} chip {index}"
                     );
                 }
