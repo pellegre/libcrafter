@@ -10,6 +10,11 @@ pub(in crate::radio) struct Admission {
     pub required_samples: usize,
 }
 
+pub(in crate::radio) struct Recovered {
+    pub admission: Admission,
+    pub psdu: Vec<u8>,
+}
+
 /// Admit checked and trained EHT20 signaling into the bounded DATA receiver.
 pub(in crate::radio) struct Receiver;
 
@@ -79,5 +84,27 @@ impl Receiver {
             info,
             required_samples,
         })
+    }
+
+    pub fn recover(
+        admission: Admission,
+        samples: &[crate::radio::ComplexSample],
+        acquisition: &crate::radio::sync::Acquisition,
+        max_psdu: usize,
+    ) -> Result<Recovered, Error> {
+        if admission.capacity.psdu_bytes > max_psdu {
+            return Err(Error::FrameLimit);
+        }
+        if admission.capacity.ldpc {
+            return Err(Error::Coding);
+        }
+        let metrics = super::iq::Demodulator::new(samples, acquisition, &admission)?.recover()?;
+        let psdu = super::bcc::recover(
+            admission.capacity,
+            admission.timing.data_symbols,
+            &metrics,
+            max_psdu,
+        )?;
+        Ok(Recovered { admission, psdu })
     }
 }

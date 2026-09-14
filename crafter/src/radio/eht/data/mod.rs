@@ -2,6 +2,7 @@
 
 mod bcc;
 mod capacity;
+mod iq;
 mod receiver;
 mod scrambler;
 #[cfg(test)]
@@ -26,4 +27,6 @@ pub(in crate::radio) enum Error {
     SampleLimit,
     Fec,
     Service,
+    Truncated { required: usize, available: usize },
+    Samples,
 }

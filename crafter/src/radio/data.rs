@@ -218,6 +218,7 @@ enum Aggregation {
     Ht,
     Vht,
     He,
+    Eht,
 }
 /// Bounded streaming legacy OFDM receiver. Only integrity-valid PSDUs are delivered.
 #[derive(Default)]
@@ -269,7 +270,9 @@ impl LegacyOfdmDecoder {
             let bytes = std::mem::take(&mut frame.bytes);
             let scan =
                 match aggregate {
-                    Aggregation::He => ampdu::Scan::he(&bytes, frame.config.max_frame_bytes),
+                    Aggregation::He | Aggregation::Eht => {
+                        ampdu::Scan::he(&bytes, frame.config.max_frame_bytes)
+                    }
                     Aggregation::Vht => ampdu::Scan::vht(&bytes, frame.config.max_frame_bytes),
                     Aggregation::Ht => ampdu::Scan::new(&bytes, frame.config.max_frame_bytes)
                         .map_err(|_| RadioError::Limit {
@@ -290,6 +293,7 @@ impl LegacyOfdmDecoder {
                             return Err(RadioError::Limit {
                                 context: match aggregate {
                                     Aggregation::He => "HE aggregate pending frames",
+                                    Aggregation::Eht => "EHT aggregate pending frames",
                                     Aggregation::Ht => "HT aggregate pending frames",
                                     Aggregation::Vht => "VHT aggregate pending frames",
                                 },
@@ -372,6 +376,55 @@ impl LegacyOfdmDecoder {
             self.triggers.pop_front();
         }
         self.triggers.push_back(context);
+    }
+
+    fn publish_eht(
+        &mut self,
+        p: Pending,
+        admission: eht::data::Admission,
+        config: &RxConfig,
+        out: &mut DecodeOutput,
+    ) -> RadioResult<()> {
+        let recovered =
+            match eht::data::Receiver::recover(admission, &p.samples, &p.acquisition, usize::MAX) {
+                Ok(recovered) => recovered,
+                Err(error) => {
+                    self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
+                    out.diagnostics.push(match error {
+                        eht::data::Error::UnsupportedFormat
+                        | eht::data::Error::Modulation(_)
+                        | eht::data::Error::Coding
+                        | eht::data::Error::FrameLimit
+                        | eht::data::Error::SampleLimit => PhyDiagnostic::UnsupportedPhy,
+                        _ => PhyDiagnostic::InvalidHeader,
+                    });
+                    return Ok(());
+                }
+            };
+        let eht::SignalFields::NonOfdma(fields) = &recovered.admission.trained.signal.signal else {
+            unreachable!("EHT DATA admission excludes OFDMA")
+        };
+        let frame = RecoveredFrame {
+            bytes: recovered.psdu,
+            link_type: LinkType::Ieee80211,
+            integrity: FrameIntegrity::ValidFcs,
+            config: config.clone(),
+            start: p.start.clone(),
+            end_sample_index: recovered.admission.info.end_sample_index,
+            rate_bps: recovered.admission.info.rate_bps,
+            diagnostics: vec![
+                PhyDiagnostic::Ofdm {
+                    frequency_offset_hz: p.acquisition.frequency_rad * 20_000_000.
+                        / std::f32::consts::TAU,
+                    training_correlation: p.acquisition.correlation,
+                },
+                PhyDiagnostic::EhtSignal {
+                    fields: fields.clone(),
+                    preamble_sample_index: p.start.sample_index,
+                },
+            ],
+        };
+        self.publish_psdu(frame, Some(Aggregation::Eht), None, out)
     }
 
     fn publish_tb(
@@ -792,13 +845,15 @@ impl PhyDecoder for LegacyOfdmDecoder {
                 }
                 if let Some(EhtStage::Data(admission)) = p.eht.as_ref() {
                     if p.samples.len() == admission.required_samples {
-                        let p = self.pending[slot].take().unwrap();
-                        let Some(EhtStage::Data(admission)) = p.eht else {
+                        let mut p = self.pending[slot].take().unwrap();
+                        let Some(EhtStage::Data(admission)) = p.eht.take() else {
                             unreachable!()
                         };
                         debug_assert_eq!(p.info, Some(admission.info));
-                        out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
-                        self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
+                        if let Err(error) = self.publish_eht(p, *admission, config, &mut out) {
+                            self.reset(ResetReason::Explicit);
+                            return Err(error);
+                        }
                     }
                     continue;
                 }

@@ -4,6 +4,35 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
 
 #[test]
+fn radio_eht_data_bcc_iq_independent_inventory() {
+    let rows = include_str!("fixtures/iq/eht-data-bcc-iq-index.tsv");
+    assert_eq!(rows.lines().skip(1).count(), 352);
+    assert_eq!(
+        hex(&Sha256::digest(rows.as_bytes())),
+        "7c11073536dbeffa5dbdeae269df1607ecf59c73566846a53f1bd978530eaa25"
+    );
+    let corpus = fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/iq/eht-data-bcc-iq.cs8"),
+    )
+    .unwrap();
+    assert_eq!(
+        hex(&Sha256::digest(&corpus)),
+        "23f22ee49cabc85c2ff4423fe9ceafaaba138c247e5d152227caf8ae12ecce84"
+    );
+    let mut cursor = 0;
+    for row in rows.lines().skip(1) {
+        let columns: Vec<_> = row.split('\t').collect();
+        assert_eq!(columns.len(), 17);
+        let offset: usize = columns[14].parse().unwrap();
+        let length: usize = columns[15].parse().unwrap();
+        assert_eq!(offset, cursor);
+        cursor += length;
+        assert_eq!(hex(&Sha256::digest(&corpus[offset..cursor])), columns[16]);
+    }
+    assert_eq!(cursor, corpus.len());
+}
+
+#[test]
 fn radio_he_tb_mu_carrier_exchange_inventory() {
     let rows = include_str!("fixtures/iq/he-tb-mu-carrier-exchange-index.tsv");
     assert_eq!(rows.lines().skip(1).count(), 5);

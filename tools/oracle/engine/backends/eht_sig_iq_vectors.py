@@ -14,8 +14,10 @@ import ofdm_vectors as base
 import ht_bcc_vectors as ht
 import he_training_vectors as training
 from eht_sig_vectors import (
+    DATA_BCC_MODES,
     OFDMA_USERS,
     block,
+    data_bcc_case,
     mu_blocks,
     ofdma_blocks,
     repair as repair_sig,
@@ -25,6 +27,8 @@ from he_prefix_iq_vectors import symbol
 from he_sig_b_coded_vectors import encode
 from he_sig_b_modulation_vectors import modulate
 from he_signal_vectors import checksum, encoded
+from vht_ampdu_vectors import delimiter
+from vht_bcc_iq_vectors import constellation
 
 
 OUT = Path(__file__).resolve().parents[4] / "crafter/tests/fixtures/iq"
@@ -36,14 +40,178 @@ MODES = {
 }
 
 
-def prefix(usig):
-    legacy = base.signal("1101", 300)
+def prefix(usig, legacy_length=300):
+    legacy = base.signal("1101", legacy_length)
     samples = [0j] * 37 + [value * math.sqrt(52 / 56) for value in base.preamble()]
     samples += symbol(base.interleave(base.encode(legacy), 1), legacy=True)
     samples += symbol(base.interleave(base.encode(legacy), 1), legacy=True)
     coded = encoded(usig)
     samples += symbol(coded[:52]) + symbol(coded[52:])
     return samples
+
+
+def append_training(samples, ltf_mode, ltf_code):
+    stf_frequency = [0j] * 245
+    for tone, value in zip(
+        range(-112, 113, 16),
+        [-1, -1, -1, 1, 1, 1, -1, 1, 1, 1, -1, 1, 1, -1, 1],
+    ):
+        if tone:
+            stf_frequency[tone + 122] = value * (1 + 1j) / math.sqrt(2)
+    samples += [
+        value * 4 * math.sqrt(52 / 14)
+        for value in training.ifft(stf_frequency)
+    ][:80]
+
+    ltf_size, guard = [(2, 16), (2, 32), (4, 16), (4, 64)][ltf_mode]
+    ltf_symbols = [1, 2, 4, 6, 8][ltf_code]
+    sequence = {2: training.LTF2, 4: training.LTF4}[ltf_size]
+    normalization = 242 * ltf_size / 4
+    ltf = [
+        value * 4 * math.sqrt(52 / normalization)
+        for value in training.ifft(
+            [{"-": -1, "+": 1, "0": 0}[value] for value in sequence]
+        )
+    ][:64 * ltf_size]
+    coefficients = {
+        1: [1],
+        2: [1, -1],
+        4: [1, -1, 1, 1],
+        6: [1, -1, 1, 1, 1, -1],
+        8: [1, -1, 1, 1, 1, -1, 1, 1],
+    }[ltf_symbols]
+    ltf_start = len(samples)
+    for coefficient in coefficients:
+        wave = [coefficient * value for value in ltf]
+        samples += wave[-guard:] + wave
+    return ltf_size, guard, ltf_symbols, ltf_start, len(samples)
+
+
+DATA_PILOTS = [-116, -90, -48, -22, 22, 48, 90, 116]
+DATA_TONES = [tone for tone in training.TONES if tone not in DATA_PILOTS]
+DATA_PILOT_SIGNS = [1, 1, 1, -1, -1, 1, 1, 1]
+
+
+def data_interleave(bits, bits_per_tone, dcm):
+    columns = 26 // (1 + int(dcm))
+    span = len(bits)
+    significance = max(bits_per_tone // 2, 1)
+    output = [0] * span
+    for index, bit in enumerate(bits):
+        transposed = (span // columns) * (index % columns) + index // columns
+        target = (
+            significance * (transposed // significance)
+            + (transposed + span - columns * transposed // span) % significance
+        )
+        output[target] = bit
+    return output
+
+
+def data_symbol(bits, bits_per_tone, dcm, symbol_index, polarity, guard):
+    mapped = data_interleave(bits, bits_per_tone, dcm)
+    frequency = [0j] * 245
+    tones = len(DATA_TONES) // (1 + int(dcm))
+    for index in range(tones):
+        label = mapped[index * bits_per_tone:(index + 1) * bits_per_tone]
+        lower = constellation(label)
+        frequency[DATA_TONES[index] + 122] = lower
+        if dcm:
+            frequency[DATA_TONES[index + tones] + 122] = lower * (
+                -1 if (index + tones) % 2 else 1
+            )
+    for index, tone in enumerate(DATA_PILOTS):
+        sign = DATA_PILOT_SIGNS[(symbol_index + index) % len(DATA_PILOT_SIGNS)]
+        frequency[tone + 122] = polarity * sign
+    wave = [
+        value * 4 * math.sqrt(52 / 242)
+        for value in training.ifft(frequency)
+    ]
+    return wave[-guard:] + wave
+
+
+def data_bcc_waveform(mcs, ltf_mode, padding, impaired):
+    signal_symbols = 2
+    data_symbols = (
+        [13, 15, 14, 11] if mcs == 15 else [8, 10, 9, 6]
+    )[ltf_mode]
+    ltf_stride = [144, 160, 272, 320][ltf_mode]
+    rounded = 320 + 80 * signal_symbols + ltf_stride
+    rounded += data_symbols * [272, 288, 272, 320][ltf_mode]
+    assert rounded % 80 == 0
+    legacy_length = 3 * (rounded // 80 - 1)
+
+    case = 65536 + 1024 * mcs + 64 * ltf_mode + padding
+    bits, _ = block(case)
+    for start, width, value in [
+        (0, 4, 0),
+        (4, 2, ltf_mode),
+        (6, 3, 0),
+        (9, 1, 0),
+        (10, 2, padding % 4),
+        (12, 1, 0),
+        (17, 3, 0),
+        (31, 4, mcs),
+        (35, 1, 0),
+        (36, 4, 0),
+        (40, 1, 0),
+        (41, 1, 0),
+    ]:
+        put(bits, start, width, value)
+    repair_sig(bits)
+    usig, _ = mu_header(case, 0, 0, 1, 0, signal_symbols)
+    samples = prefix(usig, legacy_length)
+    samples += signaling([bits], 0, signal_symbols)
+    _, guard, _, ltf_start, data_start = append_training(samples, ltf_mode, 0)
+
+    values, _, _ = data_bcc_case(mcs, padding, data_symbols)
+    mpdu = base.frame(0)
+    psdu = bytearray(delimiter(len(mpdu)) + mpdu)
+    psdu += b"\xa5" * min(-len(psdu) % 4, values[13] - len(psdu))
+    while len(psdu) + 4 <= values[13]:
+        psdu += delimiter(0, 1)
+    psdu += b"\xa5" * (values[13] - len(psdu))
+    values, psdu, coded = data_bcc_case(
+        mcs, padding, data_symbols, psdu
+    )
+    bits_per_tone = DATA_BCC_MODES[mcs][0]
+    coded_per_symbol = values[7]
+    pilot_bits = base.scramble([0] * (4 + signal_symbols + data_symbols), 127)
+    for symbol_index in range(data_symbols):
+        start = symbol_index * coded_per_symbol
+        samples += data_symbol(
+            coded[start:start + coded_per_symbol],
+            bits_per_tone,
+            mcs == 15,
+            symbol_index,
+            1 - 2 * pilot_bits[4 + signal_symbols + symbol_index],
+            guard,
+        )
+    data_end = len(samples)
+    assert data_end == 37 + 400 + rounded
+
+    if impaired:
+        samples = [
+            (value + (0.22j * samples[index - 3] if index >= 3 else 0))
+            * cmath.exp(1j * (0.45 + 0.01 * index))
+            for index, value in enumerate(samples)
+        ]
+    gain = min(
+        180,
+        120 / max(max(abs(value.real), abs(value.imag)) for value in samples),
+    )
+    assert all(max(abs(value.real), abs(value.imag)) * gain < 127 for value in samples)
+    return (
+        base.quantize(samples, scale=gain),
+        "".join(map(str, usig)),
+        "".join(map(str, bits)),
+        psdu.hex(),
+        data_symbols,
+        legacy_length,
+        guard,
+        ltf_start,
+        data_start,
+        data_end,
+    )
 
 
 def signaling(blocks, raw_mcs, symbols, actual_mcs=None):
@@ -269,39 +437,9 @@ def training_waveform(raw_mcs, ltf_mode, ltf_code, impaired):
     _, _, _, signal_symbols = MODES[raw_mcs]
     usig, _ = mu_header(case, 0, 0, 1, raw_mcs, signal_symbols)
     samples = prefix(usig) + signaling([bits], raw_mcs, signal_symbols)
-
-    stf_frequency = [0j] * 245
-    for tone, value in zip(
-        range(-112, 113, 16),
-        [-1, -1, -1, 1, 1, 1, -1, 1, 1, 1, -1, 1, 1, -1, 1],
-    ):
-        if tone:
-            stf_frequency[tone + 122] = value * (1 + 1j) / math.sqrt(2)
-    samples += [
-        value * 4 * math.sqrt(52 / 14)
-        for value in training.ifft(stf_frequency)
-    ][:80]
-
-    ltf_size, guard = [(2, 16), (2, 32), (4, 16), (4, 64)][ltf_mode]
-    ltf_symbols = [1, 2, 4, 6, 8][ltf_code]
-    sequence = {2: training.LTF2, 4: training.LTF4}[ltf_size]
-    normalization = 242 * ltf_size / 4
-    ltf = [
-        value * 4 * math.sqrt(52 / normalization)
-        for value in training.ifft([{"-": -1, "+": 1, "0": 0}[value] for value in sequence])
-    ][:64 * ltf_size]
-    coefficients = {
-        1: [1],
-        2: [1, -1],
-        4: [1, -1, 1, 1],
-        6: [1, -1, 1, 1, 1, -1],
-        8: [1, -1, 1, 1, 1, -1, 1, 1],
-    }[ltf_symbols]
-    ltf_start = len(samples)
-    for coefficient in coefficients:
-        wave = [coefficient * value for value in ltf]
-        samples += wave[-guard:] + wave
-    data_start = len(samples)
+    ltf_size, guard, ltf_symbols, ltf_start, data_start = append_training(
+        samples, ltf_mode, ltf_code
+    )
 
     if impaired:
         samples = [
@@ -485,6 +623,44 @@ def generate(out):
     (out / "eht-training-iq-index.tsv").write_text("\n".join(rows) + "\n")
     (out / "eht-training-iq.cs8").write_bytes(corpus)
     print(f"{len(rows) - 1} independent EHT20 training waveforms")
+
+    corpus = bytearray()
+    rows = [
+        "name\tusig\tbits\tmcs\tltf_mode\tguard\tpadding\tsymbols\tpsdu\tlegacy_length\tltf_start\tdata_start\tdata_end\timpaired\toffset\tbytes\tsha256"
+    ]
+    for mcs in DATA_BCC_MODES:
+        for ltf_mode in range(4):
+            for padding in range(1, 5):
+                for impaired in (False, True):
+                    suffix = "offset" if impaired else "clean"
+                    name = (
+                        f"eht-data-bcc-iq-m{mcs}-ltf{ltf_mode}-"
+                        f"pad{padding}-{suffix}"
+                    )
+                    fields = data_bcc_waveform(mcs, ltf_mode, padding, impaired)
+                    (
+                        iq,
+                        usig,
+                        bits,
+                        psdu,
+                        symbols,
+                        legacy_length,
+                        guard,
+                        ltf_start,
+                        data_start,
+                        data_end,
+                    ) = fields
+                    offset = len(corpus)
+                    corpus.extend(iq)
+                    rows.append("\t".join(map(str, [
+                        name, usig, bits, mcs, ltf_mode, guard, padding,
+                        symbols, psdu, legacy_length, ltf_start, data_start,
+                        data_end, int(impaired), offset, len(iq),
+                        hashlib.sha256(iq).hexdigest(),
+                    ])))
+    (out / "eht-data-bcc-iq-index.tsv").write_text("\n".join(rows) + "\n")
+    (out / "eht-data-bcc-iq.cs8").write_bytes(corpus)
+    print(f"{len(rows) - 1} independent EHT20 BCC DATA IQ waveforms")
 
 
 if __name__ == "__main__":
