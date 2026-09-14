@@ -5,9 +5,9 @@ use std::thread::JoinHandle;
 
 struct Job {
     chunk: IqChunk,
-    sequence: u64,
     dsss_workers: usize,
     ofdm_output_slots: usize,
+    worker_chunk_samples: usize,
     output: Mutex<Collector>,
 }
 struct Collector {
@@ -148,11 +148,16 @@ impl Worker {
                 .into(),
             )
             .spawn(move || {
+                let mut worker_sequence = 0u64;
                 while let Ok(command) = receive.recv() {
                     let result = match command {
-                        Command::Reset(reason) => Ok(decoder.reset(reason)),
+                        Command::Reset(reason) => {
+                            worker_sequence = 0;
+                            Ok(decoder.reset(reason))
+                        }
                         Command::Process(job) => {
-                            process(&mut decoder, &job, family).map(|()| DecodeOutput::default())
+                            process(&mut decoder, &job, family, &mut worker_sequence)
+                                .map(|()| DecodeOutput::default())
                         }
                     };
                     if send
@@ -198,34 +203,55 @@ impl Drop for Worker {
         }
     }
 }
-fn process(decoder: &mut impl PhyDecoder, job: &Job, family: u8) -> RadioResult<()> {
+fn process(
+    decoder: &mut impl PhyDecoder,
+    job: &Job,
+    family: u8,
+    worker_sequence: &mut u64,
+) -> RadioResult<()> {
+    let chunk_samples = if family != 0 && job.dsss_workers == 2 {
+        job.worker_chunk_samples
+    } else {
+        128
+    };
     let mut config = job.chunk.config().clone();
     config.max_buffer_samples = if family == 0 {
         config.max_buffer_samples - 128 * job.dsss_workers
     } else {
-        128
+        chunk_samples
     };
-    config.max_chunk_samples = 128;
+    config.max_chunk_samples = chunk_samples;
     config.max_pending_frames = if family == 0 {
         job.ofdm_output_slots
+    } else if job.dsss_workers == 2 {
+        job.chunk.config().max_pending_frames
     } else {
         1
     };
-    for (index, samples) in job.chunk.cs8().chunks(256).enumerate() {
+    for (index, samples) in job.chunk.cs8().chunks(chunk_samples * 2).enumerate() {
+        let sample_offset = index * chunk_samples;
         let mut position = job.chunk.position().clone();
-        position.sample_index += (index * 128) as u64;
-        position.sequence = job.sequence + index as u64;
+        position.sample_index += sample_offset as u64;
+        position.sequence = *worker_sequence;
         position.discontinuity = None;
         let output = decoder.consume(IqEvent::Chunk(IqChunk::new(
             config.clone(),
             position,
             samples.to_vec(),
         )?))?;
+        *worker_sequence = worker_sequence.checked_add(1).ok_or(RadioError::Overflow {
+            context: "parallel decoder worker sequence",
+        })?;
         if !output.frames.is_empty() || !output.diagnostics.is_empty() {
+            let slice = if chunk_samples == 128 {
+                index
+            } else {
+                sample_offset / 128
+            };
             job.output
                 .lock()
                 .map_err(|_| RadioError::Source("PHY output lock poisoned".into()))?
-                .append(index, family, output, job.chunk.config())?;
+                .append(slice, family, output, job.chunk.config())?;
         }
     }
     Ok(())
@@ -400,6 +426,14 @@ impl PhyDecoder for ParallelLegacyWifiDecoder {
                 context: "combined decoder sequence",
             })?;
         let ofdm_output_slots = config.max_pending_frames - if split { 5 } else { 2 };
+        // Bound each split-DSSS batch by the caller's input and memory limits.
+        // OFDM and the unsplit decoder retain their exact 128-sample dispatch.
+        let worker_chunk_samples = config
+            .max_chunk_samples
+            .max(128)
+            .min(16_384)
+            .min((config.max_buffer_samples - 384) / (self.workers.len() - 1))
+            .max(1);
         let job = Arc::new(Job {
             output: Mutex::new(Collector {
                 frames: Vec::new(),
@@ -414,7 +448,7 @@ impl PhyDecoder for ParallelLegacyWifiDecoder {
             chunk,
             dsss_workers: self.workers.len() - 1,
             ofdm_output_slots,
-            sequence: self.sequence,
+            worker_chunk_samples,
         });
         self.send_both(|| Command::Process(job.clone()))?;
         if let Err(e) = self.collect() {
