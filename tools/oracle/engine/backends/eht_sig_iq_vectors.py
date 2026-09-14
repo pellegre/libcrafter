@@ -12,6 +12,7 @@ import tempfile
 
 import ofdm_vectors as base
 import ht_bcc_vectors as ht
+import he_training_vectors as training
 from eht_sig_vectors import (
     OFDMA_USERS,
     block,
@@ -257,6 +258,72 @@ def ofdma_waveform(case, allocation, raw_mcs, impaired=False, damage=None):
     )
 
 
+def training_waveform(raw_mcs, ltf_mode, ltf_code, impaired):
+    case = 32768 + 128 * raw_mcs + 16 * ltf_mode + ltf_code
+    bits, _ = block(case)
+    put(bits, 4, 2, ltf_mode)
+    put(bits, 6, 3, ltf_code)
+    put(bits, 31, 4, case % 14)
+    put(bits, 36, 4, 0)
+    repair_sig(bits)
+    _, _, _, signal_symbols = MODES[raw_mcs]
+    usig, _ = mu_header(case, 0, 0, 1, raw_mcs, signal_symbols)
+    samples = prefix(usig) + signaling([bits], raw_mcs, signal_symbols)
+
+    stf_frequency = [0j] * 245
+    for tone, value in zip(
+        range(-112, 113, 16),
+        [-1, -1, -1, 1, 1, 1, -1, 1, 1, 1, -1, 1, 1, -1, 1],
+    ):
+        if tone:
+            stf_frequency[tone + 122] = value * (1 + 1j) / math.sqrt(2)
+    samples += [
+        value * 4 * math.sqrt(52 / 14)
+        for value in training.ifft(stf_frequency)
+    ][:80]
+
+    ltf_size, guard = [(2, 16), (2, 32), (4, 16), (4, 64)][ltf_mode]
+    ltf_symbols = [1, 2, 4, 6, 8][ltf_code]
+    sequence = {2: training.LTF2, 4: training.LTF4}[ltf_size]
+    normalization = 242 * ltf_size / 4
+    ltf = [
+        value * 4 * math.sqrt(52 / normalization)
+        for value in training.ifft([{"-": -1, "+": 1, "0": 0}[value] for value in sequence])
+    ][:64 * ltf_size]
+    coefficients = {
+        1: [1],
+        2: [1, -1],
+        4: [1, -1, 1, 1],
+        6: [1, -1, 1, 1, 1, -1],
+        8: [1, -1, 1, 1, 1, -1, 1, 1],
+    }[ltf_symbols]
+    ltf_start = len(samples)
+    for coefficient in coefficients:
+        wave = [coefficient * value for value in ltf]
+        samples += wave[-guard:] + wave
+    data_start = len(samples)
+
+    if impaired:
+        samples = [
+            (value + (0.22j * samples[index - 3] if index >= 3 else 0))
+            * cmath.exp(1j * (0.45 + 0.01 * index))
+            for index, value in enumerate(samples)
+        ]
+    gain = 120
+    assert all(max(abs(value.real), abs(value.imag)) * gain < 127 for value in samples)
+    return (
+        base.quantize(samples, scale=gain),
+        "".join(map(str, usig)),
+        "".join(map(str, bits)),
+        ltf_size,
+        guard,
+        ltf_symbols,
+        signal_symbols,
+        ltf_start,
+        data_start,
+    )
+
+
 def generate(out):
     base.self_check()
     corpus = bytearray()
@@ -390,6 +457,34 @@ def generate(out):
         f"{len(rows) - 1} valid and {len(invalid) - 1} invalid "
         "independent OFDMA EHT-SIG IQ waveforms"
     )
+
+    corpus = bytearray()
+    rows = [
+        "name\tusig\tbits\tltf_mode\tltf_size\tguard\tltf_symbols\tsignal_symbols\tltf_start\tdata_start\timpaired\toffset\tbytes\tsha256"
+    ]
+    for raw_mcs in range(4):
+        for ltf_mode in range(4):
+            for ltf_code in range(5):
+                for impaired in (False, True):
+                    suffix = "offset" if impaired else "clean"
+                    name = (
+                        f"eht-training-m{raw_mcs}-ltf{ltf_mode}-"
+                        f"count{ltf_code}-{suffix}"
+                    )
+                    fields = training_waveform(
+                        raw_mcs, ltf_mode, ltf_code, impaired
+                    )
+                    iq, usig, bits, size, guard, count, symbols, start, end = fields
+                    offset = len(corpus)
+                    corpus.extend(iq)
+                    rows.append("\t".join(map(str, [
+                        name, usig, bits, ltf_mode, size, guard, count, symbols,
+                        start, end, int(impaired), offset, len(iq),
+                        hashlib.sha256(iq).hexdigest(),
+                    ])))
+    (out / "eht-training-iq-index.tsv").write_text("\n".join(rows) + "\n")
+    (out / "eht-training-iq.cs8").write_bytes(corpus)
+    print(f"{len(rows) - 1} independent EHT20 training waveforms")
 
 
 if __name__ == "__main__":

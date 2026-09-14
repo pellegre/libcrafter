@@ -1,6 +1,9 @@
 use super::*;
 use crate::radio::{
-    eht::test_support::{feed, fixture},
+    eht::{
+        test_support::{feed, fixture},
+        EhtNonMuUser, EhtNonOfdmaUsers,
+    },
     PhyDiagnostic, WifiDecoder,
 };
 
@@ -202,10 +205,21 @@ fn radio_eht_sig_iq_streaming_dispatch() {
             preamble_sample_index: 37,
         }));
         assert!(output.diagnostics.contains(&PhyDiagnostic::EhtSignal {
-            fields: signal,
+            fields: signal.clone(),
             preamble_sample_index: 37,
         }));
-        assert!(output.diagnostics.contains(&PhyDiagnostic::UnsupportedPhy));
+        let one_stream = matches!(
+            signal.users,
+            EhtNonOfdmaUsers::Single(EhtNonMuUser {
+                space_time_streams: 1,
+                ..
+            })
+        );
+        assert!(output.diagnostics.contains(&if one_stream {
+            PhyDiagnostic::TruncatedFrame
+        } else {
+            PhyDiagnostic::UnsupportedPhy
+        }));
         assert!(!output.diagnostics.iter().any(|diagnostic| matches!(
             diagnostic,
             PhyDiagnostic::HtSignal { .. }

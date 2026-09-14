@@ -38,6 +38,7 @@ struct Pending {
 enum EhtPending {
     Prefix,
     Signal(usize),
+    Training(usize),
 }
 
 impl Pending {
@@ -700,6 +701,11 @@ impl PhyDecoder for LegacyOfdmDecoder {
                     if p.samples.len() == required {
                         match eht::SignalReceiver::recover(&p.samples, &p.acquisition) {
                             Ok(fields) => {
+                                let training = eht::training::Receiver::recover(
+                                    &p.samples,
+                                    &p.acquisition,
+                                    fields.clone(),
+                                );
                                 out.diagnostics.push(match fields.signal {
                                     eht::SignalFields::NonOfdma(fields) => {
                                         PhyDiagnostic::EhtSignal {
@@ -714,12 +720,43 @@ impl PhyDecoder for LegacyOfdmDecoder {
                                         }
                                     }
                                 });
-                                out.diagnostics.push(PhyDiagnostic::UnsupportedPhy);
+                                match training {
+                                    Err(eht::training::Error::Truncated { required, .. })
+                                        if required > p.samples.len()
+                                            && p.reserve_samples(required, config, reserved) =>
+                                    {
+                                        p.eht = Some(EhtPending::Training(required));
+                                        continue;
+                                    }
+                                    Err(
+                                        eht::training::Error::UnsupportedFormat
+                                        | eht::training::Error::SpatialStreams(_),
+                                    ) => out.diagnostics.push(PhyDiagnostic::UnsupportedPhy),
+                                    _ => out.diagnostics.push(PhyDiagnostic::InvalidHeader),
+                                }
                             }
                             Err(_) => out.diagnostics.push(PhyDiagnostic::InvalidHeader),
                         }
                         self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
                         self.pending[slot] = None;
+                    }
+                    continue;
+                }
+                if let Some(EhtPending::Training(required)) = p.eht {
+                    if p.samples.len() == required {
+                        let p = self.pending[slot].take().unwrap();
+                        let result = eht::SignalReceiver::recover(&p.samples, &p.acquisition)
+                            .map_err(|_| ())
+                            .and_then(|fields| {
+                                eht::training::Receiver::recover(&p.samples, &p.acquisition, fields)
+                                    .map_err(|_| ())
+                            });
+                        out.diagnostics.push(if result.is_ok() {
+                            PhyDiagnostic::UnsupportedPhy
+                        } else {
+                            PhyDiagnostic::InvalidHeader
+                        });
+                        self.stats.rejected_frames = self.stats.rejected_frames.saturating_add(1);
                     }
                     continue;
                 }

@@ -5,6 +5,7 @@ pub(in crate::radio) mod iq;
 mod sig;
 #[cfg(test)]
 mod test_support;
+pub(in crate::radio) mod training;
 mod usig;
 
 pub(in crate::radio) use sig::iq::{
