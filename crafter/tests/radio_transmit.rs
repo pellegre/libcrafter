@@ -1,6 +1,8 @@
 #![cfg(feature = "radio")]
 
 use crafter::prelude::*;
+use crafter::radio::{FrameIntegrity, IqChunk, IqEvent, IqPosition, PhyDecoder, RxConfig};
+use std::time::Duration;
 
 fn packet() -> Packet {
     Dot11::data()
@@ -123,4 +125,61 @@ fn ht20_uses_the_same_packet_writer_and_iq_sink() {
     let transmission = writer.encode_record(&record).unwrap();
     assert_eq!(transmission.coding, HtCoding::Ldpc);
     assert!(transmission.ht_signal.derived[30] != 0);
+}
+
+#[test]
+fn all_ht20_transmit_modes_round_trip_through_the_wifi_decoder() {
+    let expected = packet().compile().unwrap();
+    for format in [HtFormat::Mixed, HtFormat::Greenfield] {
+        for coding in [HtCoding::Bcc, HtCoding::Ldpc] {
+            for guard_interval in [HtGuardInterval::Long, HtGuardInterval::Short] {
+                if format == HtFormat::Greenfield && guard_interval == HtGuardInterval::Short {
+                    continue;
+                }
+                for mcs in HtMcs::ALL {
+                    let config = HtTxConfig::new(mcs)
+                        .with_format(format)
+                        .with_coding(coding)
+                        .with_guard_interval(guard_interval);
+                    let transmission = RadioPacketWriter::new(config, MemoryIqSink::new())
+                        .encode_record(&PacketRecord::new(packet()))
+                        .unwrap();
+                    let bounds = RxConfig {
+                        sample_rate_hz: 20_000_000,
+                        center_frequency_hz: 2_412_000_000,
+                        max_chunk_samples: 20_000,
+                        max_buffer_samples: 400_000,
+                        max_frame_bytes: 4095,
+                        max_pending_frames: 4,
+                        max_capture_samples: 1_000_000,
+                        max_duration: Duration::from_secs(1),
+                    };
+                    let chunk = IqChunk::new(
+                        bounds,
+                        IqPosition {
+                            epoch: 0,
+                            sequence: 0,
+                            sample_index: 0,
+                            time_anchor: None,
+                            discontinuity: None,
+                        },
+                        transmission.cs8.clone(),
+                    )
+                    .unwrap();
+                    let output = WifiDecoder::new().consume(IqEvent::Chunk(chunk)).unwrap();
+                    assert_eq!(
+                        output.frames.len(),
+                        1,
+                        "{format:?} {coding:?} {guard_interval:?} {mcs:?}"
+                    );
+                    assert_eq!(
+                        &output.frames[0].bytes[..expected.as_bytes().len()],
+                        expected.as_bytes(),
+                        "{format:?} {coding:?} {guard_interval:?} {mcs:?}"
+                    );
+                    assert_eq!(output.frames[0].integrity, FrameIntegrity::ValidFcs);
+                }
+            }
+        }
+    }
 }
